@@ -28,6 +28,7 @@
 - docs/gis/graphics-pipeline.md
 - docs/gis/three-d-tiles.md
 - docs/gis/engine-math-algorithms.md
+- docs/gis/algorithm-implementation-details.md
 - docs/gis/performance-data-stability.md
 - docs/gis/engine-testing-acceptance.md
 - docs/gis/debugging-observability.md
@@ -44,6 +45,7 @@
 - 空间操作模型
 - 当前开发阶段和 MVP 验收项
 - 需要遵守的核心 API 契约
+- 核心算法的输入输出、坐标空间、误差容差、边界情况和测试样例
 - 数据分类和数据接入必填清单
 - tile scheme、CRS profile、provider 坐标体系和无偏移叠加验收方式
 - 底图瓦片渲染编排：TilePlan 分组、共享可见性计算、每图层请求/缓存/render plan、纹理上传、父子替换、图层混合、失败降级和 debug overlay

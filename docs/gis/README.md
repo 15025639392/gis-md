@@ -18,7 +18,7 @@
 3. 到 `project-conventions.md` 查本项目自己的规则。
 4. 如果任务涉及从 0 开发或重构地球引擎，先读 `earth-engine-roadmap.md`、`reference-architecture.md`、`core-api-contracts.md`、`mvp-acceptance.md`、`implementation-prompts.md`。
 5. 如果任务涉及地球引擎模块，读 `earth-engine-architecture.md`、`earth-coordinate-systems.md`、`tiles-terrain-lod.md`、`multi-tile-schemes.md`、`rendering-engine.md`。
-6. 如果任务涉及数据接入、瓦片、底图渲染、样式、环境、交互、图形渲染、3D Tiles、算法、性能、测试或调试，再读对应专题：`data-provider-contracts.md`、`engine-data-catalog.md`、`basemap-tile-rendering.md`、`overlay-styling.md`、`environment-atmosphere-weather.md`、`interaction-system.md`、`graphics-pipeline.md`、`three-d-tiles.md`、`engine-math-algorithms.md`、`performance-data-stability.md`、`engine-testing-acceptance.md`、`debugging-observability.md`。
+6. 如果任务涉及数据接入、瓦片、底图渲染、样式、环境、交互、图形渲染、3D Tiles、算法、性能、测试或调试，再读对应专题：`data-provider-contracts.md`、`engine-data-catalog.md`、`basemap-tile-rendering.md`、`overlay-styling.md`、`environment-atmosphere-weather.md`、`interaction-system.md`、`graphics-pipeline.md`、`three-d-tiles.md`、`engine-math-algorithms.md`、`algorithm-implementation-details.md`、`performance-data-stability.md`、`engine-testing-acceptance.md`、`debugging-observability.md`。
 7. 用 `spatial-calculation.md` 判断距离、面积、缓冲区、投影和拓扑操作该怎么做。
 8. 在完成分析或代码修改前，用 `verification-checklist.md` 和 `engine-development-checklist.md` 做自检。
 
@@ -43,6 +43,7 @@
 - 交互系统：`interaction-system.md`
 - 3D Tiles：`three-d-tiles.md`
 - 数学与算法：`engine-math-algorithms.md`
+- 算法实现细节：`algorithm-implementation-details.md`
 - 性能、数据约束与稳定性：`performance-data-stability.md`
 - 测试验收：`engine-testing-acceptance.md`
 - 调试观测：`debugging-observability.md`

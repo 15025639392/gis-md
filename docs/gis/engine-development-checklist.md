@@ -6,6 +6,7 @@ AI 在实现地球引擎功能时，除 `verification-checklist.md` 外，还必
 
 - 是否把 geodesy、tile scheme、provider、renderer、camera、scheduler 分层？
 - 是否先定义数据约束、预处理策略、索引、LOD 和缓存预算，而不是直接把原始大数据塞进渲染层？
+- 核心算法是否按 `algorithm-implementation-details.md` 明确输入输出、坐标空间、误差容差、边界情况和测试？
 - 坐标转换是否集中在核心层，而不是散落在 UI 或 shader 拼接代码中？
 - 异步数据加载是否可取消？
 - GPU 资源是否有释放路径？
