@@ -17,7 +17,7 @@
 2. 到 `trusted-sources.md` 查对应的权威标准或官方库文档。
 3. 到 `project-conventions.md` 查本项目自己的规则。
 4. 如果任务涉及地球引擎，先读 `earth-engine-architecture.md`、`earth-coordinate-systems.md`、`tiles-terrain-lod.md`、`multi-tile-schemes.md`、`rendering-engine.md`。
-5. 如果任务涉及数据接入、瓦片、样式、环境、3D Tiles、算法、测试或调试，再读对应专题：`data-provider-contracts.md`、`engine-data-catalog.md`、`overlay-styling.md`、`environment-atmosphere-weather.md`、`three-d-tiles.md`、`engine-math-algorithms.md`、`engine-testing-acceptance.md`、`debugging-observability.md`。
+5. 如果任务涉及数据接入、瓦片、样式、环境、交互、3D Tiles、算法、测试或调试，再读对应专题：`data-provider-contracts.md`、`engine-data-catalog.md`、`overlay-styling.md`、`environment-atmosphere-weather.md`、`interaction-system.md`、`three-d-tiles.md`、`engine-math-algorithms.md`、`engine-testing-acceptance.md`、`debugging-observability.md`。
 6. 用 `spatial-calculation.md` 判断距离、面积、缓冲区、投影和拓扑操作该怎么做。
 7. 在完成分析或代码修改前，用 `verification-checklist.md` 和 `engine-development-checklist.md` 做自检。
 
@@ -32,6 +32,7 @@
 - 数据承载目录：`engine-data-catalog.md`
 - 数据叠加层样式：`overlay-styling.md`
 - 星空、大气、光照、天气：`environment-atmosphere-weather.md`
+- 交互系统：`interaction-system.md`
 - 3D Tiles：`three-d-tiles.md`
 - 数学与算法：`engine-math-algorithms.md`
 - 测试验收：`engine-testing-acceptance.md`

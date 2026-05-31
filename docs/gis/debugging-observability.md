@@ -32,6 +32,7 @@ Overlay 必须可关闭，不能污染正常产品 UI。
 - `renderer`
 - `camera`
 - `picking`
+- `interaction`
 - `performance`
 
 日志要能按级别关闭。高频帧日志必须采样或节流。
@@ -59,6 +60,7 @@ Overlay 必须可关闭，不能污染正常产品 UI。
 - 近地抖动：检查 float32 精度、相机相对坐标、origin rebasing。
 - 瓦片闪烁：检查请求取消、旧请求覆盖、LOD hysteresis、cache eviction。
 - 点击不准：检查 screen to ray、DPR、canvas 尺寸、地形/椭球拾取优先级。
+- 绘制编辑异常：检查工具状态机、临时 feature、撤销栈、吸附规则和取消清理。
 
 ## AI 调试流程
 

@@ -18,13 +18,14 @@
 10. `docs/gis/engine-data-catalog.md`
 11. `docs/gis/overlay-styling.md`
 12. `docs/gis/environment-atmosphere-weather.md`
-13. `docs/gis/three-d-tiles.md`
-14. `docs/gis/engine-math-algorithms.md`
-15. `docs/gis/engine-testing-acceptance.md`
-16. `docs/gis/debugging-observability.md`
-17. `docs/gis/spatial-calculation.md`
-18. `docs/gis/verification-checklist.md`
-19. `docs/gis/engine-development-checklist.md`
+13. `docs/gis/interaction-system.md`
+14. `docs/gis/three-d-tiles.md`
+15. `docs/gis/engine-math-algorithms.md`
+16. `docs/gis/engine-testing-acceptance.md`
+17. `docs/gis/debugging-observability.md`
+18. `docs/gis/spatial-calculation.md`
+19. `docs/gis/verification-checklist.md`
+20. `docs/gis/engine-development-checklist.md`
 
 ## 执行规则
 
@@ -39,3 +40,4 @@
 - 多瓦片体系叠加必须通过 `multi-tile-schemes.md` 定义的 TileScheme、CRS profile、坐标转换和控制点验收来证明无系统性偏移，不能只靠“看起来差不多”。
 - 点、线、面、标注、模型、点云和分析结果的样式必须遵守 `overlay-styling.md`，把数据 schema、样式表达式、交互状态、LOD、贴地/高度和性能预算分开设计。
 - 星空、大气、太阳/月亮、光照、阴影、云雾雨雪、海洋和时间系统必须遵守 `environment-atmosphere-weather.md`，明确真实物理、近似渲染和纯视觉效果的边界。
+- 相机、手势、拾取、选择、绘制、编辑、测量、时间轴和图层控制必须遵守 `interaction-system.md`，把输入事件、空间结果、状态机和撤销/重做分开设计。

@@ -34,6 +34,8 @@
 
 地球尺度场景要特别关注 depth buffer 精度。near plane 太小、far plane 太大，会导致 z-fighting。
 
+相机输入、手势、fly-to、follow、碰撞和状态序列化必须遵守 `interaction-system.md`。
+
 ## Culling
 
 可见性判断应分层：
@@ -64,6 +66,8 @@ Culling 逻辑必须可调试，建议提供 overlay 或日志显示瓦片状态
 - 返回结果坐标是 screen、ECEF、cartographic，还是业务对象 id。
 - 地形拾取和椭球拾取的优先级。
 - 透明对象、地下对象、遮挡对象如何处理。
+
+拾取结果、选择状态、查询面板和编辑工具必须通过 `interaction-system.md` 定义的结构化契约串联。
 
 ## 性能预算
 

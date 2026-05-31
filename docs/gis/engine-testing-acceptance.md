@@ -26,6 +26,7 @@
 - 3D Tiles tileset traversal 和 content 加载。
 - 相机移动触发 tile selection 更新。
 - 图层添加、移除、销毁。
+- picking、选择、绘制、编辑、测量和撤销/重做。
 
 ## 视觉验收
 
@@ -40,6 +41,7 @@
 - 瓦片边界无明显裂缝。
 - 文字、标注、控件不遮挡关键画面。
 - debug overlay 不影响正常交互。
+- 移动端手势、键盘取消和图层控制可用。
 
 如果使用 Playwright，应保存桌面和移动视口截图。
 
