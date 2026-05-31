@@ -27,11 +27,12 @@
 19. `docs/gis/interaction-system.md`
 20. `docs/gis/three-d-tiles.md`
 21. `docs/gis/engine-math-algorithms.md`
-22. `docs/gis/engine-testing-acceptance.md`
-23. `docs/gis/debugging-observability.md`
-24. `docs/gis/spatial-calculation.md`
-25. `docs/gis/verification-checklist.md`
-26. `docs/gis/engine-development-checklist.md`
+22. `docs/gis/performance-data-stability.md`
+23. `docs/gis/engine-testing-acceptance.md`
+24. `docs/gis/debugging-observability.md`
+25. `docs/gis/spatial-calculation.md`
+26. `docs/gis/verification-checklist.md`
+27. `docs/gis/engine-development-checklist.md`
 
 ## 执行规则
 
@@ -50,3 +51,4 @@
 - 相机、手势、拾取、选择、绘制、编辑、测量、时间轴和图层控制必须遵守 `interaction-system.md`，把输入事件、空间结果、状态机和撤销/重做分开设计。
 - 图形渲染、shader、材质、深度、透明、后处理、GPU 资源和性能优化必须遵守 `graphics-pipeline.md`，不得用临时视觉 hack 掩盖坐标或数据错误。
 - 从 0 开发地球引擎时，必须按 `earth-engine-roadmap.md` 分阶段推进，按 `reference-architecture.md` 组织目录和模块，按 `core-api-contracts.md` 定义接口，并用 `mvp-acceptance.md` 验收最小可运行版本。
+- 性能优化必须优先检查 `performance-data-stability.md` 中的数据约束、预处理、索引、LOD、缓存、worker 和底层正确性门禁；不得用渲染层 hack 掩盖数据过载或核心实现不稳定。

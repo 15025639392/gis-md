@@ -5,6 +5,7 @@ AI 在实现地球引擎功能时，除 `verification-checklist.md` 外，还必
 ## 架构
 
 - 是否把 geodesy、tile scheme、provider、renderer、camera、scheduler 分层？
+- 是否先定义数据约束、预处理策略、索引、LOD 和缓存预算，而不是直接把原始大数据塞进渲染层？
 - 坐标转换是否集中在核心层，而不是散落在 UI 或 shader 拼接代码中？
 - 异步数据加载是否可取消？
 - GPU 资源是否有释放路径？
@@ -42,6 +43,14 @@ AI 在实现地球引擎功能时，除 `verification-checklist.md` 外，还必
 - LOD 是否有明确误差指标？
 - 是否避免每帧创建 GPU 资源？
 - 是否能处理 context lost / device lost？
+
+## 性能与稳定性
+
+- 是否遵守 `performance-data-stability.md`？
+- 是否有数据规模上限和超限策略？
+- 是否有 raw/decoded/GPU cache 预算？
+- 是否区分渲染 LOD 数据和分析数据？
+- 是否跑过快速缩放、弱网、长时间运行和高纬/反经线压力场景？
 
 ## 体验
 

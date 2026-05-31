@@ -48,6 +48,8 @@
 
 ## 性能验收
 
+性能验收必须先按 `performance-data-stability.md` 检查数据约束、预处理、索引、LOD、缓存和底层稳定性。不要只看 FPS。
+
 建议记录：
 
 - FPS 或 frame time。

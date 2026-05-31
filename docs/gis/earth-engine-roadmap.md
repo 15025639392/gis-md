@@ -236,6 +236,7 @@
 
 目标：
 
+- 按 `performance-data-stability.md` 建立数据约束、预处理、索引、LOD、缓存和稳定性门禁。
 - 完善缓存、worker、资源释放、profiling。
 - 支持离线包或本地数据。
 - 完善文档、示例、回归测试。
@@ -243,6 +244,7 @@
 验收：
 
 - 有 FPS、draw call、tile queue、GPU resource 观测。
+- 有数据规模上限、预处理策略和性能压力场景。
 - 快速操作不泄漏资源。
 - 关键场景有自动化截图或回归测试。
 
