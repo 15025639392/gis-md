@@ -9,14 +9,16 @@
 - 距离、面积、缓冲区、相交、包含、简化、拓扑
 - 空间数据库、空间索引、包围盒、空间查询
 - 轨迹、路线、地理编码、行政区划、地图渲染
+- 3D 地球、地形 LOD、影像瓦片、3D Tiles、相机交互、GPU 渲染
 
 ## 工作流程
 
 1. 先识别 GIS 问题边界：数据格式、CRS、坐标顺序、单位、空间操作和输出结果。
 2. 到 `trusted-sources.md` 查对应的权威标准或官方库文档。
 3. 到 `project-conventions.md` 查本项目自己的规则。
-4. 用 `spatial-calculation.md` 判断距离、面积、缓冲区、投影和拓扑操作该怎么做。
-5. 在完成分析或代码修改前，用 `verification-checklist.md` 做自检。
+4. 如果任务涉及地球引擎，先读 `earth-engine-architecture.md`、`earth-coordinate-systems.md`、`tiles-terrain-lod.md`、`rendering-engine.md`。
+5. 用 `spatial-calculation.md` 判断距离、面积、缓冲区、投影和拓扑操作该怎么做。
+6. 在完成分析或代码修改前，用 `verification-checklist.md` 做自检。
 
 ## 证据规则
 

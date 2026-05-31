@@ -62,6 +62,37 @@
   来源：https://operations.osmfoundation.org/policies/tiles/  
   用途：使用公共 OSM 瓦片时的限制和规范。
 
+## 3D 地球、地形与场景
+
+- CesiumJS documentation  
+  来源：https://cesium.com/learn/cesiumjs/ref-doc/  
+  用途：3D globe、相机、terrain provider、imagery layer、坐标转换、场景渲染 API 的工程参考。
+
+- 3D Tiles specification  
+  来源：https://github.com/CesiumGS/3d-tiles  
+  OGC 入口：https://www.ogc.org/standard/3dtiles/  
+  用途：大规模 3D 地理空间内容的分块、层级、bounding volume、geometric error、tileset JSON、content 格式。
+
+- glTF specification  
+  来源：https://github.com/KhronosGroup/glTF  
+  用途：3D 模型资产格式、PBR 材质、坐标、buffer、mesh、texture。
+
+- Quantized Mesh terrain format  
+  来源：https://github.com/CesiumGS/quantized-mesh  
+  用途：地形瓦片网格、顶点量化、高程、边界裙边 skirt、terrain LOD。
+
+- WebGL specification  
+  来源：https://registry.khronos.org/webgl/specs/latest/  
+  用途：浏览器 GPU 渲染能力、精度限制、shader、texture、buffer、上下文行为。
+
+- WebGPU specification  
+  来源：https://www.w3.org/TR/webgpu/  
+  用途：新一代浏览器 GPU API。采用前需确认目标浏览器支持情况。
+
+- WGS 84 / NGA geodesy references  
+  来源：https://earth-info.nga.mil/  
+  用途：WGS 84、地球参考系、椭球参数和大地测量背景资料。
+
 ## 本项目的来源使用规则
 
 如果上面的来源和本仓库实际使用的库版本存在差异，优先查“当前安装版本”的官方文档，并把版本差异记录在本文件或相关实现文档中。
