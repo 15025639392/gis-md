@@ -14,18 +14,19 @@
 6. `docs/gis/tiles-terrain-lod.md`
 7. `docs/gis/multi-tile-schemes.md`
 8. `docs/gis/rendering-engine.md`
-9. `docs/gis/data-provider-contracts.md`
-10. `docs/gis/engine-data-catalog.md`
-11. `docs/gis/overlay-styling.md`
-12. `docs/gis/environment-atmosphere-weather.md`
-13. `docs/gis/interaction-system.md`
-14. `docs/gis/three-d-tiles.md`
-15. `docs/gis/engine-math-algorithms.md`
-16. `docs/gis/engine-testing-acceptance.md`
-17. `docs/gis/debugging-observability.md`
-18. `docs/gis/spatial-calculation.md`
-19. `docs/gis/verification-checklist.md`
-20. `docs/gis/engine-development-checklist.md`
+9. `docs/gis/graphics-pipeline.md`
+10. `docs/gis/data-provider-contracts.md`
+11. `docs/gis/engine-data-catalog.md`
+12. `docs/gis/overlay-styling.md`
+13. `docs/gis/environment-atmosphere-weather.md`
+14. `docs/gis/interaction-system.md`
+15. `docs/gis/three-d-tiles.md`
+16. `docs/gis/engine-math-algorithms.md`
+17. `docs/gis/engine-testing-acceptance.md`
+18. `docs/gis/debugging-observability.md`
+19. `docs/gis/spatial-calculation.md`
+20. `docs/gis/verification-checklist.md`
+21. `docs/gis/engine-development-checklist.md`
 
 ## 执行规则
 
@@ -41,3 +42,4 @@
 - 点、线、面、标注、模型、点云和分析结果的样式必须遵守 `overlay-styling.md`，把数据 schema、样式表达式、交互状态、LOD、贴地/高度和性能预算分开设计。
 - 星空、大气、太阳/月亮、光照、阴影、云雾雨雪、海洋和时间系统必须遵守 `environment-atmosphere-weather.md`，明确真实物理、近似渲染和纯视觉效果的边界。
 - 相机、手势、拾取、选择、绘制、编辑、测量、时间轴和图层控制必须遵守 `interaction-system.md`，把输入事件、空间结果、状态机和撤销/重做分开设计。
+- 图形渲染、shader、材质、深度、透明、后处理、GPU 资源和性能优化必须遵守 `graphics-pipeline.md`，不得用临时视觉 hack 掩盖坐标或数据错误。

@@ -20,6 +20,7 @@
 - docs/gis/overlay-styling.md
 - docs/gis/environment-atmosphere-weather.md
 - docs/gis/interaction-system.md
+- docs/gis/graphics-pipeline.md
 - docs/gis/three-d-tiles.md
 - docs/gis/engine-math-algorithms.md
 - docs/gis/engine-testing-acceptance.md
@@ -39,6 +40,7 @@
 - 点/线/面/标注/模型的样式模型、状态样式、LOD 和性能预算
 - 环境效果的真实性等级、时间系统、光照方向、天气数据来源和降级策略
 - 交互契约：输入事件、相机控制、picking、选择状态、绘制编辑、测量、时间轴、图层控制和取消/撤销规则
+- 图形管线：WebGL/WebGPU 能力、坐标空间、shader、材质、深度、透明、后处理、GPU 资源生命周期和性能指标
 - 相关官方来源或项目约定
 - 如果涉及地球引擎，还要识别：参考椭球体、世界坐标系、局部坐标系、相机模型、tile scheme、LOD 策略、Provider 接口、GPU 精度策略、资源生命周期、调试证据和性能预算
 

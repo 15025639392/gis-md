@@ -37,6 +37,8 @@
 - 在高纬度用近似公式代替明确的地理计算。
 - 在反经线附近用简单 min/max 经度判断范围。
 
+图形管线中的 camera-relative、origin rebasing、high/low split、depth precision 和 shader 精度规则见 `graphics-pipeline.md`。
+
 ## Picking 算法
 
 拾取应按场景需求选择：

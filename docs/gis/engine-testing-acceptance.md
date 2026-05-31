@@ -55,6 +55,8 @@
 - 请求队列长度。
 - 正在加载 tile 数。
 - GPU texture/buffer 数量。
+- shader/program/pipeline 数量。
+- 每帧 GPU 资源创建次数。
 - 主线程长任务。
 - 内存和显存估算。
 

@@ -2,6 +2,8 @@
 
 地球渲染引擎同时受 GIS 正确性和 GPU 约束影响。AI 修改渲染相关代码时，必须说明场景坐标、GPU 资源生命周期和验证方式。
 
+图形管线、shader、材质、纹理、buffer、深度、透明、多 pass、后处理和 GPU 性能规则见 `graphics-pipeline.md`。本文件只定义渲染引擎的高层职责。
+
 ## 渲染对象
 
 常见对象包括：
@@ -57,6 +59,8 @@ Culling 逻辑必须可调试，建议提供 overlay 或日志显示瓦片状态
 - 恢复：WebGL context lost 或 WebGPU device lost。
 
 不要在每帧重复创建 buffer、texture、material 或 shader。
+
+GPU 资源所有权、context lost / device lost、资源统计和释放验收必须遵守 `graphics-pipeline.md`。
 
 ## Picking
 

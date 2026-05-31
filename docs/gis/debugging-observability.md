@@ -30,6 +30,7 @@ Overlay 必须可关闭，不能污染正常产品 UI。
 - `imagery`
 - `3d-tiles`
 - `renderer`
+- `graphics`
 - `camera`
 - `picking`
 - `interaction`
@@ -55,6 +56,7 @@ Overlay 必须可关闭，不能污染正常产品 UI。
 ## 常见问题定位
 
 - 地球空白：检查 canvas、相机、near/far、shader 编译、首个 tile、context lost。
+- 图形异常：检查 shader 编译、buffer attribute layout、texture format、framebuffer、depth state、blend state 和 postprocess。
 - 瓦片错位：检查 CRS、tile scheme、y 轴方向、bounds、经纬度顺序。
 - 地形裂缝：检查 skirt、邻接 LOD、边缘高程、index buffer。
 - 近地抖动：检查 float32 精度、相机相对坐标、origin rebasing。
