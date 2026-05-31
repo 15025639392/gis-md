@@ -14,26 +14,32 @@
 6. `docs/gis/reference-architecture.md`
 7. `docs/gis/core-api-contracts.md`
 8. `docs/gis/mvp-acceptance.md`
-9. `docs/gis/earth-coordinate-systems.md`
-10. `docs/gis/tiles-terrain-lod.md`
-11. `docs/gis/multi-tile-schemes.md`
-12. `docs/gis/basemap-tile-rendering.md`
-13. `docs/gis/rendering-engine.md`
-14. `docs/gis/graphics-pipeline.md`
-15. `docs/gis/data-provider-contracts.md`
-16. `docs/gis/engine-data-catalog.md`
-17. `docs/gis/overlay-styling.md`
-18. `docs/gis/environment-atmosphere-weather.md`
-19. `docs/gis/interaction-system.md`
-20. `docs/gis/three-d-tiles.md`
-21. `docs/gis/engine-math-algorithms.md`
-22. `docs/gis/algorithm-implementation-details.md`
-23. `docs/gis/performance-data-stability.md`
-24. `docs/gis/engine-testing-acceptance.md`
-25. `docs/gis/debugging-observability.md`
-26. `docs/gis/spatial-calculation.md`
-27. `docs/gis/verification-checklist.md`
-28. `docs/gis/engine-development-checklist.md`
+9. `docs/gis/technology-decisions.md`
+10. `docs/gis/task-breakdown.md`
+11. `docs/gis/test-fixtures.md`
+12. `docs/gis/provider-compatibility-matrix.md`
+13. `docs/gis/maturity-model.md`
+14. `docs/gis/error-recovery.md`
+15. `docs/gis/earth-coordinate-systems.md`
+16. `docs/gis/tiles-terrain-lod.md`
+17. `docs/gis/multi-tile-schemes.md`
+18. `docs/gis/basemap-tile-rendering.md`
+19. `docs/gis/rendering-engine.md`
+20. `docs/gis/graphics-pipeline.md`
+21. `docs/gis/data-provider-contracts.md`
+22. `docs/gis/engine-data-catalog.md`
+23. `docs/gis/overlay-styling.md`
+24. `docs/gis/environment-atmosphere-weather.md`
+25. `docs/gis/interaction-system.md`
+26. `docs/gis/three-d-tiles.md`
+27. `docs/gis/engine-math-algorithms.md`
+28. `docs/gis/algorithm-implementation-details.md`
+29. `docs/gis/performance-data-stability.md`
+30. `docs/gis/engine-testing-acceptance.md`
+31. `docs/gis/debugging-observability.md`
+32. `docs/gis/spatial-calculation.md`
+33. `docs/gis/verification-checklist.md`
+34. `docs/gis/engine-development-checklist.md`
 
 ## 执行规则
 
@@ -52,5 +58,7 @@
 - 相机、手势、拾取、选择、绘制、编辑、测量、时间轴和图层控制必须遵守 `interaction-system.md`，把输入事件、空间结果、状态机和撤销/重做分开设计。
 - 图形渲染、shader、材质、深度、透明、后处理、GPU 资源和性能优化必须遵守 `graphics-pipeline.md`，不得用临时视觉 hack 掩盖坐标或数据错误。
 - 从 0 开发地球引擎时，必须按 `earth-engine-roadmap.md` 分阶段推进，按 `reference-architecture.md` 组织目录和模块，按 `core-api-contracts.md` 定义接口，并用 `mvp-acceptance.md` 验收最小可运行版本。
+- 从 0 开发前必须先记录 `technology-decisions.md` 中的技术栈决策，并按 `task-breakdown.md` 拆成可验证任务；不得在技术路线未定时混用 Three.js、自研 WebGL/WebGPU 和业务框架假设。
 - 性能优化必须优先检查 `performance-data-stability.md` 中的数据约束、预处理、索引、LOD、缓存、worker 和底层正确性门禁；不得用渲染层 hack 掩盖数据过载或核心实现不稳定。
 - 核心算法实现必须遵守 `algorithm-implementation-details.md`，每个算法都要明确输入输出、坐标空间、误差模型、边界情况、测试样例和调试观测。
+- 能力成熟度必须按 `maturity-model.md` 标注；Provider 接入必须更新 `provider-compatibility-matrix.md`；错误处理和恢复必须遵守 `error-recovery.md`；测试数据必须优先使用 `test-fixtures.md`。

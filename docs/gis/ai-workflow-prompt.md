@@ -12,8 +12,14 @@
 - docs/gis/project-conventions.md
 - docs/gis/earth-engine-architecture.md
 - docs/gis/earth-engine-roadmap.md
+- docs/gis/technology-decisions.md
 - docs/gis/reference-architecture.md
 - docs/gis/core-api-contracts.md
+- docs/gis/task-breakdown.md
+- docs/gis/test-fixtures.md
+- docs/gis/provider-compatibility-matrix.md
+- docs/gis/maturity-model.md
+- docs/gis/error-recovery.md
 - docs/gis/mvp-acceptance.md
 - docs/gis/earth-coordinate-systems.md
 - docs/gis/tiles-terrain-lod.md
@@ -44,6 +50,7 @@
 - 单位
 - 空间操作模型
 - 当前开发阶段和 MVP 验收项
+- 技术栈决策、任务拆解、Provider 兼容等级、功能成熟度和错误恢复策略
 - 需要遵守的核心 API 契约
 - 核心算法的输入输出、坐标空间、误差容差、边界情况和测试样例
 - 数据分类和数据接入必填清单
