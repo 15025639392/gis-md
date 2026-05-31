@@ -39,3 +39,10 @@ AI 在实现地球引擎功能时，除 `verification-checklist.md` 外，还必
 - 相机控制是否稳定，不穿地、不抖动？
 - 快速拖动/缩放时是否不会闪烁或显示过期数据？
 - debug overlay 是否能显示 tile、LOD、请求、帧率等关键信息？
+
+## 交付
+
+- 是否说明本次改动影响的 Provider、Renderer、Camera、Scheduler 或 Geodesy 模块？
+- 是否给出可复现测试或截图验证？
+- 是否列出未覆盖的极区、反经线、网络失败、设备性能风险？
+- 是否更新相关知识库或项目约定？

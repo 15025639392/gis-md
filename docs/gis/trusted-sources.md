@@ -93,6 +93,20 @@
   来源：https://earth-info.nga.mil/  
   用途：WGS 84、地球参考系、椭球参数和大地测量背景资料。
 
+- IAU/IAG geodesy and reference frame materials  
+  来源：https://iag-aig.org/  
+  用途：参考框架、大地测量概念和高精度地球建模背景。项目工程实现仍应优先以所用库和数据源文档为准。
+
+## 工程参考实现
+
+- CesiumJS source code  
+  来源：https://github.com/CesiumGS/cesium  
+  用途：地球引擎架构、瓦片调度、坐标、terrain、3D Tiles、相机和渲染实现参考。不得直接照搬实现，应提炼设计依据。
+
+- NASA WorldWind documentation/source  
+  来源：https://worldwind.arc.nasa.gov/  
+  用途：地球可视化、图层、瓦片和相机交互的工程参考。
+
 ## 本项目的来源使用规则
 
 如果上面的来源和本仓库实际使用的库版本存在差异，优先查“当前安装版本”的官方文档，并把版本差异记录在本文件或相关实现文档中。

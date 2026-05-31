@@ -13,8 +13,14 @@
 5. `docs/gis/earth-coordinate-systems.md`
 6. `docs/gis/tiles-terrain-lod.md`
 7. `docs/gis/rendering-engine.md`
-8. `docs/gis/spatial-calculation.md`
-9. `docs/gis/verification-checklist.md`
+8. `docs/gis/data-provider-contracts.md`
+9. `docs/gis/three-d-tiles.md`
+10. `docs/gis/engine-math-algorithms.md`
+11. `docs/gis/engine-testing-acceptance.md`
+12. `docs/gis/debugging-observability.md`
+13. `docs/gis/spatial-calculation.md`
+14. `docs/gis/verification-checklist.md`
+15. `docs/gis/engine-development-checklist.md`
 
 ## 执行规则
 
@@ -24,3 +30,4 @@
 - 坐标转换、几何运算、拓扑关系、空间索引、测地线计算等专业能力，优先使用成熟 GIS 库。
 - 每个 GIS 实现都应在代码、测试或文档中明确坐标顺序、CRS、单位和计算模型。
 - 地球引擎相关实现必须额外明确：参考椭球体、世界坐标系、局部坐标系、相机模型、瓦片方案、LOD 策略、精度策略和性能预算。
+- 数据接入、瓦片调度、3D Tiles、渲染、相机和拾取功能必须有可测试接口契约，不得只靠视觉观察判断正确。
