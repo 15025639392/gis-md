@@ -16,14 +16,20 @@
 1. 先识别 GIS 问题边界：数据格式、CRS、坐标顺序、单位、空间操作和输出结果。
 2. 到 `trusted-sources.md` 查对应的权威标准或官方库文档。
 3. 到 `project-conventions.md` 查本项目自己的规则。
-4. 如果任务涉及地球引擎，先读 `earth-engine-architecture.md`、`earth-coordinate-systems.md`、`tiles-terrain-lod.md`、`multi-tile-schemes.md`、`rendering-engine.md`。
-5. 如果任务涉及数据接入、瓦片、底图渲染、样式、环境、交互、图形渲染、3D Tiles、算法、测试或调试，再读对应专题：`data-provider-contracts.md`、`engine-data-catalog.md`、`basemap-tile-rendering.md`、`overlay-styling.md`、`environment-atmosphere-weather.md`、`interaction-system.md`、`graphics-pipeline.md`、`three-d-tiles.md`、`engine-math-algorithms.md`、`engine-testing-acceptance.md`、`debugging-observability.md`。
-6. 用 `spatial-calculation.md` 判断距离、面积、缓冲区、投影和拓扑操作该怎么做。
-7. 在完成分析或代码修改前，用 `verification-checklist.md` 和 `engine-development-checklist.md` 做自检。
+4. 如果任务涉及从 0 开发或重构地球引擎，先读 `earth-engine-roadmap.md`、`reference-architecture.md`、`core-api-contracts.md`、`mvp-acceptance.md`、`implementation-prompts.md`。
+5. 如果任务涉及地球引擎模块，读 `earth-engine-architecture.md`、`earth-coordinate-systems.md`、`tiles-terrain-lod.md`、`multi-tile-schemes.md`、`rendering-engine.md`。
+6. 如果任务涉及数据接入、瓦片、底图渲染、样式、环境、交互、图形渲染、3D Tiles、算法、测试或调试，再读对应专题：`data-provider-contracts.md`、`engine-data-catalog.md`、`basemap-tile-rendering.md`、`overlay-styling.md`、`environment-atmosphere-weather.md`、`interaction-system.md`、`graphics-pipeline.md`、`three-d-tiles.md`、`engine-math-algorithms.md`、`engine-testing-acceptance.md`、`debugging-observability.md`。
+7. 用 `spatial-calculation.md` 判断距离、面积、缓冲区、投影和拓扑操作该怎么做。
+8. 在完成分析或代码修改前，用 `verification-checklist.md` 和 `engine-development-checklist.md` 做自检。
 
 ## 专题地图
 
 - 引擎架构：`earth-engine-architecture.md`
+- 从 0 开发路线图：`earth-engine-roadmap.md`
+- 参考架构：`reference-architecture.md`
+- 核心 API 契约：`core-api-contracts.md`
+- MVP 验收：`mvp-acceptance.md`
+- 分阶段开发提示词：`implementation-prompts.md`
 - 坐标系统：`earth-coordinate-systems.md`
 - 瓦片、地形、LOD：`tiles-terrain-lod.md`
 - 多瓦片体系与无偏移叠加：`multi-tile-schemes.md`

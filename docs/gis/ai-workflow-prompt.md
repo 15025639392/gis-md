@@ -11,6 +11,10 @@
 - docs/gis/trusted-sources.md
 - docs/gis/project-conventions.md
 - docs/gis/earth-engine-architecture.md
+- docs/gis/earth-engine-roadmap.md
+- docs/gis/reference-architecture.md
+- docs/gis/core-api-contracts.md
+- docs/gis/mvp-acceptance.md
 - docs/gis/earth-coordinate-systems.md
 - docs/gis/tiles-terrain-lod.md
 - docs/gis/multi-tile-schemes.md
@@ -29,6 +33,7 @@
 - docs/gis/spatial-calculation.md
 - docs/gis/verification-checklist.md
 - docs/gis/engine-development-checklist.md
+- docs/gis/implementation-prompts.md
 
 针对本任务，先识别：
 - 数据格式
@@ -36,6 +41,8 @@
 - 坐标顺序
 - 单位
 - 空间操作模型
+- 当前开发阶段和 MVP 验收项
+- 需要遵守的核心 API 契约
 - 数据分类和数据接入必填清单
 - tile scheme、CRS profile、provider 坐标体系和无偏移叠加验收方式
 - 底图瓦片渲染编排：TilePlan 分组、共享可见性计算、每图层请求/缓存/render plan、纹理上传、父子替换、图层混合、失败降级和 debug overlay

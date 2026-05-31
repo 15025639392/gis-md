@@ -10,24 +10,28 @@
 2. `docs/gis/trusted-sources.md`
 3. `docs/gis/project-conventions.md`
 4. `docs/gis/earth-engine-architecture.md`
-5. `docs/gis/earth-coordinate-systems.md`
-6. `docs/gis/tiles-terrain-lod.md`
-7. `docs/gis/multi-tile-schemes.md`
-8. `docs/gis/basemap-tile-rendering.md`
-9. `docs/gis/rendering-engine.md`
-10. `docs/gis/graphics-pipeline.md`
-11. `docs/gis/data-provider-contracts.md`
-12. `docs/gis/engine-data-catalog.md`
-13. `docs/gis/overlay-styling.md`
-14. `docs/gis/environment-atmosphere-weather.md`
-15. `docs/gis/interaction-system.md`
-16. `docs/gis/three-d-tiles.md`
-17. `docs/gis/engine-math-algorithms.md`
-18. `docs/gis/engine-testing-acceptance.md`
-19. `docs/gis/debugging-observability.md`
-20. `docs/gis/spatial-calculation.md`
-21. `docs/gis/verification-checklist.md`
-22. `docs/gis/engine-development-checklist.md`
+5. `docs/gis/earth-engine-roadmap.md`
+6. `docs/gis/reference-architecture.md`
+7. `docs/gis/core-api-contracts.md`
+8. `docs/gis/mvp-acceptance.md`
+9. `docs/gis/earth-coordinate-systems.md`
+10. `docs/gis/tiles-terrain-lod.md`
+11. `docs/gis/multi-tile-schemes.md`
+12. `docs/gis/basemap-tile-rendering.md`
+13. `docs/gis/rendering-engine.md`
+14. `docs/gis/graphics-pipeline.md`
+15. `docs/gis/data-provider-contracts.md`
+16. `docs/gis/engine-data-catalog.md`
+17. `docs/gis/overlay-styling.md`
+18. `docs/gis/environment-atmosphere-weather.md`
+19. `docs/gis/interaction-system.md`
+20. `docs/gis/three-d-tiles.md`
+21. `docs/gis/engine-math-algorithms.md`
+22. `docs/gis/engine-testing-acceptance.md`
+23. `docs/gis/debugging-observability.md`
+24. `docs/gis/spatial-calculation.md`
+25. `docs/gis/verification-checklist.md`
+26. `docs/gis/engine-development-checklist.md`
 
 ## 执行规则
 
@@ -45,3 +49,4 @@
 - 星空、大气、太阳/月亮、光照、阴影、云雾雨雪、海洋和时间系统必须遵守 `environment-atmosphere-weather.md`，明确真实物理、近似渲染和纯视觉效果的边界。
 - 相机、手势、拾取、选择、绘制、编辑、测量、时间轴和图层控制必须遵守 `interaction-system.md`，把输入事件、空间结果、状态机和撤销/重做分开设计。
 - 图形渲染、shader、材质、深度、透明、后处理、GPU 资源和性能优化必须遵守 `graphics-pipeline.md`，不得用临时视觉 hack 掩盖坐标或数据错误。
+- 从 0 开发地球引擎时，必须按 `earth-engine-roadmap.md` 分阶段推进，按 `reference-architecture.md` 组织目录和模块，按 `core-api-contracts.md` 定义接口，并用 `mvp-acceptance.md` 验收最小可运行版本。
