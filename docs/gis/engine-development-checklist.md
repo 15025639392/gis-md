@@ -32,6 +32,8 @@ AI 在实现地球引擎功能时，除 `verification-checklist.md` 外，还必
 
 ## 渲染
 
+- 点、线、面、标注或模型样式是否遵守 `overlay-styling.md`？
+- 样式是否区分数据 schema、渲染表达和交互状态？
 - near/far plane 是否合理？
 - 是否有 frustum/horizon culling？
 - LOD 是否有明确误差指标？

@@ -17,6 +17,8 @@
 
 每类对象都应有明确的数据来源、坐标系、生命周期和释放逻辑。
 
+点、线、面、标注、模型和点云的样式设计必须遵守 `overlay-styling.md`，Renderer 只负责把样式高效表达为 draw call、buffer、texture 和 shader 参数。
+
 ## 相机
 
 相机系统必须明确：
