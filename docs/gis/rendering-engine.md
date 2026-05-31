@@ -4,6 +4,8 @@
 
 图形管线、shader、材质、纹理、buffer、深度、透明、多 pass、后处理和 GPU 性能规则见 `graphics-pipeline.md`。本文件只定义渲染引擎的高层职责。
 
+底图瓦片渲染编排见 `basemap-tile-rendering.md`。Renderer 不应直接负责网络请求、provider 坐标纠偏或缓存策略。
+
 ## 渲染对象
 
 常见对象包括：

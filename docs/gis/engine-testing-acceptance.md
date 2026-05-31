@@ -22,6 +22,7 @@
 
 - Provider 请求、取消、失败、重试。
 - 影像瓦片加载到可渲染纹理。
+- 底图瓦片父子 fallback、过期请求取消、多图层混合和失败降级。
 - 地形瓦片加载到 mesh。
 - 3D Tiles tileset traversal 和 content 加载。
 - 相机移动触发 tile selection 更新。

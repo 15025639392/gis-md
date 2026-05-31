@@ -78,6 +78,8 @@ TileKey {
 
 GPU cache 不应由 Provider 私自长期持有，除非架构明确允许。Provider 负责数据，Renderer 负责 GPU 资源更清晰。
 
+底图瓦片的 raw、decoded、texture、render command 分层缓存和渲染编排见 `basemap-tile-rendering.md`。
+
 ## Attribution
 
 Provider 必须暴露 attribution。影像、OSM、地形和商业数据源通常有版权显示要求。AI 实现图层时不得忽略 attribution。

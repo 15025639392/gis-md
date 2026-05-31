@@ -92,6 +92,8 @@ Shader 必须明确：
 
 影像瓦片、图标 atlas、科学栅格、深度纹理和 picking texture 不能混为一种纹理类型。
 
+底图瓦片纹理的上传节流、父子替换、图层混合和失败降级见 `basemap-tile-rendering.md`。
+
 ## Buffer 与几何
 
 几何资源必须明确：

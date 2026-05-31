@@ -9,6 +9,7 @@
 - tile 边界。
 - tile z/x/y 或 tile id。
 - tile 状态：queued、loading、ready、failed、evicted。
+- parent fallback、cache hit/miss、texture-ready、rendered 状态。
 - LOD error / screen-space error。
 - bounding volume。
 - frustum。

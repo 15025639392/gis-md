@@ -24,6 +24,7 @@ AI 在实现地球引擎功能时，除 `verification-checklist.md` 外，还必
 - 是否声明了 `TileScheme` 和 `CrsProfile`？
 - 如果使用高德、百度、腾讯或私有瓦片，是否证明它不是被误当作标准 Web Mercator？
 - 是否有控制点验收来证明多图层无系统性偏移？
+- 如果是底图瓦片，是否遵守 `basemap-tile-rendering.md` 的可见性选择、请求调度、缓存、纹理上传和父子 fallback 策略？
 - tile scheme 是否明确？
 - tile bounds 是否可测试？
 - y 轴方向是否明确？
