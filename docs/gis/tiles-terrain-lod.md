@@ -11,6 +11,10 @@
 - y 轴原点在北还是南？
 - 瓦片覆盖范围是 Web Mercator 世界、geographic rectangle，还是局部区域？
 - 坐标边界是否包含极区，是否裁剪到 Web Mercator 常用纬度范围？
+- 图层使用的逻辑坐标系、瓦片坐标系和服务商坐标系是否一致？
+- 是否涉及 GCJ-02、BD-09、百度墨卡托、局部偏移或 provider 私有 tiling scheme？
+
+多瓦片体系叠加必须遵守 `multi-tile-schemes.md`。不要把不同 provider 的瓦片都假设为标准 Web Mercator。
 
 ## LOD 选择
 

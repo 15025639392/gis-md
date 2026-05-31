@@ -21,6 +21,9 @@ AI 在实现地球引擎功能时，除 `verification-checklist.md` 外，还必
 
 - 数据类型是否已在 `engine-data-catalog.md` 中归类？
 - 是否填写了数据格式、来源、CRS、坐标顺序、高度基准、单位、时间维度？
+- 是否声明了 `TileScheme` 和 `CrsProfile`？
+- 如果使用高德、百度、腾讯或私有瓦片，是否证明它不是被误当作标准 Web Mercator？
+- 是否有控制点验收来证明多图层无系统性偏移？
 - tile scheme 是否明确？
 - tile bounds 是否可测试？
 - y 轴方向是否明确？

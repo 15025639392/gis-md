@@ -24,6 +24,8 @@
 - `id`：稳定标识。
 - `type`：imagery、terrain、vector、3d-tiles、model、point-cloud、time-series、sensor、annotation 等。
 - `crs` 或 `tileMatrixSet`：数据空间参考。
+- `tileScheme`：瓦片矩阵、行列号、原点、bounds、分辨率序列和 provider quirks。
+- `crsProfile`：WGS84、WebMercator、GCJ-02、BD-09、百度墨卡托、自定义局部坐标等。
 - `availability`：可用范围、层级、时间范围。
 - `request(key, signal)`：异步请求，必须支持取消。
 - `parse(response)`：解析网络或本地数据。
@@ -37,6 +39,8 @@ Tile key 必须是结构化对象，不要只用字符串到处传：
 ```text
 TileKey {
   scheme: "XYZ" | "TMS" | "WMTS" | "Geographic" | "Custom"
+  crsProfile?: string
+  provider?: string
   z: number
   x: number
   y: number
@@ -53,6 +57,7 @@ TileKey {
 - key 序列化和反序列化。
 - y 轴方向测试。
 - 世界边界和反经线测试。
+- 与参考控制点的叠加偏移测试。
 
 ## 请求与取消
 
