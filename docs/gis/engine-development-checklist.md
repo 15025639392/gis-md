@@ -19,6 +19,8 @@ AI 在实现地球引擎功能时，除 `verification-checklist.md` 外，还必
 
 ## 瓦片与数据
 
+- 数据类型是否已在 `engine-data-catalog.md` 中归类？
+- 是否填写了数据格式、来源、CRS、坐标顺序、高度基准、单位、时间维度？
 - tile scheme 是否明确？
 - tile bounds 是否可测试？
 - y 轴方向是否明确？

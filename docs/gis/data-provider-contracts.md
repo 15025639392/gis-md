@@ -12,13 +12,17 @@
 - `TilesetProvider`：3D Tiles tileset、content、metadata。
 - `ModelProvider`：glTF/glb 模型。
 - `ElevationProvider`：点位高程查询、地形采样。
+- `PointCloudProvider`：点云数据，例如 LAS/LAZ、3D Tiles pnts、实时点云。
+- `TimeSeriesProvider`：时序栅格、时序矢量、动态轨迹、气象海洋时序数据。
+- `SensorProvider`：实时传感器、AIS/ADS-B、IoT、遥测流。
+- `AnnotationProvider`：标注、测量、绘制、用户编辑数据。
 
 ## 最小接口
 
 每个 Provider 至少要明确：
 
 - `id`：稳定标识。
-- `type`：imagery、terrain、vector、3d-tiles、model 等。
+- `type`：imagery、terrain、vector、3d-tiles、model、point-cloud、time-series、sensor、annotation 等。
 - `crs` 或 `tileMatrixSet`：数据空间参考。
 - `availability`：可用范围、层级、时间范围。
 - `request(key, signal)`：异步请求，必须支持取消。

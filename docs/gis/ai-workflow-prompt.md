@@ -15,6 +15,7 @@
 - docs/gis/tiles-terrain-lod.md
 - docs/gis/rendering-engine.md
 - docs/gis/data-provider-contracts.md
+- docs/gis/engine-data-catalog.md
 - docs/gis/three-d-tiles.md
 - docs/gis/engine-math-algorithms.md
 - docs/gis/engine-testing-acceptance.md
@@ -29,6 +30,7 @@
 - 坐标顺序
 - 单位
 - 空间操作模型
+- 数据分类和数据接入必填清单
 - 相关官方来源或项目约定
 - 如果涉及地球引擎，还要识别：参考椭球体、世界坐标系、局部坐标系、相机模型、tile scheme、LOD 策略、Provider 接口、GPU 精度策略、资源生命周期、调试证据和性能预算
 

@@ -14,13 +14,14 @@
 6. `docs/gis/tiles-terrain-lod.md`
 7. `docs/gis/rendering-engine.md`
 8. `docs/gis/data-provider-contracts.md`
-9. `docs/gis/three-d-tiles.md`
-10. `docs/gis/engine-math-algorithms.md`
-11. `docs/gis/engine-testing-acceptance.md`
-12. `docs/gis/debugging-observability.md`
-13. `docs/gis/spatial-calculation.md`
-14. `docs/gis/verification-checklist.md`
-15. `docs/gis/engine-development-checklist.md`
+9. `docs/gis/engine-data-catalog.md`
+10. `docs/gis/three-d-tiles.md`
+11. `docs/gis/engine-math-algorithms.md`
+12. `docs/gis/engine-testing-acceptance.md`
+13. `docs/gis/debugging-observability.md`
+14. `docs/gis/spatial-calculation.md`
+15. `docs/gis/verification-checklist.md`
+16. `docs/gis/engine-development-checklist.md`
 
 ## 执行规则
 
@@ -31,3 +32,4 @@
 - 每个 GIS 实现都应在代码、测试或文档中明确坐标顺序、CRS、单位和计算模型。
 - 地球引擎相关实现必须额外明确：参考椭球体、世界坐标系、局部坐标系、相机模型、瓦片方案、LOD 策略、精度策略和性能预算。
 - 数据接入、瓦片调度、3D Tiles、渲染、相机和拾取功能必须有可测试接口契约，不得只靠视觉观察判断正确。
+- 新增任何地球引擎数据类型时，必须先在 `engine-data-catalog.md` 中明确分类、坐标、单位、时间维度、LOD、样式、权限、缓存和验收方式。
