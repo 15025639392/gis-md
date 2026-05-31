@@ -20,6 +20,7 @@
 ```text
 FrameState
   -> BasemapLayerStack
+  -> TilePlanBuilder
   -> TileVisibilitySelector
   -> TileRequestScheduler
   -> TileCache
@@ -33,6 +34,7 @@ FrameState
 
 - `FrameState`：相机、视口、时间、DPR、渲染模式。
 - `BasemapLayerStack`：底图图层顺序、透明度、可见范围、混合模式。
+- `TilePlanBuilder`：按 tile scheme、CRS profile、图层组和时间生成本帧 tile plan。
 - `TileVisibilitySelector`：选出当前帧需要的 tile key。
 - `TileRequestScheduler`：请求优先级、并发、取消、重试。
 - `TileCache`：raw、decoded、texture 多级缓存。
@@ -58,6 +60,117 @@ FrameState
 11. 更新统计和 debug overlay。
 
 不要让网络回调直接修改最终可见集。网络回调只能更新 tile 状态，最终画什么由当前帧的 render queue 决定。
+
+## Tile Plan 策略
+
+瓦片策略不能简单理解为“每个数据源都完整计算一遍”，也不能把所有图层强行共用同一套 tile set。推荐使用 `TilePlan` 分层编排。
+
+```text
+TilePlan {
+  frameId
+  schemeId
+  crsProfile
+  timeKey?
+  visibleTiles: TileKey[]
+  layerPlans: LayerTilePlan[]
+}
+
+LayerTilePlan {
+  layerId
+  providerId
+  desiredTiles: TileKey[]
+  renderTiles: RenderTileRef[]
+  requestTiles: TileKey[]
+  fallbackTiles: TileFallback[]
+}
+```
+
+### 共享计算
+
+以下计算应尽量按 `TileScheme + CrsProfile + FrameState` 共享：
+
+- 相机视域与地球相交。
+- horizon / frustum 可见性。
+- tile bounds 与视域相交。
+- 屏幕空间覆盖面积。
+- 基础目标 LOD。
+- 反经线、极区和 provider bounds 的几何裁剪。
+
+例如多个图层都使用标准 XYZ Web Mercator，且 zoom/resolution 策略一致，可以共享同一个 `visibleTiles` 基础集合。
+
+### 图层独立计算
+
+以下内容必须按图层独立计算：
+
+- provider availability。
+- minZoom / maxZoom。
+- 图层可见范围和 opacity。
+- 图层时间片。
+- style/version 是否影响 cache key。
+- 失败、重试、权限、token。
+- attribution。
+- 请求优先级权重。
+- 是否允许 parent fallback。
+- 是否允许预取。
+
+同一个 tile key 在不同图层中通常对应不同 URL、不同缓存、不同纹理和不同 attribution，不能只因为 `z/x/y` 一样就混用资源。
+
+### 分组策略
+
+推荐把图层按以下 key 分组：
+
+```text
+TileGroupKey = {
+  tileSchemeId
+  crsProfile
+  matrixSet
+  tileSize
+  timeKey?
+}
+```
+
+同组图层共享可见 tile 候选集；不同组分别计算。例如：
+
+- OSM XYZ 与某个标准 XYZ 注记层可以同组。
+- WMTS EPSG:4326 geographic tiling 与 XYZ Web Mercator 不能同组。
+- 高德/腾讯 GCJ-02 体系不能和 WGS84 业务瓦片直接同组。
+- 百度瓦片应独立 group。
+- 时序影像即使 tile scheme 相同，也需要按 timeKey 派生 layer plan。
+
+### 请求与渲染分离
+
+`desiredTiles` 不等于 `requestTiles`，也不等于 `renderTiles`：
+
+- `desiredTiles`：当前图层理想情况下需要的 tile。
+- `requestTiles`：cache 缺失且允许请求的 tile。
+- `renderTiles`：本帧实际可画的 tile，可能是目标 tile，也可能是 parent fallback。
+
+这样可以避免网络、缓存和渲染互相污染。
+
+### 计算频率
+
+不需要每帧对所有数据源重算全量 tile plan。可以按 dirty flag 增量更新：
+
+- 相机变化：重算可见 tile 和 LOD。
+- 图层显隐/顺序/透明度变化：重算 layer plan 和 render queue。
+- provider availability 变化：重算受影响图层。
+- 时间轴变化：重算带 timeKey 的图层。
+- 样式版本变化：重算 cache key 和 render resource。
+- 网络返回：只更新 tile 状态，并触发 render queue 重新选择。
+
+但每次渲染前必须保证 render queue 来自当前最新 frame state，不能使用过期相机状态直接绘制。
+
+### 叠加层与底图区别
+
+底图瓦片通常要求连续铺满视域，因此 fallback 和预取更重要。专题叠加层可以按业务允许：
+
+- 允许空洞。
+- 只显示有数据区域。
+- 不使用 parent fallback。
+- 使用透明 missing tile。
+- 降低请求优先级。
+
+这意味着底图和叠加层可以共享 `visibleTiles`，但不应共享同一套 fallback 和请求策略。
 
 ## 可见 Tile 选择
 
