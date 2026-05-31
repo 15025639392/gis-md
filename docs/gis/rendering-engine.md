@@ -19,6 +19,8 @@
 
 点、线、面、标注、模型和点云的样式设计必须遵守 `overlay-styling.md`，Renderer 只负责把样式高效表达为 draw call、buffer、texture 和 shader 参数。
 
+星空、大气、光照、天气、云层、海洋和时间系统必须遵守 `environment-atmosphere-weather.md`，Renderer 需要区分真实数据、近似模型和纯视觉效果。
+
 ## 相机
 
 相机系统必须明确：

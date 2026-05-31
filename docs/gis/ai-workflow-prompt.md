@@ -18,6 +18,7 @@
 - docs/gis/data-provider-contracts.md
 - docs/gis/engine-data-catalog.md
 - docs/gis/overlay-styling.md
+- docs/gis/environment-atmosphere-weather.md
 - docs/gis/three-d-tiles.md
 - docs/gis/engine-math-algorithms.md
 - docs/gis/engine-testing-acceptance.md
@@ -35,6 +36,7 @@
 - 数据分类和数据接入必填清单
 - tile scheme、CRS profile、provider 坐标体系和无偏移叠加验收方式
 - 点/线/面/标注/模型的样式模型、状态样式、LOD 和性能预算
+- 环境效果的真实性等级、时间系统、光照方向、天气数据来源和降级策略
 - 相关官方来源或项目约定
 - 如果涉及地球引擎，还要识别：参考椭球体、世界坐标系、局部坐标系、相机模型、tile scheme、LOD 策略、Provider 接口、GPU 精度策略、资源生命周期、调试证据和性能预算
 

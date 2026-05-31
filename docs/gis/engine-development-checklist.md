@@ -43,6 +43,8 @@ AI 在实现地球引擎功能时，除 `verification-checklist.md` 外，还必
 ## 体验
 
 - 首屏是否有可见内容或明确 loading 状态？
+- 星空、大气、光照、天气等环境效果是否可关闭或降级？
+- 环境效果是否明确是 visual-only、approximate 还是 analytic？
 - 相机控制是否稳定，不穿地、不抖动？
 - 快速拖动/缩放时是否不会闪烁或显示过期数据？
 - debug overlay 是否能显示 tile、LOD、请求、帧率等关键信息？
