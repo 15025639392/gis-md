@@ -1,0 +1,28 @@
+{
+  "name": "earth-engine",
+  "version": "0.1.0",
+  "description": "C++ mobile-first 3D earth engine core library",
+  "dependencies": [
+    {
+      "name": "glm",
+      "version>=": "0.9.9.8"
+    },
+    {
+      "name": "nlohmann-json",
+      "version>=": "3.11.0"
+    },
+    {
+      "name": "gtest",
+      "version>=": "1.14.0"
+    },
+    {
+      "name": "curl",
+      "version>=": "8.0.0"
+    },
+    {
+      "name": "stb",
+      "version>=": "2023-01-29"
+    }
+  ],
+  "builtin-baseline": "2024.01.12"
+}

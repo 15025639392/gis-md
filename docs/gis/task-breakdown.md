@@ -18,36 +18,40 @@
 
 目标：
 
-- 建立 TypeScript/Web MVP 项目骨架。
-- 提供示例页面、测试命令、lint/format 可选。
+- 建立 C++17 / CMake 项目骨架。
+- 配置 vcpkg 依赖（GLM、nlohmann/json、libcurl、GoogleTest、stb_image）。
+- 提供 iOS 和 Android 最小示例应用（空渲染 surface + 基础 diagnostics）。
+- 配置 CMake toolchain（iOS cross-compile、Android NDK cross-compile）。
 
 验收：
 
-- `npm install` 后能启动示例。
-- 空 canvas 可显示。
-- 单元测试命令可运行。
+- `cmake --build .` 成功输出 `libearth_engine_core.a`。
+- iOS 模拟器可启动并显示空白 Metal view。
+- Android 模拟器或设备可启动并显示空白 GL surface。
+- GoogleTest 单元测试可执行。
 
 ## T01 基础数学类型
 
 目标：
 
-- 实现 `Cartesian3`、`Cartographic`、`Matrix4`、`Ray`、`Rectangle`。
+- 实现 `Vec3`、`Cartographic`、`Mat4`、`Ray`、`Rectangle`。
+- 配合 GLM 使用（核心类型封装 GLM，不直接暴露 GLM 头文件到所有模块）。
 
 测试：
 
 - 向量加减、点积、叉积、归一化。
-- 矩阵乘法和逆矩阵。
+- 矩阵乘法和逆。
 - Rectangle contains/intersection。
 
 禁止：
 
-- 混用 degree/radian。
+- 混用 degree/radian 作为内部单位。
 
 ## T02 WGS84 Ellipsoid
 
 目标：
 
-- 实现 `Ellipsoid.WGS84`。
+- 实现 `Ellipsoid::WGS84()`。
 - 实现 cartographic/ECEF 双向转换。
 
 测试：
@@ -62,20 +66,20 @@
 
 测试：
 
-- DPR 不同情况下 screen 到 ray 正确。
+- 不同屏幕分辨率下 screen 到 ray 正确。
 - 中心点 ray 指向地球。
 
 ## T04 椭球渲染
 
 目标：
 
-- 渲染可见地球。
+- 通过 RenderDevice 渲染可见地球（Metal on iOS、GL ES on Android）。
 - 支持相机 orbit/zoom。
 
 验收：
 
-- 首屏非空白。
-- 拖动和滚轮可用。
+- 首屏渲染 surface 非空白。
+- 触控拖动和捏合缩放可用。
 
 ## T05 TileScheme XYZ
 
@@ -106,7 +110,7 @@
 
 目标：
 
-- 接入标准 XYZ URL provider。
+- 接入标准 XYZ URL provider，通过 PlatformBridge HTTP 发请求。
 - 支持 request cancellation。
 
 测试：
@@ -119,13 +123,13 @@
 
 目标：
 
-- 图片解码和 GPU texture 上传。
+- 平台图片解码（iOS: CGImage、Android: BitmapFactory）后上传 GPU texture。
 - raw/decoded/texture cache 分层。
 
 验收：
 
 - 每帧上传数量受控。
-- 图层销毁后资源释放。
+- 图层销毁后 GPU 资源释放。
 
 ## T09 Basemap Rendering
 
@@ -183,7 +187,7 @@
 
 验收：
 
-- Esc 取消。
+- Esc（或 back gesture）取消。
 - 输出单位和计算模型。
 
 ## T14 Terrain MVP
@@ -203,15 +207,19 @@
 目标：
 
 - 快速缩放、弱网、长时间运行、资源释放测试。
+- 移动端专用场景：应用后台/前台切换、内存压力信号、设备旋转。
 
 验收：
 
 - 无明显资源泄漏。
 - 过期请求不污染当前帧。
+- GL context 丢失后可恢复。
+- 应用挂起到后台并返回后引擎状态正常。
 
 ## 任务执行规则
 
-- 每个任务完成后必须保持示例可运行。
+- 每个任务完成后必须保持 iOS 和 Android 示例可运行。
 - 每个任务必须有测试或可复现验收。
 - 不得跨多个阶段一次性大改。
 - 遇到架构不清时先更新契约文档。
+- 每个任务必须在 iOS 模拟器和至少一台 Android 设备（或模拟器）上验证。

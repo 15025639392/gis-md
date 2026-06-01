@@ -1,0 +1,12 @@
+{
+  "type": "Feature",
+  "properties": {
+    "id": "beijing-point",
+    "name": "北京天安门广场",
+    "note": "用于中国区域 provider 控制点测试 (WGS84)"
+  },
+  "geometry": {
+    "type": "Point",
+    "coordinates": [116.397, 39.908]
+  }
+}

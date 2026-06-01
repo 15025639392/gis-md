@@ -71,10 +71,10 @@ TileKey {
 
 建议分层缓存：
 
-- HTTP/browser cache：负责网络层缓存。
-- raw data cache：缓存 response 或 ArrayBuffer。
-- parsed data cache：缓存解码后的 tile 数据。
-- GPU resource cache：缓存 texture、buffer、mesh。
+- HTTP/网络层缓存：由 libcurl 或平台 HTTP 栈的缓存策略控制。
+- raw data cache：缓存 response body 原始字节。
+- parsed data cache：缓存解码后的 tile 数据（像素缓冲区、解析后的几何等）。
+- GPU resource cache：通过 RenderDevice 管理的 texture、buffer、mesh。
 
 GPU cache 不应由 Provider 私自长期持有，除非架构明确允许。Provider 负责数据，Renderer 负责 GPU 资源更清晰。
 
@@ -84,11 +84,12 @@ GPU cache 不应由 Provider 私自长期持有，除非架构明确允许。Pro
 
 Provider 必须暴露 attribution。影像、OSM、地形和商业数据源通常有版权显示要求。AI 实现图层时不得忽略 attribution。
 
-## Worker 解析
+## 线程池解析
 
-大瓦片、DEM、MVT、3D Tiles content、glTF 解码应优先考虑 worker。Worker 设计必须说明：
+大瓦片、DEM、MVT、3D Tiles content、glTF 解码应在线程池中执行，不在主线程阻塞。线程池设计必须说明（详见 `threading-architecture.md`）：
 
-- 输入输出数据结构。
-- transferable object 使用方式。
-- 错误回传。
-- 取消或丢弃过期任务的机制。
+- 任务提交和优先级队列。
+- 输入输出数据结构（通过 `std::future` 或回调）。
+- 取消令牌（AbortSignal 等价物，线程安全）。
+- 过期任务结果丢弃策略。
+- 线程池大小（移动端建议 2-3 个工作线程）。

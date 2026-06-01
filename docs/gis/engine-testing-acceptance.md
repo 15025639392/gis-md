@@ -44,7 +44,7 @@
 - debug overlay 不影响正常交互。
 - 移动端手势、键盘取消和图层控制可用。
 
-如果使用 Playwright，应保存桌面和移动视口截图。
+使用 Xcode UITest（iOS）和 Android Compose Test（Android）保存截图。两平台截图应对比验证一致性。
 
 ## 性能验收
 

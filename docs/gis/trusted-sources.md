@@ -36,7 +36,7 @@
 
 - Turf.js documentation  
   来源：https://turfjs.org/  
-  用途：JavaScript GeoJSON 操作。每个函数都要确认单位和球面/平面假设。
+  用途：JavaScript GeoJSON 操作（用于算法参考，不在 C++ 引擎中直接使用）。每个函数都要确认单位和球面/平面假设。
 
 ## 空间数据库
 
@@ -81,13 +81,21 @@
   来源：https://github.com/CesiumGS/quantized-mesh  
   用途：地形瓦片网格、顶点量化、高程、边界裙边 skirt、terrain LOD。
 
-- WebGL specification  
-  来源：https://registry.khronos.org/webgl/specs/latest/  
-  用途：浏览器 GPU 渲染能力、精度限制、shader、texture、buffer、上下文行为。
+- OpenGL ES 3.0 specification  
+  来源：https://registry.khronos.org/OpenGL/index_es.php  
+  用途：Android 主 GPU API。精度限制、shader（GLSL ES）、texture、buffer、EGL context 生命周期。
 
-- WebGPU specification  
-  来源：https://www.w3.org/TR/webgpu/  
-  用途：新一代浏览器 GPU API。采用前需确认目标浏览器支持情况。
+- Metal Shading Language specification  
+  来源：https://developer.apple.com/metal/Metal-Shading-Language-Specification.pdf  
+  用途：iOS 主 GPU API。MSL shader、MTLDevice、资源驱逐、command buffer 模型。
+
+- Vulkan 1.1 specification  
+  来源：https://registry.khronos.org/vulkan/  
+  用途：Android 可选后端（高性能、显式 GPU 控制）。SPIR-V shader、descriptor set、pipeline barrier。
+
+- bgfx cross-platform rendering library  
+  来源：https://bkaradzic.github.io/bgfx/  
+  用途：备选跨平台渲染中间层（若不采用自研 RenderDevice）。
 
 - WGS 84 / NGA geodesy references  
   来源：https://earth-info.nga.mil/  
@@ -106,6 +114,32 @@
 - NASA WorldWind documentation/source  
   来源：https://worldwind.arc.nasa.gov/  
   用途：地球可视化、图层、瓦片和相机交互的工程参考。
+
+## C++ 核心库
+
+- GLM (OpenGL Mathematics) documentation  
+  来源：https://github.com/g-truc/glm  
+  用途：本项目首选数学库。vec3/mat4/quat 与 GLSL 一致的 API。
+
+- Eigen documentation  
+  来源：https://eigen.tuxfamily.org/  
+  用途：按需引入的大规模线性代数库。
+
+- stb_image documentation  
+  来源：https://github.com/nothings/stb  
+  用途：跨平台图片解码回退。
+
+- libcurl documentation  
+  来源：https://curl.se/libcurl/  
+  用途：跨平台 HTTP 网络请求。
+
+- nlohmann/json documentation  
+  来源：https://json.nlohmann.me/  
+  用途：JSON 解析（GeoJSON、tileset.json、样式配置）。
+
+- GoogleTest documentation  
+  来源：https://google.github.io/googletest/  
+  用途：C++ 单元测试框架。
 
 ## 本项目的来源使用规则
 

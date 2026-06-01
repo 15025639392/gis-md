@@ -19,8 +19,12 @@
 4. 如果任务涉及从 0 开发或重构地球引擎，先读 `earth-engine-roadmap.md`、`technology-decisions.md`、`reference-architecture.md`、`core-api-contracts.md`、`task-breakdown.md`、`mvp-acceptance.md`、`implementation-prompts.md`。
 5. 如果任务涉及地球引擎模块，读 `earth-engine-architecture.md`、`earth-coordinate-systems.md`、`tiles-terrain-lod.md`、`multi-tile-schemes.md`、`rendering-engine.md`。
 6. 如果任务涉及数据接入、瓦片、底图渲染、样式、环境、交互、图形渲染、3D Tiles、算法、性能、测试或调试，再读对应专题：`data-provider-contracts.md`、`engine-data-catalog.md`、`basemap-tile-rendering.md`、`overlay-styling.md`、`environment-atmosphere-weather.md`、`interaction-system.md`、`graphics-pipeline.md`、`three-d-tiles.md`、`engine-math-algorithms.md`、`algorithm-implementation-details.md`、`performance-data-stability.md`、`engine-testing-acceptance.md`、`debugging-observability.md`。
-7. 用 `spatial-calculation.md` 判断距离、面积、缓冲区、投影和拓扑操作该怎么做。
-8. 在完成分析或代码修改前，用 `verification-checklist.md` 和 `engine-development-checklist.md` 做自检。
+7. 如果任务涉及多线程、异步任务或 GPU 上传线程边界，读 `threading-architecture.md`。
+8. 如果任务涉及网络请求、用户数据、文件 IO 或 API key 管理，读 `security.md`。
+9. 如果任务涉及离线缓存、数据包导入或后台下载，读 `offline-and-packaging.md`。
+10. 在开始编码前，读 `implementation-prompts.md` 获取对应阶段的 AI 开发提示词，读 `common-pitfalls.md` 避免已知错误，读 `ai-workflow-prompt.md` 获取完整 GIS 专家工作流提示词。
+11. 用 `spatial-calculation.md` 判断距离、面积、缓冲区、投影和拓扑操作该怎么做。
+12. 在完成分析或代码修改前，用 `verification-checklist.md` 和 `engine-development-checklist.md` 做自检。
 
 ## 专题地图
 
@@ -53,6 +57,16 @@
 - 性能、数据约束与稳定性：`performance-data-stability.md`
 - 测试验收：`engine-testing-acceptance.md`
 - 调试观测：`debugging-observability.md`
+- AI 专家工作流提示词：`ai-workflow-prompt.md`
+- 常见 GIS 错误：`common-pitfalls.md`
+- 线程架构：`threading-architecture.md`
+- 安全架构：`security.md`
+- 离线与打包：`offline-and-packaging.md`
+- Shader 接口规范：`shader-interface.md`
+- Shader 编译管线：`shader-compilation.md`
+- 构建与 CI：`build-and-ci.md`
+- 部署与分发：`deployment.md`
+- 性能剖析：`profiling-guide.md`
 
 ## 证据规则
 

@@ -1,0 +1,20 @@
+# Build outputs
+build/
+cmake-build-*/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+
+# Android / Gradle generated files
+.gradle/
+**/.gradle/
+**/.cxx/
+**/build/
+*.apk
+
+# Local IDE and OS files
+.DS_Store
+.idea/
+.vscode/

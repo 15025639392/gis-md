@@ -1,6 +1,6 @@
 # 错误处理与恢复策略
 
-地球引擎必须把失败当作常态：网络失败、token 失效、瓦片缺失、worker 崩溃、GPU context lost、内存压力、provider 越界都会发生。
+地球引擎必须把失败当作常态：网络失败、token 失效、瓦片缺失、线程任务崩溃、GPU context/device lost、Metal resource eviction、内存压力、provider 越界都会发生。
 
 ## 错误分类
 
@@ -10,7 +10,7 @@
 - `CrsError`：CRS 不支持、坐标转换失败。
 - `TileSchemeError`：tile key 越界、matrix set 不匹配。
 - `RenderError`：shader、buffer、texture、framebuffer。
-- `ContextLostError`：WebGL context lost / WebGPU device lost。
+- `ContextLostError`：Metal resource eviction / GL ES context lost / Vulkan device lost (VK_ERROR_DEVICE_LOST)。
 - `MemoryPressureError`：缓存或 GPU 资源超预算。
 - `PermissionError`：业务权限不足。
 - `DataQualityError`：几何非法、nodata、字段缺失。
@@ -48,20 +48,23 @@ EngineError {
 - 不让坏瓦片进入 texture upload。
 - debug 模式可显示错误占位。
 
-### Worker 失败
+### 线程任务失败
 
-- 捕获 worker error。
+- 捕获线程池任务异常（通过 `std::future` 或回调中的 error code）。
 - 标记任务 failed。
-- 可重建 worker。
+- 线程池保持运行，单个任务失败不影响其他任务。
 - 过期任务结果丢弃。
 - fatal 前保留主线程可取消状态。
 
-### GPU Context Lost
+### GPU Context Lost / Resource Eviction
 
 - 停止提交 draw。
 - 标记所有 GPU resource invalid。
-- 保留 provider/raw cache。
-- context restored 后重建 shader、buffer、texture、framebuffer。
+- 保留 provider/raw cache（非 GPU 资源不丢失）。
+- 接收到 context restored / 应用进入前台信号后，通过 RenderDevice 重建 shader、buffer、texture、framebuffer。
+- Metal resource eviction：应用进入前台时检查 `MTLResource` 的有效性，按需重建。
+- GL ES context lost：EGL context 重新创建后，全部 GL 资源需重建。
+- Vulkan device lost：重建 VkDevice 及全部关联资源；通常由驱动崩溃或系统升级触发。
 - 如果无法恢复，显示明确错误状态。
 
 ### 内存压力
@@ -86,7 +89,7 @@ EngineError {
 - 图层加载失败。
 - 权限/token 问题。
 - 数据超限。
-- 当前设备不支持 WebGL/WebGPU 能力。
+- 当前设备不支持 Metal / OpenGL ES 3.0 / Vulkan 能力。
 
 用户不需要看到：
 

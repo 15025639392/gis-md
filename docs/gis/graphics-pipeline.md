@@ -4,13 +4,12 @@
 
 ## 渲染后端
 
-必须明确目标后端：
+本项目通过 `RenderDevice` 抽象支持多后端。必须明确目标后端：
 
-- WebGL1
-- WebGL2
-- WebGPU
-- Native OpenGL / Metal / Vulkan / DirectX
-- Three.js / Babylon.js / custom renderer
+- Metal 2（iOS 主后端）
+- OpenGL ES 3.0（Android 默认后端）
+- Vulkan 1.1（Android 可选后端，未来主推）
+- 桌面调试后端：OpenGL 4.1（macOS）、OpenGL 3.3 / Vulkan（Windows/Linux）
 
 不同后端的能力差异会影响：
 
@@ -20,10 +19,23 @@
 - depth texture
 - uniform buffer / storage buffer
 - compute shader
-- shader language
+- shader language（MSL vs GLSL ES vs SPIR-V）
 - context/device lost 处理
+- 资源驱逐策略（Metal resource eviction vs GL context lost vs Vulkan device lost）
 
-AI 不得假设 WebGL1、WebGL2 和 WebGPU 能力相同。
+AI 不得假设 Metal、OpenGL ES 和 Vulkan 能力相同。
+
+### 移动端 GPU 约束
+
+移动端 GPU 通常使用 tile-based deferred rendering（TBDR）架构（Apple GPU、ARM Mali、Qualcomm Adreno 部分）。与桌面 GPU 的 immediate mode 有重要差异：
+
+- **避免在片段着色器中动态计算纹理坐标**：TBDR 的 binning pass 依赖固定的几何信息。
+- **避免大量 discard/clip 操作**：会破坏 TBDR 的 hidden-surface removal 优化。
+- **避免频繁切换 render target**：tile memory 通常有限（~32-256 KB per tile），多次 store/load 代价高。
+- **优先使用 MSAA resolve 而非全屏后处理抗锯齿**：TBDR 的 MSAA 几乎零成本（tile memory 内的 resolve）。
+- **纹理格式**：移动端对 ASTC（iOS/Android）和 PVRTC（iOS legacy）有原生硬件支持；ETC2 在 Android GL ES 3.0 上强制支持。
+- **最大纹理尺寸**：高端移动端通常 8192-16384 px，中低端 4096 px。引擎必须在启动时检测 `RenderDevice::maxTextureSize()`。
+- **maximum varying/register 数量**：移动端通常比桌面更少，shader 复杂度必须控制。
 
 ## 坐标空间管线
 
@@ -48,7 +60,9 @@ geographic/cartographic
 - modelViewProjection matrix
 - normal matrix
 
-地球尺度场景中，CPU 可以用 double，GPU 通常用 float32。大坐标必须通过 camera-relative、origin rebasing、high/low split 或局部 ENU 解决精度问题。
+地球尺度场景中，CPU 用 double（C++ 原生 `double` 或 GLM::dvec3），GPU 必须使用 float32（Metal/GL ES/Vulkan 均支持）。移动端 GPU 对 double 无硬件支持或性能极差。大坐标必须通过 camera-relative、origin rebasing、high/low split 或局部 ENU 解决精度问题。
+
+移动端 TBDR GPU 的 tile buffer 精度通常为 16-bit（RGB10_A2 或 RGBA8），深度精度有限。在高空视角（地球整体可见）时，务必使用 logarithmic depth 或 reversed-Z 避免 z-fighting。
 
 ## Shader 设计
 
@@ -81,7 +95,7 @@ Shader 必须明确：
 
 纹理设计必须明确：
 
-- source：image、canvas、video、raster tile、data texture、atlas。
+- source：平台图片解码器输出（iOS: CGImage、Android: BitmapFactory）、原始像素缓冲区（stb_image 回退）、瓦片数据、data texture、atlas。
 - format：RGBA8、RGB8、R16F、RGBA16F、depth 等。
 - color space：sRGB 或 linear。
 - mipmap。
@@ -193,7 +207,10 @@ Picking pass 不应使用和 color pass 完全相同的材质，否则容易受�
 - 引用计数或所有权。
 - 更新策略。
 - 释放时机。
-- context lost / device lost 恢复。
+- context lost / device lost 恢复（Metal: MTLDevice 资源驱逐通知；GL ES: EGL context lost；Vulkan: VK_ERROR_DEVICE_LOST）。
+- 应用后台/前台切换时的资源策略（GPU 资源是否保留、是否需要重建）。
+
+移动端 GPU 可能随时驱逐未使用的资源（Metal resource eviction）。引擎必须在应用进入前台时检查资源有效性并重建。
 
 瓦片卸载、图层隐藏、场景销毁、样式切换和数据更新都可能触发资源释放。AI 不得只实现创建不实现释放。
 
@@ -204,10 +221,11 @@ Picking pass 不应使用和 color pass 完全相同的材质，否则容易受�
 - requestRender 模式还是 continuous render loop。
 - 哪些状态变化触发重绘。
 - 动态对象、天气、时间轴是否需要持续渲染。
-- 空闲时是否停止渲染以省电。
-- worker 解析和主线程上传 GPU 的边界。
+- 空闲时是否停止渲染以省电（移动端电量预算，见 `technology-decisions.md`）。
+- 线程池解析和主线程上传 GPU 的边界。
+- 应用挂起到后台时是否停止渲染循环（iOS CADisplayLink 自动暂停；Android Choreographer 需手动停止）。
 
-静态地球视图不应无意义地满帧渲染，除非有动画或交互。
+静态地球视图不应无意义地满帧渲染，除非有动画或交互。移动端 60 FPS 连续渲染会显著耗电；无交互时应降至 30 FPS 或暂停。
 
 ## 性能指标
 
@@ -249,22 +267,26 @@ Picking pass 不应使用和 color pass 完全相同的材质，否则容易受�
 - 每帧创建 shader、material、texture 或 buffer。
 - 把地理坐标直接作为 GPU 顶点。
 - 用 shader 魔法偏移修正瓦片错位。
-- 忽略 DPR 导致 picking 偏移。
+- 忽略屏幕密度（Retina/@2x/@3x / Android density）导致 picking 偏移。
 - 透明对象写 depth 导致后续对象消失。
 - 后处理改变业务分级颜色。
 - context lost 后无法恢复。
 - 图层隐藏但 GPU 资源不释放。
 - 移动端使用桌面级别纹理和后处理。
+- 每帧创建新的 MTLCommandBuffer 或 GL command encoder 而不复用。
+- Metal resource eviction 后未重建纹理和 buffer 导致黑屏。
+- 在 Metal 和 GL ES 后端之间使用不同的 shader 精度导致渲染不一致。
 
 ## 验收清单
 
 图形相关改动至少验证：
 
-- 首屏非空白。
-- WebGL/WebGPU capability 检查和降级路径。
+- iOS 和 Android 首屏非空白。
+- RenderDevice 能力检查和降级路径（Metal → 无降级选项；GL ES → 回退到较低版本的 ES 或错误提示）。
 - 近地不抖动，远地不闪烁。
 - depth、透明、标注和后处理没有明显互相破坏。
-- picking 在 DPR 不同情况下准确。
+- picking 在不同屏幕密度下准确（iOS @1x/@2x/@3x、Android mdpi/xhdpi/xxhdpi）。
 - 图层切换和瓦片卸载后 GPU 资源下降。
 - context lost / device lost 有恢复或明确错误提示。
-- 移动端性能和内存可接受。
+- 应用后台/前台切换后渲染正常。
+- 移动端性能和内存可接受（低端和中端设备分别测试）。

@@ -40,6 +40,17 @@
 32. `docs/gis/spatial-calculation.md`
 33. `docs/gis/verification-checklist.md`
 34. `docs/gis/engine-development-checklist.md`
+35. `docs/gis/ai-workflow-prompt.md`
+36. `docs/gis/implementation-prompts.md`
+37. `docs/gis/common-pitfalls.md`
+38. `docs/gis/threading-architecture.md`
+39. `docs/gis/security.md`
+40. `docs/gis/offline-and-packaging.md`
+41. `docs/gis/shader-interface.md`
+42. `docs/gis/shader-compilation.md`
+43. `docs/gis/build-and-ci.md`
+44. `docs/gis/deployment.md`
+45. `docs/gis/profiling-guide.md`
 
 ## 执行规则
 
@@ -58,7 +69,10 @@
 - 相机、手势、拾取、选择、绘制、编辑、测量、时间轴和图层控制必须遵守 `interaction-system.md`，把输入事件、空间结果、状态机和撤销/重做分开设计。
 - 图形渲染、shader、材质、深度、透明、后处理、GPU 资源和性能优化必须遵守 `graphics-pipeline.md`，不得用临时视觉 hack 掩盖坐标或数据错误。
 - 从 0 开发地球引擎时，必须按 `earth-engine-roadmap.md` 分阶段推进，按 `reference-architecture.md` 组织目录和模块，按 `core-api-contracts.md` 定义接口，并用 `mvp-acceptance.md` 验收最小可运行版本。
-- 从 0 开发前必须先记录 `technology-decisions.md` 中的技术栈决策，并按 `task-breakdown.md` 拆成可验证任务；不得在技术路线未定时混用 Three.js、自研 WebGL/WebGPU 和业务框架假设。
-- 性能优化必须优先检查 `performance-data-stability.md` 中的数据约束、预处理、索引、LOD、缓存、worker 和底层正确性门禁；不得用渲染层 hack 掩盖数据过载或核心实现不稳定。
+- 从 0 开发前必须先记录 `technology-decisions.md` 中的技术栈决策，并按 `task-breakdown.md` 拆成可验证任务；不得在技术路线未定时混用 Metal、OpenGL ES、Vulkan、bgfx 和业务框架假设。技术栈以 `technology-decisions.md` 中已记录的决策为准（C++17、Metal/GL ES、CMake、GLM）。
+- 性能优化必须优先检查 `performance-data-stability.md` 中的数据约束、预处理、索引、LOD、缓存、线程池和底层正确性门禁；不得用渲染层 hack 掩盖数据过载或核心实现不稳定。
 - 核心算法实现必须遵守 `algorithm-implementation-details.md`，每个算法都要明确输入输出、坐标空间、误差模型、边界情况、测试样例和调试观测。
+- Shader 开发必须遵守 `shader-interface.md` 的 vertex attribute 布局、uniform block 结构和坐标空间约定；shader 编译管线必须遵守 `shader-compilation.md`。
+- 构建、CI/CD 和跨平台 toolchain 配置必须遵守 `build-and-ci.md`；部署产物（xcframework/AAR）必须遵守 `deployment.md`。
+- 性能剖析必须在真机上按 `profiling-guide.md` 执行，不能仅凭模拟器或 FPS 计数做判断。
 - 能力成熟度必须按 `maturity-model.md` 标注；Provider 接入必须更新 `provider-compatibility-matrix.md`；错误处理和恢复必须遵守 `error-recovery.md`；测试数据必须优先使用 `test-fixtures.md`。

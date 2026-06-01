@@ -86,14 +86,14 @@ case:
 ```
 
 ```text
-viewport:
-  cssWidth: 800
-  cssHeight: 600
-  drawingBufferWidth: 1600
-  drawingBufferHeight: 1200
-  dpr: 2
+surface:
+  logicalWidth: 390    // iOS points
+  logicalHeight: 844
+  pixelWidth: 1170     // @3x
+  pixelHeight: 2532
+  density: 3
 purpose:
-  DPR picking correction.
+  屏幕密度 picking correction（如 iPhone 14 Pro 竖屏）。
 ```
 
 ## 反经线 Fixtures

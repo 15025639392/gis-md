@@ -133,15 +133,143 @@
 
 要求：
 
-- 正确处理 DPR。
-- 正确处理 canvas CSS 尺寸和实际 drawing buffer 尺寸。
+- 正确处理屏幕密度（@1x/@2x/@3x 和 Android density）。
+- 正确处理渲染 surface 尺寸和逻辑 viewport 尺寸的差异。
 - y 轴方向明确。
 
 常见错误：
 
-- 用 CSS pixel 当 framebuffer pixel。
-- 忘记 canvas offset。
+- 用逻辑像素当 framebuffer 像素（混淆 iOS points 与 pixels、Android dp 与 px）。
+- 忘记 view/surface 在屏幕中的偏移（如安全区域 inset、状态栏高度）。
 - NDC y 方向写反。
+
+## Arcball / Virtual Trackball 拖拽旋转
+
+用于地球 orbit/旋转交互。该算法是交互算法，不替代真实坐标转换、拾取或地球表面定位。
+
+输入：
+
+- startX/startY：拖动起点，单位 screen px 或 framebuffer px，必须与 viewport 单位一致。
+- endX/endY：拖动终点，同上。
+- viewport width/height：像素。
+- verticalFov：radian。
+- cameraDistance：与 globeRadius 相同世界单位。
+- globeRadius：用于交互映射的参考半径。单位化 demo 可取 1；真实 ECEF 地球需使用 meter 或 camera-relative 后的一致单位。
+- currentRotation：单位四元数。
+
+输出：
+
+- nextRotation：单位四元数。
+- optional angularVelocity：用于惯性，单位 rad/s。
+- optional inertiaAxis：单位向量。
+
+关键步骤：
+
+1. 根据当前相机距离估算屏幕上的地球投影半径：
+
+```text
+focalLengthPx = viewportHeightPx / (2 * tan(verticalFov / 2))
+projectedRadiusPx = focalLengthPx * globeRadius / cameraDistance
+```
+
+2. 将屏幕点映射到以 viewport center 为原点的虚拟球：
+
+```text
+nx = (x - viewportWidth / 2) / projectedRadiusPx
+ny = (viewportHeight / 2 - y) / projectedRadiusPx
+len2 = nx * nx + ny * ny
+if len2 <= 1:
+  p = normalize([nx, ny, sqrt(1 - len2)])
+else:
+  p = normalize([nx, ny, 0])
+```
+
+3. 计算旋转轴和角度：
+
+```text
+axis = cross(from, to)
+axisLength = length(axis)
+dotValue = clamp(dot(from, to), -1, 1)
+angle = atan2(axisLength, dotValue)
+```
+
+4. 当 `axisLength` 小于阈值时忽略该样本；否则：
+
+```text
+delta = angleAxis(angle, axis / axisLength)
+nextRotation = normalize(delta * currentRotation)
+```
+
+边界情况：
+
+- 拖动点在虚拟球外：投影到 z=0 的双曲/平面区域并归一化，避免屏幕边缘失控。
+- 双指缩放后：必须重新使用当前 `cameraDistance` 计算 `projectedRadiusPx`，否则拖拽距离不一致。
+- viewport 极窄或高度为 0：半径至少 clamp 到 1 px，并跳过非法输入。
+- 极小位移：axis length 接近 0 时返回原旋转。
+- 四元数漂移：每次累计后 normalize。
+
+测试：
+
+- 同一缩放级别下，相同像素拖动产生稳定角度。
+- 放大后同样像素拖动产生更小角度，缩小后产生更大角度。
+- 连续从南向北拖过屏幕中心和极区，不能出现 pitch clamp 卡顿。
+- 多次大幅拖动后四元数长度仍接近 1。
+
+debug：
+
+- 输出 projectedRadiusPx、angle、axis、angularVelocity。
+- 可选显示虚拟球投影圆，辅助调试触控手感。
+
+## Arcball 拖拽惯性
+
+输入：
+
+- delta rotation angle：相邻拖动样本得到的旋转角，radian。
+- delta time：相邻样本时间，second。
+- axis：相邻拖动样本的旋转轴，单位向量。
+- frameDt：渲染帧间隔，second。
+- dampingPerSecond：阻尼系数，1/second。
+- maxAngularVelocity：最大角速度，rad/s。
+
+输出：
+
+- 每帧惯性 delta quaternion。
+- 衰减后的 angularVelocity。
+
+关键步骤：
+
+1. 拖动中估算角速度：
+
+```text
+if 0 < sampleDt < maxSampleDt:
+  instantaneous = min(angle / sampleDt, maxAngularVelocity)
+  angularVelocity = mix(angularVelocity, instantaneous, smoothing)
+  inertiaAxis = axis
+```
+
+2. pointer-up 后每帧推进：
+
+```text
+angle = angularVelocity * frameDt
+rotation = normalize(angleAxis(angle, inertiaAxis) * rotation)
+angularVelocity *= exp(-dampingPerSecond * frameDt)
+```
+
+3. 当角速度低于阈值时置 0。
+
+边界情况：
+
+- 新 pointer-down、pinch、fly-to、相机 reset、场景销毁时必须清零。
+- sampleDt 过大时不能用作速度样本，避免应用切后台/卡顿后一帧飞转。
+- inertiaAxis 必须归一化；非法轴时不启动惯性。
+- 低 FPS 或掉帧时必须用真实 `frameDt`，不能按固定帧率。
+
+测试：
+
+- 快速 swipe 后，pointer-up 之后至少若干帧姿态继续变化。
+- 惯性会随时间衰减并最终停止。
+- pinch 后惯性立即停止。
+- 连续触摸不会继承上一次惯性的残余速度。
 
 ## Frustum Plane 提取
 

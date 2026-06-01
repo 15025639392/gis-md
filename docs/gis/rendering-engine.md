@@ -58,7 +58,7 @@ Culling 逻辑必须可调试，建议提供 overlay 或日志显示瓦片状态
 - 创建：buffer、texture、shader、pipeline/material。
 - 更新：增量更新还是重建。
 - 释放：瓦片卸载、图层关闭、场景销毁。
-- 恢复：WebGL context lost 或 WebGPU device lost。
+- 恢复：Metal resource eviction / GL ES context lost / Vulkan device lost。见 `graphics-pipeline.md` 移动端 GPU 约束。
 
 不要在每帧重复创建 buffer、texture、material 或 shader。
 

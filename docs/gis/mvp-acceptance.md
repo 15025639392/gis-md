@@ -4,15 +4,15 @@
 
 ## MVP 必须包含
 
-- 一个可启动示例页面。
-- 一个可旋转缩放的 WGS84 地球。
-- 一个标准 XYZ Web Mercator 底图 provider。
+- iOS 和 Android 可启动的最小示例应用。
+- 一个可旋转缩放的 WGS84 地球（通过 RenderDevice 渲染，Metal on iOS、GL ES on Android）。
+- 一个标准 XYZ Web Mercator 底图 provider（通过 PlatformBridge HTTP 加载）。
 - 底图瓦片贴到地球表面。
 - Tile debug overlay。
-- 基础 picking：点击地球返回经纬度。
-- 基础相机控制：drag rotate、wheel zoom。
+- 基础 picking：触控点击地球返回经纬度。
+- 基础相机控制：触控 drag rotate、pinch zoom。
 - 基础 diagnostics：FPS、draw calls、visible tiles、request queue。
-- 自动化单元测试和至少一张截图验收。
+- GoogleTest 单元测试和至少一张双平台截图验收。
 
 ## MVP 不包含
 
@@ -32,14 +32,14 @@ MVP 阶段可以不做：
 
 必须验证：
 
-- 页面启动后 canvas 非空白。
+- 应用启动后渲染 surface 非空白。
 - 地球在视口中完整显示。
-- 鼠标拖动可旋转。
-- 滚轮可缩放。
+- 触控拖动可旋转。
+- 捏合手势可缩放。
 - XYZ 瓦片能加载并贴到地球上。
 - debug overlay 能显示 z/x/y。
 - 快速拖动不会被旧瓦片大面积污染。
-- 点击地球返回合理经纬度。
+- 触控点击地球返回合理经纬度。
 
 ## 数学验收
 
@@ -89,10 +89,10 @@ MVP 阶段可以不做：
 ## 自动化验收建议
 
 - 单元测试覆盖 core math 和 tile scheme。
-- 使用 Playwright 或等价工具打开示例页面。
-- 截图检查 canvas 非空白。
+- 使用 Xcode UITest（iOS）或 Android Compose Test / ActivityScenario（Android）启动示例应用。
+- 截图检查渲染 surface 非空白。
 - 可选：像素检查确认地球区域不是纯色背景。
-- 可选：模拟 wheel/drag 后检查 camera state 改变。
+- 可选：模拟 pinch/drag 后检查 camera state 改变。
 
 ## MVP 完成定义
 

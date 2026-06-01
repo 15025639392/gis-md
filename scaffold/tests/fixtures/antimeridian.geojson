@@ -1,0 +1,18 @@
+{
+  "type": "Feature",
+  "properties": {
+    "id": "antimeridian-bbox",
+    "name": "跨反经线矩形",
+    "note": "west=170°E, east=-170°W → crosses 180° meridian. west > east."
+  },
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [[
+      [170, -10],
+      [-170, -10],
+      [-170, 10],
+      [170, 10],
+      [170, -10]
+    ]]
+  }
+}

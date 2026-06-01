@@ -1,6 +1,6 @@
 # 地球引擎交互系统
 
-地球引擎交互不是普通 DOM 点击。每个输入事件都可能对应屏幕坐标、射线、椭球点、地形点、3D Tiles feature、业务对象、时间状态和图层状态。AI 设计交互时必须先定义交互契约，而不是在 UI 组件里临时拼逻辑。
+地球引擎交互不是普通 view 点击。每个输入事件都可能对应屏幕坐标、射线、椭球点、地形点、3D Tiles feature、业务对象、时间状态和图层状态。AI 设计交互时必须先定义交互契约，而不是在 UI 组件里临时拼逻辑。移动端输入源主要为触控（单指/双指/三指手势）和触控笔，需通过平台桥接层归一化为统一 InputEvent。
 
 ## 交互模块边界
 
@@ -33,7 +33,7 @@ InputEvent {
 }
 ```
 
-不要让业务工具直接读取原始 DOM 事件，否则移动端、DPR、canvas 缩放和嵌入布局很容易出错。
+不要让业务工具直接读取原始平台事件（iOS UITouch/UIEvent、Android MotionEvent），否则屏幕密度、渲染 surface 尺寸和 view 布局差异很容易出错。所有输入应通过 `InputManager` 和 `GestureRecognizer` 归一化为引擎内部 `InputEvent`。
 
 ## 相机交互
 
@@ -59,6 +59,52 @@ CameraState {
   target?: Cartographic | ECEF
 }
 ```
+
+### 地球拖拽旋转：Arcball / Virtual Trackball
+
+单指拖动地球时，默认优先采用 Arcball / virtual trackball 模型，而不是简单的 `yaw/pitch` 欧拉角累加。原因：
+
+- 欧拉角 `pitch` 通常需要 clamp，接近极区时会出现“顶住”“翻不过去”或方向突变。
+- Arcball 将屏幕拖动映射为虚拟球面上的两个点，通过任意轴四元数旋转累计姿态，可以自然越过极区。
+- 四元数累计旋转更适合后续加入惯性、双指旋转和飞行动画插值。
+
+交互契约：
+
+- 输入：拖动起点/终点屏幕坐标，单位为渲染 surface 像素；必须明确是否已包含 devicePixelRatio。
+- 状态：地球姿态或 orbit target 姿态保存为单位四元数，不保存为无限增长的欧拉角。
+- 输出：更新后的相机 orbit 姿态或 globe model 姿态。正式引擎应优先旋转相机/target frame；demo 可临时旋转 globe mesh。
+- 极区：不得通过简单禁止 `pitch` 越界来处理极区拖拽。若需要限制视角，应在 CameraController 层用明确的 collision/tilt 约束实现。
+- 输入打断：新的 pointer-down、pinch、fly-to 或程序化相机切换必须能中断当前惯性。
+
+屏幕拖拽映射必须跟随当前缩放级别。Arcball 半径不能固定取屏幕短边，否则双指缩放后同样的手指位移会产生不一致的角速度。推荐用当前相机距离和垂直 FOV 估算地球投影半径：
+
+```text
+focalLengthPx = viewportHeightPx / (2 * tan(verticalFov / 2))
+projectedGlobeRadiusPx = focalLengthPx * globeRadiusWorld / cameraDistanceWorld
+```
+
+当前 demo 使用单位化 WGS84 椭球（赤道半径为 1），因此 `globeRadiusWorld = 1`。正式 ECEF 地球实现必须改用相同世界单位下的相机距离和椭球半径，并记录单位。
+
+### 拖拽惯性
+
+拖拽物理惯性属于 CameraController 行为，不应散落在平台 UI 事件里。推荐模型：
+
+- 拖动时根据相邻 arcball 旋转的 `angle / dt` 估算角速度，单位 rad/s。
+- 记录最近旋转轴，单位向量。
+- pointer-up 后每帧按 `angle = angularVelocity * frameDt` 继续应用四元数旋转。
+- 每帧使用指数阻尼衰减角速度：
+
+```text
+angularVelocity *= exp(-dampingPerSecond * frameDt)
+```
+
+约束：
+
+- 设置最大惯性角速度，避免异常 MotionEvent 间隔导致飞转。
+- `dt <= 0` 或过大时不更新速度样本。
+- pointer-down、pinch、程序化相机切换、场景销毁时清零惯性。
+- 惯性参数必须命名，例如 `maxInertiaAngularVelocityRadPerSec`、`inertiaDampingPerSecond`，不能只写 magic number。
+- 低帧率下必须使用真实 `frameDt`，不能按固定 60 FPS 推进。
 
 ## Picking 与命中结果
 
@@ -270,7 +316,7 @@ Command {
 实现交互功能后至少验证：
 
 - 鼠标、触摸板、触摸屏基本可用。
-- DPR 不同或 canvas 缩放后 picking 仍准确。
+- 屏幕密度不同（@1x/@2x/@3x、Android density）或 view 缩放后 picking 仍准确。
 - 相机不会穿地或异常翻转。
 - hover/selected/editing 状态一致。
 - 绘制和编辑支持撤销/重做。

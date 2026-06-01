@@ -5,14 +5,18 @@
 ## 阶段 0：项目骨架
 
 ```text
-请在当前仓库从 0 搭建地球引擎项目骨架。先阅读 AGENTS.md、docs/gis/earth-engine-roadmap.md、docs/gis/reference-architecture.md、docs/gis/core-api-contracts.md、docs/gis/mvp-acceptance.md。
+请在当前仓库从 0 搭建 C++ 移动端地球引擎项目骨架。先阅读 AGENTS.md、docs/gis/earth-engine-roadmap.md、docs/gis/reference-architecture.md、docs/gis/core-api-contracts.md、docs/gis/mvp-acceptance.md、docs/gis/technology-decisions.md。
 
 目标：
-- 建立 src/core、src/renderer、src/scene、src/camera、src/tiling、src/providers、src/layers、src/interaction、src/debug、examples/minimal-globe。
-- 配置构建、测试和示例页面。
-- 示例页面先显示空 canvas 和基础 diagnostics。
+- 建立 src/core、src/renderer、src/scene、src/camera、src/tiling、src/providers、src/layers、src/interaction、src/debug、src/threading、src/platform/bridge。
+- 配置 CMakeLists.txt（顶层 + src 静态库 + tests + 示例 app）。
+- 配置 vcpkg.json（GLM、nlohmann/json、libcurl、GoogleTest、stb_image）。
+- 实现 PlatformBridge 抽象接口。
+- 实现 RenderDevice 抽象接口。
+- iOS 示例：单屏 Metal view + CADisplayLink 渲染循环 + 基础 diagnostics overlay。
+- Android 示例：单屏 GLSurfaceView + Choreographer 渲染循环 + 基础 diagnostics overlay。
 
-不要实现复杂功能。完成后运行测试/构建，并说明目录职责。
+不要实现复杂功能。完成后运行构建/测试，并说明目录职责。
 ```
 
 ## 阶段 1：核心数学
@@ -22,18 +26,19 @@
 
 实现：
 - Cartographic
-- Cartesian3
-- Matrix4 或项目需要的矩阵类型
+- Vec3（封装 GLM::dvec3，内部 double precision）
+- Mat4（封装 GLM::dmat4）
 - Ray
 - Rectangle
-- Ellipsoid.WGS84
+- Ellipsoid::WGS84
 - cartographicToCartesian
 - cartesianToCartographic
 - screen/pick ray 所需基础接口
 
 要求：
 - 内部单位明确 degree/radian。
-- 提供单元测试，覆盖赤道、极区、高度非 0、degree/radian 误用。
+- 核心类型封装 GLM，但在头文件中不强制包含 GLM（通过 Pimpl 或 opaque pointer）。
+- 提供 GoogleTest 单元测试，覆盖赤道、极区、高度非 0、degree/radian 误用。
 ```
 
 ## 阶段 2：可旋转地球
@@ -42,15 +47,18 @@
 请实现最小可渲染地球。遵守 docs/gis/rendering-engine.md、docs/gis/graphics-pipeline.md、docs/gis/interaction-system.md。
 
 目标：
-- 渲染 WGS84 椭球体或近似球体。
+- 通过 RenderDevice 渲染 WGS84 椭球体或近似球体。
 - 实现 Camera、Scene、Renderer、CameraController。
-- 支持拖动旋转和滚轮缩放。
+- iOS 通过 RenderDeviceMetal 实现。
+- Android 通过 RenderDeviceGLES 实现。
+- 支持触控拖动旋转和捏合缩放。
 - 提供 diagnostics：FPS、draw calls。
 
 验收：
-- 示例页面首屏非空白。
+- iOS 模拟器和 Android 模拟器首屏非空白。
 - 相机不穿地。
 - 近地和远地不明显抖动。
+- 两个平台渲染结果视觉一致（截图对比）。
 ```
 
 ## 阶段 3：XYZ 底图
@@ -61,10 +69,10 @@
 实现：
 - TileScheme
 - TileKey
-- ImageryProvider
+- ImageryProvider（通过 PlatformBridge HTTP 异步请求）
 - BasemapLayer
 - TilePlan / LayerTilePlan
-- TileCache
+- TileCache（raw data + decoded pixel buffer + GPU texture 三级缓存）
 - parent fallback
 - tile debug overlay
 
@@ -72,6 +80,8 @@
 - 不要把 URL 模板当 TileScheme。
 - 网络返回只更新 tile 状态，当前帧 render queue 决定画什么。
 - 缓存 key 包含 provider/layer/style/version。
+- 图片解码通过 PlatformBridge（iOS: CGImage、Android: BitmapFactory）。
+- 纹理上传在主线程，通过 RenderDevice 创建。
 ```
 
 ## 阶段 4：Picking
@@ -83,10 +93,11 @@
 - screen -> pick ray
 - ray -> ellipsoid intersection
 - 返回 Cartographic 经纬高
-- 在示例页面点击显示经纬度
+- 在示例应用点击显示经纬度
 
 要求：
-- DPR 和 canvas 尺寸正确处理。
+- 正确处理 Retina/@2x/@3x 屏幕密度。
+- 正确处理渲染 surface 尺寸和逻辑 viewport 尺寸的差异。
 - 没有命中时返回结构化 none。
 - 输出说明 CRS 和高度来源。
 ```
@@ -160,3 +171,13 @@
 - 标明 visual-only / approximate / analytic。
 - 环境效果不改变业务分析数据值。
 ```
+
+## 移动端验证要求
+
+每个阶段完成后必须：
+
+- 在 iOS 模拟器（iPhone 15 Pro 或等效）上运行并截图。
+- 在 Android 模拟器（Pixel 7 或等效）上运行并截图。
+- 两个平台截图对比，确认无系统性差异。
+- 在至少一台真机（iOS 或 Android）上验证触控交互。
+- GoogleTest 单元测试全绿。

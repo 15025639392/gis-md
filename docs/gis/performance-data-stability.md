@@ -90,11 +90,11 @@ LOD 不只是性能优化，也是正确性策略。必须定义：
 
 严肃分析不能默认使用渲染 LOD 数据。分析数据和显示数据应有边界。
 
-## Worker 与主线程
+## 线程池与主线程
 
-应放入 worker 的任务：
+应在后台线程池执行的任务：
 
-- 大瓦片解码。
+- 大瓦片解码（图片 → 原始像素缓冲区）。
 - MVT/GeoJSON 解析。
 - 几何简化。
 - 三角化。
@@ -105,11 +105,13 @@ LOD 不只是性能优化，也是正确性策略。必须定义：
 主线程应负责：
 
 - 最终状态合并。
-- GPU 上传。
+- GPU 上传（通过 RenderDevice，仅主线程安全）。
 - 用户交互。
 - 小规模同步计算。
 
-Worker 输出必须可取消或可丢弃。过期 worker 结果不能覆盖当前场景状态。
+线程池输出必须可取消或可丢弃。过期线程任务结果不能覆盖当前场景状态。
+
+移动端线程池大小应保守（2-3 个工作线程），避免与系统后台任务抢占 CPU。iOS 的 QoS 和 Android 的 cpuset 应在平台桥接层中配置。详见 `threading-architecture.md`。
 
 ## 缓存与内存
 
@@ -168,7 +170,7 @@ Worker 输出必须可取消或可丢弃。过期 worker 结果不能覆盖当�
 指标要能定位层级：
 
 - 网络慢：request latency、失败率、队列长度。
-- 解析慢：worker time、main thread parse time。
+- 解析慢：线程池 task time、main thread parse time。
 - 上传慢：texture upload count/time。
 - 渲染慢：draw calls、triangles、GPU time。
 - 内存高：raw/decoded/GPU cache。

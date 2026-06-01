@@ -1,0 +1,15 @@
+{
+  "type": "Feature",
+  "properties": {
+    "id": "polygon-with-hole",
+    "name": "带洞多边形",
+    "note": "用于测试 ring orientation 和 holes 处理"
+  },
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+      [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]],
+      [[2, 2], [8, 2], [8, 8], [2, 8], [2, 2]]
+    ]
+  }
+}

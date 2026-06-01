@@ -15,7 +15,7 @@
 目标：
 
 - 建立工程脚手架、构建、测试、示例页面。
-- 明确渲染后端：WebGL2、WebGPU、Three.js 或自研 renderer。
+- 明确渲染后端：Metal 2（iOS）、OpenGL ES 3.0（Android）、Vulkan 1.1（Android 可选），通过 RenderDevice 抽象。
 - 建立模块目录和 public API。
 
 产物：
@@ -31,7 +31,7 @@
 
 验收：
 
-- 本地能启动空 canvas。
+- iOS 和 Android 示例应用能启动并显示空渲染 surface。
 - 测试命令可运行。
 - debug 面板能显示基础 frame state。
 

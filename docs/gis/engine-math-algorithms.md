@@ -15,6 +15,7 @@
 - AABB/sphere 与 frustum 的保守相交测试。
 - tile z/x/y 与 bounds 的互转。
 - 屏幕坐标到 picking ray。
+- Arcball / virtual trackball 拖拽旋转和基础惯性。它属于交互数学，必须明确屏幕像素、FOV、相机距离、投影半径、四元数归一化和阻尼参数。
 
 这些函数必须有单元测试，不能只靠可视化。
 

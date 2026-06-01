@@ -56,13 +56,13 @@ Overlay 必须可关闭，不能污染正常产品 UI。
 
 ## 常见问题定位
 
-- 地球空白：检查 canvas、相机、near/far、shader 编译、首个 tile、context lost。
+- 地球空白：检查渲染 surface、相机、near/far、shader 编译、首个 tile、context/resource lost。
 - 图形异常：检查 shader 编译、buffer attribute layout、texture format、framebuffer、depth state、blend state 和 postprocess。
 - 瓦片错位：检查 CRS、tile scheme、y 轴方向、bounds、经纬度顺序。
 - 地形裂缝：检查 skirt、邻接 LOD、边缘高程、index buffer。
 - 近地抖动：检查 float32 精度、相机相对坐标、origin rebasing。
 - 瓦片闪烁：检查请求取消、旧请求覆盖、LOD hysteresis、cache eviction。
-- 点击不准：检查 screen to ray、DPR、canvas 尺寸、地形/椭球拾取优先级。
+- 点击不准：检查 screen to ray、屏幕密度（@2x/@3x）、渲染 surface 尺寸、地形/椭球拾取优先级。
 - 绘制编辑异常：检查工具状态机、临时 feature、撤销栈、吸附规则和取消清理。
 
 ## AI 调试流程

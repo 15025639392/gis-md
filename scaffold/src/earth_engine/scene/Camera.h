@@ -1,0 +1,53 @@
+#pragma once
+
+#include "../core/math/Mat4.h"
+#include "../core/math/Ray.h"
+#include "../core/math/Vec3.h"
+
+namespace earth_engine {
+
+/// Perspective camera in ECEF/world meters.
+/// Screen coordinates are physical viewport pixels with origin at top-left.
+class Camera {
+public:
+    Camera();
+
+    const Vec3& position() const { return position_; }
+    const Vec3& direction() const { return direction_; }
+    const Vec3& up() const { return up_; }
+    const Vec3& right() const { return right_; }
+
+    double verticalFovRadians() const { return verticalFovRadians_; }
+    double nearPlaneMeters() const { return nearPlaneMeters_; }
+    double farPlaneMeters() const { return farPlaneMeters_; }
+
+    void setView(const Vec3& position, const Vec3& direction, const Vec3& up);
+    void lookAt(const Vec3& position, const Vec3& target, const Vec3& up);
+    void setPerspective(double verticalFovRadians,
+                        double nearPlaneMeters,
+                        double farPlaneMeters);
+
+    Mat4 viewMatrix() const;
+    Mat4 projectionMatrix(double viewportWidthPixels,
+                          double viewportHeightPixels) const;
+    Mat4 viewProjectionMatrix(double viewportWidthPixels,
+                              double viewportHeightPixels) const;
+
+    Ray getPickRay(double screenXPixels,
+                   double screenYPixels,
+                   double viewportWidthPixels,
+                   double viewportHeightPixels) const;
+
+private:
+    void setOrientation(const Vec3& direction, const Vec3& up);
+
+    Vec3 position_;
+    Vec3 direction_;
+    Vec3 up_;
+    Vec3 right_;
+    double verticalFovRadians_;
+    double nearPlaneMeters_;
+    double farPlaneMeters_;
+};
+
+} // namespace earth_engine

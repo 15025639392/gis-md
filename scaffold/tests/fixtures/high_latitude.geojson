@@ -1,0 +1,12 @@
+{
+  "type": "Feature",
+  "properties": {
+    "id": "high-latitude",
+    "name": "高纬度点 (北纬 85°)",
+    "note": "用于测试极区坐标转换、Web Mercator clamp 和 tile range"
+  },
+  "geometry": {
+    "type": "Point",
+    "coordinates": [0, 85]
+  }
+}

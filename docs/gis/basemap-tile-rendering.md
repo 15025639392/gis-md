@@ -32,7 +32,7 @@ FrameState
 
 职责边界：
 
-- `FrameState`：相机、视口、时间、DPR、渲染模式。
+- `FrameState`：相机、视口、时间、屏幕密度、渲染模式。
 - `BasemapLayerStack`：底图图层顺序、透明度、可见范围、混合模式。
 - `TilePlanBuilder`：按 tile scheme、CRS profile、图层组和时间生成本帧 tile plan。
 - `TileVisibilitySelector`：选出当前帧需要的 tile key。
@@ -227,9 +227,9 @@ LOD 必须有滞回 hysteresis，避免相机轻微缩放时 z/z+1 来回抖动�
 
 建议分层：
 
-- `RawCache`：ArrayBuffer/blob/image response。
-- `DecodedCache`：ImageBitmap、HTMLImageElement、decoded raster。
-- `TextureCache`：GPU texture。
+- `RawCache`：原始字节缓冲区（网络 response body）。
+- `DecodedCache`：平台解码后的像素缓冲区（iOS: CGImage 解码输出、Android: Bitmap 解码输出、stb_image 回退）。
+- `TextureCache`：GPU texture（通过 RenderDevice 创建）。
 - `RenderTileCache`：tile mesh/uv/command。
 
 缓存 key 必须包含：
@@ -238,7 +238,7 @@ LOD 必须有滞回 hysteresis，避免相机轻微缩放时 z/z+1 来回抖动�
 - layer id。
 - tile key。
 - style/version。
-- DPR 或 tile scale，如果影响资源。
+- tile scale 或屏幕密度等级（@1x/@2x/@3x），如果影响资源。
 - time，如果是时序底图。
 
 不要用裸 `z/x/y` 作为全局缓存 key。
@@ -247,12 +247,12 @@ LOD 必须有滞回 hysteresis，避免相机轻微缩放时 z/z+1 来回抖动�
 
 纹理上传策略：
 
-- 优先使用 ImageBitmap 或异步解码，避免主线程阻塞。
-- 限制每帧上传纹理数量，避免掉帧。
+- 优先使用平台原生图片解码器（iOS: CGImage、Android: BitmapFactory），在后台线程解码为原始像素缓冲区，主线程仅做 GPU 上传。
+- 对于不依赖平台的线程池解码，使用 stb_image 或 libjpeg-turbo。
+- 限制每帧上传纹理数量，避免掉帧（移动端建议 ≤ 4 张/帧）。
 - 对大图或 512/1024 tile 估算显存。
 - 明确 mipmap、filter、wrap、color space。
-- 处理跨域、CORS、tainted canvas。
-- context lost 后可恢复或重新请求。
+- context lost 或 resource eviction 后可恢复或重新请求和上传。
 
 纹理上传是常见卡顿点，不应在一帧内无限上传所有 ready 图片。
 
@@ -287,7 +287,7 @@ LOD 必须有滞回 hysteresis，避免相机轻微缩放时 z/z+1 来回抖动�
 - 401/403：权限或 token。
 - timeout：网络慢。
 - decode error：图片损坏或格式不支持。
-- CORS：跨域策略。
+- network unavailable：无网络连接（移动端 WiFi↔蜂窝切换常见）。
 - provider out of bounds：超出覆盖范围。
 
 降级方式：
