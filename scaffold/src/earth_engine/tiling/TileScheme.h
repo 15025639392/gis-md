@@ -8,14 +8,21 @@
 
 namespace earth_engine {
 
+class CrsProfile;
+
 /// 瓦片体系抽象。
-/// 定义 tile ↔ bounds 转换、zoom 范围、y 轴方向。
+/// 定义 tile ↔ bounds 转换、zoom 范围、y 轴方向、关联 CRS。
 /// 具体实现：XYZWebMercator、TMS、WMTS、Geographic、Baidu 等。
 class TileScheme {
 public:
     virtual ~TileScheme() = default;
 
     virtual std::string id() const = 0;
+
+    /// 关联的 CRS 体系
+    virtual const CrsProfile& crs() const = 0;
+
+    /// CRS profile 标识（便捷方法，等价于 crs().id()）
     virtual std::string crsProfile() const = 0;
     virtual int tileSize() const = 0;
     virtual int minZoom() const = 0;
@@ -39,6 +46,10 @@ public:
 
     /// 创建标准 XYZ Web Mercator 瓦片体系
     static std::unique_ptr<TileScheme> createXYZWebMercator();
+
+    /// 创建 TMS（Tile Map Service）Web Mercator 瓦片体系
+    /// y 轴方向为 "up"（南→北），与 XYZ 相反
+    static std::unique_ptr<TileScheme> createTMS();
 };
 
 } // namespace earth_engine

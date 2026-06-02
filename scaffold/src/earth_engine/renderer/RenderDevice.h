@@ -26,7 +26,10 @@ class RenderDevice {
 public:
     virtual ~RenderDevice() = default;
 
+    enum class Backend { Metal, OpenGLES, Vulkan };
+
     // ---- 能力查询 ----
+    virtual Backend backendType() const = 0;
     virtual int maxTextureSize() const = 0;
     virtual int maxDrawBuffers() const = 0;
     virtual bool supportsFloatTextures() const = 0;

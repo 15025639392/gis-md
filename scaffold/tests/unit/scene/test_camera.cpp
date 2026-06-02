@@ -60,3 +60,14 @@ TEST(CameraTest, RejectsInvalidViewport) {
     EXPECT_THROW(camera.projectionMatrix(0.0, 600.0), std::invalid_argument);
     EXPECT_THROW(camera.getPickRay(0.0, 0.0, 800.0, 0.0), std::invalid_argument);
 }
+
+TEST(CameraTest, BuildsFrustumFromCurrentViewProjection) {
+    Camera camera;
+    camera.lookAt(Vec3(0.0, 0.0, 10.0), Vec3::zero(), Vec3::unitY());
+    camera.setPerspective(M_PI / 2.0, 1.0, 20.0);
+
+    Frustum frustum = camera.frustum(800.0, 800.0);
+
+    EXPECT_TRUE(frustum.containsPoint(Vec3::zero()));
+    EXPECT_FALSE(frustum.containsPoint(Vec3(0.0, 0.0, 12.0)));
+}

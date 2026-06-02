@@ -19,7 +19,7 @@ android {
 
         externalNativeBuild {
             cmake {
-                arguments "-DCMAKE_PREFIX_PATH=/opt/homebrew"
+                arguments "-DGLM_INCLUDE_DIR=/opt/homebrew/include"
                 cppFlags "-std=c++17"
             }
         }

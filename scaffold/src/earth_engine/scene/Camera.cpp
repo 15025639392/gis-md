@@ -4,6 +4,8 @@
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <stdexcept>
+#include <limits>
+#include <cmath>
 
 namespace earth_engine {
 
@@ -16,17 +18,20 @@ Camera::Camera()
       direction_(0.0, 0.0, -1.0),
       up_(0.0, 1.0, 0.0),
       right_(1.0, 0.0, 0.0),
+      target_(std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0),
       verticalFovRadians_(glm::radians(60.0)),
       nearPlaneMeters_(1.0),
-      farPlaneMeters_(50000000.0) {}
+      farPlaneMeters_(200000000.0) {}  // 200M — covers globe at 7 earth radii
 
 void Camera::setView(const Vec3& position, const Vec3& direction, const Vec3& up) {
     position_ = position;
+    target_ = Vec3(std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0);  // invalidate stale target
     setOrientation(direction, up);
 }
 
 void Camera::lookAt(const Vec3& position, const Vec3& target, const Vec3& up) {
     position_ = position;
+    target_ = target;
     setOrientation(target - position, up);
 }
 
@@ -46,9 +51,14 @@ void Camera::setPerspective(double verticalFovRadians,
 }
 
 Mat4 Camera::viewMatrix() const {
-    return Mat4(glm::lookAt(position_.raw(),
-                            (position_ + direction_).raw(),
-                            up_.raw()));
+    // 如果已通过 lookAt 设置目标，使用目标点；否则回退到 position+direction
+    glm::dvec3 center;
+    if (std::isnan(target_.x())) {
+        center = (position_ + direction_).raw();
+    } else {
+        center = target_.raw();
+    }
+    return Mat4(glm::lookAt(position_.raw(), center, up_.raw()));
 }
 
 Mat4 Camera::projectionMatrix(double viewportWidthPixels,
@@ -67,6 +77,12 @@ Mat4 Camera::projectionMatrix(double viewportWidthPixels,
 Mat4 Camera::viewProjectionMatrix(double viewportWidthPixels,
                                   double viewportHeightPixels) const {
     return projectionMatrix(viewportWidthPixels, viewportHeightPixels) * viewMatrix();
+}
+
+Frustum Camera::frustum(double viewportWidthPixels,
+                        double viewportHeightPixels) const {
+    return Frustum::fromViewProjection(
+        viewProjectionMatrix(viewportWidthPixels, viewportHeightPixels));
 }
 
 Ray Camera::getPickRay(double screenXPixels,

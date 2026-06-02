@@ -20,7 +20,7 @@ protected:
 
 TEST_F(TileSchemeTest, IdAndCrsProfile) {
     EXPECT_EQ("XYZ-WebMercator", scheme_->id());
-    EXPECT_EQ("WebMercator", scheme_->crsProfile());
+    EXPECT_EQ("EPSG:3857", scheme_->crsProfile());  // crs().id() returns EPSG code
     EXPECT_EQ(256, scheme_->tileSize());
     EXPECT_EQ(0, scheme_->minZoom());
     EXPECT_EQ(20, scheme_->maxZoom());

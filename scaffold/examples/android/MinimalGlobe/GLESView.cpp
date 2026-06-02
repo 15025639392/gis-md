@@ -4,22 +4,34 @@
 #include <android/log.h>
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/quaternion.hpp>
-#include <glm/gtc/type_ptr.hpp>
 #include <chrono>
 #include <algorithm>
-#include <cmath>
-#include <cstdio>
-#include <vector>
+
+#include "earth_engine/Engine.h"
+#include "earth_engine/scene/Camera.h"
+#include "earth_engine/platform/android/RenderDeviceGLES.h"
+#include "earth_engine/platform/android/AndroidPlatformBridge.h"
+#include "earth_engine/providers/DebugImageryProvider.h"
+#include "earth_engine/providers/HeightmapTerrainProvider.h"
+#include "earth_engine/layers/BasemapLayer.h"
+#include "earth_engine/layers/TerrainLayer.h"
+#include "earth_engine/layers/VectorLayer.h"
+#include "earth_engine/tiling/TileScheme.h"
+#include "earth_engine/data/GeoJsonParser.h"
+#include "earth_engine/style/OverlayStyle.h"
+#include "earth_engine/interaction/InputEvent.h"
+#include "earth_engine/interaction/PickingService.h"
+#include "earth_engine/environment/TimeController.h"
+#include "earth_engine/scene/FrameState.h"
 
 #define LOG_TAG "MinimalGlobe"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
+using namespace earth_engine;
+
 // ============================================================
-// EGL / GL ES 3.0 上下文初始化
+// EGL / GL ES 3.0 上下文
 // ============================================================
 
 static EGLDisplay gDisplay = EGL_NO_DISPLAY;
@@ -27,232 +39,77 @@ static EGLSurface gSurface = EGL_NO_SURFACE;
 static EGLContext gContext = EGL_NO_CONTEXT;
 static ANativeWindow* gWindow = nullptr;
 static int gWidth = 0, gHeight = 0;
-static GLuint gProgram = 0;
-static GLuint gVao = 0;
-static GLuint gVertexBuffer = 0;
-static GLuint gIndexBuffer = 0;
-static GLsizei gIndexCount = 0;
-static GLint gMvpLocation = -1;
-static GLint gModelLocation = -1;
-static GLint gLightDirLocation = -1;
-static std::chrono::steady_clock::time_point gStartTime;
-static std::chrono::steady_clock::time_point gLastFrameTime;
-static std::chrono::steady_clock::time_point gLastDragTime;
-static glm::quat gGlobeRotation(1.0f, 0.0f, 0.0f, 0.0f);
-static float gCameraDistance = 7.0f;
-static float gCameraTilt = 0.0f;
-static glm::vec3 gInertiaAxis(0.0f, 1.0f, 0.0f);
-static float gInertiaAngularVelocity = 0.0f;
+
+// Engine + RenderDevice
+static std::unique_ptr<RenderDeviceGLES> gRenderDevice;
+static std::unique_ptr<Engine> gEngine;
+static std::unique_ptr<AndroidPlatformBridge> gPlatformBridge;
+static bool gEngineReady = false;
+
+// JNI_OnLoad — 存储 JavaVM 引用
+static JavaVM* gJvm = nullptr;
+extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
+    gJvm = vm;
+    AndroidPlatformBridge_InitJvm(vm);
+    return JNI_VERSION_1_6;
+}
+
+// Touch state
 static bool gTouching = false;
+static bool gDragStarted = false;
+static bool gTouchMoved = false;
 
-struct GlobeVertex {
-    float position[3];
-    float normal[3];
-    float texcoord[2];
-};
+static constexpr const char* kFabdemTerrainTemplate =
+    "http://192.168.1.4:8090/{z}/{x}/{y}.png";
 
-static GLuint compileShader(GLenum type, const char* source) {
-    GLuint shader = glCreateShader(type);
-    glShaderSource(shader, 1, &source, nullptr);
-    glCompileShader(shader);
-
-    GLint compiled = GL_FALSE;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
-    if (!compiled) {
-        GLint infoLen = 0;
-        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &infoLen);
-        std::vector<char> log(static_cast<size_t>(infoLen) + 1);
-        glGetShaderInfoLog(shader, infoLen, nullptr, log.data());
-        LOGE("Shader compile failed: %s", log.data());
-        glDeleteShader(shader);
-        return 0;
+static void addDemoVectorLayer() {
+    static constexpr const char* kDemoGeoJson = R"json(
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "beijing-marker",
+      "properties": { "name": "Beijing" },
+      "geometry": { "type": "Point", "coordinates": [116.3913, 39.9075, 0] }
+    },
+    {
+      "type": "Feature",
+      "id": "demo-route",
+      "properties": { "name": "Demo route" },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[116.30, 39.86], [116.39, 39.91], [116.48, 39.95]]
+      }
     }
-    return shader;
+  ]
 }
+)json";
 
-static bool createGlobeProgram() {
-    static const char* kVertexShader = R"glsl(
-        #version 300 es
-        layout(location = 0) in vec3 a_position;
-        layout(location = 1) in vec3 a_normal;
-        layout(location = 2) in vec2 a_texcoord;
-
-        uniform mat4 u_modelViewProjection;
-        uniform mat4 u_model;
-
-        out vec3 v_normal;
-        out vec2 v_texcoord;
-
-        void main() {
-            v_normal = normalize(mat3(u_model) * a_normal);
-            v_texcoord = a_texcoord;
-            gl_Position = u_modelViewProjection * vec4(a_position, 1.0);
-        }
-    )glsl";
-
-    static const char* kFragmentShader = R"glsl(
-        #version 300 es
-        precision mediump float;
-
-        in vec3 v_normal;
-        in vec2 v_texcoord;
-
-        uniform vec3 u_lightDir;
-
-        out vec4 fragColor;
-
-        void main() {
-            vec3 n = normalize(v_normal);
-            float diffuse = max(dot(n, normalize(u_lightDir)), 0.0);
-            vec3 ocean = vec3(0.05, 0.26, 0.58);
-            vec3 land = vec3(0.18, 0.48, 0.24);
-            float band = smoothstep(0.42, 0.58, sin(v_texcoord.x * 37.0) * 0.5 + sin(v_texcoord.y * 23.0) * 0.5 + 0.5);
-            vec3 base = mix(ocean, land, band * 0.45);
-            vec3 color = base * (0.22 + diffuse * 0.88);
-            fragColor = vec4(color, 1.0);
-        }
-    )glsl";
-
-    GLuint vertexShader = compileShader(GL_VERTEX_SHADER, kVertexShader);
-    GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, kFragmentShader);
-    if (!vertexShader || !fragmentShader) {
-        glDeleteShader(vertexShader);
-        glDeleteShader(fragmentShader);
-        return false;
+    auto features = GeoJsonParser::parse(kDemoGeoJson);
+    if (features.empty()) {
+        LOGE("Demo GeoJSON parse failed");
+        return;
     }
 
-    gProgram = glCreateProgram();
-    glAttachShader(gProgram, vertexShader);
-    glAttachShader(gProgram, fragmentShader);
-    glLinkProgram(gProgram);
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
+    auto style = makeDefaultPointStyle();
+    style.layer.geometry = PointStyle{
+        PointStyle::Shape::Circle,
+        12.0f,
+        Color{0.95f, 0.20f, 0.12f, 1.0f},
+        Color::white(),
+        2.0f,
+        true,
+        true
+    };
 
-    GLint linked = GL_FALSE;
-    glGetProgramiv(gProgram, GL_LINK_STATUS, &linked);
-    if (!linked) {
-        GLint infoLen = 0;
-        glGetProgramiv(gProgram, GL_INFO_LOG_LENGTH, &infoLen);
-        std::vector<char> log(static_cast<size_t>(infoLen) + 1);
-        glGetProgramInfoLog(gProgram, infoLen, nullptr, log.data());
-        LOGE("Program link failed: %s", log.data());
-        glDeleteProgram(gProgram);
-        gProgram = 0;
-        return false;
-    }
-
-    gMvpLocation = glGetUniformLocation(gProgram, "u_modelViewProjection");
-    gModelLocation = glGetUniformLocation(gProgram, "u_model");
-    gLightDirLocation = glGetUniformLocation(gProgram, "u_lightDir");
-    return true;
-}
-
-static bool createGlobeMesh() {
-    constexpr int kLongitudeSegments = 96;
-    constexpr int kLatitudeSegments = 48;
-    constexpr float kPi = 3.14159265358979323846f;
-    constexpr float kPolarRadiusRatio = 6356752.314245f / 6378137.0f;
-
-    std::vector<GlobeVertex> vertices;
-    std::vector<uint32_t> indices;
-    vertices.reserve(static_cast<size_t>((kLongitudeSegments + 1) * (kLatitudeSegments + 1)));
-    indices.reserve(static_cast<size_t>(kLongitudeSegments * kLatitudeSegments * 6));
-
-    for (int lat = 0; lat <= kLatitudeSegments; ++lat) {
-        float v = static_cast<float>(lat) / static_cast<float>(kLatitudeSegments);
-        float phi = -0.5f * kPi + v * kPi;
-        float cosPhi = std::cos(phi);
-        float sinPhi = std::sin(phi);
-
-        for (int lon = 0; lon <= kLongitudeSegments; ++lon) {
-            float u = static_cast<float>(lon) / static_cast<float>(kLongitudeSegments);
-            float theta = u * 2.0f * kPi;
-            float cosTheta = std::cos(theta);
-            float sinTheta = std::sin(theta);
-
-            GlobeVertex vertex{};
-            vertex.position[0] = cosPhi * cosTheta;
-            vertex.position[1] = kPolarRadiusRatio * sinPhi;
-            vertex.position[2] = cosPhi * sinTheta;
-
-            glm::vec3 normal(vertex.position[0], vertex.position[1] / (kPolarRadiusRatio * kPolarRadiusRatio), vertex.position[2]);
-            normal = glm::normalize(normal);
-            vertex.normal[0] = normal.x;
-            vertex.normal[1] = normal.y;
-            vertex.normal[2] = normal.z;
-            vertex.texcoord[0] = u;
-            vertex.texcoord[1] = v;
-            vertices.push_back(vertex);
-        }
-    }
-
-    for (int lat = 0; lat < kLatitudeSegments; ++lat) {
-        for (int lon = 0; lon < kLongitudeSegments; ++lon) {
-            uint32_t row0 = static_cast<uint32_t>(lat * (kLongitudeSegments + 1));
-            uint32_t row1 = static_cast<uint32_t>((lat + 1) * (kLongitudeSegments + 1));
-            uint32_t a = row0 + static_cast<uint32_t>(lon);
-            uint32_t b = row0 + static_cast<uint32_t>(lon + 1);
-            uint32_t c = row1 + static_cast<uint32_t>(lon);
-            uint32_t d = row1 + static_cast<uint32_t>(lon + 1);
-            indices.push_back(a);
-            indices.push_back(c);
-            indices.push_back(b);
-            indices.push_back(b);
-            indices.push_back(c);
-            indices.push_back(d);
-        }
-    }
-
-    glGenVertexArrays(1, &gVao);
-    glBindVertexArray(gVao);
-
-    glGenBuffers(1, &gVertexBuffer);
-    glBindBuffer(GL_ARRAY_BUFFER, gVertexBuffer);
-    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(GlobeVertex)), vertices.data(), GL_STATIC_DRAW);
-
-    glGenBuffers(1, &gIndexBuffer);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gIndexBuffer);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(indices.size() * sizeof(uint32_t)), indices.data(), GL_STATIC_DRAW);
-
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(GlobeVertex), reinterpret_cast<void*>(offsetof(GlobeVertex, position)));
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(GlobeVertex), reinterpret_cast<void*>(offsetof(GlobeVertex, normal)));
-    glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(GlobeVertex), reinterpret_cast<void*>(offsetof(GlobeVertex, texcoord)));
-
-    glBindVertexArray(0);
-    gIndexCount = static_cast<GLsizei>(indices.size());
-    LOGI("Globe mesh created: %zu vertices, %zu indices", vertices.size(), indices.size());
-    return true;
-}
-
-static bool createGlobeResources() {
-    gStartTime = std::chrono::steady_clock::now();
-    gLastFrameTime = gStartTime;
-    gLastDragTime = gStartTime;
-    if (!createGlobeProgram()) {
-        return false;
-    }
-    if (!createGlobeMesh()) {
-        return false;
-    }
-    glEnable(GL_DEPTH_TEST);
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
-    return true;
-}
-
-static void destroyGlobeResources() {
-    if (gIndexBuffer) glDeleteBuffers(1, &gIndexBuffer);
-    if (gVertexBuffer) glDeleteBuffers(1, &gVertexBuffer);
-    if (gVao) glDeleteVertexArrays(1, &gVao);
-    if (gProgram) glDeleteProgram(gProgram);
-    gIndexBuffer = 0;
-    gVertexBuffer = 0;
-    gVao = 0;
-    gProgram = 0;
-    gIndexCount = 0;
+    auto vectorLayer = std::make_unique<VectorLayer>(
+        "android-demo-vector",
+        std::move(features),
+        style,
+        gRenderDevice.get());
+    gEngine->addVectorLayer(std::move(vectorLayer));
+    LOGI("Demo vector layer added");
 }
 
 static bool initEGL(ANativeWindow* window) {
@@ -292,11 +149,15 @@ static bool initEGL(ANativeWindow* window) {
          glGetString(GL_VERSION),
          glGetString(GL_SHADING_LANGUAGE_VERSION));
 
-    return createGlobeResources();
+    return true;
 }
 
 static void destroyEGL() {
-    destroyGlobeResources();
+    gEngine.reset();
+    gRenderDevice.reset();
+    gPlatformBridge.reset();
+    gEngineReady = false;
+
     eglMakeCurrent(gDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     if (gContext != EGL_NO_CONTEXT) eglDestroyContext(gDisplay, gContext);
     if (gSurface != EGL_NO_SURFACE) eglDestroySurface(gDisplay, gSurface);
@@ -306,151 +167,99 @@ static void destroyEGL() {
     gDisplay = EGL_NO_DISPLAY;
 }
 
-static void renderFrame() {
-    glClearColor(0.0f, 0.0f, 0.1f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+static bool createEngine() {
+    gRenderDevice = std::make_unique<RenderDeviceGLES>();
+    gEngine = std::make_unique<Engine>(gRenderDevice.get());
 
-    if (gProgram && gVao && gWidth > 0 && gHeight > 0) {
-        auto now = std::chrono::steady_clock::now();
-        float dt = std::chrono::duration<float>(now - gLastFrameTime).count();
-        gLastFrameTime = now;
-        if (!gTouching && gInertiaAngularVelocity > 0.0001f && dt > 0.0f) {
-            constexpr float kInertiaDampingPerSecond = 3.0f;
-            float angle = gInertiaAngularVelocity * dt;
-            glm::quat delta = glm::angleAxis(angle, gInertiaAxis);
-            gGlobeRotation = glm::normalize(delta * gGlobeRotation);
-            gInertiaAngularVelocity *= std::exp(-kInertiaDampingPerSecond * dt);
-        }
+    gEngine->onSurfaceCreated();
+    gEngine->onSurfaceChanged(gWidth, gHeight, 1.0f);
 
-        float aspect = static_cast<float>(gWidth) / static_cast<float>(gHeight);
-        float cameraDistance = gCameraDistance;
+    gEngineReady = gEngine->isReady();
+    if (gEngineReady) {
+        LOGI("Engine initialized successfully, camera pos: %.1f,%.1f,%.1f",
+             gEngine->camera().position().x(),
+             gEngine->camera().position().y(),
+             gEngine->camera().position().z());
 
-        glm::mat4 projection = glm::perspective(glm::radians(42.0f), aspect, 0.1f, 20.0f);
-        glm::vec3 eye(0.0f,
-                      std::sin(gCameraTilt) * cameraDistance,
-                      std::cos(gCameraTilt) * cameraDistance);
-        glm::vec3 up(0.0f, std::cos(gCameraTilt), -std::sin(gCameraTilt));
-        glm::mat4 view = glm::lookAt(eye,
-                                     glm::vec3(0.0f, 0.0f, 0.0f),
-                                     up);
-        glm::mat4 model = glm::mat4_cast(gGlobeRotation);
-        glm::mat4 mvp = projection * view * model;
+        // 创建 Android JNI HTTP 桥接
+        gPlatformBridge = std::make_unique<AndroidPlatformBridge>(gJvm);
 
-        glUseProgram(gProgram);
-        glUniformMatrix4fv(gMvpLocation, 1, GL_FALSE, glm::value_ptr(mvp));
-        glUniformMatrix4fv(gModelLocation, 1, GL_FALSE, glm::value_ptr(model));
-        glUniform3f(gLightDirLocation, 0.35f, 0.45f, 0.82f);
-        glBindVertexArray(gVao);
-        glDrawElements(GL_TRIANGLES, gIndexCount, GL_UNSIGNED_INT, nullptr);
-        glBindVertexArray(0);
+        // Standard XYZ WebMercator debug imagery. It is generated locally, so
+        // alignment checks do not depend on network access or provider offsets.
+        auto provider = std::make_unique<DebugImageryProvider>();
+        auto scheme = TileScheme::createXYZWebMercator();
+        auto layer = std::make_unique<BasemapLayer>(
+            std::move(provider), std::move(scheme), gRenderDevice.get());
+        gEngine->addLayer(std::move(layer));
+        LOGI("Debug standard XYZ WebMercator layer added");
+
+        // FABDEM raster DEM served by dems/scripts/serve_tiles.py.
+        // XYZ WebMercator / Mapbox Terrain-RGB, WGS84 ellipsoid heights in meters.
+        auto terrainProvider = std::make_unique<HeightmapTerrainProvider>(
+            kFabdemTerrainTemplate,
+            "FABDEM raster DEM");
+        terrainProvider->setZoomRange(0, 12);
+        terrainProvider->setEncoding(HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
+        terrainProvider->setPlatformBridge(gPlatformBridge.get());
+        auto terrainLayer = std::make_unique<TerrainLayer>(
+            std::move(terrainProvider),
+            TileScheme::createXYZWebMercator());
+        terrainLayer->setEnabled(true);
+        gEngine->setTerrainLayer(std::move(terrainLayer));
+        gEngine->setTerrainEnabled(true);
+        LOGI("FABDEM terrain layer added: %s", kFabdemTerrainTemplate);
+
+        // Keep the feature path available, but avoid covering the basemap while
+        // validating XYZ Web Mercator tile alignment.
+        // addDemoVectorLayer();
+
+        // 开启调试叠加层
+        gEngine->setDebugOverlayEnabled(true);
+        LOGI("Debug overlay enabled");
+
+        // 设置模拟时间为当前系统时间
+        double nowJd = currentJulianDate();
+        gEngine->setTime(nowJd);
+        LOGI("Simulation time set to JD %.3f (Unix %.0f)",
+             nowJd, julianToUnix(nowJd));
+    } else {
+        LOGE("Engine initialization failed");
     }
+    return gEngineReady;
+}
+
+static int gFrameCount = 0;
+static void renderFrame() {
+    if (!gEngineReady) return;
+
+    // 时间步进（实时）
+    static auto lastTime = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    double dt = std::chrono::duration<double>(now - lastTime).count();
+    lastTime = now;
+
+    // 环境系统：时间步进，render 中 update() 计算当前帧天空色
+    gEngine->advanceTime(dt);
+    gEngine->render(0.0);  // auto-delta（内部 beginFrame→update 计算 clearColor→render→endFrame）
+
+    // 读取本帧计算的 clear color，设置为下一帧的 glClear 颜色（1 帧滞后，视觉无感）
+    float cr, cg, cb, ca;
+    gEngine->getClearColor(cr, cg, cb, ca);
+    glClearColor(cr, cg, cb, ca);
+
+    Vec3 sunDir = gEngine->sunDirection();
 
     eglSwapBuffers(gDisplay, gSurface);
-}
 
-static float projectedGlobeRadiusPixels(float height) {
-    constexpr float kVerticalFovRadians = 42.0f * 3.14159265358979323846f / 180.0f;
-    float focalLengthPixels = (height * 0.5f) / std::tan(kVerticalFovRadians * 0.5f);
-    return std::max(1.0f, focalLengthPixels / gCameraDistance);
-}
-
-static glm::vec3 mapToArcball(float x, float y, float width, float height) {
-    float radius = projectedGlobeRadiusPixels(height);
-    float nx = (x - width * 0.5f) / radius;
-    float ny = (height * 0.5f - y) / radius;
-    float lengthSquared = nx * nx + ny * ny;
-    if (lengthSquared <= 1.0f) {
-        return glm::normalize(glm::vec3(nx, ny, std::sqrt(1.0f - lengthSquared)));
+    gFrameCount++;
+    if (gFrameCount <= 1 || gFrameCount % 300 == 0) {
+        const auto& diag = gEngine->diagnostics();
+        LOGI("Frame %d | tiles vis=%d cached=%d | sun=(%.2f,%.2f,%.2f) | "
+             "FPS=%.1f draw=%d",
+             gFrameCount, diag.visibleTiles, diag.cachedTextures,
+             sunDir.x(), sunDir.y(), sunDir.z(),
+             diag.fps, diag.drawCalls);
     }
-    return glm::normalize(glm::vec3(nx, ny, 0.0f));
-}
-
-static void orbitCamera(float startX, float startY, float endX, float endY, float width, float height) {
-    glm::vec3 from = mapToArcball(startX, startY, width, height);
-    glm::vec3 to = mapToArcball(endX, endY, width, height);
-    glm::vec3 axis = glm::cross(from, to);
-    float axisLength = glm::length(axis);
-    if (axisLength < 1e-5f) {
-        return;
-    }
-
-    float dot = std::clamp(glm::dot(from, to), -1.0f, 1.0f);
-    float angle = std::atan2(axisLength, dot);
-    glm::vec3 normalizedAxis = axis / axisLength;
-    glm::quat delta = glm::angleAxis(angle, normalizedAxis);
-    gGlobeRotation = glm::normalize(delta * gGlobeRotation);
-
-    auto now = std::chrono::steady_clock::now();
-    float dt = std::chrono::duration<float>(now - gLastDragTime).count();
-    gLastDragTime = now;
-    if (dt > 0.0f && dt < 0.25f) {
-        constexpr float kMaxInertiaAngularVelocity = 5.0f;
-        constexpr float kVelocitySmoothing = 0.35f;
-        float instantaneousVelocity = std::min(angle / dt, kMaxInertiaAngularVelocity);
-        gInertiaAxis = normalizedAxis;
-        gInertiaAngularVelocity =
-            gInertiaAngularVelocity * (1.0f - kVelocitySmoothing) +
-            instantaneousVelocity * kVelocitySmoothing;
-    }
-}
-
-static void zoomCamera(float scale) {
-    if (scale <= 0.0f) {
-        return;
-    }
-    if (std::abs(scale - 1.0f) < 0.004f) {
-        return;
-    }
-    constexpr float kMinDistance = 2.4f;
-    constexpr float kMaxDistance = 12.0f;
-    gInertiaAngularVelocity = 0.0f;
-    gCameraDistance = std::clamp(gCameraDistance / scale, kMinDistance, kMaxDistance);
-}
-
-static glm::vec3 anchorAxisOnGlobe(float centerX, float centerY, float width, float height) {
-    glm::vec3 viewSpaceAnchor = mapToArcball(centerX, centerY, width, height);
-    glm::vec3 localAnchor = glm::normalize(glm::inverse(gGlobeRotation) * viewSpaceAnchor);
-    return localAnchor;
-}
-
-static void rotateAroundAnchor(float rotationRadians, float centerX, float centerY, float width, float height) {
-    constexpr float kRotateDeadZoneRadians = 0.006f;
-    if (std::abs(rotationRadians) < kRotateDeadZoneRadians) {
-        return;
-    }
-    gInertiaAngularVelocity = 0.0f;
-    glm::vec3 localAnchor = anchorAxisOnGlobe(centerX, centerY, width, height);
-    glm::quat delta = glm::angleAxis(-rotationRadians, localAnchor);
-    gGlobeRotation = glm::normalize(gGlobeRotation * delta);
-}
-
-static void tiltAroundAnchor(float centerX, float centerY, float centerDy, float width, float height) {
-    constexpr float kTiltDeadZonePixels = 3.0f;
-    if (height <= 1.0f || std::abs(centerDy) < kTiltDeadZonePixels) {
-        return;
-    }
-    constexpr float kTiltRadiansPerScreen = 1.8f;
-    gInertiaAngularVelocity = 0.0f;
-    float tiltRadians = -(centerDy / height) * kTiltRadiansPerScreen;
-    glm::vec3 viewSpaceAnchor = mapToArcball(centerX, centerY, width, height);
-    glm::vec3 viewRight = glm::normalize(glm::cross(viewSpaceAnchor, glm::vec3(0.0f, 0.0f, 1.0f)));
-    if (glm::length(viewRight) < 1e-5f) {
-        viewRight = glm::vec3(1.0f, 0.0f, 0.0f);
-    }
-    glm::quat delta = glm::angleAxis(tiltRadians, viewRight);
-    gGlobeRotation = glm::normalize(delta * gGlobeRotation);
-}
-
-static void applyPinchRotateTilt(float scale,
-                                 float rotationRadians,
-                                 float centerX,
-                                 float centerY,
-                                 float centerDy,
-                                 float width,
-                                 float height) {
-    zoomCamera(scale);
-    rotateAroundAnchor(rotationRadians, centerX, centerY, width, height);
-    tiltAroundAnchor(centerX, centerY, centerDy, width, height);
 }
 
 // ============================================================
@@ -466,6 +275,10 @@ Java_com_earthengine_minimalglobe_GLESView_nativeSurfaceCreated(
     gWindow = ANativeWindow_fromSurface(env, surface);
     if (!initEGL(gWindow)) {
         LOGE("Failed to initialize EGL");
+        return;
+    }
+    if (!createEngine()) {
+        LOGE("Failed to create Engine");
     }
 }
 
@@ -474,7 +287,9 @@ Java_com_earthengine_minimalglobe_GLESView_nativeSurfaceChanged(
     JNIEnv* /* env */, jobject /* this */, jint width, jint height) {
     gWidth = width;
     gHeight = height;
-    glViewport(0, 0, width, height);
+    if (gEngine) {
+        gEngine->onSurfaceChanged(width, height, 1.0f);
+    }
 }
 
 JNIEXPORT void JNICALL
@@ -493,59 +308,125 @@ Java_com_earthengine_minimalglobe_GLESView_nativeSurfaceDestroyed(
     }
 }
 
+// 辅助：通过 JNI 获取 Android 单调时钟（秒）
+static double androidUptimeSeconds() {
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<double>(ts.tv_sec) +
+           static_cast<double>(ts.tv_nsec) * 1e-9;
+}
+
 JNIEXPORT void JNICALL
 Java_com_earthengine_minimalglobe_GLESView_nativeTouchDown(
     JNIEnv* /* env */, jobject /* this */) {
     gTouching = true;
-    gInertiaAngularVelocity = 0.0f;
-    gLastDragTime = std::chrono::steady_clock::now();
+    gDragStarted = false;
+    gTouchMoved = false;
 }
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_minimalglobe_GLESView_nativeDrag(
     JNIEnv* /* env */, jobject /* this */,
     jfloat startX, jfloat startY, jfloat endX, jfloat endY,
-    jint width, jint height) {
-    orbitCamera(startX, startY, endX, endY, static_cast<float>(width), static_cast<float>(height));
+    jint /*width*/, jint /*height*/) {
+    if (!gEngine) return;
+    gTouchMoved = true;
+
+    double ts = androidUptimeSeconds();
+
+    if (!gDragStarted) {
+        gDragStarted = true;
+        InputEvent event;
+        event.type = InputEvent::Type::PointerDown;
+        event.screenX = startX;
+        event.screenY = startY;
+        event.pointerType = InputEvent::PointerType::Touch;
+        event.timestamp = ts;
+        gEngine->onInputEvent(event);
+    }
+
+    InputEvent event;
+    event.type = InputEvent::Type::PointerMove;
+    event.screenX = endX;
+    event.screenY = endY;
+    event.pointerType = InputEvent::PointerType::Touch;
+    event.timestamp = ts;
+    gEngine->onInputEvent(event);
 }
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_minimalglobe_GLESView_nativeTouchUp(
-    JNIEnv* /* env */, jobject /* this */) {
+    JNIEnv* /* env */, jobject /* this */, jfloat x, jfloat y) {
     gTouching = false;
+    if (!gEngine) return;
+
+    double ts = androidUptimeSeconds();
+
+    InputEvent upEvent;
+    upEvent.type = InputEvent::Type::PointerUp;
+    upEvent.screenX = x;
+    upEvent.screenY = y;
+    upEvent.pointerType = InputEvent::PointerType::Touch;
+    upEvent.timestamp = ts;
+    gEngine->onInputEvent(upEvent);
+
+    // 诊断日志（pick 和选择由 InputManager → Scene 回调处理）
+    if (!gTouchMoved) {
+        PickResult result = gEngine->pick(x, y);
+        if (result.isValid()) {
+            const double lngDeg = result.cartographic.longitudeDegrees();
+            const double latDeg = result.cartographic.latitudeDegrees();
+            LOGI("Tap at (%.0f,%.0f) → lng=%.6f lat=%.6f height=%.2f "
+                 "layer=%s feature=%s",
+                 x, y, lngDeg, latDeg,
+                 result.cartographic.height(),
+                 result.layerId.c_str(),
+                 result.featureId.c_str());
+        } else {
+            LOGI("Tap at (%.0f,%.0f) → no hit", x, y);
+        }
+    }
 }
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_minimalglobe_GLESView_nativePinch(
     JNIEnv* /* env */, jobject /* this */, jfloat scale) {
-    zoomCamera(scale);
+    if (!gEngine) return;
+    // 旧接口：构造 PinchMove 事件
+    InputEvent event;
+    event.type = InputEvent::Type::PinchMove;
+    event.pinchScale = scale;
+    event.pointerType = InputEvent::PointerType::Touch;
+    event.timestamp = androidUptimeSeconds();
+    gEngine->onInputEvent(event);
 }
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_minimalglobe_GLESView_nativePinchRotateTilt(
     JNIEnv* /* env */, jobject /* this */,
-    jfloat scale, jfloat rotationRadians,
-    jfloat centerX, jfloat centerY, jfloat centerDy,
-    jint width, jint height) {
-    applyPinchRotateTilt(scale,
-                         rotationRadians,
-                         centerX,
-                         centerY,
-                         centerDy,
-                         static_cast<float>(width),
-                         static_cast<float>(height));
+    jfloat scale, jfloat /*rotationRadians*/,
+    jfloat /*centerX*/, jfloat /*centerY*/, jfloat /*centerDy*/,
+    jint /*width*/, jint /*height*/) {
+    // MVP 阶段仅处理缩放；旋转/倾斜留给后续阶段
+    if (!gEngine) return;
+    InputEvent event;
+    event.type = InputEvent::Type::PinchMove;
+    event.pinchScale = scale;
+    event.pointerType = InputEvent::PointerType::Touch;
+    event.timestamp = androidUptimeSeconds();
+    gEngine->onInputEvent(event);
 }
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_minimalglobe_GLESView_nativePause(
     JNIEnv* /* env */, jobject /* this */) {
-    // TODO: 通知 PlatformBridge::onEnterBackground()
+    // TODO: 后续阶段通知 PlatformBridge::onEnterBackground()
 }
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_minimalglobe_GLESView_nativeResume(
     JNIEnv* /* env */, jobject /* this */) {
-    // TODO: 通知 PlatformBridge::onEnterForeground()
+    // TODO: 后续阶段通知 PlatformBridge::onEnterForeground()
 }
 
 } // extern "C"

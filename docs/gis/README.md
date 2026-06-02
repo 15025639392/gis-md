@@ -46,6 +46,7 @@
 - 底图瓦片渲染编排：`basemap-tile-rendering.md`
 - 渲染管线：`rendering-engine.md`
 - 图形学与 GPU 管线：`graphics-pipeline.md`
+- 渲染重点审查：`rendering-review-checklist.md`
 - 数据 Provider 接口：`data-provider-contracts.md`
 - 数据承载目录：`engine-data-catalog.md`
 - 数据叠加层样式：`overlay-styling.md`

@@ -1,0 +1,89 @@
+#include "Frustum.h"
+
+#include <cmath>
+#include <stdexcept>
+
+namespace earth_engine {
+
+namespace {
+
+Plane makePlane(double a, double b, double c, double d) {
+    const double length = std::sqrt(a * a + b * b + c * c);
+    if (length <= 0.0) {
+        throw std::invalid_argument("Frustum plane normal must be non-zero.");
+    }
+    return Plane{Vec3(a / length, b / length, c / length), d / length};
+}
+
+} // namespace
+
+double Plane::signedDistanceTo(const Vec3& point) const {
+    return normal.dot(point) + distance;
+}
+
+Frustum Frustum::fromViewProjection(const Mat4& viewProjection) {
+    Frustum frustum;
+
+    // GLM matrices are column-major, while Mat4(row, col) gives row-major access.
+    const double m00 = viewProjection(0, 0);
+    const double m01 = viewProjection(0, 1);
+    const double m02 = viewProjection(0, 2);
+    const double m03 = viewProjection(0, 3);
+    const double m10 = viewProjection(1, 0);
+    const double m11 = viewProjection(1, 1);
+    const double m12 = viewProjection(1, 2);
+    const double m13 = viewProjection(1, 3);
+    const double m20 = viewProjection(2, 0);
+    const double m21 = viewProjection(2, 1);
+    const double m22 = viewProjection(2, 2);
+    const double m23 = viewProjection(2, 3);
+    const double m30 = viewProjection(3, 0);
+    const double m31 = viewProjection(3, 1);
+    const double m32 = viewProjection(3, 2);
+    const double m33 = viewProjection(3, 3);
+
+    frustum.planes_[static_cast<size_t>(PlaneIndex::Left)] =
+        makePlane(m30 + m00, m31 + m01, m32 + m02, m33 + m03);
+    frustum.planes_[static_cast<size_t>(PlaneIndex::Right)] =
+        makePlane(m30 - m00, m31 - m01, m32 - m02, m33 - m03);
+    frustum.planes_[static_cast<size_t>(PlaneIndex::Bottom)] =
+        makePlane(m30 + m10, m31 + m11, m32 + m12, m33 + m13);
+    frustum.planes_[static_cast<size_t>(PlaneIndex::Top)] =
+        makePlane(m30 - m10, m31 - m11, m32 - m12, m33 - m13);
+    frustum.planes_[static_cast<size_t>(PlaneIndex::Near)] =
+        makePlane(m30 + m20, m31 + m21, m32 + m22, m33 + m23);
+    frustum.planes_[static_cast<size_t>(PlaneIndex::Far)] =
+        makePlane(m30 - m20, m31 - m21, m32 - m22, m33 - m23);
+
+    return frustum;
+}
+
+const Plane& Frustum::plane(PlaneIndex index) const {
+    return planes_[static_cast<size_t>(index)];
+}
+
+bool Frustum::containsPoint(const Vec3& point, double epsilonMeters) const {
+    for (const auto& p : planes_) {
+        if (p.signedDistanceTo(point) < -epsilonMeters) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Frustum::intersectsSphere(const Vec3& center,
+                               double radiusMeters,
+                               double epsilonMeters) const {
+    if (radiusMeters < 0.0) {
+        throw std::invalid_argument("Sphere radius must be non-negative.");
+    }
+
+    for (const auto& p : planes_) {
+        if (p.signedDistanceTo(center) < -(radiusMeters + epsilonMeters)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace earth_engine

@@ -3,6 +3,7 @@
 #include "../core/math/Mat4.h"
 #include "../core/math/Ray.h"
 #include "../core/math/Vec3.h"
+#include "Frustum.h"
 
 namespace earth_engine {
 
@@ -23,6 +24,7 @@ public:
 
     void setView(const Vec3& position, const Vec3& direction, const Vec3& up);
     void lookAt(const Vec3& position, const Vec3& target, const Vec3& up);
+    const Vec3& target() const { return target_; }
     void setPerspective(double verticalFovRadians,
                         double nearPlaneMeters,
                         double farPlaneMeters);
@@ -32,6 +34,8 @@ public:
                           double viewportHeightPixels) const;
     Mat4 viewProjectionMatrix(double viewportWidthPixels,
                               double viewportHeightPixels) const;
+    Frustum frustum(double viewportWidthPixels,
+                    double viewportHeightPixels) const;
 
     Ray getPickRay(double screenXPixels,
                    double screenYPixels,
@@ -45,6 +49,7 @@ private:
     Vec3 direction_;
     Vec3 up_;
     Vec3 right_;
+    Vec3 target_;
     double verticalFovRadians_;
     double nearPlaneMeters_;
     double farPlaneMeters_;

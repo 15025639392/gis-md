@@ -126,7 +126,7 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
             case MotionEvent.ACTION_POINTER_UP:
                 pinching = false;
                 suppressSingleDragUntilUp = true;
-                nativeTouchUp();
+                nativeTouchUp(lastPinchCenterX, lastPinchCenterY);
                 if (event.getPointerCount() > 1) {
                     int remainingIndex = event.getActionIndex() == 0 ? 1 : 0;
                     lastX = event.getX(remainingIndex);
@@ -137,7 +137,7 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
             case MotionEvent.ACTION_CANCEL:
                 pinching = false;
                 suppressSingleDragUntilUp = false;
-                nativeTouchUp();
+                nativeTouchUp(event.getX(), event.getY());
                 return true;
             default:
                 return true;
@@ -178,7 +178,7 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
     private static native void nativeSurfaceDestroyed();
     private static native void nativeTouchDown();
     private static native void nativeDrag(float startX, float startY, float endX, float endY, int width, int height);
-    private static native void nativeTouchUp();
+    private static native void nativeTouchUp(float x, float y);
     private static native void nativePinch(float scale);
     private static native void nativePinchRotateTilt(float scale, float rotationRadians, float centerX, float centerY, float centerDy, int width, int height);
     private static native void nativePause();
