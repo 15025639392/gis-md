@@ -246,6 +246,7 @@ void Scene::render() {
     diag.imageryParentFallbackAttachments = 0;
     diag.imageryMissingTiles = 0;
     diag.imageryTransitionTiles = 0;
+    diag.lodSizePixels = 0.0;
     diag.quadtreeEqualZoomLayers = 0;
     diag.quadtreeFadingNodes = 0;
     diag.quadtreeNeighborLinks = 0;
@@ -254,6 +255,9 @@ void Scene::render() {
     diag.quadtreeNotRenderingNodes = 0;
     diag.quadtreeCameraInsideNodes = 0;
     diag.quadtreeInFrustumNodes = 0;
+    diag.mercatorTileCount = 0;
+    diag.northPolarTileCount = 0;
+    diag.southPolarTileCount = 0;
     diag.surfaceMeshBytes = 0;
     diag.terrainCachedTiles = 0;
     diag.terrainGeneration = 0;
@@ -273,6 +277,7 @@ void Scene::render() {
         diag.imageryParentFallbackAttachments += layer->parentFallbackAttachmentCount();
         diag.imageryMissingTiles += layer->missingImageryTileCount();
         diag.imageryTransitionTiles += layer->transitionTileCount();
+        diag.lodSizePixels = std::max(diag.lodSizePixels, layer->lodSizePixels());
         diag.quadtreeEqualZoomLayers += layer->quadtreeEqualZoomApplied();
         diag.quadtreeFadingNodes += layer->quadtreeFadingNodeCount();
         diag.quadtreeNeighborLinks += layer->quadtreeNeighborLinkCount();
@@ -281,6 +286,9 @@ void Scene::render() {
         diag.quadtreeNotRenderingNodes += layer->quadtreeNotRenderingNodeCount();
         diag.quadtreeCameraInsideNodes += layer->quadtreeCameraInsideNodeCount();
         diag.quadtreeInFrustumNodes += layer->quadtreeInFrustumNodeCount();
+        diag.mercatorTileCount += layer->mercatorTileCount();
+        diag.northPolarTileCount += layer->northPolarTileCount();
+        diag.southPolarTileCount += layer->southPolarTileCount();
         diag.surfaceMeshBytes += static_cast<int>(layer->surfaceMeshBytes());
         diag.terrainSurfaceMeshes += layer->terrainSurfaceMeshCount();
         diag.terrainParentFallbackMeshes += layer->terrainParentFallbackMeshCount();

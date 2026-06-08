@@ -247,6 +247,30 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     static int submitCount = 0;
     submitCount++;
 
+    GLuint currentProgram = 0;
+    GLuint currentArrayBuffer = 0;
+    GLuint currentElementArrayBuffer = 0;
+    GLuint currentTexture0 = 0;
+    GLuint currentTexture1 = 0;
+    bool attrib0Enabled = false;
+    bool attrib1Enabled = false;
+    bool attrib2Enabled = false;
+    bool depthTestEnabled = true;
+    bool blendEnabled = false;
+    bool polygonOffsetEnabled = false;
+    bool cullFaceEnabled = true;
+    bool depthWriteEnabled = true;
+
+    auto setAttribEnabled = [](GLuint index, bool& cached, bool enabled) {
+        if (cached == enabled) return;
+        if (enabled) {
+            glEnableVertexAttribArray(index);
+        } else {
+            glDisableVertexAttribArray(index);
+        }
+        cached = enabled;
+    };
+
     for (const auto& cmd : commands) {
         auto* program = static_cast<GLShaderProgram*>(cmd.shader);
         auto* vb = static_cast<GLBuffer*>(cmd.vertexBuffer);
@@ -254,64 +278,78 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
 
         if (!program || !vb) continue;
 
-        glUseProgram(program->glId());
+        if (currentProgram != program->glId()) {
+            currentProgram = program->glId();
+            glUseProgram(currentProgram);
+            int tileSamplerLoc = program->uniformLocation("u_tileTexture");
+            if (tileSamplerLoc >= 0) {
+                glUniform1i(tileSamplerLoc, 0);
+            }
+            int normalSamplerLoc = program->uniformLocation("u_normalMap");
+            if (normalSamplerLoc >= 0) {
+                glUniform1i(normalSamplerLoc, 1);
+            }
+        }
 
         // ---- 顶点属性设置 ----
-        glBindBuffer(GL_ARRAY_BUFFER, vb->glId());
+        if (currentArrayBuffer != vb->glId()) {
+            currentArrayBuffer = vb->glId();
+            glBindBuffer(GL_ARRAY_BUFFER, currentArrayBuffer);
+        }
 
         if (cmd.kind == RenderCommandKind::SurfaceTile) {
             constexpr int kSurfaceStride = 32;
-            glEnableVertexAttribArray(0);
+            setAttribEnabled(0, attrib0Enabled, true);
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, kSurfaceStride,
                                   reinterpret_cast<void*>(0));
-            glEnableVertexAttribArray(1);
+            setAttribEnabled(1, attrib1Enabled, true);
             glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, kSurfaceStride,
                                   reinterpret_cast<void*>(12));
-            glEnableVertexAttribArray(2);
+            setAttribEnabled(2, attrib2Enabled, true);
             glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, kSurfaceStride,
                                   reinterpret_cast<void*>(24));
         } else if (cmd.vertexStride > 0) {
             // 显式 vertex stride（VectorLayer 等使用）
-            glEnableVertexAttribArray(0);
+            setAttribEnabled(0, attrib0Enabled, true);
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, cmd.vertexStride,
                                   reinterpret_cast<void*>(0));
-            glDisableVertexAttribArray(1);
-            glDisableVertexAttribArray(2);
+            setAttribEnabled(1, attrib1Enabled, false);
+            setAttribEnabled(2, attrib2Enabled, false);
         } else {
             // Globe vertex: float3 pos + float3 normal + float2 tex = 32 bytes
             constexpr int kGlobeStride = 32;
-            glEnableVertexAttribArray(0);
+            setAttribEnabled(0, attrib0Enabled, true);
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, kGlobeStride,
                                   reinterpret_cast<void*>(0));
-            glEnableVertexAttribArray(1);
+            setAttribEnabled(1, attrib1Enabled, true);
             glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, kGlobeStride,
                                   reinterpret_cast<void*>(12));
-            glEnableVertexAttribArray(2);
+            setAttribEnabled(2, attrib2Enabled, true);
             glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, kGlobeStride,
                                   reinterpret_cast<void*>(24));
         }
 
-        if (ib) {
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ib->glId());
+        const GLuint elementArrayBuffer = ib ? ib->glId() : 0;
+        if (currentElementArrayBuffer != elementArrayBuffer) {
+            currentElementArrayBuffer = elementArrayBuffer;
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, currentElementArrayBuffer);
         }
 
         // ---- 纹理绑定 ----
         if (!cmd.textures.empty() && cmd.textures[0]) {
             auto* glTex = static_cast<GLTexture*>(cmd.textures[0]);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, glTex->glId());
-            int samplerLoc = program->uniformLocation("u_tileTexture");
-            if (samplerLoc >= 0) {
-                glUniform1i(samplerLoc, 0);
+            if (currentTexture0 != glTex->glId()) {
+                currentTexture0 = glTex->glId();
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, currentTexture0);
             }
         }
         if (cmd.textures.size() > 1 && cmd.textures[1]) {
             auto* glTex = static_cast<GLTexture*>(cmd.textures[1]);
-            glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, glTex->glId());
-            int samplerLoc = program->uniformLocation("u_normalMap");
-            if (samplerLoc >= 0) {
-                glUniform1i(samplerLoc, 1);
+            if (currentTexture1 != glTex->glId()) {
+                currentTexture1 = glTex->glId();
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, currentTexture1);
             }
         }
 
@@ -340,27 +378,47 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         }
 
         // ---- 渲染状态 ----
-        if (cmd.depthTest) {
-            glEnable(GL_DEPTH_TEST);
-        } else {
-            glDisable(GL_DEPTH_TEST);
+        if (depthTestEnabled != cmd.depthTest) {
+            if (cmd.depthTest) {
+                glEnable(GL_DEPTH_TEST);
+            } else {
+                glDisable(GL_DEPTH_TEST);
+            }
+            depthTestEnabled = cmd.depthTest;
         }
-        glDepthMask(cmd.depthWrite ? GL_TRUE : GL_FALSE);
+        if (depthWriteEnabled != cmd.depthWrite) {
+            glDepthMask(cmd.depthWrite ? GL_TRUE : GL_FALSE);
+            depthWriteEnabled = cmd.depthWrite;
+        }
 
+        if (blendEnabled != cmd.blend) {
+            if (cmd.blend) {
+                glEnable(GL_BLEND);
+            } else {
+                glDisable(GL_BLEND);
+            }
+            blendEnabled = cmd.blend;
+        }
         if (cmd.blend) {
-            glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            glEnable(GL_POLYGON_OFFSET_FILL);
-            glPolygonOffset(-1.0f, -1.0f);
-        } else {
-            glDisable(GL_BLEND);
-            glDisable(GL_POLYGON_OFFSET_FILL);
+        }
+        if (polygonOffsetEnabled != cmd.blend) {
+            if (cmd.blend) {
+                glEnable(GL_POLYGON_OFFSET_FILL);
+                glPolygonOffset(-1.0f, -1.0f);
+            } else {
+                glDisable(GL_POLYGON_OFFSET_FILL);
+            }
+            polygonOffsetEnabled = cmd.blend;
         }
 
-        if (cmd.cullFace) {
-            glEnable(GL_CULL_FACE);
-        } else {
-            glDisable(GL_CULL_FACE);
+        if (cullFaceEnabled != cmd.cullFace) {
+            if (cmd.cullFace) {
+                glEnable(GL_CULL_FACE);
+            } else {
+                glDisable(GL_CULL_FACE);
+            }
+            cullFaceEnabled = cmd.cullFace;
         }
 
         // ---- Draw ----
@@ -381,18 +439,19 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         } else {
             glDrawArrays(mode, 0, cmd.vertexCount);
         }
-
-        // 清理
-        glDisableVertexAttribArray(0);
-        glDisableVertexAttribArray(1);
-        glDisableVertexAttribArray(2);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, 0);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, 0);
     }
+
+    // Batch-level cleanup keeps RenderDevice ownership explicit without
+    // thrashing GL state between adjacent SurfaceTile commands.
+    if (attrib0Enabled) glDisableVertexAttribArray(0);
+    if (attrib1Enabled) glDisableVertexAttribArray(1);
+    if (attrib2Enabled) glDisableVertexAttribArray(2);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
 
     if (submitCount <= 1 || submitCount % 300 == 0) {
         GLenum err = glGetError();

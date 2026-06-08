@@ -34,6 +34,33 @@ constexpr int kAlwaysSubdivideUntilZoom = 2;
 constexpr size_t kMaxRenderedNodes = 1000;
 constexpr double kOpenGlobusMaxHorizonDistanceSquared = 106876472875.63281;
 
+int openGlobusGroupBaseY(int group, int tilesAtZoom) {
+    return group * tilesAtZoom;
+}
+
+int openGlobusGroupForY(int y, int tilesAtZoom) {
+    if (y >= 2 * tilesAtZoom) return 2;
+    if (y >= tilesAtZoom) return 1;
+    return 0;
+}
+
+int childYForTile(const TileKey& key, int childLocalYOffset) {
+    if (key.schemeId != "OpenGlobus-Earth") {
+        return key.y * 2 + childLocalYOffset;
+    }
+
+    const int tilesAtZoom = 1 << key.z;
+    const int childTilesAtZoom = 1 << (key.z + 1);
+    const int group = openGlobusGroupForY(key.y, tilesAtZoom);
+    const int localY = std::clamp(
+        key.y - openGlobusGroupBaseY(group, tilesAtZoom),
+        0,
+        tilesAtZoom - 1);
+    return openGlobusGroupBaseY(group, childTilesAtZoom) +
+           localY * 2 +
+           childLocalYOffset;
+}
+
 double normalizeLongitude(double lngRad) {
     double x = std::fmod(lngRad + glm::pi<double>(), glm::two_pi<double>());
     if (x < 0.0) x += glm::two_pi<double>();
@@ -252,8 +279,11 @@ void updateTileTransitions(const std::vector<TileNode*>& renderedNodes, TilePlan
 
 void applyOpenGlobusEqualZoomPass(const TileScheme& scheme,
                                   const Camera& camera,
+                                  const Frustum& frustum,
                                   double viewportWidthPixels,
                                   double viewportHeightPixels,
+                                  double cameraLongitudeRad,
+                                  double cameraLatitudeRad,
                                   TilePlan& plan,
                                   std::vector<TileNode*>& renderedNodes) {
     if (renderedNodes.empty()) return;
@@ -280,8 +310,12 @@ void applyOpenGlobusEqualZoomPass(const TileScheme& scheme,
 
         node->renderToZoom(scheme,
                            camera,
+                           frustum,
                            viewportWidthPixels,
                            viewportHeightPixels,
+                           cameraLongitudeRad,
+                           cameraLatitudeRad,
+                           node->cameraInside(),
                            maxZoom,
                            true,
                            kMaxRenderedNodes,
@@ -323,22 +357,23 @@ void TileNode::ensureChildren(const TileScheme& scheme) {
 
     const int childZ = key_.z + 1;
     const int childX = key_.x * 2;
-    const int childY = key_.y * 2;
+    const int childY0 = childYForTile(key_, 0);
+    const int childY1 = childYForTile(key_, 1);
     children_[0] = std::make_unique<TileNode>(
-        TileKey{key_.schemeId, childZ, childX, childY},
-        scheme.tileToRectangle(TileKey{key_.schemeId, childZ, childX, childY}),
+        TileKey{key_.schemeId, childZ, childX, childY0},
+        scheme.tileToRectangle(TileKey{key_.schemeId, childZ, childX, childY0}),
         this);
     children_[1] = std::make_unique<TileNode>(
-        TileKey{key_.schemeId, childZ, childX + 1, childY},
-        scheme.tileToRectangle(TileKey{key_.schemeId, childZ, childX + 1, childY}),
+        TileKey{key_.schemeId, childZ, childX + 1, childY0},
+        scheme.tileToRectangle(TileKey{key_.schemeId, childZ, childX + 1, childY0}),
         this);
     children_[2] = std::make_unique<TileNode>(
-        TileKey{key_.schemeId, childZ, childX, childY + 1},
-        scheme.tileToRectangle(TileKey{key_.schemeId, childZ, childX, childY + 1}),
+        TileKey{key_.schemeId, childZ, childX, childY1},
+        scheme.tileToRectangle(TileKey{key_.schemeId, childZ, childX, childY1}),
         this);
     children_[3] = std::make_unique<TileNode>(
-        TileKey{key_.schemeId, childZ, childX + 1, childY + 1},
-        scheme.tileToRectangle(TileKey{key_.schemeId, childZ, childX + 1, childY + 1}),
+        TileKey{key_.schemeId, childZ, childX + 1, childY1},
+        scheme.tileToRectangle(TileKey{key_.schemeId, childZ, childX + 1, childY1}),
         this);
 }
 
@@ -432,6 +467,7 @@ void TileNode::markRenderingTransition() {
 
 void TileNode::traverse(const TileScheme& scheme,
                         const Camera& camera,
+                        const Frustum& frustum,
                         double viewportWidthPixels,
                         double viewportHeightPixels,
                         double cameraLongitudeRad,
@@ -444,7 +480,6 @@ void TileNode::traverse(const TileScheme& scheme,
         return;
     }
 
-    const Frustum frustum = camera.frustum(viewportWidthPixels, viewportHeightPixels);
     cameraInside_ = parentCameraInside &&
                     containsCartographic(cameraLongitudeRad, cameraLatitudeRad);
     if (frustum.intersectsSphere(boundingCenter_, boundingRadiusMeters_)) {
@@ -479,6 +514,7 @@ void TileNode::traverse(const TileScheme& scheme,
     for (auto& child : children_) {
         child->traverse(scheme,
                         camera,
+                        frustum,
                         viewportWidthPixels,
                         viewportHeightPixels,
                         cameraLongitudeRad,
@@ -492,21 +528,31 @@ void TileNode::traverse(const TileScheme& scheme,
 
 void TileNode::renderToZoom(const TileScheme& scheme,
                             const Camera& camera,
+                            const Frustum& frustum,
                             double viewportWidthPixels,
                             double viewportHeightPixels,
+                            double cameraLongitudeRad,
+                            double cameraLatitudeRad,
+                            bool parentCameraInside,
                             int targetZoom,
                             bool stopAtHorizon,
                             size_t maxRenderedTiles,
                             std::vector<TileKey>& out,
                             std::vector<TileNode*>& renderedNodes) {
     if (out.size() >= maxRenderedTiles) return;
+    cameraInside_ = parentCameraInside &&
+                    containsCartographic(cameraLongitudeRad, cameraLatitudeRad);
+    inFrustumMask_ = frustum.intersectsSphere(boundingCenter_, boundingRadiusMeters_) ? 1 : 0;
+    const bool visible = inFrustumMask_ || cameraInside_ || key_.z < 3;
+    if (!visible) {
+        state_ = TileNodeState::NotRendering;
+        return;
+    }
     if (stopAtHorizon && !isAltitudeVisible(camera) && !cameraInside_) {
         state_ = TileNodeState::NotRendering;
         return;
     }
 
-    const Frustum frustum = camera.frustum(viewportWidthPixels, viewportHeightPixels);
-    inFrustumMask_ = frustum.intersectsSphere(boundingCenter_, boundingRadiusMeters_) ? 1 : 0;
     if (key_.z >= targetZoom || key_.z >= scheme.maxZoom()) {
         state_ = TileNodeState::Rendering;
         markRenderingTransition();
@@ -520,8 +566,12 @@ void TileNode::renderToZoom(const TileScheme& scheme,
     for (auto& child : children_) {
         child->renderToZoom(scheme,
                             camera,
+                            frustum,
                             viewportWidthPixels,
                             viewportHeightPixels,
+                            cameraLongitudeRad,
+                            cameraLatitudeRad,
+                            cameraInside_,
                             targetZoom,
                             stopAtHorizon,
                             maxRenderedTiles,
@@ -532,18 +582,28 @@ void TileNode::renderToZoom(const TileScheme& scheme,
 
 void TileQuadTree::resetIfSchemeChanged(const TileScheme& scheme) {
     if (schemeId_ == scheme.id()) return;
-    root_.reset();
+    roots_.clear();
     schemeId_ = scheme.id();
     createdNodeCount_ = 0;
 }
 
 void TileQuadTree::ensureRoot(const TileScheme& scheme) {
     resetIfSchemeChanged(scheme);
-    if (root_) return;
-    TileKey rootKey{scheme.id(), 0, 0, 0};
-    root_ = std::make_unique<TileNode>(
-        rootKey, scheme.tileToRectangle(rootKey), nullptr);
-    createdNodeCount_ = 1;
+    if (!roots_.empty()) return;
+
+    if (scheme.id() == "OpenGlobus-Earth") {
+        for (int rootY = 0; rootY < 3; ++rootY) {
+            TileKey rootKey{scheme.id(), 0, 0, rootY};
+            roots_.push_back(std::make_unique<TileNode>(
+                rootKey, scheme.tileToRectangle(rootKey), nullptr));
+        }
+    } else {
+        TileKey rootKey{scheme.id(), 0, 0, 0};
+        roots_.push_back(std::make_unique<TileNode>(
+            rootKey, scheme.tileToRectangle(rootKey), nullptr));
+    }
+
+    createdNodeCount_ = static_cast<int>(roots_.size());
 }
 
 TilePlan TileQuadTree::compute(const Camera& camera,
@@ -553,7 +613,9 @@ TilePlan TileQuadTree::compute(const Camera& camera,
                                int previousZoom) {
     TilePlan plan;
     ensureRoot(scheme);
-    root_->resetFrameState();
+    for (auto& root : roots_) {
+        root->resetFrameState();
+    }
     std::vector<TileNode*> renderedNodes;
 
     Vec3 camPos = camera.position();
@@ -562,17 +624,21 @@ TilePlan TileQuadTree::compute(const Camera& camera,
 
     const Cartographic subCamera = Ellipsoid::WGS84().cartesianToCartographic(
         camera.position().normalized() * kEarthRadius);
+    const Frustum frustum = camera.frustum(viewportWidthPixels, viewportHeightPixels);
 
-    root_->traverse(scheme,
-                    camera,
-                    viewportWidthPixels,
-                    viewportHeightPixels,
-                    subCamera.longitude(),
-                    subCamera.latitude(),
-                    true,
-                    kMaxRenderedNodes,
-                    plan.visibleTiles,
-                    renderedNodes);
+    for (auto& root : roots_) {
+        root->traverse(scheme,
+                       camera,
+                       frustum,
+                       viewportWidthPixels,
+                       viewportHeightPixels,
+                       subCamera.longitude(),
+                       subCamera.latitude(),
+                       true,
+                       kMaxRenderedNodes,
+                       plan.visibleTiles,
+                       renderedNodes);
+    }
 
     plan.lodSizePixels = std::clamp(
         openglobusLodSizePixels(camera),
@@ -586,8 +652,11 @@ TilePlan TileQuadTree::compute(const Camera& camera,
         plan.equalZoomApplied = true;
         applyOpenGlobusEqualZoomPass(scheme,
                                       camera,
+                                      frustum,
                                       viewportWidthPixels,
                                       viewportHeightPixels,
+                                      subCamera.longitude(),
+                                      subCamera.latitude(),
                                       plan,
                                       renderedNodes);
         dedupeAndUpdateZoomStats(plan);
@@ -595,12 +664,17 @@ TilePlan TileQuadTree::compute(const Camera& camera,
             plan.equalZoomApplied = true;
         }
     }
-    accumulateNodeStats(root_.get(), plan);
+    for (const auto& root : roots_) {
+        accumulateNodeStats(root.get(), plan);
+    }
     accumulateTileGroupStats(plan);
     accumulateNeighborStats(renderedNodes, plan);
     updateTileTransitions(renderedNodes, plan);
 
-    createdNodeCount_ = root_ ? root_->subtreeNodeCount() : 0;
+    createdNodeCount_ = 0;
+    for (const auto& root : roots_) {
+        createdNodeCount_ += root ? root->subtreeNodeCount() : 0;
+    }
     lastVisitedNodeCount_ = static_cast<int>(renderedNodes.size());
     return plan;
 }

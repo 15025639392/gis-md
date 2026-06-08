@@ -41,13 +41,14 @@
 - SurfaceTile terrain 已默认生成 skirt 作为不同 LOD/未齐备邻接瓦片时的接缝降级策略；当前还不是完整邻接边高程 reconciliation。
 - `SurfaceVertex` 已保存 CPU double ECEF authoritative position，同时拆分 `positionHighEcef` / `positionLowEcef`，为后续 shader high/low split 或更严格 camera-relative 上传提供契约。
 - `LayerTilePlan` 已区分 `Ready`、`ParentFallback`、`Missing`，parent fallback tile 带 `transitionOpacity`；Diagnostics 已暴露 imagery/terrain transition 和 readiness 计数。
+- `LayerTilePlan` 的 imagery 请求已按 OpenGlobus material readiness 语义改为父链先行：高 zoom target 缺纹理时，`requestTiles` 选择从 root 到 target 的第一个缺失且 provider 支持的祖先 tile，并跨 visible leaves 去重；只有父级 fallback 链稳定后才逐步追 exact texture，避免把 `visibleTiles` 直接当作高层级请求风暴。实际 provider 请求启动受 OpenGlobus `loadingBatchSize=12` 对应的 in-flight 预算约束，避免 layer 在高 zoom 期间无限制创建网络/解码线程。
 - `ImageryProvider` 已增加 `supportsTile` 与 `providerKeyForTile` 门禁；`XYZImageryProvider` 必须显式启用 OpenGlobus grouped-y 才会请求三分区 tile，并支持 `{tileGroup}` / `{groupedY}` URL 模板占位。
-- SurfaceTile normal map 已按 OpenGlobus 数据语义接入：从 surface mesh 的 ECEF/world normal 派生 RGBA8 normal texture，作为 SurfaceTile command 的第二纹理绑定，shader 解码后参与光照；无 normal map 时回退顶点法线。
+- SurfaceTile normal map 已按 OpenGlobus 数据语义接入：从 surface mesh 的 ECEF/world normal 派生 RGBA8 normal texture，作为 SurfaceTile command 的第二纹理绑定，shader 解码后参与光照；无 normal map 时回退顶点法线。对齐 OpenGlobus 后，normal map 是 terrain/segment readiness 或显式 debug 能力，不是每个 ellipsoid 底图 tile 的默认同步资源；ellipsoid SurfaceTile 默认使用顶点法线，避免高 zoom 下把普通影像瓦片误升级成 terrain normal-map 工作负载。
 
 ## 仍未完成的 OpenGlobus 行为级对齐
 
 - SurfaceTile terrain 已按 target tile key 查找 exact terrain tile，并沿父链查找 parent fallback terrain tile；parent fallback 已按父 tile bounds 裁剪采样；已用 skirt 作为接缝降级策略。尚未实现完整邻接 seam stitching/edge height reconciliation，因为还缺少跨 tile 邻接 terrain registry 与边高程同步接口。
-- normal map 已实现派生纹理、上传和 shader 采样；与 OpenGlobus 的差异是当前在 CPU 侧编码 RGBA8 后上传，而 OpenGlobus 使用 `NormalMapCreator` framebuffer pass 把 normal 数组渲染成 texture，并可选 blur。
+- normal map 已实现派生纹理、上传和 shader 采样；与 OpenGlobus 的差异是当前在 CPU 侧编码 RGBA8 后上传，而 OpenGlobus 使用 `NormalMapCreator` framebuffer pass 把 normal 数组渲染成 texture，并可选 blur。后续若启用 terrain normal map，应继续演进为独立队列/每帧预算消费，而不是在 `SurfaceTileCommand` 构建路径里无条件同步创建。
 - high/low split 已在 CPU SurfaceVertex 契约中落地；GPU vertex attribute / shader 侧 high-low 上传仍待 `shader-interface.md` 对应扩展。
 - OpenGlobus Earth 三分区 scheme 已实现编码、bounds、极区 surface 采样、provider compatibility 和 grouped-y URL 映射；debug overlay 文本和更细的 tile availability 区域/层级矩阵仍待完善。
 - LOD 已有 projected-size 与节点统计，LayerPlan 已有 transition/readiness 状态；尚未完整实现 OpenGlobus rendered nodes 邻接事件、terrain readiness observer 和 min/max visible zoom 事件。

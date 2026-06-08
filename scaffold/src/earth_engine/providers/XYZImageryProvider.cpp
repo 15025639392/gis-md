@@ -89,13 +89,19 @@ void XYZImageryProvider::setOpenGlobusGroupedY(bool enabled) {
     }
 }
 
+void XYZImageryProvider::setOpenGlobusPolarGroupsEnabled(bool enabled) {
+    openGlobusPolarGroupsEnabled_ = enabled;
+}
+
 bool XYZImageryProvider::supportsTile(const TileKey& key) const {
     if (key.z < minZoom_ || key.z > maxZoom_) return false;
     if (key.schemeId != schemeId_) return false;
     if (!openGlobusGroupedY_) return key.schemeId == "XYZ-WebMercator";
 
     const int tilesAtZoom = 1 << key.z;
-    return key.y >= 0 && key.y < 3 * tilesAtZoom;
+    if (key.y < 0 || key.y >= 3 * tilesAtZoom) return false;
+    if (!openGlobusPolarGroupsEnabled_ && key.y >= tilesAtZoom) return false;
+    return true;
 }
 
 TileKey XYZImageryProvider::providerKeyForTile(const TileKey& key) const {

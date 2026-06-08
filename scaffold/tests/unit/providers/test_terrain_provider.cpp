@@ -122,3 +122,17 @@ TEST(XYZImageryProviderTest, OpenGlobusGroupedYMapsUrlLocalYAndExposesGroup) {
     EXPECT_EQ("https://example.com/north/3/4/4?gy=12", provider.buildUrl(north));
     EXPECT_EQ("https://example.com/south/3/4/4?gy=20", provider.buildUrl(south));
 }
+
+TEST(XYZImageryProviderTest, OpenGlobusGroupedYCanRejectPolarGroupsWhenProviderLacksPolarCoverage) {
+    XYZImageryProvider provider("https://example.com/{z}/{x}/{y}.png");
+    provider.setOpenGlobusGroupedY(true);
+    provider.setOpenGlobusPolarGroupsEnabled(false);
+
+    TileKey mercator{"OpenGlobus-Earth", 3, 4, 4};
+    TileKey north{"OpenGlobus-Earth", 3, 4, 12};
+    TileKey south{"OpenGlobus-Earth", 3, 4, 20};
+
+    EXPECT_TRUE(provider.supportsTile(mercator));
+    EXPECT_FALSE(provider.supportsTile(north));
+    EXPECT_FALSE(provider.supportsTile(south));
+}

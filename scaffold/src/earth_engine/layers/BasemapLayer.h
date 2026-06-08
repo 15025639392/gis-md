@@ -91,6 +91,7 @@ public:
     int parentFallbackAttachmentCount() const;
     int missingImageryTileCount() const { return layerPlan_.missingTileCount; }
     int transitionTileCount() const { return layerPlan_.transitionTileCount; }
+    double lodSizePixels() const { return layerPlan_.lodSizePixels; }
     int quadtreeFadingNodeCount() const { return layerPlan_.quadtreeFadingNodeCount; }
     int quadtreeNeighborLinkCount() const { return layerPlan_.quadtreeNeighborLinkCount; }
     int quadtreeRenderingNodeCount() const { return layerPlan_.quadtreeRenderingNodeCount; }
@@ -99,6 +100,9 @@ public:
     int quadtreeCameraInsideNodeCount() const { return layerPlan_.quadtreeCameraInsideNodeCount; }
     int quadtreeInFrustumNodeCount() const { return layerPlan_.quadtreeInFrustumNodeCount; }
     int quadtreeEqualZoomApplied() const { return layerPlan_.equalZoomApplied ? 1 : 0; }
+    int mercatorTileCount() const { return tilePlan_.mercatorTileCount; }
+    int northPolarTileCount() const { return tilePlan_.northPolarTileCount; }
+    int southPolarTileCount() const { return tilePlan_.southPolarTileCount; }
     int terrainReadySurfaceMeshCount() const;
     int terrainTransitionSurfaceMeshCount() const;
     int normalMapTextureCount() const;
@@ -117,7 +121,9 @@ private:
     void processPendingUploads();
     void rebuildLayerPlan();
     Texture* findFallbackTexture(const TileKey& target, TileKey& textureKey);
+    bool findRequestTileForMissingTexture(const TileKey& target, TileKey& requestKey) const;
     bool isCurrentDesiredTile(const TileKey& key) const;
+    bool isCurrentPlanTileOrAncestor(const TileKey& key) const;
     struct SurfaceGpuMesh {
         std::unique_ptr<Buffer> vertexBuffer;
         std::unique_ptr<Buffer> indexBuffer;

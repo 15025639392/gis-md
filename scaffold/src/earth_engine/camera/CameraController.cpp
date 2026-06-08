@@ -16,6 +16,8 @@ constexpr double kMaxInertiaAngularVelocityRadPerSec = 5.0;
 constexpr double kInertiaDampingPerSecond = 3.0;
 constexpr double kVelocitySmoothing = 0.35;
 constexpr double kEarthRadiusMeters = 6378137.0;
+constexpr float kMinDistanceEarthRadii = 1.05f;
+constexpr float kMaxDistanceEarthRadii = 30.0f;
 
 glm::dvec3 cartographicNormal(double lngDeg, double latDeg) {
     const double lng = glm::radians(lngDeg);
@@ -125,11 +127,12 @@ void CameraController::onPinchGesture(float scale,
         pinchAnchorNormal_ = anchorPoint.normalized();
     }
 
-    constexpr float kMinDistance = 2.4f;
-    constexpr float kMaxDistance = 12.0f;
     inertiaAngularVelocity_ = 0.0;
 
-    distance_ = std::clamp(distance_ / scale, kMinDistance, kMaxDistance);
+    distance_ = std::clamp(
+        distance_ / scale,
+        kMinDistanceEarthRadii,
+        kMaxDistanceEarthRadii);
 
     if (hasPinchAnchor_) {
         if (std::abs(rotationRadians) > 1e-5f) {
@@ -204,7 +207,10 @@ void CameraController::update(double deltaSeconds) {
 }
 
 void CameraController::setDistance(float earthRadii) {
-    distance_ = std::clamp(earthRadii, 2.4f, 12.0f);
+    distance_ = std::clamp(
+        earthRadii,
+        kMinDistanceEarthRadii,
+        kMaxDistanceEarthRadii);
     inertiaAngularVelocity_ = 0.0;
 }
 

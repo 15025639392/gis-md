@@ -179,6 +179,10 @@ if(ANDROID)
     if(LOG_LIBRARY)
         target_link_libraries(earth_engine_core PRIVATE ${LOG_LIBRARY})
     endif()
+    find_library(JNIGRAPHICS_LIBRARY jnigraphics)
+    if(JNIGRAPHICS_LIBRARY)
+        target_link_libraries(earth_engine_core PRIVATE ${JNIGRAPHICS_LIBRARY})
+    endif()
 elseif(APPLE)
     # iOS / macOS
     target_sources(earth_engine_core PRIVATE

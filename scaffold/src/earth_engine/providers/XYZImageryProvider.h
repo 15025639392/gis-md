@@ -38,6 +38,7 @@ public:
     void setTileSize(int width, int height);
     void setSchemeId(std::string schemeId);
     void setOpenGlobusGroupedY(bool enabled);
+    void setOpenGlobusPolarGroupsEnabled(bool enabled);
 
     std::string buildUrl(const TileKey& key) const override;
     bool supportsTile(const TileKey& key) const override;
@@ -63,6 +64,7 @@ private:
     int tileHeight_ = 256;
     std::string schemeId_ = "XYZ-WebMercator";
     bool openGlobusGroupedY_ = false;
+    bool openGlobusPolarGroupsEnabled_ = true;
     PlatformBridge* platformBridge_ = nullptr;
 };
 

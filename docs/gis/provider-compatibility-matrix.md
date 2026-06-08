@@ -82,6 +82,7 @@ controlPoints: required before using for spatial acceptance
 maturity: mvp-tested for Android visual basemap only
 knownIssues:
   Visual loading verified on Android MinimalGlobe.
+  Android MinimalGlobe may use OpenGlobus-Earth geometry, but Gaode imagery coverage is Mercator-band only; polar grouped-y requests must be disabled.
   Provider policy/auth/rate limits still require product/legal confirmation.
   WGS84 vector/terrain overlays must not be accepted against this basemap until GCJ-02 control points are tested.
 ```
@@ -148,6 +149,7 @@ controlPoints:
   -88S at z=4 must roundtrip inside a south polar tile.
 knownIssues:
   XYZImageryProvider must enable OpenGlobus grouped-y explicitly before requests.
+  Providers that only expose WebMercator/XYZ imagery must disable polar-group availability instead of folding polar y back to ordinary XYZ URLs.
   URL templates may use {tileGroup}, {groupedY}, and local {y}.
   Fine-grained polar imagery availability by zoom/region is not complete yet.
 ```

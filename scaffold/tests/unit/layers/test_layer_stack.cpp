@@ -9,6 +9,7 @@
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
+#include "earth_engine/renderer/Renderer.h"
 #include "earth_engine/renderer/RenderDevice.h"
 
 using namespace earth_engine;
@@ -56,6 +57,33 @@ public:
     bool supportsTile(const TileKey&) const override { return false; }
 };
 
+class CountingProvider : public StubProvider {
+public:
+    explicit CountingProvider(bool returnsImage = false)
+        : StubProvider("counting", "XYZ-WebMercator"),
+          returnsImage_(returnsImage) {}
+
+    void requestTile(const TileKey& key, CancellationToken,
+                     TileCallback callback) override {
+        requestedKeys.push_back(key);
+        if (returnsImage_) {
+            auto image = std::make_unique<DecodedImage>();
+            image->width = 1;
+            image->height = 1;
+            image->channels = 4;
+            image->pixels = {255, 255, 255, 255};
+            callback(key, std::move(image));
+            return;
+        }
+        callback(key, nullptr);
+    }
+
+    std::vector<TileKey> requestedKeys;
+
+private:
+    bool returnsImage_ = false;
+};
+
 class FakeTexture : public Texture {
 public:
     FakeTexture(int width, int height) : width_(width), height_(height) {}
@@ -65,6 +93,15 @@ public:
 private:
     int width_;
     int height_;
+};
+
+class FakeBuffer : public Buffer {
+public:
+    explicit FakeBuffer(size_t size) : size_(size) {}
+    size_t size() const override { return size_; }
+
+private:
+    size_t size_ = 0;
 };
 
 class FakeRenderDevice : public RenderDevice {
@@ -82,7 +119,8 @@ public:
     }
 
     std::unique_ptr<Buffer> createBuffer(const BufferDesc&) override {
-        return nullptr;
+        ++bufferCreates;
+        return std::make_unique<FakeBuffer>(1);
     }
 
     std::unique_ptr<ShaderProgram> createShader(const ShaderDesc&) override {
@@ -101,6 +139,7 @@ public:
     void onSurfaceDestroyed() override {}
 
     int textureCreates = 0;
+    int bufferCreates = 0;
 };
 
 } // anonymous namespace
@@ -242,10 +281,21 @@ TEST_F(BasemapLayerStackTest, LayerPlanSeparatesDesiredRequestAndRenderTiles) {
     EXPECT_TRUE(plan.renderTiles.empty());
     EXPECT_TRUE(plan.fallbackTiles.empty());
 
-    std::unordered_set<TileKey> desired(plan.desiredTiles.begin(),
-                                        plan.desiredTiles.end());
     for (const TileKey& key : plan.requestTiles) {
-        EXPECT_TRUE(desired.find(key) != desired.end());
+        bool isDesiredOrAncestor = false;
+        for (const TileKey& desired : plan.desiredTiles) {
+            TileKey candidate = desired;
+            while (true) {
+                if (candidate == key) {
+                    isDesiredOrAncestor = true;
+                    break;
+                }
+                if (candidate.z <= layer->tileScheme().minZoom()) break;
+                candidate = TilePlanBuilder::parentKey(candidate);
+            }
+            if (isDesiredOrAncestor) break;
+        }
+        EXPECT_TRUE(isDesiredOrAncestor);
     }
 }
 
@@ -264,8 +314,9 @@ TEST_F(BasemapLayerStackTest, BasemapLayerTrustsTilePlanVisibilityWithoutSecondC
     layer->applyPlan(plan, Vec3(radius * 3.0, 0.0, 0.0));
 
     const LayerTilePlan& layerPlan = layer->layerPlan();
-    ASSERT_EQ(2u, layerPlan.requestTiles.size());
-    EXPECT_EQ(plan.visibleTiles, layerPlan.requestTiles);
+    const TileKey rootKey{"XYZ-WebMercator", 0, 0, 0};
+    ASSERT_EQ(1u, layerPlan.requestTiles.size());
+    EXPECT_EQ(rootKey, layerPlan.requestTiles.front());
     EXPECT_TRUE(layerPlan.renderTiles.empty());
 }
 
@@ -340,14 +391,12 @@ TEST_F(BasemapLayerStackTest, BasemapLayerKeepsTileGenerationAcrossFrameIds) {
 
     TilePlan plan;
     plan.frameId = 1;
-    plan.zoom = 3;
+    plan.zoom = 0;
     plan.visibleTiles = {
-        TileKey{"XYZ-WebMercator", 3, 4, 3},
-        TileKey{"XYZ-WebMercator", 3, 5, 3},
+        TileKey{"XYZ-WebMercator", 0, 0, 0},
     };
     plan.tileTransitions = {
-        TileTransition{TileKey{"XYZ-WebMercator", 3, 4, 3}, 0.4f, 1},
-        TileTransition{TileKey{"XYZ-WebMercator", 3, 5, 3}, 1.0f, 0},
+        TileTransition{TileKey{"XYZ-WebMercator", 0, 0, 0}, 0.4f, 1},
     };
 
     constexpr double radius = 6378137.0;
@@ -359,13 +408,164 @@ TEST_F(BasemapLayerStackTest, BasemapLayerKeepsTileGenerationAcrossFrameIds) {
     nextFrame.frameId = 2;
     layer->applyPlan(nextFrame, cameraPosition);
 
-    EXPECT_EQ(2, device.textureCreates);
-    EXPECT_EQ(2, layer->cachedTileCount());
-    EXPECT_EQ(2, layer->renderTileCount());
-    EXPECT_EQ(2, layer->exactAttachmentCount());
-    ASSERT_EQ(2u, layer->layerPlan().renderTiles.size());
+    EXPECT_EQ(1, device.textureCreates);
+    EXPECT_EQ(1, layer->cachedTileCount());
+    EXPECT_EQ(1, layer->renderTileCount());
+    EXPECT_EQ(1, layer->exactAttachmentCount());
+    ASSERT_EQ(1u, layer->layerPlan().renderTiles.size());
     EXPECT_FLOAT_EQ(0.4f, layer->layerPlan().renderTiles[0].transitionOpacity);
-    EXPECT_FLOAT_EQ(1.0f, layer->layerPlan().renderTiles[1].transitionOpacity);
+}
+
+TEST_F(BasemapLayerStackTest, MissingHighZoomTilesRequestFirstMissingParentOnce) {
+    auto provider = std::make_unique<CountingProvider>();
+    auto* providerPtr = provider.get();
+    auto layer = std::make_unique<BasemapLayer>(
+        std::move(provider),
+        TileScheme::createXYZWebMercator(),
+        nullptr);
+
+    TilePlan plan;
+    plan.frameId = 11;
+    plan.zoom = 8;
+    for (int i = 0; i < 20; ++i) {
+        plan.visibleTiles.push_back(TileKey{"XYZ-WebMercator", 8, i, 120});
+    }
+
+    constexpr double radius = 6378137.0;
+    layer->applyPlan(plan, Vec3(radius * 2.0, 0.0, 0.0));
+    layer->loadMissingTiles();
+
+    const TileKey rootKey{"XYZ-WebMercator", 0, 0, 0};
+    ASSERT_EQ(1u, layer->layerPlan().requestTiles.size());
+    EXPECT_EQ(rootKey, layer->layerPlan().requestTiles.front());
+    ASSERT_EQ(1u, providerPtr->requestedKeys.size());
+    EXPECT_EQ(rootKey, providerPtr->requestedKeys.front());
+}
+
+TEST_F(BasemapLayerStackTest, LoadMissingTilesDoesNotDuplicateInFlightRequests) {
+    auto provider = std::make_unique<CountingProvider>();
+    auto* providerPtr = provider.get();
+    auto layer = std::make_unique<BasemapLayer>(
+        std::move(provider),
+        TileScheme::createXYZWebMercator(),
+        nullptr);
+
+    TilePlan plan;
+    plan.frameId = 12;
+    plan.zoom = 6;
+    for (int i = 0; i < 6; ++i) {
+        plan.visibleTiles.push_back(TileKey{"XYZ-WebMercator", 6, i, 30});
+    }
+
+    constexpr double radius = 6378137.0;
+    layer->applyPlan(plan, Vec3(radius * 2.0, 0.0, 0.0));
+    layer->loadMissingTiles();
+    layer->loadMissingTiles();
+
+    const TileKey rootKey{"XYZ-WebMercator", 0, 0, 0};
+    ASSERT_EQ(1u, providerPtr->requestedKeys.size());
+    EXPECT_EQ(rootKey, providerPtr->requestedKeys.front());
+}
+
+TEST_F(BasemapLayerStackTest, AncestorRequestUploadIsAcceptedForHighZoomDesiredTiles) {
+    FakeRenderDevice device;
+    auto provider = std::make_unique<CountingProvider>(true);
+    auto* providerPtr = provider.get();
+    auto layer = std::make_unique<BasemapLayer>(
+        std::move(provider),
+        TileScheme::createXYZWebMercator(),
+        &device);
+
+    TilePlan plan;
+    plan.frameId = 13;
+    plan.zoom = 6;
+    plan.visibleTiles = {
+        TileKey{"XYZ-WebMercator", 6, 12, 30},
+        TileKey{"XYZ-WebMercator", 6, 13, 30}
+    };
+
+    constexpr double radius = 6378137.0;
+    const Vec3 cameraPosition(radius * 2.0, 0.0, 0.0);
+    layer->applyPlan(plan, cameraPosition);
+    layer->loadMissingTiles();
+
+    TilePlan nextFrame = plan;
+    nextFrame.frameId = 14;
+    layer->applyPlan(nextFrame, cameraPosition);
+
+    const TileKey rootKey{"XYZ-WebMercator", 0, 0, 0};
+    ASSERT_EQ(1u, providerPtr->requestedKeys.size());
+    EXPECT_EQ(rootKey, providerPtr->requestedKeys.front());
+    EXPECT_EQ(1, device.textureCreates);
+    EXPECT_EQ(1, layer->cachedTileCount());
+    EXPECT_EQ(2, layer->parentFallbackAttachmentCount());
+}
+
+TEST_F(BasemapLayerStackTest, EllipsoidSurfaceTileUsesVertexNormalsByDefault) {
+    FakeRenderDevice device;
+    auto layer = std::make_unique<BasemapLayer>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        &device);
+
+    TilePlan plan;
+    plan.frameId = 20;
+    plan.zoom = 0;
+    plan.visibleTiles = {
+        TileKey{"XYZ-WebMercator", 0, 0, 0},
+    };
+
+    constexpr double radius = 6378137.0;
+    const Vec3 cameraPosition(radius * 7.0, 0.0, 0.0);
+    layer->applyPlan(plan, cameraPosition);
+    layer->loadMissingTiles();
+
+    TilePlan nextFrame = plan;
+    nextFrame.frameId = 21;
+    layer->applyPlan(nextFrame, cameraPosition);
+
+    Renderer renderer(&device);
+    RenderCommandList commands;
+    layer->buildRenderCommands(renderer, nullptr, commands);
+
+    ASSERT_EQ(1u, commands.size());
+    EXPECT_EQ(1, device.textureCreates);
+    EXPECT_EQ(0, layer->normalMapTextureCount());
+    EXPECT_EQ(0.0f, commands.front().uniforms["u_useNormalMap"][0]);
+}
+
+TEST_F(BasemapLayerStackTest, NormalMapDebugExplicitlyCreatesEllipsoidNormalMap) {
+    FakeRenderDevice device;
+    auto layer = std::make_unique<BasemapLayer>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        &device);
+    layer->setNormalMapDebugEnabled(true);
+
+    TilePlan plan;
+    plan.frameId = 22;
+    plan.zoom = 0;
+    plan.visibleTiles = {
+        TileKey{"XYZ-WebMercator", 0, 0, 0},
+    };
+
+    constexpr double radius = 6378137.0;
+    const Vec3 cameraPosition(radius * 7.0, 0.0, 0.0);
+    layer->applyPlan(plan, cameraPosition);
+    layer->loadMissingTiles();
+
+    TilePlan nextFrame = plan;
+    nextFrame.frameId = 23;
+    layer->applyPlan(nextFrame, cameraPosition);
+
+    Renderer renderer(&device);
+    RenderCommandList commands;
+    layer->buildRenderCommands(renderer, nullptr, commands);
+
+    ASSERT_EQ(1u, commands.size());
+    EXPECT_EQ(2, device.textureCreates);
+    EXPECT_EQ(1, layer->normalMapTextureCount());
+    EXPECT_EQ(1.0f, commands.front().uniforms["u_useNormalMap"][0]);
 }
 
 TEST_F(BasemapLayerStackTest, DifferentSchemeIndependentTilePlan) {

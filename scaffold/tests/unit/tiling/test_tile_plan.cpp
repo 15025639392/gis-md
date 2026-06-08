@@ -94,6 +94,22 @@ TEST_F(TilePlanTest, ParentKeyFollowsExactChildLineage) {
     }
 }
 
+TEST(TilePlanOpenGlobusEarthTest, ParentKeyPreservesGroupedYLineage) {
+    TileKey northChild{"OpenGlobus-Earth", 4, 7, (1 << 4) + 9};
+    TileKey northParent = TilePlanBuilder::parentKey(northChild);
+    EXPECT_EQ("OpenGlobus-Earth", northParent.schemeId);
+    EXPECT_EQ(3, northParent.z);
+    EXPECT_EQ(3, northParent.x);
+    EXPECT_EQ((1 << 3) + 4, northParent.y);
+
+    TileKey southChild{"OpenGlobus-Earth", 4, 7, 2 * (1 << 4) + 9};
+    TileKey southParent = TilePlanBuilder::parentKey(southChild);
+    EXPECT_EQ("OpenGlobus-Earth", southParent.schemeId);
+    EXPECT_EQ(3, southParent.z);
+    EXPECT_EQ(3, southParent.x);
+    EXPECT_EQ(2 * (1 << 3) + 4, southParent.y);
+}
+
 TEST_F(TilePlanTest, AllTilesWithinSchemeBounds) {
     camera_->lookAt(Vec3(0, 0, 7000000), Vec3::zero(), Vec3::unitY());
 
@@ -283,4 +299,24 @@ TEST(TilePlanOpenGlobusEarthTest, ReportsPolarTileGroups) {
     EXPECT_EQ(static_cast<int>(plan.visibleTiles.size()),
               plan.mercatorTileCount + plan.northPolarTileCount +
               plan.southPolarTileCount);
+}
+
+TEST(TilePlanOpenGlobusEarthTest, PolarViewTraversesPolarRoot) {
+    auto scheme = TileScheme::createOpenGlobusEarth();
+    Camera camera;
+    camera.setPerspective(glm::radians(60.0), 1.0, 50000000.0);
+    camera.lookAt(Vec3(0, 0, 7000000), Vec3::zero(), Vec3::unitY());
+
+    TileQuadTree tree;
+    TilePlan plan = tree.compute(camera, *scheme, 800, 600);
+
+    ASSERT_GT(plan.visibleTiles.size(), 0u);
+    EXPECT_GT(plan.northPolarTileCount, 0);
+    for (const TileKey& key : plan.visibleTiles) {
+        const int tilesAtZoom = 1 << key.z;
+        if (key.y >= tilesAtZoom && key.y < 2 * tilesAtZoom) {
+            Rectangle bounds = scheme->tileToRectangle(key);
+            EXPECT_GT(bounds.north(), 85.0 * M_PI / 180.0);
+        }
+    }
 }

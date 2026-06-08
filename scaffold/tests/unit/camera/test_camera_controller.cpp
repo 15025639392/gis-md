@@ -69,13 +69,17 @@ TEST_F(CameraControllerTest, SetDistance) {
     controller_->setDistance(5.0f);
     EXPECT_FLOAT_EQ(5.0f, controller_->distance());
 
-    // 不应低于最小值
+    // 不应低于近地安全距离，避免相机穿入 WGS84 椭球。
     controller_->setDistance(1.0f);
-    EXPECT_GE(controller_->distance(), 2.4f);
+    EXPECT_GE(controller_->distance(), 1.05f);
 
-    // 不应超过最大值
+    // OpenGlobus-style globe navigation should allow much farther pullback than
+    // the previous demo-only 12R cap while staying inside the current far plane.
     controller_->setDistance(20.0f);
-    EXPECT_LE(controller_->distance(), 12.0f);
+    EXPECT_FLOAT_EQ(20.0f, controller_->distance());
+
+    controller_->setDistance(40.0f);
+    EXPECT_LE(controller_->distance(), 30.0f);
 }
 
 TEST_F(CameraControllerTest, DragChangesRotation) {

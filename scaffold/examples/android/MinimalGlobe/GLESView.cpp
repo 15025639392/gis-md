@@ -196,7 +196,9 @@ static bool createEngine() {
             auto xyz = std::make_unique<XYZImageryProvider>(
                 kGaodeSatelliteTemplate,
                 "Gaode/Amap satellite imagery");
-            xyz->setZoomRange(0, 18);
+            xyz->setZoomRange(0, 20);
+            xyz->setOpenGlobusGroupedY(true);
+            xyz->setOpenGlobusPolarGroupsEnabled(false);
             xyz->setPlatformBridge(gPlatformBridge.get());
             provider = std::move(xyz);
             LOGI("Gaode satellite provider enabled: %s", kGaodeSatelliteTemplate);
@@ -206,7 +208,9 @@ static bool createEngine() {
             LOGI("Debug standard XYZ WebMercator provider enabled");
         }
 
-        auto scheme = TileScheme::createXYZWebMercator();
+        auto scheme = kUseGaodeSatelliteForDemo
+            ? TileScheme::createOpenGlobusEarth()
+            : TileScheme::createXYZWebMercator();
         auto layer = std::make_unique<BasemapLayer>(
             std::move(provider), std::move(scheme), gRenderDevice.get());
         layer->setNormalMapDebugEnabled(kShowNormalMapForDemo);
@@ -281,6 +285,8 @@ static void renderFrame() {
         const auto& diag = gEngine->diagnostics();
         LOGI("Frame %d | tiles vis=%d cached=%d renderSurface=%d mesh=%d "
              "attach=%d exact=%d parent=%d normalMap=%d stale=%d missingGen=%d | "
+             "lod=%.0f eq=%d qRender=%d qWalk=%d qFrustum=%d qFade=%d "
+             "grp=%d/%d/%d gen=%llu | "
              "sun=(%.2f,%.2f,%.2f) | FPS=%.1f draw=%d",
              gFrameCount, diag.visibleTiles, diag.cachedTextures,
              diag.renderSurfaceTiles, diag.surfaceMeshCount,
@@ -288,6 +294,16 @@ static void renderFrame() {
              diag.imageryParentFallbackAttachments,
              diag.normalMapTextures,
              diag.staleSurfaceCommands, diag.missingGenerationSurfaceCommands,
+             diag.lodSizePixels,
+             diag.quadtreeEqualZoomLayers,
+             diag.quadtreeRenderingNodes,
+             diag.quadtreeWalkthroughNodes,
+             diag.quadtreeInFrustumNodes,
+             diag.quadtreeFadingNodes,
+             diag.mercatorTileCount,
+             diag.northPolarTileCount,
+             diag.southPolarTileCount,
+             static_cast<unsigned long long>(diag.maxSurfaceGeneration),
              sunDir.x(), sunDir.y(), sunDir.z(),
              diag.fps, diag.drawCalls);
     }
@@ -470,6 +486,66 @@ Java_com_earthengine_minimalglobe_GLESView_nativePinchRotateTilt(
     event.pointerType = InputEvent::PointerType::Touch;
     event.timestamp = androidUptimeSeconds();
     gEngine->onInputEvent(event);
+}
+
+JNIEXPORT void JNICALL
+Java_com_earthengine_minimalglobe_GLESView_nativeDebugZoom(
+    JNIEnv* /* env */, jobject /* this */,
+    jfloat scale, jint width, jint height) {
+    if (!gEngine) return;
+
+    const float centerX = static_cast<float>(width) * 0.5f;
+    const float centerY = static_cast<float>(height) * 0.5f;
+    const double ts = androidUptimeSeconds();
+
+    InputEvent start;
+    start.type = InputEvent::Type::PinchStart;
+    start.screenX = centerX;
+    start.screenY = centerY;
+    start.pinchScale = 1.0f;
+    start.pointerType = InputEvent::PointerType::Touch;
+    start.timestamp = ts;
+    gEngine->onInputEvent(start);
+
+    InputEvent move;
+    move.type = InputEvent::Type::PinchMove;
+    move.screenX = centerX;
+    move.screenY = centerY;
+    move.pinchScale = scale;
+    move.pointerType = InputEvent::PointerType::Touch;
+    move.timestamp = ts + 0.016;
+    gEngine->onInputEvent(move);
+
+    InputEvent end;
+    end.type = InputEvent::Type::PinchEnd;
+    end.screenX = centerX;
+    end.screenY = centerY;
+    end.pinchScale = 1.0f;
+    end.pointerType = InputEvent::PointerType::Touch;
+    end.timestamp = ts + 0.032;
+    gEngine->onInputEvent(end);
+
+    const auto& diag = gEngine->diagnostics();
+    LOGI("Debug zoom scale=%.2f | tiles vis=%d cached=%d renderSurface=%d "
+         "exact=%d parent=%d missing=%d lod=%.0f eq=%d qRender=%d qWalk=%d "
+         "qFrustum=%d grp=%d/%d/%d FPS=%.1f draw=%d",
+         scale,
+         diag.visibleTiles,
+         diag.cachedTextures,
+         diag.renderSurfaceTiles,
+         diag.imageryExactAttachments,
+         diag.imageryParentFallbackAttachments,
+         diag.imageryMissingTiles,
+         diag.lodSizePixels,
+         diag.quadtreeEqualZoomLayers,
+         diag.quadtreeRenderingNodes,
+         diag.quadtreeWalkthroughNodes,
+         diag.quadtreeInFrustumNodes,
+         diag.mercatorTileCount,
+         diag.northPolarTileCount,
+         diag.southPolarTileCount,
+         diag.fps,
+         diag.drawCalls);
 }
 
 JNIEXPORT void JNICALL

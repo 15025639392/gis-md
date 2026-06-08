@@ -4,6 +4,9 @@
 #include <mutex>
 #include <condition_variable>
 #include <unordered_map>
+#include <algorithm>
+#include <cstddef>
+#include <android/bitmap.h>
 #include <android/log.h>
 #include <jni.h>
 
@@ -156,7 +159,7 @@ std::string AndroidPlatformBridge::documentsDirectory() const {
 
 std::unique_ptr<DecodedImage> AndroidPlatformBridge::decodeImage(
     const uint8_t* data, size_t len) {
-    // 使用 Android BitmapFactory 解码（硬件加速）
+    // 使用 Android BitmapFactory 解码为 ARGB_8888，再显式拷贝为 RGBA8。
     JNIEnv* env = getJniEnv();
     if (!env) { detachJni(); return nullptr; }
 
@@ -165,68 +168,94 @@ std::unique_ptr<DecodedImage> AndroidPlatformBridge::decodeImage(
     env->SetByteArrayRegion(byteArray, 0, static_cast<jsize>(len),
                             reinterpret_cast<const jbyte*>(data));
 
-    // BitmapFactory.decodeByteArray(data, offset, length)
+    jclass configClass = env->FindClass("android/graphics/Bitmap$Config");
+    jfieldID argb8888Field = env->GetStaticFieldID(
+        configClass, "ARGB_8888", "Landroid/graphics/Bitmap$Config;");
+    jobject argb8888 = env->GetStaticObjectField(configClass, argb8888Field);
+
+    jclass optionsClass = env->FindClass("android/graphics/BitmapFactory$Options");
+    jmethodID optionsCtor = env->GetMethodID(optionsClass, "<init>", "()V");
+    jobject options = env->NewObject(optionsClass, optionsCtor);
+    jfieldID inPreferredConfig = env->GetFieldID(
+        optionsClass, "inPreferredConfig", "Landroid/graphics/Bitmap$Config;");
+    jfieldID inMutable = env->GetFieldID(optionsClass, "inMutable", "Z");
+    env->SetObjectField(options, inPreferredConfig, argb8888);
+    env->SetBooleanField(options, inMutable, JNI_TRUE);
+
+    if (clearPendingJniException(env, "BitmapFactory.Options setup")) {
+        env->DeleteLocalRef(byteArray);
+        if (options) env->DeleteLocalRef(options);
+        if (optionsClass) env->DeleteLocalRef(optionsClass);
+        if (argb8888) env->DeleteLocalRef(argb8888);
+        if (configClass) env->DeleteLocalRef(configClass);
+        detachJni();
+        return nullptr;
+    }
+
+    // BitmapFactory.decodeByteArray(data, offset, length, options)
     jclass bmpFactoryClass = env->FindClass("android/graphics/BitmapFactory");
     jmethodID decodeMethod = env->GetStaticMethodID(
         bmpFactoryClass, "decodeByteArray",
-        "([BII)Landroid/graphics/Bitmap;");
+        "([BIILandroid/graphics/BitmapFactory$Options;)Landroid/graphics/Bitmap;");
     jobject bitmap = env->CallStaticObjectMethod(
-        bmpFactoryClass, decodeMethod, byteArray, 0, static_cast<jint>(len));
+        bmpFactoryClass, decodeMethod, byteArray, 0, static_cast<jint>(len), options);
     env->DeleteLocalRef(byteArray);
     env->DeleteLocalRef(bmpFactoryClass);
+    env->DeleteLocalRef(options);
+    env->DeleteLocalRef(optionsClass);
+    env->DeleteLocalRef(argb8888);
+    env->DeleteLocalRef(configClass);
 
     if (!bitmap || clearPendingJniException(env, "BitmapFactory.decode")) {
+        LOGE("BitmapFactory failed to decode %zu bytes", len);
         detachJni();
         return nullptr;
     }
 
-    // 获取宽高
-    jclass bmpClass = env->FindClass("android/graphics/Bitmap");
-    jmethodID getWidth = env->GetMethodID(bmpClass, "getWidth", "()I");
-    jmethodID getHeight = env->GetMethodID(bmpClass, "getHeight", "()I");
-    int w = env->CallIntMethod(bitmap, getWidth);
-    int h = env->CallIntMethod(bitmap, getHeight);
-
-    if (w <= 0 || h <= 0) {
+    AndroidBitmapInfo info{};
+    if (AndroidBitmap_getInfo(env, bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS ||
+        info.width == 0 || info.height == 0) {
+        LOGE("AndroidBitmap_getInfo failed");
         env->DeleteLocalRef(bitmap);
-        env->DeleteLocalRef(bmpClass);
         detachJni();
         return nullptr;
     }
 
-    // bitmap.getPixels(pixels, offset, stride, x, y, width, height)
-    jintArray pixelArray = env->NewIntArray(w * h);
-    jmethodID getPixels = env->GetMethodID(
-        bmpClass, "getPixels", "([IIIIIII)V");
-    env->CallVoidMethod(bitmap, getPixels, pixelArray, 0, w, 0, 0, w, h);
+    if (info.format != ANDROID_BITMAP_FORMAT_RGBA_8888) {
+        LOGE("Unsupported bitmap format %u for decoded image", info.format);
+        env->DeleteLocalRef(bitmap);
+        detachJni();
+        return nullptr;
+    }
 
-    jint* jpixels = env->GetIntArrayElements(pixelArray, nullptr);
+    void* pixels = nullptr;
+    if (AndroidBitmap_lockPixels(env, bitmap, &pixels) != ANDROID_BITMAP_RESULT_SUCCESS ||
+        !pixels) {
+        LOGE("AndroidBitmap_lockPixels failed");
+        env->DeleteLocalRef(bitmap);
+        detachJni();
+        return nullptr;
+    }
 
     auto img = std::make_unique<DecodedImage>();
-    img->width = w;
-    img->height = h;
+    img->width = static_cast<int>(info.width);
+    img->height = static_cast<int>(info.height);
     img->channels = 4;
-    img->pixels.resize(static_cast<size_t>(w * h * 4));
+    img->pixels.resize(static_cast<size_t>(info.width * info.height * 4));
 
-    // Android Bitmap 格式是 ARGB，转为 RGBA
-    for (int i = 0; i < w * h; ++i) {
-        uint32_t argb = static_cast<uint32_t>(jpixels[i]);
-        uint8_t a = (argb >> 24) & 0xFF;
-        uint8_t r = (argb >> 16) & 0xFF;
-        uint8_t g = (argb >> 8) & 0xFF;
-        uint8_t b = argb & 0xFF;
-        img->pixels[i * 4 + 0] = r;
-        img->pixels[i * 4 + 1] = g;
-        img->pixels[i * 4 + 2] = b;
-        img->pixels[i * 4 + 3] = a;
+    const auto* src = static_cast<const uint8_t*>(pixels);
+    for (uint32_t y = 0; y < info.height; ++y) {
+        const uint8_t* row = src + static_cast<size_t>(y) * info.stride;
+        auto dst = img->pixels.begin() +
+            static_cast<ptrdiff_t>(static_cast<size_t>(y) * info.width * 4);
+        std::copy(row, row + static_cast<size_t>(info.width) * 4, dst);
     }
 
-    env->ReleaseIntArrayElements(pixelArray, jpixels, JNI_ABORT);
-    env->DeleteLocalRef(pixelArray);
+    AndroidBitmap_unlockPixels(env, bitmap);
     env->DeleteLocalRef(bitmap);
-    env->DeleteLocalRef(bmpClass);
     detachJni();
 
+    LOGI("Decoded image %dx%d from %zu bytes", img->width, img->height, len);
     return img;
 }
 

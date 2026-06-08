@@ -124,6 +124,7 @@ void BasemapLayer::applyPlan(const TilePlan& plan, const Vec3& cameraPosition) {
 void BasemapLayer::loadMissingTiles() {
     constexpr double kRetryBackoffSec = 2.0;
     constexpr int kMaxRetries = 3;
+    constexpr size_t kOpenGlobusLoadingBatchSize = 12;
 
     auto now = std::chrono::duration<double>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -138,6 +139,9 @@ void BasemapLayer::loadMissingTiles() {
     }
 
     for (const auto& key : layerPlan_.requestTiles) {
+        if (requestedGeneration_.size() >= kOpenGlobusLoadingBatchSize) {
+            break;
+        }
         std::string ck = tileCacheKey(key);
 
         auto it = failedTiles_.find(ck);
@@ -145,8 +149,7 @@ void BasemapLayer::loadMissingTiles() {
             if (it->second.retries >= kMaxRetries) continue;
             if (now - it->second.firstFailTime < kRetryBackoffSec) continue;
         }
-        auto requested = requestedGeneration_.find(ck);
-        if (requested != requestedGeneration_.end() && requested->second == generation_) {
+        if (requestedGeneration_.find(ck) != requestedGeneration_.end()) {
             continue;
         }
 
@@ -164,7 +167,6 @@ void BasemapLayer::loadTile(const TileKey& key) {
 
     provider_->requestTile(key, token,
         [queue, key, generation](const TileKey& k, std::unique_ptr<DecodedImage> image) {
-            if (!image) return;  // 失败由 loadMissingTiles 超时重试处理
             std::lock_guard<std::mutex> lock(queue->mutex);
             queue->queue.push_back({k, generation, std::move(image)});
         });
@@ -189,11 +191,24 @@ void BasemapLayer::processPendingUploads() {
     }
 
     for (auto& item : batch) {
-        if (item.generation != generation_) {
+        const std::string ck = tileCacheKey(item.key);
+        auto clearRequestIfCurrent = [&]() {
+            auto requested = requestedGeneration_.find(ck);
+            if (requested != requestedGeneration_.end() &&
+                requested->second == item.generation) {
+                requestedGeneration_.erase(requested);
+            }
+        };
+        if (!item.image) {
+            clearRequestIfCurrent();
             continue;
         }
-        if (!isCurrentDesiredTile(item.key)) {
-            requestedGeneration_.erase(tileCacheKey(item.key));
+        if (item.generation != generation_) {
+            clearRequestIfCurrent();
+            continue;
+        }
+        if (!isCurrentPlanTileOrAncestor(item.key)) {
+            clearRequestIfCurrent();
             continue;
         }
         auto& image = item.image;
@@ -213,9 +228,8 @@ void BasemapLayer::processPendingUploads() {
         auto texture = renderDevice_->createTexture(texDesc);
         if (texture) {
             // 成功上传 → 清除失败记录
-            std::string ck = tileCacheKey(item.key);
             failedTiles_.erase(ck);
-            requestedGeneration_.erase(ck);
+            clearRequestIfCurrent();
 #ifdef __ANDROID__
             __android_log_print(ANDROID_LOG_INFO, "BasemapLayer",
                 "Tile uploaded: %d/%d/%d %dx%d",
@@ -253,6 +267,7 @@ void BasemapLayer::rebuildLayerPlan() {
     layerPlan_.tileTransitions = tilePlan_.tileTransitions;
     layerPlan_.desiredTiles = tilePlan_.visibleTiles;
     layerPlan_.transitionTileCount += tilePlan_.fadingNodeCount;
+    std::unordered_set<TileKey> requestSet;
 
     for (const auto& key : layerPlan_.desiredTiles) {
         const float lodTransitionOpacity = transitionOpacityForTile(tilePlan_, key);
@@ -273,7 +288,8 @@ void BasemapLayer::rebuildLayerPlan() {
         }
 
         TileKey fallbackKey = key;
-        if (findFallbackTexture(key, fallbackKey)) {
+        const bool hasFallback = findFallbackTexture(key, fallbackKey) != nullptr;
+        if (hasFallback) {
             layerPlan_.fallbackTiles.push_back(TileFallback{key, fallbackKey});
             layerPlan_.renderTiles.push_back(RenderTileRef{
                 key,
@@ -285,23 +301,12 @@ void BasemapLayer::rebuildLayerPlan() {
             ++layerPlan_.transitionTileCount;
         }
 
-        layerPlan_.requestTiles.push_back(key);
+        TileKey requestKey = key;
+        if (findRequestTileForMissingTexture(key, requestKey) &&
+            requestSet.insert(requestKey).second) {
+            layerPlan_.requestTiles.push_back(requestKey);
+        }
         ++layerPlan_.missingTileCount;
-    }
-
-    for (auto it = requestedGeneration_.begin(); it != requestedGeneration_.end(); ) {
-        bool keep = false;
-        for (const TileKey& key : layerPlan_.requestTiles) {
-            if (it->first == tileCacheKey(key)) {
-                keep = true;
-                break;
-            }
-        }
-        if (!keep) {
-            it = requestedGeneration_.erase(it);
-        } else {
-            ++it;
-        }
     }
     evictUnusedSurfaceMeshes();
 }
@@ -310,6 +315,24 @@ bool BasemapLayer::isCurrentDesiredTile(const TileKey& key) const {
     return std::find(layerPlan_.desiredTiles.begin(),
                      layerPlan_.desiredTiles.end(),
                      key) != layerPlan_.desiredTiles.end();
+}
+
+bool BasemapLayer::isCurrentPlanTileOrAncestor(const TileKey& key) const {
+    if (std::find(layerPlan_.requestTiles.begin(),
+                  layerPlan_.requestTiles.end(),
+                  key) != layerPlan_.requestTiles.end()) {
+        return true;
+    }
+    if (isCurrentDesiredTile(key)) return true;
+
+    for (const TileKey& desired : layerPlan_.desiredTiles) {
+        TileKey candidate = desired;
+        while (candidate.z > tileScheme_->minZoom()) {
+            candidate = TilePlanBuilder::parentKey(candidate);
+            if (candidate == key) return true;
+        }
+    }
+    return false;
 }
 
 Texture* BasemapLayer::findFallbackTexture(const TileKey& target, TileKey& textureKey) {
@@ -323,6 +346,25 @@ Texture* BasemapLayer::findFallbackTexture(const TileKey& target, TileKey& textu
         }
     }
     return nullptr;
+}
+
+bool BasemapLayer::findRequestTileForMissingTexture(const TileKey& target,
+                                                    TileKey& requestKey) const {
+    std::vector<TileKey> lineage;
+    TileKey candidate = target;
+    while (true) {
+        lineage.push_back(candidate);
+        if (candidate.z <= tileScheme_->minZoom()) break;
+        candidate = TilePlanBuilder::parentKey(candidate);
+    }
+
+    for (auto it = lineage.rbegin(); it != lineage.rend(); ++it) {
+        if (!provider_ || !provider_->supportsTile(*it)) continue;
+        if (textureCache_.contains(*it)) continue;
+        requestKey = *it;
+        return true;
+    }
+    return false;
 }
 
 BasemapLayer::SurfaceGpuMesh*
@@ -383,19 +425,22 @@ BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
     gpuMesh.indexBuffer = renderDevice_->createBuffer(ibDesc);
     if (!gpuMesh.indexBuffer) return nullptr;
 
-    SurfaceNormalMap normalMap = TileSurface::buildNormalMap(mesh);
-    if (normalMap.valid()) {
-        TextureDesc normalDesc;
-        normalDesc.width = normalMap.width;
-        normalDesc.height = normalMap.height;
-        normalDesc.format = TextureDesc::Format::RGBA8;
-        normalDesc.data = normalMap.rgba.data();
-        normalDesc.dataSize = normalMap.rgba.size();
-        normalDesc.mipmap = false;
-        normalDesc.minFilter = TextureDesc::Filter::Linear;
-        normalDesc.wrapS = TextureDesc::Wrap::Clamp;
-        normalDesc.wrapT = TextureDesc::Wrap::Clamp;
-        gpuMesh.normalMapTexture = renderDevice_->createTexture(normalDesc);
+    const bool needsNormalMapTexture = useTerrain || normalMapDebugEnabled_;
+    if (needsNormalMapTexture) {
+        SurfaceNormalMap normalMap = TileSurface::buildNormalMap(mesh);
+        if (normalMap.valid()) {
+            TextureDesc normalDesc;
+            normalDesc.width = normalMap.width;
+            normalDesc.height = normalMap.height;
+            normalDesc.format = TextureDesc::Format::RGBA8;
+            normalDesc.data = normalMap.rgba.data();
+            normalDesc.dataSize = normalMap.rgba.size();
+            normalDesc.mipmap = false;
+            normalDesc.minFilter = TextureDesc::Filter::Linear;
+            normalDesc.wrapS = TextureDesc::Wrap::Clamp;
+            normalDesc.wrapT = TextureDesc::Wrap::Clamp;
+            gpuMesh.normalMapTexture = renderDevice_->createTexture(normalDesc);
+        }
     }
 
     gpuMesh.indexCount = static_cast<int>(mesh.indices.size());

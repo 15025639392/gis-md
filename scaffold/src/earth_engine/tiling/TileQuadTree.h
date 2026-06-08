@@ -12,6 +12,7 @@
 namespace earth_engine {
 
 class Camera;
+class Frustum;
 class TileScheme;
 struct TilePlan;
 
@@ -46,6 +47,7 @@ public:
 
     void traverse(const TileScheme& scheme,
                   const Camera& camera,
+                  const Frustum& frustum,
                   double viewportWidthPixels,
                   double viewportHeightPixels,
                   double cameraLongitudeRad,
@@ -57,8 +59,12 @@ public:
 
     void renderToZoom(const TileScheme& scheme,
                       const Camera& camera,
+                      const Frustum& frustum,
                       double viewportWidthPixels,
                       double viewportHeightPixels,
+                      double cameraLongitudeRad,
+                      double cameraLatitudeRad,
+                      bool parentCameraInside,
                       int targetZoom,
                       bool stopAtHorizon,
                       size_t maxRenderedTiles,
@@ -109,7 +115,7 @@ public:
                      double viewportHeightPixels,
                      int previousZoom = -1);
 
-    const TileNode* root() const { return root_.get(); }
+    const TileNode* root() const { return roots_.empty() ? nullptr : roots_.front().get(); }
     int createdNodeCount() const { return createdNodeCount_; }
     int lastVisitedNodeCount() const { return lastVisitedNodeCount_; }
 
@@ -117,7 +123,7 @@ private:
     void ensureRoot(const TileScheme& scheme);
     void resetIfSchemeChanged(const TileScheme& scheme);
 
-    std::unique_ptr<TileNode> root_;
+    std::vector<std::unique_ptr<TileNode>> roots_;
     std::string schemeId_;
     int createdNodeCount_ = 0;
     int lastVisitedNodeCount_ = 0;

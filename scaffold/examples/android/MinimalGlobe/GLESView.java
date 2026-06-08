@@ -2,6 +2,7 @@ package com.earthengine.minimalglobe;
 
 import android.content.Context;
 import android.view.Choreographer;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
@@ -25,6 +26,9 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
     public GLESView(Context context) {
         super(context);
         getHolder().addCallback(this);
+        setFocusable(true);
+        setFocusableInTouchMode(true);
+        requestFocus();
     }
 
     @Override
@@ -68,6 +72,19 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
             rendering = true;
             Choreographer.getInstance().postFrameCallback(this);
         }
+    }
+
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+            nativeDebugZoom(1.18f, getWidth(), getHeight());
+            return true;
+        }
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            nativeDebugZoom(0.84f, getWidth(), getHeight());
+            return true;
+        }
+        return super.onKeyDown(keyCode, event);
     }
 
     @Override
@@ -185,6 +202,7 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
     private static native void nativePinchStart(float centerX, float centerY);
     private static native void nativePinchEnd(float centerX, float centerY);
     private static native void nativePinchRotateTilt(float scale, float rotationRadians, float centerX, float centerY, float centerDy, int width, int height);
+    private static native void nativeDebugZoom(float scale, int width, int height);
     private static native void nativePause();
     private static native void nativeResume();
 }
