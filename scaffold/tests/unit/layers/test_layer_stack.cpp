@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <cmath>
+#include <unordered_set>
 #include "earth_engine/layers/BasemapLayerStack.h"
 #include "earth_engine/layers/BasemapLayer.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -7,6 +8,8 @@
 #include "earth_engine/tiling/CrsProfile.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
+#include "earth_engine/providers/DebugImageryProvider.h"
+#include "earth_engine/renderer/RenderDevice.h"
 
 using namespace earth_engine;
 
@@ -43,6 +46,53 @@ public:
 private:
     std::string id_;
     std::string schemeId_;
+};
+
+class FakeTexture : public Texture {
+public:
+    FakeTexture(int width, int height) : width_(width), height_(height) {}
+    int width() const override { return width_; }
+    int height() const override { return height_; }
+
+private:
+    int width_;
+    int height_;
+};
+
+class FakeRenderDevice : public RenderDevice {
+public:
+    Backend backendType() const override { return Backend::OpenGLES; }
+    int maxTextureSize() const override { return 4096; }
+    int maxDrawBuffers() const override { return 4; }
+    bool supportsFloatTextures() const override { return true; }
+    bool supportsInstancing() const override { return true; }
+    std::string rendererString() const override { return "fake"; }
+
+    std::unique_ptr<Texture> createTexture(const TextureDesc& desc) override {
+        ++textureCreates;
+        return std::make_unique<FakeTexture>(desc.width, desc.height);
+    }
+
+    std::unique_ptr<Buffer> createBuffer(const BufferDesc&) override {
+        return nullptr;
+    }
+
+    std::unique_ptr<ShaderProgram> createShader(const ShaderDesc&) override {
+        return nullptr;
+    }
+
+    std::unique_ptr<Framebuffer> createFramebuffer(const FramebufferDesc&) override {
+        return nullptr;
+    }
+
+    void beginFrame() override {}
+    void submit(const RenderCommandList&) override {}
+    void endFrame() override {}
+    void onSurfaceCreated() override {}
+    void onSurfaceChanged(int, int) override {}
+    void onSurfaceDestroyed() override {}
+
+    int textureCreates = 0;
 };
 
 } // anonymous namespace
@@ -166,6 +216,79 @@ TEST_F(BasemapLayerStackTest, SameSchemeSharesTilePlan) {
     for (size_t i = 0; i < tilesA.size(); ++i) {
         EXPECT_EQ(tilesA[i], tilesB[i]);
     }
+}
+
+TEST_F(BasemapLayerStackTest, LayerPlanSeparatesDesiredRequestAndRenderTiles) {
+    BasemapLayerStack stack;
+    stack.addLayer(makeXYZLayer("a"));
+
+    stack.update(frameState_);
+
+    auto* layer = stack.findLayer("stub-a");
+    ASSERT_NE(nullptr, layer);
+
+    const LayerTilePlan& plan = layer->layerPlan();
+    EXPECT_EQ(layer->tilePlan().visibleTiles.size(), plan.desiredTiles.size());
+    EXPECT_LE(plan.requestTiles.size(), plan.desiredTiles.size());
+    EXPECT_GT(plan.requestTiles.size(), 0u);
+    EXPECT_TRUE(plan.renderTiles.empty());
+    EXPECT_TRUE(plan.fallbackTiles.empty());
+
+    std::unordered_set<TileKey> desired(plan.desiredTiles.begin(),
+                                        plan.desiredTiles.end());
+    for (const TileKey& key : plan.requestTiles) {
+        EXPECT_TRUE(desired.find(key) != desired.end());
+    }
+}
+
+TEST_F(BasemapLayerStackTest, BasemapLayerTrustsTilePlanVisibilityWithoutSecondCulling) {
+    auto layer = makeXYZLayer("a");
+
+    TilePlan plan;
+    plan.frameId = 7;
+    plan.zoom = 2;
+    plan.visibleTiles = {
+        TileKey{"XYZ-WebMercator", 2, 2, 1},
+        TileKey{"XYZ-WebMercator", 2, 0, 1}
+    };
+
+    constexpr double radius = 6378137.0;
+    layer->applyPlan(plan, Vec3(radius * 3.0, 0.0, 0.0));
+
+    const LayerTilePlan& layerPlan = layer->layerPlan();
+    ASSERT_EQ(2u, layerPlan.requestTiles.size());
+    EXPECT_EQ(plan.visibleTiles, layerPlan.requestTiles);
+    EXPECT_TRUE(layerPlan.renderTiles.empty());
+}
+
+TEST_F(BasemapLayerStackTest, BasemapLayerKeepsTileGenerationAcrossFrameIds) {
+    FakeRenderDevice device;
+    auto layer = std::make_unique<BasemapLayer>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        &device);
+
+    TilePlan plan;
+    plan.frameId = 1;
+    plan.zoom = 3;
+    plan.visibleTiles = {
+        TileKey{"XYZ-WebMercator", 3, 4, 3},
+        TileKey{"XYZ-WebMercator", 3, 5, 3},
+    };
+
+    constexpr double radius = 6378137.0;
+    const Vec3 cameraPosition(radius * 7.0, 0.0, 0.0);
+    layer->applyPlan(plan, cameraPosition);
+    layer->loadMissingTiles();
+
+    TilePlan nextFrame = plan;
+    nextFrame.frameId = 2;
+    layer->applyPlan(nextFrame, cameraPosition);
+
+    EXPECT_EQ(2, device.textureCreates);
+    EXPECT_EQ(2, layer->cachedTileCount());
+    EXPECT_EQ(2, layer->renderTileCount());
+    EXPECT_EQ(2, layer->exactAttachmentCount());
 }
 
 TEST_F(BasemapLayerStackTest, DifferentSchemeIndependentTilePlan) {

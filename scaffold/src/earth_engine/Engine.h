@@ -60,11 +60,10 @@ public:
     /// 归一化输入事件（推荐使用，携带时间戳和修饰键）
     void onInputEvent(const InputEvent& event);
 
-    /// 原始输入方法（向后兼容，内部转为 InputEvent 调用 onInputEvent）
+    /// 原始输入方法（内部转为 InputEvent 调用 onInputEvent）
     void onDragStart(float xPixels, float yPixels);
     void onDragMove(float xPixels, float yPixels);
     void onDragEnd();
-    void onPinch(float scale);
 
     // ---- 图层 ----
 

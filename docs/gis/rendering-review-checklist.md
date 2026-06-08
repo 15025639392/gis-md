@@ -16,6 +16,8 @@
 
 如果只能说“看起来没问题”，则审查证据不足。
 
+MVP 3D globe 主链路必须先执行 `engine-infrastructure-contracts.md` 中的固定规则。该主链路里的 basemap tile depth test、depth write、backface culling、pass 顺序和 render gate 不是开放式审查项；审查只允许确认实现是否遵守固定规则，不能把关闭 depth/culling 当作普通权衡。
+
 ## 必须引用的项目约定
 
 审查渲染、culling、depth、shader、picking 或 GPU 资源时，应至少对照：
@@ -55,8 +57,9 @@
 - near/far plane 策略是否明确，并适配近地、远地和整球可见场景？
 - 是否评估过 near plane 过小、far plane 过大造成的 depth precision 问题？
 - 是否需要 logarithmic depth 或 reversed-Z？如果需要，目标后端是否支持，Metal / GL ES / Vulkan 行为是否一致？
-- 地形、影像、贴地 polygon、classification、模型、label、atmosphere 是否有明确的 depth test / depth write 策略？
-- 透明对象是否禁止或谨慎使用 depth write？
+- MVP globe / terrain / basemap 是否严格遵守 `engine-infrastructure-contracts.md` 的固定 depth test / depth write 规则？
+- 非 MVP 特殊对象（classification、模型、label、atmosphere、云雾、水面、地下对象）是否有独立 depth test / depth write 策略和例外证据？
+- 透明对象默认不得 depth write；若特殊对象需要 depth write，是否有独立 pass、排序规则和截图/测试证据？
 - 贴地 polygon 是否通过 terrain draping、polygon offset、depth offset 或 classification pass 处理，而不是随意抬高高度？
 - depth prepass、color pass、picking pass、shadow pass 的 depth state 是否一致或差异有解释？
 - depth buffer 格式、清理时机、framebuffer 尺寸和 MSAA resolve 是否明确？
@@ -88,7 +91,7 @@
 ## 地平线剔除审查
 
 - 是否区分 frustum culling 和 horizon culling？
-- 地球背面瓦片是否通过 horizon culling 或等价策略剔除？
+- MVP basemap 背面瓦片是否在 render gate 前被 horizon culling 或前半球门禁剔除？
 - horizon culling 是否基于椭球或项目声明的近似球体模型？
 - 高空、低空、地平线附近是否分别验证？
 - horizon culling 失败时是否优先保守显示，而不是直接隐藏？
@@ -102,9 +105,9 @@
 
 ## 背面与遮挡剔除审查
 
-- backface culling 是否适用于当前 mesh winding？
+- MVP globe / terrain / basemap 是否保持 backface culling 开启，且 mesh winding 与正面规则一致？
 - globe、terrain tile、polygon overlay、model 的正反面规则是否一致？
-- 贴地面、地下对象、室内场景是否需要关闭或分场景配置 backface culling？
+- 非 MVP 贴地面、地下对象、室内场景若需要关闭或分场景配置 backface culling，是否走了例外流程？
 - occlusion culling 是否有明确数据结构和保守性证明？
 - 遮挡剔除失败时是否能通过 debug overlay 定位？
 

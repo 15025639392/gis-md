@@ -52,6 +52,7 @@ target_sources(earth_engine_core PRIVATE
 target_sources(earth_engine_core PRIVATE
     earth_engine/renderer/RenderDevice.h
     earth_engine/renderer/RenderCommand.h
+    earth_engine/renderer/RenderCommand.cpp
     earth_engine/renderer/Renderer.h
     earth_engine/renderer/Renderer.cpp
     earth_engine/renderer/TileTextureCache.h
@@ -92,8 +93,13 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileKey.cpp
     earth_engine/tiling/TileScheme.h
     earth_engine/tiling/TileScheme.cpp
+    earth_engine/tiling/SurfaceTile.h
+    earth_engine/tiling/TileSurface.h
+    earth_engine/tiling/TileSurface.cpp
     earth_engine/tiling/TilePlan.h
     earth_engine/tiling/TilePlan.cpp
+    earth_engine/tiling/TileQuadTree.h
+    earth_engine/tiling/TileQuadTree.cpp
     earth_engine/tiling/TileRequestScheduler.h
     earth_engine/tiling/TileRequestScheduler.cpp
 )

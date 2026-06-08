@@ -88,7 +88,8 @@
 
 - 接入一个标准 XYZ Web Mercator 影像/地图瓦片 provider。
 - 实现 tile scheme、tile bounds、visible tile selection。
-- 把瓦片纹理贴到地球上。
+- 实现 `SurfaceTile` 主链路，把影像瓦片作为 surface imagery attachment 渲染。
+- 废弃标准底图的独立共面 `BasemapTileCommand` 过渡路线。
 
 产物：
 
@@ -96,14 +97,20 @@
 - `ImageryProvider`
 - `BasemapLayer`
 - `TilePlan`
+- `TileSurface`
+- `SurfaceTile`
+- `SurfaceTileMesh`
+- `ImageryAttachment`
 - `TileCache`
 
 验收：
 
-- 地球表面显示底图。
+- 地球表面由 `SurfaceTileCommand` 显示底图。
 - debug overlay 显示 z/x/y。
 - 快速缩放不大面积白屏。
 - 父瓦片 fallback 可用。
+- Web Mercator `v` 方向按 Mercator Y 采样，CPU 测试和 shader 语义一致。
+- 不存在 `GlobeCommand + BasemapTileCommand` 共面竞争作为验收路径。
 
 ## 阶段 4：多图层与多瓦片体系
 

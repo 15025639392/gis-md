@@ -15,27 +15,6 @@ std::ostream& operator<<(std::ostream& os, const TileGroupKey& key) {
               << ")";
 }
 
-// ============================================================
-// LayerTilePlan
-// ============================================================
-
-LayerTilePlan LayerTilePlan::independent(TilePlan plan) {
-    LayerTilePlan result;
-    result.owned_ = std::make_unique<TilePlan>(std::move(plan));
-    result.plan_ = result.owned_.get();
-    return result;
-}
-
-LayerTilePlan LayerTilePlan::sharedFrom(const TilePlan* shared) {
-    LayerTilePlan result;
-    result.plan_ = shared;
-    return result;
-}
-
-// ============================================================
-// TilePlanGroupBuilder
-// ============================================================
-
 std::unordered_map<TileGroupKey, TilePlan>
 TilePlanGroupBuilder::computeGrouped(
     const std::vector<const TileScheme*>& schemes,

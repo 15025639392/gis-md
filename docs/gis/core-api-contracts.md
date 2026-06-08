@@ -115,6 +115,57 @@ TileKey {
 
 缓存 key 必须额外包含 provider/layer/style/version，不得只用 TileKey。
 
+## SurfaceTile
+
+标准 3D globe 底图主链路必须以 `SurfaceTile` 为渲染对象：
+
+```text
+SurfaceTile {
+  key: SurfaceTileKey
+  bounds: Rectangle
+  mesh: SurfaceTileMesh
+  boundingVolume: BoundingVolume
+  imageryAttachments: ImageryAttachment[]
+  generation: number
+}
+
+SurfaceTileKey {
+  tileKey: TileKey
+  surfaceProfile: "ellipsoid" | "terrain"
+  terrainVersion?: string
+  time?: string
+}
+
+SurfaceTileMesh {
+  vertices: SurfaceVertex[]
+  indices: number[]
+  winding: "outward"
+  sampling: "web-mercator-v-to-wgs84-ecef" | "geographic-v-to-wgs84-ecef"
+}
+
+SurfaceVertex {
+  positionEcef: Cartesian3
+  normalEcef: Cartesian3
+  uv: [number, number]
+}
+
+ImageryAttachment {
+  layerId: string
+  providerId: string
+  textureKey: TileKey
+  uvWindow: [number, number, number, number]
+  opacity: number
+  fallbackSource: "exact" | "parent" | "placeholder"
+}
+```
+
+固定规则：
+
+- `SurfaceTile` 是标准底图 depth 的唯一来源。
+- imagery tile 是 `SurfaceTile` 的 texture attachment，不是独立共面 mesh。
+- Web Mercator imagery 的 `v` 必须按 Mercator Y 采样后反投影到 WGS84 latitude。
+- `SurfaceTileCommand` 绑定当前 `frameId` 或 generation。
+
 ## Provider
 
 ```text
@@ -168,6 +219,8 @@ RenderCommand {
 ```
 
 RenderCommand 不应包含网络请求或业务权限判断。
+
+标准底图必须使用 `SurfaceTileCommand`，不得使用独立 `BasemapTileCommand` 作为主链路。
 
 ## Picking
 

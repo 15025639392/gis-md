@@ -131,17 +131,50 @@
 - 每帧上传数量受控。
 - 图层销毁后 GPU 资源释放。
 
-## T09 Basemap Rendering
+## T09 SurfaceTile Basemap Rendering
 
 目标：
 
-- 把底图瓦片贴到地球表面。
+- 实现 `SurfaceTile` 主链路，把底图 imagery 作为 surface attachment 渲染。
+- `SurfaceTile` 是地球表面 mesh 和 depth 的唯一来源。
 - 支持 parent fallback。
+
+修改模块：
+
+- `tiling/TileSurface`
+- `tiling/SurfaceTile`
+- `tiling/SurfaceTileMesh`
+- `layers/BasemapLayer`
+- `renderer/RenderCommand`
+- `renderer/Renderer`
+
+核心接口：
+
+- `SurfaceTileKey`
+- `SurfaceTile`
+- `ImageryAttachment`
+- `SurfaceTileCommand`
+
+测试：
+
+- Web Mercator `u/v` 到 WGS84 ECEF 的 surface mesh 测试。
+- outward winding 测试。
+- parent fallback `uvWindow` 按 Mercator Y 计算。
+- `SurfaceTileCommand` 固定 depth/cull/blend 状态验证。
+- 背面 surface tile 不进入 render queue。
 
 验收：
 
 - 不白屏。
 - debug overlay 显示 z/x/y/state。
+- 首屏底图来自 `SurfaceTileCommand`，不是 `GlobeCommand + BasemapTileCommand`。
+- 快速旋转和缩放不显示背面或过期 surface tile。
+
+禁止事项：
+
+- 不得把标准底图作为独立共面 imagery mesh 绘制。
+- 不得通过关闭 depth test 或 cull face 修复瓦片消失。
+- 不得把 Web Mercator tile 的 `v` 线性映射到 geodetic latitude。
 
 ## T10 Picking 经纬度
 

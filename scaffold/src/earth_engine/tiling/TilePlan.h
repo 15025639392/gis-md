@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TileKey.h"
+#include <string>
 #include <vector>
 #include <memory>
 
@@ -9,16 +10,41 @@ namespace earth_engine {
 class TileScheme;
 class Camera;
 
-/// 一帧的可见瓦片计算结果。
+/// TilePlan is the shared, frame-derived candidate set for one tile scheme.
+/// It does not decide provider requests or final rendering for a layer.
 struct TilePlan {
-    /// 当前目标 zoom 层级
+    uint64_t frameId = 0;
     int zoom = 0;
-
-    /// 当前帧需要的瓦片键列表
     std::vector<TileKey> visibleTiles;
+};
 
-    /// 上一 zoom 层级（parent fallback 用）
-    std::vector<TileKey> parentTiles;
+enum class TileRenderSource {
+    Exact,
+    ParentFallback
+};
+
+struct RenderTileRef {
+    TileKey targetKey;
+    TileKey textureKey;
+    TileRenderSource source = TileRenderSource::Exact;
+};
+
+struct TileFallback {
+    TileKey targetKey;
+    TileKey fallbackKey;
+};
+
+/// Per-layer plan derived from TilePlan plus that layer's cache/provider state.
+struct LayerTilePlan {
+    std::string layerId;
+    std::string providerId;
+    uint64_t frameId = 0;
+    int zoom = 0;
+    std::vector<TileKey> visibleTiles;
+    std::vector<TileKey> desiredTiles;
+    std::vector<TileKey> requestTiles;
+    std::vector<RenderTileRef> renderTiles;
+    std::vector<TileFallback> fallbackTiles;
 };
 
 /// 瓦片计划计算器。
@@ -50,6 +76,8 @@ public:
                                    int minZoom,
                                    int maxZoom,
                                    int previousZoom = -1);
+
+    static TileKey parentKey(const TileKey& key);
 };
 
 } // namespace earth_engine

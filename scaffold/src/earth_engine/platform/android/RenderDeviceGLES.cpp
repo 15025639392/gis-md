@@ -259,18 +259,21 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         // ---- 顶点属性设置 ----
         glBindBuffer(GL_ARRAY_BUFFER, vb->glId());
 
-        if (cmd.vertexStride > 0) {
+        if (cmd.kind == RenderCommandKind::SurfaceTile) {
+            constexpr int kSurfaceStride = 32;
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, kSurfaceStride,
+                                  reinterpret_cast<void*>(0));
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, kSurfaceStride,
+                                  reinterpret_cast<void*>(12));
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, kSurfaceStride,
+                                  reinterpret_cast<void*>(24));
+        } else if (cmd.vertexStride > 0) {
             // 显式 vertex stride（VectorLayer 等使用）
             glEnableVertexAttribArray(0);
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, cmd.vertexStride,
-                                  reinterpret_cast<void*>(0));
-            glDisableVertexAttribArray(1);
-            glDisableVertexAttribArray(2);
-        } else if (cmd.owner == "tile") {
-            // Tile vertex: float2 texcoord, stride = 8
-            constexpr int kTileStride = 8;
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, kTileStride,
                                   reinterpret_cast<void*>(0));
             glDisableVertexAttribArray(1);
             glDisableVertexAttribArray(2);

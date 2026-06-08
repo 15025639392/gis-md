@@ -4,6 +4,7 @@
 #include "../core/math/Rectangle.h"
 
 #include <array>
+#include <unordered_map>
 
 namespace earth_engine {
 
@@ -124,6 +125,34 @@ static const BorderVertex kBorderVerts[] = {
     {{0.0f, 0.0f}},  // 闭合回环
 };
 
+enum class DebugTileState {
+    Desired,
+    Requested,
+    Exact,
+    ParentFallback
+};
+
+std::array<float, 4> colorForState(DebugTileState state) {
+    switch (state) {
+        case DebugTileState::Exact:
+            return {0.15f, 0.95f, 0.35f, 0.82f};
+        case DebugTileState::ParentFallback:
+            return {1.0f, 0.68f, 0.12f, 0.82f};
+        case DebugTileState::Requested:
+            return {0.15f, 0.7f, 1.0f, 0.78f};
+        case DebugTileState::Desired:
+        default:
+            return {1.0f, 0.18f, 0.18f, 0.76f};
+    }
+}
+
+std::string keyString(const TileKey& key) {
+    return key.schemeId + "/" +
+           std::to_string(key.z) + "/" +
+           std::to_string(key.x) + "/" +
+           std::to_string(key.y);
+}
+
 // ============================================================
 // DebugOverlay
 // ============================================================
@@ -175,6 +204,7 @@ void DebugOverlay::buildCommands(const std::vector<TileKey>& tileKeys,
         float b = (h & 0xFF) / 255.0f;
 
         RenderCommand cmd;
+        cmd.kind = RenderCommandKind::DebugOverlay;
         cmd.owner = "debug-overlay";
         cmd.pass = "color";
         cmd.shader = lineShader_.get();
@@ -194,6 +224,62 @@ void DebugOverlay::buildCommands(const std::vector<TileKey>& tileKeys,
             static_cast<float>(bounds.north())
         };
         cmd.uniforms["u_color"] = {r, g, b, 0.6f};
+
+        commands.push_back(std::move(cmd));
+    }
+}
+
+void DebugOverlay::buildCommands(const LayerTilePlan& layerPlan,
+                                  const TileScheme& tileScheme,
+                                  RenderCommandList& commands) {
+    if (!enabled_ || !lineShader_ || !borderVertexBuffer_) return;
+
+    std::unordered_map<std::string, DebugTileState> states;
+    states.reserve(layerPlan.desiredTiles.size());
+
+    for (const auto& key : layerPlan.desiredTiles) {
+        states[keyString(key)] = DebugTileState::Desired;
+    }
+    for (const auto& key : layerPlan.requestTiles) {
+        states[keyString(key)] = DebugTileState::Requested;
+    }
+    for (const auto& renderTile : layerPlan.renderTiles) {
+        states[keyString(renderTile.targetKey)] =
+            renderTile.source == TileRenderSource::Exact
+                ? DebugTileState::Exact
+                : DebugTileState::ParentFallback;
+    }
+
+    for (const auto& key : layerPlan.visibleTiles) {
+        Rectangle bounds = tileScheme.tileToRectangle(key);
+        DebugTileState state = DebugTileState::Desired;
+        auto it = states.find(keyString(key));
+        if (it != states.end()) {
+            state = it->second;
+        }
+        const auto color = colorForState(state);
+
+        RenderCommand cmd;
+        cmd.kind = RenderCommandKind::DebugOverlay;
+        cmd.owner = "debug-overlay";
+        cmd.pass = "color";
+        cmd.shader = lineShader_.get();
+        cmd.vertexBuffer = borderVertexBuffer_.get();
+        cmd.indexBuffer = nullptr;
+        cmd.vertexCount = 5;
+        cmd.primitive = RenderCommand::PrimitiveType::LineStrip;
+        cmd.indexType = RenderCommand::IndexType::UInt16;
+        cmd.depthTest = true;
+        cmd.depthWrite = false;
+        cmd.blend = true;
+
+        cmd.uniforms["u_tileBounds"] = {
+            static_cast<float>(bounds.west()),
+            static_cast<float>(bounds.south()),
+            static_cast<float>(bounds.east()),
+            static_cast<float>(bounds.north())
+        };
+        cmd.uniforms["u_color"] = {color[0], color[1], color[2], color[3]};
 
         commands.push_back(std::move(cmd));
     }

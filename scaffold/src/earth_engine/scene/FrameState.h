@@ -17,6 +17,16 @@ struct Diagnostics {
     int queuedRequests = 0;
     int loadingRequests = 0;
     int gpuTextureCount = 0;
+    int renderSurfaceTiles = 0;
+    int surfaceMeshCount = 0;
+    int imageryAttachments = 0;
+    int imageryExactAttachments = 0;
+    int imageryParentFallbackAttachments = 0;
+    int surfaceMeshBytes = 0;
+    int staleSurfaceCommands = 0;
+    int missingGenerationSurfaceCommands = 0;
+    uint64_t minSurfaceGeneration = 0;
+    uint64_t maxSurfaceGeneration = 0;
 };
 
 /// 每帧渲染上下文。

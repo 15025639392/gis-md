@@ -4,6 +4,8 @@
 
 本文件主要面向影像瓦片、电子地图瓦片、栅格底图、WMTS/XYZ/TMS/私有底图。地形瓦片和 3D Tiles 另见 `tiles-terrain-lod.md` 和 `three-d-tiles.md`，但调度思想相通。
 
+MVP / 标准底图 / 3D globe 的正式渲染主链路必须遵守 `surface-tile-mainline.md`：影像瓦片作为 `SurfaceTile` 的 imagery attachment 渲染，不作为独立共面 `BasemapTileCommand`。
+
 ## 核心目标
 
 底图瓦片渲染要同时满足：
@@ -26,7 +28,9 @@ FrameState
   -> TileCache
   -> TileDecoder
   -> TextureUploader
-  -> TileRenderQueue
+  -> SurfaceTileBuilder
+  -> ImageryAttachmentBuilder
+  -> SurfaceRenderQueue
   -> Renderer
 ```
 
@@ -40,7 +44,9 @@ FrameState
 - `TileCache`：raw、decoded、texture 多级缓存。
 - `TileDecoder`：图片解码、格式检查、色彩空间处理。
 - `TextureUploader`：把 decoded image 上传为 GPU texture。
-- `TileRenderQueue`：决定本帧画哪些 tile、用父瓦片还是子瓦片。
+- `SurfaceTileBuilder`：生成或复用地球表面 mesh，ellipsoid MVP 使用 Web Mercator-v 采样到 WGS84 ECEF。
+- `ImageryAttachmentBuilder`：为每个 surface tile 绑定 exact texture、parent fallback 或透明缺失策略。
+- `SurfaceRenderQueue`：决定本帧画哪些 `SurfaceTileCommand`。
 - `Renderer`：按 render order 和 blend state 执行 draw。
 
 ## 每帧编排
@@ -54,9 +60,9 @@ FrameState
 5. 查询 cache，分成 ready、loading、missing、failed。
 6. 对 missing tile 入请求队列。
 7. 对过期或不可见请求降级或取消。
-8. 对 ready tile 生成 render command。
-9. 对未 ready tile 查找可用 parent/ancestor fallback。
-10. 按图层顺序和透明度渲染。
+8. 为 ready surface tile 绑定 imagery attachment。
+9. 对未 ready imagery 查找可用 parent/ancestor fallback，并计算 Mercator UV window。
+10. 对 `renderSurfaceTiles` 生成 `SurfaceTileCommand`。
 11. 更新统计和 debug overlay。
 
 不要让网络回调直接修改最终可见集。网络回调只能更新 tile 状态，最终画什么由当前帧的 render queue 决定。
@@ -72,6 +78,7 @@ TilePlan {
   crsProfile
   timeKey?
   visibleTiles: TileKey[]
+  desiredSurfaceTiles: SurfaceTileKey[]
   layerPlans: LayerTilePlan[]
 }
 
@@ -79,7 +86,7 @@ LayerTilePlan {
   layerId
   providerId
   desiredTiles: TileKey[]
-  renderTiles: RenderTileRef[]
+  imageryAttachments: ImageryAttachment[]
   requestTiles: TileKey[]
   fallbackTiles: TileFallback[]
 }
@@ -139,11 +146,12 @@ TileGroupKey = {
 
 ### 请求与渲染分离
 
-`desiredTiles` 不等于 `requestTiles`，也不等于 `renderTiles`：
+`desiredTiles` 不等于 `requestTiles`，也不等于 `renderSurfaceTiles`：
 
 - `desiredTiles`：当前图层理想情况下需要的 tile。
 - `requestTiles`：cache 缺失且允许请求的 tile。
-- `renderTiles`：本帧实际可画的 tile，可能是目标 tile，也可能是 parent fallback。
+- `ImageryAttachment`：本帧可绑定到 surface tile 的纹理，可能是目标 tile，也可能是 parent fallback。
+- `renderSurfaceTiles`：本帧实际可画的地表 tile，必须同时拥有有效 surface mesh 和 imagery attachment 策略。
 
 这样可以避免网络、缓存和渲染互相污染。
 
@@ -207,8 +215,41 @@ LOD 必须有滞回 hysteresis，避免相机轻微缩放时 z/z+1 来回抖动�
 - 四个子瓦片可设置 all-ready 替换，避免四分之一高清、四分之三低清造成明显拼接。
 - 或使用渐进混合 crossfade，但要控制性能。
 - 父瓦片纹理坐标必须裁剪到子瓦片对应区域。
+- Web Mercator imagery 的 V 方向必须按 Mercator Y 计算，不能按 geodetic latitude 差值计算。
 
 禁止在子瓦片未 ready 时直接留白，除非当前图层明确允许空白。
+
+## SurfaceTile 渲染
+
+标准底图最终渲染对象是 `SurfaceTileCommand`，不是独立 imagery mesh。
+
+```text
+SurfaceTile {
+  tileKey
+  bounds
+  mesh
+  boundingVolume
+  imageryAttachments
+  generation
+}
+```
+
+MVP ellipsoid surface mesh 的采样规则：
+
+```text
+u -> longitude linear
+v -> WebMercatorY linear
+WebMercatorY -> latitude
+longitude/latitude/height0 -> WGS84 ECEF
+```
+
+固定要求：
+
+- `SurfaceTile` 写 depth；imagery attachment 只是材质输入。
+- `GlobeCommand + BasemapTileCommand` 不得作为标准底图验收链路。
+- shader 与 CPU `TileSurface` 测试必须使用同一套 Mercator-v 采样语义。
+- surface tile mesh winding 必须 outward，保持 `cullFace=true`。
+- 过期 generation 的 surface 或 imagery attachment 不得进入当前帧 `SurfaceRenderQueue`。
 
 ## 请求优先级
 

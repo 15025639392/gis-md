@@ -63,6 +63,13 @@ struct InputEvent {
     /// PinchMove 时的累积缩放因子（1.0 = 手势开始时的状态）
     float pinchScale = 1.0f;
 
+    /// 双指相对上一帧的旋转角（radian，屏幕坐标系）
+    float rotationRadians = 0.0f;
+
+    /// 双指中心相对上一帧的位移（物理像素，screen y 向下）
+    float centerDeltaX = 0.0f;
+    float centerDeltaY = 0.0f;
+
     /// 便捷查询
     bool isPointerEvent() const {
         return type == Type::PointerDown ||

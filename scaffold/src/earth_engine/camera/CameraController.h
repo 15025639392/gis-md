@@ -1,21 +1,23 @@
 #pragma once
 
+#include "../core/math/Vec3.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
 namespace earth_engine {
 
 class Camera;
+class Ray;
 
-/// Arcball 轨道相机控制器。
-/// 将 2D 触控输入转换为 3D 相机 orbit rotation。
+/// OpenGlobus-style anchor-based globe camera controller.
+/// 单指拖拽先抓取 WGS84 椭球上的地表点，移动时让该点跟随手指。
 /// 支持 drag 旋转、pinch 缩放和惯性阻尼。
 class CameraController {
 public:
     /// @param camera 受控相机（非空，生命周期由调用者管理）
     explicit CameraController(Camera* camera);
 
-    /// 设置视口尺寸（用于 arcball 投影计算）
+    /// 设置视口尺寸（用于 pick ray 和屏幕坐标归一化）
     void setViewport(int widthPixels, int heightPixels);
 
     /// drag 开始（手指按下）
@@ -28,8 +30,13 @@ public:
     /// drag 结束（手指抬起，启动惯性）
     void onDragEnd();
 
-    /// pinch 缩放（累积缩放因子，1.0 = 初始状态）
-    void onPinch(float scale);
+    void onPinchGesture(float scale,
+                        float centerX,
+                        float centerY,
+                        float rotationRadians,
+                        float centerDeltaY,
+                        double timestamp = 0.0);
+    void onPinchEnd();
 
     /// 时间步进（更新惯性动画）
     /// @param deltaSeconds 上一帧到现在的秒数
@@ -48,16 +55,10 @@ public:
     void setRotation(const glm::dquat& q);
 
 private:
-    /// 计算地球在屏幕上的投影半径（像素）
-    float projectedGlobeRadiusPixels() const;
-
-    /// 屏幕坐标 → arcball 单位球面上的点
-    glm::vec3 mapToArcball(float xPixels, float yPixels) const;
-
-    /// 应用 orbit 旋转
-    /// @param timestamp 本次事件的时间戳（秒），用于角速度计算
-    void orbit(float startX, float startY, float endX, float endY,
-               double timestamp);
+    bool intersectGrabSphere(const Ray& ray, Vec3& outPoint) const;
+    bool grabSurfacePoint(float xPixels, float yPixels);
+    void applyAnchorDrag(float xPixels, float yPixels, double timestamp);
+    void applyRotationAroundAxis(const glm::dvec3& axis, double angle);
 
     Camera* camera_;
     int viewportWidth_ = 1;
@@ -72,6 +73,9 @@ private:
     float dragStartY_ = 0.0f;
     float dragLastX_ = 0.0f;
     float dragLastY_ = 0.0f;
+    bool hasGrabbedPoint_ = false;
+    Vec3 grabbedNormal_{0.0, 0.0, 1.0};
+    double grabbedRadiusMeters_ = 6378137.0;
 
     // 惯性状态
     glm::dvec3 inertiaAxis_{0.0, 1.0, 0.0};
@@ -79,8 +83,10 @@ private:
     double lastDragTimestamp_ = 0.0;  // 最近一次 drag 事件的时间戳
 
     // pinch 状态
-    float pinchBaseDistance_ = 7.0f;
     bool pinching_ = false;
+    bool hasPinchAnchor_ = false;
+    Vec3 pinchAnchorNormal_{0.0, 0.0, 1.0};
+    Vec3 pinchEarthUpNormal_{0.0, 0.0, 1.0};
 };
 
 } // namespace earth_engine

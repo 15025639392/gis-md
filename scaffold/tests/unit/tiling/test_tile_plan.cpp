@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <cmath>
 #include <unordered_set>
 #include "earth_engine/tiling/TilePlan.h"
+#include "earth_engine/tiling/TileQuadTree.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/scene/Camera.h"
 
@@ -53,11 +55,14 @@ TEST_F(TilePlanTest, DefaultCameraShowsTiles) {
     EXPECT_GE(plan.zoom, 0);
     EXPECT_LE(plan.zoom, 20);
 
-    // 所有 tile key 应属于正确的 scheme
+    int maxVisibleZoom = 0;
     for (const auto& key : plan.visibleTiles) {
         EXPECT_EQ("XYZ-WebMercator", key.schemeId);
-        EXPECT_EQ(plan.zoom, key.z);
+        EXPECT_GE(key.z, scheme_->minZoom());
+        EXPECT_LE(key.z, scheme_->maxZoom());
+        maxVisibleZoom = std::max(maxVisibleZoom, key.z);
     }
+    EXPECT_EQ(maxVisibleZoom, plan.zoom);
 }
 
 TEST_F(TilePlanTest, LowAltitudeMoreTiles) {
@@ -73,16 +78,19 @@ TEST_F(TilePlanTest, LowAltitudeMoreTiles) {
     EXPECT_GE(nearPlan.zoom, farPlan.zoom);
 }
 
-TEST_F(TilePlanTest, ParentTilesExistWhenNotMinZoom) {
+TEST_F(TilePlanTest, ParentKeyFollowsExactChildLineage) {
     camera_->lookAt(Vec3(0, 0, 7000000), Vec3::zero(), Vec3::unitY());
 
     TilePlan plan = TilePlanBuilder::compute(*camera_, *scheme_, 800, 600);
 
     if (plan.zoom > scheme_->minZoom()) {
-        EXPECT_GT(plan.parentTiles.size(), 0u);
-        for (const auto& key : plan.parentTiles) {
-            EXPECT_EQ(plan.zoom - 1, key.z);
-        }
+        ASSERT_GT(plan.visibleTiles.size(), 0u);
+        const TileKey child = plan.visibleTiles.front();
+        const TileKey parent = TilePlanBuilder::parentKey(child);
+        EXPECT_EQ(child.schemeId, parent.schemeId);
+        EXPECT_EQ(child.z - 1, parent.z);
+        EXPECT_EQ(child.x / 2, parent.x);
+        EXPECT_EQ(child.y / 2, parent.y);
     }
 }
 
@@ -91,8 +99,8 @@ TEST_F(TilePlanTest, AllTilesWithinSchemeBounds) {
 
     TilePlan plan = TilePlanBuilder::compute(*camera_, *scheme_, 800, 600);
 
-    int tilesAtZoom = 1 << plan.zoom;
     for (const auto& key : plan.visibleTiles) {
+        int tilesAtZoom = 1 << key.z;
         EXPECT_GE(key.x, 0);
         EXPECT_LT(key.x, tilesAtZoom);
         EXPECT_GE(key.y, 0);
@@ -109,9 +117,13 @@ TEST_F(TilePlanTest, VisibleTilesAreDeduplicatedAndBudgetedByZoomWorldSize) {
                                        plan.visibleTiles.end());
     EXPECT_EQ(unique.size(), plan.visibleTiles.size());
 
-    int tilesAtZoom = 1 << plan.zoom;
-    EXPECT_LE(plan.visibleTiles.size(),
-              static_cast<size_t>(tilesAtZoom * tilesAtZoom));
+    for (const TileKey& key : plan.visibleTiles) {
+        int tilesAtZoom = 1 << key.z;
+        EXPECT_GE(key.x, 0);
+        EXPECT_LT(key.x, tilesAtZoom);
+        EXPECT_GE(key.y, 0);
+        EXPECT_LT(key.y, tilesAtZoom);
+    }
 }
 
 TEST_F(TilePlanTest, AntimeridianViewWrapsWithoutDuplicatingTiles) {
@@ -130,13 +142,75 @@ TEST_F(TilePlanTest, AntimeridianViewWrapsWithoutDuplicatingTiles) {
                                        plan.visibleTiles.end());
     EXPECT_EQ(unique.size(), plan.visibleTiles.size());
 
-    int tilesAtZoom = 1 << plan.zoom;
     bool sawWestEdge = false;
     bool sawEastEdge = false;
     for (const auto& key : plan.visibleTiles) {
+        int tilesAtZoom = 1 << key.z;
         sawWestEdge = sawWestEdge || key.x <= 1;
         sawEastEdge = sawEastEdge || key.x >= tilesAtZoom - 2;
     }
     EXPECT_TRUE(sawWestEdge);
     EXPECT_TRUE(sawEastEdge);
+}
+
+TEST_F(TilePlanTest, IncludesSubCameraTileForObliqueEarthView) {
+    camera_->setPerspective(glm::radians(60.0), 10000.0, 50000000.0);
+    camera_->lookAt(Vec3(-9465697.8, 35326465.0, 25608443.6),
+                    Vec3::zero(),
+                    Vec3::unitY());
+
+    TilePlan plan = TilePlanBuilder::compute(*camera_, *scheme_, 1240, 2772);
+    ASSERT_GT(plan.visibleTiles.size(), 0u);
+
+    TileKey subCamera = scheme_->positionToTile(
+        105.0 * M_PI / 180.0,
+        35.1808 * M_PI / 180.0,
+        plan.zoom);
+
+    bool found = false;
+    for (const TileKey& key : plan.visibleTiles) {
+        if (key.schemeId != subCamera.schemeId || key.z > subCamera.z) {
+            continue;
+        }
+        const int shift = subCamera.z - key.z;
+        found = found ||
+            (key.x == (subCamera.x >> shift) && key.y == (subCamera.y >> shift));
+    }
+    EXPECT_TRUE(found)
+        << "sub-camera tile " << subCamera.z << "/"
+        << subCamera.x << "/" << subCamera.y
+        << " must stay in the frame plan";
+}
+
+TEST_F(TilePlanTest, TileQuadTreePersistsNodesAcrossFrames) {
+    camera_->lookAt(Vec3(0, 0, 7000000), Vec3::zero(), Vec3::unitY());
+
+    TileQuadTree tree;
+    TilePlan first = tree.compute(*camera_, *scheme_, 800, 600);
+    ASSERT_GT(first.visibleTiles.size(), 0u);
+    ASSERT_NE(nullptr, tree.root());
+    EXPECT_TRUE(tree.root()->childrenCreated());
+    const int firstNodeCount = tree.createdNodeCount();
+
+    TilePlan second = tree.compute(*camera_, *scheme_, 800, 600, first.zoom);
+    EXPECT_EQ(first.zoom, second.zoom);
+    EXPECT_EQ(first.visibleTiles, second.visibleTiles);
+    EXPECT_EQ(firstNodeCount, tree.createdNodeCount());
+}
+
+TEST_F(TilePlanTest, TileQuadTreeNodesFollowParentChildLineage) {
+    camera_->lookAt(Vec3(0, 0, 7000000), Vec3::zero(), Vec3::unitY());
+
+    TileQuadTree tree;
+    TilePlan plan = tree.compute(*camera_, *scheme_, 800, 600);
+    ASSERT_GT(plan.zoom, 0);
+    ASSERT_NE(nullptr, tree.root());
+    ASSERT_TRUE(tree.root()->childrenCreated());
+
+    const auto& child = tree.root()->children()[0];
+    ASSERT_NE(nullptr, child);
+    EXPECT_EQ(tree.root(), child->parent());
+    EXPECT_EQ(1, child->key().z);
+    EXPECT_EQ(0, child->key().x);
+    EXPECT_EQ(0, child->key().y);
 }

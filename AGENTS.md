@@ -10,6 +10,7 @@
 2. `docs/gis/trusted-sources.md`
 3. `docs/gis/project-conventions.md`
 4. `docs/gis/earth-engine-architecture.md`
+4a. `docs/gis/engine-infrastructure-contracts.md`
 5. `docs/gis/earth-engine-roadmap.md`
 6. `docs/gis/reference-architecture.md`
 7. `docs/gis/core-api-contracts.md`
@@ -24,33 +25,34 @@
 16. `docs/gis/tiles-terrain-lod.md`
 17. `docs/gis/multi-tile-schemes.md`
 18. `docs/gis/basemap-tile-rendering.md`
-19. `docs/gis/rendering-engine.md`
-20. `docs/gis/graphics-pipeline.md`
-21. `docs/gis/data-provider-contracts.md`
-22. `docs/gis/engine-data-catalog.md`
-23. `docs/gis/overlay-styling.md`
-24. `docs/gis/environment-atmosphere-weather.md`
-25. `docs/gis/interaction-system.md`
-26. `docs/gis/three-d-tiles.md`
-27. `docs/gis/engine-math-algorithms.md`
-28. `docs/gis/algorithm-implementation-details.md`
-29. `docs/gis/performance-data-stability.md`
-30. `docs/gis/engine-testing-acceptance.md`
-31. `docs/gis/debugging-observability.md`
-32. `docs/gis/spatial-calculation.md`
-33. `docs/gis/verification-checklist.md`
-34. `docs/gis/engine-development-checklist.md`
-35. `docs/gis/ai-workflow-prompt.md`
-36. `docs/gis/implementation-prompts.md`
-37. `docs/gis/common-pitfalls.md`
-38. `docs/gis/threading-architecture.md`
-39. `docs/gis/security.md`
-40. `docs/gis/offline-and-packaging.md`
-41. `docs/gis/shader-interface.md`
-42. `docs/gis/shader-compilation.md`
-43. `docs/gis/build-and-ci.md`
-44. `docs/gis/deployment.md`
-45. `docs/gis/profiling-guide.md`
+19. `docs/gis/surface-tile-mainline.md`
+20. `docs/gis/rendering-engine.md`
+21. `docs/gis/graphics-pipeline.md`
+22. `docs/gis/data-provider-contracts.md`
+23. `docs/gis/engine-data-catalog.md`
+24. `docs/gis/overlay-styling.md`
+25. `docs/gis/environment-atmosphere-weather.md`
+26. `docs/gis/interaction-system.md`
+27. `docs/gis/three-d-tiles.md`
+28. `docs/gis/engine-math-algorithms.md`
+29. `docs/gis/algorithm-implementation-details.md`
+30. `docs/gis/performance-data-stability.md`
+31. `docs/gis/engine-testing-acceptance.md`
+32. `docs/gis/debugging-observability.md`
+33. `docs/gis/spatial-calculation.md`
+34. `docs/gis/verification-checklist.md`
+35. `docs/gis/engine-development-checklist.md`
+36. `docs/gis/ai-workflow-prompt.md`
+37. `docs/gis/implementation-prompts.md`
+38. `docs/gis/common-pitfalls.md`
+39. `docs/gis/threading-architecture.md`
+40. `docs/gis/security.md`
+41. `docs/gis/offline-and-packaging.md`
+42. `docs/gis/shader-interface.md`
+43. `docs/gis/shader-compilation.md`
+44. `docs/gis/build-and-ci.md`
+45. `docs/gis/deployment.md`
+46. `docs/gis/profiling-guide.md`
 
 ## 执行规则
 
@@ -61,9 +63,10 @@
 - 每个 GIS 实现都应在代码、测试或文档中明确坐标顺序、CRS、单位和计算模型。
 - 地球引擎相关实现必须额外明确：参考椭球体、世界坐标系、局部坐标系、相机模型、瓦片方案、LOD 策略、精度策略和性能预算。
 - 数据接入、瓦片调度、3D Tiles、渲染、相机和拾取功能必须有可测试接口契约，不得只靠视觉观察判断正确。
+- 地球引擎基础设施必须先遵守 `engine-infrastructure-contracts.md`，明确 Geodesy/CRS、TileScheme、Camera/FrameState、TilePlan/LOD、Provider/Scheduler、Cache、RenderCommand、RenderDevice/Shader、Picking、Diagnostics 和验收证据之间的链路，不得只实现局部类名或临时视觉修补。
 - 新增任何地球引擎数据类型时，必须先在 `engine-data-catalog.md` 中明确分类、坐标、单位、时间维度、LOD、样式、权限、缓存和验收方式。
 - 多瓦片体系叠加必须通过 `multi-tile-schemes.md` 定义的 TileScheme、CRS profile、坐标转换和控制点验收来证明无系统性偏移，不能只靠“看起来差不多”。
-- 作为地球底图的影像/地图瓦片渲染必须遵守 `basemap-tile-rendering.md`，明确可见性选择、请求调度、缓存、纹理上传、父子替换、多图层混合和失败降级策略。
+- 作为地球底图的影像/地图瓦片渲染必须遵守 `basemap-tile-rendering.md` 和 `surface-tile-mainline.md`，使用 SurfaceTile + ImageryAttachment 正式主链路，明确可见性选择、请求调度、缓存、纹理上传、父子替换、多图层混合和失败降级策略；不得把标准底图作为独立共面 BasemapTile mesh 主链路。
 - 点、线、面、标注、模型、点云和分析结果的样式必须遵守 `overlay-styling.md`，把数据 schema、样式表达式、交互状态、LOD、贴地/高度和性能预算分开设计。
 - 星空、大气、太阳/月亮、光照、阴影、云雾雨雪、海洋和时间系统必须遵守 `environment-atmosphere-weather.md`，明确真实物理、近似渲染和纯视觉效果的边界。
 - 相机、手势、拾取、选择、绘制、编辑、测量、时间轴和图层控制必须遵守 `interaction-system.md`，把输入事件、空间结果、状态机和撤销/重做分开设计。

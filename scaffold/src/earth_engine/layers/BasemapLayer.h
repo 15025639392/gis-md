@@ -5,6 +5,8 @@
 #include "../renderer/TileTextureCache.h"
 #include "../providers/ImageryProvider.h"
 #include "../tiling/TileScheme.h"
+#include "../tiling/SurfaceTile.h"
+#include "../core/math/Vec3.h"
 
 #include <memory>
 #include <vector>
@@ -14,11 +16,13 @@
 #include <unordered_map>
 #include <chrono>
 #include <atomic>
+#include <cstddef>
 
 namespace earth_engine {
 
 class RenderDevice;
 class Renderer;
+class Buffer;
 struct FrameState;
 class TileScheme;
 
@@ -54,7 +58,7 @@ public:
     void update(const FrameState& frameState);
 
     /// 从外部注入 TilePlan（由 BasemapLayerStack 提供共享计划）
-    void applyPlan(const TilePlan& plan);
+    void applyPlan(const TilePlan& plan, const Vec3& cameraPosition);
 
     /// 请求缺失的瓦片（通常在 applyPlan 之后调用）
     void loadMissingTiles();
@@ -63,17 +67,25 @@ public:
     const TilePlan& tilePlan() const { return tilePlan_; }
 
     /// 生成渲染命令
-    /// @param renderer 共享渲染器（用于 makeTileCommand）
+    /// @param renderer 共享渲染器（用于 makeSurfaceTileCommand）
     /// @param commands 输出命令列表
     void buildRenderCommands(Renderer& renderer,
                              RenderCommandList& commands);
 
     /// 获取统计信息
     int visibleTileCount() const { return static_cast<int>(tilePlan_.visibleTiles.size()); }
+    int desiredTileCount() const { return static_cast<int>(layerPlan_.desiredTiles.size()); }
+    int requestTileCount() const { return static_cast<int>(layerPlan_.requestTiles.size()); }
+    int renderTileCount() const { return static_cast<int>(layerPlan_.renderTiles.size()); }
     int cachedTileCount() const { return static_cast<int>(textureCache_.count()); }
+    int surfaceMeshCount() const { return static_cast<int>(surfaceMeshCache_.size()); }
+    size_t surfaceMeshBytes() const;
+    int exactAttachmentCount() const;
+    int parentFallbackAttachmentCount() const;
 
     /// 获取当前可见瓦片（供调试叠加层使用）
     const std::vector<TileKey>& visibleTiles() const { return tilePlan_.visibleTiles; }
+    const LayerTilePlan& layerPlan() const { return layerPlan_; }
 
     /// 获取瓦片体系
     const TileScheme& tileScheme() const { return *tileScheme_; }
@@ -83,6 +95,19 @@ private:
     void loadTile(const TileKey& key);
     /// 处理待上传队列（在 update() 中调用，主线程安全）
     void processPendingUploads();
+    void rebuildLayerPlan();
+    Texture* findFallbackTexture(const TileKey& target, TileKey& textureKey);
+    bool isCurrentDesiredTile(const TileKey& key) const;
+    struct SurfaceGpuMesh {
+        std::unique_ptr<Buffer> vertexBuffer;
+        std::unique_ptr<Buffer> indexBuffer;
+        Vec3 localOriginEcef = Vec3::zero();
+        int indexCount = 0;
+    };
+    SurfaceGpuMesh* getOrCreateSurfaceGpuMesh(const TileKey& key,
+                                              const Rectangle& bounds);
+    void evictUnusedSurfaceMeshes();
+    std::string tileCacheKey(const TileKey& key) const;
 
     std::string id_;
     bool visible_ = true;
@@ -92,7 +117,10 @@ private:
     std::unique_ptr<TileScheme> tileScheme_;
     RenderDevice* renderDevice_;
     TileTextureCache textureCache_;
+    std::unordered_map<std::string, SurfaceGpuMesh> surfaceMeshCache_;
     TilePlan tilePlan_;
+    LayerTilePlan layerPlan_;
+    Vec3 lastCameraPosition_ = Vec3::zero();
 
     // 待上传队列（后台线程解码 → 主线程上传 GPU）
     struct PendingUpload {

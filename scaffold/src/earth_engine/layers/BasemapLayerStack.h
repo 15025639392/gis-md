@@ -3,6 +3,7 @@
 #include "BasemapLayer.h"
 #include "../tiling/TileGroupKey.h"
 #include "../tiling/TilePlan.h"
+#include "../tiling/TileQuadTree.h"
 #include "../renderer/RenderCommand.h"
 #include "../core/math/Rectangle.h"
 
@@ -118,6 +119,7 @@ private:
     std::vector<std::unique_ptr<BasemapLayer>> layers_;
     std::unordered_map<TileGroupKey, TilePlan> groupPlans_;
     std::unordered_map<std::string, int> previousZoomByScheme_;
+    std::unordered_map<std::string, TileQuadTree> quadTreesByScheme_;
 };
 
 } // namespace earth_engine

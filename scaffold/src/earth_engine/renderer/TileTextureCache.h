@@ -20,6 +20,9 @@ public:
     /// @param maxBytes 最大缓存字节数（默认 64 MB）
     explicit TileTextureCache(RenderDevice* device,
                               size_t maxBytes = 64 * 1024 * 1024);
+    TileTextureCache(RenderDevice* device,
+                     std::string cacheDomain,
+                     size_t maxBytes = 64 * 1024 * 1024);
     ~TileTextureCache();
 
     // 禁止拷贝
@@ -60,9 +63,9 @@ private:
     };
 
     /// 从 TileKey 生成缓存键
-    static std::string makeCacheKey(const TileKey& key);
+    std::string makeCacheKey(const TileKey& key) const;
 
-    RenderDevice* device_;
+    std::string cacheDomain_;
     size_t maxBytes_;
     size_t totalBytes_ = 0;
 

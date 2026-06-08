@@ -16,7 +16,7 @@
 1. 先识别 GIS 问题边界：数据格式、CRS、坐标顺序、单位、空间操作和输出结果。
 2. 到 `trusted-sources.md` 查对应的权威标准或官方库文档。
 3. 到 `project-conventions.md` 查本项目自己的规则。
-4. 如果任务涉及从 0 开发或重构地球引擎，先读 `earth-engine-roadmap.md`、`technology-decisions.md`、`reference-architecture.md`、`core-api-contracts.md`、`task-breakdown.md`、`mvp-acceptance.md`、`implementation-prompts.md`。
+4. 如果任务涉及从 0 开发或重构地球引擎，先读 `earth-engine-roadmap.md`、`engine-infrastructure-contracts.md`、`technology-decisions.md`、`reference-architecture.md`、`core-api-contracts.md`、`task-breakdown.md`、`mvp-acceptance.md`、`implementation-prompts.md`。
 5. 如果任务涉及地球引擎模块，读 `earth-engine-architecture.md`、`earth-coordinate-systems.md`、`tiles-terrain-lod.md`、`multi-tile-schemes.md`、`rendering-engine.md`。
 6. 如果任务涉及数据接入、瓦片、底图渲染、样式、环境、交互、图形渲染、3D Tiles、算法、性能、测试或调试，再读对应专题：`data-provider-contracts.md`、`engine-data-catalog.md`、`basemap-tile-rendering.md`、`overlay-styling.md`、`environment-atmosphere-weather.md`、`interaction-system.md`、`graphics-pipeline.md`、`three-d-tiles.md`、`engine-math-algorithms.md`、`algorithm-implementation-details.md`、`performance-data-stability.md`、`engine-testing-acceptance.md`、`debugging-observability.md`。
 7. 如果任务涉及多线程、异步任务或 GPU 上传线程边界，读 `threading-architecture.md`。
@@ -29,6 +29,7 @@
 ## 专题地图
 
 - 引擎架构：`earth-engine-architecture.md`
+- 基础设施契约：`engine-infrastructure-contracts.md`
 - 从 0 开发路线图：`earth-engine-roadmap.md`
 - 参考架构：`reference-architecture.md`
 - 核心 API 契约：`core-api-contracts.md`
@@ -44,6 +45,7 @@
 - 瓦片、地形、LOD：`tiles-terrain-lod.md`
 - 多瓦片体系与无偏移叠加：`multi-tile-schemes.md`
 - 底图瓦片渲染编排：`basemap-tile-rendering.md`
+- SurfaceTile 正式主链路：`surface-tile-mainline.md`
 - 渲染管线：`rendering-engine.md`
 - 图形学与 GPU 管线：`graphics-pipeline.md`
 - 渲染重点审查：`rendering-review-checklist.md`

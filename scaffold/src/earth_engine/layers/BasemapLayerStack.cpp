@@ -102,7 +102,9 @@ void BasemapLayerStack::update(const FrameState& frameState) {
             previousZoom = prevIt->second;
         }
 
-        TilePlan plan = TilePlanBuilder::compute(camera, scheme, vpW, vpH, previousZoom);
+        TileQuadTree& quadTree = quadTreesByScheme_[schemeId];
+        TilePlan plan = quadTree.compute(camera, scheme, vpW, vpH, previousZoom);
+        plan.frameId = frameState.frameId;
         previousZoomByScheme_[schemeId] = plan.zoom;
 
         TileGroupKey key{schemeId, plan.zoom,
@@ -110,7 +112,7 @@ void BasemapLayerStack::update(const FrameState& frameState) {
         auto iter = groupPlans_.emplace(std::move(key), std::move(plan)).first;
 
         for (auto* layer : group) {
-            layer->applyPlan(iter->second);
+            layer->applyPlan(iter->second, camera.position());
         }
     }
 

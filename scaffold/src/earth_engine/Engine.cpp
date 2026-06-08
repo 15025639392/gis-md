@@ -93,14 +93,6 @@ void Engine::onDragEnd() {
     onInputEvent(event);
 }
 
-void Engine::onPinch(float scale) {
-    InputEvent event;
-    event.type = InputEvent::Type::PinchMove;
-    event.pinchScale = scale;
-    event.pointerType = InputEvent::PointerType::Touch;
-    onInputEvent(event);
-}
-
 Camera& Engine::camera() {
     return scene_->camera();
 }

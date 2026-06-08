@@ -61,6 +61,8 @@ static bool gTouchMoved = false;
 
 static constexpr const char* kFabdemTerrainTemplate =
     "http://192.168.1.4:8090/{z}/{x}/{y}.png";
+static constexpr bool kEnableTerrainForDemo = false;
+static constexpr bool kEnableDebugOverlayForDemo = false;
 
 static void addDemoVectorLayer() {
     static constexpr const char* kDemoGeoJson = R"json(
@@ -193,29 +195,33 @@ static bool createEngine() {
         gEngine->addLayer(std::move(layer));
         LOGI("Debug standard XYZ WebMercator layer added");
 
-        // FABDEM raster DEM served by dems/scripts/serve_tiles.py.
-        // XYZ WebMercator / Mapbox Terrain-RGB, WGS84 ellipsoid heights in meters.
-        auto terrainProvider = std::make_unique<HeightmapTerrainProvider>(
-            kFabdemTerrainTemplate,
-            "FABDEM raster DEM");
-        terrainProvider->setZoomRange(0, 12);
-        terrainProvider->setEncoding(HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
-        terrainProvider->setPlatformBridge(gPlatformBridge.get());
-        auto terrainLayer = std::make_unique<TerrainLayer>(
-            std::move(terrainProvider),
-            TileScheme::createXYZWebMercator());
-        terrainLayer->setEnabled(true);
-        gEngine->setTerrainLayer(std::move(terrainLayer));
-        gEngine->setTerrainEnabled(true);
-        LOGI("FABDEM terrain layer added: %s", kFabdemTerrainTemplate);
+        if (kEnableTerrainForDemo) {
+            // FABDEM raster DEM served by dems/scripts/serve_tiles.py.
+            // XYZ WebMercator / Mapbox Terrain-RGB, WGS84 ellipsoid heights in meters.
+            auto terrainProvider = std::make_unique<HeightmapTerrainProvider>(
+                kFabdemTerrainTemplate,
+                "FABDEM raster DEM");
+            terrainProvider->setZoomRange(0, 12);
+            terrainProvider->setEncoding(HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
+            terrainProvider->setPlatformBridge(gPlatformBridge.get());
+            auto terrainLayer = std::make_unique<TerrainLayer>(
+                std::move(terrainProvider),
+                TileScheme::createXYZWebMercator());
+            terrainLayer->setEnabled(true);
+            gEngine->setTerrainLayer(std::move(terrainLayer));
+            gEngine->setTerrainEnabled(true);
+            LOGI("FABDEM terrain layer added: %s", kFabdemTerrainTemplate);
+        } else {
+            LOGI("FABDEM terrain disabled for clean SurfaceTile validation");
+        }
 
         // Keep the feature path available, but avoid covering the basemap while
         // validating XYZ Web Mercator tile alignment.
         // addDemoVectorLayer();
 
-        // 开启调试叠加层
-        gEngine->setDebugOverlayEnabled(true);
-        LOGI("Debug overlay enabled");
+        gEngine->setDebugOverlayEnabled(kEnableDebugOverlayForDemo);
+        LOGI("Debug overlay %s",
+             kEnableDebugOverlayForDemo ? "enabled" : "disabled");
 
         // 设置模拟时间为当前系统时间
         double nowJd = currentJulianDate();
@@ -254,9 +260,14 @@ static void renderFrame() {
     gFrameCount++;
     if (gFrameCount <= 1 || gFrameCount % 300 == 0) {
         const auto& diag = gEngine->diagnostics();
-        LOGI("Frame %d | tiles vis=%d cached=%d | sun=(%.2f,%.2f,%.2f) | "
-             "FPS=%.1f draw=%d",
+        LOGI("Frame %d | tiles vis=%d cached=%d renderSurface=%d mesh=%d "
+             "attach=%d exact=%d parent=%d stale=%d missingGen=%d | "
+             "sun=(%.2f,%.2f,%.2f) | FPS=%.1f draw=%d",
              gFrameCount, diag.visibleTiles, diag.cachedTextures,
+             diag.renderSurfaceTiles, diag.surfaceMeshCount,
+             diag.imageryAttachments, diag.imageryExactAttachments,
+             diag.imageryParentFallbackAttachments,
+             diag.staleSurfaceCommands, diag.missingGenerationSurfaceCommands,
              sunDir.x(), sunDir.y(), sunDir.z(),
              diag.fps, diag.drawCalls);
     }
@@ -389,13 +400,34 @@ Java_com_earthengine_minimalglobe_GLESView_nativeTouchUp(
 }
 
 JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativePinch(
-    JNIEnv* /* env */, jobject /* this */, jfloat scale) {
+Java_com_earthengine_minimalglobe_GLESView_nativePinchStart(
+    JNIEnv* /* env */, jobject /* this */, jfloat centerX, jfloat centerY) {
+    gTouching = true;
+    gDragStarted = false;
+    gTouchMoved = true;
     if (!gEngine) return;
-    // 旧接口：构造 PinchMove 事件
+
     InputEvent event;
-    event.type = InputEvent::Type::PinchMove;
-    event.pinchScale = scale;
+    event.type = InputEvent::Type::PinchStart;
+    event.screenX = centerX;
+    event.screenY = centerY;
+    event.pinchScale = 1.0f;
+    event.pointerType = InputEvent::PointerType::Touch;
+    event.timestamp = androidUptimeSeconds();
+    gEngine->onInputEvent(event);
+}
+
+JNIEXPORT void JNICALL
+Java_com_earthengine_minimalglobe_GLESView_nativePinchEnd(
+    JNIEnv* /* env */, jobject /* this */, jfloat centerX, jfloat centerY) {
+    gTouching = false;
+    if (!gEngine) return;
+
+    InputEvent event;
+    event.type = InputEvent::Type::PinchEnd;
+    event.screenX = centerX;
+    event.screenY = centerY;
+    event.pinchScale = 1.0f;
     event.pointerType = InputEvent::PointerType::Touch;
     event.timestamp = androidUptimeSeconds();
     gEngine->onInputEvent(event);
@@ -404,14 +436,17 @@ Java_com_earthengine_minimalglobe_GLESView_nativePinch(
 JNIEXPORT void JNICALL
 Java_com_earthengine_minimalglobe_GLESView_nativePinchRotateTilt(
     JNIEnv* /* env */, jobject /* this */,
-    jfloat scale, jfloat /*rotationRadians*/,
-    jfloat /*centerX*/, jfloat /*centerY*/, jfloat /*centerDy*/,
+    jfloat scale, jfloat rotationRadians,
+    jfloat centerX, jfloat centerY, jfloat centerDy,
     jint /*width*/, jint /*height*/) {
-    // MVP 阶段仅处理缩放；旋转/倾斜留给后续阶段
     if (!gEngine) return;
     InputEvent event;
     event.type = InputEvent::Type::PinchMove;
+    event.screenX = centerX;
+    event.screenY = centerY;
     event.pinchScale = scale;
+    event.rotationRadians = rotationRadians;
+    event.centerDeltaY = centerDy;
     event.pointerType = InputEvent::PointerType::Touch;
     event.timestamp = androidUptimeSeconds();
     gEngine->onInputEvent(event);

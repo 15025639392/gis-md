@@ -146,6 +146,7 @@ void TerrainLayer::buildRenderCommands(const GlobeMesh& baseGlobeMesh,
 
     // 为地形网格生成 RenderCommand（使用与 Globe 相同的 shader）
     RenderCommand cmd;
+    cmd.kind = RenderCommandKind::TerrainSurface;
     cmd.owner = "terrain";
     cmd.pass = "color";
     cmd.shader = renderer.globeShader();
@@ -153,6 +154,8 @@ void TerrainLayer::buildRenderCommands(const GlobeMesh& baseGlobeMesh,
     cmd.indexType = RenderCommand::IndexType::UInt32;
     cmd.depthTest = true;
     cmd.depthWrite = true;
+    cmd.blend = false;
+    cmd.cullFace = true;
 
     // 使用 Renderer 的 globe vertex/index buffer（已通过 updateGlobeMesh 上传位移+裙边）
     cmd.vertexBuffer = renderer.globeVertexBuffer();

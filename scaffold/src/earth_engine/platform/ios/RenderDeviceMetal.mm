@@ -180,37 +180,28 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
     // 尝试识别 shader 类型（globe vs tile）
     id<MTLFunction> vertexFunc = [library newFunctionWithName:@"globeVertex"];
     id<MTLFunction> fragmentFunc = [library newFunctionWithName:@"globeFragment"];
-    bool isTile = false;
 
     if (!vertexFunc || !fragmentFunc) {
         vertexFunc = [library newFunctionWithName:@"tileVertex"];
         fragmentFunc = [library newFunctionWithName:@"tileFragment"];
-        isTile = true;
     }
 
     if (!vertexFunc || !fragmentFunc) {
         return nullptr;
     }
 
-    // Vertex descriptor: Globe = 32 bytes stride, Tile = 8 bytes stride
+    // Vertex descriptor: Globe and SurfaceTile share position/normal/uv layout.
     MTLVertexDescriptor* vd = [MTLVertexDescriptor vertexDescriptor];
-    if (isTile) {
-        vd.attributes[0].format = MTLVertexFormatFloat2;   // texcoord only
-        vd.attributes[0].offset = 0;
-        vd.attributes[0].bufferIndex = 0;
-        vd.layouts[0].stride = 8;
-    } else {
-        vd.attributes[0].format = MTLVertexFormatFloat3;   // position
-        vd.attributes[0].offset = 0;
-        vd.attributes[0].bufferIndex = 0;
-        vd.attributes[1].format = MTLVertexFormatFloat3;   // normal
-        vd.attributes[1].offset = 12;
-        vd.attributes[1].bufferIndex = 0;
-        vd.attributes[2].format = MTLVertexFormatFloat2;   // texcoord
-        vd.attributes[2].offset = 24;
-        vd.attributes[2].bufferIndex = 0;
-        vd.layouts[0].stride = 32;
-    }
+    vd.attributes[0].format = MTLVertexFormatFloat3;   // position
+    vd.attributes[0].offset = 0;
+    vd.attributes[0].bufferIndex = 0;
+    vd.attributes[1].format = MTLVertexFormatFloat3;   // normal
+    vd.attributes[1].offset = 12;
+    vd.attributes[1].bufferIndex = 0;
+    vd.attributes[2].format = MTLVertexFormatFloat2;   // texcoord
+    vd.attributes[2].offset = 24;
+    vd.attributes[2].bufferIndex = 0;
+    vd.layouts[0].stride = 32;
     vd.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
 
     MTLRenderPipelineDescriptor* pipeDesc = [MTLRenderPipelineDescriptor new];

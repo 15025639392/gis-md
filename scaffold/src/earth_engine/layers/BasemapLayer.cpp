@@ -4,17 +4,73 @@
 #include "../renderer/Renderer.h"
 #include "../renderer/RenderDevice.h"
 #include "../core/math/Rectangle.h"
+#include "../tiling/SurfaceTile.h"
+#include "../tiling/TileSurface.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <cstring>
+#include <algorithm>
+#include <unordered_set>
 
 #ifdef __ANDROID__
 #include <android/log.h>
 #endif
 
 namespace earth_engine {
+namespace {
+
+struct SurfaceGpuVertex {
+    float position[3];
+    float normal[3];
+    float texcoord[2];
+};
+
+std::vector<SurfaceGpuVertex> makeSurfaceGpuVertices(const SurfaceTileMesh& mesh,
+                                                     const Vec3& origin) {
+    std::vector<SurfaceGpuVertex> vertices;
+    vertices.reserve(mesh.vertices.size());
+    for (const SurfaceVertex& src : mesh.vertices) {
+        SurfaceGpuVertex dst{};
+        const Vec3 relative = src.positionEcef - origin;
+        dst.position[0] = static_cast<float>(relative.x());
+        dst.position[1] = static_cast<float>(relative.y());
+        dst.position[2] = static_cast<float>(relative.z());
+        dst.normal[0] = static_cast<float>(src.normalEcef.x());
+        dst.normal[1] = static_cast<float>(src.normalEcef.y());
+        dst.normal[2] = static_cast<float>(src.normalEcef.z());
+        dst.texcoord[0] = src.uv[0];
+        dst.texcoord[1] = src.uv[1];
+        vertices.push_back(dst);
+    }
+    return vertices;
+}
+
+Vec3 meshCentroid(const SurfaceTileMesh& mesh) {
+    if (mesh.vertices.empty()) return Vec3::zero();
+
+    Vec3 sum = Vec3::zero();
+    for (const SurfaceVertex& vertex : mesh.vertices) {
+        sum += vertex.positionEcef;
+    }
+    return sum / static_cast<double>(mesh.vertices.size());
+}
+
+int surfaceGridSizeForZoom(int zoom) {
+    // Aligned with OpenGlobus EmptyTerrain.gridSizeByZoom.
+    static constexpr int kGridSizeByZoom[] = {
+        64, 32, 16, 8, 4, 4, 4, 4, 2, 2, 2, 2, 2,
+        2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2
+    };
+    const int index = std::clamp(
+        zoom,
+        0,
+        static_cast<int>(sizeof(kGridSizeByZoom) / sizeof(kGridSizeByZoom[0])) - 1);
+    return kGridSizeByZoom[index];
+}
+
+} // namespace
 
 BasemapLayer::BasemapLayer(std::unique_ptr<ImageryProvider> provider,
                             std::unique_ptr<TileScheme> tileScheme,
@@ -23,7 +79,7 @@ BasemapLayer::BasemapLayer(std::unique_ptr<ImageryProvider> provider,
       provider_(std::move(provider)),
       tileScheme_(std::move(tileScheme)),
       renderDevice_(renderDevice),
-      textureCache_(renderDevice, 64 * 1024 * 1024),
+      textureCache_(renderDevice, id_ + ":" + provider_->id(), 64 * 1024 * 1024),
       pendingQueue_(std::make_shared<PendingQueue>()) {}
 
 BasemapLayer::~BasemapLayer() = default;
@@ -31,28 +87,28 @@ BasemapLayer::~BasemapLayer() = default;
 void BasemapLayer::update(const FrameState& frameState) {
     if (!visible_ || !frameState.camera) return;
 
-    // 1. 处理后台线程完成的解码，上传 GPU 纹理（主线程安全）
-    processPendingUploads();
-
-    // 2. 计算可见瓦片
-    tilePlan_ = TilePlanBuilder::compute(
+    TilePlan plan = TilePlanBuilder::compute(
         *frameState.camera, *tileScheme_,
         static_cast<double>(frameState.viewportWidthPixels),
         static_cast<double>(frameState.viewportHeightPixels),
         tilePlan_.zoom);
+    plan.frameId = frameState.frameId;
 
-    // 3. 请求缺失的瓦片
+    applyPlan(plan, frameState.camera->position());
     loadMissingTiles();
 }
 
-void BasemapLayer::applyPlan(const TilePlan& plan) {
+void BasemapLayer::applyPlan(const TilePlan& plan, const Vec3& cameraPosition) {
     if (!visible_) return;
 
-    processPendingUploads();
-    if (plan.zoom != tilePlan_.zoom || plan.visibleTiles != tilePlan_.visibleTiles) {
+    lastCameraPosition_ = cameraPosition;
+    if (plan.zoom != tilePlan_.zoom ||
+        plan.visibleTiles != tilePlan_.visibleTiles) {
         ++generation_;
     }
     tilePlan_ = plan;
+    rebuildLayerPlan();
+    processPendingUploads();
 }
 
 void BasemapLayer::loadMissingTiles() {
@@ -71,12 +127,8 @@ void BasemapLayer::loadMissingTiles() {
         }
     }
 
-    for (const auto& key : tilePlan_.visibleTiles) {
-        if (textureCache_.contains(key)) continue;
-
-        std::string ck = std::to_string(key.z) + "/" +
-                         std::to_string(key.x) + "/" +
-                         std::to_string(key.y);
+    for (const auto& key : layerPlan_.requestTiles) {
+        std::string ck = tileCacheKey(key);
 
         auto it = failedTiles_.find(ck);
         if (it != failedTiles_.end()) {
@@ -97,9 +149,7 @@ void BasemapLayer::loadTile(const TileKey& key) {
     auto token = CancellationToken();
     const uint64_t generation = generation_;
 
-    std::string ck = std::to_string(key.z) + "/" +
-                     std::to_string(key.x) + "/" +
-                     std::to_string(key.y);
+    std::string ck = tileCacheKey(key);
     requestedGeneration_[ck] = generation;
 
     provider_->requestTile(key, token,
@@ -121,11 +171,19 @@ void BasemapLayer::processPendingUploads() {
     std::deque<PendingUpload> batch;
     {
         std::lock_guard<std::mutex> lock(pendingQueue_->mutex);
-        batch.swap(pendingQueue_->queue);
+        constexpr size_t kMaxUploadsPerFrame = 4;
+        while (!pendingQueue_->queue.empty() && batch.size() < kMaxUploadsPerFrame) {
+            batch.push_back(std::move(pendingQueue_->queue.front()));
+            pendingQueue_->queue.pop_front();
+        }
     }
 
     for (auto& item : batch) {
         if (item.generation != generation_) {
+            continue;
+        }
+        if (!isCurrentDesiredTile(item.key)) {
+            requestedGeneration_.erase(tileCacheKey(item.key));
             continue;
         }
         auto& image = item.image;
@@ -145,9 +203,7 @@ void BasemapLayer::processPendingUploads() {
         auto texture = renderDevice_->createTexture(texDesc);
         if (texture) {
             // 成功上传 → 清除失败记录
-            std::string ck = std::to_string(item.key.z) + "/" +
-                             std::to_string(item.key.x) + "/" +
-                             std::to_string(item.key.y);
+            std::string ck = tileCacheKey(item.key);
             failedTiles_.erase(ck);
             requestedGeneration_.erase(ck);
 #ifdef __ANDROID__
@@ -159,54 +215,230 @@ void BasemapLayer::processPendingUploads() {
             textureCache_.put(item.key, std::move(texture));
         }
     }
+    rebuildLayerPlan();
+}
+
+void BasemapLayer::rebuildLayerPlan() {
+    layerPlan_ = LayerTilePlan{};
+    layerPlan_.layerId = id_;
+    layerPlan_.providerId = provider_ ? provider_->id() : "";
+    layerPlan_.frameId = tilePlan_.frameId;
+    layerPlan_.zoom = tilePlan_.zoom;
+    layerPlan_.visibleTiles = tilePlan_.visibleTiles;
+    layerPlan_.desiredTiles = tilePlan_.visibleTiles;
+
+    for (const auto& key : layerPlan_.desiredTiles) {
+        if (textureCache_.contains(key)) {
+            layerPlan_.renderTiles.push_back(RenderTileRef{key, key, TileRenderSource::Exact});
+            continue;
+        }
+
+        TileKey fallbackKey = key;
+        if (findFallbackTexture(key, fallbackKey)) {
+            layerPlan_.fallbackTiles.push_back(TileFallback{key, fallbackKey});
+            layerPlan_.renderTiles.push_back(
+                RenderTileRef{key, fallbackKey, TileRenderSource::ParentFallback});
+        }
+
+        layerPlan_.requestTiles.push_back(key);
+    }
+
+    for (auto it = requestedGeneration_.begin(); it != requestedGeneration_.end(); ) {
+        bool keep = false;
+        for (const TileKey& key : layerPlan_.requestTiles) {
+            if (it->first == tileCacheKey(key)) {
+                keep = true;
+                break;
+            }
+        }
+        if (!keep) {
+            it = requestedGeneration_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    evictUnusedSurfaceMeshes();
+}
+
+bool BasemapLayer::isCurrentDesiredTile(const TileKey& key) const {
+    return std::find(layerPlan_.desiredTiles.begin(),
+                     layerPlan_.desiredTiles.end(),
+                     key) != layerPlan_.desiredTiles.end();
+}
+
+Texture* BasemapLayer::findFallbackTexture(const TileKey& target, TileKey& textureKey) {
+    TileKey candidate = target;
+    while (candidate.z > tileScheme_->minZoom()) {
+        candidate = TilePlanBuilder::parentKey(candidate);
+        Texture* tex = textureCache_.get(candidate);
+        if (tex) {
+            textureKey = candidate;
+            return tex;
+        }
+    }
+    return nullptr;
+}
+
+BasemapLayer::SurfaceGpuMesh*
+BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
+                                        const Rectangle& bounds) {
+    if (!renderDevice_) return nullptr;
+
+    const int gridSize = surfaceGridSizeForZoom(key.z);
+    const std::string ck = tileCacheKey(key) + "/surface/" +
+        "ellipsoid/" + std::to_string(gridSize);
+
+    auto found = surfaceMeshCache_.find(ck);
+    if (found != surfaceMeshCache_.end()) {
+        return &found->second;
+    }
+
+    SurfaceTileMesh mesh = TileSurface::buildEllipsoidMesh(bounds, gridSize);
+    if (mesh.vertices.empty() || mesh.indices.empty()) return nullptr;
+
+    const Vec3 localOrigin = meshCentroid(mesh);
+    std::vector<SurfaceGpuVertex> vertices =
+        makeSurfaceGpuVertices(mesh, localOrigin);
+    if (vertices.empty()) return nullptr;
+
+    SurfaceGpuMesh gpuMesh;
+    gpuMesh.localOriginEcef = localOrigin;
+
+    BufferDesc vbDesc;
+    vbDesc.size = vertices.size() * sizeof(SurfaceGpuVertex);
+    vbDesc.data = vertices.data();
+    vbDesc.usage = BufferDesc::Usage::Static;
+    vbDesc.type = BufferDesc::Type::Vertex;
+    gpuMesh.vertexBuffer = renderDevice_->createBuffer(vbDesc);
+    if (!gpuMesh.vertexBuffer) return nullptr;
+
+    BufferDesc ibDesc;
+    ibDesc.size = mesh.indices.size() * sizeof(uint32_t);
+    ibDesc.data = mesh.indices.data();
+    ibDesc.usage = BufferDesc::Usage::Static;
+    ibDesc.type = BufferDesc::Type::Index;
+    gpuMesh.indexBuffer = renderDevice_->createBuffer(ibDesc);
+    if (!gpuMesh.indexBuffer) return nullptr;
+
+    gpuMesh.indexCount = static_cast<int>(mesh.indices.size());
+    auto [it, inserted] = surfaceMeshCache_.emplace(ck, std::move(gpuMesh));
+    (void)inserted;
+    return &it->second;
+}
+
+void BasemapLayer::evictUnusedSurfaceMeshes() {
+    std::unordered_set<std::string> keep;
+    keep.reserve(layerPlan_.renderTiles.size());
+    for (const auto& renderTile : layerPlan_.renderTiles) {
+        keep.insert(tileCacheKey(renderTile.targetKey) + "/surface/ellipsoid/" +
+                    std::to_string(surfaceGridSizeForZoom(renderTile.targetKey.z)));
+    }
+
+    for (auto it = surfaceMeshCache_.begin(); it != surfaceMeshCache_.end(); ) {
+        if (keep.find(it->first) == keep.end()) {
+            it = surfaceMeshCache_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+size_t BasemapLayer::surfaceMeshBytes() const {
+    size_t total = 0;
+    for (const auto& entry : surfaceMeshCache_) {
+        const int indexCount = entry.second.indexCount;
+        const int gridSize = indexCount > 0
+            ? static_cast<int>(std::sqrt(static_cast<double>(indexCount) / 6.0))
+            : 0;
+        const size_t vertexCount = static_cast<size_t>((gridSize + 1) * (gridSize + 1));
+        total += vertexCount * sizeof(SurfaceGpuVertex) +
+                 static_cast<size_t>(indexCount) * sizeof(uint32_t);
+    }
+    return total;
+}
+
+int BasemapLayer::exactAttachmentCount() const {
+    int count = 0;
+    for (const auto& renderTile : layerPlan_.renderTiles) {
+        if (renderTile.source == TileRenderSource::Exact) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+int BasemapLayer::parentFallbackAttachmentCount() const {
+    int count = 0;
+    for (const auto& renderTile : layerPlan_.renderTiles) {
+        if (renderTile.source == TileRenderSource::ParentFallback) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+std::string BasemapLayer::tileCacheKey(const TileKey& key) const {
+    return id_ + "/" + provider_->id() + "/" + key.schemeId + "/" +
+           std::to_string(key.z) + "/" +
+           std::to_string(key.x) + "/" +
+           std::to_string(key.y);
 }
 
 void BasemapLayer::buildRenderCommands(Renderer& renderer,
                                         RenderCommandList& commands) {
     if (!visible_) return;
 
-    for (const auto& key : tilePlan_.visibleTiles) {
-        Texture* tex = textureCache_.get(key);
-        TileKey textureKey = key;
-
-        // 父瓦片回退：如果子级未缓存，尝试上一级 zoom 的父级
-        if (!tex) {
-            for (const auto& parentKey : tilePlan_.parentTiles) {
-                tex = textureCache_.get(parentKey);
-                if (tex) {
-                    textureKey = parentKey;
-                    break;
-                }
-            }
-        }
+    for (const auto& renderTile : layerPlan_.renderTiles) {
+        const TileKey& key = renderTile.targetKey;
+        const TileKey& textureKey = renderTile.textureKey;
+        Texture* tex = textureCache_.get(textureKey);
 
         if (!tex) continue;
 
         Rectangle bounds = tileScheme_->tileToRectangle(key);
         Rectangle textureBounds = tileScheme_->tileToRectangle(textureKey);
-        const double textureWidth = textureBounds.east() - textureBounds.west();
-        const double textureHeight = textureBounds.north() - textureBounds.south();
-        float uvOffsetX = 0.0f;
-        float uvOffsetY = 0.0f;
-        float uvScaleX = 1.0f;
-        float uvScaleY = 1.0f;
-        if (textureKey != key && textureWidth != 0.0 && textureHeight != 0.0) {
-            uvOffsetX = static_cast<float>((bounds.west() - textureBounds.west()) / textureWidth);
-            uvScaleX = static_cast<float>((bounds.east() - bounds.west()) / textureWidth);
-            uvOffsetY = static_cast<float>((textureBounds.north() - bounds.north()) / textureHeight);
-            uvScaleY = static_cast<float>((bounds.north() - bounds.south()) / textureHeight);
-        }
+        TileTextureWindow uv = TileSurface::textureWindow(bounds, textureBounds);
 
-        auto cmd = renderer.makeTileCommand(
+        ImageryAttachment attachment{
+            id_,
+            provider_ ? provider_->id() : "",
+            textureKey,
             tex,
-            static_cast<float>(bounds.west()),
-            static_cast<float>(bounds.south()),
-            static_cast<float>(bounds.east()),
-            static_cast<float>(bounds.north()),
-            uvOffsetX,
-            uvOffsetY,
-            uvScaleX,
-            uvScaleY);
+            uv.offsetU,
+            uv.offsetV,
+            uv.scaleU,
+            uv.scaleV,
+            opacity_,
+            renderTile.source == TileRenderSource::Exact
+                ? ImageryFallbackSource::Exact
+                : ImageryFallbackSource::Parent
+        };
+
+        SurfaceGpuMesh* gpuMesh = getOrCreateSurfaceGpuMesh(key, bounds);
+        if (!gpuMesh) continue;
+
+        auto cmd = renderer.makeSurfaceTileCommand(
+            attachment.texture,
+            gpuMesh->vertexBuffer.get(),
+            gpuMesh->indexBuffer.get(),
+            gpuMesh->indexCount,
+            attachment.uvOffsetU,
+            attachment.uvOffsetV,
+            attachment.uvScaleU,
+            attachment.uvScaleV);
+        cmd.uniforms["u_tileOpacity"] = {attachment.opacity};
+        cmd.uniforms["u_surfaceGeneration"] = {
+            static_cast<float>(generation_)
+        };
+        const Vec3 cameraRelativeToTileOrigin =
+            lastCameraPosition_ - gpuMesh->localOriginEcef;
+        cmd.uniforms["u_cameraRelativeOrigin"] = {
+            static_cast<float>(cameraRelativeToTileOrigin.x()),
+            static_cast<float>(cameraRelativeToTileOrigin.y()),
+            static_cast<float>(cameraRelativeToTileOrigin.z())
+        };
+        cmd.frameId = layerPlan_.frameId;
+        cmd.generation = generation_;
 
         commands.push_back(std::move(cmd));
     }

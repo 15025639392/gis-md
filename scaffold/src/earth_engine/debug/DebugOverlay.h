@@ -2,6 +2,7 @@
 
 #include "../renderer/RenderCommand.h"
 #include "../tiling/TileKey.h"
+#include "../tiling/TilePlan.h"
 #include <vector>
 
 namespace earth_engine {
@@ -29,6 +30,12 @@ public:
     /// @param tileScheme 瓦片体系（用于计算 tile bounds）
     /// @param commands 输出命令列表
     void buildCommands(const std::vector<TileKey>& tileKeys,
+                       const TileScheme& tileScheme,
+                       RenderCommandList& commands);
+
+    /// 生成带 SurfaceTile 状态颜色的调试渲染命令。
+    /// exact=green, parent fallback=amber, requested/missing=cyan, desired-only=red.
+    void buildCommands(const LayerTilePlan& layerPlan,
                        const TileScheme& tileScheme,
                        RenderCommandList& commands);
 

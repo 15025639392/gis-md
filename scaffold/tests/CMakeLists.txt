@@ -54,6 +54,12 @@ add_executable(test_tile_plan
 target_link_libraries(test_tile_plan PRIVATE earth_engine_core GTest::gtest GTest::gtest_main)
 add_test(NAME test_tile_plan COMMAND test_tile_plan)
 
+add_executable(test_tile_surface
+    unit/tiling/test_tile_surface.cpp
+)
+target_link_libraries(test_tile_surface PRIVATE earth_engine_core GTest::gtest GTest::gtest_main)
+add_test(NAME test_tile_surface COMMAND test_tile_surface)
+
 # ============================================================
 # stage 4 tests
 # ============================================================
@@ -76,6 +82,12 @@ add_executable(test_layer_stack
 target_link_libraries(test_layer_stack PRIVATE earth_engine_core GTest::gtest GTest::gtest_main)
 add_test(NAME test_layer_stack COMMAND test_layer_stack)
 
+add_executable(test_renderer_commands
+    unit/renderer/test_renderer_commands.cpp
+)
+target_link_libraries(test_renderer_commands PRIVATE earth_engine_core GTest::gtest GTest::gtest_main)
+add_test(NAME test_renderer_commands COMMAND test_renderer_commands)
+
 # ============================================================
 # stage 5 tests
 # ============================================================
@@ -97,6 +109,12 @@ add_executable(test_picking
 )
 target_link_libraries(test_picking PRIVATE earth_engine_core GTest::gtest GTest::gtest_main)
 add_test(NAME test_picking COMMAND test_picking)
+
+add_executable(test_input_manager
+    unit/interaction/test_input_manager.cpp
+)
+target_link_libraries(test_input_manager PRIVATE earth_engine_core GTest::gtest GTest::gtest_main)
+add_test(NAME test_input_manager COMMAND test_input_manager)
 
 # ============================================================
 # stage 6 tests

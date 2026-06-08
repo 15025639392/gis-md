@@ -59,14 +59,15 @@ public:
     /// 构建 globe 背景 RenderCommand
     RenderCommand makeGlobeCommand(const FrameState& frameState) const;
 
-    /// 构建 tile RenderCommand（调用者提供 texture 和 tileBounds）
-    RenderCommand makeTileCommand(Texture* texture,
-                                  float west, float south,
-                                  float east, float north,
-                                  float uvOffsetX = 0.0f,
-                                  float uvOffsetY = 0.0f,
-                                  float uvScaleX = 1.0f,
-                                  float uvScaleY = 1.0f) const;
+    /// 构建 SurfaceTile RenderCommand（调用者提供 imagery attachment 和 tileBounds）
+    RenderCommand makeSurfaceTileCommand(Texture* texture,
+                                         Buffer* vertexBuffer,
+                                         Buffer* indexBuffer,
+                                         int indexCount,
+                                         float uvOffsetX = 0.0f,
+                                         float uvOffsetY = 0.0f,
+                                         float uvScaleX = 1.0f,
+                                         float uvScaleY = 1.0f) const;
 
     /// 更新 globe 顶点和索引 buffer（地形位移/裙边后调用）。
     /// 一次性替换顶点位置和索引数据，支持 skirt 增加新几何。

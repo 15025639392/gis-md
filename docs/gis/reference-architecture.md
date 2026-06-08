@@ -46,6 +46,10 @@ src/
     TileScheme.h / TileScheme.cpp
     TileKey.h / TileKey.cpp
     TilePlan.h / TilePlan.cpp
+    TileSurface.h / TileSurface.cpp
+    SurfaceTile.h / SurfaceTile.cpp
+    SurfaceTileMesh.h / SurfaceTileMesh.cpp
+    SurfaceTilePlan.h / SurfaceTilePlan.cpp
     TileCache.h / TileCache.cpp
   providers/
     ImageryProvider.h / ImageryProvider.cpp
@@ -135,6 +139,7 @@ earth-engine/
 允许：
 
 - `layers` 依赖 `providers`、`tiling`、`renderer` 抽象（RenderDevice 接口，不依赖具体实现）。
+- `SurfaceTile` 位于 `tiling` 或 `globe/surface` 边界层，负责地球表面 mesh、bounding volume、imagery attachment 绑定，不负责网络请求。
 - `renderer` 依赖 `core/math`，通过 `platform/bridge/PlatformBridge.h` 获取平台能力，不直接 `#import <Metal/Metal.h>` 或 `#include <GLES3/gl3.h>`。
 - `interaction` 通过 public API 操作 scene/layers，不直接改 GPU 资源。
 - `providers` 负责数据请求和解析，不创建长期 GPU 资源。
@@ -146,6 +151,7 @@ earth-engine/
 - `provider` 直接调用 Metal/GL/Vulkan API。
 - `shader` 处理 CRS 偏移或业务权限。
 - `renderer` 发网络请求（网络通过 `platform/bridge/HttpRequest` 注入）。
+- 标准底图使用 `GlobeCommand + BasemapTileCommand` 独立共面 mesh 作为主链路。
 - `layer` 私自维护与全局冲突的 selection 状态。
 - `core/math` 依赖 `platform/`。
 

@@ -6,8 +6,47 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <cstring>
 #include <algorithm>
+#include <stdexcept>
+#include <limits>
 
 namespace earth_engine {
+namespace {
+
+void updateSurfaceCommandDiagnostics(const RenderCommandList& commands,
+                                     uint64_t expectedFrameId,
+                                     Diagnostics& diag) {
+    diag.staleSurfaceCommands = 0;
+    diag.missingGenerationSurfaceCommands = 0;
+    diag.minSurfaceGeneration = 0;
+    diag.maxSurfaceGeneration = 0;
+
+    uint64_t minGeneration = std::numeric_limits<uint64_t>::max();
+    uint64_t maxGeneration = 0;
+    bool sawGeneration = false;
+
+    for (const RenderCommand& cmd : commands) {
+        if (cmd.kind != RenderCommandKind::SurfaceTile) continue;
+
+        if (expectedFrameId != 0 && cmd.frameId != expectedFrameId) {
+            ++diag.staleSurfaceCommands;
+        }
+        if (cmd.generation == 0) {
+            ++diag.missingGenerationSurfaceCommands;
+            continue;
+        }
+
+        minGeneration = std::min(minGeneration, cmd.generation);
+        maxGeneration = std::max(maxGeneration, cmd.generation);
+        sawGeneration = true;
+    }
+
+    if (sawGeneration) {
+        diag.minSurfaceGeneration = minGeneration;
+        diag.maxSurfaceGeneration = maxGeneration;
+    }
+}
+
+} // namespace
 
 Scene::Scene()
     : camera_(std::make_unique<Camera>()),
@@ -111,7 +150,7 @@ void Scene::render() {
 
     RenderCommandList commands;
 
-    // 1. Globe 背景（或地形如果启用）
+    // 1. 地形主表面，或稍后在无 SurfaceTile 时使用 globe fallback
     static bool sWasTerrainLastFrame = false;
     if (terrainLayer_ && terrainEnabled_ && terrainLayer_->visible()) {
         terrainLayer_->buildRenderCommands(globeMesh_, frameState_,
@@ -123,11 +162,19 @@ void Scene::render() {
             renderer_->updateGlobeMesh(globeMesh_);
             sWasTerrainLastFrame = false;
         }
-        commands.push_back(renderer_->makeGlobeCommand(frameState_));
     }
 
-    // 2. 底图图层（通过栈按顺序生成渲染命令）
+    // 2. 标准底图 SurfaceTile 主链路
     layerStack_.buildRenderCommands(*renderer_, commands);
+
+    const bool hasSurfaceTile = std::any_of(commands.begin(), commands.end(),
+        [](const RenderCommand& cmd) {
+            return cmd.kind == RenderCommandKind::SurfaceTile ||
+                   cmd.kind == RenderCommandKind::TerrainSurface;
+        });
+    if (!hasSurfaceTile && !(terrainLayer_ && terrainEnabled_ && terrainLayer_->visible())) {
+        commands.insert(commands.begin(), renderer_->makeGlobeCommand(frameState_));
+    }
 
     // 3. 矢量图层
     for (auto& vLayer : vectorLayers_) {
@@ -138,14 +185,12 @@ void Scene::render() {
 
     // 4. 调试叠加层
     if (debugOverlay_ && debugOverlay_->enabled()) {
-        for (const auto& [layerId, tiles] : layerStack_.allVisibleTiles()) {
-            auto* layer = layerStack_.findLayer(layerId);
-            if (layer) {
-                debugOverlay_->buildCommands(
-                    tiles,
-                    layer->tileScheme(),
-                    commands);
-            }
+        for (const auto& layer : layerStack_.layers()) {
+            if (!layer->visible()) continue;
+            debugOverlay_->buildCommands(
+                layer->layerPlan(),
+                layer->tileScheme(),
+                commands);
         }
     }
 
@@ -167,19 +212,31 @@ void Scene::render() {
             auto& mvpU = cmd.uniforms["u_modelViewProjection"];
             if (mvpU.empty()) {
                 mvpU.resize(16);
-                const glm::mat4& matrix = (cmd.owner == "tile")
+                const glm::mat4& matrix = (cmd.owner == "surface_tile")
                     ? relativeViewProj
                     : viewProj;
                 std::memcpy(mvpU.data(), glm::value_ptr(matrix), 16 * sizeof(float));
             }
-            if (cmd.owner == "tile") {
-                cmd.uniforms["u_cameraRelativeOrigin"] = {
-                    static_cast<float>(cam.position().x()),
-                    static_cast<float>(cam.position().y()),
-                    static_cast<float>(cam.position().z())
-                };
+            if (cmd.owner == "surface_tile") {
+                auto& originU = cmd.uniforms["u_cameraRelativeOrigin"];
+                if (originU.empty()) {
+                    originU = {
+                        static_cast<float>(cam.position().x()),
+                        static_cast<float>(cam.position().y()),
+                        static_cast<float>(cam.position().z())
+                    };
+                }
             }
         }
+    }
+
+    sortMvpRenderCommands(commands);
+    updateSurfaceCommandDiagnostics(
+        commands, frameState_.frameId, frameState_.diagnostics);
+    if (auto error = validateMvpRenderCommands(commands, frameState_.frameId)) {
+        throw std::runtime_error(
+            "MVP render command validation failed for '" + error->owner +
+            "': " + error->message);
     }
 
     // 6. 填充诊断数据
@@ -187,10 +244,29 @@ void Scene::render() {
     diag.drawCalls = static_cast<int>(commands.size());
     diag.visibleTiles = 0;
     diag.cachedTextures = 0;
+    diag.queuedRequests = 0;
+    diag.loadingRequests = 0;
+    diag.gpuTextureCount = 0;
+    diag.renderSurfaceTiles = 0;
+    diag.surfaceMeshCount = 0;
+    diag.imageryAttachments = 0;
+    diag.imageryExactAttachments = 0;
+    diag.imageryParentFallbackAttachments = 0;
+    diag.surfaceMeshBytes = 0;
     for (const auto& layer : layerStack_.layers()) {
         diag.visibleTiles += layer->visibleTileCount();
         diag.cachedTextures += layer->cachedTileCount();
+        diag.queuedRequests += layer->requestTileCount();
+        diag.renderSurfaceTiles += layer->renderTileCount();
+        diag.surfaceMeshCount += layer->surfaceMeshCount();
+        diag.imageryExactAttachments += layer->exactAttachmentCount();
+        diag.imageryParentFallbackAttachments += layer->parentFallbackAttachmentCount();
+        diag.surfaceMeshBytes += static_cast<int>(layer->surfaceMeshBytes());
     }
+    diag.loadingRequests = diag.queuedRequests;
+    diag.gpuTextureCount = diag.cachedTextures;
+    diag.imageryAttachments =
+        diag.imageryExactAttachments + diag.imageryParentFallbackAttachments;
 
     // 7. 提交
     renderer_->submit(commands);
@@ -352,14 +428,23 @@ void Scene::setupInputCallback() {
                     cameraController_->onDragEnd();
                     break;
                 case InputManager::Gesture::PinchStart:
-                    cameraController_->onPinch(event.pinchScale);
+                    cameraController_->onPinchGesture(event.pinchScale,
+                                                      event.screenX,
+                                                      event.screenY,
+                                                      event.rotationRadians,
+                                                      event.centerDeltaY,
+                                                      event.timestamp);
                     break;
                 case InputManager::Gesture::PinchMove:
-                    cameraController_->onPinch(event.pinchScale);
+                    cameraController_->onPinchGesture(event.pinchScale,
+                                                      event.screenX,
+                                                      event.screenY,
+                                                      event.rotationRadians,
+                                                      event.centerDeltaY,
+                                                      event.timestamp);
                     break;
                 case InputManager::Gesture::PinchEnd:
-                    // pinch 结束重置
-                    cameraController_->onPinch(1.0f);
+                    cameraController_->onPinchEnd();
                     break;
                 case InputManager::Gesture::Click:
                 case InputManager::Gesture::DoubleClick: {

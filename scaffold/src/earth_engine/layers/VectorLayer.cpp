@@ -431,6 +431,7 @@ void VectorLayer::buildRenderCommands(const FrameState& frameState,
         Color color = resolveColor(feature, override);
 
         RenderCommand cmd;
+        cmd.kind = RenderCommandKind::VectorOverlay;
         cmd.owner = layerId_ + ":" + feature.id;
         cmd.depthTest = true;
 

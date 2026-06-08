@@ -1,11 +1,20 @@
 #include "TileTextureCache.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace earth_engine {
 
 TileTextureCache::TileTextureCache(RenderDevice* device, size_t maxBytes)
-    : device_(device), maxBytes_(maxBytes) {}
+    : TileTextureCache(device, "default", maxBytes) {}
+
+TileTextureCache::TileTextureCache(RenderDevice* device,
+                                   std::string cacheDomain,
+                                   size_t maxBytes)
+    : cacheDomain_(std::move(cacheDomain)),
+      maxBytes_(maxBytes) {
+    (void)device;
+}
 
 TileTextureCache::~TileTextureCache() {
     clear();
@@ -74,8 +83,9 @@ void TileTextureCache::clear() {
     totalBytes_ = 0;
 }
 
-std::string TileTextureCache::makeCacheKey(const TileKey& key) {
-    return key.schemeId + "/" +
+std::string TileTextureCache::makeCacheKey(const TileKey& key) const {
+    return cacheDomain_ + "/" +
+           key.schemeId + "/" +
            std::to_string(key.z) + "/" +
            std::to_string(key.x) + "/" +
            std::to_string(key.y);

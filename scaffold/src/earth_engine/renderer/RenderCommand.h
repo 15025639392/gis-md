@@ -4,15 +4,28 @@
 #include <vector>
 #include <unordered_map>
 #include <cstdint>
+#include <optional>
 #include "RenderDevice.h"  // for Texture/Buffer/ShaderProgram/Framebuffer forward decls
 
 namespace earth_engine {
 
+enum class RenderCommandKind {
+    Unknown,
+    GlobeSurface,
+    TerrainSurface,
+    SurfaceTile,
+    VectorOverlay,
+    DebugOverlay
+};
+
 /// 单条渲染命令。
 /// 由 Layer::buildRenderCommands() 生成，Renderer 收集并提交给 RenderDevice。
 struct RenderCommand {
+    RenderCommandKind kind = RenderCommandKind::Unknown;
     std::string owner;     // layer id（调试用）
     std::string pass;      // "depth" | "color" | "picking" | "shadow" | "postprocess"
+    uint64_t frameId = 0;
+    uint64_t generation = 0;
 
     // GPU 资源引用（裸指针，生命周期由 RenderDevice 管理）
     ShaderProgram* shader = nullptr;
@@ -43,5 +56,22 @@ struct RenderCommand {
 
 /// 渲染命令列表（每帧一帧）
 using RenderCommandList = std::vector<RenderCommand>;
+
+struct RenderCommandValidationError {
+    size_t commandIndex = 0;
+    std::string owner;
+    std::string message;
+};
+
+/// MVP 3D globe 主链路固定顺序：surface -> vector -> debug。
+int mvpRenderOrder(RenderCommandKind kind);
+
+/// 对 MVP 主链路的 pass/depth/cull/blend 状态做硬校验。
+/// 非 MVP 命令必须标为 Unknown 或新增独立 kind 后再定义规则。
+std::optional<RenderCommandValidationError>
+validateMvpRenderCommands(const RenderCommandList& commands,
+                          uint64_t expectedFrameId = 0);
+
+void sortMvpRenderCommands(RenderCommandList& commands);
 
 } // namespace earth_engine

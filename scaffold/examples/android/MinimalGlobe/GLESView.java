@@ -82,7 +82,7 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
             if (action == MotionEvent.ACTION_POINTER_DOWN || !pinching) {
                 pinching = true;
                 suppressSingleDragUntilUp = true;
-                nativeTouchDown();
+                nativePinchStart(centerX, centerY);
                 lastPinchDistance = distance;
                 lastPinchAngle = angle;
                 lastPinchCenterX = centerX;
@@ -98,8 +98,8 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
                         centerY - lastPinchCenterY,
                         getWidth(),
                         getHeight());
-                lastPinchDistance = distance;
                 lastPinchAngle = angle;
+                lastPinchDistance = distance;
                 lastPinchCenterX = centerX;
                 lastPinchCenterY = centerY;
                 return true;
@@ -126,7 +126,7 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
             case MotionEvent.ACTION_POINTER_UP:
                 pinching = false;
                 suppressSingleDragUntilUp = true;
-                nativeTouchUp(lastPinchCenterX, lastPinchCenterY);
+                nativePinchEnd(lastPinchCenterX, lastPinchCenterY);
                 if (event.getPointerCount() > 1) {
                     int remainingIndex = event.getActionIndex() == 0 ? 1 : 0;
                     lastX = event.getX(remainingIndex);
@@ -135,6 +135,9 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
                 return true;
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
+                if (pinching) {
+                    nativePinchEnd(lastPinchCenterX, lastPinchCenterY);
+                }
                 pinching = false;
                 suppressSingleDragUntilUp = false;
                 nativeTouchUp(event.getX(), event.getY());
@@ -179,7 +182,8 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
     private static native void nativeTouchDown();
     private static native void nativeDrag(float startX, float startY, float endX, float endY, int width, int height);
     private static native void nativeTouchUp(float x, float y);
-    private static native void nativePinch(float scale);
+    private static native void nativePinchStart(float centerX, float centerY);
+    private static native void nativePinchEnd(float centerX, float centerY);
     private static native void nativePinchRotateTilt(float scale, float rotationRadians, float centerX, float centerY, float centerDy, int width, int height);
     private static native void nativePause();
     private static native void nativeResume();

@@ -63,40 +63,24 @@ void main() {
 )glsl";
 
 // ============================================================
-// Tile Shader — GLSL ES 3.0
+// SurfaceTile Shader — GLSL ES 3.0
 // ============================================================
 
 static const char* kTileVertexGLSL = R"glsl(
 #version 300 es
-layout(location = 0) in vec2 a_texcoord;
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec2 a_texcoord;
 
 uniform mat4 u_modelViewProjection;
-uniform vec4 u_tileBounds; // west, south, east, north (radians)
 uniform vec4 u_tileUV;     // offsetU, offsetV, scaleU, scaleV
 uniform vec3 u_cameraRelativeOrigin;
 
 out vec2 v_texcoord;
 
-vec3 geoToECEF(vec2 lngLat) {
-    const float a = 6378137.0;
-    const float e2 = 0.00669437999014;
-    float lng = lngLat.x;
-    float lat = lngLat.y;
-    float sinLat = sin(lat);
-    float cosLat = cos(lat);
-    float N = a / sqrt(1.0 - e2 * sinLat * sinLat);
-    return vec3(N * cosLat * cos(lng),
-                N * cosLat * sin(lng),
-                N * (1.0 - e2) * sinLat);
-}
-
 void main() {
-    float lng = mix(u_tileBounds.x, u_tileBounds.z, a_texcoord.x);
-    float lat = mix(u_tileBounds.w, u_tileBounds.y, a_texcoord.y);
-    vec2 geo = vec2(lng, lat);
-    vec3 ecef = geoToECEF(geo);
     v_texcoord = u_tileUV.xy + a_texcoord * u_tileUV.zw;
-    gl_Position = u_modelViewProjection * vec4(ecef - u_cameraRelativeOrigin, 1.0);
+    gl_Position = u_modelViewProjection * vec4(a_position - u_cameraRelativeOrigin, 1.0);
 }
 )glsl";
 
@@ -173,7 +157,9 @@ static const char* kTileVertexMSL = R"msl(
 using namespace metal;
 
 struct VertexIn {
-    float2 texcoord [[attribute(0)]];
+    float3 position [[attribute(0)]];
+    float3 normal   [[attribute(1)]];
+    float2 texcoord [[attribute(2)]];
 };
 
 struct VertexOut {
@@ -181,31 +167,13 @@ struct VertexOut {
     float2 texcoord;
 };
 
-constant float a = 6378137.0;
-constant float e2 = 0.00669437999014;
-
-float3 geoToECEF(float2 lngLat) {
-    float lng = lngLat.x;
-    float lat = lngLat.y;
-    float sinLat = sin(lat);
-    float cosLat = cos(lat);
-    float N = a / sqrt(1.0 - e2 * sinLat * sinLat);
-    return float3(N * cosLat * cos(lng),
-                  N * cosLat * sin(lng),
-                  N * (1.0 - e2) * sinLat);
-}
-
 vertex VertexOut tileVertex(VertexIn in [[stage_in]],
                              constant float4x4& u_modelViewProjection [[buffer(1)]],
-                             constant float4& u_tileBounds [[buffer(2)]],
                              constant float4& u_tileUV [[buffer(3)]],
                              constant float3& u_cameraRelativeOrigin [[buffer(4)]]) {
     VertexOut out;
-    float lng = mix(u_tileBounds.x, u_tileBounds.z, in.texcoord.x);
-    float lat = mix(u_tileBounds.w, u_tileBounds.y, in.texcoord.y);
-    float2 geo = float2(lng, lat);
     out.position = u_modelViewProjection *
-        float4(geoToECEF(geo) - u_cameraRelativeOrigin, 1.0);
+        float4(in.position - u_cameraRelativeOrigin, 1.0);
     out.texcoord = u_tileUV.xy + in.texcoord * u_tileUV.zw;
     return out;
 }
@@ -288,7 +256,7 @@ fragment float4 tileFragment(VertexOut in [[stage_in]],
 )msl";
 
 // ============================================================
-// Shared tile geometry: unit grid mesh
+// Shared SurfaceTile geometry: unit grid mesh
 // ============================================================
 
 struct TileVertex {
@@ -339,7 +307,7 @@ struct Renderer::Impl {
     std::unique_ptr<Buffer> globeIndexBuffer;
     int globeIndexCount = 0;
 
-    // Tile
+    // Surface tile
     std::unique_ptr<ShaderProgram> tileShader;
     std::unique_ptr<Buffer> tileVertexBuffer;
     std::unique_ptr<Buffer> tileIndexBuffer;
@@ -497,6 +465,7 @@ int Renderer::tileIndexCount() const { return impl_->tileIndexCount; }
 
 RenderCommand Renderer::makeGlobeCommand(const FrameState& frameState) const {
     RenderCommand cmd;
+    cmd.kind = RenderCommandKind::GlobeSurface;
     cmd.owner = "globe";
     cmd.pass = "color";
     cmd.shader = impl_->globeShader.get();
@@ -507,6 +476,8 @@ RenderCommand Renderer::makeGlobeCommand(const FrameState& frameState) const {
     cmd.indexType = RenderCommand::IndexType::UInt32;
     cmd.depthTest = true;
     cmd.depthWrite = true;
+    cmd.blend = false;
+    cmd.cullFace = true;
 
     if (frameState.camera) {
         const Camera& cam = *frameState.camera;
@@ -535,35 +506,36 @@ RenderCommand Renderer::makeGlobeCommand(const FrameState& frameState) const {
     return cmd;
 }
 
-RenderCommand Renderer::makeTileCommand(Texture* texture,
-                                         float west, float south,
-                                         float east, float north,
-                                         float uvOffsetX,
-                                         float uvOffsetY,
-                                         float uvScaleX,
-                                         float uvScaleY) const {
+RenderCommand Renderer::makeSurfaceTileCommand(Texture* texture,
+                                                Buffer* vertexBuffer,
+                                                Buffer* indexBuffer,
+                                                int indexCount,
+                                                float uvOffsetX,
+                                                float uvOffsetY,
+                                                float uvScaleX,
+                                                float uvScaleY) const {
     RenderCommand cmd;
-    cmd.owner = "tile";
+    cmd.kind = RenderCommandKind::SurfaceTile;
+    cmd.owner = "surface_tile";
     cmd.pass = "color";
     cmd.shader = impl_->tileShader.get();
-    cmd.vertexBuffer = impl_->tileVertexBuffer.get();
-    cmd.indexBuffer = impl_->tileIndexBuffer.get();
-    cmd.indexCount = impl_->tileIndexCount;
+    cmd.vertexBuffer = vertexBuffer;
+    cmd.indexBuffer = indexBuffer;
+    cmd.indexCount = indexCount;
+    cmd.vertexStride = 32;
     cmd.primitive = RenderCommand::PrimitiveType::Triangles;
     cmd.indexType = RenderCommand::IndexType::UInt32;
-    // Basemap tiles are draped exactly on the globe surface. TilePlan limits the
-    // draw set to the visible hemisphere; disabling depth avoids coplanar loss
-    // against the already-rendered globe depth buffer on mobile GPUs.
-    cmd.depthTest = false;
-    cmd.depthWrite = false;
-    cmd.blend = true;
-    cmd.cullFace = false;
+    // SurfaceTile is the authoritative MVP globe surface and writes depth.
+    // Imagery is attached to this surface instead of competing with a globe mesh.
+    cmd.depthTest = true;
+    cmd.depthWrite = true;
+    cmd.blend = false;
+    cmd.cullFace = true;
 
     if (texture) {
         cmd.textures.push_back(texture);
     }
 
-    cmd.uniforms["u_tileBounds"] = {west, south, east, north};
     cmd.uniforms["u_tileUV"] = {uvOffsetX, uvOffsetY, uvScaleX, uvScaleY};
     return cmd;
 }

@@ -10,6 +10,8 @@ void InputManager::process(const InputEvent& event) {
     if (event.isPinchEvent()) {
         switch (event.type) {
             case InputEvent::Type::PinchStart:
+                tracking_ = false;
+                dragging_ = false;
                 callback_(Gesture::PinchStart, event);
                 break;
             case InputEvent::Type::PinchMove:
