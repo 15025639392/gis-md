@@ -322,8 +322,8 @@ TEST_F(CameraControllerTest, PinchRotationSignMatchesOpenGlobusDeltaAngle) {
     controller_->update(0.0);
     const glm::dvec2 negativeProjected = projectToScreen(*camera_, reference);
 
-    EXPECT_GT(positiveProjected.x, 400.0);
-    EXPECT_LT(negativeProjected.x, 400.0);
+    EXPECT_LT(positiveProjected.x, 400.0);
+    EXPECT_GT(negativeProjected.x, 400.0);
     EXPECT_NEAR(positiveProjected.y, negativeProjected.y, 1e-6);
 }
 

@@ -21,6 +21,7 @@ constexpr float kMinDistanceEarthRadii = 1.05f;
 constexpr float kMaxDistanceEarthRadii = 30.0f;
 constexpr double kOpenGlobusTouchJerkLimit = 0.3;
 constexpr double kOpenGlobusTouchInertia = 0.007;
+constexpr double kOpenGlobusTouchMinSlope = 0.1;
 
 glm::dvec3 cartographicNormal(double lngDeg, double latDeg) {
     const double lng = glm::radians(lngDeg);
@@ -124,7 +125,14 @@ void CameraController::onPinchGesture(float scale,
         if (hasPinchAnchor_) {
             grabbedRadiusMeters_ = anchorPoint.length();
             pinchAnchorNormal_ = anchorPoint.normalized();
-            pinchEarthUpNormal_ = pinchAnchorNormal_;
+            Vec3 screenCenterPoint;
+            if (pickSurfacePoint(static_cast<float>(viewportWidth_) * 0.5f,
+                                 static_cast<float>(viewportHeight_) * 0.5f,
+                                 screenCenterPoint)) {
+                pinchEarthUpNormal_ = screenCenterPoint.normalized();
+            } else {
+                pinchEarthUpNormal_ = pinchAnchorNormal_;
+            }
             pinchAnchorScreenX_ = centerX;
             pinchAnchorScreenY_ = centerY;
         }
@@ -168,7 +176,7 @@ void CameraController::onPinchGesture(float scale,
             rotateCameraAroundPoint(
                 pointOnEarth,
                 pinchEarthUpNormal_.raw(),
-                static_cast<double>(rotationRadians));
+                -static_cast<double>(rotationRadians));
         }
 
         if (std::abs(centerDeltaX) > 0.5f || std::abs(centerDeltaY) > 0.5f) {
@@ -187,20 +195,17 @@ void CameraController::onPinchGesture(float scale,
             }
 
             if (std::abs(centerDeltaX) > 0.5f) {
-                applyRotationAroundAxis(
+                rotateCameraAroundPoint(
+                    pointOnEarth,
                     pinchEarthUpNormal_.raw(),
                     sensitivity * static_cast<double>(centerDeltaX));
             }
 
             if (std::abs(centerDeltaY) > 0.5f) {
-                const glm::dvec3 right = camera_->right().raw();
-                glm::dvec3 axis = glm::cross(right, anchor);
-                if (glm::length(axis) > 1e-10) {
-                    axis = glm::normalize(axis);
-                    applyRotationAroundAxis(
-                        axis,
-                        sensitivity * static_cast<double>(centerDeltaY));
-                }
+                rotateCameraVerticalAroundPoint(
+                    pointOnEarth,
+                    sensitivity * static_cast<double>(centerDeltaY),
+                    kOpenGlobusTouchMinSlope);
             }
         }
     } else {
@@ -348,6 +353,48 @@ void CameraController::rotateCameraAroundPoint(const glm::dvec3& center,
     const glm::dvec3 direction = delta * camera_->direction().raw();
     const glm::dvec3 up = delta * camera_->up().raw();
     camera_->setView(Vec3(eye), Vec3(direction), Vec3(up));
+    rotation_ = glm::normalize(delta * rotation_);
+    syncDistanceFromCamera();
+}
+
+void CameraController::rotateCameraVerticalAroundPoint(const glm::dvec3& center,
+                                                       double angle,
+                                                       double minSlope) {
+    const glm::dvec3 axis = camera_->right().raw();
+    if (glm::length(axis) < 1e-10 || std::abs(angle) < 1e-12) {
+        return;
+    }
+
+    const glm::dvec3 currentEyeNorm = glm::normalize(camera_->position().raw());
+    const double currentSlope = glm::dot(-camera_->direction().raw(), currentEyeNorm);
+
+    const glm::dquat delta = glm::angleAxis(angle, glm::normalize(axis));
+    const glm::dvec3 nextEye = center + delta * (camera_->position().raw() - center);
+    const glm::dvec3 nextDirection = delta * camera_->direction().raw();
+    const glm::dvec3 nextUp = delta * camera_->up().raw();
+
+    const glm::dvec3 nextEyeNorm = glm::normalize(nextEye);
+    const double nextSlope = glm::dot(-nextDirection, nextEyeNorm);
+    if (glm::dot(nextUp, nextEyeNorm) <= 0.0) {
+        return;
+    }
+
+    if (minSlope > 0.0) {
+        const double dSlope = nextSlope - currentSlope;
+        if (nextSlope < minSlope && dSlope < 0.0) {
+            return;
+        }
+
+        const bool canApply =
+            (nextSlope > 0.1 && glm::dot(nextUp, nextEyeNorm) > 0.0) ||
+            currentSlope <= 0.1 ||
+            glm::dot(camera_->up().raw(), currentEyeNorm) <= 0.0;
+        if (!canApply) {
+            return;
+        }
+    }
+
+    camera_->setView(Vec3(nextEye), Vec3(nextDirection), Vec3(nextUp));
     rotation_ = glm::normalize(delta * rotation_);
     syncDistanceFromCamera();
 }

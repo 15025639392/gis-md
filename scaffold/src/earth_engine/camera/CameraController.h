@@ -80,6 +80,9 @@ private:
     void rotateCameraAroundPoint(const glm::dvec3& center,
                                  const glm::dvec3& axis,
                                  double angle);
+    void rotateCameraVerticalAroundPoint(const glm::dvec3& center,
+                                         double angle,
+                                         double minSlope);
     void applyCameraRotation(const glm::dquat& delta);
     void syncDistanceFromCamera();
 
