@@ -128,6 +128,61 @@ TEST(EllipsoidTest, HighLatitude85) {
     EXPECT_NEAR(0, back.height(), kEpsilon);
 }
 
+TEST(EllipsoidTest, ProjectToSurfaceMatchesEllipsoidHeightZero) {
+    const auto& e = Ellipsoid::WGS84();
+    auto cart = Cartographic::fromDegrees(116.397, 39.908, 1200.0);
+    Vec3 ecef = e.cartographicToCartesian(cart);
+
+    Vec3 surface = e.projectToSurface(ecef);
+    Cartographic back = e.cartesianToCartographic(surface);
+
+    EXPECT_NEAR(cart.longitude(), back.longitude(), 1e-10);
+    EXPECT_NEAR(cart.latitude(), back.latitude(), 1e-10);
+    EXPECT_NEAR(0.0, back.height(), 1e-5);
+}
+
+TEST(EllipsoidTest, RayIntersectionHasExplicitMissAndHit) {
+    const auto& e = Ellipsoid::WGS84();
+    Vec3 origin(0.0, 0.0, 7000000.0);
+    Vec3 inward(0.0, 0.0, -1.0);
+    Vec3 outward(0.0, 0.0, 1.0);
+
+    auto hit = e.rayIntersection(origin, inward);
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_NEAR(e.semiMinorAxis(), hit->z(), 1e-3);
+
+    auto miss = e.rayIntersection(origin, outward);
+    EXPECT_FALSE(miss.has_value());
+}
+
+TEST(EllipsoidTest, VincentyInverseBeijingShanghaiDistance) {
+    const auto& e = Ellipsoid::WGS84();
+    auto beijing = Cartographic::fromDegrees(116.397, 39.908, 0.0);
+    auto shanghai = Cartographic::fromDegrees(121.4737, 31.2304, 0.0);
+
+    GeodesicInverseResult inv = e.inverse(beijing, shanghai);
+
+    EXPECT_TRUE(inv.converged);
+    EXPECT_NEAR(1066626.6, inv.distanceMeters, 1.0);
+    EXPECT_GE(inv.initialAzimuthRadians, 0.0);
+    EXPECT_LT(inv.initialAzimuthRadians, 2.0 * M_PI);
+}
+
+TEST(EllipsoidTest, VincentyDirectRoundtripsInverse) {
+    const auto& e = Ellipsoid::WGS84();
+    auto start = Cartographic::fromDegrees(116.397, 39.908, 0.0);
+    auto end = Cartographic::fromDegrees(121.4737, 31.2304, 0.0);
+
+    GeodesicInverseResult inv = e.inverse(start, end);
+    ASSERT_TRUE(inv.converged);
+    GeodesicDirectResult direct = e.direct(start, inv.initialAzimuthRadians,
+                                           inv.distanceMeters);
+
+    EXPECT_TRUE(direct.converged);
+    EXPECT_NEAR(end.longitude(), direct.destination.longitude(), 1e-8);
+    EXPECT_NEAR(end.latitude(), direct.destination.latitude(), 1e-8);
+}
+
 // ============================================================
 // Degree / Radian 误用保护
 // ============================================================

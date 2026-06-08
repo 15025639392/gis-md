@@ -77,9 +77,11 @@ uniform vec4 u_tileUV;     // offsetU, offsetV, scaleU, scaleV
 uniform vec3 u_cameraRelativeOrigin;
 
 out vec2 v_texcoord;
+out vec3 v_normal;
 
 void main() {
     v_texcoord = u_tileUV.xy + a_texcoord * u_tileUV.zw;
+    v_normal = normalize(a_normal);
     gl_Position = u_modelViewProjection * vec4(a_position - u_cameraRelativeOrigin, 1.0);
 }
 )glsl";
@@ -89,11 +91,26 @@ static const char* kTileFragmentGLSL = R"glsl(
 precision mediump float;
 
 in vec2 v_texcoord;
+in vec3 v_normal;
 uniform sampler2D u_tileTexture;
+uniform sampler2D u_normalMap;
+uniform vec3 u_lightDir;
+uniform float u_useNormalMap;
+uniform float u_debugNormalMap;
 out vec4 fragColor;
 
 void main() {
-    fragColor = texture(u_tileTexture, v_texcoord);
+    vec4 color = texture(u_tileTexture, v_texcoord);
+    vec3 normalSample = texture(u_normalMap, v_texcoord).rgb;
+    if (u_debugNormalMap > 0.5) {
+        fragColor = vec4(normalSample, 1.0);
+        return;
+    }
+    vec3 mapNormal = normalize((normalSample - 0.5) * 2.0);
+    vec3 normal = normalize(mix(normalize(v_normal), mapNormal, clamp(u_useNormalMap, 0.0, 1.0)));
+    float diffuse = max(dot(normal, normalize(u_lightDir)), 0.0);
+    color.rgb *= 0.45 + diffuse * 0.55;
+    fragColor = color;
 }
 )glsl";
 
@@ -165,6 +182,7 @@ struct VertexIn {
 struct VertexOut {
     float4 position [[position]];
     float2 texcoord;
+    float3 normal;
 };
 
 vertex VertexOut tileVertex(VertexIn in [[stage_in]],
@@ -175,6 +193,7 @@ vertex VertexOut tileVertex(VertexIn in [[stage_in]],
     out.position = u_modelViewProjection *
         float4(in.position - u_cameraRelativeOrigin, 1.0);
     out.texcoord = u_tileUV.xy + in.texcoord * u_tileUV.zw;
+    out.normal = normalize(in.normal);
     return out;
 }
 )msl";
@@ -250,8 +269,21 @@ struct VertexOut {
 
 fragment float4 tileFragment(VertexOut in [[stage_in]],
                              texture2d<float> u_tileTexture [[texture(0)]],
-                             sampler u_sampler [[sampler(0)]]) {
-    return u_tileTexture.sample(u_sampler, in.texcoord);
+                             texture2d<float> u_normalMap [[texture(1)]],
+                             sampler u_sampler [[sampler(0)]],
+                             constant float3& u_lightDir [[buffer(0)]],
+                             constant float& u_useNormalMap [[buffer(1)]],
+                             constant float& u_debugNormalMap [[buffer(2)]]) {
+    float4 color = u_tileTexture.sample(u_sampler, in.texcoord);
+    float3 normalSample = u_normalMap.sample(u_sampler, in.texcoord).rgb;
+    if (u_debugNormalMap > 0.5) {
+        return float4(normalSample, 1.0);
+    }
+    float3 mapNormal = normalize((normalSample - 0.5) * 2.0);
+    float3 normal = normalize(mix(normalize(in.normal), mapNormal, clamp(u_useNormalMap, 0.0, 1.0)));
+    float diffuse = max(dot(normal, normalize(u_lightDir)), 0.0);
+    color.rgb *= 0.45 + diffuse * 0.55;
+    return color;
 }
 )msl";
 
@@ -422,32 +454,6 @@ void Renderer::dispose() {
     impl_->initialized = false;
 }
 
-void Renderer::updateGlobeMesh(const GlobeMesh& mesh) {
-    if (!impl_->device || !impl_->initialized) return;
-    if (mesh.vertices.empty() || mesh.indices.empty()) return;
-
-    // 顶点 buffer
-    BufferDesc vbDesc;
-    vbDesc.size = mesh.vertices.size() * sizeof(GlobeVertex);
-    vbDesc.data = mesh.vertices.data();
-    vbDesc.usage = BufferDesc::Usage::Dynamic;
-    vbDesc.type = BufferDesc::Type::Vertex;
-    auto newVB = impl_->device->createBuffer(vbDesc);
-    if (newVB) impl_->globeVertexBuffer = std::move(newVB);
-
-    // 索引 buffer（裙边会增加额外的三角面）
-    BufferDesc ibDesc;
-    ibDesc.size = mesh.indices.size() * sizeof(uint32_t);
-    ibDesc.data = mesh.indices.data();
-    ibDesc.usage = BufferDesc::Usage::Dynamic;
-    ibDesc.type = BufferDesc::Type::Index;
-    auto newIB = impl_->device->createBuffer(ibDesc);
-    if (newIB) {
-        impl_->globeIndexBuffer = std::move(newIB);
-        impl_->globeIndexCount = static_cast<int>(mesh.indices.size());
-    }
-}
-
 // ---- 共享资源访问 ----
 
 ShaderProgram* Renderer::globeShader() const { return impl_->globeShader.get(); }
@@ -507,6 +513,7 @@ RenderCommand Renderer::makeGlobeCommand(const FrameState& frameState) const {
 }
 
 RenderCommand Renderer::makeSurfaceTileCommand(Texture* texture,
+                                                Texture* normalMapTexture,
                                                 Buffer* vertexBuffer,
                                                 Buffer* indexBuffer,
                                                 int indexCount,
@@ -535,8 +542,12 @@ RenderCommand Renderer::makeSurfaceTileCommand(Texture* texture,
     if (texture) {
         cmd.textures.push_back(texture);
     }
+    if (normalMapTexture) {
+        cmd.textures.push_back(normalMapTexture);
+    }
 
     cmd.uniforms["u_tileUV"] = {uvOffsetX, uvOffsetY, uvScaleX, uvScaleY};
+    cmd.uniforms["u_useNormalMap"] = {normalMapTexture ? 1.0f : 0.0f};
     return cmd;
 }
 

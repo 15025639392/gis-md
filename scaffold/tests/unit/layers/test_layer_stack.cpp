@@ -48,6 +48,14 @@ private:
     std::string schemeId_;
 };
 
+class UnsupportedOpenGlobusProvider : public StubProvider {
+public:
+    UnsupportedOpenGlobusProvider()
+        : StubProvider("stub-og-unsupported", "OpenGlobus-Earth") {}
+
+    bool supportsTile(const TileKey&) const override { return false; }
+};
+
 class FakeTexture : public Texture {
 public:
     FakeTexture(int width, int height) : width_(width), height_(height) {}
@@ -259,6 +267,29 @@ TEST_F(BasemapLayerStackTest, BasemapLayerTrustsTilePlanVisibilityWithoutSecondC
     ASSERT_EQ(2u, layerPlan.requestTiles.size());
     EXPECT_EQ(plan.visibleTiles, layerPlan.requestTiles);
     EXPECT_TRUE(layerPlan.renderTiles.empty());
+}
+
+TEST_F(BasemapLayerStackTest, ProviderAvailabilityBlocksUnsupportedRequests) {
+    auto layer = std::make_unique<BasemapLayer>(
+        std::make_unique<UnsupportedOpenGlobusProvider>(),
+        TileScheme::createOpenGlobusEarth(),
+        nullptr);
+
+    TilePlan plan;
+    plan.frameId = 8;
+    plan.zoom = 3;
+    plan.visibleTiles = {
+        TileKey{"OpenGlobus-Earth", 3, 4, 12}
+    };
+
+    constexpr double radius = 6378137.0;
+    layer->applyPlan(plan, Vec3(radius * 3.0, 0.0, 0.0));
+
+    const LayerTilePlan& layerPlan = layer->layerPlan();
+    EXPECT_EQ(1u, layerPlan.desiredTiles.size());
+    EXPECT_TRUE(layerPlan.requestTiles.empty());
+    EXPECT_TRUE(layerPlan.renderTiles.empty());
+    EXPECT_EQ(1, layerPlan.missingTileCount);
 }
 
 TEST_F(BasemapLayerStackTest, BasemapLayerKeepsTileGenerationAcrossFrameIds) {

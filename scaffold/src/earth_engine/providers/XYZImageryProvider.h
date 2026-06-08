@@ -27,7 +27,7 @@ public:
 
     std::string id() const override;
     std::string type() const override { return "xyz-imagery"; }
-    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    std::string schemeId() const override { return schemeId_; }
 
     int minZoom() const override { return minZoom_; }
     int maxZoom() const override { return maxZoom_; }
@@ -36,8 +36,12 @@ public:
 
     void setZoomRange(int minZoom, int maxZoom);
     void setTileSize(int width, int height);
+    void setSchemeId(std::string schemeId);
+    void setOpenGlobusGroupedY(bool enabled);
 
     std::string buildUrl(const TileKey& key) const override;
+    bool supportsTile(const TileKey& key) const override;
+    TileKey providerKeyForTile(const TileKey& key) const override;
     std::string attribution() const override { return attribution_; }
 
     void requestTile(const TileKey& key,
@@ -57,6 +61,8 @@ private:
     int maxZoom_ = 19;
     int tileWidth_ = 256;
     int tileHeight_ = 256;
+    std::string schemeId_ = "XYZ-WebMercator";
+    bool openGlobusGroupedY_ = false;
     PlatformBridge* platformBridge_ = nullptr;
 };
 

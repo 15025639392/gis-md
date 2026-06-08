@@ -18,6 +18,7 @@ class Renderer;
 struct FrameState;
 class Camera;
 class TileScheme;
+class TerrainLayer;
 
 /// 底图图层栈管理器。
 ///
@@ -77,6 +78,7 @@ public:
 
     /// 按图层顺序生成渲染命令
     void buildRenderCommands(Renderer& renderer,
+                             const TerrainLayer* terrainLayer,
                              RenderCommandList& commands);
 
     // ---- 调试 ----

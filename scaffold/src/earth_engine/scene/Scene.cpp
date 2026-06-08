@@ -76,11 +76,8 @@ bool Scene::setRenderDevice(RenderDevice* device) {
         // Context lost: 标记所有 GPU 资源失效
         // 图层纹理缓存在下次 surfaceCreated + Renderer 重建后自然重建
         // (TileTextureCache 在 Renderer 重建时重新分配)
-        // 地形网格标记为脏，下次渲染时重建
-        if (terrainLayer_) {
-            // terrainLayer_ 的 tileCache_ 持有 TerrainTile CPU 数据，可保留
-            // 但下次渲染需重新上传 mesh（通过 Renderer 的 updateGlobeVertices）
-        }
+        // TerrainLayer 只保留 CPU TerrainTile 数据；SurfaceTile GPU mesh
+        // 由 BasemapLayer 在新 RenderDevice 上按 terrainGeneration 重建。
         renderer_.reset();
         return false;
     }
@@ -150,40 +147,30 @@ void Scene::render() {
 
     RenderCommandList commands;
 
-    // 1. 地形主表面，或稍后在无 SurfaceTile 时使用 globe fallback
-    static bool sWasTerrainLastFrame = false;
-    if (terrainLayer_ && terrainEnabled_ && terrainLayer_->visible()) {
-        terrainLayer_->buildRenderCommands(globeMesh_, frameState_,
-                                            *renderer_, commands);
-        sWasTerrainLastFrame = true;
-    } else {
-        // 地形→平坦切换时恢复原始椭球顶点+索引 buffer（避免每帧重建）
-        if (sWasTerrainLastFrame) {
-            renderer_->updateGlobeMesh(globeMesh_);
-            sWasTerrainLastFrame = false;
-        }
-    }
-
-    // 2. 标准底图 SurfaceTile 主链路
-    layerStack_.buildRenderCommands(*renderer_, commands);
+    // 1. 标准底图 SurfaceTile 主链路。地形启用时，TerrainLayer 只作为
+    // SurfaceTile mesh 的高度数据源，不再发出独立地形 surface pass。
+    const TerrainLayer* terrainSource =
+        (terrainLayer_ && terrainEnabled_ && terrainLayer_->visible())
+            ? terrainLayer_.get()
+            : nullptr;
+    layerStack_.buildRenderCommands(*renderer_, terrainSource, commands);
 
     const bool hasSurfaceTile = std::any_of(commands.begin(), commands.end(),
         [](const RenderCommand& cmd) {
-            return cmd.kind == RenderCommandKind::SurfaceTile ||
-                   cmd.kind == RenderCommandKind::TerrainSurface;
+            return cmd.kind == RenderCommandKind::SurfaceTile;
         });
     if (!hasSurfaceTile && !(terrainLayer_ && terrainEnabled_ && terrainLayer_->visible())) {
         commands.insert(commands.begin(), renderer_->makeGlobeCommand(frameState_));
     }
 
-    // 3. 矢量图层
+    // 2. 矢量图层
     for (auto& vLayer : vectorLayers_) {
         if (vLayer->visible()) {
             vLayer->buildRenderCommands(frameState_, *renderer_, commands);
         }
     }
 
-    // 4. 调试叠加层
+    // 3. 调试叠加层
     if (debugOverlay_ && debugOverlay_->enabled()) {
         for (const auto& layer : layerStack_.layers()) {
             if (!layer->visible()) continue;
@@ -194,7 +181,7 @@ void Scene::render() {
         }
     }
 
-    // 5. 后处理：为 tile/debug commands 设置 MVP
+    // 4. 后处理：为 tile/debug commands 设置 MVP
     if (frameState_.camera) {
         const Camera& cam = *frameState_.camera;
         float vpW = static_cast<float>(frameState_.viewportWidthPixels);
@@ -218,6 +205,11 @@ void Scene::render() {
                 std::memcpy(mvpU.data(), glm::value_ptr(matrix), 16 * sizeof(float));
             }
             if (cmd.owner == "surface_tile") {
+                cmd.uniforms["u_lightDir"] = {
+                    frameState_.lightDir.x,
+                    frameState_.lightDir.y,
+                    frameState_.lightDir.z
+                };
                 auto& originU = cmd.uniforms["u_cameraRelativeOrigin"];
                 if (originU.empty()) {
                     originU = {
@@ -239,7 +231,7 @@ void Scene::render() {
             "': " + error->message);
     }
 
-    // 6. 填充诊断数据
+    // 5. 填充诊断数据
     auto& diag = frameState_.diagnostics;
     diag.drawCalls = static_cast<int>(commands.size());
     diag.visibleTiles = 0;
@@ -252,7 +244,17 @@ void Scene::render() {
     diag.imageryAttachments = 0;
     diag.imageryExactAttachments = 0;
     diag.imageryParentFallbackAttachments = 0;
+    diag.imageryMissingTiles = 0;
+    diag.imageryTransitionTiles = 0;
     diag.surfaceMeshBytes = 0;
+    diag.terrainCachedTiles = 0;
+    diag.terrainGeneration = 0;
+    diag.terrainSurfaceMeshes = 0;
+    diag.terrainParentFallbackMeshes = 0;
+    diag.terrainReadySurfaceMeshes = 0;
+    diag.terrainTransitionSurfaceMeshes = 0;
+    diag.ellipsoidSurfaceMeshes = 0;
+    diag.normalMapTextures = 0;
     for (const auto& layer : layerStack_.layers()) {
         diag.visibleTiles += layer->visibleTileCount();
         diag.cachedTextures += layer->cachedTileCount();
@@ -261,14 +263,26 @@ void Scene::render() {
         diag.surfaceMeshCount += layer->surfaceMeshCount();
         diag.imageryExactAttachments += layer->exactAttachmentCount();
         diag.imageryParentFallbackAttachments += layer->parentFallbackAttachmentCount();
+        diag.imageryMissingTiles += layer->missingImageryTileCount();
+        diag.imageryTransitionTiles += layer->transitionTileCount();
         diag.surfaceMeshBytes += static_cast<int>(layer->surfaceMeshBytes());
+        diag.terrainSurfaceMeshes += layer->terrainSurfaceMeshCount();
+        diag.terrainParentFallbackMeshes += layer->terrainParentFallbackMeshCount();
+        diag.terrainReadySurfaceMeshes += layer->terrainReadySurfaceMeshCount();
+        diag.terrainTransitionSurfaceMeshes += layer->terrainTransitionSurfaceMeshCount();
+        diag.ellipsoidSurfaceMeshes += layer->ellipsoidSurfaceMeshCount();
+        diag.normalMapTextures += layer->normalMapTextureCount();
     }
     diag.loadingRequests = diag.queuedRequests;
     diag.gpuTextureCount = diag.cachedTextures;
     diag.imageryAttachments =
         diag.imageryExactAttachments + diag.imageryParentFallbackAttachments;
+    if (terrainLayer_ && terrainEnabled_) {
+        diag.terrainCachedTiles = terrainLayer_->cachedTileCount();
+        diag.terrainGeneration = terrainLayer_->terrainGeneration();
+    }
 
-    // 7. 提交
+    // 6. 提交
     renderer_->submit(commands);
 }
 

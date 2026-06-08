@@ -106,3 +106,36 @@ TEST_F(TileSchemeTest, LevelResolution) {
     // z=2 分辨率 = π/2 rad (90°)
     EXPECT_NEAR(M_PI / 2.0, scheme_->levelResolution(2), 1e-6);
 }
+
+TEST(OpenGlobusEarthTileSchemeTest, SplitsMercatorAndPolarGroups) {
+    auto scheme = TileScheme::createOpenGlobusEarth();
+
+    TileKey beijing = scheme->positionToTile(
+        116.397 * M_PI / 180.0, 39.908 * M_PI / 180.0, 3);
+    TileKey north = scheme->positionToTile(0.0, 89.0 * M_PI / 180.0, 3);
+    TileKey south = scheme->positionToTile(0.0, -89.0 * M_PI / 180.0, 3);
+
+    const int n = 1 << 3;
+    EXPECT_EQ("OpenGlobus-Earth", scheme->id());
+    EXPECT_LT(beijing.y, n);
+    EXPECT_GE(north.y, n);
+    EXPECT_LT(north.y, 2 * n);
+    EXPECT_GE(south.y, 2 * n);
+    EXPECT_LT(south.y, 3 * n);
+
+    Rectangle northBounds = scheme->tileToRectangle(north);
+    Rectangle southBounds = scheme->tileToRectangle(south);
+    EXPECT_GT(northBounds.north(), 85.0 * M_PI / 180.0);
+    EXPECT_LT(southBounds.south(), -85.0 * M_PI / 180.0);
+}
+
+TEST(OpenGlobusEarthTileSchemeTest, PolarRoundtripContainsPosition) {
+    auto scheme = TileScheme::createOpenGlobusEarth();
+    const double lng = 45.0 * M_PI / 180.0;
+    const double lat = 88.0 * M_PI / 180.0;
+
+    TileKey key = scheme->positionToTile(lng, lat, 4);
+    Rectangle bounds = scheme->tileToRectangle(key);
+
+    EXPECT_TRUE(bounds.contains(lng, lat));
+}

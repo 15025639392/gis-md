@@ -324,11 +324,28 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
                                              length:fragIt->second.size() * sizeof(float)
                                             atIndex:0];
         }
+        auto useNormalIt = cmd.uniforms.find("u_useNormalMap");
+        if (useNormalIt != cmd.uniforms.end()) {
+            [impl_->currentEncoder setFragmentBytes:useNormalIt->second.data()
+                                             length:useNormalIt->second.size() * sizeof(float)
+                                            atIndex:1];
+        }
+        auto debugNormalIt = cmd.uniforms.find("u_debugNormalMap");
+        if (debugNormalIt != cmd.uniforms.end()) {
+            [impl_->currentEncoder setFragmentBytes:debugNormalIt->second.data()
+                                             length:debugNormalIt->second.size() * sizeof(float)
+                                            atIndex:2];
+        }
 
         // 纹理绑定
         if (!cmd.textures.empty() && cmd.textures[0]) {
             auto* metalTex = static_cast<MetalTexture*>(cmd.textures[0]);
             [impl_->currentEncoder setFragmentTexture:metalTex->mtl() atIndex:0];
+            [impl_->currentEncoder setFragmentSamplerState:impl_->linearClampSampler atIndex:0];
+        }
+        if (cmd.textures.size() > 1 && cmd.textures[1]) {
+            auto* metalTex = static_cast<MetalTexture*>(cmd.textures[1]);
+            [impl_->currentEncoder setFragmentTexture:metalTex->mtl() atIndex:1];
             [impl_->currentEncoder setFragmentSamplerState:impl_->linearClampSampler atIndex:0];
         }
 

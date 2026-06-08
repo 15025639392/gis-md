@@ -13,6 +13,23 @@ namespace earth_engine {
 // ============================================================
 
 namespace {
+constexpr double kMaxWebMercatorLat = 1.4844222297453324;
+
+enum class OpenGlobusTileGroup {
+    Mercator = 0,
+    NorthPolar = 1,
+    SouthPolar = 2
+};
+
+int groupBaseY(OpenGlobusTileGroup group, int tilesAtZoom) {
+    return static_cast<int>(group) * tilesAtZoom;
+}
+
+OpenGlobusTileGroup groupForY(int y, int tilesAtZoom) {
+    if (y >= 2 * tilesAtZoom) return OpenGlobusTileGroup::SouthPolar;
+    if (y >= tilesAtZoom) return OpenGlobusTileGroup::NorthPolar;
+    return OpenGlobusTileGroup::Mercator;
+}
 
 class XYZWebMercatorScheme : public TileScheme {
 public:
@@ -53,7 +70,6 @@ public:
             return (lng + glm::pi<double>()) / glm::two_pi<double>();
         };
         auto latToMercator = [](double lat) -> double {
-            constexpr double kMaxWebMercatorLat = 1.4844222297453324; // ~85.05112878 deg
             double clampedLat = std::clamp(lat, -kMaxWebMercatorLat, kMaxWebMercatorLat);
             return (1.0 - std::log(std::tan(clampedLat * 0.5 + glm::pi<double>() / 4.0)) /
                           glm::pi<double>()) * 0.5;
@@ -141,7 +157,6 @@ public:
             return (lng + glm::pi<double>()) / glm::two_pi<double>();
         };
         auto latToMercator = [](double lat) -> double {
-            constexpr double kMaxWebMercatorLat = 1.4844222297453324;
             double clampedLat = std::clamp(lat, -kMaxWebMercatorLat, kMaxWebMercatorLat);
             return (1.0 - std::log(std::tan(clampedLat * 0.5 + glm::pi<double>() / 4.0)) /
                           glm::pi<double>()) * 0.5;
@@ -179,6 +194,124 @@ public:
 
 std::unique_ptr<TileScheme> TileScheme::createTMS() {
     return std::make_unique<TMSWebMercatorScheme>();
+}
+
+namespace {
+
+class OpenGlobusEarthScheme : public TileScheme {
+public:
+    std::string id() const override { return "OpenGlobus-Earth"; }
+    const CrsProfile& crs() const override { return CrsProfile::webMercator(); }
+    std::string crsProfile() const override { return "EPSG:3857+polar-lonlat"; }
+    int tileSize() const override { return 256; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 20; }
+    std::string yDirection() const override { return "down-grouped"; }
+
+    Rectangle tileToRectangle(const TileKey& key) const override {
+        const int z = key.z;
+        const int tilesAtZoom = 1 << z;
+        const int x = std::clamp(key.x, 0, tilesAtZoom - 1);
+        const OpenGlobusTileGroup group = groupForY(key.y, tilesAtZoom);
+        const int localY = std::clamp(
+            key.y - groupBaseY(group, tilesAtZoom),
+            0,
+            tilesAtZoom - 1);
+
+        const double west = -glm::pi<double>() +
+            glm::two_pi<double>() * static_cast<double>(x) / tilesAtZoom;
+        const double east = -glm::pi<double>() +
+            glm::two_pi<double>() * static_cast<double>(x + 1) / tilesAtZoom;
+
+        if (group == OpenGlobusTileGroup::NorthPolar) {
+            const double height = (glm::half_pi<double>() - kMaxWebMercatorLat) /
+                static_cast<double>(tilesAtZoom);
+            const double north = glm::half_pi<double>() - height * localY;
+            const double south = glm::half_pi<double>() - height * (localY + 1);
+            return Rectangle(west, south, east, north);
+        }
+        if (group == OpenGlobusTileGroup::SouthPolar) {
+            const double height = (glm::half_pi<double>() - kMaxWebMercatorLat) /
+                static_cast<double>(tilesAtZoom);
+            const double south = -glm::half_pi<double>() + height * localY;
+            const double north = -glm::half_pi<double>() + height * (localY + 1);
+            return Rectangle(west, south, east, north);
+        }
+
+        const double xMin = static_cast<double>(x) / tilesAtZoom;
+        const double xMax = static_cast<double>(x + 1) / tilesAtZoom;
+        const double yMin = static_cast<double>(localY) / tilesAtZoom;
+        const double yMax = static_cast<double>(localY + 1) / tilesAtZoom;
+        auto mercatorToLng = [](double mx) -> double {
+            return mx * glm::two_pi<double>() - glm::pi<double>();
+        };
+        auto mercatorToLat = [](double my) -> double {
+            double latRad = glm::pi<double>() - glm::two_pi<double>() * my;
+            return std::atan(std::sinh(latRad));
+        };
+        return Rectangle(mercatorToLng(xMin), mercatorToLat(yMax),
+                         mercatorToLng(xMax), mercatorToLat(yMin));
+    }
+
+    TileKey positionToTile(double lngRad, double latRad, int zoom) const override {
+        const int tilesAtZoom = 1 << zoom;
+        const double lngNorm = std::clamp(
+            (lngRad + glm::pi<double>()) / glm::two_pi<double>(),
+            0.0,
+            std::nextafter(1.0, 0.0));
+        const int x = std::clamp(static_cast<int>(lngNorm * tilesAtZoom),
+                                 0,
+                                 tilesAtZoom - 1);
+
+        OpenGlobusTileGroup group = OpenGlobusTileGroup::Mercator;
+        int localY = 0;
+        if (latRad > kMaxWebMercatorLat) {
+            group = OpenGlobusTileGroup::NorthPolar;
+            const double t = std::clamp(
+                (glm::half_pi<double>() - latRad) /
+                    (glm::half_pi<double>() - kMaxWebMercatorLat),
+                0.0,
+                std::nextafter(1.0, 0.0));
+            localY = static_cast<int>(t * tilesAtZoom);
+        } else if (latRad < -kMaxWebMercatorLat) {
+            group = OpenGlobusTileGroup::SouthPolar;
+            const double t = std::clamp(
+                (latRad + glm::half_pi<double>()) /
+                    (glm::half_pi<double>() - kMaxWebMercatorLat),
+                0.0,
+                std::nextafter(1.0, 0.0));
+            localY = static_cast<int>(t * tilesAtZoom);
+        } else {
+            const double clampedLat = std::clamp(latRad, -kMaxWebMercatorLat, kMaxWebMercatorLat);
+            const double my = (1.0 - std::log(std::tan(clampedLat * 0.5 +
+                glm::pi<double>() / 4.0)) / glm::pi<double>()) * 0.5;
+            localY = static_cast<int>(std::clamp(my, 0.0, std::nextafter(1.0, 0.0)) *
+                                      tilesAtZoom);
+        }
+
+        localY = std::clamp(localY, 0, tilesAtZoom - 1);
+        return TileKey{id(), zoom, x, groupBaseY(group, tilesAtZoom) + localY};
+    }
+
+    void tileRange(const Rectangle& rect, int zoom,
+                   int& minX, int& minY, int& maxX, int& maxY) const override {
+        TileKey sw = positionToTile(rect.west(), rect.south(), zoom);
+        TileKey ne = positionToTile(rect.east(), rect.north(), zoom);
+        minX = std::min(sw.x, ne.x);
+        maxX = std::max(sw.x, ne.x);
+        minY = std::min(sw.y, ne.y);
+        maxY = std::max(sw.y, ne.y);
+    }
+
+    double levelResolution(int zoom) const override {
+        return glm::two_pi<double>() / static_cast<double>(1 << zoom);
+    }
+};
+
+} // anonymous namespace
+
+std::unique_ptr<TileScheme> TileScheme::createOpenGlobusEarth() {
+    return std::make_unique<OpenGlobusEarthScheme>();
 }
 
 } // namespace earth_engine

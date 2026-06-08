@@ -48,7 +48,6 @@ bool requireState(size_t index,
 int mvpRenderOrder(RenderCommandKind kind) {
     switch (kind) {
         case RenderCommandKind::GlobeSurface:
-        case RenderCommandKind::TerrainSurface:
             return 10;
         case RenderCommandKind::SurfaceTile:
             return 10;
@@ -81,11 +80,6 @@ validateMvpRenderCommands(const RenderCommandList& commands,
             case RenderCommandKind::GlobeSurface:
                 if (!requireColorPass(i, cmd, error)) return error;
                 if (!requireState(i, cmd, true, true, true, false, "GlobeSurface", error)) return error;
-                break;
-
-            case RenderCommandKind::TerrainSurface:
-                if (!requireColorPass(i, cmd, error)) return error;
-                if (!requireState(i, cmd, true, true, true, false, "TerrainSurface", error)) return error;
                 break;
 
             case RenderCommandKind::SurfaceTile:

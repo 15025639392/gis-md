@@ -38,6 +38,19 @@ public:
     /// 构建瓦片请求 URL
     virtual std::string buildUrl(const TileKey& key) const = 0;
 
+    /// Provider 是否可为该逻辑 tile 提供 imagery。
+    /// 默认要求 schemeId 匹配且 zoom 在 provider 范围内。
+    virtual bool supportsTile(const TileKey& key) const {
+        return key.schemeId == schemeId() &&
+               key.z >= minZoom() &&
+               key.z <= maxZoom();
+    }
+
+    /// 将引擎逻辑 TileKey 映射为 provider URL 模板使用的 TileKey。
+    /// 标准 XYZ/TMS 通常是 identity；OpenGlobus-Earth 三分区 provider
+    /// 必须在这里显式处理 grouped-y 语义。
+    virtual TileKey providerKeyForTile(const TileKey& key) const { return key; }
+
     /// 获取 attribution
     virtual std::string attribution() const { return ""; }
 

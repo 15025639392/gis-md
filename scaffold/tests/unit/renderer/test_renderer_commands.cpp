@@ -11,6 +11,7 @@ TEST(RendererCommandTest, SurfaceTilesAreAuthoritativeDepthSurface) {
         nullptr,
         nullptr,
         nullptr,
+        nullptr,
         42);
 
     EXPECT_EQ(RenderCommandKind::SurfaceTile, cmd.kind);
@@ -19,6 +20,7 @@ TEST(RendererCommandTest, SurfaceTilesAreAuthoritativeDepthSurface) {
     EXPECT_EQ(32, cmd.vertexStride);
     EXPECT_EQ(0u, cmd.frameId);
     EXPECT_EQ(0u, cmd.generation);
+    EXPECT_EQ(0.0f, cmd.uniforms["u_useNormalMap"][0]);
     EXPECT_TRUE(cmd.depthTest);
     EXPECT_TRUE(cmd.depthWrite);
     EXPECT_TRUE(cmd.cullFace);

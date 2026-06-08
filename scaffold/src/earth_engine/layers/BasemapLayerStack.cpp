@@ -128,10 +128,11 @@ void BasemapLayerStack::update(const FrameState& frameState) {
 // ============================================================
 
 void BasemapLayerStack::buildRenderCommands(Renderer& renderer,
+                                             const TerrainLayer* terrainLayer,
                                              RenderCommandList& commands) {
     for (auto& layer : layers_) {
         if (!layer->visible()) continue;
-        layer->buildRenderCommands(renderer, commands);
+        layer->buildRenderCommands(renderer, terrainLayer, commands);
     }
 }
 

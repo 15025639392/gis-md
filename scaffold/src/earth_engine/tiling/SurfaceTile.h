@@ -34,6 +34,8 @@ enum class SurfaceTileSampling {
 
 struct SurfaceVertex {
     Vec3 positionEcef;
+    Vec3 positionHighEcef;
+    Vec3 positionLowEcef;
     Vec3 normalEcef;
     std::array<float, 2> uv = {0.0f, 0.0f};
 };
@@ -44,6 +46,18 @@ struct SurfaceTileMesh {
     int gridSize = 0;
     SurfaceTileMeshWinding winding = SurfaceTileMeshWinding::Outward;
     SurfaceTileSampling sampling = SurfaceTileSampling::WebMercatorVToWgs84Ecef;
+};
+
+struct SurfaceNormalMap {
+    int width = 0;
+    int height = 0;
+    std::vector<uint8_t> rgba;
+
+    bool valid() const {
+        return width > 0 &&
+               height > 0 &&
+               rgba.size() == static_cast<size_t>(width * height * 4);
+    }
 };
 
 struct ImageryAttachment {

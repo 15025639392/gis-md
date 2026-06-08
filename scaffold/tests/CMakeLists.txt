@@ -134,18 +134,3 @@ else()
     endif()
 endif()
 add_test(NAME test_terrain_provider COMMAND test_terrain_provider)
-
-add_executable(test_terrain_mesh
-    unit/terrain/test_terrain_mesh.cpp
-)
-target_link_libraries(test_terrain_mesh PRIVATE earth_engine_core GTest::gtest GTest::gtest_main)
-find_package(CURL QUIET)
-if(CURL_FOUND)
-    target_link_libraries(test_terrain_mesh PRIVATE CURL::libcurl)
-else()
-    find_library(CURL_LIB2 curl)
-    if(CURL_LIB2)
-        target_link_libraries(test_terrain_mesh PRIVATE ${CURL_LIB2})
-    endif()
-endif()
-add_test(NAME test_terrain_mesh COMMAND test_terrain_mesh)

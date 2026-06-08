@@ -12,7 +12,6 @@ namespace earth_engine {
 enum class RenderCommandKind {
     Unknown,
     GlobeSurface,
-    TerrainSurface,
     SurfaceTile,
     VectorOverlay,
     DebugOverlay

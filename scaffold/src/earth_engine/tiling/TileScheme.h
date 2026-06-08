@@ -50,6 +50,13 @@ public:
     /// 创建 TMS（Tile Map Service）Web Mercator 瓦片体系
     /// y 轴方向为 "up"（南→北），与 XYZ 相反
     static std::unique_ptr<TileScheme> createTMS();
+
+    /// 创建 OpenGlobus Earth 三分区瓦片体系。
+    /// y 编码：
+    ///   main Mercator group: [0, 2^z)
+    ///   north polar LonLat group: [2^z, 2*2^z)
+    ///   south polar LonLat group: [2*2^z, 3*2^z)
+    static std::unique_ptr<TileScheme> createOpenGlobusEarth();
 };
 
 } // namespace earth_engine

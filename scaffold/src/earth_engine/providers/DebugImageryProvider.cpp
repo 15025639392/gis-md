@@ -18,6 +18,7 @@ std::string DebugImageryProvider::buildUrl(const TileKey& key) const {
 void DebugImageryProvider::requestTile(const TileKey& key,
                                         CancellationToken token,
                                         TileCallback callback) {
+    (void)token;
     // 同步生成瓦片（无网络延迟）
     auto image = generateTile(key, tileWidth(), tileHeight());
     callback(key, std::move(image));

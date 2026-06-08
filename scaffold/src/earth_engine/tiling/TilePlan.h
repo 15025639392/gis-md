@@ -15,7 +15,20 @@ class Camera;
 struct TilePlan {
     uint64_t frameId = 0;
     int zoom = 0;
+    int minVisibleZoom = 0;
+    int maxVisibleZoom = 0;
+    bool equalZoomApplied = false;
+    double lodSizePixels = 0.0;
+    double minLodSizePixels = 0.0;
+    double maxLodSizePixels = 0.0;
     std::vector<TileKey> visibleTiles;
+    int renderingNodeCount = 0;
+    int walkthroughNodeCount = 0;
+    int notRenderingNodeCount = 0;
+    int cameraInsideNodeCount = 0;
+    int mercatorTileCount = 0;
+    int northPolarTileCount = 0;
+    int southPolarTileCount = 0;
 };
 
 enum class TileRenderSource {
@@ -23,10 +36,18 @@ enum class TileRenderSource {
     ParentFallback
 };
 
+enum class TileReadinessState {
+    Missing,
+    ParentFallback,
+    Ready
+};
+
 struct RenderTileRef {
     TileKey targetKey;
     TileKey textureKey;
     TileRenderSource source = TileRenderSource::Exact;
+    TileReadinessState readiness = TileReadinessState::Missing;
+    float transitionOpacity = 1.0f;
 };
 
 struct TileFallback {
@@ -45,6 +66,10 @@ struct LayerTilePlan {
     std::vector<TileKey> requestTiles;
     std::vector<RenderTileRef> renderTiles;
     std::vector<TileFallback> fallbackTiles;
+    int readyTileCount = 0;
+    int parentFallbackReadyTileCount = 0;
+    int missingTileCount = 0;
+    int transitionTileCount = 0;
 };
 
 /// 瓦片计划计算器。

@@ -23,9 +23,12 @@ namespace earth_engine {
 namespace {
 
 constexpr double kEarthRadius = 6378137.0;
-constexpr double kCurrentLodPixels = 256.0;
-constexpr double kMinLodPixels = 512.0;
-constexpr double kMaxLodPixels = 256.0;
+constexpr double kOpenGlobusCurrentLodPixels = 256.0;
+constexpr double kOpenGlobusMinLodPixels = 512.0;
+constexpr double kOpenGlobusMaxLodPixels = 256.0;
+constexpr double kOpenGlobusMinEqualZoomAltitudeMeters = 10000.0;
+constexpr double kOpenGlobusMaxEqualZoomAltitudeMeters = 15000000.0;
+constexpr double kOpenGlobusMinEqualZoomCameraSlope = 0.8;
 constexpr int kAlwaysSubdivideUntilZoom = 2;
 constexpr size_t kMaxRenderedNodes = 1000;
 constexpr double kOpenGlobusMaxHorizonDistanceSquared = 106876472875.63281;
@@ -89,6 +92,153 @@ std::array<Vec3, 4> tileCornerPoints(const Rectangle& bounds) {
 
 double distanceSquared(const Vec3& a, const Vec3& b) {
     return (a - b).lengthSquared();
+}
+
+void accumulateNodeStats(const TileNode* node, TilePlan& plan) {
+    if (!node) return;
+    switch (node->state()) {
+        case TileNodeState::Rendering:
+            ++plan.renderingNodeCount;
+            break;
+        case TileNodeState::Walkthrough:
+            ++plan.walkthroughNodeCount;
+            break;
+        case TileNodeState::NotRendering:
+            ++plan.notRenderingNodeCount;
+            break;
+    }
+    if (node->cameraInside()) {
+        ++plan.cameraInsideNodeCount;
+    }
+    for (const auto& child : node->children()) {
+        accumulateNodeStats(child.get(), plan);
+    }
+}
+
+void accumulateTileGroupStats(TilePlan& plan) {
+    for (const TileKey& key : plan.visibleTiles) {
+        if (key.schemeId == "OpenGlobus-Earth") {
+            const int tilesAtZoom = 1 << key.z;
+            if (key.y >= 2 * tilesAtZoom) {
+                ++plan.southPolarTileCount;
+            } else if (key.y >= tilesAtZoom) {
+                ++plan.northPolarTileCount;
+            } else {
+                ++plan.mercatorTileCount;
+            }
+        } else {
+            ++plan.mercatorTileCount;
+        }
+    }
+}
+
+double cameraSlope(const Camera& camera) {
+    return std::clamp(
+        (-camera.direction()).dot(camera.position().normalized()),
+        0.0,
+        1.0);
+}
+
+double openglobusLodSizePixels(const Camera& camera) {
+    const double slope = cameraSlope(camera);
+    return kOpenGlobusCurrentLodPixels +
+        (kOpenGlobusMinLodPixels - kOpenGlobusCurrentLodPixels) * slope;
+}
+
+double projectedSizePixels(const Camera& camera,
+                           const Vec3& center,
+                           double radiusMeters,
+                           double viewportWidthPixels,
+                           double viewportHeightPixels) {
+    const double distance = std::max(1.0, camera.position().distanceTo(center));
+    const double viewport = std::min(
+        viewportWidthPixels < 512.0 ? 512.0 : viewportWidthPixels,
+        viewportHeightPixels < 512.0 ? 512.0 : viewportHeightPixels);
+    const double projSizeConst = viewport / camera.verticalFovRadians();
+    return std::atan(radiusMeters / distance) * projSizeConst;
+}
+
+bool shouldApplyEqualZoom(const Camera& camera, double cameraHeightMeters) {
+    return cameraSlope(camera) > kOpenGlobusMinEqualZoomCameraSlope &&
+           cameraHeightMeters < kOpenGlobusMaxEqualZoomAltitudeMeters &&
+           cameraHeightMeters > kOpenGlobusMinEqualZoomAltitudeMeters;
+}
+
+void addDescendantsAtZoom(const TileScheme& scheme,
+                          const TileKey& key,
+                          int targetZoom,
+                          size_t maxRenderedTiles,
+                          std::vector<TileKey>& out) {
+    if (out.size() >= maxRenderedTiles) return;
+    if (key.z >= targetZoom) {
+        out.push_back(key);
+        return;
+    }
+
+    const int childZ = key.z + 1;
+    const int childX = key.x * 2;
+    const int childY = key.y * 2;
+    const TileKey children[] = {
+        TileKey{key.schemeId, childZ, childX, childY},
+        TileKey{key.schemeId, childZ, childX + 1, childY},
+        TileKey{key.schemeId, childZ, childX, childY + 1},
+        TileKey{key.schemeId, childZ, childX + 1, childY + 1}
+    };
+
+    for (const TileKey& child : children) {
+        if (out.size() >= maxRenderedTiles) return;
+        if (child.x < 0 || child.y < 0) continue;
+        if (child.z > scheme.maxZoom()) continue;
+        addDescendantsAtZoom(scheme, child, targetZoom, maxRenderedTiles, out);
+    }
+}
+
+void applyEqualZoomPass(const TileScheme& scheme, TilePlan& plan) {
+    if (plan.visibleTiles.empty()) return;
+
+    int maxZoom = 0;
+    for (const TileKey& key : plan.visibleTiles) {
+        maxZoom = std::max(maxZoom, key.z);
+    }
+    if (maxZoom <= 0) return;
+
+    std::vector<TileKey> expanded;
+    expanded.reserve(plan.visibleTiles.size());
+    for (const TileKey& key : plan.visibleTiles) {
+        addDescendantsAtZoom(scheme, key, maxZoom, kMaxRenderedNodes, expanded);
+        if (expanded.size() >= kMaxRenderedNodes) break;
+    }
+    if (!expanded.empty()) {
+        plan.visibleTiles = std::move(expanded);
+        plan.equalZoomApplied = true;
+    }
+}
+
+void dedupeAndUpdateZoomStats(TilePlan& plan) {
+    std::unordered_set<TileKey> seen;
+    std::vector<TileKey> deduped;
+    deduped.reserve(plan.visibleTiles.size());
+    for (const TileKey& key : plan.visibleTiles) {
+        if (seen.insert(key).second) {
+            deduped.push_back(key);
+        }
+    }
+    plan.visibleTiles = std::move(deduped);
+
+    if (plan.visibleTiles.empty()) {
+        plan.zoom = 0;
+        plan.minVisibleZoom = 0;
+        plan.maxVisibleZoom = 0;
+        return;
+    }
+
+    plan.minVisibleZoom = plan.visibleTiles.front().z;
+    plan.maxVisibleZoom = plan.visibleTiles.front().z;
+    for (const TileKey& key : plan.visibleTiles) {
+        plan.minVisibleZoom = std::min(plan.minVisibleZoom, key.z);
+        plan.maxVisibleZoom = std::max(plan.maxVisibleZoom, key.z);
+    }
+    plan.zoom = plan.maxVisibleZoom;
 }
 
 } // namespace
@@ -169,23 +319,17 @@ bool TileNode::isAltitudeVisible(const Camera& camera) const {
 bool TileNode::shouldSubdivide(const Camera& camera,
                                double viewportWidthPixels,
                                double viewportHeightPixels) const {
-    const double distance = std::max(1.0, camera.position().distanceTo(boundingCenter_));
-    const double viewport = std::min(
-        viewportWidthPixels < 512.0 ? 512.0 : viewportWidthPixels,
-        viewportHeightPixels < 512.0 ? 512.0 : viewportHeightPixels);
-    const double projectedSizePixels =
-        std::atan(boundingRadiusMeters_ / distance) *
-        viewport / camera.verticalFovRadians();
-
-    const double slope = std::clamp(
-        (-camera.direction()).dot(camera.position().normalized()),
-        0.0,
-        1.0);
-    const double lodPixels = kCurrentLodPixels +
-        (kMinLodPixels - kCurrentLodPixels) * slope;
-
-    const double refineThreshold = std::clamp(lodPixels, kMaxLodPixels, kMinLodPixels);
-    return projectedSizePixels > refineThreshold;
+    const double projectedPixels = projectedSizePixels(
+        camera,
+        boundingCenter_,
+        boundingRadiusMeters_,
+        viewportWidthPixels,
+        viewportHeightPixels);
+    const double refineThreshold = std::clamp(
+        openglobusLodSizePixels(camera),
+        kOpenGlobusMaxLodPixels,
+        kOpenGlobusMinLodPixels);
+    return projectedPixels > refineThreshold;
 }
 
 void TileNode::traverse(const TileScheme& scheme,
@@ -272,7 +416,6 @@ TilePlan TileQuadTree::compute(const Camera& camera,
     double cameraHeight = camPos.length() - kEarthRadius;
     if (cameraHeight < 1000.0) cameraHeight = 1000.0;
 
-    (void)previousZoom;
     const Cartographic subCamera = Ellipsoid::WGS84().cartesianToCartographic(
         camera.position().normalized() * kEarthRadius);
 
@@ -286,19 +429,24 @@ TilePlan TileQuadTree::compute(const Camera& camera,
                     kMaxRenderedNodes,
                     plan.visibleTiles);
 
-    std::unordered_set<TileKey> seen;
-    std::vector<TileKey> deduped;
-    deduped.reserve(plan.visibleTiles.size());
-    for (const TileKey& key : plan.visibleTiles) {
-        if (seen.insert(key).second) {
-            deduped.push_back(key);
+    plan.lodSizePixels = std::clamp(
+        openglobusLodSizePixels(camera),
+        kOpenGlobusMaxLodPixels,
+        kOpenGlobusMinLodPixels);
+    plan.minLodSizePixels = kOpenGlobusMinLodPixels;
+    plan.maxLodSizePixels = kOpenGlobusMaxLodPixels;
+
+    dedupeAndUpdateZoomStats(plan);
+    if (shouldApplyEqualZoom(camera, cameraHeight)) {
+        const int beforeZoom = plan.zoom;
+        applyEqualZoomPass(scheme, plan);
+        dedupeAndUpdateZoomStats(plan);
+        if (previousZoom >= 0 && previousZoom < beforeZoom) {
+            plan.equalZoomApplied = true;
         }
     }
-    plan.visibleTiles = std::move(deduped);
-    plan.zoom = 0;
-    for (const TileKey& key : plan.visibleTiles) {
-        plan.zoom = std::max(plan.zoom, key.z);
-    }
+    accumulateNodeStats(root_.get(), plan);
+    accumulateTileGroupStats(plan);
 
     createdNodeCount_ = root_ ? root_->subtreeNodeCount() : 0;
     lastVisitedNodeCount_ = static_cast<int>(plan.visibleTiles.size());

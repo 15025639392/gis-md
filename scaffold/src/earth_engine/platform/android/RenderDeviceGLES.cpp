@@ -305,6 +305,15 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                 glUniform1i(samplerLoc, 0);
             }
         }
+        if (cmd.textures.size() > 1 && cmd.textures[1]) {
+            auto* glTex = static_cast<GLTexture*>(cmd.textures[1]);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, glTex->glId());
+            int samplerLoc = program->uniformLocation("u_normalMap");
+            if (samplerLoc >= 0) {
+                glUniform1i(samplerLoc, 1);
+            }
+        }
 
         // ---- Uniforms ----
         for (const auto& [name, values] : cmd.uniforms) {
@@ -379,6 +388,9 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         glDisableVertexAttribArray(2);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, 0);
     }
 

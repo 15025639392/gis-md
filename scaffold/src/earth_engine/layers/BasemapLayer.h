@@ -25,6 +25,7 @@ class Renderer;
 class Buffer;
 struct FrameState;
 class TileScheme;
+class TerrainLayer;
 
 /// 底图图层。
 /// 管理从 TilePlan 计算 → Provider 请求 → TextureCache → RenderCommands 的完整链路。
@@ -51,6 +52,8 @@ public:
     /// 透明度
     float opacity() const { return opacity_; }
     void setOpacity(float o) { opacity_ = std::max(0.0f, std::min(1.0f, o)); }
+    void setNormalMapDebugEnabled(bool enabled) { normalMapDebugEnabled_ = enabled; }
+    bool normalMapDebugEnabled() const { return normalMapDebugEnabled_; }
 
     /// 每帧更新（计算 TilePlan、请求缺失瓦片）
     /// 独立模式：图层自己计算 TilePlan。
@@ -70,6 +73,7 @@ public:
     /// @param renderer 共享渲染器（用于 makeSurfaceTileCommand）
     /// @param commands 输出命令列表
     void buildRenderCommands(Renderer& renderer,
+                             const TerrainLayer* terrainLayer,
                              RenderCommandList& commands);
 
     /// 获取统计信息
@@ -80,8 +84,16 @@ public:
     int cachedTileCount() const { return static_cast<int>(textureCache_.count()); }
     int surfaceMeshCount() const { return static_cast<int>(surfaceMeshCache_.size()); }
     size_t surfaceMeshBytes() const;
+    int terrainSurfaceMeshCount() const;
+    int terrainParentFallbackMeshCount() const;
+    int ellipsoidSurfaceMeshCount() const;
     int exactAttachmentCount() const;
     int parentFallbackAttachmentCount() const;
+    int missingImageryTileCount() const { return layerPlan_.missingTileCount; }
+    int transitionTileCount() const { return layerPlan_.transitionTileCount; }
+    int terrainReadySurfaceMeshCount() const;
+    int terrainTransitionSurfaceMeshCount() const;
+    int normalMapTextureCount() const;
 
     /// 获取当前可见瓦片（供调试叠加层使用）
     const std::vector<TileKey>& visibleTiles() const { return tilePlan_.visibleTiles; }
@@ -101,17 +113,24 @@ private:
     struct SurfaceGpuMesh {
         std::unique_ptr<Buffer> vertexBuffer;
         std::unique_ptr<Buffer> indexBuffer;
+        std::unique_ptr<Texture> normalMapTexture;
         Vec3 localOriginEcef = Vec3::zero();
         int indexCount = 0;
+        bool usesTerrain = false;
+        bool usesParentTerrain = false;
+        bool terrainReady = false;
+        bool terrainTransition = false;
     };
     SurfaceGpuMesh* getOrCreateSurfaceGpuMesh(const TileKey& key,
-                                              const Rectangle& bounds);
+                                              const Rectangle& bounds,
+                                              const TerrainLayer* terrainLayer);
     void evictUnusedSurfaceMeshes();
     std::string tileCacheKey(const TileKey& key) const;
 
     std::string id_;
     bool visible_ = true;
     float opacity_ = 1.0f;
+    bool normalMapDebugEnabled_ = false;
 
     std::unique_ptr<ImageryProvider> provider_;
     std::unique_ptr<TileScheme> tileScheme_;

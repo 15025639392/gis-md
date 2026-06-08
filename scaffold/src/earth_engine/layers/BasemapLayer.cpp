@@ -6,6 +6,7 @@
 #include "../core/math/Rectangle.h"
 #include "../tiling/SurfaceTile.h"
 #include "../tiling/TileSurface.h"
+#include "TerrainLayer.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -228,19 +229,33 @@ void BasemapLayer::rebuildLayerPlan() {
     layerPlan_.desiredTiles = tilePlan_.visibleTiles;
 
     for (const auto& key : layerPlan_.desiredTiles) {
+        if (provider_ && !provider_->supportsTile(key)) {
+            ++layerPlan_.missingTileCount;
+            continue;
+        }
+
         if (textureCache_.contains(key)) {
-            layerPlan_.renderTiles.push_back(RenderTileRef{key, key, TileRenderSource::Exact});
+            layerPlan_.renderTiles.push_back(RenderTileRef{
+                key, key, TileRenderSource::Exact, TileReadinessState::Ready, 1.0f});
+            ++layerPlan_.readyTileCount;
             continue;
         }
 
         TileKey fallbackKey = key;
         if (findFallbackTexture(key, fallbackKey)) {
             layerPlan_.fallbackTiles.push_back(TileFallback{key, fallbackKey});
-            layerPlan_.renderTiles.push_back(
-                RenderTileRef{key, fallbackKey, TileRenderSource::ParentFallback});
+            layerPlan_.renderTiles.push_back(RenderTileRef{
+                key,
+                fallbackKey,
+                TileRenderSource::ParentFallback,
+                TileReadinessState::ParentFallback,
+                0.65f});
+            ++layerPlan_.parentFallbackReadyTileCount;
+            ++layerPlan_.transitionTileCount;
         }
 
         layerPlan_.requestTiles.push_back(key);
+        ++layerPlan_.missingTileCount;
     }
 
     for (auto it = requestedGeneration_.begin(); it != requestedGeneration_.end(); ) {
@@ -281,19 +296,32 @@ Texture* BasemapLayer::findFallbackTexture(const TileKey& target, TileKey& textu
 
 BasemapLayer::SurfaceGpuMesh*
 BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
-                                        const Rectangle& bounds) {
+                                        const Rectangle& bounds,
+                                        const TerrainLayer* terrainLayer) {
     if (!renderDevice_) return nullptr;
 
     const int gridSize = surfaceGridSizeForZoom(key.z);
+    const TerrainTile* terrainTile = terrainLayer
+        ? terrainLayer->findBestTileForKey(key)
+        : nullptr;
+    const bool useTerrain = terrainTile && terrainTile->valid();
     const std::string ck = tileCacheKey(key) + "/surface/" +
-        "ellipsoid/" + std::to_string(gridSize);
+        (useTerrain
+            ? "terrain/" + std::to_string(terrainLayer->terrainGeneration()) +
+                  "/" + tileCacheKey(terrainTile->key())
+            : "ellipsoid") +
+        "/" + std::to_string(gridSize);
 
     auto found = surfaceMeshCache_.find(ck);
     if (found != surfaceMeshCache_.end()) {
         return &found->second;
     }
 
-    SurfaceTileMesh mesh = TileSurface::buildEllipsoidMesh(bounds, gridSize);
+    constexpr double kTerrainSkirtHeightMeters = -100.0;
+    SurfaceTileMesh mesh = useTerrain
+        ? TileSurface::buildTerrainMesh(
+              bounds, terrainTile, gridSize, kTerrainSkirtHeightMeters)
+        : TileSurface::buildEllipsoidMesh(bounds, gridSize);
     if (mesh.vertices.empty() || mesh.indices.empty()) return nullptr;
 
     const Vec3 localOrigin = meshCentroid(mesh);
@@ -303,6 +331,10 @@ BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
 
     SurfaceGpuMesh gpuMesh;
     gpuMesh.localOriginEcef = localOrigin;
+    gpuMesh.usesTerrain = useTerrain;
+    gpuMesh.usesParentTerrain = useTerrain && terrainTile->key() != key;
+    gpuMesh.terrainReady = useTerrain && terrainTile->key() == key;
+    gpuMesh.terrainTransition = useTerrain && terrainTile->key() != key;
 
     BufferDesc vbDesc;
     vbDesc.size = vertices.size() * sizeof(SurfaceGpuVertex);
@@ -320,6 +352,21 @@ BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
     gpuMesh.indexBuffer = renderDevice_->createBuffer(ibDesc);
     if (!gpuMesh.indexBuffer) return nullptr;
 
+    SurfaceNormalMap normalMap = TileSurface::buildNormalMap(mesh);
+    if (normalMap.valid()) {
+        TextureDesc normalDesc;
+        normalDesc.width = normalMap.width;
+        normalDesc.height = normalMap.height;
+        normalDesc.format = TextureDesc::Format::RGBA8;
+        normalDesc.data = normalMap.rgba.data();
+        normalDesc.dataSize = normalMap.rgba.size();
+        normalDesc.mipmap = false;
+        normalDesc.minFilter = TextureDesc::Filter::Linear;
+        normalDesc.wrapS = TextureDesc::Wrap::Clamp;
+        normalDesc.wrapT = TextureDesc::Wrap::Clamp;
+        gpuMesh.normalMapTexture = renderDevice_->createTexture(normalDesc);
+    }
+
     gpuMesh.indexCount = static_cast<int>(mesh.indices.size());
     auto [it, inserted] = surfaceMeshCache_.emplace(ck, std::move(gpuMesh));
     (void)inserted;
@@ -330,8 +377,12 @@ void BasemapLayer::evictUnusedSurfaceMeshes() {
     std::unordered_set<std::string> keep;
     keep.reserve(layerPlan_.renderTiles.size());
     for (const auto& renderTile : layerPlan_.renderTiles) {
-        keep.insert(tileCacheKey(renderTile.targetKey) + "/surface/ellipsoid/" +
-                    std::to_string(surfaceGridSizeForZoom(renderTile.targetKey.z)));
+        const std::string prefix = tileCacheKey(renderTile.targetKey) + "/surface/";
+        for (const auto& entry : surfaceMeshCache_) {
+            if (entry.first.rfind(prefix, 0) == 0) {
+                keep.insert(entry.first);
+            }
+        }
     }
 
     for (auto it = surfaceMeshCache_.begin(); it != surfaceMeshCache_.end(); ) {
@@ -377,6 +428,66 @@ int BasemapLayer::parentFallbackAttachmentCount() const {
     return count;
 }
 
+int BasemapLayer::terrainSurfaceMeshCount() const {
+    int count = 0;
+    for (const auto& entry : surfaceMeshCache_) {
+        if (entry.second.usesTerrain) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+int BasemapLayer::terrainParentFallbackMeshCount() const {
+    int count = 0;
+    for (const auto& entry : surfaceMeshCache_) {
+        if (entry.second.usesParentTerrain) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+int BasemapLayer::ellipsoidSurfaceMeshCount() const {
+    int count = 0;
+    for (const auto& entry : surfaceMeshCache_) {
+        if (!entry.second.usesTerrain) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+int BasemapLayer::terrainReadySurfaceMeshCount() const {
+    int count = 0;
+    for (const auto& entry : surfaceMeshCache_) {
+        if (entry.second.terrainReady) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+int BasemapLayer::terrainTransitionSurfaceMeshCount() const {
+    int count = 0;
+    for (const auto& entry : surfaceMeshCache_) {
+        if (entry.second.terrainTransition) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+int BasemapLayer::normalMapTextureCount() const {
+    int count = 0;
+    for (const auto& entry : surfaceMeshCache_) {
+        if (entry.second.normalMapTexture) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 std::string BasemapLayer::tileCacheKey(const TileKey& key) const {
     return id_ + "/" + provider_->id() + "/" + key.schemeId + "/" +
            std::to_string(key.z) + "/" +
@@ -385,6 +496,7 @@ std::string BasemapLayer::tileCacheKey(const TileKey& key) const {
 }
 
 void BasemapLayer::buildRenderCommands(Renderer& renderer,
+                                        const TerrainLayer* terrainLayer,
                                         RenderCommandList& commands) {
     if (!visible_) return;
 
@@ -414,11 +526,12 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
                 : ImageryFallbackSource::Parent
         };
 
-        SurfaceGpuMesh* gpuMesh = getOrCreateSurfaceGpuMesh(key, bounds);
+        SurfaceGpuMesh* gpuMesh = getOrCreateSurfaceGpuMesh(key, bounds, terrainLayer);
         if (!gpuMesh) continue;
 
         auto cmd = renderer.makeSurfaceTileCommand(
             attachment.texture,
+            gpuMesh->normalMapTexture.get(),
             gpuMesh->vertexBuffer.get(),
             gpuMesh->indexBuffer.get(),
             gpuMesh->indexCount,
@@ -427,6 +540,8 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
             attachment.uvScaleU,
             attachment.uvScaleV);
         cmd.uniforms["u_tileOpacity"] = {attachment.opacity};
+        cmd.uniforms["u_transitionOpacity"] = {renderTile.transitionOpacity};
+        cmd.uniforms["u_debugNormalMap"] = {normalMapDebugEnabled_ ? 1.0f : 0.0f};
         cmd.uniforms["u_surfaceGeneration"] = {
             static_cast<float>(generation_)
         };

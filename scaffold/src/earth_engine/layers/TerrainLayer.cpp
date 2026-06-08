@@ -1,15 +1,8 @@
 #include "TerrainLayer.h"
-#include "../terrain/TerrainMesh.h"
 #include "../scene/FrameState.h"
 #include "../scene/Camera.h"
-#include "../renderer/Renderer.h"
-#include "../core/geodesy/Ellipsoid.h"
-#include "../core/geodesy/Cartographic.h"
+#include "../tiling/TilePlan.h"
 
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
-#include <cstring>
 #include <algorithm>
 
 namespace earth_engine {
@@ -49,6 +42,21 @@ const TerrainTile* TerrainLayer::findBestTile(double lngRad, double latRad) cons
     return best;
 }
 
+const TerrainTile* TerrainLayer::findBestTileForKey(const TileKey& targetKey) const {
+    TileKey candidate = targetKey;
+    while (true) {
+        auto found = tileCache_.find(terrainCacheKey(candidate));
+        if (found != tileCache_.end() && found->second && found->second->valid()) {
+            return found->second.get();
+        }
+        if (candidate.z <= tileScheme_->minZoom()) {
+            break;
+        }
+        candidate = TilePlanBuilder::parentKey(candidate);
+    }
+    return nullptr;
+}
+
 // ============================================================
 // 帧更新
 // ============================================================
@@ -70,9 +78,7 @@ void TerrainLayer::update(const FrameState& frameState) {
     constexpr int kMaxTerrainRequestsPerUpdate = 8;
     for (const auto& key : tilePlan_.visibleTiles) {
         if (key.z < provider_->minZoom() || key.z > provider_->maxZoom()) continue;
-        std::string cacheKey = std::to_string(key.z) + "/" +
-                               std::to_string(key.x) + "/" +
-                               std::to_string(key.y);
+        std::string cacheKey = terrainCacheKey(key);
         if (tileCache_.find(cacheKey) == tileCache_.end() &&
             requestedTiles_.find(cacheKey) == requestedTiles_.end()) {
             if (requestsThisUpdate >= kMaxTerrainRequestsPerUpdate) break;
@@ -103,92 +109,21 @@ void TerrainLayer::processPendingUploads() {
     }
 
     for (auto& item : batch) {
-        std::string cacheKey = std::to_string(item.key.z) + "/" +
-                               std::to_string(item.key.x) + "/" +
-                               std::to_string(item.key.y);
+        std::string cacheKey = terrainCacheKey(item.key);
 
         auto tile = std::make_unique<TerrainTile>(
             item.key, *tileScheme_, std::move(item.heightmap));
 
         tileCache_[cacheKey] = std::move(tile);
-        meshDirty_ = true;
+        ++terrainGeneration_;
     }
 }
 
-// ============================================================
-// 渲染命令
-// ============================================================
-
-void TerrainLayer::buildRenderCommands(const GlobeMesh& baseGlobeMesh,
-                                        const FrameState& frameState,
-                                        Renderer& renderer,
-                                        RenderCommandList& commands) {
-    if (!enabled_ || !visible_) return;
-    if (!frameState.camera) return;
-
-    // 查找最佳覆盖瓦片（最高 zoom 且覆盖屏幕中心）
-    // 简化：取第一个有效的高 zoom tile
-    const TerrainTile* bestTile = nullptr;
-    int bestZoom = -1;
-    for (const auto& [key, tile] : tileCache_) {
-        if (tile->valid() && tile->key().z > bestZoom) {
-            bestZoom = tile->key().z;
-            bestTile = tile.get();
-        }
-    }
-
-    // 生成地形网格（含裙边防止 tile 间裂缝）并上传到 GPU
-    if ((meshDirty_ || bestTile) && bestTile) {
-        cachedMesh_ = TerrainMeshBuilder::build(baseGlobeMesh, bestTile, -50.0f);
-        renderer.updateGlobeMesh(cachedMesh_);
-        meshDirty_ = false;
-    }
-
-    // 为地形网格生成 RenderCommand（使用与 Globe 相同的 shader）
-    RenderCommand cmd;
-    cmd.kind = RenderCommandKind::TerrainSurface;
-    cmd.owner = "terrain";
-    cmd.pass = "color";
-    cmd.shader = renderer.globeShader();
-    cmd.primitive = RenderCommand::PrimitiveType::Triangles;
-    cmd.indexType = RenderCommand::IndexType::UInt32;
-    cmd.depthTest = true;
-    cmd.depthWrite = true;
-    cmd.blend = false;
-    cmd.cullFace = true;
-
-    // 使用 Renderer 的 globe vertex/index buffer（已通过 updateGlobeMesh 上传位移+裙边）
-    cmd.vertexBuffer = renderer.globeVertexBuffer();
-    cmd.indexBuffer = renderer.globeIndexBuffer();
-    cmd.indexCount = renderer.globeIndexCount();
-
-    // 设置 MVP
-    if (frameState.camera) {
-        const Camera& cam = *frameState.camera;
-        float vpW = static_cast<float>(frameState.viewportWidthPixels);
-        float vpH = static_cast<float>(frameState.viewportHeightPixels);
-
-        glm::mat4 model = glm::make_mat4(Renderer::earthModelMatrix().data());
-        glm::mat4 view(cam.viewMatrix().raw());
-        glm::mat4 proj(cam.projectionMatrix(vpW, vpH).raw());
-        glm::mat4 mvp = proj * view * model;
-
-        auto& mvpU = cmd.uniforms["u_modelViewProjection"];
-        mvpU.resize(16);
-        std::memcpy(mvpU.data(), glm::value_ptr(mvp), 16 * sizeof(float));
-
-        auto& modelU = cmd.uniforms["u_model"];
-        modelU.resize(16);
-        std::memcpy(modelU.data(), glm::value_ptr(model), 16 * sizeof(float));
-    }
-
-    cmd.uniforms["u_lightDir"] = {
-        frameState.lightDir.x,
-        frameState.lightDir.y,
-        frameState.lightDir.z
-    };
-
-    commands.push_back(std::move(cmd));
+std::string TerrainLayer::terrainCacheKey(const TileKey& key) const {
+    return key.schemeId + "/" +
+           std::to_string(key.z) + "/" +
+           std::to_string(key.x) + "/" +
+           std::to_string(key.y);
 }
 
 } // namespace earth_engine

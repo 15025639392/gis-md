@@ -22,7 +22,17 @@ struct Diagnostics {
     int imageryAttachments = 0;
     int imageryExactAttachments = 0;
     int imageryParentFallbackAttachments = 0;
+    int imageryMissingTiles = 0;
+    int imageryTransitionTiles = 0;
     int surfaceMeshBytes = 0;
+    int terrainCachedTiles = 0;
+    uint64_t terrainGeneration = 0;
+    int terrainSurfaceMeshes = 0;
+    int terrainParentFallbackMeshes = 0;
+    int terrainReadySurfaceMeshes = 0;
+    int terrainTransitionSurfaceMeshes = 0;
+    int ellipsoidSurfaceMeshes = 0;
+    int normalMapTextures = 0;
     int staleSurfaceCommands = 0;
     int missingGenerationSurfaceCommands = 0;
     uint64_t minSurfaceGeneration = 0;

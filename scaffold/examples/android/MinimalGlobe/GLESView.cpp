@@ -12,6 +12,7 @@
 #include "earth_engine/platform/android/RenderDeviceGLES.h"
 #include "earth_engine/platform/android/AndroidPlatformBridge.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
+#include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/providers/HeightmapTerrainProvider.h"
 #include "earth_engine/layers/BasemapLayer.h"
 #include "earth_engine/layers/TerrainLayer.h"
@@ -61,8 +62,12 @@ static bool gTouchMoved = false;
 
 static constexpr const char* kFabdemTerrainTemplate =
     "http://192.168.1.4:8090/{z}/{x}/{y}.png";
+static constexpr const char* kGaodeSatelliteTemplate =
+    "https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
 static constexpr bool kEnableTerrainForDemo = false;
 static constexpr bool kEnableDebugOverlayForDemo = false;
+static constexpr bool kShowNormalMapForDemo = false;
+static constexpr bool kUseGaodeSatelliteForDemo = true;
 
 static void addDemoVectorLayer() {
     static constexpr const char* kDemoGeoJson = R"json(
@@ -186,14 +191,28 @@ static bool createEngine() {
         // 创建 Android JNI HTTP 桥接
         gPlatformBridge = std::make_unique<AndroidPlatformBridge>(gJvm);
 
-        // Standard XYZ WebMercator debug imagery. It is generated locally, so
-        // alignment checks do not depend on network access or provider offsets.
-        auto provider = std::make_unique<DebugImageryProvider>();
+        std::unique_ptr<ImageryProvider> provider;
+        if (kUseGaodeSatelliteForDemo) {
+            auto xyz = std::make_unique<XYZImageryProvider>(
+                kGaodeSatelliteTemplate,
+                "Gaode/Amap satellite imagery");
+            xyz->setZoomRange(0, 18);
+            xyz->setPlatformBridge(gPlatformBridge.get());
+            provider = std::move(xyz);
+            LOGI("Gaode satellite provider enabled: %s", kGaodeSatelliteTemplate);
+            LOGI("Gaode/Amap tiles are GCJ-02 aligned; this demo is visual only, not WGS84 control-point acceptance");
+        } else {
+            provider = std::make_unique<DebugImageryProvider>();
+            LOGI("Debug standard XYZ WebMercator provider enabled");
+        }
+
         auto scheme = TileScheme::createXYZWebMercator();
         auto layer = std::make_unique<BasemapLayer>(
             std::move(provider), std::move(scheme), gRenderDevice.get());
+        layer->setNormalMapDebugEnabled(kShowNormalMapForDemo);
         gEngine->addLayer(std::move(layer));
-        LOGI("Debug standard XYZ WebMercator layer added");
+        LOGI("Basemap layer added; normal map debug %s",
+             kShowNormalMapForDemo ? "enabled" : "disabled");
 
         if (kEnableTerrainForDemo) {
             // FABDEM raster DEM served by dems/scripts/serve_tiles.py.
@@ -261,12 +280,13 @@ static void renderFrame() {
     if (gFrameCount <= 1 || gFrameCount % 300 == 0) {
         const auto& diag = gEngine->diagnostics();
         LOGI("Frame %d | tiles vis=%d cached=%d renderSurface=%d mesh=%d "
-             "attach=%d exact=%d parent=%d stale=%d missingGen=%d | "
+             "attach=%d exact=%d parent=%d normalMap=%d stale=%d missingGen=%d | "
              "sun=(%.2f,%.2f,%.2f) | FPS=%.1f draw=%d",
              gFrameCount, diag.visibleTiles, diag.cachedTextures,
              diag.renderSurfaceTiles, diag.surfaceMeshCount,
              diag.imageryAttachments, diag.imageryExactAttachments,
              diag.imageryParentFallbackAttachments,
+             diag.normalMapTextures,
              diag.staleSurfaceCommands, diag.missingGenerationSurfaceCommands,
              sunDir.x(), sunDir.y(), sunDir.z(),
              diag.fps, diag.drawCalls);

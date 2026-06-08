@@ -78,7 +78,41 @@ void XYZImageryProvider::setTileSize(int width, int height) {
     tileHeight_ = height;
 }
 
+void XYZImageryProvider::setSchemeId(std::string schemeId) {
+    schemeId_ = std::move(schemeId);
+}
+
+void XYZImageryProvider::setOpenGlobusGroupedY(bool enabled) {
+    openGlobusGroupedY_ = enabled;
+    if (enabled) {
+        schemeId_ = "OpenGlobus-Earth";
+    }
+}
+
+bool XYZImageryProvider::supportsTile(const TileKey& key) const {
+    if (key.z < minZoom_ || key.z > maxZoom_) return false;
+    if (key.schemeId != schemeId_) return false;
+    if (!openGlobusGroupedY_) return key.schemeId == "XYZ-WebMercator";
+
+    const int tilesAtZoom = 1 << key.z;
+    return key.y >= 0 && key.y < 3 * tilesAtZoom;
+}
+
+TileKey XYZImageryProvider::providerKeyForTile(const TileKey& key) const {
+    if (!openGlobusGroupedY_) return key;
+
+    const int tilesAtZoom = 1 << key.z;
+    TileKey mapped = key;
+    if (mapped.y >= 2 * tilesAtZoom) {
+        mapped.y -= 2 * tilesAtZoom;
+    } else if (mapped.y >= tilesAtZoom) {
+        mapped.y -= tilesAtZoom;
+    }
+    return mapped;
+}
+
 std::string XYZImageryProvider::buildUrl(const TileKey& key) const {
+    const TileKey providerKey = providerKeyForTile(key);
     std::string url = urlTemplate_;
     auto replace = [&url](const std::string& ph, const std::string& val) {
         size_t pos = 0;
@@ -87,14 +121,22 @@ std::string XYZImageryProvider::buildUrl(const TileKey& key) const {
             pos += val.length();
         }
     };
-    replace("{z}", std::to_string(key.z));
-    replace("{x}", std::to_string(key.x));
-    replace("{y}", std::to_string(key.y));
+    replace("{z}", std::to_string(providerKey.z));
+    replace("{x}", std::to_string(providerKey.x));
+    replace("{y}", std::to_string(providerKey.y));
+    replace("{groupedY}", std::to_string(key.y));
+    if (url.find("{tileGroup}") != std::string::npos) {
+        std::string group = "mercator";
+        const int tilesAtZoom = 1 << key.z;
+        if (key.y >= 2 * tilesAtZoom) group = "south";
+        else if (key.y >= tilesAtZoom) group = "north";
+        replace("{tileGroup}", group);
+    }
     if (url.find("{s}") != std::string::npos) {
         // 高德等使用 1-4 子域；OSM 等使用 0-3
         // 简单规则：如果模板中有 "0{s}" 则在前面补 0 的基础上用 1-4
         bool hasLeadingZero = (url.find("0{s}") != std::string::npos);
-        int s = (key.x + key.y) % 4;
+        int s = (providerKey.x + providerKey.y) % 4;
         if (hasLeadingZero) s += 1;  // 1-4 range
         replace("{s}", std::to_string(s));
     }

@@ -214,3 +214,58 @@ TEST_F(TilePlanTest, TileQuadTreeNodesFollowParentChildLineage) {
     EXPECT_EQ(0, child->key().x);
     EXPECT_EQ(0, child->key().y);
 }
+
+TEST_F(TilePlanTest, TilePlanReportsLodDiagnostics) {
+    camera_->lookAt(Vec3(7000000, 0, 0), Vec3::zero(), Vec3::unitZ());
+
+    TilePlan plan = TilePlanBuilder::compute(*camera_, *scheme_, 800, 600);
+
+    EXPECT_GT(plan.renderingNodeCount, 0);
+    EXPECT_GE(plan.walkthroughNodeCount, 1);
+    EXPECT_GE(plan.notRenderingNodeCount, 0);
+    EXPECT_GE(plan.cameraInsideNodeCount, 1);
+    EXPECT_GE(plan.minVisibleZoom, 0);
+    EXPECT_EQ(plan.zoom, plan.maxVisibleZoom);
+    EXPECT_GE(plan.lodSizePixels, plan.maxLodSizePixels);
+    EXPECT_LE(plan.lodSizePixels, plan.minLodSizePixels);
+    EXPECT_EQ(static_cast<int>(plan.visibleTiles.size()), plan.mercatorTileCount);
+    EXPECT_EQ(0, plan.northPolarTileCount);
+    EXPECT_EQ(0, plan.southPolarTileCount);
+}
+
+TEST_F(TilePlanTest, OpenGlobusEqualZoomPassUsesMaxVisibleZoomForNadirView) {
+    camera_->lookAt(Vec3(7000000, 0, 0), Vec3::zero(), Vec3::unitZ());
+
+    TilePlan plan = TilePlanBuilder::compute(*camera_, *scheme_, 800, 600);
+
+    ASSERT_GT(plan.visibleTiles.size(), 0u);
+    EXPECT_TRUE(plan.equalZoomApplied);
+    EXPECT_EQ(plan.maxVisibleZoom, plan.minVisibleZoom);
+    EXPECT_EQ(plan.zoom, plan.maxVisibleZoom);
+    for (const TileKey& key : plan.visibleTiles) {
+        EXPECT_EQ(plan.zoom, key.z);
+    }
+}
+
+TEST_F(TilePlanTest, OpenGlobusEqualZoomPassSkippedOutsideAltitudeBand) {
+    camera_->lookAt(Vec3(0, 0, 50000000), Vec3::zero(), Vec3::unitY());
+
+    TilePlan plan = TilePlanBuilder::compute(*camera_, *scheme_, 800, 600);
+
+    EXPECT_FALSE(plan.equalZoomApplied);
+    EXPECT_EQ(plan.zoom, plan.maxVisibleZoom);
+}
+
+TEST(TilePlanOpenGlobusEarthTest, ReportsPolarTileGroups) {
+    auto scheme = TileScheme::createOpenGlobusEarth();
+    Camera camera;
+    camera.setPerspective(glm::radians(60.0), 1.0, 50000000.0);
+    camera.lookAt(Vec3(0, 0, 7000000), Vec3::zero(), Vec3::unitY());
+
+    TilePlan plan = TilePlanBuilder::compute(camera, *scheme, 800, 600);
+
+    EXPECT_GT(plan.visibleTiles.size(), 0u);
+    EXPECT_EQ(static_cast<int>(plan.visibleTiles.size()),
+              plan.mercatorTileCount + plan.northPolarTileCount +
+              plan.southPolarTileCount);
+}

@@ -61,6 +61,7 @@ public:
 
     /// 构建 SurfaceTile RenderCommand（调用者提供 imagery attachment 和 tileBounds）
     RenderCommand makeSurfaceTileCommand(Texture* texture,
+                                         Texture* normalMapTexture,
                                          Buffer* vertexBuffer,
                                          Buffer* indexBuffer,
                                          int indexCount,
@@ -68,11 +69,6 @@ public:
                                          float uvOffsetY = 0.0f,
                                          float uvScaleX = 1.0f,
                                          float uvScaleY = 1.0f) const;
-
-    /// 更新 globe 顶点和索引 buffer（地形位移/裙边后调用）。
-    /// 一次性替换顶点位置和索引数据，支持 skirt 增加新几何。
-    /// 需恢复原始平坦椭球时再次调用传入原始 GlobeMesh。
-    void updateGlobeMesh(const GlobeMesh& mesh);
 
 private:
     struct Impl;

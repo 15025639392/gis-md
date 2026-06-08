@@ -224,8 +224,6 @@ target_sources(earth_engine_core PRIVATE
 target_sources(earth_engine_core PRIVATE
     earth_engine/terrain/TerrainTile.h
     earth_engine/terrain/TerrainTile.cpp
-    earth_engine/terrain/TerrainMesh.h
-    earth_engine/terrain/TerrainMesh.cpp
 )
 
 # ============================================================

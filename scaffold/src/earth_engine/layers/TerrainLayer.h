@@ -3,8 +3,6 @@
 #include "../providers/TerrainProvider.h"
 #include "../tiling/TileScheme.h"
 #include "../tiling/TilePlan.h"
-#include "../globe/Globe.h"
-#include "../renderer/RenderCommand.h"
 #include "../terrain/TerrainTile.h"
 
 #include <memory>
@@ -17,8 +15,6 @@
 
 namespace earth_engine {
 
-class RenderDevice;
-class Renderer;
 struct FrameState;
 class Camera;
 
@@ -50,20 +46,13 @@ public:
     /// 采样指定地理坐标的地形高度
     /// @return ellipsoid height（meter），无数据返回 0
     float sampleHeight(double lngRad, double latRad) const;
-
-    // ---- 渲染 ----
+    const TerrainTile* findBestTile(double lngRad, double latRad) const;
+    const TerrainTile* findBestTileForKey(const TileKey& targetKey) const;
+    uint64_t terrainGeneration() const { return terrainGeneration_; }
+    int cachedTileCount() const { return static_cast<int>(tileCache_.size()); }
 
     /// 每帧更新（加载缺失瓦片）
     void update(const FrameState& frameState);
-
-    /// 生成地形渲染命令（替换 Globe 背景）
-    /// @param baseGlobeMesh 基础椭球网格
-    /// @param renderer 共享渲染器
-    /// @param commands 输出命令列表
-    void buildRenderCommands(const GlobeMesh& baseGlobeMesh,
-                             const FrameState& frameState,
-                             Renderer& renderer,
-                             RenderCommandList& commands);
 
     /// 获取当前可见瓦片（供调试用）
     const std::vector<TileKey>& visibleTiles() const { return tilePlan_.visibleTiles; }
@@ -72,8 +61,6 @@ public:
 private:
     void loadTile(const TileKey& key);
     void processPendingUploads();
-    const TerrainTile* findBestTile(double lngRad, double latRad) const;
-
     std::string id_;
     bool visible_ = true;
     bool enabled_ = false;  // 默认关闭，由 Scene 启用
@@ -97,9 +84,8 @@ private:
     };
     std::shared_ptr<PendingQueue> pendingQueue_;
 
-    // 当前渲染的地形网格（缓存避免每帧重建）
-    GlobeMesh cachedMesh_;
-    mutable bool meshDirty_ = true;
+    uint64_t terrainGeneration_ = 0;
+    std::string terrainCacheKey(const TileKey& key) const;
 };
 
 } // namespace earth_engine

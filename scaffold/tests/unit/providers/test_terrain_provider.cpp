@@ -2,6 +2,7 @@
 #include <cmath>
 #include "earth_engine/providers/HeightmapTerrainProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
+#include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/tiling/TileKey.h"
 
 using namespace earth_engine;
@@ -100,4 +101,24 @@ TEST(DecodedHeightmapTest, BilinearOutOfRangeClamped) {
     // (2.0, -1.0) → (1, 0) = top-right corner = 10
     float h2 = hm.sampleBilinear(2.0f, -1.0f);
     EXPECT_FLOAT_EQ(10.0f, h2);
+}
+
+TEST(XYZImageryProviderTest, RejectsOpenGlobusTileUnlessGroupedYEnabled) {
+    XYZImageryProvider provider("https://example.com/{z}/{x}/{y}.png");
+    TileKey polar{"OpenGlobus-Earth", 3, 4, 12};
+
+    EXPECT_FALSE(provider.supportsTile(polar));
+}
+
+TEST(XYZImageryProviderTest, OpenGlobusGroupedYMapsUrlLocalYAndExposesGroup) {
+    XYZImageryProvider provider(
+        "https://example.com/{tileGroup}/{z}/{x}/{y}?gy={groupedY}");
+    provider.setOpenGlobusGroupedY(true);
+
+    TileKey north{"OpenGlobus-Earth", 3, 4, 12};
+    TileKey south{"OpenGlobus-Earth", 3, 4, 20};
+
+    EXPECT_TRUE(provider.supportsTile(north));
+    EXPECT_EQ("https://example.com/north/3/4/4?gy=12", provider.buildUrl(north));
+    EXPECT_EQ("https://example.com/south/3/4/4?gy=20", provider.buildUrl(south));
 }
