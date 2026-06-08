@@ -58,10 +58,11 @@ Scene::Scene()
       timeController_(std::make_unique<TimeController>()),
       skyGradient_(std::make_unique<SkyGradient>()) {
 
-    // OpenGlobus Camera defaults to a near plane of 1m. This renderer does not
-    // implement OpenGlobus reverse-Z yet, so a large near plane would clip the
-    // surface in near-ground views instead of improving precision safely.
-    camera_->setPerspective(glm::radians(60.0), 1.0, 50000000.0);
+    // OpenGlobus Camera defaults to a near plane of 1m and minAltitude=1m.
+    // This renderer does not implement OpenGlobus reverse-Z/multi-frustum yet,
+    // so keep a sub-meter near plane to avoid clipping terrain while the camera
+    // is clamped at the OpenGlobus minimum altitude.
+    camera_->setPerspective(glm::radians(60.0), 0.1, 50000000.0);
     globeMesh_ = Globe::createMesh(96, 48);
     configureCameraSurfacePicker();
     setupSelectionCallbacks();

@@ -76,5 +76,5 @@ TEST(CameraTest, BuildsFrustumFromCurrentViewProjection) {
 TEST(SceneTest, DefaultCameraNearPlaneAllowsNearGroundViews) {
     Scene scene;
 
-    EXPECT_DOUBLE_EQ(1.0, scene.camera().nearPlaneMeters());
+    EXPECT_DOUBLE_EQ(0.1, scene.camera().nearPlaneMeters());
 }

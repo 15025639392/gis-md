@@ -89,7 +89,7 @@ BasemapLayer::BasemapLayer(std::unique_ptr<ImageryProvider> provider,
       provider_(std::move(provider)),
       tileScheme_(std::move(tileScheme)),
       renderDevice_(renderDevice),
-      textureCache_(renderDevice, id_ + ":" + provider_->id(), 64 * 1024 * 1024),
+      textureCache_(renderDevice, id_ + ":" + provider_->id(), 192 * 1024 * 1024),
       pendingQueue_(std::make_shared<PendingQueue>()) {}
 
 BasemapLayer::~BasemapLayer() = default;
@@ -183,7 +183,7 @@ void BasemapLayer::processPendingUploads() {
     std::deque<PendingUpload> batch;
     {
         std::lock_guard<std::mutex> lock(pendingQueue_->mutex);
-        constexpr size_t kMaxUploadsPerFrame = 4;
+        constexpr size_t kMaxUploadsPerFrame = 2;
         while (!pendingQueue_->queue.empty() && batch.size() < kMaxUploadsPerFrame) {
             batch.push_back(std::move(pendingQueue_->queue.front()));
             pendingQueue_->queue.pop_front();
