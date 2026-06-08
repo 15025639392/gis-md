@@ -88,6 +88,12 @@ add_executable(test_renderer_commands
 target_link_libraries(test_renderer_commands PRIVATE earth_engine_core GTest::gtest GTest::gtest_main)
 add_test(NAME test_renderer_commands COMMAND test_renderer_commands)
 
+add_executable(test_debug_overlay
+    unit/debug/test_debug_overlay.cpp
+)
+target_link_libraries(test_debug_overlay PRIVATE earth_engine_core GTest::gtest GTest::gtest_main)
+add_test(NAME test_debug_overlay COMMAND test_debug_overlay)
+
 # ============================================================
 # stage 5 tests
 # ============================================================

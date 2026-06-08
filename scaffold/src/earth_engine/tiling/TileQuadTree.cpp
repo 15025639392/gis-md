@@ -29,6 +29,7 @@ constexpr double kOpenGlobusMaxLodPixels = 256.0;
 constexpr double kOpenGlobusMinEqualZoomAltitudeMeters = 10000.0;
 constexpr double kOpenGlobusMaxEqualZoomAltitudeMeters = 15000000.0;
 constexpr double kOpenGlobusMinEqualZoomCameraSlope = 0.8;
+constexpr double kOpenGlobusHorizonTangent = 0.81;
 constexpr int kAlwaysSubdivideUntilZoom = 2;
 constexpr size_t kMaxRenderedNodes = 1000;
 constexpr double kOpenGlobusMaxHorizonDistanceSquared = 106876472875.63281;
@@ -110,6 +111,10 @@ void accumulateNodeStats(const TileNode* node, TilePlan& plan) {
     if (node->cameraInside()) {
         ++plan.cameraInsideNodeCount;
     }
+    if (node->inFrustumMask() != 0) {
+        ++plan.inFrustumNodeCount;
+    }
+    plan.fadingNodeCount += node->fadingNodeCount();
     for (const auto& child : node->children()) {
         accumulateNodeStats(child.get(), plan);
     }
@@ -164,56 +169,6 @@ bool shouldApplyEqualZoom(const Camera& camera, double cameraHeightMeters) {
            cameraHeightMeters > kOpenGlobusMinEqualZoomAltitudeMeters;
 }
 
-void addDescendantsAtZoom(const TileScheme& scheme,
-                          const TileKey& key,
-                          int targetZoom,
-                          size_t maxRenderedTiles,
-                          std::vector<TileKey>& out) {
-    if (out.size() >= maxRenderedTiles) return;
-    if (key.z >= targetZoom) {
-        out.push_back(key);
-        return;
-    }
-
-    const int childZ = key.z + 1;
-    const int childX = key.x * 2;
-    const int childY = key.y * 2;
-    const TileKey children[] = {
-        TileKey{key.schemeId, childZ, childX, childY},
-        TileKey{key.schemeId, childZ, childX + 1, childY},
-        TileKey{key.schemeId, childZ, childX, childY + 1},
-        TileKey{key.schemeId, childZ, childX + 1, childY + 1}
-    };
-
-    for (const TileKey& child : children) {
-        if (out.size() >= maxRenderedTiles) return;
-        if (child.x < 0 || child.y < 0) continue;
-        if (child.z > scheme.maxZoom()) continue;
-        addDescendantsAtZoom(scheme, child, targetZoom, maxRenderedTiles, out);
-    }
-}
-
-void applyEqualZoomPass(const TileScheme& scheme, TilePlan& plan) {
-    if (plan.visibleTiles.empty()) return;
-
-    int maxZoom = 0;
-    for (const TileKey& key : plan.visibleTiles) {
-        maxZoom = std::max(maxZoom, key.z);
-    }
-    if (maxZoom <= 0) return;
-
-    std::vector<TileKey> expanded;
-    expanded.reserve(plan.visibleTiles.size());
-    for (const TileKey& key : plan.visibleTiles) {
-        addDescendantsAtZoom(scheme, key, maxZoom, kMaxRenderedNodes, expanded);
-        if (expanded.size() >= kMaxRenderedNodes) break;
-    }
-    if (!expanded.empty()) {
-        plan.visibleTiles = std::move(expanded);
-        plan.equalZoomApplied = true;
-    }
-}
-
 void dedupeAndUpdateZoomStats(TilePlan& plan) {
     std::unordered_set<TileKey> seen;
     std::vector<TileKey> deduped;
@@ -241,6 +196,107 @@ void dedupeAndUpdateZoomStats(TilePlan& plan) {
     plan.zoom = plan.maxVisibleZoom;
 }
 
+bool haveCommonSide(const TileNode& a, const TileNode& b) {
+    constexpr double kEpsilon = 1e-12;
+    const Rectangle& ar = a.bounds();
+    const Rectangle& br = b.bounds();
+
+    const bool latOverlap =
+        ar.south() <= br.north() + kEpsilon &&
+        ar.north() + kEpsilon >= br.south();
+    const bool lngOverlap =
+        ar.west() <= br.east() + kEpsilon &&
+        ar.east() + kEpsilon >= br.west();
+
+    if (std::abs(ar.east() - br.west()) <= kEpsilon && latOverlap) return true;
+    if (std::abs(ar.west() - br.east()) <= kEpsilon && latOverlap) return true;
+    if (std::abs(ar.north() - br.south()) <= kEpsilon && lngOverlap) return true;
+    if (std::abs(ar.south() - br.north()) <= kEpsilon && lngOverlap) return true;
+
+    const bool antimeridianEast =
+        std::abs(ar.east() - glm::pi<double>()) <= kEpsilon &&
+        std::abs(br.west() + glm::pi<double>()) <= kEpsilon;
+    const bool antimeridianWest =
+        std::abs(ar.west() + glm::pi<double>()) <= kEpsilon &&
+        std::abs(br.east() - glm::pi<double>()) <= kEpsilon;
+    return (antimeridianEast || antimeridianWest) && latOverlap;
+}
+
+void accumulateNeighborStats(const std::vector<TileNode*>& renderedNodes, TilePlan& plan) {
+    int links = 0;
+    for (size_t i = 0; i < renderedNodes.size(); ++i) {
+        for (size_t j = i + 1; j < renderedNodes.size(); ++j) {
+            if (haveCommonSide(*renderedNodes[i], *renderedNodes[j])) {
+                ++links;
+            }
+        }
+    }
+    plan.neighborLinkCount = links;
+}
+
+void updateTileTransitions(const std::vector<TileNode*>& renderedNodes, TilePlan& plan) {
+    plan.tileTransitions.clear();
+    plan.tileTransitions.reserve(renderedNodes.size());
+    std::unordered_set<TileKey> seen;
+    for (const TileNode* node : renderedNodes) {
+        if (!node) continue;
+        const TileKey& key = node->key();
+        if (!seen.insert(key).second) continue;
+        plan.tileTransitions.push_back(TileTransition{
+            key,
+            static_cast<float>(std::clamp(node->transitionOpacity(), 0.0, 1.0)),
+            node->fadingNodeCount()
+        });
+    }
+}
+
+void applyOpenGlobusEqualZoomPass(const TileScheme& scheme,
+                                  const Camera& camera,
+                                  double viewportWidthPixels,
+                                  double viewportHeightPixels,
+                                  TilePlan& plan,
+                                  std::vector<TileNode*>& renderedNodes) {
+    if (renderedNodes.empty()) return;
+
+    const int maxZoom = plan.maxVisibleZoom;
+    std::vector<TileNode*> firstPassNodes = renderedNodes;
+    std::vector<TileKey> secondPassTiles;
+    std::vector<TileNode*> secondPassNodes;
+    secondPassTiles.reserve(plan.visibleTiles.size());
+    secondPassNodes.reserve(renderedNodes.size());
+
+    for (TileNode* node : firstPassNodes) {
+        if (!node) continue;
+        const bool preserveHorizonTangent =
+            node->key().z != maxZoom && node->isHorizonTangent(camera);
+        if (node->key().z == maxZoom || preserveHorizonTangent) {
+            secondPassTiles.push_back(node->key());
+            secondPassNodes.push_back(node);
+            if (preserveHorizonTangent) {
+                ++plan.horizonTangentPreservedCount;
+            }
+            continue;
+        }
+
+        node->renderToZoom(scheme,
+                           camera,
+                           viewportWidthPixels,
+                           viewportHeightPixels,
+                           maxZoom,
+                           true,
+                           kMaxRenderedNodes,
+                           secondPassTiles,
+                           secondPassNodes);
+        ++plan.equalZoomSecondPassNodeCount;
+    }
+
+    if (!secondPassTiles.empty()) {
+        plan.visibleTiles = std::move(secondPassTiles);
+        renderedNodes = std::move(secondPassNodes);
+        plan.equalZoomApplied = true;
+    }
+}
+
 } // namespace
 
 TileNode::TileNode(TileKey key, Rectangle bounds, TileNode* parent)
@@ -252,8 +308,11 @@ TileNode::TileNode(TileKey key, Rectangle bounds, TileNode* parent)
 }
 
 void TileNode::resetFrameState() {
+    previousState_ = state_;
     state_ = TileNodeState::NotRendering;
     cameraInside_ = false;
+    inFrustumMask_ = 0;
+    fadingNodeCount_ = 0;
     for (auto& child : children_) {
         if (child) child->resetFrameState();
     }
@@ -316,6 +375,10 @@ bool TileNode::isAltitudeVisible(const Camera& camera) const {
     return false;
 }
 
+bool TileNode::isHorizonTangent(const Camera& camera) const {
+    return boundingCenter_.normalized().dot(-camera.direction()) < kOpenGlobusHorizonTangent;
+}
+
 bool TileNode::shouldSubdivide(const Camera& camera,
                                double viewportWidthPixels,
                                double viewportHeightPixels) const {
@@ -332,6 +395,41 @@ bool TileNode::shouldSubdivide(const Camera& camera,
     return projectedPixels > refineThreshold;
 }
 
+bool TileNode::childrenPreviousStateEquals(TileNodeState state) const {
+    return children_[0] &&
+           children_[1] &&
+           children_[2] &&
+           children_[3] &&
+           children_[0]->previousState_ == state &&
+           children_[1]->previousState_ == state &&
+           children_[2]->previousState_ == state &&
+           children_[3]->previousState_ == state;
+}
+
+void TileNode::markRenderingTransition() {
+    if (key_.z < 3) {
+        transitionOpacity_ = 1.0;
+        fadingNodeCount_ = 0;
+        return;
+    }
+
+    if (previousState_ == TileNodeState::Rendering) {
+        transitionOpacity_ = 1.0;
+        fadingNodeCount_ = 0;
+        return;
+    }
+
+    transitionOpacity_ = 0.0;
+    fadingNodeCount_ = 0;
+    if (parent_ && parent_->previousState_ == TileNodeState::Rendering) {
+        fadingNodeCount_ = 1;
+        return;
+    }
+    if (childrenPreviousStateEquals(TileNodeState::Rendering)) {
+        fadingNodeCount_ = 4;
+    }
+}
+
 void TileNode::traverse(const TileScheme& scheme,
                         const Camera& camera,
                         double viewportWidthPixels,
@@ -340,7 +438,8 @@ void TileNode::traverse(const TileScheme& scheme,
                         double cameraLatitudeRad,
                         bool parentCameraInside,
                         size_t maxRenderedTiles,
-                        std::vector<TileKey>& out) {
+                        std::vector<TileKey>& out,
+                        std::vector<TileNode*>& renderedNodes) {
     if (out.size() >= maxRenderedTiles) {
         return;
     }
@@ -348,9 +447,10 @@ void TileNode::traverse(const TileScheme& scheme,
     const Frustum frustum = camera.frustum(viewportWidthPixels, viewportHeightPixels);
     cameraInside_ = parentCameraInside &&
                     containsCartographic(cameraLongitudeRad, cameraLatitudeRad);
-    const bool visible = frustum.intersectsSphere(boundingCenter_, boundingRadiusMeters_) ||
-                         cameraInside_ ||
-                         key_.z < 3;
+    if (frustum.intersectsSphere(boundingCenter_, boundingRadiusMeters_)) {
+        inFrustumMask_ = 1;
+    }
+    const bool visible = inFrustumMask_ || cameraInside_ || key_.z < 3;
     const bool altVisible = isAltitudeVisible(camera);
     if (!visible) {
         state_ = TileNodeState::NotRendering;
@@ -368,7 +468,9 @@ void TileNode::traverse(const TileScheme& scheme,
 
     if (!refine || !canSubdivide) {
         state_ = TileNodeState::Rendering;
+        markRenderingTransition();
         out.push_back(key_);
+        renderedNodes.push_back(this);
         return;
     }
 
@@ -383,7 +485,48 @@ void TileNode::traverse(const TileScheme& scheme,
                         cameraLatitudeRad,
                         cameraInside_,
                         maxRenderedTiles,
-                        out);
+                        out,
+                        renderedNodes);
+    }
+}
+
+void TileNode::renderToZoom(const TileScheme& scheme,
+                            const Camera& camera,
+                            double viewportWidthPixels,
+                            double viewportHeightPixels,
+                            int targetZoom,
+                            bool stopAtHorizon,
+                            size_t maxRenderedTiles,
+                            std::vector<TileKey>& out,
+                            std::vector<TileNode*>& renderedNodes) {
+    if (out.size() >= maxRenderedTiles) return;
+    if (stopAtHorizon && !isAltitudeVisible(camera) && !cameraInside_) {
+        state_ = TileNodeState::NotRendering;
+        return;
+    }
+
+    const Frustum frustum = camera.frustum(viewportWidthPixels, viewportHeightPixels);
+    inFrustumMask_ = frustum.intersectsSphere(boundingCenter_, boundingRadiusMeters_) ? 1 : 0;
+    if (key_.z >= targetZoom || key_.z >= scheme.maxZoom()) {
+        state_ = TileNodeState::Rendering;
+        markRenderingTransition();
+        out.push_back(key_);
+        renderedNodes.push_back(this);
+        return;
+    }
+
+    state_ = TileNodeState::Walkthrough;
+    ensureChildren(scheme);
+    for (auto& child : children_) {
+        child->renderToZoom(scheme,
+                            camera,
+                            viewportWidthPixels,
+                            viewportHeightPixels,
+                            targetZoom,
+                            stopAtHorizon,
+                            maxRenderedTiles,
+                            out,
+                            renderedNodes);
     }
 }
 
@@ -411,6 +554,7 @@ TilePlan TileQuadTree::compute(const Camera& camera,
     TilePlan plan;
     ensureRoot(scheme);
     root_->resetFrameState();
+    std::vector<TileNode*> renderedNodes;
 
     Vec3 camPos = camera.position();
     double cameraHeight = camPos.length() - kEarthRadius;
@@ -427,7 +571,8 @@ TilePlan TileQuadTree::compute(const Camera& camera,
                     subCamera.latitude(),
                     true,
                     kMaxRenderedNodes,
-                    plan.visibleTiles);
+                    plan.visibleTiles,
+                    renderedNodes);
 
     plan.lodSizePixels = std::clamp(
         openglobusLodSizePixels(camera),
@@ -438,18 +583,25 @@ TilePlan TileQuadTree::compute(const Camera& camera,
 
     dedupeAndUpdateZoomStats(plan);
     if (shouldApplyEqualZoom(camera, cameraHeight)) {
-        const int beforeZoom = plan.zoom;
-        applyEqualZoomPass(scheme, plan);
+        plan.equalZoomApplied = true;
+        applyOpenGlobusEqualZoomPass(scheme,
+                                      camera,
+                                      viewportWidthPixels,
+                                      viewportHeightPixels,
+                                      plan,
+                                      renderedNodes);
         dedupeAndUpdateZoomStats(plan);
-        if (previousZoom >= 0 && previousZoom < beforeZoom) {
+        if (previousZoom >= 0 && previousZoom < plan.maxVisibleZoom) {
             plan.equalZoomApplied = true;
         }
     }
     accumulateNodeStats(root_.get(), plan);
     accumulateTileGroupStats(plan);
+    accumulateNeighborStats(renderedNodes, plan);
+    updateTileTransitions(renderedNodes, plan);
 
     createdNodeCount_ = root_ ? root_->subtreeNodeCount() : 0;
-    lastVisitedNodeCount_ = static_cast<int>(plan.visibleTiles.size());
+    lastVisitedNodeCount_ = static_cast<int>(renderedNodes.size());
     return plan;
 }
 

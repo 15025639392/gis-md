@@ -129,7 +129,8 @@ enum class DebugTileState {
     Desired,
     Requested,
     Exact,
-    ParentFallback
+    ParentFallback,
+    LodTransition
 };
 
 std::array<float, 4> colorForState(DebugTileState state) {
@@ -138,6 +139,8 @@ std::array<float, 4> colorForState(DebugTileState state) {
             return {0.15f, 0.95f, 0.35f, 0.82f};
         case DebugTileState::ParentFallback:
             return {1.0f, 0.68f, 0.12f, 0.82f};
+        case DebugTileState::LodTransition:
+            return {0.82f, 0.32f, 1.0f, 0.9f};
         case DebugTileState::Requested:
             return {0.15f, 0.7f, 1.0f, 0.78f};
         case DebugTileState::Desired:
@@ -248,6 +251,11 @@ void DebugOverlay::buildCommands(const LayerTilePlan& layerPlan,
             renderTile.source == TileRenderSource::Exact
                 ? DebugTileState::Exact
                 : DebugTileState::ParentFallback;
+    }
+    for (const auto& transition : layerPlan.tileTransitions) {
+        if (transition.opacity < 0.999f || transition.fadingNodeCount > 0) {
+            states[keyString(transition.key)] = DebugTileState::LodTransition;
+        }
     }
 
     for (const auto& key : layerPlan.visibleTiles) {

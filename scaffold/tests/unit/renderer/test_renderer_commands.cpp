@@ -21,10 +21,46 @@ TEST(RendererCommandTest, SurfaceTilesAreAuthoritativeDepthSurface) {
     EXPECT_EQ(0u, cmd.frameId);
     EXPECT_EQ(0u, cmd.generation);
     EXPECT_EQ(0.0f, cmd.uniforms["u_useNormalMap"][0]);
+    EXPECT_EQ(1.0f, cmd.uniforms["u_tileOpacity"][0]);
+    EXPECT_EQ(1.0f, cmd.uniforms["u_transitionOpacity"][0]);
     EXPECT_TRUE(cmd.depthTest);
     EXPECT_TRUE(cmd.depthWrite);
     EXPECT_TRUE(cmd.cullFace);
     EXPECT_FALSE(cmd.blend);
+}
+
+TEST(RendererCommandTest, SurfaceTileBlendAllowedForLodTransitionOpacity) {
+    RenderCommand tile;
+    tile.kind = RenderCommandKind::SurfaceTile;
+    tile.owner = "surface_tile";
+    tile.pass = "color";
+    tile.depthTest = true;
+    tile.depthWrite = true;
+    tile.cullFace = true;
+    tile.blend = true;
+    tile.generation = 1;
+    tile.uniforms["u_transitionOpacity"] = {0.5f};
+
+    RenderCommandList commands{tile};
+    auto error = validateMvpRenderCommands(commands);
+    EXPECT_FALSE(error.has_value());
+}
+
+TEST(RendererCommandTest, SurfaceTileBlendRejectedWithoutOpacityReason) {
+    RenderCommand tile;
+    tile.kind = RenderCommandKind::SurfaceTile;
+    tile.owner = "surface_tile";
+    tile.pass = "color";
+    tile.depthTest = true;
+    tile.depthWrite = true;
+    tile.cullFace = true;
+    tile.blend = true;
+    tile.generation = 1;
+
+    RenderCommandList commands{tile};
+    auto error = validateMvpRenderCommands(commands);
+    ASSERT_TRUE(error.has_value());
+    EXPECT_EQ("surface_tile", error->owner);
 }
 
 TEST(RendererCommandTest, MvpValidatorAcceptsSurfaceTileAsSurface) {

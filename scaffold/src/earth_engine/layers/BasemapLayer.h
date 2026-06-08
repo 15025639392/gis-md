@@ -91,6 +91,14 @@ public:
     int parentFallbackAttachmentCount() const;
     int missingImageryTileCount() const { return layerPlan_.missingTileCount; }
     int transitionTileCount() const { return layerPlan_.transitionTileCount; }
+    int quadtreeFadingNodeCount() const { return layerPlan_.quadtreeFadingNodeCount; }
+    int quadtreeNeighborLinkCount() const { return layerPlan_.quadtreeNeighborLinkCount; }
+    int quadtreeRenderingNodeCount() const { return layerPlan_.quadtreeRenderingNodeCount; }
+    int quadtreeWalkthroughNodeCount() const { return layerPlan_.quadtreeWalkthroughNodeCount; }
+    int quadtreeNotRenderingNodeCount() const { return layerPlan_.quadtreeNotRenderingNodeCount; }
+    int quadtreeCameraInsideNodeCount() const { return layerPlan_.quadtreeCameraInsideNodeCount; }
+    int quadtreeInFrustumNodeCount() const { return layerPlan_.quadtreeInFrustumNodeCount; }
+    int quadtreeEqualZoomApplied() const { return layerPlan_.equalZoomApplied ? 1 : 0; }
     int terrainReadySurfaceMeshCount() const;
     int terrainTransitionSurfaceMeshCount() const;
     int normalMapTextureCount() const;

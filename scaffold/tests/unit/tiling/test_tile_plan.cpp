@@ -155,7 +155,7 @@ TEST_F(TilePlanTest, AntimeridianViewWrapsWithoutDuplicatingTiles) {
 
 TEST_F(TilePlanTest, IncludesSubCameraTileForObliqueEarthView) {
     camera_->setPerspective(glm::radians(60.0), 10000.0, 50000000.0);
-    camera_->lookAt(Vec3(-9465697.8, 35326465.0, 25608443.6),
+    camera_->lookAt(Vec3(7000000, 0, 7000000),
                     Vec3::zero(),
                     Vec3::unitY());
 
@@ -242,9 +242,24 @@ TEST_F(TilePlanTest, OpenGlobusEqualZoomPassUsesMaxVisibleZoomForNadirView) {
     EXPECT_TRUE(plan.equalZoomApplied);
     EXPECT_EQ(plan.maxVisibleZoom, plan.minVisibleZoom);
     EXPECT_EQ(plan.zoom, plan.maxVisibleZoom);
+    EXPECT_GT(plan.neighborLinkCount, 0);
     for (const TileKey& key : plan.visibleTiles) {
         EXPECT_EQ(plan.zoom, key.z);
     }
+}
+
+TEST_F(TilePlanTest, PersistentTreeReportsOpenGlobusTransitionDiagnostics) {
+    TileQuadTree tree;
+    camera_->lookAt(Vec3(0, 0, 50000000), Vec3::zero(), Vec3::unitY());
+    TilePlan farPlan = tree.compute(*camera_, *scheme_, 800, 600);
+    ASSERT_GT(farPlan.visibleTiles.size(), 0u);
+
+    camera_->lookAt(Vec3(0, 0, 6778137), Vec3::zero(), Vec3::unitY());
+    TilePlan nearPlan = tree.compute(*camera_, *scheme_, 800, 600);
+
+    EXPECT_GT(nearPlan.visibleTiles.size(), 0u);
+    EXPECT_GT(nearPlan.fadingNodeCount, 0);
+    EXPECT_GT(nearPlan.neighborLinkCount, 0);
 }
 
 TEST_F(TilePlanTest, OpenGlobusEqualZoomPassSkippedOutsideAltitudeBand) {

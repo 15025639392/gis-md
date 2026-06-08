@@ -71,6 +71,15 @@ int surfaceGridSizeForZoom(int zoom) {
     return kGridSizeByZoom[index];
 }
 
+float transitionOpacityForTile(const TilePlan& plan, const TileKey& key) {
+    for (const TileTransition& transition : plan.tileTransitions) {
+        if (transition.key == key) {
+            return std::clamp(transition.opacity, 0.0f, 1.0f);
+        }
+    }
+    return 1.0f;
+}
+
 } // namespace
 
 BasemapLayer::BasemapLayer(std::unique_ptr<ImageryProvider> provider,
@@ -225,10 +234,28 @@ void BasemapLayer::rebuildLayerPlan() {
     layerPlan_.providerId = provider_ ? provider_->id() : "";
     layerPlan_.frameId = tilePlan_.frameId;
     layerPlan_.zoom = tilePlan_.zoom;
+    layerPlan_.minVisibleZoom = tilePlan_.minVisibleZoom;
+    layerPlan_.maxVisibleZoom = tilePlan_.maxVisibleZoom;
+    layerPlan_.equalZoomApplied = tilePlan_.equalZoomApplied;
+    layerPlan_.lodSizePixels = tilePlan_.lodSizePixels;
+    layerPlan_.quadtreeFadingNodeCount = tilePlan_.fadingNodeCount;
+    layerPlan_.quadtreeNeighborLinkCount = tilePlan_.neighborLinkCount;
+    layerPlan_.quadtreeRenderingNodeCount = tilePlan_.renderingNodeCount;
+    layerPlan_.quadtreeWalkthroughNodeCount = tilePlan_.walkthroughNodeCount;
+    layerPlan_.quadtreeNotRenderingNodeCount = tilePlan_.notRenderingNodeCount;
+    layerPlan_.quadtreeCameraInsideNodeCount = tilePlan_.cameraInsideNodeCount;
+    layerPlan_.quadtreeInFrustumNodeCount = tilePlan_.inFrustumNodeCount;
+    layerPlan_.quadtreeHorizonTangentPreservedCount =
+        tilePlan_.horizonTangentPreservedCount;
+    layerPlan_.quadtreeEqualZoomSecondPassNodeCount =
+        tilePlan_.equalZoomSecondPassNodeCount;
     layerPlan_.visibleTiles = tilePlan_.visibleTiles;
+    layerPlan_.tileTransitions = tilePlan_.tileTransitions;
     layerPlan_.desiredTiles = tilePlan_.visibleTiles;
+    layerPlan_.transitionTileCount += tilePlan_.fadingNodeCount;
 
     for (const auto& key : layerPlan_.desiredTiles) {
+        const float lodTransitionOpacity = transitionOpacityForTile(tilePlan_, key);
         if (provider_ && !provider_->supportsTile(key)) {
             ++layerPlan_.missingTileCount;
             continue;
@@ -236,7 +263,11 @@ void BasemapLayer::rebuildLayerPlan() {
 
         if (textureCache_.contains(key)) {
             layerPlan_.renderTiles.push_back(RenderTileRef{
-                key, key, TileRenderSource::Exact, TileReadinessState::Ready, 1.0f});
+                key,
+                key,
+                TileRenderSource::Exact,
+                TileReadinessState::Ready,
+                lodTransitionOpacity});
             ++layerPlan_.readyTileCount;
             continue;
         }
@@ -249,7 +280,7 @@ void BasemapLayer::rebuildLayerPlan() {
                 fallbackKey,
                 TileRenderSource::ParentFallback,
                 TileReadinessState::ParentFallback,
-                0.65f});
+                std::min(0.65f, lodTransitionOpacity)});
             ++layerPlan_.parentFallbackReadyTileCount;
             ++layerPlan_.transitionTileCount;
         }
@@ -541,6 +572,9 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
             attachment.uvScaleV);
         cmd.uniforms["u_tileOpacity"] = {attachment.opacity};
         cmd.uniforms["u_transitionOpacity"] = {renderTile.transitionOpacity};
+        const float effectiveOpacity =
+            attachment.opacity * std::clamp(renderTile.transitionOpacity, 0.0f, 1.0f);
+        cmd.blend = effectiveOpacity < 0.999f;
         cmd.uniforms["u_debugNormalMap"] = {normalMapDebugEnabled_ ? 1.0f : 0.0f};
         cmd.uniforms["u_surfaceGeneration"] = {
             static_cast<float>(generation_)

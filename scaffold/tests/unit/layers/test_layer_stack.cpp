@@ -269,6 +269,45 @@ TEST_F(BasemapLayerStackTest, BasemapLayerTrustsTilePlanVisibilityWithoutSecondC
     EXPECT_TRUE(layerPlan.renderTiles.empty());
 }
 
+TEST_F(BasemapLayerStackTest, LayerPlanCarriesOpenGlobusQuadTreeDiagnostics) {
+    auto layer = makeXYZLayer("a");
+
+    TilePlan plan;
+    plan.frameId = 9;
+    plan.zoom = 4;
+    plan.minVisibleZoom = 4;
+    plan.maxVisibleZoom = 4;
+    plan.equalZoomApplied = true;
+    plan.lodSizePixels = 512.0;
+    plan.fadingNodeCount = 3;
+    plan.neighborLinkCount = 7;
+    plan.renderingNodeCount = 11;
+    plan.walkthroughNodeCount = 5;
+    plan.notRenderingNodeCount = 2;
+    plan.cameraInsideNodeCount = 1;
+    plan.inFrustumNodeCount = 8;
+    plan.visibleTiles = {
+        TileKey{"XYZ-WebMercator", 4, 8, 7}
+    };
+
+    constexpr double radius = 6378137.0;
+    layer->applyPlan(plan, Vec3(radius * 3.0, 0.0, 0.0));
+
+    const LayerTilePlan& layerPlan = layer->layerPlan();
+    EXPECT_EQ(4, layerPlan.minVisibleZoom);
+    EXPECT_EQ(4, layerPlan.maxVisibleZoom);
+    EXPECT_TRUE(layerPlan.equalZoomApplied);
+    EXPECT_DOUBLE_EQ(512.0, layerPlan.lodSizePixels);
+    EXPECT_EQ(3, layerPlan.quadtreeFadingNodeCount);
+    EXPECT_EQ(7, layerPlan.quadtreeNeighborLinkCount);
+    EXPECT_EQ(11, layerPlan.quadtreeRenderingNodeCount);
+    EXPECT_EQ(5, layerPlan.quadtreeWalkthroughNodeCount);
+    EXPECT_EQ(2, layerPlan.quadtreeNotRenderingNodeCount);
+    EXPECT_EQ(1, layerPlan.quadtreeCameraInsideNodeCount);
+    EXPECT_EQ(8, layerPlan.quadtreeInFrustumNodeCount);
+    EXPECT_EQ(3, layerPlan.transitionTileCount);
+}
+
 TEST_F(BasemapLayerStackTest, ProviderAvailabilityBlocksUnsupportedRequests) {
     auto layer = std::make_unique<BasemapLayer>(
         std::make_unique<UnsupportedOpenGlobusProvider>(),
@@ -306,6 +345,10 @@ TEST_F(BasemapLayerStackTest, BasemapLayerKeepsTileGenerationAcrossFrameIds) {
         TileKey{"XYZ-WebMercator", 3, 4, 3},
         TileKey{"XYZ-WebMercator", 3, 5, 3},
     };
+    plan.tileTransitions = {
+        TileTransition{TileKey{"XYZ-WebMercator", 3, 4, 3}, 0.4f, 1},
+        TileTransition{TileKey{"XYZ-WebMercator", 3, 5, 3}, 1.0f, 0},
+    };
 
     constexpr double radius = 6378137.0;
     const Vec3 cameraPosition(radius * 7.0, 0.0, 0.0);
@@ -320,6 +363,9 @@ TEST_F(BasemapLayerStackTest, BasemapLayerKeepsTileGenerationAcrossFrameIds) {
     EXPECT_EQ(2, layer->cachedTileCount());
     EXPECT_EQ(2, layer->renderTileCount());
     EXPECT_EQ(2, layer->exactAttachmentCount());
+    ASSERT_EQ(2u, layer->layerPlan().renderTiles.size());
+    EXPECT_FLOAT_EQ(0.4f, layer->layerPlan().renderTiles[0].transitionOpacity);
+    EXPECT_FLOAT_EQ(1.0f, layer->layerPlan().renderTiles[1].transitionOpacity);
 }
 
 TEST_F(BasemapLayerStackTest, DifferentSchemeIndependentTilePlan) {

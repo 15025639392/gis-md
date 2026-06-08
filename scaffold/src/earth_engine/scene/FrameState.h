@@ -24,6 +24,14 @@ struct Diagnostics {
     int imageryParentFallbackAttachments = 0;
     int imageryMissingTiles = 0;
     int imageryTransitionTiles = 0;
+    int quadtreeEqualZoomLayers = 0;
+    int quadtreeFadingNodes = 0;
+    int quadtreeNeighborLinks = 0;
+    int quadtreeRenderingNodes = 0;
+    int quadtreeWalkthroughNodes = 0;
+    int quadtreeNotRenderingNodes = 0;
+    int quadtreeCameraInsideNodes = 0;
+    int quadtreeInFrustumNodes = 0;
     int surfaceMeshBytes = 0;
     int terrainCachedTiles = 0;
     uint64_t terrainGeneration = 0;

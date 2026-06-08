@@ -12,6 +12,12 @@ class Camera;
 
 /// TilePlan is the shared, frame-derived candidate set for one tile scheme.
 /// It does not decide provider requests or final rendering for a layer.
+struct TileTransition {
+    TileKey key;
+    float opacity = 1.0f;
+    int fadingNodeCount = 0;
+};
+
 struct TilePlan {
     uint64_t frameId = 0;
     int zoom = 0;
@@ -22,10 +28,16 @@ struct TilePlan {
     double minLodSizePixels = 0.0;
     double maxLodSizePixels = 0.0;
     std::vector<TileKey> visibleTiles;
+    std::vector<TileTransition> tileTransitions;
     int renderingNodeCount = 0;
     int walkthroughNodeCount = 0;
     int notRenderingNodeCount = 0;
     int cameraInsideNodeCount = 0;
+    int inFrustumNodeCount = 0;
+    int horizonTangentPreservedCount = 0;
+    int equalZoomSecondPassNodeCount = 0;
+    int fadingNodeCount = 0;
+    int neighborLinkCount = 0;
     int mercatorTileCount = 0;
     int northPolarTileCount = 0;
     int southPolarTileCount = 0;
@@ -61,7 +73,12 @@ struct LayerTilePlan {
     std::string providerId;
     uint64_t frameId = 0;
     int zoom = 0;
+    int minVisibleZoom = 0;
+    int maxVisibleZoom = 0;
+    bool equalZoomApplied = false;
+    double lodSizePixels = 0.0;
     std::vector<TileKey> visibleTiles;
+    std::vector<TileTransition> tileTransitions;
     std::vector<TileKey> desiredTiles;
     std::vector<TileKey> requestTiles;
     std::vector<RenderTileRef> renderTiles;
@@ -70,6 +87,15 @@ struct LayerTilePlan {
     int parentFallbackReadyTileCount = 0;
     int missingTileCount = 0;
     int transitionTileCount = 0;
+    int quadtreeFadingNodeCount = 0;
+    int quadtreeNeighborLinkCount = 0;
+    int quadtreeRenderingNodeCount = 0;
+    int quadtreeWalkthroughNodeCount = 0;
+    int quadtreeNotRenderingNodeCount = 0;
+    int quadtreeCameraInsideNodeCount = 0;
+    int quadtreeInFrustumNodeCount = 0;
+    int quadtreeHorizonTangentPreservedCount = 0;
+    int quadtreeEqualZoomSecondPassNodeCount = 0;
 };
 
 /// 瓦片计划计算器。

@@ -336,6 +336,18 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
                                              length:debugNormalIt->second.size() * sizeof(float)
                                             atIndex:2];
         }
+        auto tileOpacityIt = cmd.uniforms.find("u_tileOpacity");
+        if (tileOpacityIt != cmd.uniforms.end()) {
+            [impl_->currentEncoder setFragmentBytes:tileOpacityIt->second.data()
+                                             length:tileOpacityIt->second.size() * sizeof(float)
+                                            atIndex:3];
+        }
+        auto transitionOpacityIt = cmd.uniforms.find("u_transitionOpacity");
+        if (transitionOpacityIt != cmd.uniforms.end()) {
+            [impl_->currentEncoder setFragmentBytes:transitionOpacityIt->second.data()
+                                             length:transitionOpacityIt->second.size() * sizeof(float)
+                                            atIndex:4];
+        }
 
         // 纹理绑定
         if (!cmd.textures.empty() && cmd.textures[0]) {

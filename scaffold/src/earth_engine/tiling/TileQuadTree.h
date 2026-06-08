@@ -30,6 +30,11 @@ public:
     const TileNode* parent() const { return parent_; }
     TileNodeState state() const { return state_; }
     bool cameraInside() const { return cameraInside_; }
+    int inFrustumMask() const { return inFrustumMask_; }
+    TileNodeState previousState() const { return previousState_; }
+    double transitionOpacity() const { return transitionOpacity_; }
+    int fadingNodeCount() const { return fadingNodeCount_; }
+    bool isHorizonTangent(const Camera& camera) const;
     const Vec3& boundingCenter() const { return boundingCenter_; }
     double boundingRadiusMeters() const { return boundingRadiusMeters_; }
     const std::array<Vec3, 4>& cornerPoints() const { return cornerPoints_; }
@@ -47,7 +52,18 @@ public:
                   double cameraLatitudeRad,
                   bool parentCameraInside,
                   size_t maxRenderedTiles,
-                  std::vector<TileKey>& out);
+                  std::vector<TileKey>& out,
+                  std::vector<TileNode*>& renderedNodes);
+
+    void renderToZoom(const TileScheme& scheme,
+                      const Camera& camera,
+                      double viewportWidthPixels,
+                      double viewportHeightPixels,
+                      int targetZoom,
+                      bool stopAtHorizon,
+                      size_t maxRenderedTiles,
+                      std::vector<TileKey>& out,
+                      std::vector<TileNode*>& renderedNodes);
 
     const std::array<std::unique_ptr<TileNode>, 4>& children() const {
         return children_;
@@ -60,6 +76,8 @@ private:
     bool shouldSubdivide(const Camera& camera,
                          double viewportWidthPixels,
                          double viewportHeightPixels) const;
+    bool childrenPreviousStateEquals(TileNodeState state) const;
+    void markRenderingTransition();
     void traverse(const TileScheme& scheme,
                   const std::vector<Rectangle>& visibleFootprint,
                   const std::unordered_set<TileKey>& forcedTiles,
@@ -70,7 +88,11 @@ private:
     Rectangle bounds_;
     TileNode* parent_ = nullptr;
     TileNodeState state_ = TileNodeState::NotRendering;
+    TileNodeState previousState_ = TileNodeState::NotRendering;
     bool cameraInside_ = false;
+    int inFrustumMask_ = 0;
+    double transitionOpacity_ = 1.0;
+    int fadingNodeCount_ = 0;
     Vec3 boundingCenter_ = Vec3::zero();
     double boundingRadiusMeters_ = 0.0;
     std::array<Vec3, 4> cornerPoints_{};

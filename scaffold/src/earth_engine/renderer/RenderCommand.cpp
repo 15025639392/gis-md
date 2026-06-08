@@ -43,6 +43,20 @@ bool requireState(size_t index,
     return true;
 }
 
+float uniformScalar(const RenderCommand& cmd, const std::string& name, float fallback) {
+    auto it = cmd.uniforms.find(name);
+    if (it == cmd.uniforms.end() || it->second.empty()) {
+        return fallback;
+    }
+    return it->second.front();
+}
+
+bool surfaceTileBlendAllowed(const RenderCommand& cmd) {
+    const float tileOpacity = uniformScalar(cmd, "u_tileOpacity", 1.0f);
+    const float transitionOpacity = uniformScalar(cmd, "u_transitionOpacity", 1.0f);
+    return tileOpacity < 0.999f || transitionOpacity < 0.999f;
+}
+
 } // namespace
 
 int mvpRenderOrder(RenderCommandKind kind) {
@@ -84,7 +98,14 @@ validateMvpRenderCommands(const RenderCommandList& commands,
 
             case RenderCommandKind::SurfaceTile:
                 if (!requireColorPass(i, cmd, error)) return error;
-                if (!requireState(i, cmd, true, true, true, false, "SurfaceTile", error)) return error;
+                if (!requireState(i,
+                                  cmd,
+                                  true,
+                                  true,
+                                  true,
+                                  cmd.blend && surfaceTileBlendAllowed(cmd),
+                                  "SurfaceTile",
+                                  error)) return error;
                 if (expectedFrameId != 0 && cmd.frameId != expectedFrameId) {
                     fail(i, cmd, "SurfaceTile frameId is stale for current FrameState", error);
                     return error;

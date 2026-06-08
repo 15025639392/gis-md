@@ -97,6 +97,8 @@ uniform sampler2D u_normalMap;
 uniform vec3 u_lightDir;
 uniform float u_useNormalMap;
 uniform float u_debugNormalMap;
+uniform float u_tileOpacity;
+uniform float u_transitionOpacity;
 out vec4 fragColor;
 
 void main() {
@@ -110,6 +112,7 @@ void main() {
     vec3 normal = normalize(mix(normalize(v_normal), mapNormal, clamp(u_useNormalMap, 0.0, 1.0)));
     float diffuse = max(dot(normal, normalize(u_lightDir)), 0.0);
     color.rgb *= 0.45 + diffuse * 0.55;
+    color.a *= clamp(u_tileOpacity, 0.0, 1.0) * clamp(u_transitionOpacity, 0.0, 1.0);
     fragColor = color;
 }
 )glsl";
@@ -265,6 +268,7 @@ using namespace metal;
 struct VertexOut {
     float4 position [[position]];
     float2 texcoord;
+    float3 normal;
 };
 
 fragment float4 tileFragment(VertexOut in [[stage_in]],
@@ -273,7 +277,9 @@ fragment float4 tileFragment(VertexOut in [[stage_in]],
                              sampler u_sampler [[sampler(0)]],
                              constant float3& u_lightDir [[buffer(0)]],
                              constant float& u_useNormalMap [[buffer(1)]],
-                             constant float& u_debugNormalMap [[buffer(2)]]) {
+                             constant float& u_debugNormalMap [[buffer(2)]],
+                             constant float& u_tileOpacity [[buffer(3)]],
+                             constant float& u_transitionOpacity [[buffer(4)]]) {
     float4 color = u_tileTexture.sample(u_sampler, in.texcoord);
     float3 normalSample = u_normalMap.sample(u_sampler, in.texcoord).rgb;
     if (u_debugNormalMap > 0.5) {
@@ -283,6 +289,7 @@ fragment float4 tileFragment(VertexOut in [[stage_in]],
     float3 normal = normalize(mix(normalize(in.normal), mapNormal, clamp(u_useNormalMap, 0.0, 1.0)));
     float diffuse = max(dot(normal, normalize(u_lightDir)), 0.0);
     color.rgb *= 0.45 + diffuse * 0.55;
+    color.a *= clamp(u_tileOpacity, 0.0, 1.0) * clamp(u_transitionOpacity, 0.0, 1.0);
     return color;
 }
 )msl";
@@ -548,6 +555,8 @@ RenderCommand Renderer::makeSurfaceTileCommand(Texture* texture,
 
     cmd.uniforms["u_tileUV"] = {uvOffsetX, uvOffsetY, uvScaleX, uvScaleY};
     cmd.uniforms["u_useNormalMap"] = {normalMapTexture ? 1.0f : 0.0f};
+    cmd.uniforms["u_tileOpacity"] = {1.0f};
+    cmd.uniforms["u_transitionOpacity"] = {1.0f};
     return cmd;
 }
 
