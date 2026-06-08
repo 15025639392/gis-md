@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <cmath>
 #include "earth_engine/scene/Camera.h"
+#include "earth_engine/scene/Scene.h"
 
 using namespace earth_engine;
 
@@ -70,4 +71,10 @@ TEST(CameraTest, BuildsFrustumFromCurrentViewProjection) {
 
     EXPECT_TRUE(frustum.containsPoint(Vec3::zero()));
     EXPECT_FALSE(frustum.containsPoint(Vec3(0.0, 0.0, 12.0)));
+}
+
+TEST(SceneTest, DefaultCameraNearPlaneAllowsNearGroundViews) {
+    Scene scene;
+
+    EXPECT_DOUBLE_EQ(1.0, scene.camera().nearPlaneMeters());
 }

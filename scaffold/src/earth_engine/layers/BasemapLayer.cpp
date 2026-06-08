@@ -203,10 +203,6 @@ void BasemapLayer::processPendingUploads() {
             clearRequestIfCurrent();
             continue;
         }
-        if (item.generation != generation_) {
-            clearRequestIfCurrent();
-            continue;
-        }
         if (!isCurrentPlanTileOrAncestor(item.key)) {
             clearRequestIfCurrent();
             continue;
@@ -268,12 +264,20 @@ void BasemapLayer::rebuildLayerPlan() {
     layerPlan_.transitionTileCount += tilePlan_.fadingNodeCount;
     std::unordered_set<TileKey> requestSet;
 
+    std::unordered_set<TileKey> desiredSet;
     for (const auto& key : tilePlan_.visibleTiles) {
-        if (provider_ && !provider_->supportsTile(key)) {
+        TileKey desiredKey = key;
+        while (provider_ && !provider_->supportsTile(desiredKey) &&
+               desiredKey.z > tileScheme_->minZoom()) {
+            desiredKey = TilePlanBuilder::parentKey(desiredKey);
+        }
+        if (provider_ && !provider_->supportsTile(desiredKey)) {
             ++layerPlan_.unsupportedTileCount;
             continue;
         }
-        layerPlan_.desiredTiles.push_back(key);
+        if (desiredSet.insert(desiredKey).second) {
+            layerPlan_.desiredTiles.push_back(desiredKey);
+        }
     }
 
     for (const auto& key : layerPlan_.desiredTiles) {
@@ -298,7 +302,7 @@ void BasemapLayer::rebuildLayerPlan() {
                 fallbackKey,
                 TileRenderSource::ParentFallback,
                 TileReadinessState::ParentFallback,
-                std::min(0.65f, lodTransitionOpacity)});
+                lodTransitionOpacity});
             ++layerPlan_.parentFallbackReadyTileCount;
             ++layerPlan_.transitionTileCount;
         }
@@ -308,7 +312,9 @@ void BasemapLayer::rebuildLayerPlan() {
             requestSet.insert(requestKey).second) {
             layerPlan_.requestTiles.push_back(requestKey);
         }
-        ++layerPlan_.missingTileCount;
+        if (!hasFallback) {
+            ++layerPlan_.missingTileCount;
+        }
     }
     evictUnusedSurfaceMeshes();
 }

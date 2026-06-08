@@ -51,6 +51,15 @@ glm::dquat defaultViewRotation() {
     return glm::angleAxis(angle, axis);
 }
 
+glm::dvec3 clampEyeToOpenGlobusMinAltitude(const glm::dvec3& eye) {
+    const double minRadius = kEarthRadiusMeters + kOpenGlobusMinAltitudeMeters;
+    const double radius = glm::length(eye);
+    if (radius >= minRadius || radius < 1e-6) {
+        return eye;
+    }
+    return glm::normalize(eye) * minRadius;
+}
+
 } // namespace
 
 CameraController::CameraController(Camera* camera)
@@ -151,21 +160,22 @@ void CameraController::onPinchGesture(float scale,
         Vec3 currentCenterPoint;
         grabbedRadiusMeters_ = kEarthRadiusMeters;
         if (!pickSurfacePoint(centerX, centerY, currentCenterPoint)) {
-            return;
+            currentCenterPoint = Vec3(pinchAnchorNormal_.raw() * grabbedRadiusMeters_);
+        } else {
+            grabbedRadiusMeters_ = currentCenterPoint.length();
+            pinchAnchorNormal_ = currentCenterPoint.normalized();
         }
-        grabbedRadiusMeters_ = currentCenterPoint.length();
-        pinchAnchorNormal_ = currentCenterPoint.normalized();
 
         const glm::dvec3 pointOnEarth = currentCenterPoint.raw();
         const double distanceToAnchor = camera_->position().distanceTo(currentCenterPoint);
         const double moveMeters = distanceToAnchor * (clampedScale - 1.0);
-        const glm::dvec3 nextEye =
+        glm::dvec3 nextEye =
             camera_->position().raw() +
             camera_->direction().raw() * moveMeters;
+        nextEye = clampEyeToOpenGlobusMinAltitude(nextEye);
         const double nextDistanceRadii =
             glm::length(nextEye) / kEarthRadiusMeters;
-        if (nextDistanceRadii >= kMinDistanceEarthRadii &&
-            nextDistanceRadii <= kMaxDistanceEarthRadii) {
+        if (nextDistanceRadii <= kMaxDistanceEarthRadii) {
             camera_->setView(Vec3(nextEye), camera_->direction(), camera_->up());
             syncDistanceFromCamera();
         }

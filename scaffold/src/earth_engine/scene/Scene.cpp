@@ -58,9 +58,10 @@ Scene::Scene()
       timeController_(std::make_unique<TimeController>()),
       skyGradient_(std::make_unique<SkyGradient>()) {
 
-    // 近平面 10000m：地球尺度渲染需要足够的深度精度
-    // 1m 近平面会将 99%+ 的深度范围浪费在前几公里
-    camera_->setPerspective(glm::radians(60.0), 10000.0, 50000000.0);
+    // OpenGlobus Camera defaults to a near plane of 1m. This renderer does not
+    // implement OpenGlobus reverse-Z yet, so a large near plane would clip the
+    // surface in near-ground views instead of improving precision safely.
+    camera_->setPerspective(glm::radians(60.0), 1.0, 50000000.0);
     globeMesh_ = Globe::createMesh(96, 48);
     configureCameraSurfacePicker();
     setupSelectionCallbacks();

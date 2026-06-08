@@ -53,6 +53,7 @@ public:
                   double cameraLongitudeRad,
                   double cameraLatitudeRad,
                   bool parentCameraInside,
+                  int cameraInsideTargetZoom,
                   size_t maxRenderedTiles,
                   std::vector<TileKey>& out,
                   std::vector<TileNode*>& renderedNodes);

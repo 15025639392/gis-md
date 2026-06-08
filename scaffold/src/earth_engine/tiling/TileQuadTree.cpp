@@ -33,6 +33,7 @@ constexpr double kOpenGlobusHorizonTangent = 0.81;
 constexpr int kAlwaysSubdivideUntilZoom = 2;
 constexpr size_t kMaxRenderedNodes = 1000;
 constexpr double kOpenGlobusMaxHorizonDistanceSquared = 106876472875.63281;
+constexpr int kTileSizePixels = 256;
 
 int openGlobusGroupBaseY(int group, int tilesAtZoom) {
     return group * tilesAtZoom;
@@ -194,6 +195,23 @@ bool shouldApplyEqualZoom(const Camera& camera, double cameraHeightMeters) {
     return cameraSlope(camera) > kOpenGlobusMinEqualZoomCameraSlope &&
            cameraHeightMeters < kOpenGlobusMaxEqualZoomAltitudeMeters &&
            cameraHeightMeters > kOpenGlobusMinEqualZoomAltitudeMeters;
+}
+
+int zoomLevelFromHeight(double cameraHeightMeters,
+                        double viewportHeightPixels,
+                        double verticalFovRadians,
+                        int minZoom,
+                        int maxZoom) {
+    if (viewportHeightPixels <= 0.0) return minZoom;
+    const double safeHeight = std::max(1.0, cameraHeightMeters);
+    const double metersPerPixel = safeHeight * 2.0 *
+                                  std::tan(verticalFovRadians * 0.5) /
+                                  viewportHeightPixels;
+    const double earthCircumference = 2.0 * glm::pi<double>() * kEarthRadius;
+    const double idealTiles =
+        earthCircumference / (static_cast<double>(kTileSizePixels) * metersPerPixel);
+    const int zoom = static_cast<int>(std::round(std::log2(idealTiles)));
+    return std::clamp(zoom, minZoom, maxZoom);
 }
 
 void dedupeAndUpdateZoomStats(TilePlan& plan) {
@@ -473,6 +491,7 @@ void TileNode::traverse(const TileScheme& scheme,
                         double cameraLongitudeRad,
                         double cameraLatitudeRad,
                         bool parentCameraInside,
+                        int cameraInsideTargetZoom,
                         size_t maxRenderedTiles,
                         std::vector<TileKey>& out,
                         std::vector<TileNode*>& renderedNodes) {
@@ -494,8 +513,11 @@ void TileNode::traverse(const TileScheme& scheme,
 
     const bool canSubdivide = key_.z < scheme.maxZoom();
     const bool mustSubdivide = key_.z < std::max(scheme.minZoom(), kAlwaysSubdivideUntilZoom);
+    const bool cameraInsideNeedsHeightZoom =
+        cameraInside_ && key_.z < cameraInsideTargetZoom;
     const bool refine = mustSubdivide || (canSubdivide && shouldSubdivide(
-        camera, viewportWidthPixels, viewportHeightPixels));
+        camera, viewportWidthPixels, viewportHeightPixels)) ||
+        (canSubdivide && cameraInsideNeedsHeightZoom);
     if (!altVisible && !cameraInside_) {
         state_ = TileNodeState::NotRendering;
         return;
@@ -520,6 +542,7 @@ void TileNode::traverse(const TileScheme& scheme,
                         cameraLongitudeRad,
                         cameraLatitudeRad,
                         cameraInside_,
+                        cameraInsideTargetZoom,
                         maxRenderedTiles,
                         out,
                         renderedNodes);
@@ -621,6 +644,12 @@ TilePlan TileQuadTree::compute(const Camera& camera,
     Vec3 camPos = camera.position();
     double cameraHeight = camPos.length() - kEarthRadius;
     if (cameraHeight < 1000.0) cameraHeight = 1000.0;
+    const int cameraInsideTargetZoom = zoomLevelFromHeight(
+        cameraHeight,
+        viewportHeightPixels,
+        camera.verticalFovRadians(),
+        scheme.minZoom(),
+        scheme.maxZoom());
 
     const Cartographic subCamera = Ellipsoid::WGS84().cartesianToCartographic(
         camera.position().normalized() * kEarthRadius);
@@ -635,6 +664,7 @@ TilePlan TileQuadTree::compute(const Camera& camera,
                        subCamera.longitude(),
                        subCamera.latitude(),
                        true,
+                       cameraInsideTargetZoom,
                        kMaxRenderedNodes,
                        plan.visibleTiles,
                        renderedNodes);

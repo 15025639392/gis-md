@@ -252,16 +252,19 @@ TEST_F(TilePlanTest, TilePlanReportsLodDiagnostics) {
 TEST_F(TilePlanTest, OpenGlobusEqualZoomPassUsesMaxVisibleZoomForNadirView) {
     camera_->lookAt(Vec3(7000000, 0, 0), Vec3::zero(), Vec3::unitZ());
 
+    TileQuadTree firstPassTree;
+    TilePlan firstPass = firstPassTree.compute(*camera_, *scheme_, 800, 600);
+    const int firstPassMaxZoom = firstPass.maxVisibleZoom;
+
     TilePlan plan = TilePlanBuilder::compute(*camera_, *scheme_, 800, 600);
 
     ASSERT_GT(plan.visibleTiles.size(), 0u);
     EXPECT_TRUE(plan.equalZoomApplied);
-    EXPECT_EQ(plan.maxVisibleZoom, plan.minVisibleZoom);
+    EXPECT_EQ(firstPassMaxZoom, plan.maxVisibleZoom);
+    EXPECT_GT(plan.horizonTangentPreservedCount, 0);
+    EXPECT_LT(plan.minVisibleZoom, plan.maxVisibleZoom);
     EXPECT_EQ(plan.zoom, plan.maxVisibleZoom);
     EXPECT_GT(plan.neighborLinkCount, 0);
-    for (const TileKey& key : plan.visibleTiles) {
-        EXPECT_EQ(plan.zoom, key.z);
-    }
 }
 
 TEST_F(TilePlanTest, PersistentTreeReportsOpenGlobusTransitionDiagnostics) {
@@ -285,6 +288,19 @@ TEST_F(TilePlanTest, OpenGlobusEqualZoomPassSkippedOutsideAltitudeBand) {
 
     EXPECT_FALSE(plan.equalZoomApplied);
     EXPECT_EQ(plan.zoom, plan.maxVisibleZoom);
+}
+
+TEST_F(TilePlanTest, NearGroundCameraInsideBranchReachesHeightZoom) {
+    constexpr double radius = 6378137.0;
+    camera_->setPerspective(glm::radians(60.0), 1.0, 50000000.0);
+    camera_->lookAt(Vec3(radius + 1000.0, 0.0, 0.0),
+                    Vec3(radius, 0.0, 0.0),
+                    Vec3::unitZ());
+
+    TileQuadTree tree;
+    TilePlan plan = tree.compute(*camera_, *scheme_, 1240, 2772);
+
+    EXPECT_GE(plan.maxVisibleZoom, 18);
 }
 
 TEST(TilePlanOpenGlobusEarthTest, ReportsPolarTileGroups) {

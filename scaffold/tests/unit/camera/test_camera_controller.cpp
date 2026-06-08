@@ -310,6 +310,47 @@ TEST_F(CameraControllerTest, PinchUsesInjectedSurfacePickerForCurrentCenter) {
     EXPECT_LT(controller_->distance(), 5.0f);
 }
 
+TEST_F(CameraControllerTest, PinchZoomContinuesWhenCurrentCenterPickMisses) {
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(5.0f);
+    controller_->update(0.0);
+
+    int pickCount = 0;
+    controller_->setSurfacePicker([&](float x, float y, Vec3& outPoint) {
+        ++pickCount;
+        if (pickCount > 2) {
+            return false;
+        }
+        Ray ray = camera_->getPickRay(x, y, 800.0, 600.0);
+        outPoint = intersectEarthSphere(ray);
+        return true;
+    });
+
+    const float before = controller_->distance();
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.2f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    controller_->update(0.0);
+
+    EXPECT_GT(pickCount, 2);
+    EXPECT_LT(controller_->distance(), before);
+}
+
+TEST_F(CameraControllerTest, PinchZoomClampsToOpenGlobusMinAltitudeInsteadOfStopping) {
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(1.00008f);
+    controller_->update(0.0);
+
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 24; ++i) {
+        controller_->onPinchGesture(1.3f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    }
+    controller_->update(0.0);
+
+    const double altitude = camera_->position().length() - kEarthRadiusMeters;
+    EXPECT_GE(altitude, 0.999);
+    EXPECT_LT(altitude, 2.0);
+}
+
 TEST_F(CameraControllerTest, PinchRotationSignMatchesOpenGlobusDeltaAngle) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
     controller_->update(0.0);

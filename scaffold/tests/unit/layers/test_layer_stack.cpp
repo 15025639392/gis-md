@@ -22,13 +22,15 @@ namespace {
 
 class StubProvider : public ImageryProvider {
 public:
-    explicit StubProvider(std::string id, std::string schemeId)
-        : id_(std::move(id)), schemeId_(std::move(schemeId)) {}
+    explicit StubProvider(std::string id, std::string schemeId, int maxZoom = 20)
+        : id_(std::move(id)),
+          schemeId_(std::move(schemeId)),
+          maxZoom_(maxZoom) {}
 
     std::string id() const override { return id_; }
     std::string schemeId() const override { return schemeId_; }
     int minZoom() const override { return 0; }
-    int maxZoom() const override { return 20; }
+    int maxZoom() const override { return maxZoom_; }
     int tileWidth() const override { return 256; }
     int tileHeight() const override { return 256; }
     std::string buildUrl(const TileKey&) const override { return ""; }
@@ -47,6 +49,7 @@ public:
 private:
     std::string id_;
     std::string schemeId_;
+    int maxZoom_ = 20;
 };
 
 class UnsupportedOpenGlobusProvider : public StubProvider {
@@ -95,6 +98,46 @@ public:
 
 private:
     bool returnsImage_ = false;
+};
+
+class DeferredProvider : public StubProvider {
+public:
+    DeferredProvider() : StubProvider("deferred", "XYZ-WebMercator") {}
+
+    void requestTile(const TileKey& key, CancellationToken,
+                     TileCallback callback) override {
+        requestedKeys.push_back(key);
+        callbacks.push_back({key, std::move(callback)});
+    }
+
+    void completeFirst() {
+        ASSERT_FALSE(callbacks.empty());
+        auto pending = std::move(callbacks.front());
+        callbacks.erase(callbacks.begin());
+        auto image = std::make_unique<DecodedImage>();
+        image->width = 1;
+        image->height = 1;
+        image->channels = 4;
+        image->pixels = {255, 255, 255, 255};
+        pending.callback(pending.key, std::move(image));
+    }
+
+    std::vector<TileKey> requestedKeys;
+
+private:
+    struct Pending {
+        TileKey key;
+        TileCallback callback;
+    };
+    std::vector<Pending> callbacks;
+};
+
+class MaxZoom18Provider : public CountingProvider {
+public:
+    explicit MaxZoom18Provider(bool returnsImage = false)
+        : CountingProvider(returnsImage) {}
+
+    int maxZoom() const override { return 18; }
 };
 
 class FakeTexture : public Texture {
@@ -539,6 +582,133 @@ TEST_F(BasemapLayerStackTest, AncestorRequestUploadIsAcceptedForHighZoomDesiredT
     EXPECT_EQ(1, device.textureCreates);
     EXPECT_EQ(1, layer->cachedTileCount());
     EXPECT_EQ(2, layer->parentFallbackAttachmentCount());
+}
+
+TEST_F(BasemapLayerStackTest, ParentFallbackIsReadyMaterialAndKeepsLodOpacity) {
+    FakeRenderDevice device;
+    auto layer = std::make_unique<BasemapLayer>(
+        std::make_unique<CountingProvider>(true),
+        TileScheme::createXYZWebMercator(),
+        &device);
+
+    TilePlan parentPlan;
+    parentPlan.frameId = 30;
+    parentPlan.zoom = 0;
+    parentPlan.visibleTiles = {
+        TileKey{"XYZ-WebMercator", 0, 0, 0}
+    };
+
+    constexpr double radius = 6378137.0;
+    const Vec3 cameraPosition(radius * 2.0, 0.0, 0.0);
+    layer->applyPlan(parentPlan, cameraPosition);
+    layer->loadMissingTiles();
+    parentPlan.frameId = 31;
+    layer->applyPlan(parentPlan, cameraPosition);
+
+    TilePlan childPlan;
+    childPlan.frameId = 32;
+    childPlan.zoom = 6;
+    childPlan.visibleTiles = {
+        TileKey{"XYZ-WebMercator", 6, 12, 30}
+    };
+    childPlan.tileTransitions = {
+        TileTransition{TileKey{"XYZ-WebMercator", 6, 12, 30}, 1.0f, 0}
+    };
+    layer->applyPlan(childPlan, cameraPosition);
+
+    ASSERT_EQ(1u, layer->layerPlan().renderTiles.size());
+    EXPECT_EQ(TileRenderSource::ParentFallback,
+              layer->layerPlan().renderTiles[0].source);
+    EXPECT_EQ(TileReadinessState::ParentFallback,
+              layer->layerPlan().renderTiles[0].readiness);
+    EXPECT_FLOAT_EQ(1.0f, layer->layerPlan().renderTiles[0].transitionOpacity);
+    EXPECT_EQ(1, layer->parentFallbackAttachmentCount());
+    EXPECT_EQ(0, layer->missingImageryTileCount());
+}
+
+TEST_F(BasemapLayerStackTest, StaleAncestorUploadAcceptedWhenStillCurrentFallback) {
+    FakeRenderDevice device;
+    auto provider = std::make_unique<DeferredProvider>();
+    auto* providerPtr = provider.get();
+    auto layer = std::make_unique<BasemapLayer>(
+        std::move(provider),
+        TileScheme::createXYZWebMercator(),
+        &device);
+
+    TilePlan firstPlan;
+    firstPlan.frameId = 40;
+    firstPlan.zoom = 6;
+    firstPlan.visibleTiles = {
+        TileKey{"XYZ-WebMercator", 6, 12, 30}
+    };
+
+    constexpr double radius = 6378137.0;
+    const Vec3 cameraPosition(radius * 2.0, 0.0, 0.0);
+    layer->applyPlan(firstPlan, cameraPosition);
+    layer->loadMissingTiles();
+    ASSERT_EQ(1u, providerPtr->requestedKeys.size());
+    EXPECT_EQ((TileKey{"XYZ-WebMercator", 0, 0, 0}),
+              providerPtr->requestedKeys.front());
+
+    TilePlan nextPlan = firstPlan;
+    nextPlan.frameId = 41;
+    nextPlan.visibleTiles = {
+        TileKey{"XYZ-WebMercator", 6, 13, 30}
+    };
+    layer->applyPlan(nextPlan, cameraPosition);
+
+    providerPtr->completeFirst();
+    layer->applyPlan(nextPlan, cameraPosition);
+
+    EXPECT_EQ(1, device.textureCreates);
+    EXPECT_EQ(1, layer->cachedTileCount());
+    EXPECT_EQ(1, layer->parentFallbackAttachmentCount());
+    EXPECT_EQ(0, layer->missingImageryTileCount());
+}
+
+TEST_F(BasemapLayerStackTest, UnsupportedHighZoomUsesSupportedAncestor) {
+    FakeRenderDevice device;
+    auto provider = std::make_unique<MaxZoom18Provider>(true);
+    auto* providerPtr = provider.get();
+    auto layer = std::make_unique<BasemapLayer>(
+        std::move(provider),
+        TileScheme::createXYZWebMercator(),
+        &device);
+
+    TilePlan plan;
+    plan.frameId = 50;
+    plan.zoom = 19;
+    plan.minVisibleZoom = 19;
+    plan.maxVisibleZoom = 19;
+    plan.visibleTiles = {
+        TileKey{"XYZ-WebMercator", 19, 415058, 207336},
+        TileKey{"XYZ-WebMercator", 19, 415059, 207336},
+        TileKey{"XYZ-WebMercator", 19, 415058, 207337},
+        TileKey{"XYZ-WebMercator", 19, 415059, 207337}
+    };
+
+    constexpr double radius = 6378137.0;
+    const Vec3 cameraPosition(radius + 1000.0, 0.0, 0.0);
+    layer->applyPlan(plan, cameraPosition);
+    layer->loadMissingTiles();
+
+    ASSERT_EQ(1u, layer->layerPlan().desiredTiles.size());
+    EXPECT_EQ((TileKey{"XYZ-WebMercator", 18, 207529, 103668}),
+              layer->layerPlan().desiredTiles.front());
+    ASSERT_EQ(1u, providerPtr->requestedKeys.size());
+    EXPECT_EQ((TileKey{"XYZ-WebMercator", 0, 0, 0}),
+              providerPtr->requestedKeys.front());
+
+    plan.frameId = 51;
+    layer->applyPlan(plan, cameraPosition);
+
+    ASSERT_EQ(1u, layer->layerPlan().renderTiles.size());
+    EXPECT_EQ((TileKey{"XYZ-WebMercator", 18, 207529, 103668}),
+              layer->layerPlan().renderTiles[0].targetKey);
+    EXPECT_EQ(TileRenderSource::ParentFallback,
+              layer->layerPlan().renderTiles[0].source);
+    EXPECT_EQ(0, layer->unsupportedImageryTileCount());
+    EXPECT_EQ(0, layer->missingImageryTileCount());
 }
 
 TEST_F(BasemapLayerStackTest, EllipsoidSurfaceTileUsesVertexNormalsByDefault) {

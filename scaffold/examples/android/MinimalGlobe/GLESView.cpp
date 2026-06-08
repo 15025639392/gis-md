@@ -59,6 +59,7 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
 static bool gTouching = false;
 static bool gDragStarted = false;
 static bool gTouchMoved = false;
+static bool gDebugPinchActive = false;
 
 static constexpr const char* kFabdemTerrainTemplate =
     "http://192.168.1.4:8090/{z}/{x}/{y}.png";
@@ -196,7 +197,10 @@ static bool createEngine() {
             auto xyz = std::make_unique<XYZImageryProvider>(
                 kGaodeSatelliteTemplate,
                 "Gaode/Amap satellite imagery");
-            xyz->setZoomRange(0, 20);
+            // Gaode satellite returns reliable native imagery through z18 in
+            // this demo region; higher z requests can produce solid placeholder
+            // tiles, so keep provider capability separate from camera LOD.
+            xyz->setZoomRange(0, 18);
             xyz->setOpenGlobusGroupedY(true);
             xyz->setOpenGlobusPolarGroupsEnabled(false);
             xyz->setPlatformBridge(gPlatformBridge.get());
@@ -366,9 +370,25 @@ static double androidUptimeSeconds() {
            static_cast<double>(ts.tv_nsec) * 1e-9;
 }
 
+static void endDebugPinchIfNeeded(float centerX, float centerY) {
+    if (!gDebugPinchActive || !gEngine) return;
+
+    InputEvent event;
+    event.type = InputEvent::Type::PinchEnd;
+    event.screenX = centerX;
+    event.screenY = centerY;
+    event.pinchScale = 1.0f;
+    event.pointerType = InputEvent::PointerType::Touch;
+    event.timestamp = androidUptimeSeconds();
+    gEngine->onInputEvent(event);
+    gDebugPinchActive = false;
+}
+
 JNIEXPORT void JNICALL
 Java_com_earthengine_minimalglobe_GLESView_nativeTouchDown(
     JNIEnv* /* env */, jobject /* this */) {
+    endDebugPinchIfNeeded(static_cast<float>(gWidth) * 0.5f,
+                          static_cast<float>(gHeight) * 0.5f);
     gTouching = true;
     gDragStarted = false;
     gTouchMoved = false;
@@ -441,6 +461,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativeTouchUp(
 JNIEXPORT void JNICALL
 Java_com_earthengine_minimalglobe_GLESView_nativePinchStart(
     JNIEnv* /* env */, jobject /* this */, jfloat centerX, jfloat centerY) {
+    endDebugPinchIfNeeded(centerX, centerY);
     gTouching = true;
     gDragStarted = false;
     gTouchMoved = true;
@@ -502,14 +523,17 @@ Java_com_earthengine_minimalglobe_GLESView_nativeDebugZoom(
     const float centerY = static_cast<float>(height) * 0.5f;
     const double ts = androidUptimeSeconds();
 
-    InputEvent start;
-    start.type = InputEvent::Type::PinchStart;
-    start.screenX = centerX;
-    start.screenY = centerY;
-    start.pinchScale = 1.0f;
-    start.pointerType = InputEvent::PointerType::Touch;
-    start.timestamp = ts;
-    gEngine->onInputEvent(start);
+    if (!gDebugPinchActive) {
+        InputEvent start;
+        start.type = InputEvent::Type::PinchStart;
+        start.screenX = centerX;
+        start.screenY = centerY;
+        start.pinchScale = 1.0f;
+        start.pointerType = InputEvent::PointerType::Touch;
+        start.timestamp = ts;
+        gEngine->onInputEvent(start);
+        gDebugPinchActive = true;
+    }
 
     InputEvent move;
     move.type = InputEvent::Type::PinchMove;
@@ -520,19 +544,12 @@ Java_com_earthengine_minimalglobe_GLESView_nativeDebugZoom(
     move.timestamp = ts + 0.016;
     gEngine->onInputEvent(move);
 
-    InputEvent end;
-    end.type = InputEvent::Type::PinchEnd;
-    end.screenX = centerX;
-    end.screenY = centerY;
-    end.pinchScale = 1.0f;
-    end.pointerType = InputEvent::PointerType::Touch;
-    end.timestamp = ts + 0.032;
-    gEngine->onInputEvent(end);
-
     const auto& diag = gEngine->diagnostics();
+    const double cameraRadius = gEngine->camera().position().length();
+    const double cameraAltitude = cameraRadius - 6378137.0;
     LOGI("Debug zoom scale=%.2f | tiles vis=%d cached=%d renderSurface=%d "
          "exact=%d parent=%d missing=%d unsupported=%d lod=%.0f eq=%d qRender=%d qWalk=%d "
-         "qFrustum=%d grp=%d/%d/%d FPS=%.1f draw=%d",
+         "qFrustum=%d grp=%d/%d/%d alt=%.2f radius=%.2f FPS=%.1f draw=%d",
          scale,
          diag.visibleTiles,
          diag.cachedTextures,
@@ -549,6 +566,8 @@ Java_com_earthengine_minimalglobe_GLESView_nativeDebugZoom(
          diag.mercatorTileCount,
          diag.northPolarTileCount,
          diag.southPolarTileCount,
+         cameraAltitude,
+         cameraRadius,
          diag.fps,
          diag.drawCalls);
 }
