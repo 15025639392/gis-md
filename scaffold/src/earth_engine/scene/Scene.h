@@ -103,6 +103,7 @@ public:
     bool debugOverlayEnabled() const;
 
 private:
+    void configureCameraSurfacePicker();
     void setupSelectionCallbacks();
     void setupInputCallback();
 

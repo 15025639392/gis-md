@@ -180,6 +180,26 @@ TEST_F(CameraControllerTest, DragStepUsesAnchorSphereIntersection) {
     EXPECT_GT(farAngle, nearAngle);
 }
 
+TEST_F(CameraControllerTest, DragUsesInjectedSurfacePicker) {
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->update(0.0);
+
+    int pickCount = 0;
+    controller_->setSurfacePicker([&](float x, float y, Vec3& outPoint) {
+        ++pickCount;
+        Ray ray = camera_->getPickRay(x, y, 800.0, 600.0);
+        outPoint = intersectEarthSphere(ray) * 1.001;
+        return true;
+    });
+
+    controller_->onDragStart(400.0f, 300.0f);
+    controller_->onDragMove(430.0f, 300.0f);
+    controller_->onDragEnd();
+
+    EXPECT_GE(pickCount, 2);
+    EXPECT_GT(quatAngleFromIdentity(controller_->rotation()), 0.0);
+}
+
 TEST_F(CameraControllerTest, DragThenInertiaDecays) {
     // 快速拖拽
     controller_->onDragStart(400.0f, 300.0f);
@@ -208,15 +228,18 @@ TEST_F(CameraControllerTest, DragThenInertiaDecays) {
 TEST_F(CameraControllerTest, PinchChangesDistance) {
     float initialDist = controller_->distance();
 
-    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f);
-    controller_->onPinchGesture(2.0f, 400.0f, 300.0f, 0.0f, 0.0f);  // 缩小 → 距离减小
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(2.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);  // 缩小 → 距离减小
 
-    // 距离应显著减小
-    EXPECT_LT(controller_->distance(), initialDist * 0.75f);
+    // OpenGlobus TouchNavigation clamps per-frame pinch jerk and moves along
+    // camera forward by distanceToPointOnEarth * (scale - 1).
+    EXPECT_NEAR(initialDist - (initialDist - 1.0f) * 0.3f,
+                controller_->distance(),
+                1e-5f);
 
     controller_->onPinchEnd();
-    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f);
-    controller_->onPinchGesture(0.5f, 400.0f, 300.0f, 0.0f, 0.0f);  // 放大 → 距离增大
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(0.5f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);  // 放大 → 距离增大
 
     // 距离应大于之前
     float distAfterZoomOut = controller_->distance();
@@ -229,8 +252,8 @@ TEST_F(CameraControllerTest, PinchRotationChangesCameraAroundAnchor) {
     Vec3 grabbed = intersectEarthSphere(
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
 
-    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f);
-    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.25f, 0.0f);
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.25f, 0.0f, 0.0f);
     controller_->update(0.0);
 
     glm::dvec2 projected = projectToScreen(*camera_, grabbed);
@@ -239,13 +262,53 @@ TEST_F(CameraControllerTest, PinchRotationChangesCameraAroundAnchor) {
     EXPECT_GT(quatAngleFromIdentity(controller_->rotation()), 0.01);
 }
 
+TEST_F(CameraControllerTest, PinchZoomUsesCurrentCenterPointLikeOpenGlobus) {
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(5.0f);
+    controller_->update(0.0);
+
+    constexpr double anchorX = 470.0;
+    constexpr double anchorY = 260.0;
+    Vec3 centerPoint = intersectEarthSphere(
+        camera_->getPickRay(anchorX, anchorY, 800.0, 600.0));
+    const double beforeDistance = camera_->position().distanceTo(centerPoint);
+
+    controller_->onPinchGesture(1.0f, static_cast<float>(anchorX), static_cast<float>(anchorY), 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.35f, static_cast<float>(anchorX), static_cast<float>(anchorY), 0.0f, 0.0f, 0.0f);
+    controller_->update(0.0);
+
+    const double afterDistance = camera_->position().distanceTo(centerPoint);
+    EXPECT_LT(afterDistance, beforeDistance);
+}
+
+TEST_F(CameraControllerTest, PinchUsesInjectedSurfacePickerForCurrentCenter) {
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(5.0f);
+    controller_->update(0.0);
+
+    int pickCount = 0;
+    controller_->setSurfacePicker([&](float x, float y, Vec3& outPoint) {
+        ++pickCount;
+        Ray ray = camera_->getPickRay(x, y, 800.0, 600.0);
+        outPoint = intersectEarthSphere(ray) * 1.002;
+        return true;
+    });
+
+    controller_->onPinchGesture(1.0f, 470.0f, 260.0f, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.2f, 470.0f, 260.0f, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchEnd();
+
+    EXPECT_GE(pickCount, 2);
+    EXPECT_LT(controller_->distance(), 5.0f);
+}
+
 TEST_F(CameraControllerTest, PinchRotationSignMatchesOpenGlobusDeltaAngle) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
     controller_->update(0.0);
     Vec3 reference = intersectEarthSphere(
         camera_->getPickRay(400.0, 250.0, 800.0, 600.0));
-    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f);
-    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.25f, 0.0f);
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.25f, 0.0f, 0.0f);
     controller_->update(0.0);
     const glm::dvec2 positiveProjected = projectToScreen(*camera_, reference);
 
@@ -254,8 +317,8 @@ TEST_F(CameraControllerTest, PinchRotationSignMatchesOpenGlobusDeltaAngle) {
     controller_->update(0.0);
     reference = intersectEarthSphere(
         camera_->getPickRay(400.0, 250.0, 800.0, 600.0));
-    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f);
-    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, -0.25f, 0.0f);
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, -0.25f, 0.0f, 0.0f);
     controller_->update(0.0);
     const glm::dvec2 negativeProjected = projectToScreen(*camera_, reference);
 
@@ -269,8 +332,8 @@ TEST_F(CameraControllerTest, PinchTiltChangesCamera) {
     controller_->update(0.0);
     auto before = camera_->viewMatrix();
 
-    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f);
-    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 40.0f);
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 40.0f);
     controller_->update(0.0);
 
     auto after = camera_->viewMatrix();
@@ -283,6 +346,42 @@ TEST_F(CameraControllerTest, PinchTiltChangesCamera) {
         }
     }
     EXPECT_TRUE(changed);
+}
+
+TEST_F(CameraControllerTest, PinchHorizontalPanChangesCamera) {
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->update(0.0);
+    auto before = camera_->viewMatrix();
+
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.0f, 430.0f, 300.0f, 0.0f, 30.0f, 0.0f);
+    controller_->update(0.0);
+
+    auto after = camera_->viewMatrix();
+    bool changed = false;
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            if (std::abs(before(i, j) - after(i, j)) > 1e-6) {
+                changed = true;
+            }
+        }
+    }
+    EXPECT_TRUE(changed);
+}
+
+TEST_F(CameraControllerTest, ViewDistanceMovesCameraTowardPickedTarget) {
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(7.0f);
+    controller_->update(0.0);
+
+    Vec3 target = intersectEarthSphere(
+        camera_->getPickRay(420.0, 280.0, 800.0, 600.0));
+    const double requestedDistance = camera_->position().distanceTo(target) * 0.57;
+
+    controller_->viewDistance(target, requestedDistance);
+
+    EXPECT_NEAR(requestedDistance, camera_->position().distanceTo(target), 1e-3);
+    EXPECT_GT(camera_->direction().dot((target - camera_->position()).normalized()), 0.999);
 }
 
 TEST_F(CameraControllerTest, UpdateUpdatesCameraPosition) {

@@ -60,7 +60,8 @@ struct InputEvent {
     /// SystemClock.uptimeMillis），不是挂钟时间。
     double timestamp = 0.0;
 
-    /// PinchMove 时的累积缩放因子（1.0 = 手势开始时的状态）
+    /// PinchMove 时相对上一帧的缩放因子（OpenGlobus TouchNavigation:
+    /// zoomCur.length / zoomPrev.length，1.0 = 无缩放）
     float pinchScale = 1.0f;
 
     /// 双指相对上一帧的旋转角（radian，屏幕坐标系）

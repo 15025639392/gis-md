@@ -62,6 +62,7 @@ Scene::Scene()
     // 1m 近平面会将 99%+ 的深度范围浪费在前几公里
     camera_->setPerspective(glm::radians(60.0), 10000.0, 50000000.0);
     globeMesh_ = Globe::createMesh(96, 48);
+    configureCameraSurfacePicker();
     setupSelectionCallbacks();
     setupInputCallback();
 }
@@ -339,10 +340,12 @@ Scene::verifyControlPoint(double lngRad, double latRad, int zoom) const {
 
 void Scene::setTerrainLayer(std::unique_ptr<TerrainLayer> layer) {
     terrainLayer_ = std::move(layer);
+    configureCameraSurfacePicker();
 }
 
 void Scene::setTerrainEnabled(bool enabled) {
     terrainEnabled_ = enabled;
+    configureCameraSurfacePicker();
 }
 
 bool Scene::hasTerrain() const {
@@ -452,6 +455,37 @@ void Scene::setupSelectionCallbacks() {
 
 // ---- 输入回调 ----
 
+void Scene::configureCameraSurfacePicker() {
+    if (!cameraController_) return;
+
+    cameraController_->setSurfacePicker(
+        [this](float screenX, float screenY, Vec3& outPoint) {
+            if (!pickingService_ || !camera_) {
+                return false;
+            }
+
+            std::function<float(double,double)> terrainSampler;
+            if (terrainLayer_ && terrainEnabled_) {
+                terrainSampler = [this](double lng, double lat) {
+                    return terrainLayer_->sampleHeight(lng, lat);
+                };
+            }
+
+            PickResult result = pickingService_->pickTerrain(
+                screenX, screenY,
+                *camera_,
+                static_cast<double>(frameState_.viewportWidthPixels),
+                static_cast<double>(frameState_.viewportHeightPixels),
+                terrainSampler);
+            if (!result.isValid()) {
+                return false;
+            }
+
+            outPoint = result.worldPosition;
+            return true;
+        });
+}
+
 void Scene::setupInputCallback() {
     inputManager_->setCallback(
         [this](InputManager::Gesture gesture, const InputEvent& event) {
@@ -472,6 +506,7 @@ void Scene::setupInputCallback() {
                                                       event.screenX,
                                                       event.screenY,
                                                       event.rotationRadians,
+                                                      event.centerDeltaX,
                                                       event.centerDeltaY,
                                                       event.timestamp);
                     break;
@@ -480,6 +515,7 @@ void Scene::setupInputCallback() {
                                                       event.screenX,
                                                       event.screenY,
                                                       event.rotationRadians,
+                                                      event.centerDeltaX,
                                                       event.centerDeltaY,
                                                       event.timestamp);
                     break;
@@ -490,9 +526,12 @@ void Scene::setupInputCallback() {
                 case InputManager::Gesture::DoubleClick: {
                     PickResult result = pick(event.screenX, event.screenY);
                     if (gesture == InputManager::Gesture::DoubleClick) {
-                        // 双击：若有命中则选中，否则放大
+                        // OpenGlobus TouchNavigation.onDoubleTouch:
+                        // fly to picked terrain point with distance * 0.57.
                         if (result.isValid()) {
-                            selectionManager_->onSelect(result);
+                            cameraController_->viewDistance(
+                                result.worldPosition,
+                                result.distance * 0.57);
                         } else {
                             // 以点击位置为中心放大（缩小距离 30%）
                             float newDist = cameraController_->distance() * 0.7f;

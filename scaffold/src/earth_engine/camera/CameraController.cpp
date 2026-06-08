@@ -7,6 +7,7 @@
 #include <glm/gtc/constants.hpp>
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace earth_engine {
 
@@ -18,6 +19,8 @@ constexpr double kVelocitySmoothing = 0.35;
 constexpr double kEarthRadiusMeters = 6378137.0;
 constexpr float kMinDistanceEarthRadii = 1.05f;
 constexpr float kMaxDistanceEarthRadii = 30.0f;
+constexpr double kOpenGlobusTouchJerkLimit = 0.3;
+constexpr double kOpenGlobusTouchInertia = 0.007;
 
 glm::dvec3 cartographicNormal(double lngDeg, double latDeg) {
     const double lng = glm::radians(lngDeg);
@@ -58,14 +61,22 @@ void CameraController::setViewport(int widthPixels, int heightPixels) {
     viewportHeight_ = std::max(1, heightPixels);
 }
 
+void CameraController::setSurfacePicker(SurfacePicker picker) {
+    surfacePicker_ = std::move(picker);
+}
+
 void CameraController::onDragStart(float xPixels, float yPixels, double timestamp) {
     update(0.0);
+    orbitMode_ = false;
     dragging_ = grabSurfacePoint(xPixels, yPixels);
     dragStartX_ = xPixels;
     dragStartY_ = yPixels;
     dragLastX_ = xPixels;
     dragLastY_ = yPixels;
+    dragStartEye_ = camera_->position();
     inertiaAngularVelocity_ = 0.0;
+    touchInertiaScale_ = 0.0;
+    touchInertiaRotation_ = glm::dquat(1.0, 0.0, 0.0, 0.0);
     lastDragTimestamp_ = timestamp;
 }
 
@@ -89,6 +100,7 @@ void CameraController::onPinchGesture(float scale,
                                       float centerX,
                                       float centerY,
                                       float rotationRadians,
+                                      float centerDeltaX,
                                       float centerDeltaY,
                                       double /*timestamp*/) {
     if (scale <= 0.0f) return;
@@ -96,76 +108,107 @@ void CameraController::onPinchGesture(float scale,
     // Pinch starts/updates interrupt drag inertia. OpenGlobus does the same by
     // stopping qRot when touch mode changes.
     inertiaAngularVelocity_ = 0.0;
+    touchInertiaScale_ = 0.0;
+    touchInertiaRotation_ = glm::dquat(1.0, 0.0, 0.0, 0.0);
     dragging_ = false;
     hasGrabbedPoint_ = false;
 
     if (!pinching_) {
         pinching_ = true;
         update(0.0);
+        orbitMode_ = false;
 
-        Vec3 earthUpPoint;
-        const Ray centerRay = camera_->getPickRay(
-            static_cast<double>(viewportWidth_) * 0.5,
-            static_cast<double>(viewportHeight_) * 0.5,
-            static_cast<double>(viewportWidth_),
-            static_cast<double>(viewportHeight_));
+        Vec3 anchorPoint;
         grabbedRadiusMeters_ = kEarthRadiusMeters;
-        if (intersectGrabSphere(centerRay, earthUpPoint)) {
-            pinchEarthUpNormal_ = earthUpPoint.normalized();
+        hasPinchAnchor_ = pickSurfacePoint(centerX, centerY, anchorPoint);
+        if (hasPinchAnchor_) {
+            grabbedRadiusMeters_ = anchorPoint.length();
+            pinchAnchorNormal_ = anchorPoint.normalized();
+            pinchEarthUpNormal_ = pinchAnchorNormal_;
+            pinchAnchorScreenX_ = centerX;
+            pinchAnchorScreenY_ = centerY;
         }
-    }
-
-    Vec3 anchorPoint;
-    const Ray middleRay = camera_->getPickRay(
-        static_cast<double>(centerX),
-        static_cast<double>(centerY),
-        static_cast<double>(viewportWidth_),
-        static_cast<double>(viewportHeight_));
-    grabbedRadiusMeters_ = kEarthRadiusMeters;
-    hasPinchAnchor_ = intersectGrabSphere(middleRay, anchorPoint);
-    if (hasPinchAnchor_) {
-        pinchAnchorNormal_ = anchorPoint.normalized();
     }
 
     inertiaAngularVelocity_ = 0.0;
 
-    distance_ = std::clamp(
-        distance_ / scale,
-        kMinDistanceEarthRadii,
-        kMaxDistanceEarthRadii);
+    const double jerkMin = 1.0 - kOpenGlobusTouchJerkLimit;
+    const double jerkMax = 1.0 + kOpenGlobusTouchJerkLimit;
+    const double clampedScale = std::clamp(static_cast<double>(scale), jerkMin, jerkMax);
 
     if (hasPinchAnchor_) {
+        Vec3 currentCenterPoint;
+        grabbedRadiusMeters_ = kEarthRadiusMeters;
+        if (!pickSurfacePoint(centerX, centerY, currentCenterPoint)) {
+            return;
+        }
+        grabbedRadiusMeters_ = currentCenterPoint.length();
+        pinchAnchorNormal_ = currentCenterPoint.normalized();
+
+        const glm::dvec3 pointOnEarth = currentCenterPoint.raw();
+        const double distanceToAnchor = camera_->position().distanceTo(currentCenterPoint);
+        const double moveMeters = distanceToAnchor * (clampedScale - 1.0);
+        const glm::dvec3 nextEye =
+            camera_->position().raw() +
+            camera_->direction().raw() * moveMeters;
+        const double nextDistanceRadii =
+            glm::length(nextEye) / kEarthRadiusMeters;
+        if (nextDistanceRadii >= kMinDistanceEarthRadii &&
+            nextDistanceRadii <= kMaxDistanceEarthRadii) {
+            camera_->setView(Vec3(nextEye), camera_->direction(), camera_->up());
+            syncDistanceFromCamera();
+        }
+
         if (std::abs(rotationRadians) > 1e-5f) {
             // OpenGlobus TouchNavigation:
             //   deltaAngle = curAngle - prevAngle
             //   cam.rotateAround(-deltaAngle, false, pointOnEarth, earthUp)
             // This controller stores the inverse orbit pose, so applying the
             // platform's signed screen delta directly matches that camera move.
-            applyRotationAroundAxis(pinchEarthUpNormal_.raw(),
-                                    static_cast<double>(rotationRadians));
+            rotateCameraAroundPoint(
+                pointOnEarth,
+                pinchEarthUpNormal_.raw(),
+                static_cast<double>(rotationRadians));
         }
 
-        if (std::abs(centerDeltaY) > 0.5f) {
+        if (std::abs(centerDeltaX) > 0.5f || std::abs(centerDeltaY) > 0.5f) {
             update(0.0);
             const glm::dvec3 anchor = pinchAnchorNormal_.raw();
-            const glm::dvec3 right = camera_->right().raw();
-            glm::dvec3 axis = glm::cross(right, anchor);
-            if (glm::length(axis) > 1e-10) {
-                axis = glm::normalize(axis);
-                const double focusDistanceMeters =
-                    std::max(kEarthRadiusMeters * 0.01,
-                             camera_->position().distanceTo(Vec3(anchor * kEarthRadiusMeters)));
-                double sensitivity = (0.5 / focusDistanceMeters) *
-                                     glm::pi<double>() / 180.0;
-                sensitivity = std::clamp(sensitivity, 0.003, 0.007);
+            const double focusDistanceMeters =
+                std::max(kEarthRadiusMeters * 0.01,
+                         camera_->position().distanceTo(Vec3(anchor * kEarthRadiusMeters)));
+            const double cameraHeightMeters =
+                std::max(0.0, camera_->position().length() - kEarthRadiusMeters);
+            double sensitivity = (0.5 / focusDistanceMeters) *
+                                 cameraHeightMeters *
+                                 glm::pi<double>() / 180.0;
+            if (sensitivity > 0.003) {
+                sensitivity = 0.003;
+            }
+
+            if (std::abs(centerDeltaX) > 0.5f) {
                 applyRotationAroundAxis(
-                    axis,
-                    sensitivity * static_cast<double>(centerDeltaY) * 0.75);
+                    pinchEarthUpNormal_.raw(),
+                    sensitivity * static_cast<double>(centerDeltaX));
+            }
+
+            if (std::abs(centerDeltaY) > 0.5f) {
+                const glm::dvec3 right = camera_->right().raw();
+                glm::dvec3 axis = glm::cross(right, anchor);
+                if (glm::length(axis) > 1e-10) {
+                    axis = glm::normalize(axis);
+                    applyRotationAroundAxis(
+                        axis,
+                        sensitivity * static_cast<double>(centerDeltaY));
+                }
             }
         }
+    } else {
+        distance_ = std::clamp(
+            static_cast<float>(static_cast<double>(distance_) / clampedScale),
+            kMinDistanceEarthRadii,
+            kMaxDistanceEarthRadii);
     }
-
-    update(0.0);
 }
 
 void CameraController::onPinchEnd() {
@@ -175,12 +218,38 @@ void CameraController::onPinchEnd() {
 }
 
 void CameraController::update(double deltaSeconds) {
-    // 惯性衰减
-    if (!dragging_ && inertiaAngularVelocity_ > 0.0001 && deltaSeconds > 0.0) {
+    if (!dragging_ && touchInertiaScale_ > 0.0 && deltaSeconds > 0.0) {
+        touchInertiaScale_ -= kOpenGlobusTouchInertia;
+        if (touchInertiaScale_ <= 0.0) {
+            touchInertiaScale_ = 0.0;
+        } else {
+            const double t = 1.0 - touchInertiaScale_ * touchInertiaScale_ * touchInertiaScale_;
+            const glm::dquat delta = glm::normalize(glm::slerp(
+                touchInertiaRotation_,
+                glm::dquat(1.0, 0.0, 0.0, 0.0),
+                t));
+            if (std::abs(delta.x) > 1e-12 ||
+                std::abs(delta.y) > 1e-12 ||
+                std::abs(delta.z) > 1e-12) {
+                applyCameraRotation(delta);
+            } else {
+                touchInertiaScale_ = 0.0;
+            }
+        }
+    } else if (!dragging_ && inertiaAngularVelocity_ > 0.0001 && deltaSeconds > 0.0) {
         double angle = inertiaAngularVelocity_ * deltaSeconds;
         glm::dquat delta = glm::angleAxis(angle, inertiaAxis_);
-        rotation_ = glm::normalize(delta * rotation_);
+        if (orbitMode_) {
+            rotation_ = glm::normalize(delta * rotation_);
+        } else {
+            applyCameraRotation(delta);
+        }
         inertiaAngularVelocity_ *= std::exp(-kInertiaDampingPerSecond * deltaSeconds);
+    }
+
+    if (!orbitMode_) {
+        syncDistanceFromCamera();
+        return;
     }
 
     // 计算相机在 ECEF 空间中的位置
@@ -207,16 +276,44 @@ void CameraController::update(double deltaSeconds) {
 }
 
 void CameraController::setDistance(float earthRadii) {
+    orbitMode_ = true;
     distance_ = std::clamp(
         earthRadii,
         kMinDistanceEarthRadii,
         kMaxDistanceEarthRadii);
     inertiaAngularVelocity_ = 0.0;
+    touchInertiaScale_ = 0.0;
 }
 
 void CameraController::setRotation(const glm::dquat& q) {
+    orbitMode_ = true;
     rotation_ = glm::normalize(q);
     inertiaAngularVelocity_ = 0.0;
+    touchInertiaScale_ = 0.0;
+}
+
+void CameraController::viewDistance(const Vec3& targetWorld, double distanceMeters) {
+    const double minDistanceMeters = kMinDistanceEarthRadii * kEarthRadiusMeters;
+    const double maxDistanceMeters = kMaxDistanceEarthRadii * kEarthRadiusMeters;
+    const double clampedDistance = std::clamp(
+        distanceMeters,
+        minDistanceMeters * 0.01,
+        maxDistanceMeters);
+
+    glm::dvec3 away = camera_->position().raw() - targetWorld.raw();
+    if (glm::length(away) < 1e-6) {
+        away = -camera_->direction().raw();
+    }
+    if (glm::length(away) < 1e-6) {
+        away = glm::normalize(targetWorld.raw());
+    }
+
+    const glm::dvec3 eye = targetWorld.raw() + glm::normalize(away) * clampedDistance;
+    camera_->lookAt(Vec3(eye), targetWorld, camera_->up());
+    orbitMode_ = false;
+    inertiaAngularVelocity_ = 0.0;
+    touchInertiaScale_ = 0.0;
+    syncDistanceFromCamera();
 }
 
 void CameraController::applyRotationAroundAxis(const glm::dvec3& axis, double angle) {
@@ -224,7 +321,66 @@ void CameraController::applyRotationAroundAxis(const glm::dvec3& axis, double an
         return;
     }
     const glm::dquat delta = glm::angleAxis(angle, glm::normalize(axis));
+    if (orbitMode_) {
+        rotation_ = glm::normalize(delta * rotation_);
+    } else {
+        applyCameraRotation(delta);
+    }
+}
+
+void CameraController::applyCameraRotation(const glm::dquat& delta) {
+    const glm::dvec3 eye = delta * camera_->position().raw();
+    const glm::dvec3 direction = delta * camera_->direction().raw();
+    const glm::dvec3 up = delta * camera_->up().raw();
+    camera_->setView(Vec3(eye), Vec3(direction), Vec3(up));
     rotation_ = glm::normalize(delta * rotation_);
+    syncDistanceFromCamera();
+}
+
+void CameraController::rotateCameraAroundPoint(const glm::dvec3& center,
+                                               const glm::dvec3& axis,
+                                               double angle) {
+    if (glm::length(axis) < 1e-10 || std::abs(angle) < 1e-12) {
+        return;
+    }
+    const glm::dquat delta = glm::angleAxis(angle, glm::normalize(axis));
+    const glm::dvec3 eye = center + delta * (camera_->position().raw() - center);
+    const glm::dvec3 direction = delta * camera_->direction().raw();
+    const glm::dvec3 up = delta * camera_->up().raw();
+    camera_->setView(Vec3(eye), Vec3(direction), Vec3(up));
+    rotation_ = glm::normalize(delta * rotation_);
+    syncDistanceFromCamera();
+}
+
+void CameraController::syncDistanceFromCamera() {
+    distance_ = static_cast<float>(camera_->position().length() / kEarthRadiusMeters);
+}
+
+void CameraController::keepAnchorAtScreenPoint(const Vec3& anchorNormal,
+                                               float xPixels,
+                                               float yPixels) {
+    Vec3 screenPointOnSphere;
+    const Ray ray = camera_->getPickRay(
+        static_cast<double>(xPixels),
+        static_cast<double>(yPixels),
+        static_cast<double>(viewportWidth_),
+        static_cast<double>(viewportHeight_));
+    if (!intersectGrabSphere(ray, screenPointOnSphere)) {
+        return;
+    }
+
+    const glm::dvec3 from = screenPointOnSphere.normalized().raw();
+    const glm::dvec3 to = anchorNormal.raw();
+    glm::dvec3 axis = glm::cross(from, to);
+    const double axisLength = glm::length(axis);
+    if (axisLength < 1e-10) {
+        return;
+    }
+
+    const double dot = std::clamp(glm::dot(from, to), -1.0, 1.0);
+    const double angle = std::atan2(axisLength, dot);
+    axis /= axisLength;
+    applyRotationAroundAxis(axis, angle);
 }
 
 // ============================================================
@@ -253,21 +409,46 @@ bool CameraController::intersectGrabSphere(const Ray& ray, Vec3& outPoint) const
     return true;
 }
 
-bool CameraController::grabSurfacePoint(float xPixels, float yPixels) {
-    grabbedRadiusMeters_ = kEarthRadiusMeters;
+bool CameraController::pickSurfacePoint(float xPixels, float yPixels, Vec3& outPoint) const {
+    if (surfacePicker_ && surfacePicker_(xPixels, yPixels, outPoint)) {
+        return true;
+    }
 
-    Vec3 grabbedPoint;
     const Ray ray = camera_->getPickRay(
         static_cast<double>(xPixels),
         static_cast<double>(yPixels),
         static_cast<double>(viewportWidth_),
         static_cast<double>(viewportHeight_));
-    if (!intersectGrabSphere(ray, grabbedPoint)) {
+    return intersectGrabSphere(ray, outPoint);
+}
+
+bool CameraController::intersectPlane(const Ray& ray,
+                                      const glm::dvec3& planePoint,
+                                      const glm::dvec3& planeNormal,
+                                      glm::dvec3& outPoint) const {
+    const double denom = glm::dot(ray.direction().raw(), planeNormal);
+    if (std::abs(denom) < 1e-12) {
+        return false;
+    }
+    const double t = glm::dot(planePoint - ray.origin().raw(), planeNormal) / denom;
+    if (t <= 0.0) {
+        return false;
+    }
+    outPoint = ray.pointAt(t).raw();
+    return true;
+}
+
+bool CameraController::grabSurfacePoint(float xPixels, float yPixels) {
+    grabbedRadiusMeters_ = kEarthRadiusMeters;
+
+    Vec3 grabbedPoint;
+    if (!pickSurfacePoint(xPixels, yPixels, grabbedPoint)) {
         hasGrabbedPoint_ = false;
         return false;
     }
 
     grabbedRadiusMeters_ = grabbedPoint.length();
+    grabbedPoint_ = grabbedPoint;
     grabbedNormal_ = grabbedPoint.normalized();
     hasGrabbedPoint_ = true;
     return true;
@@ -285,7 +466,23 @@ void CameraController::applyAnchorDrag(float xPixels, float yPixels,
         static_cast<double>(yPixels),
         static_cast<double>(viewportWidth_),
         static_cast<double>(viewportHeight_));
-    if (!intersectGrabSphere(ray, targetPoint)) {
+    if (!pickSurfacePoint(xPixels, yPixels, targetPoint)) {
+        return;
+    }
+
+    const glm::dvec3 eyeNorm = glm::normalize(camera_->position().raw());
+    const double slope = glm::dot(-camera_->direction().raw(), eyeNorm);
+    if (slope <= 0.2) {
+        const glm::dvec3 p0 = grabbedPoint_.raw();
+        const glm::dvec3 planeNormal =
+            glm::normalize(glm::cross(camera_->up().raw(), grabbedNormal_.raw()));
+        glm::dvec3 planeHit;
+        if (intersectPlane(ray, p0, planeNormal, planeHit)) {
+            const glm::dvec3 newEye = dragStartEye_.raw() - (planeHit - p0);
+            camera_->setView(Vec3(newEye), camera_->direction(), camera_->up());
+            syncDistanceFromCamera();
+            touchInertiaScale_ = 0.0;
+        }
         return;
     }
 
@@ -302,8 +499,9 @@ void CameraController::applyAnchorDrag(float xPixels, float yPixels,
 
     const glm::dvec3 normalizedAxis = glm::normalize(axis);
     const glm::dquat delta = glm::angleAxis(angle, normalizedAxis);
-    rotation_ = glm::normalize(delta * rotation_);
-    update(0.0);
+    applyCameraRotation(delta);
+    touchInertiaRotation_ = delta;
+    touchInertiaScale_ = 1.0;
 
     // 更新惯性（使用事件时间戳，而非渲染时钟）
     double dt = timestamp - lastDragTimestamp_;

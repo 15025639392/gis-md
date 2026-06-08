@@ -22,6 +22,8 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
     private float lastPinchCenterY;
     private boolean pinching;
     private boolean suppressSingleDragUntilUp;
+    private int pinchPointerId0 = -1;
+    private int pinchPointerId1 = -1;
 
     public GLESView(Context context) {
         super(context);
@@ -91,11 +93,42 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
     public boolean onTouchEvent(MotionEvent event) {
         int action = event.getActionMasked();
 
+        if (action == MotionEvent.ACTION_POINTER_UP) {
+            if (pinching) {
+                nativePinchEnd(lastPinchCenterX, lastPinchCenterY);
+            }
+            pinching = false;
+            pinchPointerId0 = -1;
+            pinchPointerId1 = -1;
+
+            int remainingIndex = firstRemainingPointerIndex(event, event.getActionIndex());
+            if (remainingIndex >= 0) {
+                lastX = event.getX(remainingIndex);
+                lastY = event.getY(remainingIndex);
+                suppressSingleDragUntilUp = false;
+                nativeTouchDown();
+            } else {
+                suppressSingleDragUntilUp = true;
+            }
+            return true;
+        }
+
         if (event.getPointerCount() >= 2) {
-            float distance = pointerDistance(event);
-            float angle = pointerAngle(event);
-            float centerX = pointerCenterX(event);
-            float centerY = pointerCenterY(event);
+            if (action == MotionEvent.ACTION_POINTER_DOWN || !pinching) {
+                pinchPointerId0 = event.getPointerId(0);
+                pinchPointerId1 = event.getPointerId(1);
+            }
+
+            int index0 = event.findPointerIndex(pinchPointerId0);
+            int index1 = event.findPointerIndex(pinchPointerId1);
+            if (index0 < 0 || index1 < 0 || index0 == index1) {
+                return true;
+            }
+
+            float distance = pointerDistance(event, index0, index1);
+            float angle = pointerAngle(event, index0, index1);
+            float centerX = pointerCenterX(event, index0, index1);
+            float centerY = pointerCenterY(event, index0, index1);
             if (action == MotionEvent.ACTION_POINTER_DOWN || !pinching) {
                 pinching = true;
                 suppressSingleDragUntilUp = true;
@@ -112,6 +145,7 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
                         normalizeAngle(angle - lastPinchAngle),
                         centerX,
                         centerY,
+                        centerX - lastPinchCenterX,
                         centerY - lastPinchCenterY,
                         getWidth(),
                         getHeight());
@@ -126,6 +160,8 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
         switch (action) {
             case MotionEvent.ACTION_DOWN:
                 pinching = false;
+                pinchPointerId0 = -1;
+                pinchPointerId1 = -1;
                 suppressSingleDragUntilUp = false;
                 nativeTouchDown();
                 lastX = event.getX();
@@ -140,22 +176,14 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
                     lastY = y;
                 }
                 return true;
-            case MotionEvent.ACTION_POINTER_UP:
-                pinching = false;
-                suppressSingleDragUntilUp = true;
-                nativePinchEnd(lastPinchCenterX, lastPinchCenterY);
-                if (event.getPointerCount() > 1) {
-                    int remainingIndex = event.getActionIndex() == 0 ? 1 : 0;
-                    lastX = event.getX(remainingIndex);
-                    lastY = event.getY(remainingIndex);
-                }
-                return true;
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
                 if (pinching) {
                     nativePinchEnd(lastPinchCenterX, lastPinchCenterY);
                 }
                 pinching = false;
+                pinchPointerId0 = -1;
+                pinchPointerId1 = -1;
                 suppressSingleDragUntilUp = false;
                 nativeTouchUp(event.getX(), event.getY());
                 return true;
@@ -164,22 +192,31 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
         }
     }
 
-    private static float pointerDistance(MotionEvent event) {
-        float dx = event.getX(0) - event.getX(1);
-        float dy = event.getY(0) - event.getY(1);
+    private static int firstRemainingPointerIndex(MotionEvent event, int liftedIndex) {
+        for (int i = 0; i < event.getPointerCount(); ++i) {
+            if (i != liftedIndex) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static float pointerDistance(MotionEvent event, int index0, int index1) {
+        float dx = event.getX(index0) - event.getX(index1);
+        float dy = event.getY(index0) - event.getY(index1);
         return (float) Math.sqrt(dx * dx + dy * dy);
     }
 
-    private static float pointerAngle(MotionEvent event) {
-        return (float) Math.atan2(event.getY(1) - event.getY(0), event.getX(1) - event.getX(0));
+    private static float pointerAngle(MotionEvent event, int index0, int index1) {
+        return (float) Math.atan2(event.getY(index1) - event.getY(index0), event.getX(index1) - event.getX(index0));
     }
 
-    private static float pointerCenterX(MotionEvent event) {
-        return (event.getX(0) + event.getX(1)) * 0.5f;
+    private static float pointerCenterX(MotionEvent event, int index0, int index1) {
+        return (event.getX(index0) + event.getX(index1)) * 0.5f;
     }
 
-    private static float pointerCenterY(MotionEvent event) {
-        return (event.getY(0) + event.getY(1)) * 0.5f;
+    private static float pointerCenterY(MotionEvent event, int index0, int index1) {
+        return (event.getY(index0) + event.getY(index1)) * 0.5f;
     }
 
     private static float normalizeAngle(float angle) {
@@ -201,7 +238,7 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
     private static native void nativeTouchUp(float x, float y);
     private static native void nativePinchStart(float centerX, float centerY);
     private static native void nativePinchEnd(float centerX, float centerY);
-    private static native void nativePinchRotateTilt(float scale, float rotationRadians, float centerX, float centerY, float centerDy, int width, int height);
+    private static native void nativePinchRotateTilt(float scale, float rotationRadians, float centerX, float centerY, float centerDx, float centerDy, int width, int height);
     private static native void nativeDebugZoom(float scale, int width, int height);
     private static native void nativePause();
     private static native void nativeResume();

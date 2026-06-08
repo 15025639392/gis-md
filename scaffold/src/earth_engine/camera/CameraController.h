@@ -3,6 +3,7 @@
 #include "../core/math/Vec3.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <functional>
 
 namespace earth_engine {
 
@@ -20,6 +21,12 @@ public:
     /// 设置视口尺寸（用于 pick ray 和屏幕坐标归一化）
     void setViewport(int widthPixels, int heightPixels);
 
+    /// OpenGlobus 对 touch anchor 使用 planet.getCartesianFromPixelTerrain /
+    /// getCartesianFromPixelEllipsoid。Scene 可注入同一条地形拾取链路；
+    /// 未注入或未命中时回退到控制器内部的 WGS84 球面拾取。
+    using SurfacePicker = std::function<bool(float xPixels, float yPixels, Vec3& outPoint)>;
+    void setSurfacePicker(SurfacePicker picker);
+
     /// drag 开始（手指按下）
     /// @param timestamp 单调时钟时间戳（秒），用于惯性角速度计算
     void onDragStart(float xPixels, float yPixels, double timestamp = 0.0);
@@ -34,6 +41,7 @@ public:
                         float centerX,
                         float centerY,
                         float rotationRadians,
+                        float centerDeltaX,
                         float centerDeltaY,
                         double timestamp = 0.0);
     void onPinchEnd();
@@ -54,18 +62,35 @@ public:
     /// 直接设置旋转
     void setRotation(const glm::dquat& q);
 
+    /// OpenGlobus camera.viewDistance(target, distanceMeters) 等价的即时版本。
+    /// 保持当前 target→eye 方位，把相机放到 target 外指定距离并看向 target。
+    void viewDistance(const Vec3& targetWorld, double distanceMeters);
+
 private:
     bool intersectGrabSphere(const Ray& ray, Vec3& outPoint) const;
+    bool pickSurfacePoint(float xPixels, float yPixels, Vec3& outPoint) const;
+    bool intersectPlane(const Ray& ray,
+                        const glm::dvec3& planePoint,
+                        const glm::dvec3& planeNormal,
+                        glm::dvec3& outPoint) const;
     bool grabSurfacePoint(float xPixels, float yPixels);
     void applyAnchorDrag(float xPixels, float yPixels, double timestamp);
     void applyRotationAroundAxis(const glm::dvec3& axis, double angle);
+    void keepAnchorAtScreenPoint(const Vec3& anchorNormal, float xPixels, float yPixels);
+    void rotateCameraAroundPoint(const glm::dvec3& center,
+                                 const glm::dvec3& axis,
+                                 double angle);
+    void applyCameraRotation(const glm::dquat& delta);
+    void syncDistanceFromCamera();
 
     Camera* camera_;
+    SurfacePicker surfacePicker_;
     int viewportWidth_ = 1;
     int viewportHeight_ = 1;
 
     glm::dquat rotation_{1.0, 0.0, 0.0, 0.0};
     float distance_ = 7.0f;
+    bool orbitMode_ = true;
 
     // drag 状态
     bool dragging_ = false;
@@ -75,18 +100,24 @@ private:
     float dragLastY_ = 0.0f;
     bool hasGrabbedPoint_ = false;
     Vec3 grabbedNormal_{0.0, 0.0, 1.0};
+    Vec3 grabbedPoint_{0.0, 0.0, 6378137.0};
+    Vec3 dragStartEye_{0.0, 0.0, 0.0};
     double grabbedRadiusMeters_ = 6378137.0;
 
     // 惯性状态
     glm::dvec3 inertiaAxis_{0.0, 1.0, 0.0};
     double inertiaAngularVelocity_ = 0.0;
     double lastDragTimestamp_ = 0.0;  // 最近一次 drag 事件的时间戳
+    glm::dquat touchInertiaRotation_{1.0, 0.0, 0.0, 0.0};
+    double touchInertiaScale_ = 0.0;
 
     // pinch 状态
     bool pinching_ = false;
     bool hasPinchAnchor_ = false;
     Vec3 pinchAnchorNormal_{0.0, 0.0, 1.0};
     Vec3 pinchEarthUpNormal_{0.0, 0.0, 1.0};
+    float pinchAnchorScreenX_ = 0.0f;
+    float pinchAnchorScreenY_ = 0.0f;
 };
 
 } // namespace earth_engine

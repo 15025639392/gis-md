@@ -476,7 +476,7 @@ JNIEXPORT void JNICALL
 Java_com_earthengine_minimalglobe_GLESView_nativePinchRotateTilt(
     JNIEnv* /* env */, jobject /* this */,
     jfloat scale, jfloat rotationRadians,
-    jfloat centerX, jfloat centerY, jfloat centerDy,
+    jfloat centerX, jfloat centerY, jfloat centerDx, jfloat centerDy,
     jint /*width*/, jint /*height*/) {
     if (!gEngine) return;
     InputEvent event;
@@ -485,6 +485,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativePinchRotateTilt(
     event.screenY = centerY;
     event.pinchScale = scale;
     event.rotationRadians = rotationRadians;
+    event.centerDeltaX = centerDx;
     event.centerDeltaY = centerDy;
     event.pointerType = InputEvent::PointerType::Touch;
     event.timestamp = androidUptimeSeconds();
