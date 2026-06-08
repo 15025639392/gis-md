@@ -285,6 +285,7 @@ static void renderFrame() {
         const auto& diag = gEngine->diagnostics();
         LOGI("Frame %d | tiles vis=%d cached=%d renderSurface=%d mesh=%d "
              "attach=%d exact=%d parent=%d normalMap=%d stale=%d missingGen=%d | "
+             "missing=%d unsupported=%d "
              "lod=%.0f eq=%d qRender=%d qWalk=%d qFrustum=%d qFade=%d "
              "grp=%d/%d/%d gen=%llu | "
              "sun=(%.2f,%.2f,%.2f) | FPS=%.1f draw=%d",
@@ -294,6 +295,8 @@ static void renderFrame() {
              diag.imageryParentFallbackAttachments,
              diag.normalMapTextures,
              diag.staleSurfaceCommands, diag.missingGenerationSurfaceCommands,
+             diag.imageryMissingTiles,
+             diag.imageryUnsupportedTiles,
              diag.lodSizePixels,
              diag.quadtreeEqualZoomLayers,
              diag.quadtreeRenderingNodes,
@@ -527,7 +530,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativeDebugZoom(
 
     const auto& diag = gEngine->diagnostics();
     LOGI("Debug zoom scale=%.2f | tiles vis=%d cached=%d renderSurface=%d "
-         "exact=%d parent=%d missing=%d lod=%.0f eq=%d qRender=%d qWalk=%d "
+         "exact=%d parent=%d missing=%d unsupported=%d lod=%.0f eq=%d qRender=%d qWalk=%d "
          "qFrustum=%d grp=%d/%d/%d FPS=%.1f draw=%d",
          scale,
          diag.visibleTiles,
@@ -536,6 +539,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativeDebugZoom(
          diag.imageryExactAttachments,
          diag.imageryParentFallbackAttachments,
          diag.imageryMissingTiles,
+         diag.imageryUnsupportedTiles,
          diag.lodSizePixels,
          diag.quadtreeEqualZoomLayers,
          diag.quadtreeRenderingNodes,

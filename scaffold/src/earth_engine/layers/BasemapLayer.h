@@ -90,6 +90,7 @@ public:
     int exactAttachmentCount() const;
     int parentFallbackAttachmentCount() const;
     int missingImageryTileCount() const { return layerPlan_.missingTileCount; }
+    int unsupportedImageryTileCount() const { return layerPlan_.unsupportedTileCount; }
     int transitionTileCount() const { return layerPlan_.transitionTileCount; }
     double lodSizePixels() const { return layerPlan_.lodSizePixels; }
     int quadtreeFadingNodeCount() const { return layerPlan_.quadtreeFadingNodeCount; }

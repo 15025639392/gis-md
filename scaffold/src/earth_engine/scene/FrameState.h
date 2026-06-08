@@ -23,6 +23,7 @@ struct Diagnostics {
     int imageryExactAttachments = 0;
     int imageryParentFallbackAttachments = 0;
     int imageryMissingTiles = 0;
+    int imageryUnsupportedTiles = 0;
     int imageryTransitionTiles = 0;
     double lodSizePixels = 0.0;
     int quadtreeEqualZoomLayers = 0;

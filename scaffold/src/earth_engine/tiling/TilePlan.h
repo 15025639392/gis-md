@@ -86,6 +86,7 @@ struct LayerTilePlan {
     int readyTileCount = 0;
     int parentFallbackReadyTileCount = 0;
     int missingTileCount = 0;
+    int unsupportedTileCount = 0;
     int transitionTileCount = 0;
     int quadtreeFadingNodeCount = 0;
     int quadtreeNeighborLinkCount = 0;

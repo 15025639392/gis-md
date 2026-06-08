@@ -148,7 +148,8 @@ TileGroupKey = {
 
 `desiredTiles` 不等于 `requestTiles`，也不等于 `renderSurfaceTiles`：
 
-- `desiredTiles`：当前图层理想情况下需要的 tile。
+- `desiredTiles`：当前图层理想情况下需要、且 provider 覆盖范围/可用矩阵支持的 tile。
+- `unsupportedTiles`：当前 TilePlan 可见、但 provider 不支持的 tile；不得进入 `desiredTiles`、`requestTiles` 或 `renderSurfaceTiles`，也不得计为 imagery missing。
 - `requestTiles`：cache 缺失且允许请求的 tile。
 - `ImageryAttachment`：本帧可绑定到 surface tile 的纹理，可能是目标 tile，也可能是 parent fallback。
 - `renderSurfaceTiles`：本帧实际可画的地表 tile，必须同时拥有有效 surface mesh 和 imagery attachment 策略。

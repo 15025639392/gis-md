@@ -57,6 +57,19 @@ public:
     bool supportsTile(const TileKey&) const override { return false; }
 };
 
+class MercatorOnlyOpenGlobusProvider : public StubProvider {
+public:
+    MercatorOnlyOpenGlobusProvider()
+        : StubProvider("stub-og-mercator", "OpenGlobus-Earth") {}
+
+    bool supportsTile(const TileKey& key) const override {
+        const int tilesAtZoom = 1 << key.z;
+        return key.schemeId == "OpenGlobus-Earth" &&
+               key.y >= 0 &&
+               key.y < tilesAtZoom;
+    }
+};
+
 class CountingProvider : public StubProvider {
 public:
     explicit CountingProvider(bool returnsImage = false)
@@ -376,10 +389,37 @@ TEST_F(BasemapLayerStackTest, ProviderAvailabilityBlocksUnsupportedRequests) {
     layer->applyPlan(plan, Vec3(radius * 3.0, 0.0, 0.0));
 
     const LayerTilePlan& layerPlan = layer->layerPlan();
-    EXPECT_EQ(1u, layerPlan.desiredTiles.size());
+    EXPECT_TRUE(layerPlan.desiredTiles.empty());
     EXPECT_TRUE(layerPlan.requestTiles.empty());
     EXPECT_TRUE(layerPlan.renderTiles.empty());
+    EXPECT_EQ(0, layerPlan.missingTileCount);
+    EXPECT_EQ(1, layerPlan.unsupportedTileCount);
+}
+
+TEST_F(BasemapLayerStackTest, ProviderAvailabilityKeepsSupportedDesiredTilesOnly) {
+    auto layer = std::make_unique<BasemapLayer>(
+        std::make_unique<MercatorOnlyOpenGlobusProvider>(),
+        TileScheme::createOpenGlobusEarth(),
+        nullptr);
+
+    TilePlan plan;
+    plan.frameId = 9;
+    plan.zoom = 3;
+    plan.visibleTiles = {
+        TileKey{"OpenGlobus-Earth", 3, 4, 4},
+        TileKey{"OpenGlobus-Earth", 3, 4, 12}
+    };
+
+    constexpr double radius = 6378137.0;
+    layer->applyPlan(plan, Vec3(radius * 3.0, 0.0, 0.0));
+
+    const LayerTilePlan& layerPlan = layer->layerPlan();
+    ASSERT_EQ(1u, layerPlan.desiredTiles.size());
+    EXPECT_EQ((TileKey{"OpenGlobus-Earth", 3, 4, 4}), layerPlan.desiredTiles.front());
     EXPECT_EQ(1, layerPlan.missingTileCount);
+    EXPECT_EQ(1, layerPlan.unsupportedTileCount);
+    ASSERT_EQ(1u, layerPlan.requestTiles.size());
+    EXPECT_EQ((TileKey{"OpenGlobus-Earth", 0, 0, 0}), layerPlan.requestTiles.front());
 }
 
 TEST_F(BasemapLayerStackTest, BasemapLayerKeepsTileGenerationAcrossFrameIds) {

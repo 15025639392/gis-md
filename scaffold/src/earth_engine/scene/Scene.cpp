@@ -245,6 +245,7 @@ void Scene::render() {
     diag.imageryExactAttachments = 0;
     diag.imageryParentFallbackAttachments = 0;
     diag.imageryMissingTiles = 0;
+    diag.imageryUnsupportedTiles = 0;
     diag.imageryTransitionTiles = 0;
     diag.lodSizePixels = 0.0;
     diag.quadtreeEqualZoomLayers = 0;
@@ -276,6 +277,7 @@ void Scene::render() {
         diag.imageryExactAttachments += layer->exactAttachmentCount();
         diag.imageryParentFallbackAttachments += layer->parentFallbackAttachmentCount();
         diag.imageryMissingTiles += layer->missingImageryTileCount();
+        diag.imageryUnsupportedTiles += layer->unsupportedImageryTileCount();
         diag.imageryTransitionTiles += layer->transitionTileCount();
         diag.lodSizePixels = std::max(diag.lodSizePixels, layer->lodSizePixels());
         diag.quadtreeEqualZoomLayers += layer->quadtreeEqualZoomApplied();

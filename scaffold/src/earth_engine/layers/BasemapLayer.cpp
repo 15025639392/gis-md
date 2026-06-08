@@ -265,17 +265,19 @@ void BasemapLayer::rebuildLayerPlan() {
         tilePlan_.equalZoomSecondPassNodeCount;
     layerPlan_.visibleTiles = tilePlan_.visibleTiles;
     layerPlan_.tileTransitions = tilePlan_.tileTransitions;
-    layerPlan_.desiredTiles = tilePlan_.visibleTiles;
     layerPlan_.transitionTileCount += tilePlan_.fadingNodeCount;
     std::unordered_set<TileKey> requestSet;
 
-    for (const auto& key : layerPlan_.desiredTiles) {
-        const float lodTransitionOpacity = transitionOpacityForTile(tilePlan_, key);
+    for (const auto& key : tilePlan_.visibleTiles) {
         if (provider_ && !provider_->supportsTile(key)) {
-            ++layerPlan_.missingTileCount;
+            ++layerPlan_.unsupportedTileCount;
             continue;
         }
+        layerPlan_.desiredTiles.push_back(key);
+    }
 
+    for (const auto& key : layerPlan_.desiredTiles) {
+        const float lodTransitionOpacity = transitionOpacityForTile(tilePlan_, key);
         if (textureCache_.contains(key)) {
             layerPlan_.renderTiles.push_back(RenderTileRef{
                 key,
