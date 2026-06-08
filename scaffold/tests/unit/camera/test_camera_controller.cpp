@@ -8,13 +8,14 @@ using namespace earth_engine;
 
 namespace {
 
+constexpr double kEarthRadiusMeters = 6378137.0;
+
 double quatAngleFromIdentity(const glm::dquat& q) {
     glm::dquat n = glm::normalize(q);
     return 2.0 * std::acos(std::clamp(std::abs(n.w), 0.0, 1.0));
 }
 
 Vec3 intersectEarthSphere(const Ray& ray) {
-    constexpr double kEarthRadiusMeters = 6378137.0;
     const glm::dvec3 o = ray.origin().raw();
     const glm::dvec3 d = ray.direction().raw();
     const double b = 2.0 * glm::dot(o, d);
@@ -69,9 +70,12 @@ TEST_F(CameraControllerTest, SetDistance) {
     controller_->setDistance(5.0f);
     EXPECT_FLOAT_EQ(5.0f, controller_->distance());
 
-    // 不应低于近地安全距离，避免相机穿入 WGS84 椭球。
+    // OpenGlobus PlanetCamera defaults minAltitude to 1 meter; the controller
+    // should not keep the old demo-only 1.05R (~319 km) floor.
     controller_->setDistance(1.0f);
-    EXPECT_GE(controller_->distance(), 1.05f);
+    controller_->update(0.0);
+    EXPECT_GE(camera_->position().length() - kEarthRadiusMeters, 0.0);
+    EXPECT_LT(camera_->position().length() - kEarthRadiusMeters, 2.0);
 
     // OpenGlobus-style globe navigation should allow much farther pullback than
     // the previous demo-only 12R cap while staying inside the current far plane.
@@ -381,6 +385,20 @@ TEST_F(CameraControllerTest, ViewDistanceMovesCameraTowardPickedTarget) {
     controller_->viewDistance(target, requestedDistance);
 
     EXPECT_NEAR(requestedDistance, camera_->position().distanceTo(target), 1e-3);
+    EXPECT_GT(camera_->direction().dot((target - camera_->position()).normalized()), 0.999);
+}
+
+TEST_F(CameraControllerTest, ViewDistanceAllowsOpenGlobusNearGroundDistance) {
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(7.0f);
+    controller_->update(0.0);
+
+    Vec3 target = intersectEarthSphere(
+        camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
+
+    controller_->viewDistance(target, 10.0);
+
+    EXPECT_NEAR(10.0, camera_->position().distanceTo(target), 1e-3);
     EXPECT_GT(camera_->direction().dot((target - camera_->position()).normalized()), 0.999);
 }
 

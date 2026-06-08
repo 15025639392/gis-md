@@ -17,7 +17,10 @@ constexpr double kMaxInertiaAngularVelocityRadPerSec = 5.0;
 constexpr double kInertiaDampingPerSecond = 3.0;
 constexpr double kVelocitySmoothing = 0.35;
 constexpr double kEarthRadiusMeters = 6378137.0;
-constexpr float kMinDistanceEarthRadii = 1.05f;
+constexpr double kOpenGlobusMinAltitudeMeters = 1.0;
+constexpr float kMinDistanceEarthRadii =
+    static_cast<float>((kEarthRadiusMeters + kOpenGlobusMinAltitudeMeters) /
+                       kEarthRadiusMeters);
 constexpr float kMaxDistanceEarthRadii = 30.0f;
 constexpr double kOpenGlobusTouchJerkLimit = 0.3;
 constexpr double kOpenGlobusTouchInertia = 0.007;
@@ -298,11 +301,10 @@ void CameraController::setRotation(const glm::dquat& q) {
 }
 
 void CameraController::viewDistance(const Vec3& targetWorld, double distanceMeters) {
-    const double minDistanceMeters = kMinDistanceEarthRadii * kEarthRadiusMeters;
     const double maxDistanceMeters = kMaxDistanceEarthRadii * kEarthRadiusMeters;
     const double clampedDistance = std::clamp(
         distanceMeters,
-        minDistanceMeters * 0.01,
+        kOpenGlobusMinAltitudeMeters,
         maxDistanceMeters);
 
     glm::dvec3 away = camera_->position().raw() - targetWorld.raw();
