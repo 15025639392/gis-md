@@ -179,7 +179,7 @@ void CameraController::onPinchGesture(float scale,
             rotateCameraAroundPoint(
                 pointOnEarth,
                 pinchEarthUpNormal_.raw(),
-                -static_cast<double>(rotationRadians));
+                static_cast<double>(rotationRadians));
         }
 
         if (std::abs(centerDeltaX) > 0.5f || std::abs(centerDeltaY) > 0.5f) {
@@ -207,7 +207,7 @@ void CameraController::onPinchGesture(float scale,
             if (std::abs(centerDeltaY) > 0.5f) {
                 rotateCameraVerticalAroundPoint(
                     pointOnEarth,
-                    sensitivity * static_cast<double>(centerDeltaY),
+                    -sensitivity * static_cast<double>(centerDeltaY),
                     kOpenGlobusTouchMinSlope);
             }
         }

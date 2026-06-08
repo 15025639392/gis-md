@@ -41,6 +41,10 @@ glm::dvec2 projectToScreen(const Camera& camera, const Vec3& world) {
     };
 }
 
+double cameraSlope(const Camera& camera) {
+    return camera.direction().dot(-camera.position().normalized());
+}
+
 } // namespace
 
 class CameraControllerTest : public ::testing::Test {
@@ -326,8 +330,8 @@ TEST_F(CameraControllerTest, PinchRotationSignMatchesOpenGlobusDeltaAngle) {
     controller_->update(0.0);
     const glm::dvec2 negativeProjected = projectToScreen(*camera_, reference);
 
-    EXPECT_LT(positiveProjected.x, 400.0);
-    EXPECT_GT(negativeProjected.x, 400.0);
+    EXPECT_GT(positiveProjected.x, 400.0);
+    EXPECT_LT(negativeProjected.x, 400.0);
     EXPECT_NEAR(positiveProjected.y, negativeProjected.y, 1e-6);
 }
 
@@ -337,7 +341,7 @@ TEST_F(CameraControllerTest, PinchTiltChangesCamera) {
     auto before = camera_->viewMatrix();
 
     controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
-    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 40.0f);
+    controller_->onPinchGesture(1.0f, 400.0f, 260.0f, 0.0f, 0.0f, -40.0f);
     controller_->update(0.0);
 
     auto after = camera_->viewMatrix();
@@ -350,6 +354,31 @@ TEST_F(CameraControllerTest, PinchTiltChangesCamera) {
         }
     }
     EXPECT_TRUE(changed);
+}
+
+TEST_F(CameraControllerTest, PinchPushUpIncreasesTiltPullDownDecreasesTilt) {
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->update(0.0);
+    const double beforePushUpSlope = cameraSlope(*camera_);
+
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.0f, 400.0f, 260.0f, 0.0f, 0.0f, -40.0f);
+    controller_->update(0.0);
+    const double afterPushUpSlope = cameraSlope(*camera_);
+
+    EXPECT_LT(afterPushUpSlope, beforePushUpSlope);
+
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->onPinchEnd();
+    controller_->update(0.0);
+    const double beforePullDownSlope = cameraSlope(*camera_);
+
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.0f, 400.0f, 340.0f, 0.0f, 0.0f, 40.0f);
+    controller_->update(0.0);
+    const double afterPullDownSlope = cameraSlope(*camera_);
+
+    EXPECT_GT(afterPullDownSlope, beforePullDownSlope);
 }
 
 TEST_F(CameraControllerTest, PinchHorizontalPanChangesCamera) {
