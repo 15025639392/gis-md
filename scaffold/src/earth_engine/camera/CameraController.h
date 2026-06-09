@@ -27,6 +27,12 @@ public:
     using SurfacePicker = std::function<bool(float xPixels, float yPixels, Vec3& outPoint)>;
     void setSurfacePicker(SurfacePicker picker);
 
+    /// Terrain height query, matching OpenGlobus PlanetCamera.checkTerrainCollision.
+    /// Returns height above WGS84 ellipsoid (meters) at the given ECEF position.
+    /// When set, collision clamping uses terrain height instead of bare ellipsoid.
+    using TerrainHeightFunc = std::function<double(const Vec3& ecefPosition)>;
+    void setTerrainHeightFunc(TerrainHeightFunc func);
+
     /// drag 开始（手指按下）
     /// @param timestamp 单调时钟时间戳（秒），用于惯性角速度计算
     void onDragStart(float xPixels, float yPixels, double timestamp = 0.0);
@@ -86,8 +92,13 @@ private:
     void applyCameraRotation(const glm::dquat& delta);
     void syncDistanceFromCamera();
 
+    /// OpenGlobus PlanetCamera.checkTerrainCollision equivalent.
+    /// Clamps eye to at least kOpenGlobusMinAltitudeMeters above terrain/ellipsoid.
+    glm::dvec3 clampEyeAltitude(const glm::dvec3& eye) const;
+
     Camera* camera_;
     SurfacePicker surfacePicker_;
+    TerrainHeightFunc terrainHeightFunc_;
     int viewportWidth_ = 1;
     int viewportHeight_ = 1;
 

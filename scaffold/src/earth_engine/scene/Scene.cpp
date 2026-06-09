@@ -1,5 +1,7 @@
 #include "Scene.h"
 #include "Camera.h"
+#include "../core/geodesy/Ellipsoid.h"
+#include "../core/geodesy/Cartographic.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -484,6 +486,19 @@ void Scene::configureCameraSurfacePicker() {
 
             outPoint = result.worldPosition;
             return true;
+        });
+
+    // Terrain collision: inject terrain height query (OpenGlobus
+    // PlanetCamera.checkTerrainCollision equivalent).
+    cameraController_->setTerrainHeightFunc(
+        [this](const Vec3& ecefPosition) -> double {
+            if (!terrainLayer_ || !terrainEnabled_) return 0.0;
+            const auto& ellipsoid = Ellipsoid::WGS84();
+            const Cartographic c = ellipsoid.cartesianToCartographic(ecefPosition);
+            return static_cast<double>(
+                terrainLayer_->sampleHeight(
+                    static_cast<float>(c.longitude()),
+                    static_cast<float>(c.latitude())));
         });
 }
 

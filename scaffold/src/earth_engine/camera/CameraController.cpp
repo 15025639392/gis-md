@@ -51,12 +51,22 @@ glm::dquat defaultViewRotation() {
     return glm::angleAxis(angle, axis);
 }
 
-glm::dvec3 clampEyeToOpenGlobusMinAltitude(const glm::dvec3& eye) {
-    const double minRadius = kEarthRadiusMeters + kOpenGlobusMinAltitudeMeters;
+glm::dvec3 clampEyeToOpenGlobusMinAltitude(const glm::dvec3& eye,
+                                           const CameraController::TerrainHeightFunc& terrainFunc) {
     const double radius = glm::length(eye);
-    if (radius >= minRadius || radius < 1e-6) {
-        return eye;
+    if (radius < 1e-6) return eye;
+
+    double terrainHeight = 0.0;
+    if (terrainFunc) {
+        // Query terrain height at the sub-camera point on the ellipsoid surface.
+        const Vec3 subPoint = Vec3(glm::normalize(eye) * kEarthRadiusMeters);
+        terrainHeight = terrainFunc(subPoint);
     }
+
+    const double minRadius = kEarthRadiusMeters + std::max(terrainHeight, 0.0) +
+                             kOpenGlobusMinAltitudeMeters;
+
+    if (radius >= minRadius) return eye;
     return glm::normalize(eye) * minRadius;
 }
 
@@ -76,6 +86,10 @@ void CameraController::setViewport(int widthPixels, int heightPixels) {
 
 void CameraController::setSurfacePicker(SurfacePicker picker) {
     surfacePicker_ = std::move(picker);
+}
+
+void CameraController::setTerrainHeightFunc(TerrainHeightFunc func) {
+    terrainHeightFunc_ = std::move(func);
 }
 
 void CameraController::onDragStart(float xPixels, float yPixels, double timestamp) {
@@ -172,7 +186,7 @@ void CameraController::onPinchGesture(float scale,
         glm::dvec3 nextEye =
             camera_->position().raw() +
             camera_->direction().raw() * moveMeters;
-        nextEye = clampEyeToOpenGlobusMinAltitude(nextEye);
+        nextEye = clampEyeAltitude(nextEye);
         const double nextDistanceRadii =
             glm::length(nextEye) / kEarthRadiusMeters;
         if (nextDistanceRadii <= kMaxDistanceEarthRadii) {
@@ -229,7 +243,7 @@ void CameraController::onPinchGesture(float scale,
         glm::dvec3 nextEye =
             camera_->position().raw() +
             camera_->direction().raw() * moveMeters;
-        nextEye = clampEyeToOpenGlobusMinAltitude(nextEye);
+        nextEye = clampEyeAltitude(nextEye);
         if ((glm::length(nextEye) / kEarthRadiusMeters) <= kMaxDistanceEarthRadii) {
             camera_->setView(Vec3(nextEye), camera_->direction(), camera_->up());
             syncDistanceFromCamera();
@@ -259,7 +273,7 @@ void CameraController::update(double deltaSeconds) {
                 std::abs(delta.z) > 1e-12) {
                 applyCameraRotation(delta);
                 // OpenGlobus: terrain collision check during touch inertia
-                glm::dvec3 clampedEye = clampEyeToOpenGlobusMinAltitude(
+                glm::dvec3 clampedEye = clampEyeAltitude(
                     camera_->position().raw());
                 if (glm::length(clampedEye - camera_->position().raw()) > 1e-6) {
                     camera_->setView(Vec3(clampedEye), camera_->direction(),
@@ -277,7 +291,7 @@ void CameraController::update(double deltaSeconds) {
         } else {
             applyCameraRotation(delta);
             // OpenGlobus: terrain collision check during inertia
-            glm::dvec3 clampedEye = clampEyeToOpenGlobusMinAltitude(
+            glm::dvec3 clampedEye = clampEyeAltitude(
                 camera_->position().raw());
             if (glm::length(clampedEye - camera_->position().raw()) > 1e-6) {
                 camera_->setView(Vec3(clampedEye), camera_->direction(),
@@ -437,6 +451,10 @@ void CameraController::syncDistanceFromCamera() {
     distance_ = static_cast<float>(camera_->position().length() / kEarthRadiusMeters);
 }
 
+glm::dvec3 CameraController::clampEyeAltitude(const glm::dvec3& eye) const {
+    return clampEyeToOpenGlobusMinAltitude(eye, terrainHeightFunc_);
+}
+
 void CameraController::keepAnchorAtScreenPoint(const Vec3& anchorNormal,
                                                float xPixels,
                                                float yPixels) {
@@ -560,7 +578,7 @@ void CameraController::applyAnchorDrag(float xPixels, float yPixels,
         glm::dvec3 planeHit;
         if (intersectPlane(ray, p0, planeNormal, planeHit)) {
             glm::dvec3 newEye = dragStartEye_.raw() - (planeHit - p0);
-            newEye = clampEyeToOpenGlobusMinAltitude(newEye);
+            newEye = clampEyeAltitude(newEye);
             camera_->setView(Vec3(newEye), camera_->direction(), camera_->up());
             syncDistanceFromCamera();
             touchInertiaScale_ = 0.0;
@@ -584,7 +602,7 @@ void CameraController::applyAnchorDrag(float xPixels, float yPixels,
     applyCameraRotation(delta);
     // OpenGlobus: cam.checkTerrainCollision() after every camera move
     {
-        glm::dvec3 clampedEye = clampEyeToOpenGlobusMinAltitude(
+        glm::dvec3 clampedEye = clampEyeAltitude(
             camera_->position().raw());
         if (glm::length(clampedEye - camera_->position().raw()) > 1e-6) {
             camera_->setView(Vec3(clampedEye), camera_->direction(),
