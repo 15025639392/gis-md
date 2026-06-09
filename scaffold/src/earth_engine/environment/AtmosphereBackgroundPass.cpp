@@ -121,105 +121,63 @@ void main() {
     float TOP_RADIUS = u_topRadius;
 
     vec3 light = vec3(0.0);
-    vec3 transmittanceFromCameraToSpace = vec3(1.0);
 
-    // Ray-sphere intersection with atmosphere
-    float offset = 0.0;
-    float distanceToSpace = 0.0;
-
+    // Check ray intersection with atmosphere and Earth
     vec2 atmHit = intersectSphere(cameraPosition, rayDirection, vec3(0.0), TOP_RADIUS);
-    if (atmHit.y > 0.0 && atmHit.x < atmHit.y) {
-        offset = max(atmHit.x, 0.0);
-        distanceToSpace = atmHit.y;
+    vec2 groundHit = intersectSphere(cameraPosition, rayDirection, vec3(0.0), BOTTOM_RADIUS);
 
-        vec3 rayOrigin = cameraPosition + rayDirection * offset;
+    bool hitsAtmosphere = (atmHit.y > 0.0 && atmHit.x < atmHit.y);
+    bool hitsGround = (groundHit.x > 0.0 && groundHit.x < atmHit.y);
 
-        float height = length(rayOrigin) - BOTTOM_RADIUS;
-        float rayAngle = dot(rayOrigin, rayDirection) / length(rayOrigin);
+    // Discard pixels that hit the Earth (covered by globe/tiles)
+    if (hitsGround) {
+        discard;
+    }
 
-        // Simplified transmittance: approximate as exp(-opticalDepth)
-        // For the background pass, we use single-scattering integration
+    if (hitsAtmosphere) {
+        // Compute the closest approach of the ray to Earth's center
+        vec3 oc = -cameraPosition;
+        float b = dot(oc, rayDirection);
+        float c = dot(oc, oc);
+        float closestDist2 = max(0.0, c - b * b);
+        float closestDist = sqrt(closestDist2);
+        float tangentHeight = closestDist - BOTTOM_RADIUS;
 
-        float phaseAngle = dot(lightDirection, rayDirection);
-        float rayleighPhaseVal = rayleighPhase(phaseAngle);
-        float miePhaseVal = miePhase(phaseAngle);
+        // Only glow if ray passes through atmosphere
+        if (tangentHeight > 0.0 && tangentHeight < u_atmosHeight) {
+            // Exponential falloff based on tangent height
+            float density = exp(-tangentHeight / u_rayleighScaleHeight);
 
-        // Earth shadow: check if ray hits the ground
-        float distanceToGround = 0.0;
-        vec2 groundHit = intersectSphere(cameraPosition, rayDirection, vec3(0.0), BOTTOM_RADIUS);
-        bool hitGround = (groundHit.x > 0.0 && groundHit.x < distanceToSpace);
+            // Compute scattering angle between view and sun
+            float cosTheta = dot(rayDirection, lightDirection);
 
-        // If ray hits ground at a close distance, discard (render as black/earth color)
-        float earthEdge = BOTTOM_RADIUS - 200000.0;
-        vec2 edgeHit = intersectSphere(cameraPosition, rayDirection, vec3(0.0), earthEdge);
-        if (edgeHit.x > 0.0 && edgeHit.x < distanceToSpace && hitGround) {
-            discard;
-        }
+            // Rayleigh: strong forward+backward, blue-rich
+            float rayleigh = 1.0 + cosTheta * cosTheta;
+            vec3 rayleighColor = vec3(0.3, 0.6, 1.0);
 
-        float segmentLength = ((hitGround ? distanceToGround : distanceToSpace) - offset) / 20.0;
-        float t = segmentLength * 0.5;
+            // Mie: strong forward (sun direction)
+            float mie = 1.0 / max(1.0 - 0.9 * cosTheta, 0.01);
+            vec3 mieColor = vec3(1.0, 0.9, 0.7);
 
-        for (int i = 0; i < 20; i++) {
-            vec3 position = rayOrigin + float(i) * segmentLength * rayDirection;
-            float h = length(position) - BOTTOM_RADIUS;
-            if (h < 0.0) break;
+            // Path length through atmosphere (longer at tangent, shorter at limb)
+            float pathLength = sqrt(max(0.0, TOP_RADIUS * TOP_RADIUS - closestDist * closestDist));
 
-            vec3 up = position / length(position);
-            float lightAngle = dot(up, lightDirection);
+            // Glow intensity
+            float intensity = density * pathLength * 0.00001 * u_sunIntensity;
 
-            // Density at this height
-            float rayleighDensity = exp(-h / u_rayleighScaleHeight);
-            float mieDensity = exp(-h / u_mieScaleHeight);
+            light = (rayleighColor * rayleigh + mieColor * mie * 0.3) * intensity;
 
-            // Optical depth from sun to this point (approximate)
-            float sunPathLength = TOP_RADIUS / max(abs(lightAngle), 0.05);
-            float rayleighOD = u_rayleighScattering.r * rayleighDensity * sunPathLength;
-            float mieOD = u_mieScattering.r * mieDensity * sunPathLength;
-
-            vec3 extinction = vec3(exp(-(rayleighOD + mieOD)));
-
-            // Scattered light at this point
-            vec3 scattered = (u_rayleighScattering * rayleighDensity * rayleighPhaseVal +
-                              u_mieScattering * mieDensity * miePhaseVal) *
-                             extinction * u_sunIntensity;
-
-            // Transmittance from point to camera (simplified)
-            float camPathLength = t;
-            float camRayleighOD = u_rayleighScattering.r * rayleighDensity * camPathLength;
-            float camMieOD = u_mieScattering.r * mieDensity * camPathLength;
-            vec3 camTransmittance = vec3(exp(-(camRayleighOD + camMieOD)));
-
-            light += scattered * camTransmittance * segmentLength;
-            t += segmentLength;
-        }
-
-        light *= u_sunIntensity;
-
-        // Sun disk
-        if (!hitGround) {
-            float sunAngle = dot(rayDirection, lightDirection);
-            float sunAngularRadius = 0.004685;
-            if (sunAngle > cos(sunAngularRadius * 3.0)) {
-                float sunMask = smoothstep(cos(sunAngularRadius * 3.0),
-                                           cos(sunAngularRadius * 1.5),
-                                           sunAngle);
-                light += vec3(1.0, 0.95, 0.8) * sunMask * u_sunIntensity * 0.5;
+            // Sun disk in atmosphere
+            if (cosTheta > 0.9998) {
+                light += vec3(1.0, 0.95, 0.8) * 0.5 * u_sunIntensity;
             }
-        }
-
-        // Ground reflection for horizon
-        if (hitGround) {
-            vec3 hitPoint = cameraPosition + rayDirection * distanceToGround;
-            vec3 up = hitPoint / length(hitPoint);
-            float diffuseAngle = max(dot(up, lightDirection), 0.0);
-            light += vec3(0.15, 0.12, 0.1) * u_groundAlbedo * diffuseAngle * u_sunIntensity;
         }
     }
 
-    // HDR tone mapping
+    // Tone mapping
     light = light / (light + vec3(1.0));
 
-    // Discard pixels outside atmosphere (no glow visible)
+    // Discard pixels with negligible atmosphere glow
     if (dot(light, light) < 0.0001) {
         discard;
     }
@@ -370,19 +328,19 @@ RenderCommand AtmosphereBackgroundPass::buildCommand(
     cmd.uniforms["u_bottomRadius"] = {static_cast<float>(p.bottomRadius)};
     cmd.uniforms["u_topRadius"] = {static_cast<float>(p.topRadius())};
     cmd.uniforms["u_rayleighScattering"] = {
-        static_cast<float>(p.rayleigh.r * 1e-6 * p.rayleighSeaLevelScattering),
-        static_cast<float>(p.rayleigh.g * 1e-6 * p.rayleighSeaLevelScattering),
-        static_cast<float>(p.rayleigh.b * 1e-6 * p.rayleighSeaLevelScattering)
+        static_cast<float>(p.rayleigh.r * 5e-5),
+        static_cast<float>(p.rayleigh.g * 5e-5),
+        static_cast<float>(p.rayleigh.b * 5e-5)
     };
     cmd.uniforms["u_mieScattering"] = {
-        static_cast<float>(p.mie.scattering * 1e-6 * p.mieSeaLevelScattering),
-        static_cast<float>(p.mie.scattering * 1e-6 * p.mieSeaLevelScattering * 0.8f),
-        static_cast<float>(p.mie.scattering * 1e-6 * p.mieSeaLevelScattering * 0.5f)
+        static_cast<float>(p.mie.scattering * 5e-5),
+        static_cast<float>(p.mie.scattering * 5e-5 * 0.8f),
+        static_cast<float>(p.mie.scattering * 5e-5 * 0.5f)
     };
     cmd.uniforms["u_ozoneAbsorption"] = {
-        static_cast<float>(p.ozone.r * 1e-6),
-        static_cast<float>(p.ozone.g * 1e-6),
-        static_cast<float>(p.ozone.b * 1e-6)
+        static_cast<float>(p.ozone.r * 5e-5),
+        static_cast<float>(p.ozone.g * 5e-5),
+        static_cast<float>(p.ozone.b * 5e-5)
     };
     cmd.uniforms["u_rayleighScaleHeight"] = {static_cast<float>(p.rayleighScaleHeight)};
     cmd.uniforms["u_mieScaleHeight"] = {static_cast<float>(p.mieScaleHeight)};
