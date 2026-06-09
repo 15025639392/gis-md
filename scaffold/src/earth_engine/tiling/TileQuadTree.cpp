@@ -178,6 +178,13 @@ double openglobusLodSizePixels(const Camera& camera) {
         (kOpenGlobusMinLodPixels - kOpenGlobusCurrentLodPixels) * slope;
 }
 
+// OpenGlobus Camera._projSizeConst:
+//   _projSizeConst = min(max(w,512), max(h,512)) / (viewAngle * RADIANS)
+// where viewAngle = 47° and RADIANS = π/180.
+// The viewAngle is independent of the actual projection FOV used for rendering —
+// it is a tuning constant that controls LOD subdivision granularity.
+constexpr double kOpenGlobusViewAngleRadians = 47.0 * glm::pi<double>() / 180.0;
+
 double projectedSizePixels(const Camera& camera,
                            const Vec3& center,
                            double radiusMeters,
@@ -187,7 +194,7 @@ double projectedSizePixels(const Camera& camera,
     const double viewport = std::min(
         viewportWidthPixels < 512.0 ? 512.0 : viewportWidthPixels,
         viewportHeightPixels < 512.0 ? 512.0 : viewportHeightPixels);
-    const double projSizeConst = viewport / camera.verticalFovRadians();
+    const double projSizeConst = viewport / kOpenGlobusViewAngleRadians;
     return std::atan(radiusMeters / distance) * projSizeConst;
 }
 
@@ -435,17 +442,23 @@ bool TileNode::isHorizonTangent(const Camera& camera) const {
 bool TileNode::shouldSubdivide(const Camera& camera,
                                double viewportWidthPixels,
                                double viewportHeightPixels) const {
+    // OpenGlobus LOD decision (renderTree):
+    //   1. if projectedSize < lodSize → STOP (good enough)
+    //   2. if projectedSize >= lodSize && checkZoom() → SUBDIVIDE
+    //   3. otherwise → RENDER current
+    //
+    // For imagery tiles, checkZoom() corresponds to "is there data at a deeper
+    // zoom?" which is determined by canSubdivide (z < maxZoom) in the caller.
     const double projectedPixels = projectedSizePixels(
         camera,
         boundingCenter_,
         boundingRadiusMeters_,
         viewportWidthPixels,
         viewportHeightPixels);
-    const double refineThreshold = std::clamp(
-        openglobusLodSizePixels(camera),
-        kOpenGlobusMaxLodPixels,
-        kOpenGlobusMinLodPixels);
-    return projectedPixels > refineThreshold;
+    const double lodSize = openglobusLodSizePixels(camera);
+
+    // Stop when screen-projected tile size <= LOD threshold.
+    return projectedPixels > lodSize;
 }
 
 bool TileNode::childrenPreviousStateEquals(TileNodeState state) const {
@@ -513,11 +526,14 @@ void TileNode::traverse(const TileScheme& scheme,
 
     const bool canSubdivide = key_.z < scheme.maxZoom();
     const bool mustSubdivide = key_.z < std::max(scheme.minZoom(), kAlwaysSubdivideUntilZoom);
-    const bool cameraInsideNeedsHeightZoom =
-        cameraInside_ && key_.z < cameraInsideTargetZoom;
+    // OpenGlobus does NOT force-subdivide based on camera-inside in the primary
+    // traverse — cameraInside_ only gates the equal-zoom pass.  Forcing deep
+    // subdivision here creates excessive tiny tiles at near-ground zoom with no
+    // corresponding imagery data, causing stutter.
+    const bool cameraInsideNeedsHeightZoom = false;
+    (void)cameraInsideTargetZoom;
     const bool refine = mustSubdivide || (canSubdivide && shouldSubdivide(
-        camera, viewportWidthPixels, viewportHeightPixels)) ||
-        (canSubdivide && cameraInsideNeedsHeightZoom);
+        camera, viewportWidthPixels, viewportHeightPixels));
     if (!altVisible && !cameraInside_) {
         state_ = TileNodeState::NotRendering;
         return;
