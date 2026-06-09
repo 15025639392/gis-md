@@ -93,32 +93,41 @@ void main() {
         rayDirection = rd.xyz;
     }
 
-    // Earth intersection for discard
-    vec2 earthHit = sphIntersect(cameraPosition, rayDirection, ZERO, u_earthRadius);
-    bool hitEarth = (earthHit.x > 0.0);
+    // Compute closest approach of ray to Earth center
+    vec3 oc = -cameraPosition;
+    float b = dot(oc, rayDirection);
+    float c = dot(oc, oc);
+    float closestDist2 = c - b * b;
+    float closestDist = sqrt(max(0.0, closestDist2));
+    float tangentHeight = closestDist - u_earthRadius;
 
-    // Discard pixels that hit the Earth (covered by globe/tiles)
-    if (hitEarth) {
+    // Discard pixels deep inside Earth (covered by globe/tiles)
+    // Keep a thin ring (~200km) at the limb for atmosphere glow
+    if (tangentHeight < -200000.0) {
         discard;
     }
 
-    // Big virtual sphere for sky gradient blending
-    // (matches OpenGlobus: bigRadius = earthRadius * 2.5, center offset along camera direction)
-    float bigRadius = u_earthRadius * 2.5;
-    vec3 bigCenter = normalize(cameraPosition) * bigRadius * 1.3;
+    vec3 color;
 
-    vec2 bigHit = sphIntersect(cameraPosition, rayDirection, bigCenter, bigRadius);
+    if (tangentHeight < 0.0) {
+        // Ray grazes the atmosphere limb — bright blue glow
+        float glow = 1.0 + tangentHeight / 200000.0; // 0..1 from -200km to 0
+        color = u_colorZenith * glow;
+    } else {
+        // Above atmosphere — use big sphere blend for sky gradient
+        float bigRadius = u_earthRadius * 2.5;
+        vec3 bigCenter = normalize(cameraPosition) * bigRadius * 1.3;
 
-    // Distance from big sphere exit point to Earth center
-    vec3 exitPoint = cameraPosition + rayDirection * bigHit.y;
-    float distToEarthCenter = length(exitPoint);
+        vec2 bigHit = sphIntersect(cameraPosition, rayDirection, bigCenter, bigRadius);
 
-    // Normalize: 0 = looking straight up (zenith), maxDist = looking at horizon
-    float maxDist = sqrt(bigRadius * bigRadius + bigRadius * bigRadius);
-    float t = distToEarthCenter / maxDist;
+        vec3 exitPoint = cameraPosition + rayDirection * bigHit.y;
+        float distToEarthCenter = length(exitPoint);
 
-    // Blend zenith ↔ horizon
-    vec3 color = mix(u_colorZenith, u_colorHorizon, t);
+        float maxDist = sqrt(bigRadius * bigRadius + bigRadius * bigRadius);
+        float t = distToEarthCenter / maxDist;
+
+        color = mix(u_colorZenith, u_colorHorizon, t);
+    }
 
     fragColor = vec4(color, 1.0);
 }
