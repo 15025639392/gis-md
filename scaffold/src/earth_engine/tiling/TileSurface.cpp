@@ -207,15 +207,16 @@ SurfaceTileMesh TileSurface::buildTerrainMesh(const Rectangle& tileBounds,
                     surfaceCart.longitude(), surfaceCart.latitude()))
                 : 0.0;
 
-            // Edge averaging: blend border vertices with parent tile height
+            // OpenGlobus equalizeVertices: use parent tile height for border
+            // vertices.  This guarantees that adjacent tiles sharing a border
+            // compute identical vertex positions, eliminating seams.
             if (canEqualize) {
                 const bool isBorder = (x == 0 || x == n - 1 || y == 0 || y == n - 1);
                 if (isBorder) {
                     double parentH = static_cast<double>(parentTile->sampleHeight(
                         surfaceCart.longitude(), surfaceCart.latitude()));
-                    // Only blend if parent has valid (non-no-data) height
                     if (!parentTile->heightmap()->isNoData(static_cast<float>(parentH))) {
-                        h = (h + parentH) * 0.5;
+                        h = parentH;  // 100% parent — not blended
                     }
                 }
             }
@@ -267,11 +268,25 @@ SurfaceTileMesh TileSurface::buildTerrainMesh(const Rectangle& tileBounds,
     }
 
     if (terrainTile && terrainTile->valid() && skirtHeightMeters < 0.0) {
+        auto sampleSkirtHeight = [&](double u, double v) -> double {
+            TileSurfaceVertex sampled = vertexForUnitUv(tileBounds, u, v);
+            Cartographic surfaceCart = ellipsoid.cartesianToCartographic(sampled.ecef);
+            // Skirt top must match the border vertex height for seamless
+            // tile joins.  Use parent tile height when equalizing borders.
+            if (canEqualize && parentTile) {
+                double parentH = static_cast<double>(parentTile->sampleHeight(
+                    surfaceCart.longitude(), surfaceCart.latitude()));
+                if (!parentTile->heightmap()->isNoData(static_cast<float>(parentH))) {
+                    return parentH;
+                }
+            }
+            return static_cast<double>(terrainTile->sampleHeight(
+                surfaceCart.longitude(), surfaceCart.latitude()));
+        };
         auto appendVertex = [&](double u, double v, double heightOffsetMeters) {
             TileSurfaceVertex sampled = vertexForUnitUv(tileBounds, u, v);
             Cartographic surfaceCart = ellipsoid.cartesianToCartographic(sampled.ecef);
-            const double h = static_cast<double>(terrainTile->sampleHeight(
-                surfaceCart.longitude(), surfaceCart.latitude())) + heightOffsetMeters;
+            const double h = sampleSkirtHeight(u, v) + heightOffsetMeters;
             Cartographic cart = Cartographic::fromRadians(
                 surfaceCart.longitude(), surfaceCart.latitude(), h);
             SurfaceVertex vertex;
