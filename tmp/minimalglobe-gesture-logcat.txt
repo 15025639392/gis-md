@@ -1,0 +1,14 @@
+06-08 22:52:10.396  3189  3642 D ActivityManager: Async freezing 14613 com.oplus.crashbox
+06-08 22:52:20.409  3189  3759 D ActivityManager: freezing 14613 com.oplus.crashbox
+06-08 22:52:49.744 27429 27429 I MinimalGlobe: Frame 1200 | tiles vis=64 cached=64 renderSurface=32 mesh=32 attach=32 exact=32 parent=0 stale=0 missingGen=0 | sun=(0.67,-0.63,0.39) | FPS=20.0 draw=32
+06-08 22:53:04.738 27429 27429 I MinimalGlobe: Frame 1500 | tiles vis=64 cached=64 renderSurface=32 mesh=32 attach=32 exact=32 parent=0 stale=0 missingGen=0 | sun=(0.67,-0.63,0.39) | FPS=20.0 draw=32
+06-08 22:53:19.632 27429 27429 I MinimalGlobe: Frame 1800 | tiles vis=64 cached=64 renderSurface=32 mesh=32 attach=32 exact=32 parent=0 stale=0 missingGen=0 | sun=(0.67,-0.63,0.39) | FPS=20.8 draw=32
+06-08 22:53:34.619 27429 27429 I MinimalGlobe: Frame 2100 | tiles vis=64 cached=64 renderSurface=32 mesh=32 attach=32 exact=32 parent=0 stale=0 missingGen=0 | sun=(0.67,-0.64,0.39) | FPS=20.0 draw=32
+06-08 22:53:49.610 27429 27429 I MinimalGlobe: Frame 2400 | tiles vis=64 cached=64 renderSurface=32 mesh=32 attach=32 exact=32 parent=0 stale=0 missingGen=0 | sun=(0.67,-0.64,0.39) | FPS=20.0 draw=32
+06-08 22:53:50.249 27159 27309 I AndroidRuntime: VM exiting with result code 0, cleanup skipped.
+06-08 22:54:04.603 27429 27429 I MinimalGlobe: Frame 2700 | tiles vis=64 cached=64 renderSurface=32 mesh=32 attach=32 exact=32 parent=0 stale=0 missingGen=0 | sun=(0.67,-0.64,0.39) | FPS=20.0 draw=32
+06-08 22:54:24.248 27429 27429 I MinimalGlobe: Frame 3000 | tiles vis=64 cached=84 renderSurface=32 mesh=32 attach=32 exact=32 parent=0 stale=0 missingGen=0 | sun=(0.66,-0.64,0.39) | FPS=18.4 draw=32
+06-08 22:54:39.995 27429 27429 I MinimalGlobe: Frame 3300 | tiles vis=64 cached=84 renderSurface=32 mesh=32 attach=32 exact=32 parent=0 stale=0 missingGen=0 | sun=(0.66,-0.64,0.39) | FPS=20.0 draw=32
+06-08 22:54:54.986 27429 27429 I MinimalGlobe: Frame 3600 | tiles vis=64 cached=84 renderSurface=32 mesh=32 attach=32 exact=32 parent=0 stale=0 missingGen=0 | sun=(0.66,-0.64,0.39) | FPS=20.0 draw=32
+06-08 22:54:57.967 28445 28445 E libEGL  : No entry found in platform lookup table for eglSurfaceAttribMTK
+06-08 22:55:00.347 28480 28480 E libEGL  : No entry found in platform lookup table for eglSurfaceAttribMTK

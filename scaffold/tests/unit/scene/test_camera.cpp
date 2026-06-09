@@ -73,8 +73,10 @@ TEST(CameraTest, BuildsFrustumFromCurrentViewProjection) {
     EXPECT_FALSE(frustum.containsPoint(Vec3(0.0, 0.0, 12.0)));
 }
 
-TEST(SceneTest, DefaultCameraNearPlaneAllowsNearGroundViews) {
+TEST(SceneTest, DefaultCameraUsesOpenGlobusNearPlane) {
     Scene scene;
 
-    EXPECT_DOUBLE_EQ(0.1, scene.camera().nearPlaneMeters());
+    // OpenGlobus PlanetCamera reverse-Z: near=150, far=1e12.
+    EXPECT_DOUBLE_EQ(150.0, scene.camera().nearPlaneMeters());
+    EXPECT_DOUBLE_EQ(1e12, scene.camera().farPlaneMeters());
 }

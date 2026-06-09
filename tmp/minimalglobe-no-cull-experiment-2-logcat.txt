@@ -1,0 +1,19 @@
+--------- beginning of main
+06-08 22:02:16.695 14999 14999 I MinimalGlobe: EGL initialized: 1240x2772, GL: OpenGL ES 3.2 V@0615.100 (GIT@b82916be04, I507ba793b7, 1754480107) (Date:08/06/25), GLSL: OpenGL ES GLSL ES 3.20
+06-08 22:02:16.700 14999 14999 I MinimalGlobe: Engine initialized successfully, camera pos: -9465697.8,35326465.0,25608443.6
+06-08 22:02:16.700 14999 14999 I MinimalGlobe: Debug standard XYZ WebMercator layer added
+06-08 22:02:16.700 14999 14999 I MinimalGlobe: FABDEM terrain disabled for clean SurfaceTile validation
+06-08 22:02:16.700 14999 14999 I MinimalGlobe: Debug overlay disabled
+06-08 22:02:16.700 14999 14999 I MinimalGlobe: Simulation time set to JD 2461200.085 (Unix 1780927337)
+06-08 22:02:18.705 15142 15142 I MinimalGlobe: EGL initialized: 1240x2772, GL: OpenGL ES 3.2 V@0615.100 (GIT@b82916be04, I507ba793b7, 1754480107) (Date:08/06/25), GLSL: OpenGL ES GLSL ES 3.20
+06-08 22:02:18.709 15142 15142 I MinimalGlobe: Engine initialized successfully, camera pos: -9465697.8,35326465.0,25608443.6
+06-08 22:02:18.709 15142 15142 I MinimalGlobe: Debug standard XYZ WebMercator layer added
+06-08 22:02:18.709 15142 15142 I MinimalGlobe: FABDEM terrain disabled for clean SurfaceTile validation
+06-08 22:02:18.709 15142 15142 I MinimalGlobe: Debug overlay disabled
+06-08 22:02:18.709 15142 15142 I MinimalGlobe: Simulation time set to JD 2461200.085 (Unix 1780927339)
+06-08 22:02:19.642 15202 15202 I MinimalGlobe: EGL initialized: 1240x2772, GL: OpenGL ES 3.2 V@0615.100 (GIT@b82916be04, I507ba793b7, 1754480107) (Date:08/06/25), GLSL: OpenGL ES GLSL ES 3.20
+06-08 22:02:19.646 15202 15202 I MinimalGlobe: Engine initialized successfully, camera pos: -9465697.8,35326465.0,25608443.6
+06-08 22:02:19.646 15202 15202 I MinimalGlobe: Debug standard XYZ WebMercator layer added
+06-08 22:02:19.646 15202 15202 I MinimalGlobe: FABDEM terrain disabled for clean SurfaceTile validation
+06-08 22:02:19.646 15202 15202 I MinimalGlobe: Debug overlay disabled
+06-08 22:02:19.646 15202 15202 I MinimalGlobe: Simulation time set to JD 2461200.085 (Unix 1780927340)

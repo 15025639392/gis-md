@@ -59,10 +59,9 @@ Scene::Scene()
       skyGradient_(std::make_unique<SkyGradient>()) {
 
     // OpenGlobus Camera defaults to a near plane of 1m and minAltitude=1m.
-    // This renderer does not implement OpenGlobus reverse-Z/multi-frustum yet,
-    // so keep a sub-meter near plane to avoid clipping terrain while the camera
-    // is clamped at the OpenGlobus minimum altitude.
-    camera_->setPerspective(glm::radians(60.0), 0.1, 50000000.0);
+    // OpenGlobus PlanetCamera reverse-Z defaults: near=150, far=1e12.
+    // Camera constructor already sets these; depth func/clear are configured
+    // per-platform by RenderDevice.
     globeMesh_ = Globe::createMesh(96, 48);
     configureCameraSurfacePicker();
     setupSelectionCallbacks();

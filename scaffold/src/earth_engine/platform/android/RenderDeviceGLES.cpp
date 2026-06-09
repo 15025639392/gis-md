@@ -235,10 +235,10 @@ std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(const Framebuff
 void RenderDeviceGLES::beginFrame() {
     glViewport(0, 0, viewportWidth_, viewportHeight_);
     glClearColor(0.0f, 0.0f, 0.1f, 1.0f);
-    glClearDepthf(1.0f);
+    glClearDepthf(0.0f);   // Reverse-Z: clear to 0 (farthest)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL); // Reverse-Z: greater depth = closer
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
 }
@@ -476,7 +476,7 @@ void RenderDeviceGLES::onSurfaceCreated() {
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL); // Reverse-Z: greater depth = closer
 }
 
 void RenderDeviceGLES::onSurfaceChanged(int width, int height) {

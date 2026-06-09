@@ -20,8 +20,9 @@ Camera::Camera()
       right_(1.0, 0.0, 0.0),
       target_(std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0),
       verticalFovRadians_(glm::radians(60.0)),
-      nearPlaneMeters_(1.0),
-      farPlaneMeters_(200000000.0) {}  // 200M — covers globe at 7 earth radii
+      // OpenGlobus PlanetCamera defaults: single frustum [150, 1e12] with reverse-Z.
+      nearPlaneMeters_(150.0),
+      farPlaneMeters_(1e12) {}
 
 void Camera::setView(const Vec3& position, const Vec3& direction, const Vec3& up) {
     position_ = position;
@@ -67,11 +68,31 @@ Mat4 Camera::projectionMatrix(double viewportWidthPixels,
         throw std::invalid_argument("Camera viewport dimensions must be positive pixels.");
     }
 
+    // Reverse-Z projection, matched to OpenGlobus PlanetCamera
+    // (reverseDepth: true, frustums: [[150, 1e12]]).
+    //
+    // Depth mapping: z_eye = near(150) → z_ndc = 1, z_eye = far(1e12) → z_ndc = 0.
+    // Requires: depth clear = 0.0, depth func = GreaterEqual.
+    //
+    // Matrix (column-major, glm convention):
+    //   P[2][2] =  near/(far-near)
+    //   P[2][3] = -far*near/(far-near)
+    //   P[3][2] = -1  (standard w_clip = -z_eye)
+
     const double aspect = viewportWidthPixels / viewportHeightPixels;
-    return Mat4(glm::perspective(verticalFovRadians_,
-                                 aspect,
-                                 nearPlaneMeters_,
-                                 farPlaneMeters_));
+    const double f = 1.0 / std::tan(verticalFovRadians_ * 0.5);
+    const double n = nearPlaneMeters_;
+    const double r = farPlaneMeters_;  // "far" becomes the near limit in reverse-Z
+    const double invRange = 1.0 / (r - n);
+
+    glm::dmat4 proj(0.0);
+    proj[0][0] = f / aspect;
+    proj[1][1] = f;
+    proj[2][2] = n * invRange;
+    proj[2][3] = -1.0;                  // P[3][2] = -1 → w_clip = -z_eye
+    proj[3][2] = r * n * invRange;      // P[2][3] = +far*near/(far-near)
+
+    return Mat4(proj);
 }
 
 Mat4 Camera::viewProjectionMatrix(double viewportWidthPixels,
@@ -99,8 +120,9 @@ Ray Camera::getPickRay(double screenXPixels,
     const glm::dmat4 inverseViewProjection =
         glm::inverse(viewProjectionMatrix(viewportWidthPixels, viewportHeightPixels).raw());
 
-    const glm::dvec4 nearClip(ndcX, ndcY, -1.0, 1.0);
-    const glm::dvec4 farClip(ndcX, ndcY, 1.0, 1.0);
+    // Reverse-Z depth [0,1]: near(150m) → z_ndc=1, far(1e12) → z_ndc=0.
+    const glm::dvec4 nearClip(ndcX, ndcY, 1.0, 1.0);
+    const glm::dvec4 farClip(ndcX, ndcY, 0.0, 1.0);
 
     glm::dvec4 nearWorld = inverseViewProjection * nearClip;
     glm::dvec4 farWorld = inverseViewProjection * farClip;

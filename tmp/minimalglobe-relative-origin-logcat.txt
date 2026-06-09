@@ -1,0 +1,19 @@
+--------- beginning of main
+06-08 21:59:54.252 13962 13962 I MinimalGlobe: EGL initialized: 1240x2772, GL: OpenGL ES 3.2 V@0615.100 (GIT@b82916be04, I507ba793b7, 1754480107) (Date:08/06/25), GLSL: OpenGL ES GLSL ES 3.20
+06-08 21:59:54.255 13962 13962 I MinimalGlobe: Engine initialized successfully, camera pos: -9465697.8,35326465.0,25608443.6
+06-08 21:59:54.256 13962 13962 I MinimalGlobe: Debug standard XYZ WebMercator layer added
+06-08 21:59:54.256 13962 13962 I MinimalGlobe: FABDEM terrain disabled for clean SurfaceTile validation
+06-08 21:59:54.256 13962 13962 I MinimalGlobe: Debug overlay disabled
+06-08 21:59:54.256 13962 13962 I MinimalGlobe: Simulation time set to JD 2461200.083 (Unix 1780927194)
+06-08 21:59:54.296 13962 13962 I GLES    : submit #1: 1 commands, glError=0
+06-08 21:59:54.298 13962 13962 I MinimalGlobe: Frame 1 | tiles vis=24 cached=0 renderSurface=0 mesh=0 attach=0 exact=0 parent=0 stale=0 missingGen=0 | sun=(0.80,-0.46,0.39) | FPS=6.0 draw=1
+06-08 21:59:54.315 13962 13962 I BasemapLayer: Tile uploaded: 3/1/0 256x256
+06-08 21:59:54.316 13962 13962 I BasemapLayer: Tile uploaded: 3/2/0 256x256
+06-08 21:59:54.316 13962 13962 I BasemapLayer: Tile uploaded: 3/3/0 256x256
+06-08 21:59:54.316 13962 13962 I BasemapLayer: Tile uploaded: 3/1/1 256x256
+06-08 21:59:56.305 13962 13962 I BasemapLayer: Tile uploaded: 3/2/1 256x256
+06-08 21:59:56.330 13962 13962 I BasemapLayer: Tile uploaded: 3/3/1 256x256
+06-08 21:59:56.330 13962 13962 I BasemapLayer: Tile uploaded: 3/1/2 256x256
+06-08 21:59:56.331 13962 13962 I BasemapLayer: Tile uploaded: 3/3/2 256x256
+06-08 21:59:57.930 13962 13962 I GLES    : submit #300: 8 commands, glError=0
+06-08 21:59:57.931 13962 13962 I MinimalGlobe: Frame 300 | tiles vis=24 cached=8 renderSurface=8 mesh=8 attach=8 exact=8 parent=0 stale=0 missingGen=0 | sun=(0.80,-0.46,0.39) | FPS=60.0 draw=8

@@ -1,0 +1,28 @@
+--------- beginning of main
+06-08 22:15:55.998 18269 18269 I MinimalGlobe: EGL initialized: 1240x2772, GL: OpenGL ES 3.2 V@0615.100 (GIT@b82916be04, I507ba793b7, 1754480107) (Date:08/06/25), GLSL: OpenGL ES GLSL ES 3.20
+06-08 22:15:56.002 18269 18269 I MinimalGlobe: Engine initialized successfully, camera pos: -9465697.8,35326465.0,25608443.6
+06-08 22:15:56.002 18269 18269 I MinimalGlobe: Debug standard XYZ WebMercator layer added
+06-08 22:15:56.002 18269 18269 I MinimalGlobe: FABDEM terrain disabled for clean SurfaceTile validation
+06-08 22:15:56.002 18269 18269 I MinimalGlobe: Debug overlay disabled
+06-08 22:15:56.002 18269 18269 I MinimalGlobe: Simulation time set to JD 2461200.094 (Unix 1780928156)
+06-08 22:15:56.061 18269 18269 I GLES    : submit #1: 1 commands, glError=0
+06-08 22:15:56.063 18269 18269 I MinimalGlobe: Frame 1 | tiles vis=33 cached=0 renderSurface=0 mesh=0 attach=0 exact=0 parent=0 stale=0 missingGen=0 | sun=(0.76,-0.52,0.39) | FPS=6.0 draw=1
+06-08 22:15:56.078 18269 18269 I BasemapLayer: Tile uploaded: 3/1/0 256x256
+06-08 22:15:56.079 18269 18269 I BasemapLayer: Tile uploaded: 3/2/0 256x256
+06-08 22:15:56.079 18269 18269 I BasemapLayer: Tile uploaded: 3/3/0 256x256
+06-08 22:15:56.079 18269 18269 I BasemapLayer: Tile uploaded: 3/1/1 256x256
+06-08 22:15:56.099 18269 18269 I BasemapLayer: Tile uploaded: 3/2/1 256x256
+06-08 22:15:56.099 18269 18269 I BasemapLayer: Tile uploaded: 3/3/1 256x256
+06-08 22:15:56.099 18269 18269 I BasemapLayer: Tile uploaded: 3/1/2 256x256
+06-08 22:15:56.100 18269 18269 I BasemapLayer: Tile uploaded: 3/3/2 256x256
+06-08 22:15:56.123 18269 18269 I BasemapLayer: Tile uploaded: 3/5/2 256x256
+06-08 22:15:56.123 18269 18269 I BasemapLayer: Tile uploaded: 3/6/2 256x256
+06-08 22:15:56.123 18269 18269 I BasemapLayer: Tile uploaded: 3/7/2 256x256
+06-08 22:15:56.123 18269 18269 I BasemapLayer: Tile uploaded: 3/5/3 256x256
+06-08 22:15:56.156 18269 18269 I BasemapLayer: Tile uploaded: 3/6/3 256x256
+06-08 22:15:56.156 18269 18269 I BasemapLayer: Tile uploaded: 3/7/3 256x256
+06-08 22:15:56.156 18269 18269 I BasemapLayer: Tile uploaded: 3/5/4 256x256
+06-08 22:15:56.156 18269 18269 I BasemapLayer: Tile uploaded: 3/6/4 256x256
+06-08 22:15:56.189 18269 18269 I BasemapLayer: Tile uploaded: 3/7/4 256x256
+06-08 22:16:05.498 18269 18269 I GLES    : submit #300: 17 commands, glError=0
+06-08 22:16:05.499 18269 18269 I MinimalGlobe: Frame 300 | tiles vis=33 cached=17 renderSurface=17 mesh=17 attach=17 exact=17 parent=0 stale=0 missingGen=0 | sun=(0.76,-0.52,0.39) | FPS=30.1 draw=17

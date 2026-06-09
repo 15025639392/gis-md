@@ -70,7 +70,8 @@ static id<MTLDepthStencilState> makeDepthState(id<MTLDevice> device,
                                                bool enabled,
                                                bool write) {
     MTLDepthStencilDescriptor* desc = [MTLDepthStencilDescriptor new];
-    desc.depthCompareFunction = enabled ? MTLCompareFunctionLessEqual : MTLCompareFunctionAlways;
+    // Reverse-Z: greater depth = closer. Matches OpenGlobus reverseDepth:true.
+    desc.depthCompareFunction = enabled ? MTLCompareFunctionGreaterEqual : MTLCompareFunctionAlways;
     desc.depthWriteEnabled = enabled && write;
     return [device newDepthStencilStateWithDescriptor:desc];
 }
@@ -284,7 +285,7 @@ void RenderDeviceMetal::beginFrame() {
     passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
     passDesc.depthAttachment.texture = impl_->depthTexture;
     passDesc.depthAttachment.loadAction = MTLLoadActionClear;
-    passDesc.depthAttachment.clearDepth = 1.0;
+    passDesc.depthAttachment.clearDepth = 0.0;  // Reverse-Z: clear to 0 (farthest)
     passDesc.depthAttachment.storeAction = MTLStoreActionDontCare;
 
     impl_->currentEncoder =

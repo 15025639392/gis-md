@@ -1,0 +1,225 @@
+--------- beginning of main
+06-09 01:10:26.737 16603 16603 I ne.minimalglobe: isSwordfishLaunchAppEnabled_ 1 isSwordfishInstallAppEnabled_ 1
+06-09 01:10:26.737 16603 16603 I ne.minimalglobe: Late-enabling -Xcheck:jni
+06-09 01:10:26.758 16603 16603 E ne.minimalglobe: Unknown bits set in runtime_flags: 0x40000000
+06-09 01:10:26.758 16603 16603 I ne.minimalglobe: Using CollectorTypeCMC GC.
+06-09 01:10:26.764 16603 16603 D nativeloader: Load libframework-connectivity-tiramisu-jni.so using APEX ns com_android_tethering for caller /apex/com.android.tethering/javalib/framework-connectivity-t.jar: ok
+06-09 01:10:26.769 16603 16603 W libc    : Access denied finding property "persist.vendor.sys.activitylog"
+06-09 01:10:26.769 16603 16603 I OneTrace: Mark active for pid=16603? true
+06-09 01:10:26.769 16603 16603 D cutils-dev: otrace_set_tracing_enabled? true tag:0
+06-09 01:10:26.769 16603 16612 D cutils-dev: properties changed in otrace_seq_number_changed!
+06-09 01:10:26.788 16603 16619 D OplusActivityManager: get AMS extension: android.os.BinderProxy@3f82f32
+06-09 01:10:26.789 16603 16619 D SurfaceSyncGroup: preCreateSurfaceSyncGroupTimerThread
+06-09 01:10:26.791 16603 16603 D CompactWindowAppManager: initCompactApplicationInfo CompactMode: , NormalMode: 
+--------- beginning of system
+06-09 01:10:26.794 16603 16603 V Configuration: Updating configuration, locales updated from [] to [zh_CN]
+06-09 01:10:26.794 16603 16603 D OplusScrollToTopManager: setIsInWhiteList false
+06-09 01:10:26.795 16603 16603 D OplusViewDebugManager: OplusViewDebugManager Constructor android.view.debug.OplusViewDebugManager@2af8600 [mHasViewDebugProperty true] [mHasMsgDebugProperty false] [DEBUG false] [EXTRAINFOENABLE false] [LIGHT_OS false]
+06-09 01:10:26.803 16603 16603 D CompatChangeReporter: Compat change id reported: 202956589; UID 10599; state: ENABLED
+06-09 01:10:26.805 16603 16603 W libc    : Access denied finding property "ro.odm.prev.product.name"
+06-09 01:10:26.811 16603 16603 D nativeloader: Configuring clns-9 for other apk /data/app/~~rvp3tQ6K4KYFc477njIUEw==/com.earthengine.minimalglobe-XizgS4432sT-EsYp_9HaKA==/base.apk. target_sdk_version=35, uses_libraries=, library_path=/data/app/~~rvp3tQ6K4KYFc477njIUEw==/com.earthengine.minimalglobe-XizgS4432sT-EsYp_9HaKA==/lib/arm64:/data/app/~~rvp3tQ6K4KYFc477njIUEw==/com.earthengine.minimalglobe-XizgS4432sT-EsYp_9HaKA==/base.apk!/lib/arm64-v8a, permitted_path=/data:/mnt/expand:/data/user/0/com.earthengine.minimalglobe
+06-09 01:10:26.816 16603 16603 I ne.minimalglobe: AssetManager2(0xb400007ad7991128) locale list changing from [] to [zh-CN]
+06-09 01:10:26.823 16603 16603 V GraphicsEnvironment: Currently set values for:
+06-09 01:10:26.823 16603 16603 V GraphicsEnvironment:   angle_gl_driver_selection_pkgs=[]
+06-09 01:10:26.823 16603 16603 V GraphicsEnvironment:   angle_gl_driver_selection_values=[]
+06-09 01:10:26.823 16603 16603 V GraphicsEnvironment: com.earthengine.minimalglobe is not listed in per-application setting
+06-09 01:10:26.823 16603 16603 V GraphicsEnvironment: ANGLE allowlist from config: 
+06-09 01:10:26.823 16603 16603 V GraphicsEnvironment: com.earthengine.minimalglobe is not listed in ANGLE allowlist or settings, returning default
+06-09 01:10:26.824 16603 16603 V GraphicsEnvironment: Updatable production driver is not supported on the device.
+06-09 01:10:26.826 16603 16603 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:-1
+06-09 01:10:26.833 16603 16603 I HWUI    : SupportApps size 0
+06-09 01:10:26.833 16603 16603 D ExtensionsLoader: createInstance(64bit) : createExtendedFactory
+06-09 01:10:26.833 16603 16603 D ExtensionsLoader: Opened libSchedAssistExtImpl.so
+06-09 01:10:26.833 16603 16603 E SchedAssist: open sharedFd failed with error=Permission denied
+06-09 01:10:26.833 16603 16603 E SchedAssist: open sharedFd failed with error=Permission denied
+06-09 01:10:26.833 16603 16603 E SchedAssist: open sharedFd failed with error=Permission denied
+06-09 01:10:26.833 16603 16603 E SchedAssist: open sharedFd failed with error=Permission denied
+06-09 01:10:26.836 16603 16628 D OplusGraphicsEvent: OplusGraphicsEventListener create now!
+06-09 01:10:26.837 16603 16603 I ne.minimalglobe: AssetManager2(0xb400007ad7991a28) locale list changing from [] to [zh-CN]
+06-09 01:10:26.838 16603 16603 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-09 01:10:26.838 16603 16628 D OplusGraphicsEvent: addEventListener success!
+06-09 01:10:26.838 16603 16628 D ExtensionsLoader: createInstance(64bit) : createExtendedFactory
+06-09 01:10:26.838 16603 16628 D ExtensionsLoader: Opened libSchedAssistExtImpl.so
+06-09 01:10:26.838 16603 16628 I DisplayManager: Choreographer implicitly registered for the refresh rate.
+06-09 01:10:26.840 16603 16628 I AdrenoGLES-0: QUALCOMM build                   : b82916be04, I507ba793b7
+06-09 01:10:26.840 16603 16628 I AdrenoGLES-0: Build Date                       : 08/06/25
+06-09 01:10:26.840 16603 16628 I AdrenoGLES-0: OpenGL ES Shader Compiler Version: EV031.36.08.34
+06-09 01:10:26.840 16603 16628 I AdrenoGLES-0: Local Branch                     : 
+06-09 01:10:26.840 16603 16628 I AdrenoGLES-0: Remote Branch                    : refs/tags/AU_LINUX_ANDROID_LA.VENDOR.1.0.R1.11.00.00.816.269
+06-09 01:10:26.840 16603 16628 I AdrenoGLES-0: Remote Branch                    : NONE
+06-09 01:10:26.840 16603 16628 I AdrenoGLES-0: Reconstruct Branch               : NOTHING
+06-09 01:10:26.840 16603 16628 I AdrenoGLES-0: Build Config                     : S P 12.1.1 AArch64
+06-09 01:10:26.840 16603 16628 I AdrenoGLES-0: Driver Path                      : /vendor/lib64/egl/libGLESv2_adreno.so
+06-09 01:10:26.840 16603 16628 I AdrenoGLES-0: Driver Version                   : 0615.100
+06-09 01:10:26.843 16603 16628 I AdrenoGLES-0: PFP: 0x01730181, ME: 0x00000000
+06-09 01:10:26.843 16603 16603 E ashmem  : Pinning is deprecated since Android Q. Please use trim or other methods.
+06-09 01:10:26.850 16603 16603 E OplusPredictiveBackController:  NoSuchMethodException 
+06-09 01:10:26.850 16603 16603 D OplusPredictiveBackController: initPredictiveBackConfig for com.earthengine.minimalglobe.MainActivity@bfd2d56 initPredictiveBackConfig mShouldInterceptKeyEvent false
+06-09 01:10:26.850 16603 16603 D WindowOnBackDispatcher:  predictive settings is disabled for com.earthengine.minimalglobe
+06-09 01:10:26.854 16603 16603 D nativeloader: Load /data/app/~~rvp3tQ6K4KYFc477njIUEw==/com.earthengine.minimalglobe-XizgS4432sT-EsYp_9HaKA==/base.apk!/lib/arm64-v8a/libminimal_globe_jni.so using class loader ns clns-9 (caller=/data/app/~~rvp3tQ6K4KYFc477njIUEw==/com.earthengine.minimalglobe-XizgS4432sT-EsYp_9HaKA==/base.apk!classes2.dex): ok
+06-09 01:10:26.855 16603 16628 D ExtensionsLoader: createInstance(64bit) : createExtendedFactory
+06-09 01:10:26.855 16603 16628 D ExtensionsLoader: Opened libeglextimpl.so
+06-09 01:10:26.855 16603 16628 D PreCache: [IPreCacheRus]loadRUSConfigs#102 failed to transact: -22 prc:com.earthengine.minimalglobe
+06-09 01:10:26.857 16603 16603 I oplus.android.OplusFrameworkFactoryImpl: Unknow feature:IOplusTextViewRTLUtilForUG
+06-09 01:10:26.863 16603 16603 D CompatChangeReporter: Compat change id reported: 279646685; UID 10599; state: ENABLED
+06-09 01:10:26.868 16603 16603 D CompatChangeReporter: Compat change id reported: 309578419; UID 10599; state: ENABLED
+06-09 01:10:26.869 16603 16603 D DesktopModeFlags: Toggle override initialized to: OVERRIDE_UNSET
+06-09 01:10:26.871 16603 16603 D OplusWindowManager: get WMS extension: android.os.BinderProxy@7c912e
+06-09 01:10:26.877 16603 16603 D ActivityThread: ComponentInfo{com.earthengine.minimalglobe/com.earthengine.minimalglobe.MainActivity} checkFinished=false 2
+06-09 01:10:26.878 16603 16603 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-09 01:10:26.887 16603 16603 E [UAH_CLIENT]: uahInit enter
+06-09 01:10:26.888 16603 16603 W ne.minimalglobe: AIBinder_linkToDeath is being called with a non-null cookie and no onUnlink callback set. This might not be intended. AIBinder_DeathRecipient_setOnUnlinked should be called first.
+06-09 01:10:26.888 16603 16603 I [UAH_CLIENT]: UahGetFeatureStatus enter
+06-09 01:10:26.889 16603 16603 D CompatChangeReporter: Compat change id reported: 352594277; UID 10599; state: ENABLED
+06-09 01:10:26.889 16603 16603 D OplusInputMethodUtil: init sDebug to false, init sDebugIme to false, init sAlwaysOn to false
+06-09 01:10:26.889 16603 16603 D OplusInputMethodUtil: updateDebugToClass InputMethodManager.DEBUG = false
+06-09 01:10:26.889 16603 16603 D OplusInputMethodUtil: updateDebugToClass ImeFocusController.DEBUG = false
+06-09 01:10:26.889 16603 16603 D OplusInputMethodUtil: updateDebugToClass OnBackInvokedDispatcher.DEBUG = false
+06-09 01:10:26.889 16603 16603 D OplusInputMethodUtil: updateDebugToClass InsetsController.DEBUG = false
+06-09 01:10:26.889 16603 16603 D OplusInputMethodUtil: updateDebugToClass BaseInputConnection.DEBUG = false
+06-09 01:10:26.897 16603 16603 D CompatChangeReporter: Compat change id reported: 349153669; UID 10599; state: ENABLED
+06-09 01:10:26.899 16603 16603 D WindowManager: Add to mViews: com.android.internal.policy.DecorView{aef0c1d I.E...... R.....ID 0,0-0,0 alpha=1.0 viewInfo = }[MainActivity],pkg= com.earthengine.minimalglobe
+06-09 01:10:26.901 16603 16628 D ExtensionsLoader: createInstance(64bit) : createExtendedFactory
+06-09 01:10:26.901 16603 16628 D ExtensionsLoader: Opened libhwuiextimpl.so
+06-09 01:10:26.901 16603 16628 D skia    : setRusSupported enable 1
+06-09 01:10:26.910 16603 16603 D ViewRootImplExtImpl: onDisplayChanged -1 for VRI android.view.ViewRootImpl@5f54d19
+06-09 01:10:26.915 16603 16603 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-09 01:10:26.917 16603 16603 E OplusBracketLog: [OplusViewMirrorManager] updateHostViewRootIfNeeded, not support android.view.ViewRootImpl@5f54d19
+06-09 01:10:26.917 16603 16603 I SurfaceView: 21340638 onAttachedToWindow
+06-09 01:10:26.919 16603 16603 D WindowOnBackDispatcher:  predictive settings is disabled for com.earthengine.minimalglobe
+06-09 01:10:26.919 16603 16603 D WindowOnBackDispatcher:  predictive settings is disabled for com.earthengine.minimalglobe
+06-09 01:10:26.921 16603 16603 D ViewRootImplExtImpl: wrapConfigInfoIntoFlags rotation=0, smallestScreenWidthDp=0, residentWS=false, scenario=0, bounds=Rect(0, 0 - 1240, 2772), relayoutAsync=false, flags=0, newFlags=1453326336, title=com.earthengine.minimalglobe/com.earthengine.minimalglobe.MainActivity
+06-09 01:10:26.930 16603 16603 D VRI[MainActivity]: relayoutWindow result, sizeChanged:true, surfaceControlChanged:true, transformHintChanged:false, mSurfaceSize:Point(1240, 2772), mLastSurfaceSize:Point(0, 0), mWidth:-1, mHeight:-1, requestedWidth:1240, requestedHeight:2772, transformHint:0, installOrientation:0, displayRotation:0, isSurfaceValid:true, attr.flag:-2122252032, tmpFrames:ClientWindowFrames{frame=[0,0][1240,2772] display=[0,0][1240,2772] parentFrame=[0,0][0,0]}, relayoutAsync:false, mSyncSeqId:0
+06-09 01:10:26.930 16603 16603 W VRI[MainActivity]: updateBlastSurfaceIfNeeded, surfaceSize:Point(1240, 2772), lastSurfaceSize:Point(0, 0), format:-3, blastBufferQueue:null
+06-09 01:10:26.930 16603 16603 W libc    : Access denied finding property "vendor.display.enable_optimal_refresh_rate"
+06-09 01:10:26.930 16603 16603 D BufferQueueConsumer: [](id:40db00000000,api:0,p:-1,c:16603) connect: controlledByApp=false
+06-09 01:10:26.931 16603 16603 D BufferQueueConsumer: [VRI[MainActivity]#0(BLAST Consumer)0](id:40db00000000,api:0,p:-1,c:16603) setMaxAcquiredBufferCount: 2
+06-09 01:10:26.931 16603 16603 W libc    : Access denied finding property "vendor.display.enable_optimal_refresh_rate"
+06-09 01:10:26.933 16603 16628 D HWUI    : createSurface new attribs array
+06-09 01:10:26.934 16603 16628 D libEGL  : this is from skia gles
+06-09 01:10:26.934 16603 16628 D BufferQueueProducer: [VRI[MainActivity]#0(BLAST Consumer)0](id:40db00000000,api:1,p:16603,c:16603) connect: api=1 producerControlledByApp=true
+06-09 01:10:26.934 16603 16603 E OplusDisplayModeManager: has been initialized.
+06-09 01:10:26.943 16603 16603 D SurfaceView: 21340638, SurfaceView[com.earthengine.minimalglobe/com.earthengine.minimalglobe.MainActivity], layerid: 2463 createBlastSurfaceControls
+06-09 01:10:26.943 16603 16603 W libc    : Access denied finding property "vendor.display.enable_optimal_refresh_rate"
+06-09 01:10:26.943 16603 16603 D BufferQueueConsumer: [](id:40db00000001,api:0,p:-1,c:16603) connect: controlledByApp=false
+06-09 01:10:26.944 16603 16603 D BufferQueueConsumer: [145a1de SurfaceView[com.earthengine.minimalglobe/com.earthengine.minimalglobe.MainActivity]#1(BLAST Consumer)1](id:40db00000001,api:0,p:-1,c:16603) setMaxAcquiredBufferCount: 2
+06-09 01:10:26.946 16603 16603 W libc    : Access denied finding property "vendor.display.enable_optimal_refresh_rate"
+06-09 01:10:26.946 16603 16603 I SurfaceView: 21340638 visibleChanged -- surfaceCreated 
+06-09 01:10:26.947 16603 16603 D Surface : Surface::dispatchSetGameApi
+06-09 01:10:26.947 16603 16603 D Surface : dispatchSetGameApi pid[16603] tid[16603] GameApi[0]
+06-09 01:10:26.947 16603 16603 D Surface : dispatchSetGameApi res:0
+06-09 01:10:26.947 16603 16603 D libEGL  : set game api gles successfully
+06-09 01:10:26.947 16603 16603 D BufferQueueProducer: [145a1de SurfaceView[com.earthengine.minimalglobe/com.earthengine.minimalglobe.MainActivity]#1(BLAST Consumer)1](id:40db00000001,api:1,p:16603,c:16603) connect: api=1 producerControlledByApp=true
+06-09 01:10:26.948 16603 16603 I MinimalGlobe: EGL initialized: 1240x2772, GL: OpenGL ES 3.2 V@0615.100 (GIT@b82916be04, I507ba793b7, 1754480107) (Date:08/06/25), GLSL: OpenGL ES GLSL ES 3.20
+06-09 01:10:26.960 16603 16603 I MinimalGlobe: Engine initialized successfully, camera pos: -9465697.8,35326465.0,25608443.6
+06-09 01:10:26.961 16603 16603 I MinimalGlobe: Debug standard XYZ WebMercator layer added
+06-09 01:10:26.961 16603 16603 I MinimalGlobe: FABDEM terrain disabled for clean SurfaceTile validation
+06-09 01:10:26.961 16603 16603 I MinimalGlobe: Debug overlay disabled
+06-09 01:10:26.961 16603 16603 I MinimalGlobe: Simulation time set to JD 2461200.216 (Unix 1780938627)
+06-09 01:10:26.961 16603 16603 D SurfaceView: 21340638 handleSyncNoBuffer
+06-09 01:10:26.962 16603 16603 D SurfaceView: 21340638 finishedDrawing
+06-09 01:10:26.962 16603 16603 D SurfaceView: 21340638 performDrawFinished mAttachedToWindow true
+06-09 01:10:26.962 16603 16603 I SurfaceControl:  setExtendedRangeBrightness sc=Surface(name=com.earthengine.minimalglobe/com.earthengine.minimalglobe.MainActivity)/@0xdbe0eb6,currentBufferRatio=1.0,desiredRatio=1.0
+06-09 01:10:26.963 16603 16603 D SurfaceView: 21340638 dispatchDraw mDrawFinished true isAboveParent false (mPrivateFlags & PFLAG_SKIP_DRAW) 128
+06-09 01:10:26.963 16603 16603 D SurfaceView: 21340638 clearSurfaceViewPort mCornerRadius 0.0
+06-09 01:10:26.968 16603 16628 D BLASTBufferQueue: [VRI[MainActivity]#0](f:0,a:1) acquireNextBufferLocked size=1240x2772 mFrameNumber=1 applyTransaction=true mTimestamp=32680281835395(auto) mPendingTransactions.size=0 graphicBufferId=71309342015488 transform=0
+06-09 01:10:26.968 16603 16628 D VRI[MainActivity]: Received frameCommittedCallback lastAttemptedDrawFrameNum=1 didProduceBuffer=true syncBuffer=false
+06-09 01:10:26.968 16603 16628 D ExtensionsLoader: createInstance(64bit) : createExtendedFactory
+06-09 01:10:26.969 16603 16628 D ExtensionsLoader: Opened libSchedAssistExtImpl.so
+06-09 01:10:26.969 16603 16603 D VRI[MainActivity]: draw finished. seqId=0
+06-09 01:10:27.010 16603 16603 I GLES    : submit #1: 1 commands, glError=0
+06-09 01:10:27.012 16603 16603 D BLASTBufferQueue: [145a1de SurfaceView[com.earthengine.minimalglobe/com.earthengine.minimalglobe.MainActivity]#1](f:0,a:1) acquireNextBufferLocked size=1240x2772 mFrameNumber=1 applyTransaction=true mTimestamp=32680327030552(auto) mPendingTransactions.size=0 graphicBufferId=71309342015489 transform=0
+06-09 01:10:27.012 16603 16603 I MinimalGlobe: Frame 1 | tiles vis=16 cached=0 renderSurface=0 mesh=0 attach=0 exact=0 parent=0 stale=0 missingGen=0 | sun=(0.19,-0.90,0.39) | FPS=6.0 draw=1
+06-09 01:10:27.014 16603 16603 D VRI[MainActivity]: onFocusEvent true
+06-09 01:10:27.014 16603 16603 W VRI[MainActivity]: handleResized, msg:, frameChanged:false, configChanged:false, displayChanged:false, attachedFrameChanged:false, compatScaleChanged:false, pendingDragResizing=false
+06-09 01:10:27.016 16603 16603 I DynamicFramerate [FRTCConfigManager]: initFrameRateConfig: 
+06-09 01:10:27.016 16603 16603 I DynamicFramerate [FRTCConfigManager]: 	levelsFor120hz: [120, 60]
+06-09 01:10:27.016 16603 16603 I DynamicFramerate [FRTCConfigManager]: 	thresholdsFor120hz: [200]
+06-09 01:10:27.016 16603 16603 I DynamicFramerate [FRTCConfigManager]: 	levelsFor90hz: [90]
+06-09 01:10:27.016 16603 16603 I DynamicFramerate [FRTCConfigManager]: 	thresholdsFor90hz: []
+06-09 01:10:27.016 16603 16603 I DynamicFramerate [FRTCConfigManager]: FRTCConfigManager: FRTC_CAPABILITY = 120, package name = com.earthengine.minimalglobe, WINDOW_ANIMATION_SPEED_RATE = 10, SCROLL_ANIMATION_SPEED_RATE = 20, PACKAGE_ENABLE = false
+06-09 01:10:27.016 16603 16603 I DynamicFramerate [DynamicFrameRateController]: init info: mPackageName = com.earthengine.minimalglobe, mIsEnabled = false
+06-09 01:10:27.020 16603 16603 I BasemapLayer: Tile uploaded: 2/0/0 256x256
+06-09 01:10:27.021 16603 16603 I BasemapLayer: Tile uploaded: 2/1/0 256x256
+06-09 01:10:27.021 16603 16603 I BasemapLayer: Tile uploaded: 2/0/1 256x256
+06-09 01:10:27.021 16603 16603 I BasemapLayer: Tile uploaded: 2/1/1 256x256
+06-09 01:10:27.033 16603 16628 D VRI[MainActivity]: Received frameCommittedCallback lastAttemptedDrawFrameNum=2 didProduceBuffer=false syncBuffer=false
+06-09 01:10:27.034 16603 16603 D VRI[MainActivity]: draw finished. seqId=0
+06-09 01:10:27.034 16603 16603 D InsetsController: hide(ime(), fromIme=false)
+06-09 01:10:27.034 16603 16603 I ImeTracker: com.earthengine.minimalglobe:3ab702c4: onCancelled at PHASE_CLIENT_ALREADY_HIDDEN
+06-09 01:10:27.042 16603 16603 I BasemapLayer: Tile uploaded: 2/2/0 256x256
+06-09 01:10:27.042 16603 16603 I BasemapLayer: Tile uploaded: 2/3/0 256x256
+06-09 01:10:27.043 16603 16603 I BasemapLayer: Tile uploaded: 2/2/1 256x256
+06-09 01:10:27.043 16603 16603 I BasemapLayer: Tile uploaded: 2/3/1 256x256
+06-09 01:10:27.067 16603 16603 I BasemapLayer: Tile uploaded: 2/0/2 256x256
+06-09 01:10:27.067 16603 16603 I BasemapLayer: Tile uploaded: 2/1/2 256x256
+06-09 01:10:27.067 16603 16603 I BasemapLayer: Tile uploaded: 2/0/3 256x256
+06-09 01:10:27.068 16603 16603 I BasemapLayer: Tile uploaded: 2/1/3 256x256
+06-09 01:10:27.083 16603 16603 I BasemapLayer: Tile uploaded: 2/2/2 256x256
+06-09 01:10:27.083 16603 16603 I BasemapLayer: Tile uploaded: 2/3/2 256x256
+06-09 01:10:27.083 16603 16603 I BasemapLayer: Tile uploaded: 2/2/3 256x256
+06-09 01:10:27.083 16603 16603 I BasemapLayer: Tile uploaded: 2/3/3 256x256
+06-09 01:10:27.600 16603 16612 I ne.minimalglobe: Compiler allocated 7246KB to compile void android.view.ViewRootImpl.performTraversals()
+06-09 01:10:28.022 16603 16623 D OplusScrollToTopManager: com.earthengine.minimalglobe/com.earthengine.minimalglobe.MainActivity,This com.android.internal.policy.DecorView{aef0c1d V.E...... R....... 0,0-1240,2772 aid=0 alpha=1.0 viewInfo = }[MainActivity] change focus to true
+06-09 01:10:29.585 16603 16603 D ViewExtract: [OplusViewExtractManager] OplusViewExtractManager init com.earthengine.minimalglobe
+06-09 01:10:30.533 16603 16603 D OplusInputMethodManagerInternal: get inputMethodManager extension: com.android.internal.view.IInputMethodManager$Stub$Proxy@2681554
+06-09 01:10:30.533 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:30.535 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-09 01:10:31.084 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:31.085 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-09 01:10:31.643 16603 16603 I GLES    : submit #300: 16 commands, glError=0
+06-09 01:10:31.645 16603 16603 I MinimalGlobe: Frame 300 | tiles vis=16 cached=16 renderSurface=16 mesh=16 attach=16 exact=16 parent=0 stale=0 missingGen=0 | sun=(0.19,-0.90,0.39) | FPS=60.2 draw=16
+06-09 01:10:32.017 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:32.018 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-09 01:10:32.993 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:32.994 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-09 01:10:33.857 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:33.857 16603 16603 I VelocityTracker: LSQ2 speed rezero
+06-09 01:10:33.858 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-09 01:10:34.110 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:34.111 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-09 01:10:34.730 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:34.731 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-09 01:10:35.857 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:35.857 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-09 01:10:36.380 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:36.382 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-09 01:10:36.636 16603 16603 I GLES    : submit #600: 16 commands, glError=0
+06-09 01:10:36.638 16603 16603 I MinimalGlobe: Frame 600 | tiles vis=16 cached=16 renderSurface=16 mesh=16 attach=16 exact=16 parent=0 stale=0 missingGen=0 | sun=(0.19,-0.90,0.39) | FPS=60.4 draw=16
+06-09 01:10:37.755 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 5
+06-09 01:10:38.249 16603 16603 I BasemapLayer: Tile uploaded: 3/2/2 256x256
+06-09 01:10:38.250 16603 16603 I BasemapLayer: Tile uploaded: 3/3/2 256x256
+06-09 01:10:38.250 16603 16603 I BasemapLayer: Tile uploaded: 3/2/3 256x256
+06-09 01:10:38.250 16603 16603 I BasemapLayer: Tile uploaded: 3/3/3 256x256
+06-09 01:10:38.285 16603 16603 I BasemapLayer: Tile uploaded: 3/4/2 256x256
+06-09 01:10:38.285 16603 16603 I BasemapLayer: Tile uploaded: 3/5/2 256x256
+06-09 01:10:38.285 16603 16603 I BasemapLayer: Tile uploaded: 3/4/3 256x256
+06-09 01:10:38.286 16603 16603 I BasemapLayer: Tile uploaded: 3/5/3 256x256
+06-09 01:10:38.536 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 6
+06-09 01:10:38.536 16603 16603 I VelocityTracker: LSQ2 speed rezero
+06-09 01:10:38.719 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:38.720 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-09 01:10:39.224 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:39.226 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-09 01:10:39.756 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:39.757 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-09 01:10:40.354 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:40.355 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-09 01:10:40.591 16603 16603 I BasemapLayer: Tile uploaded: 3/2/4 256x256
+06-09 01:10:40.592 16603 16603 I BasemapLayer: Tile uploaded: 3/3/4 256x256
+06-09 01:10:40.592 16603 16603 I BasemapLayer: Tile uploaded: 3/2/5 256x256
+06-09 01:10:40.593 16603 16603 I BasemapLayer: Tile uploaded: 3/3/5 256x256
+06-09 01:10:41.519 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:41.520 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-09 01:10:41.661 16603 16603 I GLES    : submit #900: 19 commands, glError=0
+06-09 01:10:41.663 16603 16603 I MinimalGlobe: Frame 900 | tiles vis=19 cached=28 renderSurface=19 mesh=19 attach=19 exact=19 parent=0 stale=0 missingGen=0 | sun=(0.19,-0.90,0.39) | FPS=60.3 draw=19
+06-09 01:10:41.902 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:41.902 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-09 01:10:42.204 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:42.205 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-09 01:10:42.700 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:42.701 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-09 01:10:43.180 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:43.180 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-09 01:10:43.686 16603 16603 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-09 01:10:43.688 16603 16603 D ViewRootImplExtImpl: the up motion event handled by client, just return

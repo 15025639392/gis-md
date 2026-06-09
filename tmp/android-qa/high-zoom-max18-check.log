@@ -1,0 +1,305 @@
+06-09 04:23:40.587 D/FlexibleTaskController( 3189): findSourceTaskForFreeForm: the caller is not a flexible freeform window application and does not have a zoom windowMode startup parameter
+06-09 04:23:40.599 V/WindowManagerShell( 4329):  appCompatTaskInfo=AppCompatTaskInfo { topActivityInSizeCompat=false topActivityInOplusCompatMode=false eligibleForLetterboxEducation= false isLetterboxEducationEnabled= false isLetterboxDoubleTapEnabled= false eligibleForUserAspectRatioButton= false topActivityBoundsLetterboxed= false isFromLetterboxDoubleTap= false topActivityLetterboxVerticalPosition= -1 topActivityLetterboxHorizontalPosition= -1 topActivityLetterboxWidth=-1 topActivityLetterboxHeight=-1 topActivityAppBounds=Rect(0, 0 - 1240, 2772) isUserFullscreenOverrideEnabled=false isSystemFullscreenOverrideEnabled=false hasMinAspectRatioOverride=false topActivityLetterboxBounds=null cameraCompatTaskInfo=CameraCompatTaskInfo { freeformCameraCompatMode=inactive}} topActivityMainWindowFrame=null topActivityLetterboxInsets=Rect(0, 0 - 0, 0)
+06-09 04:23:40.662 V/WindowManager( 3189):  appCompatTaskInfo=AppCompatTaskInfo { topActivityInSizeCompat=false topActivityInOplusCompatMode=false eligibleForLetterboxEducation= false isLetterboxEducationEnabled= false isLetterboxDoubleTapEnabled= false eligibleForUserAspectRatioButton= false topActivityBoundsLetterboxed= false isFromLetterboxDoubleTap= false topActivityLetterboxVerticalPosition= -1 topActivityLetterboxHorizontalPosition= -1 topActivityLetterboxWidth=-1 topActivityLetterboxHeight=-1 topActivityAppBounds=Rect(0, 0 - 1240, 2772) isUserFullscreenOverrideEnabled=false isSystemFullscreenOverrideEnabled=false hasMinAspectRatioOverride=false topActivityLetterboxBounds=null cameraCompatTaskInfo=CameraCompatTaskInfo { freeformCameraCompatMode=inactive}} topActivityMainWindowFrame=null topActivityLetterboxInsets=Rect(0, 0 - 0, 0)
+06-09 04:23:50.083 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=128 cached=124 renderSurface=96 exact=19 parent=77 missing=0 unsupported=32 lod=512 eq=1 qRender=128 qWalk=79 qFrustum=182 grp=96/16/16 FPS=11.5 draw=96
+06-09 04:23:50.141 I/BasemapLayer(17323): Tile uploaded: 6/50/25 256x256
+06-09 04:23:50.141 I/BasemapLayer(17323): Tile uploaded: 6/50/24 256x256
+06-09 04:23:50.142 I/BasemapLayer(17323): Tile uploaded: 6/51/25 256x256
+06-09 04:23:50.142 I/BasemapLayer(17323): Tile uploaded: 6/51/24 256x256
+06-09 04:23:50.283 I/BasemapLayer(17323): Tile uploaded: 3/0/4 256x256
+06-09 04:23:50.283 I/BasemapLayer(17323): Tile uploaded: 6/51/26 256x256
+06-09 04:23:50.283 I/BasemapLayer(17323): Tile uploaded: 6/50/26 256x256
+06-09 04:23:50.501 I/BasemapLayer(17323): Tile uploaded: 8/199/97 256x256
+06-09 04:23:50.502 I/BasemapLayer(17323): Tile uploaded: 3/1/4 256x256
+06-09 04:23:50.503 I/BasemapLayer(17323): Tile uploaded: 8/199/98 256x256
+06-09 04:23:50.615 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=221 cached=134 renderSurface=189 exact=17 parent=172 missing=0 unsupported=32 lod=512 eq=1 qRender=221 qWalk=122 qFrustum=318 grp=189/16/16 FPS=10.9 draw=189
+06-09 04:23:50.691 I/BasemapLayer(17323): Tile uploaded: 7/100/48 256x256
+06-09 04:23:50.691 I/BasemapLayer(17323): Tile uploaded: 7/101/48 256x256
+06-09 04:23:50.692 I/BasemapLayer(17323): Tile uploaded: 7/100/49 256x256
+06-09 04:23:50.816 I/BasemapLayer(17323): Tile uploaded: 7/101/49 256x256
+06-09 04:23:50.816 I/BasemapLayer(17323): Tile uploaded: 7/101/50 256x256
+06-09 04:23:50.817 I/BasemapLayer(17323): Tile uploaded: 7/100/50 256x256
+06-09 04:23:51.069 I/BasemapLayer(17323): Tile uploaded: 8/203/97 256x256
+06-09 04:23:51.070 I/BasemapLayer(17323): Tile uploaded: 8/201/97 256x256
+06-09 04:23:51.070 I/BasemapLayer(17323): Tile uploaded: 8/202/97 256x256
+06-09 04:23:51.071 I/BasemapLayer(17323): Tile uploaded: 8/200/98 256x256
+06-09 04:23:51.145 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=172 cached=144 renderSurface=140 exact=17 parent=123 missing=0 unsupported=32 lod=512 eq=1 qRender=172 qWalk=101 qFrustum=248 grp=140/16/16 FPS=9.6 draw=140
+06-09 04:23:51.191 I/BasemapLayer(17323): Tile uploaded: 8/201/98 256x256
+06-09 04:23:51.192 I/BasemapLayer(17323): Tile uploaded: 8/201/99 256x256
+06-09 04:23:51.192 I/BasemapLayer(17323): Tile uploaded: 8/202/98 256x256
+06-09 04:23:51.192 I/BasemapLayer(17323): Tile uploaded: 8/200/99 256x256
+06-09 04:23:51.285 I/BasemapLayer(17323): Tile uploaded: 8/203/99 256x256
+06-09 04:23:51.286 I/BasemapLayer(17323): Tile uploaded: 8/200/100 256x256
+06-09 04:23:51.286 I/BasemapLayer(17323): Tile uploaded: 8/202/99 256x256
+06-09 04:23:51.286 I/BasemapLayer(17323): Tile uploaded: 8/203/98 256x256
+06-09 04:23:51.385 I/BasemapLayer(17323): Tile uploaded: 9/401/197 256x256
+06-09 04:23:51.432 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=142 cached=153 renderSurface=110 exact=18 parent=92 missing=0 unsupported=32 lod=512 eq=1 qRender=142 qWalk=85 qFrustum=202 grp=110/16/16 FPS=9.5 draw=110
+06-09 04:23:51.689 I/BasemapLayer(17323): Tile uploaded: 9/403/198 256x256
+06-09 04:23:51.689 I/BasemapLayer(17323): Tile uploaded: 9/402/198 256x256
+06-09 04:23:51.947 I/BasemapLayer(17323): Tile uploaded: 9/402/199 256x256
+06-09 04:23:51.948 I/BasemapLayer(17323): Tile uploaded: 9/403/199 256x256
+06-09 04:23:52.202 I/BasemapLayer(17323): Tile uploaded: 9/405/197 256x256
+06-09 04:23:52.203 I/BasemapLayer(17323): Tile uploaded: 9/404/197 256x256
+06-09 04:23:52.203 I/BasemapLayer(17323): Tile uploaded: 9/406/197 256x256
+06-09 04:23:52.204 I/BasemapLayer(17323): Tile uploaded: 9/404/198 256x256
+06-09 04:23:52.340 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=241 cached=161 renderSurface=209 exact=16 parent=193 missing=0 unsupported=32 lod=512 eq=1 qRender=241 qWalk=133 qFrustum=349 grp=209/16/16 FPS=8.5 draw=209
+06-09 04:23:52.601 I/BasemapLayer(17323): Tile uploaded: 10/807/397 256x256
+06-09 04:23:52.689 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=187 cached=162 renderSurface=155 exact=16 parent=139 missing=0 unsupported=32 lod=512 eq=1 qRender=187 qWalk=111 qFrustum=273 grp=155/16/16 FPS=7.7 draw=155
+06-09 04:23:52.853 I/BasemapLayer(17323): Tile uploaded: 10/807/399 256x256
+06-09 04:23:52.854 I/BasemapLayer(17323): Tile uploaded: 10/806/399 256x256
+06-09 04:23:52.960 I/BasemapLayer(17323): Tile uploaded: 9/404/199 256x256
+06-09 04:23:53.017 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=151 cached=165 renderSurface=119 exact=17 parent=102 missing=0 unsupported=32 lod=512 eq=1 qRender=151 qWalk=92 qFrustum=218 grp=119/16/16 FPS=7.9 draw=119
+06-09 04:23:53.065 I/BasemapLayer(17323): Tile uploaded: 8/201/100 256x256
+06-09 04:23:53.066 I/BasemapLayer(17323): Tile uploaded: 9/405/199 256x256
+06-09 04:23:53.144 I/BasemapLayer(17323): Tile uploaded: 8/203/101 256x256
+06-09 04:23:53.144 I/BasemapLayer(17323): Tile uploaded: 8/203/100 256x256
+06-09 04:23:53.145 I/BasemapLayer(17323): Tile uploaded: 8/202/100 256x256
+06-09 04:23:53.145 I/BasemapLayer(17323): Tile uploaded: 8/202/101 256x256
+06-09 04:23:53.224 I/BasemapLayer(17323): Tile uploaded: 10/809/399 256x256
+06-09 04:23:53.225 I/BasemapLayer(17323): Tile uploaded: 9/403/200 256x256
+06-09 04:23:53.292 I/BasemapLayer(17323): Tile uploaded: 10/810/399 256x256
+06-09 04:23:53.292 I/BasemapLayer(17323): Tile uploaded: 9/403/201 256x256
+06-09 04:23:53.293 I/BasemapLayer(17323): Tile uploaded: 10/811/399 256x256
+06-09 04:23:53.363 I/BasemapLayer(17323): Tile uploaded: 9/405/201 256x256
+06-09 04:23:53.363 I/BasemapLayer(17323): Tile uploaded: 9/404/200 256x256
+06-09 04:23:53.364 I/BasemapLayer(17323): Tile uploaded: 9/405/200 256x256
+06-09 04:23:53.364 I/BasemapLayer(17323): Tile uploaded: 9/404/201 256x256
+06-09 04:23:53.402 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=125 cached=180 renderSurface=93 exact=18 parent=75 missing=0 unsupported=32 lod=512 eq=1 qRender=125 qWalk=82 qFrustum=182 grp=93/16/16 FPS=9.9 draw=93
+06-09 04:23:53.473 I/BasemapLayer(17323): Tile uploaded: 9/404/202 256x256
+06-09 04:23:53.610 I/BasemapLayer(17323): Tile uploaded: 10/807/401 256x256
+06-09 04:23:53.610 I/BasemapLayer(17323): Tile uploaded: 9/406/201 256x256
+06-09 04:23:53.611 I/BasemapLayer(17323): Tile uploaded: 10/807/402 256x256
+06-09 04:23:53.807 I/BasemapLayer(17323): Tile uploaded: 10/809/401 256x256
+06-09 04:23:53.807 I/BasemapLayer(17323): Tile uploaded: 10/810/400 256x256
+06-09 04:23:53.807 I/BasemapLayer(17323): Tile uploaded: 10/808/401 256x256
+06-09 04:23:53.808 I/BasemapLayer(17323): Tile uploaded: 10/809/400 256x256
+06-09 04:23:53.911 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=211 cached=188 renderSurface=179 exact=15 parent=164 missing=0 unsupported=32 lod=512 eq=1 qRender=211 qWalk=121 qFrustum=307 grp=179/16/16 FPS=9.6 draw=179
+06-09 04:23:53.985 I/BasemapLayer(17323): Tile uploaded: 10/810/401 256x256
+06-09 04:23:53.985 I/BasemapLayer(17323): Tile uploaded: 10/811/401 256x256
+06-09 04:23:54.119 I/BasemapLayer(17323): Tile uploaded: 10/808/402 256x256
+06-09 04:23:54.384 I/BasemapLayer(17323): Tile uploaded: 11/1618/803 256x256
+06-09 04:23:54.384 I/BasemapLayer(17323): Tile uploaded: 11/1620/802 256x256
+06-09 04:23:54.385 I/BasemapLayer(17323): Tile uploaded: 11/1617/803 256x256
+06-09 04:23:54.385 I/BasemapLayer(17323): Tile uploaded: 11/1619/803 256x256
+06-09 04:23:54.504 I/BasemapLayer(17323): Tile uploaded: 11/1620/803 256x256
+06-09 04:23:54.504 I/BasemapLayer(17323): Tile uploaded: 11/1621/802 256x256
+06-09 04:23:54.504 I/BasemapLayer(17323): Tile uploaded: 11/1622/803 256x256
+06-09 04:23:54.566 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=166 cached=198 renderSurface=134 exact=22 parent=112 missing=0 unsupported=32 lod=512 eq=1 qRender=166 qWalk=102 qFrustum=243 grp=134/16/16 FPS=8.6 draw=134
+06-09 04:23:54.620 I/BasemapLayer(17323): Tile uploaded: 11/1621/803 256x256
+06-09 04:23:54.621 I/BasemapLayer(17323): Tile uploaded: 11/1617/805 256x256
+06-09 04:23:54.698 I/BasemapLayer(17323): Tile uploaded: 10/809/402 256x256
+06-09 04:23:54.699 I/BasemapLayer(17323): Tile uploaded: 10/808/403 256x256
+06-09 04:23:54.865 I/BasemapLayer(17323): Tile uploaded: 10/809/403 256x256
+06-09 04:23:54.906 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=134 cached=203 renderSurface=102 exact=18 parent=84 missing=0 unsupported=32 lod=512 eq=1 qRender=134 qWalk=89 qFrustum=198 grp=102/16/16 FPS=9.5 draw=102
+06-09 04:23:54.987 I/BasemapLayer(17323): Tile uploaded: 10/810/403 256x256
+06-09 04:23:54.987 I/BasemapLayer(17323): Tile uploaded: 10/811/403 256x256
+06-09 04:23:54.987 I/BasemapLayer(17323): Tile uploaded: 10/810/402 256x256
+06-09 04:23:55.294 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=238 cached=206 renderSurface=206 exact=15 parent=191 missing=0 unsupported=32 lod=512 eq=1 qRender=238 qWalk=135 qFrustum=348 grp=206/16/16 FPS=9.5 draw=206
+06-09 04:23:55.386 I/BasemapLayer(17323): Tile uploaded: 10/809/404 256x256
+06-09 04:23:55.749 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=185 cached=207 renderSurface=153 exact=15 parent=138 missing=0 unsupported=32 lod=512 eq=1 qRender=185 qWalk=113 qFrustum=273 grp=153/16/16 FPS=8.5 draw=153
+06-09 04:23:55.925 I/BasemapLayer(17323): Tile uploaded: 10/809/405 256x256
+06-09 04:23:56.091 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=149 cached=208 renderSurface=117 exact=15 parent=102 missing=0 unsupported=32 lod=512 eq=1 qRender=149 qWalk=95 qFrustum=219 grp=117/16/16 FPS=8.3 draw=117
+06-09 04:23:56.428 I/BasemapLayer(17323): Tile uploaded: 11/1619/807 256x256
+06-09 04:23:56.604 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=272 cached=209 renderSurface=240 exact=15 parent=225 missing=0 unsupported=32 lod=512 eq=1 qRender=272 qWalk=152 qFrustum=399 grp=240/16/16 FPS=8.3 draw=240
+06-09 04:23:56.721 I/BasemapLayer(17323): Tile uploaded: 11/1620/807 256x256
+06-09 04:23:56.722 I/BasemapLayer(17323): Tile uploaded: 11/1621/807 256x256
+06-09 04:23:56.722 I/BasemapLayer(17323): Tile uploaded: 11/1619/808 256x256
+06-09 04:23:56.936 I/BasemapLayer(17323): Tile uploaded: 9/405/202 256x256
+06-09 04:23:56.937 I/BasemapLayer(17323): Tile uploaded: 9/405/203 256x256
+06-09 04:23:57.048 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=209 cached=214 renderSurface=177 exact=15 parent=162 missing=0 unsupported=32 lod=512 eq=1 qRender=209 qWalk=125 qFrustum=309 grp=177/16/16 FPS=7.4 draw=177
+06-09 04:23:57.121 I/BasemapLayer(17323): Tile uploaded: 3/0/5 256x256
+06-09 04:23:57.122 I/BasemapLayer(17323): Tile uploaded: 3/2/4 256x256
+06-09 04:23:57.122 I/BasemapLayer(17323): Tile uploaded: 3/1/5 256x256
+06-09 04:23:57.315 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=166 cached=217 renderSurface=134 exact=18 parent=116 missing=0 unsupported=32 lod=512 eq=1 qRender=166 qWalk=106 qFrustum=247 grp=134/16/16 FPS=7.1 draw=134
+06-09 04:23:57.442 I/BasemapLayer(17323): Tile uploaded: 10/810/404 256x256
+06-09 04:23:57.443 I/BasemapLayer(17323): Tile uploaded: 10/810/405 256x256
+06-09 04:23:57.743 I/BasemapLayer(17323): Tile uploaded: 3/3/4 256x256
+06-09 04:23:57.743 I/BasemapLayer(17323): Tile uploaded: 3/2/5 256x256
+06-09 04:23:57.744 I/BasemapLayer(17323): Tile uploaded: 10/811/405 256x256
+06-09 04:23:57.744 I/BasemapLayer(17323): Tile uploaded: 3/3/5 256x256
+06-09 04:23:57.970 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=310 cached=223 renderSurface=278 exact=21 parent=257 missing=0 unsupported=32 lod=512 eq=1 qRender=310 qWalk=171 qFrustum=456 grp=278/16/16 FPS=7.0 draw=278
+06-09 04:23:58.134 I/BasemapLayer(17323): Tile uploaded: 3/7/4 256x256
+06-09 04:23:58.134 I/BasemapLayer(17323): Tile uploaded: 3/5/5 256x256
+06-09 04:23:58.135 I/BasemapLayer(17323): Tile uploaded: 3/6/5 256x256
+06-09 04:23:58.135 I/BasemapLayer(17323): Tile uploaded: 3/4/5 256x256
+06-09 04:23:58.270 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=235 cached=227 renderSurface=203 exact=25 parent=178 missing=0 unsupported=32 lod=512 eq=1 qRender=235 qWalk=139 qFrustum=349 grp=203/16/16 FPS=6.5 draw=203
+06-09 04:23:58.365 I/BasemapLayer(17323): Tile uploaded: 11/1620/809 256x256
+06-09 04:23:58.365 I/BasemapLayer(17323): Tile uploaded: 11/1621/809 256x256
+06-09 04:23:58.366 I/BasemapLayer(17323): Tile uploaded: 11/1621/808 256x256
+06-09 04:23:58.531 I/BasemapLayer(17323): Tile uploaded: 11/1621/810 256x256
+06-09 04:23:58.532 I/BasemapLayer(17323): Tile uploaded: 11/1620/810 256x256
+06-09 04:23:58.614 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=185 cached=232 renderSurface=153 exact=25 parent=128 missing=0 unsupported=32 lod=512 eq=1 qRender=185 qWalk=118 qFrustum=278 grp=153/16/16 FPS=6.1 draw=153
+06-09 04:23:58.780 I/BasemapLayer(17323): Tile uploaded: 3/7/5 256x256
+06-09 04:23:58.784 I/BasemapLayer(17323): Tile uploaded: 12/3241/1618 256x256
+06-09 04:23:59.170 I/BasemapLayer(17323): Tile uploaded: 12/3241/1619 256x256
+06-09 04:23:59.171 I/BasemapLayer(17323): Tile uploaded: 12/3243/1619 256x256
+06-09 04:23:59.171 I/BasemapLayer(17323): Tile uploaded: 12/3243/1618 256x256
+06-09 04:23:59.772 I/BasemapLayer(17323): Tile uploaded: 12/3242/1619 256x256
+06-09 04:23:59.773 I/BasemapLayer(17323): Tile uploaded: 12/3242/1618 256x256
+06-09 04:23:59.773 I/BasemapLayer(17323): Tile uploaded: 12/3242/1620 256x256
+06-09 04:23:59.773 I/BasemapLayer(17323): Tile uploaded: 12/3241/1620 256x256
+06-09 04:24:00.071 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=358 cached=241 renderSurface=326 exact=26 parent=300 missing=0 unsupported=32 lod=512 eq=1 qRender=358 qWalk=188 qFrustum=521 grp=326/16/16 FPS=5.5 draw=326
+06-09 04:24:00.113 I/BasemapLayer(17323): Tile uploaded: 12/3243/1620 256x256
+06-09 04:24:00.113 I/BasemapLayer(17323): Tile uploaded: 12/3242/1621 256x256
+06-09 04:24:00.114 I/BasemapLayer(17323): Tile uploaded: 12/3243/1621 256x256
+06-09 04:24:00.216 I/BasemapLayer(17323): Tile uploaded: 13/6484/3238 256x256
+06-09 04:24:00.216 I/BasemapLayer(17323): Tile uploaded: 13/6485/3239 256x256
+06-09 04:24:00.250 I/BasemapLayer(17323): Tile uploaded: 13/6485/3238 256x256
+06-09 04:24:00.250 I/BasemapLayer(17323): Tile uploaded: 14/12971/6478 256x256
+06-09 04:24:00.283 I/BasemapLayer(17323): Tile uploaded: 14/12970/6478 256x256
+06-09 04:24:00.284 I/BasemapLayer(17323): Tile uploaded: 14/12970/6479 256x256
+06-09 04:24:00.284 I/BasemapLayer(17323): Tile uploaded: 13/6484/3239 256x256
+06-09 04:24:00.284 I/BasemapLayer(17323): Tile uploaded: 14/12971/6479 256x256
+06-09 04:24:00.316 I/BasemapLayer(17323): Tile uploaded: 11/1622/810 256x256
+06-09 04:24:00.350 I/BasemapLayer(17323): Tile uploaded: 15/25941/12959 256x256
+06-09 04:24:00.350 I/BasemapLayer(17323): Tile uploaded: 15/25941/12958 256x256
+06-09 04:24:00.351 I/BasemapLayer(17323): Tile uploaded: 15/25940/12958 256x256
+06-09 04:24:00.383 I/BasemapLayer(17323): Tile uploaded: 15/25940/12959 256x256
+06-09 04:24:00.404 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=79 cached=256 renderSurface=47 exact=47 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=79 qWalk=54 qFrustum=108 grp=47/16/16 FPS=18.6 draw=47
+06-09 04:24:00.487 I/BasemapLayer(17323): Tile uploaded: 16/51883/25919 256x256
+06-09 04:24:00.488 I/BasemapLayer(17323): Tile uploaded: 16/51883/25918 256x256
+06-09 04:24:00.488 I/BasemapLayer(17323): Tile uploaded: 16/51882/25918 256x256
+06-09 04:24:00.516 I/BasemapLayer(17323): Tile uploaded: 16/51882/25919 256x256
+06-09 04:24:00.551 I/BasemapLayer(17323): Tile uploaded: 0/0/0 256x256
+06-09 04:24:00.727 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=80 cached=256 renderSurface=48 exact=48 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=80 qWalk=55 qFrustum=110 grp=48/16/16 FPS=26.0 draw=48
+06-09 04:24:00.820 I/BasemapLayer(17323): Tile uploaded: 1/1/0 256x256
+06-09 04:24:00.884 I/BasemapLayer(17323): Tile uploaded: 2/3/1 256x256
+06-09 04:24:00.952 I/BasemapLayer(17323): Tile uploaded: 3/6/3 256x256
+06-09 04:24:01.020 I/BasemapLayer(17323): Tile uploaded: 4/12/6 256x256
+06-09 04:24:01.037 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=80 cached=256 renderSurface=48 exact=44 parent=4 missing=0 unsupported=32 lod=512 eq=0 qRender=80 qWalk=55 qFrustum=110 grp=48/16/16 FPS=28.5 draw=48
+06-09 04:24:01.084 I/BasemapLayer(17323): Tile uploaded: 13/6485/3240 256x256
+06-09 04:24:01.085 I/BasemapLayer(17323): Tile uploaded: 13/6485/3241 256x256
+06-09 04:24:01.115 I/BasemapLayer(17323): Tile uploaded: 13/6484/3240 256x256
+06-09 04:24:01.116 I/BasemapLayer(17323): Tile uploaded: 13/6484/3241 256x256
+06-09 04:24:01.116 I/BasemapLayer(17323): Tile uploaded: 17/103764/51837 256x256
+06-09 04:24:01.116 I/BasemapLayer(17323): Tile uploaded: 17/103765/51837 256x256
+06-09 04:24:01.149 I/BasemapLayer(17323): Tile uploaded: 17/103765/51836 256x256
+06-09 04:24:01.150 I/BasemapLayer(17323): Tile uploaded: 17/103764/51836 256x256
+06-09 04:24:01.150 I/BasemapLayer(17323): Tile uploaded: 13/6486/3239 256x256
+06-09 04:24:01.335 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=82 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=82 qWalk=56 qFrustum=113 grp=50/16/16 FPS=29.4 draw=50
+06-09 04:24:01.381 I/BasemapLayer(17323): Tile uploaded: 18/207531/103672 256x256
+06-09 04:24:01.414 I/BasemapLayer(17323): Tile uploaded: 13/6486/3240 256x256
+06-09 04:24:01.415 I/BasemapLayer(17323): Tile uploaded: 18/207531/103673 256x256
+06-09 04:24:01.448 I/BasemapLayer(17323): Tile uploaded: 18/207530/103673 256x256
+06-09 04:24:01.448 I/BasemapLayer(17323): Tile uploaded: 18/207530/103672 256x256
+06-09 04:24:01.629 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=29.8 draw=50
+06-09 04:24:01.924 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:02.225 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:02.558 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:02.867 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:03.223 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:03.508 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=31.9 draw=50
+06-09 04:24:03.790 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=32.6 draw=50
+06-09 04:24:04.062 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=31.1 draw=50
+06-09 04:24:04.355 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.5 draw=50
+06-09 04:24:04.658 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.2 draw=50
+06-09 04:24:04.935 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:05.257 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:05.573 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=31.8 draw=50
+06-09 04:24:05.871 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.7 draw=50
+06-09 04:24:06.175 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.3 draw=50
+06-09 04:24:06.439 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:06.737 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:06.769 I/MinimalGlobe(17323): Frame 600 | tiles vis=85 cached=256 renderSurface=50 mesh=50 attach=50 exact=50 parent=0 normalMap=0 stale=0 missingGen=0 | missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 qFade=0 grp=53/16/16 gen=39 | sun=(-0.54,-0.74,0.39) | FPS=30.1 draw=50
+06-09 04:24:07.006 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:07.303 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:07.605 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:07.878 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:08.167 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:08.466 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:08.771 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:09.066 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:09.398 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:09.699 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:10.000 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:10.298 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:10.612 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:10.909 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:11.231 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:11.530 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:11.830 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:12.128 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:12.403 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:12.695 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:12.994 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:13.266 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:13.563 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:13.862 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:14.163 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:14.461 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:14.759 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:15.061 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:15.362 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:15.658 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:15.932 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:16.226 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:16.531 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:16.756 I/MinimalGlobe(17323): Frame 900 | tiles vis=85 cached=256 renderSurface=50 mesh=50 attach=50 exact=50 parent=0 normalMap=0 stale=0 missingGen=0 | missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 qFade=0 grp=53/16/16 gen=39 | sun=(-0.55,-0.74,0.39) | FPS=30.0 draw=50
+06-09 04:24:16.826 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:17.124 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:17.422 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:17.723 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:17.998 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:18.326 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:18.624 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:18.922 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:19.223 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:19.523 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:19.820 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:20.119 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=33.4 draw=50
+06-09 04:24:20.423 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=31.3 draw=50
+06-09 04:24:20.753 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.4 draw=50
+06-09 04:24:21.054 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.2 draw=50
+06-09 04:24:21.362 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:21.685 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:21.987 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:22.259 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:22.562 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:22.862 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:23.184 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:23.491 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:23.799 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=31.8 draw=50
+06-09 04:24:24.100 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.7 draw=50
+06-09 04:24:24.398 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.3 draw=50
+06-09 04:24:24.701 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:24.998 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:25.298 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:25.608 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:25.900 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:26.196 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:26.498 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:26.694 I/MinimalGlobe(17323): Frame 1200 | tiles vis=85 cached=256 renderSurface=50 mesh=50 attach=50 exact=50 parent=0 normalMap=0 stale=0 missingGen=0 | missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 qFade=0 grp=53/16/16 gen=39 | sun=(-0.55,-0.74,0.39) | FPS=30.0 draw=50
+06-09 04:24:26.800 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:27.131 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:27.430 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=29.9 draw=50
+06-09 04:24:27.730 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:28.030 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:28.328 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:28.628 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:28.931 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:29.225 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:29.558 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:29.862 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:30.158 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:30.460 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:30.759 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:31.059 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:31.358 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:31.634 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:31.957 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:32.255 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:32.555 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:32.855 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:33.155 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:33.455 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:33.754 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:34.021 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.0 draw=50
+06-09 04:24:34.321 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.1 draw=50
+06-09 04:24:34.603 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=31.8 draw=50
+06-09 04:24:34.933 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.7 draw=50
+06-09 04:24:35.239 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.3 draw=50
+06-09 04:24:35.518 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=32.1 draw=50
+06-09 04:24:35.797 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.9 draw=50
+06-09 04:24:36.089 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.4 draw=50
+06-09 04:24:36.385 I/MinimalGlobe(17323): Debug zoom scale=1.18 | tiles vis=85 cached=256 renderSurface=50 exact=50 parent=0 missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 grp=53/16/16 FPS=30.2 draw=50
+06-09 04:24:36.647 I/MinimalGlobe(17323): Frame 1500 | tiles vis=85 cached=256 renderSurface=50 mesh=50 attach=50 exact=50 parent=0 normalMap=0 stale=0 missingGen=0 | missing=0 unsupported=32 lod=512 eq=0 qRender=85 qWalk=59 qFrustum=119 qFade=0 grp=53/16/16 gen=39 | sun=(-0.55,-0.74,0.39) | FPS=30.1 draw=50
