@@ -23,6 +23,17 @@ float TerrainTile::sampleHeight(double lngRad, double latRad,
     double u = (lngRad - bounds_.west()) / bounds_.width();
     double v = (bounds_.north() - latRad) / bounds_.height();  // 北→南
 
+    // Mapbox Terrain-RGB: 514×514 tiles have a 1px skirt on each side.
+    // The actual data grid is [1, tileSize-2] = 512×512.
+    // Remap u/v [0,1] → skirt-adjusted [1/513, 512/513].
+    const int tsz = heightmap_->tileSize;
+    if (tsz > 2) {
+        const double skirtRatio = 1.0 / static_cast<double>(tsz - 1);
+        const double dataMax = 1.0 - skirtRatio;
+        u = skirtRatio + u * (dataMax - skirtRatio);
+        v = skirtRatio + v * (dataMax - skirtRatio);
+    }
+
     // 超出范围 → 尝试父瓦片
     if (u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0) {
         if (parentTile) return parentTile->sampleHeight(lngRad, latRad);

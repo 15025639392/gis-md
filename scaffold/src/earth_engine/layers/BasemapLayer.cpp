@@ -59,10 +59,13 @@ Vec3 meshCentroid(const SurfaceTileMesh& mesh) {
 }
 
 int surfaceGridSizeForZoom(int zoom) {
-    // Aligned with OpenGlobus EmptyTerrain.gridSizeByZoom.
+    // Aligned with OpenGlobus RgbTerrain.gridSizeByZoom.
+    // EmptyTerrain defaults are coarser (2 at zoom ≥ 8) but Mapbox
+    // Terrain-RGB has 514×514 source data — enough for 32-64 grid at
+    // medium-high zooms.
     static constexpr int kGridSizeByZoom[] = {
-        64, 32, 16, 8, 4, 4, 4, 4, 2, 2, 2, 2, 2,
-        2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2
+        64, 32, 16, 8, 8, 8, 16, 16, 16, 32, 32, 32, 32,
+        32, 32, 64, 64, 64, 32, 32, 16, 8
     };
     const int index = std::clamp(
         zoom,
