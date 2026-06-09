@@ -295,11 +295,23 @@ public:
 - (void)handlePinch:(UIPinchGestureRecognizer *)gesture {
     if (!_engineReady) return;
 
+    // UIPinchGestureRecognizer 的 locationInView 返回双指中心
+    CGPoint center = [gesture locationInView:self];
+    CGFloat scale = self.contentScaleFactor;
+    // UIPinchGestureRecognizer.scale 是累积值（相对手势起点），
+    // CameraController::onPinchGesture 期望逐帧 scale（与 OpenGlobus
+    // zoomCur.length / zoomPrev.length 一致）。
+    float perFrameScale = 1.0f;
+    float cumulativeScale = static_cast<float>(gesture.scale);
+
     switch (gesture.state) {
         case UIGestureRecognizerStateBegan: {
-            _lastPinchScale = 1.0;
+            _lastPinchScale = 1.0f;
             earth_engine::InputEvent event;
             event.type = earth_engine::InputEvent::Type::PinchStart;
+            event.screenX = static_cast<float>(center.x * scale);
+            event.screenY = static_cast<float>(center.y * scale);
+            event.devicePixelRatio = static_cast<float>(scale);
             event.pinchScale = 1.0f;
             event.pointerType = earth_engine::InputEvent::PointerType::Touch;
             event.timestamp = CACurrentMediaTime();
@@ -307,9 +319,18 @@ public:
             break;
         }
         case UIGestureRecognizerStateChanged: {
+            // 逐帧 scale = 当前累积 / 上一帧累积
+            perFrameScale = (_lastPinchScale > 0.001f)
+                ? cumulativeScale / _lastPinchScale
+                : 1.0f;
+            _lastPinchScale = cumulativeScale;
+
             earth_engine::InputEvent event;
             event.type = earth_engine::InputEvent::Type::PinchMove;
-            event.pinchScale = static_cast<float>(gesture.scale);
+            event.screenX = static_cast<float>(center.x * scale);
+            event.screenY = static_cast<float>(center.y * scale);
+            event.devicePixelRatio = static_cast<float>(scale);
+            event.pinchScale = perFrameScale;
             event.pointerType = earth_engine::InputEvent::PointerType::Touch;
             event.timestamp = CACurrentMediaTime();
             _engine->onInputEvent(event);
@@ -317,9 +338,12 @@ public:
         }
         case UIGestureRecognizerStateEnded:
         case UIGestureRecognizerStateCancelled: {
-            _lastPinchScale = 1.0;
+            _lastPinchScale = 1.0f;
             earth_engine::InputEvent event;
             event.type = earth_engine::InputEvent::Type::PinchEnd;
+            event.screenX = static_cast<float>(center.x * scale);
+            event.screenY = static_cast<float>(center.y * scale);
+            event.devicePixelRatio = static_cast<float>(scale);
             event.pinchScale = 1.0f;
             event.pointerType = earth_engine::InputEvent::PointerType::Touch;
             event.timestamp = CACurrentMediaTime();

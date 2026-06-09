@@ -222,10 +222,18 @@ void CameraController::onPinchGesture(float scale,
             }
         }
     } else {
-        distance_ = std::clamp(
-            static_cast<float>(static_cast<double>(distance_) / clampedScale),
-            kMinDistanceEarthRadii,
-            kMaxDistanceEarthRadii);
+        // 无有效 pinch anchor 时，沿视线方向缩放相机（与 OpenGlobus 行为一致）。
+        // 不能仅设置 distance_，因为 orbitMode_ 已关闭，update() 不消费它。
+        const double moveMeters =
+            camera_->position().length() * (clampedScale - 1.0);
+        glm::dvec3 nextEye =
+            camera_->position().raw() +
+            camera_->direction().raw() * moveMeters;
+        nextEye = clampEyeToOpenGlobusMinAltitude(nextEye);
+        if ((glm::length(nextEye) / kEarthRadiusMeters) <= kMaxDistanceEarthRadii) {
+            camera_->setView(Vec3(nextEye), camera_->direction(), camera_->up());
+            syncDistanceFromCamera();
+        }
     }
 }
 
@@ -250,6 +258,13 @@ void CameraController::update(double deltaSeconds) {
                 std::abs(delta.y) > 1e-12 ||
                 std::abs(delta.z) > 1e-12) {
                 applyCameraRotation(delta);
+                // OpenGlobus: terrain collision check during touch inertia
+                glm::dvec3 clampedEye = clampEyeToOpenGlobusMinAltitude(
+                    camera_->position().raw());
+                if (glm::length(clampedEye - camera_->position().raw()) > 1e-6) {
+                    camera_->setView(Vec3(clampedEye), camera_->direction(),
+                                     camera_->up());
+                }
             } else {
                 touchInertiaScale_ = 0.0;
             }
@@ -261,6 +276,13 @@ void CameraController::update(double deltaSeconds) {
             rotation_ = glm::normalize(delta * rotation_);
         } else {
             applyCameraRotation(delta);
+            // OpenGlobus: terrain collision check during inertia
+            glm::dvec3 clampedEye = clampEyeToOpenGlobusMinAltitude(
+                camera_->position().raw());
+            if (glm::length(clampedEye - camera_->position().raw()) > 1e-6) {
+                camera_->setView(Vec3(clampedEye), camera_->direction(),
+                                 camera_->up());
+            }
         }
         inertiaAngularVelocity_ *= std::exp(-kInertiaDampingPerSecond * deltaSeconds);
     }
@@ -537,7 +559,8 @@ void CameraController::applyAnchorDrag(float xPixels, float yPixels,
             glm::normalize(glm::cross(camera_->up().raw(), grabbedNormal_.raw()));
         glm::dvec3 planeHit;
         if (intersectPlane(ray, p0, planeNormal, planeHit)) {
-            const glm::dvec3 newEye = dragStartEye_.raw() - (planeHit - p0);
+            glm::dvec3 newEye = dragStartEye_.raw() - (planeHit - p0);
+            newEye = clampEyeToOpenGlobusMinAltitude(newEye);
             camera_->setView(Vec3(newEye), camera_->direction(), camera_->up());
             syncDistanceFromCamera();
             touchInertiaScale_ = 0.0;
@@ -559,6 +582,16 @@ void CameraController::applyAnchorDrag(float xPixels, float yPixels,
     const glm::dvec3 normalizedAxis = glm::normalize(axis);
     const glm::dquat delta = glm::angleAxis(angle, normalizedAxis);
     applyCameraRotation(delta);
+    // OpenGlobus: cam.checkTerrainCollision() after every camera move
+    {
+        glm::dvec3 clampedEye = clampEyeToOpenGlobusMinAltitude(
+            camera_->position().raw());
+        if (glm::length(clampedEye - camera_->position().raw()) > 1e-6) {
+            camera_->setView(Vec3(clampedEye), camera_->direction(),
+                             camera_->up());
+            syncDistanceFromCamera();
+        }
+    }
     touchInertiaRotation_ = delta;
     touchInertiaScale_ = 1.0;
 
