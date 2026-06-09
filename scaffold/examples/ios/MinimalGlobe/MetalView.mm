@@ -1,29 +1,145 @@
-#import <MetalKit/MetalKit.h>
+#import "MetalView.h"
 #import <QuartzCore/CADisplayLink.h>
+#import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
 #include "earth_engine/Engine.h"
 #include "earth_engine/interaction/InputEvent.h"
+#include "earth_engine/platform/bridge/PlatformBridge.h"
 #include "earth_engine/platform/ios/RenderDeviceMetal.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
+#include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/layers/BasemapLayer.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/environment/TimeController.h"
+#include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
 #include <chrono>
+#include <cstdio>
 #include <memory>
+#include <thread>
+#include <vector>
 
 using namespace earth_engine;
 
-/// 最小 Metal 渲染视图 — 使用 earth_engine::Engine + RenderDeviceMetal。
-@interface MetalView : MTKView
-@end
+namespace {
+
+constexpr const char* kGaodeSatelliteTemplate =
+    "https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
+constexpr bool kEnableDebugOverlayForDemo = false;
+constexpr bool kShowNormalMapForDemo = false;
+constexpr bool kUseGaodeSatelliteForDemo = true;
+
+class IosDemoHttpRequest : public HttpRequest {
+public:
+    void cancel() override {}
+};
+
+class IosDemoPlatformBridge : public PlatformBridge {
+public:
+    void onMemoryPressure() override {}
+    void onEnterBackground() override {}
+    void onEnterForeground() override {}
+
+    std::unique_ptr<HttpRequest> get(
+        const std::string& url,
+        std::function<void(int statusCode, std::vector<uint8_t> body)> callback) override {
+        std::thread([url, callback = std::move(callback)]() {
+            @autoreleasepool {
+                NSURL* nsUrl = [NSURL URLWithString:[NSString stringWithUTF8String:url.c_str()]];
+                if (!nsUrl) {
+                    callback(-1, {});
+                    return;
+                }
+
+                NSURLRequest* request = [NSURLRequest requestWithURL:nsUrl
+                                                         cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
+                                                     timeoutInterval:15.0];
+                NSHTTPURLResponse* response = nil;
+                NSError* error = nil;
+                NSData* data = [NSURLConnection sendSynchronousRequest:request
+                                                      returningResponse:&response
+                                                                  error:&error];
+                if (error || !data || response.statusCode != 200) {
+                    callback(error ? -1 : static_cast<int>(response.statusCode), {});
+                    return;
+                }
+
+                const uint8_t* bytes = static_cast<const uint8_t*>(data.bytes);
+                callback(static_cast<int>(response.statusCode),
+                         std::vector<uint8_t>(bytes, bytes + data.length));
+            }
+        }).detach();
+        return std::make_unique<IosDemoHttpRequest>();
+    }
+
+    std::string cacheDirectory() const override { return NSTemporaryDirectory().UTF8String ?: "/tmp"; }
+    std::string documentsDirectory() const override { return NSHomeDirectory().UTF8String ?: "."; }
+
+    std::unique_ptr<DecodedImage> decodeImage(const uint8_t* data, size_t len) override {
+        @autoreleasepool {
+            NSData* nsData = [NSData dataWithBytes:data length:len];
+            UIImage* image = [UIImage imageWithData:nsData];
+            CGImageRef cgImage = image.CGImage;
+            if (!cgImage) return nullptr;
+
+            const size_t width = CGImageGetWidth(cgImage);
+            const size_t height = CGImageGetHeight(cgImage);
+            if (width == 0 || height == 0) return nullptr;
+
+            auto decoded = std::make_unique<DecodedImage>();
+            decoded->width = static_cast<int>(width);
+            decoded->height = static_cast<int>(height);
+            decoded->channels = 4;
+            decoded->pixels.resize(width * height * 4);
+
+            CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+            CGContextRef context = CGBitmapContextCreate(
+                decoded->pixels.data(),
+                width,
+                height,
+                8,
+                width * 4,
+                colorSpace,
+                kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+            CGColorSpaceRelease(colorSpace);
+            if (!context) return nullptr;
+
+            CGContextDrawImage(context, CGRectMake(0, 0, width, height), cgImage);
+            CGContextRelease(context);
+            return decoded;
+        }
+    }
+
+    void log(LogLevel /*level*/, const std::string& tag, const std::string& message) override {
+        NSLog(@"[%s] %s", tag.c_str(), message.c_str());
+    }
+
+    DeviceInfo deviceInfo() const override {
+        DeviceInfo info;
+        info.platform = "iOS";
+        info.model = UIDevice.currentDevice.model.UTF8String ?: "iOS";
+        info.osVersion = UIDevice.currentDevice.systemVersion.UTF8String ?: "";
+        info.screenDensity = static_cast<float>(UIScreen.mainScreen.scale);
+        info.screenWidthPx = static_cast<int>(UIScreen.mainScreen.bounds.size.width * UIScreen.mainScreen.scale);
+        info.screenHeightPx = static_cast<int>(UIScreen.mainScreen.bounds.size.height * UIScreen.mainScreen.scale);
+        info.cpuCores = static_cast<int>([NSProcessInfo processInfo].processorCount);
+        info.totalMemoryBytes = static_cast<int64_t>([NSProcessInfo processInfo].physicalMemory);
+        return info;
+    }
+
+    std::string getToken(const std::string& /*providerId*/) const override { return ""; }
+};
+
+} // namespace
 
 @implementation MetalView {
     CADisplayLink *_displayLink;
     std::unique_ptr<RenderDeviceMetal> _renderDevice;
     std::unique_ptr<Engine> _engine;
+    std::unique_ptr<IosDemoPlatformBridge> _platformBridge;
     BOOL _engineReady;
+    int _frameCount;
 
     // Touch state
     BOOL _touching;
@@ -70,19 +186,42 @@ using namespace earth_engine;
 
     _engineReady = _engine->isReady();
     if (_engineReady) {
-        NSLog(@"Engine initialized successfully");
+        NSLog(@"Engine initialized successfully, camera pos: %.1f,%.1f,%.1f",
+              _engine->camera().position().x(),
+              _engine->camera().position().y(),
+              _engine->camera().position().z());
 
-        // 添加调试底图图层
-        auto provider = std::make_unique<DebugImageryProvider>();
-        auto scheme = TileScheme::createXYZWebMercator();
+        std::unique_ptr<ImageryProvider> provider;
+        std::unique_ptr<TileScheme> scheme;
+        if (kUseGaodeSatelliteForDemo) {
+            _platformBridge = std::make_unique<IosDemoPlatformBridge>();
+            auto xyz = std::make_unique<XYZImageryProvider>(
+                kGaodeSatelliteTemplate,
+                "Gaode/Amap satellite imagery");
+            xyz->setZoomRange(0, 18);
+            xyz->setOpenGlobusGroupedY(true);
+            xyz->setOpenGlobusPolarGroupsEnabled(false);
+            xyz->setPlatformBridge(_platformBridge.get());
+            provider = std::move(xyz);
+            scheme = TileScheme::createOpenGlobusEarth();
+            NSLog(@"Gaode satellite provider enabled: %s", kGaodeSatelliteTemplate);
+            NSLog(@"Gaode/Amap tiles are GCJ-02 aligned; this demo is visual only, not WGS84 control-point acceptance");
+        } else {
+            provider = std::make_unique<DebugImageryProvider>();
+            scheme = TileScheme::createXYZWebMercator();
+            NSLog(@"Debug standard XYZ WebMercator provider enabled");
+        }
+
         auto layer = std::make_unique<BasemapLayer>(
             std::move(provider), std::move(scheme), _renderDevice.get());
+        layer->setNormalMapDebugEnabled(kShowNormalMapForDemo);
         _engine->addLayer(std::move(layer));
-        NSLog(@"Debug basemap layer added");
+        NSLog(@"Basemap layer added; normal map debug %s",
+              kShowNormalMapForDemo ? "enabled" : "disabled");
 
-        // 开启调试叠加层
-        _engine->setDebugOverlayEnabled(true);
-        NSLog(@"Debug overlay enabled");
+        _engine->setDebugOverlayEnabled(kEnableDebugOverlayForDemo);
+        NSLog(@"Debug overlay %s",
+              kEnableDebugOverlayForDemo ? "enabled" : "disabled");
 
         // 设置模拟时间为当前系统时间
         double nowJd = currentJulianDate();
@@ -208,6 +347,37 @@ using namespace earth_engine;
     float cr, cg, cb, ca;
     _engine->getClearColor(cr, cg, cb, ca);
     self.clearColor = MTLClearColorMake(cr, cg, cb, ca);
+
+    ++_frameCount;
+    if (_frameCount <= 3 || _frameCount % 300 == 0) {
+        const auto& diag = _engine->diagnostics();
+        Vec3 sunDir = _engine->sunDirection();
+        NSLog(@"Frame %d | tiles vis=%d cached=%d renderSurface=%d mesh=%d "
+              "attach=%d exact=%d parent=%d missing=%d unsupported=%d "
+              "lod=%.0f eq=%d qRender=%d qWalk=%d qFrustum=%d "
+              "grp=%d/%d/%d | sun=(%.2f,%.2f,%.2f) | FPS=%.1f draw=%d",
+              _frameCount,
+              diag.visibleTiles,
+              diag.cachedTextures,
+              diag.renderSurfaceTiles,
+              diag.surfaceMeshCount,
+              diag.imageryAttachments,
+              diag.imageryExactAttachments,
+              diag.imageryParentFallbackAttachments,
+              diag.imageryMissingTiles,
+              diag.imageryUnsupportedTiles,
+              diag.lodSizePixels,
+              diag.quadtreeEqualZoomLayers,
+              diag.quadtreeRenderingNodes,
+              diag.quadtreeWalkthroughNodes,
+              diag.quadtreeInFrustumNodes,
+              diag.mercatorTileCount,
+              diag.northPolarTileCount,
+              diag.southPolarTileCount,
+              sunDir.x(), sunDir.y(), sunDir.z(),
+              diag.fps,
+              diag.drawCalls);
+    }
 }
 
 - (void)layoutSubviews {
@@ -224,6 +394,7 @@ using namespace earth_engine;
 - (void)dealloc {
     _engine.reset();
     _renderDevice.reset();
+    _platformBridge.reset();
     [_displayLink invalidate];
 }
 

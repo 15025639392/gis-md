@@ -177,13 +177,30 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
         return nullptr;
     }
 
-    // 尝试识别 shader 类型（globe vs tile）
+    enum class PipelineLayout {
+        Surface,
+        Color,
+        DebugLine
+    };
+    PipelineLayout layout = PipelineLayout::Surface;
+
+    // 尝试识别 shader 类型（globe / tile / vector color / debug line）
     id<MTLFunction> vertexFunc = [library newFunctionWithName:@"globeVertex"];
     id<MTLFunction> fragmentFunc = [library newFunctionWithName:@"globeFragment"];
 
     if (!vertexFunc || !fragmentFunc) {
         vertexFunc = [library newFunctionWithName:@"tileVertex"];
         fragmentFunc = [library newFunctionWithName:@"tileFragment"];
+    }
+    if (!vertexFunc || !fragmentFunc) {
+        vertexFunc = [library newFunctionWithName:@"colorVertex"];
+        fragmentFunc = [library newFunctionWithName:@"colorFragment"];
+        layout = PipelineLayout::Color;
+    }
+    if (!vertexFunc || !fragmentFunc) {
+        vertexFunc = [library newFunctionWithName:@"debugLineVertex"];
+        fragmentFunc = [library newFunctionWithName:@"debugLineFragment"];
+        layout = PipelineLayout::DebugLine;
     }
 
     if (!vertexFunc || !fragmentFunc) {
@@ -192,16 +209,28 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
 
     // Vertex descriptor: Globe and SurfaceTile share position/normal/uv layout.
     MTLVertexDescriptor* vd = [MTLVertexDescriptor vertexDescriptor];
-    vd.attributes[0].format = MTLVertexFormatFloat3;   // position
-    vd.attributes[0].offset = 0;
-    vd.attributes[0].bufferIndex = 0;
-    vd.attributes[1].format = MTLVertexFormatFloat3;   // normal
-    vd.attributes[1].offset = 12;
-    vd.attributes[1].bufferIndex = 0;
-    vd.attributes[2].format = MTLVertexFormatFloat2;   // texcoord
-    vd.attributes[2].offset = 24;
-    vd.attributes[2].bufferIndex = 0;
-    vd.layouts[0].stride = 32;
+    if (layout == PipelineLayout::DebugLine) {
+        vd.attributes[0].format = MTLVertexFormatFloat2;   // texcoord
+        vd.attributes[0].offset = 0;
+        vd.attributes[0].bufferIndex = 0;
+        vd.layouts[0].stride = 8;
+    } else if (layout == PipelineLayout::Color) {
+        vd.attributes[0].format = MTLVertexFormatFloat3;   // position
+        vd.attributes[0].offset = 0;
+        vd.attributes[0].bufferIndex = 0;
+        vd.layouts[0].stride = 12;
+    } else {
+        vd.attributes[0].format = MTLVertexFormatFloat3;   // position
+        vd.attributes[0].offset = 0;
+        vd.attributes[0].bufferIndex = 0;
+        vd.attributes[1].format = MTLVertexFormatFloat3;   // normal
+        vd.attributes[1].offset = 12;
+        vd.attributes[1].bufferIndex = 0;
+        vd.attributes[2].format = MTLVertexFormatFloat2;   // texcoord
+        vd.attributes[2].offset = 24;
+        vd.attributes[2].bufferIndex = 0;
+        vd.layouts[0].stride = 32;
+    }
     vd.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
 
     MTLRenderPipelineDescriptor* pipeDesc = [MTLRenderPipelineDescriptor new];

@@ -1,10 +1,5 @@
-#import <UIKit/UIKit.h>
-
-/// iOS 最小地球引擎示例 — AppDelegate。
-/// 仅创建 window 和 MetalView controller。
-@interface AppDelegate : UIResponder <UIApplicationDelegate>
-@property (strong, nonatomic) UIWindow *window;
-@end
+#import "AppDelegate.h"
+#import "MetalView.h"
 
 @implementation AppDelegate
 
@@ -14,7 +9,10 @@
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
 
     UIViewController *vc = [[UIViewController alloc] init];
-    // MetalView 将在 viewDidLoad 中创建并添加到 vc.view
+    MetalView *metalView = [[MetalView alloc] initWithFrame:self.window.bounds];
+    metalView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    vc.view = metalView;
+
     self.window.rootViewController = vc;
     [self.window makeKeyAndVisible];
 

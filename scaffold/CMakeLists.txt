@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-enable_testing()
+include(CTest)
 
 # 编译选项
 if(MSVC)
@@ -27,7 +27,9 @@ endif()
 
 # 子目录
 add_subdirectory(src)
-add_subdirectory(tests)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
 
 # 示例应用（默认不构建，通过 option 开启）
 option(BUILD_EXAMPLES "Build example applications" OFF)

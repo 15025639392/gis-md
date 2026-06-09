@@ -149,15 +149,6 @@ vertex VertexOut globeVertex(VertexIn in [[stage_in]],
 )msl";
 
 static const char* kGlobeFragmentMSL = R"msl(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexOut {
-    float4 position [[position]];
-    float3 normal;
-    float2 texcoord;
-};
-
 fragment float4 globeFragment(VertexOut in [[stage_in]],
                               constant float3& u_lightDir [[buffer(0)]]) {
     float3 n = normalize(in.normal);
@@ -262,15 +253,6 @@ fragment float4 colorFragment(constant float4& u_color [[buffer(0)]]) {
 )msl";
 
 static const char* kTileFragmentMSL = R"msl(
-#include <metal_stdlib>
-using namespace metal;
-
-struct VertexOut {
-    float4 position [[position]];
-    float2 texcoord;
-    float3 normal;
-};
-
 fragment float4 tileFragment(VertexOut in [[stage_in]],
                              texture2d<float> u_tileTexture [[texture(0)]],
                              texture2d<float> u_normalMap [[texture(1)]],
