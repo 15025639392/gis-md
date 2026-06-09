@@ -189,10 +189,12 @@ void Scene::render() {
         float normalMat[9];
         cam.getNormalMatrix(normalMat);
 
-        auto& zenith = skyGradient_->zenithColor();
-        auto& horizon = skyGradient_->horizonColor();
-        std::array<float, 3> zColor = {zenith[0], zenith[1], zenith[2]};
-        std::array<float, 3> hColor = {horizon[0], horizon[1], horizon[2]};
+        // Sky colors: match OpenGlobus SimpleSkyBackground hardcoded
+        // zenith=sky blue, horizon=dark blue-purple (linear RGB)
+        // OG: colorOne = srgbToLinear(128/255, 223/255, 255/255)
+        //     colorTwo = srgbToLinear(10/255, 15/255, 56/255)
+        std::array<float, 3> zColor = {0.216f, 0.716f, 1.0f};    // sky blue
+        std::array<float, 3> hColor = {0.0012f, 0.0031f, 0.042f}; // dark
 
         commands.push_back(atmospherePass_->buildCommand(
             cam.position(),
