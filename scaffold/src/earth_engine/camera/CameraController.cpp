@@ -1,4 +1,7 @@
 #include "CameraController.h"
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../scene/Camera.h"
@@ -19,7 +22,7 @@ constexpr double kMaxInertiaAngularVelocityRadPerSec = 5.0;
 constexpr double kInertiaDampingPerSecond = 3.0;
 constexpr double kVelocitySmoothing = 0.35;
 constexpr double kEarthRadiusMeters = 6378137.0;
-constexpr double kOpenGlobusMinAltitudeMeters = 1.0;
+constexpr double kOpenGlobusMinAltitudeMeters = 1500.0;  // match Gaode z18 tile ~133m
 constexpr float kMinDistanceEarthRadii =
     static_cast<float>((kEarthRadiusMeters + kOpenGlobusMinAltitudeMeters) /
                        kEarthRadiusMeters);
@@ -82,9 +85,9 @@ CameraController::CameraController(Camera* camera)
     auto target = e.cartographicToCartesian(
         Cartographic::fromDegrees(106.508, 29.617, 0.0));
     auto eye = e.cartographicToCartesian(
-        Cartographic::fromDegrees(106.508, 29.617, 1000.0));
+        Cartographic::fromDegrees(106.508, 29.617, 1500.0));
     camera_->lookAt(eye, target, e.geodeticSurfaceNormal(target));
-    orbitMode_ = false;  // disable orbit so lookAt isn't overridden
+    orbitMode_ = false;
 }
 
 void CameraController::setViewport(int widthPixels, int heightPixels) {
@@ -156,6 +159,11 @@ void CameraController::onPinchGesture(float scale,
         Vec3 anchorPoint;
         grabbedRadiusMeters_ = kEarthRadiusMeters;
         hasPinchAnchor_ = pickSurfacePoint(centerX, centerY, anchorPoint);
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_INFO, "CameraCtrl",
+            "pinchStart hasAnchor=%d center=(%.0f,%.0f)",
+            hasPinchAnchor_, centerX, centerY);
+#endif
         if (hasPinchAnchor_) {
             grabbedRadiusMeters_ = anchorPoint.length();
             pinchAnchorNormal_ = anchorPoint.normalized();

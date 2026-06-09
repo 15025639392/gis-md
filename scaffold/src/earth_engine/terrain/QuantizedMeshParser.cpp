@@ -1,4 +1,7 @@
 #include "QuantizedMeshParser.h"
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
 
@@ -10,7 +13,7 @@
 namespace earth_engine {
 namespace {
 
-constexpr size_t kHeaderSize = 88;  // QuantizedMesh header (no padding assumed)
+constexpr size_t kHeaderSize = 92;  // 11×8 + 4 = 92 (3d center + 2f height + 7d bounds + 1u vc)
 
 /// Barycentric point-in-triangle test with height interpolation.
 bool pointInTriangle(double px, double py,
@@ -39,9 +42,9 @@ bool pointInTriangle(double px, double py,
 std::unique_ptr<DecodedHeightmap> QuantizedMeshParser::parseAndRasterize(
     const uint8_t* data, size_t len, int outputGridSize) {
 
-    if (len < kHeaderSize || !data) {
+    if (len < 88 || !data) {
 #ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_ERROR, "QMParser", "fail: len=%zu < %zu", len, kHeaderSize);
+        __android_log_print(ANDROID_LOG_ERROR, "QMParser", "fail: len=%zu < 88", len);
 #endif
         return nullptr;
     }
@@ -81,14 +84,22 @@ std::unique_ptr<DecodedHeightmap> QuantizedMeshParser::parseAndRasterize(
     hdr.horizonOcclusionY = readD();
     hdr.horizonOcclusionZ = readD();
     hdr.vertexCount = readU32();
-    // header = 88 bytes
-
     const uint32_t vertexCount = hdr.vertexCount;
     if (vertexCount == 0 || vertexCount > 500000) {
 #ifdef __ANDROID__
         __android_log_print(ANDROID_LOG_ERROR, "QMParser", "fail: vc=%u", vertexCount);
 #endif
         return nullptr;
+    }
+
+    // Detect header padding: some tilers produce 96-byte headers.
+    // Validate by checking if U-buffer bounds fit within file.
+    {
+        size_t stdEnd = offset + vertexCount * 6;  // U+V+H, 3×2 bytes each
+        if (stdEnd + 8 > len && offset + 4 + vertexCount * 6 + 8 <= len) {
+            // 92-byte header would overflow; 96-byte fits → skip padding
+            offset += 4;
+        }
     }
 
     // --- Parse U, V, Height buffers (zigzag delta encoded uint16_t arrays) ---
@@ -110,7 +121,13 @@ std::unique_ptr<DecodedHeightmap> QuantizedMeshParser::parseAndRasterize(
     auto uBuf = readU16s(vertexCount);
     auto vBuf = readU16s(vertexCount);
     auto hBuf = readU16s(vertexCount);
-    if (uBuf.empty() || vBuf.empty() || hBuf.empty()) return nullptr;
+    if (uBuf.empty() || vBuf.empty() || hBuf.empty()) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "QMParser", "fail: uBuf=%zu vBuf=%zu hBuf=%zu",
+            uBuf.size(), vBuf.size(), hBuf.size());
+#endif
+        return nullptr;
+    }
 
     // Decode zigzag delta to get U/V/Height ratios
     std::vector<double> uRatio(vertexCount), vRatio(vertexCount), heightRatio(vertexCount);
@@ -125,21 +142,37 @@ std::unique_ptr<DecodedHeightmap> QuantizedMeshParser::parseAndRasterize(
     }
 
     // --- Parse indices ---
+    // Some tilers add 2-byte alignment padding even when vertexCount ≤ 65536.
+    // Try unaligned first; if garbage, retry with alignment to 4-byte boundary. 
     uint32_t triangleCount = 0;
     bool use32BitIndices = (vertexCount > 65536);
-    if (use32BitIndices) {
-        // align to 4 bytes if needed
+    size_t idxOffset = offset;
+
+    if (use32BitIndices && (offset % 4) != 0) offset += 2;
+    if (offset + 4 > len) return nullptr;
+    triangleCount = readU32();
+
+    if (triangleCount == 0 || triangleCount > vertexCount * 4) {
+        // Retry with 4-byte alignment (some tilers pad to 4-byte boundary)
+        offset = idxOffset;
         if ((offset % 4) != 0) offset += 2;
         if (offset + 4 > len) return nullptr;
         triangleCount = readU32();
-    } else {
-        if (offset + 4 > len) return nullptr;
-        triangleCount = readU32();
+#ifdef __ANDROID__
+        if (triangleCount > 0 && triangleCount <= vertexCount * 4)
+            __android_log_print(ANDROID_LOG_INFO, "QMParser", "aligned triCount=%u", triangleCount);
+#endif
     }
 
     const uint32_t indicesCount = triangleCount * 3;
     size_t indexSize = use32BitIndices ? 4 : 2;
-    if (offset + indicesCount * indexSize > len) return nullptr;
+    if (offset + indicesCount * indexSize > len || triangleCount == 0 || triangleCount > vertexCount * 4) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "QMParser", "fail: idx overflow off=%zu cnt=%u sz=%zu len=%zu",
+            offset, indicesCount, indexSize, len);
+#endif
+        return nullptr;
+    }
 
     // Decode zigzag-delta indices
     std::vector<uint32_t> indices(indicesCount);
@@ -226,6 +259,10 @@ std::unique_ptr<DecodedHeightmap> QuantizedMeshParser::parseAndRasterize(
         }
     }
 
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "QMParser", "parseAndRasterize OK: %dx%d heights, %u verts, %u tris",
+        n, n, vertexCount, triangleCount);
+#endif
     return hm;
 }
 

@@ -8,6 +8,13 @@
 
 namespace earth_engine {
 
+/// cesium-native CullingResult: tri-state visibility for hierarchical culling.
+enum class CullingResult {
+    Outside = -1,     // Entirely outside frustum
+    Intersecting = 0, // Partially inside
+    Inside = 1        // Entirely inside (all children also inside)
+};
+
 /// Normalized plane in world/ECEF meters: normal.dot(point) + distance >= 0 is inside.
 struct FrustumPlane {
     Vec3 normal = Vec3::unitX();
@@ -42,6 +49,13 @@ public:
 
     /// cesium-native aligned: OBB test (tighter than sphere) against all 6 frustum planes.
     bool intersectsOBB(const OrientedBoundingBox& obb) const;
+
+    /// cesium-native CullingVolume: tri-state visibility for BoundingSphere.
+    /// Inside → sphere entirely within all planes → subtree culling can be skipped.
+    CullingResult computeVisibility(const BoundingSphere& sphere) const;
+
+    /// cesium-native CullingVolume: tri-state visibility for OrientedBoundingBox.
+    CullingResult computeVisibility(const OrientedBoundingBox& obb) const;
 
 private:
     std::array<FrustumPlane, 6> planes_;

@@ -65,6 +65,20 @@ public:
                   std::vector<TileKey>& out,
                   std::vector<TileNode*>& renderedNodes);
 
+    void traverseImpl(const TileScheme& scheme,
+                  const Camera& camera,
+                  const Frustum& frustum,
+                  double viewportWidthPixels,
+                  double viewportHeightPixels,
+                  double cameraLongitudeRad,
+                  double cameraLatitudeRad,
+                  bool parentCameraInside,
+                  int cameraInsideTargetZoom,
+                  size_t maxRenderedTiles,
+                  std::vector<TileKey>& out,
+                  std::vector<TileNode*>& renderedNodes,
+                  bool parentInsideFrustum);
+
     void renderToZoom(const TileScheme& scheme,
                       const Camera& camera,
                       const Frustum& frustum,
@@ -92,6 +106,7 @@ private:
                          double viewportHeightPixels) const;
     bool childrenPreviousStateEquals(TileNodeState state) const;
     void markRenderingTransition();
+    void markFadingOut();  // parent fading out as children take over
     void traverse(const TileScheme& scheme,
                   const std::vector<Rectangle>& visibleFootprint,
                   const std::unordered_set<TileKey>& forcedTiles,
@@ -108,6 +123,7 @@ private:
     double transitionOpacity_ = 1.0;
     int fadingNodeCount_ = 0;
     double transitionTimestamp_ = 0.0;
+    bool fadingOut_ = false;  // true = 1→0 fade, false = 0→1 fade
     BoundingSphere boundingSphere_{Vec3::zero(), 0.0};
     OrientedBoundingBox obb_{Vec3::zero(), Vec3::unitX(), Vec3::unitY(), Vec3::unitZ()};
     std::array<Vec3, 4> cornerPoints_{};

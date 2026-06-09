@@ -298,16 +298,15 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         }
 
         if (cmd.kind == RenderCommandKind::SurfaceTile) {
-            constexpr int kSurfaceStride = 32;
+            constexpr int kSurfaceStride = 20;  // pos(12) + uv(8)
             setAttribEnabled(0, attrib0Enabled, true);
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, kSurfaceStride,
                                   reinterpret_cast<void*>(0));
-            setAttribEnabled(1, attrib1Enabled, true);
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, kSurfaceStride,
-                                  reinterpret_cast<void*>(12));
+            // normal disabled — computed in vertex shader from position
+            setAttribEnabled(1, attrib1Enabled, false);
             setAttribEnabled(2, attrib2Enabled, true);
             glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, kSurfaceStride,
-                                  reinterpret_cast<void*>(24));
+                                  reinterpret_cast<void*>(12));
         } else if (cmd.vertexStride > 0) {
             // 显式 vertex stride（VectorLayer 等使用）
             setAttribEnabled(0, attrib0Enabled, true);

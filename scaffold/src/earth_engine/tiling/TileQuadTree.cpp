@@ -467,23 +467,25 @@ bool TileNode::isHorizonTangent(const Camera& camera) const {
 bool TileNode::shouldSubdivide(const Camera& camera,
                                double viewportWidthPixels,
                                double viewportHeightPixels) const {
-    // OpenGlobus LOD decision (renderTree):
-    //   1. if projectedSize < lodSize → STOP (good enough)
-    //   2. if projectedSize >= lodSize && checkZoom() → SUBDIVIDE
-    //   3. otherwise → RENDER current
-    //
-    // For imagery tiles, checkZoom() corresponds to "is there data at a deeper
-    // zoom?" which is determined by canSubdivide (z < maxZoom) in the caller.
-    const double projectedPixels = projectedSizePixels(
-        camera,
-        boundingSphere_.getCenter(),
-        boundingSphere_.getRadius(),
-        viewportWidthPixels,
-        viewportHeightPixels);
-    const double lodSize = openglobusLodSizePixels(camera);
+    // cesium-native SSE-based LOD (TilesetSelection::computeSse).
+    // SSE = geometricError * screenHeight / (distance * 2 * tan(fovy/2))
 
-    // Stop when screen-projected tile size <= LOD threshold.
-    return projectedPixels > lodSize;
+    // cesium-native SSE-based LOD.
+    // geometricError = tile angular width × earth radius (meters of surface)
+    const double geometricError =
+        bounds_.width() * 6378137.0;
+
+    const double distance =
+        std::max(1.0, camera.position().distanceTo(boundingSphere_.getCenter()));
+
+    const double sse =
+        geometricError * viewportHeightPixels /
+        (distance * 2.0 * std::tan(camera.verticalFovRadians() * 0.5));
+
+    // SSE threshold: lower = more tiles (sharper). 2000 ≈ 40 tiles at 1km
+    constexpr double kMaximumSSE = 2000.0;
+
+    return sse > kMaximumSSE;
 }
 
 bool TileNode::childrenPreviousStateEquals(TileNodeState state) const {
@@ -501,26 +503,36 @@ void TileNode::markRenderingTransition() {
     if (key_.z < 3) {
         transitionOpacity_ = 1.0;
         fadingNodeCount_ = 0;
+        fadingOut_ = false;
         return;
     }
 
     if (previousState_ == TileNodeState::Rendering) {
+        // Node was rendering last frame and continues to render — no fade.
         transitionOpacity_ = 1.0;
         fadingNodeCount_ = 0;
+        fadingOut_ = false;
         return;
     }
 
-    // OpenGlobus: fresh nodes start at opacity 0 and fade in over ~0.3s.
+    // Fresh node (was NotRendering): fade in from 0→1 over ~0.3s.
+    fadingOut_ = false;
     transitionOpacity_ = 0.0;
-    transitionTimestamp_ = 0.3; // remaining fade duration (seconds)
+    transitionTimestamp_ = 0.3;
     fadingNodeCount_ = 0;
     if (parent_ && parent_->previousState_ == TileNodeState::Rendering) {
         fadingNodeCount_ = 1;
-        return;
-    }
-    if (childrenPreviousStateEquals(TileNodeState::Rendering)) {
+    } else if (childrenPreviousStateEquals(TileNodeState::Rendering)) {
         fadingNodeCount_ = 4;
     }
+}
+
+void TileNode::markFadingOut() {
+    if (key_.z < 3) return;
+    // Parent fading out as children take over (cesium-native tilesFadingOut).
+    fadingOut_ = true;
+    transitionOpacity_ = 1.0;   // start fully visible
+    transitionTimestamp_ = 0.3; // 0.3s to fade to 0
 }
 
 void TileNode::animateTransitionOpacity(double dt) {
@@ -528,9 +540,13 @@ void TileNode::animateTransitionOpacity(double dt) {
 
     transitionTimestamp_ = std::max(0.0, transitionTimestamp_ - dt);
     const double t = 1.0 - transitionTimestamp_ / 0.3;
-    // Cubic ease-out (matches OpenGlobus transition feel)
+    // Cubic ease-out
     const double eased = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t);
-    transitionOpacity_ = std::clamp(eased, 0.0, 1.0);
+    if (fadingOut_) {
+        transitionOpacity_ = std::clamp(1.0 - eased, 0.0, 1.0);  // 1→0
+    } else {
+        transitionOpacity_ = std::clamp(eased, 0.0, 1.0);         // 0→1
+    }
 }
 
 void TileNode::traverse(const TileScheme& scheme,
@@ -545,17 +561,50 @@ void TileNode::traverse(const TileScheme& scheme,
                         size_t maxRenderedTiles,
                         std::vector<TileKey>& out,
                         std::vector<TileNode*>& renderedNodes) {
+    // Propagated: parent was INSIDE the frustum → this node and all
+    // descendants are also inside (cesium-native CullingVolume optimization).
+    constexpr bool kParentInside = false; // root-caller never passes this
+    return traverseImpl(scheme, camera, frustum,
+                        viewportWidthPixels, viewportHeightPixels,
+                        cameraLongitudeRad, cameraLatitudeRad,
+                        parentCameraInside, cameraInsideTargetZoom,
+                        maxRenderedTiles, out, renderedNodes,
+                        kParentInside);
+}
+
+void TileNode::traverseImpl(const TileScheme& scheme,
+                        const Camera& camera,
+                        const Frustum& frustum,
+                        double viewportWidthPixels,
+                        double viewportHeightPixels,
+                        double cameraLongitudeRad,
+                        double cameraLatitudeRad,
+                        bool parentCameraInside,
+                        int cameraInsideTargetZoom,
+                        size_t maxRenderedTiles,
+                        std::vector<TileKey>& out,
+                        std::vector<TileNode*>& renderedNodes,
+                        bool parentInsideFrustum) {
     if (out.size() >= maxRenderedTiles) {
         return;
     }
 
     cameraInside_ = parentCameraInside &&
                     containsCartographic(cameraLongitudeRad, cameraLatitudeRad);
-    // Two-pass culling: sphere first, then OBB for tighter rejection.
-    if (frustum.intersectsSphere(boundingSphere_.getCenter(), boundingSphere_.getRadius()) &&
-        frustum.intersectsOBB(obb_)) {
+
+    // cesium-native CullingVolume: if parent was fully inside the frustum,
+    // skip all plane tests for this subtree.
+    CullingResult vis = CullingResult::Intersecting;
+    if (parentInsideFrustum) {
         inFrustumMask_ = 1;
+    } else {
+        vis = frustum.computeVisibility(boundingSphere_);
+        if (vis != CullingResult::Outside &&
+            frustum.intersectsOBB(obb_)) {
+            inFrustumMask_ = 1;
+        }
     }
+
     const bool visible = inFrustumMask_ || cameraInside_ || key_.z < 3;
     const bool altVisible = isAltitudeVisible(camera);
     if (!visible) {
@@ -587,9 +636,18 @@ void TileNode::traverse(const TileScheme& scheme,
     }
 
     state_ = TileNodeState::Walkthrough;
+    // cesium-native tilesFadingOut: if this node was rendering last frame
+    // and now subdivides to children, keep rendering the parent while it
+    // fades out over ~0.3s (cross-fade with children fading in).
+    if (previousState_ == TileNodeState::Rendering) {
+        markFadingOut();
+        out.push_back(key_);
+        renderedNodes.push_back(this);
+    }
+    bool childInside = (vis == CullingResult::Inside) || parentInsideFrustum;
     ensureChildren(scheme);
     for (auto& child : children_) {
-        child->traverse(scheme,
+        child->traverseImpl(scheme,
                         camera,
                         frustum,
                         viewportWidthPixels,
@@ -600,7 +658,8 @@ void TileNode::traverse(const TileScheme& scheme,
                         cameraInsideTargetZoom,
                         maxRenderedTiles,
                         out,
-                        renderedNodes);
+                        renderedNodes,
+                        childInside);
     }
 }
 
@@ -620,11 +679,11 @@ void TileNode::renderToZoom(const TileScheme& scheme,
     if (out.size() >= maxRenderedTiles) return;
     cameraInside_ = parentCameraInside &&
                     containsCartographic(cameraLongitudeRad, cameraLatitudeRad);
-    // Two-pass culling: sphere first (fast), then OBB (tighter).
-    const bool sphereVisible =
-        frustum.intersectsSphere(boundingSphere_.getCenter(), boundingSphere_.getRadius());
-    const bool obbVisible = sphereVisible && frustum.intersectsOBB(obb_);
-    inFrustumMask_ = obbVisible ? 1 : 0;
+    // cesium-native CullingVolume optimization
+    CullingResult vis = frustum.computeVisibility(boundingSphere_);
+    if (vis != CullingResult::Outside && frustum.intersectsOBB(obb_)) {
+        inFrustumMask_ = 1;
+    }
     const bool visible = inFrustumMask_ || cameraInside_ || key_.z < 3;
     if (!visible) {
         state_ = TileNodeState::NotRendering;
@@ -643,9 +702,16 @@ void TileNode::renderToZoom(const TileScheme& scheme,
         return;
     }
 
+    bool childInside = (vis == CullingResult::Inside);
     state_ = TileNodeState::Walkthrough;
+    if (previousState_ == TileNodeState::Rendering) {
+        markFadingOut();
+        out.push_back(key_);
+        renderedNodes.push_back(this);
+    }
     ensureChildren(scheme);
     for (auto& child : children_) {
+        if (childInside) child->inFrustumMask_ = 1;
         child->renderToZoom(scheme,
                             camera,
                             frustum,

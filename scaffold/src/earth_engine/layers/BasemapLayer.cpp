@@ -27,7 +27,7 @@ namespace {
 
 struct SurfaceGpuVertex {
     float position[3];
-    float normal[3];
+    // normal removed — computed in vertex shader from ECEF position
     float texcoord[2];
 };
 
@@ -41,9 +41,6 @@ std::vector<SurfaceGpuVertex> makeSurfaceGpuVertices(const SurfaceTileMesh& mesh
         dst.position[0] = static_cast<float>(relative.x());
         dst.position[1] = static_cast<float>(relative.y());
         dst.position[2] = static_cast<float>(relative.z());
-        dst.normal[0] = static_cast<float>(src.normalEcef.x());
-        dst.normal[1] = static_cast<float>(src.normalEcef.y());
-        dst.normal[2] = static_cast<float>(src.normalEcef.z());
         dst.texcoord[0] = src.uv[0];
         dst.texcoord[1] = src.uv[1];
         vertices.push_back(dst);
@@ -656,6 +653,12 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
             static_cast<float>(cameraRelativeToTileOrigin.x()),
             static_cast<float>(cameraRelativeToTileOrigin.y()),
             static_cast<float>(cameraRelativeToTileOrigin.z())
+        };
+        // Pass tile centroid for GPU geodetic normal computation
+        cmd.uniforms["u_tileOrigin"] = {
+            static_cast<float>(gpuMesh->localOriginEcef.x()),
+            static_cast<float>(gpuMesh->localOriginEcef.y()),
+            static_cast<float>(gpuMesh->localOriginEcef.z())
         };
         cmd.frameId = layerPlan_.frameId;
         cmd.generation = generation_;

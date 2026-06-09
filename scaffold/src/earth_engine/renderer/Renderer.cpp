@@ -73,16 +73,27 @@ layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec2 a_texcoord;
 
 uniform mat4 u_modelViewProjection;
-uniform vec4 u_tileUV;     // offsetU, offsetV, scaleU, scaleV
+uniform vec4 u_tileUV;
 uniform vec3 u_cameraRelativeOrigin;
+uniform vec3 u_tileOrigin;
 
 out vec2 v_texcoord;
 out vec3 v_normal;
+out float v_distance;
+
+// WGS84 inverse radii squared
+const vec3 kInvRadiiSq = vec3(
+    1.0 / (6378137.0 * 6378137.0),
+    1.0 / (6378137.0 * 6378137.0),
+    1.0 / (6356752.314245 * 6356752.314245));
 
 void main() {
     v_texcoord = u_tileUV.xy + a_texcoord * u_tileUV.zw;
-    v_normal = normalize(a_normal);
-    gl_Position = u_modelViewProjection * vec4(a_position - u_cameraRelativeOrigin, 1.0);
+    vec3 camRelPos = a_position - u_cameraRelativeOrigin;
+    vec3 worldPos = a_position + u_tileOrigin;
+    v_normal = normalize(worldPos * kInvRadiiSq);
+    v_distance = length(camRelPos);
+    gl_Position = u_modelViewProjection * vec4(camRelPos, 1.0);
 }
 )glsl";
 
@@ -92,9 +103,12 @@ precision mediump float;
 
 in vec2 v_texcoord;
 in vec3 v_normal;
+in float v_distance;
 uniform sampler2D u_tileTexture;
 uniform sampler2D u_waterMask;
 uniform vec3 u_lightDir;
+uniform vec3 u_fogColor;
+uniform float u_fogDensity;
 uniform float u_tileOpacity;
 uniform float u_transitionOpacity;
 uniform float u_hasWaterMask;
@@ -106,15 +120,18 @@ void main() {
     float diffuse = max(dot(n, normalize(u_lightDir)), 0.0);
     color.rgb *= 0.45 + diffuse * 0.55;
 
-    // Water mask (QuantizedMesh extension ID=2): alpha = water fraction
     if (u_hasWaterMask > 0.5) {
         float waterAlpha = texture(u_waterMask, v_texcoord).a;
         if (waterAlpha > 0.01) {
-            // Blend to a blue-tinted water color
             vec3 waterColor = vec3(0.18, 0.35, 0.62);
             color.rgb = mix(color.rgb, waterColor, waterAlpha * 0.7);
         }
     }
+
+    // cesium-native exponential fog: exp(-(d * density)²)
+    float fog = exp(-v_distance * u_fogDensity * v_distance * u_fogDensity);
+    fog = clamp(fog, 0.0, 1.0);
+    color.rgb = mix(u_fogColor, color.rgb, fog);
 
     color.a *= clamp(u_tileOpacity, 0.0, 1.0) * clamp(u_transitionOpacity, 0.0, 1.0);
     fragColor = color;
@@ -173,8 +190,8 @@ using namespace metal;
 
 struct VertexIn {
     float3 position [[attribute(0)]];
-    float3 normal   [[attribute(1)]];
-    float2 texcoord [[attribute(2)]];
+    // normal removed — GPU computes geodetic normal from position
+    float2 texcoord [[attribute(1)]];
 };
 
 struct VertexOut {
@@ -191,7 +208,12 @@ vertex VertexOut tileVertex(VertexIn in [[stage_in]],
     out.position = u_modelViewProjection *
         float4(in.position - u_cameraRelativeOrigin, 1.0);
     out.texcoord = u_tileUV.xy + in.texcoord * u_tileUV.zw;
-    out.normal = normalize(in.normal);
+    // WGS84 geodetic normal from ECEF position
+    constexpr float3 kInvRadiiSq = float3(
+        1.0f / (6378137.0f * 6378137.0f),
+        1.0f / (6378137.0f * 6378137.0f),
+        1.0f / (6356752.314245f * 6356752.314245f));
+    out.normal = normalize(in.position * kInvRadiiSq);
     return out;
 }
 )msl";
@@ -514,7 +536,7 @@ RenderCommand Renderer::makeSurfaceTileCommand(Texture* texture,
     cmd.vertexBuffer = vertexBuffer;
     cmd.indexBuffer = indexBuffer;
     cmd.indexCount = indexCount;
-    cmd.vertexStride = 32;
+    cmd.vertexStride = 20;  // pos(12) + uv(8), normal computed in shader
     cmd.primitive = RenderCommand::PrimitiveType::Triangles;
     cmd.indexType = RenderCommand::IndexType::UInt32;
     cmd.depthTest = true;
@@ -531,6 +553,8 @@ RenderCommand Renderer::makeSurfaceTileCommand(Texture* texture,
 
     cmd.uniforms["u_tileUV"] = {uvOffsetX, uvOffsetY, uvScaleX, uvScaleY};
     cmd.uniforms["u_hasWaterMask"] = {waterMaskTexture ? 1.0f : 0.0f};
+    cmd.uniforms["u_fogColor"] = {0.62f, 0.78f, 0.92f};  // light blue sky
+    cmd.uniforms["u_fogDensity"] = {3.0e-5f};  // ~50% fog at 30km
     cmd.uniforms["u_tileOpacity"] = {1.0f};
     cmd.uniforms["u_transitionOpacity"] = {1.0f};
     return cmd;

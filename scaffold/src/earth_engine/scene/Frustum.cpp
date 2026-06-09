@@ -103,4 +103,25 @@ bool Frustum::intersectsOBB(const OrientedBoundingBox& obb) const {
     return true;
 }
 
+CullingResult Frustum::computeVisibility(const BoundingSphere& sphere) const {
+    bool allInside = true;
+    for (const auto& fp : planes_) {
+        double d = fp.signedDistanceTo(sphere.getCenter());
+        if (d < -sphere.getRadius()) return CullingResult::Outside;
+        if (d < sphere.getRadius()) allInside = false;
+    }
+    return allInside ? CullingResult::Inside : CullingResult::Intersecting;
+}
+
+CullingResult Frustum::computeVisibility(const OrientedBoundingBox& obb) const {
+    bool allInside = true;
+    for (const auto& fp : planes_) {
+        Plane plane(fp.normal, fp.distance);
+        int result = obb.intersectPlane(plane);
+        if (result < 0) return CullingResult::Outside;
+        if (result == 0) allInside = false;
+    }
+    return allInside ? CullingResult::Inside : CullingResult::Intersecting;
+}
+
 } // namespace earth_engine
