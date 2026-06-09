@@ -67,15 +67,18 @@ void TerrainLayer::update(const FrameState& frameState) {
     // 1. 处理后台线程完成的解码
     processPendingUploads();
 
-    // 2. 计算可见瓦片
-    tilePlan_ = TilePlanBuilder::compute(
+    // 2. 计算可见瓦片（使用持久化 quad tree，避免每帧重建所有节点）
+    if (!quadTree_) {
+        quadTree_ = std::make_unique<TileQuadTree>();
+    }
+    tilePlan_ = quadTree_->compute(
         *frameState.camera, *tileScheme_,
         static_cast<double>(frameState.viewportWidthPixels),
         static_cast<double>(frameState.viewportHeightPixels));
 
     // 3. 请求缺失的瓦片（限制 zoom 范围到 provider 支持的范围）
     int requestsThisUpdate = 0;
-    constexpr int kMaxTerrainRequestsPerUpdate = 8;
+    constexpr int kMaxTerrainRequestsPerUpdate = 4;
     for (const auto& key : tilePlan_.visibleTiles) {
         if (key.z < provider_->minZoom() || key.z > provider_->maxZoom()) continue;
         std::string cacheKey = terrainCacheKey(key);
@@ -105,7 +108,12 @@ void TerrainLayer::processPendingUploads() {
     std::deque<PendingUpload> batch;
     {
         std::lock_guard<std::mutex> lock(pendingQueue_->mutex);
-        batch.swap(pendingQueue_->queue);
+        // Limit terrain tile processing per frame to avoid GPU buffer spikes
+        constexpr size_t kMaxTerrainUploadsPerFrame = 2;
+        while (!pendingQueue_->queue.empty() && batch.size() < kMaxTerrainUploadsPerFrame) {
+            batch.push_back(std::move(pendingQueue_->queue.front()));
+            pendingQueue_->queue.pop_front();
+        }
     }
 
     for (auto& item : batch) {

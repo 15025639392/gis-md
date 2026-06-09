@@ -388,8 +388,7 @@ BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
     const bool useTerrain = terrainTile && terrainTile->valid();
     const std::string ck = tileCacheKey(key) + "/surface/" +
         (useTerrain
-            ? "terrain/" + std::to_string(terrainLayer->terrainGeneration()) +
-                  "/" + tileCacheKey(terrainTile->key())
+            ? "terrain/" + tileCacheKey(terrainTile->key())
             : "ellipsoid") +
         "/" + std::to_string(gridSize);
 

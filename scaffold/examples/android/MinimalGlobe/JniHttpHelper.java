@@ -38,7 +38,7 @@ public class JniHttpHelper {
     }
 
     private static final java.util.concurrent.Semaphore semaphore =
-        new java.util.concurrent.Semaphore(4);
+        new java.util.concurrent.Semaphore(12);
 
     public static byte[] httpGet(String urlString) {
         try { semaphore.acquire(); } catch (InterruptedException e) { return new byte[0]; }

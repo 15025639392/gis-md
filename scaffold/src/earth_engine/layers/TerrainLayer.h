@@ -3,6 +3,7 @@
 #include "../providers/TerrainProvider.h"
 #include "../tiling/TileScheme.h"
 #include "../tiling/TilePlan.h"
+#include "../tiling/TileQuadTree.h"
 #include "../terrain/TerrainTile.h"
 
 #include <memory>
@@ -72,6 +73,9 @@ private:
     // 瓦片缓存
     std::unordered_map<std::string, std::unique_ptr<TerrainTile>> tileCache_;
     std::unordered_set<std::string> requestedTiles_;
+
+    // Persistent quad tree (avoids rebuilding every frame)
+    std::unique_ptr<TileQuadTree> quadTree_;
 
     // 待上传队列
     struct PendingUpload {
