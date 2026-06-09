@@ -140,6 +140,9 @@ public:
     void setDebugOverlayEnabled(bool enabled);
     bool debugOverlayEnabled() const;
 
+    /// 开关法线贴图调试渲染（作用于所有底图图层）
+    void setNormalMapDebugEnabled(bool enabled);
+
     /// 运行时诊断（FPS、draw calls、visible tiles 等）
     const Diagnostics& diagnostics() const;
 

@@ -206,6 +206,14 @@ bool Engine::debugOverlayEnabled() const {
     return scene_->debugOverlayEnabled();
 }
 
+void Engine::setNormalMapDebugEnabled(bool enabled) {
+    // Forward to all basemap layers through the Scene's layer stack.
+    auto& stack = scene_->layerStack();
+    for (auto& layer : stack.layers()) {
+        layer->setNormalMapDebugEnabled(enabled);
+    }
+}
+
 const Diagnostics& Engine::diagnostics() const {
     return scene_->diagnostics();
 }

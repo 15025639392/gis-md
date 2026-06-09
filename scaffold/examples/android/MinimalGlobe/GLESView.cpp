@@ -59,6 +59,9 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* /*reserved*/) {
 static bool gTouching = false;
 static bool gDragStarted = false;
 static bool gTouchMoved = false;
+
+// Debug panel state
+static bool gNormalMapDebugEnabled = false;
 static bool gDebugPinchActive = false;
 
 static constexpr const char* kFabdemTerrainTemplate =
@@ -570,6 +573,112 @@ Java_com_earthengine_minimalglobe_GLESView_nativeDebugZoom(
          cameraRadius,
          diag.fps,
          diag.drawCalls);
+}
+
+// ============================================================
+// Debug panel JNI
+// ============================================================
+
+JNIEXPORT jstring JNICALL
+Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
+    JNIEnv* env, jobject /* this */) {
+    if (!gEngine) return env->NewStringUTF("Engine not ready");
+
+    const auto& diag = gEngine->diagnostics();
+    const double cameraRadius = gEngine->camera().position().length();
+    const double cameraAltitude = cameraRadius - 6378137.0;
+    const double cameraDist = gEngine->camera().position().distanceTo(Vec3::zero());
+
+    char buf[1024];
+    snprintf(buf, sizeof(buf),
+        "FPS: %.1f  |  Frame: %.1f ms\n"
+        "Draw calls: %d  |  GPU tex: %d\n"
+        "Visible tiles: %d  |  Cached: %d\n"
+        "Surface meshes: %d (%d ellip, %d terr, %d ready)\n"
+        "Attachments: %d exact, %d parent, %d missing, %d unsup\n"
+        "LOD: %.0f px  |  EqZoom: %d\n"
+        "QuadTree: %d render, %d walk, %d frustum, %d fade\n"
+        "Groups: %d merc, %d N, %d S\n"
+        "Camera: alt=%.0fm dist=%.0fm radius=%.0fm\n"
+        "Mesh: %d KB  |  Terrain tiles: %d (gen %llu)",
+        diag.fps, diag.frameTimeMs,
+        diag.drawCalls, diag.gpuTextureCount,
+        diag.visibleTiles, diag.cachedTextures,
+        diag.surfaceMeshCount, diag.ellipsoidSurfaceMeshes,
+        diag.terrainSurfaceMeshes, diag.terrainReadySurfaceMeshes,
+        diag.imageryExactAttachments, diag.imageryParentFallbackAttachments,
+        diag.imageryMissingTiles, diag.imageryUnsupportedTiles,
+        diag.lodSizePixels, diag.quadtreeEqualZoomLayers,
+        diag.quadtreeRenderingNodes, diag.quadtreeWalkthroughNodes,
+        diag.quadtreeInFrustumNodes, diag.quadtreeFadingNodes,
+        diag.mercatorTileCount, diag.northPolarTileCount,
+        diag.southPolarTileCount,
+        cameraAltitude, cameraDist, cameraRadius,
+        diag.surfaceMeshBytes / 1024, diag.terrainCachedTiles,
+        static_cast<unsigned long long>(diag.terrainGeneration));
+    return env->NewStringUTF(buf);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_earthengine_minimalglobe_GLESView_nativeGetDebugOverlayEnabled(
+    JNIEnv* /* env */, jobject /* this */) {
+    return gEngine ? gEngine->debugOverlayEnabled() : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_earthengine_minimalglobe_GLESView_nativeGetTerrainEnabled(
+    JNIEnv* /* env */, jobject /* this */) {
+    return gEngine ? gEngine->hasTerrain() : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_earthengine_minimalglobe_GLESView_nativeGetNormalMapDebugEnabled(
+    JNIEnv* /* env */, jobject /* this */) {
+    (void)gEngine;
+    // Normal map debug is per-layer; demo always has one basemap layer.
+    // Enable flag is stored globally on the JNI side.
+    return gNormalMapDebugEnabled ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_com_earthengine_minimalglobe_GLESView_nativeSetDebugOverlay(
+    JNIEnv* /* env */, jobject /* this */, jboolean enabled) {
+    if (gEngine) gEngine->setDebugOverlayEnabled(enabled);
+}
+
+JNIEXPORT void JNICALL
+Java_com_earthengine_minimalglobe_GLESView_nativeSetTerrainEnabled(
+    JNIEnv* /* env */, jobject /* this */, jboolean enabled) {
+    if (gEngine) gEngine->setTerrainEnabled(enabled);
+}
+
+JNIEXPORT void JNICALL
+Java_com_earthengine_minimalglobe_GLESView_nativeSetNormalMapDebug(
+    JNIEnv* /* env */, jobject /* this */, jboolean enabled) {
+    gNormalMapDebugEnabled = enabled;
+    if (gEngine) gEngine->setNormalMapDebugEnabled(enabled);
+    LOGI("Normal map debug: %s", enabled ? "ON" : "OFF");
+}
+
+JNIEXPORT void JNICALL
+Java_com_earthengine_minimalglobe_GLESView_nativeAddDemoVectorLayer(
+    JNIEnv* /* env */, jobject /* this */) {
+    if (!gEngine) return;
+    addDemoVectorLayer();
+}
+
+JNIEXPORT void JNICALL
+Java_com_earthengine_minimalglobe_GLESView_nativeResetCamera(
+    JNIEnv* /* env */, jobject /* this */) {
+    if (!gEngine) return;
+    // Reset to default East-Asia viewpoint
+    gEngine->setDebugOverlayEnabled(gEngine->debugOverlayEnabled()); // no-op, preserve
+    auto& cam = gEngine->camera();
+    // Default position: 7 earth radii above East Asia
+    constexpr double kDefaultDistRadii = 7.0;
+    const double d = kDefaultDistRadii * 6378137.0;
+    cam.lookAt(Vec3(-9465697.8, 35326465.0, 25608443.6), Vec3::zero(), Vec3::unitZ());
+    LOGI("Camera reset to default viewpoint");
 }
 
 JNIEXPORT void JNICALL
