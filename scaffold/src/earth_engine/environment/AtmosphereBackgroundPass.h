@@ -29,18 +29,15 @@ public:
     /// 初始化 GPU 资源（shader + 全屏 quad buffer）
     bool initialize(RenderDevice* device);
 
-    /// 构建渲染命令（对齐 OpenGlobus SimpleSkyBackground）
-    /// @param cameraPos 相机 ECEF 位置
-    /// @param viewMatrix 视图矩阵（16 floats, column-major）
+    /// 构建渲染命令（薄壳大气模型，camera space 计算）
+    /// @param viewMatrix 视图矩阵（16 floats, column-major, world→camera）
     /// @param fovRadians 垂直 FOV
     /// @param viewportWidth/Height 视口像素
     /// @param isOrthographic 是否正交
-    /// @param zenithColor 天顶颜色（RGB, 0..1, from SkyGradient）
-    /// @param horizonColor 地平线颜色（RGB, 0..1, from SkyGradient）
+    /// @param zenithColor 天顶颜色（RGB, 0..1）
+    /// @param horizonColor 地平线颜色（RGB, 0..1）
     /// @param earthRadius 地球半径（米）
-    /// @param normalMatrix 相机法线矩阵（9 floats, mat3）
     RenderCommand buildCommand(
-        const Vec3& cameraPos,
         const float* viewMatrix,
         float fovRadians,
         int viewportWidth,
@@ -48,8 +45,7 @@ public:
         bool isOrthographic,
         const std::array<float, 3>& zenithColor,
         const std::array<float, 3>& horizonColor,
-        float earthRadius,
-        const float* normalMatrix) const;
+        float earthRadius) const;
 
     bool isReady() const { return shader_ != nullptr && quadBuffer_ != nullptr; }
     void dispose();

@@ -186,18 +186,12 @@ void Scene::render() {
         float vpW = static_cast<float>(frameState_.viewportWidthPixels);
         float vpH = static_cast<float>(frameState_.viewportHeightPixels);
 
-        float normalMat[9];
-        cam.getNormalMatrix(normalMat);
-
         // Sky colors: match OpenGlobus SimpleSkyBackground hardcoded
         // zenith=sky blue, horizon=dark blue-purple (linear RGB)
-        // OG: colorOne = srgbToLinear(128/255, 223/255, 255/255)
-        //     colorTwo = srgbToLinear(10/255, 15/255, 56/255)
         std::array<float, 3> zColor = {0.216f, 0.716f, 1.0f};    // sky blue
         std::array<float, 3> hColor = {0.0012f, 0.0031f, 0.042f}; // dark
 
         commands.push_back(atmospherePass_->buildCommand(
-            cam.position(),
             viewMatrix,
             static_cast<float>(cam.verticalFovRadians()),
             static_cast<int>(vpW),
@@ -205,8 +199,7 @@ void Scene::render() {
             cam.isOrthographic(),
             zColor,
             hColor,
-            static_cast<float>(Ellipsoid::WGS84().semiMinorAxis()),
-            normalMat));
+            static_cast<float>(Ellipsoid::WGS84().semiMinorAxis())));
     }
 
     // 1. 标准底图 SurfaceTile 主链路。地形启用时，TerrainLayer 只作为

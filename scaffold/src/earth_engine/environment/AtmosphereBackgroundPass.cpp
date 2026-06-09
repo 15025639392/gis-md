@@ -36,45 +36,31 @@ void main() {
 const char* kAtmosphereBackgroundFrag = R"(#version 300 es
 precision highp float;
 
-// Thin-shell atmosphere limb glow model.
-// Computes Rayleigh scattering for rays passing through the atmosphere shell.
+// Thin-shell atmosphere limb glow — computed in CAMERA SPACE.
+// Earth center derived from view matrix translation (no normalMatrix needed).
 
 #define MAX_DIST 1e10
-#define PI 3.14159265359
 
-uniform vec3 u_camPos;
 uniform vec2 u_resolution;
 uniform float u_fov;
 uniform float u_isOrthographic;
 uniform vec4 u_frustumParams;
-uniform mat4 u_viewMatrix;
+uniform mat4 u_viewMatrix;       // world→camera
 uniform float u_earthRadius;
-uniform float u_atmosHeight;   // atmosphere thickness (100km)
-uniform float u_scaleHeight;    // Rayleigh scale height (~8km)
-uniform mat3 u_normalMatrix;
-uniform vec3 u_colorZenith;     // bright blue for limb glow
-uniform vec3 u_colorHorizon;    // dark space color
+uniform float u_atmosHeight;
+uniform float u_scaleHeight;
+uniform vec3 u_colorZenith;
+uniform vec3 u_colorHorizon;
 
 out vec4 fragColor;
 
-vec2 sphIntersect(vec3 ro, vec3 rd, vec3 ce, float ra) {
-    vec3 oc = ro - ce;
-    float b = dot(oc, rd);
-    float c = dot(oc, oc) - ra * ra;
-    float h = b * b - c;
-    if (h < 0.0) return vec2(MAX_DIST);
-    h = sqrt(h);
-    return vec2(-b - h, -b + h);
-}
-
 void main() {
-    vec3 cameraPosition = u_camPos;
-
-    // Compute view ray from screen coordinates
+    // View ray in camera space: camera at (0,0,0), looking along -Z
     vec2 uv = (2.0 * gl_FragCoord.xy - u_resolution.xy) / u_resolution.y;
-    vec3 rayDirection;
+    vec3 rayDir;
 
     if (u_isOrthographic > 0.5) {
+        // Ortho: ray is forward, origin offset by screen pos
         float px = uv.x * u_resolution.y / u_resolution.x;
         float py = uv.y;
         float dx = 0.5 * u_frustumParams.x * px;
@@ -83,64 +69,57 @@ void main() {
         vec3 right = normalize(viewT[0].xyz);
         vec3 up = normalize(viewT[1].xyz);
         vec3 backward = normalize(viewT[2].xyz);
-        vec3 forward = -backward;
-        rayDirection = forward;
-        cameraPosition = cameraPosition + right * dx + up * dy;
+        rayDir = -backward;
+        // Ortho branch not fully implemented for limb glow
+        fragColor = vec4(0.0);
+        return;
     } else {
         float z = 1.0 / tan(u_fov * 0.5);
-        rayDirection = normalize(vec3(uv, -z));
-        rayDirection = u_normalMatrix * rayDirection;
+        rayDir = normalize(vec3(uv, -z));
     }
 
-    float TOP_RADIUS = u_earthRadius + u_atmosHeight;
+    // Earth center in CAMERA SPACE
+    // viewMatrix = [R | -R*camPos], so column 3 (translation) = -R * camPos_world
+    // Earth center in camera space = viewMatrix * (0,0,0,1)_world = translation = u_viewMatrix[3].xyz
+    vec3 earthCenter = u_viewMatrix[3].xyz;
+
+    // Camera at origin in camera space
+    vec3 camPos = vec3(0.0);
 
     // Closest approach of ray to Earth center
-    vec3 oc = -cameraPosition;
-    float b = dot(oc, rayDirection);
+    vec3 oc = earthCenter - camPos; // = earthCenter
+    float b = dot(oc, rayDir);
     float c = dot(oc, oc);
     float closestDist2 = max(0.0, c - b * b);
     float closestDist = sqrt(closestDist2);
     float tangentHeight = closestDist - u_earthRadius;
 
+    float TOP_RADIUS = u_earthRadius + u_atmosHeight;
     vec3 color = vec3(0.0);
 
     if (closestDist < u_earthRadius) {
-        // Ray hits Earth — check if near the limb for glow
         if (tangentHeight > -u_atmosHeight) {
-            // Near the edge: some atmosphere visible
             float pathLen = 2.0 * sqrt(max(0.0, TOP_RADIUS * TOP_RADIUS - closestDist * closestDist));
             float density = exp(-max(tangentHeight, 0.0) / u_scaleHeight);
             float glow = density * pathLen * 0.0000008;
-            // Blue-tinted, brighter near surface
             color = mix(u_colorZenith, vec3(0.6, 0.85, 1.0), clamp(tangentHeight / 50000.0 + 0.5, 0.0, 1.0)) * glow;
         } else {
-            // Deep inside Earth — discard (globe covers)
             discard;
         }
     } else if (closestDist < TOP_RADIUS) {
-        // Ray passes through atmosphere shell — limb glow
         float pathLen = 2.0 * sqrt(TOP_RADIUS * TOP_RADIUS - closestDist * closestDist);
         float density = exp(-tangentHeight / u_scaleHeight);
         float glow = density * pathLen * 0.0000008;
-        // Color shifts from white (near surface) to deep blue (high altitude)
         float blueShift = clamp(tangentHeight / u_scaleHeight, 0.0, 1.0);
         vec3 atmosphereColor = mix(vec3(0.8, 0.9, 1.0), vec3(0.2, 0.4, 1.0), blueShift);
         color = atmosphereColor * glow;
     } else {
-        // Ray misses atmosphere — deep space (starfield visible through). Output transparent black.
-        color = u_colorHorizon * 0.01; // very faint, mostly starfield shows
+        color = u_colorHorizon * 0.01;
     }
 
-    // HDR tone mapping
     color = color / (color + vec3(1.0));
-
-    float alpha = dot(color, vec3(0.299, 0.587, 0.114)); // luminance
-
-    // Discard if nearly invisible
-    if (alpha < 0.0005) {
-        discard;
-    }
-
+    float alpha = dot(color, vec3(0.299, 0.587, 0.114));
+    if (alpha < 0.0005) discard;
     fragColor = vec4(color, alpha);
 }
 )";
@@ -202,7 +181,6 @@ bool AtmosphereBackgroundPass::initialize(RenderDevice* device) {
 }
 
 RenderCommand AtmosphereBackgroundPass::buildCommand(
-    const Vec3& cameraPos,
     const float* viewMatrix,
     float fovRadians,
     int viewportWidth,
@@ -210,8 +188,7 @@ RenderCommand AtmosphereBackgroundPass::buildCommand(
     bool isOrthographic,
     const std::array<float, 3>& zenithColor,
     const std::array<float, 3>& horizonColor,
-    float earthRadius,
-    const float* normalMatrix) const {
+    float earthRadius) const {
 
     RenderCommand cmd;
     cmd.kind = RenderCommandKind::AtmosphereBackground;
@@ -230,13 +207,6 @@ RenderCommand AtmosphereBackgroundPass::buildCommand(
     cmd.blendDst = RenderCommand::BlendFactorDst::OneMinusSrcAlpha;
     cmd.cullFace = false;
 
-    // Camera position
-    cmd.uniforms["u_camPos"] = {
-        static_cast<float>(cameraPos.x()),
-        static_cast<float>(cameraPos.y()),
-        static_cast<float>(cameraPos.z())
-    };
-
     // Resolution
     cmd.uniforms["u_resolution"] = {
         static_cast<float>(viewportWidth),
@@ -247,23 +217,20 @@ RenderCommand AtmosphereBackgroundPass::buildCommand(
     cmd.uniforms["u_fov"] = {fovRadians};
     cmd.uniforms["u_isOrthographic"] = {isOrthographic ? 1.0f : 0.0f};
 
-    // Frustum (placeholder, not used in perspective)
+    // Frustum (placeholder)
     cmd.uniforms["u_frustumParams"] = {0.0f, 0.0f, 0.0f, 0.0f};
 
-    // View matrix
+    // View matrix (world→camera, 16 floats)
     cmd.uniforms["u_viewMatrix"] = std::vector<float>(viewMatrix, viewMatrix + 16);
 
     // Earth radius (meters)
     cmd.uniforms["u_earthRadius"] = {earthRadius};
 
-    // Normal matrix (mat3, 9 floats)
-    cmd.uniforms["u_normalMatrix"] = std::vector<float>(normalMatrix, normalMatrix + 9);
-
     // Atmosphere geometry (meters)
-    cmd.uniforms["u_atmosHeight"] = {100000.0f};   // 100km
-    cmd.uniforms["u_scaleHeight"] = {7994.0f};     // Rayleigh scale height ~8km
+    cmd.uniforms["u_atmosHeight"] = {100000.0f};
+    cmd.uniforms["u_scaleHeight"] = {7994.0f};
 
-    // Sky colors from SkyGradient
+    // Sky colors
     cmd.uniforms["u_colorZenith"] = {zenithColor[0], zenithColor[1], zenithColor[2]};
     cmd.uniforms["u_colorHorizon"] = {horizonColor[0], horizonColor[1], horizonColor[2]};
 
