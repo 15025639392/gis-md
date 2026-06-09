@@ -16,6 +16,8 @@
 #include "../environment/TimeController.h"
 #include "../environment/SunDirection.h"
 #include "../environment/SkyGradient.h"
+#include "../environment/AtmosphereBackgroundPass.h"
+#include "../environment/SkyBox.h"
 #include <memory>
 #include <vector>
 #include <string>
@@ -134,6 +136,8 @@ private:
     // 环境系统
     std::unique_ptr<TimeController> timeController_;
     std::unique_ptr<SkyGradient> skyGradient_;
+    std::unique_ptr<AtmosphereBackgroundPass> atmospherePass_;
+    std::unique_ptr<SkyBox> skyBox_;
 };
 
 } // namespace earth_engine

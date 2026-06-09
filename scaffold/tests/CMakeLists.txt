@@ -140,3 +140,25 @@ else()
     endif()
 endif()
 add_test(NAME test_terrain_provider COMMAND test_terrain_provider)
+
+# ============================================================
+# environment tests
+# ============================================================
+
+add_executable(test_sun_direction
+    unit/environment/test_sun_direction.cpp
+)
+target_link_libraries(test_sun_direction PRIVATE earth_engine_core GTest::gtest GTest::gtest_main)
+add_test(NAME test_sun_direction COMMAND test_sun_direction)
+
+add_executable(test_time_controller
+    unit/environment/test_time_controller.cpp
+)
+target_link_libraries(test_time_controller PRIVATE earth_engine_core GTest::gtest GTest::gtest_main)
+add_test(NAME test_time_controller COMMAND test_time_controller)
+
+add_executable(test_atmosphere_scattering
+    unit/environment/test_atmosphere_scattering.cpp
+)
+target_link_libraries(test_atmosphere_scattering PRIVATE earth_engine_core GTest::gtest GTest::gtest_main)
+add_test(NAME test_atmosphere_scattering COMMAND test_atmosphere_scattering)

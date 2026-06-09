@@ -308,9 +308,13 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, kSurfaceStride,
                                   reinterpret_cast<void*>(12));
         } else if (cmd.vertexStride > 0) {
-            // 显式 vertex stride（VectorLayer 等使用）
+            // 显式 vertex stride（VectorLayer、SkyBox、Atmosphere 等使用）
+            // 根据 stride 推断分量数：8=vec2, 12=vec3
+            int compCount = 3;
+            if (cmd.vertexStride == 8) compCount = 2;   // vec2
+            else if (cmd.vertexStride == 12) compCount = 3; // vec3
             setAttribEnabled(0, attrib0Enabled, true);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, cmd.vertexStride,
+            glVertexAttribPointer(0, compCount, GL_FLOAT, GL_FALSE, cmd.vertexStride,
                                   reinterpret_cast<void*>(0));
             setAttribEnabled(1, attrib1Enabled, false);
             setAttribEnabled(2, attrib2Enabled, false);
@@ -360,6 +364,9 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             switch (values.size()) {
                 case 1:
                     glUniform1f(loc, values[0]);
+                    break;
+                case 2:
+                    glUniform2fv(loc, 1, values.data());
                     break;
                 case 3:
                     glUniform3fv(loc, 1, values.data());

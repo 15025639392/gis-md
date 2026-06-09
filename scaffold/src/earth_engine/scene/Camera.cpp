@@ -1,4 +1,5 @@
 #include "Camera.h"
+#include "../core/geodesy/Ellipsoid.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
@@ -130,6 +131,15 @@ Ray Camera::getPickRay(double screenXPixels,
     farWorld /= farWorld.w;
 
     return Ray(Vec3(glm::dvec3(nearWorld)), Vec3(glm::dvec3(farWorld - nearWorld)));
+}
+
+double Camera::getHeight() const {
+    // 计算 camera ECEF 位置距 WGS84 椭球表面的高度
+    double len = position_.length();
+    const auto& wgs84 = Ellipsoid::WGS84();
+    // 简化：使用半短轴（极半径）作为球近似
+    double surfaceRadius = wgs84.semiMinorAxis();
+    return len - surfaceRadius;
 }
 
 void Camera::setOrientation(const Vec3& direction, const Vec3& up) {

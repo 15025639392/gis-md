@@ -269,6 +269,11 @@ target_sources(earth_engine_core PRIVATE
 # environment
 # ============================================================
 target_sources(earth_engine_core PRIVATE
+    earth_engine/environment/AtmosphereParameters.h
+    earth_engine/environment/AtmosphereBackgroundPass.h
+    earth_engine/environment/AtmosphereBackgroundPass.cpp
+    earth_engine/environment/SkyBox.h
+    earth_engine/environment/SkyBox.cpp
     earth_engine/environment/TimeController.h
     earth_engine/environment/TimeController.cpp
     earth_engine/environment/SunDirection.h

@@ -22,6 +22,12 @@ public:
     double nearPlaneMeters() const { return nearPlaneMeters_; }
     double farPlaneMeters() const { return farPlaneMeters_; }
 
+    /// 是否正交投影（当前仅支持透视）
+    bool isOrthographic() const { return false; }
+
+    /// 相机距 WGS84 椭球表面的高度（米）
+    double getHeight() const;
+
     void setView(const Vec3& position, const Vec3& direction, const Vec3& up);
     void lookAt(const Vec3& position, const Vec3& target, const Vec3& up);
     const Vec3& target() const { return target_; }

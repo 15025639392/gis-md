@@ -58,7 +58,9 @@ Scene::Scene()
       pickingService_(std::make_unique<PickingService>()),
       selectionManager_(std::make_unique<SelectionManager>()),
       timeController_(std::make_unique<TimeController>()),
-      skyGradient_(std::make_unique<SkyGradient>()) {
+      skyGradient_(std::make_unique<SkyGradient>()),
+      atmospherePass_(std::make_unique<AtmosphereBackgroundPass>()),
+      skyBox_(std::make_unique<SkyBox>()) {
 
     // OpenGlobus Camera defaults to a near plane of 1m and minAltitude=1m.
     // OpenGlobus PlanetCamera reverse-Z defaults: near=150, far=1e12.
@@ -91,6 +93,10 @@ bool Scene::setRenderDevice(RenderDevice* device) {
 
     // 初始化调试叠加层
     debugOverlay_->initialize(device);
+
+    // 初始化环境系统渲染 Pass
+    atmospherePass_->initialize(device);
+    skyBox_->initialize(device);
 
     return true;
 }
@@ -126,7 +132,8 @@ void Scene::update(double deltaSeconds) {
 
     // 环境系统：更新太阳方向 + 天空颜色
     Vec3 sunDir = SunDirection::compute(timeController_->julianDate());
-    skyGradient_->update(sunDir);
+    double camAlt = camera_->getHeight();
+    skyGradient_->update(sunDir, camAlt);
     frameState_.lightDir = {
         static_cast<float>(sunDir.x()),
         static_cast<float>(sunDir.y()),
@@ -150,6 +157,43 @@ void Scene::render() {
     if (!renderer_ || !isReady()) return;
 
     RenderCommandList commands;
+
+    // 0. SkyBox（最远）
+    if (skyBox_ && skyBox_->isReady()) {
+        const auto& cam = camera();
+        const auto& vmRaw = cam.viewMatrix().raw();
+        float viewMatrix[16];
+        const double* vmPtr = glm::value_ptr(vmRaw);
+        for (int i = 0; i < 16; ++i) viewMatrix[i] = static_cast<float>(vmPtr[i]);
+        float vpW = static_cast<float>(frameState_.viewportWidthPixels);
+        float vpH = static_cast<float>(frameState_.viewportHeightPixels);
+        const auto& pmRaw = cam.projectionMatrix(
+            static_cast<double>(vpW), static_cast<double>(vpH)).raw();
+        float projMatrix[16];
+        const double* pmPtr = glm::value_ptr(pmRaw);
+        for (int i = 0; i < 16; ++i) projMatrix[i] = static_cast<float>(pmPtr[i]);
+        commands.push_back(skyBox_->buildCommand(
+            viewMatrix, projMatrix, cam.isOrthographic()));
+    }
+
+    // 0.5 AtmosphereBackgroundPass（SkyBox 之上，地球之下）
+    if (atmospherePass_ && atmospherePass_->isReady()) {
+        const auto& cam = camera();
+        const auto& vmRaw = cam.viewMatrix().raw();
+        float viewMatrix[16];
+        const double* vmPtr = glm::value_ptr(vmRaw);
+        for (int i = 0; i < 16; ++i) viewMatrix[i] = static_cast<float>(vmPtr[i]);
+        float vpW = static_cast<float>(frameState_.viewportWidthPixels);
+        float vpH = static_cast<float>(frameState_.viewportHeightPixels);
+        commands.push_back(atmospherePass_->buildCommand(
+            sunDirection(),
+            cam.position(),
+            viewMatrix,
+            static_cast<float>(cam.verticalFovRadians()),
+            static_cast<int>(vpW),
+            static_cast<int>(vpH),
+            cam.isOrthographic()));
+    }
 
     // 1. 标准底图 SurfaceTile 主链路。地形启用时，TerrainLayer 只作为
     // SurfaceTile mesh 的高度数据源，不再发出独立地形 surface pass。

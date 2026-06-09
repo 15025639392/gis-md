@@ -11,10 +11,12 @@ namespace earth_engine {
 
 enum class RenderCommandKind {
     Unknown,
-    GlobeSurface,
-    SurfaceTile,
-    VectorOverlay,
-    DebugOverlay
+    SkyBackground,        // order 0: skybox / starfield
+    AtmosphereBackground,  // order 5: atmospheric scattering
+    GlobeSurface,          // order 10
+    SurfaceTile,           // order 10
+    VectorOverlay,         // order 30
+    DebugOverlay           // order 40
 };
 
 /// 单条渲染命令。

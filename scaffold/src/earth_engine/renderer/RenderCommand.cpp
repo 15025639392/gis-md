@@ -61,6 +61,10 @@ bool surfaceTileBlendAllowed(const RenderCommand& cmd) {
 
 int mvpRenderOrder(RenderCommandKind kind) {
     switch (kind) {
+        case RenderCommandKind::SkyBackground:
+            return 0;
+        case RenderCommandKind::AtmosphereBackground:
+            return 5;
         case RenderCommandKind::GlobeSurface:
             return 10;
         case RenderCommandKind::SurfaceTile:

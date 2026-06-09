@@ -1,23 +1,32 @@
 #pragma once
 
 #include "../core/math/Vec3.h"
+#include "AtmosphereParameters.h"
 #include <array>
 
 namespace earth_engine {
 
-/// 天空颜色渐变（visual-only 等级）。
+/// 物理大气散射颜色计算。
 ///
-/// 根据太阳方向计算：
+/// 使用 Rayleigh + Mie 散射解析近似，与 openglobus/src/shaders/atmos/
+/// 使用相同的参数模型，但不依赖 LUT 预计算。
+///
+/// 根据太阳方向 + 相机高度计算：
 ///   - 天顶颜色（天空顶部）
 ///   - 地平线颜色（天空底部，clear color 使用）
 ///   - 环境光颜色
-///
-/// 使用简化的 Rayleigh 散射近似，不涉及真实大气物理。
 class SkyGradient {
 public:
-    /// 根据 ECEF 太阳方向更新颜色
+    SkyGradient();
+    explicit SkyGradient(const AtmosphereParameters& params);
+
+    /// 设置大气参数
+    void setParameters(const AtmosphereParameters& params);
+
+    /// 根据 ECEF 太阳方向 + 相机海拔高度更新颜色
     /// @param sunDirECEF 太阳方向单位向量（地心→太阳）
-    void update(const Vec3& sunDirECEF);
+    /// @param cameraAltitudeMeters 相机距椭球表面高度（米），默认 0（地面）
+    void update(const Vec3& sunDirECEF, double cameraAltitudeMeters = 0.0);
 
     /// 天顶颜色（RGBA，0..1）
     const std::array<float, 4>& zenithColor() const { return zenith_; }
@@ -32,6 +41,7 @@ public:
     double sunElevation() const { return sunElevation_; }
 
 private:
+    AtmosphereParameters params_;
     std::array<float, 4> zenith_;
     std::array<float, 4> horizon_;
     std::array<float, 3> ambient_;
