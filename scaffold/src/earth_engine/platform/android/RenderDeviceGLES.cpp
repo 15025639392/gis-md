@@ -184,7 +184,14 @@ std::unique_ptr<ShaderProgram> RenderDeviceGLES::createShader(const ShaderDesc& 
     if (!compiled) {
         GLint logLen = 0;
         glGetShaderiv(vs, GL_INFO_LOG_LENGTH, &logLen);
-        // 编译失败，删除 shader 并返回 null
+        if (logLen > 1) {
+            std::string log(logLen, '\0');
+            glGetShaderInfoLog(vs, logLen, nullptr, log.data());
+            __android_log_print(ANDROID_LOG_ERROR, "GLES",
+                "Vertex shader compile error: %s", log.c_str());
+        }
+        __android_log_print(ANDROID_LOG_ERROR, "GLES",
+            "Vertex shader source (first 200 chars): %.200s", vsSrc);
         glDeleteShader(vs);
         return nullptr;
     }
@@ -197,6 +204,16 @@ std::unique_ptr<ShaderProgram> RenderDeviceGLES::createShader(const ShaderDesc& 
 
     glGetShaderiv(fs, GL_COMPILE_STATUS, &compiled);
     if (!compiled) {
+        GLint logLen = 0;
+        glGetShaderiv(fs, GL_INFO_LOG_LENGTH, &logLen);
+        if (logLen > 1) {
+            std::string log(logLen, '\0');
+            glGetShaderInfoLog(fs, logLen, nullptr, log.data());
+            __android_log_print(ANDROID_LOG_ERROR, "GLES",
+                "Fragment shader compile error: %s", log.c_str());
+        }
+        __android_log_print(ANDROID_LOG_ERROR, "GLES",
+            "Fragment shader source (first 200 chars): %.200s", fsSrc);
         glDeleteShader(vs);
         glDeleteShader(fs);
         return nullptr;
@@ -210,6 +227,16 @@ std::unique_ptr<ShaderProgram> RenderDeviceGLES::createShader(const ShaderDesc& 
 
     GLint linked = GL_FALSE;
     glGetProgramiv(program, GL_LINK_STATUS, &linked);
+    if (!linked) {
+        GLint logLen = 0;
+        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &logLen);
+        if (logLen > 1) {
+            std::string log(logLen, '\0');
+            glGetProgramInfoLog(program, logLen, nullptr, log.data());
+            __android_log_print(ANDROID_LOG_ERROR, "GLES",
+                "Program link error: %s", log.c_str());
+        }
+    }
 
     // 链接后可释放 shader
     glDeleteShader(vs);

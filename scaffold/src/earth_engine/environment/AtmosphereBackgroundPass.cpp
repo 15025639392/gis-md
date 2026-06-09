@@ -5,6 +5,15 @@
 #include <sstream>
 #include <iomanip>
 
+#ifdef ANDROID
+#include <android/log.h>
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "AtmosPass", __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "AtmosPass", __VA_ARGS__)
+#else
+#define LOGI(...)
+#define LOGE(...)
+#endif
+
 namespace earth_engine {
 
 // ============================================================
@@ -167,7 +176,7 @@ void main() {
             float rayleighOD = u_rayleighScattering.r * rayleighDensity * sunPathLength;
             float mieOD = u_mieScattering.r * mieDensity * sunPathLength;
 
-            vec3 extinction = exp(-(rayleighOD + mieOD));
+            vec3 extinction = vec3(exp(-(rayleighOD + mieOD)));
 
             // Scattered light at this point
             vec3 scattered = (u_rayleighScattering * rayleighDensity * rayleighPhaseVal +
@@ -178,7 +187,7 @@ void main() {
             float camPathLength = t;
             float camRayleighOD = u_rayleighScattering.r * rayleighDensity * camPathLength;
             float camMieOD = u_mieScattering.r * mieDensity * camPathLength;
-            vec3 camTransmittance = exp(-(camRayleighOD + camMieOD));
+            vec3 camTransmittance = vec3(exp(-(camRayleighOD + camMieOD)));
 
             light += scattered * camTransmittance * segmentLength;
             t += segmentLength;
@@ -233,14 +242,23 @@ AtmosphereBackgroundPass::~AtmosphereBackgroundPass() {
 }
 
 bool AtmosphereBackgroundPass::initialize(RenderDevice* device) {
-    if (!device) return false;
+    if (!device) {
+        LOGE("initialize: null device");
+        return false;
+    }
     device_ = device;
+    LOGI("initialize: creating shader...");
 
     ShaderDesc shaderDesc;
     shaderDesc.vertexSource = kAtmosphereBackgroundVert;
     shaderDesc.fragmentSource = kAtmosphereBackgroundFrag;
-    shader_ = device->createShader(shaderDesc).release();
-    if (!shader_) return false;
+    auto shaderPtr = device->createShader(shaderDesc);
+    if (!shaderPtr) {
+        LOGE("initialize: createShader returned null");
+        return false;
+    }
+    shader_ = shaderPtr.release();
+    LOGI("initialize: shader created ok");
 
     // Full-screen quad: two triangles covering NDC [-1,1]²
     // Positioned as triangle strip: [-1,-1], [1,-1], [-1,1], [1,1]
@@ -256,9 +274,15 @@ bool AtmosphereBackgroundPass::initialize(RenderDevice* device) {
     bufferDesc.data = quadVertices;
     bufferDesc.usage = BufferDesc::Usage::Static;
     bufferDesc.type = BufferDesc::Type::Vertex;
-    quadBuffer_ = device->createBuffer(bufferDesc).release();
+    auto bufPtr = device->createBuffer(bufferDesc);
+    if (!bufPtr) {
+        LOGE("initialize: createBuffer returned null");
+        return false;
+    }
+    quadBuffer_ = bufPtr.release();
+    LOGI("initialize: buffer created ok, ready");
 
-    return quadBuffer_ != nullptr;
+    return true;
 }
 
 void AtmosphereBackgroundPass::setParameters(RenderDevice* device,
