@@ -89,8 +89,8 @@ void main() {
     } else {
         float z = 1.0 / tan(u_fov * 0.5);
         rayDirection = normalize(vec3(uv, -z));
-        vec4 rd = transpose(u_viewMatrix) * vec4(rayDirection, 1.0);
-        rayDirection = rd.xyz;
+        // Transform camera-space direction to world space using normal matrix
+        rayDirection = u_normalMatrix * rayDirection;
     }
 
     // Compute closest approach of ray to Earth center
