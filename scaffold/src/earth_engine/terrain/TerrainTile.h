@@ -28,8 +28,10 @@ public:
     /// 双线性采样高度。
     /// @param lngRad 经度（radian）
     /// @param latRad 纬度（radian）
+    /// @param parentTile 可选的父瓦片（用于 no-data 回退）
     /// @return ellipsoid height（meter），超出范围返回 0
-    float sampleHeight(double lngRad, double latRad) const;
+    float sampleHeight(double lngRad, double latRad,
+                       const TerrainTile* parentTile = nullptr) const;
 
 private:
     TileKey key_;

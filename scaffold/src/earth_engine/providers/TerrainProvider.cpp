@@ -4,6 +4,16 @@
 
 namespace earth_engine {
 
+bool DecodedHeightmap::isNoData(float height) const {
+    // OpenGlobus RgbTerrain.checkNoDataValue: heights > 50000 are no-data.
+    if (height > 50000.0f) return true;
+
+    for (float sentinel : noDataValues) {
+        if (height == sentinel) return true;
+    }
+    return false;
+}
+
 float DecodedHeightmap::sampleBilinear(float u, float v) const {
     if (!valid()) return 0.0f;
 

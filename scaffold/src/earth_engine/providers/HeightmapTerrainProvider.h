@@ -46,7 +46,11 @@ public:
     int tileSize() const override { return tileSize_; }
 
     void setZoomRange(int minZ, int maxZ);
+    void setMaxNativeZoom(int maxNativeZ) { maxNativeZoom_ = maxNativeZ; }
+    int maxNativeZoom() const { return maxNativeZoom_; }
     void setEncoding(Encoding encoding);
+    void setHeightFactor(float factor) { heightFactor_ = factor; }
+    void setNoDataValues(std::vector<float> values) { noDataValues_ = std::move(values); }
 
     std::string buildUrl(const TileKey& key) const override;
 
@@ -65,7 +69,10 @@ private:
     Encoding encoding_ = Encoding::Terrarium;
     int minZoom_ = 0;
     int maxZoom_ = 14;
+    int maxNativeZoom_ = 14;
     int tileSize_ = 256;
+    float heightFactor_ = 1.0f;
+    std::vector<float> noDataValues_;
     PlatformBridge* platformBridge_ = nullptr;
 };
 

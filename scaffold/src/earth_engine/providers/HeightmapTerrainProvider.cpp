@@ -170,6 +170,8 @@ std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(
 
         auto hm = std::make_unique<DecodedHeightmap>();
         hm->tileSize = img->width;
+        hm->heightFactor = heightFactor_;
+        hm->noDataValues = noDataValues_;
 
         size_t count = static_cast<size_t>(img->width * img->height);
         hm->heights.reserve(count);
@@ -186,6 +188,7 @@ std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(
             } else {
                 h = r * 256.0f + g + b / 256.0f - 32768.0f;
             }
+            h *= heightFactor_;  // OpenGlobus _heightFactor
             hm->heights.push_back(h);
             if (h < minH) minH = h;
             if (h > maxH) maxH = h;
@@ -203,6 +206,8 @@ std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(
 
     auto hm = std::make_unique<DecodedHeightmap>();
     hm->tileSize = w;
+    hm->heightFactor = heightFactor_;
+    hm->noDataValues = noDataValues_;
 
     size_t count = static_cast<size_t>(w * h);
     hm->heights.reserve(count);
@@ -219,6 +224,7 @@ std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(
         } else {
             elev = r * 256.0f + g + b / 256.0f - 32768.0f;
         }
+        elev *= heightFactor_;  // OpenGlobus _heightFactor
         hm->heights.push_back(elev);
         if (elev < minH) minH = elev;
         if (elev > maxH) maxH = elev;

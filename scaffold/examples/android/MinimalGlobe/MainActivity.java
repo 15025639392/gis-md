@@ -50,7 +50,7 @@ public class MainActivity extends Activity {
         mDebugButton.setBackgroundColor(0x88000000);
         FrameLayout.LayoutParams btnParams = new FrameLayout.LayoutParams(
                 120, 120, Gravity.TOP | Gravity.END);
-        btnParams.setMargins(0, 20, 20, 0);
+        btnParams.setMargins(0, 100, 20, 0);
         mDebugButton.setOnClickListener(v -> toggleDebugPanel());
         root.addView(mDebugButton, btnParams);
 

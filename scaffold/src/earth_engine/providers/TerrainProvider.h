@@ -21,7 +21,16 @@ struct DecodedHeightmap {
     float minHeight = 0.0f;
     float maxHeight = 0.0f;
 
+    /// 无效高度哨兵值列表（OpenGlobus noDataValues）
+    std::vector<float> noDataValues;
+
+    /// 高度缩放因子（OpenGlobus _heightFactor），默认为 1.0
+    float heightFactor = 1.0f;
+
     bool valid() const { return tileSize > 0 && heights.size() == static_cast<size_t>(tileSize * tileSize); }
+
+    /// 检查高度是否为无效值（哨兵值匹配 或 值 > 50000）
+    bool isNoData(float height) const;
 
     /// 双线性采样高度。
     /// @param u 列归一化坐标 [0,1]（西→东）
