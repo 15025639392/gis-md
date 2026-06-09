@@ -10,82 +10,74 @@
 namespace earth_engine {
 
 // ============================================================
-// Meeus 简化太阳位置（精度 ~0.5°）
+// OpenGlobus getSunPosition (stjarnhimlen.se tutorial)
+// Matches src/astro/earth.ts exactly.
 // ============================================================
 
 namespace {
 
-/// Julian century since J2000.0
-double julianCentury(double jd) {
-    return (jd - 2451545.0) / 36525.0;
-}
+// OpenGlobus astro constants
+constexpr double kJ2000 = 2451545.0;
+constexpr double kObliquityDeg = 23.4392911;        // J2000_OBLIQUITY
+constexpr double kAuToMeters = 1.4959787e11;         // AU_TO_METERS
 
-/// 经度归一化到 [0, 360)
-double normalize360(double deg) {
-    deg = std::fmod(deg, 360.0);
-    if (deg < 0.0) deg += 360.0;
-    return deg;
-}
-
-/// 太阳黄经（degree）
-double sunEclipticLongitude(double T) {
-    // Mean anomaly（度）
-    double M = normalize360(357.5291 + 35999.0503 * T - 0.0001559 * T * T);
-    double Mrad = glm::radians(M);
-
-    // Equation of center
-    double C = (1.9148 - 0.0048 * T - 0.000014 * T * T) * std::sin(Mrad)
-             + (0.019993 - 0.000101 * T) * std::sin(2.0 * Mrad)
-             + 0.000290 * std::sin(3.0 * Mrad);
-
-    // Mean longitude
-    double L0 = normalize360(280.4665 + 36000.7698 * T);
-
-    return normalize360(L0 + C);
-}
-
-/// 黄赤交角（度）
-double obliquity(double T) {
-    return 23.4393 - 0.0130 * T;
+double rev(double angleDeg) {
+    double x = std::fmod(angleDeg, 360.0);
+    if (x < 0.0) x += 360.0;
+    return x;
 }
 
 } // anonymous namespace
 
-// ============================================================
-// SunDirection
-// ============================================================
-
 Vec3 SunDirection::compute(double julianDate) {
-    double T = julianCentury(julianDate);
-    double lon = glm::radians(sunEclipticLongitude(T));
-    double obl = glm::radians(obliquity(T));
+    const double d = julianDate - kJ2000;                     // days since J2000.0
+    const double w = rev(282.9404 + 4.70935e-5 * d);          // longitude of perihelion (°)
+    const double e = 0.016709 - 1.151e-9 * d;                // eccentricity
+    const double M_deg = rev(356.047 + 0.9856002585 * d);     // mean anomaly (°)
+    const double oblecl_deg = kObliquityDeg - 3.563e-7 * d;  // obliquity of ecliptic (°)
 
-    // 黄道坐标 → 赤道坐标（J2000 春分点）
-    double cosLon = std::cos(lon);
-    double sinLon = std::sin(lon);
-    double cosObl = std::cos(obl);
-    double sinObl = std::sin(obl);
+    const double M = glm::radians(M_deg);
+    const double oblecl = glm::radians(oblecl_deg);
 
-    // 赤道直角坐标（地心天球，X 指向春分点）
-    double eqX = cosLon;
-    double eqY = sinLon * cosObl;
-    double eqZ = sinLon * sinObl;
+    // Eccentric anomaly (approximation): E = M + e*sin(M)*(1 + e*cos(M))
+    const double E_deg = M_deg +
+        (180.0 / glm::pi<double>()) * e * std::sin(M) * (1.0 + e * std::cos(M));
+    const double E = glm::radians(E_deg);
 
-    // 格林威治恒星时（近似）→ ECEF X 轴旋转
-    // GMST ≈ 280.4606 + 360.9856474 * days_since_J2000
-    double daysSinceJ2000 = julianDate - 2451545.0;
-    double gmst = glm::radians(normalize360(280.4606 + 360.9856474 * daysSinceJ2000));
+    // Heliocentric rectangular coordinates (perihelion frame)
+    const double x_peri = std::cos(E) - e;
+    const double y_peri = std::sin(E) * std::sqrt(1.0 - e * e);
 
-    double cosG = std::cos(gmst);
-    double sinG = std::sin(gmst);
+    const double r = std::sqrt(x_peri * x_peri + y_peri * y_peri); // distance (AU)
+    const double v = std::atan2(y_peri, x_peri);                     // true anomaly (rad)
 
-    // 旋转到 ECEF
-    double ecefX = eqX * cosG + eqY * sinG;
-    double ecefY = -eqX * sinG + eqY * cosG;
-    double ecefZ = eqZ;
+    const double lon = glm::radians(rev(glm::degrees(v) + w));       // ecliptic longitude (rad)
 
-    // 归一化
-    double len = std::sqrt(ecefX * ecefX + ecefY * ecefY + ecefZ * ecefZ);
+    // Ecliptic → equatorial coordinates
+    const double x_ecl = r * std::cos(lon);
+    const double y_ecl = r * std::sin(lon);
+
+    const double xequat = x_ecl;
+    const double yequat = y_ecl * std::cos(oblecl);
+    const double zequat = y_ecl * std::sin(oblecl);
+
+    // Sidereal rotation: Earth rotates to align equatorial frame with ECEF
+    const double theta = glm::two_pi<double>() *
+        ((d * 24.0) / 23.9344694 - 259.853 / 360.0);
+
+    // OpenGlobus: Quat.zRotation(-theta).mulVec3(Vec3(-xequat*AU, -yequat*AU, zequat*AU))
+    const double cosT = std::cos(-theta);
+    const double sinT = std::sin(-theta);
+
+    const double sx = -xequat * kAuToMeters;
+    const double sy = -yequat * kAuToMeters;
+    const double sz =  zequat * kAuToMeters;
+
+    const double ecefX = sx * cosT - sy * sinT;   // Z-rotation: x' = x*cos - y*sin
+    const double ecefY = sx * sinT + sy * cosT;   //              y' = x*sin + y*cos
+    const double ecefZ = sz;
+
+    const double len = std::sqrt(ecefX * ecefX + ecefY * ecefY + ecefZ * ecefZ);
     if (len < 1e-12) return Vec3(1, 0, 0);
 
     return Vec3(ecefX / len, ecefY / len, ecefZ / len);
@@ -93,7 +85,6 @@ Vec3 SunDirection::compute(double julianDate) {
 
 double SunDirection::elevation(double julianDate) {
     Vec3 dir = compute(julianDate);
-    // 太阳方向与赤道面的夹角 ≈ asin(z)
     return std::asin(dir.z());
 }
 
