@@ -4,6 +4,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <stdexcept>
 #include <limits>
 #include <cmath>
@@ -140,6 +141,23 @@ double Camera::getHeight() const {
     // 简化：使用半短轴（极半径）作为球近似
     double surfaceRadius = wgs84.semiMinorAxis();
     return len - surfaceRadius;
+}
+
+void Camera::getNormalMatrix(float out[9]) const {
+    // 法线矩阵 = viewMatrix 的左上 3×3（旋转部分）
+    // viewMatrix 是 column-major，取前三列的前三个元素
+    auto vm = viewMatrix().raw();
+    const double* m = glm::value_ptr(vm);
+    // column-major: col0 = [m[0],m[1],m[2]], col1 = [m[4],m[5],m[6]], col2 = [m[8],m[9],m[10]]
+    out[0] = static_cast<float>(m[0]);  // col0.x
+    out[1] = static_cast<float>(m[1]);  // col0.y
+    out[2] = static_cast<float>(m[2]);  // col0.z
+    out[3] = static_cast<float>(m[4]);  // col1.x
+    out[4] = static_cast<float>(m[5]);  // col1.y
+    out[5] = static_cast<float>(m[6]);  // col1.z
+    out[6] = static_cast<float>(m[8]);  // col2.x
+    out[7] = static_cast<float>(m[9]);  // col2.y
+    out[8] = static_cast<float>(m[10]); // col2.z
 }
 
 void Camera::setOrientation(const Vec3& direction, const Vec3& up) {

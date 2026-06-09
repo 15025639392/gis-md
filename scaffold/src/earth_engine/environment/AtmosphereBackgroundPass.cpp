@@ -36,60 +36,36 @@ void main() {
 const char* kAtmosphereBackgroundFrag = R"(#version 300 es
 precision highp float;
 
-#define PI 3.14159265359
-#define SQRT_SAMPLE_COUNT 100.0
+// Aligned with openglobus SimpleSkyBackground fragment shader
 
-uniform vec3 u_sunDir;
+#define MAX_DIST 1e10
+#define PI 3.14159265359
+#define ZERO vec3(0.0)
+
 uniform vec3 u_camPos;
 uniform vec2 u_resolution;
 uniform float u_fov;
 uniform float u_isOrthographic;
-uniform vec4 u_frustumParams; // x=left-right, y=top-bottom, z=right, w=top
+uniform vec4 u_frustumParams;
 uniform mat4 u_viewMatrix;
-
-// Atmosphere parameters
-uniform float u_atmosHeight;
-uniform float u_bottomRadius;
-uniform float u_topRadius;
-uniform vec3 u_rayleighScattering;   // RGB at sea level
-uniform vec3 u_mieScattering;        // RGB at sea level  
-uniform vec3 u_ozoneAbsorption;      // RGB at sea level
-uniform float u_rayleighScaleHeight;
-uniform float u_mieScaleHeight;
-uniform float u_sunIntensity;
-uniform float u_groundAlbedo;
-uniform float u_ozoneDensityHeight;
-uniform float u_ozoneDensityWidth;
+uniform float u_earthRadius;
+uniform mat3 u_normalMatrix;
+uniform vec3 u_colorZenith;   // SkyGradient zenith color (top)
+uniform vec3 u_colorHorizon;  // SkyGradient horizon color (bottom)
 
 out vec4 fragColor;
 
-// Rayleigh phase function
-float rayleighPhase(float cosTheta) {
-    return 3.0 / (16.0 * PI) * (1.0 + cosTheta * cosTheta);
-}
-
-// Mie phase function (Henyey-Greenstein, g=0.76)
-float miePhase(float cosTheta) {
-    float g = 0.76;
-    float g2 = g * g;
-    float denom = 1.0 + g2 - 2.0 * g * cosTheta;
-    denom = max(denom, 1e-6);
-    return (1.0 - g2) / (4.0 * PI * denom * sqrt(denom));
-}
-
-// intersect sphere: return vec2(t1, t2) or vec2(1e10) if no hit
-vec2 intersectSphere(vec3 ro, vec3 rd, vec3 center, float radius) {
-    vec3 oc = ro - center;
+vec2 sphIntersect(vec3 ro, vec3 rd, vec3 ce, float ra) {
+    vec3 oc = ro - ce;
     float b = dot(oc, rd);
-    float c = dot(oc, oc) - radius * radius;
+    float c = dot(oc, oc) - ra * ra;
     float h = b * b - c;
-    if (h < 0.0) return vec2(1e10);
+    if (h < 0.0) return vec2(MAX_DIST);
     h = sqrt(h);
     return vec2(-b - h, -b + h);
 }
 
 void main() {
-    vec3 lightDirection = normalize(u_sunDir);
     vec3 cameraPosition = u_camPos;
 
     // Compute view ray from screen coordinates
@@ -117,72 +93,34 @@ void main() {
         rayDirection = rd.xyz;
     }
 
-    float BOTTOM_RADIUS = u_bottomRadius;
-    float TOP_RADIUS = u_topRadius;
-
-    vec3 light = vec3(0.0);
-
-    // Check ray intersection with atmosphere and Earth
-    vec2 atmHit = intersectSphere(cameraPosition, rayDirection, vec3(0.0), TOP_RADIUS);
-    vec2 groundHit = intersectSphere(cameraPosition, rayDirection, vec3(0.0), BOTTOM_RADIUS);
-
-    bool hitsAtmosphere = (atmHit.y > 0.0 && atmHit.x < atmHit.y);
-    bool hitsGround = (groundHit.x > 0.0 && groundHit.x < atmHit.y);
+    // Earth intersection for discard
+    vec2 earthHit = sphIntersect(cameraPosition, rayDirection, ZERO, u_earthRadius);
+    bool hitEarth = (earthHit.x > 0.0);
 
     // Discard pixels that hit the Earth (covered by globe/tiles)
-    if (hitsGround) {
+    if (hitEarth) {
         discard;
     }
 
-    if (hitsAtmosphere) {
-        // Compute the closest approach of the ray to Earth's center
-        vec3 oc = -cameraPosition;
-        float b = dot(oc, rayDirection);
-        float c = dot(oc, oc);
-        float closestDist2 = max(0.0, c - b * b);
-        float closestDist = sqrt(closestDist2);
-        float tangentHeight = closestDist - BOTTOM_RADIUS;
+    // Big virtual sphere for sky gradient blending
+    // (matches OpenGlobus: bigRadius = earthRadius * 2.5, center offset along camera direction)
+    float bigRadius = u_earthRadius * 2.5;
+    vec3 bigCenter = normalize(cameraPosition) * bigRadius * 1.3;
 
-        // Only glow if ray passes through atmosphere
-        if (tangentHeight > 0.0 && tangentHeight < u_atmosHeight) {
-            // Exponential falloff based on tangent height
-            float density = exp(-tangentHeight / u_rayleighScaleHeight);
+    vec2 bigHit = sphIntersect(cameraPosition, rayDirection, bigCenter, bigRadius);
 
-            // Compute scattering angle between view and sun
-            float cosTheta = dot(rayDirection, lightDirection);
+    // Distance from big sphere exit point to Earth center
+    vec3 exitPoint = cameraPosition + rayDirection * bigHit.y;
+    float distToEarthCenter = length(exitPoint);
 
-            // Rayleigh: strong forward+backward, blue-rich
-            float rayleigh = 1.0 + cosTheta * cosTheta;
-            vec3 rayleighColor = vec3(0.3, 0.6, 1.0);
+    // Normalize: 0 = looking straight up (zenith), maxDist = looking at horizon
+    float maxDist = sqrt(bigRadius * bigRadius + bigRadius * bigRadius);
+    float t = distToEarthCenter / maxDist;
 
-            // Mie: strong forward (sun direction)
-            float mie = 1.0 / max(1.0 - 0.9 * cosTheta, 0.01);
-            vec3 mieColor = vec3(1.0, 0.9, 0.7);
+    // Blend zenith ↔ horizon
+    vec3 color = mix(u_colorZenith, u_colorHorizon, t);
 
-            // Path length through atmosphere (longer at tangent, shorter at limb)
-            float pathLength = sqrt(max(0.0, TOP_RADIUS * TOP_RADIUS - closestDist * closestDist));
-
-            // Glow intensity
-            float intensity = density * pathLength * 0.00001 * u_sunIntensity;
-
-            light = (rayleighColor * rayleigh + mieColor * mie * 0.3) * intensity;
-
-            // Sun disk in atmosphere
-            if (cosTheta > 0.9998) {
-                light += vec3(1.0, 0.95, 0.8) * 0.5 * u_sunIntensity;
-            }
-        }
-    }
-
-    // Tone mapping
-    light = light / (light + vec3(1.0));
-
-    // Discard pixels with negligible atmosphere glow
-    if (dot(light, light) < 0.0001) {
-        discard;
-    }
-
-    fragColor = vec4(light, 1.0);
+    fragColor = vec4(color, 1.0);
 }
 )";
 
@@ -192,13 +130,7 @@ void main() {
 // AtmosphereBackgroundPass
 // ============================================================
 
-AtmosphereBackgroundPass::AtmosphereBackgroundPass()
-    : params_(earthAtmosphereDefaults()) {}
-
-AtmosphereBackgroundPass::AtmosphereBackgroundPass(const AtmosphereParameters& params)
-    : params_(params) {
-    params_.validate();
-}
+AtmosphereBackgroundPass::AtmosphereBackgroundPass() = default;
 
 AtmosphereBackgroundPass::~AtmosphereBackgroundPass() {
     dispose();
@@ -248,27 +180,17 @@ bool AtmosphereBackgroundPass::initialize(RenderDevice* device) {
     return true;
 }
 
-void AtmosphereBackgroundPass::setParameters(RenderDevice* device,
-                                              const AtmosphereParameters& params) {
-    params_ = params;
-    params_.validate();
-    // Recreate shader with new parameters if needed
-    // (currently parameters are passed as uniforms, so no rebuild needed)
-    (void)device;
-}
-
 RenderCommand AtmosphereBackgroundPass::buildCommand(
-    const Vec3& sunDirECEF,
     const Vec3& cameraPos,
     const float* viewMatrix,
     float fovRadians,
     int viewportWidth,
     int viewportHeight,
     bool isOrthographic,
-    float frustumLeft,
-    float frustumRight,
-    float frustumTop,
-    float frustumBottom) const {
+    const std::array<float, 3>& zenithColor,
+    const std::array<float, 3>& horizonColor,
+    float earthRadius,
+    const float* normalMatrix) const {
 
     RenderCommand cmd;
     cmd.kind = RenderCommandKind::AtmosphereBackground;
@@ -287,14 +209,7 @@ RenderCommand AtmosphereBackgroundPass::buildCommand(
     cmd.blendDst = RenderCommand::BlendFactorDst::OneMinusSrcAlpha;
     cmd.cullFace = false;
 
-    // Sun direction uniform
-    cmd.uniforms["u_sunDir"] = {
-        static_cast<float>(sunDirECEF.x()),
-        static_cast<float>(sunDirECEF.y()),
-        static_cast<float>(sunDirECEF.z())
-    };
-
-    // Camera position uniform
+    // Camera position
     cmd.uniforms["u_camPos"] = {
         static_cast<float>(cameraPos.x()),
         static_cast<float>(cameraPos.y()),
@@ -307,47 +222,25 @@ RenderCommand AtmosphereBackgroundPass::buildCommand(
         static_cast<float>(viewportHeight)
     };
 
-    // FOV (radians)
+    // FOV
     cmd.uniforms["u_fov"] = {fovRadians};
     cmd.uniforms["u_isOrthographic"] = {isOrthographic ? 1.0f : 0.0f};
 
-    // Frustum params
-    cmd.uniforms["u_frustumParams"] = {
-        frustumLeft - frustumRight,  // x: total width
-        frustumTop - frustumBottom,  // y: total height
-        frustumRight,
-        frustumTop
-    };
+    // Frustum (placeholder, not used in perspective)
+    cmd.uniforms["u_frustumParams"] = {0.0f, 0.0f, 0.0f, 0.0f};
 
-    // View matrix (16 floats, column-major)
+    // View matrix
     cmd.uniforms["u_viewMatrix"] = std::vector<float>(viewMatrix, viewMatrix + 16);
 
-    // Atmosphere parameters as uniforms
-    const auto& p = params_;
-    cmd.uniforms["u_atmosHeight"] = {static_cast<float>(p.atmosHeight)};
-    cmd.uniforms["u_bottomRadius"] = {static_cast<float>(p.bottomRadius)};
-    cmd.uniforms["u_topRadius"] = {static_cast<float>(p.topRadius())};
-    cmd.uniforms["u_rayleighScattering"] = {
-        static_cast<float>(p.rayleigh.r * 5e-5),
-        static_cast<float>(p.rayleigh.g * 5e-5),
-        static_cast<float>(p.rayleigh.b * 5e-5)
-    };
-    cmd.uniforms["u_mieScattering"] = {
-        static_cast<float>(p.mie.scattering * 5e-5),
-        static_cast<float>(p.mie.scattering * 5e-5 * 0.8f),
-        static_cast<float>(p.mie.scattering * 5e-5 * 0.5f)
-    };
-    cmd.uniforms["u_ozoneAbsorption"] = {
-        static_cast<float>(p.ozone.r * 5e-5),
-        static_cast<float>(p.ozone.g * 5e-5),
-        static_cast<float>(p.ozone.b * 5e-5)
-    };
-    cmd.uniforms["u_rayleighScaleHeight"] = {static_cast<float>(p.rayleighScaleHeight)};
-    cmd.uniforms["u_mieScaleHeight"] = {static_cast<float>(p.mieScaleHeight)};
-    cmd.uniforms["u_sunIntensity"] = {static_cast<float>(p.sunIntensity)};
-    cmd.uniforms["u_groundAlbedo"] = {static_cast<float>(p.groundAlbedo)};
-    cmd.uniforms["u_ozoneDensityHeight"] = {static_cast<float>(p.ozoneDensityHeight)};
-    cmd.uniforms["u_ozoneDensityWidth"] = {static_cast<float>(p.ozoneDensityWidth)};
+    // Earth radius (meters)
+    cmd.uniforms["u_earthRadius"] = {earthRadius};
+
+    // Normal matrix (mat3, 9 floats)
+    cmd.uniforms["u_normalMatrix"] = std::vector<float>(normalMatrix, normalMatrix + 9);
+
+    // Sky colors from SkyGradient
+    cmd.uniforms["u_colorZenith"] = {zenithColor[0], zenithColor[1], zenithColor[2]};
+    cmd.uniforms["u_colorHorizon"] = {horizonColor[0], horizonColor[1], horizonColor[2]};
 
     return cmd;
 }

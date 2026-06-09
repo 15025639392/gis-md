@@ -185,14 +185,26 @@ void Scene::render() {
         for (int i = 0; i < 16; ++i) viewMatrix[i] = static_cast<float>(vmPtr[i]);
         float vpW = static_cast<float>(frameState_.viewportWidthPixels);
         float vpH = static_cast<float>(frameState_.viewportHeightPixels);
+
+        float normalMat[9];
+        cam.getNormalMatrix(normalMat);
+
+        auto& zenith = skyGradient_->zenithColor();
+        auto& horizon = skyGradient_->horizonColor();
+        std::array<float, 3> zColor = {zenith[0], zenith[1], zenith[2]};
+        std::array<float, 3> hColor = {horizon[0], horizon[1], horizon[2]};
+
         commands.push_back(atmospherePass_->buildCommand(
-            sunDirection(),
             cam.position(),
             viewMatrix,
             static_cast<float>(cam.verticalFovRadians()),
             static_cast<int>(vpW),
             static_cast<int>(vpH),
-            cam.isOrthographic()));
+            cam.isOrthographic(),
+            zColor,
+            hColor,
+            static_cast<float>(Ellipsoid::WGS84().semiMinorAxis()),
+            normalMat));
     }
 
     // 1. 标准底图 SurfaceTile 主链路。地形启用时，TerrainLayer 只作为

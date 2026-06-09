@@ -28,6 +28,9 @@ public:
     /// 相机距 WGS84 椭球表面的高度（米）
     double getHeight() const;
 
+    /// 法线矩阵（3×3，viewMatrix 的旋转部分，column-major，9 floats）
+    void getNormalMatrix(float out[9]) const;
+
     void setView(const Vec3& position, const Vec3& direction, const Vec3& up);
     void lookAt(const Vec3& position, const Vec3& target, const Vec3& up);
     const Vec3& target() const { return target_; }
