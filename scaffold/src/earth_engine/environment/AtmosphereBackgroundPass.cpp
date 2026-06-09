@@ -78,20 +78,19 @@ void main() {
         rayDir = normalize(vec3(uv, -z));
     }
 
-    // Earth center in CAMERA SPACE
-    // viewMatrix = [R | -R*camPos], so column 3 (translation) = -R * camPos_world
-    // Earth center in camera space = viewMatrix * (0,0,0,1)_world = translation = u_viewMatrix[3].xyz
-    vec3 earthCenter = u_viewMatrix[3].xyz;
+    // Earth center in CAMERA SPACE = viewMatrix * (0,0,0,1)
+    vec3 earthCenter = (u_viewMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
 
     // Camera at origin in camera space
     vec3 camPos = vec3(0.0);
 
     // Closest approach of ray to Earth center
-    vec3 oc = earthCenter - camPos; // = earthCenter
+    // Use the vector projection to avoid catastrophic cancellation
+    // (c - b*b loses all precision when ray nearly hits center)
+    vec3 oc = earthCenter - camPos;
     float b = dot(oc, rayDir);
-    float c = dot(oc, oc);
-    float closestDist2 = max(0.0, c - b * b);
-    float closestDist = sqrt(closestDist2);
+    vec3 closestPoint = oc - b * rayDir;
+    float closestDist = length(closestPoint);
     float tangentHeight = closestDist - u_earthRadius;
 
     float TOP_RADIUS = u_earthRadius + u_atmosHeight;
@@ -107,7 +106,7 @@ void main() {
             discard;
         }
     } else if (closestDist < TOP_RADIUS) {
-        float pathLen = 2.0 * sqrt(TOP_RADIUS * TOP_RADIUS - closestDist * closestDist);
+        float pathLen = 2.0 * sqrt(max(0.0, TOP_RADIUS * TOP_RADIUS - closestDist * closestDist));
         float density = exp(-tangentHeight / u_scaleHeight);
         float glow = density * pathLen * 0.0000008;
         float blueShift = clamp(tangentHeight / u_scaleHeight, 0.0, 1.0);
