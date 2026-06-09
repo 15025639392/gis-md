@@ -36,11 +36,11 @@ void main() {
 const char* kAtmosphereBackgroundFrag = R"(#version 300 es
 precision highp float;
 
-// Aligned with openglobus SimpleSkyBackground fragment shader
+// Thin-shell atmosphere limb glow model.
+// Computes Rayleigh scattering for rays passing through the atmosphere shell.
 
 #define MAX_DIST 1e10
 #define PI 3.14159265359
-#define ZERO vec3(0.0)
 
 uniform vec3 u_camPos;
 uniform vec2 u_resolution;
@@ -49,9 +49,11 @@ uniform float u_isOrthographic;
 uniform vec4 u_frustumParams;
 uniform mat4 u_viewMatrix;
 uniform float u_earthRadius;
+uniform float u_atmosHeight;   // atmosphere thickness (100km)
+uniform float u_scaleHeight;    // Rayleigh scale height (~8km)
 uniform mat3 u_normalMatrix;
-uniform vec3 u_colorZenith;   // SkyGradient zenith color (top)
-uniform vec3 u_colorHorizon;  // SkyGradient horizon color (bottom)
+uniform vec3 u_colorZenith;     // bright blue for limb glow
+uniform vec3 u_colorHorizon;    // dark space color
 
 out vec4 fragColor;
 
@@ -77,59 +79,69 @@ void main() {
         float py = uv.y;
         float dx = 0.5 * u_frustumParams.x * px;
         float dy = 0.5 * u_frustumParams.y * py;
-
         mat4 viewT = transpose(u_viewMatrix);
         vec3 right = normalize(viewT[0].xyz);
         vec3 up = normalize(viewT[1].xyz);
         vec3 backward = normalize(viewT[2].xyz);
         vec3 forward = -backward;
-
         rayDirection = forward;
         cameraPosition = cameraPosition + right * dx + up * dy;
     } else {
         float z = 1.0 / tan(u_fov * 0.5);
         rayDirection = normalize(vec3(uv, -z));
-        // Transform camera-space direction to world space using normal matrix
         rayDirection = u_normalMatrix * rayDirection;
     }
 
-    // Compute closest approach of ray to Earth center
+    float TOP_RADIUS = u_earthRadius + u_atmosHeight;
+
+    // Closest approach of ray to Earth center
     vec3 oc = -cameraPosition;
     float b = dot(oc, rayDirection);
     float c = dot(oc, oc);
-    float closestDist2 = c - b * b;
-    float closestDist = sqrt(max(0.0, closestDist2));
+    float closestDist2 = max(0.0, c - b * b);
+    float closestDist = sqrt(closestDist2);
     float tangentHeight = closestDist - u_earthRadius;
 
-    // Discard pixels deep inside Earth (covered by globe/tiles)
-    // Keep a thin ring (~200km) at the limb for atmosphere glow
-    if (tangentHeight < -200000.0) {
+    vec3 color = vec3(0.0);
+
+    if (closestDist < u_earthRadius) {
+        // Ray hits Earth — check if near the limb for glow
+        if (tangentHeight > -u_atmosHeight) {
+            // Near the edge: some atmosphere visible
+            float pathLen = 2.0 * sqrt(max(0.0, TOP_RADIUS * TOP_RADIUS - closestDist * closestDist));
+            float density = exp(-max(tangentHeight, 0.0) / u_scaleHeight);
+            float glow = density * pathLen * 0.0000008;
+            // Blue-tinted, brighter near surface
+            color = mix(u_colorZenith, vec3(0.6, 0.85, 1.0), clamp(tangentHeight / 50000.0 + 0.5, 0.0, 1.0)) * glow;
+        } else {
+            // Deep inside Earth — discard (globe covers)
+            discard;
+        }
+    } else if (closestDist < TOP_RADIUS) {
+        // Ray passes through atmosphere shell — limb glow
+        float pathLen = 2.0 * sqrt(TOP_RADIUS * TOP_RADIUS - closestDist * closestDist);
+        float density = exp(-tangentHeight / u_scaleHeight);
+        float glow = density * pathLen * 0.0000008;
+        // Color shifts from white (near surface) to deep blue (high altitude)
+        float blueShift = clamp(tangentHeight / u_scaleHeight, 0.0, 1.0);
+        vec3 atmosphereColor = mix(vec3(0.8, 0.9, 1.0), vec3(0.2, 0.4, 1.0), blueShift);
+        color = atmosphereColor * glow;
+    } else {
+        // Ray misses atmosphere — deep space (starfield visible through). Output transparent black.
+        color = u_colorHorizon * 0.01; // very faint, mostly starfield shows
+    }
+
+    // HDR tone mapping
+    color = color / (color + vec3(1.0));
+
+    float alpha = dot(color, vec3(0.299, 0.587, 0.114)); // luminance
+
+    // Discard if nearly invisible
+    if (alpha < 0.0005) {
         discard;
     }
 
-    vec3 color;
-
-    if (tangentHeight < 0.0) {
-        // Ray grazes the atmosphere limb — bright blue glow
-        float glow = 1.0 + tangentHeight / 200000.0; // 0..1 from -200km to 0
-        color = u_colorZenith * glow;
-    } else {
-        // Above atmosphere — use big sphere blend for sky gradient
-        float bigRadius = u_earthRadius * 2.5;
-        vec3 bigCenter = normalize(cameraPosition) * bigRadius * 1.3;
-
-        vec2 bigHit = sphIntersect(cameraPosition, rayDirection, bigCenter, bigRadius);
-
-        vec3 exitPoint = cameraPosition + rayDirection * bigHit.y;
-        float distToEarthCenter = length(exitPoint);
-
-        float maxDist = sqrt(bigRadius * bigRadius + bigRadius * bigRadius);
-        float t = distToEarthCenter / maxDist;
-
-        color = mix(u_colorZenith, u_colorHorizon, t);
-    }
-
-    fragColor = vec4(color, 1.0);
+    fragColor = vec4(color, alpha);
 }
 )";
 
@@ -246,6 +258,10 @@ RenderCommand AtmosphereBackgroundPass::buildCommand(
 
     // Normal matrix (mat3, 9 floats)
     cmd.uniforms["u_normalMatrix"] = std::vector<float>(normalMatrix, normalMatrix + 9);
+
+    // Atmosphere geometry (meters)
+    cmd.uniforms["u_atmosHeight"] = {100000.0f};   // 100km
+    cmd.uniforms["u_scaleHeight"] = {7994.0f};     // Rayleigh scale height ~8km
 
     // Sky colors from SkyGradient
     cmd.uniforms["u_colorZenith"] = {zenithColor[0], zenithColor[1], zenithColor[2]};
