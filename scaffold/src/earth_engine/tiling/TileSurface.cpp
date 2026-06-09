@@ -179,7 +179,8 @@ SurfaceTileMesh TileSurface::buildEllipsoidMesh(const Rectangle& tileBounds,
 SurfaceTileMesh TileSurface::buildTerrainMesh(const Rectangle& tileBounds,
                                               const TerrainTile* terrainTile,
                                               int gridSize,
-                                              double skirtHeightMeters) {
+                                              double skirtHeightMeters,
+                                              const TerrainTile* parentTile) {
     const int safeGrid = std::max(1, gridSize);
     const int n = safeGrid + 1;
     const auto& ellipsoid = Ellipsoid::WGS84();
@@ -191,16 +192,34 @@ SurfaceTileMesh TileSurface::buildTerrainMesh(const Rectangle& tileBounds,
     mesh.vertices.reserve(static_cast<size_t>(n * n));
     mesh.indices.reserve(static_cast<size_t>(safeGrid * safeGrid * 6));
 
+    // OpenGlobus equalizeVertices: blend border vertices with parent tile
+    // for smooth transitions between tiles of different resolutions.
+    const bool canEqualize = parentTile && parentTile->valid() && terrainTile && terrainTile->valid();
+
     for (int y = 0; y < n; ++y) {
         const double v = static_cast<double>(y) / static_cast<double>(safeGrid);
         for (int x = 0; x < n; ++x) {
             const double u = static_cast<double>(x) / static_cast<double>(safeGrid);
             TileSurfaceVertex sampled = vertexForUnitUv(tileBounds, u, v);
             Cartographic surfaceCart = ellipsoid.cartesianToCartographic(sampled.ecef);
-            const double h = terrainTile && terrainTile->valid()
+            double h = terrainTile && terrainTile->valid()
                 ? static_cast<double>(terrainTile->sampleHeight(
                     surfaceCart.longitude(), surfaceCart.latitude()))
                 : 0.0;
+
+            // Edge averaging: blend border vertices with parent tile height
+            if (canEqualize) {
+                const bool isBorder = (x == 0 || x == n - 1 || y == 0 || y == n - 1);
+                if (isBorder) {
+                    double parentH = static_cast<double>(parentTile->sampleHeight(
+                        surfaceCart.longitude(), surfaceCart.latitude()));
+                    // Only blend if parent has valid (non-no-data) height
+                    if (!parentTile->heightmap()->isNoData(static_cast<float>(parentH))) {
+                        h = (h + parentH) * 0.5;
+                    }
+                }
+            }
+
             Cartographic terrainCart = Cartographic::fromRadians(
                 surfaceCart.longitude(),
                 surfaceCart.latitude(),

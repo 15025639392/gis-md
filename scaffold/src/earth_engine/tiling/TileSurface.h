@@ -45,7 +45,8 @@ public:
     static SurfaceTileMesh buildTerrainMesh(const Rectangle& tileBounds,
                                             const TerrainTile* terrainTile,
                                             int gridSize,
-                                            double skirtHeightMeters = 0.0);
+                                            double skirtHeightMeters = 0.0,
+                                            const TerrainTile* parentTile = nullptr);
 
     /// 从 SurfaceTile mesh 顶点法线派生 OpenGlobus-style normal map。
     /// normal 以 ECEF/world space 单位向量编码到 RGBA8：rgb = normal * 0.5 + 0.5。

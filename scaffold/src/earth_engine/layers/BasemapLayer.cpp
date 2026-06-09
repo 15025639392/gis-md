@@ -399,9 +399,17 @@ BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
     }
 
     constexpr double kTerrainSkirtHeightMeters = -100.0;
+
+    // OpenGlobus equalizeVertices: get parent tile for edge averaging
+    const TerrainTile* parentTile = nullptr;
+    if (useTerrain && terrainTile) {
+        TileKey parentKey = TilePlanBuilder::parentKey(terrainTile->key());
+        parentTile = terrainLayer->findBestTileForKey(parentKey);
+    }
+
     SurfaceTileMesh mesh = useTerrain
         ? TileSurface::buildTerrainMesh(
-              bounds, terrainTile, gridSize, kTerrainSkirtHeightMeters)
+              bounds, terrainTile, gridSize, kTerrainSkirtHeightMeters, parentTile)
         : TileSurface::buildEllipsoidMesh(bounds, gridSize);
     if (mesh.vertices.empty() || mesh.indices.empty()) return nullptr;
 
