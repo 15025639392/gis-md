@@ -219,6 +219,11 @@ void main() {
     // HDR tone mapping
     light = light / (light + vec3(1.0));
 
+    // Discard pixels outside atmosphere (no glow visible)
+    if (dot(light, light) < 0.0001) {
+        discard;
+    }
+
     fragColor = vec4(light, 1.0);
 }
 )";
@@ -319,7 +324,9 @@ RenderCommand AtmosphereBackgroundPass::buildCommand(
     cmd.primitive = RenderCommand::PrimitiveType::TriangleStrip;
     cmd.depthTest = false;
     cmd.depthWrite = false;
-    cmd.blend = false;
+    cmd.blend = true;
+    cmd.blendSrc = RenderCommand::BlendFactor::SrcAlpha;
+    cmd.blendDst = RenderCommand::BlendFactorDst::OneMinusSrcAlpha;
     cmd.cullFace = false;
 
     // Sun direction uniform
