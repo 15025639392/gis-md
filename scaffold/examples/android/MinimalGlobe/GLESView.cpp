@@ -65,10 +65,10 @@ static bool gNormalMapDebugEnabled = false;
 static bool gDebugPinchActive = false;
 
 static constexpr const char* kFabdemTerrainTemplate =
-    "http://192.168.1.4:8090/{z}/{x}/{y}.png";
+    "http://localhost:8001/{z}/{x}/{y}.png";
 static constexpr const char* kGaodeSatelliteTemplate =
     "https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
-static constexpr bool kEnableTerrainForDemo = false;
+static constexpr bool kEnableTerrainForDemo = true;
 static constexpr bool kEnableDebugOverlayForDemo = false;
 static constexpr bool kShowNormalMapForDemo = false;
 static constexpr bool kUseGaodeSatelliteForDemo = true;
@@ -226,12 +226,11 @@ static bool createEngine() {
              kShowNormalMapForDemo ? "enabled" : "disabled");
 
         if (kEnableTerrainForDemo) {
-            // FABDEM raster DEM served by dems/scripts/serve_tiles.py.
-            // XYZ WebMercator / Mapbox Terrain-RGB, WGS84 ellipsoid heights in meters.
+            // Mapbox Terrain-RGB tiles served from localhost:8001.
             auto terrainProvider = std::make_unique<HeightmapTerrainProvider>(
                 kFabdemTerrainTemplate,
-                "FABDEM raster DEM");
-            terrainProvider->setZoomRange(0, 12);
+                "Mapbox Terrain-RGB");
+            terrainProvider->setZoomRange(0, 14);
             terrainProvider->setEncoding(HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
             terrainProvider->setPlatformBridge(gPlatformBridge.get());
             auto terrainLayer = std::make_unique<TerrainLayer>(
@@ -240,9 +239,9 @@ static bool createEngine() {
             terrainLayer->setEnabled(true);
             gEngine->setTerrainLayer(std::move(terrainLayer));
             gEngine->setTerrainEnabled(true);
-            LOGI("FABDEM terrain layer added: %s", kFabdemTerrainTemplate);
+            LOGI("Terrain layer added: %s", kFabdemTerrainTemplate);
         } else {
-            LOGI("FABDEM terrain disabled for clean SurfaceTile validation");
+            LOGI("Terrain disabled");
         }
 
         // Keep the feature path available, but avoid covering the basemap while
