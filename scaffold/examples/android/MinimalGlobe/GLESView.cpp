@@ -65,7 +65,7 @@ static bool gNormalMapDebugEnabled = false;
 static bool gDebugPinchActive = false;
 
 static constexpr const char* kFabdemTerrainTemplate =
-    "http://localhost:8001/{z}/{x}/{y}.png";
+    "http://192.168.1.4:8001/{z}/{x}/{y}.png";
 static constexpr const char* kGaodeSatelliteTemplate =
     "https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
 static constexpr bool kEnableTerrainForDemo = true;
@@ -232,6 +232,7 @@ static bool createEngine() {
                 "Mapbox Terrain-RGB");
             terrainProvider->setZoomRange(0, 14);
             terrainProvider->setEncoding(HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
+            terrainProvider->setTileSize(514);  // 512 grid + 1px skirt per side
             terrainProvider->setPlatformBridge(gPlatformBridge.get());
             auto terrainLayer = std::make_unique<TerrainLayer>(
                 std::move(terrainProvider),

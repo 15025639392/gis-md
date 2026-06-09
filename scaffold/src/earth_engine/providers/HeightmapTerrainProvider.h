@@ -49,6 +49,7 @@ public:
     void setMaxNativeZoom(int maxNativeZ) { maxNativeZoom_ = maxNativeZ; }
     int maxNativeZoom() const { return maxNativeZoom_; }
     void setEncoding(Encoding encoding);
+    void setTileSize(int size) { tileSize_ = size; }
     void setHeightFactor(float factor) { heightFactor_ = factor; }
     void setNoDataValues(std::vector<float> values) { noDataValues_ = std::move(values); }
 
