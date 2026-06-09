@@ -316,7 +316,7 @@ RenderCommand AtmosphereBackgroundPass::buildCommand(
     cmd.indexBuffer = nullptr;
     cmd.vertexCount = 4;
     cmd.vertexStride = 2 * sizeof(float);
-    cmd.primitive = RenderCommand::PrimitiveType::Triangles;
+    cmd.primitive = RenderCommand::PrimitiveType::TriangleStrip;
     cmd.depthTest = false;
     cmd.depthWrite = false;
     cmd.blend = false;

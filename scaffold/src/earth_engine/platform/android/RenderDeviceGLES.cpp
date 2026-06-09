@@ -457,10 +457,11 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         // ---- Draw ----
         GLenum mode = GL_TRIANGLES;
         switch (cmd.primitive) {
-            case RenderCommand::PrimitiveType::Triangles: mode = GL_TRIANGLES; break;
-            case RenderCommand::PrimitiveType::Lines:     mode = GL_LINES; break;
-            case RenderCommand::PrimitiveType::LineStrip: mode = GL_LINE_STRIP; break;
-            case RenderCommand::PrimitiveType::Points:    mode = GL_POINTS; break;
+            case RenderCommand::PrimitiveType::Triangles:     mode = GL_TRIANGLES; break;
+            case RenderCommand::PrimitiveType::TriangleStrip: mode = GL_TRIANGLE_STRIP; break;
+            case RenderCommand::PrimitiveType::Lines:         mode = GL_LINES; break;
+            case RenderCommand::PrimitiveType::LineStrip:     mode = GL_LINE_STRIP; break;
+            case RenderCommand::PrimitiveType::Points:        mode = GL_POINTS; break;
         }
 
         if (ib) {

@@ -39,7 +39,7 @@ struct RenderCommand {
     int indexCount = 0;        // glDrawElements 的索引数
     int indexOffset = 0;
     int vertexStride = 0;      // 每顶点字节数（0 = 后端自动检测，32=globe, 8=tile, 12=vec3）
-    enum class PrimitiveType { Triangles, Lines, LineStrip, Points } primitive = PrimitiveType::Triangles;
+    enum class PrimitiveType { Triangles, TriangleStrip, Lines, LineStrip, Points } primitive = PrimitiveType::Triangles;
     enum class IndexType { UInt16, UInt32 } indexType = IndexType::UInt16;
 
     // 渲染状态
