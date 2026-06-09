@@ -35,6 +35,8 @@ public:
     TileNodeState previousState() const { return previousState_; }
     double transitionOpacity() const { return transitionOpacity_; }
     int fadingNodeCount() const { return fadingNodeCount_; }
+    double transitionTimestamp() const { return transitionTimestamp_; }
+    void animateTransitionOpacity(double elapsedSinceTransition);
     bool isHorizonTangent(const Camera& camera) const;
     const Vec3& boundingCenter() const { return boundingCenter_; }
     double boundingRadiusMeters() const { return boundingRadiusMeters_; }
@@ -100,6 +102,7 @@ private:
     int inFrustumMask_ = 0;
     double transitionOpacity_ = 1.0;
     int fadingNodeCount_ = 0;
+    double transitionTimestamp_ = 0.0;
     Vec3 boundingCenter_ = Vec3::zero();
     double boundingRadiusMeters_ = 0.0;
     std::array<Vec3, 4> cornerPoints_{};
@@ -128,6 +131,7 @@ private:
     std::string schemeId_;
     int createdNodeCount_ = 0;
     int lastVisitedNodeCount_ = 0;
+    double lastFrameTime_ = 0.0;  // for transition opacity animation
 };
 
 } // namespace earth_engine

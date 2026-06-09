@@ -12,7 +12,9 @@
 #include <glm/gtc/constants.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <string>
 #include <unordered_set>
@@ -485,7 +487,9 @@ void TileNode::markRenderingTransition() {
         return;
     }
 
+    // OpenGlobus: fresh nodes start at opacity 0 and fade in over ~0.3s.
     transitionOpacity_ = 0.0;
+    transitionTimestamp_ = 0.3; // remaining fade duration (seconds)
     fadingNodeCount_ = 0;
     if (parent_ && parent_->previousState_ == TileNodeState::Rendering) {
         fadingNodeCount_ = 1;
@@ -494,6 +498,16 @@ void TileNode::markRenderingTransition() {
     if (childrenPreviousStateEquals(TileNodeState::Rendering)) {
         fadingNodeCount_ = 4;
     }
+}
+
+void TileNode::animateTransitionOpacity(double dt) {
+    if (transitionTimestamp_ <= 0.0 || dt <= 0.0) return;
+
+    transitionTimestamp_ = std::max(0.0, transitionTimestamp_ - dt);
+    const double t = 1.0 - transitionTimestamp_ / 0.3;
+    // Cubic ease-out (matches OpenGlobus transition feel)
+    const double eased = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t);
+    transitionOpacity_ = std::clamp(eased, 0.0, 1.0);
 }
 
 void TileNode::traverse(const TileScheme& scheme,
@@ -713,6 +727,31 @@ TilePlan TileQuadTree::compute(const Camera& camera,
     for (const auto& root : roots_) {
         accumulateNodeStats(root.get(), plan);
     }
+
+    // Animate transition opacity for newly-rendered nodes (OpenGlobus fade-in).
+    {
+        auto now = std::chrono::duration<double>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        double dt = (lastFrameTime_ > 0.0) ? now - lastFrameTime_ : 1.0 / 60.0;
+        lastFrameTime_ = now;
+
+        // Animate rendered nodes
+        for (TileNode* node : renderedNodes) {
+            node->animateTransitionOpacity(dt);
+        }
+        // Also animate not-rendering nodes (they might be fading out)
+        std::function<void(TileNode*)> animateAll = [&](TileNode* n) {
+            if (!n) return;
+            n->animateTransitionOpacity(dt);
+            for (const auto& child : n->children()) {
+                animateAll(child.get());
+            }
+        };
+        for (auto& root : roots_) {
+            animateAll(root.get());
+        }
+    }
+
     accumulateTileGroupStats(plan);
     accumulateNeighborStats(renderedNodes, plan);
     updateTileTransitions(renderedNodes, plan);
