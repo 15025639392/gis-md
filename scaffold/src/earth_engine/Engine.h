@@ -27,7 +27,7 @@ struct PickResult;
 ///   2. 创建 Engine 并传入 RenderDevice
 ///   3. 调用 onSurfaceCreated() → onSurfaceChanged()
 ///   4. 每帧调用 render()
-///   5. 输入事件通过 onDrag* / onPinch 转发
+///   5. 输入事件通过 onInputEvent(InputEvent) 转发（或向后兼容的 onDrag*）
 class Engine {
 public:
     /// @param device 平台渲染设备（Engine 不拥有所有权）
