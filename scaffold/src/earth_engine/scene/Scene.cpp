@@ -179,23 +179,21 @@ void Scene::render() {
     // 0.5 AtmosphereBackgroundPass（SkyBox 之上，地球之下）
     if (atmospherePass_ && atmospherePass_->isReady()) {
         const auto& cam = camera();
-        Mat4 vm = cam.viewMatrix();  // must store, .raw() refs internals
-        const double* vmPtr = glm::value_ptr(vm.raw());
-        float viewMatrix[16];
-        for (int i = 0; i < 16; ++i) viewMatrix[i] = static_cast<float>(vmPtr[i]);
         float vpW = static_cast<float>(frameState_.viewportWidthPixels);
         float vpH = static_cast<float>(frameState_.viewportHeightPixels);
 
-        // Sky colors: match OpenGlobus SimpleSkyBackground hardcoded
-        std::array<float, 3> zColor = {0.216f, 0.716f, 1.0f};    // sky blue
-        std::array<float, 3> hColor = {0.0012f, 0.0031f, 0.042f}; // dark
+        float normalMat[9];
+        cam.getNormalMatrix(normalMat);
+
+        std::array<float, 3> zColor = {0.216f, 0.716f, 1.0f};
+        std::array<float, 3> hColor = {0.0012f, 0.0031f, 0.042f};
 
         commands.push_back(atmospherePass_->buildCommand(
-            viewMatrix,
+            cam.position(),
             static_cast<float>(cam.verticalFovRadians()),
             static_cast<int>(vpW),
             static_cast<int>(vpH),
-            cam.isOrthographic(),
+            normalMat,
             zColor,
             hColor,
             static_cast<float>(Ellipsoid::WGS84().semiMinorAxis())));

@@ -36,16 +36,13 @@ void main() {
 const char* kAtmosphereBackgroundFrag = R"(#version 300 es
 precision highp float;
 
-// Thin-shell atmosphere limb glow — computed in CAMERA SPACE.
-// Earth center derived from view matrix translation (no normalMatrix needed).
+// Thin-shell atmosphere limb glow — computed in WORLD SPACE.
+// Camera position and normalMatrix passed directly (no view matrix extraction).
 
-#define MAX_DIST 1e10
-
+uniform vec3 u_camPos;          // world-space camera position (ECEF)
 uniform vec2 u_resolution;
 uniform float u_fov;
-uniform float u_isOrthographic;
-uniform vec4 u_frustumParams;
-uniform mat4 u_viewMatrix;       // world→camera
+uniform mat3 u_normalMatrix;     // camera→world rotation
 uniform float u_earthRadius;
 uniform float u_atmosHeight;
 uniform float u_scaleHeight;
@@ -55,41 +52,19 @@ uniform vec3 u_colorHorizon;
 out vec4 fragColor;
 
 void main() {
-    // View ray in camera space: camera at (0,0,0), looking along -Z
     vec2 uv = (2.0 * gl_FragCoord.xy - u_resolution.xy) / u_resolution.y;
-    vec3 rayDir;
 
-    if (u_isOrthographic > 0.5) {
-        // Ortho: ray is forward, origin offset by screen pos
-        float px = uv.x * u_resolution.y / u_resolution.x;
-        float py = uv.y;
-        float dx = 0.5 * u_frustumParams.x * px;
-        float dy = 0.5 * u_frustumParams.y * py;
-        mat4 viewT = transpose(u_viewMatrix);
-        vec3 right = normalize(viewT[0].xyz);
-        vec3 up = normalize(viewT[1].xyz);
-        vec3 backward = normalize(viewT[2].xyz);
-        rayDir = -backward;
-        // Ortho branch not fully implemented for limb glow
-        fragColor = vec4(0.0);
-        return;
-    } else {
-        float z = 1.0 / tan(u_fov * 0.5);
-        rayDir = normalize(vec3(uv, -z));
-    }
+    // View ray in camera space
+    float z = 1.0 / tan(u_fov * 0.5);
+    vec3 rayCam = normalize(vec3(uv, -z));
 
-    // Earth center in CAMERA SPACE = viewMatrix * (0,0,0,1)
-    vec3 earthCenter = (u_viewMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+    // Transform to world space
+    vec3 rayWorld = u_normalMatrix * rayCam;
 
-    // Camera at origin in camera space
-    vec3 camPos = vec3(0.0);
-
-    // Closest approach of ray to Earth center
-    // Use the vector projection to avoid catastrophic cancellation
-    // (c - b*b loses all precision when ray nearly hits center)
-    vec3 oc = earthCenter - camPos;
-    float b = dot(oc, rayDir);
-    vec3 closestPoint = oc - b * rayDir;
+    // Closest approach of ray to Earth center (world origin)
+    vec3 oc = -u_camPos;  // vector from camera to Earth center
+    float b = dot(oc, rayWorld);
+    vec3 closestPoint = oc - b * rayWorld;
     float closestDist = length(closestPoint);
     float tangentHeight = closestDist - u_earthRadius;
 
@@ -180,11 +155,11 @@ bool AtmosphereBackgroundPass::initialize(RenderDevice* device) {
 }
 
 RenderCommand AtmosphereBackgroundPass::buildCommand(
-    const float* viewMatrix,
+    const Vec3& cameraPos,
     float fovRadians,
     int viewportWidth,
     int viewportHeight,
-    bool isOrthographic,
+    const float* normalMatrix,
     const std::array<float, 3>& zenithColor,
     const std::array<float, 3>& horizonColor,
     float earthRadius) const {
@@ -206,26 +181,25 @@ RenderCommand AtmosphereBackgroundPass::buildCommand(
     cmd.blendDst = RenderCommand::BlendFactorDst::OneMinusSrcAlpha;
     cmd.cullFace = false;
 
-    // Resolution
+    // Camera position (world space, ECEF)
+    cmd.uniforms["u_camPos"] = {
+        static_cast<float>(cameraPos.x()),
+        static_cast<float>(cameraPos.y()),
+        static_cast<float>(cameraPos.z())
+    };
+
+    // Resolution + FOV
     cmd.uniforms["u_resolution"] = {
         static_cast<float>(viewportWidth),
         static_cast<float>(viewportHeight)
     };
-
-    // FOV
     cmd.uniforms["u_fov"] = {fovRadians};
-    cmd.uniforms["u_isOrthographic"] = {isOrthographic ? 1.0f : 0.0f};
 
-    // Frustum (placeholder)
-    cmd.uniforms["u_frustumParams"] = {0.0f, 0.0f, 0.0f, 0.0f};
+    // Normal matrix (camera→world, mat3, 9 floats)
+    cmd.uniforms["u_normalMatrix"] = std::vector<float>(normalMatrix, normalMatrix + 9);
 
-    // View matrix (world→camera, 16 floats)
-    cmd.uniforms["u_viewMatrix"] = std::vector<float>(viewMatrix, viewMatrix + 16);
-
-    // Earth radius (meters)
+    // Earth radius + atmosphere geometry
     cmd.uniforms["u_earthRadius"] = {earthRadius};
-
-    // Atmosphere geometry (meters)
     cmd.uniforms["u_atmosHeight"] = {100000.0f};
     cmd.uniforms["u_scaleHeight"] = {7994.0f};
 

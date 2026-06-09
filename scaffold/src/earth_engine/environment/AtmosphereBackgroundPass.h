@@ -29,20 +29,20 @@ public:
     /// 初始化 GPU 资源（shader + 全屏 quad buffer）
     bool initialize(RenderDevice* device);
 
-    /// 构建渲染命令（薄壳大气模型，camera space 计算）
-    /// @param viewMatrix 视图矩阵（16 floats, column-major, world→camera）
+    /// 构建渲染命令（薄壳大气模型，world space 计算）
+    /// @param cameraPos 相机 ECEF 位置（米）
     /// @param fovRadians 垂直 FOV
     /// @param viewportWidth/Height 视口像素
-    /// @param isOrthographic 是否正交
+    /// @param normalMatrix 相机→世界旋转（9 floats, mat3 column-major）
     /// @param zenithColor 天顶颜色（RGB, 0..1）
     /// @param horizonColor 地平线颜色（RGB, 0..1）
     /// @param earthRadius 地球半径（米）
     RenderCommand buildCommand(
-        const float* viewMatrix,
+        const Vec3& cameraPos,
         float fovRadians,
         int viewportWidth,
         int viewportHeight,
-        bool isOrthographic,
+        const float* normalMatrix,
         const std::array<float, 3>& zenithColor,
         const std::array<float, 3>& horizonColor,
         float earthRadius) const;
