@@ -43,6 +43,7 @@ const TerrainTile* TerrainLayer::findBestTile(double lngRad, double latRad) cons
 }
 
 const TerrainTile* TerrainLayer::findBestTileForKey(const TileKey& targetKey) const {
+    // First try exact match and parents (lower zoom fallback)
     TileKey candidate = targetKey;
     while (true) {
         auto found = tileCache_.find(terrainCacheKey(candidate));
@@ -54,7 +55,24 @@ const TerrainTile* TerrainLayer::findBestTileForKey(const TileKey& targetKey) co
         }
         candidate = TilePlanBuilder::parentKey(candidate);
     }
-    return nullptr;
+
+    // Parent chain exhausted — scan all cache entries for the best
+    // (highest zoom) tile whose geographic bounds cover the target.
+    const TerrainTile* best = nullptr;
+    int bestZoom = -1;
+    const Rectangle& targetBounds = tileScheme_->tileToRectangle(targetKey);
+    const double targetCenterLng = targetBounds.west() + targetBounds.width() * 0.5;
+    const double targetCenterLat = targetBounds.south() + targetBounds.height() * 0.5;
+    for (const auto& [key, tile] : tileCache_) {
+        if (!tile->valid()) continue;
+        if (tile->bounds().contains(targetCenterLng, targetCenterLat)) {
+            if (tile->key().z > bestZoom) {
+                bestZoom = tile->key().z;
+                best = tile.get();
+            }
+        }
+    }
+    return best;
 }
 
 // ============================================================

@@ -291,6 +291,7 @@ static void renderFrame() {
     if (gFrameCount <= 1 || gFrameCount % 300 == 0) {
         const auto& diag = gEngine->diagnostics();
         LOGI("Frame %d | tiles vis=%d cached=%d renderSurface=%d mesh=%d "
+             "(terr=%d ellip=%d ready=%d) "
              "attach=%d exact=%d parent=%d normalMap=%d stale=%d missingGen=%d | "
              "missing=%d unsupported=%d "
              "lod=%.0f eq=%d qRender=%d qWalk=%d qFrustum=%d qFade=%d "
@@ -298,6 +299,8 @@ static void renderFrame() {
              "sun=(%.2f,%.2f,%.2f) | FPS=%.1f draw=%d",
              gFrameCount, diag.visibleTiles, diag.cachedTextures,
              diag.renderSurfaceTiles, diag.surfaceMeshCount,
+             diag.terrainSurfaceMeshes, diag.ellipsoidSurfaceMeshes,
+             diag.terrainReadySurfaceMeshes,
              diag.imageryAttachments, diag.imageryExactAttachments,
              diag.imageryParentFallbackAttachments,
              diag.normalMapTextures,
