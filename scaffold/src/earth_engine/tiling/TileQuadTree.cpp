@@ -92,7 +92,7 @@ std::vector<Vec3> tileSamplePoints(const Rectangle& bounds) {
     return points;
 }
 
-std::pair<Vec3, double> boundingSphereFor(const Rectangle& bounds) {
+BoundingSphere boundingSphereFor(const Rectangle& bounds) {
     const auto points = tileSamplePoints(bounds);
     Vec3 center = Vec3::zero();
     for (const Vec3& p : points) {
@@ -104,7 +104,31 @@ std::pair<Vec3, double> boundingSphereFor(const Rectangle& bounds) {
     for (const Vec3& p : points) {
         radius = std::max(radius, center.distanceTo(p));
     }
-    return {center, radius};
+    return BoundingSphere(center, radius);
+}
+
+OrientedBoundingBox obbFromCorners(const Vec3& center,
+                                    const std::array<Vec3, 4>& corners) {
+    // ENU basis at the tile center
+    Vec3 up = center.normalized();
+    Vec3 east = Vec3::unitZ().cross(up).normalized();
+    Vec3 north = up.cross(east).normalized();
+
+    double hEast = 0.0, hNorth = 0.0, hUp = 0.0;
+    for (const Vec3& c : corners) {
+        Vec3 d = c - center;
+        hEast  = std::max(hEast,  std::abs(d.dot(east)));
+        hNorth = std::max(hNorth, std::abs(d.dot(north)));
+        hUp    = std::max(hUp,    std::abs(d.dot(up)));
+    }
+    hEast  = std::max(hEast, 1.0);
+    hNorth = std::max(hNorth, 1.0);
+    hUp    = std::max(hUp,   1.0);
+
+    return OrientedBoundingBox(center,
+                                east * hEast,
+                                north * hNorth,
+                                up * hUp);
 }
 
 std::array<Vec3, 4> tileCornerPoints(const Rectangle& bounds) {
@@ -362,10 +386,9 @@ void applyOpenGlobusEqualZoomPass(const TileScheme& scheme,
 
 TileNode::TileNode(TileKey key, Rectangle bounds, TileNode* parent)
     : key_(std::move(key)), bounds_(bounds), parent_(parent) {
-    auto sphere = boundingSphereFor(bounds_);
-    boundingCenter_ = sphere.first;
-    boundingRadiusMeters_ = sphere.second;
+    boundingSphere_ = boundingSphereFor(bounds_);
     cornerPoints_ = tileCornerPoints(bounds_);
+    obb_ = obbFromCorners(boundingSphere_.getCenter(), cornerPoints_);
 }
 
 void TileNode::resetFrameState() {
@@ -438,7 +461,7 @@ bool TileNode::isAltitudeVisible(const Camera& camera) const {
 }
 
 bool TileNode::isHorizonTangent(const Camera& camera) const {
-    return boundingCenter_.normalized().dot(-camera.direction()) < kOpenGlobusHorizonTangent;
+    return boundingSphere_.getCenter().normalized().dot(-camera.direction()) < kOpenGlobusHorizonTangent;
 }
 
 bool TileNode::shouldSubdivide(const Camera& camera,
@@ -453,8 +476,8 @@ bool TileNode::shouldSubdivide(const Camera& camera,
     // zoom?" which is determined by canSubdivide (z < maxZoom) in the caller.
     const double projectedPixels = projectedSizePixels(
         camera,
-        boundingCenter_,
-        boundingRadiusMeters_,
+        boundingSphere_.getCenter(),
+        boundingSphere_.getRadius(),
         viewportWidthPixels,
         viewportHeightPixels);
     const double lodSize = openglobusLodSizePixels(camera);
@@ -528,7 +551,9 @@ void TileNode::traverse(const TileScheme& scheme,
 
     cameraInside_ = parentCameraInside &&
                     containsCartographic(cameraLongitudeRad, cameraLatitudeRad);
-    if (frustum.intersectsSphere(boundingCenter_, boundingRadiusMeters_)) {
+    // Two-pass culling: sphere first, then OBB for tighter rejection.
+    if (frustum.intersectsSphere(boundingSphere_.getCenter(), boundingSphere_.getRadius()) &&
+        frustum.intersectsOBB(obb_)) {
         inFrustumMask_ = 1;
     }
     const bool visible = inFrustumMask_ || cameraInside_ || key_.z < 3;
@@ -595,7 +620,11 @@ void TileNode::renderToZoom(const TileScheme& scheme,
     if (out.size() >= maxRenderedTiles) return;
     cameraInside_ = parentCameraInside &&
                     containsCartographic(cameraLongitudeRad, cameraLatitudeRad);
-    inFrustumMask_ = frustum.intersectsSphere(boundingCenter_, boundingRadiusMeters_) ? 1 : 0;
+    // Two-pass culling: sphere first (fast), then OBB (tighter).
+    const bool sphereVisible =
+        frustum.intersectsSphere(boundingSphere_.getCenter(), boundingSphere_.getRadius());
+    const bool obbVisible = sphereVisible && frustum.intersectsOBB(obb_);
+    inFrustumMask_ = obbVisible ? 1 : 0;
     const bool visible = inFrustumMask_ || cameraInside_ || key_.z < 3;
     if (!visible) {
         state_ = TileNodeState::NotRendering;

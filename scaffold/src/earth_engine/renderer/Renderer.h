@@ -60,8 +60,10 @@ public:
     RenderCommand makeGlobeCommand(const FrameState& frameState) const;
 
     /// 构建 SurfaceTile RenderCommand（调用者提供 imagery attachment 和 tileBounds）
+    /// Per-vertex normals are used directly (aligned with cesium-native glTF NORMAL attribute);
+    /// no separate normal map texture is required.
     RenderCommand makeSurfaceTileCommand(Texture* texture,
-                                         Texture* normalMapTexture,
+                                         Texture* waterMaskTexture,
                                          Buffer* vertexBuffer,
                                          Buffer* indexBuffer,
                                          int indexCount,

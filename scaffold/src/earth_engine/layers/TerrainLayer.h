@@ -49,6 +49,8 @@ public:
     float sampleHeight(double lngRad, double latRad) const;
     const TerrainTile* findBestTile(double lngRad, double latRad) const;
     const TerrainTile* findBestTileForKey(const TileKey& targetKey) const;
+    /// Cross-projection lookup by geographic bounds (when basemap CRS ≠ terrain CRS).
+    const TerrainTile* findBestTileForBounds(const Rectangle& geoBounds) const;
     uint64_t terrainGeneration() const { return terrainGeneration_; }
     int cachedTileCount() const { return static_cast<int>(tileCache_.size()); }
 
@@ -74,6 +76,10 @@ private:
     std::unordered_map<std::string, std::unique_ptr<TerrainTile>> tileCache_;
     std::unordered_set<std::string> requestedTiles_;
 
+    // cesium-native availability tracking (see CesiumGeometry/QuadtreeRectangleAvailability).
+    // Tracks tiles confirmed to have NO data to avoid redundant requests.
+    std::unordered_set<std::string> emptyTiles_;
+
     // Persistent quad tree (avoids rebuilding every frame)
     std::unique_ptr<TileQuadTree> quadTree_;
 
@@ -84,12 +90,17 @@ private:
     };
     struct PendingQueue {
         std::deque<PendingUpload> queue;
+        std::unordered_set<std::string> emptyTiles;
         std::mutex mutex;
     };
     std::shared_ptr<PendingQueue> pendingQueue_;
 
     uint64_t terrainGeneration_ = 0;
     std::string terrainCacheKey(const TileKey& key) const;
+
+    /// Returns false if this tile or any ancestor has been confirmed empty.
+    /// Prevents redundant requests to coverage gaps (cesium-native availability).
+    bool isTilePossiblyAvailable(const TileKey& key) const;
 };
 
 } // namespace earth_engine

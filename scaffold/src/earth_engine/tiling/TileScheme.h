@@ -57,6 +57,11 @@ public:
     ///   north polar LonLat group: [2^z, 2*2^z)
     ///   south polar LonLat group: [2*2^z, 3*2^z)
     static std::unique_ptr<TileScheme> createOpenGlobusEarth();
+
+    /// Geographic (EPSG:4326) TMS tiling.
+    /// x = floor((lng + 180) / 360 * 2^z)
+    /// y = floor((90 - lat) / 180 * 2^z)  (TMS: y=0 at south pole)
+    static std::unique_ptr<TileScheme> createGeographicTMS();
 };
 
 } // namespace earth_engine

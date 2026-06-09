@@ -1,4 +1,6 @@
 #include "CameraController.h"
+#include "../core/geodesy/Cartographic.h"
+#include "../core/geodesy/Ellipsoid.h"
 #include "../scene/Camera.h"
 #include "../core/math/Ray.h"
 
@@ -75,8 +77,14 @@ glm::dvec3 clampEyeToOpenGlobusMinAltitude(const glm::dvec3& eye,
 CameraController::CameraController(Camera* camera)
     : camera_(camera),
       rotation_(defaultViewRotation()) {
-    // 初始相机位置：沿 +Z 轴，距离地球中心 distance_ 个地球半径外
-    update(0.0);
+    // Default to Chongqing area for testing
+    const auto& e = Ellipsoid::WGS84();
+    auto target = e.cartographicToCartesian(
+        Cartographic::fromDegrees(106.508, 29.617, 0.0));
+    auto eye = e.cartographicToCartesian(
+        Cartographic::fromDegrees(106.508, 29.617, 1000.0));
+    camera_->lookAt(eye, target, e.geodeticSurfaceNormal(target));
+    orbitMode_ = false;  // disable orbit so lookAt isn't overridden
 }
 
 void CameraController::setViewport(int widthPixels, int heightPixels) {

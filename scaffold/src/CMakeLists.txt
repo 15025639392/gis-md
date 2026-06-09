@@ -17,6 +17,24 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/core/math/Ray.cpp
     earth_engine/core/math/Rectangle.h
     earth_engine/core/math/Rectangle.cpp
+    earth_engine/core/math/Plane.h
+    earth_engine/core/math/BoundingSphere.h
+    earth_engine/core/math/OrientedBoundingBox.h
+)
+
+# ============================================================
+# core/async
+# ============================================================
+target_sources(earth_engine_core PRIVATE
+    earth_engine/core/async/AsyncSystem.h
+)
+
+# ============================================================
+# core/cache
+# ============================================================
+target_sources(earth_engine_core PRIVATE
+    earth_engine/core/cache/HttpCache.h
+    earth_engine/core/cache/PersistentCache.h
 )
 
 # ============================================================
@@ -117,6 +135,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/providers/TerrainProvider.cpp
     earth_engine/providers/HeightmapTerrainProvider.h
     earth_engine/providers/HeightmapTerrainProvider.cpp
+    earth_engine/providers/QuantizedMeshTerrainProvider.h
+    earth_engine/providers/QuantizedMeshTerrainProvider.cpp
 )
 
 # ============================================================
@@ -228,6 +248,8 @@ target_sources(earth_engine_core PRIVATE
 target_sources(earth_engine_core PRIVATE
     earth_engine/terrain/TerrainTile.h
     earth_engine/terrain/TerrainTile.cpp
+    earth_engine/terrain/QuantizedMeshParser.h
+    earth_engine/terrain/QuantizedMeshParser.cpp
 )
 
 # ============================================================

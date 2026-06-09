@@ -314,4 +314,60 @@ std::unique_ptr<TileScheme> TileScheme::createOpenGlobusEarth() {
     return std::make_unique<OpenGlobusEarthScheme>();
 }
 
+namespace {
+
+class GeographicTMSScheme : public TileScheme {
+public:
+    std::string id() const override { return "Geographic-TMS"; }
+    const CrsProfile& crs() const override { return CrsProfile::wgs84Geographic(); }
+    std::string crsProfile() const override { return "EPSG:4326"; }
+    int tileSize() const override { return 256; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 20; }
+    std::string yDirection() const override { return "up"; }  // y=0 = south
+
+    Rectangle tileToRectangle(const TileKey& key) const override {
+        int z = key.z, x = key.x, y = key.y;
+        double tilesAtZ = static_cast<double>(1 << z);
+        double west  = static_cast<double>(x)     / tilesAtZ * 360.0 - 180.0;
+        double east  = static_cast<double>(x + 1) / tilesAtZ * 360.0 - 180.0;
+        // y=0 at south pole, y increases northward (EPSG:4326 standard)
+        double south = -90.0 + static_cast<double>(y)     / tilesAtZ * 180.0;
+        double north = -90.0 + static_cast<double>(y + 1) / tilesAtZ * 180.0;
+        return Rectangle(
+            glm::radians(west), glm::radians(south),
+            glm::radians(east), glm::radians(north));
+    }
+
+    TileKey positionToTile(double lngRad, double latRad, int zoom) const override {
+        double lngDeg = glm::degrees(lngRad);
+        double latDeg = glm::degrees(latRad);
+        int tilesAtZoom = 1 << zoom;
+        int x = static_cast<int>((lngDeg + 180.0) / 360.0 * tilesAtZoom);
+        // y=0 at south pole: y = (lat + 90) / 180 * 2^z
+        int y = static_cast<int>((latDeg + 90.0) / 180.0 * tilesAtZoom);
+        x = std::clamp(x, 0, tilesAtZoom - 1);
+        y = std::clamp(y, 0, tilesAtZoom - 1);
+        return TileKey{id(), zoom, x, y};
+    }
+
+    void tileRange(const Rectangle& rect, int zoom,
+                   int& minX, int& minY, int& maxX, int& maxY) const override {
+        TileKey sw = positionToTile(rect.west(), rect.south(), zoom);
+        TileKey ne = positionToTile(rect.east(), rect.north(), zoom);
+        minX = std::min(sw.x, ne.x); maxX = std::max(sw.x, ne.x);
+        minY = std::min(sw.y, ne.y); maxY = std::max(sw.y, ne.y);
+    }
+
+    double levelResolution(int zoom) const override {
+        return glm::radians(180.0) / static_cast<double>(1 << zoom);
+    }
+};
+
+} // anonymous namespace
+
+std::unique_ptr<TileScheme> TileScheme::createGeographicTMS() {
+    return std::make_unique<GeographicTMSScheme>();
+}
+
 } // namespace earth_engine

@@ -1,4 +1,7 @@
 #include "BasemapLayer.h"
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
 #include "../scene/FrameState.h"
 #include "../scene/Camera.h"
 #include "../renderer/Renderer.h"
@@ -386,9 +389,17 @@ BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
 
     const int gridSize = surfaceGridSizeForZoom(key.z);
     const TerrainTile* terrainTile = terrainLayer
-        ? terrainLayer->findBestTileForKey(key)
+        ? terrainLayer->findBestTileForBounds(bounds)
         : nullptr;
     const bool useTerrain = terrainTile && terrainTile->valid();
+#ifdef __ANDROID__
+    static int dbgCount = 0;
+    if (terrainLayer && ++dbgCount <= 3) {
+        __android_log_print(ANDROID_LOG_INFO, "BasemapLayer",
+            "getOrCreate: z=%d useTerr=%d cacheTerr=%d",
+            key.z, useTerrain, terrainLayer->cachedTileCount());
+    }
+#endif
     const std::string ck = tileCacheKey(key) + "/surface/" +
         (useTerrain
             ? "terrain/" + tileCacheKey(terrainTile->key())
@@ -443,22 +454,30 @@ BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
     gpuMesh.indexBuffer = renderDevice_->createBuffer(ibDesc);
     if (!gpuMesh.indexBuffer) return nullptr;
 
-    const bool needsNormalMapTexture = useTerrain || normalMapDebugEnabled_;
-    if (needsNormalMapTexture) {
-        SurfaceNormalMap normalMap = TileSurface::buildNormalMap(mesh);
-        if (normalMap.valid()) {
-            TextureDesc normalDesc;
-            normalDesc.width = normalMap.width;
-            normalDesc.height = normalMap.height;
-            normalDesc.format = TextureDesc::Format::RGBA8;
-            normalDesc.data = normalMap.rgba.data();
-            normalDesc.dataSize = normalMap.rgba.size();
-            normalDesc.mipmap = false;
-            normalDesc.minFilter = TextureDesc::Filter::Linear;
-            normalDesc.wrapS = TextureDesc::Wrap::Clamp;
-            normalDesc.wrapT = TextureDesc::Wrap::Clamp;
-            gpuMesh.normalMapTexture = renderDevice_->createTexture(normalDesc);
+    // cesium-native alignment: per-vertex normals are used directly in the
+    // shader (glTF NORMAL attribute style); no separate normal map texture
+    // upload is required, eliminating per-tile RGBA8 texture allocation.
+
+    // Water mask texture (QuantizedMesh extension ID=2)
+    if (mesh.waterMask.valid()) {
+        TextureDesc wmDesc;
+        wmDesc.width = 256;
+        wmDesc.height = 256;
+        wmDesc.format = TextureDesc::Format::RGBA8;
+        if (mesh.waterMask.allWater) {
+            // Solid white = fully water
+            static std::vector<uint8_t> sWhite(256 * 256 * 4, 255);
+            wmDesc.data = sWhite.data();
+            wmDesc.dataSize = sWhite.size();
+        } else {
+            wmDesc.data = mesh.waterMask.data.data();
+            wmDesc.dataSize = mesh.waterMask.data.size();
         }
+        wmDesc.mipmap = false;
+        wmDesc.minFilter = TextureDesc::Filter::Linear;
+        wmDesc.wrapS = TextureDesc::Wrap::Clamp;
+        wmDesc.wrapT = TextureDesc::Wrap::Clamp;
+        gpuMesh.waterMaskTexture = renderDevice_->createTexture(wmDesc);
     }
 
     gpuMesh.indexCount = static_cast<int>(mesh.indices.size());
@@ -572,16 +591,6 @@ int BasemapLayer::terrainTransitionSurfaceMeshCount() const {
     return count;
 }
 
-int BasemapLayer::normalMapTextureCount() const {
-    int count = 0;
-    for (const auto& entry : surfaceMeshCache_) {
-        if (entry.second.normalMapTexture) {
-            ++count;
-        }
-    }
-    return count;
-}
-
 std::string BasemapLayer::tileCacheKey(const TileKey& key) const {
     return id_ + "/" + provider_->id() + "/" + key.schemeId + "/" +
            std::to_string(key.z) + "/" +
@@ -625,7 +634,7 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
 
         auto cmd = renderer.makeSurfaceTileCommand(
             attachment.texture,
-            gpuMesh->normalMapTexture.get(),
+            gpuMesh->waterMaskTexture.get(),
             gpuMesh->vertexBuffer.get(),
             gpuMesh->indexBuffer.get(),
             gpuMesh->indexCount,
@@ -638,7 +647,6 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
         const float effectiveOpacity =
             attachment.opacity * std::clamp(renderTile.transitionOpacity, 0.0f, 1.0f);
         cmd.blend = effectiveOpacity < 0.999f;
-        cmd.uniforms["u_debugNormalMap"] = {normalMapDebugEnabled_ ? 1.0f : 0.0f};
         cmd.uniforms["u_surfaceGeneration"] = {
             static_cast<float>(generation_)
         };

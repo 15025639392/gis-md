@@ -1,6 +1,8 @@
 #pragma once
 
 #include "TileKey.h"
+#include "../core/math/BoundingSphere.h"
+#include "../core/math/OrientedBoundingBox.h"
 #include "../core/math/Rectangle.h"
 #include "../core/math/Vec3.h"
 
@@ -38,8 +40,11 @@ public:
     double transitionTimestamp() const { return transitionTimestamp_; }
     void animateTransitionOpacity(double elapsedSinceTransition);
     bool isHorizonTangent(const Camera& camera) const;
-    const Vec3& boundingCenter() const { return boundingCenter_; }
-    double boundingRadiusMeters() const { return boundingRadiusMeters_; }
+    /// cesium-native aligned bounding volumes for frustum culling.
+    const BoundingSphere& boundingSphere() const { return boundingSphere_; }
+    const OrientedBoundingBox& boundingBox() const { return obb_; }
+    const Vec3& boundingCenter() const { return boundingSphere_.getCenter(); }
+    double boundingRadiusMeters() const { return boundingSphere_.getRadius(); }
     const std::array<Vec3, 4>& cornerPoints() const { return cornerPoints_; }
     bool childrenCreated() const { return children_[0] != nullptr; }
     int subtreeNodeCount() const;
@@ -103,8 +108,8 @@ private:
     double transitionOpacity_ = 1.0;
     int fadingNodeCount_ = 0;
     double transitionTimestamp_ = 0.0;
-    Vec3 boundingCenter_ = Vec3::zero();
-    double boundingRadiusMeters_ = 0.0;
+    BoundingSphere boundingSphere_{Vec3::zero(), 0.0};
+    OrientedBoundingBox obb_{Vec3::zero(), Vec3::unitX(), Vec3::unitY(), Vec3::unitZ()};
     std::array<Vec3, 4> cornerPoints_{};
     std::array<std::unique_ptr<TileNode>, 4> children_{};
 };

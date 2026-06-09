@@ -106,7 +106,6 @@ public:
     int southPolarTileCount() const { return tilePlan_.southPolarTileCount; }
     int terrainReadySurfaceMeshCount() const;
     int terrainTransitionSurfaceMeshCount() const;
-    int normalMapTextureCount() const;
 
     /// 获取当前可见瓦片（供调试叠加层使用）
     const std::vector<TileKey>& visibleTiles() const { return tilePlan_.visibleTiles; }
@@ -128,7 +127,7 @@ private:
     struct SurfaceGpuMesh {
         std::unique_ptr<Buffer> vertexBuffer;
         std::unique_ptr<Buffer> indexBuffer;
-        std::unique_ptr<Texture> normalMapTexture;
+        std::unique_ptr<Texture> waterMaskTexture;
         Vec3 localOriginEcef = Vec3::zero();
         int indexCount = 0;
         bool usesTerrain = false;

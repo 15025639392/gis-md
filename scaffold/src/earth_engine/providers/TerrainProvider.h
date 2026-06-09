@@ -36,6 +36,11 @@ struct DecodedHeightmap {
     /// @param u 列归一化坐标 [0,1]（西→东）
     /// @param v 行归一化坐标 [0,1]（北→南）
     float sampleBilinear(float u, float v) const;
+
+    /// Raw binary data from the provider (e.g. QuantizedMesh bytes).
+    /// When non-empty, TileSurface::buildTerrainMesh may reconstruct
+    /// the optimized triangulation instead of using the regular grid.
+    std::vector<uint8_t> rawData;
 };
 
 /// 地形数据 Provider 抽象接口。

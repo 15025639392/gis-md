@@ -1,7 +1,11 @@
 #include "TileSurface.h"
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
 #include "TileScheme.h"
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
+#include "../terrain/QuantizedMeshParser.h"
 #include "../terrain/TerrainTile.h"
 
 #include <algorithm>
@@ -185,6 +189,39 @@ SurfaceTileMesh TileSurface::buildTerrainMesh(const Rectangle& tileBounds,
     const int n = safeGrid + 1;
     const auto& ellipsoid = Ellipsoid::WGS84();
 
+    // If the terrain provider supplies raw QuantizedMesh binary, reconstruct
+    // the optimized triangulation directly instead of building a regular grid.
+#ifdef __ANDROID__
+    bool hasRaw = terrainTile && terrainTile->valid() &&
+        terrainTile->heightmap() && !terrainTile->heightmap()->rawData.empty();
+    if (hasRaw) {
+        auto qm = QuantizedMeshParser::parseToSurfaceTileMesh(
+            terrainTile->heightmap()->rawData.data(),
+            terrainTile->heightmap()->rawData.size(),
+            tileBounds);
+        if (qm) {
+            __android_log_print(ANDROID_LOG_INFO, "TileSurface",
+                "QM mesh: verts=%zu idx=%zu skirtVerts=%u", 
+                qm->vertices.size(), qm->indices.size(),
+                qm->skirtMeta.noSkirtVerticesCount);
+            return *qm;
+        }
+        __android_log_print(ANDROID_LOG_ERROR, "TileSurface",
+            "QM parse failed: rawData=%zu bytes", 
+            terrainTile->heightmap()->rawData.size());
+        // Fall through to grid-based path on parse failure
+    }
+#else
+    if (terrainTile && terrainTile->valid() &&
+        terrainTile->heightmap() && !terrainTile->heightmap()->rawData.empty()) {
+        auto qm = QuantizedMeshParser::parseToSurfaceTileMesh(
+            terrainTile->heightmap()->rawData.data(),
+            terrainTile->heightmap()->rawData.size(),
+            tileBounds);
+        if (qm) return *qm;
+    }
+#endif
+
     SurfaceTileMesh mesh;
     mesh.gridSize = safeGrid;
     mesh.winding = SurfaceTileMeshWinding::Outward;
@@ -249,80 +286,193 @@ SurfaceTileMesh TileSurface::buildTerrainMesh(const Rectangle& tileBounds,
         }
     }
 
-    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-        SurfaceVertex& a = mesh.vertices[mesh.indices[i]];
-        SurfaceVertex& b = mesh.vertices[mesh.indices[i + 1]];
-        SurfaceVertex& c = mesh.vertices[mesh.indices[i + 2]];
-        const Vec3 faceNormal = (b.positionEcef - a.positionEcef)
-            .cross(c.positionEcef - a.positionEcef);
-        a.normalEcef += faceNormal;
-        b.normalEcef += faceNormal;
-        c.normalEcef += faceNormal;
-    }
-    for (SurfaceVertex& vertex : mesh.vertices) {
-        if (vertex.normalEcef.lengthSquared() > 0.0) {
-            vertex.normalEcef = vertex.normalEcef.normalized();
-        } else {
-            vertex.normalEcef = ellipsoid.geodeticSurfaceNormal(vertex.positionEcef);
+    // cesium-native alignment: compute per-vertex normals from heightmap gradient
+    // (central differences) instead of triangle face averaging. This matches the
+    // quality of the old Normal Map texture while using only vertex attributes.
+    const double du = 1.0 / static_cast<double>(safeGrid);
+    const double dv = 1.0 / static_cast<double>(safeGrid);
+    for (int y = 0; y < n; ++y) {
+        for (int x = 0; x < n; ++x) {
+            SurfaceVertex& vtx = mesh.vertices[static_cast<size_t>(y * n + x)];
+
+            // Sample heights at one-grid-step offsets for gradient
+            double hL = 0, hR = 0, hD = 0, hU = 0;
+            if (terrainTile && terrainTile->valid()) {
+                auto sampleH = [&](double u, double v) -> double {
+                    TileSurfaceVertex sv = vertexForUnitUv(tileBounds,
+                        std::clamp(u, 0.0, 1.0), std::clamp(v, 0.0, 1.0));
+                    Cartographic sc = ellipsoid.cartesianToCartographic(sv.ecef);
+                    return static_cast<double>(terrainTile->sampleHeight(
+                        sc.longitude(), sc.latitude()));
+                };
+                const double u = static_cast<double>(x) / safeGrid;
+                const double v = static_cast<double>(y) / safeGrid;
+                hL = sampleH(u - du, v);
+                hR = sampleH(u + du, v);
+                hD = sampleH(u, v - dv);
+                hU = sampleH(u, v + dv);
+            }
+
+            // Build ECEF positions at offsets for gradient
+            auto ecefAt = [&](double u, double v, double h) -> Vec3 {
+                TileSurfaceVertex sv = vertexForUnitUv(
+                    tileBounds, std::clamp(u, 0.0, 1.0), std::clamp(v, 0.0, 1.0));
+                Cartographic c = ellipsoid.cartesianToCartographic(sv.ecef);
+                return ellipsoid.cartographicToCartesian(
+                    Cartographic::fromRadians(c.longitude(), c.latitude(), h));
+            };
+
+            const double u = static_cast<double>(x) / safeGrid;
+            const double v = static_cast<double>(y) / safeGrid;
+            const Vec3 pL = ecefAt(u - du, v, hL);
+            const Vec3 pR = ecefAt(u + du, v, hR);
+            const Vec3 pD = ecefAt(u, v - dv, hD);
+            const Vec3 pU = ecefAt(u, v + dv, hU);
+
+            Vec3 tangentU = pR - pL;
+            Vec3 tangentV = pU - pD;
+            Vec3 nrm = tangentU.cross(tangentV);
+
+            if (nrm.lengthSquared() > 0.0) {
+                vtx.normalEcef = nrm.normalized();
+                // Ensure outward-facing
+                if (vtx.normalEcef.dot(vtx.positionEcef) < 0.0) {
+                    vtx.normalEcef = -vtx.normalEcef;
+                }
+            } else {
+                vtx.normalEcef =
+                    ellipsoid.geodeticSurfaceNormal(vtx.positionEcef);
+            }
         }
     }
 
+    // cesium-native skirt algorithm.
+    // Replaces the old uniform-grid edge walk with sorted edge vertices,
+    // dynamic skirt height, and overlap offsets for seamless tile joins.
+    //
+    // Reference: CesiumQuantizedMeshTerrain/src/QuantizedMeshLoader.cpp
+    //   - addSkirt() / addSkirts(): edge-sorted triangle strip construction
+    //   - calculateSkirtHeight(): 5.0 × levelMaxGeometricError
+    //   - longitudeOffset / latitudeOffset: 0.0001 × tile extent
     if (terrainTile && terrainTile->valid() && skirtHeightMeters < 0.0) {
-        auto sampleSkirtHeight = [&](double u, double v) -> double {
-            TileSurfaceVertex sampled = vertexForUnitUv(tileBounds, u, v);
-            Cartographic surfaceCart = ellipsoid.cartesianToCartographic(sampled.ecef);
-            // Skirt top must match the border vertex height for seamless
-            // tile joins.  Use parent tile height when equalizing borders.
-            if (canEqualize && parentTile) {
-                double parentH = static_cast<double>(parentTile->sampleHeight(
-                    surfaceCart.longitude(), surfaceCart.latitude()));
-                if (!parentTile->heightmap()->isNoData(static_cast<float>(parentH))) {
-                    return parentH;
-                }
-            }
-            return static_cast<double>(terrainTile->sampleHeight(
-                surfaceCart.longitude(), surfaceCart.latitude()));
-        };
-        auto appendVertex = [&](double u, double v, double heightOffsetMeters) {
-            TileSurfaceVertex sampled = vertexForUnitUv(tileBounds, u, v);
-            Cartographic surfaceCart = ellipsoid.cartesianToCartographic(sampled.ecef);
-            const double h = sampleSkirtHeight(u, v) + heightOffsetMeters;
-            Cartographic cart = Cartographic::fromRadians(
-                surfaceCart.longitude(), surfaceCart.latitude(), h);
-            SurfaceVertex vertex;
-            setPosition(vertex, ellipsoid.cartographicToCartesian(cart));
-            vertex.normalEcef = ellipsoid.geodeticSurfaceNormal(cart);
-            vertex.uv = sampled.uv;
-            mesh.vertices.push_back(vertex);
-            return static_cast<uint32_t>(mesh.vertices.size() - 1);
-        };
+        // --- cesium-native calcQuadtreeMaxGeometricError ---
+        // From CesiumGeospatial/src/calcQuadtreeMaxGeometricError.cpp:
+        //   return ellipsoid.getMaximumRadius() * 0.25 / 65.0;
+        const double maxGeometricError =
+            ellipsoid.semiMajorAxis() * 0.25 / 65.0;
 
-        auto addSkirtEdge = [&](double u0, double v0, double u1, double v1) {
-            uint32_t previousTop = 0;
-            uint32_t previousBottom = 0;
-            for (int i = 0; i <= safeGrid; ++i) {
-                const double t = static_cast<double>(i) / static_cast<double>(safeGrid);
-                const double u = mix(u0, u1, t);
-                const double v = mix(v0, v1, t);
-                const uint32_t top = appendVertex(u, v, 0.0);
-                const uint32_t bottom = appendVertex(u, v, skirtHeightMeters);
-                if (i > 0) {
-                    mesh.indices.push_back(previousTop);
-                    mesh.indices.push_back(previousBottom);
-                    mesh.indices.push_back(top);
-                    mesh.indices.push_back(previousBottom);
-                    mesh.indices.push_back(bottom);
-                    mesh.indices.push_back(top);
-                }
-                previousTop = top;
-                previousBottom = bottom;
-            }
-        };
+        // Per cesium-native's calculateSkirtHeight():
+        //   skirtHeight = 5.0 × calcQuadtreeMaxGeometricError × rectangle.computeWidth()
+        const double skirtHeight =
+            5.0 * maxGeometricError * tileBounds.width();
 
-        addSkirtEdge(0.0, 0.0, 1.0, 0.0);
-        addSkirtEdge(1.0, 0.0, 1.0, 1.0);
-        addSkirtEdge(1.0, 1.0, 0.0, 1.0);
-        addSkirtEdge(0.0, 1.0, 0.0, 0.0);
+        // Overlap offsets for adjacency – 0.0001 × tile angular extent
+        const double longitudeOffset =
+            (tileBounds.east() - tileBounds.west()) * 0.0001;
+        const double latitudeOffset =
+            (tileBounds.north() - tileBounds.south()) * 0.0001;
+
+        // Record surface-only ranges before skirt geometry is appended
+        mesh.skirtMeta.noSkirtVerticesBegin = 0;
+        mesh.skirtMeta.noSkirtVerticesCount =
+            static_cast<uint32_t>(mesh.vertices.size());
+        mesh.skirtMeta.noSkirtIndicesBegin = 0;
+        mesh.skirtMeta.noSkirtIndicesCount =
+            static_cast<uint32_t>(mesh.indices.size());
+
+        // Build a skirt edge: given border vertex indices (already in their
+        // sorted traversal order), create bottom-of-skirt vertices offset
+        // outward and downward, then construct a triangle strip.
+        auto addSkirtEdge =
+            [&](const std::vector<uint32_t>& edgeIndices, double lonOffset,
+                double latOffset) {
+                const size_t edgeVerts = edgeIndices.size();
+                if (edgeVerts < 2) return;
+
+                const uint32_t firstSkirtVert =
+                    static_cast<uint32_t>(mesh.vertices.size());
+
+                for (size_t i = 0; i < edgeVerts; ++i) {
+                    const SurfaceVertex& topVert =
+                        mesh.vertices[edgeIndices[i]];
+                    Cartographic topCart =
+                        ellipsoid.cartesianToCartographic(topVert.positionEcef);
+
+                    const double lon = topCart.longitude() + lonOffset;
+                    const double lat = topCart.latitude() + latOffset;
+                    const double h = topCart.height() - skirtHeight;
+
+                    Cartographic skirtCart =
+                        Cartographic::fromRadians(lon, lat, h);
+                    Vec3 skirtEcef =
+                        ellipsoid.cartographicToCartesian(skirtCart);
+
+                    SurfaceVertex skirtVert;
+                    setPosition(skirtVert, skirtEcef);
+                    skirtVert.normalEcef =
+                        ellipsoid.geodeticSurfaceNormal(skirtEcef);
+                    skirtVert.uv = topVert.uv;
+                    mesh.vertices.push_back(skirtVert);
+                }
+
+                // Triangle strip connecting top edge vertices to skirt
+                // bottom vertices.
+                for (size_t i = 0; i < edgeVerts - 1; ++i) {
+                    const uint32_t topA = edgeIndices[i];
+                    const uint32_t topB = edgeIndices[i + 1];
+                    const uint32_t skirtA =
+                        firstSkirtVert + static_cast<uint32_t>(i);
+                    const uint32_t skirtB =
+                        firstSkirtVert + static_cast<uint32_t>(i + 1);
+
+                    mesh.indices.push_back(topA);
+                    mesh.indices.push_back(topB);
+                    mesh.indices.push_back(skirtA);
+
+                    mesh.indices.push_back(skirtA);
+                    mesh.indices.push_back(topB);
+                    mesh.indices.push_back(skirtB);
+                }
+            };
+
+        // Edge vertex indices in cesium-native sort order.
+        // Grid: y=0 (north), y=safeGrid (south); x=0 (west), x=safeGrid (east).
+        // Vertex index = y * n + x.
+        //
+        // Sort order per cesium-native addSkirts():
+        //   West:  by v ASCENDING  → south→north  (y=safeGrid..0)
+        //   South: by u DESCENDING → east→west    (x=safeGrid..0)
+        //   East:  by v DESCENDING → north→south  (y=0..safeGrid)
+        //   North: by u ASCENDING  → west→east    (x=0..safeGrid)
+
+        // West edge: x=0, south→north
+        {
+            std::vector<uint32_t> westEdge;
+            for (int y = safeGrid; y >= 0; --y)
+                westEdge.push_back(static_cast<uint32_t>(y * n));
+            addSkirtEdge(westEdge, -longitudeOffset, 0.0);
+        }
+        // South edge: y=safeGrid, east→west
+        {
+            std::vector<uint32_t> southEdge;
+            for (int x = safeGrid; x >= 0; --x)
+                southEdge.push_back(static_cast<uint32_t>(safeGrid * n + x));
+            addSkirtEdge(southEdge, 0.0, -latitudeOffset);
+        }
+        // East edge: x=safeGrid, north→south
+        {
+            std::vector<uint32_t> eastEdge;
+            for (int y = 0; y <= safeGrid; ++y)
+                eastEdge.push_back(static_cast<uint32_t>(y * n + safeGrid));
+            addSkirtEdge(eastEdge, longitudeOffset, 0.0);
+        }
+        // North edge: y=0, west→east
+        {
+            std::vector<uint32_t> northEdge;
+            for (int x = 0; x <= safeGrid; ++x)
+                northEdge.push_back(static_cast<uint32_t>(x));
+            addSkirtEdge(northEdge, 0.0, latitudeOffset);
+        }
     }
 
     return mesh;
@@ -332,8 +482,13 @@ SurfaceNormalMap TileSurface::buildNormalMap(const SurfaceTileMesh& mesh) {
     SurfaceNormalMap normalMap;
     if (mesh.gridSize < 1) return normalMap;
 
+    // Use skirt metadata when available for precise surface vertex count;
+    // fall back to grid-size-based count for meshes without skirt metadata.
     const int n = mesh.gridSize + 1;
-    const size_t surfaceVertexCount = static_cast<size_t>(n * n);
+    const size_t surfaceVertexCount =
+        mesh.skirtMeta.noSkirtVerticesCount > 0
+            ? static_cast<size_t>(mesh.skirtMeta.noSkirtVerticesCount)
+            : static_cast<size_t>(n * n);
     if (mesh.vertices.size() < surfaceVertexCount) return normalMap;
 
     normalMap.width = n;

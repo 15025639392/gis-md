@@ -93,25 +93,29 @@ precision mediump float;
 in vec2 v_texcoord;
 in vec3 v_normal;
 uniform sampler2D u_tileTexture;
-uniform sampler2D u_normalMap;
+uniform sampler2D u_waterMask;
 uniform vec3 u_lightDir;
-uniform float u_useNormalMap;
-uniform float u_debugNormalMap;
 uniform float u_tileOpacity;
 uniform float u_transitionOpacity;
+uniform float u_hasWaterMask;
 out vec4 fragColor;
 
 void main() {
     vec4 color = texture(u_tileTexture, v_texcoord);
-    vec3 normalSample = texture(u_normalMap, v_texcoord).rgb;
-    if (u_debugNormalMap > 0.5) {
-        fragColor = vec4(normalSample, 1.0);
-        return;
-    }
-    vec3 mapNormal = normalize((normalSample - 0.5) * 2.0);
-    vec3 normal = normalize(mix(normalize(v_normal), mapNormal, clamp(u_useNormalMap, 0.0, 1.0)));
-    float diffuse = max(dot(normal, normalize(u_lightDir)), 0.0);
+    vec3 n = normalize(v_normal);
+    float diffuse = max(dot(n, normalize(u_lightDir)), 0.0);
     color.rgb *= 0.45 + diffuse * 0.55;
+
+    // Water mask (QuantizedMesh extension ID=2): alpha = water fraction
+    if (u_hasWaterMask > 0.5) {
+        float waterAlpha = texture(u_waterMask, v_texcoord).a;
+        if (waterAlpha > 0.01) {
+            // Blend to a blue-tinted water color
+            vec3 waterColor = vec3(0.18, 0.35, 0.62);
+            color.rgb = mix(color.rgb, waterColor, waterAlpha * 0.7);
+        }
+    }
+
     color.a *= clamp(u_tileOpacity, 0.0, 1.0) * clamp(u_transitionOpacity, 0.0, 1.0);
     fragColor = color;
 }
@@ -255,21 +259,13 @@ fragment float4 colorFragment(constant float4& u_color [[buffer(0)]]) {
 static const char* kTileFragmentMSL = R"msl(
 fragment float4 tileFragment(VertexOut in [[stage_in]],
                              texture2d<float> u_tileTexture [[texture(0)]],
-                             texture2d<float> u_normalMap [[texture(1)]],
                              sampler u_sampler [[sampler(0)]],
                              constant float3& u_lightDir [[buffer(0)]],
-                             constant float& u_useNormalMap [[buffer(1)]],
-                             constant float& u_debugNormalMap [[buffer(2)]],
-                             constant float& u_tileOpacity [[buffer(3)]],
-                             constant float& u_transitionOpacity [[buffer(4)]]) {
+                             constant float& u_tileOpacity [[buffer(1)]],
+                             constant float& u_transitionOpacity [[buffer(2)]]) {
     float4 color = u_tileTexture.sample(u_sampler, in.texcoord);
-    float3 normalSample = u_normalMap.sample(u_sampler, in.texcoord).rgb;
-    if (u_debugNormalMap > 0.5) {
-        return float4(normalSample, 1.0);
-    }
-    float3 mapNormal = normalize((normalSample - 0.5) * 2.0);
-    float3 normal = normalize(mix(normalize(in.normal), mapNormal, clamp(u_useNormalMap, 0.0, 1.0)));
-    float diffuse = max(dot(normal, normalize(u_lightDir)), 0.0);
+    float3 n = normalize(in.normal);
+    float diffuse = max(dot(n, normalize(u_lightDir)), 0.0);
     color.rgb *= 0.45 + diffuse * 0.55;
     color.a *= clamp(u_tileOpacity, 0.0, 1.0) * clamp(u_transitionOpacity, 0.0, 1.0);
     return color;
@@ -502,7 +498,7 @@ RenderCommand Renderer::makeGlobeCommand(const FrameState& frameState) const {
 }
 
 RenderCommand Renderer::makeSurfaceTileCommand(Texture* texture,
-                                                Texture* normalMapTexture,
+                                                Texture* waterMaskTexture,
                                                 Buffer* vertexBuffer,
                                                 Buffer* indexBuffer,
                                                 int indexCount,
@@ -521,8 +517,6 @@ RenderCommand Renderer::makeSurfaceTileCommand(Texture* texture,
     cmd.vertexStride = 32;
     cmd.primitive = RenderCommand::PrimitiveType::Triangles;
     cmd.indexType = RenderCommand::IndexType::UInt32;
-    // SurfaceTile is the authoritative MVP globe surface and writes depth.
-    // Imagery is attached to this surface instead of competing with a globe mesh.
     cmd.depthTest = true;
     cmd.depthWrite = true;
     cmd.blend = false;
@@ -531,12 +525,12 @@ RenderCommand Renderer::makeSurfaceTileCommand(Texture* texture,
     if (texture) {
         cmd.textures.push_back(texture);
     }
-    if (normalMapTexture) {
-        cmd.textures.push_back(normalMapTexture);
+    if (waterMaskTexture) {
+        cmd.textures.push_back(waterMaskTexture);
     }
 
     cmd.uniforms["u_tileUV"] = {uvOffsetX, uvOffsetY, uvScaleX, uvScaleY};
-    cmd.uniforms["u_useNormalMap"] = {normalMapTexture ? 1.0f : 0.0f};
+    cmd.uniforms["u_hasWaterMask"] = {waterMaskTexture ? 1.0f : 0.0f};
     cmd.uniforms["u_tileOpacity"] = {1.0f};
     cmd.uniforms["u_transitionOpacity"] = {1.0f};
     return cmd;

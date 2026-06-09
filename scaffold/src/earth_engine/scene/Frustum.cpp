@@ -1,4 +1,5 @@
 #include "Frustum.h"
+#include "../core/math/Plane.h"
 
 #include <cmath>
 #include <stdexcept>
@@ -7,17 +8,17 @@ namespace earth_engine {
 
 namespace {
 
-Plane makePlane(double a, double b, double c, double d) {
+FrustumPlane makePlane(double a, double b, double c, double d) {
     const double length = std::sqrt(a * a + b * b + c * c);
     if (length <= 0.0) {
         throw std::invalid_argument("Frustum plane normal must be non-zero.");
     }
-    return Plane{Vec3(a / length, b / length, c / length), d / length};
+    return FrustumPlane{Vec3(a / length, b / length, c / length), d / length};
 }
 
 } // namespace
 
-double Plane::signedDistanceTo(const Vec3& point) const {
+double FrustumPlane::signedDistanceTo(const Vec3& point) const {
     return normal.dot(point) + distance;
 }
 
@@ -60,7 +61,7 @@ Frustum Frustum::fromViewProjection(const Mat4& viewProjection) {
     return frustum;
 }
 
-const Plane& Frustum::plane(PlaneIndex index) const {
+const FrustumPlane& Frustum::plane(PlaneIndex index) const {
     return planes_[static_cast<size_t>(index)];
 }
 
@@ -84,6 +85,20 @@ bool Frustum::intersectsSphere(const Vec3& center,
         if (p.signedDistanceTo(center) < -(radiusMeters + epsilonMeters)) {
             return false;
         }
+    }
+    return true;
+}
+
+bool Frustum::intersectsSphere(const BoundingSphere& sphere,
+                               double epsilonMeters) const {
+    return intersectsSphere(
+        sphere.getCenter(), sphere.getRadius(), epsilonMeters);
+}
+
+bool Frustum::intersectsOBB(const OrientedBoundingBox& obb) const {
+    for (const auto& fp : planes_) {
+        Plane plane(fp.normal, fp.distance);
+        if (obb.intersectPlane(plane) < 0) return false;
     }
     return true;
 }

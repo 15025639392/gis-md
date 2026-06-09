@@ -1,4 +1,6 @@
 #include "HeightmapTerrainProvider.h"
+#include "../core/async/AsyncSystem.h"
+#include "../core/cache/HttpCache.h"
 #include "../platform/bridge/PlatformBridge.h"
 
 #if !defined(ANDROID) && __has_include(<curl/curl.h>)
@@ -95,24 +97,32 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
                                             CancellationToken token,
                                             HeightmapCallback callback) {
     std::string url = buildUrl(key);
-    std::thread([this, url, key, token = std::move(token),
-                 callback = std::move(callback)]() {
-        if (token.isCancelled()) { callback(key, nullptr); return; }
-        auto body = httpGet(url);
-        if (token.isCancelled() || body.empty()) { callback(key, nullptr); return; }
-        auto hm = decodeTile(body.data(), body.size());
-        callback(key, std::move(hm));
-    }).detach();
+    // cesium-native alignment: use thread pool instead of raw std::thread::detach().
+    AsyncSystem::pool().enqueue(
+        [this, url, key, token = std::move(token),
+         callback = std::move(callback)]() mutable {
+            if (token.isCancelled()) { callback(key, nullptr); return; }
+            auto body = httpGet(url);
+            if (token.isCancelled() || body.empty()) { callback(key, nullptr); return; }
+            auto hm = decodeTile(body.data(), body.size());
+            callback(key, std::move(hm));
+        });
 }
 
 std::vector<uint8_t> HeightmapTerrainProvider::httpGet(const std::string& url) {
+    // Shared LRU cache: avoid re-downloading recently fetched tiles.
+    auto cached = HttpCache::shared().get(url);
+    if (!cached.empty()) return cached;
+
     constexpr const char* kFilePrefix = "file://";
     if (url.rfind(kFilePrefix, 0) == 0) {
         std::ifstream in(url.substr(std::strlen(kFilePrefix)), std::ios::binary);
         if (!in) return {};
-        return std::vector<uint8_t>(
+        std::vector<uint8_t> data{
             std::istreambuf_iterator<char>(in),
-            std::istreambuf_iterator<char>());
+            std::istreambuf_iterator<char>()};
+        HttpCache::shared().put(url, data);
+        return data;
     }
 
     // PlatformBridge 优先
@@ -130,6 +140,7 @@ std::vector<uint8_t> HeightmapTerrainProvider::httpGet(const std::string& url) {
 
         { std::unique_lock<std::mutex> lk(mtx);
           cv.wait_for(lk, std::chrono::seconds(20), [&]{ return done; }); }
+        if (!result.empty()) HttpCache::shared().put(url, result);
         return result;
     }
 
@@ -154,7 +165,10 @@ std::vector<uint8_t> HeightmapTerrainProvider::httpGet(const std::string& url) {
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
     curl_easy_cleanup(curl);
 
-    return (res == CURLE_OK && httpCode == 200) ? body : std::vector<uint8_t>{};
+    std::vector<uint8_t> result =
+        (res == CURLE_OK && httpCode == 200) ? std::move(body) : std::vector<uint8_t>{};
+    if (!result.empty()) HttpCache::shared().put(url, result);
+    return result;
 #else
     (void)url;
     return {};

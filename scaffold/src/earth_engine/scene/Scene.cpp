@@ -271,7 +271,6 @@ void Scene::render() {
     diag.terrainReadySurfaceMeshes = 0;
     diag.terrainTransitionSurfaceMeshes = 0;
     diag.ellipsoidSurfaceMeshes = 0;
-    diag.normalMapTextures = 0;
     for (const auto& layer : layerStack_.layers()) {
         diag.visibleTiles += layer->visibleTileCount();
         diag.cachedTextures += layer->cachedTileCount();
@@ -301,7 +300,6 @@ void Scene::render() {
         diag.terrainReadySurfaceMeshes += layer->terrainReadySurfaceMeshCount();
         diag.terrainTransitionSurfaceMeshes += layer->terrainTransitionSurfaceMeshCount();
         diag.ellipsoidSurfaceMeshes += layer->ellipsoidSurfaceMeshCount();
-        diag.normalMapTextures += layer->normalMapTextureCount();
     }
     diag.loadingRequests = diag.queuedRequests;
     diag.gpuTextureCount = diag.cachedTextures;

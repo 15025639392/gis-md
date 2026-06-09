@@ -45,7 +45,6 @@ struct Diagnostics {
     int terrainReadySurfaceMeshes = 0;
     int terrainTransitionSurfaceMeshes = 0;
     int ellipsoidSurfaceMeshes = 0;
-    int normalMapTextures = 0;
     int staleSurfaceCommands = 0;
     int missingGenerationSurfaceCommands = 0;
     uint64_t minSurfaceGeneration = 0;

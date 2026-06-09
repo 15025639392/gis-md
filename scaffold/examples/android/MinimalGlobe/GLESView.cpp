@@ -8,12 +8,15 @@
 #include <algorithm>
 
 #include "earth_engine/Engine.h"
+#include "earth_engine/core/geodesy/Cartographic.h"
+#include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/platform/android/RenderDeviceGLES.h"
 #include "earth_engine/platform/android/AndroidPlatformBridge.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/providers/HeightmapTerrainProvider.h"
+#include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
 #include "earth_engine/layers/BasemapLayer.h"
 #include "earth_engine/layers/TerrainLayer.h"
 #include "earth_engine/layers/VectorLayer.h"
@@ -66,12 +69,16 @@ static bool gDebugPinchActive = false;
 
 static constexpr const char* kFabdemTerrainTemplate =
     "http://192.168.1.4:8001/{z}/{x}/{y}.png";
+static constexpr const char* kQuantizedMeshTerrainTemplate =
+    "http://192.168.1.6:8091/{z}/{x}/{y}.terrain";
 static constexpr const char* kGaodeSatelliteTemplate =
     "https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
 static constexpr bool kEnableTerrainForDemo = true;
 static constexpr bool kEnableDebugOverlayForDemo = false;
 static constexpr bool kShowNormalMapForDemo = false;
 static constexpr bool kUseGaodeSatelliteForDemo = true;
+/// Use QuantizedMesh terrain (cesium-native format) instead of RGB heightmap.
+static constexpr bool kUseQuantizedMeshTerrain = true;
 
 static void addDemoVectorLayer() {
     static constexpr const char* kDemoGeoJson = R"json(
@@ -192,6 +199,18 @@ static bool createEngine() {
              gEngine->camera().position().y(),
              gEngine->camera().position().z());
 
+        // Default view: Chongqing, China area
+        {
+            const auto& ellipsoid = Ellipsoid::WGS84();
+            const double centerLng = 106.508, centerLat = 29.617;
+            auto targetEcef = ellipsoid.cartographicToCartesian(
+                Cartographic::fromDegrees(centerLng, centerLat, 0.0));
+            auto camEcef = ellipsoid.cartographicToCartesian(
+                Cartographic::fromDegrees(centerLng, centerLat, 30000.0));
+            Vec3 up = ellipsoid.geodeticSurfaceNormal(targetEcef);
+            gEngine->camera().lookAt(camEcef, targetEcef, up);
+        }
+
         // 创建 Android JNI HTTP 桥接
         gPlatformBridge = std::make_unique<AndroidPlatformBridge>(gJvm);
 
@@ -226,17 +245,34 @@ static bool createEngine() {
              kShowNormalMapForDemo ? "enabled" : "disabled");
 
         if (kEnableTerrainForDemo) {
-            // Mapbox Terrain-RGB tiles served from localhost:8001.
-            auto terrainProvider = std::make_unique<HeightmapTerrainProvider>(
-                kFabdemTerrainTemplate,
-                "Mapbox Terrain-RGB");
-            terrainProvider->setZoomRange(0, 14);
-            terrainProvider->setEncoding(HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
-            terrainProvider->setTileSize(514);  // 512 grid + 1px skirt per side
-            terrainProvider->setPlatformBridge(gPlatformBridge.get());
+            std::unique_ptr<TerrainProvider> terrainProvider;
+            if (kUseQuantizedMeshTerrain) {
+                // cesium-native QuantizedMesh-1.0 binary terrain.
+                auto qm = std::make_unique<QuantizedMeshTerrainProvider>(
+                    kQuantizedMeshTerrainTemplate,
+                    "QuantizedMesh Terrain");
+                qm->setZoomRange(11, 12);  // allow z=11 fallback
+                qm->setTileSize(65);
+                qm->setPlatformBridge(gPlatformBridge.get());
+                terrainProvider = std::move(qm);
+                LOGI("Terrain provider: QuantizedMesh (%s)", kQuantizedMeshTerrainTemplate);
+            } else {
+                // Mapbox Terrain-RGB heightmap tiles.
+                auto hm = std::make_unique<HeightmapTerrainProvider>(
+                    kFabdemTerrainTemplate,
+                    "Mapbox Terrain-RGB");
+                hm->setZoomRange(0, 14);
+                hm->setEncoding(HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
+                hm->setTileSize(514);  // 512 grid + 1px skirt per side
+                hm->setPlatformBridge(gPlatformBridge.get());
+                terrainProvider = std::move(hm);
+                LOGI("Terrain provider: Heightmap (%s)", kFabdemTerrainTemplate);
+            }
+            // Use Geographic TMS scheme to match the server's EPSG:4326+TMS tiling.
+            auto terrainScheme = TileScheme::createGeographicTMS();
             auto terrainLayer = std::make_unique<TerrainLayer>(
                 std::move(terrainProvider),
-                TileScheme::createXYZWebMercator());
+                std::move(terrainScheme));
             terrainLayer->setEnabled(true);
             gEngine->setTerrainLayer(std::move(terrainLayer));
             gEngine->setTerrainEnabled(true);
@@ -292,7 +328,7 @@ static void renderFrame() {
         const auto& diag = gEngine->diagnostics();
         LOGI("Frame %d | tiles vis=%d cached=%d renderSurface=%d mesh=%d "
              "(terr=%d ellip=%d ready=%d) "
-             "attach=%d exact=%d parent=%d normalMap=%d stale=%d missingGen=%d | "
+             "attach=%d exact=%d parent=%d stale=%d missingGen=%d | "
              "missing=%d unsupported=%d "
              "lod=%.0f eq=%d qRender=%d qWalk=%d qFrustum=%d qFade=%d "
              "grp=%d/%d/%d gen=%llu | "
@@ -303,7 +339,6 @@ static void renderFrame() {
              diag.terrainReadySurfaceMeshes,
              diag.imageryAttachments, diag.imageryExactAttachments,
              diag.imageryParentFallbackAttachments,
-             diag.normalMapTextures,
              diag.staleSurfaceCommands, diag.missingGenerationSurfaceCommands,
              diag.imageryMissingTiles,
              diag.imageryUnsupportedTiles,

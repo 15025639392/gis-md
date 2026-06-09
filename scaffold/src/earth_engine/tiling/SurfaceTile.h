@@ -40,12 +40,34 @@ struct SurfaceVertex {
     std::array<float, 2> uv = {0.0f, 0.0f};
 };
 
+/// cesium-native style skirt metadata (see CesiumGltfContent/SkirtMeshMetadata.h).
+/// Tracks the vertex/index ranges that belong to the real terrain surface
+/// (not the skirt), so downstream operations (e.g. normal map, UV generation)
+/// can skip skirt geometry.
+struct SkirtMetadata {
+    uint32_t noSkirtIndicesBegin = 0;
+    uint32_t noSkirtIndicesCount = 0;
+    uint32_t noSkirtVerticesBegin = 0;
+    uint32_t noSkirtVerticesCount = 0;
+};
+
+/// Water mask from QuantizedMesh extension ID=2.
+/// If both allLand and allWater are false, data is a 256×256 RGBA8 bitmap.
+struct WaterMask {
+    std::vector<uint8_t> data;  // 256×256 RGBA8, empty = no mask
+    bool allLand = true;
+    bool allWater = false;
+    bool valid() const { return !data.empty() || allWater; }
+};
+
 struct SurfaceTileMesh {
     std::vector<SurfaceVertex> vertices;
     std::vector<uint32_t> indices;
     int gridSize = 0;
     SurfaceTileMeshWinding winding = SurfaceTileMeshWinding::Outward;
     SurfaceTileSampling sampling = SurfaceTileSampling::WebMercatorVToWgs84Ecef;
+    SkirtMetadata skirtMeta;
+    WaterMask waterMask;
 };
 
 struct SurfaceNormalMap {

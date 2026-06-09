@@ -75,6 +75,8 @@ static std::vector<uint8_t> androidHttpGet(const std::string& url) {
         detachJni();
         return {};
     }
+    LOGI("androidHttpGet: env=%p gJniHttpHelperClass=%p gHttpGetMethod=%p url=%s",
+         (void*)env, (void*)gJniHttpHelperClass, (void*)gHttpGetMethod, url.c_str());
 
     if (!gJniHttpHelperClass || !gHttpGetMethod) {
         LOGE("JniHttpHelper not initialized (call InitJvm first)");

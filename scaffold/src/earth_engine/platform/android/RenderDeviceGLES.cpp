@@ -285,9 +285,9 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             if (tileSamplerLoc >= 0) {
                 glUniform1i(tileSamplerLoc, 0);
             }
-            int normalSamplerLoc = program->uniformLocation("u_normalMap");
-            if (normalSamplerLoc >= 0) {
-                glUniform1i(normalSamplerLoc, 1);
+            int waterMaskLoc = program->uniformLocation("u_waterMask");
+            if (waterMaskLoc >= 0) {
+                glUniform1i(waterMaskLoc, 1);
             }
         }
 
