@@ -46,6 +46,16 @@ double cameraSlope(const Camera& camera) {
     return camera.direction().dot(-camera.position().normalized());
 }
 
+double matrixAbsDiff(const Mat4& a, const Mat4& b) {
+    double diff = 0.0;
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            diff += std::abs(a(i, j) - b(i, j));
+        }
+    }
+    return diff;
+}
+
 } // namespace
 
 class CameraControllerTest : public ::testing::Test {
@@ -87,56 +97,70 @@ TEST_F(CameraControllerTest, SetDistance) {
     EXPECT_LE(controller_->distance(), 30.0f);
 }
 
-TEST_F(CameraControllerTest, DragChangesRotation) {
-    auto initialRotation = controller_->rotation();
-
-    // 模拟从屏幕中心抓住地球向右拖拽
-    controller_->onDragStart(400.0f, 300.0f);
-    controller_->onDragMove(430.0f, 300.0f);
-    controller_->onDragEnd();
-
-    auto newRotation = controller_->rotation();
-
-    // 旋转应发生变化
-    bool rotationChanged = (std::abs(initialRotation.w - newRotation.w) > 1e-6) ||
-                           (std::abs(initialRotation.x - newRotation.x) > 1e-6) ||
-                           (std::abs(initialRotation.y - newRotation.y) > 1e-6) ||
-                           (std::abs(initialRotation.z - newRotation.z) > 1e-6);
-    EXPECT_TRUE(rotationChanged);
-}
-
-TEST_F(CameraControllerTest, DragDirectionMatchesScreenDelta) {
+TEST_F(CameraControllerTest, DragKeepsGrabbedSurfacePointUnderFinger) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->update(0.0);
+    Vec3 grabbed = intersectEarthSphere(
+        camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
+
     controller_->onDragStart(400.0f, 300.0f);
     controller_->onDragMove(430.0f, 300.0f);
     controller_->onDragEnd();
     controller_->update(0.0);
-    EXPECT_GT(camera_->position().x(), 0.0);
-    EXPECT_NEAR(0.0, camera_->position().y(), 1e-6);
+
+    glm::dvec2 projected = projectToScreen(*camera_, grabbed);
+    EXPECT_NEAR(430.0, projected.x, 2.0);
+    EXPECT_NEAR(300.0, projected.y, 2.0);
+}
+
+TEST_F(CameraControllerTest, DragKeepsGrabbedSurfacePointUnderFingerInAllDirections) {
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->update(0.0);
+    Vec3 grabbed = intersectEarthSphere(
+        camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
+    controller_->onDragStart(400.0f, 300.0f);
+    controller_->onDragMove(430.0f, 300.0f);
+    controller_->onDragEnd();
+    controller_->update(0.0);
+    glm::dvec2 projected = projectToScreen(*camera_, grabbed);
+    EXPECT_NEAR(430.0, projected.x, 2.0);
+    EXPECT_NEAR(300.0, projected.y, 2.0);
 
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->update(0.0);
+    grabbed = intersectEarthSphere(
+        camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
     controller_->onDragStart(400.0f, 300.0f);
     controller_->onDragMove(370.0f, 300.0f);
     controller_->onDragEnd();
     controller_->update(0.0);
-    EXPECT_LT(camera_->position().x(), 0.0);
-    EXPECT_NEAR(0.0, camera_->position().y(), 1e-6);
+    projected = projectToScreen(*camera_, grabbed);
+    EXPECT_NEAR(370.0, projected.x, 2.0);
+    EXPECT_NEAR(300.0, projected.y, 2.0);
 
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->update(0.0);
+    grabbed = intersectEarthSphere(
+        camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
     controller_->onDragStart(400.0f, 300.0f);
     controller_->onDragMove(400.0f, 270.0f);
     controller_->onDragEnd();
     controller_->update(0.0);
-    EXPECT_LT(camera_->position().y(), 0.0);
-    EXPECT_NEAR(0.0, camera_->position().x(), 1e-6);
+    projected = projectToScreen(*camera_, grabbed);
+    EXPECT_NEAR(400.0, projected.x, 2.0);
+    EXPECT_NEAR(270.0, projected.y, 2.0);
 
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->update(0.0);
+    grabbed = intersectEarthSphere(
+        camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
     controller_->onDragStart(400.0f, 300.0f);
     controller_->onDragMove(400.0f, 330.0f);
     controller_->onDragEnd();
     controller_->update(0.0);
-    EXPECT_GT(camera_->position().y(), 0.0);
-    EXPECT_NEAR(0.0, camera_->position().x(), 1e-6);
+    projected = projectToScreen(*camera_, grabbed);
+    EXPECT_NEAR(400.0, projected.x, 2.0);
+    EXPECT_NEAR(330.0, projected.y, 2.0);
 }
 
 TEST_F(CameraControllerTest, DraggedSurfacePointFollowsFingerDirection) {
@@ -206,19 +230,14 @@ TEST_F(CameraControllerTest, DragUsesInjectedSurfacePicker) {
 }
 
 TEST_F(CameraControllerTest, DragThenInertiaDecays) {
-    // 快速拖拽
-    controller_->onDragStart(400.0f, 300.0f);
-    controller_->onDragMove(430.0f, 300.0f);  // 有效球面内位移 → 惯性
+    controller_->onDragStart(400.0f, 300.0f, 1.0);
+    controller_->onDragMove(430.0f, 300.0f, 1.016);
     controller_->onDragEnd();
 
-    // 模拟多帧更新（惯性应衰减到接近停止）
     for (int i = 0; i < 120; ++i) {
         controller_->update(1.0 / 60.0);
     }
 
-    // 经过 2 秒后旋转应基本稳定（惯性衰减系数 e^(-3*2) ≈ 0.0025）
-    // 但第一次 update 的旋转可能已经使 q1 != q2
-    // 测试最后几帧的变化很小
     auto qBefore = controller_->rotation();
     controller_->update(1.0 / 60.0);
     auto qAfter = controller_->rotation();
@@ -296,7 +315,7 @@ TEST_F(CameraControllerTest, PinchZoomKeepsGestureCenterAnchorStable) {
     EXPECT_LT(afterDistance, beforeDistance);
 }
 
-TEST_F(CameraControllerTest, PinchUsesInjectedSurfacePickerForCurrentCenter) {
+TEST_F(CameraControllerTest, PinchUsesInjectedSurfacePickerForAnchor) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
     controller_->setDistance(5.0f);
     controller_->update(0.0);
@@ -445,6 +464,34 @@ TEST_F(CameraControllerTest, PinchHorizontalPanDoesNotMoveCamera) {
         }
     }
     EXPECT_LT(diff, 1e-6);
+}
+
+TEST_F(CameraControllerTest, PinchDiagonalCenterMoveDoesNotTilt) {
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->update(0.0);
+    auto before = camera_->viewMatrix();
+
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.0f, 430.0f, 275.0f, 0.0f, 30.0f, -25.0f);
+    controller_->update(0.0);
+
+    EXPECT_LT(matrixAbsDiff(before, camera_->viewMatrix()), 1e-6);
+}
+
+TEST_F(CameraControllerTest, PinchScaleDominanceSuppressesTilt) {
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(5.0f);
+    controller_->update(0.0);
+    Vec3 anchor = intersectEarthSphere(
+        camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
+
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
+    controller_->onPinchGesture(1.2f, 400.0f, 275.0f, 0.0f, 0.0f, -25.0f);
+    controller_->update(0.0);
+
+    glm::dvec2 projected = projectToScreen(*camera_, anchor);
+    EXPECT_NEAR(400.0, projected.x, 2.0);
+    EXPECT_NEAR(275.0, projected.y, 2.0);
 }
 
 TEST_F(CameraControllerTest, ViewDistanceMovesCameraTowardPickedTarget) {
