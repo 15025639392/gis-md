@@ -156,8 +156,8 @@ void main() {
     float camHeight = max(length(cam) - R, 0.0);
     float spaceFactor = smoothstep(120000.0, 900000.0, camHeight);
     float viewUp = dot(rayDir, localUp);
-    vec3 zenithColor = vec3(0.08, 0.28, 0.58);
-    vec3 lowSkyColor = vec3(0.18, 0.42, 0.82);
+    vec3 zenithColor = vec3(0.06, 0.24, 0.55);
+    vec3 lowSkyColor = vec3(0.50, 0.74, 0.92);
     float raySkyT = smoothstep(-0.08, 0.85, viewUp);
     float screenSkyT = smoothstep(0.0, 1.0, py / h);
     float skyT = mix(screenSkyT, raySkyT, spaceFactor);
@@ -172,9 +172,12 @@ void main() {
         clamp(1.0 - exp(-opticalThickness), 0.0, 0.35) * u_opacity;
     vec3 color = mix(baseSky, baseSky + scatterColor, pathScatterAmount * spaceFactor);
 
-    float horizonGlow = pow(1.0 - screenSkyT, 2.8) * (1.0 - spaceFactor);
-    vec3 horizonColor = vec3(0.42, 0.82, 1.0);
-    color = mix(color, horizonColor, clamp(horizonGlow * 0.45, 0.0, 0.45));
+    float horizonGlow = pow(1.0 - screenSkyT, 2.4) * (1.0 - spaceFactor);
+    vec3 horizonColor = vec3(0.62, 0.82, 0.94);
+    color = mix(color, horizonColor, clamp(horizonGlow * 0.62, 0.0, 0.62));
+
+    float horizonAir = (1.0 - smoothstep(0.0, 0.18, abs(viewUp))) * (1.0 - spaceFactor);
+    color = mix(color, horizonColor, clamp(horizonAir * 0.38, 0.0, 0.38));
 
     // ---- Sun disk ----
     float minSunCos = cos(u_sunAngularRadius);

@@ -558,8 +558,8 @@ RenderCommand Renderer::makeSurfaceTileCommand(Texture* texture,
 
     cmd.uniforms["u_tileUV"] = {uvOffsetX, uvOffsetY, uvScaleX, uvScaleY};
     cmd.uniforms["u_hasWaterMask"] = {waterMaskTexture ? 1.0f : 0.0f};
-    cmd.uniforms["u_fogColor"] = {0.62f, 0.78f, 0.92f};  // light blue sky
-    cmd.uniforms["u_fogDensity"] = {3.0e-5f};  // ~50% fog at 30km
+    cmd.uniforms["u_fogColor"] = {0.62f, 0.82f, 0.94f};  // matches low-altitude sky haze
+    cmd.uniforms["u_fogDensity"] = {3.5e-5f};  // blend far oblique terrain into horizon haze
     cmd.uniforms["u_tileOpacity"] = {1.0f};
     cmd.uniforms["u_transitionOpacity"] = {1.0f};
     return cmd;
