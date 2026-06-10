@@ -22,7 +22,11 @@ constexpr double kMaxInertiaAngularVelocityRadPerSec = 5.0;
 constexpr double kInertiaDampingPerSecond = 3.0;
 constexpr double kVelocitySmoothing = 0.35;
 constexpr double kEarthRadiusMeters = 6378137.0;
-constexpr double kOpenGlobusMinAltitudeMeters = 1500.0;  // match Gaode z18 tile ~133m
+// OpenGlobus PlanetCamera: minAltitude defaults to 1.0
+// This engine still uses a single 1m near plane for globe rendering. Keeping a
+// small visual floor avoids clipping the ellipsoid surface while preserving
+// OpenGlobus' ellipsoid-normal altitude semantics.
+constexpr double kOpenGlobusMinAltitudeMeters = 50.0;
 constexpr float kMinDistanceEarthRadii =
     static_cast<float>((kEarthRadiusMeters + kOpenGlobusMinAltitudeMeters) /
                        kEarthRadiusMeters);
@@ -58,21 +62,24 @@ glm::dquat defaultViewRotation() {
 
 glm::dvec3 clampEyeToOpenGlobusMinAltitude(const glm::dvec3& eye,
                                            const CameraController::TerrainHeightFunc& terrainFunc) {
-    const double radius = glm::length(eye);
-    if (radius < 1e-6) return eye;
+    if (glm::length(eye) < 1e-6) return eye;
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 eyeVec(eye);
+    const Vec3 surface = ellipsoid.projectToSurface(eyeVec);
+    const Vec3 normal = ellipsoid.geodeticSurfaceNormal(surface);
+    const Cartographic cart = ellipsoid.cartesianToCartographic(eyeVec);
 
     double terrainHeight = 0.0;
     if (terrainFunc) {
-        // Query terrain height at the sub-camera point on the ellipsoid surface.
-        const Vec3 subPoint = Vec3(glm::normalize(eye) * kEarthRadiusMeters);
-        terrainHeight = terrainFunc(subPoint);
+        terrainHeight = terrainFunc(surface);
     }
 
-    const double minRadius = kEarthRadiusMeters + std::max(terrainHeight, 0.0) +
+    const double minHeight = std::max(terrainHeight, 0.0) +
                              kOpenGlobusMinAltitudeMeters;
 
-    if (radius >= minRadius) return eye;
-    return glm::normalize(eye) * minRadius;
+    if (cart.height() >= minHeight) return eye;
+    return (surface + normal * minHeight).raw();
 }
 
 } // namespace

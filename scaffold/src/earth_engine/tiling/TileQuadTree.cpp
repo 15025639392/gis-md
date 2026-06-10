@@ -614,14 +614,17 @@ void TileNode::traverseImpl(const TileScheme& scheme,
 
     const bool canSubdivide = key_.z < scheme.maxZoom();
     const bool mustSubdivide = key_.z < std::max(scheme.minZoom(), kAlwaysSubdivideUntilZoom);
-    // OpenGlobus does NOT force-subdivide based on camera-inside in the primary
-    // traverse — cameraInside_ only gates the equal-zoom pass.  Forcing deep
-    // subdivision here creates excessive tiny tiles at near-ground zoom with no
-    // corresponding imagery data, causing stutter.
-    const bool cameraInsideNeedsHeightZoom = false;
-    (void)cameraInsideTargetZoom;
+    // OpenGlobus keeps tracking the node under the camera via _cameraInside.
+    // Without forcing that branch toward the height-derived zoom, low-altitude
+    // pinch can move the eye down to minAltitude while imagery remains stuck on
+    // coarse nodes, which feels like a zoom-in clamp. Restrict this to the
+    // single camera-inside branch so the rest of the view still uses projected
+    // size and horizon culling.
+    const bool cameraInsideNeedsHeightZoom =
+        cameraInside_ && key_.z < cameraInsideTargetZoom;
     const bool refine = mustSubdivide || (canSubdivide && shouldSubdivide(
-        camera, viewportWidthPixels, viewportHeightPixels));
+        camera, viewportWidthPixels, viewportHeightPixels)) ||
+        (canSubdivide && cameraInsideNeedsHeightZoom);
     if (!altVisible && !cameraInside_) {
         state_ = TileNodeState::NotRendering;
         return;
@@ -766,18 +769,27 @@ TilePlan TileQuadTree::compute(const Camera& camera,
     }
     std::vector<TileNode*> renderedNodes;
 
-    Vec3 camPos = camera.position();
-    double cameraHeight = camPos.length() - kEarthRadius;
-    if (cameraHeight < 1000.0) cameraHeight = 1000.0;
-    const int cameraInsideTargetZoom = zoomLevelFromHeight(
-        cameraHeight,
-        viewportHeightPixels,
-        camera.verticalFovRadians(),
-        scheme.minZoom(),
-        scheme.maxZoom());
+    const Cartographic cameraCart = Ellipsoid::WGS84().cartesianToCartographic(
+        camera.position());
+    double cameraHeight = cameraCart.height();
+    if (cameraHeight < 1.0) cameraHeight = 1.0;
+    // The camera-inside branch is only a near-ground escape hatch. If it runs
+    // while OpenGlobus' equal-zoom pass is active, this single branch raises
+    // plan.maxVisibleZoom and the second pass tries to refine the whole screen
+    // to that zoom, causing large transient tile bursts during pinch.
+    const int cameraInsideTargetZoom =
+        cameraHeight < kOpenGlobusMinEqualZoomAltitudeMeters
+            ? zoomLevelFromHeight(cameraHeight,
+                                  viewportHeightPixels,
+                                  camera.verticalFovRadians(),
+                                  scheme.minZoom(),
+                                  scheme.maxZoom())
+            : scheme.minZoom();
 
-    const Cartographic subCamera = Ellipsoid::WGS84().cartesianToCartographic(
-        camera.position().normalized() * kEarthRadius);
+    const Cartographic subCamera = Cartographic::fromRadians(
+        cameraCart.longitude(),
+        cameraCart.latitude(),
+        0.0);
     const Frustum frustum = camera.frustum(viewportWidthPixels, viewportHeightPixels);
 
     for (auto& root : roots_) {

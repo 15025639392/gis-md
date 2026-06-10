@@ -22,8 +22,8 @@ Camera::Camera()
       right_(1.0, 0.0, 0.0),
       target_(std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0),
       verticalFovRadians_(glm::radians(60.0)),
-      // OpenGlobus PlanetCamera defaults: single frustum [150, 1e12] with reverse-Z.
-      nearPlaneMeters_(150.0),
+      // OpenGlobus PlanetCamera defaults: near=1.0, far=1e12 with reverse-Z.
+      nearPlaneMeters_(1.0),
       farPlaneMeters_(1e12) {}
 
 void Camera::setView(const Vec3& position, const Vec3& direction, const Vec3& up) {
@@ -71,9 +71,9 @@ Mat4 Camera::projectionMatrix(double viewportWidthPixels,
     }
 
     // Reverse-Z projection, matched to OpenGlobus PlanetCamera
-    // (reverseDepth: true, frustums: [[150, 1e12]]).
+    // (reverseDepth: true, frustums: [[1, 1e12]]).
     //
-    // Depth mapping: z_eye = near(150) → z_ndc = 1, z_eye = far(1e12) → z_ndc = 0.
+    // Depth mapping: z_eye = near(1) → z_ndc = 1, z_eye = far(1e12) → z_ndc = 0.
     // Requires: depth clear = 0.0, depth func = GreaterEqual.
     //
     // Matrix (column-major, glm convention):
@@ -122,7 +122,7 @@ Ray Camera::getPickRay(double screenXPixels,
     const glm::dmat4 inverseViewProjection =
         glm::inverse(viewProjectionMatrix(viewportWidthPixels, viewportHeightPixels).raw());
 
-    // Reverse-Z depth [0,1]: near(150m) → z_ndc=1, far(1e12) → z_ndc=0.
+    // Reverse-Z depth [0,1]: near(1m) → z_ndc=1, far(1e12) → z_ndc=0.
     const glm::dvec4 nearClip(ndcX, ndcY, 1.0, 1.0);
     const glm::dvec4 farClip(ndcX, ndcY, 0.0, 1.0);
 
@@ -135,12 +135,8 @@ Ray Camera::getPickRay(double screenXPixels,
 }
 
 double Camera::getHeight() const {
-    // 计算 camera ECEF 位置距 WGS84 椭球表面的高度
-    double len = position_.length();
     const auto& wgs84 = Ellipsoid::WGS84();
-    // 简化：使用半短轴（极半径）作为球近似
-    double surfaceRadius = wgs84.semiMinorAxis();
-    return len - surfaceRadius;
+    return wgs84.cartesianToCartographic(position_).height();
 }
 
 void Camera::getNormalMatrix(float out[9]) const {

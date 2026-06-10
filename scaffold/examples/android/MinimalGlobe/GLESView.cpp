@@ -586,10 +586,12 @@ Java_com_earthengine_minimalglobe_GLESView_nativeDebugZoom(
 
     const auto& diag = gEngine->diagnostics();
     const double cameraRadius = gEngine->camera().position().length();
-    const double cameraAltitude = cameraRadius - 6378137.0;
+    const double sphericalAltitude = cameraRadius - 6378137.0;
+    const double ellipsoidAltitude =
+        Ellipsoid::WGS84().cartesianToCartographic(gEngine->camera().position()).height();
     LOGI("Debug zoom scale=%.2f | tiles vis=%d cached=%d renderSurface=%d "
-         "exact=%d parent=%d missing=%d unsupported=%d lod=%.0f eq=%d qRender=%d qWalk=%d "
-         "qFrustum=%d grp=%d/%d/%d alt=%.2f radius=%.2f FPS=%.1f draw=%d",
+         "exact=%d parent=%d missing=%d unsupported=%d z=%d-%d lod=%.0f eq=%d qRender=%d qWalk=%d "
+         "qFrustum=%d grp=%d/%d/%d ellAlt=%.2f sphAlt=%.2f radius=%.2f FPS=%.1f draw=%d",
          scale,
          diag.visibleTiles,
          diag.cachedTextures,
@@ -598,6 +600,8 @@ Java_com_earthengine_minimalglobe_GLESView_nativeDebugZoom(
          diag.imageryParentFallbackAttachments,
          diag.imageryMissingTiles,
          diag.imageryUnsupportedTiles,
+         diag.minVisibleZoom,
+         diag.maxVisibleZoom,
          diag.lodSizePixels,
          diag.quadtreeEqualZoomLayers,
          diag.quadtreeRenderingNodes,
@@ -606,7 +610,8 @@ Java_com_earthengine_minimalglobe_GLESView_nativeDebugZoom(
          diag.mercatorTileCount,
          diag.northPolarTileCount,
          diag.southPolarTileCount,
-         cameraAltitude,
+         ellipsoidAltitude,
+         sphericalAltitude,
          cameraRadius,
          diag.fps,
          diag.drawCalls);
@@ -623,7 +628,9 @@ Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
 
     const auto& diag = gEngine->diagnostics();
     const double cameraRadius = gEngine->camera().position().length();
-    const double cameraAltitude = cameraRadius - 6378137.0;
+    const double sphericalAltitude = cameraRadius - 6378137.0;
+    const double ellipsoidAltitude =
+        Ellipsoid::WGS84().cartesianToCartographic(gEngine->camera().position()).height();
     const double cameraDist = gEngine->camera().position().distanceTo(Vec3::zero());
 
     char buf[1024];
@@ -633,10 +640,10 @@ Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
         "Visible tiles: %d  |  Cached: %d\n"
         "Surface meshes: %d (%d ellip, %d terr, %d ready)\n"
         "Attachments: %d exact, %d parent, %d missing, %d unsup\n"
-        "LOD: %.0f px  |  EqZoom: %d\n"
+        "Zoom: %d-%d  |  LOD: %.0f px  |  EqZoom: %d\n"
         "QuadTree: %d render, %d walk, %d frustum, %d fade\n"
         "Groups: %d merc, %d N, %d S\n"
-        "Camera: alt=%.0fm dist=%.0fm radius=%.0fm\n"
+        "Camera: ellAlt=%.0fm sphAlt=%.0fm dist=%.0fm\n"
         "Mesh: %d KB  |  Terrain tiles: %d (gen %llu)",
         diag.fps, diag.frameTimeMs,
         diag.drawCalls, diag.gpuTextureCount,
@@ -645,12 +652,13 @@ Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
         diag.terrainSurfaceMeshes, diag.terrainReadySurfaceMeshes,
         diag.imageryExactAttachments, diag.imageryParentFallbackAttachments,
         diag.imageryMissingTiles, diag.imageryUnsupportedTiles,
+        diag.minVisibleZoom, diag.maxVisibleZoom,
         diag.lodSizePixels, diag.quadtreeEqualZoomLayers,
         diag.quadtreeRenderingNodes, diag.quadtreeWalkthroughNodes,
         diag.quadtreeInFrustumNodes, diag.quadtreeFadingNodes,
         diag.mercatorTileCount, diag.northPolarTileCount,
         diag.southPolarTileCount,
-        cameraAltitude, cameraDist, cameraRadius,
+        ellipsoidAltitude, sphericalAltitude, cameraDist,
         diag.surfaceMeshBytes / 1024, diag.terrainCachedTiles,
         static_cast<unsigned long long>(diag.terrainGeneration));
     return env->NewStringUTF(buf);

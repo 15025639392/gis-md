@@ -93,6 +93,8 @@ public:
     int unsupportedImageryTileCount() const { return layerPlan_.unsupportedTileCount; }
     int transitionTileCount() const { return layerPlan_.transitionTileCount; }
     double lodSizePixels() const { return layerPlan_.lodSizePixels; }
+    int minVisibleZoom() const { return layerPlan_.minVisibleZoom; }
+    int maxVisibleZoom() const { return layerPlan_.maxVisibleZoom; }
     int quadtreeFadingNodeCount() const { return layerPlan_.quadtreeFadingNodeCount; }
     int quadtreeNeighborLinkCount() const { return layerPlan_.quadtreeNeighborLinkCount; }
     int quadtreeRenderingNodeCount() const { return layerPlan_.quadtreeRenderingNodeCount; }

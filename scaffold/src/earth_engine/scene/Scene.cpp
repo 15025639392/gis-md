@@ -317,6 +317,8 @@ void Scene::render() {
     diag.imageryUnsupportedTiles = 0;
     diag.imageryTransitionTiles = 0;
     diag.lodSizePixels = 0.0;
+    diag.minVisibleZoom = 0;
+    diag.maxVisibleZoom = 0;
     diag.quadtreeEqualZoomLayers = 0;
     diag.quadtreeFadingNodes = 0;
     diag.quadtreeNeighborLinks = 0;
@@ -348,6 +350,12 @@ void Scene::render() {
         diag.imageryUnsupportedTiles += layer->unsupportedImageryTileCount();
         diag.imageryTransitionTiles += layer->transitionTileCount();
         diag.lodSizePixels = std::max(diag.lodSizePixels, layer->lodSizePixels());
+        if (layer->visibleTileCount() > 0) {
+            diag.minVisibleZoom = diag.minVisibleZoom == 0
+                ? layer->minVisibleZoom()
+                : std::min(diag.minVisibleZoom, layer->minVisibleZoom());
+            diag.maxVisibleZoom = std::max(diag.maxVisibleZoom, layer->maxVisibleZoom());
+        }
         diag.quadtreeEqualZoomLayers += layer->quadtreeEqualZoomApplied();
         diag.quadtreeFadingNodes += layer->quadtreeFadingNodeCount();
         diag.quadtreeNeighborLinks += layer->quadtreeNeighborLinkCount();

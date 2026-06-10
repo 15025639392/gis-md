@@ -26,6 +26,8 @@ struct Diagnostics {
     int imageryUnsupportedTiles = 0;
     int imageryTransitionTiles = 0;
     double lodSizePixels = 0.0;
+    int minVisibleZoom = 0;
+    int maxVisibleZoom = 0;
     int quadtreeEqualZoomLayers = 0;
     int quadtreeFadingNodes = 0;
     int quadtreeNeighborLinks = 0;

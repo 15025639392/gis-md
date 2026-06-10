@@ -38,7 +38,7 @@ public:
     std::string crsProfile() const override { return crs().id(); }
     int tileSize() const override { return 256; }
     int minZoom() const override { return 0; }
-    int maxZoom() const override { return 20; }
+    int maxZoom() const override { return 22; }
     std::string yDirection() const override { return "down"; }
 
     Rectangle tileToRectangle(const TileKey& key) const override {
@@ -124,7 +124,7 @@ public:
     std::string crsProfile() const override { return crs().id(); }
     int tileSize() const override { return 256; }
     int minZoom() const override { return 0; }
-    int maxZoom() const override { return 20; }
+    int maxZoom() const override { return 22; }
     std::string yDirection() const override { return "up"; }
 
     Rectangle tileToRectangle(const TileKey& key) const override {
@@ -205,7 +205,7 @@ public:
     std::string crsProfile() const override { return "EPSG:3857+polar-lonlat"; }
     int tileSize() const override { return 256; }
     int minZoom() const override { return 0; }
-    int maxZoom() const override { return 20; }
+    int maxZoom() const override { return 22; }
     std::string yDirection() const override { return "down-grouped"; }
 
     Rectangle tileToRectangle(const TileKey& key) const override {
@@ -323,7 +323,7 @@ public:
     std::string crsProfile() const override { return "EPSG:4326"; }
     int tileSize() const override { return 256; }
     int minZoom() const override { return 0; }
-    int maxZoom() const override { return 20; }
+    int maxZoom() const override { return 22; }
     std::string yDirection() const override { return "up"; }  // y=0 = south
 
     Rectangle tileToRectangle(const TileKey& key) const override {

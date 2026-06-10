@@ -59,7 +59,7 @@ private:
     std::string urlTemplate_;
     std::string attribution_;
     int minZoom_ = 0;
-    int maxZoom_ = 19;
+    int maxZoom_ = 22;
     int tileWidth_ = 256;
     int tileHeight_ = 256;
     std::string schemeId_ = "XYZ-WebMercator";
