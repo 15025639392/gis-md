@@ -318,6 +318,10 @@ void Scene::render() {
     diag.imageryTransitionTiles = 0;
     diag.imageryKickedTiles = 0;
     diag.imageryAncestorRetainedTiles = 0;
+    diag.imageryMinTargetZoom = 0;
+    diag.imageryMaxTargetZoom = 0;
+    diag.imageryMinTextureZoom = 0;
+    diag.imageryMaxTextureZoom = 0;
     diag.lodSizePixels = 0.0;
     diag.minVisibleZoom = 0;
     diag.maxVisibleZoom = 0;
@@ -334,6 +338,8 @@ void Scene::render() {
     diag.quadtreeSelectionAncestorMeetsSseNodes = 0;
     diag.quadtreeCameraInsideNodes = 0;
     diag.quadtreeInFrustumNodes = 0;
+    diag.quadtreeHorizonTangentPreservedNodes = 0;
+    diag.quadtreeEqualZoomSecondPassNodes = 0;
     diag.mercatorTileCount = 0;
     diag.northPolarTileCount = 0;
     diag.southPolarTileCount = 0;
@@ -358,6 +364,18 @@ void Scene::render() {
         diag.imageryTransitionTiles += layer->transitionTileCount();
         diag.imageryKickedTiles += layer->kickedTileCount();
         diag.imageryAncestorRetainedTiles += layer->ancestorRetainedTileCount();
+        if (layer->renderTileCount() > 0) {
+            diag.imageryMinTargetZoom = diag.imageryMinTargetZoom == 0
+                ? layer->minRenderTargetZoom()
+                : std::min(diag.imageryMinTargetZoom, layer->minRenderTargetZoom());
+            diag.imageryMaxTargetZoom =
+                std::max(diag.imageryMaxTargetZoom, layer->maxRenderTargetZoom());
+            diag.imageryMinTextureZoom = diag.imageryMinTextureZoom == 0
+                ? layer->minRenderTextureZoom()
+                : std::min(diag.imageryMinTextureZoom, layer->minRenderTextureZoom());
+            diag.imageryMaxTextureZoom =
+                std::max(diag.imageryMaxTextureZoom, layer->maxRenderTextureZoom());
+        }
         diag.lodSizePixels = std::max(diag.lodSizePixels, layer->lodSizePixels());
         if (layer->visibleTileCount() > 0) {
             diag.minVisibleZoom = diag.minVisibleZoom == 0
@@ -383,6 +401,10 @@ void Scene::render() {
             layer->layerPlan().quadtreeSelectionAncestorMeetsSseCount;
         diag.quadtreeCameraInsideNodes += layer->quadtreeCameraInsideNodeCount();
         diag.quadtreeInFrustumNodes += layer->quadtreeInFrustumNodeCount();
+        diag.quadtreeHorizonTangentPreservedNodes +=
+            layer->quadtreeHorizonTangentPreservedCount();
+        diag.quadtreeEqualZoomSecondPassNodes +=
+            layer->quadtreeEqualZoomSecondPassNodeCount();
         diag.mercatorTileCount += layer->mercatorTileCount();
         diag.northPolarTileCount += layer->northPolarTileCount();
         diag.southPolarTileCount += layer->southPolarTileCount();

@@ -244,8 +244,7 @@ double cesiumTerrainGeometricError(const Rectangle& bounds) {
 
 bool shouldApplyEqualZoom(const Camera& camera, double cameraHeightMeters) {
     return cameraSlope(camera) > kOpenGlobusMinEqualZoomCameraSlope &&
-           cameraHeightMeters < kOpenGlobusMaxEqualZoomAltitudeMeters &&
-           cameraHeightMeters > kOpenGlobusMinEqualZoomAltitudeMeters;
+           cameraHeightMeters < kOpenGlobusMaxEqualZoomAltitudeMeters;
 }
 
 double maximumScreenSpaceError(const Camera& camera, double cameraHeightMeters) {

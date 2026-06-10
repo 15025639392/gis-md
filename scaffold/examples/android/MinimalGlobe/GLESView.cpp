@@ -344,8 +344,9 @@ static void renderFrame() {
         LOGI("Frame %d | tiles vis=%d cached=%d renderSurface=%d mesh=%d "
              "(terr=%d ellip=%d ready=%d terrParent=%d terrTrans=%d) "
              "attach=%d exact=%d parent=%d stale=%d missingGen=%d | "
-             "missing=%d unsupported=%d "
-             "lod=%.0f eq=%d qRender=%d qWalk=%d qFrustum=%d qFade=%d qBal=%d "
+             "missing=%d unsupported=%d kicked=%d retained=%d "
+             "visZ=%d-%d targetZ=%d-%d texZ=%d-%d lod=%.0f "
+             "eq=%d qRender=%d qWalk=%d qFrustum=%d qFade=%d qBal=%d qHz=%d qEq2=%d "
              "grp=%d/%d/%d gen=%llu | "
              "sun=(%.2f,%.2f,%.2f) | FPS=%.1f draw=%d",
              gFrameCount, diag.visibleTiles, diag.cachedTextures,
@@ -359,6 +360,14 @@ static void renderFrame() {
              diag.staleSurfaceCommands, diag.missingGenerationSurfaceCommands,
              diag.imageryMissingTiles,
              diag.imageryUnsupportedTiles,
+             diag.imageryKickedTiles,
+             diag.imageryAncestorRetainedTiles,
+             diag.minVisibleZoom,
+             diag.maxVisibleZoom,
+             diag.imageryMinTargetZoom,
+             diag.imageryMaxTargetZoom,
+             diag.imageryMinTextureZoom,
+             diag.imageryMaxTextureZoom,
              diag.lodSizePixels,
              diag.quadtreeEqualZoomLayers,
              diag.quadtreeRenderingNodes,
@@ -366,6 +375,8 @@ static void renderFrame() {
              diag.quadtreeInFrustumNodes,
              diag.quadtreeFadingNodes,
              diag.quadtreeNeighborBalancedTiles,
+             diag.quadtreeHorizonTangentPreservedNodes,
+             diag.quadtreeEqualZoomSecondPassNodes,
              diag.mercatorTileCount,
              diag.northPolarTileCount,
              diag.southPolarTileCount,
@@ -621,8 +632,9 @@ Java_com_earthengine_minimalglobe_GLESView_nativeDebugZoom(
     const double ellipsoidAltitude =
         Ellipsoid::WGS84().cartesianToCartographic(gEngine->camera().position()).height();
     LOGI("Debug zoom scale=%.2f | tiles vis=%d cached=%d renderSurface=%d "
-         "exact=%d parent=%d missing=%d unsupported=%d kicked=%d retained=%d z=%d-%d lod=%.0f eq=%d qRender=%d qWalk=%d qBal=%d "
-         "qFrustum=%d grp=%d/%d/%d ellAlt=%.2f sphAlt=%.2f radius=%.2f FPS=%.1f draw=%d",
+         "exact=%d parent=%d missing=%d unsupported=%d kicked=%d retained=%d "
+         "z=%d-%d targetZ=%d-%d texZ=%d-%d lod=%.0f eq=%d qRender=%d qWalk=%d qBal=%d "
+         "qFrustum=%d qHz=%d qEq2=%d grp=%d/%d/%d ellAlt=%.2f sphAlt=%.2f radius=%.2f FPS=%.1f draw=%d",
          scale,
          diag.visibleTiles,
          diag.cachedTextures,
@@ -635,12 +647,18 @@ Java_com_earthengine_minimalglobe_GLESView_nativeDebugZoom(
          diag.imageryAncestorRetainedTiles,
          diag.minVisibleZoom,
          diag.maxVisibleZoom,
+         diag.imageryMinTargetZoom,
+         diag.imageryMaxTargetZoom,
+         diag.imageryMinTextureZoom,
+         diag.imageryMaxTextureZoom,
          diag.lodSizePixels,
          diag.quadtreeEqualZoomLayers,
          diag.quadtreeRenderingNodes,
          diag.quadtreeWalkthroughNodes,
          diag.quadtreeNeighborBalancedTiles,
          diag.quadtreeInFrustumNodes,
+         diag.quadtreeHorizonTangentPreservedNodes,
+         diag.quadtreeEqualZoomSecondPassNodes,
          diag.mercatorTileCount,
          diag.northPolarTileCount,
          diag.southPolarTileCount,
@@ -674,7 +692,8 @@ Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
         "Visible tiles: %d  |  Cached: %d\n"
         "Surface meshes: %d (%d ellip, %d terr, %d ready, %d parent, %d trans)\n"
         "Attachments: %d exact, %d parent, %d missing, %d unsup, %d kicked, %d retained\n"
-        "Zoom: %d-%d  |  LOD: %.0f px  |  EqZoom: %d\n"
+        "Zoom: %d-%d  |  Img: %d-%d -> tex %d-%d\n"
+        "LOD: %.0f px  |  EqZoom: %d\n"
         "QuadTree: %d render, %d walk, %d frustum, %d fade, %d balanced\n"
         "Groups: %d merc, %d N, %d S\n"
         "Camera: ellAlt=%.0fm sphAlt=%.0fm dist=%.0fm\n"
@@ -690,6 +709,8 @@ Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
         diag.imageryKickedTiles,
         diag.imageryAncestorRetainedTiles,
         diag.minVisibleZoom, diag.maxVisibleZoom,
+        diag.imageryMinTargetZoom, diag.imageryMaxTargetZoom,
+        diag.imageryMinTextureZoom, diag.imageryMaxTextureZoom,
         diag.lodSizePixels, diag.quadtreeEqualZoomLayers,
         diag.quadtreeRenderingNodes, diag.quadtreeWalkthroughNodes,
         diag.quadtreeInFrustumNodes, diag.quadtreeFadingNodes,

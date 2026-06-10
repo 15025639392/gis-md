@@ -316,10 +316,49 @@ void BasemapLayer::rebuildLayerPlan() {
 
     for (const auto& key : layerPlan_.desiredTiles) {
         const float lodTransitionOpacity = transitionOpacityForTile(tilePlan_, key);
-        if (textureCache_.contains(key)) {
+        TileKey preferredTextureKey = key;
+
+        TileKey coherentFallbackKey = preferredTextureKey;
+        bool useCoherentParentFallback = false;
+
+        if (textureCache_.contains(preferredTextureKey) &&
+            preferredTextureKey.z > tileScheme_->minZoom()) {
+            const TileKey parent = TilePlanBuilder::parentKey(preferredTextureKey);
+            if (textureCache_.contains(parent)) {
+                for (const TileKey& sibling : layerPlan_.desiredTiles) {
+                    if (sibling == key || sibling.z != key.z) continue;
+                    TileKey siblingTextureKey = sibling;
+                    while (provider_ && !provider_->supportsTile(siblingTextureKey) &&
+                           siblingTextureKey.z > tileScheme_->minZoom()) {
+                        siblingTextureKey = TilePlanBuilder::parentKey(siblingTextureKey);
+                    }
+                    if (TilePlanBuilder::parentKey(siblingTextureKey) != parent) continue;
+                    if (!textureCache_.contains(siblingTextureKey)) {
+                        coherentFallbackKey = parent;
+                        useCoherentParentFallback = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (useCoherentParentFallback) {
+            layerPlan_.fallbackTiles.push_back(TileFallback{key, coherentFallbackKey});
             layerPlan_.renderTiles.push_back(RenderTileRef{
                 key,
+                coherentFallbackKey,
+                TileRenderSource::ParentFallback,
+                TileReadinessState::ParentFallback,
+                lodTransitionOpacity});
+            ++layerPlan_.parentFallbackReadyTileCount;
+            ++layerPlan_.transitionTileCount;
+            continue;
+        }
+
+        if (textureCache_.contains(preferredTextureKey)) {
+            layerPlan_.renderTiles.push_back(RenderTileRef{
                 key,
+                preferredTextureKey,
                 TileRenderSource::Exact,
                 TileReadinessState::Ready,
                 lodTransitionOpacity});
@@ -327,8 +366,9 @@ void BasemapLayer::rebuildLayerPlan() {
             continue;
         }
 
-        TileKey fallbackKey = key;
-        const bool hasFallback = findFallbackTexture(key, fallbackKey) != nullptr;
+        TileKey fallbackKey = preferredTextureKey;
+        const bool hasFallback =
+            findFallbackTexture(preferredTextureKey, fallbackKey) != nullptr;
         if (hasFallback) {
             layerPlan_.fallbackTiles.push_back(TileFallback{key, fallbackKey});
             layerPlan_.renderTiles.push_back(RenderTileRef{
@@ -341,8 +381,15 @@ void BasemapLayer::rebuildLayerPlan() {
             ++layerPlan_.transitionTileCount;
         }
 
-        TileKey requestKey = key;
-        if (findRequestTileForMissingTexture(key, requestKey) &&
+        TileKey requestKey = preferredTextureKey;
+        const bool shouldRequestExact =
+            hasFallback &&
+            provider_ &&
+            provider_->supportsTile(preferredTextureKey) &&
+            !textureCache_.contains(preferredTextureKey);
+        const bool shouldRequestFallbackChain =
+            !hasFallback && findRequestTileForMissingTexture(preferredTextureKey, requestKey);
+        if ((shouldRequestExact || shouldRequestFallbackChain) &&
             requestSet.insert(requestKey).second) {
             layerPlan_.requestTiles.push_back(requestKey);
         }
@@ -722,6 +769,42 @@ int BasemapLayer::parentFallbackAttachmentCount() const {
         }
     }
     return count;
+}
+
+int BasemapLayer::minRenderTargetZoom() const {
+    if (layerPlan_.renderTiles.empty()) return 0;
+    int minZoom = layerPlan_.renderTiles.front().targetKey.z;
+    for (const auto& renderTile : layerPlan_.renderTiles) {
+        minZoom = std::min(minZoom, renderTile.targetKey.z);
+    }
+    return minZoom;
+}
+
+int BasemapLayer::maxRenderTargetZoom() const {
+    if (layerPlan_.renderTiles.empty()) return 0;
+    int maxZoom = layerPlan_.renderTiles.front().targetKey.z;
+    for (const auto& renderTile : layerPlan_.renderTiles) {
+        maxZoom = std::max(maxZoom, renderTile.targetKey.z);
+    }
+    return maxZoom;
+}
+
+int BasemapLayer::minRenderTextureZoom() const {
+    if (layerPlan_.renderTiles.empty()) return 0;
+    int minZoom = layerPlan_.renderTiles.front().textureKey.z;
+    for (const auto& renderTile : layerPlan_.renderTiles) {
+        minZoom = std::min(minZoom, renderTile.textureKey.z);
+    }
+    return minZoom;
+}
+
+int BasemapLayer::maxRenderTextureZoom() const {
+    if (layerPlan_.renderTiles.empty()) return 0;
+    int maxZoom = layerPlan_.renderTiles.front().textureKey.z;
+    for (const auto& renderTile : layerPlan_.renderTiles) {
+        maxZoom = std::max(maxZoom, renderTile.textureKey.z);
+    }
+    return maxZoom;
 }
 
 int BasemapLayer::terrainSurfaceMeshCount() const {

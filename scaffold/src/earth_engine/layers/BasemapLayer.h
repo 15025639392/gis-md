@@ -94,6 +94,10 @@ public:
     int transitionTileCount() const { return layerPlan_.transitionTileCount; }
     int kickedTileCount() const { return layerPlan_.kickedTileCount; }
     int ancestorRetainedTileCount() const { return layerPlan_.ancestorRetainedTileCount; }
+    int minRenderTargetZoom() const;
+    int maxRenderTargetZoom() const;
+    int minRenderTextureZoom() const;
+    int maxRenderTextureZoom() const;
     double lodSizePixels() const { return layerPlan_.lodSizePixels; }
     int minVisibleZoom() const { return layerPlan_.minVisibleZoom; }
     int maxVisibleZoom() const { return layerPlan_.maxVisibleZoom; }
@@ -107,6 +111,12 @@ public:
     int quadtreeNotRenderingNodeCount() const { return layerPlan_.quadtreeNotRenderingNodeCount; }
     int quadtreeCameraInsideNodeCount() const { return layerPlan_.quadtreeCameraInsideNodeCount; }
     int quadtreeInFrustumNodeCount() const { return layerPlan_.quadtreeInFrustumNodeCount; }
+    int quadtreeHorizonTangentPreservedCount() const {
+        return layerPlan_.quadtreeHorizonTangentPreservedCount;
+    }
+    int quadtreeEqualZoomSecondPassNodeCount() const {
+        return layerPlan_.quadtreeEqualZoomSecondPassNodeCount;
+    }
     int quadtreeEqualZoomApplied() const { return layerPlan_.equalZoomApplied ? 1 : 0; }
     int mercatorTileCount() const { return tilePlan_.mercatorTileCount; }
     int northPolarTileCount() const { return tilePlan_.northPolarTileCount; }

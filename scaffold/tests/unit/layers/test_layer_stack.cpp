@@ -705,6 +705,8 @@ TEST_F(BasemapLayerStackTest, UnsupportedHighZoomUsesSupportedAncestor) {
     ASSERT_EQ(1u, layer->layerPlan().renderTiles.size());
     EXPECT_EQ((TileKey{"XYZ-WebMercator", 18, 207529, 103668}),
               layer->layerPlan().renderTiles[0].targetKey);
+    EXPECT_EQ((TileKey{"XYZ-WebMercator", 0, 0, 0}),
+              layer->layerPlan().renderTiles[0].textureKey);
     EXPECT_EQ(TileRenderSource::ParentFallback,
               layer->layerPlan().renderTiles[0].source);
     EXPECT_EQ(0, layer->unsupportedImageryTileCount());

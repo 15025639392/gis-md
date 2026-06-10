@@ -27,6 +27,10 @@ struct Diagnostics {
     int imageryTransitionTiles = 0;
     int imageryKickedTiles = 0;
     int imageryAncestorRetainedTiles = 0;
+    int imageryMinTargetZoom = 0;
+    int imageryMaxTargetZoom = 0;
+    int imageryMinTextureZoom = 0;
+    int imageryMaxTextureZoom = 0;
     double lodSizePixels = 0.0;
     int minVisibleZoom = 0;
     int maxVisibleZoom = 0;
@@ -43,6 +47,8 @@ struct Diagnostics {
     int quadtreeSelectionAncestorMeetsSseNodes = 0;
     int quadtreeCameraInsideNodes = 0;
     int quadtreeInFrustumNodes = 0;
+    int quadtreeHorizonTangentPreservedNodes = 0;
+    int quadtreeEqualZoomSecondPassNodes = 0;
     int mercatorTileCount = 0;
     int northPolarTileCount = 0;
     int southPolarTileCount = 0;
