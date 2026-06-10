@@ -7,11 +7,13 @@
 #include "../platform/bridge/PlatformBridge.h"
 #include "../terrain/QuantizedMeshParser.h"
 
+#ifndef EARTH_ENGINE_HAS_LIBCURL
 #if !defined(ANDROID) && __has_include(<curl/curl.h>)
 #include <curl/curl.h>
 #define EARTH_ENGINE_HAS_LIBCURL 1
 #else
 #define EARTH_ENGINE_HAS_LIBCURL 0
+#endif
 #endif
 
 #include <sstream>

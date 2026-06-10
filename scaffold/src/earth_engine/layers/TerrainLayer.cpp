@@ -63,12 +63,21 @@ const TerrainTile* TerrainLayer::findBestTileForBounds(const Rectangle& geoBound
     if (!best && !tileCache_.empty()) {
         // Debug: print first tile bounds vs target
         auto& first = tileCache_.begin()->second;
+#ifdef __ANDROID__
         __android_log_print(ANDROID_LOG_INFO, "TerrainLayer",
             "bounds mismatch: target(%.4f,%.4f) tile[%d/%d/%d](%.4f-%.4f,%.4f-%.4f) cache=%zu",
             tcLng, tcLat, first->key().z, first->key().x, first->key().y,
             first->bounds().west(), first->bounds().east(),
             first->bounds().south(), first->bounds().north(),
             tileCache_.size());
+#else
+        fprintf(stderr, "[TerrainLayer] bounds mismatch: target(%.4f,%.4f) "
+            "tile[%d/%d/%d](%.4f-%.4f,%.4f-%.4f) cache=%zu\n",
+            tcLng, tcLat, first->key().z, first->key().x, first->key().y,
+            first->bounds().west(), first->bounds().east(),
+            first->bounds().south(), first->bounds().north(),
+            tileCache_.size());
+#endif
     }
     return best;
 }

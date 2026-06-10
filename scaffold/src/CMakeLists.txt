@@ -204,7 +204,8 @@ if(ANDROID)
         target_link_libraries(earth_engine_core PRIVATE ${JNIGRAPHICS_LIBRARY})
     endif()
 elseif(APPLE)
-    # iOS / macOS
+    # iOS / macOS — HTTP 通过 PlatformBridge (NSURLSession)，禁用 libcurl
+    target_compile_definitions(earth_engine_core PRIVATE EARTH_ENGINE_HAS_LIBCURL=0)
     target_sources(earth_engine_core PRIVATE
         earth_engine/platform/ios/RenderDeviceMetal.h
         earth_engine/platform/ios/RenderDeviceMetal.mm
@@ -309,6 +310,18 @@ endif()
 find_package(nlohmann_json CONFIG QUIET)
 if(nlohmann_json_FOUND)
     target_link_libraries(earth_engine_core PUBLIC nlohmann_json::nlohmann_json)
+else()
+    find_path(NLOHMANN_JSON_INCLUDE_DIR nlohmann/json.hpp
+        HINTS
+            ${CMAKE_CURRENT_LIST_DIR}/../third_party_py/nlohmann_json/include
+            /opt/homebrew/include
+            /usr/local/include
+        NO_CMAKE_FIND_ROOT_PATH
+    )
+    if(NOT NLOHMANN_JSON_INCLUDE_DIR)
+        message(FATAL_ERROR "nlohmann/json.hpp not found. Install nlohmann_json or set NLOHMANN_JSON_INCLUDE_DIR.")
+    endif()
+    target_include_directories(earth_engine_core PUBLIC ${NLOHMANN_JSON_INCLUDE_DIR})
 endif()
 
 find_package(CURL CONFIG QUIET)

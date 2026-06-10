@@ -5,11 +5,13 @@
 #include <android/log.h>
 #endif
 
+#ifndef EARTH_ENGINE_HAS_LIBCURL
 #if !defined(ANDROID) && __has_include(<curl/curl.h>)
 #include <curl/curl.h>
 #define EARTH_ENGINE_HAS_LIBCURL 1
 #else
 #define EARTH_ENGINE_HAS_LIBCURL 0
+#endif
 #endif
 #if __has_include(<stb_image.h>)
 #include <stb_image.h>
@@ -173,7 +175,7 @@ std::vector<uint8_t> XYZImageryProvider::httpGet(
         std::condition_variable cv;
         bool done = false;
 
-        platformBridge_->get(url, [&](int code, std::vector<uint8_t> body) {
+        auto httpRequest = platformBridge_->get(url, [&](int code, std::vector<uint8_t> body) {
             if (code == 200) result = std::move(body);
             {
                 std::lock_guard<std::mutex> lk(mtx);

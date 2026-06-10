@@ -152,10 +152,13 @@ void main() {
     float m = mieDepth * 0.020 * mPhase;
 
     vec3 localUp = normalize(cam);
+    float camHeight = max(length(cam) - R, 0.0);
+    float spaceFactor = smoothstep(120000.0, 900000.0, camHeight);
     float viewUp = clamp(dot(rayDir, localUp), 0.0, 1.0);
     vec3 zenithColor = vec3(0.08, 0.28, 0.58);
     vec3 lowSkyColor = vec3(0.18, 0.42, 0.82);
     vec3 baseSky = mix(lowSkyColor, zenithColor, pow(viewUp, 0.65));
+    baseSky = mix(baseSky, vec3(0.0, 0.005, 0.025), spaceFactor);
 
     vec3 scatterColor = rayleighColor * r + mieColor * m;
     scatterColor *= u_sunIntensity * 0.85;
@@ -177,7 +180,9 @@ void main() {
     sunDisk = smoothstep(0.002, 1.0, sunDisk);
     color += sunDisk * vec3(1.0, 0.95, 0.7) * u_sunIntensity * 0.4;
 
-    fragColor = vec4(color, 1.0);
+    float skyAlpha = mix(1.0, 0.18, spaceFactor);
+    float limbAlpha = scatterAmount * spaceFactor;
+    fragColor = vec4(color, clamp(max(skyAlpha, limbAlpha), 0.0, 1.0));
 }
 )";
 

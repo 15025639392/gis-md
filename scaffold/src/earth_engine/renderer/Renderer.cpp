@@ -170,6 +170,8 @@ vertex VertexOut globeVertex(VertexIn in [[stage_in]],
 )msl";
 
 static const char* kGlobeFragmentMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
 fragment float4 globeFragment(VertexOut in [[stage_in]],
                               constant float3& u_lightDir [[buffer(0)]]) {
     float3 n = normalize(in.normal);
@@ -279,6 +281,9 @@ fragment float4 colorFragment(constant float4& u_color [[buffer(0)]]) {
 )msl";
 
 static const char* kTileFragmentMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
 fragment float4 tileFragment(VertexOut in [[stage_in]],
                              texture2d<float> u_tileTexture [[texture(0)]],
                              sampler u_sampler [[sampler(0)]],
@@ -383,7 +388,7 @@ bool Renderer::initialize(const GlobeMesh& mesh) {
     globeSd.vertexSource = isMetal ? kGlobeVertexMSL : kGlobeVertexGLSL;
     globeSd.fragmentSource = isMetal ? kGlobeFragmentMSL : kGlobeFragmentGLSL;
     impl_->globeShader = dev->createShader(globeSd);
-    if (!impl_->globeShader) return false;
+    if (!impl_->globeShader) { fprintf(stderr, "[Renderer] globeShader failed\n"); return false; }
 
     // Globe vertex buffer
     BufferDesc vbDesc;
@@ -409,7 +414,7 @@ bool Renderer::initialize(const GlobeMesh& mesh) {
     tileSd.vertexSource = isMetal ? kTileVertexMSL : kTileVertexGLSL;
     tileSd.fragmentSource = isMetal ? kTileFragmentMSL : kTileFragmentGLSL;
     impl_->tileShader = dev->createShader(tileSd);
-    if (!impl_->tileShader) return false;
+    if (!impl_->tileShader) { fprintf(stderr, "[Renderer] tileShader failed\n"); return false; }
 
     // Tile shared geometry. Web Mercator tile bounds are converted to ECEF on a curved
     // ellipsoid, so low subdivision visibly warps large low-zoom tiles.

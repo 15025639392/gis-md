@@ -3,11 +3,13 @@
 #include "../core/cache/HttpCache.h"
 #include "../platform/bridge/PlatformBridge.h"
 
+#ifndef EARTH_ENGINE_HAS_LIBCURL
 #if !defined(ANDROID) && __has_include(<curl/curl.h>)
 #include <curl/curl.h>
 #define EARTH_ENGINE_HAS_LIBCURL 1
 #else
 #define EARTH_ENGINE_HAS_LIBCURL 0
+#endif
 #endif
 
 #if __has_include(<stb_image.h>)

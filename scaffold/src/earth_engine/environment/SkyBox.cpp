@@ -227,7 +227,8 @@ bool SkyBox::initialize(RenderDevice* device) {
 RenderCommand SkyBox::buildCommand(
     const float* viewMatrix,
     const float* projMatrix,
-    bool isOrthographic) const {
+    bool isOrthographic,
+    float nightFactor) const {
 
     RenderCommand cmd;
     cmd.kind = RenderCommandKind::SkyBackground;
@@ -276,8 +277,8 @@ RenderCommand SkyBox::buildCommand(
         cmd.textures.push_back(cubemapTexture_);
     }
 
-    // For procedural starfield, set night factor
-    cmd.uniforms["u_nightFactor"] = {1.0f};
+    // For procedural starfield, set night factor (0=day, 1=night)
+    cmd.uniforms["u_nightFactor"] = {nightFactor};
     cmd.uniforms["u_time"] = {0.0f};
 
     return cmd;

@@ -4,12 +4,12 @@ plugins {
 
 android {
     namespace "com.earthengine.minimalglobe"
-    compileSdk 35
+    compileSdk 36
 
     defaultConfig {
         applicationId "com.earthengine.minimalglobe"
         minSdk 26
-        targetSdk 35
+        targetSdk 36
         versionCode 1
         versionName "0.1.0"
 
@@ -19,7 +19,7 @@ android {
 
         externalNativeBuild {
             cmake {
-                arguments "-DGLM_INCLUDE_DIR=/opt/homebrew/include"
+                arguments "-DGLM_INCLUDE_DIR=/Users/ldy/Desktop/work/globe/third_party/vcpkg/packages/glm_arm64-android/include"
                 cppFlags "-std=c++17"
             }
         }

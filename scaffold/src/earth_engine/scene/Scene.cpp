@@ -179,8 +179,18 @@ void Scene::render() {
         const double* pmPtr = glm::value_ptr(pm.raw());
         float projMatrix[16];
         for (int i = 0; i < 16; ++i) projMatrix[i] = static_cast<float>(pmPtr[i]);
+        // Night factor: 0 when sun above horizon, ramps to 1 below.
+        // In high orbit, keep the starfield visible behind the atmosphere
+        // instead of a flat daytime clear color.
+        float nightFactor = static_cast<float>(
+            skyGradient_->sunElevation() < -0.05
+                ? std::clamp(std::exp(skyGradient_->sunElevation() * 8.0), 0.0, 1.0)
+                : 0.0);
+        double spaceFactor = std::clamp((cam.getHeight() - 120000.0) / 780000.0, 0.0, 1.0);
+        spaceFactor = spaceFactor * spaceFactor * (3.0 - 2.0 * spaceFactor);
+        nightFactor = std::max(nightFactor, static_cast<float>(spaceFactor));
         commands.push_back(skyBox_->buildCommand(
-            viewMatrix, projMatrix, cam.isOrthographic()));
+            viewMatrix, projMatrix, cam.isOrthographic(), nightFactor));
     }
 
     // 0.5 AtmosphereBackgroundPass（SkyBox 之上，地球之下）

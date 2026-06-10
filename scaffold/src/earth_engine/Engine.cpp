@@ -25,7 +25,10 @@ void Engine::onSurfaceCreated() {
     if (!device_) return;
 
     device_->onSurfaceCreated();
-    scene_->setRenderDevice(device_);
+    if (!scene_->setRenderDevice(device_)) {
+        surfaceCreated_ = false;
+        return;
+    }
     surfaceCreated_ = true;
 }
 
@@ -43,7 +46,7 @@ void Engine::onSurfaceDestroyed() {
 }
 
 void Engine::render(double deltaSeconds) {
-    if (!surfaceCreated_ || !isReady()) return;
+    if (!surfaceCreated_ || !isReady()) { fprintf(stderr, "[Engine::render] BLOCKED: surface=%d ready=%d\n", surfaceCreated_, isReady()); return; }
 
     // 自动计时
     if (deltaSeconds <= 0.0) {

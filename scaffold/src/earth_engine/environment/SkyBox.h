@@ -48,13 +48,12 @@ public:
     bool initialize(RenderDevice* device);
 
     /// 构建渲染命令
-    /// @param viewMatrix 相机视图矩阵（16 floats, column-major, 仅旋转部分）
-    /// @param projMatrix 相机投影矩阵（16 floats, column-major）
-    /// @param isOrthographic 是否正交投影
+    /// @param nightFactor 0=day (transparent), 1=night (full stars)
     RenderCommand buildCommand(
-        const float* viewMatrix,       // 16 floats
-        const float* projMatrix,       // 16 floats
-        bool isOrthographic = false) const;
+        const float* viewMatrix,
+        const float* projMatrix,
+        bool isOrthographic,
+        float nightFactor) const;
 
     /// 是否已初始化
     bool isReady() const { return shader_ != nullptr && vertexBuffer_ != nullptr; }
