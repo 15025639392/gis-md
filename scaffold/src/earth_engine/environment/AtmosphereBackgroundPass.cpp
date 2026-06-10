@@ -2,8 +2,6 @@
 #include <glm/gtc/constants.hpp>
 #include <cmath>
 #include <cstring>
-#include <sstream>
-#include <iomanip>
 
 #ifdef ANDROID
 #include <android/log.h>
@@ -16,18 +14,11 @@
 
 namespace earth_engine {
 
-// ============================================================
-// GLSL ES 3.0 Atmosphere Background Shader
-// 对标 openglobus/src/shaders/atmos/atmosphere.frag.glsl
-// ============================================================
-
 namespace {
 
 const char* kAtmosphereBackgroundVert = R"(#version 300 es
 precision highp float;
-
 in vec2 a_position;
-
 void main() {
     gl_Position = vec4(a_position, 0.0, 1.0);
 }
@@ -36,73 +27,95 @@ void main() {
 const char* kAtmosphereBackgroundFrag = R"(#version 300 es
 precision highp float;
 
-// Thin-shell atmosphere limb glow — computed in WORLD SPACE.
-// Camera position and normalMatrix passed directly (no view matrix extraction).
-
-uniform vec3 u_camPos;          // world-space camera position (ECEF)
-uniform vec2 u_resolution;
+uniform vec3 u_camPos;
+uniform vec3 u_camRight;
+uniform vec3 u_camUp;
+uniform vec3 u_camForward;
+uniform vec3 u_sunDir;
+uniform float u_bottomRadius;
+uniform float u_topRadius;
 uniform float u_fov;
-uniform mat3 u_normalMatrix;     // camera→world rotation
-uniform float u_earthRadius;
-uniform float u_atmosHeight;
-uniform float u_scaleHeight;
-uniform vec3 u_colorZenith;
-uniform vec3 u_colorHorizon;
+uniform float u_aspect;
+uniform float u_sunIntensity;
+uniform float u_sunAngularRadius;
+uniform float u_opacity;
+uniform vec2 u_resolution;
 
 out vec4 fragColor;
 
+const float PI = 3.1415926538;
+
 void main() {
-    vec2 uv = (2.0 * gl_FragCoord.xy - u_resolution.xy) / u_resolution.y;
+    // NDC from gl_FragCoord
+    float px = gl_FragCoord.x;
+    float py = gl_FragCoord.y;
+    float w = u_resolution.x;
+    float h = u_resolution.y;
+    float ndcX = (2.0 * px / w - 1.0) * u_aspect;
+    float ndcY = 2.0 * py / h - 1.0;
 
-    // View ray in camera space
-    float z = 1.0 / tan(u_fov * 0.5);
-    vec3 rayCam = normalize(vec3(uv, -z));
+    float tanFovHalf = tan(u_fov * 0.5);
 
-    // Transform to world space
-    vec3 rayWorld = u_normalMatrix * rayCam;
+    // View ray in world (ECEF) space from camera basis
+    vec3 rayDir = normalize(u_camForward + u_camRight * ndcX * tanFovHalf + u_camUp * ndcY * tanFovHalf);
 
-    // Closest approach of ray to Earth center (world origin)
-    vec3 oc = -u_camPos;  // vector from camera to Earth center
-    float b = dot(oc, rayWorld);
-    vec3 closestPoint = oc - b * rayWorld;
-    float closestDist = length(closestPoint);
-    float tangentHeight = closestDist - u_earthRadius;
+    vec3 sun = normalize(u_sunDir);
+    vec3 cam = u_camPos;
+    float sunAngle = dot(rayDir, sun);
 
-    float TOP_RADIUS = u_earthRadius + u_atmosHeight;
-    vec3 color = vec3(0.0);
+    // Tangent height: distance from ray's closest approach to ellipse center (origin), minus radius
+    float ct = -dot(cam, rayDir);
+    float dist = length(cam + ct * rayDir);
+    float tanH = dist - u_bottomRadius;
 
-    if (closestDist < u_earthRadius) {
-        if (tangentHeight > -u_atmosHeight) {
-            float pathLen = 2.0 * sqrt(max(0.0, TOP_RADIUS * TOP_RADIUS - closestDist * closestDist));
-            float density = exp(-max(tangentHeight, 0.0) / u_scaleHeight);
-            float glow = density * pathLen * 0.0000008;
-            color = mix(u_colorZenith, vec3(0.6, 0.85, 1.0), clamp(tangentHeight / 50000.0 + 0.5, 0.0, 1.0)) * glow;
-        } else {
-            discard;
-        }
-    } else if (closestDist < TOP_RADIUS) {
-        float pathLen = 2.0 * sqrt(max(0.0, TOP_RADIUS * TOP_RADIUS - closestDist * closestDist));
-        float density = exp(-tangentHeight / u_scaleHeight);
-        float glow = density * pathLen * 0.0000008;
-        float blueShift = clamp(tangentHeight / u_scaleHeight, 0.0, 1.0);
-        vec3 atmosphereColor = mix(vec3(0.8, 0.9, 1.0), vec3(0.2, 0.4, 1.0), blueShift);
-        color = atmosphereColor * glow;
-    } else {
-        color = u_colorHorizon * 0.01;
+    // Discard pixels hitting Earth surface
+    if (tanH < -500.0) {
+        discard;
     }
 
-    color = color / (color + vec3(1.0));
-    float alpha = dot(color, vec3(0.299, 0.587, 0.114));
-    if (alpha < 0.0005) discard;
-    fragColor = vec4(color, alpha);
+    float atmosH = u_topRadius - u_bottomRadius;
+
+    // Rayleigh phase function
+    float rayleighPhaseFunc = 3.0 / (16.0 * PI) * (1.0 + sunAngle * sunAngle);
+
+    // Horizon glow: strongest at tanH=0, fades over scale height
+    float scaleH = atmosH * 0.08;
+    float limb = exp(-max(tanH, 0.0) / scaleH);
+
+    // Sky color
+    vec3 zenith = vec3(0.15, 0.35, 0.85);
+    vec3 sunCol = vec3(1.0, 0.95, 0.75);
+    vec3 horizon = vec3(0.8, 0.85, 0.95);
+    float sunWeight = max(0.0, sunAngle) * rayleighPhaseFunc * 2.0;
+    vec3 color = mix(zenith, sunCol, clamp(sunWeight, 0.0, 1.0));
+
+    // Horizon fade
+    float horizonFactor = 1.0 - clamp(tanH / (atmosH * 0.3), 0.0, 1.0);
+    color = mix(color, horizon, horizonFactor * 0.7);
+
+    // Limb brightening
+    color = mix(color, vec3(1.0, 0.9, 0.8), limb * 0.5);
+
+    // Sun disk with Gaussian bloom
+    float minSunCos = cos(u_sunAngularRadius);
+    float cosTheta = dot(rayDir, sun);
+    float sunDisk = 0.0;
+    if (cosTheta >= minSunCos) {
+        sunDisk = 1.0;
+    } else {
+        float offset = minSunCos - cosTheta;
+        sunDisk = exp(-offset * 15000.0) * 0.7 + 1.0 / (0.09 + offset * 200.0) * 0.01;
+    }
+    sunDisk = smoothstep(0.002, 1.0, sunDisk);
+
+    vec3 outColor = color + sunDisk * vec3(1.0, 1.0, 0.8) * u_sunIntensity * 0.3;
+    float alpha = clamp(0.3 + horizonFactor * 0.4 + limb * 0.3, 0.0, 1.0);
+
+    fragColor = vec4(outColor * u_opacity, alpha);
 }
 )";
 
 } // anonymous namespace
-
-// ============================================================
-// AtmosphereBackgroundPass
-// ============================================================
 
 AtmosphereBackgroundPass::AtmosphereBackgroundPass() = default;
 
@@ -116,7 +129,6 @@ bool AtmosphereBackgroundPass::initialize(RenderDevice* device) {
         return false;
     }
     device_ = device;
-    LOGI("initialize: creating shader...");
 
     ShaderDesc shaderDesc;
     shaderDesc.vertexSource = kAtmosphereBackgroundVert;
@@ -129,8 +141,6 @@ bool AtmosphereBackgroundPass::initialize(RenderDevice* device) {
     shader_ = shaderPtr.release();
     LOGI("initialize: shader created ok");
 
-    // Full-screen quad: two triangles covering NDC [-1,1]²
-    // Positioned as triangle strip: [-1,-1], [1,-1], [-1,1], [1,1]
     float quadVertices[] = {
         -1.0f, -1.0f,
          1.0f, -1.0f,
@@ -150,7 +160,6 @@ bool AtmosphereBackgroundPass::initialize(RenderDevice* device) {
     }
     quadBuffer_ = bufPtr.release();
     LOGI("initialize: buffer created ok, ready");
-
     return true;
 }
 
@@ -159,10 +168,12 @@ RenderCommand AtmosphereBackgroundPass::buildCommand(
     float fovRadians,
     int viewportWidth,
     int viewportHeight,
-    const float* normalMatrix,
-    const std::array<float, 3>& zenithColor,
-    const std::array<float, 3>& horizonColor,
-    float earthRadius) const {
+    const Vec3& camRight,
+    const Vec3& camUp,
+    const Vec3& camForward,
+    const Vec3& sunDir,
+    const AtmosphereParameters& params,
+    float opacity) const {
 
     RenderCommand cmd;
     cmd.kind = RenderCommandKind::AtmosphereBackground;
@@ -181,40 +192,30 @@ RenderCommand AtmosphereBackgroundPass::buildCommand(
     cmd.blendDst = RenderCommand::BlendFactorDst::OneMinusSrcAlpha;
     cmd.cullFace = false;
 
-    // Camera position (world space, ECEF)
-    cmd.uniforms["u_camPos"] = {
-        static_cast<float>(cameraPos.x()),
-        static_cast<float>(cameraPos.y()),
-        static_cast<float>(cameraPos.z())
+    auto set3 = [&](const char* name, const Vec3& v) {
+        cmd.uniforms[name] = {static_cast<float>(v.x()), static_cast<float>(v.y()), static_cast<float>(v.z())};
     };
 
-    // Resolution + FOV
-    cmd.uniforms["u_resolution"] = {
-        static_cast<float>(viewportWidth),
-        static_cast<float>(viewportHeight)
-    };
+    set3("u_camPos", cameraPos);
+    set3("u_camRight", camRight);
+    set3("u_camUp", camUp);
+    set3("u_camForward", camForward);
+    set3("u_sunDir", sunDir);
+    cmd.uniforms["u_bottomRadius"] = {static_cast<float>(params.bottomRadius)};
+    cmd.uniforms["u_topRadius"] = {static_cast<float>(params.topRadius())};
     cmd.uniforms["u_fov"] = {fovRadians};
-
-    // Normal matrix (camera→world, mat3, 9 floats)
-    cmd.uniforms["u_normalMatrix"] = std::vector<float>(normalMatrix, normalMatrix + 9);
-
-    // Earth radius + atmosphere geometry
-    cmd.uniforms["u_earthRadius"] = {earthRadius};
-    cmd.uniforms["u_atmosHeight"] = {100000.0f};
-    cmd.uniforms["u_scaleHeight"] = {7994.0f};
-
-    // Sky colors
-    cmd.uniforms["u_colorZenith"] = {zenithColor[0], zenithColor[1], zenithColor[2]};
-    cmd.uniforms["u_colorHorizon"] = {horizonColor[0], horizonColor[1], horizonColor[2]};
+    cmd.uniforms["u_aspect"] = {static_cast<float>(viewportWidth) / static_cast<float>(viewportHeight)};
+    cmd.uniforms["u_sunIntensity"] = {static_cast<float>(params.sunIntensity)};
+    cmd.uniforms["u_sunAngularRadius"] = {static_cast<float>(params.sunAngularRadius)};
+    cmd.uniforms["u_opacity"] = {opacity};
+    cmd.uniforms["u_resolution"] = {static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)};
 
     return cmd;
 }
 
 void AtmosphereBackgroundPass::dispose() {
-    // Resources owned by RenderDevice; just clear pointers
     shader_ = nullptr;
     quadBuffer_ = nullptr;
-    // Note: actual GPU resource deletion is handled by RenderDevice::onSurfaceDestroyed()
 }
 
 } // namespace earth_engine

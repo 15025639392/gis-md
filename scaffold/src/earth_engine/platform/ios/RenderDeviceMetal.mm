@@ -164,22 +164,30 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
     NSString* source = [NSString stringWithUTF8String:desc.vertexSource.c_str()];
     // 实际上需要 vertex + fragment；这里把两者拼接或用 separate libraries
     // 简便做法：把 vertex 和 fragment 源码拼接（MSL 允许多个函数在同一 library）
-    NSString* combinedSource = [NSString stringWithFormat:@"%s\n%s",
-                                desc.vertexSource.c_str(),
-                                desc.fragmentSource.c_str()];
+    fprintf(stderr, "[createShader] vertexSrc length=%zu, first 50 chars: %.50s\n",
+        desc.vertexSource.length(), desc.vertexSource.c_str());
+    fprintf(stderr, "[createShader] fragSrc length=%zu, first 50 chars: %.50s\n",
+        desc.fragmentSource.length(), desc.fragmentSource.c_str());
+    NSString* vertexStr = [NSString stringWithUTF8String:desc.vertexSource.c_str()];
+    NSString* fragStr = [NSString stringWithUTF8String:desc.fragmentSource.c_str()];
+    NSString* combinedSource = [vertexStr stringByAppendingFormat:@"\n%@", fragStr];
 
     id<MTLLibrary> library = [impl_->device newLibraryWithSource:combinedSource
                                                          options:nil
                                                            error:&error];
     if (!library) {
         if (error) {
-            NSLog(@"Metal shader compile error: %@", error.localizedDescription);
+            fprintf(stderr, "Metal shader compile error: %s\n",
+                [[error localizedDescription] UTF8String]);
+            fprintf(stderr, "Combined source:\n%s\n",
+                [combinedSource UTF8String]);
         }
         return nullptr;
     }
 
     enum class PipelineLayout {
         Surface,
+        Tile,
         Color,
         DebugLine
     };
@@ -190,8 +198,14 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
     id<MTLFunction> fragmentFunc = [library newFunctionWithName:@"globeFragment"];
 
     if (!vertexFunc || !fragmentFunc) {
+        fprintf(stderr, "[createShader] trying tileVertex / tileFragment\n");
         vertexFunc = [library newFunctionWithName:@"tileVertex"];
         fragmentFunc = [library newFunctionWithName:@"tileFragment"];
+        if (vertexFunc && fragmentFunc) layout = PipelineLayout::Tile;
+        fprintf(stderr, "[createShader] tileVertex=%p tileFragment=%p\n", (void*)vertexFunc, (void*)fragmentFunc);
+    }
+    if (!vertexFunc || !fragmentFunc) {
+        fprintf(stderr, "[createShader] tile not found, trying colorVertex / colorFragment\n");
     }
     if (!vertexFunc || !fragmentFunc) {
         vertexFunc = [library newFunctionWithName:@"colorVertex"];
@@ -205,6 +219,7 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
     }
 
     if (!vertexFunc || !fragmentFunc) {
+        fprintf(stderr, "[createShader] ALL entry-point lookups FAILED\n");
         return nullptr;
     }
 
@@ -215,6 +230,14 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
         vd.attributes[0].offset = 0;
         vd.attributes[0].bufferIndex = 0;
         vd.layouts[0].stride = 8;
+    } else if (layout == PipelineLayout::Tile) {
+        vd.attributes[0].format = MTLVertexFormatFloat3;   // position
+        vd.attributes[0].offset = 0;
+        vd.attributes[0].bufferIndex = 0;
+        vd.attributes[1].format = MTLVertexFormatFloat2;   // texcoord (no normal — computed in shader)
+        vd.attributes[1].offset = 12;
+        vd.attributes[1].bufferIndex = 0;
+        vd.layouts[0].stride = 20;
     } else if (layout == PipelineLayout::Color) {
         vd.attributes[0].format = MTLVertexFormatFloat3;   // position
         vd.attributes[0].offset = 0;
@@ -274,6 +297,10 @@ void RenderDeviceMetal::beginFrame() {
     // 获取 current drawable
     id<CAMetalDrawable> drawable = [impl_->metalLayer nextDrawable];
     if (!drawable) {
+        fprintf(stderr, "[Metal] beginFrame: nextDrawable returned NIL!\n");
+        fprintf(stderr, "[Metal] metalLayer=%p viewport=%dx%d\n",
+            (__bridge void*)impl_->metalLayer,
+            impl_->viewportWidth, impl_->viewportHeight);
         impl_->currentCommandBuffer = nil;
         return;
     }
@@ -281,7 +308,9 @@ void RenderDeviceMetal::beginFrame() {
     MTLRenderPassDescriptor* passDesc = [MTLRenderPassDescriptor renderPassDescriptor];
     passDesc.colorAttachments[0].texture = drawable.texture;
     passDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
-    passDesc.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.1, 1.0);
+    // Clear color: sky-horizon blue (fullscreen atmosphere pass covers this).
+    // TODO: pass frameState.clearR/G/B from Engine after beginFrame() reorder.
+    passDesc.colorAttachments[0].clearColor = MTLClearColorMake(0.1, 0.3, 0.6, 1.0);
     passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
     passDesc.depthAttachment.texture = impl_->depthTexture;
     passDesc.depthAttachment.loadAction = MTLLoadActionClear;
@@ -452,6 +481,7 @@ void RenderDeviceMetal::onSurfaceCreated() {
 }
 
 void RenderDeviceMetal::onSurfaceChanged(int width, int height) {
+    fprintf(stderr, "[Metal] onSurfaceChanged: %dx%d\n", width, height);
     impl_->viewportWidth = width;
     impl_->viewportHeight = height;
     impl_->metalLayer.drawableSize = CGSizeMake(width, height);

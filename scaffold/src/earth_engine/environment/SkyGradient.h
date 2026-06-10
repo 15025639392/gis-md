@@ -23,6 +23,9 @@ public:
     /// 设置大气参数
     void setParameters(const AtmosphereParameters& params);
 
+    /// 获取当前大气参数
+    const AtmosphereParameters& parameters() const { return params_; }
+
     /// 根据 ECEF 太阳方向 + 相机海拔高度更新颜色
     /// @param sunDirECEF 太阳方向单位向量（地心→太阳）
     /// @param cameraAltitudeMeters 相机距椭球表面高度（米），默认 0（地面）

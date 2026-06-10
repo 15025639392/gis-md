@@ -89,7 +89,10 @@ bool Scene::setRenderDevice(RenderDevice* device) {
     }
 
     renderer_ = std::make_unique<Renderer>(device);
-    if (!renderer_->initialize(globeMesh_)) return false;
+    if (!renderer_->initialize(globeMesh_)) {
+        fprintf(stderr, "[Scene] renderer_->initialize() FAILED\n");
+        return false;
+    }
 
     // 初始化调试叠加层
     debugOverlay_->initialize(device);
@@ -157,6 +160,10 @@ void Scene::render() {
     if (!renderer_ || !isReady()) return;
 
     RenderCommandList commands;
+    fprintf(stderr, "[Scene::render] entered | sky=%d atmo=%d layers=%zu\n",
+        skyBox_ ? skyBox_->isReady() : -1,
+        atmospherePass_ ? atmospherePass_->isReady() : -1,
+        layerStack_.layers().size());
 
     // 0. SkyBox（最远）
     if (skyBox_ && skyBox_->isReady()) {
@@ -182,21 +189,21 @@ void Scene::render() {
         float vpW = static_cast<float>(frameState_.viewportWidthPixels);
         float vpH = static_cast<float>(frameState_.viewportHeightPixels);
 
-        float normalMat[9];
-        cam.getNormalMatrix(normalMat);
-
-        std::array<float, 3> zColor = {0.216f, 0.716f, 1.0f};
-        std::array<float, 3> hColor = {0.0012f, 0.0031f, 0.042f};
+        Vec3 sunDir(
+            frameState_.lightDir.x,
+            frameState_.lightDir.y,
+            frameState_.lightDir.z);
 
         commands.push_back(atmospherePass_->buildCommand(
             cam.position(),
             static_cast<float>(cam.verticalFovRadians()),
             static_cast<int>(vpW),
             static_cast<int>(vpH),
-            normalMat,
-            zColor,
-            hColor,
-            static_cast<float>(Ellipsoid::WGS84().semiMinorAxis())));
+            cam.right(),
+            cam.up(),
+            cam.direction(),
+            sunDir,
+            skyGradient_->parameters()));
     }
 
     // 1. 标准底图 SurfaceTile 主链路。地形启用时，TerrainLayer 只作为
@@ -359,6 +366,7 @@ void Scene::render() {
     }
 
     // 6. 提交
+    fprintf(stderr, "[Scene::render] submitting %zu commands\n", commands.size());
     renderer_->submit(commands);
 }
 

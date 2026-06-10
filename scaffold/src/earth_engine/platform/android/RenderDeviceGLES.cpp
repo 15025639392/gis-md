@@ -261,7 +261,9 @@ std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(const Framebuff
 
 void RenderDeviceGLES::beginFrame() {
     glViewport(0, 0, viewportWidth_, viewportHeight_);
-    glClearColor(0.0f, 0.0f, 0.1f, 1.0f);
+    // Clear color: sky-horizon blue (fullscreen atmosphere pass covers this).
+    // TODO: pass frameState.clearR/G/B from Engine after beginFrame() reorder.
+    glClearColor(0.1f, 0.3f, 0.6f, 1.0f);
     glClearDepthf(0.0f);   // Reverse-Z: clear to 0 (farthest)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);

@@ -289,11 +289,10 @@ static bool createEngine() {
         LOGI("Debug overlay %s",
              kEnableDebugOverlayForDemo ? "enabled" : "disabled");
 
-        // 设置模拟时间为当前系统时间
-        double nowJd = currentJulianDate();
-        gEngine->setTime(nowJd);
-        LOGI("Simulation time set to JD %.3f (Unix %.0f)",
-             nowJd, julianToUnix(nowJd));
+        // 设置模拟时间为固定的白天时间（2026-06-10 14:00 UTC+8 = 06:00 UTC）
+        // 对应 JD 2461188.75，确保看到完整大气散射效果
+        gEngine->setTime(2461188.75);
+        LOGI("Simulation time set to fixed daytime JD 2461188.75 (2026-06-10 14:00 UTC+8)");
     } else {
         LOGE("Engine initialization failed");
     }
