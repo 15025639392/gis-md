@@ -24,7 +24,7 @@ public:
     std::string id() const override;
     std::string type() const override { return "quantized-mesh-terrain"; }
 
-    std::string schemeId() const override { return "OpenGlobus-Earth"; }
+    std::string schemeId() const override { return "Geographic-TMS"; }
 
     int minZoom() const override { return minZoom_; }
     int maxZoom() const override { return maxZoom_; }
@@ -33,6 +33,7 @@ public:
     void setZoomRange(int minZ, int maxZ);
     void setTileSize(int ts) { tileSize_ = ts; }
     void setPlatformBridge(PlatformBridge* bridge);
+    void setFlipYForUrl(bool flip) { flipYForUrl_ = flip; }
 
     std::string buildUrl(const TileKey& key) const override;
 
@@ -50,6 +51,7 @@ private:
     int minZoom_ = 0;
     int maxZoom_ = 15;
     int tileSize_ = 65;   // default 64×64 grid
+    bool flipYForUrl_ = false;
     PlatformBridge* platformBridge_ = nullptr;
 };
 

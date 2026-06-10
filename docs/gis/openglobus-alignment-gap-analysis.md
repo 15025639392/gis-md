@@ -45,13 +45,35 @@
 - `ImageryProvider` 已增加 `supportsTile` 与 `providerKeyForTile` 门禁；`XYZImageryProvider` 必须显式启用 OpenGlobus grouped-y 才会请求三分区 tile，并支持 `{tileGroup}` / `{groupedY}` URL 模板占位。
 - SurfaceTile normal map 已按 OpenGlobus 数据语义接入：从 surface mesh 的 ECEF/world normal 派生 RGBA8 normal texture，作为 SurfaceTile command 的第二纹理绑定，shader 解码后参与光照；无 normal map 时回退顶点法线。对齐 OpenGlobus 后，normal map 是 terrain/segment readiness 或显式 debug 能力，不是每个 ellipsoid 底图 tile 的默认同步资源；ellipsoid SurfaceTile 默认使用顶点法线，避免高 zoom 下把普通影像瓦片误升级成 terrain normal-map 工作负载。
 
+## Cesium Native 选择器借鉴决策
+
+当前低空局部清晰块的直接成因，是四叉树选出的可渲染节点层级不均匀：中心相机分支继续细分，周边仍停在较粗层级。同一 z18 影像贴到不同大小的 `SurfaceTile` / target 覆盖范围后，屏幕采样密度不一致，视觉上形成局部清晰块。
+
+这不是 OpenGlobus 原版策略错误，而是当前实现还缺少完整配套机制。后续路线采用混合方案：
+
+- 保留 OpenGlobus 风格的 globe segment 表达：三分区 tile scheme、极区处理、地平线可见性、相机所在 segment 保护、terrain/segment 状态语义。
+- 借鉴 cesium-native 的选择器状态机：SSE/geometric error、renderable 判断、上一帧 selection state、Ancestor Meets SSE、Kicking、loadingDescendantLimit 和 raster overlay target pixels。
+- `equal-zoom` 只能作为诊断或实验开关，用来验证层级不均匀问题；不应成为低空正式策略。正式修复应靠选择器状态、父子替换和 imagery/surface 尺度匹配完成。
+
+对本项目而言，cesium-native 的强项不是某个公式，而是把“是否细分”“是否可渲染”“加载哪个祖先/子孙”“上一帧画过什么”“本帧 render list 是否要回退父级”合成一个闭环。该闭环比当前简化 quadtree 更适合解决低空局部清晰块、缩放闪烁和父子瓦片替换不连续。
+
+计划拆分：
+
+1. 在 `TileQuadTree` 中用更接近 cesium-native 的 SSE 作为主要 refine 条件，避免 camera-inside 分支单独把中心分支拉得过深。
+2. 为 `TileNode` 增加 selection state，记录 `Rendered`、`Refined`、`Kicked`、`NotVisited` 以及上一帧原始状态。
+3. 为 `SurfaceTile` / imagery / terrain fallback 定义 `isRenderable`，让 render list 决策依赖资源状态，而不是只依赖目标 tile key。
+4. 实现简化版 Kicking：子孙未 ready 且上一帧未渲染过时，继续渲染父 tile，同时保留子孙加载。
+5. 实现简化版 Ancestor Meets SSE：父 tile 满足 SSE 但不可渲染时，继续允许上一帧深层子孙渲染。
+6. 引入 loading descendant limit，避免低空视角一次性追过多深层瓦片。
+7. 让 imagery attachment 参考 surface tile 屏幕覆盖和目标像素，避免固定高 zoom 影像被贴到不同 surface 尺度后产生清晰度块状差异。
+
 ## 仍未完成的 OpenGlobus 行为级对齐
 
 - SurfaceTile terrain 已按 target tile key 查找 exact terrain tile，并沿父链查找 parent fallback terrain tile；parent fallback 已按父 tile bounds 裁剪采样；已用 skirt 作为接缝降级策略。尚未实现完整邻接 seam stitching/edge height reconciliation，因为还缺少跨 tile 邻接 terrain registry 与边高程同步接口。
 - normal map 已实现派生纹理、上传和 shader 采样；与 OpenGlobus 的差异是当前在 CPU 侧编码 RGBA8 后上传，而 OpenGlobus 使用 `NormalMapCreator` framebuffer pass 把 normal 数组渲染成 texture，并可选 blur。后续若启用 terrain normal map，应继续演进为独立队列/每帧预算消费，而不是在 `SurfaceTileCommand` 构建路径里无条件同步创建。
 - high/low split 已在 CPU SurfaceVertex 契约中落地；GPU vertex attribute / shader 侧 high-low 上传仍待 `shader-interface.md` 对应扩展。
 - OpenGlobus Earth 三分区 scheme 已实现编码、bounds、极区 surface 采样、provider compatibility 和 grouped-y URL 映射；debug overlay 文本和更细的 tile availability 区域/层级矩阵仍待完善。
-- LOD 已有 projected-size 与节点统计，LayerPlan 已有 transition/readiness 状态；尚未完整实现 OpenGlobus rendered nodes 邻接事件、terrain readiness observer 和 min/max visible zoom 事件。
+- LOD 已有 projected-size 与节点统计，LayerPlan 已有 transition/readiness 状态；尚未完整实现 cesium-native 风格 selection state、Kicking、Ancestor Meets SSE、loadingDescendantLimit、raster target pixels，也尚未完整实现 OpenGlobus rendered nodes 邻接事件、terrain readiness observer 和 min/max visible zoom 事件。
 
 ## 验收要求
 

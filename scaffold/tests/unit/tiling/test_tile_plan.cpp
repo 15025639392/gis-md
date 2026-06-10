@@ -290,10 +290,11 @@ TEST_F(TilePlanTest, OpenGlobusEqualZoomPassSkippedOutsideAltitudeBand) {
     EXPECT_EQ(plan.zoom, plan.maxVisibleZoom);
 }
 
-TEST_F(TilePlanTest, NearGroundCameraInsideBranchReachesHeightZoom) {
-    // OpenGlobus does NOT force-subdivide in the primary traverse based on
-    // camera-inside — the LOD formula alone governs when to stop.  At 1 km
-    // altitude the projected size naturally selects zoom ≈ 17.
+TEST_F(TilePlanTest, NearGroundCameraInsideBranchUsesSseInsteadOfForcedHeightZoom) {
+    // The camera-inside branch must keep the sub-camera tile visible, but it
+    // must not bypass the Cesium-style SSE selector and force the branch to the
+    // height-derived zoom. That forced path was the root of the low-altitude
+    // local clarity block.
     constexpr double radius = 6378137.0;
     camera_->setPerspective(glm::radians(60.0), 1.0, 50000000.0);
     camera_->lookAt(Vec3(radius + 1000.0, 0.0, 0.0),
@@ -302,8 +303,14 @@ TEST_F(TilePlanTest, NearGroundCameraInsideBranchReachesHeightZoom) {
 
     TileQuadTree tree;
     TilePlan plan = tree.compute(*camera_, *scheme_, 1240, 2772);
+    const int heightZoom = TilePlanBuilder::zoomLevelFromHeight(
+        1000.0, 2772.0, glm::radians(60.0), 256, 0, 20);
 
-    EXPECT_GE(plan.maxVisibleZoom, 16);
+    EXPECT_GT(plan.visibleTiles.size(), 0u);
+    EXPECT_GT(plan.cameraInsideNodeCount, 0);
+    EXPECT_GT(plan.selectionRenderedCount, 0);
+    EXPECT_GT(plan.selectionRefinedCount, 0);
+    EXPECT_LT(plan.maxVisibleZoom, heightZoom);
 }
 
 TEST(TilePlanOpenGlobusEarthTest, ReportsPolarTileGroups) {

@@ -18,6 +18,23 @@ struct TileTransition {
     int fadingNodeCount = 0;
 };
 
+enum class TileSelectionState {
+    NotVisited,
+    Rendered,
+    Refined,
+    Kicked
+};
+
+struct TileSelectionRecord {
+    TileKey key;
+    TileSelectionState state = TileSelectionState::NotVisited;
+    TileSelectionState previousState = TileSelectionState::NotVisited;
+    double screenSpaceError = 0.0;
+    bool cameraInside = false;
+    bool inFrustum = false;
+    bool ancestorMeetsSse = false;
+};
+
 struct TilePlan {
     uint64_t frameId = 0;
     int zoom = 0;
@@ -29,15 +46,21 @@ struct TilePlan {
     double maxLodSizePixels = 0.0;
     std::vector<TileKey> visibleTiles;
     std::vector<TileTransition> tileTransitions;
+    std::vector<TileSelectionRecord> selectionRecords;
     int renderingNodeCount = 0;
     int walkthroughNodeCount = 0;
     int notRenderingNodeCount = 0;
+    int selectionRenderedCount = 0;
+    int selectionRefinedCount = 0;
+    int selectionKickedCount = 0;
+    int selectionAncestorMeetsSseCount = 0;
     int cameraInsideNodeCount = 0;
     int inFrustumNodeCount = 0;
     int horizonTangentPreservedCount = 0;
     int equalZoomSecondPassNodeCount = 0;
     int fadingNodeCount = 0;
     int neighborLinkCount = 0;
+    int neighborBalancedTileCount = 0;
     int mercatorTileCount = 0;
     int northPolarTileCount = 0;
     int southPolarTileCount = 0;
@@ -83,16 +106,25 @@ struct LayerTilePlan {
     std::vector<TileKey> requestTiles;
     std::vector<RenderTileRef> renderTiles;
     std::vector<TileFallback> fallbackTiles;
+    std::vector<TileFallback> kickedTiles;
+    std::vector<TileKey> ancestorRetainedTiles;
     int readyTileCount = 0;
     int parentFallbackReadyTileCount = 0;
     int missingTileCount = 0;
     int unsupportedTileCount = 0;
     int transitionTileCount = 0;
+    int kickedTileCount = 0;
+    int ancestorRetainedTileCount = 0;
     int quadtreeFadingNodeCount = 0;
     int quadtreeNeighborLinkCount = 0;
+    int quadtreeNeighborBalancedTileCount = 0;
     int quadtreeRenderingNodeCount = 0;
     int quadtreeWalkthroughNodeCount = 0;
     int quadtreeNotRenderingNodeCount = 0;
+    int quadtreeSelectionRenderedCount = 0;
+    int quadtreeSelectionRefinedCount = 0;
+    int quadtreeSelectionKickedCount = 0;
+    int quadtreeSelectionAncestorMeetsSseCount = 0;
     int quadtreeCameraInsideNodeCount = 0;
     int quadtreeInFrustumNodeCount = 0;
     int quadtreeHorizonTangentPreservedCount = 0;

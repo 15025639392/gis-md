@@ -16,6 +16,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <cstring>
 #include <algorithm>
+#include <unordered_map>
 #include <unordered_set>
 
 #ifdef __ANDROID__
@@ -81,6 +82,28 @@ float transitionOpacityForTile(const TilePlan& plan, const TileKey& key) {
         }
     }
     return 1.0f;
+}
+
+bool isDescendantOf(TileKey candidate, const TileKey& ancestor) {
+    if (candidate.schemeId != ancestor.schemeId || candidate.z <= ancestor.z) {
+        return false;
+    }
+    while (candidate.z > ancestor.z) {
+        candidate = TilePlanBuilder::parentKey(candidate);
+    }
+    return candidate == ancestor;
+}
+
+void recomputeRenderReadinessCounts(LayerTilePlan& plan) {
+    plan.readyTileCount = 0;
+    plan.parentFallbackReadyTileCount = 0;
+    for (const RenderTileRef& renderTile : plan.renderTiles) {
+        if (renderTile.source == TileRenderSource::Exact) {
+            ++plan.readyTileCount;
+        } else if (renderTile.source == TileRenderSource::ParentFallback) {
+            ++plan.parentFallbackReadyTileCount;
+        }
+    }
 }
 
 } // namespace
@@ -242,6 +265,7 @@ void BasemapLayer::processPendingUploads() {
 }
 
 void BasemapLayer::rebuildLayerPlan() {
+    const LayerTilePlan previousPlan = layerPlan_;
     layerPlan_ = LayerTilePlan{};
     layerPlan_.layerId = id_;
     layerPlan_.providerId = provider_ ? provider_->id() : "";
@@ -253,9 +277,16 @@ void BasemapLayer::rebuildLayerPlan() {
     layerPlan_.lodSizePixels = tilePlan_.lodSizePixels;
     layerPlan_.quadtreeFadingNodeCount = tilePlan_.fadingNodeCount;
     layerPlan_.quadtreeNeighborLinkCount = tilePlan_.neighborLinkCount;
+    layerPlan_.quadtreeNeighborBalancedTileCount =
+        tilePlan_.neighborBalancedTileCount;
     layerPlan_.quadtreeRenderingNodeCount = tilePlan_.renderingNodeCount;
     layerPlan_.quadtreeWalkthroughNodeCount = tilePlan_.walkthroughNodeCount;
     layerPlan_.quadtreeNotRenderingNodeCount = tilePlan_.notRenderingNodeCount;
+    layerPlan_.quadtreeSelectionRenderedCount = tilePlan_.selectionRenderedCount;
+    layerPlan_.quadtreeSelectionRefinedCount = tilePlan_.selectionRefinedCount;
+    layerPlan_.quadtreeSelectionKickedCount = tilePlan_.selectionKickedCount;
+    layerPlan_.quadtreeSelectionAncestorMeetsSseCount =
+        tilePlan_.selectionAncestorMeetsSseCount;
     layerPlan_.quadtreeCameraInsideNodeCount = tilePlan_.cameraInsideNodeCount;
     layerPlan_.quadtreeInFrustumNodeCount = tilePlan_.inFrustumNodeCount;
     layerPlan_.quadtreeHorizonTangentPreservedCount =
@@ -305,7 +336,7 @@ void BasemapLayer::rebuildLayerPlan() {
                 fallbackKey,
                 TileRenderSource::ParentFallback,
                 TileReadinessState::ParentFallback,
-                lodTransitionOpacity});
+                1.0f});
             ++layerPlan_.parentFallbackReadyTileCount;
             ++layerPlan_.transitionTileCount;
         }
@@ -319,6 +350,8 @@ void BasemapLayer::rebuildLayerPlan() {
             ++layerPlan_.missingTileCount;
         }
     }
+    applyAncestorMeetsSseFallback(previousPlan);
+    applyCesiumNativeKicking(previousPlan);
     evictUnusedSurfaceMeshes();
 }
 
@@ -357,6 +390,159 @@ Texture* BasemapLayer::findFallbackTexture(const TileKey& target, TileKey& textu
         }
     }
     return nullptr;
+}
+
+bool BasemapLayer::buildRenderableRefForTile(const TileKey& target,
+                                             float transitionOpacity,
+                                             RenderTileRef& out) {
+    if (provider_ && !provider_->supportsTile(target)) {
+        return false;
+    }
+
+    if (textureCache_.contains(target)) {
+        out = RenderTileRef{
+            target,
+            target,
+            TileRenderSource::Exact,
+            TileReadinessState::Ready,
+            transitionOpacity};
+        return true;
+    }
+
+    TileKey fallbackKey = target;
+    if (findFallbackTexture(target, fallbackKey) != nullptr) {
+        out = RenderTileRef{
+            target,
+            fallbackKey,
+            TileRenderSource::ParentFallback,
+            TileReadinessState::ParentFallback,
+            transitionOpacity};
+        return true;
+    }
+
+    return false;
+}
+
+void BasemapLayer::applyAncestorMeetsSseFallback(
+    const LayerTilePlan& previousPlan) {
+    if (previousPlan.renderTiles.empty() || layerPlan_.desiredTiles.empty()) {
+        return;
+    }
+
+    std::unordered_set<TileKey> currentRenderTargets;
+    currentRenderTargets.reserve(layerPlan_.renderTiles.size());
+    for (const RenderTileRef& renderTile : layerPlan_.renderTiles) {
+        currentRenderTargets.insert(renderTile.targetKey);
+    }
+
+    for (const TileKey& desired : layerPlan_.desiredTiles) {
+        if (currentRenderTargets.find(desired) != currentRenderTargets.end()) {
+            continue;
+        }
+
+        for (const RenderTileRef& previous : previousPlan.renderTiles) {
+            if (!isDescendantOf(previous.targetKey, desired)) {
+                continue;
+            }
+            if (!textureCache_.contains(previous.textureKey)) {
+                continue;
+            }
+            if (!currentRenderTargets.insert(previous.targetKey).second) {
+                continue;
+            }
+
+            layerPlan_.renderTiles.push_back(previous);
+            layerPlan_.ancestorRetainedTiles.push_back(previous.targetKey);
+        }
+    }
+
+    if (layerPlan_.ancestorRetainedTiles.empty()) return;
+
+    layerPlan_.ancestorRetainedTileCount =
+        static_cast<int>(layerPlan_.ancestorRetainedTiles.size());
+    layerPlan_.transitionTileCount += layerPlan_.ancestorRetainedTileCount;
+    recomputeRenderReadinessCounts(layerPlan_);
+}
+
+void BasemapLayer::applyCesiumNativeKicking(const LayerTilePlan& previousPlan) {
+    if (layerPlan_.renderTiles.empty()) return;
+
+    std::unordered_set<TileKey> previousRenderedTargets;
+    previousRenderedTargets.reserve(previousPlan.renderTiles.size());
+    for (const RenderTileRef& renderTile : previousPlan.renderTiles) {
+        previousRenderedTargets.insert(renderTile.targetKey);
+    }
+
+    std::unordered_map<TileKey, std::vector<size_t>> childrenByParent;
+    childrenByParent.reserve(layerPlan_.renderTiles.size());
+    for (size_t i = 0; i < layerPlan_.renderTiles.size(); ++i) {
+        const TileKey& target = layerPlan_.renderTiles[i].targetKey;
+        if (target.z <= tileScheme_->minZoom()) continue;
+        childrenByParent[TilePlanBuilder::parentKey(target)].push_back(i);
+    }
+
+    std::vector<bool> kicked(layerPlan_.renderTiles.size(), false);
+    std::vector<RenderTileRef> parentRenderTiles;
+
+    for (const auto& [parentKey, indices] : childrenByParent) {
+        if (indices.empty()) continue;
+
+        bool allAreExactReady = true;
+        bool anyWereRenderedLastFrame = false;
+        for (size_t index : indices) {
+            const RenderTileRef& renderTile = layerPlan_.renderTiles[index];
+            allAreExactReady =
+                allAreExactReady &&
+                renderTile.readiness == TileReadinessState::Ready &&
+                renderTile.source == TileRenderSource::Exact;
+            anyWereRenderedLastFrame =
+                anyWereRenderedLastFrame ||
+                previousRenderedTargets.find(renderTile.targetKey) !=
+                    previousRenderedTargets.end();
+        }
+
+        if (allAreExactReady || anyWereRenderedLastFrame) {
+            continue;
+        }
+
+        RenderTileRef parentRef;
+        constexpr float opacity = 1.0f;
+        if (!buildRenderableRefForTile(parentKey, opacity, parentRef)) {
+            continue;
+        }
+
+        parentRenderTiles.push_back(parentRef);
+        for (size_t index : indices) {
+            kicked[index] = true;
+            layerPlan_.kickedTiles.push_back(TileFallback{
+                layerPlan_.renderTiles[index].targetKey,
+                parentKey
+            });
+        }
+    }
+
+    if (parentRenderTiles.empty()) return;
+
+    std::vector<RenderTileRef> rewritten;
+    rewritten.reserve(layerPlan_.renderTiles.size());
+    std::unordered_set<TileKey> emittedTargets;
+    for (size_t i = 0; i < layerPlan_.renderTiles.size(); ++i) {
+        if (kicked[i]) continue;
+        if (emittedTargets.insert(layerPlan_.renderTiles[i].targetKey).second) {
+            rewritten.push_back(layerPlan_.renderTiles[i]);
+        }
+    }
+    for (const RenderTileRef& parentRef : parentRenderTiles) {
+        if (emittedTargets.insert(parentRef.targetKey).second) {
+            rewritten.push_back(parentRef);
+        }
+    }
+
+    layerPlan_.kickedTileCount =
+        static_cast<int>(layerPlan_.kickedTiles.size());
+    layerPlan_.transitionTileCount += layerPlan_.kickedTileCount;
+    layerPlan_.renderTiles = std::move(rewritten);
+    recomputeRenderReadinessCounts(layerPlan_);
 }
 
 bool BasemapLayer::findRequestTileForMissingTexture(const TileKey& target,
@@ -610,6 +796,14 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
         Rectangle bounds = tileScheme_->tileToRectangle(key);
         Rectangle textureBounds = tileScheme_->tileToRectangle(textureKey);
         TileTextureWindow uv = TileSurface::textureWindow(bounds, textureBounds);
+        if (tex->width() > 0 && tex->height() > 0) {
+            const float insetU = 0.5f / static_cast<float>(tex->width());
+            const float insetV = 0.5f / static_cast<float>(tex->height());
+            uv.offsetU += insetU;
+            uv.offsetV += insetV;
+            uv.scaleU = std::max(0.0f, uv.scaleU - insetU * 2.0f);
+            uv.scaleV = std::max(0.0f, uv.scaleV - insetV * 2.0f);
+        }
 
         ImageryAttachment attachment{
             id_,

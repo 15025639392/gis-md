@@ -316,15 +316,22 @@ void Scene::render() {
     diag.imageryMissingTiles = 0;
     diag.imageryUnsupportedTiles = 0;
     diag.imageryTransitionTiles = 0;
+    diag.imageryKickedTiles = 0;
+    diag.imageryAncestorRetainedTiles = 0;
     diag.lodSizePixels = 0.0;
     diag.minVisibleZoom = 0;
     diag.maxVisibleZoom = 0;
     diag.quadtreeEqualZoomLayers = 0;
     diag.quadtreeFadingNodes = 0;
     diag.quadtreeNeighborLinks = 0;
+    diag.quadtreeNeighborBalancedTiles = 0;
     diag.quadtreeRenderingNodes = 0;
     diag.quadtreeWalkthroughNodes = 0;
     diag.quadtreeNotRenderingNodes = 0;
+    diag.quadtreeSelectionRenderedNodes = 0;
+    diag.quadtreeSelectionRefinedNodes = 0;
+    diag.quadtreeSelectionKickedNodes = 0;
+    diag.quadtreeSelectionAncestorMeetsSseNodes = 0;
     diag.quadtreeCameraInsideNodes = 0;
     diag.quadtreeInFrustumNodes = 0;
     diag.mercatorTileCount = 0;
@@ -349,6 +356,8 @@ void Scene::render() {
         diag.imageryMissingTiles += layer->missingImageryTileCount();
         diag.imageryUnsupportedTiles += layer->unsupportedImageryTileCount();
         diag.imageryTransitionTiles += layer->transitionTileCount();
+        diag.imageryKickedTiles += layer->kickedTileCount();
+        diag.imageryAncestorRetainedTiles += layer->ancestorRetainedTileCount();
         diag.lodSizePixels = std::max(diag.lodSizePixels, layer->lodSizePixels());
         if (layer->visibleTileCount() > 0) {
             diag.minVisibleZoom = diag.minVisibleZoom == 0
@@ -359,9 +368,19 @@ void Scene::render() {
         diag.quadtreeEqualZoomLayers += layer->quadtreeEqualZoomApplied();
         diag.quadtreeFadingNodes += layer->quadtreeFadingNodeCount();
         diag.quadtreeNeighborLinks += layer->quadtreeNeighborLinkCount();
+        diag.quadtreeNeighborBalancedTiles +=
+            layer->quadtreeNeighborBalancedTileCount();
         diag.quadtreeRenderingNodes += layer->quadtreeRenderingNodeCount();
         diag.quadtreeWalkthroughNodes += layer->quadtreeWalkthroughNodeCount();
         diag.quadtreeNotRenderingNodes += layer->quadtreeNotRenderingNodeCount();
+        diag.quadtreeSelectionRenderedNodes +=
+            layer->layerPlan().quadtreeSelectionRenderedCount;
+        diag.quadtreeSelectionRefinedNodes +=
+            layer->layerPlan().quadtreeSelectionRefinedCount;
+        diag.quadtreeSelectionKickedNodes +=
+            layer->layerPlan().quadtreeSelectionKickedCount;
+        diag.quadtreeSelectionAncestorMeetsSseNodes +=
+            layer->layerPlan().quadtreeSelectionAncestorMeetsSseCount;
         diag.quadtreeCameraInsideNodes += layer->quadtreeCameraInsideNodeCount();
         diag.quadtreeInFrustumNodes += layer->quadtreeInFrustumNodeCount();
         diag.mercatorTileCount += layer->mercatorTileCount();

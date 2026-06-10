@@ -17,6 +17,7 @@
 #endif
 
 #include <sstream>
+#include <algorithm>
 #include <mutex>
 #include <condition_variable>
 #include <chrono>
@@ -70,6 +71,10 @@ std::string QuantizedMeshTerrainProvider::id() const {
 
 std::string QuantizedMeshTerrainProvider::buildUrl(const TileKey& key) const {
     std::string url = urlTemplate_;
+    const int tilesAtZoom = 1 << key.z;
+    const int urlY = flipYForUrl_
+        ? std::clamp(tilesAtZoom - 1 - key.y, 0, tilesAtZoom - 1)
+        : key.y;
     auto replace = [&url](const std::string& ph, const std::string& val) {
         size_t pos = 0;
         while ((pos = url.find(ph, pos)) != std::string::npos) {
@@ -79,7 +84,7 @@ std::string QuantizedMeshTerrainProvider::buildUrl(const TileKey& key) const {
     };
     replace("{z}", std::to_string(key.z));
     replace("{x}", std::to_string(key.x));
-    replace("{y}", std::to_string(key.y));
+    replace("{y}", std::to_string(urlY));
     return url;
 }
 

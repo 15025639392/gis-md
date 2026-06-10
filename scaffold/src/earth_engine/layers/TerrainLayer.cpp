@@ -111,14 +111,6 @@ void TerrainLayer::update(const FrameState& frameState) {
         static_cast<double>(frameState.viewportWidthPixels),
         static_cast<double>(frameState.viewportHeightPixels));
 
-    // DEBUG: force-request known z=12 tiles for Chongqing area
-    {
-        TileKey k12{tileScheme_->id(), 12, 3259, 2721};
-        tilePlan_.visibleTiles.push_back(k12);
-        k12.y = 2722;
-        tilePlan_.visibleTiles.push_back(k12);
-    }
-
     // 3. 请求缺失的瓦片（限制 zoom 范围到 provider 支持的范围）
     int requestsThisUpdate = 0;
     constexpr int kMaxTerrainRequestsPerUpdate = 8;
@@ -132,16 +124,19 @@ void TerrainLayer::update(const FrameState& frameState) {
     }
 #endif
     for (const auto& key : tilePlan_.visibleTiles) {
-        if (key.z < provider_->minZoom() || key.z > provider_->maxZoom()) continue;
-        std::string cacheKey = terrainCacheKey(key);
+        TileKey requestKey = key;
+        while (requestKey.z > provider_->maxZoom()) {
+            requestKey = TilePlanBuilder::parentKey(requestKey);
+        }
+        if (requestKey.z < provider_->minZoom()) continue;
+
+        std::string cacheKey = terrainCacheKey(requestKey);
         if (tileCache_.find(cacheKey) == tileCache_.end() &&
             requestedTiles_.find(cacheKey) == requestedTiles_.end()) {
-            // cesium-native availability: skip tiles known to be empty
-            // Temporarily disabled for debugging
-            // if (!isTilePossiblyAvailable(key)) continue;
+            if (!isTilePossiblyAvailable(requestKey)) continue;
             if (requestsThisUpdate >= kMaxTerrainRequestsPerUpdate) break;
             requestedTiles_.insert(cacheKey);
-            loadTile(key);
+            loadTile(requestKey);
             ++requestsThisUpdate;
         }
     }

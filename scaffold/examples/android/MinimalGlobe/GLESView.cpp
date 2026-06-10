@@ -253,6 +253,7 @@ static bool createEngine() {
                     "QuantizedMesh Terrain");
                 qm->setZoomRange(11, 12);  // allow z=11 fallback
                 qm->setTileSize(65);
+                qm->setFlipYForUrl(true);
                 qm->setPlatformBridge(gPlatformBridge.get());
                 terrainProvider = std::move(qm);
                 LOGI("Terrain provider: QuantizedMesh (%s)", kQuantizedMeshTerrainTemplate);
@@ -326,16 +327,18 @@ static void renderFrame() {
     if (gFrameCount <= 1 || gFrameCount % 300 == 0) {
         const auto& diag = gEngine->diagnostics();
         LOGI("Frame %d | tiles vis=%d cached=%d renderSurface=%d mesh=%d "
-             "(terr=%d ellip=%d ready=%d) "
+             "(terr=%d ellip=%d ready=%d terrParent=%d terrTrans=%d) "
              "attach=%d exact=%d parent=%d stale=%d missingGen=%d | "
              "missing=%d unsupported=%d "
-             "lod=%.0f eq=%d qRender=%d qWalk=%d qFrustum=%d qFade=%d "
+             "lod=%.0f eq=%d qRender=%d qWalk=%d qFrustum=%d qFade=%d qBal=%d "
              "grp=%d/%d/%d gen=%llu | "
              "sun=(%.2f,%.2f,%.2f) | FPS=%.1f draw=%d",
              gFrameCount, diag.visibleTiles, diag.cachedTextures,
              diag.renderSurfaceTiles, diag.surfaceMeshCount,
              diag.terrainSurfaceMeshes, diag.ellipsoidSurfaceMeshes,
              diag.terrainReadySurfaceMeshes,
+             diag.terrainParentFallbackMeshes,
+             diag.terrainTransitionSurfaceMeshes,
              diag.imageryAttachments, diag.imageryExactAttachments,
              diag.imageryParentFallbackAttachments,
              diag.staleSurfaceCommands, diag.missingGenerationSurfaceCommands,
@@ -347,6 +350,7 @@ static void renderFrame() {
              diag.quadtreeWalkthroughNodes,
              diag.quadtreeInFrustumNodes,
              diag.quadtreeFadingNodes,
+             diag.quadtreeNeighborBalancedTiles,
              diag.mercatorTileCount,
              diag.northPolarTileCount,
              diag.southPolarTileCount,
@@ -590,7 +594,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativeDebugZoom(
     const double ellipsoidAltitude =
         Ellipsoid::WGS84().cartesianToCartographic(gEngine->camera().position()).height();
     LOGI("Debug zoom scale=%.2f | tiles vis=%d cached=%d renderSurface=%d "
-         "exact=%d parent=%d missing=%d unsupported=%d z=%d-%d lod=%.0f eq=%d qRender=%d qWalk=%d "
+         "exact=%d parent=%d missing=%d unsupported=%d kicked=%d retained=%d z=%d-%d lod=%.0f eq=%d qRender=%d qWalk=%d qBal=%d "
          "qFrustum=%d grp=%d/%d/%d ellAlt=%.2f sphAlt=%.2f radius=%.2f FPS=%.1f draw=%d",
          scale,
          diag.visibleTiles,
@@ -600,12 +604,15 @@ Java_com_earthengine_minimalglobe_GLESView_nativeDebugZoom(
          diag.imageryParentFallbackAttachments,
          diag.imageryMissingTiles,
          diag.imageryUnsupportedTiles,
+         diag.imageryKickedTiles,
+         diag.imageryAncestorRetainedTiles,
          diag.minVisibleZoom,
          diag.maxVisibleZoom,
          diag.lodSizePixels,
          diag.quadtreeEqualZoomLayers,
          diag.quadtreeRenderingNodes,
          diag.quadtreeWalkthroughNodes,
+         diag.quadtreeNeighborBalancedTiles,
          diag.quadtreeInFrustumNodes,
          diag.mercatorTileCount,
          diag.northPolarTileCount,
@@ -638,10 +645,10 @@ Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
         "FPS: %.1f  |  Frame: %.1f ms\n"
         "Draw calls: %d  |  GPU tex: %d\n"
         "Visible tiles: %d  |  Cached: %d\n"
-        "Surface meshes: %d (%d ellip, %d terr, %d ready)\n"
-        "Attachments: %d exact, %d parent, %d missing, %d unsup\n"
+        "Surface meshes: %d (%d ellip, %d terr, %d ready, %d parent, %d trans)\n"
+        "Attachments: %d exact, %d parent, %d missing, %d unsup, %d kicked, %d retained\n"
         "Zoom: %d-%d  |  LOD: %.0f px  |  EqZoom: %d\n"
-        "QuadTree: %d render, %d walk, %d frustum, %d fade\n"
+        "QuadTree: %d render, %d walk, %d frustum, %d fade, %d balanced\n"
         "Groups: %d merc, %d N, %d S\n"
         "Camera: ellAlt=%.0fm sphAlt=%.0fm dist=%.0fm\n"
         "Mesh: %d KB  |  Terrain tiles: %d (gen %llu)",
@@ -650,12 +657,16 @@ Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
         diag.visibleTiles, diag.cachedTextures,
         diag.surfaceMeshCount, diag.ellipsoidSurfaceMeshes,
         diag.terrainSurfaceMeshes, diag.terrainReadySurfaceMeshes,
+        diag.terrainParentFallbackMeshes, diag.terrainTransitionSurfaceMeshes,
         diag.imageryExactAttachments, diag.imageryParentFallbackAttachments,
         diag.imageryMissingTiles, diag.imageryUnsupportedTiles,
+        diag.imageryKickedTiles,
+        diag.imageryAncestorRetainedTiles,
         diag.minVisibleZoom, diag.maxVisibleZoom,
         diag.lodSizePixels, diag.quadtreeEqualZoomLayers,
         diag.quadtreeRenderingNodes, diag.quadtreeWalkthroughNodes,
         diag.quadtreeInFrustumNodes, diag.quadtreeFadingNodes,
+        diag.quadtreeNeighborBalancedTiles,
         diag.mercatorTileCount, diag.northPolarTileCount,
         diag.southPolarTileCount,
         ellipsoidAltitude, sphericalAltitude, cameraDist,

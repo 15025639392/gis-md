@@ -26,6 +26,27 @@ LOD 不能只靠“相机近就加载高 zoom”这种口头规则。应选择�
 
 LOD 选择需要防抖和滞回，避免相机轻微移动造成瓦片频繁替换。
 
+### Globe surface LOD 选择器
+
+3D globe 的地表瓦片选择应把 OpenGlobus 的 globe segment 空间语义和 cesium-native 的 tile selection 状态机结合起来：
+
+- OpenGlobus 负责地球分区、极区补丁、地平线/前半球可见性、相机所在 segment 保护和 terrain/segment 语义。
+- cesium-native 负责可迁移的选择器规则：screen-space error、geometric error、bounding volume 距离、上一帧 selection state、renderable 判断、父子替换和加载队列优先级。
+- 不应把低空 `equal-zoom` 作为正式 LOD 策略。它可以作为诊断开关，用来证明局部清晰块来自可渲染节点层级不均匀，但正式策略应通过 SSE、renderable 状态和父子替换解决。
+
+低空局部清晰块的直接成因通常不是影像 provider 本身给了不同 zoom，而是同一高 zoom 影像被贴到不同大小的 `SurfaceTile` / target 覆盖范围上。中心相机分支被细分到更小 surface，周边仍停在粗 surface 时，即使两者都使用 z18 影像，也会因为屏幕采样密度不同而出现局部清晰块。
+
+正式选择器必须至少具备以下状态与规则：
+
+- `TileSelectionState`：区分 `Rendered`、`Refined`、`Kicked`、`NotVisited`，并保留上一帧原始状态。
+- `isRenderable`：tile key 被选中不等于能渲染，必须综合 surface mesh、terrain fallback、imagery attachment 或占位策略。
+- `Ancestor Meets SSE`：缩小时，如果父 tile 已满足 SSE 但尚不可渲染，应继续允许上一帧已显示的深层子孙渲染，避免细节突然消失。
+- `Kicking`：放大时，如果子孙目标 tile 尚未全部可渲染且上一帧也没有显示过，应继续渲染当前父 tile，同时保留子孙加载任务。
+- `loadingDescendantLimit`：等待子孙过多时，应优先加载并显示较粗父 tile，避免长时间空白或一次性细节突现。
+- raster/imagery target pixels：影像请求和 fallback 不应只看固定 zoom，应参考承载它的 surface tile 屏幕覆盖、目标像素和 provider 限制。
+
+相邻 LOD 均衡可以作为视觉补充，例如限制邻接 tile 最大层级差，但它不应替代选择器状态机。只靠邻居 equal-zoom 会提高请求和 mesh 数量，并掩盖 renderable / fallback / overlay target pixels 的根因问题。
+
 ## 地形瓦片
 
 地形实现必须说明：

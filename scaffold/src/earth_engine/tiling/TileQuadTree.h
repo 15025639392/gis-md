@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TileKey.h"
+#include "TilePlan.h"
 #include "../core/math/BoundingSphere.h"
 #include "../core/math/OrientedBoundingBox.h"
 #include "../core/math/Rectangle.h"
@@ -16,7 +17,6 @@ namespace earth_engine {
 class Camera;
 class Frustum;
 class TileScheme;
-struct TilePlan;
 
 enum class TileNodeState {
     NotRendering,
@@ -32,10 +32,14 @@ public:
     const Rectangle& bounds() const { return bounds_; }
     const TileNode* parent() const { return parent_; }
     TileNodeState state() const { return state_; }
+    TileSelectionState selectionState() const { return selectionState_; }
+    TileSelectionState previousSelectionState() const { return previousSelectionState_; }
     bool cameraInside() const { return cameraInside_; }
     int inFrustumMask() const { return inFrustumMask_; }
     TileNodeState previousState() const { return previousState_; }
     double transitionOpacity() const { return transitionOpacity_; }
+    double screenSpaceError() const { return screenSpaceError_; }
+    bool ancestorMeetsSse() const { return ancestorMeetsSse_; }
     int fadingNodeCount() const { return fadingNodeCount_; }
     double transitionTimestamp() const { return transitionTimestamp_; }
     void animateTransitionOpacity(double elapsedSinceTransition);
@@ -51,6 +55,7 @@ public:
 
     void resetFrameState();
     void ensureChildren(const TileScheme& scheme);
+    void markNeighborBalancedRendering();
 
     void traverse(const TileScheme& scheme,
                   const Camera& camera,
@@ -60,7 +65,7 @@ public:
                   double cameraLongitudeRad,
                   double cameraLatitudeRad,
                   bool parentCameraInside,
-                  int cameraInsideTargetZoom,
+                  double cameraHeightMeters,
                   size_t maxRenderedTiles,
                   std::vector<TileKey>& out,
                   std::vector<TileNode*>& renderedNodes);
@@ -73,7 +78,7 @@ public:
                   double cameraLongitudeRad,
                   double cameraLatitudeRad,
                   bool parentCameraInside,
-                  int cameraInsideTargetZoom,
+                  double cameraHeightMeters,
                   size_t maxRenderedTiles,
                   std::vector<TileKey>& out,
                   std::vector<TileNode*>& renderedNodes,
@@ -87,6 +92,7 @@ public:
                       double cameraLongitudeRad,
                       double cameraLatitudeRad,
                       bool parentCameraInside,
+                      double cameraHeightMeters,
                       int targetZoom,
                       bool stopAtHorizon,
                       size_t maxRenderedTiles,
@@ -103,7 +109,9 @@ private:
     bool intersectsAny(const std::vector<Rectangle>& rectangles) const;
     bool shouldSubdivide(const Camera& camera,
                          double viewportWidthPixels,
-                         double viewportHeightPixels) const;
+                         double viewportHeightPixels,
+                         double cameraHeightMeters,
+                         double& outScreenSpaceError) const;
     bool childrenPreviousStateEquals(TileNodeState state) const;
     void markRenderingTransition();
     void markFadingOut();  // parent fading out as children take over
@@ -118,6 +126,10 @@ private:
     TileNode* parent_ = nullptr;
     TileNodeState state_ = TileNodeState::NotRendering;
     TileNodeState previousState_ = TileNodeState::NotRendering;
+    TileSelectionState selectionState_ = TileSelectionState::NotVisited;
+    TileSelectionState previousSelectionState_ = TileSelectionState::NotVisited;
+    double screenSpaceError_ = 0.0;
+    bool ancestorMeetsSse_ = false;
     bool cameraInside_ = false;
     int inFrustumMask_ = 0;
     double transitionOpacity_ = 1.0;

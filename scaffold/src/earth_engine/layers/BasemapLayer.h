@@ -92,11 +92,16 @@ public:
     int missingImageryTileCount() const { return layerPlan_.missingTileCount; }
     int unsupportedImageryTileCount() const { return layerPlan_.unsupportedTileCount; }
     int transitionTileCount() const { return layerPlan_.transitionTileCount; }
+    int kickedTileCount() const { return layerPlan_.kickedTileCount; }
+    int ancestorRetainedTileCount() const { return layerPlan_.ancestorRetainedTileCount; }
     double lodSizePixels() const { return layerPlan_.lodSizePixels; }
     int minVisibleZoom() const { return layerPlan_.minVisibleZoom; }
     int maxVisibleZoom() const { return layerPlan_.maxVisibleZoom; }
     int quadtreeFadingNodeCount() const { return layerPlan_.quadtreeFadingNodeCount; }
     int quadtreeNeighborLinkCount() const { return layerPlan_.quadtreeNeighborLinkCount; }
+    int quadtreeNeighborBalancedTileCount() const {
+        return layerPlan_.quadtreeNeighborBalancedTileCount;
+    }
     int quadtreeRenderingNodeCount() const { return layerPlan_.quadtreeRenderingNodeCount; }
     int quadtreeWalkthroughNodeCount() const { return layerPlan_.quadtreeWalkthroughNodeCount; }
     int quadtreeNotRenderingNodeCount() const { return layerPlan_.quadtreeNotRenderingNodeCount; }
@@ -126,6 +131,11 @@ private:
     bool findRequestTileForMissingTexture(const TileKey& target, TileKey& requestKey) const;
     bool isCurrentDesiredTile(const TileKey& key) const;
     bool isCurrentPlanTileOrAncestor(const TileKey& key) const;
+    bool buildRenderableRefForTile(const TileKey& target,
+                                   float transitionOpacity,
+                                   RenderTileRef& out);
+    void applyAncestorMeetsSseFallback(const LayerTilePlan& previousPlan);
+    void applyCesiumNativeKicking(const LayerTilePlan& previousPlan);
     struct SurfaceGpuMesh {
         std::unique_ptr<Buffer> vertexBuffer;
         std::unique_ptr<Buffer> indexBuffer;

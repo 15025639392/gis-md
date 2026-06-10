@@ -35,7 +35,11 @@ constexpr double kOpenGlobusHorizonTangent = 0.81;
 constexpr int kAlwaysSubdivideUntilZoom = 2;
 constexpr size_t kMaxRenderedNodes = 1000;
 constexpr double kOpenGlobusMaxHorizonDistanceSquared = 106876472875.63281;
-constexpr int kTileSizePixels = 256;
+constexpr double kCesiumTerrainMapQuality = 0.25;
+constexpr double kCesiumTerrainMapWidth = 65.0;
+constexpr double kCesiumNativeMaximumSse = 16.0;
+constexpr double kCesiumNativeLowAltitudeMaximumSse = 10.0;
+constexpr double kCesiumNativeMidAltitudeMaximumSse = 12.0;
 
 int openGlobusGroupBaseY(int group, int tilesAtZoom) {
     return group * tilesAtZoom;
@@ -168,6 +172,33 @@ void accumulateNodeStats(const TileNode* node, TilePlan& plan) {
     if (node->inFrustumMask() != 0) {
         ++plan.inFrustumNodeCount;
     }
+    if (node->selectionState() != TileSelectionState::NotVisited) {
+        plan.selectionRecords.push_back(TileSelectionRecord{
+            node->key(),
+            node->selectionState(),
+            node->previousSelectionState(),
+            node->screenSpaceError(),
+            node->cameraInside(),
+            node->inFrustumMask() != 0,
+            node->ancestorMeetsSse()
+        });
+    }
+    switch (node->selectionState()) {
+        case TileSelectionState::Rendered:
+            ++plan.selectionRenderedCount;
+            break;
+        case TileSelectionState::Refined:
+            ++plan.selectionRefinedCount;
+            break;
+        case TileSelectionState::Kicked:
+            ++plan.selectionKickedCount;
+            break;
+        case TileSelectionState::NotVisited:
+            break;
+    }
+    if (node->ancestorMeetsSse()) {
+        ++plan.selectionAncestorMeetsSseCount;
+    }
     plan.fadingNodeCount += node->fadingNodeCount();
     for (const auto& child : node->children()) {
         accumulateNodeStats(child.get(), plan);
@@ -204,24 +235,11 @@ double openglobusLodSizePixels(const Camera& camera) {
         (kOpenGlobusMinLodPixels - kOpenGlobusCurrentLodPixels) * slope;
 }
 
-// OpenGlobus Camera._projSizeConst:
-//   _projSizeConst = min(max(w,512), max(h,512)) / (viewAngle * RADIANS)
-// where viewAngle = 47° and RADIANS = π/180.
-// The viewAngle is independent of the actual projection FOV used for rendering —
-// it is a tuning constant that controls LOD subdivision granularity.
-constexpr double kOpenGlobusViewAngleRadians = 47.0 * glm::pi<double>() / 180.0;
-
-double projectedSizePixels(const Camera& camera,
-                           const Vec3& center,
-                           double radiusMeters,
-                           double viewportWidthPixels,
-                           double viewportHeightPixels) {
-    const double distance = std::max(1.0, camera.position().distanceTo(center));
-    const double viewport = std::min(
-        viewportWidthPixels < 512.0 ? 512.0 : viewportWidthPixels,
-        viewportHeightPixels < 512.0 ? 512.0 : viewportHeightPixels);
-    const double projSizeConst = viewport / kOpenGlobusViewAngleRadians;
-    return std::atan(radiusMeters / distance) * projSizeConst;
+double cesiumTerrainGeometricError(const Rectangle& bounds) {
+    const double maxGeometricErrorPerRadian =
+        kEarthRadius * kCesiumTerrainMapQuality / kCesiumTerrainMapWidth;
+    return maxGeometricErrorPerRadian *
+           std::max(bounds.width(), bounds.height());
 }
 
 bool shouldApplyEqualZoom(const Camera& camera, double cameraHeightMeters) {
@@ -230,21 +248,24 @@ bool shouldApplyEqualZoom(const Camera& camera, double cameraHeightMeters) {
            cameraHeightMeters > kOpenGlobusMinEqualZoomAltitudeMeters;
 }
 
-int zoomLevelFromHeight(double cameraHeightMeters,
-                        double viewportHeightPixels,
-                        double verticalFovRadians,
-                        int minZoom,
-                        int maxZoom) {
-    if (viewportHeightPixels <= 0.0) return minZoom;
-    const double safeHeight = std::max(1.0, cameraHeightMeters);
-    const double metersPerPixel = safeHeight * 2.0 *
-                                  std::tan(verticalFovRadians * 0.5) /
-                                  viewportHeightPixels;
-    const double earthCircumference = 2.0 * glm::pi<double>() * kEarthRadius;
-    const double idealTiles =
-        earthCircumference / (static_cast<double>(kTileSizePixels) * metersPerPixel);
-    const int zoom = static_cast<int>(std::round(std::log2(idealTiles)));
-    return std::clamp(zoom, minZoom, maxZoom);
+double maximumScreenSpaceError(const Camera& camera, double cameraHeightMeters) {
+    double maximumSse = kCesiumNativeMaximumSse;
+    if (cameraHeightMeters < 50000.0) {
+        maximumSse = kCesiumNativeLowAltitudeMaximumSse;
+    } else if (cameraHeightMeters < 250000.0) {
+        maximumSse = kCesiumNativeMidAltitudeMaximumSse;
+    }
+
+    // Very oblique views can otherwise refine a long horizon strip too deeply.
+    // Cesium's full selector has fog/dynamic SSE and loading pressure gates;
+    // this compact version keeps the same intent with a slope-based relaxation.
+    const double slope = cameraSlope(camera);
+    if (slope < 0.45) {
+        maximumSse += 6.0;
+    } else if (slope < 0.65) {
+        maximumSse += 3.0;
+    }
+    return maximumSse;
 }
 
 void dedupeAndUpdateZoomStats(TilePlan& plan) {
@@ -312,6 +333,58 @@ void accumulateNeighborStats(const std::vector<TileNode*>& renderedNodes, TilePl
     plan.neighborLinkCount = links;
 }
 
+void addNeighborBalancedChildren(const TileScheme& scheme,
+                                 TileNode& coarse,
+                                 std::vector<TileKey>& out,
+                                 std::vector<TileNode*>& renderedNodes,
+                                 std::unordered_set<TileKey>& emitted,
+                                 TilePlan& plan) {
+    if (coarse.key().z >= scheme.maxZoom()) return;
+
+    coarse.ensureChildren(scheme);
+    for (const auto& child : coarse.children()) {
+        if (!child) continue;
+        const TileKey& childKey = child->key();
+        if (!emitted.insert(childKey).second) continue;
+
+        child->markNeighborBalancedRendering();
+        out.push_back(childKey);
+        renderedNodes.push_back(child.get());
+        ++plan.neighborBalancedTileCount;
+    }
+}
+
+void applyNeighborBalancePass(const TileScheme& scheme,
+                              TilePlan& plan,
+                              std::vector<TileNode*>& renderedNodes) {
+    if (renderedNodes.size() < 2) return;
+
+    std::unordered_set<TileKey> emitted;
+    emitted.reserve(renderedNodes.size() * 2);
+    for (const TileNode* node : renderedNodes) {
+        if (node) emitted.insert(node->key());
+    }
+
+    std::vector<TileNode*> initialNodes = renderedNodes;
+    for (size_t i = 0; i < initialNodes.size(); ++i) {
+        TileNode* a = initialNodes[i];
+        if (!a) continue;
+        for (size_t j = i + 1; j < initialNodes.size(); ++j) {
+            TileNode* b = initialNodes[j];
+            if (!b || !haveCommonSide(*a, *b)) continue;
+
+            const int zoomDelta = a->key().z - b->key().z;
+            if (zoomDelta > 1) {
+                addNeighborBalancedChildren(
+                    scheme, *b, plan.visibleTiles, renderedNodes, emitted, plan);
+            } else if (zoomDelta < -1) {
+                addNeighborBalancedChildren(
+                    scheme, *a, plan.visibleTiles, renderedNodes, emitted, plan);
+            }
+        }
+    }
+}
+
 void updateTileTransitions(const std::vector<TileNode*>& renderedNodes, TilePlan& plan) {
     plan.tileTransitions.clear();
     plan.tileTransitions.reserve(renderedNodes.size());
@@ -335,6 +408,7 @@ void applyOpenGlobusEqualZoomPass(const TileScheme& scheme,
                                   double viewportHeightPixels,
                                   double cameraLongitudeRad,
                                   double cameraLatitudeRad,
+                                  double cameraHeightMeters,
                                   TilePlan& plan,
                                   std::vector<TileNode*>& renderedNodes) {
     if (renderedNodes.empty()) return;
@@ -367,6 +441,7 @@ void applyOpenGlobusEqualZoomPass(const TileScheme& scheme,
                            cameraLongitudeRad,
                            cameraLatitudeRad,
                            node->cameraInside(),
+                           cameraHeightMeters,
                            maxZoom,
                            true,
                            kMaxRenderedNodes,
@@ -393,7 +468,11 @@ TileNode::TileNode(TileKey key, Rectangle bounds, TileNode* parent)
 
 void TileNode::resetFrameState() {
     previousState_ = state_;
+    previousSelectionState_ = selectionState_;
     state_ = TileNodeState::NotRendering;
+    selectionState_ = TileSelectionState::NotVisited;
+    screenSpaceError_ = 0.0;
+    ancestorMeetsSse_ = false;
     cameraInside_ = false;
     inFrustumMask_ = 0;
     fadingNodeCount_ = 0;
@@ -466,26 +545,32 @@ bool TileNode::isHorizonTangent(const Camera& camera) const {
 
 bool TileNode::shouldSubdivide(const Camera& camera,
                                double viewportWidthPixels,
-                               double viewportHeightPixels) const {
-    // cesium-native SSE-based LOD (TilesetSelection::computeSse).
-    // SSE = geometricError * screenHeight / (distance * 2 * tan(fovy/2))
+                               double viewportHeightPixels,
+                               double cameraHeightMeters,
+                               double& outScreenSpaceError) const {
+    (void)viewportWidthPixels;
 
-    // cesium-native SSE-based LOD.
-    // geometricError = tile angular width × earth radius (meters of surface)
-    const double geometricError =
-        bounds_.width() * 6378137.0;
+    // cesium-native terrain alignment:
+    // geometricError = calcQuadtreeMaxGeometricError(ellipsoid) * rectangleWidth.
+    const double geometricError = cesiumTerrainGeometricError(bounds_);
 
-    const double distance =
-        std::max(1.0, camera.position().distanceTo(boundingSphere_.getCenter()));
+    // For globe surface tiles, a bounding sphere may contain the camera even
+    // when the actual closest rendered surface is roughly cameraHeight away.
+    // Using height as a lower bound keeps the camera branch from refining to
+    // max zoom solely because the eye is inside a coarse bounding sphere.
+    const double sphereDistance = std::max(
+        0.0,
+        camera.position().distanceTo(boundingSphere_.getCenter()) -
+            boundingSphere_.getRadius());
+    const double distance = std::max(
+        1.0,
+        std::max(sphereDistance, cameraHeightMeters));
 
-    const double sse =
+    outScreenSpaceError =
         geometricError * viewportHeightPixels /
         (distance * 2.0 * std::tan(camera.verticalFovRadians() * 0.5));
 
-    // SSE threshold: lower = more tiles (sharper). 2000 ≈ 40 tiles at 1km
-    constexpr double kMaximumSSE = 2000.0;
-
-    return sse > kMaximumSSE;
+    return outScreenSpaceError >= maximumScreenSpaceError(camera, cameraHeightMeters);
 }
 
 bool TileNode::childrenPreviousStateEquals(TileNodeState state) const {
@@ -527,6 +612,12 @@ void TileNode::markRenderingTransition() {
     }
 }
 
+void TileNode::markNeighborBalancedRendering() {
+    state_ = TileNodeState::Rendering;
+    selectionState_ = TileSelectionState::Rendered;
+    markRenderingTransition();
+}
+
 void TileNode::markFadingOut() {
     if (key_.z < 3) return;
     // Parent fading out as children take over (cesium-native tilesFadingOut).
@@ -557,7 +648,7 @@ void TileNode::traverse(const TileScheme& scheme,
                         double cameraLongitudeRad,
                         double cameraLatitudeRad,
                         bool parentCameraInside,
-                        int cameraInsideTargetZoom,
+                        double cameraHeightMeters,
                         size_t maxRenderedTiles,
                         std::vector<TileKey>& out,
                         std::vector<TileNode*>& renderedNodes) {
@@ -567,7 +658,7 @@ void TileNode::traverse(const TileScheme& scheme,
     return traverseImpl(scheme, camera, frustum,
                         viewportWidthPixels, viewportHeightPixels,
                         cameraLongitudeRad, cameraLatitudeRad,
-                        parentCameraInside, cameraInsideTargetZoom,
+                        parentCameraInside, cameraHeightMeters,
                         maxRenderedTiles, out, renderedNodes,
                         kParentInside);
 }
@@ -580,7 +671,7 @@ void TileNode::traverseImpl(const TileScheme& scheme,
                         double cameraLongitudeRad,
                         double cameraLatitudeRad,
                         bool parentCameraInside,
-                        int cameraInsideTargetZoom,
+                        double cameraHeightMeters,
                         size_t maxRenderedTiles,
                         std::vector<TileKey>& out,
                         std::vector<TileNode*>& renderedNodes,
@@ -614,24 +705,24 @@ void TileNode::traverseImpl(const TileScheme& scheme,
 
     const bool canSubdivide = key_.z < scheme.maxZoom();
     const bool mustSubdivide = key_.z < std::max(scheme.minZoom(), kAlwaysSubdivideUntilZoom);
-    // OpenGlobus keeps tracking the node under the camera via _cameraInside.
-    // Without forcing that branch toward the height-derived zoom, low-altitude
-    // pinch can move the eye down to minAltitude while imagery remains stuck on
-    // coarse nodes, which feels like a zoom-in clamp. Restrict this to the
-    // single camera-inside branch so the rest of the view still uses projected
-    // size and horizon culling.
-    const bool cameraInsideNeedsHeightZoom =
-        cameraInside_ && key_.z < cameraInsideTargetZoom;
-    const bool refine = mustSubdivide || (canSubdivide && shouldSubdivide(
-        camera, viewportWidthPixels, viewportHeightPixels)) ||
-        (canSubdivide && cameraInsideNeedsHeightZoom);
+    double sse = 0.0;
+    const bool refineForSse = canSubdivide && shouldSubdivide(
+        camera,
+        viewportWidthPixels,
+        viewportHeightPixels,
+        cameraHeightMeters,
+        sse);
+    screenSpaceError_ = sse;
+    const bool refine = mustSubdivide || refineForSse;
     if (!altVisible && !cameraInside_) {
         state_ = TileNodeState::NotRendering;
+        selectionState_ = TileSelectionState::NotVisited;
         return;
     }
 
     if (!refine || !canSubdivide) {
         state_ = TileNodeState::Rendering;
+        selectionState_ = TileSelectionState::Rendered;
         markRenderingTransition();
         out.push_back(key_);
         renderedNodes.push_back(this);
@@ -639,10 +730,12 @@ void TileNode::traverseImpl(const TileScheme& scheme,
     }
 
     state_ = TileNodeState::Walkthrough;
+    selectionState_ = TileSelectionState::Refined;
     // cesium-native tilesFadingOut: if this node was rendering last frame
     // and now subdivides to children, keep rendering the parent while it
     // fades out over ~0.3s (cross-fade with children fading in).
     if (previousState_ == TileNodeState::Rendering) {
+        ancestorMeetsSse_ = !refineForSse;
         markFadingOut();
         out.push_back(key_);
         renderedNodes.push_back(this);
@@ -658,7 +751,7 @@ void TileNode::traverseImpl(const TileScheme& scheme,
                         cameraLongitudeRad,
                         cameraLatitudeRad,
                         cameraInside_,
-                        cameraInsideTargetZoom,
+                        cameraHeightMeters,
                         maxRenderedTiles,
                         out,
                         renderedNodes,
@@ -674,6 +767,7 @@ void TileNode::renderToZoom(const TileScheme& scheme,
                             double cameraLongitudeRad,
                             double cameraLatitudeRad,
                             bool parentCameraInside,
+                            double cameraHeightMeters,
                             int targetZoom,
                             bool stopAtHorizon,
                             size_t maxRenderedTiles,
@@ -690,15 +784,27 @@ void TileNode::renderToZoom(const TileScheme& scheme,
     const bool visible = inFrustumMask_ || cameraInside_ || key_.z < 3;
     if (!visible) {
         state_ = TileNodeState::NotRendering;
+        selectionState_ = TileSelectionState::NotVisited;
         return;
     }
     if (stopAtHorizon && !isAltitudeVisible(camera) && !cameraInside_) {
         state_ = TileNodeState::NotRendering;
+        selectionState_ = TileSelectionState::NotVisited;
         return;
     }
 
+    double sse = 0.0;
+    (void)shouldSubdivide(
+        camera,
+        viewportWidthPixels,
+        viewportHeightPixels,
+        cameraHeightMeters,
+        sse);
+    screenSpaceError_ = sse;
+
     if (key_.z >= targetZoom || key_.z >= scheme.maxZoom()) {
         state_ = TileNodeState::Rendering;
+        selectionState_ = TileSelectionState::Rendered;
         markRenderingTransition();
         out.push_back(key_);
         renderedNodes.push_back(this);
@@ -707,7 +813,9 @@ void TileNode::renderToZoom(const TileScheme& scheme,
 
     bool childInside = (vis == CullingResult::Inside);
     state_ = TileNodeState::Walkthrough;
+    selectionState_ = TileSelectionState::Refined;
     if (previousState_ == TileNodeState::Rendering) {
+        ancestorMeetsSse_ = true;
         markFadingOut();
         out.push_back(key_);
         renderedNodes.push_back(this);
@@ -723,6 +831,7 @@ void TileNode::renderToZoom(const TileScheme& scheme,
                             cameraLongitudeRad,
                             cameraLatitudeRad,
                             cameraInside_,
+                            cameraHeightMeters,
                             targetZoom,
                             stopAtHorizon,
                             maxRenderedTiles,
@@ -773,18 +882,6 @@ TilePlan TileQuadTree::compute(const Camera& camera,
         camera.position());
     double cameraHeight = cameraCart.height();
     if (cameraHeight < 1.0) cameraHeight = 1.0;
-    // The camera-inside branch is only a near-ground escape hatch. If it runs
-    // while OpenGlobus' equal-zoom pass is active, this single branch raises
-    // plan.maxVisibleZoom and the second pass tries to refine the whole screen
-    // to that zoom, causing large transient tile bursts during pinch.
-    const int cameraInsideTargetZoom =
-        cameraHeight < kOpenGlobusMinEqualZoomAltitudeMeters
-            ? zoomLevelFromHeight(cameraHeight,
-                                  viewportHeightPixels,
-                                  camera.verticalFovRadians(),
-                                  scheme.minZoom(),
-                                  scheme.maxZoom())
-            : scheme.minZoom();
 
     const Cartographic subCamera = Cartographic::fromRadians(
         cameraCart.longitude(),
@@ -801,7 +898,7 @@ TilePlan TileQuadTree::compute(const Camera& camera,
                        subCamera.longitude(),
                        subCamera.latitude(),
                        true,
-                       cameraInsideTargetZoom,
+                       cameraHeight,
                        kMaxRenderedNodes,
                        plan.visibleTiles,
                        renderedNodes);
@@ -824,6 +921,7 @@ TilePlan TileQuadTree::compute(const Camera& camera,
                                       viewportHeightPixels,
                                       subCamera.longitude(),
                                       subCamera.latitude(),
+                                      cameraHeight,
                                       plan,
                                       renderedNodes);
         dedupeAndUpdateZoomStats(plan);
@@ -831,6 +929,9 @@ TilePlan TileQuadTree::compute(const Camera& camera,
             plan.equalZoomApplied = true;
         }
     }
+
+    applyNeighborBalancePass(scheme, plan, renderedNodes);
+    dedupeAndUpdateZoomStats(plan);
     for (const auto& root : roots_) {
         accumulateNodeStats(root.get(), plan);
     }
