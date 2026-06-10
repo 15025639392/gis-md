@@ -428,7 +428,7 @@ TEST_F(CameraControllerTest, PinchPushUpIncreasesTiltPullDownDecreasesTilt) {
     EXPECT_GT(afterPullDownSlope, beforePullDownSlope);
 }
 
-TEST_F(CameraControllerTest, PinchHorizontalPanChangesCamera) {
+TEST_F(CameraControllerTest, PinchHorizontalPanDoesNotMoveCamera) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
     controller_->update(0.0);
     auto before = camera_->viewMatrix();
@@ -438,15 +438,13 @@ TEST_F(CameraControllerTest, PinchHorizontalPanChangesCamera) {
     controller_->update(0.0);
 
     auto after = camera_->viewMatrix();
-    bool changed = false;
+    double diff = 0.0;
     for (int i = 0; i < 4; ++i) {
         for (int j = 0; j < 4; ++j) {
-            if (std::abs(before(i, j) - after(i, j)) > 1e-6) {
-                changed = true;
-            }
+            diff += std::abs(before(i, j) - after(i, j));
         }
     }
-    EXPECT_TRUE(changed);
+    EXPECT_LT(diff, 1e-6);
 }
 
 TEST_F(CameraControllerTest, ViewDistanceMovesCameraTowardPickedTarget) {

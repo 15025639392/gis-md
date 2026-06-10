@@ -32,6 +32,9 @@ constexpr double kTouchJerkLimit = 0.3;
 constexpr double kTouchInertiaDecayStep = 0.007;
 constexpr double kTouchMinSlope = 0.1;
 constexpr double kPinchIntentThresholdPixels = 4.0;
+constexpr double kPinchTiltThresholdPixels = 10.0;
+constexpr double kPinchTiltRadiansPerPixel = 0.0015;
+constexpr double kPinchTiltMaxStepRadians = 0.08;
 constexpr double kPinchRotateThresholdRadians = 0.003;
 constexpr double kPinchAnchorFollow = 0.12;
 
@@ -208,7 +211,9 @@ void CameraController::onPinchGesture(float scale,
             syncDistanceFromCamera();
         }
 
-        if (std::abs(rotationRadians) > kPinchRotateThresholdRadians) {
+        const bool rotateIntent =
+            std::abs(rotationRadians) > kPinchRotateThresholdRadians;
+        if (rotateIntent) {
             rotateCameraAroundPoint(
                 pointOnEarth,
                 pinchEarthUpNormal_.raw(),
@@ -223,38 +228,31 @@ void CameraController::onPinchGesture(float scale,
             absCenterDy > kPinchIntentThresholdPixels;
         const bool scaleDominant = scaleIntent > 0.015 &&
             scaleIntent * 900.0 > std::max(absCenterDx, absCenterDy);
+        const bool zoomIntent = scaleIntent > 0.001;
+        const bool tiltIntent =
+            absCenterDy > kPinchTiltThresholdPixels &&
+            absCenterDy > absCenterDx * 1.35;
 
-        if (centerIntent && !scaleDominant) {
+        if (tiltIntent && !scaleDominant) {
             update(0.0);
-            const glm::dvec3 anchor = pinchAnchorNormal_.raw();
-            const double focusDistanceMeters =
-                std::max(kEarthRadiusMeters * 0.01,
-                         camera_->position().distanceTo(Vec3(anchor * kEarthRadiusMeters)));
-            const double cameraHeightMeters =
-                std::max(0.0, camera_->position().length() - kEarthRadiusMeters);
-            double sensitivity = (0.5 / focusDistanceMeters) *
-                                 cameraHeightMeters *
-                                 glm::pi<double>() / 180.0;
-            if (sensitivity > 0.003) {
-                sensitivity = 0.003;
-            }
-
-            if (std::abs(centerDeltaX) > 0.5f) {
-                rotateCameraAroundPoint(
-                    pointOnEarth,
-                    pinchEarthUpNormal_.raw(),
-                    sensitivity * static_cast<double>(centerDeltaX));
-            }
-
-            if (std::abs(centerDeltaY) > 0.5f) {
-                rotateCameraVerticalAroundPoint(
-                    pointOnEarth,
-                    -sensitivity * static_cast<double>(centerDeltaY),
-                    kTouchMinSlope);
-            }
+            const double tiltAngle = std::clamp(
+                -kPinchTiltRadiansPerPixel * static_cast<double>(centerDeltaY),
+                -kPinchTiltMaxStepRadians,
+                kPinchTiltMaxStepRadians);
+            rotateCameraVerticalAroundPoint(
+                pointOnEarth,
+                tiltAngle,
+                kTouchMinSlope);
         }
 
-        keepAnchorAtScreenPoint(pinchAnchorNormal_, centerX, centerY);
+        if (zoomIntent || rotateIntent) {
+            keepAnchorAtScreenPoint(pinchAnchorNormal_, centerX, centerY);
+        } else if (tiltIntent && !scaleDominant) {
+            keepAnchorAtScreenPoint(
+                pinchAnchorNormal_,
+                pinchAnchorScreenX_,
+                pinchAnchorScreenY_);
+        }
 
         if (centerIntent && !scaleDominant) {
             Vec3 currentCenterPoint;
