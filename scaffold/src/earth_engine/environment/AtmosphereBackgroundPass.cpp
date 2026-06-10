@@ -1,4 +1,5 @@
 #include "AtmosphereBackgroundPass.h"
+#include "../core/geodesy/Ellipsoid.h"
 #include <glm/gtc/constants.hpp>
 #include <cmath>
 #include <cstring>
@@ -154,18 +155,26 @@ void main() {
     vec3 localUp = normalize(cam);
     float camHeight = max(length(cam) - R, 0.0);
     float spaceFactor = smoothstep(120000.0, 900000.0, camHeight);
-    float viewUp = clamp(dot(rayDir, localUp), 0.0, 1.0);
+    float viewUp = dot(rayDir, localUp);
     vec3 zenithColor = vec3(0.08, 0.28, 0.58);
     vec3 lowSkyColor = vec3(0.18, 0.42, 0.82);
-    vec3 baseSky = mix(lowSkyColor, zenithColor, pow(viewUp, 0.65));
+    float raySkyT = smoothstep(-0.08, 0.85, viewUp);
+    float screenSkyT = smoothstep(0.0, 1.0, py / h);
+    float skyT = mix(screenSkyT, raySkyT, spaceFactor);
+    vec3 baseSky = mix(lowSkyColor, zenithColor, pow(skyT, 0.85));
     baseSky = mix(baseSky, vec3(0.0, 0.005, 0.025), spaceFactor);
 
     vec3 scatterColor = rayleighColor * r + mieColor * m;
     scatterColor *= u_sunIntensity * 0.85;
 
     float opticalThickness = rayleighDepth * 0.018 + mieDepth * 0.010;
-    float scatterAmount = clamp(1.0 - exp(-opticalThickness), 0.0, 0.35) * u_opacity;
-    vec3 color = mix(baseSky, baseSky + scatterColor, scatterAmount);
+    float pathScatterAmount =
+        clamp(1.0 - exp(-opticalThickness), 0.0, 0.35) * u_opacity;
+    vec3 color = mix(baseSky, baseSky + scatterColor, pathScatterAmount * spaceFactor);
+
+    float horizonGlow = pow(1.0 - screenSkyT, 2.8) * (1.0 - spaceFactor);
+    vec3 horizonColor = vec3(0.42, 0.82, 1.0);
+    color = mix(color, horizonColor, clamp(horizonGlow * 0.45, 0.0, 0.45));
 
     // ---- Sun disk ----
     float minSunCos = cos(u_sunAngularRadius);
@@ -181,7 +190,7 @@ void main() {
     color += sunDisk * vec3(1.0, 0.95, 0.7) * u_sunIntensity * 0.4;
 
     float skyAlpha = mix(1.0, 0.18, spaceFactor);
-    float limbAlpha = scatterAmount * spaceFactor;
+    float limbAlpha = pathScatterAmount * spaceFactor;
     fragColor = vec4(color, clamp(max(skyAlpha, limbAlpha), 0.0, 1.0));
 }
 )";
@@ -277,8 +286,12 @@ RenderCommand AtmosphereBackgroundPass::buildCommand(
     set3("u_camUp", camUp);
     set3("u_camForward", camForward);
     set3("u_sunDir", sunDir);
-    cmd.uniforms["u_bottomRadius"] = {static_cast<float>(params.bottomRadius)};
-    cmd.uniforms["u_topRadius"] = {static_cast<float>(params.topRadius())};
+    const Ellipsoid atmosphereEllipsoid(params.equatorialRadius, params.bottomRadius);
+    const double localBottomRadius =
+        atmosphereEllipsoid.projectToSurface(cameraPos).length();
+    cmd.uniforms["u_bottomRadius"] = {static_cast<float>(localBottomRadius)};
+    cmd.uniforms["u_topRadius"] = {
+        static_cast<float>(localBottomRadius + params.atmosHeight)};
     cmd.uniforms["u_fov"] = {fovRadians};
     cmd.uniforms["u_aspect"] = {static_cast<float>(viewportWidth) / static_cast<float>(viewportHeight)};
     cmd.uniforms["u_sunIntensity"] = {static_cast<float>(params.sunIntensity)};
