@@ -67,6 +67,21 @@ static bool gTouchMoved = false;
 static bool gNormalMapDebugEnabled = false;
 static bool gDebugPinchActive = false;
 
+static double androidUptimeSeconds();
+
+static void cancelInputIfNeeded() {
+    if (!gEngine) return;
+    InputEvent event;
+    event.type = InputEvent::Type::Cancel;
+    event.pointerType = InputEvent::PointerType::Touch;
+    event.timestamp = androidUptimeSeconds();
+    gEngine->onInputEvent(event);
+    gTouching = false;
+    gDragStarted = false;
+    gTouchMoved = false;
+    gDebugPinchActive = false;
+}
+
 static constexpr const char* kFabdemTerrainTemplate =
     "http://192.168.1.4:8001/{z}/{x}/{y}.png";
 static constexpr const char* kQuantizedMeshTerrainTemplate =
@@ -399,6 +414,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativeRenderFrame(
 JNIEXPORT void JNICALL
 Java_com_earthengine_minimalglobe_GLESView_nativeSurfaceDestroyed(
     JNIEnv* /* env */, jobject /* this */) {
+    cancelInputIfNeeded();
     destroyEGL();
     if (gWindow) {
         ANativeWindow_release(gWindow);
@@ -423,6 +439,7 @@ static void endDebugPinchIfNeeded(float centerX, float centerY) {
     event.screenY = centerY;
     event.pinchScale = 1.0f;
     event.pointerType = InputEvent::PointerType::Touch;
+    event.pointerCount = 2;
     event.timestamp = androidUptimeSeconds();
     gEngine->onInputEvent(event);
     gDebugPinchActive = false;
@@ -517,6 +534,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativePinchStart(
     event.screenY = centerY;
     event.pinchScale = 1.0f;
     event.pointerType = InputEvent::PointerType::Touch;
+    event.pointerCount = 2;
     event.timestamp = androidUptimeSeconds();
     gEngine->onInputEvent(event);
 }
@@ -542,6 +560,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativePinchRotateTilt(
     JNIEnv* /* env */, jobject /* this */,
     jfloat scale, jfloat rotationRadians,
     jfloat centerX, jfloat centerY, jfloat centerDx, jfloat centerDy,
+    jfloat pointer0X, jfloat pointer0Y, jfloat pointer1X, jfloat pointer1Y,
     jint /*width*/, jint /*height*/) {
     if (!gEngine) return;
     InputEvent event;
@@ -553,6 +572,12 @@ Java_com_earthengine_minimalglobe_GLESView_nativePinchRotateTilt(
     event.centerDeltaX = centerDx;
     event.centerDeltaY = centerDy;
     event.pointerType = InputEvent::PointerType::Touch;
+    event.pointerCount = 2;
+    event.hasPointerPair = true;
+    event.pointer0X = pointer0X;
+    event.pointer0Y = pointer0Y;
+    event.pointer1X = pointer1X;
+    event.pointer1Y = pointer1Y;
     event.timestamp = androidUptimeSeconds();
     gEngine->onInputEvent(event);
 }
@@ -574,6 +599,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativeDebugZoom(
         start.screenY = centerY;
         start.pinchScale = 1.0f;
         start.pointerType = InputEvent::PointerType::Touch;
+        start.pointerCount = 2;
         start.timestamp = ts;
         gEngine->onInputEvent(start);
         gDebugPinchActive = true;
@@ -585,6 +611,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativeDebugZoom(
     move.screenY = centerY;
     move.pinchScale = scale;
     move.pointerType = InputEvent::PointerType::Touch;
+    move.pointerCount = 2;
     move.timestamp = ts + 0.016;
     gEngine->onInputEvent(move);
 
@@ -740,6 +767,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativeResetCamera(
 JNIEXPORT void JNICALL
 Java_com_earthengine_minimalglobe_GLESView_nativePause(
     JNIEnv* /* env */, jobject /* this */) {
+    cancelInputIfNeeded();
     // TODO: 后续阶段通知 PlatformBridge::onEnterBackground()
 }
 

@@ -210,7 +210,9 @@ constexpr bool kUseGaodeSatelliteForDemo = true;
         case NSGestureRecognizerStateEnded:
         case NSGestureRecognizerStateCancelled: {
             InputEvent event;
-            event.type = InputEvent::Type::PointerUp;
+            event.type = gesture.state == NSGestureRecognizerStateCancelled
+                ? InputEvent::Type::Cancel
+                : InputEvent::Type::PointerUp;
             event.screenX = static_cast<float>(location.x * scale);
             event.screenY = static_cast<float>(location.y * scale);
             event.devicePixelRatio = static_cast<float>(scale);
@@ -241,6 +243,7 @@ constexpr bool kUseGaodeSatelliteForDemo = true;
             event.devicePixelRatio = static_cast<float>(scale);
             event.pinchScale = 1.0f;
             event.pointerType = InputEvent::PointerType::Touch;
+            event.pointerCount = 2;
             event.timestamp = timestamp;
             _engine->onInputEvent(event);
             break;
@@ -257,6 +260,7 @@ constexpr bool kUseGaodeSatelliteForDemo = true;
             event.devicePixelRatio = static_cast<float>(scale);
             event.pinchScale = perFrameScale;
             event.pointerType = InputEvent::PointerType::Touch;
+            event.pointerCount = 2;
             event.timestamp = timestamp;
             _engine->onInputEvent(event);
             break;
@@ -265,12 +269,15 @@ constexpr bool kUseGaodeSatelliteForDemo = true;
         case NSGestureRecognizerStateCancelled: {
             _lastMagnification = 0.0;
             InputEvent event;
-            event.type = InputEvent::Type::PinchEnd;
+            event.type = gesture.state == NSGestureRecognizerStateCancelled
+                ? InputEvent::Type::Cancel
+                : InputEvent::Type::PinchEnd;
             event.screenX = static_cast<float>(location.x * scale);
             event.screenY = static_cast<float>(location.y * scale);
             event.devicePixelRatio = static_cast<float>(scale);
             event.pinchScale = 1.0f;
             event.pointerType = InputEvent::PointerType::Touch;
+            event.pointerCount = 2;
             event.timestamp = timestamp;
             _engine->onInputEvent(event);
             break;
@@ -338,6 +345,12 @@ constexpr bool kUseGaodeSatelliteForDemo = true;
 }
 
 - (void)dealloc {
+    if (_engine) {
+        InputEvent event;
+        event.type = InputEvent::Type::Cancel;
+        event.timestamp = [NSProcessInfo processInfo].systemUptime;
+        _engine->onInputEvent(event);
+    }
     [_displayLink invalidate];
     [_displayLink release];
     _engine.reset();

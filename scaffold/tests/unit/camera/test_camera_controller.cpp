@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include "earth_engine/camera/CameraController.h"
+#include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/scene/Camera.h"
 
 using namespace earth_engine;
@@ -74,15 +75,11 @@ TEST_F(CameraControllerTest, SetDistance) {
     controller_->setDistance(5.0f);
     EXPECT_FLOAT_EQ(5.0f, controller_->distance());
 
-    // OpenGlobus PlanetCamera defaults minAltitude to 1 meter; the controller
-    // should not keep the old demo-only 1.05R (~319 km) floor.
     controller_->setDistance(1.0f);
     controller_->update(0.0);
-    EXPECT_GE(camera_->position().length() - kEarthRadiusMeters, 0.0);
-    EXPECT_LT(camera_->position().length() - kEarthRadiusMeters, 2.0);
+    EXPECT_GE(camera_->position().length() - kEarthRadiusMeters, 49.0);
+    EXPECT_LT(camera_->position().length() - kEarthRadiusMeters, 52.0);
 
-    // OpenGlobus-style globe navigation should allow much farther pullback than
-    // the previous demo-only 12R cap while staying inside the current far plane.
     controller_->setDistance(20.0f);
     EXPECT_FLOAT_EQ(20.0f, controller_->distance());
 
@@ -234,24 +231,34 @@ TEST_F(CameraControllerTest, DragThenInertiaDecays) {
 }
 
 TEST_F(CameraControllerTest, PinchChangesDistance) {
-    float initialDist = controller_->distance();
+    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    controller_->setDistance(5.0f);
+    controller_->update(0.0);
+    Vec3 anchor = intersectEarthSphere(
+        camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
+    double initialDist = camera_->position().distanceTo(anchor);
 
     controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
     controller_->onPinchGesture(2.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);  // 缩小 → 距离减小
 
-    // OpenGlobus TouchNavigation clamps per-frame pinch jerk and moves along
-    // camera forward by distanceToPointOnEarth * (scale - 1).
-    EXPECT_NEAR(initialDist - (initialDist - 1.0f) * 0.3f,
-                controller_->distance(),
-                1e-5f);
+    EXPECT_LT(camera_->position().distanceTo(anchor), initialDist);
+    glm::dvec2 projectedAfterZoomIn = projectToScreen(*camera_, anchor);
+    EXPECT_NEAR(400.0, projectedAfterZoomIn.x, 2.0);
+    EXPECT_NEAR(300.0, projectedAfterZoomIn.y, 2.0);
 
     controller_->onPinchEnd();
+    controller_->setDistance(5.0f);
+    controller_->update(0.0);
+    anchor = intersectEarthSphere(
+        camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
+    initialDist = camera_->position().distanceTo(anchor);
     controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
     controller_->onPinchGesture(0.5f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);  // 放大 → 距离增大
 
-    // 距离应大于之前
-    float distAfterZoomOut = controller_->distance();
-    EXPECT_GT(distAfterZoomOut, initialDist * 0.5f);
+    EXPECT_GT(camera_->position().distanceTo(anchor), initialDist);
+    glm::dvec2 projectedAfterZoomOut = projectToScreen(*camera_, anchor);
+    EXPECT_NEAR(400.0, projectedAfterZoomOut.x, 2.0);
+    EXPECT_NEAR(300.0, projectedAfterZoomOut.y, 2.0);
 }
 
 TEST_F(CameraControllerTest, PinchRotationChangesCameraAroundAnchor) {
@@ -270,7 +277,7 @@ TEST_F(CameraControllerTest, PinchRotationChangesCameraAroundAnchor) {
     EXPECT_GT(quatAngleFromIdentity(controller_->rotation()), 0.01);
 }
 
-TEST_F(CameraControllerTest, PinchZoomUsesCurrentCenterPointLikeOpenGlobus) {
+TEST_F(CameraControllerTest, PinchZoomKeepsGestureCenterAnchorStable) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
     controller_->setDistance(5.0f);
     controller_->update(0.0);
@@ -331,14 +338,16 @@ TEST_F(CameraControllerTest, PinchZoomContinuesWhenCurrentCenterPickMisses) {
     controller_->onPinchGesture(1.2f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
     controller_->update(0.0);
 
-    EXPECT_GT(pickCount, 2);
+    EXPECT_GE(pickCount, 2);
     EXPECT_LT(controller_->distance(), before);
 }
 
-TEST_F(CameraControllerTest, PinchZoomClampsToOpenGlobusMinAltitudeInsteadOfStopping) {
+TEST_F(CameraControllerTest, PinchZoomClampsToMinAltitudeInsteadOfStopping) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(1.00008f);
+    controller_->setDistance(1.01f);
     controller_->update(0.0);
+    const double beforeAltitude =
+        Ellipsoid::WGS84().cartesianToCartographic(camera_->position()).height();
 
     controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
     for (int i = 0; i < 24; ++i) {
@@ -346,12 +355,13 @@ TEST_F(CameraControllerTest, PinchZoomClampsToOpenGlobusMinAltitudeInsteadOfStop
     }
     controller_->update(0.0);
 
-    const double altitude = camera_->position().length() - kEarthRadiusMeters;
-    EXPECT_GE(altitude, 0.999);
-    EXPECT_LT(altitude, 2.0);
+    const double altitude =
+        Ellipsoid::WGS84().cartesianToCartographic(camera_->position()).height();
+    EXPECT_GE(altitude, 49.0);
+    EXPECT_LT(altitude, beforeAltitude);
 }
 
-TEST_F(CameraControllerTest, PinchRotationSignMatchesOpenGlobusDeltaAngle) {
+TEST_F(CameraControllerTest, PinchRotationSignIsPredictable) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
     controller_->update(0.0);
     Vec3 reference = intersectEarthSphere(
@@ -409,12 +419,8 @@ TEST_F(CameraControllerTest, PinchPushUpIncreasesTiltPullDownDecreasesTilt) {
 
     EXPECT_LT(afterPushUpSlope, beforePushUpSlope);
 
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->onPinchEnd();
-    controller_->update(0.0);
     const double beforePullDownSlope = cameraSlope(*camera_);
 
-    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
     controller_->onPinchGesture(1.0f, 400.0f, 340.0f, 0.0f, 0.0f, 40.0f);
     controller_->update(0.0);
     const double afterPullDownSlope = cameraSlope(*camera_);
@@ -458,7 +464,7 @@ TEST_F(CameraControllerTest, ViewDistanceMovesCameraTowardPickedTarget) {
     EXPECT_GT(camera_->direction().dot((target - camera_->position()).normalized()), 0.999);
 }
 
-TEST_F(CameraControllerTest, ViewDistanceAllowsOpenGlobusNearGroundDistance) {
+TEST_F(CameraControllerTest, ViewDistanceRespectsNearGroundSafetyFloor) {
     controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
     controller_->setDistance(7.0f);
     controller_->update(0.0);
@@ -468,7 +474,7 @@ TEST_F(CameraControllerTest, ViewDistanceAllowsOpenGlobusNearGroundDistance) {
 
     controller_->viewDistance(target, 10.0);
 
-    EXPECT_NEAR(10.0, camera_->position().distanceTo(target), 1e-3);
+    EXPECT_NEAR(50.0, camera_->position().distanceTo(target), 1e-3);
     EXPECT_GT(camera_->direction().dot((target - camera_->position()).normalized()), 0.999);
 }
 

@@ -55,15 +55,27 @@ public:
     void setDoubleClickInterval(double seconds) { doubleClickInterval_ = seconds; }
 
 private:
+    enum class State {
+        Idle,
+        OneFingerPending,
+        OneFingerDrag,
+        TwoFinger
+    };
+
+    void finishPointerGesture(const InputEvent& event);
+    void cancelActiveGesture();
+
     Callback callback_;
 
+    State state_ = State::Idle;
+
     // 拖拽状态
-    bool tracking_ = false;
     float trackStartX_ = 0.0f;
     float trackStartY_ = 0.0f;
     float trackLastX_ = 0.0f;
     float trackLastY_ = 0.0f;
-    bool dragging_ = false;
+    bool suppressClick_ = false;
+    bool pinchActive_ = false;
 
     // 双击检测
     double lastClickTime_ = -1.0;

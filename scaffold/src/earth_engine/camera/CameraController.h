@@ -10,9 +10,9 @@ namespace earth_engine {
 class Camera;
 class Ray;
 
-/// OpenGlobus-style anchor-based globe camera controller.
-/// 单指拖拽先抓取 WGS84 椭球上的地表点，移动时让该点跟随手指。
-/// 支持 drag 旋转、pinch 缩放和惯性阻尼。
+/// Anchor-based globe camera controller.
+/// 单指拖拽先抓取地表点，移动时让该点尽量跟随手指。
+/// 双指手势围绕双指中心下方的地表锚点缩放、旋转和倾斜。
 class CameraController {
 public:
     /// @param camera 受控相机（非空，生命周期由调用者管理）
@@ -21,13 +21,11 @@ public:
     /// 设置视口尺寸（用于 pick ray 和屏幕坐标归一化）
     void setViewport(int widthPixels, int heightPixels);
 
-    /// OpenGlobus 对 touch anchor 使用 planet.getCartesianFromPixelTerrain /
-    /// getCartesianFromPixelEllipsoid。Scene 可注入同一条地形拾取链路；
-    /// 未注入或未命中时回退到控制器内部的 WGS84 球面拾取。
+    /// Scene 可注入地形拾取链路；未注入或未命中时回退到控制器
+    /// 内部的 WGS84 球面拾取。
     using SurfacePicker = std::function<bool(float xPixels, float yPixels, Vec3& outPoint)>;
     void setSurfacePicker(SurfacePicker picker);
 
-    /// Terrain height query, matching OpenGlobus PlanetCamera.checkTerrainCollision.
     /// Returns height above WGS84 ellipsoid (meters) at the given ECEF position.
     /// When set, collision clamping uses terrain height instead of bare ellipsoid.
     using TerrainHeightFunc = std::function<double(const Vec3& ecefPosition)>;
@@ -68,17 +66,12 @@ public:
     /// 直接设置旋转
     void setRotation(const glm::dquat& q);
 
-    /// OpenGlobus camera.viewDistance(target, distanceMeters) 等价的即时版本。
     /// 保持当前 target→eye 方位，把相机放到 target 外指定距离并看向 target。
     void viewDistance(const Vec3& targetWorld, double distanceMeters);
 
 private:
     bool intersectGrabSphere(const Ray& ray, Vec3& outPoint) const;
     bool pickSurfacePoint(float xPixels, float yPixels, Vec3& outPoint) const;
-    bool intersectPlane(const Ray& ray,
-                        const glm::dvec3& planePoint,
-                        const glm::dvec3& planeNormal,
-                        glm::dvec3& outPoint) const;
     bool grabSurfacePoint(float xPixels, float yPixels);
     void applyAnchorDrag(float xPixels, float yPixels, double timestamp);
     void applyRotationAroundAxis(const glm::dvec3& axis, double angle);
@@ -92,8 +85,7 @@ private:
     void applyCameraRotation(const glm::dquat& delta);
     void syncDistanceFromCamera();
 
-    /// OpenGlobus PlanetCamera.checkTerrainCollision equivalent.
-    /// Clamps eye to at least kOpenGlobusMinAltitudeMeters above terrain/ellipsoid.
+    /// Clamps eye to at least the configured visual floor above terrain/ellipsoid.
     glm::dvec3 clampEyeAltitude(const glm::dvec3& eye) const;
 
     Camera* camera_;
@@ -115,7 +107,6 @@ private:
     bool hasGrabbedPoint_ = false;
     Vec3 grabbedNormal_{0.0, 0.0, 1.0};
     Vec3 grabbedPoint_{0.0, 0.0, 6378137.0};
-    Vec3 dragStartEye_{0.0, 0.0, 0.0};
     double grabbedRadiusMeters_ = 6378137.0;
 
     // 惯性状态

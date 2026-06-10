@@ -65,3 +65,38 @@ TEST(InputManagerTest, PinchInterruptsSinglePointerTracking) {
     EXPECT_EQ(InputManager::Gesture::PinchEnd, gestures[2]);
     EXPECT_FLOAT_EQ(1.6f, scales[1]);
 }
+
+TEST(InputManagerTest, CancelClearsDragWithoutClick) {
+    InputManager manager;
+    std::vector<InputManager::Gesture> gestures;
+    manager.setCallback([&](InputManager::Gesture gesture, const InputEvent&) {
+        gestures.push_back(gesture);
+    });
+
+    manager.process(touch(InputEvent::Type::PointerDown, 100.0f, 100.0f, 1.0));
+    manager.process(touch(InputEvent::Type::PointerMove, 120.0f, 100.0f, 1.1));
+    manager.process(touch(InputEvent::Type::Cancel, 120.0f, 100.0f, 1.2));
+    manager.process(touch(InputEvent::Type::PointerUp, 120.0f, 100.0f, 1.3));
+
+    ASSERT_EQ(3u, gestures.size());
+    EXPECT_EQ(InputManager::Gesture::DragStart, gestures[0]);
+    EXPECT_EQ(InputManager::Gesture::DragMove, gestures[1]);
+    EXPECT_EQ(InputManager::Gesture::DragEnd, gestures[2]);
+}
+
+TEST(InputManagerTest, PinchEndSuppressesFollowingPointerUpClick) {
+    InputManager manager;
+    std::vector<InputManager::Gesture> gestures;
+    manager.setCallback([&](InputManager::Gesture gesture, const InputEvent&) {
+        gestures.push_back(gesture);
+    });
+
+    manager.process(touch(InputEvent::Type::PointerDown, 100.0f, 100.0f, 1.0));
+    manager.process(pinch(InputEvent::Type::PinchStart, 1.0f, 1.1));
+    manager.process(pinch(InputEvent::Type::PinchEnd, 1.0f, 1.2));
+    manager.process(touch(InputEvent::Type::PointerUp, 100.0f, 100.0f, 1.3));
+
+    ASSERT_EQ(2u, gestures.size());
+    EXPECT_EQ(InputManager::Gesture::PinchStart, gestures[0]);
+    EXPECT_EQ(InputManager::Gesture::PinchEnd, gestures[1]);
+}

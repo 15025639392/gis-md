@@ -278,7 +278,9 @@ public:
         case UIGestureRecognizerStateCancelled: {
             _touching = NO;
             earth_engine::InputEvent event;
-            event.type = earth_engine::InputEvent::Type::PointerUp;
+            event.type = gesture.state == UIGestureRecognizerStateCancelled
+                ? earth_engine::InputEvent::Type::Cancel
+                : earth_engine::InputEvent::Type::PointerUp;
             event.screenX = static_cast<float>(location.x * scale);
             event.screenY = static_cast<float>(location.y * scale);
             event.devicePixelRatio = static_cast<float>(scale);
@@ -314,6 +316,7 @@ public:
             event.devicePixelRatio = static_cast<float>(scale);
             event.pinchScale = 1.0f;
             event.pointerType = earth_engine::InputEvent::PointerType::Touch;
+            event.pointerCount = 2;
             event.timestamp = CACurrentMediaTime();
             _engine->onInputEvent(event);
             break;
@@ -332,6 +335,7 @@ public:
             event.devicePixelRatio = static_cast<float>(scale);
             event.pinchScale = perFrameScale;
             event.pointerType = earth_engine::InputEvent::PointerType::Touch;
+            event.pointerCount = 2;
             event.timestamp = CACurrentMediaTime();
             _engine->onInputEvent(event);
             break;
@@ -340,12 +344,15 @@ public:
         case UIGestureRecognizerStateCancelled: {
             _lastPinchScale = 1.0f;
             earth_engine::InputEvent event;
-            event.type = earth_engine::InputEvent::Type::PinchEnd;
+            event.type = gesture.state == UIGestureRecognizerStateCancelled
+                ? earth_engine::InputEvent::Type::Cancel
+                : earth_engine::InputEvent::Type::PinchEnd;
             event.screenX = static_cast<float>(center.x * scale);
             event.screenY = static_cast<float>(center.y * scale);
             event.devicePixelRatio = static_cast<float>(scale);
             event.pinchScale = 1.0f;
             event.pointerType = earth_engine::InputEvent::PointerType::Touch;
+            event.pointerCount = 2;
             event.timestamp = CACurrentMediaTime();
             _engine->onInputEvent(event);
             break;
@@ -416,6 +423,12 @@ public:
 }
 
 - (void)dealloc {
+    if (_engine) {
+        earth_engine::InputEvent event;
+        event.type = earth_engine::InputEvent::Type::Cancel;
+        event.timestamp = CACurrentMediaTime();
+        _engine->onInputEvent(event);
+    }
     _engine.reset();
     _renderDevice.reset();
     _platformBridge.reset();

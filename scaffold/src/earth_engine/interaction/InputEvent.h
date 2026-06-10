@@ -22,6 +22,7 @@ struct InputEvent {
         PinchStart,
         PinchMove,
         PinchEnd,
+        Cancel,
         Key
     };
 
@@ -54,14 +55,17 @@ struct InputEvent {
     /// 按钮位掩码（0=none, 1=primary, 2=secondary, …）
     int buttons = 0;
 
+    /// 当前有效指针数量。鼠标为 1；双指手势为 2。
+    int pointerCount = 1;
+
     Modifiers modifiers;
 
     /// 单调递增时间戳（秒）。来源应为平台单调时钟（如 CACurrentMediaTime、
     /// SystemClock.uptimeMillis），不是挂钟时间。
     double timestamp = 0.0;
 
-    /// PinchMove 时相对上一帧的缩放因子（OpenGlobus TouchNavigation:
-    /// zoomCur.length / zoomPrev.length，1.0 = 无缩放）
+    /// PinchMove 时相对上一帧的缩放因子（当前双指距离 / 上一帧双指距离，
+    /// 1.0 = 无缩放）
     float pinchScale = 1.0f;
 
     /// 双指相对上一帧的旋转角（radian，屏幕坐标系）
@@ -70,6 +74,14 @@ struct InputEvent {
     /// 双指中心相对上一帧的位移（物理像素，screen y 向下）
     float centerDeltaX = 0.0f;
     float centerDeltaY = 0.0f;
+
+    /// 双指原始位置（物理像素，左上原点）。平台能提供时应填写，
+    /// 便于核心层统一判断缩放、旋转、平移、倾斜意图。
+    bool hasPointerPair = false;
+    float pointer0X = 0.0f;
+    float pointer0Y = 0.0f;
+    float pointer1X = 0.0f;
+    float pointer1Y = 0.0f;
 
     /// 便捷查询
     bool isPointerEvent() const {

@@ -579,8 +579,7 @@ void Scene::configureCameraSurfacePicker() {
             return true;
         });
 
-    // Terrain collision: inject terrain height query (OpenGlobus
-    // PlanetCamera.checkTerrainCollision equivalent).
+    // Terrain collision: inject terrain height query for camera floor checks.
     cameraController_->setTerrainHeightFunc(
         [this](const Vec3& ecefPosition) -> double {
             if (!terrainLayer_ || !terrainEnabled_) return 0.0;
@@ -633,8 +632,6 @@ void Scene::setupInputCallback() {
                 case InputManager::Gesture::DoubleClick: {
                     PickResult result = pick(event.screenX, event.screenY);
                     if (gesture == InputManager::Gesture::DoubleClick) {
-                        // OpenGlobus TouchNavigation.onDoubleTouch:
-                        // fly to picked terrain point with distance * 0.57.
                         if (result.isValid()) {
                             cameraController_->viewDistance(
                                 result.worldPosition,

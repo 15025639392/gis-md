@@ -147,6 +147,10 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
                         centerY,
                         centerX - lastPinchCenterX,
                         centerY - lastPinchCenterY,
+                        event.getX(index0),
+                        event.getY(index0),
+                        event.getX(index1),
+                        event.getY(index1),
                         getWidth(),
                         getHeight());
                 lastPinchAngle = angle;
@@ -238,7 +242,7 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
     private static native void nativeTouchUp(float x, float y);
     private static native void nativePinchStart(float centerX, float centerY);
     private static native void nativePinchEnd(float centerX, float centerY);
-    private static native void nativePinchRotateTilt(float scale, float rotationRadians, float centerX, float centerY, float centerDx, float centerDy, int width, int height);
+    private static native void nativePinchRotateTilt(float scale, float rotationRadians, float centerX, float centerY, float centerDx, float centerDy, float pointer0X, float pointer0Y, float pointer1X, float pointer1Y, int width, int height);
     private static native void nativeDebugZoom(float scale, int width, int height);
     private static native void nativePause();
     private static native void nativeResume();
