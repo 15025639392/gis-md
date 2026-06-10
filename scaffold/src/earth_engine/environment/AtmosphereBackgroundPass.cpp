@@ -45,78 +45,139 @@ out vec4 fragColor;
 
 const float PI = 3.1415926538;
 
+float rayleighPhase(float mu) {
+    return 0.75 * (1.0 + mu * mu);
+}
+
+float miePhase(float mu) {
+    // Henyey-Greenstein, softened for a background pass so the horizon
+    // does not collapse into a white outline on mobile displays.
+    const float g = 0.76;
+    float g2 = g * g;
+    return 0.18 * (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * mu, 0.05), 1.5);
+}
+
 void main() {
-    // NDC from gl_FragCoord
+    // ---- View ray in world (ECEF) space from camera basis ----
     float px = gl_FragCoord.x;
     float py = gl_FragCoord.y;
     float w = u_resolution.x;
     float h = u_resolution.y;
     float ndcX = (2.0 * px / w - 1.0) * u_aspect;
     float ndcY = 2.0 * py / h - 1.0;
-
     float tanFovHalf = tan(u_fov * 0.5);
-
-    // View ray in world (ECEF) space from camera basis
     vec3 rayDir = normalize(u_camForward + u_camRight * ndcX * tanFovHalf + u_camUp * ndcY * tanFovHalf);
 
     vec3 sun = normalize(u_sunDir);
     vec3 cam = u_camPos;
-    float sunAngle = dot(rayDir, sun);
 
-    // Tangent height: distance from ray's closest approach to ellipse center (origin), minus radius
-    float ct = -dot(cam, rayDir);
-    float dist = length(cam + ct * rayDir);
-    float tanH = dist - u_bottomRadius;
+    // ---- Ray-sphere intersection with atmosphere shell ----
+    float R = u_bottomRadius;
+    float Rtop = u_topRadius;
+    float b = -dot(cam, rayDir);
+    float c = dot(cam, cam);
+    float dInner = b * b - (c - R * R);
+    float dOuter = b * b - (c - Rtop * Rtop);
 
-    // Discard pixels clearly inside Earth
-    if (tanH < -100.0) {
+    float pathLen = 0.0;   // distance through atmosphere (m)
+    float pathStart = 0.0;
+    float pathEnd = 0.0;
+    bool hitPlanet = false;
+
+    if (dInner > 0.0) {
+        float tHit = b - sqrt(dInner);
+        if (tHit > 0.0) {
+            // Ray from camera to planet surface — atmosphere path in between
+            float tEnter = 0.0;
+            if (dOuter > 0.0) {
+                float tOutEntry = b - sqrt(dOuter);
+                tEnter = max(tOutEntry, 0.0);
+            }
+            if (tEnter < tHit) {
+                pathStart = tEnter;
+                pathEnd = tHit;
+                pathLen = tHit - tEnter;
+            }
+            hitPlanet = true;
+        }
+    } else if (dOuter > 0.0) {
+        // Ray passes through atmosphere without hitting planet
+        float tOutEntry = b - sqrt(dOuter);
+        float tExit = b + sqrt(dOuter);
+        float tEnter = max(tOutEntry, 0.0);
+        if (tExit > tEnter) {
+            pathStart = tEnter;
+            pathEnd = tExit;
+            pathLen = tExit - tEnter;
+        }
+    }
+
+    // Ground-facing rays are left for the globe/terrain pass. For every
+    // open-sky ray, this pass still emits a base sky color; otherwise the
+    // top-atmosphere tangent shows up as a hard line against glClearColor.
+    if (hitPlanet) {
         discard;
     }
 
-    float atmosH = u_topRadius - u_bottomRadius;
+    // ---- Scattering approximation ----
+    // OpenGlobus integrates optical density along the view ray. Keep this
+    // pass lightweight, but use the same idea instead of mapping raw path
+    // length linearly to white alpha.
+    const int SAMPLE_COUNT = 8;
+    const float rayleighScaleHeight = 8000.0;
+    const float mieScaleHeight = 1200.0;
+    float segmentLen = max(pathEnd - pathStart, 0.0) / float(SAMPLE_COUNT);
+    float t = pathStart + segmentLen * 0.5;
+    float rayleighDepth = 0.0;
+    float mieDepth = 0.0;
 
-    // Rayleigh phase function
-    float rayleighPhaseFunc = 3.0 / (16.0 * PI) * (1.0 + sunAngle * sunAngle);
+    for (int i = 0; i < SAMPLE_COUNT; ++i) {
+        vec3 p = cam + rayDir * t;
+        float height = max(length(p) - R, 0.0);
+        rayleighDepth += exp(-height / rayleighScaleHeight) * segmentLen;
+        mieDepth += exp(-height / mieScaleHeight) * segmentLen;
+        t += segmentLen;
+    }
 
-    // Horizon glow: strongest at tanH=0, fades over scale height
-    float scaleH = atmosH * 0.06;
-    float limb = exp(-max(tanH, 0.0) / scaleH);
+    rayleighDepth *= 0.001; // km-equivalent optical depth
+    mieDepth *= 0.001;
 
-    // Sky color: brighter zenith, warm near sun
-    vec3 zenith = vec3(0.25, 0.45, 0.9);
-    vec3 sunCol = vec3(1.0, 0.95, 0.7);
-    vec3 horizon = vec3(0.85, 0.88, 0.95);
-    float sunWeight = max(0.0, sunAngle) * rayleighPhaseFunc * 3.0;
-    vec3 color = mix(zenith, sunCol, clamp(sunWeight, 0.0, 1.0));
+    float mu = dot(rayDir, sun);
+    float rPhase = rayleighPhase(mu);
+    float mPhase = miePhase(mu);
 
-    // Horizon fade: near horizon brighter, far from horizon darker (but not black)
-    float horizonFactor = 1.0 - clamp(tanH / (atmosH * 0.4), 0.0, 1.0);
-    color = mix(color, horizon, horizonFactor * 0.5);
+    vec3 rayleighColor = vec3(0.20, 0.42, 1.0);
+    vec3 mieColor = vec3(0.72, 0.80, 0.92);
+    float r = rayleighDepth * 0.055 * rPhase;
+    float m = mieDepth * 0.020 * mPhase;
 
-    // Limb brightening at the very edge
-    color = mix(color, vec3(1.0, 0.95, 0.85), limb * 0.3);
+    vec3 localUp = normalize(cam);
+    float viewUp = clamp(dot(rayDir, localUp), 0.0, 1.0);
+    vec3 zenithColor = vec3(0.08, 0.28, 0.58);
+    vec3 lowSkyColor = vec3(0.18, 0.42, 0.82);
+    vec3 baseSky = mix(lowSkyColor, zenithColor, pow(viewUp, 0.65));
 
-    // Space glow: very faint blue even at high altitude (prevents black space)
-    float spaceFade = exp(-max(tanH, 0.0) / (atmosH * 2.0));
-    color = mix(vec3(0.02, 0.02, 0.08), color, clamp(spaceFade * 3.0, 0.0, 1.0));
+    vec3 scatterColor = rayleighColor * r + mieColor * m;
+    scatterColor *= u_sunIntensity * 0.85;
 
-    // Sun disk with Gaussian bloom (wider search)
+    float opticalThickness = rayleighDepth * 0.018 + mieDepth * 0.010;
+    float scatterAmount = clamp(1.0 - exp(-opticalThickness), 0.0, 0.35) * u_opacity;
+    vec3 color = mix(baseSky, baseSky + scatterColor, scatterAmount);
+
+    // ---- Sun disk ----
     float minSunCos = cos(u_sunAngularRadius);
     float cosTheta = dot(rayDir, sun);
     float sunDisk = 0.0;
     if (cosTheta >= minSunCos) {
         sunDisk = 1.0;
     } else {
-        float offset = minSunCos - cosTheta;
-        sunDisk = exp(-offset * 5000.0) * 0.5 + 1.0 / (0.05 + offset * 100.0) * 0.02;
+        float off = minSunCos - cosTheta;
+        sunDisk = exp(-off * 5000.0) * 0.5 + 1.0 / (0.05 + off * 120.0) * 0.015;
     }
-    // Wider bloom tolerance
-    sunDisk = smoothstep(0.001, 1.0, sunDisk);
+    sunDisk = smoothstep(0.002, 1.0, sunDisk);
+    color += sunDisk * vec3(1.0, 0.95, 0.7) * u_sunIntensity * 0.4;
 
-    vec3 outColor = color + sunDisk * vec3(1.0, 0.95, 0.7) * u_sunIntensity * 0.5;
-    float alpha = clamp(0.35 + horizonFactor * 0.3 + limb * 0.2 + spaceFade * 0.2, 0.0, 1.0);
-
-    fragColor = vec4(outColor * u_opacity, alpha);
+    fragColor = vec4(color, 1.0);
 }
 )";
 
@@ -134,6 +195,7 @@ bool AtmosphereBackgroundPass::initialize(RenderDevice* device) {
         return false;
     }
     device_ = device;
+    LOGI("initialize: creating shader...");
 
     ShaderDesc shaderDesc;
     shaderDesc.vertexSource = kAtmosphereBackgroundVert;
@@ -198,7 +260,11 @@ RenderCommand AtmosphereBackgroundPass::buildCommand(
     cmd.cullFace = false;
 
     auto set3 = [&](const char* name, const Vec3& v) {
-        cmd.uniforms[name] = {static_cast<float>(v.x()), static_cast<float>(v.y()), static_cast<float>(v.z())};
+        cmd.uniforms[name] = {
+            static_cast<float>(v.x()),
+            static_cast<float>(v.y()),
+            static_cast<float>(v.z())
+        };
     };
 
     set3("u_camPos", cameraPos);
