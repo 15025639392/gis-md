@@ -1,0 +1,3 @@
+display_name: Phenomenon Clarifier
+short_description: Clarifies gis-md globe, Android, gesture, rendering, tile, and terrain phenomena into diagnosis-ready evidence.
+default_prompt: Help clarify a hard-to-describe gis-md phenomenon by asking a few targeted project-specific questions, gathering logs/screenshots/state snapshots, and preparing a diagnosis-ready summary without guessing the root cause.

@@ -1,11 +1,17 @@
 # earth-md AI 工作规则
 
-本项目的地球引擎行为以 `/Users/ldy/Desktop/work/openglobus` 为主要对齐对象。
+本项目的地球引擎算法以 `/Users/ldy/Desktop/work/cesium-native` 为主要对齐对象；交互、表现层和 OpenGlobus 特有行为以 `/Users/ldy/Desktop/work/openglobus` 为补充对齐对象。
 
 ## 执行规则
 
-- 涉及地图、坐标、瓦片、地形、相机、拾取、渲染、LOD、Provider 或 3D globe 行为时，先查阅 `/Users/ldy/Desktop/work/openglobus/AI_INDEX.md` 按算法定位源文件，再阅读对应源码，最后修改本项目。
+- 体验优先，策略优先：涉及产品行为、交互手感、视觉反馈、调试体验或异常处理时，先明确目标体验和策略，再落到算法和实现；算法对齐服务于体验目标，不能用“参考实现如此”替代本项目的体验判断。
+- 性能需要特别关注：涉及渲染循环、瓦片调度、LOD、地形、纹理上传、Provider、相机/手势、调试 overlay 或 Android 真机体验时，必须考虑 FPS、帧时间、内存、网络/IO、GPU 上传、主线程阻塞和功耗；性能相关改动应尽量给出可测指标、对照日志或 A/B 验证。
+- 遇到性能问题且不确定瓶颈范围时，优先分段埋点快速定位：按输入处理、相机更新、瓦片遍历、请求调度、数据解析、纹理上传、地形处理、渲染提交、GPU/平台调用等阶段记录耗时/计数，再基于证据优化。
+- 每次修复问题后，在最终回复中输出本次采用的策略：目标体验/行为、关键取舍、参考依据、验证方式，以及性能影响判断；如果是手势问题，还要输出本项目交互契约。
+- 涉及地图、坐标、瓦片、地形、相机、拾取、渲染、LOD、Provider、裁剪、投影、椭球、Quantized Mesh、SSE、包围体或 3D globe 算法时，先查阅 `/Users/ldy/Desktop/work/cesium-native/AI_INDEX.md` 按算法定位源文件，再阅读对应源码，最后修改本项目。
+- 如果 cesium-native 未覆盖交互、表现层、WebGL 渲染组织、UI 控件或 OpenGlobus 特有 globe 行为，再查阅 `/Users/ldy/Desktop/work/openglobus/AI_INDEX.md` 并阅读对应源码。
+- 手势系统暂时没有合适的外部参考目标，不强制对齐 cesium-native 或 OpenGlobus；涉及触摸、拖拽、缩放、旋转、惯性、anchor、near-ground 手势约束时，先在本项目内明确交互设计、状态变量语义、输入单位、边界条件和可验证测试，再实现。
 - 不再强制读取 `docs/gis/*` 作为开发前置条件。
-- 如果本项目既有文档、测试或实现与 OpenGlobus 行为冲突，以 OpenGlobus 源码行为为准。
-- 对齐时优先保留 OpenGlobus 的算法结构、状态变量语义、输入单位和边界处理；无法一比一移植时，在代码或测试中标明差异。
-- 新增或修改测试时，测试目标应验证 OpenGlobus 行为对齐，而不是验证旧项目约束。
+- 如果本项目既有文档、测试或实现与 cesium-native 算法行为冲突，以 cesium-native 源码行为为准；若是 cesium-native 未覆盖的交互或表现层行为，再以 OpenGlobus 源码行为为准。
+- 对齐算法时优先保留 cesium-native 的算法结构、状态变量语义、输入单位、数值容差和边界处理；无法一比一移植时，在代码或测试中标明差异。
+- 新增或修改测试时，算法测试目标应验证 cesium-native 行为对齐；交互或表现层测试才验证 OpenGlobus 行为对齐；手势系统测试应验证本项目明确设计的交互契约和边界行为。

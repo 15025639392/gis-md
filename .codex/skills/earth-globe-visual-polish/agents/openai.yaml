@@ -1,0 +1,3 @@
+display_name: Earth Globe Visual Polish
+short_description: Improves gis-md globe visuals while preserving cesium-native algorithm alignment.
+default_prompt: Polish the gis-md globe visual experience, verify algorithms against cesium-native first, use OpenGlobus for interaction or presentation references when relevant, and validate with build, logs, screenshots, or Android device output as practical.
