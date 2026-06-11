@@ -74,7 +74,7 @@ float hash(vec3 p) {
     return fract(sin(h) * 43758.5453);
 }
 
-// 3D noise for star distribution
+// 3D noise for soft painted bands
 float noise3D(vec3 p) {
     vec3 i = floor(p);
     vec3 f = fract(p);
@@ -89,44 +89,76 @@ float noise3D(vec3 p) {
     );
 }
 
+vec3 starTint(float r) {
+    vec3 warm = vec3(1.0, 0.82, 0.48);
+    vec3 cool = vec3(0.55, 0.78, 1.0);
+    vec3 rose = vec3(1.0, 0.55, 0.78);
+    vec3 tint = mix(warm, cool, smoothstep(0.22, 0.72, r));
+    return mix(tint, rose, smoothstep(0.82, 0.98, r) * 0.45);
+}
+
+vec2 billboardUv(vec3 dir, vec3 localCell) {
+    vec3 ad = abs(dir);
+    if (ad.x > ad.y && ad.x > ad.z) {
+        return localCell.yz;
+    }
+    if (ad.y > ad.z) {
+        return localCell.xz;
+    }
+    return localCell.xy;
+}
+
+vec3 artStarLayer(vec3 dir, float scale, float threshold, float radius, float flareScale) {
+    vec3 p = dir * scale;
+    vec3 id = floor(p);
+    float r = hash(id);
+    float exists = smoothstep(threshold, 1.0, r);
+    if (exists <= 0.0) {
+        return vec3(0.0);
+    }
+
+    vec2 uv = billboardUv(dir, fract(p) - 0.5);
+    float d = length(uv);
+    float diamond = abs(uv.x) + abs(uv.y);
+
+    float core = smoothstep(radius, 0.0, d);
+    float halo = smoothstep(radius * 4.2, 0.0, d) * 0.28;
+    float diamondGlow = smoothstep(radius * 2.1, 0.0, diamond) * 0.38;
+    float horizontal = smoothstep(radius * 7.0 * flareScale, 0.0, abs(uv.x)) *
+                       smoothstep(radius * 0.42, 0.0, abs(uv.y));
+    float vertical = smoothstep(radius * 7.0 * flareScale, 0.0, abs(uv.y)) *
+                     smoothstep(radius * 0.42, 0.0, abs(uv.x));
+    float rays = (horizontal + vertical) * 0.34;
+    float handDrawn = 0.82 + 0.18 * noise3D(id + dir * 8.0);
+    float shape = (core + halo + diamondGlow + rays) * exists * handDrawn;
+
+    return starTint(r) * shape;
+}
+
 void main() {
     vec3 dir = normalize(v_textureCoord);
-
-    // Starfield: randomly distributed bright points
-    // Use multiple octaves of hash to create stars of varying brightness
-    float starField = 0.0;
-
-    // Bright stars (sparse)
-    float star1 = hash(floor(dir * 200.0));
-    star1 = smoothstep(0.998, 1.0, star1);
-
-    // Medium stars
-    float star2 = hash(floor(dir * 100.0 + 0.5));
-    star2 = smoothstep(0.997, 1.0, star2) * 0.6;
-
-    // Dim stars (dense)
-    float star3 = hash(floor(dir * 50.0 + 1.0));
-    star3 = smoothstep(0.996, 1.0, star3) * 0.3;
-
-    starField = star1 + star2 + star3;
 
     // Fade stars below horizon slightly
     float horizonFade = smoothstep(-0.05, 0.1, dir.y);
 
-    // Milky way band (galactic plane approximation)
+    // Painted galactic ribbon: broader and softer than a photographic Milky Way.
     float galacticLat = abs(dir.y * 0.7 + dir.z * 0.7);
-    float milkyWay = smoothstep(0.15, 0.0, galacticLat) * 0.15;
-    milkyWay *= noise3D(dir * 40.0) * 0.5 + 0.5;
+    float milkyWay = smoothstep(0.22, 0.0, galacticLat) * 0.16;
+    float ribbonNoise = noise3D(dir * 18.0) * 0.55 + noise3D(dir * 42.0 + 2.0) * 0.25;
+    milkyWay *= 0.45 + ribbonNoise;
+
+    vec3 largeStars = artStarLayer(dir, 48.0, 0.982, 0.030, 1.15);
+    vec3 mediumStars = artStarLayer(dir, 84.0, 0.989, 0.018, 0.85) * 0.72;
+    vec3 accentStars = artStarLayer(dir, 28.0, 0.972, 0.038, 1.35) * 0.55;
+    vec3 starColor = (largeStars + mediumStars + accentStars) * horizonFade;
 
     // Night sky gradient: dark blue at zenith, slightly lighter at horizon
-    vec3 nightZenith = vec3(0.01, 0.01, 0.04);
-    vec3 nightHorizon = vec3(0.02, 0.02, 0.06);
+    vec3 nightZenith = vec3(0.006, 0.008, 0.035);
+    vec3 nightHorizon = vec3(0.025, 0.022, 0.065);
     float t = smoothstep(-0.1, 0.3, dir.y);
     vec3 nightColor = mix(nightHorizon, nightZenith, t);
 
-    // Combine stars with night sky
-    vec3 starColor = vec3(1.0, 0.95, 0.8) * starField;
-    vec3 milkyWayColor = vec3(0.7, 0.75, 0.9) * milkyWay;
+    vec3 milkyWayColor = mix(vec3(0.38, 0.42, 0.75), vec3(0.95, 0.56, 0.82), ribbonNoise) * milkyWay;
 
     vec3 color = nightColor + (starColor + milkyWayColor) * u_nightFactor;
 
