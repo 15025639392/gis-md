@@ -63,12 +63,12 @@ int mvpRenderOrder(RenderCommandKind kind) {
     switch (kind) {
         case RenderCommandKind::SkyBackground:
             return 0;
-        case RenderCommandKind::AtmosphereBackground:
-            return 5;
         case RenderCommandKind::GlobeSurface:
             return 10;
         case RenderCommandKind::SurfaceTile:
             return 10;
+        case RenderCommandKind::AtmosphereBackground:
+            return 20;
         case RenderCommandKind::VectorOverlay:
             return 30;
         case RenderCommandKind::DebugOverlay:
@@ -122,6 +122,11 @@ validateMvpRenderCommands(const RenderCommandList& commands,
 
             case RenderCommandKind::VectorOverlay:
                 if (!requireColorPass(i, cmd, error)) return error;
+                break;
+
+            case RenderCommandKind::AtmosphereBackground:
+                if (!requireColorPass(i, cmd, error)) return error;
+                if (!requireState(i, cmd, true, false, false, true, "AtmosphereBackground", error)) return error;
                 break;
 
             case RenderCommandKind::DebugOverlay:

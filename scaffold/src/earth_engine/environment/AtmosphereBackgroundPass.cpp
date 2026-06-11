@@ -19,8 +19,10 @@ namespace {
 
 const char* kAtmosphereBackgroundVert = R"(#version 300 es
 precision highp float;
-in vec2 a_position;
+layout(location = 0) in vec2 a_position;
 void main() {
+    // Reverse-Z depth is cleared to 0. Draw at the far plane after terrain so
+    // this pass only composites through pixels that did not receive ground.
     gl_Position = vec4(a_position, 0.0, 1.0);
 }
 )";
@@ -71,10 +73,15 @@ void main() {
 
     vec3 sun = normalize(u_sunDir);
     vec3 cam = u_camPos;
-
-    // ---- Ray-sphere intersection with atmosphere shell ----
     float R = u_bottomRadius;
     float Rtop = u_topRadius;
+    float camRadius = length(cam);
+    if (camRadius < R + 100.0) {
+        cam = normalize(cam) * (R + 100.0);
+        camRadius = R + 100.0;
+    }
+
+    // ---- Ray-sphere intersection with atmosphere shell ----
     float b = -dot(cam, rayDir);
     float c = dot(cam, cam);
     float dInner = b * b - (c - R * R);
@@ -113,9 +120,9 @@ void main() {
         }
     }
 
-    // Ground-facing rays are left for the globe/terrain pass. For every
-    // open-sky ray, this pass still emits a base sky color; otherwise the
-    // top-atmosphere tangent shows up as a hard line against glClearColor.
+    // Match OpenGlobus' background atmosphere contract: the independent sky
+    // pass never colors ground-facing rays. Ground haze belongs to the surface
+    // shader, while depth testing keeps this fullscreen pass behind terrain.
     if (hitPlanet) {
         discard;
     }
@@ -173,11 +180,11 @@ void main() {
     vec3 color = mix(baseSky, baseSky + scatterColor, pathScatterAmount * spaceFactor);
 
     float horizonGlow = pow(1.0 - screenSkyT, 2.4) * (1.0 - spaceFactor);
-    vec3 horizonColor = vec3(0.62, 0.82, 0.94);
-    color = mix(color, horizonColor, clamp(horizonGlow * 0.62, 0.0, 0.62));
+    vec3 horizonColor = vec3(0.50, 0.74, 0.92);
+    color = mix(color, horizonColor, clamp(horizonGlow * 0.36, 0.0, 0.36));
 
     float horizonAir = (1.0 - smoothstep(0.0, 0.18, abs(viewUp))) * (1.0 - spaceFactor);
-    color = mix(color, horizonColor, clamp(horizonAir * 0.38, 0.0, 0.38));
+    color = mix(color, horizonColor, clamp(horizonAir * 0.22, 0.0, 0.22));
 
     // ---- Sun disk ----
     float minSunCos = cos(u_sunAngularRadius);
@@ -269,7 +276,7 @@ RenderCommand AtmosphereBackgroundPass::buildCommand(
     cmd.vertexCount = 4;
     cmd.vertexStride = 2 * sizeof(float);
     cmd.primitive = RenderCommand::PrimitiveType::TriangleStrip;
-    cmd.depthTest = false;
+    cmd.depthTest = true;
     cmd.depthWrite = false;
     cmd.blend = true;
     cmd.blendSrc = RenderCommand::BlendFactor::SrcAlpha;

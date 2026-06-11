@@ -16,3 +16,4 @@
 - 空间查询没有确认索引是否生效
 - 假设所有 SDK 或 provider 的 tile z/x/y 顺序都一样
 - 把展示精度和存储/分析精度混为一谈
+- 在 OpenGL ES 后端把 depth mask、blend、polygon offset 等状态留给下一帧；`glClear` 前必须恢复 canonical frame state，否则 overlay/atmosphere 会导致地表穿孔

@@ -261,6 +261,12 @@ std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(const Framebuff
 
 void RenderDeviceGLES::beginFrame() {
     glViewport(0, 0, viewportWidth_, viewportHeight_);
+    // Restore frame-global state before clear. Previous overlay/background
+    // commands may leave depth writes or blending disabled/enabled; stale
+    // depth makes the next frame's surface tiles appear perforated.
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    glDisable(GL_POLYGON_OFFSET_FILL);
     // Clear color: sky-horizon blue (fullscreen atmosphere pass covers this).
     // TODO: pass frameState.clearR/G/B from Engine after beginFrame() reorder.
     glClearColor(0.1f, 0.3f, 0.6f, 1.0f);
