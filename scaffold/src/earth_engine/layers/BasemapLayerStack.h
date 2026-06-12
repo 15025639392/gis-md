@@ -118,8 +118,18 @@ public:
     }
 
 private:
+    struct CachedSchemePlan {
+        TilePlan plan;
+        int viewportWidthPixels = 0;
+        int viewportHeightPixels = 0;
+        Vec3 cameraPosition = Vec3::zero();
+        Vec3 cameraDirection = Vec3::zero();
+        bool valid = false;
+    };
+
     std::vector<std::unique_ptr<BasemapLayer>> layers_;
     std::unordered_map<TileGroupKey, TilePlan> groupPlans_;
+    std::unordered_map<std::string, CachedSchemePlan> cachedPlansByScheme_;
     std::unordered_map<std::string, int> previousZoomByScheme_;
     std::unordered_map<std::string, TileQuadTree> quadTreesByScheme_;
 };

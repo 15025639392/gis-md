@@ -187,7 +187,9 @@ void TerrainLayer::update(const FrameState& frameState) {
     }
     const double planStartMs = perf::nowMs();
     bool reusedPlan = false;
-    if (cameraMoving_ && lastPlanFrameId_ != 0 && (frameState.frameId % 2) != 0) {
+    // Basemap recomputes on even moving frames; terrain recomputes on odd
+    // moving frames so the two quadtree walks do not land on the same frame.
+    if (cameraMoving_ && lastPlanFrameId_ != 0 && (frameState.frameId % 2) == 0) {
         reusedPlan = true;
         tilePlan_.frameId = frameState.frameId;
     } else {

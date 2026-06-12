@@ -373,7 +373,17 @@ void Scene::render() {
     mvpUniformsMs = perf::nowMs() - mvpUniformsStartMs;
 
     const double sortStartMs = perf::nowMs();
-    sortMvpRenderCommands(commands);
+    bool needsSort = false;
+    for (size_t i = 1; i < commands.size(); ++i) {
+        if (mvpRenderOrder(commands[i - 1].kind) >
+            mvpRenderOrder(commands[i].kind)) {
+            needsSort = true;
+            break;
+        }
+    }
+    if (needsSort) {
+        sortMvpRenderCommands(commands);
+    }
     sortMs = perf::nowMs() - sortStartMs;
     const double surfaceDiagnosticsStartMs = perf::nowMs();
     updateSurfaceCommandDiagnostics(

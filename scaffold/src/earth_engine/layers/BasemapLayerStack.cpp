@@ -86,6 +86,7 @@ void BasemapLayerStack::update(const FrameState& frameState) {
     double tilePlanMs = 0.0;
     double applyPlanMs = 0.0;
     double loadMissingMs = 0.0;
+    int reusedPlanCount = 0;
     int groupCount = 0;
     int layerCount = 0;
 
@@ -116,12 +117,50 @@ void BasemapLayerStack::update(const FrameState& frameState) {
             previousZoom = prevIt->second;
         }
 
-        TileQuadTree& quadTree = quadTreesByScheme_[schemeId];
+        CachedSchemePlan& cachedPlan = cachedPlansByScheme_[schemeId];
+        bool cameraMoving = false;
+        if (cachedPlan.valid) {
+            const double positionDeltaMeters =
+                camera.position().distanceTo(cachedPlan.cameraPosition);
+            double directionDot = 1.0;
+            if (camera.direction().length() > 1e-6 &&
+                cachedPlan.cameraDirection.length() > 1e-6) {
+                directionDot = std::clamp(
+                    camera.direction().normalized().dot(
+                        cachedPlan.cameraDirection.normalized()),
+                    -1.0,
+                    1.0);
+            }
+            cameraMoving = positionDeltaMeters > 2.0 || directionDot < 0.99995;
+        }
+
+        const bool viewportMatches =
+            cachedPlan.valid &&
+            cachedPlan.viewportWidthPixels == static_cast<int>(vpW) &&
+            cachedPlan.viewportHeightPixels == static_cast<int>(vpH);
+        const bool reuseMovingPlan =
+            cameraMoving &&
+            viewportMatches &&
+            (frameState.frameId % 2) != 0;
+
         const double planStartMs = perf::nowMs();
-        TilePlan plan = quadTree.compute(camera, scheme, vpW, vpH, previousZoom);
+        TilePlan plan;
+        if (reuseMovingPlan) {
+            plan = cachedPlan.plan;
+            ++reusedPlanCount;
+        } else {
+            TileQuadTree& quadTree = quadTreesByScheme_[schemeId];
+            plan = quadTree.compute(camera, scheme, vpW, vpH, previousZoom);
+            cachedPlan.plan = plan;
+            cachedPlan.viewportWidthPixels = static_cast<int>(vpW);
+            cachedPlan.viewportHeightPixels = static_cast<int>(vpH);
+            cachedPlan.valid = true;
+        }
         tilePlanMs += perf::nowMs() - planStartMs;
         plan.frameId = frameState.frameId;
         previousZoomByScheme_[schemeId] = plan.zoom;
+        cachedPlan.cameraPosition = camera.position();
+        cachedPlan.cameraDirection = camera.direction();
 
         TileGroupKey key{schemeId, plan.zoom,
                          static_cast<int>(vpW), static_cast<int>(vpH)};
@@ -148,13 +187,14 @@ void BasemapLayerStack::update(const FrameState& frameState) {
 
     char detail[192];
     std::snprintf(detail, sizeof(detail),
-        "grouping=%.2f tilePlan=%.2f apply=%.2f loadMissing=%.2f groups=%d layers=%d",
+        "grouping=%.2f tilePlan=%.2f apply=%.2f loadMissing=%.2f groups=%d layers=%d reusedPlan=%d",
         groupingMs,
         tilePlanMs,
         applyPlanMs,
         loadMissingMs,
         groupCount,
-        layerCount);
+        layerCount,
+        reusedPlanCount);
     perf::logTiming(frameState.frameId,
                     "BasemapLayerStack.update",
                     perf::nowMs() - updateStartMs,

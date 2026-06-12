@@ -394,8 +394,8 @@ void BasemapLayer::processPendingUploads() {
     {
         std::lock_guard<std::mutex> lock(pendingQueue_->mutex);
         queueBefore = pendingQueue_->queue.size();
-        constexpr size_t kMaxUploadsPerFrame = 2;
-        while (!pendingQueue_->queue.empty() && batch.size() < kMaxUploadsPerFrame) {
+        const size_t maxUploadsPerFrame = cameraMoving_ ? 1 : 2;
+        while (!pendingQueue_->queue.empty() && batch.size() < maxUploadsPerFrame) {
             batch.push_back(std::move(pendingQueue_->queue.front()));
             pendingQueue_->queue.pop_front();
         }
@@ -406,7 +406,10 @@ void BasemapLayer::processPendingUploads() {
     int currentFailures = 0;
     int staleDiscarded = 0;
     double textureCreateMs = 0.0;
+    const double uploadBudgetMs = cameraMoving_ ? 2.0 : 6.0;
+    size_t processedBatchItems = 0;
     for (auto& item : batch) {
+        ++processedBatchItems;
         const std::string ck = tileCacheKey(item.key);
         auto clearRequestIfCurrent = [&]() {
             auto requested = requestedGeneration_.find(ck);
@@ -458,11 +461,21 @@ void BasemapLayer::processPendingUploads() {
             ++uploaded;
             markLayerPlanDirty();
         }
+        if (textureCreateMs >= uploadBudgetMs) {
+            break;
+        }
+    }
+    if (processedBatchItems < batch.size()) {
+        std::lock_guard<std::mutex> lock(pendingQueue_->mutex);
+        for (size_t i = batch.size(); i > processedBatchItems; --i) {
+            pendingQueue_->queue.push_front(std::move(batch[i - 1]));
+        }
+        queueAfter = pendingQueue_->queue.size();
     }
 
     char detail[192];
     std::snprintf(detail, sizeof(detail),
-        "layer=%s queue=%zu->%zu batch=%zu uploaded=%d failed=%d stale=%d textureCreate=%.2f cached=%d",
+        "layer=%s queue=%zu->%zu batch=%zu uploaded=%d failed=%d stale=%d uploadBudgetMs=%.1f textureCreate=%.2f cached=%d",
         id_.c_str(),
         queueBefore,
         queueAfter,
@@ -470,6 +483,7 @@ void BasemapLayer::processPendingUploads() {
         uploaded,
         currentFailures,
         staleDiscarded,
+        uploadBudgetMs,
         textureCreateMs,
         cachedTileCount());
     perf::logTiming(tilePlan_.frameId,
@@ -1457,32 +1471,31 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
     int meshParentFallback = 0;
     const size_t startCommands = commands.size();
     std::unordered_set<TileKey> emittedMeshFallbackTargets;
-    std::vector<const RenderTileRef*> renderOrder;
+    struct RenderOrderEntry {
+        const RenderTileRef* renderTile = nullptr;
+        double priority = 0.0;
+    };
+    std::vector<RenderOrderEntry> renderOrder;
     renderOrder.reserve(layerPlan_.renderTiles.size());
     for (const RenderTileRef& renderTile : layerPlan_.renderTiles) {
-        renderOrder.push_back(&renderTile);
+        renderOrder.push_back(RenderOrderEntry{
+            &renderTile,
+            viewImportancePriority(
+                *tileScheme_,
+                renderTile.targetKey,
+                lastCameraPosition_,
+                lastCameraDirection_,
+                hasInteractionFocus_,
+                interactionFocusDirection_)
+        });
     }
     std::stable_sort(renderOrder.begin(), renderOrder.end(),
-        [&](const RenderTileRef* lhs, const RenderTileRef* rhs) {
-            const double lhsPriority = viewImportancePriority(
-                *tileScheme_,
-                lhs->targetKey,
-                lastCameraPosition_,
-                lastCameraDirection_,
-                hasInteractionFocus_,
-                interactionFocusDirection_);
-            const double rhsPriority = viewImportancePriority(
-                *tileScheme_,
-                rhs->targetKey,
-                lastCameraPosition_,
-                lastCameraDirection_,
-                hasInteractionFocus_,
-                interactionFocusDirection_);
-            return lhsPriority < rhsPriority;
+        [](const RenderOrderEntry& lhs, const RenderOrderEntry& rhs) {
+            return lhs.priority < rhs.priority;
         });
 
-    for (const RenderTileRef* renderTilePtr : renderOrder) {
-        const RenderTileRef& renderTile = *renderTilePtr;
+    for (const RenderOrderEntry& renderEntry : renderOrder) {
+        const RenderTileRef& renderTile = *renderEntry.renderTile;
         ++visited;
         const TileKey& key = renderTile.targetKey;
         const TileKey& textureKey = renderTile.textureKey;
