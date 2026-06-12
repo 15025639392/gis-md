@@ -6,6 +6,8 @@
 #include "../scene/Camera.h"
 #include "../renderer/Renderer.h"
 #include "../renderer/RenderDevice.h"
+#include "../core/geodesy/Cartographic.h"
+#include "../core/geodesy/Ellipsoid.h"
 #include "../core/math/Rectangle.h"
 #include "../tiling/SurfaceTile.h"
 #include "../tiling/TileSurface.h"
@@ -107,6 +109,45 @@ bool tileTransitionsEqual(const std::vector<TileTransition>& lhs,
     return true;
 }
 
+double rectangleCenterLongitude(const Rectangle& bounds) {
+    double west = bounds.west();
+    double east = bounds.east();
+    if (bounds.crossesAntimeridian()) {
+        east += glm::two_pi<double>();
+    }
+    double center = west + (east - west) * 0.5;
+    if (center > glm::pi<double>()) {
+        center -= glm::two_pi<double>();
+    }
+    return center;
+}
+
+double viewImportancePriority(const TileScheme& scheme,
+                              const TileKey& key,
+                              const Vec3& cameraPosition,
+                              const Vec3& cameraDirection) {
+    const double directionLength = cameraDirection.length();
+    if (directionLength <= 1e-6) {
+        return static_cast<double>(key.z);
+    }
+
+    const Rectangle bounds = scheme.tileToRectangle(key);
+    const double centerLng = rectangleCenterLongitude(bounds);
+    const double centerLat = (bounds.south() + bounds.north()) * 0.5;
+    const Vec3 center = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic::fromRadians(centerLng, centerLat, 0.0));
+    const Vec3 toTile = center - cameraPosition;
+    const double distance = std::max(toTile.length(), 1.0);
+    const Vec3 tileDirection = toTile / distance;
+    const Vec3 viewDirection = cameraDirection / directionLength;
+    const double centerPenalty = 1.0 - std::clamp(tileDirection.dot(viewDirection), -1.0, 1.0);
+
+    // Cesium-native prioritizes load work by view-direction angle times distance.
+    // For raster tiles, add a small zoom term so parent fallbacks and near tiles
+    // still arrive before far-horizon edge detail during progressive loading.
+    return centerPenalty * distance + static_cast<double>(key.z) * 1000.0;
+}
+
 void clearLayerTilePlanRetainingCapacity(LayerTilePlan& plan) {
     plan.layerId.clear();
     plan.providerId.clear();
@@ -183,15 +224,36 @@ void BasemapLayer::update(const FrameState& frameState) {
         tilePlan_.zoom);
     plan.frameId = frameState.frameId;
 
-    applyPlan(plan, frameState.camera->position());
+    applyPlan(plan, frameState.camera->position(), frameState.camera->direction());
     loadMissingTiles();
 }
 
-void BasemapLayer::applyPlan(const TilePlan& plan, const Vec3& cameraPosition) {
+void BasemapLayer::applyPlan(const TilePlan& plan,
+                             const Vec3& cameraPosition,
+                             const Vec3& cameraDirection) {
     if (!visible_) return;
 
     const double startMs = perf::nowMs();
+    if (hasPreviousCameraState_) {
+        const double positionDeltaMeters =
+            cameraPosition.distanceTo(previousCameraPosition_);
+        double directionDot = 1.0;
+        if (cameraDirection.length() > 1e-6 &&
+            previousCameraDirection_.length() > 1e-6) {
+            directionDot = std::clamp(
+                cameraDirection.normalized().dot(previousCameraDirection_.normalized()),
+                -1.0,
+                1.0);
+        }
+        cameraMoving_ = positionDeltaMeters > 2.0 || directionDot < 0.99995;
+    } else {
+        cameraMoving_ = false;
+        hasPreviousCameraState_ = true;
+    }
+    previousCameraPosition_ = cameraPosition;
+    previousCameraDirection_ = cameraDirection;
     lastCameraPosition_ = cameraPosition;
+    lastCameraDirection_ = cameraDirection;
     const bool planChanged = isRenderAffectingPlanChange(plan);
     if (planChanged) {
         ++generation_;
@@ -229,6 +291,7 @@ void BasemapLayer::loadMissingTiles() {
     constexpr double kRetryBackoffSec = 2.0;
     constexpr int kMaxRetries = 3;
     constexpr size_t kOpenGlobusLoadingBatchSize = 12;
+    constexpr int kMaxIssuedRequestsPerFrame = 4;
 
     auto now = std::chrono::duration<double>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -245,6 +308,9 @@ void BasemapLayer::loadMissingTiles() {
     int issuedRequests = 0;
     for (const auto& key : layerPlan_.requestTiles) {
         if (requestedGeneration_.size() >= kOpenGlobusLoadingBatchSize) {
+            break;
+        }
+        if (issuedRequests >= kMaxIssuedRequestsPerFrame) {
             break;
         }
         std::string ck = tileCacheKey(key);
@@ -348,6 +414,8 @@ void BasemapLayer::processPendingUploads() {
         texDesc.dataSize = image->pixels.size();
         texDesc.mipmap = true;
         texDesc.minFilter = TextureDesc::Filter::Linear;
+        texDesc.magFilter = TextureDesc::Filter::Linear;
+        texDesc.maxAnisotropy = 4.0f;
         texDesc.wrapS = TextureDesc::Wrap::Clamp;
         texDesc.wrapT = TextureDesc::Wrap::Clamp;
 
@@ -594,6 +662,7 @@ void BasemapLayer::rebuildLayerPlan() {
                 ++layerPlan_.missingTileCount;
             }
         }
+        sortRequestTilesByViewImportance();
         renderRefsMs = perf::nowMs() - phaseStartMs;
     }
 
@@ -634,6 +703,26 @@ bool BasemapLayer::isCurrentDesiredTile(const TileKey& key) const {
     return std::find(layerPlan_.desiredTiles.begin(),
                      layerPlan_.desiredTiles.end(),
                      key) != layerPlan_.desiredTiles.end();
+}
+
+void BasemapLayer::sortRequestTilesByViewImportance() {
+    if (!tileScheme_ || layerPlan_.requestTiles.size() < 2) {
+        return;
+    }
+    std::stable_sort(layerPlan_.requestTiles.begin(),
+                     layerPlan_.requestTiles.end(),
+                     [&](const TileKey& lhs, const TileKey& rhs) {
+        const double lhsPriority = viewImportancePriority(
+            *tileScheme_, lhs, lastCameraPosition_, lastCameraDirection_);
+        const double rhsPriority = viewImportancePriority(
+            *tileScheme_, rhs, lastCameraPosition_, lastCameraDirection_);
+        if (lhsPriority != rhsPriority) {
+            return lhsPriority < rhsPriority;
+        }
+        if (lhs.z != rhs.z) return lhs.z < rhs.z;
+        if (lhs.y != rhs.y) return lhs.y < rhs.y;
+        return lhs.x < rhs.x;
+    });
 }
 
 bool BasemapLayer::isCurrentPlanTileOrAncestor(const TileKey& key) const {
@@ -839,6 +928,42 @@ bool BasemapLayer::findRequestTileForMissingTexture(const TileKey& target,
     return false;
 }
 
+std::string BasemapLayer::surfaceMeshCacheKeyForTile(
+    const TileKey& key,
+    const Rectangle& bounds,
+    const TerrainLayer* terrainLayer) const {
+    const int gridSize = surfaceGridSizeForZoom(key.z);
+    const TerrainTile* terrainTile = terrainLayer
+        ? terrainLayer->findBestTileForBounds(bounds)
+        : nullptr;
+    const bool useTerrain = terrainTile && terrainTile->valid();
+    return tileCacheKey(key) + "/surface/" +
+        (useTerrain
+            ? "terrain/" + tileCacheKey(terrainTile->key())
+            : "ellipsoid") +
+        "/" + std::to_string(gridSize);
+}
+
+BasemapLayer::SurfaceGpuMesh*
+BasemapLayer::findSurfaceGpuMesh(const TileKey& key,
+                                 const Rectangle& bounds,
+                                 const TerrainLayer* terrainLayer,
+                                 SurfaceMeshBuildStats* stats) {
+    const double totalStartMs = perf::nowMs();
+    const std::string ck = surfaceMeshCacheKeyForTile(key, bounds, terrainLayer);
+    auto found = surfaceMeshCache_.find(ck);
+    if (found == surfaceMeshCache_.end()) {
+        return nullptr;
+    }
+    found->second.lastUsedFrame = layerPlan_.frameId;
+    if (stats) {
+        ++stats->hits;
+        stats->cacheKeyMs += perf::nowMs() - totalStartMs;
+        stats->totalMs += perf::nowMs() - totalStartMs;
+    }
+    return &found->second;
+}
+
 BasemapLayer::SurfaceGpuMesh*
 BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
                                         const Rectangle& bounds,
@@ -863,11 +988,7 @@ BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
     }
 #endif
     const double cacheKeyStartMs = perf::nowMs();
-    const std::string ck = tileCacheKey(key) + "/surface/" +
-        (useTerrain
-            ? "terrain/" + tileCacheKey(terrainTile->key())
-            : "ellipsoid") +
-        "/" + std::to_string(gridSize);
+    const std::string ck = surfaceMeshCacheKeyForTile(key, bounds, terrainLayer);
     if (stats) stats->cacheKeyMs += perf::nowMs() - cacheKeyStartMs;
 
     auto found = surfaceMeshCache_.find(ck);
@@ -1047,6 +1168,27 @@ void BasemapLayer::evictUnusedSurfaceMeshes() {
 
     const bool hadPendingEvictions = !pendingSurfaceMeshEvictions_.empty();
     size_t deleted = deleteQueuedMeshes();
+
+    if (cameraMoving_ && surfaceMeshCache_.size() <= hardWatermark) {
+        if (deleted > 0 || hadPendingEvictions) {
+            char detail[256];
+            std::snprintf(detail, sizeof(detail),
+                "mode=movingConsume before=%zu after=%zu deleted=%zu queued=%zu target=%zu hard=%zu current=%zu",
+                beforeCount,
+                surfaceMeshCache_.size(),
+                deleted,
+                pendingSurfaceMeshEvictions_.size(),
+                targetCapacity,
+                hardWatermark,
+                layerPlan_.renderTiles.size());
+            perf::logTimingAtLeast(layerPlan_.frameId,
+                                   "BasemapLayer.evictSurfaceMeshes",
+                                   perf::nowMs() - startMs,
+                                   2.0,
+                                   detail);
+        }
+        return;
+    }
 
     if (hadPendingEvictions) {
         char detail[256];
@@ -1285,7 +1427,11 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
     int visited = 0;
     int missingTexture = 0;
     int emitted = 0;
+    int meshBuildBudget = cameraMoving_ ? 1 : 4;
+    int meshBuildDeferred = 0;
+    int meshParentFallback = 0;
     const size_t startCommands = commands.size();
+    std::unordered_set<TileKey> emittedMeshFallbackTargets;
 
     for (const auto& renderTile : layerPlan_.renderTiles) {
         ++visited;
@@ -1332,24 +1478,76 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
         };
 
         SurfaceGpuMesh* gpuMesh =
-            getOrCreateSurfaceGpuMesh(key, bounds, terrainLayer, &meshStats);
+            findSurfaceGpuMesh(key, bounds, terrainLayer, &meshStats);
+        ImageryAttachment commandAttachment = attachment;
+        Rectangle commandBounds = bounds;
+
+        if (!gpuMesh && meshBuildBudget > 0) {
+            gpuMesh = getOrCreateSurfaceGpuMesh(key, bounds, terrainLayer, &meshStats);
+            if (gpuMesh) {
+                --meshBuildBudget;
+            }
+        }
+        if (!gpuMesh) {
+            ++meshBuildDeferred;
+            TileKey parentKey = key;
+            while (parentKey.z > tileScheme_->minZoom()) {
+                parentKey = TilePlanBuilder::parentKey(parentKey);
+                if (!emittedMeshFallbackTargets.insert(parentKey).second) {
+                    gpuMesh = nullptr;
+                    break;
+                }
+                Rectangle parentBounds = tileScheme_->tileToRectangle(parentKey);
+                gpuMesh = findSurfaceGpuMesh(parentKey, parentBounds, terrainLayer, &meshStats);
+                if (!gpuMesh) {
+                    emittedMeshFallbackTargets.erase(parentKey);
+                    continue;
+                }
+                TileKey parentTextureKey = parentKey;
+                Texture* parentTexture = textureCache_.get(parentTextureKey);
+                if (!parentTexture) {
+                    TileKey fallbackTextureKey = parentTextureKey;
+                    parentTexture = findFallbackTexture(parentTextureKey, fallbackTextureKey);
+                    parentTextureKey = fallbackTextureKey;
+                }
+                if (!parentTexture) {
+                    emittedMeshFallbackTargets.erase(parentKey);
+                    gpuMesh = nullptr;
+                    continue;
+                }
+                tex = parentTexture;
+                commandBounds = parentBounds;
+                Rectangle parentTextureBounds = tileScheme_->tileToRectangle(parentTextureKey);
+                TileTextureWindow parentUv =
+                    TileSurface::textureWindow(parentBounds, parentTextureBounds);
+                commandAttachment.textureKey = parentTextureKey;
+                commandAttachment.texture = parentTexture;
+                commandAttachment.uvOffsetU = parentUv.offsetU;
+                commandAttachment.uvOffsetV = parentUv.offsetV;
+                commandAttachment.uvScaleU = parentUv.scaleU;
+                commandAttachment.uvScaleV = parentUv.scaleV;
+                commandAttachment.fallbackSource = ImageryFallbackSource::Parent;
+                ++meshParentFallback;
+                break;
+            }
+        }
         if (!gpuMesh) continue;
 
         const double commandStartMs = perf::nowMs();
         auto cmd = renderer.makeSurfaceTileCommand(
-            attachment.texture,
+            commandAttachment.texture,
             gpuMesh->waterMaskTexture.get(),
             gpuMesh->vertexBuffer.get(),
             gpuMesh->indexBuffer.get(),
             gpuMesh->indexCount,
-            attachment.uvOffsetU,
-            attachment.uvOffsetV,
-            attachment.uvScaleU,
-            attachment.uvScaleV);
-        cmd.surfaceTileOpacity = attachment.opacity;
+            commandAttachment.uvOffsetU,
+            commandAttachment.uvOffsetV,
+            commandAttachment.uvScaleU,
+            commandAttachment.uvScaleV);
+        cmd.surfaceTileOpacity = commandAttachment.opacity;
         cmd.surfaceTransitionOpacity = renderTile.transitionOpacity;
         const float effectiveOpacity =
-            attachment.opacity * std::clamp(renderTile.transitionOpacity, 0.0f, 1.0f);
+            commandAttachment.opacity * std::clamp(renderTile.transitionOpacity, 0.0f, 1.0f);
         cmd.blend = effectiveOpacity < 0.999f;
         cmd.surfaceGeneration = static_cast<float>(generation_);
         const Vec3 cameraRelativeToTileOrigin =
@@ -1373,12 +1571,15 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
         commandMs += perf::nowMs() - commandStartMs;
     }
 
-    char detail[384];
+    char detail[512];
     std::snprintf(detail, sizeof(detail),
-        "visited=%d emitted=%d missingTex=%d cmdDelta=%zu tex=%.2f bounds=%.2f uv=%.2f meshTotal=%.2f hit=%d miss=%d terrLookup=%.2f key=%.2f meshBuild=%.2f centroid=%.2f verts=%.2f vb=%.2f ib=%.2f wm=%.2f cmd=%.2f cache=%zu",
+        "visited=%d emitted=%d missingTex=%d deferred=%d meshParent=%d moving=%d cmdDelta=%zu tex=%.2f bounds=%.2f uv=%.2f meshTotal=%.2f hit=%d miss=%d terrLookup=%.2f key=%.2f meshBuild=%.2f centroid=%.2f verts=%.2f vb=%.2f ib=%.2f wm=%.2f cmd=%.2f cache=%zu",
         visited,
         emitted,
         missingTexture,
+        meshBuildDeferred,
+        meshParentFallback,
+        cameraMoving_ ? 1 : 0,
         commands.size() - startCommands,
         textureLookupMs,
         boundsMs,

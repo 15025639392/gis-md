@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../providers/TerrainProvider.h"
+#include "../core/math/Vec3.h"
 #include "../tiling/TileScheme.h"
 #include "../tiling/TilePlan.h"
 #include "../tiling/TileQuadTree.h"
@@ -82,6 +83,11 @@ private:
 
     // Persistent quad tree (avoids rebuilding every frame)
     std::unique_ptr<TileQuadTree> quadTree_;
+    Vec3 lastCameraPosition_ = Vec3::zero();
+    Vec3 lastCameraDirection_ = Vec3::zero();
+    bool hasCameraState_ = false;
+    bool cameraMoving_ = false;
+    uint64_t lastPlanFrameId_ = 0;
 
     // 待上传队列
     struct PendingUpload {

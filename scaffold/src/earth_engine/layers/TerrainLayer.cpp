@@ -107,22 +107,49 @@ void TerrainLayer::update(const FrameState& frameState) {
     processPendingUploads();
     const double uploadMs = perf::nowMs() - uploadStartMs;
 
+    const Vec3 cameraPosition = frameState.camera->position();
+    const Vec3 cameraDirection = frameState.camera->direction();
+    if (hasCameraState_) {
+        const double positionDeltaMeters = cameraPosition.distanceTo(lastCameraPosition_);
+        double directionDot = 1.0;
+        if (cameraDirection.length() > 1e-6 && lastCameraDirection_.length() > 1e-6) {
+            directionDot = std::clamp(
+                cameraDirection.normalized().dot(lastCameraDirection_.normalized()),
+                -1.0,
+                1.0);
+        }
+        cameraMoving_ = positionDeltaMeters > 2.0 || directionDot < 0.99995;
+    } else {
+        hasCameraState_ = true;
+        cameraMoving_ = false;
+    }
+    lastCameraPosition_ = cameraPosition;
+    lastCameraDirection_ = cameraDirection;
+
     // 2. 计算可见瓦片（使用持久化 quad tree，避免每帧重建所有节点）
     if (!quadTree_) {
         quadTree_ = std::make_unique<TileQuadTree>();
     }
     const double planStartMs = perf::nowMs();
-    tilePlan_ = quadTree_->compute(
-        *frameState.camera, *tileScheme_,
-        static_cast<double>(frameState.viewportWidthPixels),
-        static_cast<double>(frameState.viewportHeightPixels));
-    tilePlan_.frameId = frameState.frameId;
+    bool reusedPlan = false;
+    if (cameraMoving_ && lastPlanFrameId_ != 0 && (frameState.frameId % 2) != 0) {
+        reusedPlan = true;
+        tilePlan_.frameId = frameState.frameId;
+    } else {
+        tilePlan_ = quadTree_->compute(
+            *frameState.camera, *tileScheme_,
+            static_cast<double>(frameState.viewportWidthPixels),
+            static_cast<double>(frameState.viewportHeightPixels));
+        tilePlan_.frameId = frameState.frameId;
+        lastPlanFrameId_ = frameState.frameId;
+    }
     const double planMs = perf::nowMs() - planStartMs;
 
     // 3. 请求缺失的瓦片（限制 zoom 范围到 provider 支持的范围）
     const double requestStartMs = perf::nowMs();
     int requestsThisUpdate = 0;
-    constexpr int kMaxTerrainRequestsPerUpdate = 8;
+    const size_t maxTerrainInflight = cameraMoving_ ? 96 : 128;
+    const int maxTerrainRequestsPerUpdate = cameraMoving_ ? 2 : 4;
 #ifdef __ANDROID__
     static int tileLogCount = 0;
     if (++tileLogCount <= 1) {
@@ -133,6 +160,7 @@ void TerrainLayer::update(const FrameState& frameState) {
     }
 #endif
     for (const auto& key : tilePlan_.visibleTiles) {
+        if (requestedTiles_.size() >= maxTerrainInflight) break;
         TileKey requestKey = key;
         while (requestKey.z > provider_->maxZoom()) {
             requestKey = TilePlanBuilder::parentKey(requestKey);
@@ -143,7 +171,7 @@ void TerrainLayer::update(const FrameState& frameState) {
         if (tileCache_.find(cacheKey) == tileCache_.end() &&
             requestedTiles_.find(cacheKey) == requestedTiles_.end()) {
             if (!isTilePossiblyAvailable(requestKey)) continue;
-            if (requestsThisUpdate >= kMaxTerrainRequestsPerUpdate) break;
+            if (requestsThisUpdate >= maxTerrainRequestsPerUpdate) break;
             requestedTiles_.insert(cacheKey);
             loadTile(requestKey);
             ++requestsThisUpdate;
@@ -151,9 +179,9 @@ void TerrainLayer::update(const FrameState& frameState) {
     }
     const double requestMs = perf::nowMs() - requestStartMs;
 
-    char detail[192];
+    char detail[256];
     std::snprintf(detail, sizeof(detail),
-        "upload=%.2f tilePlan=%.2f request=%.2f visible=%zu issued=%d cached=%d inflight=%zu empty=%zu",
+        "upload=%.2f tilePlan=%.2f request=%.2f visible=%zu issued=%d cached=%d inflight=%zu empty=%zu moving=%d reusedPlan=%d maxInflight=%zu",
         uploadMs,
         planMs,
         requestMs,
@@ -161,7 +189,10 @@ void TerrainLayer::update(const FrameState& frameState) {
         requestsThisUpdate,
         cachedTileCount(),
         requestedTiles_.size(),
-        emptyTiles_.size());
+        emptyTiles_.size(),
+        cameraMoving_ ? 1 : 0,
+        reusedPlan ? 1 : 0,
+        maxTerrainInflight);
     perf::logTiming(frameState.frameId,
                     "TerrainLayer.update",
                     perf::nowMs() - updateStartMs,
@@ -200,11 +231,15 @@ void TerrainLayer::processPendingUploads() {
     size_t queueBefore = 0;
     size_t queueAfter = 0;
     size_t emptyBefore = 0;
+    std::vector<std::string> emptyCompleted;
     {
         std::lock_guard<std::mutex> lock(pendingQueue_->mutex);
         queueBefore = pendingQueue_->queue.size();
         emptyBefore = pendingQueue_->emptyTiles.size();
         // Drain empty-tile markers from worker threads (cesium-native availability)
+        emptyCompleted.assign(
+            pendingQueue_->emptyTiles.begin(),
+            pendingQueue_->emptyTiles.end());
         emptyTiles_.insert(
             pendingQueue_->emptyTiles.begin(),
             pendingQueue_->emptyTiles.end());
@@ -220,6 +255,9 @@ void TerrainLayer::processPendingUploads() {
     }
 
     int uploaded = 0;
+    for (const std::string& cacheKey : emptyCompleted) {
+        requestedTiles_.erase(cacheKey);
+    }
     for (auto& item : batch) {
         std::string cacheKey = terrainCacheKey(item.key);
 
@@ -227,6 +265,7 @@ void TerrainLayer::processPendingUploads() {
             item.key, *tileScheme_, std::move(item.heightmap));
 
         tileCache_[cacheKey] = std::move(tile);
+        requestedTiles_.erase(cacheKey);
         ++terrainGeneration_;
         ++uploaded;
     }

@@ -62,7 +62,9 @@ public:
     void update(const FrameState& frameState);
 
     /// 从外部注入 TilePlan（由 BasemapLayerStack 提供共享计划）
-    void applyPlan(const TilePlan& plan, const Vec3& cameraPosition);
+    void applyPlan(const TilePlan& plan,
+                   const Vec3& cameraPosition,
+                   const Vec3& cameraDirection = Vec3::zero());
 
     /// 请求缺失的瓦片（通常在 applyPlan 之后调用）
     void loadMissingTiles();
@@ -146,9 +148,19 @@ private:
     bool findRequestTileForMissingTexture(const TileKey& target, TileKey& requestKey) const;
     bool isCurrentDesiredTile(const TileKey& key) const;
     bool isCurrentPlanTileOrAncestor(const TileKey& key) const;
+    struct SurfaceGpuMesh;
+    struct SurfaceMeshBuildStats;
+    std::string surfaceMeshCacheKeyForTile(const TileKey& key,
+                                           const Rectangle& bounds,
+                                           const TerrainLayer* terrainLayer) const;
+    SurfaceGpuMesh* findSurfaceGpuMesh(const TileKey& key,
+                                       const Rectangle& bounds,
+                                       const TerrainLayer* terrainLayer,
+                                       SurfaceMeshBuildStats* stats = nullptr);
     bool buildRenderableRefForTile(const TileKey& target,
                                    float transitionOpacity,
                                    RenderTileRef& out);
+    void sortRequestTilesByViewImportance();
     void applyAncestorMeetsSseFallback(const LayerTilePlan& previousPlan);
     void applyCesiumNativeKicking(const LayerTilePlan& previousPlan);
     struct SurfaceGpuMesh {
@@ -199,6 +211,11 @@ private:
     LayerTilePlan layerPlan_;
     bool layerPlanDirty_ = true;
     Vec3 lastCameraPosition_ = Vec3::zero();
+    Vec3 lastCameraDirection_ = Vec3::zero();
+    Vec3 previousCameraPosition_ = Vec3::zero();
+    Vec3 previousCameraDirection_ = Vec3::zero();
+    bool hasPreviousCameraState_ = false;
+    bool cameraMoving_ = false;
 
     // 待上传队列（后台线程解码 → 主线程上传 GPU）
     struct PendingUpload {
