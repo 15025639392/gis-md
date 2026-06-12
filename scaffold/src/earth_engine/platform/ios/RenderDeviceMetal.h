@@ -23,6 +23,10 @@ public:
     // ---- 资源创建 ----
     std::unique_ptr<Texture> createTexture(const TextureDesc& desc) override;
     std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) override;
+    bool updateBuffer(Buffer* buffer,
+                      size_t offset,
+                      const void* data,
+                      size_t size) override;
     std::unique_ptr<ShaderProgram> createShader(const ShaderDesc& desc) override;
     std::unique_ptr<Framebuffer> createFramebuffer(const FramebufferDesc& desc) override;
 

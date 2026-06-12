@@ -143,6 +143,122 @@ void main() {
 }
 )glsl";
 
+static const char* kInstancedTileVertexGLSL = R"glsl(
+#version 300 es
+layout(location = 0) in vec2 a_gridUv;
+layout(location = 3) in vec4 i_tileRect;
+layout(location = 4) in vec4 i_textureRect;
+layout(location = 5) in vec3 i_localOrigin;
+layout(location = 6) in vec3 i_cameraRelativeOrigin;
+layout(location = 7) in vec4 i_opacityTransitionWaterFlags;
+layout(location = 8) in vec3 i_cornerNw;
+layout(location = 9) in vec3 i_cornerNe;
+layout(location = 10) in vec3 i_cornerSw;
+layout(location = 11) in vec3 i_cornerSe;
+
+uniform mat4 u_modelViewProjection;
+
+out vec2 v_texcoord;
+out vec3 v_normal;
+out float v_distance;
+out float v_tileOpacity;
+out float v_transitionOpacity;
+out float v_hasWaterMask;
+
+const float kPi = 3.14159265358979323846;
+const float kTwoPi = 6.28318530717958647692;
+const float kQuarterPi = 0.78539816339744830962;
+const float kMaxWebMercatorLat = 1.4844222297453324;
+const vec3 kRadiiSq = vec3(
+    6378137.0 * 6378137.0,
+    6378137.0 * 6378137.0,
+    6356752.314245 * 6356752.314245);
+const vec3 kInvRadiiSq = vec3(
+    1.0 / (6378137.0 * 6378137.0),
+    1.0 / (6378137.0 * 6378137.0),
+    1.0 / (6356752.314245 * 6356752.314245));
+
+float latitudeToMercatorY(float latRad) {
+    float lat = clamp(latRad, -kMaxWebMercatorLat, kMaxWebMercatorLat);
+    return (kPi - log(tan(lat * 0.5 + kQuarterPi))) / kTwoPi;
+}
+
+float mercatorYToLatitude(float y) {
+    return atan(sinh(kPi - kTwoPi * y));
+}
+
+vec3 cartographicToWgs84Ecef(float longitude, float latitude) {
+    float cosLat = cos(latitude);
+    vec3 n = normalize(vec3(cosLat * cos(longitude),
+                            cosLat * sin(longitude),
+                            sin(latitude)));
+    vec3 k = kRadiiSq * n;
+    float gamma = sqrt(dot(n, k));
+    return k / gamma;
+}
+
+void main() {
+    vec3 northEdge = mix(i_cornerNw, i_cornerNe, a_gridUv.x);
+    vec3 southEdge = mix(i_cornerSw, i_cornerSe, a_gridUv.x);
+    vec3 relativePos = mix(northEdge, southEdge, a_gridUv.y);
+    vec3 worldPos = i_localOrigin + relativePos;
+    vec3 camRelPos = relativePos - i_cameraRelativeOrigin;
+
+    v_texcoord = i_textureRect.xy + a_gridUv * i_textureRect.zw;
+    v_normal = normalize(worldPos * kInvRadiiSq);
+    v_distance = length(camRelPos);
+    v_tileOpacity = i_opacityTransitionWaterFlags.x;
+    v_transitionOpacity = i_opacityTransitionWaterFlags.y;
+    v_hasWaterMask = i_opacityTransitionWaterFlags.z;
+    gl_Position = u_modelViewProjection * vec4(camRelPos, 1.0);
+}
+)glsl";
+
+static const char* kInstancedTileFragmentGLSL = R"glsl(
+#version 300 es
+precision mediump float;
+
+in vec2 v_texcoord;
+in vec3 v_normal;
+in float v_distance;
+in float v_tileOpacity;
+in float v_transitionOpacity;
+in float v_hasWaterMask;
+uniform sampler2D u_tileTexture;
+uniform sampler2D u_waterMask;
+uniform vec3 u_lightDir;
+uniform vec3 u_fogColor;
+uniform float u_fogDensity;
+out vec4 fragColor;
+
+void main() {
+    vec4 color = texture(u_tileTexture, v_texcoord);
+    float luma = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+    color.rgb = mix(vec3(luma), color.rgb, 1.08);
+    color.rgb = (color.rgb - vec3(0.5)) * 1.06 + vec3(0.5);
+    color.rgb = clamp(color.rgb, 0.0, 1.0);
+
+    vec3 n = normalize(v_normal);
+    float diffuse = max(dot(n, normalize(u_lightDir)), 0.0);
+    color.rgb *= 0.45 + diffuse * 0.55;
+
+    if (v_hasWaterMask > 0.5) {
+        float waterAlpha = texture(u_waterMask, v_texcoord).a;
+        if (waterAlpha > 0.01) {
+            vec3 waterColor = vec3(0.18, 0.35, 0.62);
+            color.rgb = mix(color.rgb, waterColor, waterAlpha * 0.7);
+        }
+    }
+
+    float fog = exp(-v_distance * u_fogDensity * v_distance * u_fogDensity);
+    fog = clamp(fog, 0.0, 1.0);
+    color.rgb = mix(u_fogColor, color.rgb, fog);
+
+    color.a *= clamp(v_tileOpacity, 0.0, 1.0) * clamp(v_transitionOpacity, 0.0, 1.0);
+    fragColor = color;
+}
+)glsl";
+
 // ============================================================
 // Metal Shading Language 源码
 // ============================================================
@@ -363,6 +479,7 @@ struct Renderer::Impl {
 
     // Surface tile
     std::unique_ptr<ShaderProgram> tileShader;
+    std::unique_ptr<ShaderProgram> instancedTileShader;
     std::unique_ptr<Buffer> tileVertexBuffer;
     std::unique_ptr<Buffer> tileIndexBuffer;
     int tileIndexCount = 0;
@@ -426,6 +543,17 @@ bool Renderer::initialize(const GlobeMesh& mesh) {
     impl_->tileShader = dev->createShader(tileSd);
     if (!impl_->tileShader) { fprintf(stderr, "[Renderer] tileShader failed\n"); return false; }
 
+    if (!isMetal) {
+        ShaderDesc instancedTileSd;
+        instancedTileSd.vertexSource = kInstancedTileVertexGLSL;
+        instancedTileSd.fragmentSource = kInstancedTileFragmentGLSL;
+        impl_->instancedTileShader = dev->createShader(instancedTileSd);
+        if (!impl_->instancedTileShader) {
+            fprintf(stderr, "[Renderer] instancedTileShader failed\n");
+            return false;
+        }
+    }
+
     // Tile shared geometry. Web Mercator tile bounds are converted to ECEF on a curved
     // ellipsoid, so low subdivision visibly warps large low-zoom tiles.
     auto [tileVerts, tileIndices] = makeTileGeometry(32);
@@ -468,6 +596,7 @@ void Renderer::dispose() {
     impl_->globeVertexBuffer.reset();
     impl_->globeIndexBuffer.reset();
     impl_->tileShader.reset();
+    impl_->instancedTileShader.reset();
     impl_->tileVertexBuffer.reset();
     impl_->tileIndexBuffer.reset();
     impl_->colorShader.reset();
@@ -570,6 +699,37 @@ RenderCommand Renderer::makeSurfaceTileCommand(Texture* texture,
     cmd.hasSurfaceTileUniforms = true;
     cmd.surfaceTileUv = {uvOffsetX, uvOffsetY, uvScaleX, uvScaleY};
     cmd.surfaceHasWaterMask = waterMaskTexture ? 1.0f : 0.0f;
+    return cmd;
+}
+
+RenderCommand Renderer::makeInstancedSurfaceTileCommand(Texture* texture,
+                                                        Buffer* instanceBuffer,
+                                                        int instanceCount) const {
+    RenderCommand cmd;
+    cmd.kind = RenderCommandKind::SurfaceTile;
+    cmd.owner = "surface_tile";
+    cmd.pass = "color";
+    cmd.shader = impl_->instancedTileShader.get();
+    cmd.vertexBuffer = impl_->tileVertexBuffer.get();
+    cmd.indexBuffer = impl_->tileIndexBuffer.get();
+    cmd.instanceBuffer = instanceBuffer;
+    cmd.indexCount = impl_->tileIndexCount;
+    cmd.vertexStride = 8;  // shared unit grid uv
+    cmd.instanceCount = instanceCount;
+    cmd.instanceStride = 120; // SurfaceTileInstanceGpu
+    cmd.primitive = RenderCommand::PrimitiveType::Triangles;
+    cmd.indexType = RenderCommand::IndexType::UInt32;
+    cmd.depthTest = true;
+    cmd.depthWrite = true;
+    cmd.blend = false;
+    cmd.cullFace = true;
+
+    if (texture) {
+        cmd.textures.push_back(texture);
+    }
+
+    cmd.hasSurfaceTileUniforms = true;
+    cmd.surfaceHasWaterMask = 0.0f;
     return cmd;
 }
 

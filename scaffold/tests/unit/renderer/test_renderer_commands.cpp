@@ -17,16 +17,35 @@ TEST(RendererCommandTest, SurfaceTilesAreAuthoritativeDepthSurface) {
     EXPECT_EQ(RenderCommandKind::SurfaceTile, cmd.kind);
     EXPECT_EQ("surface_tile", cmd.owner);
     EXPECT_EQ(42, cmd.indexCount);
-    EXPECT_EQ(32, cmd.vertexStride);
+    EXPECT_EQ(20, cmd.vertexStride);
     EXPECT_EQ(0u, cmd.frameId);
     EXPECT_EQ(0u, cmd.generation);
-    EXPECT_EQ(0.0f, cmd.uniforms["u_useNormalMap"][0]);
-    EXPECT_EQ(1.0f, cmd.uniforms["u_tileOpacity"][0]);
-    EXPECT_EQ(1.0f, cmd.uniforms["u_transitionOpacity"][0]);
+    EXPECT_TRUE(cmd.hasSurfaceTileUniforms);
+    EXPECT_EQ(1.0f, cmd.surfaceTileOpacity);
+    EXPECT_EQ(1.0f, cmd.surfaceTransitionOpacity);
     EXPECT_TRUE(cmd.depthTest);
     EXPECT_TRUE(cmd.depthWrite);
     EXPECT_TRUE(cmd.cullFace);
     EXPECT_FALSE(cmd.blend);
+}
+
+TEST(RendererCommandTest, InstancedSurfaceTileUsesSharedGridAndInstanceBuffer) {
+    Renderer renderer(nullptr);
+
+    RenderCommand cmd = renderer.makeInstancedSurfaceTileCommand(
+        nullptr,
+        nullptr,
+        7);
+
+    EXPECT_EQ(RenderCommandKind::SurfaceTile, cmd.kind);
+    EXPECT_EQ("surface_tile", cmd.owner);
+    EXPECT_EQ(8, cmd.vertexStride);
+    EXPECT_EQ(7, cmd.instanceCount);
+    EXPECT_EQ(120, cmd.instanceStride);
+    EXPECT_TRUE(cmd.hasSurfaceTileUniforms);
+    EXPECT_TRUE(cmd.depthTest);
+    EXPECT_TRUE(cmd.depthWrite);
+    EXPECT_TRUE(cmd.cullFace);
 }
 
 TEST(RendererCommandTest, SurfaceTileBlendAllowedForLodTransitionOpacity) {
@@ -39,7 +58,8 @@ TEST(RendererCommandTest, SurfaceTileBlendAllowedForLodTransitionOpacity) {
     tile.cullFace = true;
     tile.blend = true;
     tile.generation = 1;
-    tile.uniforms["u_transitionOpacity"] = {0.5f};
+    tile.hasSurfaceTileUniforms = true;
+    tile.surfaceTransitionOpacity = 0.5f;
 
     RenderCommandList commands{tile};
     auto error = validateMvpRenderCommands(commands);

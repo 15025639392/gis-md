@@ -200,6 +200,24 @@ std::unique_ptr<Buffer> RenderDeviceGLES::createBuffer(const BufferDesc& desc) {
     return std::make_unique<GLBuffer>(id, desc.size, target);
 }
 
+bool RenderDeviceGLES::updateBuffer(Buffer* buffer,
+                                    size_t offset,
+                                    const void* data,
+                                    size_t size) {
+    auto* glBuffer = static_cast<GLBuffer*>(buffer);
+    if (!glBuffer || !data || size == 0 || offset + size > glBuffer->size()) {
+        return false;
+    }
+
+    glBindBuffer(glBuffer->target(), glBuffer->glId());
+    glBufferSubData(glBuffer->target(),
+                    static_cast<GLintptr>(offset),
+                    static_cast<GLsizeiptr>(size),
+                    data);
+    glBindBuffer(glBuffer->target(), 0);
+    return glGetError() == GL_NO_ERROR;
+}
+
 std::unique_ptr<ShaderProgram> RenderDeviceGLES::createShader(const ShaderDesc& desc) {
     // 编译 vertex shader
     GLuint vs = glCreateShader(GL_VERTEX_SHADER);
@@ -323,6 +341,15 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     bool attrib0Enabled = false;
     bool attrib1Enabled = false;
     bool attrib2Enabled = false;
+    bool attrib3Enabled = false;
+    bool attrib4Enabled = false;
+    bool attrib5Enabled = false;
+    bool attrib6Enabled = false;
+    bool attrib7Enabled = false;
+    bool attrib8Enabled = false;
+    bool attrib9Enabled = false;
+    bool attrib10Enabled = false;
+    bool attrib11Enabled = false;
     bool depthTestEnabled = true;
     bool blendEnabled = false;
     bool polygonOffsetEnabled = false;
@@ -384,16 +411,86 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             glBindBuffer(GL_ARRAY_BUFFER, currentArrayBuffer);
         }
 
-        if (cmd.kind == RenderCommandKind::SurfaceTile) {
+        if (cmd.kind == RenderCommandKind::SurfaceTile && cmd.instanceCount > 0) {
+            constexpr int kGridStride = 8;
+            setAttribEnabled(0, attrib0Enabled, true);
+            glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, kGridStride,
+                                  reinterpret_cast<void*>(0));
+            glVertexAttribDivisor(0, 0);
+            setAttribEnabled(1, attrib1Enabled, false);
+            setAttribEnabled(2, attrib2Enabled, false);
+
+            auto* instance = static_cast<GLBuffer*>(cmd.instanceBuffer);
+            if (!instance) continue;
+            glBindBuffer(GL_ARRAY_BUFFER, instance->glId());
+            currentArrayBuffer = instance->glId();
+            const GLsizei stride = static_cast<GLsizei>(cmd.instanceStride);
+            setAttribEnabled(3, attrib3Enabled, true);
+            glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(0));
+            glVertexAttribDivisor(3, 1);
+            setAttribEnabled(4, attrib4Enabled, true);
+            glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(16));
+            glVertexAttribDivisor(4, 1);
+            setAttribEnabled(5, attrib5Enabled, true);
+            glVertexAttribPointer(5, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(32));
+            glVertexAttribDivisor(5, 1);
+            setAttribEnabled(6, attrib6Enabled, true);
+            glVertexAttribPointer(6, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(44));
+            glVertexAttribDivisor(6, 1);
+            setAttribEnabled(7, attrib7Enabled, true);
+            glVertexAttribPointer(7, 4, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(56));
+            glVertexAttribDivisor(7, 1);
+            setAttribEnabled(8, attrib8Enabled, true);
+            glVertexAttribPointer(8, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(72));
+            glVertexAttribDivisor(8, 1);
+            setAttribEnabled(9, attrib9Enabled, true);
+            glVertexAttribPointer(9, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(84));
+            glVertexAttribDivisor(9, 1);
+            setAttribEnabled(10, attrib10Enabled, true);
+            glVertexAttribPointer(10, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(96));
+            glVertexAttribDivisor(10, 1);
+            setAttribEnabled(11, attrib11Enabled, true);
+            glVertexAttribPointer(11, 3, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(108));
+            glVertexAttribDivisor(11, 1);
+        } else if (cmd.kind == RenderCommandKind::SurfaceTile) {
             constexpr int kSurfaceStride = 20;  // pos(12) + uv(8)
             setAttribEnabled(0, attrib0Enabled, true);
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, kSurfaceStride,
                                   reinterpret_cast<void*>(0));
+            glVertexAttribDivisor(0, 0);
             // normal disabled — computed in vertex shader from position
             setAttribEnabled(1, attrib1Enabled, false);
             setAttribEnabled(2, attrib2Enabled, true);
             glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, kSurfaceStride,
                                   reinterpret_cast<void*>(12));
+            glVertexAttribDivisor(2, 0);
+            setAttribEnabled(3, attrib3Enabled, false);
+            setAttribEnabled(4, attrib4Enabled, false);
+            setAttribEnabled(5, attrib5Enabled, false);
+            setAttribEnabled(6, attrib6Enabled, false);
+            setAttribEnabled(7, attrib7Enabled, false);
+            setAttribEnabled(8, attrib8Enabled, false);
+            setAttribEnabled(9, attrib9Enabled, false);
+            setAttribEnabled(10, attrib10Enabled, false);
+            setAttribEnabled(11, attrib11Enabled, false);
+            glVertexAttribDivisor(3, 0);
+            glVertexAttribDivisor(4, 0);
+            glVertexAttribDivisor(5, 0);
+            glVertexAttribDivisor(6, 0);
+            glVertexAttribDivisor(7, 0);
+            glVertexAttribDivisor(8, 0);
+            glVertexAttribDivisor(9, 0);
+            glVertexAttribDivisor(10, 0);
+            glVertexAttribDivisor(11, 0);
         } else if (cmd.vertexStride > 0) {
             // 显式 vertex stride（VectorLayer、SkyBox、Atmosphere 等使用）
             // 根据 stride 推断分量数：8=vec2, 12=vec3
@@ -405,6 +502,25 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                                   reinterpret_cast<void*>(0));
             setAttribEnabled(1, attrib1Enabled, false);
             setAttribEnabled(2, attrib2Enabled, false);
+            glVertexAttribDivisor(0, 0);
+            setAttribEnabled(3, attrib3Enabled, false);
+            setAttribEnabled(4, attrib4Enabled, false);
+            setAttribEnabled(5, attrib5Enabled, false);
+            setAttribEnabled(6, attrib6Enabled, false);
+            setAttribEnabled(7, attrib7Enabled, false);
+            setAttribEnabled(8, attrib8Enabled, false);
+            setAttribEnabled(9, attrib9Enabled, false);
+            setAttribEnabled(10, attrib10Enabled, false);
+            setAttribEnabled(11, attrib11Enabled, false);
+            glVertexAttribDivisor(3, 0);
+            glVertexAttribDivisor(4, 0);
+            glVertexAttribDivisor(5, 0);
+            glVertexAttribDivisor(6, 0);
+            glVertexAttribDivisor(7, 0);
+            glVertexAttribDivisor(8, 0);
+            glVertexAttribDivisor(9, 0);
+            glVertexAttribDivisor(10, 0);
+            glVertexAttribDivisor(11, 0);
         } else {
             // Globe vertex: float3 pos + float3 normal + float2 tex = 32 bytes
             constexpr int kGlobeStride = 32;
@@ -417,6 +533,27 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             setAttribEnabled(2, attrib2Enabled, true);
             glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, kGlobeStride,
                                   reinterpret_cast<void*>(24));
+            glVertexAttribDivisor(0, 0);
+            glVertexAttribDivisor(1, 0);
+            glVertexAttribDivisor(2, 0);
+            setAttribEnabled(3, attrib3Enabled, false);
+            setAttribEnabled(4, attrib4Enabled, false);
+            setAttribEnabled(5, attrib5Enabled, false);
+            setAttribEnabled(6, attrib6Enabled, false);
+            setAttribEnabled(7, attrib7Enabled, false);
+            setAttribEnabled(8, attrib8Enabled, false);
+            setAttribEnabled(9, attrib9Enabled, false);
+            setAttribEnabled(10, attrib10Enabled, false);
+            setAttribEnabled(11, attrib11Enabled, false);
+            glVertexAttribDivisor(3, 0);
+            glVertexAttribDivisor(4, 0);
+            glVertexAttribDivisor(5, 0);
+            glVertexAttribDivisor(6, 0);
+            glVertexAttribDivisor(7, 0);
+            glVertexAttribDivisor(8, 0);
+            glVertexAttribDivisor(9, 0);
+            glVertexAttribDivisor(10, 0);
+            glVertexAttribDivisor(11, 0);
         }
 
         const GLuint elementArrayBuffer = ib ? ib->glId() : 0;
@@ -557,8 +694,17 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             GLenum indexType = (cmd.indexType == RenderCommand::IndexType::UInt32)
                                    ? GL_UNSIGNED_INT
                                    : GL_UNSIGNED_SHORT;
-            glDrawElements(mode, cmd.indexCount, indexType,
-                           reinterpret_cast<void*>(static_cast<intptr_t>(cmd.indexOffset)));
+            if (cmd.instanceCount > 0) {
+                glDrawElementsInstanced(
+                    mode,
+                    cmd.indexCount,
+                    indexType,
+                    reinterpret_cast<void*>(static_cast<intptr_t>(cmd.indexOffset)),
+                    cmd.instanceCount);
+            } else {
+                glDrawElements(mode, cmd.indexCount, indexType,
+                               reinterpret_cast<void*>(static_cast<intptr_t>(cmd.indexOffset)));
+            }
         } else {
             glDrawArrays(mode, 0, cmd.vertexCount);
         }
@@ -569,6 +715,42 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     if (attrib0Enabled) glDisableVertexAttribArray(0);
     if (attrib1Enabled) glDisableVertexAttribArray(1);
     if (attrib2Enabled) glDisableVertexAttribArray(2);
+    if (attrib3Enabled) {
+        glVertexAttribDivisor(3, 0);
+        glDisableVertexAttribArray(3);
+    }
+    if (attrib4Enabled) {
+        glVertexAttribDivisor(4, 0);
+        glDisableVertexAttribArray(4);
+    }
+    if (attrib5Enabled) {
+        glVertexAttribDivisor(5, 0);
+        glDisableVertexAttribArray(5);
+    }
+    if (attrib6Enabled) {
+        glVertexAttribDivisor(6, 0);
+        glDisableVertexAttribArray(6);
+    }
+    if (attrib7Enabled) {
+        glVertexAttribDivisor(7, 0);
+        glDisableVertexAttribArray(7);
+    }
+    if (attrib8Enabled) {
+        glVertexAttribDivisor(8, 0);
+        glDisableVertexAttribArray(8);
+    }
+    if (attrib9Enabled) {
+        glVertexAttribDivisor(9, 0);
+        glDisableVertexAttribArray(9);
+    }
+    if (attrib10Enabled) {
+        glVertexAttribDivisor(10, 0);
+        glDisableVertexAttribArray(10);
+    }
+    if (attrib11Enabled) {
+        glVertexAttribDivisor(11, 0);
+        glDisableVertexAttribArray(11);
+    }
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     glActiveTexture(GL_TEXTURE1);

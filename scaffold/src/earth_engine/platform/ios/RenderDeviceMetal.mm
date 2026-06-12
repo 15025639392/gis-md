@@ -153,10 +153,27 @@ std::unique_ptr<Texture> RenderDeviceMetal::createTexture(const TextureDesc& des
 
 std::unique_ptr<Buffer> RenderDeviceMetal::createBuffer(const BufferDesc& desc) {
     MTLResourceOptions options = MTLResourceStorageModeShared;
-    id<MTLBuffer> buf = [impl_->device newBufferWithBytes:desc.data
-                                                    length:desc.size
-                                                   options:options];
+    id<MTLBuffer> buf = desc.data
+        ? [impl_->device newBufferWithBytes:desc.data
+                                      length:desc.size
+                                     options:options]
+        : [impl_->device newBufferWithLength:desc.size
+                                     options:options];
     return buf ? std::make_unique<MetalBuffer>(buf) : nullptr;
+}
+
+bool RenderDeviceMetal::updateBuffer(Buffer* buffer,
+                                     size_t offset,
+                                     const void* data,
+                                     size_t size) {
+    auto* metalBuffer = static_cast<MetalBuffer*>(buffer);
+    if (!metalBuffer || !data || size == 0 || offset + size > metalBuffer->size()) {
+        return false;
+    }
+    std::memcpy(static_cast<uint8_t*>(metalBuffer->mtl().contents) + offset,
+                data,
+                size);
+    return true;
 }
 
 std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc& desc) {

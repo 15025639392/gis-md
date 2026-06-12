@@ -216,9 +216,96 @@ void TerrainLayer::update(const FrameState& frameState) {
         }
     }
 #endif
-    std::vector<TileKey> requestCandidates;
+    const bool reusedCandidates =
+        shouldReuseRequestCandidateSnapshot(frameState);
+    const std::vector<TileKey>& requestCandidates =
+        requestCandidatesForFrame(frameState);
+
+    for (const TileKey& requestKey : requestCandidates) {
+        if (requestedTiles_.size() >= maxTerrainInflight) break;
+        if (requestsThisUpdate >= maxTerrainRequestsPerUpdate) break;
+        const std::string cacheKey = terrainCacheKey(requestKey);
+        if (requestedTiles_.insert(cacheKey).second) {
+            loadTile(requestKey);
+            ++requestsThisUpdate;
+        }
+    }
+    const double requestMs = perf::nowMs() - requestStartMs;
+
+    char detail[256];
+    std::snprintf(detail, sizeof(detail),
+        "upload=%.2f tilePlan=%.2f request=%.2f visible=%zu candidates=%zu issued=%d cached=%d inflight=%zu empty=%zu moving=%d reusedPlan=%d reusedCandidates=%d focus=%d maxInflight=%zu",
+        uploadMs,
+        planMs,
+        requestMs,
+        tilePlan_.visibleTiles.size(),
+        requestCandidates.size(),
+        requestsThisUpdate,
+        cachedTileCount(),
+        requestedTiles_.size(),
+        emptyTiles_.size(),
+        cameraMoving_ ? 1 : 0,
+        reusedPlan ? 1 : 0,
+        reusedCandidates ? 1 : 0,
+        frameState.hasInteractionFocus ? 1 : 0,
+        maxTerrainInflight);
+    perf::logTiming(frameState.frameId,
+                    "TerrainLayer.update",
+                    perf::nowMs() - updateStartMs,
+                    detail);
+}
+
+bool TerrainLayer::shouldReuseRequestCandidateSnapshot(
+    const FrameState& frameState) const {
+    if (!requestCandidateSnapshot_.valid || !cameraMoving_) return false;
+    if (requestCandidateSnapshot_.planFrameId != tilePlan_.frameId) return false;
+    if (requestCandidateSnapshot_.terrainGeneration != terrainGeneration_) return false;
+    if (requestCandidateSnapshot_.requestedCount != requestedTiles_.size()) return false;
+    if (requestCandidateSnapshot_.emptyCount != emptyTiles_.size()) return false;
+    if (requestCandidateSnapshot_.hasInteractionFocus != frameState.hasInteractionFocus) {
+        return false;
+    }
+
+    const double positionDeltaMeters =
+        frameState.camera->position().distanceTo(requestCandidateSnapshot_.cameraPosition);
+    double directionDot = 1.0;
+    const Vec3 cameraDirection = frameState.camera->direction();
+    if (cameraDirection.length() > 1e-6 &&
+        requestCandidateSnapshot_.cameraDirection.length() > 1e-6) {
+        directionDot = std::clamp(
+            cameraDirection.normalized().dot(
+                requestCandidateSnapshot_.cameraDirection.normalized()),
+            -1.0,
+            1.0);
+    }
+    double focusDot = 1.0;
+    if (frameState.hasInteractionFocus &&
+        frameState.interactionFocusDirection.length() > 1e-6 &&
+        requestCandidateSnapshot_.interactionFocusDirection.length() > 1e-6) {
+        focusDot = std::clamp(
+            frameState.interactionFocusDirection.normalized().dot(
+                requestCandidateSnapshot_.interactionFocusDirection.normalized()),
+            -1.0,
+            1.0);
+    }
+
+    return positionDeltaMeters <= 8.0 &&
+           directionDot >= 0.9999 &&
+           focusDot >= 0.9999;
+}
+
+const std::vector<TileKey>& TerrainLayer::requestCandidatesForFrame(
+    const FrameState& frameState) {
+    if (shouldReuseRequestCandidateSnapshot(frameState)) {
+        return requestCandidateSnapshot_.tiles;
+    }
+
+    auto& snapshot = requestCandidateSnapshot_;
+    snapshot.tiles.clear();
     std::unordered_set<std::string> candidateSet;
-    requestCandidates.reserve(tilePlan_.visibleTiles.size());
+    candidateSet.reserve(tilePlan_.visibleTiles.size());
+    snapshot.tiles.reserve(tilePlan_.visibleTiles.size());
+
     for (const auto& key : tilePlan_.visibleTiles) {
         TileKey requestKey = key;
         while (requestKey.z > provider_->maxZoom()) {
@@ -226,16 +313,18 @@ void TerrainLayer::update(const FrameState& frameState) {
         }
         if (requestKey.z < provider_->minZoom()) continue;
 
-        std::string cacheKey = terrainCacheKey(requestKey);
-        if (tileCache_.find(cacheKey) == tileCache_.end() &&
-            requestedTiles_.find(cacheKey) == requestedTiles_.end()) {
-            if (!isTilePossiblyAvailable(requestKey)) continue;
-            if (candidateSet.insert(cacheKey).second) {
-                requestCandidates.push_back(requestKey);
-            }
+        const std::string cacheKey = terrainCacheKey(requestKey);
+        if (tileCache_.find(cacheKey) != tileCache_.end()) continue;
+        if (requestedTiles_.find(cacheKey) != requestedTiles_.end()) continue;
+        if (!isTilePossiblyAvailable(requestKey)) continue;
+        if (candidateSet.insert(cacheKey).second) {
+            snapshot.tiles.push_back(requestKey);
         }
     }
-    std::stable_sort(requestCandidates.begin(), requestCandidates.end(),
+
+    const Vec3 cameraPosition = frameState.camera->position();
+    const Vec3 cameraDirection = frameState.camera->direction();
+    std::stable_sort(snapshot.tiles.begin(), snapshot.tiles.end(),
         [&](const TileKey& lhs, const TileKey& rhs) {
             const double lhsPriority = terrainRequestPriority(
                 *tileScheme_,
@@ -257,37 +346,18 @@ void TerrainLayer::update(const FrameState& frameState) {
             return lhs.x < rhs.x;
         });
 
-    for (const TileKey& requestKey : requestCandidates) {
-        if (requestedTiles_.size() >= maxTerrainInflight) break;
-        if (requestsThisUpdate >= maxTerrainRequestsPerUpdate) break;
-        const std::string cacheKey = terrainCacheKey(requestKey);
-        if (requestedTiles_.insert(cacheKey).second) {
-            loadTile(requestKey);
-            ++requestsThisUpdate;
-        }
-    }
-    const double requestMs = perf::nowMs() - requestStartMs;
-
-    char detail[256];
-    std::snprintf(detail, sizeof(detail),
-        "upload=%.2f tilePlan=%.2f request=%.2f visible=%zu candidates=%zu issued=%d cached=%d inflight=%zu empty=%zu moving=%d reusedPlan=%d focus=%d maxInflight=%zu",
-        uploadMs,
-        planMs,
-        requestMs,
-        tilePlan_.visibleTiles.size(),
-        requestCandidates.size(),
-        requestsThisUpdate,
-        cachedTileCount(),
-        requestedTiles_.size(),
-        emptyTiles_.size(),
-        cameraMoving_ ? 1 : 0,
-        reusedPlan ? 1 : 0,
-        frameState.hasInteractionFocus ? 1 : 0,
-        maxTerrainInflight);
-    perf::logTiming(frameState.frameId,
-                    "TerrainLayer.update",
-                    perf::nowMs() - updateStartMs,
-                    detail);
+    snapshot.planFrameId = tilePlan_.frameId;
+    snapshot.terrainGeneration = terrainGeneration_;
+    snapshot.requestedCount = requestedTiles_.size();
+    snapshot.emptyCount = emptyTiles_.size();
+    snapshot.cameraPosition = cameraPosition;
+    snapshot.cameraDirection = cameraDirection;
+    snapshot.hasInteractionFocus = frameState.hasInteractionFocus;
+    snapshot.interactionFocusDirection = frameState.hasInteractionFocus
+        ? frameState.interactionFocusDirection
+        : Vec3::zero();
+    snapshot.valid = true;
+    return snapshot.tiles;
 }
 
 void TerrainLayer::loadTile(const TileKey& key) {
@@ -336,8 +406,8 @@ void TerrainLayer::processPendingUploads() {
             pendingQueue_->emptyTiles.end());
         pendingQueue_->emptyTiles.clear();
 
-        // Limit terrain tile processing per frame to avoid GPU buffer spikes
-        constexpr size_t kMaxTerrainUploadsPerFrame = 2;
+        // Limit terrain tile processing per frame to avoid cache/mesh rebuild spikes.
+        const size_t kMaxTerrainUploadsPerFrame = cameraMoving_ ? 1 : 2;
         while (!pendingQueue_->queue.empty() && batch.size() < kMaxTerrainUploadsPerFrame) {
             batch.push_back(std::move(pendingQueue_->queue.front()));
             pendingQueue_->queue.pop_front();
@@ -349,7 +419,10 @@ void TerrainLayer::processPendingUploads() {
     for (const std::string& cacheKey : emptyCompleted) {
         requestedTiles_.erase(cacheKey);
     }
+    const double processBudgetMs = cameraMoving_ ? 1.0 : 3.0;
+    size_t processedBatchItems = 0;
     for (auto& item : batch) {
+        ++processedBatchItems;
         std::string cacheKey = terrainCacheKey(item.key);
 
         auto tile = std::make_unique<TerrainTile>(
@@ -359,18 +432,31 @@ void TerrainLayer::processPendingUploads() {
         requestedTiles_.erase(cacheKey);
         ++terrainGeneration_;
         ++uploaded;
+        if (perf::nowMs() - startMs >= processBudgetMs) {
+            break;
+        }
+    }
+    if (processedBatchItems < batch.size()) {
+        std::lock_guard<std::mutex> lock(pendingQueue_->mutex);
+        for (size_t i = batch.size(); i > processedBatchItems; --i) {
+            pendingQueue_->queue.push_front(std::move(batch[i - 1]));
+        }
+        queueAfter = pendingQueue_->queue.size();
     }
 
-    char detail[160];
+    char detail[192];
     std::snprintf(detail, sizeof(detail),
-        "queue=%zu->%zu batch=%zu uploaded=%d emptyDrain=%zu cached=%d gen=%llu",
+        "queue=%zu->%zu batch=%zu processed=%zu uploaded=%d emptyDrain=%zu cached=%d gen=%llu budget=%.1f moving=%d",
         queueBefore,
         queueAfter,
         batch.size(),
+        processedBatchItems,
         uploaded,
         emptyBefore,
         cachedTileCount(),
-        static_cast<unsigned long long>(terrainGeneration_));
+        static_cast<unsigned long long>(terrainGeneration_),
+        processBudgetMs,
+        cameraMoving_ ? 1 : 0);
     perf::logTiming(tilePlan_.frameId,
                     "TerrainLayer.processPendingUploads",
                     perf::nowMs() - startMs,

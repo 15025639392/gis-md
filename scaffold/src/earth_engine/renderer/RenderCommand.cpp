@@ -56,6 +56,10 @@ float uniformScalar(const RenderCommand& cmd, const std::string& name, float fal
 }
 
 bool surfaceTileBlendAllowed(const RenderCommand& cmd) {
+    if (cmd.hasSurfaceTileUniforms) {
+        return cmd.surfaceTileOpacity < 0.999f ||
+               cmd.surfaceTransitionOpacity < 0.999f;
+    }
     const float tileOpacity = uniformScalar(cmd, "u_tileOpacity", 1.0f);
     const float transitionOpacity = uniformScalar(cmd, "u_transitionOpacity", 1.0f);
     return tileOpacity < 0.999f || transitionOpacity < 0.999f;

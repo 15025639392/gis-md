@@ -72,6 +72,10 @@ public:
                                          float uvScaleX = 1.0f,
                                          float uvScaleY = 1.0f) const;
 
+    RenderCommand makeInstancedSurfaceTileCommand(Texture* texture,
+                                                  Buffer* instanceBuffer,
+                                                  int instanceCount) const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

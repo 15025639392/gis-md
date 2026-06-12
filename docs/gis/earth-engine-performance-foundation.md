@@ -4,6 +4,8 @@
 
 目标：在移动端优先保证 60 FPS 的交互跟手性，在不牺牲空间正确性、影像清晰度和可诊断性的前提下持续优化。
 
+长期架构边界见 `earth-engine-final-streaming-architecture.md`。所有性能改动应先判断属于主线程策略线、后台异步线还是 GPU/渲染层线，避免把可后台化或可批处理的工作继续堆在主线程。
+
 ## 基本原则
 
 - 性能不能靠降低地图清晰度获得，尤其不能把临时放宽 SSE 当作主策略。
@@ -196,6 +198,7 @@ variant 引入时必须记录：
 
 ## 相关文档
 
+- `earth-engine-final-streaming-architecture.md`
 - `performance-data-stability.md`
 - `graphics-pipeline.md`
 - `rendering-engine.md`

@@ -8,8 +8,139 @@
 #include "earth_engine/providers/TerrainProvider.h"
 
 #include <cmath>
+#include <algorithm>
+#include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
 
 using namespace earth_engine;
+
+namespace {
+
+double mixDouble(double a, double b, double t) {
+    return a + (b - a) * t;
+}
+
+float latitudeToMercatorYFloat(float latRad) {
+    constexpr float kMaxWebMercatorLat = 1.4844222297453324f;
+    const float lat = std::clamp(latRad, -kMaxWebMercatorLat, kMaxWebMercatorLat);
+    return (glm::pi<float>() -
+            std::log(std::tan(lat * 0.5f + glm::quarter_pi<float>()))) /
+           glm::two_pi<float>();
+}
+
+float mercatorYToLatitudeFloat(float y) {
+    return std::atan(std::sinh(glm::pi<float>() - glm::two_pi<float>() * y));
+}
+
+glm::vec3 cartographicToWgs84EcefFloat(float longitude, float latitude) {
+    const float cosLat = std::cos(latitude);
+    glm::vec3 n(
+        cosLat * std::cos(longitude),
+        cosLat * std::sin(longitude),
+        std::sin(latitude));
+    n = glm::normalize(n);
+
+    const glm::vec3 radiiSq(
+        6378137.0f * 6378137.0f,
+        6378137.0f * 6378137.0f,
+        6356752.314245f * 6356752.314245f);
+    glm::vec3 k = radiiSq * n;
+    const float gamma = std::sqrt(glm::dot(n, k));
+    return k / gamma;
+}
+
+Vec3 currentInstancedShaderRelativePositionFloatLike(const Rectangle& bounds,
+                                                     double u,
+                                                     double v,
+                                                     const Vec3& localOrigin) {
+    constexpr float kMaxWebMercatorLat = 1.4844222297453324f;
+    const float west = static_cast<float>(bounds.west());
+    const float south = static_cast<float>(bounds.south());
+    const float east = static_cast<float>(bounds.east());
+    const float north = static_cast<float>(bounds.north());
+    const float fu = static_cast<float>(u);
+    const float fv = static_cast<float>(v);
+
+    const float longitude = west + (east - west) * fu;
+    float latitude = 0.0f;
+    if (south >= -kMaxWebMercatorLat && north <= kMaxWebMercatorLat) {
+        const float northY = latitudeToMercatorYFloat(north);
+        const float southY = latitudeToMercatorYFloat(south);
+        latitude = mercatorYToLatitudeFloat(northY + (southY - northY) * fv);
+    } else {
+        latitude = north + (south - north) * fv;
+    }
+
+    const glm::vec3 world = cartographicToWgs84EcefFloat(longitude, latitude);
+    const glm::vec3 origin(
+        static_cast<float>(localOrigin.x()),
+        static_cast<float>(localOrigin.y()),
+        static_cast<float>(localOrigin.z()));
+    const glm::vec3 relative = world - origin;
+    return Vec3(relative.x, relative.y, relative.z);
+}
+
+Vec3 cornerPatchInstancedRelativePositionFloatLike(const Rectangle& bounds,
+                                                   double u,
+                                                   double v,
+                                                   const Vec3& localOrigin) {
+    const Vec3 nw = TileSurface::vertexForUnitUv(bounds, 0.0, 0.0).ecef - localOrigin;
+    const Vec3 ne = TileSurface::vertexForUnitUv(bounds, 1.0, 0.0).ecef - localOrigin;
+    const Vec3 sw = TileSurface::vertexForUnitUv(bounds, 0.0, 1.0).ecef - localOrigin;
+    const Vec3 se = TileSurface::vertexForUnitUv(bounds, 1.0, 1.0).ecef - localOrigin;
+
+    const glm::vec3 fnw(
+        static_cast<float>(nw.x()),
+        static_cast<float>(nw.y()),
+        static_cast<float>(nw.z()));
+    const glm::vec3 fne(
+        static_cast<float>(ne.x()),
+        static_cast<float>(ne.y()),
+        static_cast<float>(ne.z()));
+    const glm::vec3 fsw(
+        static_cast<float>(sw.x()),
+        static_cast<float>(sw.y()),
+        static_cast<float>(sw.z()));
+    const glm::vec3 fse(
+        static_cast<float>(se.x()),
+        static_cast<float>(se.y()),
+        static_cast<float>(se.z()));
+
+    const float fu = static_cast<float>(u);
+    const float fv = static_cast<float>(v);
+    const glm::vec3 north = fnw + (fne - fnw) * fu;
+    const glm::vec3 south = fsw + (fse - fsw) * fu;
+    const glm::vec3 relative = north + (south - north) * fv;
+    return Vec3(relative.x, relative.y, relative.z);
+}
+
+Vec3 cpuMeshUploadRelativePositionFloatLike(const Rectangle& bounds,
+                                            double u,
+                                            double v,
+                                            const Vec3& localOrigin) {
+    const Vec3 world = TileSurface::vertexForUnitUv(bounds, u, v).ecef;
+    const Vec3 relative = world - localOrigin;
+    return Vec3(
+        static_cast<float>(relative.x()),
+        static_cast<float>(relative.y()),
+        static_cast<float>(relative.z()));
+}
+
+Vec3 ellipsoidOriginForBounds(const Rectangle& bounds) {
+    double east = bounds.east();
+    if (bounds.crossesAntimeridian()) {
+        east += glm::two_pi<double>();
+    }
+    double longitude = mixDouble(bounds.west(), east, 0.5);
+    if (longitude > glm::pi<double>()) {
+        longitude -= glm::two_pi<double>();
+    }
+    const double latitude = mixDouble(bounds.south(), bounds.north(), 0.5);
+    return Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic::fromRadians(longitude, latitude, 0.0));
+}
+
+} // namespace
 
 TEST(TileSurfaceTest, UnitUvMapsTopLeftToNorthWestAndBottomRightToSouthEast) {
     auto scheme = TileScheme::createXYZWebMercator();
@@ -86,6 +217,50 @@ TEST(TileSurfaceTest, EllipsoidMeshHasExpectedGridAndOutwardTriangles) {
         const Vec3 center = (a + b + c) / 3.0;
         EXPECT_GT(n.dot(center), 0.0);
     }
+}
+
+TEST(TileSurfaceTest, CurrentInstancedShaderFloatEcefPathLosesNearGroundPrecision) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    Rectangle bounds = scheme->tileToRectangle(TileKey{"XYZ-WebMercator", 18, 212000, 107000});
+    Vec3 localOrigin = ellipsoidOriginForBounds(bounds);
+
+    double maxErrorMeters = 0.0;
+    for (double v : {0.0, 0.125, 0.25, 0.5, 0.75, 0.875, 1.0}) {
+        for (double u : {0.0, 0.125, 0.25, 0.5, 0.75, 0.875, 1.0}) {
+            const Vec3 cpuUploaded =
+                cpuMeshUploadRelativePositionFloatLike(bounds, u, v, localOrigin);
+            const Vec3 shaderLike =
+                currentInstancedShaderRelativePositionFloatLike(bounds, u, v, localOrigin);
+            maxErrorMeters = std::max(maxErrorMeters, cpuUploaded.distanceTo(shaderLike));
+        }
+    }
+
+    // The old path subtracts the tile origin in double before uploading small
+    // float positions. The current GLES instanced path computes two ECEF-sized
+    // float values in shader and subtracts them there, which is not reliable at
+    // near-ground camera heights.
+    EXPECT_GT(maxErrorMeters, 1.0);
+}
+
+TEST(TileSurfaceTest, TileLocalCornerPatchKeepsHighZoomNearGroundPrecision) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    Rectangle bounds = scheme->tileToRectangle(TileKey{"XYZ-WebMercator", 18, 212000, 107000});
+    Vec3 localOrigin = ellipsoidOriginForBounds(bounds);
+
+    double maxErrorMeters = 0.0;
+    for (double v : {0.0, 0.125, 0.25, 0.5, 0.75, 0.875, 1.0}) {
+        for (double u : {0.0, 0.125, 0.25, 0.5, 0.75, 0.875, 1.0}) {
+            const Vec3 cpuUploaded =
+                cpuMeshUploadRelativePositionFloatLike(bounds, u, v, localOrigin);
+            const Vec3 patch =
+                cornerPatchInstancedRelativePositionFloatLike(bounds, u, v, localOrigin);
+            maxErrorMeters = std::max(maxErrorMeters, cpuUploaded.distanceTo(patch));
+        }
+    }
+
+    // At high zoom the tile is small enough that a tile-local patch avoids
+    // ECEF-sized float subtraction while staying below near-ground visual error.
+    EXPECT_LT(maxErrorMeters, 0.25);
 }
 
 TEST(TileSurfaceTest, EllipsoidMeshClampsMinimumGridSize) {

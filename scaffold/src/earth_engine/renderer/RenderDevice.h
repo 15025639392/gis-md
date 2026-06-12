@@ -39,6 +39,10 @@ public:
     // ---- 资源创建 ----
     virtual std::unique_ptr<Texture> createTexture(const TextureDesc& desc) = 0;
     virtual std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) = 0;
+    virtual bool updateBuffer(Buffer* buffer,
+                              size_t offset,
+                              const void* data,
+                              size_t size) = 0;
     virtual std::unique_ptr<ShaderProgram> createShader(const ShaderDesc& desc) = 0;
     virtual std::unique_ptr<Framebuffer> createFramebuffer(const FramebufferDesc& desc) = 0;
 

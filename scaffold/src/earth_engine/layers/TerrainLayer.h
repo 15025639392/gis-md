@@ -65,6 +65,8 @@ public:
 private:
     void loadTile(const TileKey& key);
     void processPendingUploads();
+    const std::vector<TileKey>& requestCandidatesForFrame(const FrameState& frameState);
+    bool shouldReuseRequestCandidateSnapshot(const FrameState& frameState) const;
     std::string id_;
     bool visible_ = true;
     bool enabled_ = false;  // 默认关闭，由 Scene 启用
@@ -88,6 +90,20 @@ private:
     bool hasCameraState_ = false;
     bool cameraMoving_ = false;
     uint64_t lastPlanFrameId_ = 0;
+
+    struct RequestCandidateSnapshot {
+        std::vector<TileKey> tiles;
+        uint64_t planFrameId = 0;
+        uint64_t terrainGeneration = 0;
+        size_t requestedCount = 0;
+        size_t emptyCount = 0;
+        Vec3 cameraPosition = Vec3::zero();
+        Vec3 cameraDirection = Vec3::zero();
+        bool hasInteractionFocus = false;
+        Vec3 interactionFocusDirection = Vec3::zero();
+        bool valid = false;
+    };
+    RequestCandidateSnapshot requestCandidateSnapshot_;
 
     // 待上传队列
     struct PendingUpload {

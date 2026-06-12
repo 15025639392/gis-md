@@ -36,6 +36,13 @@ public:
         return std::make_unique<FakeBuffer>(desc.size);
     }
 
+    bool updateBuffer(Buffer* buffer,
+                      size_t offset,
+                      const void* data,
+                      size_t size) override {
+        return buffer && data && offset + size <= buffer->size();
+    }
+
     std::unique_ptr<ShaderProgram> createShader(const ShaderDesc&) override {
         return std::make_unique<FakeShaderProgram>();
     }

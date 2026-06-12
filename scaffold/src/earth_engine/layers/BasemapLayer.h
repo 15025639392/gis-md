@@ -177,6 +177,11 @@ private:
         bool terrainReady = false;
         bool terrainTransition = false;
     };
+    struct SurfaceInstanceBatchBuffer {
+        std::unique_ptr<Buffer> buffer;
+        size_t capacityInstances = 0;
+        uint64_t lastUsedFrame = 0;
+    };
     struct SurfaceMeshBuildStats {
         int hits = 0;
         int misses = 0;
@@ -207,6 +212,7 @@ private:
     RenderDevice* renderDevice_;
     TileTextureCache textureCache_;
     std::unordered_map<std::string, SurfaceGpuMesh> surfaceMeshCache_;
+    std::unordered_map<Texture*, SurfaceInstanceBatchBuffer> surfaceInstanceBatches_;
     std::deque<std::string> pendingSurfaceMeshEvictions_;
     std::unordered_set<std::string> pendingSurfaceMeshEvictionSet_;
     TilePlan tilePlan_;

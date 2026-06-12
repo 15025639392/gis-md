@@ -36,6 +36,20 @@ struct SurfaceGpuVertex {
     float texcoord[2];
 };
 
+struct SurfaceTileInstanceGpu {
+    float tileRect[4];       // west, south, east, north radians
+    float textureRect[4];    // u0, v0, uScale, vScale
+    float localOrigin[3];    // ECEF meters
+    float cameraRelativeOrigin[3];
+    float opacityTransitionWaterFlags[4];
+    float cornerNw[3];       // tile-local ECEF meters, CPU double-subtracted
+    float cornerNe[3];
+    float cornerSw[3];
+    float cornerSe[3];
+};
+static_assert(sizeof(SurfaceTileInstanceGpu) == 120,
+              "SurfaceTileInstanceGpu layout must match Renderer instanceStride");
+
 std::vector<SurfaceGpuVertex> makeSurfaceGpuVertices(const SurfaceTileMesh& mesh,
                                                      const Vec3& origin) {
     std::vector<SurfaceGpuVertex> vertices;
@@ -88,6 +102,14 @@ float transitionOpacityForTile(const TilePlan& plan, const TileKey& key) {
     return 1.0f;
 }
 
+void writeRelativeCorner(float out[3], const Rectangle& bounds, double u, double v,
+                         const Vec3& origin) {
+    const Vec3 relative = TileSurface::vertexForUnitUv(bounds, u, v).ecef - origin;
+    out[0] = static_cast<float>(relative.x());
+    out[1] = static_cast<float>(relative.y());
+    out[2] = static_cast<float>(relative.z());
+}
+
 bool isDescendantOf(TileKey candidate, const TileKey& ancestor) {
     if (candidate.schemeId != ancestor.schemeId || candidate.z <= ancestor.z) {
         return false;
@@ -120,6 +142,13 @@ double rectangleCenterLongitude(const Rectangle& bounds) {
         center -= glm::two_pi<double>();
     }
     return center;
+}
+
+Vec3 ellipsoidSurfaceOriginForBounds(const Rectangle& bounds) {
+    const double centerLng = rectangleCenterLongitude(bounds);
+    const double centerLat = (bounds.south() + bounds.north()) * 0.5;
+    return Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic::fromRadians(centerLng, centerLat, 0.0));
 }
 
 double viewImportancePriority(const TileScheme& scheme,
@@ -1461,6 +1490,10 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
     double boundsMs = 0.0;
     double uvMs = 0.0;
     double commandMs = 0.0;
+    double instanceBufferMs = 0.0;
+    size_t instanceBufferBytes = 0;
+    int instanceBufferCreates = 0;
+    int instanceBufferUpdates = 0;
     SurfaceMeshBuildStats meshStats;
     int visited = 0;
     int missingTexture = 0;
@@ -1470,6 +1503,20 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
     int meshBuildDeferred = 0;
     int meshParentFallback = 0;
     const size_t startCommands = commands.size();
+    struct InstanceBatch {
+        Texture* texture = nullptr;
+        std::vector<SurfaceTileInstanceGpu> instances;
+        bool blend = false;
+    };
+    std::vector<InstanceBatch> instanceBatches;
+    std::unordered_map<Texture*, size_t> instanceBatchByTexture;
+    constexpr int kInstancedSurfaceMinZoom = 14;
+    const double cameraHeightMeters =
+        Ellipsoid::WGS84().cartesianToCartographic(lastCameraPosition_).height();
+    const bool canUseInstancedEllipsoidSurface =
+        renderDevice_ &&
+        renderDevice_->backendType() == RenderDevice::Backend::OpenGLES &&
+        renderDevice_->supportsInstancing();
     std::unordered_set<TileKey> emittedMeshFallbackTargets;
     struct RenderOrderEntry {
         const RenderTileRef* renderTile = nullptr;
@@ -1539,10 +1586,70 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
                 : ImageryFallbackSource::Parent
         };
 
-        SurfaceGpuMesh* gpuMesh =
-            findSurfaceGpuMesh(key, bounds, terrainLayer, &meshStats);
         ImageryAttachment commandAttachment = attachment;
         Rectangle commandBounds = bounds;
+
+        bool useInstancedEllipsoidForTile =
+            canUseInstancedEllipsoidSurface && key.z >= kInstancedSurfaceMinZoom;
+        if (useInstancedEllipsoidForTile && terrainLayer) {
+            const double terrainLookupStartMs = perf::nowMs();
+            const TerrainTile* terrainTile = terrainLayer->findBestTileForBounds(commandBounds);
+            if (terrainTile && terrainTile->valid()) {
+                useInstancedEllipsoidForTile = false;
+            }
+            meshStats.terrainLookupMs += perf::nowMs() - terrainLookupStartMs;
+        }
+
+        if (useInstancedEllipsoidForTile) {
+            const Vec3 localOrigin = ellipsoidSurfaceOriginForBounds(commandBounds);
+            const Vec3 cameraRelativeToTileOrigin =
+                lastCameraPosition_ - localOrigin;
+            SurfaceTileInstanceGpu instance{};
+            instance.tileRect[0] = static_cast<float>(commandBounds.west());
+            instance.tileRect[1] = static_cast<float>(commandBounds.south());
+            instance.tileRect[2] = static_cast<float>(commandBounds.east());
+            instance.tileRect[3] = static_cast<float>(commandBounds.north());
+            instance.textureRect[0] = commandAttachment.uvOffsetU;
+            instance.textureRect[1] = commandAttachment.uvOffsetV;
+            instance.textureRect[2] = commandAttachment.uvScaleU;
+            instance.textureRect[3] = commandAttachment.uvScaleV;
+            instance.localOrigin[0] = static_cast<float>(localOrigin.x());
+            instance.localOrigin[1] = static_cast<float>(localOrigin.y());
+            instance.localOrigin[2] = static_cast<float>(localOrigin.z());
+            instance.cameraRelativeOrigin[0] =
+                static_cast<float>(cameraRelativeToTileOrigin.x());
+            instance.cameraRelativeOrigin[1] =
+                static_cast<float>(cameraRelativeToTileOrigin.y());
+            instance.cameraRelativeOrigin[2] =
+                static_cast<float>(cameraRelativeToTileOrigin.z());
+            instance.opacityTransitionWaterFlags[0] = commandAttachment.opacity;
+            instance.opacityTransitionWaterFlags[1] = renderTile.transitionOpacity;
+            instance.opacityTransitionWaterFlags[2] = 0.0f;
+            instance.opacityTransitionWaterFlags[3] = 0.0f;
+            writeRelativeCorner(instance.cornerNw, commandBounds, 0.0, 0.0, localOrigin);
+            writeRelativeCorner(instance.cornerNe, commandBounds, 1.0, 0.0, localOrigin);
+            writeRelativeCorner(instance.cornerSw, commandBounds, 0.0, 1.0, localOrigin);
+            writeRelativeCorner(instance.cornerSe, commandBounds, 1.0, 1.0, localOrigin);
+
+            auto [it, inserted] = instanceBatchByTexture.emplace(
+                commandAttachment.texture, instanceBatches.size());
+            if (inserted) {
+                InstanceBatch batch;
+                batch.texture = commandAttachment.texture;
+                instanceBatches.push_back(std::move(batch));
+            }
+            InstanceBatch& batch = instanceBatches[it->second];
+            batch.instances.push_back(instance);
+            const float effectiveOpacity =
+                commandAttachment.opacity *
+                std::clamp(renderTile.transitionOpacity, 0.0f, 1.0f);
+            batch.blend = batch.blend || effectiveOpacity < 0.999f;
+            ++emitted;
+            continue;
+        }
+
+        SurfaceGpuMesh* gpuMesh =
+            findSurfaceGpuMesh(key, bounds, terrainLayer, &meshStats);
 
         if (!gpuMesh &&
             meshBuildBudget > 0 &&
@@ -1595,6 +1702,7 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
                 break;
             }
         }
+
         if (!gpuMesh) continue;
 
         const double commandStartMs = perf::nowMs();
@@ -1635,15 +1743,77 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
         commandMs += perf::nowMs() - commandStartMs;
     }
 
+    for (const InstanceBatch& batch : instanceBatches) {
+        if (batch.instances.empty()) continue;
+        const size_t instanceCount = batch.instances.size();
+        const size_t instanceBytes = instanceCount * sizeof(SurfaceTileInstanceGpu);
+        instanceBufferBytes += instanceBytes;
+        SurfaceInstanceBatchBuffer& batchBuffer = surfaceInstanceBatches_[batch.texture];
+        const double instanceBufferStartMs = perf::nowMs();
+        if (!batchBuffer.buffer || batchBuffer.capacityInstances < instanceCount) {
+            size_t newCapacity = 16;
+            while (newCapacity < instanceCount) {
+                newCapacity *= 2;
+            }
+            BufferDesc instanceDesc;
+            instanceDesc.size = newCapacity * sizeof(SurfaceTileInstanceGpu);
+            instanceDesc.data = nullptr;
+            instanceDesc.usage = BufferDesc::Usage::Dynamic;
+            instanceDesc.type = BufferDesc::Type::Vertex;
+            batchBuffer.buffer = renderDevice_->createBuffer(instanceDesc);
+            batchBuffer.capacityInstances = batchBuffer.buffer ? newCapacity : 0;
+            ++instanceBufferCreates;
+        }
+        bool uploaded = false;
+        if (batchBuffer.buffer) {
+            uploaded = renderDevice_->updateBuffer(
+                batchBuffer.buffer.get(),
+                0,
+                batch.instances.data(),
+                instanceBytes);
+            if (uploaded) {
+                ++instanceBufferUpdates;
+                batchBuffer.lastUsedFrame = layerPlan_.frameId;
+            }
+        }
+        instanceBufferMs += perf::nowMs() - instanceBufferStartMs;
+        if (!uploaded) continue;
+        auto cmd = renderer.makeInstancedSurfaceTileCommand(
+            batch.texture,
+            batchBuffer.buffer.get(),
+            static_cast<int>(batch.instances.size()));
+        cmd.blend = batch.blend;
+        cmd.surfaceTileOpacity = 1.0f;
+        cmd.surfaceTransitionOpacity = batch.blend ? 0.5f : 1.0f;
+        cmd.surfaceGeneration = static_cast<float>(generation_);
+        cmd.frameId = layerPlan_.frameId;
+        cmd.generation = generation_;
+        commands.push_back(std::move(cmd));
+    }
+
+    for (auto it = surfaceInstanceBatches_.begin(); it != surfaceInstanceBatches_.end();) {
+        if (it->second.lastUsedFrame != layerPlan_.frameId) {
+            it = surfaceInstanceBatches_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
     char detail[512];
     std::snprintf(detail, sizeof(detail),
-        "visited=%d emitted=%d missingTex=%d deferred=%d meshParent=%d moving=%d meshBudgetMs=%.1f cmdDelta=%zu tex=%.2f bounds=%.2f uv=%.2f meshTotal=%.2f hit=%d miss=%d terrLookup=%.2f key=%.2f meshBuild=%.2f centroid=%.2f verts=%.2f vb=%.2f ib=%.2f wm=%.2f cmd=%.2f cache=%zu",
+        "visited=%d emitted=%d missingTex=%d deferred=%d meshParent=%d moving=%d camH=%.0f instBatch=%zu instCreate=%d instUpdate=%d instBytes=%zu instBuf=%.2f meshBudgetMs=%.1f cmdDelta=%zu tex=%.2f bounds=%.2f uv=%.2f meshTotal=%.2f hit=%d miss=%d terrLookup=%.2f key=%.2f meshBuild=%.2f centroid=%.2f verts=%.2f vb=%.2f ib=%.2f wm=%.2f cmd=%.2f cache=%zu instCache=%zu",
         visited,
         emitted,
         missingTexture,
         meshBuildDeferred,
         meshParentFallback,
         cameraMoving_ ? 1 : 0,
+        cameraHeightMeters,
+        instanceBatches.size(),
+        instanceBufferCreates,
+        instanceBufferUpdates,
+        instanceBufferBytes,
+        instanceBufferMs,
         meshBuildFrameBudgetMs,
         commands.size() - startCommands,
         textureLookupMs,
@@ -1661,7 +1831,8 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
         meshStats.indexBufferMs,
         meshStats.waterMaskMs,
         commandMs,
-        surfaceMeshCache_.size());
+        surfaceMeshCache_.size(),
+        surfaceInstanceBatches_.size());
     perf::logTiming(layerPlan_.frameId,
                     "BasemapLayer.buildRenderCommands",
                     perf::nowMs() - totalStartMs,
