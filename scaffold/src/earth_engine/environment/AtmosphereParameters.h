@@ -59,8 +59,8 @@ struct AtmosphereParameters {
     double ozoneDensityHeight = 25000.0;  // 臭氧层中心高度
     double ozoneDensityWidth = 15000.0;   // 臭氧层半宽
 
-    /// 太阳角半径（rad），~0.5°
-    double sunAngularRadius = 0.004685;
+    /// 太阳角半径（rad）。演示视觉上将太阳拉近 10 倍；光照方向仍使用天文方向。
+    double sunAngularRadius = 0.04685;
 
     /// 太阳强度倍数
     double sunIntensity = 0.78;

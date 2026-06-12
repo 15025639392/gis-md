@@ -187,17 +187,28 @@ void main() {
     color = mix(color, horizonColor, clamp(horizonAir * 0.22, 0.0, 0.22));
 
     // ---- Sun disk ----
-    float minSunCos = cos(u_sunAngularRadius);
     float cosTheta = dot(rayDir, sun);
-    float sunDisk = 0.0;
-    if (cosTheta >= minSunCos) {
-        sunDisk = 1.0;
-    } else {
-        float off = minSunCos - cosTheta;
-        sunDisk = exp(-off * 5000.0) * 0.5 + 1.0 / (0.05 + off * 120.0) * 0.015;
-    }
-    sunDisk = smoothstep(0.002, 1.0, sunDisk);
-    color += sunDisk * vec3(1.0, 0.95, 0.7) * u_sunIntensity * 0.4;
+    float sunRadius = max(u_sunAngularRadius, 0.0001);
+    float sunAngle = sqrt(max(2.0 * (1.0 - cosTheta), 0.0));
+    float sunR = sunAngle / sunRadius;
+
+    float diskMask = 1.0 - smoothstep(0.97, 1.03, sunR);
+    float limb = sqrt(max(1.0 - sunR * sunR, 0.0));
+    float limbDarkening = mix(0.68, 1.0, pow(limb, 0.42));
+    vec3 solarCore = vec3(1.0, 0.985, 0.90);
+    vec3 solarEdge = vec3(1.0, 0.72, 0.36);
+    vec3 diskColor = mix(solarEdge, solarCore, pow(limb, 0.28)) * limbDarkening;
+
+    float coronaR = max(sunR - 1.0, 0.0);
+    float innerCorona = exp(-coronaR * coronaR * 2.6);
+    float outerCorona = 1.0 / (1.0 + coronaR * coronaR * 18.0);
+    float forwardScatter = smoothstep(0.72, 1.0, cosTheta);
+    vec3 coronaColor = vec3(1.0, 0.80, 0.46) * innerCorona * 0.22 +
+                       vec3(0.72, 0.84, 1.0) * outerCorona * 0.045;
+    coronaColor *= forwardScatter * (0.45 + 0.55 * spaceFactor);
+
+    color += diskMask * diskColor * u_sunIntensity * 1.15;
+    color += coronaColor * u_sunIntensity;
 
     float skyAlpha = mix(1.0, 0.18, spaceFactor);
     float limbAlpha = pathScatterAmount * spaceFactor;
