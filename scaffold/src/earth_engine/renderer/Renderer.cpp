@@ -116,6 +116,11 @@ out vec4 fragColor;
 
 void main() {
     vec4 color = texture(u_tileTexture, v_texcoord);
+    float luma = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+    color.rgb = mix(vec3(luma), color.rgb, 1.08);
+    color.rgb = (color.rgb - vec3(0.5)) * 1.06 + vec3(0.5);
+    color.rgb = clamp(color.rgb, 0.0, 1.0);
+
     vec3 n = normalize(v_normal);
     float diffuse = max(dot(n, normalize(u_lightDir)), 0.0);
     color.rgb *= 0.45 + diffuse * 0.55;
@@ -291,6 +296,11 @@ fragment float4 tileFragment(VertexOut in [[stage_in]],
                              constant float& u_tileOpacity [[buffer(1)]],
                              constant float& u_transitionOpacity [[buffer(2)]]) {
     float4 color = u_tileTexture.sample(u_sampler, in.texcoord);
+    float luma = dot(color.rgb, float3(0.299, 0.587, 0.114));
+    color.rgb = mix(float3(luma), color.rgb, 1.08);
+    color.rgb = (color.rgb - float3(0.5)) * 1.06 + float3(0.5);
+    color.rgb = clamp(color.rgb, 0.0, 1.0);
+
     float3 n = normalize(in.normal);
     float diffuse = max(dot(n, normalize(u_lightDir)), 0.0);
     color.rgb *= 0.45 + diffuse * 0.55;

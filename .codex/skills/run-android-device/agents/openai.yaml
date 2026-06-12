@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Android Device"
+  short_description: "Build and launch on Android device"
+  default_prompt: "Use $run-android-device to build the Android app, install it on the connected device, and verify it is running."

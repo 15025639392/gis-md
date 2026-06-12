@@ -18,7 +18,7 @@
 3. 到 `project-conventions.md` 查本项目自己的规则。
 4. 如果任务涉及从 0 开发或重构地球引擎，先读 `earth-engine-roadmap.md`、`engine-infrastructure-contracts.md`、`technology-decisions.md`、`reference-architecture.md`、`core-api-contracts.md`、`task-breakdown.md`、`mvp-acceptance.md`、`implementation-prompts.md`。
 5. 如果任务涉及地球引擎模块，读 `earth-engine-architecture.md`、`earth-coordinate-systems.md`、`tiles-terrain-lod.md`、`multi-tile-schemes.md`、`rendering-engine.md`。
-6. 如果任务涉及数据接入、瓦片、底图渲染、样式、环境、交互、图形渲染、3D Tiles、算法、性能、测试或调试，再读对应专题：`data-provider-contracts.md`、`engine-data-catalog.md`、`basemap-tile-rendering.md`、`overlay-styling.md`、`environment-atmosphere-weather.md`、`interaction-system.md`、`graphics-pipeline.md`、`three-d-tiles.md`、`engine-math-algorithms.md`、`algorithm-implementation-details.md`、`performance-data-stability.md`、`engine-testing-acceptance.md`、`debugging-observability.md`。
+6. 如果任务涉及数据接入、瓦片、底图渲染、矢量瓦片、样式、环境、交互、图形渲染、3D Tiles、算法、性能、测试或调试，再读对应专题：`data-provider-contracts.md`、`engine-data-catalog.md`、`basemap-tile-rendering.md`、`vector-tile-map.md`、`overlay-styling.md`、`environment-atmosphere-weather.md`、`interaction-system.md`、`graphics-pipeline.md`、`three-d-tiles.md`、`engine-math-algorithms.md`、`algorithm-implementation-details.md`、`performance-data-stability.md`、`engine-testing-acceptance.md`、`debugging-observability.md`。
 7. 如果任务涉及多线程、异步任务或 GPU 上传线程边界，读 `threading-architecture.md`。
 8. 如果任务涉及网络请求、用户数据、文件 IO 或 API key 管理，读 `security.md`。
 9. 如果任务涉及离线缓存、数据包导入或后台下载，读 `offline-and-packaging.md`。
@@ -45,6 +45,7 @@
 - 瓦片、地形、LOD：`tiles-terrain-lod.md`
 - 多瓦片体系与无偏移叠加：`multi-tile-schemes.md`
 - 底图瓦片渲染编排：`basemap-tile-rendering.md`
+- 矢量瓦片地图展示与样式设计：`vector-tile-map.md`
 - SurfaceTile 正式主链路：`surface-tile-mainline.md`
 - 渲染管线：`rendering-engine.md`
 - 图形学与 GPU 管线：`graphics-pipeline.md`

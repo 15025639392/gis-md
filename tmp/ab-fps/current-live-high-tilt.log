@@ -1,0 +1,3 @@
+06-11 21:05:42.861 I/MinimalGlobe(30151): Debug high tilt view | slope=0.093 ellAlt=25282.3
+06-11 21:05:47.604 I/GLES    (30151): submit #87300: 110 commands, glError=0
+06-11 21:05:47.606 I/MinimalGlobe(30151): Frame 87300 | tiles vis=108 cached=1359 renderSurface=108 mesh=108 (terr=0 ellip=108 ready=0 terrParent=0 terrTrans=0) attach=108 exact=108 parent=0 stale=0 missingGen=0 | missing=0 unsupported=0 kicked=0 retained=0 visZ=2-11 targetZ=2-11 texZ=2-11 lod=280 eq=0 qRender=108 qWalk=100 qFrustum=196 qFade=0 qBal=0 qHz=0 qEq2=0 grp=108/0/0 gen=869 | sun=(0.16,0.92,0.36) | FPS=30.0 draw=110

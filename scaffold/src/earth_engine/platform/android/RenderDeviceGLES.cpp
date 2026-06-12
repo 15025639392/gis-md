@@ -7,8 +7,25 @@
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
+#include <string>
 
 namespace earth_engine {
+namespace {
+
+#ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
+#define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84FE
+#endif
+#ifndef GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT
+#define GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT 0x84FF
+#endif
+
+bool supportsTextureAnisotropy() {
+    const char* extensions = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
+    return extensions &&
+           std::string(extensions).find("GL_EXT_texture_filter_anisotropic") != std::string::npos;
+}
+
+} // namespace
 
 // ============================================================
 // GLTexture
@@ -139,7 +156,17 @@ std::unique_ptr<Texture> RenderDeviceGLES::createTexture(const TextureDesc& desc
                         ? (desc.mipmap ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR)
                         : GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
-                    desc.minFilter == TextureDesc::Filter::Linear ? GL_LINEAR : GL_NEAREST);
+                    desc.magFilter == TextureDesc::Filter::Linear ? GL_LINEAR : GL_NEAREST);
+
+    if (desc.maxAnisotropy > 1.0f && supportsTextureAnisotropy()) {
+        GLfloat deviceMaxAnisotropy = 1.0f;
+        glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &deviceMaxAnisotropy);
+        const GLfloat anisotropy = std::clamp(
+            static_cast<GLfloat>(desc.maxAnisotropy),
+            1.0f,
+            deviceMaxAnisotropy);
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, anisotropy);
+    }
 
     GLint wrapS = desc.wrapS == TextureDesc::Wrap::Repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE;
     GLint wrapT = desc.wrapT == TextureDesc::Wrap::Repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE;

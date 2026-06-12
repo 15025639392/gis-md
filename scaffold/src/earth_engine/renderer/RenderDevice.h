@@ -68,6 +68,8 @@ struct TextureDesc {
     size_t dataSize = 0;
     bool mipmap = true;
     enum class Filter { Linear, Nearest } minFilter = Filter::Linear;
+    Filter magFilter = Filter::Linear;
+    float maxAnisotropy = 1.0f;
     enum class Wrap { Clamp, Repeat } wrapS = Wrap::Clamp, wrapT = Wrap::Clamp;
 };
 

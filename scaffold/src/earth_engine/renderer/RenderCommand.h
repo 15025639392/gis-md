@@ -64,7 +64,7 @@ struct RenderCommand {
     std::array<float, 3> surfaceCameraRelativeOrigin{};
     std::array<float, 3> surfaceTileOrigin{};
     std::array<float, 3> surfaceFogColor{0.62f, 0.82f, 0.94f};
-    float surfaceFogDensity = 3.5e-5f;
+    float surfaceFogDensity = 2.4e-5f;
     float surfaceTileOpacity = 1.0f;
     float surfaceTransitionOpacity = 1.0f;
     float surfaceGeneration = 0.0f;

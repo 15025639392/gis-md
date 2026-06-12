@@ -92,6 +92,8 @@ RenderDeviceMetal::RenderDeviceMetal(void* metalLayer)
     MTLSamplerDescriptor* samplerDesc = [MTLSamplerDescriptor new];
     samplerDesc.minFilter = MTLSamplerMinMagFilterLinear;
     samplerDesc.magFilter = MTLSamplerMinMagFilterLinear;
+    samplerDesc.mipFilter = MTLSamplerMipFilterLinear;
+    samplerDesc.maxAnisotropy = 4;
     samplerDesc.sAddressMode = MTLSamplerAddressModeClampToEdge;
     samplerDesc.tAddressMode = MTLSamplerAddressModeClampToEdge;
     impl_->linearClampSampler = [impl_->device newSamplerStateWithDescriptor:samplerDesc];

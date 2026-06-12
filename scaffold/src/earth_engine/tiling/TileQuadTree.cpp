@@ -37,9 +37,18 @@ constexpr size_t kMaxRenderedNodes = 1000;
 constexpr double kOpenGlobusMaxHorizonDistanceSquared = 106876472875.63281;
 constexpr double kCesiumTerrainMapQuality = 0.25;
 constexpr double kCesiumTerrainMapWidth = 65.0;
-constexpr double kCesiumNativeMaximumSse = 16.0;
-constexpr double kCesiumNativeLowAltitudeMaximumSse = 10.0;
-constexpr double kCesiumNativeMidAltitudeMaximumSse = 12.0;
+constexpr double kCesiumNativeSpaceAltitudeMeters = 20000000.0;
+constexpr double kCesiumNativeMaximumSse = 12.0;
+constexpr double kCesiumNativeHighAltitudeMaximumSse = 9.0;
+constexpr double kCesiumNativeSpaceMaximumSse = 10.0;
+constexpr double kCesiumNativeLowAltitudeMaximumSse = 6.0;
+constexpr double kCesiumNativeMidAltitudeMaximumSse = 8.0;
+constexpr double kHighAltitudeMinZoomMeters = 1000000.0;
+constexpr double kSpaceViewMinZoomMeters = 8000000.0;
+constexpr int kHighAltitudeMinRenderableZoom = 3;
+constexpr int kSpaceViewMinRenderableZoom = 3;
+constexpr size_t kHighAltitudeMaxRenderedNodes = 384;
+constexpr size_t kSpaceViewMaxRenderedNodes = 256;
 
 int openGlobusGroupBaseY(int group, int tilesAtZoom) {
     return group * tilesAtZoom;
@@ -248,12 +257,43 @@ bool shouldApplyEqualZoom(const Camera& camera, double cameraHeightMeters) {
            cameraHeightMeters > kOpenGlobusMinEqualZoomAltitudeMeters;
 }
 
+bool shouldApplyEqualZoom(const Camera& camera,
+                          double cameraHeightMeters,
+                          size_t maxRenderedTiles) {
+    return maxRenderedTiles >= kMaxRenderedNodes &&
+           shouldApplyEqualZoom(camera, cameraHeightMeters);
+}
+
+size_t maxRenderedTilesForHeight(double cameraHeightMeters) {
+    if (cameraHeightMeters > kSpaceViewMinZoomMeters) {
+        return kSpaceViewMaxRenderedNodes;
+    }
+    if (cameraHeightMeters > kHighAltitudeMinZoomMeters) {
+        return kHighAltitudeMaxRenderedNodes;
+    }
+    return kMaxRenderedNodes;
+}
+
+int minimumRenderableZoom(double cameraHeightMeters) {
+    if (cameraHeightMeters > kSpaceViewMinZoomMeters) {
+        return kSpaceViewMinRenderableZoom;
+    }
+    if (cameraHeightMeters > kHighAltitudeMinZoomMeters) {
+        return kHighAltitudeMinRenderableZoom;
+    }
+    return kAlwaysSubdivideUntilZoom;
+}
+
 double maximumScreenSpaceError(const Camera& camera, double cameraHeightMeters) {
     double maximumSse = kCesiumNativeMaximumSse;
     if (cameraHeightMeters < 50000.0) {
         maximumSse = kCesiumNativeLowAltitudeMaximumSse;
     } else if (cameraHeightMeters < 250000.0) {
         maximumSse = kCesiumNativeMidAltitudeMaximumSse;
+    } else if (cameraHeightMeters < kCesiumNativeSpaceAltitudeMeters) {
+        maximumSse = kCesiumNativeHighAltitudeMaximumSse;
+    } else {
+        maximumSse = kCesiumNativeSpaceMaximumSse;
     }
 
     // Very oblique views can otherwise refine a long horizon strip too deeply.
@@ -261,9 +301,9 @@ double maximumScreenSpaceError(const Camera& camera, double cameraHeightMeters) 
     // this compact version keeps the same intent with a slope-based relaxation.
     const double slope = cameraSlope(camera);
     if (slope < 0.45) {
-        maximumSse += 6.0;
+        maximumSse += 4.0;
     } else if (slope < 0.65) {
-        maximumSse += 3.0;
+        maximumSse += 2.0;
     }
     return maximumSse;
 }
@@ -704,7 +744,9 @@ void TileNode::traverseImpl(const TileScheme& scheme,
     }
 
     const bool canSubdivide = key_.z < scheme.maxZoom();
-    const bool mustSubdivide = key_.z < std::max(scheme.minZoom(), kAlwaysSubdivideUntilZoom);
+    const bool mustSubdivide = key_.z < std::max(
+        scheme.minZoom(),
+        minimumRenderableZoom(cameraHeightMeters));
     double sse = 0.0;
     const bool refineForSse = canSubdivide && shouldSubdivide(
         camera,
@@ -888,6 +930,7 @@ TilePlan TileQuadTree::compute(const Camera& camera,
         cameraCart.latitude(),
         0.0);
     const Frustum frustum = camera.frustum(viewportWidthPixels, viewportHeightPixels);
+    const size_t maxRenderedTiles = maxRenderedTilesForHeight(cameraHeight);
 
     for (auto& root : roots_) {
         root->traverse(scheme,
@@ -899,7 +942,7 @@ TilePlan TileQuadTree::compute(const Camera& camera,
                        subCamera.latitude(),
                        true,
                        cameraHeight,
-                       kMaxRenderedNodes,
+                       maxRenderedTiles,
                        plan.visibleTiles,
                        renderedNodes);
     }
@@ -912,7 +955,7 @@ TilePlan TileQuadTree::compute(const Camera& camera,
     plan.maxLodSizePixels = kOpenGlobusMaxLodPixels;
 
     dedupeAndUpdateZoomStats(plan);
-    if (shouldApplyEqualZoom(camera, cameraHeight)) {
+    if (shouldApplyEqualZoom(camera, cameraHeight, maxRenderedTiles)) {
         plan.equalZoomApplied = true;
         applyOpenGlobusEqualZoomPass(scheme,
                                       camera,

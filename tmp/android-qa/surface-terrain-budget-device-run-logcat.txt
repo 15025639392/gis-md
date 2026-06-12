@@ -1,0 +1,337 @@
+06-12 12:35:48.741 I/BasemapLayer(11866): Tile uploaded: 14/13038/6773 256x256
+06-12 12:35:48.774 I/BasemapLayer(11866): Tile uploaded: 13/6519/3388 256x256
+06-12 12:35:48.775 I/BasemapLayer(11866): Tile uploaded: 14/13037/6773 256x256
+06-12 12:35:48.791 I/BasemapLayer(11866): Tile uploaded: 14/13037/6772 256x256
+06-12 12:35:48.791 I/BasemapLayer(11866): Tile uploaded: 14/13037/6771 256x256
+06-12 12:35:48.860 I/BasemapLayer(11866): Tile uploaded: 8/204/108 256x256
+06-12 12:35:49.042 I/BasemapLayer(11866): Tile uploaded: 14/13039/6775 256x256
+06-12 12:35:49.042 I/BasemapLayer(11866): Tile uploaded: 13/6520/3389 256x256
+06-12 12:35:49.058 I/BasemapLayer(11866): Tile uploaded: 14/13038/6775 256x256
+06-12 12:35:49.059 I/BasemapLayer(11866): Tile uploaded: 14/13039/6774 256x256
+06-12 12:35:49.092 I/BasemapLayer(11866): Tile uploaded: 13/6520/3388 256x256
+06-12 12:35:49.092 I/BasemapLayer(11866): Tile uploaded: 14/13038/6774 256x256
+06-12 12:35:49.109 I/BasemapLayer(11866): Tile uploaded: 15/26077/13547 256x256
+06-12 12:35:49.109 I/BasemapLayer(11866): Tile uploaded: 13/6521/3389 256x256
+06-12 12:35:49.127 I/BasemapLayer(11866): Tile uploaded: 9/407/215 256x256
+06-12 12:35:49.127 I/BasemapLayer(11866): Tile uploaded: 15/26077/13546 256x256
+06-12 12:35:49.143 I/BasemapLayer(11866): Tile uploaded: 15/26076/13546 256x256
+06-12 12:35:49.160 I/BasemapLayer(11866): Tile uploaded: 15/26076/13548 256x256
+06-12 12:35:49.161 I/BasemapLayer(11866): Tile uploaded: 15/26076/13547 256x256
+06-12 12:35:49.183 I/BasemapLayer(11866): Tile uploaded: 15/26076/13549 256x256
+06-12 12:35:49.207 I/BasemapLayer(11866): Tile uploaded: 15/26077/13549 256x256
+06-12 12:35:49.207 I/BasemapLayer(11866): Tile uploaded: 15/26077/13548 256x256
+06-12 12:35:49.290 I/EarthPerf(11866): frame=720 scope=BasemapLayer.processPendingUploads ms=0.007 layer=xyz-1590851704117573850 queue=0->0 batch=0 uploaded=0 failed=0 stale=0 textureCreate=0.00 cached=152
+06-12 12:35:49.290 I/EarthPerf(11866): frame=720 scope=BasemapLayer.applyPlan ms=0.119 layer=xyz-1590851704117573850 changed=0 dirty=0 rebuild=0.00 upload=0.08 visible=72 desired=56 render=56 request=2
+06-12 12:35:49.291 I/EarthPerf(11866): frame=720 scope=BasemapLayer.loadMissingTiles ms=0.037 layer=xyz-1590851704117573850 candidates=2 issued=0 inflight=0 cached=152
+06-12 12:35:49.291 I/EarthPerf(11866): frame=720 scope=BasemapLayerStack.update ms=1.934 grouping=0.01 tilePlan=1.72 apply=0.13 loadMissing=0.04 groups=1 layers=1
+06-12 12:35:49.292 I/EarthPerf(11866): frame=720 scope=TerrainLayer.update ms=1.885 upload=0.02 tilePlan=1.73 request=0.13 visible=78 issued=0 cached=0 inflight=18 empty=40 moving=1 reusedPlan=0 maxInflight=96
+06-12 12:35:49.292 I/EarthPerf(11866): frame=720 scope=Scene.update.total ms=3.882 camera=0.02 env=0.01 basemap=1.94 terrain=1.91
+06-12 12:35:49.301 I/EarthPerf(11866): frame=720 scope=BasemapLayer.buildRenderCommands ms=8.213 visited=56 emitted=54 missingTex=0 deferred=4 meshParent=2 moving=1 cmdDelta=54 tex=0.20 bounds=0.04 uv=0.05 meshTotal=7.36 hit=53 miss=1 terrLookup=0.00 key=0.28 meshBuild=5.44 centroid=0.30 verts=0.89 vb=0.31 ib=0.12 wm=0.00 cmd=0.10 cache=160
+06-12 12:35:49.302 I/EarthPerf(11866): frame=720 scope=Scene.render.buildBreakdown ms=8.539 sky=0.02 atmo=0.02 layers=8.26 fallback=0.00 vector=0.00 debug=0.00 mvp=0.03 sort=0.11 surfDiag=0.00 validate=0.01 diag=0.06 commands=56
+06-12 12:35:49.302 I/EarthPerf(11866): frame=720 scope=Scene.render.total ms=9.628 build=8.54 submit=1.07 draw=56 surface=56 mesh=160
+06-12 12:35:49.302 I/EarthPerf(11866): frame=720 scope=Engine.render.total ms=13.798 begin=0.14 update=3.89 render=9.63 submit=1.07 end=0.14 draw=56 tiles=72
+06-12 12:35:49.307 I/EarthPerf(11866): frame=720 scope=TerrainLayer.processPendingUploads ms=0.014 queue=0->0 batch=0 uploaded=0 emptyDrain=0 cached=0 gen=0
+06-12 12:35:49.593 I/BasemapLayer(11866): Tile uploaded: 8/203/109 256x256
+06-12 12:35:49.594 I/BasemapLayer(11866): Tile uploaded: 3/5/5 256x256
+06-12 12:35:49.725 I/BasemapLayer(11866): Tile uploaded: 9/406/214 256x256
+06-12 12:35:49.725 I/BasemapLayer(11866): Tile uploaded: 9/406/215 256x256
+06-12 12:35:49.743 I/BasemapLayer(11866): Tile uploaded: 4/11/9 256x256
+06-12 12:35:49.743 I/BasemapLayer(11866): Tile uploaded: 14/13038/6776 256x256
+06-12 12:35:49.776 I/BasemapLayer(11866): Tile uploaded: 14/13039/6776 256x256
+06-12 12:35:49.776 I/BasemapLayer(11866): Tile uploaded: 14/13038/6777 256x256
+06-12 12:35:49.807 I/BasemapLayer(11866): Tile uploaded: 8/202/109 256x256
+06-12 12:35:49.808 I/BasemapLayer(11866): Tile uploaded: 5/24/15 256x256
+06-12 12:35:49.824 I/BasemapLayer(11866): Tile uploaded: 15/26078/13549 256x256
+06-12 12:35:49.825 I/BasemapLayer(11866): Tile uploaded: 14/13037/6777 256x256
+06-12 12:35:49.857 I/BasemapLayer(11866): Tile uploaded: 13/6518/3389 256x256
+06-12 12:35:49.857 I/BasemapLayer(11866): Tile uploaded: 14/13039/6777 256x256
+06-12 12:35:49.891 I/BasemapLayer(11866): Tile uploaded: 14/13037/6776 256x256
+06-12 12:35:49.891 I/BasemapLayer(11866): Tile uploaded: 15/26077/13550 256x256
+06-12 12:35:49.907 I/BasemapLayer(11866): Tile uploaded: 15/26076/13551 256x256
+06-12 12:35:49.907 I/BasemapLayer(11866): Tile uploaded: 15/26076/13550 256x256
+06-12 12:35:49.923 I/BasemapLayer(11866): Tile uploaded: 14/13036/6777 256x256
+06-12 12:35:49.923 I/BasemapLayer(11866): Tile uploaded: 14/13036/6776 256x256
+06-12 12:35:49.957 I/BasemapLayer(11866): Tile uploaded: 16/52154/27097 256x256
+06-12 12:35:49.957 I/BasemapLayer(11866): Tile uploaded: 16/52155/27096 256x256
+06-12 12:35:49.973 I/BasemapLayer(11866): Tile uploaded: 15/26077/13551 256x256
+06-12 12:35:49.974 I/BasemapLayer(11866): Tile uploaded: 9/406/213 256x256
+06-12 12:35:50.007 I/EarthPerf(11866): frame=757 scope=Scene.render.total ms=25.448 build=24.52 submit=0.92 draw=64 surface=62 mesh=185
+06-12 12:35:50.007 I/EarthPerf(11866): frame=757 scope=Engine.render.total ms=36.583 begin=0.16 update=10.78 render=25.48 submit=0.92 end=0.16 draw=64 tiles=81
+06-12 12:35:50.025 I/BasemapLayer(11866): Tile uploaded: 16/52155/27097 256x256
+06-12 12:35:50.026 I/BasemapLayer(11866): Tile uploaded: 16/52154/27096 256x256
+06-12 12:35:50.059 I/EarthPerf(11866): frame=758 scope=Engine.render.total ms=37.414 begin=0.15 update=12.63 render=24.48 submit=1.02 end=0.15 draw=67 tiles=81
+06-12 12:35:50.075 I/BasemapLayer(11866): Tile uploaded: 8/202/108 256x256
+06-12 12:35:50.076 I/BasemapLayer(11866): Tile uploaded: 16/52154/27095 256x256
+06-12 12:35:50.141 I/BasemapLayer(11866): Tile uploaded: 15/26078/13550 256x256
+06-12 12:35:50.158 I/BasemapLayer(11866): Tile uploaded: 15/26078/13551 256x256
+06-12 12:35:50.158 I/BasemapLayer(11866): Tile uploaded: 16/52154/27099 256x256
+06-12 12:35:50.240 I/BasemapLayer(11866): Tile uploaded: 16/52155/27099 256x256
+06-12 12:35:50.256 I/BasemapLayer(11866): Tile uploaded: 12/3258/1697 256x256
+06-12 12:35:50.257 I/BasemapLayer(11866): Tile uploaded: 12/3258/1696 256x256
+06-12 12:35:50.272 I/BasemapLayer(11866): Tile uploaded: 16/52154/27101 256x256
+06-12 12:35:50.306 I/BasemapLayer(11866): Tile uploaded: 16/52155/27100 256x256
+06-12 12:35:50.323 I/BasemapLayer(11866): Tile uploaded: 16/52155/27101 256x256
+06-12 12:35:50.356 I/BasemapLayer(11866): Tile uploaded: 16/52156/27101 256x256
+06-12 12:35:50.357 I/BasemapLayer(11866): Tile uploaded: 12/3260/1697 256x256
+06-12 12:35:50.389 I/BasemapLayer(11866): Tile uploaded: 15/26078/13553 256x256
+06-12 12:35:50.423 I/BasemapLayer(11866): Tile uploaded: 15/26079/13553 256x256
+06-12 12:35:50.439 I/BasemapLayer(11866): Tile uploaded: 13/6519/3390 256x256
+06-12 12:35:50.440 I/BasemapLayer(11866): Tile uploaded: 15/26077/13553 256x256
+06-12 12:35:50.456 I/BasemapLayer(11866): Tile uploaded: 13/6518/3390 256x256
+06-12 12:35:50.456 I/BasemapLayer(11866): Tile uploaded: 13/6519/3391 256x256
+06-12 12:35:50.473 I/BasemapLayer(11866): Tile uploaded: 15/26077/13552 256x256
+06-12 12:35:50.474 I/BasemapLayer(11866): Tile uploaded: 16/52156/27103 256x256
+06-12 12:35:50.506 I/BasemapLayer(11866): Tile uploaded: 13/6518/3391 256x256
+06-12 12:35:50.506 I/BasemapLayer(11866): Tile uploaded: 15/26078/13552 256x256
+06-12 12:35:50.523 I/BasemapLayer(11866): Tile uploaded: 10/814/427 256x256
+06-12 12:35:50.556 I/BasemapLayer(11866): Tile uploaded: 10/815/427 256x256
+06-12 12:35:50.557 I/BasemapLayer(11866): Tile uploaded: 16/52156/27102 256x256
+06-12 12:35:50.589 I/BasemapLayer(11866): Tile uploaded: 9/408/215 256x256
+06-12 12:35:50.622 I/BasemapLayer(11866): Tile uploaded: 9/409/214 256x256
+06-12 12:35:50.623 I/BasemapLayer(11866): Tile uploaded: 16/52155/27103 256x256
+06-12 12:35:50.656 I/BasemapLayer(11866): Tile uploaded: 9/409/215 256x256
+06-12 12:35:50.656 I/BasemapLayer(11866): Tile uploaded: 14/13038/6778 256x256
+06-12 12:35:50.673 I/BasemapLayer(11866): Tile uploaded: 13/6520/3390 256x256
+06-12 12:35:50.673 I/BasemapLayer(11866): Tile uploaded: 14/13039/6779 256x256
+06-12 12:35:50.689 I/BasemapLayer(11866): Tile uploaded: 13/6520/3391 256x256
+06-12 12:35:50.705 I/BasemapLayer(11866): Tile uploaded: 14/13039/6778 256x256
+06-12 12:35:50.706 I/BasemapLayer(11866): Tile uploaded: 16/52156/27105 256x256
+06-12 12:35:50.723 I/BasemapLayer(11866): Tile uploaded: 14/13038/6779 256x256
+06-12 12:35:50.723 I/BasemapLayer(11866): Tile uploaded: 16/52156/27104 256x256
+06-12 12:35:50.772 I/BasemapLayer(11866): Tile uploaded: 16/52157/27105 256x256
+06-12 12:35:50.806 I/BasemapLayer(11866): Tile uploaded: 14/13040/6779 256x256
+06-12 12:35:50.823 I/BasemapLayer(11866): Tile uploaded: 15/26078/13555 256x256
+06-12 12:35:51.072 I/BasemapLayer(11866): Tile uploaded: 15/26079/13557 256x256
+06-12 12:35:51.072 I/BasemapLayer(11866): Tile uploaded: 15/26078/13556 256x256
+06-12 12:35:51.106 I/BasemapLayer(11866): Tile uploaded: 15/26078/13557 256x256
+06-12 12:35:51.122 I/BasemapLayer(11866): Tile uploaded: 15/26079/13556 256x256
+06-12 12:35:51.172 I/BasemapLayer(11866): Tile uploaded: 15/26077/13557 256x256
+06-12 12:35:51.172 I/BasemapLayer(11866): Tile uploaded: 16/52157/27111 256x256
+06-12 12:35:51.205 I/BasemapLayer(11866): Tile uploaded: 16/52157/27110 256x256
+06-12 12:35:51.205 I/BasemapLayer(11866): Tile uploaded: 16/52158/27111 256x256
+06-12 12:35:51.222 I/BasemapLayer(11866): Tile uploaded: 16/52158/27110 256x256
+06-12 12:35:51.238 I/BasemapLayer(11866): Tile uploaded: 16/52156/27111 256x256
+06-12 12:35:51.388 I/BasemapLayer(11866): Tile uploaded: 14/13039/6780 256x256
+06-12 12:35:51.388 I/BasemapLayer(11866): Tile uploaded: 14/13039/6781 256x256
+06-12 12:35:51.405 I/BasemapLayer(11866): Tile uploaded: 14/13038/6780 256x256
+06-12 12:35:51.405 I/BasemapLayer(11866): Tile uploaded: 16/52157/27112 256x256
+06-12 12:35:51.439 I/BasemapLayer(11866): Tile uploaded: 16/52158/27113 256x256
+06-12 12:35:51.439 I/BasemapLayer(11866): Tile uploaded: 14/13038/6781 256x256
+06-12 12:35:51.455 I/BasemapLayer(11866): Tile uploaded: 16/52157/27113 256x256
+06-12 12:35:51.455 I/BasemapLayer(11866): Tile uploaded: 16/52158/27112 256x256
+06-12 12:35:51.472 I/BasemapLayer(11866): Tile uploaded: 4/11/8 256x256
+06-12 12:35:51.472 I/BasemapLayer(11866): Tile uploaded: 16/52156/27113 256x256
+06-12 12:35:51.591 I/BasemapLayer(11866): Tile uploaded: 17/104316/54221 256x256
+06-12 12:35:51.608 I/BasemapLayer(11866): Tile uploaded: 17/104314/54221 256x256
+06-12 12:35:51.624 I/BasemapLayer(11866): Tile uploaded: 12/3261/1697 256x256
+06-12 12:35:51.624 I/BasemapLayer(11866): Tile uploaded: 17/104315/54221 256x256
+06-12 12:35:51.660 I/BasemapLayer(11866): Tile uploaded: 17/104315/54218 256x256
+06-12 12:35:51.692 I/BasemapLayer(11866): Tile uploaded: 17/104315/54220 256x256
+06-12 12:35:51.707 I/BasemapLayer(11866): Tile uploaded: 17/104314/54220 256x256
+06-12 12:35:51.735 I/EarthPerf(11866): frame=835 scope=Engine.render.total ms=31.450 begin=0.83 update=8.46 render=22.02 submit=0.62 end=0.14 draw=58 tiles=72
+06-12 12:35:51.822 I/EarthPerf(11866): frame=840 scope=BasemapLayer.processPendingUploads ms=0.011 layer=xyz-1590851704117573850 queue=0->0 batch=0 uploaded=0 failed=0 stale=0 textureCreate=0.00 cached=260
+06-12 12:35:51.822 I/EarthPerf(11866): frame=840 scope=BasemapLayer.applyPlan ms=0.187 layer=xyz-1590851704117573850 changed=0 dirty=0 rebuild=0.00 upload=0.12 visible=72 desired=56 render=56 request=0
+06-12 12:35:51.822 I/EarthPerf(11866): frame=840 scope=BasemapLayer.loadMissingTiles ms=0.015 layer=xyz-1590851704117573850 candidates=0 issued=0 inflight=1 cached=260
+06-12 12:35:51.822 I/EarthPerf(11866): frame=840 scope=BasemapLayerStack.update ms=3.447 grouping=0.02 tilePlan=3.15 apply=0.20 loadMissing=0.03 groups=1 layers=1
+06-12 12:35:51.827 I/EarthPerf(11866): frame=840 scope=TerrainLayer.update ms=4.305 upload=0.02 tilePlan=3.94 request=0.34 visible=76 issued=0 cached=0 inflight=11 empty=48 moving=0 reusedPlan=0 maxInflight=128
+06-12 12:35:51.827 I/EarthPerf(11866): frame=840 scope=Scene.update.total ms=7.844 camera=0.00 env=0.02 basemap=3.46 terrain=4.36
+06-12 12:35:51.828 I/EarthPerf(11866): frame=840 scope=BasemapLayer.buildRenderCommands ms=1.482 visited=56 emitted=56 missingTex=0 deferred=0 meshParent=0 moving=0 cmdDelta=56 tex=0.33 bounds=0.08 uv=0.09 meshTotal=0.52 hit=56 miss=0 terrLookup=0.00 key=0.51 meshBuild=0.00 centroid=0.00 verts=0.00 vb=0.00 ib=0.00 wm=0.00 cmd=0.17 cache=258
+06-12 12:35:51.830 I/EarthPerf(11866): frame=840 scope=Scene.render.buildBreakdown ms=2.080 sky=0.05 atmo=0.05 layers=1.52 fallback=0.00 vector=0.00 debug=0.00 mvp=0.05 sort=0.22 surfDiag=0.00 validate=0.01 diag=0.12 commands=58
+06-12 12:35:51.830 I/EarthPerf(11866): frame=840 scope=Scene.render.total ms=3.446 build=2.08 submit=1.35 draw=58 surface=56 mesh=258
+06-12 12:35:51.830 I/EarthPerf(11866): frame=840 scope=Engine.render.total ms=11.636 begin=0.19 update=7.86 render=3.45 submit=1.35 end=0.14 draw=58 tiles=72
+06-12 12:35:51.838 I/EarthPerf(11866): frame=840 scope=TerrainLayer.processPendingUploads ms=0.013 queue=0->0 batch=0 uploaded=0 emptyDrain=0 cached=0 gen=0
+06-12 12:35:52.007 I/BasemapLayer(11866): Tile uploaded: 14/13040/6781 256x256
+06-12 12:35:52.008 I/BasemapLayer(11866): Tile uploaded: 14/13040/6780 256x256
+06-12 12:35:52.071 I/BasemapLayer(11866): Tile uploaded: 15/26078/13558 256x256
+06-12 12:35:52.072 I/BasemapLayer(11866): Tile uploaded: 15/26079/13559 256x256
+06-12 12:35:52.087 I/BasemapLayer(11866): Tile uploaded: 15/26080/13559 256x256
+06-12 12:35:52.087 I/BasemapLayer(11866): Tile uploaded: 15/26080/13558 256x256
+06-12 12:35:52.137 I/BasemapLayer(11866): Tile uploaded: 16/52158/27114 256x256
+06-12 12:35:52.138 I/BasemapLayer(11866): Tile uploaded: 16/52157/27115 256x256
+06-12 12:35:52.155 I/BasemapLayer(11866): Tile uploaded: 15/26079/13558 256x256
+06-12 12:35:52.155 I/BasemapLayer(11866): Tile uploaded: 16/52157/27114 256x256
+06-12 12:35:52.187 I/BasemapLayer(11866): Tile uploaded: 16/52158/27115 256x256
+06-12 12:35:52.188 I/BasemapLayer(11866): Tile uploaded: 15/26078/13559 256x256
+06-12 12:35:52.204 I/BasemapLayer(11866): Tile uploaded: 16/52159/27115 256x256
+06-12 12:35:52.204 I/BasemapLayer(11866): Tile uploaded: 16/52159/27114 256x256
+06-12 12:35:52.237 I/BasemapLayer(11866): Tile uploaded: 17/104316/54227 256x256
+06-12 12:35:52.237 I/BasemapLayer(11866): Tile uploaded: 17/104317/54227 256x256
+06-12 12:35:52.253 I/BasemapLayer(11866): Tile uploaded: 17/104315/54227 256x256
+06-12 12:35:52.287 I/BasemapLayer(11866): Tile uploaded: 17/104316/54225 256x256
+06-12 12:35:52.436 I/BasemapLayer(11866): Tile uploaded: 17/104316/54228 256x256
+06-12 12:35:52.454 I/BasemapLayer(11866): Tile uploaded: 17/104317/54229 256x256
+06-12 12:35:52.455 I/BasemapLayer(11866): Tile uploaded: 17/104316/54229 256x256
+06-12 12:35:52.521 I/BasemapLayer(11866): Tile uploaded: 16/52159/27117 256x256
+06-12 12:35:52.521 I/BasemapLayer(11866): Tile uploaded: 16/52158/27116 256x256
+06-12 12:35:52.536 I/BasemapLayer(11866): Tile uploaded: 15/26079/13561 256x256
+06-12 12:35:52.553 I/BasemapLayer(11866): Tile uploaded: 16/52158/27117 256x256
+06-12 12:35:52.571 I/BasemapLayer(11866): Tile uploaded: 15/26078/13561 256x256
+06-12 12:35:52.572 I/BasemapLayer(11866): Tile uploaded: 15/26079/13560 256x256
+06-12 12:35:52.620 I/BasemapLayer(11866): Tile uploaded: 15/26080/13561 256x256
+06-12 12:35:52.653 I/BasemapLayer(11866): Tile uploaded: 15/26080/13560 256x256
+06-12 12:35:52.654 I/BasemapLayer(11866): Tile uploaded: 13/6519/3392 256x256
+06-12 12:35:52.686 I/BasemapLayer(11866): Tile uploaded: 13/6519/3393 256x256
+06-12 12:35:52.704 I/BasemapLayer(11866): Tile uploaded: 16/52159/27119 256x256
+06-12 12:35:52.720 I/BasemapLayer(11866): Tile uploaded: 13/6521/3393 256x256
+06-12 12:35:52.754 I/BasemapLayer(11866): Tile uploaded: 13/6520/3392 256x256
+06-12 12:35:52.754 I/BasemapLayer(11866): Tile uploaded: 13/6520/3393 256x256
+06-12 12:35:52.770 I/BasemapLayer(11866): Tile uploaded: 14/13039/6782 256x256
+06-12 12:35:52.787 I/BasemapLayer(11866): Tile uploaded: 14/13039/6783 256x256
+06-12 12:35:52.787 I/BasemapLayer(11866): Tile uploaded: 14/13040/6782 256x256
+06-12 12:35:52.803 I/BasemapLayer(11866): Tile uploaded: 14/13040/6783 256x256
+06-12 12:35:52.804 I/BasemapLayer(11866): Tile uploaded: 15/26079/13563 256x256
+06-12 12:35:52.837 I/BasemapLayer(11866): Tile uploaded: 16/52159/27121 256x256
+06-12 12:35:52.837 I/BasemapLayer(11866): Tile uploaded: 15/26079/13562 256x256
+06-12 12:35:52.870 I/BasemapLayer(11866): Tile uploaded: 14/13041/6783 256x256
+06-12 12:35:52.871 I/BasemapLayer(11866): Tile uploaded: 16/52159/27120 256x256
+06-12 12:35:52.903 I/BasemapLayer(11866): Tile uploaded: 15/26081/13563 256x256
+06-12 12:35:52.903 I/BasemapLayer(11866): Tile uploaded: 16/52159/27123 256x256
+06-12 12:35:52.919 I/BasemapLayer(11866): Tile uploaded: 15/26080/13563 256x256
+06-12 12:35:52.920 I/BasemapLayer(11866): Tile uploaded: 15/26080/13562 256x256
+06-12 12:35:52.936 I/BasemapLayer(11866): Tile uploaded: 16/52160/27123 256x256
+06-12 12:35:52.936 I/BasemapLayer(11866): Tile uploaded: 16/52159/27122 256x256
+06-12 12:35:52.953 I/BasemapLayer(11866): Tile uploaded: 17/104319/54243 256x256
+06-12 12:35:53.087 I/BasemapLayer(11866): Tile uploaded: 16/52160/27124 256x256
+06-12 12:35:53.103 I/MinimalGlobe(11866): Frame 900 | tiles vis=78 cached=317 renderSurface=49 mesh=307 (terr=0 ellip=307 ready=0 terrParent=0 terrTrans=0) attach=49 exact=49 parent=0 stale=0 missingGen=0 | missing=0 unsupported=16 kicked=20 retained=0 visZ=2-17 targetZ=2-16 texZ=2-16 lod=282 eq=0 qRender=78 qWalk=102 qFrustum=122 qFade=0 qBal=4 qHz=0 qEq2=0 grp=62/0/16 gen=293 | sun=(0.03,0.93,0.36) | FPS=49.9 draw=50
+06-12 12:35:53.120 I/BasemapLayer(11866): Tile uploaded: 11/1630/851 256x256
+06-12 12:35:53.136 I/BasemapLayer(11866): Tile uploaded: 11/1630/850 256x256
+06-12 12:35:53.152 I/BasemapLayer(11866): Tile uploaded: 11/1631/850 256x256
+06-12 12:35:53.153 I/BasemapLayer(11866): Tile uploaded: 11/1629/850 256x256
+06-12 12:35:53.169 I/BasemapLayer(11866): Tile uploaded: 15/26080/13565 256x256
+06-12 12:35:53.170 I/BasemapLayer(11866): Tile uploaded: 11/1629/851 256x256
+06-12 12:35:53.186 I/BasemapLayer(11866): Tile uploaded: 15/26080/13564 256x256
+06-12 12:35:53.186 I/BasemapLayer(11866): Tile uploaded: 11/1631/851 256x256
+06-12 12:35:53.203 I/BasemapLayer(11866): Tile uploaded: 15/26079/13564 256x256
+06-12 12:35:53.203 I/BasemapLayer(11866): Tile uploaded: 15/26079/13565 256x256
+06-12 12:35:53.237 I/BasemapLayer(11866): Tile uploaded: 15/26081/13564 256x256
+06-12 12:35:53.237 I/BasemapLayer(11866): Tile uploaded: 15/26081/13565 256x256
+06-12 12:35:53.253 I/BasemapLayer(11866): Tile uploaded: 16/52160/27127 256x256
+06-12 12:35:53.253 I/BasemapLayer(11866): Tile uploaded: 16/52159/27127 256x256
+06-12 12:35:53.286 I/BasemapLayer(11866): Tile uploaded: 16/52161/27127 256x256
+06-12 12:35:53.303 I/BasemapLayer(11866): Tile uploaded: 16/52160/27126 256x256
+06-12 12:35:53.336 I/BasemapLayer(11866): Tile uploaded: 10/816/427 256x256
+06-12 12:35:53.336 I/BasemapLayer(11866): Tile uploaded: 16/52161/27126 256x256
+06-12 12:35:53.370 I/BasemapLayer(11866): Tile uploaded: 10/816/426 256x256
+06-12 12:35:53.370 I/BasemapLayer(11866): Tile uploaded: 10/817/427 256x256
+06-12 12:35:53.403 I/BasemapLayer(11866): Tile uploaded: 17/104321/54253 256x256
+06-12 12:35:53.470 I/BasemapLayer(11866): Tile uploaded: 16/52160/27129 256x256
+06-12 12:35:53.502 I/BasemapLayer(11866): Tile uploaded: 16/52160/27128 256x256
+06-12 12:35:53.519 I/BasemapLayer(11866): Tile uploaded: 16/52161/27129 256x256
+06-12 12:35:53.519 I/BasemapLayer(11866): Tile uploaded: 16/52161/27128 256x256
+06-12 12:35:53.569 I/BasemapLayer(11866): Tile uploaded: 10/817/426 256x256
+06-12 12:35:53.603 I/BasemapLayer(11866): Tile uploaded: 17/104322/54255 256x256
+06-12 12:35:53.603 I/BasemapLayer(11866): Tile uploaded: 14/13040/6785 256x256
+06-12 12:35:53.619 I/BasemapLayer(11866): Tile uploaded: 14/13041/6785 256x256
+06-12 12:35:53.639 I/BasemapLayer(11866): Tile uploaded: 14/13041/6784 256x256
+06-12 12:35:53.639 I/BasemapLayer(11866): Tile uploaded: 14/13040/6784 256x256
+06-12 12:35:53.654 I/BasemapLayer(11866): Tile uploaded: 14/13039/6785 256x256
+06-12 12:35:53.654 I/BasemapLayer(11866): Tile uploaded: 14/13039/6784 256x256
+06-12 12:35:53.685 I/BasemapLayer(11866): Tile uploaded: 15/26081/13567 256x256
+06-12 12:35:53.686 I/BasemapLayer(11866): Tile uploaded: 15/26080/13566 256x256
+06-12 12:35:53.702 I/BasemapLayer(11866): Tile uploaded: 15/26080/13567 256x256
+06-12 12:35:54.118 I/BasemapLayer(11866): Tile uploaded: 15/26080/13568 256x256
+06-12 12:35:54.136 I/BasemapLayer(11866): Tile uploaded: 15/26081/13569 256x256
+06-12 12:35:54.169 I/BasemapLayer(11866): Tile uploaded: 15/26081/13568 256x256
+06-12 12:35:54.170 I/BasemapLayer(11866): Tile uploaded: 15/26080/13569 256x256
+06-12 12:35:54.202 I/BasemapLayer(11866): Tile uploaded: 17/104323/54265 256x256
+06-12 12:35:54.235 I/BasemapLayer(11866): Tile uploaded: 17/104322/54265 256x256
+06-12 12:35:54.269 I/BasemapLayer(11866): Tile uploaded: 17/104324/54265 256x256
+06-12 12:35:54.303 I/BasemapLayer(11866): Tile uploaded: 16/52160/27135 256x256
+06-12 12:35:54.303 I/BasemapLayer(11866): Tile uploaded: 16/52161/27134 256x256
+06-12 12:35:54.338 I/BasemapLayer(11866): Tile uploaded: 15/26082/13568 256x256
+06-12 12:35:54.338 I/BasemapLayer(11866): Tile uploaded: 15/26083/13568 256x256
+06-12 12:35:54.355 I/BasemapLayer(11866): Tile uploaded: 16/52161/27135 256x256
+06-12 12:35:54.356 I/BasemapLayer(11866): Tile uploaded: 15/26082/13569 256x256
+06-12 12:35:54.405 I/BasemapLayer(11866): Tile uploaded: 16/52162/27134 256x256
+06-12 12:35:54.422 I/BasemapLayer(11866): Tile uploaded: 16/52162/27135 256x256
+06-12 12:35:54.423 I/BasemapLayer(11866): Tile uploaded: 13/6520/3395 256x256
+06-12 12:35:54.444 I/BasemapLayer(11866): Tile uploaded: 11/1628/851 256x256
+06-12 12:35:54.479 I/BasemapLayer(11866): Tile uploaded: 10/813/427 256x256
+06-12 12:35:54.480 I/BasemapLayer(11866): Tile uploaded: 13/6520/3394 256x256
+06-12 12:35:54.494 I/BasemapLayer(11866): Tile uploaded: 15/26079/13569 256x256
+06-12 12:35:54.494 I/BasemapLayer(11866): Tile uploaded: 14/13040/6786 256x256
+06-12 12:35:54.494 I/EarthPerf(11866): frame=960 scope=BasemapLayer.processPendingUploads ms=0.899 layer=xyz-1590851704117573850 queue=4->2 batch=2 uploaded=2 failed=0 stale=0 textureCreate=0.75 cached=393
+06-12 12:35:54.499 I/EarthPerf(11866): frame=960 scope=BasemapLayer.rebuildLayerPlan ms=2.055 metadata=0.02 desired=0.13 renderRefs=1.35 ancestor=0.07 kicking=0.23 evict=0.21 visible=138 desiredCount=81 render=68 request=18 cache=366
+06-12 12:35:54.499 I/EarthPerf(11866): frame=960 scope=BasemapLayer.applyPlan ms=6.054 layer=xyz-1590851704117573850 changed=1 dirty=0 rebuild=2.08 upload=3.95 visible=138 desired=81 render=68 request=18
+06-12 12:35:54.499 I/EarthPerf(11866): frame=960 scope=BasemapLayer.loadMissingTiles ms=0.224 layer=xyz-1590851704117573850 candidates=18 issued=2 inflight=12 cached=393
+06-12 12:35:54.499 I/EarthPerf(11866): frame=960 scope=BasemapLayerStack.update ms=9.163 grouping=0.01 tilePlan=2.82 apply=6.06 loadMissing=0.24 groups=1 layers=1
+06-12 12:35:54.501 I/EarthPerf(11866): frame=960 scope=TerrainLayer.update ms=2.154 upload=0.01 tilePlan=1.98 request=0.16 visible=103 issued=0 cached=0 inflight=10 empty=56 moving=1 reusedPlan=0 maxInflight=96
+06-12 12:35:54.501 I/EarthPerf(11866): frame=960 scope=Scene.update.total ms=11.362 camera=0.00 env=0.01 basemap=9.17 terrain=2.18
+06-12 12:35:54.508 I/EarthPerf(11866): frame=960 scope=BasemapLayer.buildRenderCommands ms=5.962 visited=68 emitted=67 missingTex=0 deferred=5 meshParent=4 moving=1 cmdDelta=67 tex=0.19 bounds=0.04 uv=0.06 meshTotal=5.14 hit=66 miss=1 terrLookup=0.00 key=0.29 meshBuild=3.55 centroid=0.20 verts=0.72 vb=0.27 ib=0.10 wm=0.00 cmd=0.10 cache=367
+06-12 12:35:54.508 I/EarthPerf(11866): frame=960 scope=Scene.render.buildBreakdown ms=6.289 sky=0.03 atmo=0.02 layers=5.99 fallback=0.00 vector=0.00 debug=0.00 mvp=0.02 sort=0.12 surfDiag=0.00 validate=0.01 diag=0.07 commands=69
+06-12 12:35:54.508 I/EarthPerf(11866): frame=960 scope=Scene.render.total ms=6.932 build=6.29 submit=0.63 draw=69 surface=68 mesh=367
+06-12 12:35:54.509 I/EarthPerf(11866): frame=960 scope=Engine.render.total ms=18.555 begin=0.12 update=11.37 render=6.94 submit=0.63 end=0.13 draw=69 tiles=138
+06-12 12:35:54.514 I/BasemapLayer(11866): Tile uploaded: 13/6519/3394 256x256
+06-12 12:35:54.514 I/BasemapLayer(11866): Tile uploaded: 14/13039/6786 256x256
+06-12 12:35:54.519 I/EarthPerf(11866): frame=960 scope=TerrainLayer.processPendingUploads ms=0.012 queue=0->0 batch=0 uploaded=0 emptyDrain=0 cached=0 gen=0
+06-12 12:35:54.528 I/BasemapLayer(11866): Tile uploaded: 13/6519/3395 256x256
+06-12 12:35:54.545 I/BasemapLayer(11866): Tile uploaded: 14/13040/6787 256x256
+06-12 12:35:54.545 I/BasemapLayer(11866): Tile uploaded: 14/13039/6787 256x256
+06-12 12:35:54.561 I/BasemapLayer(11866): Tile uploaded: 13/6518/3395 256x256
+06-12 12:35:54.585 I/BasemapLayer(11866): Tile uploaded: 14/13038/6787 256x256
+06-12 12:35:54.619 I/BasemapLayer(11866): Tile uploaded: 16/52161/27137 256x256
+06-12 12:35:54.620 I/BasemapLayer(11866): Tile uploaded: 16/52161/27136 256x256
+06-12 12:35:54.653 I/BasemapLayer(11866): Tile uploaded: 16/52162/27136 256x256
+06-12 12:35:54.653 I/BasemapLayer(11866): Tile uploaded: 16/52162/27137 256x256
+06-12 12:35:54.675 I/EarthPerf(11866): frame=967 scope=Engine.render.total ms=25.899 begin=0.19 update=12.81 render=12.76 submit=0.75 end=0.13 draw=78 tiles=137
+06-12 12:35:54.685 I/BasemapLayer(11866): Tile uploaded: 12/3258/1699 256x256
+06-12 12:35:54.686 I/BasemapLayer(11866): Tile uploaded: 16/52160/27137 256x256
+06-12 12:35:54.702 I/BasemapLayer(11866): Tile uploaded: 11/1628/850 256x256
+06-12 12:35:54.702 I/BasemapLayer(11866): Tile uploaded: 16/52160/27136 256x256
+06-12 12:35:54.734 I/EarthPerf(11866): frame=969 scope=Engine.render.total ms=35.055 begin=0.10 update=12.80 render=22.03 submit=0.89 end=0.12 draw=81 tiles=137
+06-12 12:35:54.752 I/BasemapLayer(11866): Tile uploaded: 5/24/17 256x256
+06-12 12:35:54.753 I/BasemapLayer(11866): Tile uploaded: 12/3258/1698 256x256
+06-12 12:35:54.769 I/BasemapLayer(11866): Tile uploaded: 9/405/215 256x256
+06-12 12:35:54.769 I/BasemapLayer(11866): Tile uploaded: 5/24/16 256x256
+06-12 12:35:54.969 I/BasemapLayer(11866): Tile uploaded: 15/26081/13571 256x256
+06-12 12:35:54.986 I/BasemapLayer(11866): Tile uploaded: 15/26079/13570 256x256
+06-12 12:35:54.986 I/BasemapLayer(11866): Tile uploaded: 15/26081/13570 256x256
+06-12 12:35:55.085 I/BasemapLayer(11866): Tile uploaded: 16/52161/27138 256x256
+06-12 12:35:55.119 I/BasemapLayer(11866): Tile uploaded: 15/26079/13571 256x256
+06-12 12:35:55.120 I/BasemapLayer(11866): Tile uploaded: 16/52161/27139 256x256
+06-12 12:35:55.152 I/BasemapLayer(11866): Tile uploaded: 16/52163/27141 256x256
+06-12 12:35:55.185 I/BasemapLayer(11866): Tile uploaded: 16/52162/27141 256x256
+06-12 12:35:55.185 I/BasemapLayer(11866): Tile uploaded: 16/52161/27141 256x256
+06-12 12:35:55.218 I/BasemapLayer(11866): Tile uploaded: 16/52162/27140 256x256
+06-12 12:35:55.235 I/BasemapLayer(11866): Tile uploaded: 16/52160/27141 256x256
+06-12 12:35:55.269 I/BasemapLayer(11866): Tile uploaded: 15/26081/13572 256x256
+06-12 12:35:55.269 I/BasemapLayer(11866): Tile uploaded: 16/52161/27140 256x256
+06-12 12:35:55.302 I/BasemapLayer(11866): Tile uploaded: 15/26080/13572 256x256
+06-12 12:35:55.303 I/BasemapLayer(11866): Tile uploaded: 15/26081/13573 256x256
+06-12 12:35:55.323 I/BasemapLayer(11866): Tile uploaded: 15/26080/13573 256x256
+06-12 12:35:55.452 I/BasemapLayer(11866): Tile uploaded: 15/26079/13573 256x256
+06-12 12:35:55.452 I/BasemapLayer(11866): Tile uploaded: 16/52162/27143 256x256
+06-12 12:35:55.485 I/BasemapLayer(11866): Tile uploaded: 14/13040/6788 256x256
+06-12 12:35:55.485 I/BasemapLayer(11866): Tile uploaded: 14/13040/6789 256x256
+06-12 12:35:55.519 I/BasemapLayer(11866): Tile uploaded: 14/13041/6789 256x256
+06-12 12:35:55.519 I/BasemapLayer(11866): Tile uploaded: 14/13041/6788 256x256
+06-12 12:35:55.535 I/BasemapLayer(11866): Tile uploaded: 16/52162/27142 256x256
+06-12 12:35:55.568 I/BasemapLayer(11866): Tile uploaded: 16/52163/27142 256x256
+06-12 12:35:55.569 I/BasemapLayer(11866): Tile uploaded: 16/52161/27142 256x256
+06-12 12:35:55.585 I/BasemapLayer(11866): Tile uploaded: 16/52161/27143 256x256
+06-12 12:35:55.585 I/BasemapLayer(11866): Tile uploaded: 16/52163/27143 256x256
+06-12 12:35:55.668 I/BasemapLayer(11866): Tile uploaded: 14/13039/6789 256x256
+06-12 12:35:55.669 I/BasemapLayer(11866): Tile uploaded: 14/13039/6788 256x256
+06-12 12:35:55.735 I/BasemapLayer(11866): Tile uploaded: 14/13038/6789 256x256
+06-12 12:35:55.802 I/BasemapLayer(11866): Tile uploaded: 16/52162/27144 256x256
+06-12 12:35:55.803 I/BasemapLayer(11866): Tile uploaded: 16/52163/27144 256x256
+06-12 12:35:55.821 I/BasemapLayer(11866): Tile uploaded: 16/52163/27145 256x256
+06-12 12:35:55.821 I/BasemapLayer(11866): Tile uploaded: 16/52162/27145 256x256
+06-12 12:35:56.421 I/BasemapLayer(11866): Tile uploaded: 10/813/426 256x256
+06-12 12:35:56.501 I/BasemapLayer(11866): Tile uploaded: 15/26079/13568 256x256
+06-12 12:35:56.502 I/BasemapLayer(11866): Tile uploaded: 13/6518/3394 256x256
+06-12 12:35:56.534 I/BasemapLayer(11866): Tile uploaded: 14/13038/6786 256x256
+06-12 12:35:56.585 I/BasemapLayer(11866): Tile uploaded: 16/52160/27134 256x256
+06-12 12:35:56.683 I/BasemapLayer(11866): Tile uploaded: 15/26079/13567 256x256
+06-12 12:35:56.717 I/BasemapLayer(11866): Tile uploaded: 16/52159/27132 256x256
+06-12 12:35:56.734 I/BasemapLayer(11866): Tile uploaded: 16/52160/27130 256x256
+06-12 12:35:56.750 I/BasemapLayer(11866): Tile uploaded: 16/52159/27133 256x256
+06-12 12:35:56.784 I/BasemapLayer(11866): Tile uploaded: 14/13038/6785 256x256
+06-12 12:35:56.784 I/BasemapLayer(11866): Tile uploaded: 16/52159/27131 256x256
+06-12 12:35:56.817 I/BasemapLayer(11866): Tile uploaded: 13/6518/3393 256x256
+06-12 12:35:56.852 I/BasemapLayer(11866): Tile uploaded: 15/26079/13566 256x256
+06-12 12:35:56.852 I/BasemapLayer(11866): Tile uploaded: 15/26078/13567 256x256
+06-12 12:35:56.884 I/BasemapLayer(11866): Tile uploaded: 14/13038/6784 256x256
+06-12 12:35:56.884 I/BasemapLayer(11866): Tile uploaded: 16/52159/27129 256x256
+06-12 12:35:56.917 I/BasemapLayer(11866): Tile uploaded: 16/52159/27130 256x256
+06-12 12:35:56.917 I/BasemapLayer(11866): Tile uploaded: 15/26078/13566 256x256
