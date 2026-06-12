@@ -181,6 +181,41 @@ std::unique_ptr<Texture> RenderDeviceGLES::createTexture(const TextureDesc& desc
     return std::make_unique<GLTexture>(id, desc.width, desc.height);
 }
 
+bool RenderDeviceGLES::updateTextureRegion(Texture* texture,
+                                           int x,
+                                           int y,
+                                           int width,
+                                           int height,
+                                           const uint8_t* data,
+                                           size_t rowBytes) {
+    auto* glTexture = static_cast<GLTexture*>(texture);
+    if (!glTexture || !data || width <= 0 || height <= 0) {
+        return false;
+    }
+    if (x < 0 || y < 0 ||
+        x + width > glTexture->width() ||
+        y + height > glTexture->height()) {
+        return false;
+    }
+    if (rowBytes != static_cast<size_t>(width) * 4u) {
+        return false;
+    }
+
+    glBindTexture(GL_TEXTURE_2D, glTexture->glId());
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage2D(GL_TEXTURE_2D,
+                    0,
+                    x,
+                    y,
+                    width,
+                    height,
+                    GL_RGBA,
+                    GL_UNSIGNED_BYTE,
+                    data);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return glGetError() == GL_NO_ERROR;
+}
+
 std::unique_ptr<Buffer> RenderDeviceGLES::createBuffer(const BufferDesc& desc) {
     GLuint id = 0;
     glGenBuffers(1, &id);

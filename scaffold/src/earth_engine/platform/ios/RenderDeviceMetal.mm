@@ -151,6 +151,33 @@ std::unique_ptr<Texture> RenderDeviceMetal::createTexture(const TextureDesc& des
     return std::make_unique<MetalTexture>(tex);
 }
 
+bool RenderDeviceMetal::updateTextureRegion(Texture* texture,
+                                            int x,
+                                            int y,
+                                            int width,
+                                            int height,
+                                            const uint8_t* data,
+                                            size_t rowBytes) {
+    auto* metalTexture = static_cast<MetalTexture*>(texture);
+    if (!metalTexture || !data || width <= 0 || height <= 0) {
+        return false;
+    }
+    if (x < 0 || y < 0 ||
+        x + width > metalTexture->width() ||
+        y + height > metalTexture->height()) {
+        return false;
+    }
+    MTLRegion region = MTLRegionMake2D(static_cast<NSUInteger>(x),
+                                       static_cast<NSUInteger>(y),
+                                       static_cast<NSUInteger>(width),
+                                       static_cast<NSUInteger>(height));
+    [metalTexture->mtl() replaceRegion:region
+                           mipmapLevel:0
+                             withBytes:data
+                           bytesPerRow:static_cast<NSUInteger>(rowBytes)];
+    return true;
+}
+
 std::unique_ptr<Buffer> RenderDeviceMetal::createBuffer(const BufferDesc& desc) {
     MTLResourceOptions options = MTLResourceStorageModeShared;
     id<MTLBuffer> buf = desc.data

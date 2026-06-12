@@ -38,6 +38,13 @@ public:
 
     // ---- 资源创建 ----
     virtual std::unique_ptr<Texture> createTexture(const TextureDesc& desc) = 0;
+    virtual bool updateTextureRegion(Texture* texture,
+                                     int x,
+                                     int y,
+                                     int width,
+                                     int height,
+                                     const uint8_t* data,
+                                     size_t rowBytes) = 0;
     virtual std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) = 0;
     virtual bool updateBuffer(Buffer* buffer,
                               size_t offset,

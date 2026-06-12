@@ -174,6 +174,16 @@ public:
         return std::make_unique<FakeTexture>(desc.width, desc.height);
     }
 
+    bool updateTextureRegion(Texture* texture,
+                             int,
+                             int,
+                             int,
+                             int,
+                             const uint8_t* data,
+                             size_t) override {
+        return texture && data;
+    }
+
     std::unique_ptr<Buffer> createBuffer(const BufferDesc&) override {
         ++bufferCreates;
         return std::make_unique<FakeBuffer>(1);

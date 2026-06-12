@@ -22,6 +22,13 @@ public:
 
     // ---- 资源创建 ----
     std::unique_ptr<Texture> createTexture(const TextureDesc& desc) override;
+    bool updateTextureRegion(Texture* texture,
+                             int x,
+                             int y,
+                             int width,
+                             int height,
+                             const uint8_t* data,
+                             size_t rowBytes) override;
     std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) override;
     bool updateBuffer(Buffer* buffer,
                       size_t offset,

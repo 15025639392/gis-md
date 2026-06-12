@@ -32,6 +32,16 @@ public:
         return nullptr;
     }
 
+    bool updateTextureRegion(Texture*,
+                             int,
+                             int,
+                             int,
+                             int,
+                             const uint8_t*,
+                             size_t) override {
+        return false;
+    }
+
     std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) override {
         return std::make_unique<FakeBuffer>(desc.size);
     }

@@ -147,6 +147,11 @@ private:
     void refreshLayerPlanFrameMetadata();
     bool isRenderAffectingPlanChange(const TilePlan& plan) const;
     Texture* findFallbackTexture(const TileKey& target, TileKey& textureKey);
+    struct ImageryAtlasEntry;
+    struct ImageryAtlasLookup;
+    ImageryAtlasLookup findImageryAtlasEntry(const TileKey& key);
+    bool uploadImageryAtlasTile(const TileKey& key, const DecodedImage& image);
+    void resetImageryAtlas(int tileSize);
     bool findRequestTileForMissingTexture(const TileKey& target, TileKey& requestKey) const;
     bool isCurrentDesiredTile(const TileKey& key) const;
     bool isCurrentPlanTileOrAncestor(const TileKey& key) const;
@@ -182,6 +187,29 @@ private:
         size_t capacityInstances = 0;
         uint64_t lastUsedFrame = 0;
     };
+    struct ImageryAtlasEntry {
+        float offsetU = 0.0f;
+        float offsetV = 0.0f;
+        float scaleU = 1.0f;
+        float scaleV = 1.0f;
+        int slot = -1;
+        uint64_t lastUsedFrame = 0;
+    };
+    struct ImageryAtlasLookup {
+        Texture* texture = nullptr;
+        ImageryAtlasEntry entry;
+    };
+    struct ImageryAtlas {
+        std::unique_ptr<Texture> texture;
+        int atlasSize = 0;
+        int tileSize = 0;
+        int columns = 0;
+        int nextSlot = 0;
+        int generation = 0;
+        int replacements = 0;
+        std::unordered_map<std::string, ImageryAtlasEntry> entries;
+        std::vector<std::string> slotKeys;
+    };
     struct SurfaceMeshBuildStats {
         int hits = 0;
         int misses = 0;
@@ -211,6 +239,7 @@ private:
     std::unique_ptr<TileScheme> tileScheme_;
     RenderDevice* renderDevice_;
     TileTextureCache textureCache_;
+    std::unordered_map<int, ImageryAtlas> imageryAtlases_;
     std::unordered_map<std::string, SurfaceGpuMesh> surfaceMeshCache_;
     std::unordered_map<Texture*, SurfaceInstanceBatchBuffer> surfaceInstanceBatches_;
     std::deque<std::string> pendingSurfaceMeshEvictions_;

@@ -20,6 +20,7 @@
 #include <cstring>
 #include <algorithm>
 #include <cstdio>
+#include <limits>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -432,6 +433,8 @@ void BasemapLayer::processPendingUploads() {
     }
 
     int uploaded = 0;
+    int atlasUploaded = 0;
+    int atlasFailed = 0;
     int currentFailures = 0;
     int staleDiscarded = 0;
     double textureCreateMs = 0.0;
@@ -477,6 +480,11 @@ void BasemapLayer::processPendingUploads() {
         auto texture = renderDevice_->createTexture(texDesc);
         textureCreateMs += perf::nowMs() - textureStartMs;
         if (texture) {
+            if (uploadImageryAtlasTile(item.key, *image)) {
+                ++atlasUploaded;
+            } else {
+                ++atlasFailed;
+            }
             // 成功上传 → 清除失败记录
             failedTiles_.erase(ck);
             clearRequestIfCurrent();
@@ -502,14 +510,32 @@ void BasemapLayer::processPendingUploads() {
         queueAfter = pendingQueue_->queue.size();
     }
 
-    char detail[192];
+    size_t atlasEntries = 0;
+    int atlasUsedSlots = 0;
+    int atlasCapacitySlots = 0;
+    int atlasReplacements = 0;
+    for (const auto& [tileSize, atlas] : imageryAtlases_) {
+        (void)tileSize;
+        atlasEntries += atlas.entries.size();
+        atlasUsedSlots += atlas.nextSlot;
+        atlasCapacitySlots += atlas.columns * atlas.columns;
+        atlasReplacements += atlas.replacements;
+    }
+
+    char detail[320];
     std::snprintf(detail, sizeof(detail),
-        "layer=%s queue=%zu->%zu batch=%zu uploaded=%d failed=%d stale=%d uploadBudgetMs=%.1f textureCreate=%.2f cached=%d",
+        "layer=%s queue=%zu->%zu batch=%zu uploaded=%d atlasUploaded=%d atlasFailed=%d atlasEntries=%zu atlasSlots=%d/%d atlasReplace=%d failed=%d stale=%d uploadBudgetMs=%.1f textureCreate=%.2f cached=%d",
         id_.c_str(),
         queueBefore,
         queueAfter,
         batch.size(),
         uploaded,
+        atlasUploaded,
+        atlasFailed,
+        atlasEntries,
+        atlasUsedSlots,
+        atlasCapacitySlots,
+        atlasReplacements,
         currentFailures,
         staleDiscarded,
         uploadBudgetMs,
@@ -1480,6 +1506,163 @@ std::string BasemapLayer::tileCacheKey(const TileKey& key) const {
            std::to_string(key.y);
 }
 
+BasemapLayer::ImageryAtlasLookup BasemapLayer::findImageryAtlasEntry(
+    const TileKey& key) {
+    const std::string cacheKey = tileCacheKey(key);
+    for (auto& [tileSize, atlas] : imageryAtlases_) {
+        (void)tileSize;
+        auto it = atlas.entries.find(cacheKey);
+        if (it != atlas.entries.end() && atlas.texture) {
+            it->second.lastUsedFrame = layerPlan_.frameId;
+            return ImageryAtlasLookup{atlas.texture.get(), it->second};
+        }
+    }
+    return {};
+}
+
+void BasemapLayer::resetImageryAtlas(int tileSize) {
+    auto it = imageryAtlases_.find(tileSize);
+    if (it == imageryAtlases_.end()) return;
+    ImageryAtlas& atlas = it->second;
+    atlas.texture.reset();
+    atlas.atlasSize = 0;
+    atlas.tileSize = 0;
+    atlas.columns = 0;
+    atlas.nextSlot = 0;
+    atlas.replacements = 0;
+    atlas.entries.clear();
+    atlas.slotKeys.clear();
+    ++atlas.generation;
+}
+
+bool BasemapLayer::uploadImageryAtlasTile(const TileKey& key, const DecodedImage& image) {
+    if (!renderDevice_ || image.width <= 0 || image.height <= 0) {
+        return false;
+    }
+    if (image.width != image.height || image.channels < 3) {
+        return false;
+    }
+
+    constexpr int kPreferredAtlasSize = 4096;
+    const int deviceMaxTextureSize = renderDevice_->maxTextureSize();
+    const int atlasSize = std::min(kPreferredAtlasSize, deviceMaxTextureSize);
+    if (atlasSize < image.width) {
+        return false;
+    }
+
+    ImageryAtlas& atlas = imageryAtlases_[image.width];
+    if (!atlas.texture ||
+        atlas.atlasSize != atlasSize ||
+        atlas.tileSize != image.width) {
+        resetImageryAtlas(image.width);
+        TextureDesc atlasDesc;
+        atlasDesc.width = atlasSize;
+        atlasDesc.height = atlasSize;
+        atlasDesc.format = TextureDesc::Format::RGBA8;
+        atlasDesc.data = nullptr;
+        atlasDesc.dataSize = 0;
+        atlasDesc.mipmap = false;
+        atlasDesc.minFilter = TextureDesc::Filter::Linear;
+        atlasDesc.magFilter = TextureDesc::Filter::Linear;
+        atlasDesc.wrapS = TextureDesc::Wrap::Clamp;
+        atlasDesc.wrapT = TextureDesc::Wrap::Clamp;
+        atlas.texture = renderDevice_->createTexture(atlasDesc);
+        if (!atlas.texture) {
+            resetImageryAtlas(image.width);
+            return false;
+        }
+        atlas.atlasSize = atlasSize;
+        atlas.tileSize = image.width;
+        atlas.columns = std::max(1, atlasSize / image.width);
+        atlas.slotKeys.assign(
+            static_cast<size_t>(atlas.columns * atlas.columns),
+            std::string());
+    }
+
+    const int capacity = atlas.columns * atlas.columns;
+    const std::string cacheKey = tileCacheKey(key);
+    int slot = -1;
+    auto existing = atlas.entries.find(cacheKey);
+    if (existing != atlas.entries.end()) {
+        slot = existing->second.slot;
+    } else if (atlas.nextSlot < capacity) {
+        slot = atlas.nextSlot++;
+    } else {
+        std::unordered_set<std::string> protectedKeys;
+        protectedKeys.reserve(layerPlan_.renderTiles.size());
+        for (const RenderTileRef& renderTile : layerPlan_.renderTiles) {
+            protectedKeys.insert(tileCacheKey(renderTile.textureKey));
+        }
+        uint64_t oldestFrame = std::numeric_limits<uint64_t>::max();
+        std::string evictKey;
+        for (const auto& entry : atlas.entries) {
+            if (entry.second.slot < 0) continue;
+            if (protectedKeys.find(entry.first) != protectedKeys.end()) continue;
+            if (entry.second.lastUsedFrame < oldestFrame) {
+                oldestFrame = entry.second.lastUsedFrame;
+                evictKey = entry.first;
+                slot = entry.second.slot;
+            }
+        }
+        if (slot < 0 || evictKey.empty()) {
+            return false;
+        }
+        atlas.entries.erase(evictKey);
+        ++atlas.replacements;
+    }
+
+    std::vector<uint8_t> convertedRgba;
+    const uint8_t* uploadPixels = image.pixels.data();
+    if (image.channels != 4) {
+        convertedRgba.resize(static_cast<size_t>(image.width) *
+                             static_cast<size_t>(image.height) * 4u);
+        for (int y = 0; y < image.height; ++y) {
+            for (int x = 0; x < image.width; ++x) {
+                const size_t src = (static_cast<size_t>(y) * image.width + x) *
+                                   static_cast<size_t>(image.channels);
+                const size_t dst = (static_cast<size_t>(y) * image.width + x) * 4u;
+                convertedRgba[dst + 0] = image.pixels[src + 0];
+                convertedRgba[dst + 1] = image.pixels[src + 1];
+                convertedRgba[dst + 2] = image.pixels[src + 2];
+                convertedRgba[dst + 3] = 255;
+            }
+        }
+        uploadPixels = convertedRgba.data();
+    }
+
+    const int col = slot % atlas.columns;
+    const int row = slot / atlas.columns;
+    const int x = col * atlas.tileSize;
+    const int y = row * atlas.tileSize;
+    const bool uploaded = renderDevice_->updateTextureRegion(
+        atlas.texture.get(),
+        x,
+        y,
+        atlas.tileSize,
+        atlas.tileSize,
+        uploadPixels,
+        static_cast<size_t>(atlas.tileSize) * 4u);
+    if (!uploaded) {
+        return false;
+    }
+
+    const float atlasScale =
+        static_cast<float>(atlas.tileSize) /
+        static_cast<float>(atlas.atlasSize);
+    ImageryAtlasEntry entry;
+    entry.offsetU = static_cast<float>(x) / static_cast<float>(atlas.atlasSize);
+    entry.offsetV = static_cast<float>(y) / static_cast<float>(atlas.atlasSize);
+    entry.scaleU = atlasScale;
+    entry.scaleV = atlasScale;
+    entry.slot = slot;
+    entry.lastUsedFrame = layerPlan_.frameId;
+    atlas.entries[cacheKey] = entry;
+    if (slot >= 0 && slot < static_cast<int>(atlas.slotKeys.size())) {
+        atlas.slotKeys[static_cast<size_t>(slot)] = cacheKey;
+    }
+    return true;
+}
+
 void BasemapLayer::buildRenderCommands(Renderer& renderer,
                                         const TerrainLayer* terrainLayer,
                                         RenderCommandList& commands) {
@@ -1494,6 +1677,11 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
     size_t instanceBufferBytes = 0;
     int instanceBufferCreates = 0;
     int instanceBufferUpdates = 0;
+    int instancedTileCount = 0;
+    int instancedExactTextures = 0;
+    int instancedParentTextures = 0;
+    int instancedAtlasTiles = 0;
+    size_t maxInstancesPerTexture = 0;
     SurfaceMeshBuildStats meshStats;
     int visited = 0;
     int missingTexture = 0;
@@ -1601,6 +1789,21 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
         }
 
         if (useInstancedEllipsoidForTile) {
+            {
+                const ImageryAtlasLookup atlasLookup =
+                    findImageryAtlasEntry(commandAttachment.textureKey);
+                if (atlasLookup.texture) {
+                    const ImageryAtlasEntry& atlasEntry = atlasLookup.entry;
+                    commandAttachment.texture = atlasLookup.texture;
+                    commandAttachment.uvOffsetU =
+                        atlasEntry.offsetU + commandAttachment.uvOffsetU * atlasEntry.scaleU;
+                    commandAttachment.uvOffsetV =
+                        atlasEntry.offsetV + commandAttachment.uvOffsetV * atlasEntry.scaleV;
+                    commandAttachment.uvScaleU *= atlasEntry.scaleU;
+                    commandAttachment.uvScaleV *= atlasEntry.scaleV;
+                    ++instancedAtlasTiles;
+                }
+            }
             const Vec3 localOrigin = ellipsoidSurfaceOriginForBounds(commandBounds);
             const Vec3 cameraRelativeToTileOrigin =
                 lastCameraPosition_ - localOrigin;
@@ -1640,6 +1843,14 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
             }
             InstanceBatch& batch = instanceBatches[it->second];
             batch.instances.push_back(instance);
+            maxInstancesPerTexture =
+                std::max(maxInstancesPerTexture, batch.instances.size());
+            ++instancedTileCount;
+            if (commandAttachment.fallbackSource == ImageryFallbackSource::Exact) {
+                ++instancedExactTextures;
+            } else {
+                ++instancedParentTextures;
+            }
             const float effectiveOpacity =
                 commandAttachment.opacity *
                 std::clamp(renderTile.transitionOpacity, 0.0f, 1.0f);
@@ -1799,9 +2010,19 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
         }
     }
 
-    char detail[512];
+    const size_t textureSplitOverhead =
+        instancedTileCount > 0 && instanceBatches.size() > 0
+            ? instanceBatches.size() - 1
+            : 0;
+    const double avgInstancesPerTexture =
+        !instanceBatches.empty()
+            ? static_cast<double>(instancedTileCount) /
+                  static_cast<double>(instanceBatches.size())
+            : 0.0;
+
+    char detail[768];
     std::snprintf(detail, sizeof(detail),
-        "visited=%d emitted=%d missingTex=%d deferred=%d meshParent=%d moving=%d camH=%.0f instBatch=%zu instCreate=%d instUpdate=%d instBytes=%zu instBuf=%.2f meshBudgetMs=%.1f cmdDelta=%zu tex=%.2f bounds=%.2f uv=%.2f meshTotal=%.2f hit=%d miss=%d terrLookup=%.2f key=%.2f meshBuild=%.2f centroid=%.2f verts=%.2f vb=%.2f ib=%.2f wm=%.2f cmd=%.2f cache=%zu instCache=%zu",
+        "visited=%d emitted=%d missingTex=%d deferred=%d meshParent=%d moving=%d camH=%.0f instTiles=%d instAtlas=%d instBatch=%zu instAvg=%.1f instMax=%zu instExact=%d instParent=%d texSplit=%zu instCreate=%d instUpdate=%d instBytes=%zu instBuf=%.2f meshBudgetMs=%.1f cmdDelta=%zu tex=%.2f bounds=%.2f uv=%.2f meshTotal=%.2f hit=%d miss=%d terrLookup=%.2f key=%.2f meshBuild=%.2f centroid=%.2f verts=%.2f vb=%.2f ib=%.2f wm=%.2f cmd=%.2f cache=%zu instCache=%zu",
         visited,
         emitted,
         missingTexture,
@@ -1809,7 +2030,14 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
         meshParentFallback,
         cameraMoving_ ? 1 : 0,
         cameraHeightMeters,
+        instancedTileCount,
+        instancedAtlasTiles,
         instanceBatches.size(),
+        avgInstancesPerTexture,
+        maxInstancesPerTexture,
+        instancedExactTextures,
+        instancedParentTextures,
+        textureSplitOverhead,
         instanceBufferCreates,
         instanceBufferUpdates,
         instanceBufferBytes,
