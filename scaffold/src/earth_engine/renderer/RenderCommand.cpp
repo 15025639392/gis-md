@@ -44,6 +44,10 @@ bool requireState(size_t index,
 }
 
 float uniformScalar(const RenderCommand& cmd, const std::string& name, float fallback) {
+    if (cmd.kind == RenderCommandKind::SurfaceTile && cmd.hasSurfaceTileUniforms) {
+        if (name == "u_tileOpacity") return cmd.surfaceTileOpacity;
+        if (name == "u_transitionOpacity") return cmd.surfaceTransitionOpacity;
+    }
     auto it = cmd.uniforms.find(name);
     if (it == cmd.uniforms.end() || it->second.empty()) {
         return fallback;

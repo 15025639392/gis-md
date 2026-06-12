@@ -688,6 +688,8 @@ Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
     char buf[1024];
     snprintf(buf, sizeof(buf),
         "FPS: %.1f  |  Frame: %.1f ms\n"
+        "CPU: %.1f ms  |  begin %.1f upd %.1f build %.1f submit %.1f end %.1f\n"
+        "Update: cam %.1f env %.1f base %.1f terr %.1f\n"
         "Draw calls: %d  |  GPU tex: %d\n"
         "Visible tiles: %d  |  Cached: %d\n"
         "Surface meshes: %d (%d ellip, %d terr, %d ready, %d parent, %d trans)\n"
@@ -699,6 +701,16 @@ Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
         "Camera: ellAlt=%.0fm sphAlt=%.0fm dist=%.0fm\n"
         "Mesh: %d KB  |  Terrain tiles: %d (gen %llu)",
         diag.fps, diag.frameTimeMs,
+        diag.engineFrameCpuMs,
+        diag.engineBeginFrameMs,
+        diag.sceneUpdateMs,
+        diag.renderCommandBuildMs,
+        diag.renderSubmitMs,
+        diag.engineEndFrameMs,
+        diag.cameraUpdateMs,
+        diag.environmentUpdateMs,
+        diag.basemapStackUpdateMs,
+        diag.terrainUpdateMs,
         diag.drawCalls, diag.gpuTextureCount,
         diag.visibleTiles, diag.cachedTextures,
         diag.surfaceMeshCount, diag.ellipsoidSurfaceMeshes,

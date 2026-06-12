@@ -11,6 +11,17 @@ class Camera;
 struct Diagnostics {
     double fps = 0.0;
     double frameTimeMs = 0.0;
+    double engineFrameCpuMs = 0.0;
+    double engineBeginFrameMs = 0.0;
+    double sceneUpdateMs = 0.0;
+    double sceneRenderMs = 0.0;
+    double engineEndFrameMs = 0.0;
+    double cameraUpdateMs = 0.0;
+    double environmentUpdateMs = 0.0;
+    double basemapStackUpdateMs = 0.0;
+    double terrainUpdateMs = 0.0;
+    double renderCommandBuildMs = 0.0;
+    double renderSubmitMs = 0.0;
     int drawCalls = 0;
     int visibleTiles = 0;
     int cachedTextures = 0;

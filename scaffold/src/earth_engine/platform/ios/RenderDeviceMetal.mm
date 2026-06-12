@@ -370,15 +370,31 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
             }
         };
 
-        setUniform("u_modelViewProjection", 1);
-        setUniform("u_model", 2);
-        setUniform("u_tileBounds", 2);
-        setUniform("u_tileUV", 3);
-        setUniform("u_cameraRelativeOrigin", 4);
+        if (cmd.kind == RenderCommandKind::SurfaceTile && cmd.hasSurfaceTileUniforms) {
+            [impl_->currentEncoder setVertexBytes:cmd.surfaceModelViewProjection.data()
+                                           length:cmd.surfaceModelViewProjection.size() * sizeof(float)
+                                          atIndex:1];
+            [impl_->currentEncoder setVertexBytes:cmd.surfaceTileUv.data()
+                                           length:cmd.surfaceTileUv.size() * sizeof(float)
+                                          atIndex:3];
+            [impl_->currentEncoder setVertexBytes:cmd.surfaceCameraRelativeOrigin.data()
+                                           length:cmd.surfaceCameraRelativeOrigin.size() * sizeof(float)
+                                          atIndex:4];
+        } else {
+            setUniform("u_modelViewProjection", 1);
+            setUniform("u_model", 2);
+            setUniform("u_tileBounds", 2);
+            setUniform("u_tileUV", 3);
+            setUniform("u_cameraRelativeOrigin", 4);
+        }
 
         // Fragment uniforms
         auto fragIt = cmd.uniforms.find("u_lightDir");
-        if (fragIt != cmd.uniforms.end()) {
+        if (cmd.kind == RenderCommandKind::SurfaceTile && cmd.hasSurfaceTileUniforms) {
+            [impl_->currentEncoder setFragmentBytes:cmd.surfaceLightDir.data()
+                                             length:cmd.surfaceLightDir.size() * sizeof(float)
+                                            atIndex:0];
+        } else if (fragIt != cmd.uniforms.end()) {
             [impl_->currentEncoder setFragmentBytes:fragIt->second.data()
                                              length:fragIt->second.size() * sizeof(float)
                                             atIndex:0];
@@ -396,13 +412,21 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
                                             atIndex:2];
         }
         auto tileOpacityIt = cmd.uniforms.find("u_tileOpacity");
-        if (tileOpacityIt != cmd.uniforms.end()) {
+        if (cmd.kind == RenderCommandKind::SurfaceTile && cmd.hasSurfaceTileUniforms) {
+            [impl_->currentEncoder setFragmentBytes:&cmd.surfaceTileOpacity
+                                             length:sizeof(float)
+                                            atIndex:3];
+        } else if (tileOpacityIt != cmd.uniforms.end()) {
             [impl_->currentEncoder setFragmentBytes:tileOpacityIt->second.data()
                                              length:tileOpacityIt->second.size() * sizeof(float)
                                             atIndex:3];
         }
         auto transitionOpacityIt = cmd.uniforms.find("u_transitionOpacity");
-        if (transitionOpacityIt != cmd.uniforms.end()) {
+        if (cmd.kind == RenderCommandKind::SurfaceTile && cmd.hasSurfaceTileUniforms) {
+            [impl_->currentEncoder setFragmentBytes:&cmd.surfaceTransitionOpacity
+                                             length:sizeof(float)
+                                            atIndex:4];
+        } else if (transitionOpacityIt != cmd.uniforms.end()) {
             [impl_->currentEncoder setFragmentBytes:transitionOpacityIt->second.data()
                                              length:transitionOpacityIt->second.size() * sizeof(float)
                                             atIndex:4];

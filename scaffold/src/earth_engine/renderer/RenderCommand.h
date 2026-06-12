@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <array>
 #include <cstdint>
 #include <optional>
 #include "RenderDevice.h"  // for Texture/Buffer/ShaderProgram/Framebuffer forward decls
@@ -53,6 +54,21 @@ struct RenderCommand {
     // Uniform 数据（name → float 数组）
     // 平台后端根据 shader uniform layout 解释
     std::unordered_map<std::string, std::vector<float>> uniforms;
+
+    // Hot path for SurfaceTile commands. Keeping these uniforms in fixed
+    // storage avoids per-tile unordered_map/string/vector allocation.
+    bool hasSurfaceTileUniforms = false;
+    std::array<float, 16> surfaceModelViewProjection{};
+    std::array<float, 4> surfaceTileUv{0.0f, 0.0f, 1.0f, 1.0f};
+    std::array<float, 3> surfaceLightDir{};
+    std::array<float, 3> surfaceCameraRelativeOrigin{};
+    std::array<float, 3> surfaceTileOrigin{};
+    std::array<float, 3> surfaceFogColor{0.62f, 0.82f, 0.94f};
+    float surfaceFogDensity = 3.5e-5f;
+    float surfaceTileOpacity = 1.0f;
+    float surfaceTransitionOpacity = 1.0f;
+    float surfaceGeneration = 0.0f;
+    float surfaceHasWaterMask = 0.0f;
 };
 
 /// 渲染命令列表（每帧一帧）

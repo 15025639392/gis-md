@@ -159,6 +159,7 @@ target_sources(earth_engine_core PRIVATE
 target_sources(earth_engine_core PRIVATE
     earth_engine/debug/DebugOverlay.h
     earth_engine/debug/DebugOverlay.cpp
+    earth_engine/debug/PerfTimer.h
 )
 
 # ============================================================

@@ -549,6 +549,7 @@ RenderCommand Renderer::makeSurfaceTileCommand(Texture* texture,
     cmd.blend = false;
     cmd.cullFace = true;
 
+    cmd.textures.reserve(waterMaskTexture ? 2 : 1);
     if (texture) {
         cmd.textures.push_back(texture);
     }
@@ -556,12 +557,9 @@ RenderCommand Renderer::makeSurfaceTileCommand(Texture* texture,
         cmd.textures.push_back(waterMaskTexture);
     }
 
-    cmd.uniforms["u_tileUV"] = {uvOffsetX, uvOffsetY, uvScaleX, uvScaleY};
-    cmd.uniforms["u_hasWaterMask"] = {waterMaskTexture ? 1.0f : 0.0f};
-    cmd.uniforms["u_fogColor"] = {0.62f, 0.82f, 0.94f};  // matches low-altitude sky haze
-    cmd.uniforms["u_fogDensity"] = {3.5e-5f};  // blend far oblique terrain into horizon haze
-    cmd.uniforms["u_tileOpacity"] = {1.0f};
-    cmd.uniforms["u_transitionOpacity"] = {1.0f};
+    cmd.hasSurfaceTileUniforms = true;
+    cmd.surfaceTileUv = {uvOffsetX, uvOffsetY, uvScaleX, uvScaleY};
+    cmd.surfaceHasWaterMask = waterMaskTexture ? 1.0f : 0.0f;
     return cmd;
 }
 

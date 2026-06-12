@@ -2,12 +2,14 @@
 #include "../scene/FrameState.h"
 #include "../scene/Camera.h"
 #include "../tiling/TilePlan.h"
+#include "../debug/PerfTimer.h"
 
 #ifdef __ANDROID__
 #include <android/log.h>
 #endif
 
 #include <algorithm>
+#include <cstdio>
 
 namespace earth_engine {
 
@@ -99,19 +101,26 @@ const TerrainTile* TerrainLayer::findBestTileForKey(const TileKey& targetKey) co
 void TerrainLayer::update(const FrameState& frameState) {
     if (!enabled_ || !visible_ || !frameState.camera) return;
 
+    const double updateStartMs = perf::nowMs();
     // 1. 处理后台线程完成的解码
+    const double uploadStartMs = perf::nowMs();
     processPendingUploads();
+    const double uploadMs = perf::nowMs() - uploadStartMs;
 
     // 2. 计算可见瓦片（使用持久化 quad tree，避免每帧重建所有节点）
     if (!quadTree_) {
         quadTree_ = std::make_unique<TileQuadTree>();
     }
+    const double planStartMs = perf::nowMs();
     tilePlan_ = quadTree_->compute(
         *frameState.camera, *tileScheme_,
         static_cast<double>(frameState.viewportWidthPixels),
         static_cast<double>(frameState.viewportHeightPixels));
+    tilePlan_.frameId = frameState.frameId;
+    const double planMs = perf::nowMs() - planStartMs;
 
     // 3. 请求缺失的瓦片（限制 zoom 范围到 provider 支持的范围）
+    const double requestStartMs = perf::nowMs();
     int requestsThisUpdate = 0;
     constexpr int kMaxTerrainRequestsPerUpdate = 8;
 #ifdef __ANDROID__
@@ -140,6 +149,23 @@ void TerrainLayer::update(const FrameState& frameState) {
             ++requestsThisUpdate;
         }
     }
+    const double requestMs = perf::nowMs() - requestStartMs;
+
+    char detail[192];
+    std::snprintf(detail, sizeof(detail),
+        "upload=%.2f tilePlan=%.2f request=%.2f visible=%zu issued=%d cached=%d inflight=%zu empty=%zu",
+        uploadMs,
+        planMs,
+        requestMs,
+        tilePlan_.visibleTiles.size(),
+        requestsThisUpdate,
+        cachedTileCount(),
+        requestedTiles_.size(),
+        emptyTiles_.size());
+    perf::logTiming(frameState.frameId,
+                    "TerrainLayer.update",
+                    perf::nowMs() - updateStartMs,
+                    detail);
 }
 
 void TerrainLayer::loadTile(const TileKey& key) {
@@ -162,6 +188,7 @@ void TerrainLayer::loadTile(const TileKey& key) {
 }
 
 void TerrainLayer::processPendingUploads() {
+    const double startMs = perf::nowMs();
 #ifdef __ANDROID__
     static int ppuCount = 0;
     if (++ppuCount <= 3)
@@ -170,8 +197,13 @@ void TerrainLayer::processPendingUploads() {
             ppuCount, pendingQueue_->queue.size(), pendingQueue_->emptyTiles.size());
 #endif
     std::deque<PendingUpload> batch;
+    size_t queueBefore = 0;
+    size_t queueAfter = 0;
+    size_t emptyBefore = 0;
     {
         std::lock_guard<std::mutex> lock(pendingQueue_->mutex);
+        queueBefore = pendingQueue_->queue.size();
+        emptyBefore = pendingQueue_->emptyTiles.size();
         // Drain empty-tile markers from worker threads (cesium-native availability)
         emptyTiles_.insert(
             pendingQueue_->emptyTiles.begin(),
@@ -184,8 +216,10 @@ void TerrainLayer::processPendingUploads() {
             batch.push_back(std::move(pendingQueue_->queue.front()));
             pendingQueue_->queue.pop_front();
         }
+        queueAfter = pendingQueue_->queue.size();
     }
 
+    int uploaded = 0;
     for (auto& item : batch) {
         std::string cacheKey = terrainCacheKey(item.key);
 
@@ -194,7 +228,23 @@ void TerrainLayer::processPendingUploads() {
 
         tileCache_[cacheKey] = std::move(tile);
         ++terrainGeneration_;
+        ++uploaded;
     }
+
+    char detail[160];
+    std::snprintf(detail, sizeof(detail),
+        "queue=%zu->%zu batch=%zu uploaded=%d emptyDrain=%zu cached=%d gen=%llu",
+        queueBefore,
+        queueAfter,
+        batch.size(),
+        uploaded,
+        emptyBefore,
+        cachedTileCount(),
+        static_cast<unsigned long long>(terrainGeneration_));
+    perf::logTiming(tilePlan_.frameId,
+                    "TerrainLayer.processPendingUploads",
+                    perf::nowMs() - startMs,
+                    detail);
 }
 
 bool TerrainLayer::isTilePossiblyAvailable(const TileKey& key) const {

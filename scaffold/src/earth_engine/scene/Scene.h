@@ -50,6 +50,7 @@ public:
 
     /// 运行时诊断（FPS、draw calls、visible tiles 等）
     const Diagnostics& diagnostics() const { return frameState_.diagnostics; }
+    Diagnostics& mutableDiagnostics() { return frameState_.diagnostics; }
 
     // ---- 底图图层管理 ----
     void addLayer(std::unique_ptr<BasemapLayer> layer);
@@ -115,6 +116,7 @@ private:
     std::unique_ptr<DebugOverlay> debugOverlay_;
     GlobeMesh globeMesh_;
     FrameState frameState_;
+    RenderCommandList renderCommands_;
     RenderDevice* renderDevice_ = nullptr;
     uint64_t frameId_ = 0;
     double elapsedTime_ = 0.0;

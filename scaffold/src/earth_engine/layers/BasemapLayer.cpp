@@ -9,6 +9,7 @@
 #include "../core/math/Rectangle.h"
 #include "../tiling/SurfaceTile.h"
 #include "../tiling/TileSurface.h"
+#include "../debug/PerfTimer.h"
 #include "TerrainLayer.h"
 
 #include <glm/glm.hpp>
@@ -16,6 +17,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <cstring>
 #include <algorithm>
+#include <cstdio>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -94,6 +96,57 @@ bool isDescendantOf(TileKey candidate, const TileKey& ancestor) {
     return candidate == ancestor;
 }
 
+bool tileTransitionsEqual(const std::vector<TileTransition>& lhs,
+                          const std::vector<TileTransition>& rhs) {
+    if (lhs.size() != rhs.size()) return false;
+    for (size_t i = 0; i < lhs.size(); ++i) {
+        if (!(lhs[i].key == rhs[i].key)) return false;
+        if (lhs[i].opacity != rhs[i].opacity) return false;
+        if (lhs[i].fadingNodeCount != rhs[i].fadingNodeCount) return false;
+    }
+    return true;
+}
+
+void clearLayerTilePlanRetainingCapacity(LayerTilePlan& plan) {
+    plan.layerId.clear();
+    plan.providerId.clear();
+    plan.frameId = 0;
+    plan.zoom = 0;
+    plan.minVisibleZoom = 0;
+    plan.maxVisibleZoom = 0;
+    plan.equalZoomApplied = false;
+    plan.lodSizePixels = 0.0;
+    plan.visibleTiles.clear();
+    plan.tileTransitions.clear();
+    plan.desiredTiles.clear();
+    plan.requestTiles.clear();
+    plan.renderTiles.clear();
+    plan.fallbackTiles.clear();
+    plan.kickedTiles.clear();
+    plan.ancestorRetainedTiles.clear();
+    plan.readyTileCount = 0;
+    plan.parentFallbackReadyTileCount = 0;
+    plan.missingTileCount = 0;
+    plan.unsupportedTileCount = 0;
+    plan.transitionTileCount = 0;
+    plan.kickedTileCount = 0;
+    plan.ancestorRetainedTileCount = 0;
+    plan.quadtreeFadingNodeCount = 0;
+    plan.quadtreeNeighborLinkCount = 0;
+    plan.quadtreeNeighborBalancedTileCount = 0;
+    plan.quadtreeRenderingNodeCount = 0;
+    plan.quadtreeWalkthroughNodeCount = 0;
+    plan.quadtreeNotRenderingNodeCount = 0;
+    plan.quadtreeSelectionRenderedCount = 0;
+    plan.quadtreeSelectionRefinedCount = 0;
+    plan.quadtreeSelectionKickedCount = 0;
+    plan.quadtreeSelectionAncestorMeetsSseCount = 0;
+    plan.quadtreeCameraInsideNodeCount = 0;
+    plan.quadtreeInFrustumNodeCount = 0;
+    plan.quadtreeHorizonTangentPreservedCount = 0;
+    plan.quadtreeEqualZoomSecondPassNodeCount = 0;
+}
+
 void recomputeRenderReadinessCounts(LayerTilePlan& plan) {
     plan.readyTileCount = 0;
     plan.parentFallbackReadyTileCount = 0;
@@ -137,17 +190,42 @@ void BasemapLayer::update(const FrameState& frameState) {
 void BasemapLayer::applyPlan(const TilePlan& plan, const Vec3& cameraPosition) {
     if (!visible_) return;
 
+    const double startMs = perf::nowMs();
     lastCameraPosition_ = cameraPosition;
-    if (plan.zoom != tilePlan_.zoom ||
-        plan.visibleTiles != tilePlan_.visibleTiles) {
+    const bool planChanged = isRenderAffectingPlanChange(plan);
+    if (planChanged) {
         ++generation_;
+        markLayerPlanDirty();
     }
     tilePlan_ = plan;
-    rebuildLayerPlan();
+
+    const double uploadStartMs = perf::nowMs();
     processPendingUploads();
+    const double uploadMs = perf::nowMs() - uploadStartMs;
+    const double rebuildStartMs = perf::nowMs();
+    rebuildLayerPlanIfNeeded();
+    const double rebuildMs = perf::nowMs() - rebuildStartMs;
+
+    char detail[192];
+    std::snprintf(detail, sizeof(detail),
+        "layer=%s changed=%d dirty=%d rebuild=%.2f upload=%.2f visible=%zu desired=%zu render=%zu request=%zu",
+        id_.c_str(),
+        planChanged ? 1 : 0,
+        layerPlanDirty_ ? 1 : 0,
+        rebuildMs,
+        uploadMs,
+        tilePlan_.visibleTiles.size(),
+        layerPlan_.desiredTiles.size(),
+        layerPlan_.renderTiles.size(),
+        layerPlan_.requestTiles.size());
+    perf::logTiming(tilePlan_.frameId,
+                    "BasemapLayer.applyPlan",
+                    perf::nowMs() - startMs,
+                    detail);
 }
 
 void BasemapLayer::loadMissingTiles() {
+    const double startMs = perf::nowMs();
     constexpr double kRetryBackoffSec = 2.0;
     constexpr int kMaxRetries = 3;
     constexpr size_t kOpenGlobusLoadingBatchSize = 12;
@@ -164,6 +242,7 @@ void BasemapLayer::loadMissingTiles() {
         }
     }
 
+    int issuedRequests = 0;
     for (const auto& key : layerPlan_.requestTiles) {
         if (requestedGeneration_.size() >= kOpenGlobusLoadingBatchSize) {
             break;
@@ -180,7 +259,21 @@ void BasemapLayer::loadMissingTiles() {
         }
 
         loadTile(key);
+        ++issuedRequests;
     }
+
+    char detail[160];
+    std::snprintf(detail, sizeof(detail),
+        "layer=%s candidates=%zu issued=%d inflight=%zu cached=%d",
+        id_.c_str(),
+        layerPlan_.requestTiles.size(),
+        issuedRequests,
+        requestedGeneration_.size(),
+        cachedTileCount());
+    perf::logTiming(tilePlan_.frameId,
+                    "BasemapLayer.loadMissingTiles",
+                    perf::nowMs() - startMs,
+                    detail);
 }
 
 void BasemapLayer::loadTile(const TileKey& key) {
@@ -206,16 +299,25 @@ void BasemapLayer::loadTile(const TileKey& key) {
 }
 
 void BasemapLayer::processPendingUploads() {
+    const double startMs = perf::nowMs();
     std::deque<PendingUpload> batch;
+    size_t queueBefore = 0;
+    size_t queueAfter = 0;
     {
         std::lock_guard<std::mutex> lock(pendingQueue_->mutex);
+        queueBefore = pendingQueue_->queue.size();
         constexpr size_t kMaxUploadsPerFrame = 2;
         while (!pendingQueue_->queue.empty() && batch.size() < kMaxUploadsPerFrame) {
             batch.push_back(std::move(pendingQueue_->queue.front()));
             pendingQueue_->queue.pop_front();
         }
+        queueAfter = pendingQueue_->queue.size();
     }
 
+    int uploaded = 0;
+    int currentFailures = 0;
+    int staleDiscarded = 0;
+    double textureCreateMs = 0.0;
     for (auto& item : batch) {
         const std::string ck = tileCacheKey(item.key);
         auto clearRequestIfCurrent = [&]() {
@@ -227,10 +329,12 @@ void BasemapLayer::processPendingUploads() {
         };
         if (!item.image) {
             clearRequestIfCurrent();
+            ++currentFailures;
             continue;
         }
         if (!isCurrentPlanTileOrAncestor(item.key)) {
             clearRequestIfCurrent();
+            ++staleDiscarded;
             continue;
         }
         auto& image = item.image;
@@ -247,7 +351,9 @@ void BasemapLayer::processPendingUploads() {
         texDesc.wrapS = TextureDesc::Wrap::Clamp;
         texDesc.wrapT = TextureDesc::Wrap::Clamp;
 
+        const double textureStartMs = perf::nowMs();
         auto texture = renderDevice_->createTexture(texDesc);
+        textureCreateMs += perf::nowMs() - textureStartMs;
         if (texture) {
             // 成功上传 → 清除失败记录
             failedTiles_.erase(ck);
@@ -259,16 +365,42 @@ void BasemapLayer::processPendingUploads() {
                 image->width, image->height);
 #endif
             textureCache_.put(item.key, std::move(texture));
+            ++uploaded;
+            markLayerPlanDirty();
         }
     }
-    rebuildLayerPlan();
+
+    char detail[192];
+    std::snprintf(detail, sizeof(detail),
+        "layer=%s queue=%zu->%zu batch=%zu uploaded=%d failed=%d stale=%d textureCreate=%.2f cached=%d",
+        id_.c_str(),
+        queueBefore,
+        queueAfter,
+        batch.size(),
+        uploaded,
+        currentFailures,
+        staleDiscarded,
+        textureCreateMs,
+        cachedTileCount());
+    perf::logTiming(tilePlan_.frameId,
+                    "BasemapLayer.processPendingUploads",
+                    perf::nowMs() - startMs,
+                    detail);
 }
 
-void BasemapLayer::rebuildLayerPlan() {
-    const LayerTilePlan previousPlan = layerPlan_;
-    layerPlan_ = LayerTilePlan{};
-    layerPlan_.layerId = id_;
-    layerPlan_.providerId = provider_ ? provider_->id() : "";
+bool BasemapLayer::isRenderAffectingPlanChange(const TilePlan& plan) const {
+    if (layerPlanDirty_) return true;
+    if (plan.zoom != tilePlan_.zoom) return true;
+    if (plan.visibleTiles != tilePlan_.visibleTiles) return true;
+    if (!tileTransitionsEqual(plan.tileTransitions, tilePlan_.tileTransitions)) return true;
+    return false;
+}
+
+void BasemapLayer::markLayerPlanDirty() {
+    layerPlanDirty_ = true;
+}
+
+void BasemapLayer::refreshLayerPlanFrameMetadata() {
     layerPlan_.frameId = tilePlan_.frameId;
     layerPlan_.zoom = tilePlan_.zoom;
     layerPlan_.minVisibleZoom = tilePlan_.minVisibleZoom;
@@ -293,113 +425,209 @@ void BasemapLayer::rebuildLayerPlan() {
         tilePlan_.horizonTangentPreservedCount;
     layerPlan_.quadtreeEqualZoomSecondPassNodeCount =
         tilePlan_.equalZoomSecondPassNodeCount;
-    layerPlan_.visibleTiles = tilePlan_.visibleTiles;
-    layerPlan_.tileTransitions = tilePlan_.tileTransitions;
-    layerPlan_.transitionTileCount += tilePlan_.fadingNodeCount;
-    std::unordered_set<TileKey> requestSet;
+}
 
-    std::unordered_set<TileKey> desiredSet;
-    for (const auto& key : tilePlan_.visibleTiles) {
-        TileKey desiredKey = key;
-        while (provider_ && !provider_->supportsTile(desiredKey) &&
-               desiredKey.z > tileScheme_->minZoom()) {
-            desiredKey = TilePlanBuilder::parentKey(desiredKey);
-        }
-        if (provider_ && !provider_->supportsTile(desiredKey)) {
-            ++layerPlan_.unsupportedTileCount;
-            continue;
-        }
-        if (desiredSet.insert(desiredKey).second) {
-            layerPlan_.desiredTiles.push_back(desiredKey);
-        }
+void BasemapLayer::rebuildLayerPlanIfNeeded() {
+    if (!layerPlanDirty_) {
+        refreshLayerPlanFrameMetadata();
+        return;
+    }
+    rebuildLayerPlan();
+    layerPlanDirty_ = false;
+}
+
+void BasemapLayer::rebuildLayerPlan() {
+    const double startMs = perf::nowMs();
+    double metadataMs = 0.0;
+    double desiredMs = 0.0;
+    double renderRefsMs = 0.0;
+    double ancestorMs = 0.0;
+    double kickingMs = 0.0;
+    double evictMs = 0.0;
+
+    const LayerTilePlan previousPlan = layerPlan_;
+    {
+        const double phaseStartMs = perf::nowMs();
+        clearLayerTilePlanRetainingCapacity(layerPlan_);
+        layerPlan_.layerId = id_;
+        layerPlan_.providerId = provider_ ? provider_->id() : "";
+        layerPlan_.frameId = tilePlan_.frameId;
+        layerPlan_.zoom = tilePlan_.zoom;
+        layerPlan_.minVisibleZoom = tilePlan_.minVisibleZoom;
+        layerPlan_.maxVisibleZoom = tilePlan_.maxVisibleZoom;
+        layerPlan_.equalZoomApplied = tilePlan_.equalZoomApplied;
+        layerPlan_.lodSizePixels = tilePlan_.lodSizePixels;
+        layerPlan_.quadtreeFadingNodeCount = tilePlan_.fadingNodeCount;
+        layerPlan_.quadtreeNeighborLinkCount = tilePlan_.neighborLinkCount;
+        layerPlan_.quadtreeNeighborBalancedTileCount =
+            tilePlan_.neighborBalancedTileCount;
+        layerPlan_.quadtreeRenderingNodeCount = tilePlan_.renderingNodeCount;
+        layerPlan_.quadtreeWalkthroughNodeCount = tilePlan_.walkthroughNodeCount;
+        layerPlan_.quadtreeNotRenderingNodeCount = tilePlan_.notRenderingNodeCount;
+        layerPlan_.quadtreeSelectionRenderedCount = tilePlan_.selectionRenderedCount;
+        layerPlan_.quadtreeSelectionRefinedCount = tilePlan_.selectionRefinedCount;
+        layerPlan_.quadtreeSelectionKickedCount = tilePlan_.selectionKickedCount;
+        layerPlan_.quadtreeSelectionAncestorMeetsSseCount =
+            tilePlan_.selectionAncestorMeetsSseCount;
+        layerPlan_.quadtreeCameraInsideNodeCount = tilePlan_.cameraInsideNodeCount;
+        layerPlan_.quadtreeInFrustumNodeCount = tilePlan_.inFrustumNodeCount;
+        layerPlan_.quadtreeHorizonTangentPreservedCount =
+            tilePlan_.horizonTangentPreservedCount;
+        layerPlan_.quadtreeEqualZoomSecondPassNodeCount =
+            tilePlan_.equalZoomSecondPassNodeCount;
+        layerPlan_.visibleTiles = tilePlan_.visibleTiles;
+        layerPlan_.tileTransitions = tilePlan_.tileTransitions;
+        layerPlan_.transitionTileCount += tilePlan_.fadingNodeCount;
+        layerPlan_.desiredTiles.reserve(tilePlan_.visibleTiles.size());
+        layerPlan_.requestTiles.reserve(tilePlan_.visibleTiles.size());
+        layerPlan_.renderTiles.reserve(tilePlan_.visibleTiles.size());
+        layerPlan_.fallbackTiles.reserve(tilePlan_.visibleTiles.size());
+        metadataMs = perf::nowMs() - phaseStartMs;
     }
 
-    for (const auto& key : layerPlan_.desiredTiles) {
-        const float lodTransitionOpacity = transitionOpacityForTile(tilePlan_, key);
-        TileKey preferredTextureKey = key;
+    std::unordered_set<TileKey> requestSet;
+    requestSet.reserve(tilePlan_.visibleTiles.size());
 
-        TileKey coherentFallbackKey = preferredTextureKey;
-        bool useCoherentParentFallback = false;
+    {
+        const double phaseStartMs = perf::nowMs();
+        std::unordered_set<TileKey> desiredSet;
+        desiredSet.reserve(tilePlan_.visibleTiles.size());
+        for (const auto& key : tilePlan_.visibleTiles) {
+            TileKey desiredKey = key;
+            while (provider_ && !provider_->supportsTile(desiredKey) &&
+                   desiredKey.z > tileScheme_->minZoom()) {
+                desiredKey = TilePlanBuilder::parentKey(desiredKey);
+            }
+            if (provider_ && !provider_->supportsTile(desiredKey)) {
+                ++layerPlan_.unsupportedTileCount;
+                continue;
+            }
+            if (desiredSet.insert(desiredKey).second) {
+                layerPlan_.desiredTiles.push_back(desiredKey);
+            }
+        }
+        desiredMs = perf::nowMs() - phaseStartMs;
+    }
 
-        if (textureCache_.contains(preferredTextureKey) &&
-            preferredTextureKey.z > tileScheme_->minZoom()) {
-            const TileKey parent = TilePlanBuilder::parentKey(preferredTextureKey);
-            if (textureCache_.contains(parent)) {
-                for (const TileKey& sibling : layerPlan_.desiredTiles) {
-                    if (sibling == key || sibling.z != key.z) continue;
-                    TileKey siblingTextureKey = sibling;
-                    while (provider_ && !provider_->supportsTile(siblingTextureKey) &&
-                           siblingTextureKey.z > tileScheme_->minZoom()) {
-                        siblingTextureKey = TilePlanBuilder::parentKey(siblingTextureKey);
-                    }
-                    if (TilePlanBuilder::parentKey(siblingTextureKey) != parent) continue;
-                    if (!textureCache_.contains(siblingTextureKey)) {
-                        coherentFallbackKey = parent;
-                        useCoherentParentFallback = true;
-                        break;
+    {
+        const double phaseStartMs = perf::nowMs();
+        for (const auto& key : layerPlan_.desiredTiles) {
+            const float lodTransitionOpacity = transitionOpacityForTile(tilePlan_, key);
+            TileKey preferredTextureKey = key;
+
+            TileKey coherentFallbackKey = preferredTextureKey;
+            bool useCoherentParentFallback = false;
+
+            if (textureCache_.contains(preferredTextureKey) &&
+                preferredTextureKey.z > tileScheme_->minZoom()) {
+                const TileKey parent = TilePlanBuilder::parentKey(preferredTextureKey);
+                if (textureCache_.contains(parent)) {
+                    for (const TileKey& sibling : layerPlan_.desiredTiles) {
+                        if (sibling == key || sibling.z != key.z) continue;
+                        TileKey siblingTextureKey = sibling;
+                        while (provider_ && !provider_->supportsTile(siblingTextureKey) &&
+                               siblingTextureKey.z > tileScheme_->minZoom()) {
+                            siblingTextureKey = TilePlanBuilder::parentKey(siblingTextureKey);
+                        }
+                        if (TilePlanBuilder::parentKey(siblingTextureKey) != parent) continue;
+                        if (!textureCache_.contains(siblingTextureKey)) {
+                            coherentFallbackKey = parent;
+                            useCoherentParentFallback = true;
+                            break;
+                        }
                     }
                 }
             }
-        }
 
-        if (useCoherentParentFallback) {
-            layerPlan_.fallbackTiles.push_back(TileFallback{key, coherentFallbackKey});
-            layerPlan_.renderTiles.push_back(RenderTileRef{
-                key,
-                coherentFallbackKey,
-                TileRenderSource::ParentFallback,
-                TileReadinessState::ParentFallback,
-                lodTransitionOpacity});
-            ++layerPlan_.parentFallbackReadyTileCount;
-            ++layerPlan_.transitionTileCount;
-            continue;
-        }
+            if (useCoherentParentFallback) {
+                layerPlan_.fallbackTiles.push_back(TileFallback{key, coherentFallbackKey});
+                layerPlan_.renderTiles.push_back(RenderTileRef{
+                    key,
+                    coherentFallbackKey,
+                    TileRenderSource::ParentFallback,
+                    TileReadinessState::ParentFallback,
+                    lodTransitionOpacity});
+                ++layerPlan_.parentFallbackReadyTileCount;
+                ++layerPlan_.transitionTileCount;
+                continue;
+            }
 
-        if (textureCache_.contains(preferredTextureKey)) {
-            layerPlan_.renderTiles.push_back(RenderTileRef{
-                key,
-                preferredTextureKey,
-                TileRenderSource::Exact,
-                TileReadinessState::Ready,
-                lodTransitionOpacity});
-            ++layerPlan_.readyTileCount;
-            continue;
-        }
+            if (textureCache_.contains(preferredTextureKey)) {
+                layerPlan_.renderTiles.push_back(RenderTileRef{
+                    key,
+                    preferredTextureKey,
+                    TileRenderSource::Exact,
+                    TileReadinessState::Ready,
+                    lodTransitionOpacity});
+                ++layerPlan_.readyTileCount;
+                continue;
+            }
 
-        TileKey fallbackKey = preferredTextureKey;
-        const bool hasFallback =
-            findFallbackTexture(preferredTextureKey, fallbackKey) != nullptr;
-        if (hasFallback) {
-            layerPlan_.fallbackTiles.push_back(TileFallback{key, fallbackKey});
-            layerPlan_.renderTiles.push_back(RenderTileRef{
-                key,
-                fallbackKey,
-                TileRenderSource::ParentFallback,
-                TileReadinessState::ParentFallback,
-                1.0f});
-            ++layerPlan_.parentFallbackReadyTileCount;
-            ++layerPlan_.transitionTileCount;
-        }
+            TileKey fallbackKey = preferredTextureKey;
+            const bool hasFallback =
+                findFallbackTexture(preferredTextureKey, fallbackKey) != nullptr;
+            if (hasFallback) {
+                layerPlan_.fallbackTiles.push_back(TileFallback{key, fallbackKey});
+                layerPlan_.renderTiles.push_back(RenderTileRef{
+                    key,
+                    fallbackKey,
+                    TileRenderSource::ParentFallback,
+                    TileReadinessState::ParentFallback,
+                    1.0f});
+                ++layerPlan_.parentFallbackReadyTileCount;
+                ++layerPlan_.transitionTileCount;
+            }
 
-        TileKey requestKey = preferredTextureKey;
-        const bool shouldRequestExact =
-            hasFallback &&
-            provider_ &&
-            provider_->supportsTile(preferredTextureKey) &&
-            !textureCache_.contains(preferredTextureKey);
-        const bool shouldRequestFallbackChain =
-            !hasFallback && findRequestTileForMissingTexture(preferredTextureKey, requestKey);
-        if ((shouldRequestExact || shouldRequestFallbackChain) &&
-            requestSet.insert(requestKey).second) {
-            layerPlan_.requestTiles.push_back(requestKey);
+            TileKey requestKey = preferredTextureKey;
+            const bool shouldRequestExact =
+                hasFallback &&
+                provider_ &&
+                provider_->supportsTile(preferredTextureKey) &&
+                !textureCache_.contains(preferredTextureKey);
+            const bool shouldRequestFallbackChain =
+                !hasFallback && findRequestTileForMissingTexture(preferredTextureKey, requestKey);
+            if ((shouldRequestExact || shouldRequestFallbackChain) &&
+                requestSet.insert(requestKey).second) {
+                layerPlan_.requestTiles.push_back(requestKey);
+            }
+            if (!hasFallback) {
+                ++layerPlan_.missingTileCount;
+            }
         }
-        if (!hasFallback) {
-            ++layerPlan_.missingTileCount;
-        }
+        renderRefsMs = perf::nowMs() - phaseStartMs;
     }
+
+    const double ancestorStartMs = perf::nowMs();
     applyAncestorMeetsSseFallback(previousPlan);
+    ancestorMs = perf::nowMs() - ancestorStartMs;
+
+    const double kickingStartMs = perf::nowMs();
     applyCesiumNativeKicking(previousPlan);
+    kickingMs = perf::nowMs() - kickingStartMs;
+
+    const double evictStartMs = perf::nowMs();
     evictUnusedSurfaceMeshes();
+    evictMs = perf::nowMs() - evictStartMs;
+
+    char detail[256];
+    std::snprintf(detail, sizeof(detail),
+        "metadata=%.2f desired=%.2f renderRefs=%.2f ancestor=%.2f kicking=%.2f evict=%.2f visible=%zu desiredCount=%zu render=%zu request=%zu cache=%zu",
+        metadataMs,
+        desiredMs,
+        renderRefsMs,
+        ancestorMs,
+        kickingMs,
+        evictMs,
+        tilePlan_.visibleTiles.size(),
+        layerPlan_.desiredTiles.size(),
+        layerPlan_.renderTiles.size(),
+        layerPlan_.requestTiles.size(),
+        surfaceMeshCache_.size());
+    perf::logTimingAtLeast(tilePlan_.frameId,
+                           "BasemapLayer.rebuildLayerPlan",
+                           perf::nowMs() - startMs,
+                           8.0,
+                           detail);
 }
 
 bool BasemapLayer::isCurrentDesiredTile(const TileKey& key) const {
@@ -614,14 +842,18 @@ bool BasemapLayer::findRequestTileForMissingTexture(const TileKey& target,
 BasemapLayer::SurfaceGpuMesh*
 BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
                                         const Rectangle& bounds,
-                                        const TerrainLayer* terrainLayer) {
+                                        const TerrainLayer* terrainLayer,
+                                        SurfaceMeshBuildStats* stats) {
     if (!renderDevice_) return nullptr;
 
+    const double totalStartMs = perf::nowMs();
     const int gridSize = surfaceGridSizeForZoom(key.z);
+    const double terrainLookupStartMs = perf::nowMs();
     const TerrainTile* terrainTile = terrainLayer
         ? terrainLayer->findBestTileForBounds(bounds)
         : nullptr;
     const bool useTerrain = terrainTile && terrainTile->valid();
+    if (stats) stats->terrainLookupMs += perf::nowMs() - terrainLookupStartMs;
 #ifdef __ANDROID__
     static int dbgCount = 0;
     if (terrainLayer && ++dbgCount <= 3) {
@@ -630,16 +862,24 @@ BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
             key.z, useTerrain, terrainLayer->cachedTileCount());
     }
 #endif
+    const double cacheKeyStartMs = perf::nowMs();
     const std::string ck = tileCacheKey(key) + "/surface/" +
         (useTerrain
             ? "terrain/" + tileCacheKey(terrainTile->key())
             : "ellipsoid") +
         "/" + std::to_string(gridSize);
+    if (stats) stats->cacheKeyMs += perf::nowMs() - cacheKeyStartMs;
 
     auto found = surfaceMeshCache_.find(ck);
     if (found != surfaceMeshCache_.end()) {
+        found->second.lastUsedFrame = layerPlan_.frameId;
+        if (stats) {
+            ++stats->hits;
+            stats->totalMs += perf::nowMs() - totalStartMs;
+        }
         return &found->second;
     }
+    if (stats) ++stats->misses;
 
     constexpr double kTerrainSkirtHeightMeters = -100.0;
 
@@ -650,19 +890,28 @@ BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
         parentTile = terrainLayer->findBestTileForKey(parentKey);
     }
 
+    const double meshBuildStartMs = perf::nowMs();
     SurfaceTileMesh mesh = useTerrain
         ? TileSurface::buildTerrainMesh(
               bounds, terrainTile, gridSize, kTerrainSkirtHeightMeters, parentTile)
         : TileSurface::buildEllipsoidMesh(bounds, gridSize);
+    const double meshBuildMs = perf::nowMs() - meshBuildStartMs;
+    if (stats) stats->meshBuildMs += meshBuildMs;
     if (mesh.vertices.empty() || mesh.indices.empty()) return nullptr;
 
+    const double centroidStartMs = perf::nowMs();
     const Vec3 localOrigin = meshCentroid(mesh);
+    if (stats) stats->centroidMs += perf::nowMs() - centroidStartMs;
+
+    const double vertexBuildStartMs = perf::nowMs();
     std::vector<SurfaceGpuVertex> vertices =
         makeSurfaceGpuVertices(mesh, localOrigin);
+    if (stats) stats->vertexBuildMs += perf::nowMs() - vertexBuildStartMs;
     if (vertices.empty()) return nullptr;
 
     SurfaceGpuMesh gpuMesh;
     gpuMesh.localOriginEcef = localOrigin;
+    gpuMesh.lastUsedFrame = layerPlan_.frameId;
     gpuMesh.usesTerrain = useTerrain;
     gpuMesh.usesParentTerrain = useTerrain && terrainTile->key() != key;
     gpuMesh.terrainReady = useTerrain && terrainTile->key() == key;
@@ -673,7 +922,9 @@ BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
     vbDesc.data = vertices.data();
     vbDesc.usage = BufferDesc::Usage::Static;
     vbDesc.type = BufferDesc::Type::Vertex;
+    const double vertexBufferStartMs = perf::nowMs();
     gpuMesh.vertexBuffer = renderDevice_->createBuffer(vbDesc);
+    if (stats) stats->vertexBufferMs += perf::nowMs() - vertexBufferStartMs;
     if (!gpuMesh.vertexBuffer) return nullptr;
 
     BufferDesc ibDesc;
@@ -681,7 +932,9 @@ BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
     ibDesc.data = mesh.indices.data();
     ibDesc.usage = BufferDesc::Usage::Static;
     ibDesc.type = BufferDesc::Type::Index;
+    const double indexBufferStartMs = perf::nowMs();
     gpuMesh.indexBuffer = renderDevice_->createBuffer(ibDesc);
+    if (stats) stats->indexBufferMs += perf::nowMs() - indexBufferStartMs;
     if (!gpuMesh.indexBuffer) return nullptr;
 
     // cesium-native alignment: per-vertex normals are used directly in the
@@ -689,6 +942,7 @@ BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
     // upload is required, eliminating per-tile RGBA8 texture allocation.
 
     // Water mask texture (QuantizedMesh extension ID=2)
+    const double waterMaskStartMs = perf::nowMs();
     if (mesh.waterMask.valid()) {
         TextureDesc wmDesc;
         wmDesc.width = 256;
@@ -709,32 +963,185 @@ BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
         wmDesc.wrapT = TextureDesc::Wrap::Clamp;
         gpuMesh.waterMaskTexture = renderDevice_->createTexture(wmDesc);
     }
+    if (stats) stats->waterMaskMs += perf::nowMs() - waterMaskStartMs;
 
     gpuMesh.indexCount = static_cast<int>(mesh.indices.size());
     auto [it, inserted] = surfaceMeshCache_.emplace(ck, std::move(gpuMesh));
     (void)inserted;
+    const double totalMs = perf::nowMs() - totalStartMs;
+    if (stats) stats->totalMs += totalMs;
+    if (totalMs >= 8.0) {
+        char detail[256];
+        std::snprintf(detail, sizeof(detail),
+            "tile=%d/%d/%d grid=%d terrain=%d parent=%d vertices=%zu indices=%zu cache=%zu mesh=%.2f",
+            key.z,
+            key.x,
+            key.y,
+            gridSize,
+            useTerrain ? 1 : 0,
+            (useTerrain && terrainTile && terrainTile->key() != key) ? 1 : 0,
+            mesh.vertices.size(),
+            mesh.indices.size(),
+            surfaceMeshCache_.size(),
+            meshBuildMs);
+        perf::logTiming(layerPlan_.frameId,
+                        "BasemapLayer.surfaceMesh.create",
+                        totalMs,
+                        detail);
+    }
     return &it->second;
 }
 
 void BasemapLayer::evictUnusedSurfaceMeshes() {
-    std::unordered_set<std::string> keep;
-    keep.reserve(layerPlan_.renderTiles.size());
-    for (const auto& renderTile : layerPlan_.renderTiles) {
-        const std::string prefix = tileCacheKey(renderTile.targetKey) + "/surface/";
-        for (const auto& entry : surfaceMeshCache_) {
-            if (entry.first.rfind(prefix, 0) == 0) {
-                keep.insert(entry.first);
-            }
-        }
+    const double startMs = perf::nowMs();
+    const size_t beforeCount = surfaceMeshCache_.size();
+    if (surfaceMeshCache_.empty()) {
+        pendingSurfaceMeshEvictions_.clear();
+        pendingSurfaceMeshEvictionSet_.clear();
+        return;
     }
 
-    for (auto it = surfaceMeshCache_.begin(); it != surfaceMeshCache_.end(); ) {
-        if (keep.find(it->first) == keep.end()) {
-            it = surfaceMeshCache_.erase(it);
-        } else {
-            ++it;
-        }
+    std::unordered_set<std::string> currentTargetPrefixes;
+    currentTargetPrefixes.reserve(layerPlan_.renderTiles.size());
+    for (const auto& renderTile : layerPlan_.renderTiles) {
+        currentTargetPrefixes.insert(tileCacheKey(renderTile.targetKey) + "/surface/");
     }
+
+    constexpr const char* kSurfaceCacheMarker = "/surface/";
+    constexpr size_t kSurfaceCacheMarkerLength = 9;
+    auto isCurrentRenderMesh = [&](const std::string& cacheKey) {
+        const size_t markerPos = cacheKey.find(kSurfaceCacheMarker);
+        if (markerPos == std::string::npos) return false;
+        return currentTargetPrefixes.find(
+                   cacheKey.substr(0, markerPos + kSurfaceCacheMarkerLength)) !=
+            currentTargetPrefixes.end();
+    };
+
+    // Surface mesh deletion can stall the GL driver, so eviction is a memory
+    // protection path rather than a steady-state movement path.
+    constexpr size_t kMinSurfaceMeshCacheEntries = 1024;
+    constexpr size_t kMaxSurfaceMeshCacheEntries = 1280;
+    constexpr size_t kSurfaceMeshHardWatermark = 1536;
+    constexpr size_t kMaxSurfaceMeshEvictionsQueuedPerRefill = 128;
+    const size_t targetCapacity = std::clamp(
+        layerPlan_.renderTiles.size() * 16,
+        kMinSurfaceMeshCacheEntries,
+        kMaxSurfaceMeshCacheEntries);
+    const size_t hardWatermark = std::max(kSurfaceMeshHardWatermark,
+                                          targetCapacity + 128);
+    constexpr size_t kMaxSurfaceMeshDeletesPerFrame = 2;
+
+    auto deleteQueuedMeshes = [&]() {
+        size_t deleted = 0;
+        while (!pendingSurfaceMeshEvictions_.empty() &&
+               deleted < kMaxSurfaceMeshDeletesPerFrame &&
+               surfaceMeshCache_.size() > targetCapacity) {
+            std::string cacheKey = std::move(pendingSurfaceMeshEvictions_.front());
+            pendingSurfaceMeshEvictions_.pop_front();
+            pendingSurfaceMeshEvictionSet_.erase(cacheKey);
+            if (isCurrentRenderMesh(cacheKey)) continue;
+            deleted += surfaceMeshCache_.erase(cacheKey);
+        }
+        return deleted;
+    };
+
+    const bool hadPendingEvictions = !pendingSurfaceMeshEvictions_.empty();
+    size_t deleted = deleteQueuedMeshes();
+
+    if (hadPendingEvictions) {
+        char detail[256];
+        std::snprintf(detail, sizeof(detail),
+            "mode=consume before=%zu after=%zu deleted=%zu queued=%zu target=%zu hard=%zu current=%zu",
+            beforeCount,
+            surfaceMeshCache_.size(),
+            deleted,
+            pendingSurfaceMeshEvictions_.size(),
+            targetCapacity,
+            hardWatermark,
+            layerPlan_.renderTiles.size());
+        perf::logTimingAtLeast(layerPlan_.frameId,
+                               "BasemapLayer.evictSurfaceMeshes",
+                               perf::nowMs() - startMs,
+                               2.0,
+                               detail);
+        return;
+    }
+
+    if (surfaceMeshCache_.size() <= hardWatermark) {
+        if (deleted > 0) {
+            char detail[256];
+            std::snprintf(detail, sizeof(detail),
+                "mode=belowHard before=%zu after=%zu deleted=%zu queued=%zu target=%zu hard=%zu current=%zu",
+                beforeCount,
+                surfaceMeshCache_.size(),
+                deleted,
+                pendingSurfaceMeshEvictions_.size(),
+                targetCapacity,
+                hardWatermark,
+                layerPlan_.renderTiles.size());
+            perf::logTimingAtLeast(layerPlan_.frameId,
+                                   "BasemapLayer.evictSurfaceMeshes",
+                                   perf::nowMs() - startMs,
+                                   2.0,
+                                   detail);
+        }
+        return;
+    }
+
+    std::vector<std::pair<uint64_t, const std::string*>> evictionCandidates;
+    evictionCandidates.reserve(surfaceMeshCache_.size());
+    for (const auto& entry : surfaceMeshCache_) {
+        if (isCurrentRenderMesh(entry.first)) continue;
+        if (pendingSurfaceMeshEvictionSet_.find(entry.first) !=
+            pendingSurfaceMeshEvictionSet_.end()) {
+            continue;
+        }
+        evictionCandidates.emplace_back(entry.second.lastUsedFrame, &entry.first);
+    }
+
+    const size_t targetQueueCount = std::min(
+        surfaceMeshCache_.size() > targetCapacity
+            ? surfaceMeshCache_.size() - targetCapacity
+            : size_t{0},
+        kMaxSurfaceMeshEvictionsQueuedPerRefill);
+    if (targetQueueCount < evictionCandidates.size()) {
+        auto nth = evictionCandidates.begin() +
+            static_cast<std::ptrdiff_t>(targetQueueCount);
+        std::nth_element(evictionCandidates.begin(), nth, evictionCandidates.end(),
+            [](const auto& a, const auto& b) {
+                if (a.first != b.first) return a.first < b.first;
+                return *a.second < *b.second;
+            });
+        evictionCandidates.resize(targetQueueCount);
+    }
+
+    size_t queued = 0;
+    for (const auto& candidate : evictionCandidates) {
+        if (queued >= targetQueueCount) {
+            break;
+        }
+        pendingSurfaceMeshEvictions_.push_back(*candidate.second);
+        pendingSurfaceMeshEvictionSet_.insert(*candidate.second);
+        ++queued;
+    }
+
+    char detail[256];
+    std::snprintf(detail, sizeof(detail),
+        "mode=refill before=%zu after=%zu candidates=%zu queuedNew=%zu queued=%zu deleted=%zu target=%zu hard=%zu current=%zu",
+        beforeCount,
+        surfaceMeshCache_.size(),
+        evictionCandidates.size(),
+        queued,
+        pendingSurfaceMeshEvictions_.size(),
+        deleted,
+        targetCapacity,
+        hardWatermark,
+        layerPlan_.renderTiles.size());
+    perf::logTimingAtLeast(layerPlan_.frameId,
+                           "BasemapLayer.evictSurfaceMeshes",
+                           perf::nowMs() - startMs,
+                           2.0,
+                           detail);
 }
 
 size_t BasemapLayer::surfaceMeshBytes() const {
@@ -869,15 +1276,35 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
                                         RenderCommandList& commands) {
     if (!visible_) return;
 
+    const double totalStartMs = perf::nowMs();
+    double textureLookupMs = 0.0;
+    double boundsMs = 0.0;
+    double uvMs = 0.0;
+    double commandMs = 0.0;
+    SurfaceMeshBuildStats meshStats;
+    int visited = 0;
+    int missingTexture = 0;
+    int emitted = 0;
+    const size_t startCommands = commands.size();
+
     for (const auto& renderTile : layerPlan_.renderTiles) {
+        ++visited;
         const TileKey& key = renderTile.targetKey;
         const TileKey& textureKey = renderTile.textureKey;
+        const double textureLookupStartMs = perf::nowMs();
         Texture* tex = textureCache_.get(textureKey);
+        textureLookupMs += perf::nowMs() - textureLookupStartMs;
 
-        if (!tex) continue;
+        if (!tex) {
+            ++missingTexture;
+            continue;
+        }
 
+        const double boundsStartMs = perf::nowMs();
         Rectangle bounds = tileScheme_->tileToRectangle(key);
         Rectangle textureBounds = tileScheme_->tileToRectangle(textureKey);
+        boundsMs += perf::nowMs() - boundsStartMs;
+        const double uvStartMs = perf::nowMs();
         TileTextureWindow uv = TileSurface::textureWindow(bounds, textureBounds);
         if (tex->width() > 0 && tex->height() > 0) {
             const float insetU = 0.5f / static_cast<float>(tex->width());
@@ -887,6 +1314,7 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
             uv.scaleU = std::max(0.0f, uv.scaleU - insetU * 2.0f);
             uv.scaleV = std::max(0.0f, uv.scaleV - insetV * 2.0f);
         }
+        uvMs += perf::nowMs() - uvStartMs;
 
         ImageryAttachment attachment{
             id_,
@@ -903,9 +1331,11 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
                 : ImageryFallbackSource::Parent
         };
 
-        SurfaceGpuMesh* gpuMesh = getOrCreateSurfaceGpuMesh(key, bounds, terrainLayer);
+        SurfaceGpuMesh* gpuMesh =
+            getOrCreateSurfaceGpuMesh(key, bounds, terrainLayer, &meshStats);
         if (!gpuMesh) continue;
 
+        const double commandStartMs = perf::nowMs();
         auto cmd = renderer.makeSurfaceTileCommand(
             attachment.texture,
             gpuMesh->waterMaskTexture.get(),
@@ -916,23 +1346,21 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
             attachment.uvOffsetV,
             attachment.uvScaleU,
             attachment.uvScaleV);
-        cmd.uniforms["u_tileOpacity"] = {attachment.opacity};
-        cmd.uniforms["u_transitionOpacity"] = {renderTile.transitionOpacity};
+        cmd.surfaceTileOpacity = attachment.opacity;
+        cmd.surfaceTransitionOpacity = renderTile.transitionOpacity;
         const float effectiveOpacity =
             attachment.opacity * std::clamp(renderTile.transitionOpacity, 0.0f, 1.0f);
         cmd.blend = effectiveOpacity < 0.999f;
-        cmd.uniforms["u_surfaceGeneration"] = {
-            static_cast<float>(generation_)
-        };
+        cmd.surfaceGeneration = static_cast<float>(generation_);
         const Vec3 cameraRelativeToTileOrigin =
             lastCameraPosition_ - gpuMesh->localOriginEcef;
-        cmd.uniforms["u_cameraRelativeOrigin"] = {
+        cmd.surfaceCameraRelativeOrigin = {
             static_cast<float>(cameraRelativeToTileOrigin.x()),
             static_cast<float>(cameraRelativeToTileOrigin.y()),
             static_cast<float>(cameraRelativeToTileOrigin.z())
         };
         // Pass tile centroid for GPU geodetic normal computation
-        cmd.uniforms["u_tileOrigin"] = {
+        cmd.surfaceTileOrigin = {
             static_cast<float>(gpuMesh->localOriginEcef.x()),
             static_cast<float>(gpuMesh->localOriginEcef.y()),
             static_cast<float>(gpuMesh->localOriginEcef.z())
@@ -941,7 +1369,37 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
         cmd.generation = generation_;
 
         commands.push_back(std::move(cmd));
+        ++emitted;
+        commandMs += perf::nowMs() - commandStartMs;
     }
+
+    char detail[384];
+    std::snprintf(detail, sizeof(detail),
+        "visited=%d emitted=%d missingTex=%d cmdDelta=%zu tex=%.2f bounds=%.2f uv=%.2f meshTotal=%.2f hit=%d miss=%d terrLookup=%.2f key=%.2f meshBuild=%.2f centroid=%.2f verts=%.2f vb=%.2f ib=%.2f wm=%.2f cmd=%.2f cache=%zu",
+        visited,
+        emitted,
+        missingTexture,
+        commands.size() - startCommands,
+        textureLookupMs,
+        boundsMs,
+        uvMs,
+        meshStats.totalMs,
+        meshStats.hits,
+        meshStats.misses,
+        meshStats.terrainLookupMs,
+        meshStats.cacheKeyMs,
+        meshStats.meshBuildMs,
+        meshStats.centroidMs,
+        meshStats.vertexBuildMs,
+        meshStats.vertexBufferMs,
+        meshStats.indexBufferMs,
+        meshStats.waterMaskMs,
+        commandMs,
+        surfaceMeshCache_.size());
+    perf::logTiming(layerPlan_.frameId,
+                    "BasemapLayer.buildRenderCommands",
+                    perf::nowMs() - totalStartMs,
+                    detail);
 }
 
 } // namespace earth_engine

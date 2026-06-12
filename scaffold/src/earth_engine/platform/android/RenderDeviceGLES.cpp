@@ -1,5 +1,6 @@
 #include "RenderDeviceGLES.h"
 #include "../../renderer/RenderCommand.h"
+#include "../../debug/PerfTimer.h"
 
 #include <GLES3/gl3.h>
 #include <android/log.h>
@@ -281,6 +282,11 @@ void RenderDeviceGLES::beginFrame() {
 void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     static int submitCount = 0;
     submitCount++;
+    const double submitStartMs = perf::nowMs();
+    int surfaceCommands = 0;
+    int vectorCommands = 0;
+    int debugCommands = 0;
+    int environmentCommands = 0;
 
     GLuint currentProgram = 0;
     GLuint currentArrayBuffer = 0;
@@ -307,6 +313,25 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     };
 
     for (const auto& cmd : commands) {
+        switch (cmd.kind) {
+            case RenderCommandKind::SurfaceTile:
+            case RenderCommandKind::GlobeSurface:
+                ++surfaceCommands;
+                break;
+            case RenderCommandKind::VectorOverlay:
+                ++vectorCommands;
+                break;
+            case RenderCommandKind::DebugOverlay:
+                ++debugCommands;
+                break;
+            case RenderCommandKind::SkyBackground:
+            case RenderCommandKind::AtmosphereBackground:
+                ++environmentCommands;
+                break;
+            case RenderCommandKind::Unknown:
+                break;
+        }
+
         auto* program = static_cast<GLShaderProgram*>(cmd.shader);
         auto* vb = static_cast<GLBuffer*>(cmd.vertexBuffer);
         auto* ib = static_cast<GLBuffer*>(cmd.indexBuffer);
@@ -392,6 +417,35 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         }
 
         // ---- Uniforms ----
+        if (cmd.kind == RenderCommandKind::SurfaceTile && cmd.hasSurfaceTileUniforms) {
+            auto set1 = [&](const char* name, float value) {
+                int loc = program->uniformLocation(name);
+                if (loc >= 0) glUniform1f(loc, value);
+            };
+            auto set3 = [&](const char* name, const std::array<float, 3>& value) {
+                int loc = program->uniformLocation(name);
+                if (loc >= 0) glUniform3fv(loc, 1, value.data());
+            };
+            auto set4 = [&](const char* name, const std::array<float, 4>& value) {
+                int loc = program->uniformLocation(name);
+                if (loc >= 0) glUniform4fv(loc, 1, value.data());
+            };
+            int mvpLoc = program->uniformLocation("u_modelViewProjection");
+            if (mvpLoc >= 0) {
+                glUniformMatrix4fv(
+                    mvpLoc, 1, GL_FALSE, cmd.surfaceModelViewProjection.data());
+            }
+            set4("u_tileUV", cmd.surfaceTileUv);
+            set3("u_lightDir", cmd.surfaceLightDir);
+            set3("u_cameraRelativeOrigin", cmd.surfaceCameraRelativeOrigin);
+            set3("u_tileOrigin", cmd.surfaceTileOrigin);
+            set3("u_fogColor", cmd.surfaceFogColor);
+            set1("u_fogDensity", cmd.surfaceFogDensity);
+            set1("u_tileOpacity", cmd.surfaceTileOpacity);
+            set1("u_transitionOpacity", cmd.surfaceTransitionOpacity);
+            set1("u_surfaceGeneration", cmd.surfaceGeneration);
+            set1("u_hasWaterMask", cmd.surfaceHasWaterMask);
+        }
         for (const auto& [name, values] : cmd.uniforms) {
             int loc = program->uniformLocation(name);
             if (loc < 0) continue;
@@ -495,11 +549,19 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    if (submitCount <= 1 || submitCount % 300 == 0) {
+    const double submitMs = perf::nowMs() - submitStartMs;
+    if (submitCount <= 1 || submitCount % 120 == 0 || submitMs >= 25.0) {
         GLenum err = glGetError();
         __android_log_print(ANDROID_LOG_INFO, "GLES",
-            "submit #%d: %zu commands, glError=%d",
-            submitCount, commands.size(), err);
+            "submit #%d: %zu commands, ms=%.3f surface=%d vector=%d env=%d debug=%d glError=%d",
+            submitCount,
+            commands.size(),
+            submitMs,
+            surfaceCommands,
+            vectorCommands,
+            environmentCommands,
+            debugCommands,
+            err);
     }
 }
 

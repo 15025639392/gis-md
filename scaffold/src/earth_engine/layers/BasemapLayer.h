@@ -14,6 +14,7 @@
 #include <mutex>
 #include <deque>
 #include <unordered_map>
+#include <unordered_set>
 #include <chrono>
 #include <atomic>
 #include <cstddef>
@@ -137,6 +138,10 @@ private:
     /// 处理待上传队列（在 update() 中调用，主线程安全）
     void processPendingUploads();
     void rebuildLayerPlan();
+    void rebuildLayerPlanIfNeeded();
+    void markLayerPlanDirty();
+    void refreshLayerPlanFrameMetadata();
+    bool isRenderAffectingPlanChange(const TilePlan& plan) const;
     Texture* findFallbackTexture(const TileKey& target, TileKey& textureKey);
     bool findRequestTileForMissingTexture(const TileKey& target, TileKey& requestKey) const;
     bool isCurrentDesiredTile(const TileKey& key) const;
@@ -152,14 +157,29 @@ private:
         std::unique_ptr<Texture> waterMaskTexture;
         Vec3 localOriginEcef = Vec3::zero();
         int indexCount = 0;
+        uint64_t lastUsedFrame = 0;
         bool usesTerrain = false;
         bool usesParentTerrain = false;
         bool terrainReady = false;
         bool terrainTransition = false;
     };
+    struct SurfaceMeshBuildStats {
+        int hits = 0;
+        int misses = 0;
+        double terrainLookupMs = 0.0;
+        double cacheKeyMs = 0.0;
+        double meshBuildMs = 0.0;
+        double centroidMs = 0.0;
+        double vertexBuildMs = 0.0;
+        double vertexBufferMs = 0.0;
+        double indexBufferMs = 0.0;
+        double waterMaskMs = 0.0;
+        double totalMs = 0.0;
+    };
     SurfaceGpuMesh* getOrCreateSurfaceGpuMesh(const TileKey& key,
                                               const Rectangle& bounds,
-                                              const TerrainLayer* terrainLayer);
+                                              const TerrainLayer* terrainLayer,
+                                              SurfaceMeshBuildStats* stats = nullptr);
     void evictUnusedSurfaceMeshes();
     std::string tileCacheKey(const TileKey& key) const;
 
@@ -173,8 +193,11 @@ private:
     RenderDevice* renderDevice_;
     TileTextureCache textureCache_;
     std::unordered_map<std::string, SurfaceGpuMesh> surfaceMeshCache_;
+    std::deque<std::string> pendingSurfaceMeshEvictions_;
+    std::unordered_set<std::string> pendingSurfaceMeshEvictionSet_;
     TilePlan tilePlan_;
     LayerTilePlan layerPlan_;
+    bool layerPlanDirty_ = true;
     Vec3 lastCameraPosition_ = Vec3::zero();
 
     // 待上传队列（后台线程解码 → 主线程上传 GPU）

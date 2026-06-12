@@ -7,8 +7,10 @@
 #include "layers/TerrainLayer.h"
 #include "interaction/InputEvent.h"
 #include "interaction/PickingService.h"
+#include "debug/PerfTimer.h"
 
 #include <chrono>
+#include <cstdio>
 
 namespace earth_engine {
 
@@ -47,6 +49,7 @@ void Engine::onSurfaceDestroyed() {
 
 void Engine::render(double deltaSeconds) {
     if (!surfaceCreated_ || !isReady()) { fprintf(stderr, "[Engine::render] BLOCKED: surface=%d ready=%d\n", surfaceCreated_, isReady()); return; }
+    const double frameStartMs = perf::nowMs();
 
     // 自动计时
     if (deltaSeconds <= 0.0) {
@@ -61,10 +64,43 @@ void Engine::render(double deltaSeconds) {
         lastRenderTime_ = nowSec;
     }
 
-    device_->beginFrame();
-    scene_->update(deltaSeconds);
-    scene_->render();
-    device_->endFrame();
+    {
+        const double startMs = perf::nowMs();
+        device_->beginFrame();
+        scene_->mutableDiagnostics().engineBeginFrameMs = perf::nowMs() - startMs;
+    }
+    {
+        const double startMs = perf::nowMs();
+        scene_->update(deltaSeconds);
+        scene_->mutableDiagnostics().sceneUpdateMs = perf::nowMs() - startMs;
+    }
+    {
+        const double startMs = perf::nowMs();
+        scene_->render();
+        scene_->mutableDiagnostics().sceneRenderMs = perf::nowMs() - startMs;
+    }
+    {
+        const double startMs = perf::nowMs();
+        device_->endFrame();
+        scene_->mutableDiagnostics().engineEndFrameMs = perf::nowMs() - startMs;
+    }
+
+    auto& diag = scene_->mutableDiagnostics();
+    diag.engineFrameCpuMs = perf::nowMs() - frameStartMs;
+    char detail[256];
+    std::snprintf(detail, sizeof(detail),
+        "begin=%.2f update=%.2f render=%.2f submit=%.2f end=%.2f draw=%d tiles=%d",
+        diag.engineBeginFrameMs,
+        diag.sceneUpdateMs,
+        diag.sceneRenderMs,
+        diag.renderSubmitMs,
+        diag.engineEndFrameMs,
+        diag.drawCalls,
+        diag.visibleTiles);
+    perf::logTiming(scene_->frameState().frameId,
+                    "Engine.render.total",
+                    diag.engineFrameCpuMs,
+                    detail);
 }
 
 void Engine::onInputEvent(const InputEvent& event) {

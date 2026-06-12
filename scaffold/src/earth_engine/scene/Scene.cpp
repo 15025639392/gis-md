@@ -2,12 +2,14 @@
 #include "Camera.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/Cartographic.h"
+#include "../debug/PerfTimer.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <cstring>
 #include <algorithm>
+#include <cstdio>
 #include <stdexcept>
 #include <limits>
 
@@ -115,8 +117,19 @@ void Scene::setViewport(int widthPixels, int heightPixels, float dpr) {
 }
 
 void Scene::update(double deltaSeconds) {
+    const double updateStartMs = perf::nowMs();
+
+    frameState_.diagnostics.cameraUpdateMs = 0.0;
+    frameState_.diagnostics.environmentUpdateMs = 0.0;
+    frameState_.diagnostics.basemapStackUpdateMs = 0.0;
+    frameState_.diagnostics.terrainUpdateMs = 0.0;
+    frameState_.diagnostics.renderCommandBuildMs = 0.0;
+    frameState_.diagnostics.renderSubmitMs = 0.0;
+
     if (cameraController_) {
+        const double startMs = perf::nowMs();
         cameraController_->update(deltaSeconds);
+        frameState_.diagnostics.cameraUpdateMs = perf::nowMs() - startMs;
     }
 
     elapsedTime_ += deltaSeconds;
@@ -133,39 +146,75 @@ void Scene::update(double deltaSeconds) {
             (1.0 / deltaSeconds) * kFpsSmoothing;
     }
 
-    // 环境系统：更新太阳方向 + 天空颜色
-    Vec3 sunDir = SunDirection::compute(timeController_->julianDate());
-    double camAlt = camera_->getHeight();
-    skyGradient_->update(sunDir, camAlt);
-    frameState_.lightDir = {
-        static_cast<float>(sunDir.x()),
-        static_cast<float>(sunDir.y()),
-        static_cast<float>(sunDir.z())
-    };
-    auto& hc = skyGradient_->horizonColor();
-    frameState_.clearR = hc[0];
-    frameState_.clearG = hc[1];
-    frameState_.clearB = hc[2];
+    {
+        const double startMs = perf::nowMs();
+        Vec3 sunDir = SunDirection::compute(timeController_->julianDate());
+        double camAlt = camera_->getHeight();
+        skyGradient_->update(sunDir, camAlt);
+        frameState_.lightDir = {
+            static_cast<float>(sunDir.x()),
+            static_cast<float>(sunDir.y()),
+            static_cast<float>(sunDir.z())
+        };
+        auto& hc = skyGradient_->horizonColor();
+        frameState_.clearR = hc[0];
+        frameState_.clearG = hc[1];
+        frameState_.clearB = hc[2];
+        frameState_.diagnostics.environmentUpdateMs = perf::nowMs() - startMs;
+    }
 
     // 使用图层栈统一驱动更新（分组共享 TilePlan）
-    layerStack_.update(frameState_);
+    {
+        const double startMs = perf::nowMs();
+        layerStack_.update(frameState_);
+        frameState_.diagnostics.basemapStackUpdateMs = perf::nowMs() - startMs;
+    }
 
     // 地形更新
     if (terrainLayer_ && terrainEnabled_) {
+        const double startMs = perf::nowMs();
         terrainLayer_->update(frameState_);
+        frameState_.diagnostics.terrainUpdateMs = perf::nowMs() - startMs;
     }
+
+    char detail[192];
+    std::snprintf(detail, sizeof(detail),
+        "camera=%.2f env=%.2f basemap=%.2f terrain=%.2f",
+        frameState_.diagnostics.cameraUpdateMs,
+        frameState_.diagnostics.environmentUpdateMs,
+        frameState_.diagnostics.basemapStackUpdateMs,
+        frameState_.diagnostics.terrainUpdateMs);
+    perf::logTiming(frameState_.frameId,
+                    "Scene.update.total",
+                    perf::nowMs() - updateStartMs,
+                    detail);
 }
 
 void Scene::render() {
     if (!renderer_ || !isReady()) return;
 
-    RenderCommandList commands;
-    fprintf(stderr, "[Scene::render] entered | sky=%d atmo=%d layers=%zu\n",
-        skyBox_ ? skyBox_->isReady() : -1,
-        atmospherePass_ ? atmospherePass_->isReady() : -1,
-        layerStack_.layers().size());
-
+    const double renderStartMs = perf::nowMs();
+    RenderCommandList& commands = renderCommands_;
+    commands.clear();
+    const size_t expectedCommands =
+        4 + static_cast<size_t>(layerStack_.visibleTileCount()) +
+        vectorLayers_.size() * 4;
+    if (commands.capacity() < expectedCommands) {
+        commands.reserve(expectedCommands);
+    }
+    double skyMs = 0.0;
+    double atmosphereMs = 0.0;
+    double layerCommandsMs = 0.0;
+    double fallbackGlobeMs = 0.0;
+    double vectorCommandsMs = 0.0;
+    double debugOverlayMs = 0.0;
+    double mvpUniformsMs = 0.0;
+    double sortMs = 0.0;
+    double surfaceDiagnosticsMs = 0.0;
+    double validateMs = 0.0;
+    double diagnosticsMs = 0.0;
     // 0. SkyBox（最远）
+    const double skyStartMs = perf::nowMs();
     if (skyBox_ && skyBox_->isReady()) {
         const auto& cam = camera();
         Mat4 vm = cam.viewMatrix();  // must store, .raw() refs internals
@@ -192,8 +241,10 @@ void Scene::render() {
         commands.push_back(skyBox_->buildCommand(
             viewMatrix, projMatrix, cam.isOrthographic(), nightFactor));
     }
+    skyMs = perf::nowMs() - skyStartMs;
 
     // 0.5 AtmosphereBackgroundPass（SkyBox 之上，地球之下）
+    const double atmosphereStartMs = perf::nowMs();
     if (atmospherePass_ && atmospherePass_->isReady()) {
         const auto& cam = camera();
         float vpW = static_cast<float>(frameState_.viewportWidthPixels);
@@ -215,6 +266,7 @@ void Scene::render() {
             sunDir,
             skyGradient_->parameters()));
     }
+    atmosphereMs = perf::nowMs() - atmosphereStartMs;
 
     // 1. 标准底图 SurfaceTile 主链路。地形启用时，TerrainLayer 只作为
     // SurfaceTile mesh 的高度数据源，不再发出独立地形 surface pass。
@@ -222,8 +274,11 @@ void Scene::render() {
         (terrainLayer_ && terrainEnabled_ && terrainLayer_->visible())
             ? terrainLayer_.get()
             : nullptr;
+    const double layerCommandsStartMs = perf::nowMs();
     layerStack_.buildRenderCommands(*renderer_, terrainSource, commands);
+    layerCommandsMs = perf::nowMs() - layerCommandsStartMs;
 
+    const double fallbackGlobeStartMs = perf::nowMs();
     const bool hasSurfaceTile = std::any_of(commands.begin(), commands.end(),
         [](const RenderCommand& cmd) {
             return cmd.kind == RenderCommandKind::SurfaceTile;
@@ -231,15 +286,19 @@ void Scene::render() {
     if (!hasSurfaceTile && !(terrainLayer_ && terrainEnabled_ && terrainLayer_->visible())) {
         commands.insert(commands.begin(), renderer_->makeGlobeCommand(frameState_));
     }
+    fallbackGlobeMs = perf::nowMs() - fallbackGlobeStartMs;
 
     // 2. 矢量图层
+    const double vectorCommandsStartMs = perf::nowMs();
     for (auto& vLayer : vectorLayers_) {
         if (vLayer->visible()) {
             vLayer->buildRenderCommands(frameState_, *renderer_, commands);
         }
     }
+    vectorCommandsMs = perf::nowMs() - vectorCommandsStartMs;
 
     // 3. 调试叠加层
+    const double debugOverlayStartMs = perf::nowMs();
     if (debugOverlay_ && debugOverlay_->enabled()) {
         for (const auto& layer : layerStack_.layers()) {
             if (!layer->visible()) continue;
@@ -249,8 +308,10 @@ void Scene::render() {
                 commands);
         }
     }
+    debugOverlayMs = perf::nowMs() - debugOverlayStartMs;
 
     // 4. 后处理：为 tile/debug commands 设置 MVP
+    const double mvpUniformsStartMs = perf::nowMs();
     if (frameState_.camera) {
         const Camera& cam = *frameState_.camera;
         float vpW = static_cast<float>(frameState_.viewportWidthPixels);
@@ -265,6 +326,17 @@ void Scene::render() {
 
         for (auto& cmd : commands) {
             if (cmd.owner == "globe") continue;
+            if (cmd.kind == RenderCommandKind::SurfaceTile && cmd.hasSurfaceTileUniforms) {
+                std::memcpy(cmd.surfaceModelViewProjection.data(),
+                            glm::value_ptr(relativeViewProj),
+                            16 * sizeof(float));
+                cmd.surfaceLightDir = {
+                    frameState_.lightDir.x,
+                    frameState_.lightDir.y,
+                    frameState_.lightDir.z
+                };
+                continue;
+            }
             auto& mvpU = cmd.uniforms["u_modelViewProjection"];
             if (mvpU.empty()) {
                 mvpU.resize(16);
@@ -290,17 +362,25 @@ void Scene::render() {
             }
         }
     }
+    mvpUniformsMs = perf::nowMs() - mvpUniformsStartMs;
 
+    const double sortStartMs = perf::nowMs();
     sortMvpRenderCommands(commands);
+    sortMs = perf::nowMs() - sortStartMs;
+    const double surfaceDiagnosticsStartMs = perf::nowMs();
     updateSurfaceCommandDiagnostics(
         commands, frameState_.frameId, frameState_.diagnostics);
+    surfaceDiagnosticsMs = perf::nowMs() - surfaceDiagnosticsStartMs;
+    const double validateStartMs = perf::nowMs();
     if (auto error = validateMvpRenderCommands(commands, frameState_.frameId)) {
         throw std::runtime_error(
             "MVP render command validation failed for '" + error->owner +
             "': " + error->message);
     }
+    validateMs = perf::nowMs() - validateStartMs;
 
     // 5. 填充诊断数据
+    const double diagnosticsStartMs = perf::nowMs();
     auto& diag = frameState_.diagnostics;
     diag.drawCalls = static_cast<int>(commands.size());
     diag.visibleTiles = 0;
@@ -423,10 +503,48 @@ void Scene::render() {
         diag.terrainCachedTiles = terrainLayer_->cachedTileCount();
         diag.terrainGeneration = terrainLayer_->terrainGeneration();
     }
+    diagnosticsMs = perf::nowMs() - diagnosticsStartMs;
 
     // 6. 提交
-    fprintf(stderr, "[Scene::render] submitting %zu commands\n", commands.size());
+    frameState_.diagnostics.renderCommandBuildMs =
+        perf::nowMs() - renderStartMs;
+
+    const double submitStartMs = perf::nowMs();
     renderer_->submit(commands);
+    frameState_.diagnostics.renderSubmitMs = perf::nowMs() - submitStartMs;
+
+    char buildDetail[384];
+    std::snprintf(buildDetail, sizeof(buildDetail),
+        "sky=%.2f atmo=%.2f layers=%.2f fallback=%.2f vector=%.2f debug=%.2f mvp=%.2f sort=%.2f surfDiag=%.2f validate=%.2f diag=%.2f commands=%zu",
+        skyMs,
+        atmosphereMs,
+        layerCommandsMs,
+        fallbackGlobeMs,
+        vectorCommandsMs,
+        debugOverlayMs,
+        mvpUniformsMs,
+        sortMs,
+        surfaceDiagnosticsMs,
+        validateMs,
+        diagnosticsMs,
+        commands.size());
+    perf::logTiming(frameState_.frameId,
+                    "Scene.render.buildBreakdown",
+                    frameState_.diagnostics.renderCommandBuildMs,
+                    buildDetail);
+
+    char detail[192];
+    std::snprintf(detail, sizeof(detail),
+        "build=%.2f submit=%.2f draw=%d surface=%d mesh=%d",
+        frameState_.diagnostics.renderCommandBuildMs,
+        frameState_.diagnostics.renderSubmitMs,
+        frameState_.diagnostics.drawCalls,
+        frameState_.diagnostics.renderSurfaceTiles,
+        frameState_.diagnostics.surfaceMeshCount);
+    perf::logTiming(frameState_.frameId,
+                    "Scene.render.total",
+                    perf::nowMs() - renderStartMs,
+                    detail);
 }
 
 // ---- 底图图层管理 ----

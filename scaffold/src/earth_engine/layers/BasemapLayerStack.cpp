@@ -4,9 +4,11 @@
 #include "../renderer/Renderer.h"
 #include "../tiling/TilePlan.h"
 #include "../tiling/TileScheme.h"
+#include "../debug/PerfTimer.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <unordered_map>
 
 namespace earth_engine {
@@ -79,6 +81,14 @@ int BasemapLayerStack::cachedTileCount() const {
 void BasemapLayerStack::update(const FrameState& frameState) {
     if (!frameState.camera) return;
 
+    const double updateStartMs = perf::nowMs();
+    double groupingMs = 0.0;
+    double tilePlanMs = 0.0;
+    double applyPlanMs = 0.0;
+    double loadMissingMs = 0.0;
+    int groupCount = 0;
+    int layerCount = 0;
+
     groupPlans_.clear();
 
     double vpW = static_cast<double>(frameState.viewportWidthPixels);
@@ -86,10 +96,14 @@ void BasemapLayerStack::update(const FrameState& frameState) {
 
     // 1. 按 scheme ID 分组（避免同 scheme 图层重复计算 TilePlan）
     std::unordered_map<std::string, std::vector<BasemapLayer*>> schemeGroups;
+    const double groupingStartMs = perf::nowMs();
     for (auto& layer : layers_) {
         if (!layer->visible()) continue;
         schemeGroups[layer->tileScheme().id()].push_back(layer.get());
+        ++layerCount;
     }
+    groupingMs = perf::nowMs() - groupingStartMs;
+    groupCount = static_cast<int>(schemeGroups.size());
 
     // 2. 每组计算一次 TilePlan，然后分发给组内所有图层
     for (auto& [schemeId, group] : schemeGroups) {
@@ -103,7 +117,9 @@ void BasemapLayerStack::update(const FrameState& frameState) {
         }
 
         TileQuadTree& quadTree = quadTreesByScheme_[schemeId];
+        const double planStartMs = perf::nowMs();
         TilePlan plan = quadTree.compute(camera, scheme, vpW, vpH, previousZoom);
+        tilePlanMs += perf::nowMs() - planStartMs;
         plan.frameId = frameState.frameId;
         previousZoomByScheme_[schemeId] = plan.zoom;
 
@@ -111,16 +127,34 @@ void BasemapLayerStack::update(const FrameState& frameState) {
                          static_cast<int>(vpW), static_cast<int>(vpH)};
         auto iter = groupPlans_.emplace(std::move(key), std::move(plan)).first;
 
+        const double applyStartMs = perf::nowMs();
         for (auto* layer : group) {
             layer->applyPlan(iter->second, camera.position());
         }
+        applyPlanMs += perf::nowMs() - applyStartMs;
     }
 
     // 3. 所有可见图层加载缺失瓦片
+    const double loadStartMs = perf::nowMs();
     for (auto& layer : layers_) {
         if (!layer->visible()) continue;
         layer->loadMissingTiles();
     }
+    loadMissingMs = perf::nowMs() - loadStartMs;
+
+    char detail[192];
+    std::snprintf(detail, sizeof(detail),
+        "grouping=%.2f tilePlan=%.2f apply=%.2f loadMissing=%.2f groups=%d layers=%d",
+        groupingMs,
+        tilePlanMs,
+        applyPlanMs,
+        loadMissingMs,
+        groupCount,
+        layerCount);
+    perf::logTiming(frameState.frameId,
+                    "BasemapLayerStack.update",
+                    perf::nowMs() - updateStartMs,
+                    detail);
 }
 
 // ============================================================
