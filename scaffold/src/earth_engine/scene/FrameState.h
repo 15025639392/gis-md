@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../core/math/Vec3.h"
+
 #include <cstdint>
 
 namespace earth_engine {
@@ -98,6 +100,9 @@ struct FrameState {
     int viewportWidthPixels = 0;
     int viewportHeightPixels = 0;
     float devicePixelRatio = 1.0f;
+
+    bool hasInteractionFocus = false;
+    Vec3 interactionFocusDirection = Vec3::zero();
 
     Diagnostics diagnostics;
 };

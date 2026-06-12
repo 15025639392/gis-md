@@ -125,7 +125,9 @@ double rectangleCenterLongitude(const Rectangle& bounds) {
 double viewImportancePriority(const TileScheme& scheme,
                               const TileKey& key,
                               const Vec3& cameraPosition,
-                              const Vec3& cameraDirection) {
+                              const Vec3& cameraDirection,
+                              bool hasInteractionFocus,
+                              const Vec3& interactionFocusDirection) {
     const double directionLength = cameraDirection.length();
     if (directionLength <= 1e-6) {
         return static_cast<double>(key.z);
@@ -141,11 +143,20 @@ double viewImportancePriority(const TileScheme& scheme,
     const Vec3 tileDirection = toTile / distance;
     const Vec3 viewDirection = cameraDirection / directionLength;
     const double centerPenalty = 1.0 - std::clamp(tileDirection.dot(viewDirection), -1.0, 1.0);
+    double anchorPenalty = centerPenalty;
+    if (hasInteractionFocus && interactionFocusDirection.length() > 1e-6) {
+        const Vec3 focusDirection = interactionFocusDirection.normalized();
+        const Vec3 tileSurfaceDirection = center.normalized();
+        anchorPenalty =
+            1.0 - std::clamp(tileSurfaceDirection.dot(focusDirection), -1.0, 1.0);
+    }
 
     // Cesium-native prioritizes load work by view-direction angle times distance.
-    // For raster tiles, add a small zoom term so parent fallbacks and near tiles
-    // still arrive before far-horizon edge detail during progressive loading.
-    return centerPenalty * distance + static_cast<double>(key.z) * 1000.0;
+    // During touch interaction, also bias toward the gesture anchor/focus so
+    // the place under the user's fingers becomes clear before edges/horizon.
+    return (centerPenalty * distance * 0.65) +
+           (anchorPenalty * distance * 0.35) +
+           static_cast<double>(key.z) * 1000.0;
 }
 
 void clearLayerTilePlanRetainingCapacity(LayerTilePlan& plan) {
@@ -224,13 +235,19 @@ void BasemapLayer::update(const FrameState& frameState) {
         tilePlan_.zoom);
     plan.frameId = frameState.frameId;
 
-    applyPlan(plan, frameState.camera->position(), frameState.camera->direction());
+    applyPlan(plan,
+              frameState.camera->position(),
+              frameState.camera->direction(),
+              frameState.hasInteractionFocus,
+              frameState.interactionFocusDirection);
     loadMissingTiles();
 }
 
 void BasemapLayer::applyPlan(const TilePlan& plan,
                              const Vec3& cameraPosition,
-                             const Vec3& cameraDirection) {
+                             const Vec3& cameraDirection,
+                             bool hasInteractionFocus,
+                             const Vec3& interactionFocusDirection) {
     if (!visible_) return;
 
     const double startMs = perf::nowMs();
@@ -254,6 +271,11 @@ void BasemapLayer::applyPlan(const TilePlan& plan,
     previousCameraDirection_ = cameraDirection;
     lastCameraPosition_ = cameraPosition;
     lastCameraDirection_ = cameraDirection;
+    hasInteractionFocus_ =
+        hasInteractionFocus && interactionFocusDirection.length() > 1e-6;
+    interactionFocusDirection_ = hasInteractionFocus_
+        ? interactionFocusDirection.normalized()
+        : Vec3::zero();
     const bool planChanged = isRenderAffectingPlanChange(plan);
     if (planChanged) {
         ++generation_;
@@ -713,9 +735,11 @@ void BasemapLayer::sortRequestTilesByViewImportance() {
                      layerPlan_.requestTiles.end(),
                      [&](const TileKey& lhs, const TileKey& rhs) {
         const double lhsPriority = viewImportancePriority(
-            *tileScheme_, lhs, lastCameraPosition_, lastCameraDirection_);
+            *tileScheme_, lhs, lastCameraPosition_, lastCameraDirection_,
+            hasInteractionFocus_, interactionFocusDirection_);
         const double rhsPriority = viewImportancePriority(
-            *tileScheme_, rhs, lastCameraPosition_, lastCameraDirection_);
+            *tileScheme_, rhs, lastCameraPosition_, lastCameraDirection_,
+            hasInteractionFocus_, interactionFocusDirection_);
         if (lhsPriority != rhsPriority) {
             return lhsPriority < rhsPriority;
         }
@@ -1427,13 +1451,38 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
     int visited = 0;
     int missingTexture = 0;
     int emitted = 0;
-    int meshBuildBudget = cameraMoving_ ? 1 : 4;
+    int meshBuildBudget = cameraMoving_ ? 1 : 2;
+    const double meshBuildFrameBudgetMs = cameraMoving_ ? 2.0 : 6.0;
     int meshBuildDeferred = 0;
     int meshParentFallback = 0;
     const size_t startCommands = commands.size();
     std::unordered_set<TileKey> emittedMeshFallbackTargets;
+    std::vector<const RenderTileRef*> renderOrder;
+    renderOrder.reserve(layerPlan_.renderTiles.size());
+    for (const RenderTileRef& renderTile : layerPlan_.renderTiles) {
+        renderOrder.push_back(&renderTile);
+    }
+    std::stable_sort(renderOrder.begin(), renderOrder.end(),
+        [&](const RenderTileRef* lhs, const RenderTileRef* rhs) {
+            const double lhsPriority = viewImportancePriority(
+                *tileScheme_,
+                lhs->targetKey,
+                lastCameraPosition_,
+                lastCameraDirection_,
+                hasInteractionFocus_,
+                interactionFocusDirection_);
+            const double rhsPriority = viewImportancePriority(
+                *tileScheme_,
+                rhs->targetKey,
+                lastCameraPosition_,
+                lastCameraDirection_,
+                hasInteractionFocus_,
+                interactionFocusDirection_);
+            return lhsPriority < rhsPriority;
+        });
 
-    for (const auto& renderTile : layerPlan_.renderTiles) {
+    for (const RenderTileRef* renderTilePtr : renderOrder) {
+        const RenderTileRef& renderTile = *renderTilePtr;
         ++visited;
         const TileKey& key = renderTile.targetKey;
         const TileKey& textureKey = renderTile.textureKey;
@@ -1482,7 +1531,9 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
         ImageryAttachment commandAttachment = attachment;
         Rectangle commandBounds = bounds;
 
-        if (!gpuMesh && meshBuildBudget > 0) {
+        if (!gpuMesh &&
+            meshBuildBudget > 0 &&
+            meshStats.totalMs < meshBuildFrameBudgetMs) {
             gpuMesh = getOrCreateSurfaceGpuMesh(key, bounds, terrainLayer, &meshStats);
             if (gpuMesh) {
                 --meshBuildBudget;
@@ -1573,13 +1624,14 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
 
     char detail[512];
     std::snprintf(detail, sizeof(detail),
-        "visited=%d emitted=%d missingTex=%d deferred=%d meshParent=%d moving=%d cmdDelta=%zu tex=%.2f bounds=%.2f uv=%.2f meshTotal=%.2f hit=%d miss=%d terrLookup=%.2f key=%.2f meshBuild=%.2f centroid=%.2f verts=%.2f vb=%.2f ib=%.2f wm=%.2f cmd=%.2f cache=%zu",
+        "visited=%d emitted=%d missingTex=%d deferred=%d meshParent=%d moving=%d meshBudgetMs=%.1f cmdDelta=%zu tex=%.2f bounds=%.2f uv=%.2f meshTotal=%.2f hit=%d miss=%d terrLookup=%.2f key=%.2f meshBuild=%.2f centroid=%.2f verts=%.2f vb=%.2f ib=%.2f wm=%.2f cmd=%.2f cache=%zu",
         visited,
         emitted,
         missingTexture,
         meshBuildDeferred,
         meshParentFallback,
         cameraMoving_ ? 1 : 0,
+        meshBuildFrameBudgetMs,
         commands.size() - startCommands,
         textureLookupMs,
         boundsMs,

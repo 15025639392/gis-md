@@ -1,4 +1,6 @@
 #include "TerrainLayer.h"
+#include "../core/geodesy/Cartographic.h"
+#include "../core/geodesy/Ellipsoid.h"
 #include "../scene/FrameState.h"
 #include "../scene/Camera.h"
 #include "../tiling/TilePlan.h"
@@ -8,10 +10,63 @@
 #include <android/log.h>
 #endif
 
+#include <glm/gtc/constants.hpp>
+
 #include <algorithm>
 #include <cstdio>
 
 namespace earth_engine {
+
+namespace {
+
+double rectangleCenterLongitude(const Rectangle& bounds) {
+    double west = bounds.west();
+    double east = bounds.east();
+    if (bounds.crossesAntimeridian()) {
+        east += glm::two_pi<double>();
+    }
+    double center = west + (east - west) * 0.5;
+    if (center > glm::pi<double>()) {
+        center -= glm::two_pi<double>();
+    }
+    return center;
+}
+
+double terrainRequestPriority(const TileScheme& scheme,
+                              const TileKey& key,
+                              const Vec3& cameraPosition,
+                              const Vec3& cameraDirection,
+                              bool hasInteractionFocus,
+                              const Vec3& interactionFocusDirection) {
+    const double directionLength = cameraDirection.length();
+    if (directionLength <= 1e-6) {
+        return static_cast<double>(key.z);
+    }
+
+    const Rectangle bounds = scheme.tileToRectangle(key);
+    const double centerLng = rectangleCenterLongitude(bounds);
+    const double centerLat = (bounds.south() + bounds.north()) * 0.5;
+    const Vec3 center = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic::fromRadians(centerLng, centerLat, 0.0));
+    const Vec3 toTile = center - cameraPosition;
+    const double distance = std::max(toTile.length(), 1.0);
+    const Vec3 tileDirection = toTile / distance;
+    const Vec3 viewDirection = cameraDirection / directionLength;
+    const double centerPenalty =
+        1.0 - std::clamp(tileDirection.dot(viewDirection), -1.0, 1.0);
+    double anchorPenalty = centerPenalty;
+    if (hasInteractionFocus && interactionFocusDirection.length() > 1e-6) {
+        anchorPenalty = 1.0 - std::clamp(
+            center.normalized().dot(interactionFocusDirection.normalized()),
+            -1.0,
+            1.0);
+    }
+    return centerPenalty * distance * 0.6 +
+           anchorPenalty * distance * 0.4 +
+           static_cast<double>(key.z) * 1000.0;
+}
+
+} // namespace
 
 TerrainLayer::TerrainLayer(std::unique_ptr<TerrainProvider> provider,
                             std::unique_ptr<TileScheme> tileScheme)
@@ -159,8 +214,10 @@ void TerrainLayer::update(const FrameState& frameState) {
         }
     }
 #endif
+    std::vector<TileKey> requestCandidates;
+    std::unordered_set<std::string> candidateSet;
+    requestCandidates.reserve(tilePlan_.visibleTiles.size());
     for (const auto& key : tilePlan_.visibleTiles) {
-        if (requestedTiles_.size() >= maxTerrainInflight) break;
         TileKey requestKey = key;
         while (requestKey.z > provider_->maxZoom()) {
             requestKey = TilePlanBuilder::parentKey(requestKey);
@@ -171,8 +228,38 @@ void TerrainLayer::update(const FrameState& frameState) {
         if (tileCache_.find(cacheKey) == tileCache_.end() &&
             requestedTiles_.find(cacheKey) == requestedTiles_.end()) {
             if (!isTilePossiblyAvailable(requestKey)) continue;
-            if (requestsThisUpdate >= maxTerrainRequestsPerUpdate) break;
-            requestedTiles_.insert(cacheKey);
+            if (candidateSet.insert(cacheKey).second) {
+                requestCandidates.push_back(requestKey);
+            }
+        }
+    }
+    std::stable_sort(requestCandidates.begin(), requestCandidates.end(),
+        [&](const TileKey& lhs, const TileKey& rhs) {
+            const double lhsPriority = terrainRequestPriority(
+                *tileScheme_,
+                lhs,
+                cameraPosition,
+                cameraDirection,
+                frameState.hasInteractionFocus,
+                frameState.interactionFocusDirection);
+            const double rhsPriority = terrainRequestPriority(
+                *tileScheme_,
+                rhs,
+                cameraPosition,
+                cameraDirection,
+                frameState.hasInteractionFocus,
+                frameState.interactionFocusDirection);
+            if (lhsPriority != rhsPriority) return lhsPriority < rhsPriority;
+            if (lhs.z != rhs.z) return lhs.z < rhs.z;
+            if (lhs.y != rhs.y) return lhs.y < rhs.y;
+            return lhs.x < rhs.x;
+        });
+
+    for (const TileKey& requestKey : requestCandidates) {
+        if (requestedTiles_.size() >= maxTerrainInflight) break;
+        if (requestsThisUpdate >= maxTerrainRequestsPerUpdate) break;
+        const std::string cacheKey = terrainCacheKey(requestKey);
+        if (requestedTiles_.insert(cacheKey).second) {
             loadTile(requestKey);
             ++requestsThisUpdate;
         }
@@ -181,17 +268,19 @@ void TerrainLayer::update(const FrameState& frameState) {
 
     char detail[256];
     std::snprintf(detail, sizeof(detail),
-        "upload=%.2f tilePlan=%.2f request=%.2f visible=%zu issued=%d cached=%d inflight=%zu empty=%zu moving=%d reusedPlan=%d maxInflight=%zu",
+        "upload=%.2f tilePlan=%.2f request=%.2f visible=%zu candidates=%zu issued=%d cached=%d inflight=%zu empty=%zu moving=%d reusedPlan=%d focus=%d maxInflight=%zu",
         uploadMs,
         planMs,
         requestMs,
         tilePlan_.visibleTiles.size(),
+        requestCandidates.size(),
         requestsThisUpdate,
         cachedTileCount(),
         requestedTiles_.size(),
         emptyTiles_.size(),
         cameraMoving_ ? 1 : 0,
         reusedPlan ? 1 : 0,
+        frameState.hasInteractionFocus ? 1 : 0,
         maxTerrainInflight);
     perf::logTiming(frameState.frameId,
                     "TerrainLayer.update",

@@ -136,6 +136,14 @@ void Scene::update(double deltaSeconds) {
     frameState_.frameId = ++frameId_;
     frameState_.timeSeconds = elapsedTime_;
     frameState_.camera = camera_.get();
+    constexpr double kInteractionFocusTtlSeconds = 2.5;
+    frameState_.hasInteractionFocus =
+        hasInteractionFocus_ &&
+        interactionFocusTimeSeconds_ >= 0.0 &&
+        elapsedTime_ - interactionFocusTimeSeconds_ <= kInteractionFocusTtlSeconds;
+    frameState_.interactionFocusDirection = frameState_.hasInteractionFocus
+        ? interactionFocusDirection_
+        : Vec3::zero();
 
     // 更新 FPS（5 帧平滑）
     if (deltaSeconds > 0.0) {
@@ -801,7 +809,57 @@ void Scene::setupInputCallback() {
         });
 }
 
+bool Scene::pickInteractionFocus(float screenX, float screenY, Vec3& outPoint) const {
+    if (!pickingService_ || !camera_) {
+        return false;
+    }
+
+    std::function<float(double,double)> terrainSampler;
+    if (terrainLayer_ && terrainEnabled_) {
+        terrainSampler = [this](double lng, double lat) {
+            return terrainLayer_->sampleHeight(lng, lat);
+        };
+    }
+
+    const PickResult result = pickingService_->pickTerrain(
+        screenX,
+        screenY,
+        *camera_,
+        static_cast<double>(frameState_.viewportWidthPixels),
+        static_cast<double>(frameState_.viewportHeightPixels),
+        terrainSampler);
+    if (!result.isValid()) {
+        return false;
+    }
+
+    outPoint = result.worldPosition;
+    return true;
+}
+
+void Scene::updateInteractionFocus(const InputEvent& event) {
+    switch (event.type) {
+        case InputEvent::Type::PointerDown:
+        case InputEvent::Type::PointerMove:
+        case InputEvent::Type::PointerUp:
+        case InputEvent::Type::PinchStart:
+        case InputEvent::Type::PinchMove:
+        case InputEvent::Type::PinchEnd:
+            break;
+        default:
+            return;
+    }
+
+    Vec3 focusPoint;
+    if (!pickInteractionFocus(event.screenX, event.screenY, focusPoint)) {
+        return;
+    }
+    interactionFocusDirection_ = focusPoint.normalized();
+    interactionFocusTimeSeconds_ = elapsedTime_;
+    hasInteractionFocus_ = true;
+}
+
 void Scene::onInputEvent(const InputEvent& event) {
+    updateInteractionFocus(event);
     if (inputManager_) {
         inputManager_->process(event);
     }

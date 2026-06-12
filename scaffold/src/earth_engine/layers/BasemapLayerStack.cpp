@@ -129,7 +129,11 @@ void BasemapLayerStack::update(const FrameState& frameState) {
 
         const double applyStartMs = perf::nowMs();
         for (auto* layer : group) {
-            layer->applyPlan(iter->second, camera.position(), camera.direction());
+            layer->applyPlan(iter->second,
+                             camera.position(),
+                             camera.direction(),
+                             frameState.hasInteractionFocus,
+                             frameState.interactionFocusDirection);
         }
         applyPlanMs += perf::nowMs() - applyStartMs;
     }

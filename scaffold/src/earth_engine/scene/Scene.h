@@ -109,6 +109,8 @@ private:
     void configureCameraSurfacePicker();
     void setupSelectionCallbacks();
     void setupInputCallback();
+    bool pickInteractionFocus(float screenX, float screenY, Vec3& outPoint) const;
+    void updateInteractionFocus(const InputEvent& event);
 
     std::unique_ptr<Camera> camera_;
     std::unique_ptr<CameraController> cameraController_;
@@ -134,6 +136,9 @@ private:
     std::unique_ptr<InputManager> inputManager_;
     std::unique_ptr<PickingService> pickingService_;
     std::unique_ptr<SelectionManager> selectionManager_;
+    bool hasInteractionFocus_ = false;
+    Vec3 interactionFocusDirection_ = Vec3::zero();
+    double interactionFocusTimeSeconds_ = -1.0;
 
     // 环境系统
     std::unique_ptr<TimeController> timeController_;

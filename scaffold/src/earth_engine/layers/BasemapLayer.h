@@ -64,7 +64,9 @@ public:
     /// 从外部注入 TilePlan（由 BasemapLayerStack 提供共享计划）
     void applyPlan(const TilePlan& plan,
                    const Vec3& cameraPosition,
-                   const Vec3& cameraDirection = Vec3::zero());
+                   const Vec3& cameraDirection = Vec3::zero(),
+                   bool hasInteractionFocus = false,
+                   const Vec3& interactionFocusDirection = Vec3::zero());
 
     /// 请求缺失的瓦片（通常在 applyPlan 之后调用）
     void loadMissingTiles();
@@ -212,6 +214,8 @@ private:
     bool layerPlanDirty_ = true;
     Vec3 lastCameraPosition_ = Vec3::zero();
     Vec3 lastCameraDirection_ = Vec3::zero();
+    bool hasInteractionFocus_ = false;
+    Vec3 interactionFocusDirection_ = Vec3::zero();
     Vec3 previousCameraPosition_ = Vec3::zero();
     Vec3 previousCameraDirection_ = Vec3::zero();
     bool hasPreviousCameraState_ = false;
