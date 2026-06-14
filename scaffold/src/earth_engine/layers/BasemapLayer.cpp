@@ -1733,20 +1733,23 @@ bool BasemapLayer::resolveAttachmentForRenderTile(const RenderTileRef& renderTil
 // cesium-native RasterOverlayUtilities::computeDesiredScreenPixels:
 //   desiredPixels = projectedSize * maximumSSE / geometricError
 // Then choose zoom so tile size in pixels ≈ desiredPixels.
+/// cesium-native RasterOverlayUtilities::computeDesiredScreenPixels
+/// Uses ellipsoid-aware projected size: width×cos(lat)×R, height×R.
+/// This accounts for longitude convergence toward the poles.
 static int computeDesiredImageryZoom(const Rectangle& bounds,
                                      double geometricError,
                                      int maxZoom) {
     constexpr double kEarthRadius = 6378137.0;
-    constexpr double kMaxSSE = 16.0;  // typical imagery maximum SSE
+    constexpr double kMaxSSE = 16.0;
     constexpr double kTilePixels = 256.0;
 
-    // Projected size of the tile in meters (geographic projection)
-    double projWidth = bounds.width() * kEarthRadius;
+    // cesium-native: computeProjectedRectangleSize with ellipsoid curvature
+    double centerLat = (bounds.north() + bounds.south()) * 0.5;
+    double cosLat = std::cos(centerLat);
+    double projWidth = bounds.width() * kEarthRadius * cosLat;
     double projHeight = bounds.height() * kEarthRadius;
     double desiredPixels = std::max(projWidth, projHeight) * kMaxSSE / std::max(geometricError, 1.0);
 
-    // Find zoom where tile projected size ≈ desiredPixels in screen pixels
-    // Level 0: 2πR pixels wide → each level halves
     double level0Width = 2.0 * M_PI * kEarthRadius / kTilePixels;
     for (int z = 0; z <= maxZoom; ++z) {
         double tileWidthPixels = level0Width / static_cast<double>(1 << z);
