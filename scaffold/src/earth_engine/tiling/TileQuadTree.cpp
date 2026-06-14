@@ -245,10 +245,15 @@ double openglobusLodSizePixels(const Camera& camera) {
 }
 
 double cesiumTerrainGeometricError(const Rectangle& bounds) {
+    // cesium-native LayerJsonTerrainLoader.cpp:267-272
+    //   childTile.setGeometricError(
+    //       8.0 * calcQuadtreeMaxGeometricError(ellipsoid) *
+    //       childGlobeRectangle.computeWidth());
+    // The ×8.0 multiplier ensures every level's geometric error halves
+    // from the previous level (since tile width halves each LOD).
     const double maxGeometricErrorPerRadian =
         kEarthRadius * kCesiumTerrainMapQuality / kCesiumTerrainMapWidth;
-    return maxGeometricErrorPerRadian *
-           std::max(bounds.width(), bounds.height());
+    return 8.0 * maxGeometricErrorPerRadian * bounds.width();
 }
 
 bool shouldApplyEqualZoom(const Camera& camera, double cameraHeightMeters) {
