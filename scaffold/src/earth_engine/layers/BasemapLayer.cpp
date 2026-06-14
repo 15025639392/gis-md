@@ -1730,6 +1730,31 @@ bool BasemapLayer::resolveAttachmentForRenderTile(const RenderTileRef& renderTil
     return true;
 }
 
+// cesium-native RasterOverlayUtilities::computeDesiredScreenPixels:
+//   desiredPixels = projectedSize * maximumSSE / geometricError
+// Then choose zoom so tile size in pixels ≈ desiredPixels.
+static int computeDesiredImageryZoom(const Rectangle& bounds,
+                                     double geometricError,
+                                     int maxZoom) {
+    constexpr double kEarthRadius = 6378137.0;
+    constexpr double kMaxSSE = 16.0;  // typical imagery maximum SSE
+    constexpr double kTilePixels = 256.0;
+
+    // Projected size of the tile in meters (geographic projection)
+    double projWidth = bounds.width() * kEarthRadius;
+    double projHeight = bounds.height() * kEarthRadius;
+    double desiredPixels = std::max(projWidth, projHeight) * kMaxSSE / std::max(geometricError, 1.0);
+
+    // Find zoom where tile projected size ≈ desiredPixels in screen pixels
+    // Level 0: 2πR pixels wide → each level halves
+    double level0Width = 2.0 * M_PI * kEarthRadius / kTilePixels;
+    for (int z = 0; z <= maxZoom; ++z) {
+        double tileWidthPixels = level0Width / static_cast<double>(1 << z);
+        if (tileWidthPixels <= desiredPixels) return z;
+    }
+    return maxZoom;
+}
+
 bool BasemapLayer::resolveAttachmentForBounds(const Rectangle& bounds,
                                               int preferredZoom,
                                               ImageryAttachment& out) {
@@ -1737,7 +1762,12 @@ bool BasemapLayer::resolveAttachmentForBounds(const Rectangle& bounds,
 
     const double centerLng = rectangleCenterLongitude(bounds);
     const double centerLat = bounds.south() + bounds.height() * 0.5;
-    const int startZoom = std::min(tileScheme_->maxZoom(), preferredZoom);
+
+    // cesium-native: compute optimal imagery zoom from geometric error
+    constexpr double kCesiumMaxGE = 6378137.0 * 0.25 / 65.0;  // calcQuadtreeMaxGeometricError
+    double geometricError = 8.0 * kCesiumMaxGE * bounds.width();
+    int desiredZoom = computeDesiredImageryZoom(bounds, geometricError, tileScheme_->maxZoom());
+    int startZoom = std::min({tileScheme_->maxZoom(), preferredZoom, desiredZoom});
     for (int z = startZoom; z >= tileScheme_->minZoom(); --z) {
         TileKey textureKey = tileScheme_->positionToTile(centerLng, centerLat, z);
         Rectangle textureBounds = tileScheme_->tileToRectangle(textureKey);
