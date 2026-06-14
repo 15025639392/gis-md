@@ -54,21 +54,12 @@ struct TilesetTile {
     TilesetTile(TileKey k, Rectangle b, TilesetTile* p = nullptr)
         : key(std::move(k)), bounds(b), parent(p) {}
 
-    /// cesium-native: create 4 child tiles with inherited geometric error
+    /// cesium-native: create 4 child tiles.
+    /// NOTE: ownership stays in Tileset::tiles_ map; children holds raw pointers.
     void createChildren(const TileScheme& scheme) {
-        if (!children.empty() || key.z >= 22) return;
-        int cz = key.z + 1;
-        int cx = key.x * 2, cy = key.y * 2;
-        double childError = geometricError * 0.5;
-        for (int dy = 0; dy < 2; ++dy) {
-            for (int dx = 0; dx < 2; ++dx) {
-                TileKey childKey{key.schemeId, cz, cx + dx, cy + dy};
-                auto child = std::make_unique<TilesetTile>(
-                    childKey, scheme.tileToRectangle(childKey), this);
-                child->geometricError = childError;
-                children.push_back(std::move(child));
-            }
-        }
+        // Children are created on-demand in Tileset::buildRenderCommands
+        // and linked via parent/children pointers there.
+        (void)scheme;
     }
 
     /// Find the deepest ancestor with a ready mesh (for upsampling)
