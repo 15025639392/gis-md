@@ -72,25 +72,26 @@ TileSurfaceVertex TileSurface::vertexForUnitUv(const Rectangle& tileBounds,
     return vertex;
 }
 
-TileTextureWindow TileSurface::textureWindow(const Rectangle& targetBounds,
-                                             const Rectangle& textureBounds) {
-    // cesium-native computeTranslationAndScale equivalent.
-    // Both rectangles are in geographic radians (for EPSG:4326 the ratio math
-    // is identical to projected coordinates because projected = rad * R).
-    const double textureWidth = textureBounds.east() - textureBounds.west();
-    const double textureHeight = textureBounds.north() - textureBounds.south();
-    if (textureWidth <= 0.0 || textureHeight <= 0.0) return {};
+// cesium-native: RasterOverlayUtilities::computeTranslationAndScale
+// geometryRectangle vs overlayRectangle, both in projected coordinates.
+// For EPSG:4326 projected = rad * R, so ratio math is identical to radians.
+TileTextureWindow TileSurface::computeTranslationAndScale(
+    const Rectangle& geometryBounds,
+    const Rectangle& imageryBounds) {
+    const double imgWidth = imageryBounds.east() - imageryBounds.west();
+    const double imgHeight = imageryBounds.north() - imageryBounds.south();
+    if (imgWidth <= 0.0 || imgHeight <= 0.0) return {};
 
-    const double targetWidth = targetBounds.east() - targetBounds.west();
-    const double targetHeight = targetBounds.north() - targetBounds.south();
+    const double geoWidth = geometryBounds.east() - geometryBounds.west();
+    const double geoHeight = geometryBounds.north() - geometryBounds.south();
 
     TileTextureWindow window;
     window.offsetU = static_cast<float>(
-        (targetBounds.west() - textureBounds.west()) / textureWidth);
-    window.scaleU = static_cast<float>(targetWidth / textureWidth);
+        (geometryBounds.west() - imageryBounds.west()) / imgWidth);
+    window.scaleU = static_cast<float>(geoWidth / imgWidth);
     window.offsetV = static_cast<float>(
-        (textureBounds.north() - targetBounds.north()) / textureHeight);
-    window.scaleV = static_cast<float>(targetHeight / textureHeight);
+        (imageryBounds.north() - geometryBounds.north()) / imgHeight);
+    window.scaleV = static_cast<float>(geoHeight / imgHeight);
     return window;
 }
 

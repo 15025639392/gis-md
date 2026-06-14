@@ -32,8 +32,9 @@ public:
                                              double u,
                                              double v);
 
-    static TileTextureWindow textureWindow(const Rectangle& targetBounds,
-                                           const Rectangle& textureBounds);
+    // cesium-native: RasterOverlayUtilities::computeTranslationAndScale
+    static TileTextureWindow computeTranslationAndScale(const Rectangle& geometryBounds,
+                                                         const Rectangle& imageryBounds);
 
     static SurfaceTileMesh buildEllipsoidMesh(const Rectangle& tileBounds,
                                               int gridSize);

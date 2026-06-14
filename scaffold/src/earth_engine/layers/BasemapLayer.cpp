@@ -39,19 +39,7 @@ struct SurfaceGpuVertex {
     float texcoord[2];   // 8 bytes
 };
 
-struct SurfaceTileInstanceGpu {
-    float tileRect[4];       // west, south, east, north radians
-    float textureRect[4];    // u0, v0, uScale, vScale
-    float localOrigin[3];    // ECEF meters
-    float cameraRelativeOrigin[3];
-    float opacityTransitionWaterFlags[4];
-    float cornerNw[3];       // tile-local ECEF meters, CPU double-subtracted
-    float cornerNe[3];
-    float cornerSw[3];
-    float cornerSe[3];
-};
-static_assert(sizeof(SurfaceTileInstanceGpu) == 120,
-              "SurfaceTileInstanceGpu layout must match Renderer instanceStride");
+// SurfaceTileInstanceGpu removed — per-tile VBO rendering now.
 
 float transitionOpacityForSurfaceDraw(const ImageryAttachment& attachment,
                                       float rawTransitionOpacity,
@@ -123,29 +111,8 @@ float transitionOpacityForTile(const TilePlan& plan, const TileKey& key) {
     return 1.0f;
 }
 
-void writeRelativeCorner(float out[3], const Rectangle& bounds, double u, double v,
-                         const Vec3& origin) {
-    const Vec3 relative = TileSurface::vertexForUnitUv(bounds, u, v).ecef - origin;
-    out[0] = static_cast<float>(relative.x());
-    out[1] = static_cast<float>(relative.y());
-    out[2] = static_cast<float>(relative.z());
-}
-
-void writeRelativeCornerWithTerrain(float out[3], const Rectangle& bounds,
-                                    double u, double v, const Vec3& origin,
-                                    const TerrainTile* terrainTile) {
-    TileSurfaceVertex sv = TileSurface::vertexForUnitUv(bounds, u, v);
-    Cartographic cart = Ellipsoid::WGS84().cartesianToCartographic(sv.ecef);
-    double h = static_cast<double>(terrainTile->sampleHeight(
-        cart.longitude(), cart.latitude()));
-    Cartographic terrainCart = Cartographic::fromRadians(
-        cart.longitude(), cart.latitude(), h);
-    Vec3 terrainEcef = Ellipsoid::WGS84().cartographicToCartesian(terrainCart);
-    const Vec3 relative = terrainEcef - origin;
-    out[0] = static_cast<float>(relative.x());
-    out[1] = static_cast<float>(relative.y());
-    out[2] = static_cast<float>(relative.z());
-}
+// writeRelativeCorner / writeRelativeCornerWithTerrain removed —
+// per-tile VBO rendering uses makeSurfaceGpuVertices instead.
 
 bool isDescendantOf(TileKey candidate, const TileKey& ancestor) {
     if (candidate.schemeId != ancestor.schemeId || candidate.z <= ancestor.z) {
@@ -1737,7 +1704,7 @@ bool BasemapLayer::resolveAttachmentForRenderTile(const RenderTileRef& renderTil
 
     Rectangle bounds = tileScheme_->tileToRectangle(key);
     Rectangle textureBounds = tileScheme_->tileToRectangle(textureKey);
-    TileTextureWindow uv = TileSurface::textureWindow(bounds, textureBounds);
+    TileTextureWindow uv = TileSurface::computeTranslationAndScale(bounds, textureBounds);
     if (tex->width() > 0 && tex->height() > 0) {
         const float insetU = 0.5f / static_cast<float>(tex->width());
         const float insetV = 0.5f / static_cast<float>(tex->height());
@@ -1781,7 +1748,7 @@ bool BasemapLayer::resolveAttachmentForBounds(const Rectangle& bounds,
             continue;
         }
 
-        TileTextureWindow uv = TileSurface::textureWindow(bounds, textureBounds);
+        TileTextureWindow uv = TileSurface::computeTranslationAndScale(bounds, textureBounds);
         if (tex->width() > 0 && tex->height() > 0) {
             const float insetU = 0.5f / static_cast<float>(tex->width());
             const float insetV = 0.5f / static_cast<float>(tex->height());
@@ -2052,7 +2019,7 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
         Rectangle textureBounds = tileScheme_->tileToRectangle(textureKey);
         boundsMs += perf::nowMs() - boundsStartMs;
         const double uvStartMs = perf::nowMs();
-        TileTextureWindow uv = TileSurface::textureWindow(bounds, textureBounds);
+        TileTextureWindow uv = TileSurface::computeTranslationAndScale(bounds, textureBounds);
         if (tex->width() > 0 && tex->height() > 0) {
             const float insetU = 0.5f / static_cast<float>(tex->width());
             const float insetV = 0.5f / static_cast<float>(tex->height());
