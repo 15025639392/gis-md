@@ -112,6 +112,7 @@ bool QuantizedMeshTerrainProvider::configureFromLayerJson(
         }
         minZoom_ = j.value("minzoom", minZoom_);
         maxZoom_ = j.value("maxzoom", maxZoom_);
+        availabilityLevels_ = j.value("metadataAvailability", -1);
         layerJsonUrl_ = layerJsonUrl;
         availabilityRanges_.clear();
         if (j.contains("available") && j["available"].is_array()) {
@@ -226,6 +227,23 @@ void QuantizedMeshTerrainProvider::addAvailabilityRects(
     for (const auto& r : rects) {
         ranges.push_back(r);
     }
+}
+
+bool QuantizedMeshTerrainProvider::isSubtreeLoaded(
+    int subtreeLevel, uint64_t mortonIndex) const {
+    if (subtreeLevel < 0 || static_cast<size_t>(subtreeLevel) >= loadedSubtrees_.size()) {
+        return false;
+    }
+    return loadedSubtrees_[subtreeLevel].count(mortonIndex) > 0;
+}
+
+void QuantizedMeshTerrainProvider::markSubtreeLoaded(
+    int subtreeLevel, uint64_t mortonIndex) {
+    if (subtreeLevel < 0) return;
+    if (static_cast<size_t>(subtreeLevel) >= loadedSubtrees_.size()) {
+        loadedSubtrees_.resize(subtreeLevel + 1);
+    }
+    loadedSubtrees_[subtreeLevel].insert(mortonIndex);
 }
 
 std::unique_ptr<DecodedHeightmap> QuantizedMeshTerrainProvider::decodeTile(

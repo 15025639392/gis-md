@@ -1885,6 +1885,22 @@ bool BasemapLayer::buildTerrainPrimaryRenderCommands(Renderer& renderer,
             if (qmProvider) {
                 qmProvider->addAvailabilityRects(
                     terrainTile->key().z + 1, qmMesh->metadataAvailability);
+                // Mark subtree as loaded (cesium-native subtree tracking)
+                if (qmProvider->availabilityLevels() > 0) {
+                    int subLevel = terrainTile->key().z / qmProvider->availabilityLevels();
+                    // Simple Morton encode for (x, y)
+                    auto mortonEncode = [](uint32_t x, uint32_t y) -> uint64_t {
+                        uint64_t result = 0;
+                        for (int i = 0; i < 32; ++i) {
+                            result |= (uint64_t)((x >> i) & 1) << (2 * i);
+                            result |= (uint64_t)((y >> i) & 1) << (2 * i + 1);
+                        }
+                        return result;
+                    };
+                    qmProvider->markSubtreeLoaded(subLevel,
+                        mortonEncode(static_cast<uint32_t>(terrainTile->key().x),
+                                     static_cast<uint32_t>(terrainTile->key().y)));
+                }
             }
         }
         if (!qmMesh) {

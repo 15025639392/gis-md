@@ -3,6 +3,7 @@
 #include "TerrainProvider.h"
 #include <array>
 #include <string>
+#include <unordered_set>
 
 namespace earth_engine {
 
@@ -45,6 +46,10 @@ public:
 
     /// cesium-native: dynamically add availability from QM metadata
     void addAvailabilityRects(int level, const std::vector<std::array<int, 4>>& rects);
+    /// cesium-native: track loaded subtrees for sparse datasets
+    bool isSubtreeLoaded(int subtreeLevel, uint64_t mortonIndex) const;
+    void markSubtreeLoaded(int subtreeLevel, uint64_t mortonIndex);
+    int availabilityLevels() const { return availabilityLevels_; }
 
     void requestTile(const TileKey& key,
                      CancellationToken token,
@@ -59,6 +64,8 @@ private:
     std::string attribution_;
     std::string layerJsonUrl_;
     std::vector<std::vector<std::array<int, 4>>> availabilityRanges_;
+    std::vector<std::unordered_set<uint64_t>> loadedSubtrees_;
+    int availabilityLevels_ = -1;  // -1 = not using subtree mode
     int minZoom_ = 0;
     int maxZoom_ = 15;
     int tileSize_ = 65;   // default 64×64 grid

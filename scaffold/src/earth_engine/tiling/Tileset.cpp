@@ -197,8 +197,24 @@ void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
     }
     // cesium-native upsampling: if mesh isn't ready, try parent
     const TilesetTile* renderTile = &tile;
+    bool usingParentMesh = false;
+    double parentToChildUvScaleU = 1.0, parentToChildUvScaleV = 1.0;
+    double parentToChildUvOffU = 0.0, parentToChildUvOffV = 0.0;
     if (!renderTile->meshReady || !renderTile->gpuVertexBuffer) {
         renderTile = tile.findUpsampleAncestor();
+        if (renderTile) {
+            usingParentMesh = true;
+            // Compute UV adjustment: parent mesh TEXCOORD_0 covers parent bounds,
+            // but child needs only the sub-region. Adjust u_tileUV accordingly.
+            const Rectangle& pb = renderTile->bounds;
+            const Rectangle& cb = tile.bounds;
+            double pw = pb.east() - pb.west();
+            double ph = pb.north() - pb.south();
+            parentToChildUvOffU = (cb.west() - pb.west()) / pw;
+            parentToChildUvOffV = (pb.north() - cb.north()) / ph;  // V flipped
+            parentToChildUvScaleU = (cb.east() - cb.west()) / pw;
+            parentToChildUvScaleV = (cb.north() - cb.south()) / ph;
+        }
     }
     if (!renderTile || !renderTile->meshReady || !renderTile->gpuVertexBuffer) return;
 
@@ -233,7 +249,23 @@ void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
         renderTile->gpuVertexBuffer.get(),
         renderTile->gpuIndexBuffer.get(),
         static_cast<int>(renderTile->mesh->indices.size()));
-    cmd.surfaceTileUv = {uvOffU, uvOffV, uvScaleU, uvScaleV};
+    if (usingParentMesh) {
+        // Adjust imagery UV for parent mesh: parent TEXCOORD_0 covers
+        // parent area, so we need to fold the child→parent mapping into
+        // the imagery→child mapping.
+        //   shader: imagery_uv = u_tileUV.xy + mesh_uv * u_tileUV.zw
+        //   mesh_uv is in parent space, u_tileUV maps child→imagery
+        //   We want: imagery_uv = child_offset_in_parent + mesh_uv * child_scale_in_parent
+        //   then apply imagery→child mapping on top.
+        cmd.surfaceTileUv = {
+            static_cast<float>(uvOffU + parentToChildUvOffU * uvScaleU),
+            static_cast<float>(uvOffV + parentToChildUvOffV * uvScaleV),
+            static_cast<float>(uvScaleU * parentToChildUvScaleU),
+            static_cast<float>(uvScaleV * parentToChildUvScaleV)
+        };
+    } else {
+        cmd.surfaceTileUv = {uvOffU, uvOffV, uvScaleU, uvScaleV};
+    }
     cmd.surfaceTileOrigin = {
         static_cast<float>(renderTile->localOrigin.x()),
         static_cast<float>(renderTile->localOrigin.y()),
