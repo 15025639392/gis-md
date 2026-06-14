@@ -45,8 +45,7 @@ public:
     /// 简单颜色 shader（矢量图层线/面渲染）
     ShaderProgram* colorShader() const;
 
-    /// Tile 共享几何（单位网格，vertex shader 中计算 ECEF 位置）
-    Buffer* tileVertexBuffer() const;
+    /// Tile 共享索引 buffer（64×64 grid，所有 surface tile 共用）
     Buffer* tileIndexBuffer() const;
     int tileIndexCount() const;
 
@@ -56,18 +55,17 @@ public:
     /// 构建 globe 背景 RenderCommand
     RenderCommand makeGlobeCommand(const FrameState& frameState) const;
 
-    /// Build instanced surface tile command (shared grid + instance buffer).
+    /// Build surface tile command (unified, cesium-native glTF vertex layout).
+    /// vertexStride=32: POSITION(12) + NORMAL(12) + TEXCOORD_0(8)
+    RenderCommand makeSurfaceTileCommand(Texture* texture,
+                                          Buffer* vertexBuffer,
+                                          Buffer* indexBuffer = nullptr,
+                                          int indexCount = 0) const;
+
+    /// Compatibility: instanced basemap (to be removed)
     RenderCommand makeInstancedSurfaceTileCommand(Texture* texture,
                                                   Buffer* instanceBuffer,
                                                   int instanceCount) const;
-
-    /// Terrain shader accessor
-    ShaderProgram* terrainShader() const;
-
-    /// Build terrain tile command (per-tile VBO with ECEF positions, shared IBO).
-    RenderCommand makeTerrainTileCommand(Texture* texture,
-                                          Buffer* vertexBuffer,
-                                          int vertexCount) const;
 
 private:
     struct Impl;

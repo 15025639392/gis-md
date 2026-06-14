@@ -453,53 +453,29 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             glBindBuffer(GL_ARRAY_BUFFER, currentArrayBuffer);
         }
 
-        if (cmd.kind == RenderCommandKind::SurfaceTile && cmd.instanceCount > 0) {
-            constexpr int kGridStride = 8;
+        if (cmd.vertexStride == 32) {
+            // Unified surface tile: POSITION(12) + NORMAL(12) + TEXCOORD_0(8) = 32 bytes
             setAttribEnabled(0, attrib0Enabled, true);
-            glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, kGridStride,
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 32,
                                   reinterpret_cast<void*>(0));
             glVertexAttribDivisor(0, 0);
-            setAttribEnabled(1, attrib1Enabled, false);
-            setAttribEnabled(2, attrib2Enabled, false);
-
-            auto* instance = static_cast<GLBuffer*>(cmd.instanceBuffer);
-            if (!instance) continue;
-            glBindBuffer(GL_ARRAY_BUFFER, instance->glId());
-            currentArrayBuffer = instance->glId();
-            const GLsizei stride = static_cast<GLsizei>(cmd.instanceStride);
-            setAttribEnabled(3, attrib3Enabled, true);
-            glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, stride,
-                                  reinterpret_cast<void*>(0));
-            glVertexAttribDivisor(3, 1);
-            setAttribEnabled(4, attrib4Enabled, true);
-            glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, stride,
-                                  reinterpret_cast<void*>(16));
-            glVertexAttribDivisor(4, 1);
-            setAttribEnabled(5, attrib5Enabled, true);
-            glVertexAttribPointer(5, 3, GL_FLOAT, GL_FALSE, stride,
-                                  reinterpret_cast<void*>(32));
-            glVertexAttribDivisor(5, 1);
+            setAttribEnabled(1, attrib1Enabled, true);
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 32,
+                                  reinterpret_cast<void*>(12));
+            glVertexAttribDivisor(1, 0);
+            setAttribEnabled(2, attrib2Enabled, true);
+            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 32,
+                                  reinterpret_cast<void*>(24));
+            glVertexAttribDivisor(2, 0);
+            setAttribEnabled(3, attrib3Enabled, false);
+            setAttribEnabled(4, attrib4Enabled, false);
+            setAttribEnabled(5, attrib5Enabled, false);
             setAttribEnabled(6, attrib6Enabled, false);
-            setAttribEnabled(7, attrib7Enabled, true);
-            glVertexAttribPointer(7, 4, GL_FLOAT, GL_FALSE, stride,
-                                  reinterpret_cast<void*>(56));
-            glVertexAttribDivisor(7, 1);
-            setAttribEnabled(8, attrib8Enabled, true);
-            glVertexAttribPointer(8, 3, GL_FLOAT, GL_FALSE, stride,
-                                  reinterpret_cast<void*>(72));
-            glVertexAttribDivisor(8, 1);
-            setAttribEnabled(9, attrib9Enabled, true);
-            glVertexAttribPointer(9, 3, GL_FLOAT, GL_FALSE, stride,
-                                  reinterpret_cast<void*>(84));
-            glVertexAttribDivisor(9, 1);
-            setAttribEnabled(10, attrib10Enabled, true);
-            glVertexAttribPointer(10, 3, GL_FLOAT, GL_FALSE, stride,
-                                  reinterpret_cast<void*>(96));
-            glVertexAttribDivisor(10, 1);
-            setAttribEnabled(11, attrib11Enabled, true);
-            glVertexAttribPointer(11, 3, GL_FLOAT, GL_FALSE, stride,
-                                  reinterpret_cast<void*>(108));
-            glVertexAttribDivisor(11, 1);
+            setAttribEnabled(7, attrib7Enabled, false);
+            setAttribEnabled(8, attrib8Enabled, false);
+            setAttribEnabled(9, attrib9Enabled, false);
+            setAttribEnabled(10, attrib10Enabled, false);
+            setAttribEnabled(11, attrib11Enabled, false);
         } else if (cmd.vertexStride == 20) {
             // Terrain tile: pos(12) + uv(8), normal computed in shader
             setAttribEnabled(0, attrib0Enabled, true);

@@ -63,15 +63,14 @@ void main() {
 )glsl";
 
 // ============================================================
-// Terrain Tile Shader — per-tile VBO with ECEF positions
+// Unified SurfaceTile Shader — cesium-native glTF vertex layout
+// POSITION(vec3) + NORMAL(vec3) + TEXCOORD_0(vec2) = 32 bytes
 // ============================================================
 
-// cesium-native aligned terrain shader: positions are tile-relative (ECEF - center).
-// u_tileOrigin adds back the tile center for world-space ECEF.
-// MVP = projection * view (full, with camera translation from A2).
-static const char* kTerrainVertexGLSL = R"glsl(
+static const char* kSurfaceTileVertexGLSL = R"glsl(
 #version 300 es
 layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec2 a_texcoord;
 
 uniform mat4 u_modelViewProjection;
@@ -82,26 +81,40 @@ out vec2 v_texcoord;
 out vec3 v_normal;
 out float v_tileOpacity;
 out float v_transitionOpacity;
-out float v_hasWaterMask;
-
-const vec3 kInvRadiiSq = vec3(
-    1.0 / (6378137.0 * 6378137.0),
-    1.0 / (6378137.0 * 6378137.0),
-    1.0 / (6356752.314245 * 6356752.314245));
 
 void main() {
     v_texcoord = u_tileUV.xy + a_texcoord * u_tileUV.zw;
     vec3 worldPos = a_position + u_tileOrigin;
-    v_normal = normalize(worldPos * kInvRadiiSq);
+    v_normal = normalize(a_normal);
     v_tileOpacity = 1.0;
     v_transitionOpacity = 1.0;
-    v_hasWaterMask = 0.0;
     gl_Position = u_modelViewProjection * vec4(worldPos, 1.0);
 }
 )glsl";
 
+static const char* kSurfaceTileFragmentGLSL = R"glsl(
+#version 300 es
+precision mediump float;
+
+in vec2 v_texcoord;
+in vec3 v_normal;
+in float v_tileOpacity;
+in float v_transitionOpacity;
+uniform sampler2D u_tileTexture;
+uniform vec3 u_lightDir;
+out vec4 fragColor;
+
+void main() {
+    vec4 color = texture(u_tileTexture, v_texcoord);
+    float diffuse = max(dot(normalize(v_normal), normalize(u_lightDir)), 0.0);
+    color.rgb *= 0.35 + diffuse * 0.65;
+    color.a *= clamp(v_tileOpacity, 0.0, 1.0) * clamp(v_transitionOpacity, 0.0, 1.0);
+    fragColor = color;
+}
+)glsl";
+
 // ============================================================
-// Deprecated non-instanced shader
+// Deprecated shaders (kept for reference)
 // ============================================================
 
 #if 0
@@ -482,10 +495,9 @@ struct Renderer::Impl {
     std::unique_ptr<Buffer> globeIndexBuffer;
     int globeIndexCount = 0;
 
-    // Surface tile (instanced + terrain)
-    std::unique_ptr<ShaderProgram> instancedTileShader;
-    std::unique_ptr<ShaderProgram> terrainShader;
-    std::unique_ptr<Buffer> tileVertexBuffer;
+    // Surface tile (unified, cesium-native glTF layout)
+    std::unique_ptr<ShaderProgram> surfaceTileShader;
+    std::unique_ptr<Buffer> tileVertexBuffer;  // shared grid VBO (compat)
     std::unique_ptr<Buffer> tileIndexBuffer;
     int tileIndexCount = 0;
 
@@ -541,31 +553,20 @@ bool Renderer::initialize(const GlobeMesh& mesh) {
     if (!impl_->globeIndexBuffer) return false;
     impl_->globeIndexCount = static_cast<int>(mesh.indices.size());
 
-    // ---- Instanced tile shader (unified path) ----
+    // ---- Unified SurfaceTile shader (cesium-native glTF layout) ----
     if (!isMetal) {
-        ShaderDesc instancedTileSd;
-        instancedTileSd.vertexSource = kInstancedTileVertexGLSL;
-        instancedTileSd.fragmentSource = kInstancedTileFragmentGLSL;
-        impl_->instancedTileShader = dev->createShader(instancedTileSd);
-        if (!impl_->instancedTileShader) {
-            fprintf(stderr, "[Renderer] instancedTileShader failed\n");
-            return false;
-        }
-
-        // Terrain tile shader: per-tile VBO (ECEF pos + uv), shared IBO
-        ShaderDesc terrainSd;
-        terrainSd.vertexSource = kTerrainVertexGLSL;
-        terrainSd.fragmentSource = kInstancedTileFragmentGLSL;
-        impl_->terrainShader = dev->createShader(terrainSd);
-        if (!impl_->terrainShader) {
-            fprintf(stderr, "[Renderer] terrainShader failed\n");
+        ShaderDesc surfaceTileSd;
+        surfaceTileSd.vertexSource = kSurfaceTileVertexGLSL;
+        surfaceTileSd.fragmentSource = kSurfaceTileFragmentGLSL;
+        impl_->surfaceTileShader = dev->createShader(surfaceTileSd);
+        if (!impl_->surfaceTileShader) {
+            fprintf(stderr, "[Renderer] surfaceTileShader failed\n");
             return false;
         }
     }
 
-    // Tile shared geometry. Web Mercator tile bounds are converted to ECEF on a curved
-    // ellipsoid, so low subdivision visibly warps large low-zoom tiles.
-    auto [tileVerts, tileIndices] = makeTileGeometry(64);  // 64×64 grid = 4225 verts
+    // Shared grid for instanced basemap (compat) + shared index buffer
+    auto [tileVerts, tileIndices] = makeTileGeometry(64);
 
     BufferDesc tvbDesc;
     tvbDesc.size = tileVerts.size() * sizeof(TileVertex);
@@ -574,7 +575,6 @@ bool Renderer::initialize(const GlobeMesh& mesh) {
     tvbDesc.type = BufferDesc::Type::Vertex;
     impl_->tileVertexBuffer = dev->createBuffer(tvbDesc);
     if (!impl_->tileVertexBuffer) return false;
-
     BufferDesc tibDesc;
     tibDesc.size = tileIndices.size() * sizeof(uint32_t);
     tibDesc.data = tileIndices.data();
@@ -604,8 +604,7 @@ void Renderer::dispose() {
     impl_->globeShader.reset();
     impl_->globeVertexBuffer.reset();
     impl_->globeIndexBuffer.reset();
-    impl_->instancedTileShader.reset();
-    impl_->terrainShader.reset();
+    impl_->surfaceTileShader.reset();
     impl_->tileVertexBuffer.reset();
     impl_->tileIndexBuffer.reset();
     impl_->colorShader.reset();
@@ -622,8 +621,6 @@ Buffer* Renderer::globeIndexBuffer() const { return impl_->globeIndexBuffer.get(
 int Renderer::globeIndexCount() const { return impl_->globeIndexCount; }
 
 ShaderProgram* Renderer::colorShader() const { return impl_->colorShader.get(); }
-ShaderProgram* Renderer::terrainShader() const { return impl_->terrainShader.get(); }
-Buffer* Renderer::tileVertexBuffer() const { return impl_->tileVertexBuffer.get(); }
 Buffer* Renderer::tileIndexBuffer() const { return impl_->tileIndexBuffer.get(); }
 int Renderer::tileIndexCount() const { return impl_->tileIndexCount; }
 
@@ -672,6 +669,7 @@ RenderCommand Renderer::makeGlobeCommand(const FrameState& frameState) const {
     return cmd;
 }
 
+// Compatibility: instanced basemap rendering (to be removed in follow-up)
 RenderCommand Renderer::makeInstancedSurfaceTileCommand(Texture* texture,
                                                         Buffer* instanceBuffer,
                                                         int instanceCount) const {
@@ -679,42 +677,39 @@ RenderCommand Renderer::makeInstancedSurfaceTileCommand(Texture* texture,
     cmd.kind = RenderCommandKind::SurfaceTile;
     cmd.owner = "surface_tile";
     cmd.pass = "color";
-    cmd.shader = impl_->instancedTileShader.get();
-    cmd.vertexBuffer = impl_->tileVertexBuffer.get();
+    cmd.shader = impl_->surfaceTileShader.get();
+    cmd.vertexBuffer = impl_->tileVertexBuffer.get();  // shared grid VBO
     cmd.indexBuffer = impl_->tileIndexBuffer.get();
     cmd.instanceBuffer = instanceBuffer;
     cmd.indexCount = impl_->tileIndexCount;
-    cmd.vertexStride = 8;  // shared unit grid uv
+    cmd.vertexStride = 8;
     cmd.instanceCount = instanceCount;
-    cmd.instanceStride = 120; // SurfaceTileInstanceGpu
+    cmd.instanceStride = 120;
     cmd.primitive = RenderCommand::PrimitiveType::Triangles;
     cmd.indexType = RenderCommand::IndexType::UInt32;
     cmd.depthTest = true;
     cmd.depthWrite = true;
     cmd.blend = false;
     cmd.cullFace = true;
-
-    if (texture) {
-        cmd.textures.push_back(texture);
-    }
-
     cmd.hasSurfaceTileUniforms = true;
     cmd.surfaceHasWaterMask = 0.0f;
+    if (texture) cmd.textures.push_back(texture);
     return cmd;
 }
 
-RenderCommand Renderer::makeTerrainTileCommand(Texture* texture,
+RenderCommand Renderer::makeSurfaceTileCommand(Texture* texture,
                                                 Buffer* vertexBuffer,
-                                                int vertexCount) const {
+                                                Buffer* indexBuffer,
+                                                int indexCount) const {
     RenderCommand cmd;
     cmd.kind = RenderCommandKind::SurfaceTile;
-    cmd.owner = "terrain_tile";
+    cmd.owner = "surface_tile";
     cmd.pass = "color";
-    cmd.shader = impl_->terrainShader.get();
+    cmd.shader = impl_->surfaceTileShader.get();
     cmd.vertexBuffer = vertexBuffer;
-    cmd.indexBuffer = impl_->tileIndexBuffer.get();
-    cmd.indexCount = impl_->tileIndexCount;
-    cmd.vertexStride = 20;  // pos(12) + uv(8)
+    cmd.indexBuffer = indexBuffer ? indexBuffer : impl_->tileIndexBuffer.get();
+    cmd.indexCount = indexBuffer ? indexCount : impl_->tileIndexCount;
+    cmd.vertexStride = 32;  // POSITION(12) + NORMAL(12) + TEXCOORD_0(8)
     cmd.primitive = RenderCommand::PrimitiveType::Triangles;
     cmd.indexType = RenderCommand::IndexType::UInt32;
     cmd.depthTest = true;
@@ -726,7 +721,6 @@ RenderCommand Renderer::makeTerrainTileCommand(Texture* texture,
     if (texture) {
         cmd.textures.push_back(texture);
     }
-    (void)vertexCount;
     return cmd;
 }
 

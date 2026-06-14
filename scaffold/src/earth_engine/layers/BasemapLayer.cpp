@@ -34,9 +34,9 @@ namespace earth_engine {
 namespace {
 
 struct SurfaceGpuVertex {
-    float position[3];
-    // normal removed — computed in vertex shader from ECEF position
-    float texcoord[2];
+    float position[3];   // 12 bytes, tile-relative ECEF
+    float normal[3];     // 12 bytes, world-space normal
+    float texcoord[2];   // 8 bytes
 };
 
 struct SurfaceTileInstanceGpu {
@@ -74,6 +74,13 @@ std::vector<SurfaceGpuVertex> makeSurfaceGpuVertices(const SurfaceTileMesh& mesh
         dst.position[0] = static_cast<float>(relative.x());
         dst.position[1] = static_cast<float>(relative.y());
         dst.position[2] = static_cast<float>(relative.z());
+        // Normal: already in world space, stored directly
+        Vec3 nrm = src.normalEcef;
+        if (nrm.lengthSquared() > 0.0) nrm = nrm.normalized();
+        else nrm = Ellipsoid::WGS84().geodeticSurfaceNormal(src.positionEcef);
+        dst.normal[0] = static_cast<float>(nrm.x());
+        dst.normal[1] = static_cast<float>(nrm.y());
+        dst.normal[2] = static_cast<float>(nrm.z());
         dst.texcoord[0] = src.uv[0];
         dst.texcoord[1] = src.uv[1];
         vertices.push_back(dst);
@@ -1902,8 +1909,8 @@ bool BasemapLayer::buildTerrainPrimaryRenderCommands(Renderer& renderer,
             vbDesc.type = BufferDesc::Type::Vertex;
             auto vbo = renderDevice_->createBuffer(vbDesc);
             if (!vbo) continue;
-            auto cmd = renderer.makeTerrainTileCommand(
-                attachment.texture, vbo.get(), static_cast<int>(verts.size()));
+            auto cmd = renderer.makeSurfaceTileCommand(
+                attachment.texture, vbo.get(), nullptr, 0);
             cmd.surfaceTileUv = {attachment.uvOffsetU, attachment.uvOffsetV,
                                  attachment.uvScaleU, attachment.uvScaleV};
             cmd.surfaceTileOpacity = attachment.opacity;
@@ -1937,24 +1944,10 @@ bool BasemapLayer::buildTerrainPrimaryRenderCommands(Renderer& renderer,
         auto ibo = renderDevice_->createBuffer(ibDesc);
         if (!ibo) continue;
 
-        // Use the terrain shader but with per-tile IBO (QM triangulation)
-        RenderCommand cmd;
-        cmd.kind = RenderCommandKind::SurfaceTile;
-        cmd.owner = "terrain_tile";
-        cmd.pass = "color";
-        cmd.shader = renderer.terrainShader();
-        cmd.vertexBuffer = vbo.get();
-        cmd.indexBuffer = ibo.get();
-        cmd.indexCount = static_cast<int>(qmMesh->indices.size());
-        cmd.vertexStride = 20;
-        cmd.primitive = RenderCommand::PrimitiveType::Triangles;
-        cmd.indexType = RenderCommand::IndexType::UInt32;
-        cmd.depthTest = true;
-        cmd.depthWrite = true;
-        cmd.blend = false;
-        cmd.cullFace = true;
-        cmd.hasSurfaceTileUniforms = true;
-        cmd.surfaceHasWaterMask = 0.0f;
+        // QM mesh: per-tile VBO + per-tile IBO, unified shader
+        auto cmd = renderer.makeSurfaceTileCommand(
+            attachment.texture, vbo.get(), ibo.get(),
+            static_cast<int>(qmMesh->indices.size()));
         cmd.surfaceTileOrigin = {
             static_cast<float>(localOrigin.x()),
             static_cast<float>(localOrigin.y()),
