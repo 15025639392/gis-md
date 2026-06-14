@@ -106,8 +106,11 @@ out vec4 fragColor;
 
 void main() {
     vec4 color = texture(u_tileTexture, v_texcoord);
-    float diffuse = max(dot(normalize(v_normal), normalize(u_lightDir)), 0.0);
-    color.rgb *= 0.35 + diffuse * 0.65;
+    // cesium-native PBR: metallic=0, roughness=1 → Lambertian diffuse
+    // diffuse = baseColor/π * NdotL ≈ baseColor * 0.318 * NdotL
+    // ambient ≈ 0.03 * baseColor for sky contribution
+    float NdotL = max(dot(normalize(v_normal), normalize(u_lightDir)), 0.0);
+    color.rgb *= 0.03 + NdotL * 0.32;
     color.a *= clamp(v_tileOpacity, 0.0, 1.0) * clamp(v_transitionOpacity, 0.0, 1.0);
     fragColor = color;
 }
@@ -267,11 +270,9 @@ out vec4 fragColor;
 
 void main() {
     vec4 color = texture(u_tileTexture, v_texcoord);
-    // Apply diffuse lighting from geodetic normal.
-    // When placeholder texture is used (solid color), lighting
-    // produces a shaded terrain appearance.
-    float diffuse = max(dot(normalize(v_normal), normalize(u_lightDir)), 0.0);
-    color.rgb *= 0.35 + diffuse * 0.65;
+    // cesium-native PBR: metallic=0, roughness=1 → Lambertian
+    float NdotL = max(dot(normalize(v_normal), normalize(u_lightDir)), 0.0);
+    color.rgb *= 0.03 + NdotL * 0.32;
     color.a = 1.0;
     color.a *= clamp(v_tileOpacity, 0.0, 1.0) * clamp(v_transitionOpacity, 0.0, 1.0);
     fragColor = color;
