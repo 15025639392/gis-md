@@ -35,6 +35,8 @@ struct TilesetTile {
     Vec3 localOrigin = Vec3::zero();
     /// Whether the mesh is ready for rendering
     bool meshReady = false;
+    /// Last frame this tile was used (for LRU eviction)
+    uint64_t lastUsedFrame = 0;
 
     // ---- Raster overlays ----
     std::vector<std::unique_ptr<RasterMappedToTilesetTile>> rasterOverlays;

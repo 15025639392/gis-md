@@ -49,6 +49,7 @@ private:
     void ensureTileMesh(TilesetTile& tile);
     void buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
                               RenderCommandList& commands);
+    void evictUnusedTiles();
     std::string terrainCacheKey(const TileKey& key) const;
 
     std::unique_ptr<TerrainProvider> terrainProvider_;
@@ -58,6 +59,9 @@ private:
     RenderDevice* device_ = nullptr;
 
     TilePlan tilePlan_;
+    static constexpr size_t kMaxCachedTiles = 256;
+    uint64_t frameNumber_ = 0;
+
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles_;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache_;
     std::unordered_set<std::string> pendingRequests_;

@@ -124,20 +124,22 @@ void Tileset::ensureTileMesh(TilesetTile& tile) {
             hm->rawData.data(), hm->rawData.size(), tile.bounds);
     }
     if (!tile.mesh) {
-        // Fallback: build ellipsoid mesh with height samples
+        // cesium-native: build regular grid mesh with terrain heights.
+        // Uses the DecodedHeightmap from terrain cache for height sampling.
         tile.mesh = std::make_unique<SurfaceTileMesh>();
         *tile.mesh = TileSurface::buildEllipsoidMesh(tile.bounds, 64);
-        // Apply terrain heights to vertices
         if (hm->valid()) {
             const auto& ellipsoid = Ellipsoid::WGS84();
+            // Create a temporary TerrainTile for height sampling
+            TerrainTile tempTile(tile.key, *tileScheme_,
+                std::make_unique<DecodedHeightmap>(*hm));
             for (auto& v : tile.mesh->vertices) {
                 Cartographic c = ellipsoid.cartesianToCartographic(v.positionEcef);
-                double h = static_cast<double>(TerrainTile(
-                    tile.key, *tileScheme_, std::unique_ptr<DecodedHeightmap>())
-                    .sampleHeight(c.longitude(), c.latitude()));
-                // Actually, we need a proper TerrainTile, but we don't have one here.
-                // For now, keep ellipsoid vertices.
-                (void)h;
+                double h = static_cast<double>(tempTile.sampleHeight(
+                    c.longitude(), c.latitude()));
+                Cartographic tc = Cartographic::fromRadians(
+                    c.longitude(), c.latitude(), h);
+                v.positionEcef = ellipsoid.cartographicToCartesian(tc);
             }
         }
     }
@@ -240,32 +242,42 @@ void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
 
 void Tileset::buildRenderCommands(Renderer& renderer,
                                    RenderCommandList& commands) {
+    ++frameNumber_;
+
     // Build tiles from visible keys
     for (const TileKey& key : tilePlan_.visibleTiles) {
         std::string ck = terrainCacheKey(key);
         auto& tile = tiles_[ck];
         if (!tile) {
             tile = std::make_unique<TilesetTile>(key, tileScheme_->tileToRectangle(key));
-            // cesium-native geometric error
             constexpr double kMaxGE = 6378137.0 * 0.25 / 65.0;
             tile->geometricError = 8.0 * kMaxGE * tile->bounds.width();
-            // Pre-allocate raster overlay slots
             tile->rasterOverlays.resize(imageryLayers_.size());
         }
+        tile->lastUsedFrame = frameNumber_;
         buildTileDrawCommand(renderer, *tile, commands);
     }
 
-    // Clean up tiles not visible this frame
-    for (auto it = tiles_.begin(); it != tiles_.end();) {
-        bool visible = false;
-        for (const TileKey& k : tilePlan_.visibleTiles) {
-            if (terrainCacheKey(k) == it->first) { visible = true; break; }
-        }
-        if (!visible) {
-            it = tiles_.erase(it);
-        } else {
-            ++it;
-        }
+    // cesium-native LRU eviction: purge tiles not used recently
+    evictUnusedTiles();
+}
+
+void Tileset::evictUnusedTiles() {
+    if (tiles_.size() <= kMaxCachedTiles) return;
+
+    // Collect tiles by last used frame, sort oldest first
+    std::vector<std::pair<std::string, uint64_t>> entries;
+    entries.reserve(tiles_.size());
+    for (const auto& [key, tile] : tiles_) {
+        entries.emplace_back(key, tile->lastUsedFrame);
+    }
+    std::sort(entries.begin(), entries.end(),
+        [](const auto& a, const auto& b) { return a.second < b.second; });
+
+    // Evict oldest tiles down to kMaxCachedTiles
+    size_t toRemove = tiles_.size() - kMaxCachedTiles;
+    for (size_t i = 0; i < toRemove && i < entries.size(); ++i) {
+        tiles_.erase(entries[i].first);
     }
 }
 
