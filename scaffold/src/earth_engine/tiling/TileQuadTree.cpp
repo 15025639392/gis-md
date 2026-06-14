@@ -117,6 +117,11 @@ BoundingSphere boundingSphereFor(const Rectangle& bounds) {
     for (const Vec3& p : points) {
         radius = std::max(radius, center.distanceTo(p));
     }
+    // cesium-native BoundingRegionWithLooseFittingHeights: expand for
+    // terrain relief. Max height on Earth is ~8848m, min ~-11000m.
+    // Using [-1000, 9000] covers all reasonable terrain.
+    constexpr double kMaxTerrainHeight = 9000.0;
+    radius += kMaxTerrainHeight;
     return BoundingSphere(center, radius);
 }
 
@@ -137,6 +142,10 @@ OrientedBoundingBox obbFromCorners(const Vec3& center,
     hEast  = std::max(hEast, 1.0);
     hNorth = std::max(hNorth, 1.0);
     hUp    = std::max(hUp,   1.0);
+
+    // cesium-native: expand for terrain height range [-1000, 9000]
+    constexpr double kTerrainHeightRange = 10000.0;  // 9000 - (-1000)
+    hUp += kTerrainHeightRange;
 
     return OrientedBoundingBox(center,
                                 east * hEast,
