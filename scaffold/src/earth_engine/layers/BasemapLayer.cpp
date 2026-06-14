@@ -2009,20 +2009,6 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
     int meshParentFallback = 0;
     int meshParentCovered = 0;
     const size_t startCommands = commands.size();
-    struct InstanceBatch {
-        Texture* texture = nullptr;
-        std::vector<SurfaceTileInstanceGpu> instances;
-        bool blend = false;
-    };
-    std::vector<InstanceBatch> instanceBatches;
-    std::unordered_map<Texture*, size_t> instanceBatchByTexture;
-    constexpr int kInstancedSurfaceMinZoom = 14;
-    const double cameraHeightMeters =
-        Ellipsoid::WGS84().cartesianToCartographic(lastCameraPosition_).height();
-    const bool canUseInstancedEllipsoidSurface =
-        renderDevice_ &&
-        renderDevice_->backendType() == RenderDevice::Backend::OpenGLES &&
-        renderDevice_->supportsInstancing();
     std::unordered_set<TileKey> emittedMeshFallbackTargets;
     struct RenderOrderEntry {
         const RenderTileRef* renderTile = nullptr;
@@ -2095,96 +2081,59 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
         ImageryAttachment commandAttachment = attachment;
         Rectangle commandBounds = bounds;
 
-        bool useInstancedEllipsoidForTile = canUseInstancedEllipsoidSurface;
+        // cesium-native: per-tile VBO + draw call (no instancing)
+        {
+            const double commandStartMs = perf::nowMs();
+            const Vec3 localOrigin = ellipsoidSurfaceOriginForBounds(commandBounds);
 
-        const TerrainTile* terrainOverlapTile = nullptr;
-        if (terrainLayer) {
-            const double terrainLookupStartMs = perf::nowMs();
-            terrainOverlapTile = terrainLayer->findBestTileForBounds(commandBounds);
-            if (terrainOverlapTile && !terrainOverlapTile->valid()) {
-                terrainOverlapTile = nullptr;
-            }
-            meshStats.terrainLookupMs += perf::nowMs() - terrainLookupStartMs;
-        }
-
-        if (useInstancedEllipsoidForTile) {
-            {
-                const ImageryAtlasLookup atlasLookup =
-                    findImageryAtlasEntry(commandAttachment.textureKey);
-                if (atlasLookup.texture) {
-                    const ImageryAtlasEntry& atlasEntry = atlasLookup.entry;
-                    commandAttachment.texture = atlasLookup.texture;
-                    commandAttachment.uvOffsetU =
-                        atlasEntry.offsetU + commandAttachment.uvOffsetU * atlasEntry.scaleU;
-                    commandAttachment.uvOffsetV =
-                        atlasEntry.offsetV + commandAttachment.uvOffsetV * atlasEntry.scaleV;
-                    commandAttachment.uvScaleU *= atlasEntry.scaleU;
-                    commandAttachment.uvScaleV *= atlasEntry.scaleV;
-                    ++instancedAtlasTiles;
+            // Build/cache ellipsoid mesh VBO per tile key
+            std::string vboKey = tileCacheKey(key) + "/vbo";
+            vboCacheUsedKeys_.insert(vboKey);
+            Buffer* vbo = nullptr;
+            auto vboIt = surfaceVboCache_.find(vboKey);
+            if (vboIt != surfaceVboCache_.end()) {
+                vbo = vboIt->second.get();
+            } else if (renderDevice_) {
+                SurfaceTileMesh mesh = TileSurface::buildEllipsoidMesh(commandBounds, 64);
+                auto gpuVerts = makeSurfaceGpuVertices(mesh, localOrigin);
+                BufferDesc vbDesc;
+                vbDesc.size = gpuVerts.size() * sizeof(SurfaceGpuVertex);
+                vbDesc.data = gpuVerts.data();
+                vbDesc.usage = BufferDesc::Usage::Static;
+                vbDesc.type = BufferDesc::Type::Vertex;
+                auto newVbo = renderDevice_->createBuffer(vbDesc);
+                if (newVbo) {
+                    vbo = newVbo.get();
+                    surfaceVboCache_[vboKey] = std::move(newVbo);
                 }
             }
-            const Vec3 localOrigin = ellipsoidSurfaceOriginForBounds(commandBounds);
-            SurfaceTileInstanceGpu instance{};
-            instance.tileRect[0] = static_cast<float>(commandBounds.west());
-            instance.tileRect[1] = static_cast<float>(commandBounds.south());
-            instance.tileRect[2] = static_cast<float>(commandBounds.east());
-            instance.tileRect[3] = static_cast<float>(commandBounds.north());
-            instance.textureRect[0] = commandAttachment.uvOffsetU;
-            instance.textureRect[1] = commandAttachment.uvOffsetV;
-            instance.textureRect[2] = commandAttachment.uvScaleU;
-            instance.textureRect[3] = commandAttachment.uvScaleV;
-            instance.localOrigin[0] = static_cast<float>(localOrigin.x());
-            instance.localOrigin[1] = static_cast<float>(localOrigin.y());
-            instance.localOrigin[2] = static_cast<float>(localOrigin.z());
-            instance.opacityTransitionWaterFlags[0] = commandAttachment.opacity;
+            if (!vbo) continue;
+
             const float rawTransitionOpacity =
                 std::clamp(renderTile.transitionOpacity, 0.0f, 1.0f);
             const float renderTransitionOpacity =
                 transitionOpacityForSurfaceDraw(
                     commandAttachment, rawTransitionOpacity, cameraMoving_);
-            instance.opacityTransitionWaterFlags[1] = renderTransitionOpacity;
-            instance.opacityTransitionWaterFlags[2] = 0.0f;
-            instance.opacityTransitionWaterFlags[3] = 0.0f;
-            if (terrainOverlapTile) {
-                writeRelativeCornerWithTerrain(instance.cornerNw, commandBounds, 0.0, 0.0, localOrigin, terrainOverlapTile);
-                writeRelativeCornerWithTerrain(instance.cornerNe, commandBounds, 1.0, 0.0, localOrigin, terrainOverlapTile);
-                writeRelativeCornerWithTerrain(instance.cornerSw, commandBounds, 0.0, 1.0, localOrigin, terrainOverlapTile);
-                writeRelativeCornerWithTerrain(instance.cornerSe, commandBounds, 1.0, 1.0, localOrigin, terrainOverlapTile);
-            } else {
-                writeRelativeCorner(instance.cornerNw, commandBounds, 0.0, 0.0, localOrigin);
-                writeRelativeCorner(instance.cornerNe, commandBounds, 1.0, 0.0, localOrigin);
-                writeRelativeCorner(instance.cornerSw, commandBounds, 0.0, 1.0, localOrigin);
-                writeRelativeCorner(instance.cornerSe, commandBounds, 1.0, 1.0, localOrigin);
-            }
 
-            auto [it, inserted] = instanceBatchByTexture.emplace(
-                commandAttachment.texture, instanceBatches.size());
-            if (inserted) {
-                InstanceBatch batch;
-                batch.texture = commandAttachment.texture;
-                instanceBatches.push_back(std::move(batch));
-            }
-            InstanceBatch& batch = instanceBatches[it->second];
-            batch.instances.push_back(instance);
-            maxInstancesPerTexture =
-                std::max(maxInstancesPerTexture, batch.instances.size());
-            ++instancedTileCount;
-            if (commandAttachment.fallbackSource == ImageryFallbackSource::Exact) {
-                ++instancedExactTextures;
-            } else {
-                ++instancedParentTextures;
-            }
-            const float rawEffectiveOpacity =
-                commandAttachment.opacity * rawTransitionOpacity;
-            if (rawEffectiveOpacity < 0.999f) {
-                ++rawBlendedTileCount;
-                rawMinEffectiveOpacity =
-                    std::min(rawMinEffectiveOpacity, rawEffectiveOpacity);
-            }
+            auto cmd = renderer.makeSurfaceTileCommand(
+                commandAttachment.texture, vbo, nullptr, 0);
+            cmd.surfaceTileUv = {commandAttachment.uvOffsetU, commandAttachment.uvOffsetV,
+                                 commandAttachment.uvScaleU, commandAttachment.uvScaleV};
+            cmd.surfaceTileOrigin = {
+                static_cast<float>(localOrigin.x()),
+                static_cast<float>(localOrigin.y()),
+                static_cast<float>(localOrigin.z())
+            };
+            cmd.surfaceTileOpacity = commandAttachment.opacity;
+            cmd.surfaceTransitionOpacity = renderTransitionOpacity;
+            cmd.surfaceGeneration = static_cast<float>(generation_);
+            cmd.frameId = layerPlan_.frameId;
+            cmd.generation = generation_;
+
             const float effectiveOpacity =
                 commandAttachment.opacity * renderTransitionOpacity;
-            batch.blend = batch.blend || effectiveOpacity < 0.999f;
             if (effectiveOpacity < 0.999f) {
+                cmd.blend = true;
                 ++blendedTileCount;
                 minEffectiveOpacity = std::min(minEffectiveOpacity, effectiveOpacity);
                 if (commandAttachment.fallbackSource == ImageryFallbackSource::Exact) {
@@ -2193,68 +2142,21 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
                     ++blendedParentTileCount;
                 }
             }
+            commands.push_back(std::move(cmd));
             ++emitted;
-            continue;
+            commandMs += perf::nowMs() - commandStartMs;
         }
-
-        continue;  // non-instanced path removed — instanced-only rendering
     }
 
-    for (const InstanceBatch& batch : instanceBatches) {
-        if (batch.instances.empty()) continue;
-        const size_t instanceCount = batch.instances.size();
-        const size_t instanceBytes = instanceCount * sizeof(SurfaceTileInstanceGpu);
-        instanceBufferBytes += instanceBytes;
-        SurfaceInstanceBatchBuffer& batchBuffer = surfaceInstanceBatches_[batch.texture];
-        const double instanceBufferStartMs = perf::nowMs();
-        if (!batchBuffer.buffer || batchBuffer.capacityInstances < instanceCount) {
-            size_t newCapacity = 16;
-            while (newCapacity < instanceCount) {
-                newCapacity *= 2;
-            }
-            BufferDesc instanceDesc;
-            instanceDesc.size = newCapacity * sizeof(SurfaceTileInstanceGpu);
-            instanceDesc.data = nullptr;
-            instanceDesc.usage = BufferDesc::Usage::Dynamic;
-            instanceDesc.type = BufferDesc::Type::Vertex;
-            batchBuffer.buffer = renderDevice_->createBuffer(instanceDesc);
-            batchBuffer.capacityInstances = batchBuffer.buffer ? newCapacity : 0;
-            ++instanceBufferCreates;
-        }
-        bool uploaded = false;
-        if (batchBuffer.buffer) {
-            uploaded = renderDevice_->updateBuffer(
-                batchBuffer.buffer.get(),
-                0,
-                batch.instances.data(),
-                instanceBytes);
-            if (uploaded) {
-                ++instanceBufferUpdates;
-                batchBuffer.lastUsedFrame = layerPlan_.frameId;
-            }
-        }
-        instanceBufferMs += perf::nowMs() - instanceBufferStartMs;
-        if (!uploaded) continue;
-        auto cmd = renderer.makeInstancedSurfaceTileCommand(
-            batch.texture,
-            batchBuffer.buffer.get(),
-            static_cast<int>(batch.instances.size()));
-        cmd.blend = batch.blend;
-        cmd.surfaceTileOpacity = 1.0f;
-        cmd.surfaceTransitionOpacity = 1.0f;
-        cmd.surfaceGeneration = static_cast<float>(generation_);
-        cmd.frameId = layerPlan_.frameId;
-        cmd.generation = generation_;
-        commands.push_back(std::move(cmd));
-    }
-
-    for (auto it = surfaceInstanceBatches_.begin(); it != surfaceInstanceBatches_.end();) {
-        if (it->second.lastUsedFrame != layerPlan_.frameId) {
-            it = surfaceInstanceBatches_.erase(it);
+    // Per-tile VBO cache cleanup: evict entries not used this frame
+    for (auto it = surfaceVboCache_.begin(); it != surfaceVboCache_.end();) {
+        if (vboCacheUsedKeys_.find(it->first) == vboCacheUsedKeys_.end()) {
+            it = surfaceVboCache_.erase(it);
         } else {
             ++it;
         }
     }
+    vboCacheUsedKeys_.clear();
 
     int terrainPrimaryCommandCount = 0;
     {
@@ -2266,15 +2168,6 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
         }
     }
 
-    const size_t textureSplitOverhead =
-        instancedTileCount > 0 && instanceBatches.size() > 0
-            ? instanceBatches.size() - 1
-            : 0;
-    const double avgInstancesPerTexture =
-        !instanceBatches.empty()
-            ? static_cast<double>(instancedTileCount) /
-                  static_cast<double>(instanceBatches.size())
-            : 0.0;
     const bool gapProbeActive =
         cameraMoving_ &&
         (layerPlan_.missingTileCount > 0 ||
@@ -2290,66 +2183,18 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
 
     char detail[1024];
     std::snprintf(detail, sizeof(detail),
-        "visited=%d emitted=%d terrainPrimary=%d missingTex=%d deferred=%d meshParent=%d meshCovered=%d moving=%d gapProbe=%d camH=%.0f desired=%zu renderRefs=%zu planMissing=%d parentFallback=%d transition=%d blended=%d rawBlended=%d blendedExact=%d blendedParent=%d minOpacity=%.3f rawMinOpacity=%.3f ancestorRetained=%d kicked=%d qFade=%d qRender=%d qWalk=%d qNot=%d instTiles=%d instAtlas=%d instBatch=%zu instAvg=%.1f instMax=%zu instExact=%d instParent=%d texSplit=%zu instCreate=%d instUpdate=%d instBytes=%zu instBuf=%.2f meshBudget=%d meshBudgetMs=%.1f cmdDelta=%zu tex=%.2f bounds=%.2f uv=%.2f meshTotal=%.2f hit=%d miss=%d terrLookup=%.2f key=%.2f meshBuild=%.2f centroid=%.2f verts=%.2f vb=%.2f ib=%.2f wm=%.2f cmd=%.2f cache=%zu instCache=%zu",
-        visited,
-        emitted,
-        terrainPrimaryCommandCount,
-        missingTexture,
-        meshBuildDeferred,
-        meshParentFallback,
-        meshParentCovered,
-        cameraMoving_ ? 1 : 0,
-        gapProbeActive ? 1 : 0,
-        cameraHeightMeters,
-        layerPlan_.desiredTiles.size(),
-        layerPlan_.renderTiles.size(),
-        layerPlan_.missingTileCount,
-        layerPlan_.parentFallbackReadyTileCount,
-        layerPlan_.transitionTileCount,
-        blendedTileCount,
-        rawBlendedTileCount,
-        blendedExactTileCount,
-        blendedParentTileCount,
-        minEffectiveOpacity,
-        rawMinEffectiveOpacity,
-        layerPlan_.ancestorRetainedTileCount,
-        layerPlan_.kickedTileCount,
-        layerPlan_.quadtreeFadingNodeCount,
+        "visited=%d emitted=%d terrainPrimary=%d missingTex=%d moving=%d gapProbe=%d desired=%zu renderRefs=%zu "
+        "blended=%d minOpacity=%.3f qRender=%d qWalk=%d qNot=%d vboCache=%zu cmdDelta=%zu tex=%.2f cmd=%.2f",
+        visited, emitted, terrainPrimaryCommandCount, missingTexture,
+        cameraMoving_ ? 1 : 0, gapProbeActive ? 1 : 0,
+        layerPlan_.desiredTiles.size(), layerPlan_.renderTiles.size(),
+        blendedTileCount, minEffectiveOpacity,
         layerPlan_.quadtreeRenderingNodeCount,
         layerPlan_.quadtreeWalkthroughNodeCount,
         layerPlan_.quadtreeNotRenderingNodeCount,
-        instancedTileCount,
-        instancedAtlasTiles,
-        instanceBatches.size(),
-        avgInstancesPerTexture,
-        maxInstancesPerTexture,
-        instancedExactTextures,
-        instancedParentTextures,
-        textureSplitOverhead,
-        instanceBufferCreates,
-        instanceBufferUpdates,
-        instanceBufferBytes,
-        instanceBufferMs,
-        meshBuildBudget,
-        meshBuildFrameBudgetMs,
+        surfaceVboCache_.size(),
         commands.size() - startCommands,
-        textureLookupMs,
-        boundsMs,
-        uvMs,
-        meshStats.totalMs,
-        meshStats.hits,
-        meshStats.misses,
-        meshStats.terrainLookupMs,
-        meshStats.cacheKeyMs,
-        meshStats.meshBuildMs,
-        meshStats.centroidMs,
-        meshStats.vertexBuildMs,
-        meshStats.vertexBufferMs,
-        meshStats.indexBufferMs,
-        meshStats.waterMaskMs,
-        commandMs,
-        surfaceMeshCache_.size(),
-        surfaceInstanceBatches_.size());
+        textureLookupMs, commandMs);
     perf::logTiming(layerPlan_.frameId,
                     "BasemapLayer.buildRenderCommands",
                     perf::nowMs() - totalStartMs,
@@ -2358,34 +2203,9 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
 #ifdef __ANDROID__
     if (gapProbeActive) {
         __android_log_print(ANDROID_LOG_INFO, "BasemapGapProbe",
-            "frame=%llu layer=%s moving=1 meshBudget=%d meshBudgetMs=%.1f camH=%.0f desired=%zu renderRefs=%zu emitted=%d "
-            "planMissing=%d missingTex=%d deferred=%d meshParent=%d meshCovered=%d parentFallback=%d transition=%d "
-            "blended=%d rawBlended=%d blendedExact=%d blendedParent=%d minOpacity=%.3f rawMinOpacity=%.3f "
-            "ancestorRetained=%d kicked=%d qFade=%d",
+            "frame=%llu layer=%s emitted=%d missingTex=%d blended=%d",
             static_cast<unsigned long long>(layerPlan_.frameId),
-            id_.c_str(),
-            meshBuildBudget,
-            meshBuildFrameBudgetMs,
-            cameraHeightMeters,
-            layerPlan_.desiredTiles.size(),
-            layerPlan_.renderTiles.size(),
-            emitted,
-            layerPlan_.missingTileCount,
-            missingTexture,
-            meshBuildDeferred,
-            meshParentFallback,
-            meshParentCovered,
-            layerPlan_.parentFallbackReadyTileCount,
-            layerPlan_.transitionTileCount,
-            blendedTileCount,
-            rawBlendedTileCount,
-            blendedExactTileCount,
-            blendedParentTileCount,
-            minEffectiveOpacity,
-            rawMinEffectiveOpacity,
-            layerPlan_.ancestorRetainedTileCount,
-            layerPlan_.kickedTileCount,
-            layerPlan_.quadtreeFadingNodeCount);
+            id_.c_str(), emitted, missingTexture, blendedTileCount);
     }
 #endif
 }

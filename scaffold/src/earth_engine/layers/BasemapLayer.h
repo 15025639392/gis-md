@@ -260,7 +260,8 @@ private:
     TileTextureCache textureCache_;
     std::unordered_map<int, ImageryAtlas> imageryAtlases_;
     std::unordered_map<std::string, SurfaceGpuMesh> surfaceMeshCache_;
-    std::unordered_map<Texture*, SurfaceInstanceBatchBuffer> surfaceInstanceBatches_;
+    std::unordered_map<std::string, std::unique_ptr<Buffer>> surfaceVboCache_;
+    std::unordered_set<std::string> vboCacheUsedKeys_;
     std::deque<std::string> pendingSurfaceMeshEvictions_;
     std::unordered_set<std::string> pendingSurfaceMeshEvictionSet_;
     TilePlan tilePlan_;
