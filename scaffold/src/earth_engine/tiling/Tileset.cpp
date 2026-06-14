@@ -266,18 +266,23 @@ void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
         renderTile->gpuIndexBuffer.get(),
         static_cast<int>(renderTile->mesh->indices.size()));
     if (usingParentMesh) {
-        // Adjust imagery UV for parent mesh: parent TEXCOORD_0 covers
-        // parent area, so we need to fold the child→parent mapping into
-        // the imagery→child mapping.
+        // cesium-native: adjust imagery UV when rendering with parent mesh.
         //   shader: imagery_uv = u_tileUV.xy + mesh_uv * u_tileUV.zw
-        //   mesh_uv is in parent space, u_tileUV maps child→imagery
-        //   We want: imagery_uv = child_offset_in_parent + mesh_uv * child_scale_in_parent
-        //   then apply imagery→child mapping on top.
+        //   parent mesh UV covers parent extent, child mesh UV would cover
+        //   child sub-extent. We need to remap:
+        //     child_uv = (parent_uv - childOffset) / childScale
+        //   where childOffset = (child.min - parent.min) / parent.range
+        //         childScale  = child.range / parent.range
+        //   Then apply imagery→child mapping: imagery = imagOff + child_uv * imagScale
+        //   Combined: imagery = imagOff - childOff*imagScale/childScale
+        //                     + parent_uv * imagScale/childScale
+        double invScaleU = 1.0 / std::max(parentToChildUvScaleU, 1e-12);
+        double invScaleV = 1.0 / std::max(parentToChildUvScaleV, 1e-12);
         cmd.surfaceTileUv = {
-            static_cast<float>(uvOffU + parentToChildUvOffU * uvScaleU),
-            static_cast<float>(uvOffV + parentToChildUvOffV * uvScaleV),
-            static_cast<float>(uvScaleU * parentToChildUvScaleU),
-            static_cast<float>(uvScaleV * parentToChildUvScaleV)
+            static_cast<float>(uvOffU - parentToChildUvOffU * uvScaleU * invScaleU),
+            static_cast<float>(uvOffV - parentToChildUvOffV * uvScaleV * invScaleV),
+            static_cast<float>(uvScaleU * invScaleU),
+            static_cast<float>(uvScaleV * invScaleV)
         };
     } else {
         cmd.surfaceTileUv = {uvOffU, uvOffV, uvScaleU, uvScaleV};
@@ -322,27 +327,21 @@ void Tileset::buildRenderCommands(Renderer& renderer,
             tile->geometricError = 8.0 * kMaxGE * tile->bounds.width();
             tile->rasterOverlays.resize(imageryLayers_.size());
 
-            // Link to parent chain
-            {
-                TilesetTile* current = tile.get();
+            // cesium-native: create parent chain and link parent↔child
+            if (!tile->parent) {
                 TileKey pk = key;
-                while (pk.z > 0) {
-                    pk = TileKey{pk.schemeId, pk.z - 1, pk.x >> 1, pk.y >> 1};
-                    std::string pck = terrainCacheKey(pk);
-                    auto& parentPtr = tiles_[pck];
-                    if (!parentPtr) {
-                        parentPtr = std::make_unique<TilesetTile>(
-                            pk, tileScheme_->tileToRectangle(pk));
-                        parentPtr->geometricError = current->geometricError * 2.0;
-                        parentPtr->rasterOverlays.resize(imageryLayers_.size());
-                    }
-                    // Link parent ↔ child
-                    if (current->parent == nullptr && parentPtr) {
-                        current->parent = parentPtr.get();
-                        parentPtr->lastUsedFrame = frameNumber_;
-                    }
-                    current = parentPtr.get();
+                pk = TileKey{pk.schemeId, pk.z - 1, pk.x >> 1, pk.y >> 1};
+                std::string pck = terrainCacheKey(pk);
+                auto& parentPtr = tiles_[pck];
+                if (!parentPtr) {
+                    parentPtr = std::make_unique<TilesetTile>(
+                        pk, tileScheme_->tileToRectangle(pk));
+                    parentPtr->geometricError = tile->geometricError * 2.0;
+                    parentPtr->rasterOverlays.resize(imageryLayers_.size());
                 }
+                tile->parent = parentPtr.get();
+                parentPtr->children.push_back(tile.get());
+                parentPtr->lastUsedFrame = frameNumber_;
             }
         }
         tile->lastUsedFrame = frameNumber_;
@@ -389,10 +388,11 @@ void Tileset::evictUnusedTiles() {
         // Walk children and mark them for removal
         std::function<void(TilesetTile*)> markChildren = [&](TilesetTile* t) {
             if (!t) return;
-            for (auto& child : t->children) {
+            for (auto* child : t->children) {
+                if (!child) continue;
                 std::string childCk = terrainCacheKey(child->key);
                 cascadeRemove.insert(childCk);
-                markChildren(child.get());
+                markChildren(child);
             }
         };
         auto it = tiles_.find(ck);

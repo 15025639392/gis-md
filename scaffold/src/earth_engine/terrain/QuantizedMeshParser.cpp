@@ -484,7 +484,8 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     mesh->skirtMeta.noSkirtIndicesBegin = 0;
     mesh->skirtMeta.noSkirtIndicesCount = static_cast<uint32_t>(mesh->indices.size());
 
-    // cesium-native skirt: sort edges, create bottom vertices, triangle strips
+    // cesium-native skirt: partial_sort_copy each edge by UV coordinate,
+    // then create bottom vertices and triangle strips.
     const double lonOff = (eastLng - westLng) * 0.0001;
     const double latOff = (northLat - southLat) * 0.0001;
     const double skirtH = 5.0 * (ellipsoid.semiMajorAxis() * 0.25 / 65.0) * bounds.width();
@@ -497,7 +498,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
         for (size_t i = 0; i < edgeIdx.size(); ++i) {
             size_t ei = reverse ? (edgeIdx.size() - 1 - i) : i;
             const SurfaceVertex& top = mesh->vertices[edgeIdx[ei]];
-            Cartographic cart = ellipsoid.cartesianToCartographic(top.positionEcef);
+            Cartographic cart = ellipsoid.cartographicToCartesian(top.positionEcef);
             Cartographic sc = Cartographic::fromRadians(
                 cart.longitude() + lo, cart.latitude() + la, cart.height() - skirtH);
 
@@ -518,12 +519,34 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
         }
     };
 
-    // QM spec edge order already matches cesium-native sort:
-    // West: south→north, South: east→west, East: north→south, North: west→east
-    addSkirtEdge(west, -lonOff, 0, false);
-    addSkirtEdge(south, 0, -latOff, false);
-    addSkirtEdge(east, lonOff, 0, false);
-    addSkirtEdge(north, 0, latOff, false);
+    // cesium-native QuantizedMeshLoader::addSkirts: sort by UV before assembling.
+    // West: sort by v asc (south→north)
+    // South: sort by u desc (east→west)
+    // East: sort by v desc (north→south)
+    // North: sort by u asc (west→east)
+    auto sortByU = [&](const std::vector<uint32_t>& idx, bool desc) {
+        std::vector<uint32_t> s = idx;
+        std::sort(s.begin(), s.end(), [&](uint32_t a, uint32_t b) {
+            double ua = (uBuf.size() > a) ? (static_cast<double>(uBuf[a]) / 32767.0) : 0.0;
+            double ub = (uBuf.size() > b) ? (static_cast<double>(uBuf[b]) / 32767.0) : 0.0;
+            return desc ? (ua > ub) : (ua < ub);
+        });
+        return s;
+    };
+    auto sortByV = [&](const std::vector<uint32_t>& idx, bool desc) {
+        std::vector<uint32_t> s = idx;
+        std::sort(s.begin(), s.end(), [&](uint32_t a, uint32_t b) {
+            double va = (vBuf.size() > a) ? (static_cast<double>(vBuf[a]) / 32767.0) : 0.0;
+            double vb = (vBuf.size() > b) ? (static_cast<double>(vBuf[b]) / 32767.0) : 0.0;
+            return desc ? (va > vb) : (va < vb);
+        });
+        return s;
+    };
+
+    addSkirtEdge(sortByV(west, false), -lonOff, 0, false);
+    addSkirtEdge(sortByU(south, true), 0, -latOff, false);
+    addSkirtEdge(sortByV(east, true), lonOff, 0, false);
+    addSkirtEdge(sortByU(north, false), 0, latOff, false);
 
     mesh->waterMask = std::move(waterMask);
     return mesh;

@@ -25,7 +25,7 @@ struct TilesetTile {
 
     // ---- Tree structure (cesium-native parent/child) ----
     TilesetTile* parent = nullptr;
-    std::vector<std::unique_ptr<TilesetTile>> children;
+    std::vector<TilesetTile*> children;  // raw pointers, owned by Tileset::tiles_ map
 
     // ---- Content (geometry) ----
     /// QM raw binary data (lazily decoded to SurfaceTileMesh)
