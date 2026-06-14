@@ -15,6 +15,7 @@ class RenderDevice;
 class Scene;
 class BasemapLayer;
 class VectorLayer;
+class Tileset;
 class TerrainLayer;
 struct InputEvent;
 struct PickResult;
@@ -100,6 +101,9 @@ public:
 
     /// 设置地形图层
     void setTerrainLayer(std::unique_ptr<TerrainLayer> layer);
+
+    /// cesium-native 对齐：设置统一 Tileset（替代 BasemapLayer + TerrainLayer）
+    void setTileset(std::unique_ptr<Tileset> tileset);
 
     /// 启用/禁用地形
     void setTerrainEnabled(bool enabled);

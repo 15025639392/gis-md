@@ -5,6 +5,7 @@
 #include "layers/BasemapLayer.h"
 #include "layers/VectorLayer.h"
 #include "layers/TerrainLayer.h"
+#include "tiling/Tileset.h"
 #include "interaction/InputEvent.h"
 #include "interaction/PickingService.h"
 #include "debug/PerfTimer.h"
@@ -187,6 +188,10 @@ void Engine::setTerrainLayer(std::unique_ptr<TerrainLayer> layer) {
 
 void Engine::setTerrainEnabled(bool enabled) {
     scene_->setTerrainEnabled(enabled);
+}
+
+void Engine::setTileset(std::unique_ptr<Tileset> tileset) {
+    scene_->setTileset(std::move(tileset));
 }
 
 bool Engine::hasTerrain() const {

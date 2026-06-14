@@ -20,6 +20,7 @@
 #include "earth_engine/layers/BasemapLayer.h"
 #include "earth_engine/layers/TerrainLayer.h"
 #include "earth_engine/layers/VectorLayer.h"
+#include "earth_engine/tiling/Tileset.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/data/GeoJsonParser.h"
 #include "earth_engine/style/OverlayStyle.h"
@@ -234,100 +235,83 @@ static bool createEngine() {
         // 创建 Android JNI HTTP 桥接
         gPlatformBridge = std::make_unique<AndroidPlatformBridge>(gJvm);
 
-        std::unique_ptr<ImageryProvider> provider;
-        if (kUseGaodeSatelliteForDemo) {
-            auto xyz = std::make_unique<XYZImageryProvider>(
-                kGaodeSatelliteTemplate,
-                "Gaode/Amap satellite imagery");
-            // Gaode satellite returns reliable native imagery through z18 in
-            // this demo region; higher z requests can produce solid placeholder
-            // tiles, so keep provider capability separate from camera LOD.
-            xyz->setZoomRange(0, 18);
-            xyz->setOpenGlobusGroupedY(true);
-            xyz->setOpenGlobusPolarGroupsEnabled(false);
-            xyz->setPlatformBridge(gPlatformBridge.get());
-            provider = std::move(xyz);
-            LOGI("Gaode satellite provider enabled: %s", kGaodeSatelliteTemplate);
-            LOGI("Gaode/Amap tiles are GCJ-02 aligned; this demo is visual only, not WGS84 control-point acceptance");
-        } else {
-            provider = std::make_unique<DebugImageryProvider>();
-            LOGI("Debug standard XYZ WebMercator provider enabled");
-        }
-
-        auto scheme = kUseGaodeSatelliteForDemo
-            ? TileScheme::createOpenGlobusEarth()
-            : TileScheme::createXYZWebMercator();
-        auto layer = std::make_unique<BasemapLayer>(
-            std::move(provider), std::move(scheme), gRenderDevice.get());
-        layer->setNormalMapDebugEnabled(kShowNormalMapForDemo);
-        gEngine->addLayer(std::move(layer));
-        LOGI("Basemap layer added; normal map debug %s",
-             kShowNormalMapForDemo ? "enabled" : "disabled");
-
-        if (kUseGaodeSatelliteForDemo && kEnableGaodeRoadNetOverlayForDemo) {
-            auto roadNetProvider = std::make_unique<XYZImageryProvider>(
-                kGaodeRoadNetTemplate,
-                "Gaode/Amap road network overlay");
-            roadNetProvider->setZoomRange(0, 18);
-            roadNetProvider->setOpenGlobusGroupedY(true);
-            roadNetProvider->setOpenGlobusPolarGroupsEnabled(false);
-            roadNetProvider->setPlatformBridge(gPlatformBridge.get());
-
-            auto roadNetLayer = std::make_unique<BasemapLayer>(
-                std::move(roadNetProvider),
-                TileScheme::createOpenGlobusEarth(),
-                gRenderDevice.get());
-            roadNetLayer->setOpacity(1.0f);
-            gEngine->addLayer(std::move(roadNetLayer));
-            LOGI("Gaode road network overlay enabled: %s", kGaodeRoadNetTemplate);
-        } else {
-            LOGI("Gaode road network overlay disabled");
-        }
-
-        if (kEnableTerrainForDemo) {
+        // cesium-native aligned: create unified Tileset
+        {
+            // 1. Terrain provider (QuantizedMesh or Heightmap)
             std::unique_ptr<TerrainProvider> terrainProvider;
-            if (kUseQuantizedMeshTerrain) {
-                // cesium-native QuantizedMesh-1.0 binary terrain.
+            if (kEnableTerrainForDemo && kUseQuantizedMeshTerrain) {
                 auto qm = std::make_unique<QuantizedMeshTerrainProvider>(
-                    kQuantizedMeshTerrainTemplate,
-                    "QuantizedMesh Terrain");
+                    kQuantizedMeshTerrainTemplate, "QuantizedMesh Terrain");
                 qm->setZoomRange(0, 12);
                 qm->setTileSize(65);
                 qm->setFlipYForUrl(false);
                 qm->setPlatformBridge(gPlatformBridge.get());
                 if (!qm->configureFromLayerJsonUrl(kQuantizedMeshTerrainLayerJson)) {
-                    LOGE("QuantizedMesh layer.json load failed, using template fallback: %s",
-                         kQuantizedMeshTerrainTemplate);
+                    LOGE("QuantizedMesh layer.json load failed: %s", kQuantizedMeshTerrainLayerJson);
                 }
                 terrainProvider = std::move(qm);
-                LOGI("Terrain provider: QuantizedMesh layer=%s template=%s",
-                     kQuantizedMeshTerrainLayerJson,
-                     static_cast<QuantizedMeshTerrainProvider*>(terrainProvider.get())->urlTemplate().c_str());
             } else {
-                // Mapbox Terrain-RGB heightmap tiles.
                 auto hm = std::make_unique<HeightmapTerrainProvider>(
-                    kFabdemTerrainTemplate,
-                    "Mapbox Terrain-RGB");
+                    kFabdemTerrainTemplate, "Mapbox Terrain-RGB");
                 hm->setZoomRange(0, 14);
                 hm->setEncoding(HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
-                hm->setTileSize(514);  // 512 grid + 1px skirt per side
+                hm->setTileSize(514);
                 hm->setPlatformBridge(gPlatformBridge.get());
                 terrainProvider = std::move(hm);
-                LOGI("Terrain provider: Heightmap (%s)", kFabdemTerrainTemplate);
             }
-            // Use Geographic TMS scheme to match the server's EPSG:4326+TMS tiling.
-            auto terrainScheme = TileScheme::createGeographicTMS();
-            auto terrainLayer = std::make_unique<TerrainLayer>(
+
+            // 2. Imagery layers (basemap + optional road overlay)
+            std::vector<BasemapLayer*> imageryLayers;
+            std::vector<std::unique_ptr<BasemapLayer>> ownedLayers;
+
+            if (kUseGaodeSatelliteForDemo) {
+                auto xyz = std::make_unique<XYZImageryProvider>(
+                    kGaodeSatelliteTemplate, "Gaode/Amap satellite");
+                xyz->setZoomRange(0, 18);
+                xyz->setOpenGlobusGroupedY(true);
+                xyz->setOpenGlobusPolarGroupsEnabled(false);
+                xyz->setPlatformBridge(gPlatformBridge.get());
+                auto layer = std::make_unique<BasemapLayer>(
+                    std::move(xyz), TileScheme::createOpenGlobusEarth(), gRenderDevice.get());
+                imageryLayers.push_back(layer.get());
+                ownedLayers.push_back(std::move(layer));
+                LOGI("Gaode satellite basemap enabled");
+
+                if (kEnableGaodeRoadNetOverlayForDemo) {
+                    auto road = std::make_unique<XYZImageryProvider>(
+                        kGaodeRoadNetTemplate, "Gaode/Amap road network");
+                    road->setZoomRange(0, 18);
+                    road->setOpenGlobusGroupedY(true);
+                    road->setOpenGlobusPolarGroupsEnabled(false);
+                    road->setPlatformBridge(gPlatformBridge.get());
+                    auto roadLayer = std::make_unique<BasemapLayer>(
+                        std::move(road), TileScheme::createOpenGlobusEarth(), gRenderDevice.get());
+                    imageryLayers.push_back(roadLayer.get());
+                    ownedLayers.push_back(std::move(roadLayer));
+                    LOGI("Gaode road network overlay enabled");
+                }
+            } else {
+                auto dbg = std::make_unique<DebugImageryProvider>();
+                auto layer = std::make_unique<BasemapLayer>(
+                    std::move(dbg), TileScheme::createXYZWebMercator(), gRenderDevice.get());
+                imageryLayers.push_back(layer.get());
+                ownedLayers.push_back(std::move(layer));
+            }
+
+            // Keep owned layers alive in the engine
+            for (auto& l : ownedLayers) {
+                gEngine->addLayer(std::move(l));
+            }
+
+            // 3. Create unified Tileset
+            auto tileset = std::make_unique<Tileset>(
                 std::move(terrainProvider),
-                std::move(terrainScheme));
-            terrainLayer->setEnabled(true);
-            gEngine->setTerrainLayer(std::move(terrainLayer));
+                TileScheme::createGeographicTMS(),
+                std::move(imageryLayers),
+                gRenderDevice.get());
+            gEngine->setTileset(std::move(tileset));
             gEngine->setTerrainEnabled(true);
-            LOGI("Terrain layer added: QuantizedMesh=%d HeightmapTemplate=%s",
-                 kUseQuantizedMeshTerrain ? 1 : 0,
-                 kFabdemTerrainTemplate);
-        } else {
-            LOGI("Terrain disabled");
+            LOGI("Unified Tileset created (cesium-native architecture)");
         }
 
         // Keep the feature path available, but avoid covering the basemap while
