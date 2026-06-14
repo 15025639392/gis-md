@@ -145,15 +145,27 @@ bool QuantizedMeshTerrainProvider::supportsTile(const TileKey& key) const {
     if (key.z < minZoom_ || key.z > maxZoom_) return false;
     if (key.schemeId != schemeId()) return false;
     if (availabilityRanges_.empty()) return true;
-    if (key.z < 0 || static_cast<size_t>(key.z) >= availabilityRanges_.size()) {
-        return false;
-    }
-    const auto& ranges = availabilityRanges_[static_cast<size_t>(key.z)];
-    if (ranges.empty()) return false;
-    for (const auto& range : ranges) {
-        if (key.x >= range[0] && key.y >= range[1] &&
-            key.x <= range[2] && key.y <= range[3]) {
-            return true;
+
+    // cesium-native QuadtreeRectangleAvailability::isTileAvailable:
+    // check ancestor levels too. A child tile is available if ANY
+    // ancestor level has a range that covers the child's area.
+    for (int level = 0; level <= key.z; ++level) {
+        if (level < 0 || static_cast<size_t>(level) >= availabilityRanges_.size()) {
+            continue;
+        }
+        const auto& ranges = availabilityRanges_[static_cast<size_t>(level)];
+        if (ranges.empty()) continue;
+
+        // Map the query tile's coordinates to this ancestor level
+        int levelDiff = key.z - level;
+        int ancestorX = key.x >> levelDiff;
+        int ancestorY = key.y >> levelDiff;
+
+        for (const auto& range : ranges) {
+            if (ancestorX >= range[0] && ancestorY >= range[1] &&
+                ancestorX <= range[2] && ancestorY <= range[3]) {
+                return true;
+            }
         }
     }
     return false;
