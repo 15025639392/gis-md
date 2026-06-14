@@ -62,10 +62,7 @@ public:
                                           Buffer* indexBuffer = nullptr,
                                           int indexCount = 0) const;
 
-    /// Compatibility: instanced basemap (to be removed)
-    RenderCommand makeInstancedSurfaceTileCommand(Texture* texture,
-                                                  Buffer* instanceBuffer,
-                                                  int instanceCount) const;
+
 
 private:
     struct Impl;

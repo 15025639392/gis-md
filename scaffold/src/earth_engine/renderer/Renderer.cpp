@@ -211,74 +211,6 @@ void main() {
 )glsl";
 #endif
 
-static const char* kInstancedTileVertexGLSL = R"glsl(
-#version 300 es
-layout(location = 0) in vec2 a_gridUv;
-layout(location = 3) in vec4 i_tileRect;
-layout(location = 4) in vec4 i_textureRect;
-layout(location = 5) in vec3 i_localOrigin;
-layout(location = 7) in vec4 i_opacityTransitionWaterFlags;
-layout(location = 8) in vec3 i_cornerNw;
-layout(location = 9) in vec3 i_cornerNe;
-layout(location = 10) in vec3 i_cornerSw;
-layout(location = 11) in vec3 i_cornerSe;
-
-uniform mat4 u_modelViewProjection;
-
-out vec2 v_texcoord;
-out vec3 v_normal;
-out float v_distance;
-out float v_tileOpacity;
-out float v_transitionOpacity;
-out float v_hasWaterMask;
-
-const vec3 kInvRadiiSq = vec3(
-    1.0 / (6378137.0 * 6378137.0),
-    1.0 / (6378137.0 * 6378137.0),
-    1.0 / (6356752.314245 * 6356752.314245));
-
-void main() {
-    vec3 northEdge = mix(i_cornerNw, i_cornerNe, a_gridUv.x);
-    vec3 southEdge = mix(i_cornerSw, i_cornerSe, a_gridUv.x);
-    vec3 relativePos = mix(northEdge, southEdge, a_gridUv.y);
-    vec3 worldPos = i_localOrigin + relativePos;
-
-    v_texcoord = i_textureRect.xy + a_gridUv * i_textureRect.zw;
-    v_normal = normalize(worldPos * kInvRadiiSq);
-    v_tileOpacity = i_opacityTransitionWaterFlags.x;
-    v_transitionOpacity = i_opacityTransitionWaterFlags.y;
-    v_hasWaterMask = i_opacityTransitionWaterFlags.z;
-    gl_Position = u_modelViewProjection * vec4(worldPos, 1.0);
-}
-)glsl";
-
-static const char* kInstancedTileFragmentGLSL = R"glsl(
-#version 300 es
-precision mediump float;
-
-in vec2 v_texcoord;
-in vec3 v_normal;
-in float v_tileOpacity;
-in float v_transitionOpacity;
-in float v_hasWaterMask;
-uniform sampler2D u_tileTexture;
-uniform sampler2D u_waterMask;
-uniform vec3 u_lightDir;
-uniform vec3 u_fogColor;
-uniform float u_fogDensity;
-out vec4 fragColor;
-
-void main() {
-    vec4 color = texture(u_tileTexture, v_texcoord);
-    // cesium-native PBR: metallic=0, roughness=1 → Lambertian
-    float NdotL = max(dot(normalize(v_normal), normalize(u_lightDir)), 0.0);
-    color.rgb *= 0.03 + NdotL * 0.32;
-    color.a = 1.0;
-    color.a *= clamp(v_tileOpacity, 0.0, 1.0) * clamp(v_transitionOpacity, 0.0, 1.0);
-    fragColor = color;
-}
-)glsl";
-
 // ============================================================
 // Metal Shading Language 源码
 // ============================================================
@@ -498,8 +430,7 @@ struct Renderer::Impl {
 
     // Surface tile (unified, cesium-native glTF layout)
     std::unique_ptr<ShaderProgram> surfaceTileShader;
-    std::unique_ptr<Buffer> tileVertexBuffer;  // shared grid VBO (compat)
-    std::unique_ptr<Buffer> tileIndexBuffer;
+    std::unique_ptr<Buffer> tileIndexBuffer;  // shared 64×64 grid IBO
     int tileIndexCount = 0;
 
     // Color (vector)
@@ -566,16 +497,10 @@ bool Renderer::initialize(const GlobeMesh& mesh) {
         }
     }
 
-    // Shared grid for instanced basemap (compat) + shared index buffer
+    // Shared index buffer for surface tiles (64×64 grid)
     auto [tileVerts, tileIndices] = makeTileGeometry(64);
+    (void)tileVerts;  // VBOs are per-tile now
 
-    BufferDesc tvbDesc;
-    tvbDesc.size = tileVerts.size() * sizeof(TileVertex);
-    tvbDesc.data = tileVerts.data();
-    tvbDesc.usage = BufferDesc::Usage::Static;
-    tvbDesc.type = BufferDesc::Type::Vertex;
-    impl_->tileVertexBuffer = dev->createBuffer(tvbDesc);
-    if (!impl_->tileVertexBuffer) return false;
     BufferDesc tibDesc;
     tibDesc.size = tileIndices.size() * sizeof(uint32_t);
     tibDesc.data = tileIndices.data();
@@ -606,7 +531,6 @@ void Renderer::dispose() {
     impl_->globeVertexBuffer.reset();
     impl_->globeIndexBuffer.reset();
     impl_->surfaceTileShader.reset();
-    impl_->tileVertexBuffer.reset();
     impl_->tileIndexBuffer.reset();
     impl_->colorShader.reset();
     impl_->globeIndexCount = 0;
@@ -667,34 +591,6 @@ RenderCommand Renderer::makeGlobeCommand(const FrameState& frameState) const {
         frameState.lightDir.y,
         frameState.lightDir.z
     };
-    return cmd;
-}
-
-// Compatibility: instanced basemap rendering (to be removed in follow-up)
-RenderCommand Renderer::makeInstancedSurfaceTileCommand(Texture* texture,
-                                                        Buffer* instanceBuffer,
-                                                        int instanceCount) const {
-    RenderCommand cmd;
-    cmd.kind = RenderCommandKind::SurfaceTile;
-    cmd.owner = "surface_tile";
-    cmd.pass = "color";
-    cmd.shader = impl_->surfaceTileShader.get();
-    cmd.vertexBuffer = impl_->tileVertexBuffer.get();  // shared grid VBO
-    cmd.indexBuffer = impl_->tileIndexBuffer.get();
-    cmd.instanceBuffer = instanceBuffer;
-    cmd.indexCount = impl_->tileIndexCount;
-    cmd.vertexStride = 8;
-    cmd.instanceCount = instanceCount;
-    cmd.instanceStride = 120;
-    cmd.primitive = RenderCommand::PrimitiveType::Triangles;
-    cmd.indexType = RenderCommand::IndexType::UInt32;
-    cmd.depthTest = true;
-    cmd.depthWrite = true;
-    cmd.blend = false;
-    cmd.cullFace = true;
-    cmd.hasSurfaceTileUniforms = true;
-    cmd.surfaceHasWaterMask = 0.0f;
-    if (texture) cmd.textures.push_back(texture);
     return cmd;
 }
 
