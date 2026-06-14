@@ -61,9 +61,25 @@ void Tileset::update(const FrameState& frameState) {
 void Tileset::requestMissingTiles(const std::vector<TileKey>& visibleKeys) {
     const int maxRequests = cameraMoving_ ? 2 : 4;
     const size_t maxInflight = cameraMoving_ ? 96 : 128;
-    int issued = 0;
 
-    for (const TileKey& key : visibleKeys) {
+    // cesium-native: sort tiles by distance to camera (closest first)
+    struct TileDist { TileKey key; double dist; };
+    std::vector<TileDist> sorted;
+    sorted.reserve(visibleKeys.size());
+    for (const auto& key : visibleKeys) {
+        Rectangle b = tileScheme_->tileToRectangle(key);
+        double cl = (b.west() + b.east()) * 0.5;
+        double clat = (b.south() + b.north()) * 0.5;
+        Vec3 center = Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic::fromRadians(cl, clat, 0.0));
+        sorted.push_back({key, lastCameraPosition_.distanceTo(center)});
+    }
+    std::sort(sorted.begin(), sorted.end(),
+        [](const auto& a, const auto& b) { return a.dist < b.dist; });
+
+    int issued = 0;
+    for (const auto& td : sorted) {
+        const TileKey& key = td.key;
         if (issued >= maxRequests) break;
         if (pendingRequests_.size() >= maxInflight) break;
 
@@ -281,8 +297,22 @@ void Tileset::buildRenderCommands(Renderer& renderer,
                                    RenderCommandList& commands) {
     ++frameNumber_;
 
+    // cesium-native fog culling: skip tiles beyond fog distance
+    constexpr double kFogDistance = 2000000.0;  // 2000km
+    constexpr double kFogDistanceSq = kFogDistance * kFogDistance;
+
     // Build tiles from visible keys, creating parent chain as needed
     for (const TileKey& key : tilePlan_.visibleTiles) {
+        // Fog culling: skip tiles too far from camera
+        Rectangle b = tileScheme_->tileToRectangle(key);
+        double cl = (b.west() + b.east()) * 0.5;
+        double clat = (b.south() + b.north()) * 0.5;
+        Vec3 center = Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic::fromRadians(cl, clat, 0.0));
+        if ((center - lastCameraPosition_).lengthSquared() > kFogDistanceSq) {
+            continue;  // beyond fog, skip rendering and loading
+        }
+
         // Ensure the full parent chain exists (cesium-native tree structure)
         std::string ck = terrainCacheKey(key);
         auto& tile = tiles_[ck];
@@ -326,21 +356,35 @@ void Tileset::buildRenderCommands(Renderer& renderer,
 void Tileset::evictUnusedTiles() {
     if (tiles_.size() <= kMaxCachedTiles) return;
 
-    // Collect tiles by last used frame, sort oldest first
-    std::vector<std::pair<std::string, uint64_t>> entries;
+    // cesium-native: distance-weighted eviction. Evict tiles farthest
+    // from camera first, weighted by last-used frame recency.
+    struct Entry { std::string key; double score; };
+    std::vector<Entry> entries;
     entries.reserve(tiles_.size());
+    uint64_t now = frameNumber_;
     for (const auto& [key, tile] : tiles_) {
-        entries.emplace_back(key, tile->lastUsedFrame);
+        // Compute distance from camera
+        Rectangle b = tile->bounds;
+        double cl = (b.west() + b.east()) * 0.5;
+        double clat = (b.south() + b.north()) * 0.5;
+        Vec3 center = Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic::fromRadians(cl, clat, 0.0));
+        double dist = lastCameraPosition_.distanceTo(center);
+        // Score: high = evict first. Far tiles + old tiles = high score.
+        // Normalize: distance in km, age in frames.
+        double ageScore = static_cast<double>(now - tile->lastUsedFrame) / 60.0;
+        double distScore = dist / 1000.0;  // km
+        double score = distScore + ageScore * 100.0;
+        entries.push_back({key, score});
     }
     std::sort(entries.begin(), entries.end(),
-        [](const auto& a, const auto& b) { return a.second < b.second; });
+        [](const auto& a, const auto& b) { return a.score > b.score; });
 
     // cesium-native: when a parent is evicted, evict its children too.
-    // Mark children of evicted tiles for removal, even if recently used.
     std::unordered_set<std::string> cascadeRemove;
     size_t toRemove = tiles_.size() - kMaxCachedTiles;
     for (size_t i = 0; i < toRemove && i < entries.size(); ++i) {
-        const std::string& ck = entries[i].first;
+        const std::string& ck = entries[i].key;
         cascadeRemove.insert(ck);
         // Walk children and mark them for removal
         std::function<void(TilesetTile*)> markChildren = [&](TilesetTile* t) {

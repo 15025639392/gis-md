@@ -106,11 +106,20 @@ out vec4 fragColor;
 
 void main() {
     vec4 color = texture(u_tileTexture, v_texcoord);
-    // cesium-native PBR: metallic=0, roughness=1 → Lambertian diffuse
-    // diffuse = baseColor/π * NdotL ≈ baseColor * 0.318 * NdotL
-    // ambient ≈ 0.03 * baseColor for sky contribution
-    float NdotL = max(dot(normalize(v_normal), normalize(u_lightDir)), 0.0);
-    color.rgb *= 0.03 + NdotL * 0.32;
+    vec3 N = normalize(v_normal);
+    vec3 L = normalize(u_lightDir);
+    float NdotL = max(dot(N, L), 0.0);
+
+    // cesium-native PBR: metallic=0, roughness=1
+    //   Diffuse: baseColor/π * (1 - F) * NdotL ≈ baseColor * 0.318 * (1-F) * NdotL
+    //   Fresnel: F = F0 + (1-F0) * (1 - NdotL)^5, with F0 = 0.04 (dielectric)
+    //   At grazing angles, Fresnel adds ~4-8% specular
+    float F0 = 0.04;
+    float F = F0 + (1.0 - F0) * pow(1.0 - NdotL, 5.0);
+    float diffuse = NdotL * 0.318;  // 1/π
+    float ambient = 0.03;
+
+    color.rgb *= ambient + diffuse * (1.0 - F) + F * 0.5 * NdotL;
     color.a *= clamp(v_tileOpacity, 0.0, 1.0) * clamp(v_transitionOpacity, 0.0, 1.0);
     fragColor = color;
 }
