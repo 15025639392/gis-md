@@ -87,6 +87,11 @@ public:
                              RenderCommandList& commands);
     bool resolveAttachmentForRenderTile(const RenderTileRef& renderTile,
                                         ImageryAttachment& out);
+    // Public for Tileset integration (cesium-native alignment)
+    bool resolveAttachmentForBounds(const Rectangle& bounds,
+                                    int preferredZoom,
+                                    ImageryAttachment& out);
+    Texture* placeholderTexture() const { return placeholderTexture_.get(); }
     bool buildTerrainPrimaryRenderCommands(Renderer& renderer,
                                            const TerrainLayer* terrainLayer,
                                            const std::vector<BasemapLayer*>& overlayLayers,
@@ -164,9 +169,6 @@ private:
     bool uploadImageryAtlasTile(const TileKey& key, const DecodedImage& image);
     void resetImageryAtlas(int tileSize);
     bool findRequestTileForMissingTexture(const TileKey& target, TileKey& requestKey) const;
-    bool resolveAttachmentForBounds(const Rectangle& bounds,
-                                    int preferredZoom,
-                                    ImageryAttachment& out);
     bool isCurrentDesiredTile(const TileKey& key) const;
     bool isCurrentPlanTileOrAncestor(const TileKey& key) const;
     struct SurfaceGpuMesh;

@@ -8,6 +8,7 @@
 #include "../layers/BasemapLayerStack.h"
 #include "../layers/VectorLayer.h"
 #include "../layers/TerrainLayer.h"
+#include "../tiling/Tileset.h"
 #include "../interaction/InputEvent.h"
 #include "../interaction/InputManager.h"
 #include "../interaction/PickingService.h"
@@ -84,6 +85,10 @@ public:
     /// 是否有地形数据
     bool hasTerrain() const;
 
+    // ---- 统一 Tileset（cesium-native 对齐） ----
+    void setTileset(std::unique_ptr<Tileset> tileset);
+    Tileset* tileset() const { return tileset_.get(); }
+
     // ---- 输入事件（归一化） ----
     void onInputEvent(const InputEvent& event);
 
@@ -131,6 +136,9 @@ private:
     // 地形
     std::unique_ptr<TerrainLayer> terrainLayer_;
     bool terrainEnabled_ = false;
+
+    // 统一 Tileset（cesium-native 对齐）
+    std::unique_ptr<Tileset> tileset_;
 
     // 交互
     std::unique_ptr<InputManager> inputManager_;

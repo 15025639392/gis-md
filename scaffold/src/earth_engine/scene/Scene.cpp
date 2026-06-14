@@ -178,11 +178,18 @@ void Scene::update(double deltaSeconds) {
         frameState_.diagnostics.basemapStackUpdateMs = perf::nowMs() - startMs;
     }
 
-    // 地形更新
-    if (terrainLayer_ && terrainEnabled_) {
+    // 统一 Tileset 更新（cesium-native 对齐）
+    if (tileset_) {
         const double startMs = perf::nowMs();
-        terrainLayer_->update(frameState_);
+        tileset_->update(frameState_);
         frameState_.diagnostics.terrainUpdateMs = perf::nowMs() - startMs;
+    } else {
+        // 地形更新（传统路径）
+        if (terrainLayer_ && terrainEnabled_) {
+            const double startMs = perf::nowMs();
+            terrainLayer_->update(frameState_);
+            frameState_.diagnostics.terrainUpdateMs = perf::nowMs() - startMs;
+        }
     }
 
     char detail[192];
@@ -276,14 +283,19 @@ void Scene::render() {
     }
     atmosphereMs = perf::nowMs() - atmosphereStartMs;
 
-    // 1. 标准底图 SurfaceTile 主链路。地形启用时，TerrainLayer 只作为
-    // SurfaceTile mesh 的高度数据源，不再发出独立地形 surface pass。
-    const TerrainLayer* terrainSource =
-        (terrainLayer_ && terrainEnabled_ && terrainLayer_->visible())
-            ? terrainLayer_.get()
-            : nullptr;
+    // 1. Surface tile rendering
     const double layerCommandsStartMs = perf::nowMs();
-    layerStack_.buildRenderCommands(*renderer_, terrainSource, commands);
+    if (tileset_) {
+        // Unified Tileset path (cesium-native alignment)
+        tileset_->buildRenderCommands(*renderer_, commands);
+    } else {
+        // Traditional BasemapLayer + TerrainLayer path
+        const TerrainLayer* terrainSource =
+            (terrainLayer_ && terrainEnabled_ && terrainLayer_->visible())
+                ? terrainLayer_.get()
+                : nullptr;
+        layerStack_.buildRenderCommands(*renderer_, terrainSource, commands);
+    }
     layerCommandsMs = perf::nowMs() - layerCommandsStartMs;
 
     const double fallbackGlobeStartMs = perf::nowMs();
@@ -589,6 +601,10 @@ void Scene::setTerrainEnabled(bool enabled) {
 
 bool Scene::hasTerrain() const {
     return terrainLayer_ != nullptr;
+}
+
+void Scene::setTileset(std::unique_ptr<Tileset> tileset) {
+    tileset_ = std::move(tileset);
 }
 
 // ---- 矢量图层管理 ----

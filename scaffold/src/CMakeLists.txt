@@ -120,6 +120,11 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileQuadTree.cpp
     earth_engine/tiling/TileRequestScheduler.h
     earth_engine/tiling/TileRequestScheduler.cpp
+    earth_engine/tiling/TilesetTile.h
+    earth_engine/tiling/RasterMappedToTilesetTile.h
+    earth_engine/tiling/RasterMappedToTilesetTile.cpp
+    earth_engine/tiling/Tileset.h
+    earth_engine/tiling/Tileset.cpp
 )
 
 # ============================================================
