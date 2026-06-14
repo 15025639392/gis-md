@@ -19,12 +19,16 @@ public:
 
     RasterMappedToTilesetTile();
 
-    /// Update state: check if loading tile is ready, handle fallback
+    /// cesium-native RasterMappedTo3DTile::update equivalent.
+    /// Tries to find imagery at the desired zoom, falls back to parent.
     /// @return true if the attached texture changed
     bool update(const TileKey& geometryKey,
                 const Rectangle& geometryBounds,
                 class BasemapLayer* imageryLayer,
                 RenderDevice* device);
+
+    /// cesium-native: check if a higher-resolution tile could be loaded
+    bool isMoreDetailAvailable() const;
 
     /// Compute UV translation/scale for current mapping
     void computeTranslationAndScale(const Rectangle& geometryBounds);
@@ -39,8 +43,8 @@ public:
 
 private:
     State state_ = State::Unattached;
-    TileKey loadingKey_;
-    TileKey readyKey_;
+    TileKey loadingKey_;     // cesium-native: _pLoadingTile
+    TileKey readyKey_;       // cesium-native: _pReadyTile->getTileID()
     Texture* readyTexture_ = nullptr;
     float offsetU_ = 0.0f, offsetV_ = 0.0f;
     float scaleU_ = 1.0f, scaleV_ = 1.0f;
