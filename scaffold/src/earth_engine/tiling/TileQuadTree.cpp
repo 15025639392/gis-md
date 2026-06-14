@@ -899,6 +899,12 @@ void TileQuadTree::ensureRoot(const TileScheme& scheme) {
             roots_.push_back(std::make_unique<TileNode>(
                 rootKey, scheme.tileToRectangle(rootKey), nullptr));
         }
+    } else if (scheme.id() == "Geographic-TMS") {
+        for (int rootX = 0; rootX < 2; ++rootX) {
+            TileKey rootKey{scheme.id(), 0, rootX, 0};
+            roots_.push_back(std::make_unique<TileNode>(
+                rootKey, scheme.tileToRectangle(rootKey), nullptr));
+        }
     } else {
         TileKey rootKey{scheme.id(), 0, 0, 0};
         roots_.push_back(std::make_unique<TileNode>(

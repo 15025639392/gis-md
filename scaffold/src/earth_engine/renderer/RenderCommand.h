@@ -10,6 +10,8 @@
 
 namespace earth_engine {
 
+static constexpr int kMaxSurfaceImageryOverlays = 4;
+
 enum class RenderCommandKind {
     Unknown,
     SkyBackground,        // order 0: skybox / starfield
@@ -63,6 +65,8 @@ struct RenderCommand {
     bool hasSurfaceTileUniforms = false;
     std::array<float, 16> surfaceModelViewProjection{};
     std::array<float, 4> surfaceTileUv{0.0f, 0.0f, 1.0f, 1.0f};
+    std::array<std::array<float, 4>, kMaxSurfaceImageryOverlays> surfaceOverlayTileUvs{};
+    std::array<float, kMaxSurfaceImageryOverlays> surfaceOverlayOpacities{};
     std::array<float, 3> surfaceLightDir{};
     std::array<float, 3> surfaceCameraRelativeOrigin{};
     std::array<float, 3> surfaceTileOrigin{};
@@ -70,6 +74,7 @@ struct RenderCommand {
     float surfaceFogDensity = 2.4e-5f;
     float surfaceTileOpacity = 1.0f;
     float surfaceTransitionOpacity = 1.0f;
+    int surfaceOverlayTextureCount = 0;
     float surfaceGeneration = 0.0f;
     float surfaceHasWaterMask = 0.0f;
 };

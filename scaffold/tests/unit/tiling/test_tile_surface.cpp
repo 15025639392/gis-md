@@ -192,7 +192,7 @@ TEST(TileSurfaceTest, EllipsoidMeshHasExpectedGridAndOutwardTriangles) {
 
     EXPECT_EQ(4, mesh.gridSize);
     EXPECT_EQ(SurfaceTileMeshWinding::Outward, mesh.winding);
-    EXPECT_EQ(SurfaceTileSampling::WebMercatorVToWgs84Ecef, mesh.sampling);
+    EXPECT_EQ(SurfaceTileSampling::GeographicVToWgs84Ecef, mesh.sampling);
     EXPECT_EQ(25u, mesh.vertices.size());
     EXPECT_EQ(96u, mesh.indices.size());
 

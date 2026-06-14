@@ -106,6 +106,11 @@ const TerrainTile* TerrainLayer::findBestTile(double lngRad, double latRad) cons
 const TerrainTile* TerrainLayer::findBestTileForBounds(const Rectangle& geoBounds) const {
     double tcLng = geoBounds.west() + geoBounds.width() * 0.5;
     double tcLat = geoBounds.south() + geoBounds.height() * 0.5;
+
+    // Find the highest-zoom terrain tile that overlaps the target bounds.
+    // Use center-point containment: the tile covers the target center means
+    // it overlaps the target area. Full containment is too strict when
+    // the target (basemap tile) is larger than a single terrain tile.
     const TerrainTile* best = nullptr;
     int bestZoom = -1;
     for (const auto& [key, tile] : tileCache_) {
@@ -116,25 +121,6 @@ const TerrainTile* TerrainLayer::findBestTileForBounds(const Rectangle& geoBound
                 best = tile.get();
             }
         }
-    }
-    if (!best && !tileCache_.empty()) {
-        // Debug: print first tile bounds vs target
-        auto& first = tileCache_.begin()->second;
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_INFO, "TerrainLayer",
-            "bounds mismatch: target(%.4f,%.4f) tile[%d/%d/%d](%.4f-%.4f,%.4f-%.4f) cache=%zu",
-            tcLng, tcLat, first->key().z, first->key().x, first->key().y,
-            first->bounds().west(), first->bounds().east(),
-            first->bounds().south(), first->bounds().north(),
-            tileCache_.size());
-#else
-        fprintf(stderr, "[TerrainLayer] bounds mismatch: target(%.4f,%.4f) "
-            "tile[%d/%d/%d](%.4f-%.4f,%.4f-%.4f) cache=%zu\n",
-            tcLng, tcLat, first->key().z, first->key().x, first->key().y,
-            first->bounds().west(), first->bounds().east(),
-            first->bounds().south(), first->bounds().north(),
-            tileCache_.size());
-#endif
     }
     return best;
 }
@@ -147,6 +133,34 @@ const TerrainTile* TerrainLayer::findBestTileForKey(const TileKey& targetKey) co
     }
     // Cross-projection fallback: scan by geographic bounds
     return findBestTileForBounds(tileScheme_->tileToRectangle(targetKey));
+}
+
+std::vector<const TerrainTile*> TerrainLayer::visibleLoadedTiles() const {
+    std::vector<const TerrainTile*> result;
+    result.reserve(tilePlan_.visibleTiles.size());
+    std::unordered_set<std::string> seen;
+    seen.reserve(tilePlan_.visibleTiles.size());
+
+    for (const TileKey& visibleKey : tilePlan_.visibleTiles) {
+        TileKey candidate = visibleKey;
+        while (candidate.z > provider_->maxZoom()) {
+            candidate = TilePlanBuilder::parentKey(candidate);
+        }
+        while (candidate.z >= tileScheme_->minZoom()) {
+            const std::string cacheKey = terrainCacheKey(candidate);
+            auto found = tileCache_.find(cacheKey);
+            if (found != tileCache_.end() && found->second && found->second->valid()) {
+                if (seen.insert(cacheKey).second) {
+                    result.push_back(found->second.get());
+                }
+                break;
+            }
+            if (candidate.z == tileScheme_->minZoom()) break;
+            candidate = TilePlanBuilder::parentKey(candidate);
+        }
+    }
+
+    return result;
 }
 
 // ============================================================
@@ -316,6 +330,7 @@ const std::vector<TileKey>& TerrainLayer::requestCandidatesForFrame(
         const std::string cacheKey = terrainCacheKey(requestKey);
         if (tileCache_.find(cacheKey) != tileCache_.end()) continue;
         if (requestedTiles_.find(cacheKey) != requestedTiles_.end()) continue;
+        if (!provider_->supportsTile(requestKey)) continue;
         if (!isTilePossiblyAvailable(requestKey)) continue;
         if (candidateSet.insert(cacheKey).second) {
             snapshot.tiles.push_back(requestKey);

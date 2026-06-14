@@ -4,6 +4,21 @@
 
 using namespace earth_engine;
 
+namespace {
+
+class DummyTexture final : public Texture {
+public:
+    explicit DummyTexture(int id) : id_(id) {}
+    int width() const override { return 256; }
+    int height() const override { return 256; }
+    int id() const { return id_; }
+
+private:
+    int id_ = 0;
+};
+
+} // namespace
+
 TEST(RendererCommandTest, SurfaceTilesAreAuthoritativeDepthSurface) {
     Renderer renderer(nullptr);
 
@@ -27,6 +42,65 @@ TEST(RendererCommandTest, SurfaceTilesAreAuthoritativeDepthSurface) {
     EXPECT_TRUE(cmd.depthWrite);
     EXPECT_TRUE(cmd.cullFace);
     EXPECT_FALSE(cmd.blend);
+}
+
+TEST(RendererCommandTest, SurfaceTileImageryTextureSlotsAreStable) {
+    Renderer renderer(nullptr);
+    DummyTexture base(0);
+    DummyTexture water(5);
+    DummyTexture overlays[] = {
+        DummyTexture(1),
+        DummyTexture(2),
+        DummyTexture(3),
+        DummyTexture(4),
+        DummyTexture(99)
+    };
+
+    RenderCommand cmd = renderer.makeSurfaceTileCommand(
+        &base,
+        &water,
+        nullptr,
+        nullptr,
+        42);
+
+    ASSERT_EQ(6u, cmd.textures.size());
+    EXPECT_EQ(&base, cmd.textures[0]);
+    EXPECT_EQ(nullptr, cmd.textures[1]);
+    EXPECT_EQ(nullptr, cmd.textures[2]);
+    EXPECT_EQ(nullptr, cmd.textures[3]);
+    EXPECT_EQ(nullptr, cmd.textures[4]);
+    EXPECT_EQ(&water, cmd.textures[5]);
+    EXPECT_EQ(1.0f, cmd.surfaceHasWaterMask);
+
+    for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
+        EXPECT_TRUE(renderer.attachSurfaceOverlayTexture(
+            cmd,
+            &overlays[i],
+            0.1f * static_cast<float>(i),
+            0.2f * static_cast<float>(i),
+            0.3f,
+            0.4f,
+            0.5f));
+    }
+    EXPECT_FALSE(renderer.attachSurfaceOverlayTexture(
+        cmd,
+        &overlays[4],
+        0.0f,
+        0.0f,
+        1.0f,
+        1.0f,
+        1.0f));
+
+    ASSERT_EQ(6u, cmd.textures.size());
+    EXPECT_EQ(&base, cmd.textures[0]);
+    EXPECT_EQ(&overlays[0], cmd.textures[1]);
+    EXPECT_EQ(&overlays[1], cmd.textures[2]);
+    EXPECT_EQ(&overlays[2], cmd.textures[3]);
+    EXPECT_EQ(&overlays[3], cmd.textures[4]);
+    EXPECT_EQ(&water, cmd.textures[5]);
+    EXPECT_EQ(kMaxSurfaceImageryOverlays, cmd.surfaceOverlayTextureCount);
+    EXPECT_FLOAT_EQ(0.5f, cmd.surfaceOverlayOpacities[3]);
+    EXPECT_FLOAT_EQ(0.3f, cmd.surfaceOverlayTileUvs[3][2]);
 }
 
 TEST(RendererCommandTest, InstancedSurfaceTileUsesSharedGridAndInstanceBuffer) {
@@ -114,6 +188,24 @@ TEST(RendererCommandTest, MvpValidatorRejectsMutableSurfaceTileDepthAndCullState
     auto error = validateMvpRenderCommands(commands);
     ASSERT_TRUE(error.has_value());
     EXPECT_EQ("surface_tile", error->owner);
+}
+
+TEST(RendererCommandTest, MvpValidatorAcceptsTerrainPrimaryOverlayDepthState) {
+    RenderCommand tile;
+    tile.kind = RenderCommandKind::SurfaceTile;
+    tile.owner = "terrain_primary_surface";
+    tile.pass = "color";
+    tile.depthTest = false;
+    tile.depthWrite = false;
+    tile.cullFace = false;
+    tile.blend = false;
+    tile.frameId = 42;
+    tile.generation = 7;
+    tile.hasSurfaceTileUniforms = true;
+
+    RenderCommandList commands{tile};
+    auto error = validateMvpRenderCommands(commands, 42);
+    EXPECT_FALSE(error.has_value());
 }
 
 TEST(RendererCommandTest, MvpValidatorRejectsStaleSurfaceTileFrameId) {

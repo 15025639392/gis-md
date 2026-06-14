@@ -418,7 +418,12 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
         sv.positionEcef = ellipsoid.cartographicToCartesian(
             Cartographic::fromRadians(lng, lat, h));
         sv.normalEcef = Vec3::zero();  // computed below
-        sv.uv = {static_cast<float>(u), static_cast<float>(v)};
+        // Quantized-mesh v=0 is the south edge, while SurfaceTile imagery
+        // UVs use v=0 at the north edge to match decoded raster rows.
+        sv.uv = {
+            static_cast<float>(u),
+            static_cast<float>(1.0 - std::clamp(v, 0.0, 1.0))
+        };
         mesh->vertices.push_back(sv);
     }
 
@@ -492,9 +497,11 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
         }
     };
 
+    // QM spec edge order already matches cesium-native sort:
+    // West: south→north, South: east→west, East: north→south, North: west→east
     addSkirtEdge(west, -lonOff, 0, false);
-    addSkirtEdge(south, 0, -latOff, true);
-    addSkirtEdge(east, lonOff, 0, true);
+    addSkirtEdge(south, 0, -latOff, false);
+    addSkirtEdge(east, lonOff, 0, false);
     addSkirtEdge(north, 0, latOff, false);
 
     mesh->waterMask = std::move(waterMask);

@@ -58,9 +58,11 @@ public:
     ///   south polar LonLat group: [2*2^z, 3*2^z)
     static std::unique_ptr<TileScheme> createOpenGlobusEarth();
 
-    /// Geographic (EPSG:4326) TMS tiling.
-    /// x = floor((lng + 180) / 360 * 2^z)
-    /// y = floor((90 - lat) / 180 * 2^z)  (TMS: y=0 at south pole)
+    /// Cesium Geographic (EPSG:4326) TMS tiling.
+    /// Level 0 is 2 x 1 tiles, matching cesium-native's
+    /// QuadtreeTilingScheme for EPSG:4326 quantized-mesh terrain.
+    /// x = floor((lng + 180) / 360 * 2^(z+1))
+    /// y = floor((lat + 90) / 180 * 2^z)  (TMS: y=0 at south pole)
     static std::unique_ptr<TileScheme> createGeographicTMS();
 };
 

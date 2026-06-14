@@ -56,6 +56,9 @@ float uniformScalar(const RenderCommand& cmd, const std::string& name, float fal
 }
 
 bool surfaceTileBlendAllowed(const RenderCommand& cmd) {
+    if (cmd.instanceCount > 0) {
+        return true;
+    }
     if (cmd.hasSurfaceTileUniforms) {
         return cmd.surfaceTileOpacity < 0.999f ||
                cmd.surfaceTransitionOpacity < 0.999f;
@@ -63,6 +66,23 @@ bool surfaceTileBlendAllowed(const RenderCommand& cmd) {
     const float tileOpacity = uniformScalar(cmd, "u_tileOpacity", 1.0f);
     const float transitionOpacity = uniformScalar(cmd, "u_transitionOpacity", 1.0f);
     return tileOpacity < 0.999f || transitionOpacity < 0.999f;
+}
+
+bool surfaceTileCullStateAllowed(const RenderCommand& cmd) {
+    // Terrain-primary Quantized Mesh tiles may include skirts and mixed LOD
+    // borders whose visibility relies on two-sided rendering. GlobeSurface and
+    // other passes keep their fixed cull state; only SurfaceTile permits this
+    // opt-out.
+    return cmd.cullFace || cmd.hasSurfaceTileUniforms;
+}
+
+bool terrainPrimaryOverlayStateAllowed(const RenderCommand& cmd) {
+    return cmd.owner == "terrain_primary_surface" &&
+           cmd.hasSurfaceTileUniforms &&
+           !cmd.depthTest &&
+           !cmd.depthWrite &&
+           !cmd.cullFace &&
+           !cmd.blend;
 }
 
 } // namespace
@@ -110,14 +130,33 @@ validateMvpRenderCommands(const RenderCommandList& commands,
 
             case RenderCommandKind::SurfaceTile:
                 if (!requireColorPass(i, cmd, error)) return error;
-                if (!requireState(i,
-                                  cmd,
-                                  true,
-                                  true,
-                                  true,
-                                  cmd.blend && surfaceTileBlendAllowed(cmd),
-                                  "SurfaceTile",
-                                  error)) return error;
+                if (terrainPrimaryOverlayStateAllowed(cmd)) {
+                    if (expectedFrameId != 0 && cmd.frameId != expectedFrameId) {
+                        fail(i, cmd, "SurfaceTile frameId is stale for current FrameState", error);
+                        return error;
+                    }
+                    if (cmd.generation == 0) {
+                        fail(i, cmd, "SurfaceTile generation must be non-zero", error);
+                        return error;
+                    }
+                    break;
+                }
+                if (cmd.depthTest != true) {
+                    fail(i, cmd, "SurfaceTile depthTest violates MVP fixed state", error);
+                    return error;
+                }
+                if (cmd.depthWrite != true) {
+                    fail(i, cmd, "SurfaceTile depthWrite violates MVP fixed state", error);
+                    return error;
+                }
+                if (!surfaceTileCullStateAllowed(cmd)) {
+                    fail(i, cmd, "SurfaceTile cullFace violates MVP fixed state", error);
+                    return error;
+                }
+                if (cmd.blend != (cmd.blend && surfaceTileBlendAllowed(cmd))) {
+                    fail(i, cmd, "SurfaceTile blend violates MVP fixed state", error);
+                    return error;
+                }
                 if (expectedFrameId != 0 && cmd.frameId != expectedFrameId) {
                     fail(i, cmd, "SurfaceTile frameId is stale for current FrameState", error);
                     return error;

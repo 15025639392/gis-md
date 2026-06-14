@@ -63,23 +63,60 @@ void main() {
 )glsl";
 
 // ============================================================
-// SurfaceTile Shader — GLSL ES 3.0
+// Terrain Tile Shader — per-tile VBO with ECEF positions
 // ============================================================
 
-static const char* kTileVertexGLSL = R"glsl(
+// cesium-native aligned terrain shader: positions are tile-relative (ECEF - center).
+// u_tileOrigin adds back the tile center for world-space ECEF.
+// MVP = projection * view (full, with camera translation from A2).
+static const char* kTerrainVertexGLSL = R"glsl(
 #version 300 es
 layout(location = 0) in vec3 a_position;
-layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec2 a_texcoord;
 
 uniform mat4 u_modelViewProjection;
 uniform vec4 u_tileUV;
-uniform vec3 u_cameraRelativeOrigin;
 uniform vec3 u_tileOrigin;
 
 out vec2 v_texcoord;
 out vec3 v_normal;
-out float v_distance;
+out float v_tileOpacity;
+out float v_transitionOpacity;
+out float v_hasWaterMask;
+
+const vec3 kInvRadiiSq = vec3(
+    1.0 / (6378137.0 * 6378137.0),
+    1.0 / (6378137.0 * 6378137.0),
+    1.0 / (6356752.314245 * 6356752.314245));
+
+void main() {
+    v_texcoord = u_tileUV.xy + a_texcoord * u_tileUV.zw;
+    vec3 worldPos = a_position + u_tileOrigin;
+    v_normal = normalize(worldPos * kInvRadiiSq);
+    v_tileOpacity = 1.0;
+    v_transitionOpacity = 1.0;
+    v_hasWaterMask = 0.0;
+    gl_Position = u_modelViewProjection * vec4(worldPos, 1.0);
+}
+)glsl";
+
+// ============================================================
+// Deprecated non-instanced shader
+// ============================================================
+
+#if 0
+static const char* kTileVertexGLSL_deprecated = R"glsl(
+#version 300 es
+layout(location = 0) in vec3 a_position;
+layout(location = 2) in vec2 a_texcoord;
+
+uniform mat4 u_modelViewProjection;
+uniform vec4 u_tileUV;
+uniform vec3 u_tileOrigin;
+
+out vec2 v_texcoord;
+out vec2 v_gridUv;
+out vec3 v_normal;
 
 // WGS84 inverse radii squared
 const vec3 kInvRadiiSq = vec3(
@@ -89,11 +126,10 @@ const vec3 kInvRadiiSq = vec3(
 
 void main() {
     v_texcoord = u_tileUV.xy + a_texcoord * u_tileUV.zw;
-    vec3 camRelPos = a_position - u_cameraRelativeOrigin;
+    v_gridUv = a_texcoord;
     vec3 worldPos = a_position + u_tileOrigin;
     v_normal = normalize(worldPos * kInvRadiiSq);
-    v_distance = length(camRelPos);
-    gl_Position = u_modelViewProjection * vec4(camRelPos, 1.0);
+    gl_Position = u_modelViewProjection * vec4(worldPos, 1.0);
 }
 )glsl";
 
@@ -102,46 +138,62 @@ static const char* kTileFragmentGLSL = R"glsl(
 precision mediump float;
 
 in vec2 v_texcoord;
+in vec2 v_gridUv;
 in vec3 v_normal;
-in float v_distance;
 uniform sampler2D u_tileTexture;
+uniform sampler2D u_overlayTexture0;
+uniform sampler2D u_overlayTexture1;
+uniform sampler2D u_overlayTexture2;
+uniform sampler2D u_overlayTexture3;
 uniform sampler2D u_waterMask;
 uniform vec3 u_lightDir;
 uniform vec3 u_fogColor;
 uniform float u_fogDensity;
 uniform float u_tileOpacity;
 uniform float u_transitionOpacity;
+uniform int u_overlayTextureCount;
 uniform float u_hasWaterMask;
+uniform vec4 u_overlayTileUV0;
+uniform vec4 u_overlayTileUV1;
+uniform vec4 u_overlayTileUV2;
+uniform vec4 u_overlayTileUV3;
+uniform float u_overlayOpacity0;
+uniform float u_overlayOpacity1;
+uniform float u_overlayOpacity2;
+uniform float u_overlayOpacity3;
 out vec4 fragColor;
+
+vec4 alphaOver(vec4 base, vec4 overlay, float opacity) {
+    overlay.a *= clamp(opacity, 0.0, 1.0);
+    base.rgb = mix(base.rgb, overlay.rgb, overlay.a);
+    base.a = max(base.a, overlay.a);
+    return base;
+}
 
 void main() {
     vec4 color = texture(u_tileTexture, v_texcoord);
-    float luma = dot(color.rgb, vec3(0.299, 0.587, 0.114));
-    color.rgb = mix(vec3(luma), color.rgb, 1.08);
-    color.rgb = (color.rgb - vec3(0.5)) * 1.06 + vec3(0.5);
-    color.rgb = clamp(color.rgb, 0.0, 1.0);
-
-    vec3 n = normalize(v_normal);
-    float diffuse = max(dot(n, normalize(u_lightDir)), 0.0);
-    color.rgb *= 0.45 + diffuse * 0.55;
-
-    if (u_hasWaterMask > 0.5) {
-        float waterAlpha = texture(u_waterMask, v_texcoord).a;
-        if (waterAlpha > 0.01) {
-            vec3 waterColor = vec3(0.18, 0.35, 0.62);
-            color.rgb = mix(color.rgb, waterColor, waterAlpha * 0.7);
-        }
-    }
-
-    // cesium-native exponential fog: exp(-(d * density)²)
-    float fog = exp(-v_distance * u_fogDensity * v_distance * u_fogDensity);
-    fog = clamp(fog, 0.0, 1.0);
-    color.rgb = mix(u_fogColor, color.rgb, fog);
-
+    color.a = 1.0;
     color.a *= clamp(u_tileOpacity, 0.0, 1.0) * clamp(u_transitionOpacity, 0.0, 1.0);
+    if (u_overlayTextureCount > 0) {
+        vec2 overlayUv = u_overlayTileUV0.xy + v_gridUv * u_overlayTileUV0.zw;
+        color = alphaOver(color, texture(u_overlayTexture0, overlayUv), u_overlayOpacity0);
+    }
+    if (u_overlayTextureCount > 1) {
+        vec2 overlayUv = u_overlayTileUV1.xy + v_gridUv * u_overlayTileUV1.zw;
+        color = alphaOver(color, texture(u_overlayTexture1, overlayUv), u_overlayOpacity1);
+    }
+    if (u_overlayTextureCount > 2) {
+        vec2 overlayUv = u_overlayTileUV2.xy + v_gridUv * u_overlayTileUV2.zw;
+        color = alphaOver(color, texture(u_overlayTexture2, overlayUv), u_overlayOpacity2);
+    }
+    if (u_overlayTextureCount > 3) {
+        vec2 overlayUv = u_overlayTileUV3.xy + v_gridUv * u_overlayTileUV3.zw;
+        color = alphaOver(color, texture(u_overlayTexture3, overlayUv), u_overlayOpacity3);
+    }
     fragColor = color;
 }
 )glsl";
+#endif
 
 static const char* kInstancedTileVertexGLSL = R"glsl(
 #version 300 es
@@ -149,7 +201,6 @@ layout(location = 0) in vec2 a_gridUv;
 layout(location = 3) in vec4 i_tileRect;
 layout(location = 4) in vec4 i_textureRect;
 layout(location = 5) in vec3 i_localOrigin;
-layout(location = 6) in vec3 i_cameraRelativeOrigin;
 layout(location = 7) in vec4 i_opacityTransitionWaterFlags;
 layout(location = 8) in vec3 i_cornerNw;
 layout(location = 9) in vec3 i_cornerNe;
@@ -165,52 +216,23 @@ out float v_tileOpacity;
 out float v_transitionOpacity;
 out float v_hasWaterMask;
 
-const float kPi = 3.14159265358979323846;
-const float kTwoPi = 6.28318530717958647692;
-const float kQuarterPi = 0.78539816339744830962;
-const float kMaxWebMercatorLat = 1.4844222297453324;
-const vec3 kRadiiSq = vec3(
-    6378137.0 * 6378137.0,
-    6378137.0 * 6378137.0,
-    6356752.314245 * 6356752.314245);
 const vec3 kInvRadiiSq = vec3(
     1.0 / (6378137.0 * 6378137.0),
     1.0 / (6378137.0 * 6378137.0),
     1.0 / (6356752.314245 * 6356752.314245));
-
-float latitudeToMercatorY(float latRad) {
-    float lat = clamp(latRad, -kMaxWebMercatorLat, kMaxWebMercatorLat);
-    return (kPi - log(tan(lat * 0.5 + kQuarterPi))) / kTwoPi;
-}
-
-float mercatorYToLatitude(float y) {
-    return atan(sinh(kPi - kTwoPi * y));
-}
-
-vec3 cartographicToWgs84Ecef(float longitude, float latitude) {
-    float cosLat = cos(latitude);
-    vec3 n = normalize(vec3(cosLat * cos(longitude),
-                            cosLat * sin(longitude),
-                            sin(latitude)));
-    vec3 k = kRadiiSq * n;
-    float gamma = sqrt(dot(n, k));
-    return k / gamma;
-}
 
 void main() {
     vec3 northEdge = mix(i_cornerNw, i_cornerNe, a_gridUv.x);
     vec3 southEdge = mix(i_cornerSw, i_cornerSe, a_gridUv.x);
     vec3 relativePos = mix(northEdge, southEdge, a_gridUv.y);
     vec3 worldPos = i_localOrigin + relativePos;
-    vec3 camRelPos = relativePos - i_cameraRelativeOrigin;
 
     v_texcoord = i_textureRect.xy + a_gridUv * i_textureRect.zw;
     v_normal = normalize(worldPos * kInvRadiiSq);
-    v_distance = length(camRelPos);
     v_tileOpacity = i_opacityTransitionWaterFlags.x;
     v_transitionOpacity = i_opacityTransitionWaterFlags.y;
     v_hasWaterMask = i_opacityTransitionWaterFlags.z;
-    gl_Position = u_modelViewProjection * vec4(camRelPos, 1.0);
+    gl_Position = u_modelViewProjection * vec4(worldPos, 1.0);
 }
 )glsl";
 
@@ -220,7 +242,6 @@ precision mediump float;
 
 in vec2 v_texcoord;
 in vec3 v_normal;
-in float v_distance;
 in float v_tileOpacity;
 in float v_transitionOpacity;
 in float v_hasWaterMask;
@@ -233,27 +254,12 @@ out vec4 fragColor;
 
 void main() {
     vec4 color = texture(u_tileTexture, v_texcoord);
-    float luma = dot(color.rgb, vec3(0.299, 0.587, 0.114));
-    color.rgb = mix(vec3(luma), color.rgb, 1.08);
-    color.rgb = (color.rgb - vec3(0.5)) * 1.06 + vec3(0.5);
-    color.rgb = clamp(color.rgb, 0.0, 1.0);
-
-    vec3 n = normalize(v_normal);
-    float diffuse = max(dot(n, normalize(u_lightDir)), 0.0);
-    color.rgb *= 0.45 + diffuse * 0.55;
-
-    if (v_hasWaterMask > 0.5) {
-        float waterAlpha = texture(u_waterMask, v_texcoord).a;
-        if (waterAlpha > 0.01) {
-            vec3 waterColor = vec3(0.18, 0.35, 0.62);
-            color.rgb = mix(color.rgb, waterColor, waterAlpha * 0.7);
-        }
-    }
-
-    float fog = exp(-v_distance * u_fogDensity * v_distance * u_fogDensity);
-    fog = clamp(fog, 0.0, 1.0);
-    color.rgb = mix(u_fogColor, color.rgb, fog);
-
+    // Apply diffuse lighting from geodetic normal.
+    // When placeholder texture is used (solid color), lighting
+    // produces a shaded terrain appearance.
+    float diffuse = max(dot(normalize(v_normal), normalize(u_lightDir)), 0.0);
+    color.rgb *= 0.35 + diffuse * 0.65;
+    color.a = 1.0;
     color.a *= clamp(v_tileOpacity, 0.0, 1.0) * clamp(v_transitionOpacity, 0.0, 1.0);
     fragColor = color;
 }
@@ -325,11 +331,10 @@ struct VertexOut {
 
 vertex VertexOut tileVertex(VertexIn in [[stage_in]],
                              constant float4x4& u_modelViewProjection [[buffer(1)]],
-                             constant float4& u_tileUV [[buffer(3)]],
-                             constant float3& u_cameraRelativeOrigin [[buffer(4)]]) {
+                             constant float4& u_tileUV [[buffer(3)]]) {
     VertexOut out;
     out.position = u_modelViewProjection *
-        float4(in.position - u_cameraRelativeOrigin, 1.0);
+        float4(in.position, 1.0);
     out.texcoord = u_tileUV.xy + in.texcoord * u_tileUV.zw;
     // WGS84 geodetic normal from ECEF position
     constexpr float3 kInvRadiiSq = float3(
@@ -477,9 +482,9 @@ struct Renderer::Impl {
     std::unique_ptr<Buffer> globeIndexBuffer;
     int globeIndexCount = 0;
 
-    // Surface tile
-    std::unique_ptr<ShaderProgram> tileShader;
+    // Surface tile (instanced + terrain)
     std::unique_ptr<ShaderProgram> instancedTileShader;
+    std::unique_ptr<ShaderProgram> terrainShader;
     std::unique_ptr<Buffer> tileVertexBuffer;
     std::unique_ptr<Buffer> tileIndexBuffer;
     int tileIndexCount = 0;
@@ -536,13 +541,7 @@ bool Renderer::initialize(const GlobeMesh& mesh) {
     if (!impl_->globeIndexBuffer) return false;
     impl_->globeIndexCount = static_cast<int>(mesh.indices.size());
 
-    // ---- Tile shader ----
-    ShaderDesc tileSd;
-    tileSd.vertexSource = isMetal ? kTileVertexMSL : kTileVertexGLSL;
-    tileSd.fragmentSource = isMetal ? kTileFragmentMSL : kTileFragmentGLSL;
-    impl_->tileShader = dev->createShader(tileSd);
-    if (!impl_->tileShader) { fprintf(stderr, "[Renderer] tileShader failed\n"); return false; }
-
+    // ---- Instanced tile shader (unified path) ----
     if (!isMetal) {
         ShaderDesc instancedTileSd;
         instancedTileSd.vertexSource = kInstancedTileVertexGLSL;
@@ -552,11 +551,21 @@ bool Renderer::initialize(const GlobeMesh& mesh) {
             fprintf(stderr, "[Renderer] instancedTileShader failed\n");
             return false;
         }
+
+        // Terrain tile shader: per-tile VBO (ECEF pos + uv), shared IBO
+        ShaderDesc terrainSd;
+        terrainSd.vertexSource = kTerrainVertexGLSL;
+        terrainSd.fragmentSource = kInstancedTileFragmentGLSL;
+        impl_->terrainShader = dev->createShader(terrainSd);
+        if (!impl_->terrainShader) {
+            fprintf(stderr, "[Renderer] terrainShader failed\n");
+            return false;
+        }
     }
 
     // Tile shared geometry. Web Mercator tile bounds are converted to ECEF on a curved
     // ellipsoid, so low subdivision visibly warps large low-zoom tiles.
-    auto [tileVerts, tileIndices] = makeTileGeometry(32);
+    auto [tileVerts, tileIndices] = makeTileGeometry(64);  // 64×64 grid = 4225 verts
 
     BufferDesc tvbDesc;
     tvbDesc.size = tileVerts.size() * sizeof(TileVertex);
@@ -595,8 +604,8 @@ void Renderer::dispose() {
     impl_->globeShader.reset();
     impl_->globeVertexBuffer.reset();
     impl_->globeIndexBuffer.reset();
-    impl_->tileShader.reset();
     impl_->instancedTileShader.reset();
+    impl_->terrainShader.reset();
     impl_->tileVertexBuffer.reset();
     impl_->tileIndexBuffer.reset();
     impl_->colorShader.reset();
@@ -612,8 +621,8 @@ Buffer* Renderer::globeVertexBuffer() const { return impl_->globeVertexBuffer.ge
 Buffer* Renderer::globeIndexBuffer() const { return impl_->globeIndexBuffer.get(); }
 int Renderer::globeIndexCount() const { return impl_->globeIndexCount; }
 
-ShaderProgram* Renderer::tileShader() const { return impl_->tileShader.get(); }
 ShaderProgram* Renderer::colorShader() const { return impl_->colorShader.get(); }
+ShaderProgram* Renderer::terrainShader() const { return impl_->terrainShader.get(); }
 Buffer* Renderer::tileVertexBuffer() const { return impl_->tileVertexBuffer.get(); }
 Buffer* Renderer::tileIndexBuffer() const { return impl_->tileIndexBuffer.get(); }
 int Renderer::tileIndexCount() const { return impl_->tileIndexCount; }
@@ -663,45 +672,6 @@ RenderCommand Renderer::makeGlobeCommand(const FrameState& frameState) const {
     return cmd;
 }
 
-RenderCommand Renderer::makeSurfaceTileCommand(Texture* texture,
-                                                Texture* waterMaskTexture,
-                                                Buffer* vertexBuffer,
-                                                Buffer* indexBuffer,
-                                                int indexCount,
-                                                float uvOffsetX,
-                                                float uvOffsetY,
-                                                float uvScaleX,
-                                                float uvScaleY) const {
-    RenderCommand cmd;
-    cmd.kind = RenderCommandKind::SurfaceTile;
-    cmd.owner = "surface_tile";
-    cmd.pass = "color";
-    cmd.shader = impl_->tileShader.get();
-    cmd.vertexBuffer = vertexBuffer;
-    cmd.indexBuffer = indexBuffer;
-    cmd.indexCount = indexCount;
-    cmd.vertexStride = 20;  // pos(12) + uv(8), normal computed in shader
-    cmd.primitive = RenderCommand::PrimitiveType::Triangles;
-    cmd.indexType = RenderCommand::IndexType::UInt32;
-    cmd.depthTest = true;
-    cmd.depthWrite = true;
-    cmd.blend = false;
-    cmd.cullFace = true;
-
-    cmd.textures.reserve(waterMaskTexture ? 2 : 1);
-    if (texture) {
-        cmd.textures.push_back(texture);
-    }
-    if (waterMaskTexture) {
-        cmd.textures.push_back(waterMaskTexture);
-    }
-
-    cmd.hasSurfaceTileUniforms = true;
-    cmd.surfaceTileUv = {uvOffsetX, uvOffsetY, uvScaleX, uvScaleY};
-    cmd.surfaceHasWaterMask = waterMaskTexture ? 1.0f : 0.0f;
-    return cmd;
-}
-
 RenderCommand Renderer::makeInstancedSurfaceTileCommand(Texture* texture,
                                                         Buffer* instanceBuffer,
                                                         int instanceCount) const {
@@ -730,6 +700,33 @@ RenderCommand Renderer::makeInstancedSurfaceTileCommand(Texture* texture,
 
     cmd.hasSurfaceTileUniforms = true;
     cmd.surfaceHasWaterMask = 0.0f;
+    return cmd;
+}
+
+RenderCommand Renderer::makeTerrainTileCommand(Texture* texture,
+                                                Buffer* vertexBuffer,
+                                                int vertexCount) const {
+    RenderCommand cmd;
+    cmd.kind = RenderCommandKind::SurfaceTile;
+    cmd.owner = "terrain_tile";
+    cmd.pass = "color";
+    cmd.shader = impl_->terrainShader.get();
+    cmd.vertexBuffer = vertexBuffer;
+    cmd.indexBuffer = impl_->tileIndexBuffer.get();
+    cmd.indexCount = impl_->tileIndexCount;
+    cmd.vertexStride = 20;  // pos(12) + uv(8)
+    cmd.primitive = RenderCommand::PrimitiveType::Triangles;
+    cmd.indexType = RenderCommand::IndexType::UInt32;
+    cmd.depthTest = true;
+    cmd.depthWrite = true;
+    cmd.blend = false;
+    cmd.cullFace = true;
+    cmd.hasSurfaceTileUniforms = true;
+    cmd.surfaceHasWaterMask = 0.0f;
+    if (texture) {
+        cmd.textures.push_back(texture);
+    }
+    (void)vertexCount;
     return cmd;
 }
 

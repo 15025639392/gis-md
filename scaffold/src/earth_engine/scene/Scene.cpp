@@ -329,14 +329,12 @@ void Scene::render() {
         glm::mat4 proj(cam.projectionMatrix(
             static_cast<double>(vpW), static_cast<double>(vpH)).raw());
         glm::mat4 viewProj = proj * view;
-        glm::mat4 relativeView = glm::mat4(glm::mat3(view));
-        glm::mat4 relativeViewProj = proj * relativeView;
 
         for (auto& cmd : commands) {
             if (cmd.owner == "globe") continue;
             if (cmd.kind == RenderCommandKind::SurfaceTile && cmd.hasSurfaceTileUniforms) {
                 std::memcpy(cmd.surfaceModelViewProjection.data(),
-                            glm::value_ptr(relativeViewProj),
+                            glm::value_ptr(viewProj),
                             16 * sizeof(float));
                 cmd.surfaceLightDir = {
                     frameState_.lightDir.x,
@@ -348,10 +346,7 @@ void Scene::render() {
             auto& mvpU = cmd.uniforms["u_modelViewProjection"];
             if (mvpU.empty()) {
                 mvpU.resize(16);
-                const glm::mat4& matrix = (cmd.owner == "surface_tile")
-                    ? relativeViewProj
-                    : viewProj;
-                std::memcpy(mvpU.data(), glm::value_ptr(matrix), 16 * sizeof(float));
+                std::memcpy(mvpU.data(), glm::value_ptr(viewProj), 16 * sizeof(float));
             }
             if (cmd.owner == "surface_tile") {
                 cmd.uniforms["u_lightDir"] = {
@@ -359,14 +354,6 @@ void Scene::render() {
                     frameState_.lightDir.y,
                     frameState_.lightDir.z
                 };
-                auto& originU = cmd.uniforms["u_cameraRelativeOrigin"];
-                if (originU.empty()) {
-                    originU = {
-                        static_cast<float>(cam.position().x()),
-                        static_cast<float>(cam.position().y()),
-                        static_cast<float>(cam.position().z())
-                    };
-                }
             }
         }
     }

@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace earth_engine {
 
@@ -208,9 +209,26 @@ void BasemapLayerStack::update(const FrameState& frameState) {
 void BasemapLayerStack::buildRenderCommands(Renderer& renderer,
                                              const TerrainLayer* terrainLayer,
                                              RenderCommandList& commands) {
-    for (auto& layer : layers_) {
+    std::unordered_set<std::string> composedSchemes;
+    for (size_t i = 0; i < layers_.size(); ++i) {
+        auto& layer = layers_[i];
         if (!layer->visible()) continue;
-        layer->buildRenderCommands(renderer, terrainLayer, commands);
+
+        const std::string schemeId = layer->tileScheme().id();
+        if (composedSchemes.find(schemeId) != composedSchemes.end()) {
+            continue;
+        }
+
+        std::vector<BasemapLayer*> overlayLayers;
+        for (size_t j = i + 1; j < layers_.size(); ++j) {
+            auto& candidate = layers_[j];
+            if (!candidate->visible()) continue;
+            if (candidate->tileScheme().id() != schemeId) continue;
+            overlayLayers.push_back(candidate.get());
+        }
+
+        layer->buildRenderCommands(renderer, terrainLayer, overlayLayers, commands);
+        composedSchemes.insert(schemeId);
     }
 }
 

@@ -54,6 +54,7 @@ public:
     const TerrainTile* findBestTileForBounds(const Rectangle& geoBounds) const;
     uint64_t terrainGeneration() const { return terrainGeneration_; }
     int cachedTileCount() const { return static_cast<int>(tileCache_.size()); }
+    std::vector<const TerrainTile*> visibleLoadedTiles() const;
 
     /// 每帧更新（加载缺失瓦片）
     void update(const FrameState& frameState);

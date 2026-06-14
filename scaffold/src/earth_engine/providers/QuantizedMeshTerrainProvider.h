@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TerrainProvider.h"
+#include <array>
 #include <string>
 
 namespace earth_engine {
@@ -34,7 +35,12 @@ public:
     void setTileSize(int ts) { tileSize_ = ts; }
     void setPlatformBridge(PlatformBridge* bridge);
     void setFlipYForUrl(bool flip) { flipYForUrl_ = flip; }
+    bool configureFromLayerJsonUrl(const std::string& layerJsonUrl);
+    bool configureFromLayerJson(const std::string& layerJson,
+                                const std::string& layerJsonUrl);
+    const std::string& urlTemplate() const { return urlTemplate_; }
 
+    bool supportsTile(const TileKey& key) const override;
     std::string buildUrl(const TileKey& key) const override;
 
     void requestTile(const TileKey& key,
@@ -48,6 +54,8 @@ private:
     std::vector<uint8_t> httpGet(const std::string& url);
     std::string urlTemplate_;
     std::string attribution_;
+    std::string layerJsonUrl_;
+    std::vector<std::vector<std::array<int, 4>>> availabilityRanges_;
     int minZoom_ = 0;
     int maxZoom_ = 15;
     int tileSize_ = 65;   // default 64×64 grid

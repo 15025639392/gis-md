@@ -42,9 +42,6 @@ public:
     Buffer* globeIndexBuffer() const;
     int globeIndexCount() const;
 
-    /// Tile shader（瓦片纹理渲染）
-    ShaderProgram* tileShader() const;
-
     /// 简单颜色 shader（矢量图层线/面渲染）
     ShaderProgram* colorShader() const;
 
@@ -59,22 +56,18 @@ public:
     /// 构建 globe 背景 RenderCommand
     RenderCommand makeGlobeCommand(const FrameState& frameState) const;
 
-    /// 构建 SurfaceTile RenderCommand（调用者提供 imagery attachment 和 tileBounds）
-    /// Per-vertex normals are used directly (aligned with cesium-native glTF NORMAL attribute);
-    /// no separate normal map texture is required.
-    RenderCommand makeSurfaceTileCommand(Texture* texture,
-                                         Texture* waterMaskTexture,
-                                         Buffer* vertexBuffer,
-                                         Buffer* indexBuffer,
-                                         int indexCount,
-                                         float uvOffsetX = 0.0f,
-                                         float uvOffsetY = 0.0f,
-                                         float uvScaleX = 1.0f,
-                                         float uvScaleY = 1.0f) const;
-
+    /// Build instanced surface tile command (shared grid + instance buffer).
     RenderCommand makeInstancedSurfaceTileCommand(Texture* texture,
                                                   Buffer* instanceBuffer,
                                                   int instanceCount) const;
+
+    /// Terrain shader accessor
+    ShaderProgram* terrainShader() const;
+
+    /// Build terrain tile command (per-tile VBO with ECEF positions, shared IBO).
+    RenderCommand makeTerrainTileCommand(Texture* texture,
+                                          Buffer* vertexBuffer,
+                                          int vertexCount) const;
 
 private:
     struct Impl;

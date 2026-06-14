@@ -19,38 +19,15 @@ double mix(double a, double b, double t) {
     return a + (b - a) * t;
 }
 
-double latitudeToMercatorY(double latRad) {
-    constexpr double kMaxWebMercatorLat = 1.4844222297453324;
-    const double lat = std::clamp(latRad, -kMaxWebMercatorLat, kMaxWebMercatorLat);
-    return (glm::pi<double>() -
-            std::log(std::tan(lat * 0.5 + glm::quarter_pi<double>()))) /
-           glm::two_pi<double>();
-}
-
-double mercatorYToLatitude(double y) {
-    return std::atan(std::sinh(glm::pi<double>() - glm::two_pi<double>() * y));
-}
-
-bool usesWebMercatorV(const Rectangle& bounds) {
-    constexpr double kMaxWebMercatorLat = 1.4844222297453324;
-    return bounds.south() >= -kMaxWebMercatorLat &&
-           bounds.north() <= kMaxWebMercatorLat;
-}
-
+// cesium-native GeographicProjection: projected Y = lat * R (linear).
+// All surfaces use linear latitude sampling. WebMercator nonlinearity
+// is the imagery provider's responsibility, not the geometry builder's.
 double latitudeForV(const Rectangle& tileBounds, double v) {
-    if (!usesWebMercatorV(tileBounds)) {
-        return mix(tileBounds.north(), tileBounds.south(), v);
-    }
-
-    const double northY = latitudeToMercatorY(tileBounds.north());
-    const double southY = latitudeToMercatorY(tileBounds.south());
-    return mercatorYToLatitude(mix(northY, southY, v));
+    return mix(tileBounds.north(), tileBounds.south(), v);
 }
 
-SurfaceTileSampling samplingForBounds(const Rectangle& bounds) {
-    return usesWebMercatorV(bounds)
-        ? SurfaceTileSampling::WebMercatorVToWgs84Ecef
-        : SurfaceTileSampling::GeographicVToWgs84Ecef;
+SurfaceTileSampling samplingForBounds(const Rectangle& /*bounds*/) {
+    return SurfaceTileSampling::GeographicVToWgs84Ecef;
 }
 
 std::pair<Vec3, Vec3> splitHighLow(const Vec3& value) {
@@ -97,43 +74,23 @@ TileSurfaceVertex TileSurface::vertexForUnitUv(const Rectangle& tileBounds,
 
 TileTextureWindow TileSurface::textureWindow(const Rectangle& targetBounds,
                                              const Rectangle& textureBounds) {
+    // cesium-native computeTranslationAndScale equivalent.
+    // Both rectangles are in geographic radians (for EPSG:4326 the ratio math
+    // is identical to projected coordinates because projected = rad * R).
+    const double textureWidth = textureBounds.east() - textureBounds.west();
+    const double textureHeight = textureBounds.north() - textureBounds.south();
+    if (textureWidth <= 0.0 || textureHeight <= 0.0) return {};
+
+    const double targetWidth = targetBounds.east() - targetBounds.west();
+    const double targetHeight = targetBounds.north() - targetBounds.south();
+
     TileTextureWindow window;
-    const double width = textureBounds.east() - textureBounds.west();
-    const bool mercatorV = usesWebMercatorV(targetBounds) &&
-                           usesWebMercatorV(textureBounds);
-    const double textureNorthV = mercatorV
-        ? latitudeToMercatorY(textureBounds.north())
-        : textureBounds.north();
-    const double textureSouthV = mercatorV
-        ? latitudeToMercatorY(textureBounds.south())
-        : textureBounds.south();
-    const double height = mercatorV
-        ? textureSouthV - textureNorthV
-        : textureNorthV - textureSouthV;
-    if (width == 0.0 || height == 0.0) return window;
-
-    const double targetNorthV = mercatorV
-        ? latitudeToMercatorY(targetBounds.north())
-        : targetBounds.north();
-    const double targetSouthV = mercatorV
-        ? latitudeToMercatorY(targetBounds.south())
-        : targetBounds.south();
-
     window.offsetU = static_cast<float>(
-        (targetBounds.west() - textureBounds.west()) / width);
-    window.scaleU = static_cast<float>(
-        (targetBounds.east() - targetBounds.west()) / width);
-    if (mercatorV) {
-        window.offsetV = static_cast<float>(
-            (targetNorthV - textureNorthV) / height);
-        window.scaleV = static_cast<float>(
-            (targetSouthV - targetNorthV) / height);
-    } else {
-        window.offsetV = static_cast<float>(
-            (textureNorthV - targetNorthV) / height);
-        window.scaleV = static_cast<float>(
-            (targetNorthV - targetSouthV) / height);
-    }
+        (targetBounds.west() - textureBounds.west()) / textureWidth);
+    window.scaleU = static_cast<float>(targetWidth / textureWidth);
+    window.offsetV = static_cast<float>(
+        (textureBounds.north() - targetBounds.north()) / textureHeight);
+    window.scaleV = static_cast<float>(targetHeight / textureHeight);
     return window;
 }
 
@@ -184,43 +141,37 @@ SurfaceTileMesh TileSurface::buildTerrainMesh(const Rectangle& tileBounds,
                                               const TerrainTile* terrainTile,
                                               int gridSize,
                                               double skirtHeightMeters,
-                                              const TerrainTile* parentTile) {
+                                              const TerrainTile* parentTile,
+                                              bool useRawQuantizedMesh) {
     const int safeGrid = std::max(1, gridSize);
     const int n = safeGrid + 1;
     const auto& ellipsoid = Ellipsoid::WGS84();
 
-    // If the terrain provider supplies raw QuantizedMesh binary, reconstruct
-    // the optimized triangulation directly instead of building a regular grid.
-#ifdef __ANDROID__
-    bool hasRaw = terrainTile && terrainTile->valid() &&
-        terrainTile->heightmap() && !terrainTile->heightmap()->rawData.empty();
-    if (hasRaw) {
-        auto qm = QuantizedMeshParser::parseToSurfaceTileMesh(
-            terrainTile->heightmap()->rawData.data(),
-            terrainTile->heightmap()->rawData.size(),
-            tileBounds);
-        if (qm) {
-            __android_log_print(ANDROID_LOG_INFO, "TileSurface",
-                "QM mesh: verts=%zu idx=%zu skirtVerts=%u", 
-                qm->vertices.size(), qm->indices.size(),
-                qm->skirtMeta.noSkirtVerticesCount);
-            return *qm;
-        }
-        __android_log_print(ANDROID_LOG_ERROR, "TileSurface",
-            "QM parse failed: rawData=%zu bytes", 
-            terrainTile->heightmap()->rawData.size());
-        // Fall through to grid-based path on parse failure
-    }
-#else
-    if (terrainTile && terrainTile->valid() &&
+    // cesium-native path: reconstruct the optimized QuantizedMesh triangulation
+    // when raw binary is available. The irregular triangulation preserves mesh
+    // decimation quality and border topology better than a regular grid.
+    if (useRawQuantizedMesh && terrainTile && terrainTile->valid() &&
         terrainTile->heightmap() && !terrainTile->heightmap()->rawData.empty()) {
         auto qm = QuantizedMeshParser::parseToSurfaceTileMesh(
             terrainTile->heightmap()->rawData.data(),
             terrainTile->heightmap()->rawData.size(),
             tileBounds);
-        if (qm) return *qm;
-    }
+        if (qm) {
+#ifdef __ANDROID__
+            __android_log_print(ANDROID_LOG_INFO, "TileSurface",
+                "QM mesh: verts=%zu idx=%zu skirtVerts=%u",
+                qm->vertices.size(), qm->indices.size(),
+                qm->skirtMeta.noSkirtVerticesCount);
 #endif
+            return *qm;
+        }
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "TileSurface",
+            "QM parse failed: rawData=%zu bytes",
+            terrainTile->heightmap()->rawData.size());
+#endif
+        // Fall through to grid-based path on parse failure
+    }
 
     SurfaceTileMesh mesh;
     mesh.gridSize = safeGrid;

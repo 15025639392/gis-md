@@ -135,3 +135,30 @@ TEST_F(TMSTileSchemeTest, LevelResolution) {
     EXPECT_NEAR(M_PI, tms_->levelResolution(1), 1e-6);
     EXPECT_NEAR(M_PI / 2.0, tms_->levelResolution(2), 1e-6);
 }
+
+TEST(GeographicTMSSchemeTest, CesiumGeodeticLevelZeroIsTwoByOne) {
+    auto scheme = TileScheme::createGeographicTMS();
+
+    Rectangle westRoot = scheme->tileToRectangle(TileKey{"Geographic-TMS", 0, 0, 0});
+    Rectangle eastRoot = scheme->tileToRectangle(TileKey{"Geographic-TMS", 0, 1, 0});
+
+    EXPECT_NEAR(-180.0, westRoot.westDegrees(), 1e-9);
+    EXPECT_NEAR(0.0, westRoot.eastDegrees(), 1e-9);
+    EXPECT_NEAR(0.0, eastRoot.westDegrees(), 1e-9);
+    EXPECT_NEAR(180.0, eastRoot.eastDegrees(), 1e-9);
+    EXPECT_NEAR(-90.0, westRoot.southDegrees(), 1e-9);
+    EXPECT_NEAR(90.0, westRoot.northDegrees(), 1e-9);
+}
+
+TEST(GeographicTMSSchemeTest, CesiumSampleTileContainsServiceArea) {
+    auto scheme = TileScheme::createGeographicTMS();
+    auto key = scheme->positionToTile(
+        106.508 * M_PI / 180.0, 29.617 * M_PI / 180.0, 12);
+
+    EXPECT_EQ(12, key.z);
+    EXPECT_EQ(6521, key.x);
+    EXPECT_EQ(2722, key.y);
+
+    Rectangle sample = scheme->tileToRectangle(TileKey{"Geographic-TMS", 12, 6487, 2685});
+    EXPECT_TRUE(sample.contains(105.17 * M_PI / 180.0, 28.1 * M_PI / 180.0));
+}

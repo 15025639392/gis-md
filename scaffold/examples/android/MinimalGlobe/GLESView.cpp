@@ -85,13 +85,18 @@ static void cancelInputIfNeeded() {
 static constexpr const char* kFabdemTerrainTemplate =
     "http://192.168.1.4:8001/{z}/{x}/{y}.png";
 static constexpr const char* kQuantizedMeshTerrainTemplate =
-    "http://192.168.1.6:8091/{z}/{x}/{y}.terrain";
+    "http://192.168.1.8:8092/{z}/{x}/{y}.terrain";
+static constexpr const char* kQuantizedMeshTerrainLayerJson =
+    "http://192.168.1.8:8092/layer.json";
 static constexpr const char* kGaodeSatelliteTemplate =
     "https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
+static constexpr const char* kGaodeRoadNetTemplate =
+    "https://webst0{s}.is.autonavi.com/appmaptile?style=8&x={x}&y={y}&z={z}";
 static constexpr bool kEnableTerrainForDemo = true;
 static constexpr bool kEnableDebugOverlayForDemo = false;
 static constexpr bool kShowNormalMapForDemo = false;
 static constexpr bool kUseGaodeSatelliteForDemo = true;
+static constexpr bool kEnableGaodeRoadNetOverlayForDemo = true;
 /// Use QuantizedMesh terrain (cesium-native format) instead of RGB heightmap.
 static constexpr bool kUseQuantizedMeshTerrain = true;
 
@@ -259,6 +264,26 @@ static bool createEngine() {
         LOGI("Basemap layer added; normal map debug %s",
              kShowNormalMapForDemo ? "enabled" : "disabled");
 
+        if (kUseGaodeSatelliteForDemo && kEnableGaodeRoadNetOverlayForDemo) {
+            auto roadNetProvider = std::make_unique<XYZImageryProvider>(
+                kGaodeRoadNetTemplate,
+                "Gaode/Amap road network overlay");
+            roadNetProvider->setZoomRange(0, 18);
+            roadNetProvider->setOpenGlobusGroupedY(true);
+            roadNetProvider->setOpenGlobusPolarGroupsEnabled(false);
+            roadNetProvider->setPlatformBridge(gPlatformBridge.get());
+
+            auto roadNetLayer = std::make_unique<BasemapLayer>(
+                std::move(roadNetProvider),
+                TileScheme::createOpenGlobusEarth(),
+                gRenderDevice.get());
+            roadNetLayer->setOpacity(1.0f);
+            gEngine->addLayer(std::move(roadNetLayer));
+            LOGI("Gaode road network overlay enabled: %s", kGaodeRoadNetTemplate);
+        } else {
+            LOGI("Gaode road network overlay disabled");
+        }
+
         if (kEnableTerrainForDemo) {
             std::unique_ptr<TerrainProvider> terrainProvider;
             if (kUseQuantizedMeshTerrain) {
@@ -266,12 +291,18 @@ static bool createEngine() {
                 auto qm = std::make_unique<QuantizedMeshTerrainProvider>(
                     kQuantizedMeshTerrainTemplate,
                     "QuantizedMesh Terrain");
-                qm->setZoomRange(11, 12);  // allow z=11 fallback
+                qm->setZoomRange(0, 12);
                 qm->setTileSize(65);
-                qm->setFlipYForUrl(true);
+                qm->setFlipYForUrl(false);
                 qm->setPlatformBridge(gPlatformBridge.get());
+                if (!qm->configureFromLayerJsonUrl(kQuantizedMeshTerrainLayerJson)) {
+                    LOGE("QuantizedMesh layer.json load failed, using template fallback: %s",
+                         kQuantizedMeshTerrainTemplate);
+                }
                 terrainProvider = std::move(qm);
-                LOGI("Terrain provider: QuantizedMesh (%s)", kQuantizedMeshTerrainTemplate);
+                LOGI("Terrain provider: QuantizedMesh layer=%s template=%s",
+                     kQuantizedMeshTerrainLayerJson,
+                     static_cast<QuantizedMeshTerrainProvider*>(terrainProvider.get())->urlTemplate().c_str());
             } else {
                 // Mapbox Terrain-RGB heightmap tiles.
                 auto hm = std::make_unique<HeightmapTerrainProvider>(
@@ -292,7 +323,9 @@ static bool createEngine() {
             terrainLayer->setEnabled(true);
             gEngine->setTerrainLayer(std::move(terrainLayer));
             gEngine->setTerrainEnabled(true);
-            LOGI("Terrain layer added: %s", kFabdemTerrainTemplate);
+            LOGI("Terrain layer added: QuantizedMesh=%d HeightmapTemplate=%s",
+                 kUseQuantizedMeshTerrain ? 1 : 0,
+                 kFabdemTerrainTemplate);
         } else {
             LOGI("Terrain disabled");
         }

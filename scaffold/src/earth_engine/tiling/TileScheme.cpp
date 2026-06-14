@@ -328,12 +328,13 @@ public:
 
     Rectangle tileToRectangle(const TileKey& key) const override {
         int z = key.z, x = key.x, y = key.y;
-        double tilesAtZ = static_cast<double>(1 << z);
-        double west  = static_cast<double>(x)     / tilesAtZ * 360.0 - 180.0;
-        double east  = static_cast<double>(x + 1) / tilesAtZ * 360.0 - 180.0;
+        double xTilesAtZ = static_cast<double>(1 << (z + 1));
+        double yTilesAtZ = static_cast<double>(1 << z);
+        double west  = static_cast<double>(x)     / xTilesAtZ * 360.0 - 180.0;
+        double east  = static_cast<double>(x + 1) / xTilesAtZ * 360.0 - 180.0;
         // y=0 at south pole, y increases northward (EPSG:4326 standard)
-        double south = -90.0 + static_cast<double>(y)     / tilesAtZ * 180.0;
-        double north = -90.0 + static_cast<double>(y + 1) / tilesAtZ * 180.0;
+        double south = -90.0 + static_cast<double>(y)     / yTilesAtZ * 180.0;
+        double north = -90.0 + static_cast<double>(y + 1) / yTilesAtZ * 180.0;
         return Rectangle(
             glm::radians(west), glm::radians(south),
             glm::radians(east), glm::radians(north));
@@ -342,12 +343,13 @@ public:
     TileKey positionToTile(double lngRad, double latRad, int zoom) const override {
         double lngDeg = glm::degrees(lngRad);
         double latDeg = glm::degrees(latRad);
-        int tilesAtZoom = 1 << zoom;
-        int x = static_cast<int>((lngDeg + 180.0) / 360.0 * tilesAtZoom);
+        int xTilesAtZoom = 1 << (zoom + 1);
+        int yTilesAtZoom = 1 << zoom;
+        int x = static_cast<int>((lngDeg + 180.0) / 360.0 * xTilesAtZoom);
         // y=0 at south pole: y = (lat + 90) / 180 * 2^z
-        int y = static_cast<int>((latDeg + 90.0) / 180.0 * tilesAtZoom);
-        x = std::clamp(x, 0, tilesAtZoom - 1);
-        y = std::clamp(y, 0, tilesAtZoom - 1);
+        int y = static_cast<int>((latDeg + 90.0) / 180.0 * yTilesAtZoom);
+        x = std::clamp(x, 0, xTilesAtZoom - 1);
+        y = std::clamp(y, 0, yTilesAtZoom - 1);
         return TileKey{id(), zoom, x, y};
     }
 

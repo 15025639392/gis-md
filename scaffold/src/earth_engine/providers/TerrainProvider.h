@@ -65,6 +65,13 @@ public:
     /// 瓦片尺寸（像素）
     virtual int tileSize() const = 0;
 
+    /// Whether this provider can serve the tile. Providers with metadata
+    /// availability should reject unsupported tiles before network request.
+    virtual bool supportsTile(const TileKey& key) const {
+        (void)key;
+        return true;
+    }
+
     /// 构建瓦片请求 URL
     virtual std::string buildUrl(const TileKey& key) const = 0;
 

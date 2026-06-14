@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
+#include <array>
 #include <string>
 
 namespace earth_engine {
@@ -371,8 +372,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     GLuint currentProgram = 0;
     GLuint currentArrayBuffer = 0;
     GLuint currentElementArrayBuffer = 0;
-    GLuint currentTexture0 = 0;
-    GLuint currentTexture1 = 0;
+    std::array<GLuint, 8> currentTextures{};
     bool attrib0Enabled = false;
     bool attrib1Enabled = false;
     bool attrib2Enabled = false;
@@ -436,7 +436,14 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             }
             int waterMaskLoc = program->uniformLocation("u_waterMask");
             if (waterMaskLoc >= 0) {
-                glUniform1i(waterMaskLoc, 1);
+                glUniform1i(waterMaskLoc, 5);
+            }
+            for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
+                std::string name = "u_overlayTexture" + std::to_string(i);
+                int overlaySamplerLoc = program->uniformLocation(name);
+                if (overlaySamplerLoc >= 0) {
+                    glUniform1i(overlaySamplerLoc, 1 + i);
+                }
             }
         }
 
@@ -472,10 +479,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             glVertexAttribPointer(5, 3, GL_FLOAT, GL_FALSE, stride,
                                   reinterpret_cast<void*>(32));
             glVertexAttribDivisor(5, 1);
-            setAttribEnabled(6, attrib6Enabled, true);
-            glVertexAttribPointer(6, 3, GL_FLOAT, GL_FALSE, stride,
-                                  reinterpret_cast<void*>(44));
-            glVertexAttribDivisor(6, 1);
+            setAttribEnabled(6, attrib6Enabled, false);
             setAttribEnabled(7, attrib7Enabled, true);
             glVertexAttribPointer(7, 4, GL_FLOAT, GL_FALSE, stride,
                                   reinterpret_cast<void*>(56));
@@ -496,16 +500,15 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             glVertexAttribPointer(11, 3, GL_FLOAT, GL_FALSE, stride,
                                   reinterpret_cast<void*>(108));
             glVertexAttribDivisor(11, 1);
-        } else if (cmd.kind == RenderCommandKind::SurfaceTile) {
-            constexpr int kSurfaceStride = 20;  // pos(12) + uv(8)
+        } else if (cmd.vertexStride == 20) {
+            // Terrain tile: pos(12) + uv(8), normal computed in shader
             setAttribEnabled(0, attrib0Enabled, true);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, kSurfaceStride,
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 20,
                                   reinterpret_cast<void*>(0));
             glVertexAttribDivisor(0, 0);
-            // normal disabled — computed in vertex shader from position
             setAttribEnabled(1, attrib1Enabled, false);
             setAttribEnabled(2, attrib2Enabled, true);
-            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, kSurfaceStride,
+            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 20,
                                   reinterpret_cast<void*>(12));
             glVertexAttribDivisor(2, 0);
             setAttribEnabled(3, attrib3Enabled, false);
@@ -517,15 +520,6 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             setAttribEnabled(9, attrib9Enabled, false);
             setAttribEnabled(10, attrib10Enabled, false);
             setAttribEnabled(11, attrib11Enabled, false);
-            glVertexAttribDivisor(3, 0);
-            glVertexAttribDivisor(4, 0);
-            glVertexAttribDivisor(5, 0);
-            glVertexAttribDivisor(6, 0);
-            glVertexAttribDivisor(7, 0);
-            glVertexAttribDivisor(8, 0);
-            glVertexAttribDivisor(9, 0);
-            glVertexAttribDivisor(10, 0);
-            glVertexAttribDivisor(11, 0);
         } else if (cmd.vertexStride > 0) {
             // 显式 vertex stride（VectorLayer、SkyBox、Atmosphere 等使用）
             // 根据 stride 推断分量数：8=vec2, 12=vec3
@@ -598,20 +592,15 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         }
 
         // ---- 纹理绑定 ----
-        if (!cmd.textures.empty() && cmd.textures[0]) {
-            auto* glTex = static_cast<GLTexture*>(cmd.textures[0]);
-            if (currentTexture0 != glTex->glId()) {
-                currentTexture0 = glTex->glId();
-                glActiveTexture(GL_TEXTURE0);
-                glBindTexture(GL_TEXTURE_2D, currentTexture0);
-            }
-        }
-        if (cmd.textures.size() > 1 && cmd.textures[1]) {
-            auto* glTex = static_cast<GLTexture*>(cmd.textures[1]);
-            if (currentTexture1 != glTex->glId()) {
-                currentTexture1 = glTex->glId();
-                glActiveTexture(GL_TEXTURE1);
-                glBindTexture(GL_TEXTURE_2D, currentTexture1);
+        const size_t textureCount =
+            std::min(cmd.textures.size(), currentTextures.size());
+        for (size_t textureIndex = 0; textureIndex < textureCount; ++textureIndex) {
+            if (!cmd.textures[textureIndex]) continue;
+            auto* glTex = static_cast<GLTexture*>(cmd.textures[textureIndex]);
+            if (currentTextures[textureIndex] != glTex->glId()) {
+                currentTextures[textureIndex] = glTex->glId();
+                glActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(textureIndex));
+                glBindTexture(GL_TEXTURE_2D, currentTextures[textureIndex]);
             }
         }
 
@@ -635,13 +624,22 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                     mvpLoc, 1, GL_FALSE, cmd.surfaceModelViewProjection.data());
             }
             set4("u_tileUV", cmd.surfaceTileUv);
+            for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
+                std::string uvName = "u_overlayTileUV" + std::to_string(i);
+                std::string opacityName = "u_overlayOpacity" + std::to_string(i);
+                set4(uvName.c_str(), cmd.surfaceOverlayTileUvs[i]);
+                set1(opacityName.c_str(), cmd.surfaceOverlayOpacities[i]);
+            }
             set3("u_lightDir", cmd.surfaceLightDir);
-            set3("u_cameraRelativeOrigin", cmd.surfaceCameraRelativeOrigin);
             set3("u_tileOrigin", cmd.surfaceTileOrigin);
             set3("u_fogColor", cmd.surfaceFogColor);
             set1("u_fogDensity", cmd.surfaceFogDensity);
             set1("u_tileOpacity", cmd.surfaceTileOpacity);
             set1("u_transitionOpacity", cmd.surfaceTransitionOpacity);
+            int overlayCountLoc = program->uniformLocation("u_overlayTextureCount");
+            if (overlayCountLoc >= 0) {
+                glUniform1i(overlayCountLoc, cmd.surfaceOverlayTextureCount);
+            }
             set1("u_surfaceGeneration", cmd.surfaceGeneration);
             set1("u_hasWaterMask", cmd.surfaceHasWaterMask);
         }
@@ -788,10 +786,10 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     }
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    for (int textureUnit = 5; textureUnit >= 0; --textureUnit) {
+        glActiveTexture(GL_TEXTURE0 + textureUnit);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
 
     const double submitMs = perf::nowMs() - submitStartMs;
     if (submitCount <= 1 || submitCount % 120 == 0 || submitMs >= 25.0) {

@@ -13,12 +13,14 @@
 #include "../tiling/TileSurface.h"
 #include "../debug/PerfTimer.h"
 #include "TerrainLayer.h"
+#include "../terrain/QuantizedMeshParser.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <cstring>
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <limits>
 #include <unordered_map>
@@ -50,6 +52,17 @@ struct SurfaceTileInstanceGpu {
 };
 static_assert(sizeof(SurfaceTileInstanceGpu) == 120,
               "SurfaceTileInstanceGpu layout must match Renderer instanceStride");
+
+float transitionOpacityForSurfaceDraw(const ImageryAttachment& attachment,
+                                      float rawTransitionOpacity,
+                                      bool cameraMoving) {
+    const float clamped = std::clamp(rawTransitionOpacity, 0.0f, 1.0f);
+    (void)attachment;
+    if (cameraMoving) {
+        return 1.0f;
+    }
+    return clamped;
+}
 
 std::vector<SurfaceGpuVertex> makeSurfaceGpuVertices(const SurfaceTileMesh& mesh,
                                                      const Vec3& origin) {
@@ -106,6 +119,22 @@ float transitionOpacityForTile(const TilePlan& plan, const TileKey& key) {
 void writeRelativeCorner(float out[3], const Rectangle& bounds, double u, double v,
                          const Vec3& origin) {
     const Vec3 relative = TileSurface::vertexForUnitUv(bounds, u, v).ecef - origin;
+    out[0] = static_cast<float>(relative.x());
+    out[1] = static_cast<float>(relative.y());
+    out[2] = static_cast<float>(relative.z());
+}
+
+void writeRelativeCornerWithTerrain(float out[3], const Rectangle& bounds,
+                                    double u, double v, const Vec3& origin,
+                                    const TerrainTile* terrainTile) {
+    TileSurfaceVertex sv = TileSurface::vertexForUnitUv(bounds, u, v);
+    Cartographic cart = Ellipsoid::WGS84().cartesianToCartographic(sv.ecef);
+    double h = static_cast<double>(terrainTile->sampleHeight(
+        cart.longitude(), cart.latitude()));
+    Cartographic terrainCart = Cartographic::fromRadians(
+        cart.longitude(), cart.latitude(), h);
+    Vec3 terrainEcef = Ellipsoid::WGS84().cartographicToCartesian(terrainCart);
+    const Vec3 relative = terrainEcef - origin;
     out[0] = static_cast<float>(relative.x());
     out[1] = static_cast<float>(relative.y());
     out[2] = static_cast<float>(relative.z());
@@ -1024,7 +1053,8 @@ bool BasemapLayer::findRequestTileForMissingTexture(const TileKey& target,
 std::string BasemapLayer::surfaceMeshCacheKeyForTile(
     const TileKey& key,
     const Rectangle& bounds,
-    const TerrainLayer* terrainLayer) const {
+    const TerrainLayer* terrainLayer,
+    bool useRawQuantizedMesh) const {
     const int gridSize = surfaceGridSizeForZoom(key.z);
     const TerrainTile* terrainTile = terrainLayer
         ? terrainLayer->findBestTileForBounds(bounds)
@@ -1032,7 +1062,9 @@ std::string BasemapLayer::surfaceMeshCacheKeyForTile(
     const bool useTerrain = terrainTile && terrainTile->valid();
     return tileCacheKey(key) + "/surface/" +
         (useTerrain
-            ? "terrain/" + tileCacheKey(terrainTile->key())
+            ? std::string("terrain/") +
+                  (useRawQuantizedMesh ? "raw/" : "grid/") +
+                  tileCacheKey(terrainTile->key())
             : "ellipsoid") +
         "/" + std::to_string(gridSize);
 }
@@ -1041,9 +1073,11 @@ BasemapLayer::SurfaceGpuMesh*
 BasemapLayer::findSurfaceGpuMesh(const TileKey& key,
                                  const Rectangle& bounds,
                                  const TerrainLayer* terrainLayer,
-                                 SurfaceMeshBuildStats* stats) {
+                                 SurfaceMeshBuildStats* stats,
+                                 bool useRawQuantizedMesh) {
     const double totalStartMs = perf::nowMs();
-    const std::string ck = surfaceMeshCacheKeyForTile(key, bounds, terrainLayer);
+    const std::string ck = surfaceMeshCacheKeyForTile(
+        key, bounds, terrainLayer, useRawQuantizedMesh);
     auto found = surfaceMeshCache_.find(ck);
     if (found == surfaceMeshCache_.end()) {
         return nullptr;
@@ -1061,7 +1095,8 @@ BasemapLayer::SurfaceGpuMesh*
 BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
                                         const Rectangle& bounds,
                                         const TerrainLayer* terrainLayer,
-                                        SurfaceMeshBuildStats* stats) {
+                                        SurfaceMeshBuildStats* stats,
+                                        bool useRawQuantizedMesh) {
     if (!renderDevice_) return nullptr;
 
     const double totalStartMs = perf::nowMs();
@@ -1081,7 +1116,8 @@ BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
     }
 #endif
     const double cacheKeyStartMs = perf::nowMs();
-    const std::string ck = surfaceMeshCacheKeyForTile(key, bounds, terrainLayer);
+    const std::string ck = surfaceMeshCacheKeyForTile(
+        key, bounds, terrainLayer, useRawQuantizedMesh);
     if (stats) stats->cacheKeyMs += perf::nowMs() - cacheKeyStartMs;
 
     auto found = surfaceMeshCache_.find(ck);
@@ -1107,7 +1143,12 @@ BasemapLayer::getOrCreateSurfaceGpuMesh(const TileKey& key,
     const double meshBuildStartMs = perf::nowMs();
     SurfaceTileMesh mesh = useTerrain
         ? TileSurface::buildTerrainMesh(
-              bounds, terrainTile, gridSize, kTerrainSkirtHeightMeters, parentTile)
+              bounds,
+              terrainTile,
+              gridSize,
+              kTerrainSkirtHeightMeters,
+              parentTile,
+              useRawQuantizedMesh)
         : TileSurface::buildEllipsoidMesh(bounds, gridSize);
     const double meshBuildMs = perf::nowMs() - meshBuildStartMs;
     if (stats) stats->meshBuildMs += meshBuildMs;
@@ -1666,7 +1707,284 @@ bool BasemapLayer::uploadImageryAtlasTile(const TileKey& key, const DecodedImage
 void BasemapLayer::buildRenderCommands(Renderer& renderer,
                                         const TerrainLayer* terrainLayer,
                                         RenderCommandList& commands) {
+    std::vector<BasemapLayer*> overlayLayers;
+    buildRenderCommands(renderer, terrainLayer, overlayLayers, commands);
+}
+
+bool BasemapLayer::resolveAttachmentForRenderTile(const RenderTileRef& renderTile,
+                                                  ImageryAttachment& out) {
+    if (!visible_) return false;
+
+    const TileKey& key = renderTile.targetKey;
+    TileKey textureKey = renderTile.textureKey;
+    Texture* tex = textureCache_.get(textureKey);
+    ImageryFallbackSource fallbackSource =
+        renderTile.source == TileRenderSource::Exact
+            ? ImageryFallbackSource::Exact
+            : ImageryFallbackSource::Parent;
+    if (!tex) {
+        tex = findFallbackTexture(key, textureKey);
+        fallbackSource = ImageryFallbackSource::Parent;
+    }
+    if (!tex) return false;
+
+    Rectangle bounds = tileScheme_->tileToRectangle(key);
+    Rectangle textureBounds = tileScheme_->tileToRectangle(textureKey);
+    TileTextureWindow uv = TileSurface::textureWindow(bounds, textureBounds);
+    if (tex->width() > 0 && tex->height() > 0) {
+        const float insetU = 0.5f / static_cast<float>(tex->width());
+        const float insetV = 0.5f / static_cast<float>(tex->height());
+        uv.offsetU += insetU;
+        uv.offsetV += insetV;
+        uv.scaleU = std::max(0.0f, uv.scaleU - insetU * 2.0f);
+        uv.scaleV = std::max(0.0f, uv.scaleV - insetV * 2.0f);
+    }
+
+    out = ImageryAttachment{
+        id_,
+        provider_ ? provider_->id() : "",
+        textureKey,
+        tex,
+        uv.offsetU,
+        uv.offsetV,
+        uv.scaleU,
+        uv.scaleV,
+        opacity_,
+        fallbackSource
+    };
+    return true;
+}
+
+bool BasemapLayer::resolveAttachmentForBounds(const Rectangle& bounds,
+                                              int preferredZoom,
+                                              ImageryAttachment& out) {
+    if (!visible_) return false;
+
+    const double centerLng = rectangleCenterLongitude(bounds);
+    const double centerLat = bounds.south() + bounds.height() * 0.5;
+    const int startZoom = std::min(tileScheme_->maxZoom(), preferredZoom);
+    for (int z = startZoom; z >= tileScheme_->minZoom(); --z) {
+        TileKey textureKey = tileScheme_->positionToTile(centerLng, centerLat, z);
+        Rectangle textureBounds = tileScheme_->tileToRectangle(textureKey);
+        if (!textureBounds.contains(bounds)) {
+            continue;
+        }
+        Texture* tex = textureCache_.get(textureKey);
+        if (!tex) {
+            continue;
+        }
+
+        TileTextureWindow uv = TileSurface::textureWindow(bounds, textureBounds);
+        if (tex->width() > 0 && tex->height() > 0) {
+            const float insetU = 0.5f / static_cast<float>(tex->width());
+            const float insetV = 0.5f / static_cast<float>(tex->height());
+            uv.offsetU += insetU;
+            uv.offsetV += insetV;
+            uv.scaleU = std::max(0.0f, uv.scaleU - insetU * 2.0f);
+            uv.scaleV = std::max(0.0f, uv.scaleV - insetV * 2.0f);
+        }
+
+        out = ImageryAttachment{
+            id_,
+            provider_ ? provider_->id() : "",
+            textureKey,
+            tex,
+            uv.offsetU,
+            uv.offsetV,
+            uv.scaleU,
+            uv.scaleV,
+            opacity_,
+            z == preferredZoom
+                ? ImageryFallbackSource::Exact
+                : ImageryFallbackSource::Parent
+        };
+        return true;
+    }
+
+    return false;
+}
+
+bool BasemapLayer::buildTerrainPrimaryRenderCommands(Renderer& renderer,
+                                                     const TerrainLayer* terrainLayer,
+                                                     const std::vector<BasemapLayer*>& overlayLayers,
+                                                     RenderCommandList& commands) {
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "TerrainPrimary",
+        "ENTER terrain=%p vis=%d rd=%p inst=%d",
+        terrainLayer, terrainLayer ? terrainLayer->visible() : 0,
+        renderDevice_, renderDevice_ ? renderDevice_->supportsInstancing() : 0);
+#endif
+    if (!terrainLayer || !terrainLayer->visible() || !visible_) return false;
+    if (!renderDevice_ || !renderDevice_->supportsInstancing()) return false;
+
+    const std::vector<const TerrainTile*> terrainTiles =
+        terrainLayer->visibleLoadedTiles();
+#ifdef __ANDROID__
+    static int tplog = 0;
+    if (++tplog <= 5) {
+        __android_log_print(ANDROID_LOG_INFO, "TerrainPrimary",
+            "visibleLoaded=%zu cached=%d visible=%zu",
+            terrainTiles.size(),
+            terrainLayer->cachedTileCount(),
+            terrainLayer->visibleTiles().size());
+    }
+#endif
+    if (terrainTiles.empty()) return false;
+
+    constexpr int kGridSize = 64;
+    const int n = kGridSize + 1;
+    const auto& ellipsoid = Ellipsoid::WGS84();
+
+    int emitted = 0;
+    constexpr int kMaxTerrainDraws = 48;
+
+    for (const TerrainTile* terrainTile : terrainTiles) {
+        if (!terrainTile || !terrainTile->valid()) continue;
+        if (emitted >= kMaxTerrainDraws) break;
+
+        const Rectangle& bounds = terrainTile->bounds();
+        ImageryAttachment attachment;
+        if (!resolveAttachmentForBounds(bounds, terrainTile->key().z, attachment)) {
+            if (!placeholderTexture_ && renderDevice_) {
+                uint8_t white[4] = {255, 255, 255, 255};
+                TextureDesc desc;
+                desc.width = 1; desc.height = 1;
+                desc.format = TextureDesc::Format::RGBA8;
+                desc.data = white;
+                desc.minFilter = TextureDesc::Filter::Nearest;
+                desc.magFilter = TextureDesc::Filter::Nearest;
+                placeholderTexture_ = renderDevice_->createTexture(desc);
+            }
+            if (!placeholderTexture_) continue;
+            attachment.texture = placeholderTexture_.get();
+            attachment.uvOffsetU = 0.0f;
+            attachment.uvOffsetV = 0.0f;
+            attachment.uvScaleU = 1.0f;
+            attachment.uvScaleV = 1.0f;
+            attachment.opacity = 1.0f;
+        }
+
+        // cesium-native: use raw QM triangulation directly.
+        // parseToSurfaceTileMesh preserves the optimized mesh topology,
+        // oct-encoded normals, and proper edge skirts.
+        const auto& rawData = terrainTile->heightmap()->rawData;
+        std::unique_ptr<SurfaceTileMesh> qmMesh;
+        if (!rawData.empty()) {
+            qmMesh = QuantizedMeshParser::parseToSurfaceTileMesh(
+                rawData.data(), rawData.size(), bounds);
+        }
+        if (!qmMesh) {
+            // Fallback: regular grid with height sampling
+            struct TerrainGpuVertex { float pos[3]; float uv[2]; };
+            std::vector<TerrainGpuVertex> verts(n * n);
+            for (int y = 0; y < n; ++y) {
+                double v = static_cast<double>(y) / static_cast<double>(kGridSize);
+                for (int x = 0; x < n; ++x) {
+                    double u = static_cast<double>(x) / static_cast<double>(kGridSize);
+                    TileSurfaceVertex sv = TileSurface::vertexForUnitUv(bounds, u, v);
+                    Cartographic cart = ellipsoid.cartesianToCartographic(sv.ecef);
+                    double h = static_cast<double>(terrainTile->sampleHeight(
+                        cart.longitude(), cart.latitude()));
+                    Cartographic tc = Cartographic::fromRadians(
+                        cart.longitude(), cart.latitude(), h);
+                    Vec3 ecef = ellipsoid.cartographicToCartesian(tc);
+                    verts[y * n + x].pos[0] = static_cast<float>(ecef.x());
+                    verts[y * n + x].pos[1] = static_cast<float>(ecef.y());
+                    verts[y * n + x].pos[2] = static_cast<float>(ecef.z());
+                    verts[y * n + x].uv[0] = static_cast<float>(u);
+                    verts[y * n + x].uv[1] = static_cast<float>(v);
+                }
+            }
+            BufferDesc vbDesc;
+            vbDesc.size = verts.size() * sizeof(TerrainGpuVertex);
+            vbDesc.data = verts.data();
+            vbDesc.usage = BufferDesc::Usage::Static;
+            vbDesc.type = BufferDesc::Type::Vertex;
+            auto vbo = renderDevice_->createBuffer(vbDesc);
+            if (!vbo) continue;
+            auto cmd = renderer.makeTerrainTileCommand(
+                attachment.texture, vbo.get(), static_cast<int>(verts.size()));
+            cmd.surfaceTileUv = {attachment.uvOffsetU, attachment.uvOffsetV,
+                                 attachment.uvScaleU, attachment.uvScaleV};
+            cmd.surfaceTileOpacity = attachment.opacity;
+            cmd.surfaceTransitionOpacity = 1.0f;
+            cmd.surfaceGeneration = static_cast<float>(generation_);
+            cmd.frameId = layerPlan_.frameId;
+            cmd.generation = generation_;
+            commands.push_back(std::move(cmd));
+            frameBuffers_.push_back(std::move(vbo));
+            ++emitted;
+            continue;
+        }
+
+        // QM mesh: build VBO/IBO from irregular triangulation
+        const Vec3 localOrigin = meshCentroid(*qmMesh);
+        std::vector<SurfaceGpuVertex> gpuVerts = makeSurfaceGpuVertices(*qmMesh, localOrigin);
+
+        BufferDesc vbDesc;
+        vbDesc.size = gpuVerts.size() * sizeof(SurfaceGpuVertex);
+        vbDesc.data = gpuVerts.data();
+        vbDesc.usage = BufferDesc::Usage::Static;
+        vbDesc.type = BufferDesc::Type::Vertex;
+        auto vbo = renderDevice_->createBuffer(vbDesc);
+        if (!vbo) continue;
+
+        BufferDesc ibDesc;
+        ibDesc.size = qmMesh->indices.size() * sizeof(uint32_t);
+        ibDesc.data = qmMesh->indices.data();
+        ibDesc.usage = BufferDesc::Usage::Static;
+        ibDesc.type = BufferDesc::Type::Index;
+        auto ibo = renderDevice_->createBuffer(ibDesc);
+        if (!ibo) continue;
+
+        // Use the terrain shader but with per-tile IBO (QM triangulation)
+        RenderCommand cmd;
+        cmd.kind = RenderCommandKind::SurfaceTile;
+        cmd.owner = "terrain_tile";
+        cmd.pass = "color";
+        cmd.shader = renderer.terrainShader();
+        cmd.vertexBuffer = vbo.get();
+        cmd.indexBuffer = ibo.get();
+        cmd.indexCount = static_cast<int>(qmMesh->indices.size());
+        cmd.vertexStride = 20;
+        cmd.primitive = RenderCommand::PrimitiveType::Triangles;
+        cmd.indexType = RenderCommand::IndexType::UInt32;
+        cmd.depthTest = true;
+        cmd.depthWrite = true;
+        cmd.blend = false;
+        cmd.cullFace = true;
+        cmd.hasSurfaceTileUniforms = true;
+        cmd.surfaceHasWaterMask = 0.0f;
+        cmd.surfaceTileOrigin = {
+            static_cast<float>(localOrigin.x()),
+            static_cast<float>(localOrigin.y()),
+            static_cast<float>(localOrigin.z())
+        };
+        if (attachment.texture) cmd.textures.push_back(attachment.texture);
+        cmd.surfaceTileUv = {attachment.uvOffsetU, attachment.uvOffsetV,
+                             attachment.uvScaleU, attachment.uvScaleV};
+        cmd.surfaceTileOpacity = attachment.opacity;
+        cmd.surfaceTransitionOpacity = 1.0f;
+        cmd.surfaceGeneration = static_cast<float>(generation_);
+        cmd.frameId = layerPlan_.frameId;
+        cmd.generation = generation_;
+        commands.push_back(std::move(cmd));
+
+        // Keep buffers alive for this frame
+        frameBuffers_.push_back(std::move(vbo));
+        frameBuffers_.push_back(std::move(ibo));
+        ++emitted;
+    }
+
+    return emitted > 0;
+}
+
+void BasemapLayer::buildRenderCommands(Renderer& renderer,
+                                        const TerrainLayer* terrainLayer,
+                                        const std::vector<BasemapLayer*>& overlayLayers,
+                                        RenderCommandList& commands) {
     if (!visible_) return;
+    constexpr bool kTerrainPrimaryProbeEnabled = true;
 
     const double totalStartMs = perf::nowMs();
     double textureLookupMs = 0.0;
@@ -1681,6 +1999,12 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
     int instancedExactTextures = 0;
     int instancedParentTextures = 0;
     int instancedAtlasTiles = 0;
+    int blendedTileCount = 0;
+    int blendedExactTileCount = 0;
+    int blendedParentTileCount = 0;
+    int rawBlendedTileCount = 0;
+    float minEffectiveOpacity = 1.0f;
+    float rawMinEffectiveOpacity = 1.0f;
     size_t maxInstancesPerTexture = 0;
     SurfaceMeshBuildStats meshStats;
     int visited = 0;
@@ -1690,6 +2014,7 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
     const double meshBuildFrameBudgetMs = cameraMoving_ ? 2.0 : 6.0;
     int meshBuildDeferred = 0;
     int meshParentFallback = 0;
+    int meshParentCovered = 0;
     const size_t startCommands = commands.size();
     struct InstanceBatch {
         Texture* texture = nullptr;
@@ -1777,13 +2102,14 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
         ImageryAttachment commandAttachment = attachment;
         Rectangle commandBounds = bounds;
 
-        bool useInstancedEllipsoidForTile =
-            canUseInstancedEllipsoidSurface && key.z >= kInstancedSurfaceMinZoom;
-        if (useInstancedEllipsoidForTile && terrainLayer) {
+        bool useInstancedEllipsoidForTile = canUseInstancedEllipsoidSurface;
+
+        const TerrainTile* terrainOverlapTile = nullptr;
+        if (terrainLayer) {
             const double terrainLookupStartMs = perf::nowMs();
-            const TerrainTile* terrainTile = terrainLayer->findBestTileForBounds(commandBounds);
-            if (terrainTile && terrainTile->valid()) {
-                useInstancedEllipsoidForTile = false;
+            terrainOverlapTile = terrainLayer->findBestTileForBounds(commandBounds);
+            if (terrainOverlapTile && !terrainOverlapTile->valid()) {
+                terrainOverlapTile = nullptr;
             }
             meshStats.terrainLookupMs += perf::nowMs() - terrainLookupStartMs;
         }
@@ -1805,8 +2131,6 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
                 }
             }
             const Vec3 localOrigin = ellipsoidSurfaceOriginForBounds(commandBounds);
-            const Vec3 cameraRelativeToTileOrigin =
-                lastCameraPosition_ - localOrigin;
             SurfaceTileInstanceGpu instance{};
             instance.tileRect[0] = static_cast<float>(commandBounds.west());
             instance.tileRect[1] = static_cast<float>(commandBounds.south());
@@ -1819,20 +2143,26 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
             instance.localOrigin[0] = static_cast<float>(localOrigin.x());
             instance.localOrigin[1] = static_cast<float>(localOrigin.y());
             instance.localOrigin[2] = static_cast<float>(localOrigin.z());
-            instance.cameraRelativeOrigin[0] =
-                static_cast<float>(cameraRelativeToTileOrigin.x());
-            instance.cameraRelativeOrigin[1] =
-                static_cast<float>(cameraRelativeToTileOrigin.y());
-            instance.cameraRelativeOrigin[2] =
-                static_cast<float>(cameraRelativeToTileOrigin.z());
             instance.opacityTransitionWaterFlags[0] = commandAttachment.opacity;
-            instance.opacityTransitionWaterFlags[1] = renderTile.transitionOpacity;
+            const float rawTransitionOpacity =
+                std::clamp(renderTile.transitionOpacity, 0.0f, 1.0f);
+            const float renderTransitionOpacity =
+                transitionOpacityForSurfaceDraw(
+                    commandAttachment, rawTransitionOpacity, cameraMoving_);
+            instance.opacityTransitionWaterFlags[1] = renderTransitionOpacity;
             instance.opacityTransitionWaterFlags[2] = 0.0f;
             instance.opacityTransitionWaterFlags[3] = 0.0f;
-            writeRelativeCorner(instance.cornerNw, commandBounds, 0.0, 0.0, localOrigin);
-            writeRelativeCorner(instance.cornerNe, commandBounds, 1.0, 0.0, localOrigin);
-            writeRelativeCorner(instance.cornerSw, commandBounds, 0.0, 1.0, localOrigin);
-            writeRelativeCorner(instance.cornerSe, commandBounds, 1.0, 1.0, localOrigin);
+            if (terrainOverlapTile) {
+                writeRelativeCornerWithTerrain(instance.cornerNw, commandBounds, 0.0, 0.0, localOrigin, terrainOverlapTile);
+                writeRelativeCornerWithTerrain(instance.cornerNe, commandBounds, 1.0, 0.0, localOrigin, terrainOverlapTile);
+                writeRelativeCornerWithTerrain(instance.cornerSw, commandBounds, 0.0, 1.0, localOrigin, terrainOverlapTile);
+                writeRelativeCornerWithTerrain(instance.cornerSe, commandBounds, 1.0, 1.0, localOrigin, terrainOverlapTile);
+            } else {
+                writeRelativeCorner(instance.cornerNw, commandBounds, 0.0, 0.0, localOrigin);
+                writeRelativeCorner(instance.cornerNe, commandBounds, 1.0, 0.0, localOrigin);
+                writeRelativeCorner(instance.cornerSw, commandBounds, 0.0, 1.0, localOrigin);
+                writeRelativeCorner(instance.cornerSe, commandBounds, 1.0, 1.0, localOrigin);
+            }
 
             auto [it, inserted] = instanceBatchByTexture.emplace(
                 commandAttachment.texture, instanceBatches.size());
@@ -1851,107 +2181,30 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
             } else {
                 ++instancedParentTextures;
             }
+            const float rawEffectiveOpacity =
+                commandAttachment.opacity * rawTransitionOpacity;
+            if (rawEffectiveOpacity < 0.999f) {
+                ++rawBlendedTileCount;
+                rawMinEffectiveOpacity =
+                    std::min(rawMinEffectiveOpacity, rawEffectiveOpacity);
+            }
             const float effectiveOpacity =
-                commandAttachment.opacity *
-                std::clamp(renderTile.transitionOpacity, 0.0f, 1.0f);
+                commandAttachment.opacity * renderTransitionOpacity;
             batch.blend = batch.blend || effectiveOpacity < 0.999f;
+            if (effectiveOpacity < 0.999f) {
+                ++blendedTileCount;
+                minEffectiveOpacity = std::min(minEffectiveOpacity, effectiveOpacity);
+                if (commandAttachment.fallbackSource == ImageryFallbackSource::Exact) {
+                    ++blendedExactTileCount;
+                } else {
+                    ++blendedParentTileCount;
+                }
+            }
             ++emitted;
             continue;
         }
 
-        SurfaceGpuMesh* gpuMesh =
-            findSurfaceGpuMesh(key, bounds, terrainLayer, &meshStats);
-
-        if (!gpuMesh &&
-            meshBuildBudget > 0 &&
-            meshStats.totalMs < meshBuildFrameBudgetMs) {
-            gpuMesh = getOrCreateSurfaceGpuMesh(key, bounds, terrainLayer, &meshStats);
-            if (gpuMesh) {
-                --meshBuildBudget;
-            }
-        }
-        if (!gpuMesh) {
-            ++meshBuildDeferred;
-            TileKey parentKey = key;
-            while (parentKey.z > tileScheme_->minZoom()) {
-                parentKey = TilePlanBuilder::parentKey(parentKey);
-                if (!emittedMeshFallbackTargets.insert(parentKey).second) {
-                    gpuMesh = nullptr;
-                    break;
-                }
-                Rectangle parentBounds = tileScheme_->tileToRectangle(parentKey);
-                gpuMesh = findSurfaceGpuMesh(parentKey, parentBounds, terrainLayer, &meshStats);
-                if (!gpuMesh) {
-                    emittedMeshFallbackTargets.erase(parentKey);
-                    continue;
-                }
-                TileKey parentTextureKey = parentKey;
-                Texture* parentTexture = textureCache_.get(parentTextureKey);
-                if (!parentTexture) {
-                    TileKey fallbackTextureKey = parentTextureKey;
-                    parentTexture = findFallbackTexture(parentTextureKey, fallbackTextureKey);
-                    parentTextureKey = fallbackTextureKey;
-                }
-                if (!parentTexture) {
-                    emittedMeshFallbackTargets.erase(parentKey);
-                    gpuMesh = nullptr;
-                    continue;
-                }
-                tex = parentTexture;
-                commandBounds = parentBounds;
-                Rectangle parentTextureBounds = tileScheme_->tileToRectangle(parentTextureKey);
-                TileTextureWindow parentUv =
-                    TileSurface::textureWindow(parentBounds, parentTextureBounds);
-                commandAttachment.textureKey = parentTextureKey;
-                commandAttachment.texture = parentTexture;
-                commandAttachment.uvOffsetU = parentUv.offsetU;
-                commandAttachment.uvOffsetV = parentUv.offsetV;
-                commandAttachment.uvScaleU = parentUv.scaleU;
-                commandAttachment.uvScaleV = parentUv.scaleV;
-                commandAttachment.fallbackSource = ImageryFallbackSource::Parent;
-                ++meshParentFallback;
-                break;
-            }
-        }
-
-        if (!gpuMesh) continue;
-
-        const double commandStartMs = perf::nowMs();
-        auto cmd = renderer.makeSurfaceTileCommand(
-            commandAttachment.texture,
-            gpuMesh->waterMaskTexture.get(),
-            gpuMesh->vertexBuffer.get(),
-            gpuMesh->indexBuffer.get(),
-            gpuMesh->indexCount,
-            commandAttachment.uvOffsetU,
-            commandAttachment.uvOffsetV,
-            commandAttachment.uvScaleU,
-            commandAttachment.uvScaleV);
-        cmd.surfaceTileOpacity = commandAttachment.opacity;
-        cmd.surfaceTransitionOpacity = renderTile.transitionOpacity;
-        const float effectiveOpacity =
-            commandAttachment.opacity * std::clamp(renderTile.transitionOpacity, 0.0f, 1.0f);
-        cmd.blend = effectiveOpacity < 0.999f;
-        cmd.surfaceGeneration = static_cast<float>(generation_);
-        const Vec3 cameraRelativeToTileOrigin =
-            lastCameraPosition_ - gpuMesh->localOriginEcef;
-        cmd.surfaceCameraRelativeOrigin = {
-            static_cast<float>(cameraRelativeToTileOrigin.x()),
-            static_cast<float>(cameraRelativeToTileOrigin.y()),
-            static_cast<float>(cameraRelativeToTileOrigin.z())
-        };
-        // Pass tile centroid for GPU geodetic normal computation
-        cmd.surfaceTileOrigin = {
-            static_cast<float>(gpuMesh->localOriginEcef.x()),
-            static_cast<float>(gpuMesh->localOriginEcef.y()),
-            static_cast<float>(gpuMesh->localOriginEcef.z())
-        };
-        cmd.frameId = layerPlan_.frameId;
-        cmd.generation = generation_;
-
-        commands.push_back(std::move(cmd));
-        ++emitted;
-        commandMs += perf::nowMs() - commandStartMs;
+        continue;  // non-instanced path removed — instanced-only rendering
     }
 
     for (const InstanceBatch& batch : instanceBatches) {
@@ -1995,7 +2248,7 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
             static_cast<int>(batch.instances.size()));
         cmd.blend = batch.blend;
         cmd.surfaceTileOpacity = 1.0f;
-        cmd.surfaceTransitionOpacity = batch.blend ? 0.5f : 1.0f;
+        cmd.surfaceTransitionOpacity = 1.0f;
         cmd.surfaceGeneration = static_cast<float>(generation_);
         cmd.frameId = layerPlan_.frameId;
         cmd.generation = generation_;
@@ -2010,6 +2263,16 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
         }
     }
 
+    int terrainPrimaryCommandCount = 0;
+    {
+        const size_t beforeTerrainPrimary = commands.size();
+        if (buildTerrainPrimaryRenderCommands(
+                renderer, terrainLayer, overlayLayers, commands)) {
+            terrainPrimaryCommandCount =
+                static_cast<int>(commands.size() - beforeTerrainPrimary);
+        }
+    }
+
     const size_t textureSplitOverhead =
         instancedTileCount > 0 && instanceBatches.size() > 0
             ? instanceBatches.size() - 1
@@ -2019,17 +2282,49 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
             ? static_cast<double>(instancedTileCount) /
                   static_cast<double>(instanceBatches.size())
             : 0.0;
+    const bool gapProbeActive =
+        cameraMoving_ &&
+        (layerPlan_.missingTileCount > 0 ||
+         missingTexture > 0 ||
+         meshBuildDeferred > 0 ||
+         meshParentCovered > 0 ||
+         blendedTileCount > 0 ||
+         rawBlendedTileCount > 0);
+    if (!gapProbeActive) {
+        minEffectiveOpacity = 1.0f;
+        rawMinEffectiveOpacity = 1.0f;
+    }
 
-    char detail[768];
+    char detail[1024];
     std::snprintf(detail, sizeof(detail),
-        "visited=%d emitted=%d missingTex=%d deferred=%d meshParent=%d moving=%d camH=%.0f instTiles=%d instAtlas=%d instBatch=%zu instAvg=%.1f instMax=%zu instExact=%d instParent=%d texSplit=%zu instCreate=%d instUpdate=%d instBytes=%zu instBuf=%.2f meshBudgetMs=%.1f cmdDelta=%zu tex=%.2f bounds=%.2f uv=%.2f meshTotal=%.2f hit=%d miss=%d terrLookup=%.2f key=%.2f meshBuild=%.2f centroid=%.2f verts=%.2f vb=%.2f ib=%.2f wm=%.2f cmd=%.2f cache=%zu instCache=%zu",
+        "visited=%d emitted=%d terrainPrimary=%d missingTex=%d deferred=%d meshParent=%d meshCovered=%d moving=%d gapProbe=%d camH=%.0f desired=%zu renderRefs=%zu planMissing=%d parentFallback=%d transition=%d blended=%d rawBlended=%d blendedExact=%d blendedParent=%d minOpacity=%.3f rawMinOpacity=%.3f ancestorRetained=%d kicked=%d qFade=%d qRender=%d qWalk=%d qNot=%d instTiles=%d instAtlas=%d instBatch=%zu instAvg=%.1f instMax=%zu instExact=%d instParent=%d texSplit=%zu instCreate=%d instUpdate=%d instBytes=%zu instBuf=%.2f meshBudget=%d meshBudgetMs=%.1f cmdDelta=%zu tex=%.2f bounds=%.2f uv=%.2f meshTotal=%.2f hit=%d miss=%d terrLookup=%.2f key=%.2f meshBuild=%.2f centroid=%.2f verts=%.2f vb=%.2f ib=%.2f wm=%.2f cmd=%.2f cache=%zu instCache=%zu",
         visited,
         emitted,
+        terrainPrimaryCommandCount,
         missingTexture,
         meshBuildDeferred,
         meshParentFallback,
+        meshParentCovered,
         cameraMoving_ ? 1 : 0,
+        gapProbeActive ? 1 : 0,
         cameraHeightMeters,
+        layerPlan_.desiredTiles.size(),
+        layerPlan_.renderTiles.size(),
+        layerPlan_.missingTileCount,
+        layerPlan_.parentFallbackReadyTileCount,
+        layerPlan_.transitionTileCount,
+        blendedTileCount,
+        rawBlendedTileCount,
+        blendedExactTileCount,
+        blendedParentTileCount,
+        minEffectiveOpacity,
+        rawMinEffectiveOpacity,
+        layerPlan_.ancestorRetainedTileCount,
+        layerPlan_.kickedTileCount,
+        layerPlan_.quadtreeFadingNodeCount,
+        layerPlan_.quadtreeRenderingNodeCount,
+        layerPlan_.quadtreeWalkthroughNodeCount,
+        layerPlan_.quadtreeNotRenderingNodeCount,
         instancedTileCount,
         instancedAtlasTiles,
         instanceBatches.size(),
@@ -2042,6 +2337,7 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
         instanceBufferUpdates,
         instanceBufferBytes,
         instanceBufferMs,
+        meshBuildBudget,
         meshBuildFrameBudgetMs,
         commands.size() - startCommands,
         textureLookupMs,
@@ -2065,6 +2361,40 @@ void BasemapLayer::buildRenderCommands(Renderer& renderer,
                     "BasemapLayer.buildRenderCommands",
                     perf::nowMs() - totalStartMs,
                     detail);
+
+#ifdef __ANDROID__
+    if (gapProbeActive) {
+        __android_log_print(ANDROID_LOG_INFO, "BasemapGapProbe",
+            "frame=%llu layer=%s moving=1 meshBudget=%d meshBudgetMs=%.1f camH=%.0f desired=%zu renderRefs=%zu emitted=%d "
+            "planMissing=%d missingTex=%d deferred=%d meshParent=%d meshCovered=%d parentFallback=%d transition=%d "
+            "blended=%d rawBlended=%d blendedExact=%d blendedParent=%d minOpacity=%.3f rawMinOpacity=%.3f "
+            "ancestorRetained=%d kicked=%d qFade=%d",
+            static_cast<unsigned long long>(layerPlan_.frameId),
+            id_.c_str(),
+            meshBuildBudget,
+            meshBuildFrameBudgetMs,
+            cameraHeightMeters,
+            layerPlan_.desiredTiles.size(),
+            layerPlan_.renderTiles.size(),
+            emitted,
+            layerPlan_.missingTileCount,
+            missingTexture,
+            meshBuildDeferred,
+            meshParentFallback,
+            meshParentCovered,
+            layerPlan_.parentFallbackReadyTileCount,
+            layerPlan_.transitionTileCount,
+            blendedTileCount,
+            rawBlendedTileCount,
+            blendedExactTileCount,
+            blendedParentTileCount,
+            minEffectiveOpacity,
+            rawMinEffectiveOpacity,
+            layerPlan_.ancestorRetainedTileCount,
+            layerPlan_.kickedTileCount,
+            layerPlan_.quadtreeFadingNodeCount);
+    }
+#endif
 }
 
 } // namespace earth_engine

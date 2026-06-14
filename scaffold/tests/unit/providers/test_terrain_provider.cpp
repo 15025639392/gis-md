@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <cmath>
 #include "earth_engine/providers/HeightmapTerrainProvider.h"
+#include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/tiling/TileKey.h"
@@ -36,6 +37,45 @@ TEST(HeightmapTerrainProviderTest, ZoomRange) {
     provider.setZoomRange(4, 10);
     EXPECT_EQ(4, provider.minZoom());
     EXPECT_EQ(10, provider.maxZoom());
+}
+
+TEST(QuantizedMeshTerrainProviderTest, ConfiguresFromCesiumLayerJson) {
+    QuantizedMeshTerrainProvider provider("https://example.com/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "tilejson": "2.1.0",
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "minzoom": 0,
+      "maxzoom": 12,
+      "available": [[{"startX":0,"startY":0,"endX":1,"endY":0}]]
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(layerJson, "http://192.168.1.8:8092/layer.json"));
+    EXPECT_EQ(0, provider.minZoom());
+    EXPECT_EQ(12, provider.maxZoom());
+    EXPECT_EQ("http://192.168.1.8:8092/{z}/{x}/{y}.terrain", provider.urlTemplate());
+    EXPECT_EQ("http://192.168.1.8:8092/12/6487/2685.terrain",
+              provider.buildUrl(TileKey{"Geographic-TMS", 12, 6487, 2685}));
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 1, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 12, 6487, 2685}));
+}
+
+TEST(QuantizedMeshTerrainProviderTest, NormalizesDotSlashRelativeTileTemplate) {
+    QuantizedMeshTerrainProvider provider("https://example.com/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["./{z}/{x}/{y}.terrain"],
+      "minzoom": 0,
+      "maxzoom": 12
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(layerJson, "http://192.168.1.8:8092/layer.json"));
+    EXPECT_EQ("http://192.168.1.8:8092/{z}/{x}/{y}.terrain",
+              provider.urlTemplate());
 }
 
 // ============================================================

@@ -6,6 +6,7 @@
 #include "../core/cache/HttpCache.h"
 #include "../platform/bridge/PlatformBridge.h"
 #include "../terrain/QuantizedMeshParser.h"
+#include <nlohmann/json.hpp>
 
 #ifndef EARTH_ENGINE_HAS_LIBCURL
 #if !defined(ANDROID) && __has_include(<curl/curl.h>)
@@ -61,6 +62,101 @@ void QuantizedMeshTerrainProvider::setPlatformBridge(PlatformBridge* bridge) {
 void QuantizedMeshTerrainProvider::setZoomRange(int minZ, int maxZ) {
     minZoom_ = minZ;
     maxZoom_ = maxZ;
+}
+
+namespace {
+
+std::string layerBaseUrl(const std::string& layerJsonUrl) {
+    const size_t slash = layerJsonUrl.find_last_of('/');
+    if (slash == std::string::npos) return "";
+    return layerJsonUrl.substr(0, slash + 1);
+}
+
+std::string resolveTerrainTemplate(const std::string& layerJsonUrl,
+                                   const std::string& tileTemplate) {
+    std::string normalized = tileTemplate;
+    while (normalized.rfind("./", 0) == 0) {
+        normalized.erase(0, 2);
+    }
+    if (tileTemplate.rfind("http://", 0) == 0 ||
+        tileTemplate.rfind("https://", 0) == 0 ||
+        tileTemplate.rfind("file://", 0) == 0) {
+        return tileTemplate;
+    }
+    return layerBaseUrl(layerJsonUrl) + normalized;
+}
+
+} // namespace
+
+bool QuantizedMeshTerrainProvider::configureFromLayerJsonUrl(
+    const std::string& layerJsonUrl) {
+    auto bytes = httpGet(layerJsonUrl);
+    if (bytes.empty()) return false;
+    std::string body(bytes.begin(), bytes.end());
+    return configureFromLayerJson(body, layerJsonUrl);
+}
+
+bool QuantizedMeshTerrainProvider::configureFromLayerJson(
+    const std::string& layerJson,
+    const std::string& layerJsonUrl) {
+    try {
+        auto j = nlohmann::json::parse(layerJson);
+        if (j.value("format", "") != "quantized-mesh-1.0") return false;
+        if (j.value("projection", "EPSG:4326") != "EPSG:4326") return false;
+        if (j.value("scheme", "tms") != "tms") return false;
+
+        if (j.contains("tiles") && j["tiles"].is_array() && !j["tiles"].empty() &&
+            j["tiles"][0].is_string()) {
+            urlTemplate_ = resolveTerrainTemplate(layerJsonUrl,
+                                                  j["tiles"][0].get<std::string>());
+        }
+        minZoom_ = j.value("minzoom", minZoom_);
+        maxZoom_ = j.value("maxzoom", maxZoom_);
+        layerJsonUrl_ = layerJsonUrl;
+        availabilityRanges_.clear();
+        if (j.contains("available") && j["available"].is_array()) {
+            availabilityRanges_.resize(j["available"].size());
+            for (size_t level = 0; level < j["available"].size(); ++level) {
+                const auto& levelRanges = j["available"][level];
+                if (!levelRanges.is_array()) continue;
+                for (const auto& range : levelRanges) {
+                    if (!range.is_object()) continue;
+                    availabilityRanges_[level].push_back({
+                        range.value("startX", 0),
+                        range.value("startY", 0),
+                        range.value("endX", 0),
+                        range.value("endY", 0)
+                    });
+                }
+            }
+        }
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_INFO, "QMTerrain",
+            "layer.json OK: url=%s z=%d-%d ranges=%zu",
+            urlTemplate_.c_str(), minZoom_, maxZoom_, availabilityRanges_.size());
+#endif
+        return !urlTemplate_.empty();
+    } catch (...) {
+        return false;
+    }
+}
+
+bool QuantizedMeshTerrainProvider::supportsTile(const TileKey& key) const {
+    if (key.z < minZoom_ || key.z > maxZoom_) return false;
+    if (key.schemeId != schemeId()) return false;
+    if (availabilityRanges_.empty()) return true;
+    if (key.z < 0 || static_cast<size_t>(key.z) >= availabilityRanges_.size()) {
+        return false;
+    }
+    const auto& ranges = availabilityRanges_[static_cast<size_t>(key.z)];
+    if (ranges.empty()) return false;
+    for (const auto& range : ranges) {
+        if (key.x >= range[0] && key.y >= range[1] &&
+            key.x <= range[2] && key.y <= range[3]) {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::string QuantizedMeshTerrainProvider::id() const {

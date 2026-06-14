@@ -27,6 +27,7 @@ class Buffer;
 struct FrameState;
 class TileScheme;
 class TerrainLayer;
+struct RenderTileRef;
 
 /// 底图图层。
 /// 管理从 TilePlan 计算 → Provider 请求 → TextureCache → RenderCommands 的完整链路。
@@ -80,6 +81,16 @@ public:
     void buildRenderCommands(Renderer& renderer,
                              const TerrainLayer* terrainLayer,
                              RenderCommandList& commands);
+    void buildRenderCommands(Renderer& renderer,
+                             const TerrainLayer* terrainLayer,
+                             const std::vector<BasemapLayer*>& overlayLayers,
+                             RenderCommandList& commands);
+    bool resolveAttachmentForRenderTile(const RenderTileRef& renderTile,
+                                        ImageryAttachment& out);
+    bool buildTerrainPrimaryRenderCommands(Renderer& renderer,
+                                           const TerrainLayer* terrainLayer,
+                                           const std::vector<BasemapLayer*>& overlayLayers,
+                                           RenderCommandList& commands);
 
     /// 获取统计信息
     int visibleTileCount() const { return static_cast<int>(tilePlan_.visibleTiles.size()); }
@@ -153,17 +164,22 @@ private:
     bool uploadImageryAtlasTile(const TileKey& key, const DecodedImage& image);
     void resetImageryAtlas(int tileSize);
     bool findRequestTileForMissingTexture(const TileKey& target, TileKey& requestKey) const;
+    bool resolveAttachmentForBounds(const Rectangle& bounds,
+                                    int preferredZoom,
+                                    ImageryAttachment& out);
     bool isCurrentDesiredTile(const TileKey& key) const;
     bool isCurrentPlanTileOrAncestor(const TileKey& key) const;
     struct SurfaceGpuMesh;
     struct SurfaceMeshBuildStats;
     std::string surfaceMeshCacheKeyForTile(const TileKey& key,
                                            const Rectangle& bounds,
-                                           const TerrainLayer* terrainLayer) const;
+                                           const TerrainLayer* terrainLayer,
+                                           bool useRawQuantizedMesh = true) const;
     SurfaceGpuMesh* findSurfaceGpuMesh(const TileKey& key,
                                        const Rectangle& bounds,
                                        const TerrainLayer* terrainLayer,
-                                       SurfaceMeshBuildStats* stats = nullptr);
+                                       SurfaceMeshBuildStats* stats = nullptr,
+                                       bool useRawQuantizedMesh = true);
     bool buildRenderableRefForTile(const TileKey& target,
                                    float transitionOpacity,
                                    RenderTileRef& out);
@@ -226,7 +242,8 @@ private:
     SurfaceGpuMesh* getOrCreateSurfaceGpuMesh(const TileKey& key,
                                               const Rectangle& bounds,
                                               const TerrainLayer* terrainLayer,
-                                              SurfaceMeshBuildStats* stats = nullptr);
+                                              SurfaceMeshBuildStats* stats = nullptr,
+                                              bool useRawQuantizedMesh = true);
     void evictUnusedSurfaceMeshes();
     std::string tileCacheKey(const TileKey& key) const;
 
@@ -238,6 +255,8 @@ private:
     std::unique_ptr<ImageryProvider> provider_;
     std::unique_ptr<TileScheme> tileScheme_;
     RenderDevice* renderDevice_;
+    std::unique_ptr<Texture> placeholderTexture_;  // 1x1 white fallback
+    std::vector<std::unique_ptr<Buffer>> frameBuffers_;  // per-frame VBOs
     TileTextureCache textureCache_;
     std::unordered_map<int, ImageryAtlas> imageryAtlases_;
     std::unordered_map<std::string, SurfaceGpuMesh> surfaceMeshCache_;

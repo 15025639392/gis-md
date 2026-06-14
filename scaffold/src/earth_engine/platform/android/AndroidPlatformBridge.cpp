@@ -143,10 +143,13 @@ std::unique_ptr<HttpRequest> AndroidPlatformBridge::get(
     const std::string& url,
     std::function<void(int, std::vector<uint8_t>)> callback) {
 
-    // 同步执行 HTTP（在 XYZImageryProvider 的后台线程中调用）
-    auto body = androidHttpGet(url);
-    int code = body.empty() ? -1 : 200;
-    callback(code, std::move(body));
+    // Always run Java networking off the Android main thread. Some callers
+    // synchronously wait for this callback during startup metadata probes.
+    std::thread([url, callback = std::move(callback)]() mutable {
+        auto body = androidHttpGet(url);
+        int code = body.empty() ? -1 : 200;
+        callback(code, std::move(body));
+    }).detach();
 
     return std::make_unique<AndroidHttpRequest>();
 }
