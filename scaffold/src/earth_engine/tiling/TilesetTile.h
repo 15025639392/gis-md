@@ -5,6 +5,7 @@
 #include "../tiling/SurfaceTile.h"
 #include "../providers/TerrainProvider.h"
 #include "../renderer/RenderDevice.h"
+#include "TileScheme.h"
 
 #include <memory>
 #include <vector>
@@ -21,6 +22,10 @@ struct TilesetTile {
     TileKey key;
     Rectangle bounds;          // geographic radians
     double geometricError = 0.0;
+
+    // ---- Tree structure (cesium-native parent/child) ----
+    TilesetTile* parent = nullptr;
+    std::vector<std::unique_ptr<TilesetTile>> children;
 
     // ---- Content (geometry) ----
     /// QM raw binary data (lazily decoded to SurfaceTileMesh)
@@ -46,7 +51,35 @@ struct TilesetTile {
     bool subdivisionDesired = false;
 
     TilesetTile() = default;
-    TilesetTile(TileKey k, Rectangle b) : key(std::move(k)), bounds(b) {}
+    TilesetTile(TileKey k, Rectangle b, TilesetTile* p = nullptr)
+        : key(std::move(k)), bounds(b), parent(p) {}
+
+    /// cesium-native: create 4 child tiles with inherited geometric error
+    void createChildren(const TileScheme& scheme) {
+        if (!children.empty() || key.z >= 22) return;
+        int cz = key.z + 1;
+        int cx = key.x * 2, cy = key.y * 2;
+        double childError = geometricError * 0.5;
+        for (int dy = 0; dy < 2; ++dy) {
+            for (int dx = 0; dx < 2; ++dx) {
+                TileKey childKey{key.schemeId, cz, cx + dx, cy + dy};
+                auto child = std::make_unique<TilesetTile>(
+                    childKey, scheme.tileToRectangle(childKey), this);
+                child->geometricError = childError;
+                children.push_back(std::move(child));
+            }
+        }
+    }
+
+    /// Find the deepest ancestor with a ready mesh (for upsampling)
+    const TilesetTile* findUpsampleAncestor() const {
+        const TilesetTile* p = parent;
+        while (p) {
+            if (p->meshReady && p->gpuVertexBuffer) return p;
+            p = p->parent;
+        }
+        return nullptr;
+    }
 };
 
 } // namespace earth_engine

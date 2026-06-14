@@ -195,7 +195,12 @@ void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
     if (!tile.meshReady) {
         ensureTileMesh(tile);
     }
-    if (!tile.meshReady || !tile.gpuVertexBuffer) return;
+    // cesium-native upsampling: if mesh isn't ready, try parent
+    const TilesetTile* renderTile = &tile;
+    if (!renderTile->meshReady || !renderTile->gpuVertexBuffer) {
+        renderTile = tile.findUpsampleAncestor();
+    }
+    if (!renderTile || !renderTile->meshReady || !renderTile->gpuVertexBuffer) return;
 
     // Update raster overlays
     Texture* tex = nullptr;
@@ -225,14 +230,14 @@ void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
 
     auto cmd = renderer.makeSurfaceTileCommand(
         tex,
-        tile.gpuVertexBuffer.get(),
-        tile.gpuIndexBuffer.get(),
-        static_cast<int>(tile.mesh->indices.size()));
+        renderTile->gpuVertexBuffer.get(),
+        renderTile->gpuIndexBuffer.get(),
+        static_cast<int>(renderTile->mesh->indices.size()));
     cmd.surfaceTileUv = {uvOffU, uvOffV, uvScaleU, uvScaleV};
     cmd.surfaceTileOrigin = {
-        static_cast<float>(tile.localOrigin.x()),
-        static_cast<float>(tile.localOrigin.y()),
-        static_cast<float>(tile.localOrigin.z())
+        static_cast<float>(renderTile->localOrigin.x()),
+        static_cast<float>(renderTile->localOrigin.y()),
+        static_cast<float>(renderTile->localOrigin.z())
     };
     cmd.surfaceTileOpacity = 1.0f;
     cmd.surfaceTransitionOpacity = 1.0f;
@@ -244,8 +249,9 @@ void Tileset::buildRenderCommands(Renderer& renderer,
                                    RenderCommandList& commands) {
     ++frameNumber_;
 
-    // Build tiles from visible keys
+    // Build tiles from visible keys, creating parent chain as needed
     for (const TileKey& key : tilePlan_.visibleTiles) {
+        // Ensure the full parent chain exists (cesium-native tree structure)
         std::string ck = terrainCacheKey(key);
         auto& tile = tiles_[ck];
         if (!tile) {
@@ -253,12 +259,35 @@ void Tileset::buildRenderCommands(Renderer& renderer,
             constexpr double kMaxGE = 6378137.0 * 0.25 / 65.0;
             tile->geometricError = 8.0 * kMaxGE * tile->bounds.width();
             tile->rasterOverlays.resize(imageryLayers_.size());
+
+            // Link to parent chain
+            {
+                TilesetTile* current = tile.get();
+                TileKey pk = key;
+                while (pk.z > 0) {
+                    pk = TileKey{pk.schemeId, pk.z - 1, pk.x >> 1, pk.y >> 1};
+                    std::string pck = terrainCacheKey(pk);
+                    auto& parentPtr = tiles_[pck];
+                    if (!parentPtr) {
+                        parentPtr = std::make_unique<TilesetTile>(
+                            pk, tileScheme_->tileToRectangle(pk));
+                        parentPtr->geometricError = current->geometricError * 2.0;
+                        parentPtr->rasterOverlays.resize(imageryLayers_.size());
+                    }
+                    // Link parent ↔ child
+                    if (current->parent == nullptr && parentPtr) {
+                        current->parent = parentPtr.get();
+                        parentPtr->lastUsedFrame = frameNumber_;
+                    }
+                    current = parentPtr.get();
+                }
+            }
         }
         tile->lastUsedFrame = frameNumber_;
         buildTileDrawCommand(renderer, *tile, commands);
     }
 
-    // cesium-native LRU eviction: purge tiles not used recently
+    // cesium-native LRU eviction with cascading to children
     evictUnusedTiles();
 }
 
@@ -274,10 +303,31 @@ void Tileset::evictUnusedTiles() {
     std::sort(entries.begin(), entries.end(),
         [](const auto& a, const auto& b) { return a.second < b.second; });
 
-    // Evict oldest tiles down to kMaxCachedTiles
+    // cesium-native: when a parent is evicted, evict its children too.
+    // Mark children of evicted tiles for removal, even if recently used.
+    std::unordered_set<std::string> cascadeRemove;
     size_t toRemove = tiles_.size() - kMaxCachedTiles;
     for (size_t i = 0; i < toRemove && i < entries.size(); ++i) {
-        tiles_.erase(entries[i].first);
+        const std::string& ck = entries[i].first;
+        cascadeRemove.insert(ck);
+        // Walk children and mark them for removal
+        std::function<void(TilesetTile*)> markChildren = [&](TilesetTile* t) {
+            if (!t) return;
+            for (auto& child : t->children) {
+                std::string childCk = terrainCacheKey(child->key);
+                cascadeRemove.insert(childCk);
+                markChildren(child.get());
+            }
+        };
+        auto it = tiles_.find(ck);
+        if (it != tiles_.end()) {
+            markChildren(it->second.get());
+        }
+    }
+
+    // Evict marked tiles
+    for (const auto& ck : cascadeRemove) {
+        tiles_.erase(ck);
     }
 }
 
