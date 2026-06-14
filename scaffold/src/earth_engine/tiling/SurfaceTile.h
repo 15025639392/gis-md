@@ -68,6 +68,8 @@ struct SurfaceTileMesh {
     SurfaceTileSampling sampling = SurfaceTileSampling::WebMercatorVToWgs84Ecef;
     SkirtMetadata skirtMeta;
     WaterMask waterMask;
+    // cesium-native: availability rectangles from QM metadata (extension ID=4)
+    std::vector<std::array<int, 4>> metadataAvailability;
 };
 
 struct SurfaceNormalMap {

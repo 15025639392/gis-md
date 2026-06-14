@@ -216,14 +216,22 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
         });
 }
 
+void QuantizedMeshTerrainProvider::addAvailabilityRects(
+    int level, const std::vector<std::array<int, 4>>& rects) {
+    if (level < 0) return;
+    if (static_cast<size_t>(level) >= availabilityRanges_.size()) {
+        availabilityRanges_.resize(static_cast<size_t>(level) + 1);
+    }
+    auto& ranges = availabilityRanges_[static_cast<size_t>(level)];
+    for (const auto& r : rects) {
+        ranges.push_back(r);
+    }
+}
+
 std::unique_ptr<DecodedHeightmap> QuantizedMeshTerrainProvider::decodeTile(
     const uint8_t* data, size_t len) {
     // Rasterize to regular heightmap grid for sampleHeight queries
     auto hm = QuantizedMeshParser::parseAndRasterize(data, len, tileSize_ - 1);
-#ifdef __ANDROID__
-    __android_log_print(ANDROID_LOG_INFO, "QMTerrain",
-        "decodeTile: len=%zu result=%s", len, hm ? "OK" : "FAIL");
-#endif
     if (!hm) return nullptr;
 
     // Preserve raw binary for on-demand triangulated mesh reconstruction

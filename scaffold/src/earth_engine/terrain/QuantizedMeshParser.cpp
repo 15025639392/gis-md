@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstring>
 #include <glm/glm.hpp>
+#include <nlohmann/json.hpp>
 
 namespace earth_engine {
 namespace {
@@ -344,6 +345,8 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     };
     auto west  = readEdge(), south = readEdge(), east = readEdge(), north = readEdge();
 
+    auto mesh = std::make_unique<SurfaceTileMesh>();
+
     // --- Parse extensions (oct-encoded normals, water mask, metadata) ---
     WaterMask waterMask;
     std::vector<Vec3> octNormals;  // decoded from extension ID=1
@@ -388,6 +391,25 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
             uint8_t v = data[offset];
             waterMask.allWater = (v != 0);
             waterMask.allLand = !waterMask.allWater;
+        } else if (extId == 4 && extLen > 0) {
+            // cesium-native: metadata JSON with availability rectangles
+            std::string metadataJson(reinterpret_cast<const char*>(data + offset), extLen);
+            // Parse "available" array: [[{startX,startY,endX,endY},...],...]
+            auto j = nlohmann::json::parse(metadataJson, nullptr, false);
+            if (!j.is_discarded() && j.contains("available") && j["available"].is_array()) {
+                for (const auto& levelRanges : j["available"]) {
+                    if (!levelRanges.is_array()) continue;
+                    for (const auto& range : levelRanges) {
+                        if (!range.is_object()) continue;
+                        mesh->metadataAvailability.push_back({
+                            range.value("startX", 0),
+                            range.value("startY", 0),
+                            range.value("endX", 0),
+                            range.value("endY", 0)
+                        });
+                    }
+                }
+            }
         }
         offset += extLen;
     }
@@ -399,7 +421,6 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     const double hMin = hdr.minimumHeight, hRange = hdr.maximumHeight - hMin;
     const double uScale = 1.0 / 32767.0, hScale = 1.0 / 32767.0;
 
-    auto mesh = std::make_unique<SurfaceTileMesh>();
     mesh->gridSize = 0;  // irregular mesh
     mesh->winding = SurfaceTileMeshWinding::Outward;
     mesh->sampling = SurfaceTileSampling::WebMercatorVToWgs84Ecef;

@@ -62,6 +62,7 @@ public:
     /// 获取当前可见瓦片（供调试用）
     const std::vector<TileKey>& visibleTiles() const { return tilePlan_.visibleTiles; }
     const TileScheme& tileScheme() const { return *tileScheme_; }
+    TerrainProvider* provider() const { return provider_.get(); }
 
 private:
     void loadTile(const TileKey& key);

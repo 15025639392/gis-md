@@ -14,6 +14,7 @@
 #include "../debug/PerfTimer.h"
 #include "TerrainLayer.h"
 #include "../terrain/QuantizedMeshParser.h"
+#include "../providers/QuantizedMeshTerrainProvider.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -1846,6 +1847,15 @@ bool BasemapLayer::buildTerrainPrimaryRenderCommands(Renderer& renderer,
         if (!rawData.empty()) {
             qmMesh = QuantizedMeshParser::parseToSurfaceTileMesh(
                 rawData.data(), rawData.size(), bounds);
+        }
+        // cesium-native: add metadata availability to provider
+        if (qmMesh && !qmMesh->metadataAvailability.empty()) {
+            auto* qmProvider = dynamic_cast<QuantizedMeshTerrainProvider*>(
+                terrainLayer->provider());
+            if (qmProvider) {
+                qmProvider->addAvailabilityRects(
+                    terrainTile->key().z + 1, qmMesh->metadataAvailability);
+            }
         }
         if (!qmMesh) {
             // Fallback: regular grid with height sampling

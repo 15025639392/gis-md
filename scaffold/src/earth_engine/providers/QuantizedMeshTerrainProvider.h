@@ -43,6 +43,9 @@ public:
     bool supportsTile(const TileKey& key) const override;
     std::string buildUrl(const TileKey& key) const override;
 
+    /// cesium-native: dynamically add availability from QM metadata
+    void addAvailabilityRects(int level, const std::vector<std::array<int, 4>>& rects);
+
     void requestTile(const TileKey& key,
                      CancellationToken token,
                      HeightmapCallback callback) override;

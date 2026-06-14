@@ -41,6 +41,9 @@ struct DecodedHeightmap {
     /// When non-empty, TileSurface::buildTerrainMesh may reconstruct
     /// the optimized triangulation instead of using the regular grid.
     std::vector<uint8_t> rawData;
+
+    /// cesium-native: availability rectangles from QM metadata (extension ID=4)
+    std::vector<std::array<int, 4>> metadataAvailability;
 };
 
 /// 地形数据 Provider 抽象接口。
