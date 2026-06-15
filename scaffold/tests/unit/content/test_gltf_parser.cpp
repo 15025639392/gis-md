@@ -10609,6 +10609,30 @@ TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) 
     appendF32(positionBinary, 2.0f);
     appendF32(positionBinary, 3.0f);
 
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus(
+            "{\"POINTS_LENGTH\":1,"
+            "\"POSITION\":{\"byteOffset\":0},"
+            "\"extensions\":{\"3DTILES_draco_point_compression\":{"
+            "\"byteOffset\":12,\"byteLength\":4,"
+            "\"properties\":{\"POSITION\":0}}}}",
+            positionBinary));
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus(
+            "{\"POINTS_LENGTH\":1,\"POSITION\":{\"byteOffset\":0}}",
+            positionBinary,
+            "{\"HIERARCHY\":{\"instances\":[]}}"));
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus(
+            "{\"POINTS_LENGTH\":1,\"POSITION\":{\"byteOffset\":0}}",
+            positionBinary,
+            "{\"extensions\":{\"3DTILES_draco_point_compression\":{"
+            "\"properties\":{\"name\":0}}},"
+            "\"name\":[\"feature\"]}"));
+
     std::vector<uint8_t> colorConflictBinary = positionBinary;
     const size_t rgbOffset = colorConflictBinary.size();
     colorConflictBinary.insert(colorConflictBinary.end(), {255u, 0u, 0u});
