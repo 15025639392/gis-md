@@ -4358,11 +4358,19 @@ TEST(GltfParserTest, RejectsUnsupportedFeatureMetadataExtensions) {
     }
 }
 
-TEST(GltfParserTest, RejectsUnsupportedMaterialExtensionsWithoutShaderSupport) {
-    const std::array<const char*, 3> unsupportedExtensions = {
+TEST(GltfParserTest, RejectsUnsupportedMaterialExtensionsWithoutRuntimeSupport) {
+    const std::array<const char*, 11> unsupportedExtensions = {
+        "KHR_materials_anisotropy",
         "KHR_materials_clearcoat",
+        "KHR_materials_diffuse_transmission",
+        "KHR_materials_dispersion",
+        "KHR_materials_iridescence",
+        "KHR_materials_pbrSpecularGlossiness",
+        "KHR_materials_sheen",
         "KHR_materials_specular",
-        "KHR_materials_transmission"};
+        "KHR_materials_transmission",
+        "KHR_materials_variants",
+        "KHR_materials_volume"};
 
     for (const char* extension : unsupportedExtensions) {
         ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
@@ -4442,6 +4450,48 @@ TEST(GltfParserTest, RejectsGpuInstancingObjectExtensionWithoutDeclaration) {
         "{\"mesh\":0,\"translation\":[10,20,30],"
         "\"extensions\":{\"EXT_mesh_gpu_instancing\":{"
         "\"attributes\":{\"TRANSLATION\":0}}}}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsKhrTextureTransformObjectExtensionWithoutDeclaration) {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf("image.bin");
+    const std::string marker =
+        "\"baseColorTexture\":{\"index\":0,\"texCoord\":0}";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "\"baseColorTexture\":{\"index\":0,\"texCoord\":0,"
+        "\"extensions\":{\"KHR_texture_transform\":{\"scale\":[2,2]}}}");
+
+    std::unique_ptr<GltfModel> model =
+        parseExternalFixtureWithSolidImage(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsKhrMaterialsIorObjectExtensionWithoutDeclaration) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string primitiveMarker = "\"mode\":4}";
+    const size_t primitivePos = fixture.jsonText.find(primitiveMarker);
+    ASSERT_NE(std::string::npos, primitivePos);
+    fixture.jsonText.replace(
+        primitivePos,
+        primitiveMarker.size(),
+        "\"mode\":4,\"material\":0}");
+
+    const std::string buffersMarker = "\"buffers\"";
+    const size_t buffersPos = fixture.jsonText.find(buffersMarker);
+    ASSERT_NE(std::string::npos, buffersPos);
+    fixture.jsonText.insert(
+        buffersPos,
+        "\"materials\":[{\"extensions\":{"
+        "\"KHR_materials_ior\":{\"ior\":2.0}}}],");
 
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
 
