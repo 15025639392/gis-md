@@ -4375,6 +4375,37 @@ TEST(GltfParserTest, RejectsBaseColorTextureEmptyDataUriPayload) {
     EXPECT_FALSE(decodedImage);
 }
 
+TEST(GltfParserTest, RejectsBaseColorTextureMalformedBase64DataUri) {
+    const ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf("data:image/png;base64,@@@@");
+    bool resolvedImageUri = false;
+    bool decodedImage = false;
+
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            if (uri == "triangle.bin") {
+                return fixture.bin;
+            }
+            resolvedImageUri = true;
+            return std::vector<uint8_t>{7};
+        },
+        [&](const uint8_t*, size_t) -> std::optional<GltfImage> {
+            decodedImage = true;
+            GltfImage image;
+            image.width = 1;
+            image.height = 1;
+            image.channels = 4;
+            image.pixels = {255, 255, 255, 255};
+            return image;
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(resolvedImageUri);
+    EXPECT_FALSE(decodedImage);
+}
+
 TEST(GltfParserTest, RejectsBaseColorTextureExternalImageResolvingEmpty) {
     const ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf("image.bin");

@@ -1431,7 +1431,11 @@ std::optional<std::vector<GltfTexture>> loadTextures(
         const auto bufferViewIt = imageJson.find("bufferView");
         if (uriIt != imageJson.end() && !uriIt->get<std::string>().empty()) {
             const std::string uri = uriIt->get<std::string>();
-            if (auto decoded = decodeBase64DataUri(uri)) {
+            if (uri.rfind("data:", 0) == 0) {
+                auto decoded = decodeBase64DataUri(uri);
+                if (!decoded) {
+                    return std::nullopt;
+                }
                 encoded = std::move(*decoded);
             } else if (externalResourceResolver) {
                 encoded = externalResourceResolver(uri);
