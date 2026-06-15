@@ -1563,6 +1563,28 @@ TEST(GltfParserTest, ParsesLineLoopPrimitiveModeAsLines) {
     EXPECT_EQ(expected, model->primitives[0].indices);
 }
 
+TEST(GltfParserTest, ParsesNonIndexedLineLoopPrimitiveModeAsLines) {
+    const std::vector<uint8_t> glb = makeQuadPrimitiveModeGlb(2, false);
+    std::unique_ptr<GltfModel> model = GltfParser::parse(glb.data(), glb.size());
+
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    EXPECT_EQ(GltfPrimitiveMode::Lines, model->primitives[0].primitiveMode);
+    const std::vector<uint32_t> expected = {0, 1, 1, 2, 2, 3, 3, 0};
+    EXPECT_EQ(expected, model->primitives[0].indices);
+}
+
+TEST(GltfParserTest, ParsesNonIndexedLineStripPrimitiveModeAsLineStrip) {
+    const std::vector<uint8_t> glb = makeQuadPrimitiveModeGlb(3, false);
+    std::unique_ptr<GltfModel> model = GltfParser::parse(glb.data(), glb.size());
+
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    EXPECT_EQ(GltfPrimitiveMode::LineStrip, model->primitives[0].primitiveMode);
+    const std::vector<uint32_t> expected = {0, 1, 2, 3};
+    EXPECT_EQ(expected, model->primitives[0].indices);
+}
+
 TEST(GltfParserTest, ParsesPointPrimitiveModeWithoutFakeTriangles) {
     const std::vector<uint8_t> glb = makeQuadPrimitiveModeGlb(0);
     std::unique_ptr<GltfModel> model = GltfParser::parse(glb.data(), glb.size());
@@ -4039,6 +4061,28 @@ TEST(GltfParserTest, RejectsUnsupportedFeatureMetadataExtensions) {
         "EXT_mesh_features",
         "EXT_structural_metadata",
         "EXT_feature_metadata"};
+
+    for (const char* extension : unsupportedExtensions) {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string marker = "\"asset\":{\"version\":\"2.0\"},";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.insert(
+            markerPos + marker.size(),
+            std::string("\"extensionsUsed\":[\"") + extension + "\"],");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << extension;
+    }
+}
+
+TEST(GltfParserTest, RejectsUnsupportedMaterialExtensionsWithoutShaderSupport) {
+    const std::array<const char*, 4> unsupportedExtensions = {
+        "KHR_materials_clearcoat",
+        "KHR_materials_specular",
+        "KHR_materials_ior",
+        "KHR_materials_transmission"};
 
     for (const char* extension : unsupportedExtensions) {
         ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
