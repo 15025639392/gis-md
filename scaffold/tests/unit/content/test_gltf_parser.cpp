@@ -5741,9 +5741,10 @@ TEST(GltfParserTest, RejectsUnsupportedRequiredExtension) {
 }
 
 TEST(GltfParserTest, RejectsUnsupportedCompressionAndTextureExtensions) {
-    const std::array<const char*, 5> unsupportedExtensions = {
+    const std::array<const char*, 6> unsupportedExtensions = {
         "KHR_draco_mesh_compression",
         "EXT_meshopt_compression",
+        "KHR_meshopt_compression",
         "KHR_texture_basisu",
         "EXT_texture_avif",
         "MSFT_texture_dds"};
