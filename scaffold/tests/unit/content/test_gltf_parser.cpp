@@ -5001,6 +5001,20 @@ TEST(GltfParserTest, RejectsImageWithEmptyUri) {
     EXPECT_FALSE(decodedImage);
 }
 
+TEST(GltfParserTest, RejectsUnreferencedImageDataUriWithMalformedBase64) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker = "\"buffers\":[";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.insert(
+        markerPos,
+        "\"images\":[{\"uri\":\"data:image/png;base64,AQIDBA==AAAA\"}],");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsImageWithNegativeBufferView) {
     ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf("image.bin");

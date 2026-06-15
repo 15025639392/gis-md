@@ -248,6 +248,39 @@ const std::array<int8_t, 256>& base64DecodeTable() {
     return table;
 }
 
+bool base64DataUriPayloadIsWellFormed(const std::string& uri) {
+    const std::string marker = ";base64,";
+    const size_t markerPos = uri.find(marker);
+    if (uri.rfind("data:", 0) != 0 || markerPos == std::string::npos) {
+        return false;
+    }
+
+    const auto& table = base64DecodeTable();
+    bool seenPadding = false;
+    size_t payloadLength = 0;
+    size_t paddingCount = 0;
+    for (size_t i = markerPos + marker.size(); i < uri.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(uri[i]);
+        if (std::isspace(c)) {
+            continue;
+        }
+        if (c == '=') {
+            seenPadding = true;
+            ++payloadLength;
+            ++paddingCount;
+            if (paddingCount > 2u) {
+                return false;
+            }
+            continue;
+        }
+        if (seenPadding || table[c] < 0) {
+            return false;
+        }
+        ++payloadLength;
+    }
+    return payloadLength > 0u && (payloadLength % 4u) == 0u;
+}
+
 std::optional<std::vector<uint8_t>> decodeBase64DataUri(const std::string& uri) {
     const std::string marker = ";base64,";
     const size_t markerPos = uri.find(marker);
@@ -380,7 +413,7 @@ bool validImageDataUriSource(const std::string& uri, bool allowWebp) {
     const auto mimeType = dataUriMimeType(uri);
     return mimeType &&
            supportedImageMimeType(*mimeType, allowWebp) &&
-           uri.find(";base64,") != std::string::npos;
+           base64DataUriPayloadIsWellFormed(uri);
 }
 
 bool encodedImageLooksLikeWebp(const std::vector<uint8_t>& encoded) {
