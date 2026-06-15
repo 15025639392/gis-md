@@ -4029,8 +4029,8 @@ bool primitiveAttributeSemanticSupported(const std::string& semantic,
         return false;
     }
 
-    if (semantic == "_BATCHID") {
-        return allowLegacyBatchIdAttribute;
+    if (attributeSemanticStartsWith(semantic, "_BATCHID")) {
+        return semantic == "_BATCHID" && allowLegacyBatchIdAttribute;
     }
 
     if (!semantic.empty() && semantic[0] == '_') {

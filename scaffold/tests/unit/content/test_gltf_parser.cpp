@@ -73,7 +73,8 @@ std::vector<uint8_t> makeTriangleGlb(
     bool legacyBatchIds = false,
     bool declareMeshQuantization = false,
     NonFiniteTriangleAttribute nonFiniteAttribute =
-        NonFiniteTriangleAttribute::None) {
+        NonFiniteTriangleAttribute::None,
+    const std::string& legacyBatchIdSemantic = "_BATCHID") {
     const bool hasColor = colorComponentType != 0;
     if (hasColor && colorType.empty()) {
         colorType = "VEC4";
@@ -273,7 +274,8 @@ std::vector<uint8_t> makeTriangleGlb(
     if (legacyBatchIds) {
         const int batchIdAccessor = nextAccessor++;
         attributes +=
-            ",\"_BATCHID\":" + std::to_string(batchIdAccessor);
+            ",\"" + legacyBatchIdSemantic + "\":" +
+            std::to_string(batchIdAccessor);
         bufferViews +=
             ",{\"buffer\":0,\"byteOffset\":" +
             std::to_string(batchIdOffset) +
@@ -381,6 +383,28 @@ std::vector<uint8_t> makeLegacyBatchIdTriangleGlb() {
         false,
         1.0f,
         true);
+}
+
+std::vector<uint8_t> makeLegacyBatchIdTriangleGlbWithSemantic(
+    const std::string& semantic) {
+    return makeTriangleGlb(
+        {1.0f, 1.0f, 1.0f, 1.0f},
+        false,
+        5126,
+        false,
+        0,
+        false,
+        0,
+        false,
+        std::string{},
+        0,
+        std::string{},
+        false,
+        1.0f,
+        true,
+        false,
+        NonFiniteTriangleAttribute::None,
+        semantic);
 }
 
 std::vector<uint8_t> makeQuadPrimitiveModeGlb(int mode, bool indexed = true) {
@@ -5336,6 +5360,29 @@ TEST(GltfParserTest, RejectsUnreferencedUnsupportedMorphTargetSemantic) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsUnreferencedFeatureIdMorphTargetSemantic) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string primitive =
+        "{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},"
+        "\"indices\":3,\"mode\":4}";
+    const std::string marker =
+        "\"meshes\":[{\"primitives\":[" + primitive + "]}]";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    const std::string invalidPrimitive =
+        "{\"attributes\":{\"POSITION\":0},\"mode\":4,"
+        "\"targets\":[{\"_FEATURE_ID_0\":0}]}";
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "\"meshes\":[{\"primitives\":[" + primitive +
+            "]},{\"primitives\":[" + invalidPrimitive + "]}]");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsPrimitiveMaterialIndexOutOfRange) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string marker =
@@ -7578,10 +7625,25 @@ TEST(GltfParserTest, RejectsFeatureIdAttributeWithoutMetadataSupport) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsFeatureIdAttributeWithoutLeadingUnderscore) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker = "\"TEXCOORD_0\":2";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.insert(markerPos + marker.size(), ",\"FEATURE_ID_0\":2");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsMalformedFeatureIdAttributePrefix) {
-    const std::array<const char*, 2> semantics = {
+    const std::array<const char*, 5> semantics = {
         "_FEATURE_ID",
-        "_FEATURE_IDABC"};
+        "_FEATURE_IDABC",
+        "_FEATURE_ID_00",
+        "_FEATURE_ID_8",
+        "_FEATURE_ID_0_EXTRA"};
 
     for (const char* semantic : semantics) {
         ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
@@ -7608,6 +7670,27 @@ TEST(GltfParserTest, RejectsLegacyBatchIdAttributeWithoutMetadataSupport) {
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
 
     EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsLegacyBatchIdPrefixedAttributeWithoutMetadataSupport) {
+    const std::array<const char*, 3> semantics = {
+        "_BATCHID_0",
+        "_BATCHID_00",
+        "_BATCHID_EXTRA"};
+
+    for (const char* semantic : semantics) {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string marker = "\"TEXCOORD_0\":2";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.insert(
+            markerPos + marker.size(),
+            std::string(",\"") + semantic + "\":2");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << semantic;
+    }
 }
 
 TEST(GltfParserTest, RejectsMeshFeaturesPrimitiveExtensionWithoutSupport) {
@@ -9039,6 +9122,23 @@ TEST(GltfParserTest, ContentProviderDecodesB3dmBatchTableWithBatchIds) {
     EXPECT_EQ(
         100u,
         *std::get_if<uint64_t>(&primitive.featureProperties[1].at("Height")));
+}
+
+TEST(GltfParserTest, ContentProviderRejectsB3dmBatchIdPrefixedAttribute) {
+    const std::vector<uint8_t> b3dm = makeB3dm(
+        makeLegacyBatchIdTriangleGlbWithSemantic("_BATCHID_0"),
+        "{\"BATCH_LENGTH\":2}",
+        "{\"name\":[\"zero\",\"one\"]}");
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "B3DM prefixed batch id fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(b3dm.data(), b3dm.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(nullptr, result.gltfModel);
 }
 
 TEST(GltfParserTest, ContentProviderRejectsB3dmPositiveBatchLength) {
