@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/content/GltfContentProvider.h"
+#include "earth_engine/content/GltfExtensions.h"
 #include "earth_engine/content/GltfModel.h"
 
 #include <algorithm>
@@ -12113,6 +12114,55 @@ TEST(GltfParserTest, TilesetContentGltfAllowsRequiredSupportedPayloadAndRendersC
         "file://" + (root / "tileset.json").generic_string(),
         bytesFromString(tilesetJson),
         "required 3DTILES_content_gltf supported fixture");
+
+    ASSERT_TRUE(provider.valid());
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    const std::vector<TileKey> children = provider.childTiles(roots.front());
+    ASSERT_EQ(1u, children.size());
+
+    TileContentLoadResult result =
+        requestTileContentBlocking(provider, children.front());
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    expectRenderableModelGeometry(*result.gltfModel);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(GltfParserTest, TilesetContentGltfAllowsEveryParserSupportedExtensionPayload) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth-md-tileset-content-gltf-all-supported";
+    std::filesystem::remove_all(root);
+    writeBytes(root / "root.glb", makeTriangleGlb());
+
+    auto extensionArrayJson = [] {
+        std::string json = "[";
+        for (size_t i = 0; i < kSupportedGltfExtensions.size(); ++i) {
+            if (i > 0) {
+                json += ",";
+            }
+            json += "\"";
+            json += std::string(kSupportedGltfExtensions[i]);
+            json += "\"";
+        }
+        json += "]";
+        return json;
+    };
+
+    const std::string extensions = extensionArrayJson();
+    const std::string tilesetJson = makeTilesetJsonWithRootContent(
+        "root.glb",
+        "\"extensionsUsed\":[\"3DTILES_content_gltf\"],"
+        "\"extensionsRequired\":[\"3DTILES_content_gltf\"],"
+        "\"extensions\":{\"3DTILES_content_gltf\":{"
+        "\"extensionsUsed\":" + extensions + ","
+        "\"extensionsRequired\":" + extensions + "}},");
+    TilesetJsonContentProvider provider(
+        "file://" + (root / "tileset.json").generic_string(),
+        bytesFromString(tilesetJson),
+        "all supported 3DTILES_content_gltf payload fixture");
 
     ASSERT_TRUE(provider.valid());
     const std::vector<TileKey> roots = provider.rootTiles();

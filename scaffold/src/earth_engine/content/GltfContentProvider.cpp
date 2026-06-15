@@ -1,4 +1,5 @@
 #include "GltfContentProvider.h"
+#include "GltfExtensions.h"
 #include "../core/async/AsyncSystem.h"
 #include "../core/cache/HttpCache.h"
 #include "../core/geodesy/Cartographic.h"
@@ -1020,24 +1021,7 @@ bool contentObjectHasMalformedUriFields(
 
 bool isSupportedGltfExtensionForTilesetContentGltf(
     const std::string& extensionName) {
-    static constexpr std::array<const char*, 13> kSupportedGltfExtensions = {
-        "KHR_texture_transform",
-        "KHR_mesh_quantization",
-        "KHR_materials_unlit",
-        "KHR_materials_emissive_strength",
-        "KHR_materials_ior",
-        "KHR_materials_pbrSpecularGlossiness",
-        "KHR_materials_transmission",
-        "KHR_materials_anisotropy",
-        "KHR_materials_specular",
-        "KHR_materials_clearcoat",
-        "KHR_materials_sheen",
-        "EXT_texture_webp",
-        "EXT_mesh_gpu_instancing"};
-    return std::find(
-        kSupportedGltfExtensions.begin(),
-        kSupportedGltfExtensions.end(),
-        extensionName) != kSupportedGltfExtensions.end();
+    return isSupportedGltfExtension(extensionName);
 }
 
 bool gltfContentExtensionArrayHasUnsupportedEntries(

@@ -1,4 +1,5 @@
 #include "GltfModel.h"
+#include "GltfExtensions.h"
 
 #include <nlohmann/json.hpp>
 
@@ -641,24 +642,7 @@ bool validateAsset(const json& doc) {
 }
 
 bool isSupportedExtensionName(const std::string& name) {
-    static constexpr std::array<const char*, 13> kSupportedExtensions = {
-        "KHR_texture_transform",
-        "KHR_mesh_quantization",
-        "KHR_materials_unlit",
-        "KHR_materials_emissive_strength",
-        "KHR_materials_ior",
-        "KHR_materials_pbrSpecularGlossiness",
-        "KHR_materials_transmission",
-        "KHR_materials_anisotropy",
-        "KHR_materials_specular",
-        "KHR_materials_clearcoat",
-        "KHR_materials_sheen",
-        "EXT_texture_webp",
-        "EXT_mesh_gpu_instancing"};
-    return std::find(
-        kSupportedExtensions.begin(),
-        kSupportedExtensions.end(),
-        name) != kSupportedExtensions.end();
+    return isSupportedGltfExtension(name);
 }
 
 bool hasUnsupportedDeclaredExtensions(const json& doc) {
@@ -1006,22 +990,10 @@ bool documentHasObjectExtension(
 }
 
 bool supportedObjectExtensionsAreDeclared(const json& doc) {
-    constexpr std::array<const char*, 12> kObjectExtensions = {
-        "KHR_texture_transform",
-        "KHR_materials_unlit",
-        "KHR_materials_emissive_strength",
-        "KHR_materials_ior",
-        "KHR_materials_pbrSpecularGlossiness",
-        "KHR_materials_transmission",
-        "KHR_materials_anisotropy",
-        "KHR_materials_specular",
-        "KHR_materials_clearcoat",
-        "KHR_materials_sheen",
-        "EXT_texture_webp",
-        "EXT_mesh_gpu_instancing"};
-    for (const char* extensionName : kObjectExtensions) {
+    for (std::string_view extensionNameView : kSupportedGltfObjectExtensions) {
+        const std::string extensionName(extensionNameView);
         if (documentHasObjectExtension(doc, extensionName) &&
-            !declaredExtension(doc, extensionName)) {
+            !declaredExtension(doc, extensionName.c_str())) {
             return false;
         }
     }

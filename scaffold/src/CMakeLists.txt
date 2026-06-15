@@ -60,6 +60,7 @@ target_sources(earth_engine_core PRIVATE
 # content
 # ============================================================
 target_sources(earth_engine_core PRIVATE
+    earth_engine/content/GltfExtensions.h
     earth_engine/content/GltfModel.h
     earth_engine/content/GltfModel.cpp
     earth_engine/content/GltfContentProvider.h
