@@ -3790,9 +3790,13 @@ void testTilesetGltfPointAndLineModesReachDrawCommands() {
     GltfPrimitive lines = root->gltfModel->primitives[0];
     lines.primitiveMode = GltfPrimitiveMode::Lines;
     lines.indices = {0, 1, 1, 2};
+    GltfPrimitive lineStrip = root->gltfModel->primitives[0];
+    lineStrip.primitiveMode = GltfPrimitiveMode::LineStrip;
+    lineStrip.indices = {0, 1, 2};
     root->gltfModel->primitives.clear();
     root->gltfModel->primitives.push_back(std::move(points));
     root->gltfModel->primitives.push_back(std::move(lines));
+    root->gltfModel->primitives.push_back(std::move(lineStrip));
     root->contentKind = TileContentKind::Render;
     root->loadState = TileLoadState::ContentLoaded;
 
@@ -3805,12 +3809,14 @@ void testTilesetGltfPointAndLineModesReachDrawCommands() {
         commands,
         1.0f);
 
-    check(commands.size() == 2,
-          "Tileset: glTF point and line primitives emit separate draw commands");
-    if (commands.size() < 2) return;
+    check(commands.size() == 3,
+          "Tileset: glTF point, line, and line-strip primitives emit separate draw commands");
+    if (commands.size() < 3) return;
     check(commands[0].primitive == RenderCommand::PrimitiveType::Points &&
               commands[1].primitive == RenderCommand::PrimitiveType::Lines,
           "Tileset: glTF primitive modes reach renderer draw command topology");
+    check(commands[2].primitive == RenderCommand::PrimitiveType::LineStrip,
+          "Tileset: glTF LINE_STRIP mode reaches renderer draw command topology");
 }
 
 void testTilesetGltfDoubleSidedDisablesCullOnly() {
