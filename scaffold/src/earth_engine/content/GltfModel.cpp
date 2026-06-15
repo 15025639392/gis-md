@@ -2222,7 +2222,9 @@ bool validateGpuInstancingNodeExtensionShape(
     if (instancingIt == extensionsIt->end()) {
         return true;
     }
-    if (!node.contains("mesh") || !instancingIt->is_object()) {
+    if (!node.contains("mesh") ||
+        node.contains("skin") ||
+        !instancingIt->is_object()) {
         return false;
     }
     const auto attributesIt = instancingIt->find("attributes");
@@ -3592,7 +3594,9 @@ std::optional<std::vector<GltfInstance>> parseGpuInstancingInstances(
     if (instancingIt == extensionsIt->end()) {
         return std::vector<GltfInstance>{};
     }
-    if (!node.contains("mesh") || !instancingIt->is_object()) {
+    if (!node.contains("mesh") ||
+        node.contains("skin") ||
+        !instancingIt->is_object()) {
         strictFailure = true;
         return std::nullopt;
     }

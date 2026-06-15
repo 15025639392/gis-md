@@ -4336,6 +4336,29 @@ TEST(GltfParserTest, RejectsGpuInstancingWithRuntimeAnimations) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsGpuInstancingOnSkinnedNode) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
+    const std::string nodeMarker =
+        "{\"mesh\":0,\"translation\":[10,20,30],";
+    const size_t nodePos = fixture.jsonText.find(nodeMarker);
+    ASSERT_NE(std::string::npos, nodePos);
+    fixture.jsonText.replace(
+        nodePos,
+        nodeMarker.size(),
+        "{\"mesh\":0,\"skin\":0,\"translation\":[10,20,30],");
+
+    const std::string buffersMarker = "\"buffers\"";
+    const size_t buffersPos = fixture.jsonText.find(buffersMarker);
+    ASSERT_NE(std::string::npos, buffersPos);
+    fixture.jsonText.insert(
+        buffersPos,
+        "\"skins\":[{\"joints\":[0]}],");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsKhrMaterialsUnlitDeclarationWithoutMaterialExtension) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string marker = "\"asset\":{\"version\":\"2.0\"},";
