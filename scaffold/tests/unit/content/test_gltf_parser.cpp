@@ -7486,6 +7486,43 @@ TEST(GltfParserTest, ContentProviderRejectsB3dmPositiveBatchLength) {
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
+TEST(GltfParserTest, ContentProviderRejectsUnknownFeatureTableSemantics) {
+    auto decodeStatus = [](const std::vector<uint8_t>& content) {
+        SingleGltfContentProvider provider(
+            TileKey{"Geographic-TMS", 0, 0, 0},
+            std::vector<uint8_t>{},
+            "unknown feature semantic fixture");
+        return provider.decodeContent(content.data(), content.size()).status;
+    };
+
+    const std::vector<uint8_t> b3dm = makeB3dm(
+        makeTriangleGlb(),
+        "{\"BATCH_LENGTH\":0,\"UNKNOWN_SEMANTIC\":1}");
+    EXPECT_EQ(TileContentLoadStatus::Failed, decodeStatus(b3dm));
+
+    std::vector<uint8_t> i3dmFeatureBinary;
+    appendF32(i3dmFeatureBinary, 0.0f);
+    appendF32(i3dmFeatureBinary, 0.0f);
+    appendF32(i3dmFeatureBinary, 0.0f);
+    const std::vector<uint8_t> i3dm = makeI3dmWithFeatureTable(
+        "{\"INSTANCES_LENGTH\":1,"
+        "\"POSITION\":{\"byteOffset\":0},"
+        "\"UNKNOWN_SEMANTIC\":1}",
+        std::move(i3dmFeatureBinary));
+    EXPECT_EQ(TileContentLoadStatus::Failed, decodeStatus(i3dm));
+
+    std::vector<uint8_t> pntsFeatureBinary;
+    appendF32(pntsFeatureBinary, 0.0f);
+    appendF32(pntsFeatureBinary, 0.0f);
+    appendF32(pntsFeatureBinary, 0.0f);
+    const std::vector<uint8_t> pnts = makePnts(
+        "{\"POINTS_LENGTH\":1,"
+        "\"POSITION\":{\"byteOffset\":0},"
+        "\"UNKNOWN_SEMANTIC\":1}",
+        std::move(pntsFeatureBinary));
+    EXPECT_EQ(TileContentLoadStatus::Failed, decodeStatus(pnts));
+}
+
 TEST(GltfParserTest, ContentProviderDecodesEmbeddedI3dmInstancesAndRtcCenter) {
     const std::vector<uint8_t> i3dm = makeI3dm(makeTriangleGlb(), 1u);
 

@@ -78,6 +78,25 @@ std::string trimRightJsonPadding(std::string value) {
     return value;
 }
 
+template <size_t N>
+bool jsonObjectHasOnlyKeys(
+    const nlohmann::json& object,
+    const std::array<const char*, N>& allowedKeys) {
+    if (!object.is_object()) {
+        return false;
+    }
+    for (auto it = object.begin(); it != object.end(); ++it) {
+        const bool allowed = std::any_of(
+            allowedKeys.begin(),
+            allowedKeys.end(),
+            [&](const char* key) { return it.key() == key; });
+        if (!allowed) {
+            return false;
+        }
+    }
+    return true;
+}
+
 std::optional<uint32_t> jsonU32(const nlohmann::json& json);
 
 struct B3dmExtractResult {
@@ -158,6 +177,12 @@ B3dmExtractResult extractB3dmGlb(const uint8_t* data, size_t size) {
             return result;
         }
         if (parsed.contains("extensions")) {
+            return result;
+        }
+        static constexpr std::array<const char*, 2> kAllowedFeatureKeys = {
+            "BATCH_LENGTH",
+            "RTC_CENTER"};
+        if (!jsonObjectHasOnlyKeys(parsed, kAllowedFeatureKeys)) {
             return result;
         }
         auto batchLengthIt = parsed.find("BATCH_LENGTH");
@@ -1066,6 +1091,23 @@ std::optional<I3dmFeatureTable> parseI3dmFeatureTable(
         featureJson.contains("BATCH_ID")) {
         return std::nullopt;
     }
+    static constexpr std::array<const char*, 13> kAllowedFeatureKeys = {
+        "INSTANCES_LENGTH",
+        "RTC_CENTER",
+        "QUANTIZED_VOLUME_OFFSET",
+        "QUANTIZED_VOLUME_SCALE",
+        "EAST_NORTH_UP",
+        "POSITION",
+        "POSITION_QUANTIZED",
+        "NORMAL_UP",
+        "NORMAL_RIGHT",
+        "NORMAL_UP_OCT32P",
+        "NORMAL_RIGHT_OCT32P",
+        "SCALE",
+        "SCALE_NON_UNIFORM"};
+    if (!jsonObjectHasOnlyKeys(featureJson, kAllowedFeatureKeys)) {
+        return std::nullopt;
+    }
 
     auto instancesIt = featureJson.find("INSTANCES_LENGTH");
     if (instancesIt == featureJson.end()) return std::nullopt;
@@ -1598,6 +1640,25 @@ std::unique_ptr<GltfModel> parsePntsModel(const uint8_t* data,
     auto featureJson =
         nlohmann::json::parse(featureJsonText, nullptr, false);
     if (featureJson.is_discarded() || !featureJson.is_object()) {
+        return nullptr;
+    }
+
+    static constexpr std::array<const char*, 14> kAllowedFeatureKeys = {
+        "POINTS_LENGTH",
+        "RTC_CENTER",
+        "POSITION",
+        "POSITION_QUANTIZED",
+        "QUANTIZED_VOLUME_OFFSET",
+        "QUANTIZED_VOLUME_SCALE",
+        "RGBA",
+        "RGB",
+        "RGB565",
+        "CONSTANT_RGBA",
+        "NORMAL",
+        "NORMAL_OCT16P",
+        "BATCH_ID",
+        "BATCH_LENGTH"};
+    if (!jsonObjectHasOnlyKeys(featureJson, kAllowedFeatureKeys)) {
         return nullptr;
     }
 
