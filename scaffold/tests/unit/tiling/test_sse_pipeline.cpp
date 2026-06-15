@@ -4043,7 +4043,9 @@ void testTilesetGltfOpaqueInstancesUseGpuInstancing() {
     root->gltfModel = makeTriangleGltfModel();
     GltfPrimitive& primitive = root->gltfModel->primitives[0];
     GltfInstance firstInstance;
-    firstInstance.transform = Mat4::translation(Vec3(1.0, 2.0, 3.0));
+    firstInstance.transform =
+        Mat4::translation(Vec3(1.0, 2.0, 3.0)) *
+        Mat4::scale(Vec3(2.0, 3.0, 4.0));
     GltfInstance secondInstance;
     secondInstance.transform = Mat4::translation(Vec3(4.0, 5.0, 6.0));
     primitive.instances = {firstInstance, secondInstance};
@@ -4070,6 +4072,31 @@ void testTilesetGltfOpaqueInstancesUseGpuInstancing() {
               !cmd.blend &&
               cmd.depthWrite,
           "Tileset: glTF opaque instances use GPU instanced draw command");
+
+    const auto* instanceBuffer = dynamic_cast<const DummyBuffer*>(
+        cmd.instanceBuffer);
+    bool firstNormalIsInverseTranspose = false;
+    if (instanceBuffer &&
+        instanceBuffer->bytes().size() >= (16u + 9u) * sizeof(float)) {
+        std::array<float, 25> packed{};
+        std::memcpy(
+            packed.data(),
+            instanceBuffer->bytes().data(),
+            packed.size() * sizeof(float));
+        const float* normal = packed.data() + 16u;
+        firstNormalIsInverseTranspose =
+            std::abs(normal[0] - 0.5f) < 1e-6f &&
+            std::abs(normal[4] - (1.0f / 3.0f)) < 1e-6f &&
+            std::abs(normal[8] - 0.25f) < 1e-6f &&
+            std::abs(normal[1]) < 1e-6f &&
+            std::abs(normal[2]) < 1e-6f &&
+            std::abs(normal[3]) < 1e-6f &&
+            std::abs(normal[5]) < 1e-6f &&
+            std::abs(normal[6]) < 1e-6f &&
+            std::abs(normal[7]) < 1e-6f;
+    }
+    check(firstNormalIsInverseTranspose,
+          "Tileset: glTF opaque instance normal matrix uses inverse-transpose");
 }
 
 void testTilesetGltfBlendInstancesSplitForSorting() {
