@@ -132,6 +132,9 @@ TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     ASSERT_TRUE(cmd.uniforms.count("u_hasSpecularTextures"));
     ASSERT_TRUE(cmd.uniforms.count("u_specularFactor"));
     ASSERT_TRUE(cmd.uniforms.count("u_specularColorFactor"));
+    ASSERT_TRUE(cmd.uniforms.count("u_specularGlossinessWorkflow"));
+    ASSERT_TRUE(cmd.uniforms.count("u_specularGlossinessFactor"));
+    ASSERT_TRUE(cmd.uniforms.count("u_hasSpecularGlossinessTexture"));
     ASSERT_TRUE(cmd.uniforms.count("u_clearcoatFactors"));
     ASSERT_TRUE(cmd.uniforms.count("u_hasClearcoatTextures"));
     ASSERT_TRUE(cmd.uniforms.count("u_sheenColorFactor"));
@@ -142,6 +145,7 @@ TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     ASSERT_TRUE(cmd.uniforms.count("u_emissiveTexCoordSet"));
     ASSERT_TRUE(cmd.uniforms.count("u_anisotropyTexCoordSet"));
     ASSERT_TRUE(cmd.uniforms.count("u_specularTexCoordSets"));
+    ASSERT_TRUE(cmd.uniforms.count("u_specularGlossinessTexCoordSet"));
     ASSERT_TRUE(cmd.uniforms.count("u_clearcoatTexCoordSets"));
     ASSERT_TRUE(cmd.uniforms.count("u_sheenTexCoordSets"));
     ASSERT_TRUE(cmd.uniforms.count("u_baseColorTexOffsetScale"));
@@ -150,6 +154,7 @@ TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     ASSERT_TRUE(cmd.uniforms.count("u_anisotropyTexRotationSinCos"));
     ASSERT_TRUE(cmd.uniforms.count("u_specularTexOffsetScale"));
     ASSERT_TRUE(cmd.uniforms.count("u_specularColorTexOffsetScale"));
+    ASSERT_TRUE(cmd.uniforms.count("u_specularGlossinessTexOffsetScale"));
     ASSERT_TRUE(cmd.uniforms.count("u_clearcoatTexOffsetScale"));
     ASSERT_TRUE(cmd.uniforms.count("u_clearcoatRoughnessTexOffsetScale"));
     ASSERT_TRUE(cmd.uniforms.count("u_clearcoatNormalTexOffsetScale"));
@@ -159,6 +164,36 @@ TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     ASSERT_TRUE(cmd.uniforms.count("u_alphaCutoff"));
     ASSERT_TRUE(cmd.uniforms.count("u_renderOpacity"));
     ASSERT_TRUE(cmd.uniforms.count("u_unlit"));
+}
+
+TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsPbrSpecularGlossiness) {
+    const std::string glsl = renderer_testing::gltfFragmentGLSL();
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("uniform sampler2D u_specularGlossinessTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("u_specularGlossinessWorkflow > 0.5"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("roughness = clamp(1.0 - specGloss.a"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("specularColor = specGlossSpecularColor"));
+
+    const std::string msl = renderer_testing::gltfFragmentMSL();
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("texture2d<float> u_specularGlossinessTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("u_specularGlossinessWorkflow > 0.5"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("roughness = clamp(1.0 - specGloss.a"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("specularColor = specGlossSpecularColor"));
 }
 
 TEST(RendererCommandTest, GltfFragmentShadersApplyDielectricSpecularF0) {

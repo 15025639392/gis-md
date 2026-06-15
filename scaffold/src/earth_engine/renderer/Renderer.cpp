@@ -188,6 +188,7 @@ uniform sampler2D u_emissiveTexture;
 uniform sampler2D u_anisotropyTexture;
 uniform sampler2D u_specularTexture;
 uniform sampler2D u_specularColorTexture;
+uniform sampler2D u_specularGlossinessTexture;
 uniform sampler2D u_clearcoatTexture;
 uniform sampler2D u_clearcoatRoughnessTexture;
 uniform sampler2D u_clearcoatNormalTexture;
@@ -203,6 +204,9 @@ uniform vec3 u_hasClearcoatTextures;  // clearcoat, roughness, normal
 uniform vec2 u_hasSheenTextures;      // color, roughness
 uniform float u_specularFactor;
 uniform vec3 u_specularColorFactor;
+uniform float u_specularGlossinessWorkflow;
+uniform vec4 u_specularGlossinessFactor; // specular rgb, glossiness
+uniform float u_hasSpecularGlossinessTexture;
 uniform vec2 u_anisotropyFactors;     // strength, rotation
 uniform vec3 u_clearcoatFactors;      // factor, roughness, normal scale
 uniform vec3 u_sheenColorFactor;
@@ -222,6 +226,8 @@ uniform vec4 u_specularTexOffsetScale;
 uniform vec2 u_specularTexRotationSinCos;
 uniform vec4 u_specularColorTexOffsetScale;
 uniform vec2 u_specularColorTexRotationSinCos;
+uniform vec4 u_specularGlossinessTexOffsetScale;
+uniform vec2 u_specularGlossinessTexRotationSinCos;
 uniform vec4 u_clearcoatTexOffsetScale;
 uniform vec2 u_clearcoatTexRotationSinCos;
 uniform vec4 u_clearcoatRoughnessTexOffsetScale;
@@ -242,6 +248,7 @@ uniform vec4 u_textureCoordSets;      // baseColor, metallicRoughness, normal, o
 uniform float u_emissiveTexCoordSet;
 uniform float u_anisotropyTexCoordSet;
 uniform vec2 u_specularTexCoordSets;  // specular, specularColor
+uniform float u_specularGlossinessTexCoordSet;
 uniform vec3 u_clearcoatTexCoordSets; // clearcoat, roughness, normal
 uniform vec2 u_sheenTexCoordSets;     // color, roughness
 
@@ -522,6 +529,28 @@ void main() {
             u_clearcoatFactors.z);
     }
 
+    vec3 specGlossSpecularColor = vec3(0.0);
+    float specGlossMaxSpecular = 0.0;
+    if (u_specularGlossinessWorkflow > 0.5) {
+        vec4 specGloss = vec4(
+            clamp(u_specularGlossinessFactor.rgb, 0.0, 1.0),
+            clamp(u_specularGlossinessFactor.a, 0.0, 1.0));
+        if (u_hasSpecularGlossinessTexture > 0.5) {
+            vec2 sgUv = transformUv(
+                uvFromSet(u_specularGlossinessTexCoordSet),
+                u_specularGlossinessTexOffsetScale,
+                u_specularGlossinessTexRotationSinCos);
+            specGloss *= texture(u_specularGlossinessTexture, sgUv);
+        }
+        specGloss = clamp(specGloss, 0.0, 1.0);
+        roughness = clamp(1.0 - specGloss.a, 0.04, 1.0);
+        metallic = 0.0;
+        specGlossSpecularColor = specGloss.rgb;
+        specGlossMaxSpecular = max(
+            max(specGlossSpecularColor.r, specGlossSpecularColor.g),
+            specGlossSpecularColor.b);
+    }
+
     float anisotropyStrength = clamp(u_anisotropyFactors.x, 0.0, 1.0);
     vec2 anisotropyDirection = vec2(1.0, 0.0);
     vec3 anisotropyTangent;
@@ -585,20 +614,28 @@ void main() {
             u_specularTexRotationSinCos);
         specularStrength *= texture(u_specularTexture, specularUv).a;
     }
-    vec3 dielectricSpecular =
-        vec3(clamp(u_dielectricSpecularF0, 0.0, 1.0)) *
-        max(u_specularColorFactor, vec3(0.0));
-    if (u_hasSpecularTextures.y > 0.5) {
-        vec2 specularColorUv = transformUv(
-            uvFromSet(u_specularTexCoordSets.y),
-            u_specularColorTexOffsetScale,
-            u_specularColorTexRotationSinCos);
-        dielectricSpecular *= texture(u_specularColorTexture, specularColorUv).rgb;
+    vec3 specularColor;
+    vec3 diffuseColor;
+    if (u_specularGlossinessWorkflow > 0.5) {
+        specularColor = specGlossSpecularColor;
+        diffuseColor = base.rgb * (1.0 - specGlossMaxSpecular);
+    } else {
+        vec3 dielectricSpecular =
+            vec3(clamp(u_dielectricSpecularF0, 0.0, 1.0)) *
+            max(u_specularColorFactor, vec3(0.0));
+        if (u_hasSpecularTextures.y > 0.5) {
+            vec2 specularColorUv = transformUv(
+                uvFromSet(u_specularTexCoordSets.y),
+                u_specularColorTexOffsetScale,
+                u_specularColorTexRotationSinCos);
+            dielectricSpecular *=
+                texture(u_specularColorTexture, specularColorUv).rgb;
+        }
+        dielectricSpecular = clamp(dielectricSpecular, 0.0, 1.0) *
+            specularStrength;
+        specularColor = mix(dielectricSpecular, base.rgb, metallic);
+        diffuseColor = base.rgb * (1.0 - metallic);
     }
-    dielectricSpecular = clamp(dielectricSpecular, 0.0, 1.0) *
-        specularStrength;
-    vec3 specularColor = mix(dielectricSpecular, base.rgb, metallic);
-    vec3 diffuseColor = base.rgb * (1.0 - metallic);
     vec3 color = diffuseColor * (0.38 * occlusion + 0.62 * diffuse) +
                  specularColor * specular +
                  emissive;
@@ -1206,6 +1243,12 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              constant float4& u_anisotropyTexOffsetScale [[buffer(54)]],
                              constant float2& u_anisotropyTexRotationSinCos [[buffer(55)]],
                              constant float& u_anisotropyTexCoordSet [[buffer(56)]],
+                             constant float& u_specularGlossinessWorkflow [[buffer(57)]],
+                             constant float4& u_specularGlossinessFactor [[buffer(58)]],
+                             constant float& u_hasSpecularGlossinessTexture [[buffer(59)]],
+                             constant float4& u_specularGlossinessTexOffsetScale [[buffer(60)]],
+                             constant float2& u_specularGlossinessTexRotationSinCos [[buffer(61)]],
+                             constant float& u_specularGlossinessTexCoordSet [[buffer(62)]],
                              texture2d<float> u_baseColorTexture [[texture(0)]],
                              texture2d<float> u_metallicRoughnessTexture [[texture(1)]],
                              texture2d<float> u_normalTexture [[texture(2)]],
@@ -1219,6 +1262,7 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              texture2d<float> u_sheenColorTexture [[texture(10)]],
                              texture2d<float> u_sheenRoughnessTexture [[texture(11)]],
                              texture2d<float> u_anisotropyTexture [[texture(12)]],
+                             texture2d<float> u_specularGlossinessTexture [[texture(13)]],
                              sampler u_baseColorSampler [[sampler(0)]],
                              sampler u_metallicRoughnessSampler [[sampler(1)]],
                              sampler u_normalSampler [[sampler(2)]],
@@ -1231,7 +1275,8 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              sampler u_clearcoatNormalSampler [[sampler(9)]],
                              sampler u_sheenColorSampler [[sampler(10)]],
                              sampler u_sheenRoughnessSampler [[sampler(11)]],
-                             sampler u_anisotropySampler [[sampler(12)]]) {
+                             sampler u_anisotropySampler [[sampler(12)]],
+                             sampler u_specularGlossinessSampler [[sampler(13)]]) {
     float faceSign = frontFacing ? 1.0 : -1.0;
     float3 n = normalize(in.normal) * faceSign;
     float3 geometryN = n;
@@ -1364,6 +1409,29 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
             u_clearcoatNormalTexture,
             u_clearcoatNormalSampler);
     }
+    float3 specGlossSpecularColor = float3(0.0);
+    float specGlossMaxSpecular = 0.0;
+    if (u_specularGlossinessWorkflow > 0.5) {
+        float4 specGloss = float4(
+            clamp(u_specularGlossinessFactor.rgb, 0.0, 1.0),
+            clamp(u_specularGlossinessFactor.a, 0.0, 1.0));
+        if (u_hasSpecularGlossinessTexture > 0.5) {
+            float2 sgUv = gltfTransformUv(
+                gltfUvFromSet(in, u_specularGlossinessTexCoordSet),
+                u_specularGlossinessTexOffsetScale,
+                u_specularGlossinessTexRotationSinCos);
+            specGloss *= u_specularGlossinessTexture.sample(
+                u_specularGlossinessSampler,
+                sgUv);
+        }
+        specGloss = clamp(specGloss, 0.0, 1.0);
+        roughness = clamp(1.0 - specGloss.a, 0.04, 1.0);
+        metallic = 0.0;
+        specGlossSpecularColor = specGloss.rgb;
+        specGlossMaxSpecular = max(
+            max(specGlossSpecularColor.r, specGlossSpecularColor.g),
+            specGlossSpecularColor.b);
+    }
     float anisotropyStrength = clamp(u_anisotropyFactors.x, 0.0, 1.0);
     float2 anisotropyDirection = float2(1.0, 0.0);
     GltfAnisotropyBasis anisotropyBasis;
@@ -1429,22 +1497,29 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
             u_specularSampler,
             specularUv).a;
     }
-    float3 dielectricSpecular =
-        float3(clamp(u_dielectricSpecularF0, 0.0, 1.0)) *
-        max(u_specularColorFactor, float3(0.0));
-    if (u_hasSpecularTextures.y > 0.5) {
-        float2 specularColorUv = gltfTransformUv(
-            gltfUvFromSet(in, u_specularTexCoordSets.y),
-            u_specularColorTexOffsetScale,
-            u_specularColorTexRotationSinCos);
-        dielectricSpecular *= u_specularColorTexture.sample(
-            u_specularColorSampler,
-            specularColorUv).rgb;
+    float3 specularColor;
+    float3 diffuseColor;
+    if (u_specularGlossinessWorkflow > 0.5) {
+        specularColor = specGlossSpecularColor;
+        diffuseColor = base.rgb * (1.0 - specGlossMaxSpecular);
+    } else {
+        float3 dielectricSpecular =
+            float3(clamp(u_dielectricSpecularF0, 0.0, 1.0)) *
+            max(u_specularColorFactor, float3(0.0));
+        if (u_hasSpecularTextures.y > 0.5) {
+            float2 specularColorUv = gltfTransformUv(
+                gltfUvFromSet(in, u_specularTexCoordSets.y),
+                u_specularColorTexOffsetScale,
+                u_specularColorTexRotationSinCos);
+            dielectricSpecular *= u_specularColorTexture.sample(
+                u_specularColorSampler,
+                specularColorUv).rgb;
+        }
+        dielectricSpecular = clamp(dielectricSpecular, 0.0, 1.0) *
+            specularStrength;
+        specularColor = mix(dielectricSpecular, base.rgb, metallic);
+        diffuseColor = base.rgb * (1.0 - metallic);
     }
-    dielectricSpecular = clamp(dielectricSpecular, 0.0, 1.0) *
-        specularStrength;
-    float3 specularColor = mix(dielectricSpecular, base.rgb, metallic);
-    float3 diffuseColor = base.rgb * (1.0 - metallic);
     float3 color = diffuseColor * (0.38 * occlusion + 0.62 * diffuse) +
                    specularColor * specular +
                    emissive;
@@ -1870,6 +1945,13 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
     cmd.uniforms["u_hasSpecularTextures"] = {0.0f, 0.0f};
     cmd.uniforms["u_specularFactor"] = {1.0f};
     cmd.uniforms["u_specularColorFactor"] = {1.0f, 1.0f, 1.0f};
+    cmd.uniforms["u_specularGlossinessWorkflow"] = {0.0f};
+    cmd.uniforms["u_specularGlossinessFactor"] = {
+        1.0f,
+        1.0f,
+        1.0f,
+        1.0f};
+    cmd.uniforms["u_hasSpecularGlossinessTexture"] = {0.0f};
     cmd.uniforms["u_clearcoatFactors"] = {0.0f, 0.0f, 1.0f};
     cmd.uniforms["u_hasClearcoatTextures"] = {0.0f, 0.0f, 0.0f};
     cmd.uniforms["u_sheenColorFactor"] = {0.0f, 0.0f, 0.0f};
@@ -1880,6 +1962,7 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
     cmd.uniforms["u_emissiveTexCoordSet"] = {0.0f};
     cmd.uniforms["u_anisotropyTexCoordSet"] = {0.0f};
     cmd.uniforms["u_specularTexCoordSets"] = {0.0f, 0.0f};
+    cmd.uniforms["u_specularGlossinessTexCoordSet"] = {0.0f};
     cmd.uniforms["u_clearcoatTexCoordSets"] = {0.0f, 0.0f, 0.0f};
     cmd.uniforms["u_sheenTexCoordSets"] = {0.0f, 0.0f};
     cmd.uniforms["u_alphaMode"] = {0.0f};
@@ -1907,6 +1990,9 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
     setTextureTransformDefaults(
         "u_specularColorTexOffsetScale",
         "u_specularColorTexRotationSinCos");
+    setTextureTransformDefaults(
+        "u_specularGlossinessTexOffsetScale",
+        "u_specularGlossinessTexRotationSinCos");
     setTextureTransformDefaults(
         "u_clearcoatTexOffsetScale",
         "u_clearcoatTexRotationSinCos");

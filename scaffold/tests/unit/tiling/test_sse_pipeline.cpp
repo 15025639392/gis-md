@@ -3151,6 +3151,99 @@ void testTilesetGltfAnisotropyMaterialUploadsUniformsAndTextures() {
           "Tileset: glTF anisotropy texture uploads KHR_texture_transform uniforms");
 }
 
+void testTilesetGltfPbrSpecularGlossinessUploadsUniformsAndTextures() {
+    DummyRenderDevice device;
+    device.allowTextureCreation = true;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: glTF spec-gloss material root tile is created");
+    if (!root) return;
+
+    root->gltfModel = makeTexturedTriangleGltfModel();
+    GltfPrimitive& primitive = root->gltfModel->primitives[0];
+    primitive.specularGlossinessWorkflow = true;
+    primitive.baseColorFactor = {0.2f, 0.3f, 0.4f, 0.5f};
+    primitive.specularGlossinessSpecularFactor = {0.6f, 0.7f, 0.8f};
+    primitive.specularGlossinessGlossinessFactor = 0.9f;
+    GltfTextureBinding specGlossBinding;
+    specGlossBinding.textureIndex = 0u;
+    specGlossBinding.texCoord = 1;
+    specGlossBinding.transform.offset = {0.125f, 0.25f};
+    specGlossBinding.transform.scale = {0.5f, 0.75f};
+    specGlossBinding.transform.rotation = 1.57079632679f;
+    primitive.specularGlossinessTexture = specGlossBinding;
+    root->contentKind = TileContentKind::Render;
+    root->loadState = TileLoadState::ContentLoaded;
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 1,
+          "Tileset: glTF spec-gloss material emits one primitive draw command");
+    if (commands.empty()) return;
+
+    const RenderCommand& cmd = commands.front();
+    check(cmd.uniforms.count("u_specularGlossinessWorkflow") &&
+              cmd.uniforms.at("u_specularGlossinessWorkflow").front() ==
+                  1.0f,
+          "Tileset: glTF spec-gloss workflow flag is uploaded");
+    check(cmd.uniforms.count("u_specularGlossinessFactor") &&
+              cmd.uniforms.at("u_specularGlossinessFactor").size() == 4 &&
+              std::abs(cmd.uniforms.at("u_specularGlossinessFactor")[0] -
+                       0.6f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_specularGlossinessFactor")[1] -
+                       0.7f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_specularGlossinessFactor")[2] -
+                       0.8f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_specularGlossinessFactor")[3] -
+                       0.9f) < 1e-6f,
+          "Tileset: glTF spec-gloss factors are uploaded");
+    check(cmd.uniforms.count("u_hasSpecularGlossinessTexture") &&
+              cmd.uniforms.at("u_hasSpecularGlossinessTexture").front() ==
+                  1.0f,
+          "Tileset: glTF spec-gloss material reports texture presence");
+    check(cmd.textures.size() >= 14 &&
+              cmd.textures[13] ==
+                  root->gltfPrimitiveResources.front()
+                      .specularGlossinessTexture.texture,
+          "Tileset: glTF spec-gloss texture binds to material slot 13");
+    check(cmd.uniforms.count("u_specularGlossinessTexCoordSet") &&
+              cmd.uniforms.at("u_specularGlossinessTexCoordSet").front() ==
+                  1.0f,
+          "Tileset: glTF spec-gloss material uploads texture coordinate set");
+    check(cmd.uniforms.count("u_specularGlossinessTexOffsetScale") &&
+              cmd.uniforms.at("u_specularGlossinessTexOffsetScale").size() ==
+                  4 &&
+              std::abs(cmd.uniforms.at("u_specularGlossinessTexOffsetScale")[0] -
+                       0.125f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_specularGlossinessTexOffsetScale")[1] -
+                       0.25f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_specularGlossinessTexOffsetScale")[2] -
+                       0.5f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_specularGlossinessTexOffsetScale")[3] -
+                       0.75f) < 1e-6f &&
+              cmd.uniforms.count("u_specularGlossinessTexRotationSinCos") &&
+              std::abs(
+                  cmd.uniforms.at("u_specularGlossinessTexRotationSinCos")[0] -
+                  1.0f) < 1e-6f,
+          "Tileset: glTF spec-gloss texture uploads KHR_texture_transform uniforms");
+}
+
 void testTilesetGltfSpecularMaterialUploadsUniformsAndTextures() {
     DummyRenderDevice device;
     device.allowTextureCreation = true;
@@ -6789,6 +6882,7 @@ int main() {
     testTilesetGltfUnlitMaterialUploadsUniform();
     testTilesetGltfIorMaterialUploadsSpecularF0();
     testTilesetGltfAnisotropyMaterialUploadsUniformsAndTextures();
+    testTilesetGltfPbrSpecularGlossinessUploadsUniformsAndTextures();
     testTilesetGltfSpecularMaterialUploadsUniformsAndTextures();
     testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures();
     testTilesetGltfSheenMaterialUploadsUniformsAndTextures();

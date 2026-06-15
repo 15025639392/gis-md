@@ -403,12 +403,13 @@ bool validateAsset(const json& doc) {
 }
 
 bool isSupportedExtensionName(const std::string& name) {
-    static constexpr std::array<const char*, 11> kSupportedExtensions = {
+    static constexpr std::array<const char*, 12> kSupportedExtensions = {
         "KHR_texture_transform",
         "KHR_mesh_quantization",
         "KHR_materials_unlit",
         "KHR_materials_emissive_strength",
         "KHR_materials_ior",
+        "KHR_materials_pbrSpecularGlossiness",
         "KHR_materials_anisotropy",
         "KHR_materials_specular",
         "KHR_materials_clearcoat",
@@ -478,7 +479,10 @@ bool isTextureInfoExtensionParentPath(const std::vector<std::string>& path) {
            (path.size() == 5 &&
             path[0] == "materials" &&
             path[2] == "extensions" &&
-            ((path[3] == "KHR_materials_anisotropy" &&
+            ((path[3] == "KHR_materials_pbrSpecularGlossiness" &&
+              (path[4] == "diffuseTexture" ||
+               path[4] == "specularGlossinessTexture")) ||
+             (path[3] == "KHR_materials_anisotropy" &&
               path[4] == "anisotropyTexture") ||
              (path[3] == "KHR_materials_specular" &&
               (path[4] == "specularTexture" ||
@@ -523,6 +527,7 @@ bool extensionsObjectSupportedAtPath(
         if (it.key() == "KHR_materials_unlit" ||
             it.key() == "KHR_materials_emissive_strength" ||
             it.key() == "KHR_materials_ior" ||
+            it.key() == "KHR_materials_pbrSpecularGlossiness" ||
             it.key() == "KHR_materials_anisotropy" ||
             it.key() == "KHR_materials_specular" ||
             it.key() == "KHR_materials_clearcoat" ||
@@ -611,11 +616,12 @@ bool documentHasObjectExtension(
 }
 
 bool supportedObjectExtensionsAreDeclared(const json& doc) {
-    constexpr std::array<const char*, 10> kObjectExtensions = {
+    constexpr std::array<const char*, 11> kObjectExtensions = {
         "KHR_texture_transform",
         "KHR_materials_unlit",
         "KHR_materials_emissive_strength",
         "KHR_materials_ior",
+        "KHR_materials_pbrSpecularGlossiness",
         "KHR_materials_anisotropy",
         "KHR_materials_specular",
         "KHR_materials_clearcoat",
@@ -2254,6 +2260,42 @@ bool validateMaterialExtensions(const json& material) {
         }
     }
 
+    const auto pbrSpecGlossIt =
+        extensionsIt->find("KHR_materials_pbrSpecularGlossiness");
+    if (pbrSpecGlossIt != extensionsIt->end()) {
+        if (unlitIt != extensionsIt->end() ||
+            extensionsIt->contains("KHR_materials_ior") ||
+            extensionsIt->contains("KHR_materials_anisotropy") ||
+            extensionsIt->contains("KHR_materials_specular") ||
+            extensionsIt->contains("KHR_materials_clearcoat") ||
+            extensionsIt->contains("KHR_materials_sheen") ||
+            !pbrSpecGlossIt->is_object()) {
+            return false;
+        }
+        const auto diffuseFactorIt = pbrSpecGlossIt->find("diffuseFactor");
+        if (diffuseFactorIt != pbrSpecGlossIt->end() &&
+            !jsonNumberArrayInRange(*diffuseFactorIt, 4u, 0.0, 1.0)) {
+            return false;
+        }
+        const auto specularFactorIt =
+            pbrSpecGlossIt->find("specularFactor");
+        if (specularFactorIt != pbrSpecGlossIt->end() &&
+            !jsonNumberArrayInRange(*specularFactorIt, 3u, 0.0, 1.0)) {
+            return false;
+        }
+        const auto glossinessIt =
+            pbrSpecGlossIt->find("glossinessFactor");
+        if (glossinessIt != pbrSpecGlossIt->end()) {
+            const auto glossiness = numberProperty(
+                *pbrSpecGlossIt,
+                "glossinessFactor",
+                1.0f);
+            if (!glossiness || *glossiness < 0.0f || *glossiness > 1.0f) {
+                return false;
+            }
+        }
+    }
+
     const auto anisotropyIt =
         extensionsIt->find("KHR_materials_anisotropy");
     if (anisotropyIt != extensionsIt->end()) {
@@ -2468,6 +2510,75 @@ std::array<float, 3> materialSpecularColorFactor(
     return factor;
 }
 
+std::array<float, 4> materialSpecularGlossinessDiffuseFactor(
+    const json& material,
+    bool& strictFailure) {
+    std::array<float, 4> factor = {1.0f, 1.0f, 1.0f, 1.0f};
+    const json* specGloss =
+        materialObjectExtension(
+            material,
+            "KHR_materials_pbrSpecularGlossiness");
+    if (!specGloss) {
+        return factor;
+    }
+    const auto factorIt = specGloss->find("diffuseFactor");
+    if (factorIt == specGloss->end()) {
+        return factor;
+    }
+    if (!readFloatArray(*factorIt, factor) ||
+        std::any_of(factor.begin(), factor.end(), [](float component) {
+            return component < 0.0f || component > 1.0f;
+        })) {
+        strictFailure = true;
+        return {1.0f, 1.0f, 1.0f, 1.0f};
+    }
+    return factor;
+}
+
+std::array<float, 3> materialSpecularGlossinessSpecularFactor(
+    const json& material,
+    bool& strictFailure) {
+    std::array<float, 3> factor = {1.0f, 1.0f, 1.0f};
+    const json* specGloss =
+        materialObjectExtension(
+            material,
+            "KHR_materials_pbrSpecularGlossiness");
+    if (!specGloss) {
+        return factor;
+    }
+    const auto factorIt = specGloss->find("specularFactor");
+    if (factorIt == specGloss->end()) {
+        return factor;
+    }
+    if (!readFloatArray(*factorIt, factor) ||
+        std::any_of(factor.begin(), factor.end(), [](float component) {
+            return component < 0.0f || component > 1.0f;
+        })) {
+        strictFailure = true;
+        return {1.0f, 1.0f, 1.0f};
+    }
+    return factor;
+}
+
+float materialSpecularGlossinessGlossinessFactor(
+    const json& material,
+    bool& strictFailure) {
+    const json* specGloss =
+        materialObjectExtension(
+            material,
+            "KHR_materials_pbrSpecularGlossiness");
+    if (!specGloss) {
+        return 1.0f;
+    }
+    const auto glossiness =
+        numberProperty(*specGloss, "glossinessFactor", 1.0f);
+    if (!glossiness || *glossiness < 0.0f || *glossiness > 1.0f) {
+        strictFailure = true;
+        return 1.0f;
+    }
+    return *glossiness;
+}
+
 float materialAnisotropyStrength(
     const json& material,
     bool& strictFailure) {
@@ -2639,6 +2750,21 @@ bool validateMaterialJson(const json& material, size_t textureCount) {
 
     const auto extensionsIt = material.find("extensions");
     if (extensionsIt != material.end() && extensionsIt->is_object()) {
+        const auto pbrSpecGlossIt =
+            extensionsIt->find("KHR_materials_pbrSpecularGlossiness");
+        if (pbrSpecGlossIt != extensionsIt->end()) {
+            if (!pbrSpecGlossIt->is_object() ||
+                !validateMaterialTextureInfo(
+                    *pbrSpecGlossIt,
+                    "diffuseTexture",
+                    textureCount) ||
+                !validateMaterialTextureInfo(
+                    *pbrSpecGlossIt,
+                    "specularGlossinessTexture",
+                    textureCount)) {
+                return false;
+            }
+        }
         const auto anisotropyIt =
             extensionsIt->find("KHR_materials_anisotropy");
         if (anisotropyIt != extensionsIt->end()) {
@@ -4523,60 +4649,128 @@ std::optional<GltfPrimitive> parsePrimitive(
                 strictFailure = true;
                 return std::nullopt;
             }
-            auto pbrIt = material.find("pbrMetallicRoughness");
-            if (pbrIt != material.end() && pbrIt->is_object()) {
-                auto factorIt = pbrIt->find("baseColorFactor");
-                if (factorIt != pbrIt->end() &&
-                    !readFloatArray(*factorIt, primitive.baseColorFactor)) {
-                    strictFailure = true;
+            const json* specGlossExtension = materialObjectExtension(
+                material,
+                "KHR_materials_pbrSpecularGlossiness");
+            if (specGlossExtension) {
+                primitive.specularGlossinessWorkflow = true;
+                primitive.metallicFactor = 0.0f;
+                primitive.roughnessFactor = 0.0f;
+                primitive.baseColorFactor =
+                    materialSpecularGlossinessDiffuseFactor(
+                        material,
+                        strictFailure);
+                primitive.specularGlossinessSpecularFactor =
+                    materialSpecularGlossinessSpecularFactor(
+                        material,
+                        strictFailure);
+                primitive.specularGlossinessGlossinessFactor =
+                    materialSpecularGlossinessGlossinessFactor(
+                        material,
+                        strictFailure);
+                if (strictFailure) {
                     return std::nullopt;
                 }
-                if (auto metallic =
-                        numberProperty(*pbrIt, "metallicFactor", 1.0f)) {
-                    primitive.metallicFactor = *metallic;
-                } else {
-                    strictFailure = true;
-                    return std::nullopt;
-                }
-                if (auto roughness =
-                        numberProperty(*pbrIt, "roughnessFactor", 1.0f)) {
-                    primitive.roughnessFactor = *roughness;
-                } else {
-                    strictFailure = true;
-                    return std::nullopt;
-                }
-                auto textureIt = pbrIt->find("baseColorTexture");
-                if (textureIt != pbrIt->end() && textureIt->is_object()) {
-                    primitive.baseColorTexture =
-                        parseTextureBinding(*textureIt, textures, strictFailure);
+
+                auto diffuseTextureIt =
+                    specGlossExtension->find("diffuseTexture");
+                if (diffuseTextureIt != specGlossExtension->end() &&
+                    diffuseTextureIt->is_object()) {
+                    primitive.baseColorTexture = parseTextureBinding(
+                        *diffuseTextureIt,
+                        textures,
+                        strictFailure);
                     if (strictFailure || !primitive.baseColorTexture) {
                         return std::nullopt;
                     }
                     primitive.baseColorTextureIndex =
                         primitive.baseColorTexture->textureIndex;
-                } else if (textureIt != pbrIt->end()) {
+                } else if (diffuseTextureIt != specGlossExtension->end()) {
                     strictFailure = true;
                     return std::nullopt;
                 }
-                auto metallicRoughnessIt =
-                    pbrIt->find("metallicRoughnessTexture");
-                if (metallicRoughnessIt != pbrIt->end() &&
-                    metallicRoughnessIt->is_object()) {
-                    primitive.metallicRoughnessTexture = parseTextureBinding(
-                        *metallicRoughnessIt,
+
+                auto specularGlossinessTextureIt =
+                    specGlossExtension->find("specularGlossinessTexture");
+                if (specularGlossinessTextureIt !=
+                        specGlossExtension->end() &&
+                    specularGlossinessTextureIt->is_object()) {
+                    primitive.specularGlossinessTexture = parseTextureBinding(
+                        *specularGlossinessTextureIt,
                         textures,
                         strictFailure);
                     if (strictFailure ||
-                        !primitive.metallicRoughnessTexture) {
+                        !primitive.specularGlossinessTexture) {
                         return std::nullopt;
                     }
-                } else if (metallicRoughnessIt != pbrIt->end()) {
+                } else if (
+                    specularGlossinessTextureIt !=
+                    specGlossExtension->end()) {
                     strictFailure = true;
                     return std::nullopt;
                 }
-            } else if (pbrIt != material.end()) {
-                strictFailure = true;
-                return std::nullopt;
+            } else {
+                auto pbrIt = material.find("pbrMetallicRoughness");
+                if (pbrIt != material.end() && pbrIt->is_object()) {
+                    auto factorIt = pbrIt->find("baseColorFactor");
+                    if (factorIt != pbrIt->end() &&
+                        !readFloatArray(
+                            *factorIt,
+                            primitive.baseColorFactor)) {
+                        strictFailure = true;
+                        return std::nullopt;
+                    }
+                    if (auto metallic =
+                            numberProperty(*pbrIt, "metallicFactor", 1.0f)) {
+                        primitive.metallicFactor = *metallic;
+                    } else {
+                        strictFailure = true;
+                        return std::nullopt;
+                    }
+                    if (auto roughness =
+                            numberProperty(*pbrIt, "roughnessFactor", 1.0f)) {
+                        primitive.roughnessFactor = *roughness;
+                    } else {
+                        strictFailure = true;
+                        return std::nullopt;
+                    }
+                    auto textureIt = pbrIt->find("baseColorTexture");
+                    if (textureIt != pbrIt->end() &&
+                        textureIt->is_object()) {
+                        primitive.baseColorTexture = parseTextureBinding(
+                            *textureIt,
+                            textures,
+                            strictFailure);
+                        if (strictFailure || !primitive.baseColorTexture) {
+                            return std::nullopt;
+                        }
+                        primitive.baseColorTextureIndex =
+                            primitive.baseColorTexture->textureIndex;
+                    } else if (textureIt != pbrIt->end()) {
+                        strictFailure = true;
+                        return std::nullopt;
+                    }
+                    auto metallicRoughnessIt =
+                        pbrIt->find("metallicRoughnessTexture");
+                    if (metallicRoughnessIt != pbrIt->end() &&
+                        metallicRoughnessIt->is_object()) {
+                        primitive.metallicRoughnessTexture =
+                            parseTextureBinding(
+                                *metallicRoughnessIt,
+                                textures,
+                                strictFailure);
+                        if (strictFailure ||
+                            !primitive.metallicRoughnessTexture) {
+                            return std::nullopt;
+                        }
+                    } else if (metallicRoughnessIt != pbrIt->end()) {
+                        strictFailure = true;
+                        return std::nullopt;
+                    }
+                } else if (pbrIt != material.end()) {
+                    strictFailure = true;
+                    return std::nullopt;
+                }
             }
 
             primitive.dielectricSpecularF0 =
@@ -4847,6 +5041,7 @@ std::optional<GltfPrimitive> parsePrimitive(
         !hasTexCoordSet(primitive.anisotropyTexture) ||
         !hasTexCoordSet(primitive.specularTexture) ||
         !hasTexCoordSet(primitive.specularColorTexture) ||
+        !hasTexCoordSet(primitive.specularGlossinessTexture) ||
         !hasTexCoordSet(primitive.clearcoatTexture) ||
         !hasTexCoordSet(primitive.clearcoatRoughnessTexture) ||
         !hasTexCoordSet(primitive.clearcoatNormalTexture) ||
@@ -5706,6 +5901,14 @@ std::unique_ptr<GltfModel> GltfParser::parse(
     }
     if (declaredExtension(input->document, "KHR_materials_ior") &&
         !documentHasObjectExtension(input->document, "KHR_materials_ior")) {
+        return nullptr;
+    }
+    if (declaredExtension(
+            input->document,
+            "KHR_materials_pbrSpecularGlossiness") &&
+        !documentHasObjectExtension(
+            input->document,
+            "KHR_materials_pbrSpecularGlossiness")) {
         return nullptr;
     }
     if (declaredExtension(input->document, "KHR_materials_anisotropy") &&
