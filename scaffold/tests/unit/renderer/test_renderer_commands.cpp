@@ -301,6 +301,9 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsSpecular) {
         glsl.find("u_specularColorFactor"));
     EXPECT_NE(
         std::string::npos,
+        glsl.find("dielectricSpecular = clamp(dielectricSpecular, 0.0, 1.0)"));
+    EXPECT_NE(
+        std::string::npos,
         glsl.find("mix(dielectricSpecular, base.rgb, metallic)"));
 
     const std::string msl = renderer_testing::gltfFragmentMSL();
@@ -316,6 +319,9 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsSpecular) {
     EXPECT_NE(
         std::string::npos,
         msl.find("u_specularColorFactor"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("dielectricSpecular = clamp(dielectricSpecular, 0.0, 1.0)"));
     EXPECT_NE(
         std::string::npos,
         msl.find("mix(dielectricSpecular, base.rgb, metallic)"));
