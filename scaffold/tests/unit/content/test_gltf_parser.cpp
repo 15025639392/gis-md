@@ -1391,18 +1391,20 @@ ExternalGltfFixture makeTexturedExternalBufferTriangleGltf(
 
 ExternalGltfFixture makeBufferViewImageExternalBufferTriangleGltf(
     bool includeMimeType = true,
-    const std::string& mimeType = "image/png") {
+    const std::string& mimeType = "image/png",
+    const std::vector<uint8_t>& imageBytes = {}) {
     ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf("image.bin");
     const size_t imageOffset = fixture.bin.size();
-    const std::vector<uint8_t> imageBytes =
-        mimeType == "image/webp"
-            ? makeFakeWebpBytes()
-            : std::vector<uint8_t>{9, 8, 7, 6};
+    const std::vector<uint8_t> embeddedImageBytes = !imageBytes.empty()
+        ? imageBytes
+        : (mimeType == "image/webp"
+               ? makeFakeWebpBytes()
+               : std::vector<uint8_t>{9, 8, 7, 6});
     fixture.bin.insert(
         fixture.bin.end(),
-        imageBytes.begin(),
-        imageBytes.end());
+        embeddedImageBytes.begin(),
+        embeddedImageBytes.end());
 
     const std::string oldBuffer =
         "\"buffers\":[{\"uri\":\"triangle.bin\",\"byteLength\":" +
@@ -1431,7 +1433,7 @@ ExternalGltfFixture makeBufferViewImageExternalBufferTriangleGltf(
     const std::string imageBufferView =
         lastBufferView + ",{\"buffer\":0,\"byteOffset\":" +
         std::to_string(imageOffset) + ",\"byteLength\":" +
-        std::to_string(imageBytes.size()) + "}";
+        std::to_string(embeddedImageBytes.size()) + "}";
     const size_t bufferViewPos = fixture.jsonText.find(lastBufferView);
     if (bufferViewPos != std::string::npos) {
         fixture.jsonText.replace(
@@ -4737,6 +4739,52 @@ TEST(GltfParserTest, ParsesExtTextureWebpBufferViewImage) {
     EXPECT_EQ(1, model->textures[0].image.width);
 }
 
+TEST(GltfParserTest, RejectsExtTextureWebpBufferViewBytesWithoutWebpSignature) {
+    ExternalGltfFixture fixture =
+        makeBufferViewImageExternalBufferTriangleGltf(
+            true,
+            "image/webp",
+            {9, 8, 7, 6});
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":[\"EXT_texture_webp\"],"
+        "\"extensionsRequired\":[\"EXT_texture_webp\"],");
+
+    const std::string textureMarker =
+        "\"textures\":[{\"source\":0,\"sampler\":0}]";
+    const size_t texturePos = fixture.jsonText.find(textureMarker);
+    ASSERT_NE(std::string::npos, texturePos);
+    fixture.jsonText.replace(
+        texturePos,
+        textureMarker.size(),
+        "\"textures\":[{\"sampler\":0,"
+        "\"extensions\":{\"EXT_texture_webp\":{\"source\":0}}}]");
+
+    bool decodedImage = false;
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            return uri == "triangle.bin" ? fixture.bin
+                                         : std::vector<uint8_t>{};
+        },
+        [&](const uint8_t*, size_t) -> std::optional<GltfImage> {
+            decodedImage = true;
+            GltfImage image;
+            image.width = 1;
+            image.height = 1;
+            image.channels = 4;
+            image.pixels = {255, 255, 255, 255};
+            return image;
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(decodedImage);
+}
+
 TEST(GltfParserTest, RejectsBaseColorTextureDataUriWithUnsupportedMimeType) {
     const ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf(
@@ -5582,6 +5630,80 @@ TEST(GltfParserTest, RejectsUnsupportedEncodedImageSignaturesBeforeDecoder) {
             fixture.jsonText.size(),
             [&](const std::string& uri) {
                 return uri == "triangle.bin" ? fixture.bin : testCase.bytes;
+            },
+            [&](const uint8_t*, size_t) -> std::optional<GltfImage> {
+                decodedImage = true;
+                GltfImage image;
+                image.width = 1;
+                image.height = 1;
+                image.channels = 4;
+                image.pixels = {255, 255, 255, 255};
+                return image;
+            });
+
+        EXPECT_EQ(nullptr, model) << testCase.label;
+        EXPECT_FALSE(decodedImage) << testCase.label;
+    }
+}
+
+TEST(GltfParserTest, RejectsUnsupportedBufferViewImageSignaturesBeforeDecoder) {
+    struct EncodedCase {
+        std::vector<uint8_t> bytes;
+        const char* label;
+    };
+
+    const std::vector<EncodedCase> cases = {
+        {
+            {
+                static_cast<uint8_t>(0xABu), 'K', 'T', 'X', ' ', '1', '1',
+                static_cast<uint8_t>(0xBBu), 0x0Du, 0x0Au, 0x1Au, 0x0Au},
+            "KTX1"},
+        {
+            {
+                static_cast<uint8_t>(0xABu), 'K', 'T', 'X', ' ', '2', '0',
+                static_cast<uint8_t>(0xBBu), 0x0Du, 0x0Au, 0x1Au, 0x0Au},
+            "KTX2"},
+        {
+            {'D', 'D', 'S', ' '},
+            "DDS"},
+        {
+            {
+                0x13u,
+                static_cast<uint8_t>(0xABu),
+                static_cast<uint8_t>(0xA1u),
+                0x5Cu},
+            "ASTC"},
+        {
+            {
+                0, 0, 0, 20,
+                'f', 't', 'y', 'p',
+                'a', 'v', 'i', 'f',
+                0, 0, 0, 0},
+            "AVIF major brand"},
+        {
+            {
+                0, 0, 0, 24,
+                'f', 't', 'y', 'p',
+                'm', 'i', 'f', '1',
+                0, 0, 0, 0,
+                'a', 'v', 'i', 'f'},
+            "AVIF compatible brand"},
+    };
+
+    for (const EncodedCase& testCase : cases) {
+        ExternalGltfFixture fixture =
+            makeBufferViewImageExternalBufferTriangleGltf(
+                true,
+                "image/png",
+                testCase.bytes);
+        bool decodedImage = false;
+
+        std::unique_ptr<GltfModel> model = GltfParser::parse(
+            reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+            fixture.jsonText.size(),
+            [&](const std::string& uri) {
+                return uri == "triangle.bin" ? fixture.bin
+                                             : std::vector<uint8_t>{};
             },
             [&](const uint8_t*, size_t) -> std::optional<GltfImage> {
                 decodedImage = true;
