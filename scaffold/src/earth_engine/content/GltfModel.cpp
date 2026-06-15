@@ -307,7 +307,9 @@ bool imageUriUsesUnsupportedFormat(
         return true;
     }
     return uriPathEndsWith(uri, ".ktx2") ||
-           uriPathEndsWith(uri, ".basis");
+           uriPathEndsWith(uri, ".basis") ||
+           uriPathEndsWith(uri, ".avif") ||
+           uriPathEndsWith(uri, ".dds");
 }
 
 std::optional<std::string> dataUriMimeType(const std::string& uri) {

@@ -4697,6 +4697,46 @@ TEST(GltfParserTest, RejectsExternalKtx2ImageWithoutDecoder) {
     EXPECT_FALSE(resolvedImage);
 }
 
+TEST(GltfParserTest, RejectsExternalAvifImageWithoutDecoder) {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf("textures/texture.AVIF?rev=1");
+    bool resolvedImage = false;
+
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            if (uri == "triangle.bin") {
+                return fixture.bin;
+            }
+            resolvedImage = true;
+            return std::vector<uint8_t>{'a', 'v', 'i', 'f'};
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(resolvedImage);
+}
+
+TEST(GltfParserTest, RejectsExternalDdsImageWithoutDecoder) {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf("textures/texture.dds#main");
+    bool resolvedImage = false;
+
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            if (uri == "triangle.bin") {
+                return fixture.bin;
+            }
+            resolvedImage = true;
+            return std::vector<uint8_t>{'D', 'D', 'S', ' '};
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(resolvedImage);
+}
+
 TEST(GltfParserTest, ParsesBaseColorTextureBufferViewImage) {
     const ExternalGltfFixture fixture =
         makeBufferViewImageExternalBufferTriangleGltf();
@@ -5701,10 +5741,12 @@ TEST(GltfParserTest, RejectsUnsupportedRequiredExtension) {
 }
 
 TEST(GltfParserTest, RejectsUnsupportedCompressionAndTextureExtensions) {
-    const std::array<const char*, 3> unsupportedExtensions = {
+    const std::array<const char*, 5> unsupportedExtensions = {
         "KHR_draco_mesh_compression",
         "EXT_meshopt_compression",
-        "KHR_texture_basisu"};
+        "KHR_texture_basisu",
+        "EXT_texture_avif",
+        "MSFT_texture_dds"};
 
     for (const char* extension : unsupportedExtensions) {
         ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
