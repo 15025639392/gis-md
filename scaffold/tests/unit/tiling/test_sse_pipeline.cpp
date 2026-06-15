@@ -5453,10 +5453,13 @@ void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
     check(unsupportedProvider.rootTiles().empty(),
           "TilesetJsonContentProvider: unsupported 3DTILES_content_gltf exposes no roots");
 
-    const std::array<const char*, 13> unsupportedGltfExtensions = {
+    const std::array<const char*, 19> unsupportedGltfExtensions = {
         "KHR_draco_mesh_compression",
         "EXT_meshopt_compression",
+        "KHR_meshopt_compression",
         "KHR_texture_basisu",
+        "EXT_texture_avif",
+        "MSFT_texture_dds",
         "EXT_mesh_features",
         "EXT_instance_features",
         "EXT_structural_metadata",
@@ -5465,7 +5468,10 @@ void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
         "KHR_gaussian_splatting_compression_spz",
         "KHR_gaussian_splatting_compression_spz_2",
         "KHR_spz_gaussian_splats_compression",
+        "KHR_materials_diffuse_transmission",
+        "KHR_materials_dispersion",
         "KHR_materials_iridescence",
+        "KHR_materials_variants",
         "KHR_materials_volume"};
 
     for (const char* extension : unsupportedGltfExtensions) {
