@@ -528,6 +528,107 @@ bool declaredExtension(const json& doc, const char* extensionName) {
            checkArray(doc.value("extensionsUsed", json::array()));
 }
 
+bool meshQuantizationDeclarationComponentType(int componentType) {
+    return componentType == 5120 ||
+           componentType == 5121 ||
+           componentType == 5122 ||
+           componentType == 5123;
+}
+
+bool accessorUsesMeshQuantization(
+    const json& accessors,
+    const std::string& semantic,
+    const json& accessorIndexJson) {
+    if (!accessorIndexJson.is_number_integer()) {
+        return false;
+    }
+    const int accessorIndex = accessorIndexJson.get<int>();
+    if (accessorIndex < 0 ||
+        static_cast<size_t>(accessorIndex) >= accessors.size()) {
+        return false;
+    }
+
+    const json& accessor = accessors[static_cast<size_t>(accessorIndex)];
+    if (!accessor.is_object()) {
+        return false;
+    }
+    const auto componentTypeIt = accessor.find("componentType");
+    const auto typeIt = accessor.find("type");
+    if (componentTypeIt == accessor.end() ||
+        typeIt == accessor.end() ||
+        !componentTypeIt->is_number_integer() ||
+        !typeIt->is_string()) {
+        return false;
+    }
+
+    const int componentType = componentTypeIt->get<int>();
+    if (!meshQuantizationDeclarationComponentType(componentType)) {
+        return false;
+    }
+
+    const std::string type = typeIt->get<std::string>();
+    if (semantic == "POSITION" || semantic == "NORMAL") {
+        return type == "VEC3";
+    }
+    if (semantic == "TANGENT") {
+        return type == "VEC4";
+    }
+    if (!texCoordSetIndexFromSemantic(semantic) || type != "VEC2") {
+        return false;
+    }
+
+    bool normalized = false;
+    const auto normalizedIt = accessor.find("normalized");
+    if (normalizedIt != accessor.end()) {
+        if (!normalizedIt->is_boolean()) {
+            return false;
+        }
+        normalized = normalizedIt->get<bool>();
+    }
+    return !normalized || (componentType != 5121 && componentType != 5123);
+}
+
+bool documentUsesMeshQuantization(const json& doc) {
+    const auto meshesIt = doc.find("meshes");
+    const auto accessorsIt = doc.find("accessors");
+    if (meshesIt == doc.end() ||
+        accessorsIt == doc.end() ||
+        !meshesIt->is_array() ||
+        !accessorsIt->is_array()) {
+        return false;
+    }
+
+    for (const json& mesh : *meshesIt) {
+        if (!mesh.is_object()) {
+            continue;
+        }
+        const auto primitivesIt = mesh.find("primitives");
+        if (primitivesIt == mesh.end() || !primitivesIt->is_array()) {
+            continue;
+        }
+        for (const json& primitive : *primitivesIt) {
+            if (!primitive.is_object()) {
+                continue;
+            }
+            const auto attributesIt = primitive.find("attributes");
+            if (attributesIt == primitive.end() || !attributesIt->is_object()) {
+                continue;
+            }
+            for (auto it = attributesIt->begin();
+                 it != attributesIt->end();
+                 ++it) {
+                if (accessorUsesMeshQuantization(
+                        *accessorsIt,
+                        it.key(),
+                        it.value())) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 bool isTextureInfoExtensionParentPath(const std::vector<std::string>& path) {
     if (path.size() == 4 &&
         path[0] == "materials" &&
@@ -6180,6 +6281,10 @@ std::unique_ptr<GltfModel> GltfParser::parse(
     }
     const bool meshQuantizationEnabled =
         declaredExtension(input->document, "KHR_mesh_quantization");
+    if (meshQuantizationEnabled &&
+        !documentUsesMeshQuantization(input->document)) {
+        return nullptr;
+    }
 
     auto loadedBuffers =
         loadBuffers(

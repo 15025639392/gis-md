@@ -62,7 +62,8 @@ std::vector<uint8_t> makeTriangleGlb(
     std::string tangentType = std::string{},
     bool zeroTangent = false,
     float tangentW = 1.0f,
-    bool legacyBatchIds = false) {
+    bool legacyBatchIds = false,
+    bool declareMeshQuantization = false) {
     const bool hasColor = colorComponentType != 0;
     if (hasColor && colorType.empty()) {
         colorType = "VEC4";
@@ -263,9 +264,14 @@ std::vector<uint8_t> makeTriangleGlb(
         (indexNormalized ? ",\"normalized\":true" : "") +
         "}";
 
+    const std::string extensionDeclarations = declareMeshQuantization
+        ? "\"extensionsUsed\":[\"KHR_mesh_quantization\"],"
+          "\"extensionsRequired\":[\"KHR_mesh_quantization\"],"
+        : "";
     const std::string jsonText =
         std::string("{") +
         "\"asset\":{\"version\":\"2.0\"}," +
+        extensionDeclarations +
         "\"scene\":0," +
         "\"scenes\":[{\"nodes\":[0]}]," +
         "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30]}]," +
@@ -1919,6 +1925,52 @@ TEST(GltfParserTest, ParsesKhrMeshQuantizationAttributesWhenDeclared) {
 
 TEST(GltfParserTest, RejectsQuantizedMeshAttributesWithoutExtension) {
     const std::vector<uint8_t> glb = makeQuantizedTriangleGlb(false);
+    std::unique_ptr<GltfModel> model = GltfParser::parse(glb.data(), glb.size());
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsKhrMeshQuantizationDeclarationWithoutUse) {
+    const std::vector<uint8_t> glb =
+        makeTriangleGlb(
+            {1.0f, 1.0f, 1.0f, 1.0f},
+            false,
+            5126,
+            false,
+            0,
+            false,
+            0,
+            false,
+            std::string{},
+            0,
+            std::string{},
+            false,
+            1.0f,
+            false,
+            true);
+    std::unique_ptr<GltfModel> model = GltfParser::parse(glb.data(), glb.size());
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsKhrMeshQuantizationDeclarationForCoreTexcoords) {
+    const std::vector<uint8_t> glb =
+        makeTriangleGlb(
+            {1.0f, 1.0f, 1.0f, 1.0f},
+            false,
+            5121,
+            true,
+            0,
+            false,
+            0,
+            false,
+            std::string{},
+            0,
+            std::string{},
+            false,
+            1.0f,
+            false,
+            true);
     std::unique_ptr<GltfModel> model = GltfParser::parse(glb.data(), glb.size());
 
     EXPECT_EQ(nullptr, model);
