@@ -8584,6 +8584,81 @@ TEST(GltfParserTest, RejectsSupportedObjectExtensionsAtTopLevel) {
     }
 }
 
+TEST(GltfParserTest, RejectsSupportedObjectExtensionsAtWrongOwnerPath) {
+    struct ObjectExtensionCase {
+        const char* extensionName;
+        const char* marker;
+        const char* replacement;
+        bool needsTextureFixture;
+        const char* label;
+    };
+
+    const std::array<ObjectExtensionCase, 5> cases = {{
+        {
+            "KHR_texture_transform",
+            "{\"mesh\":0,\"translation\":[10,20,30]}",
+            "{\"mesh\":0,\"translation\":[10,20,30],"
+            "\"extensions\":{\"KHR_texture_transform\":{\"scale\":[2,2]}}}",
+            false,
+            "texture transform on node"},
+        {
+            "KHR_materials_unlit",
+            "\"textures\":[{\"source\":0,\"sampler\":0}]",
+            "\"textures\":[{\"source\":0,\"sampler\":0,"
+            "\"extensions\":{\"KHR_materials_unlit\":{}}}]",
+            true,
+            "material extension on texture"},
+        {
+            "KHR_materials_clearcoat",
+            "{\"mesh\":0,\"translation\":[10,20,30]}",
+            "{\"mesh\":0,\"translation\":[10,20,30],"
+            "\"extensions\":{\"KHR_materials_clearcoat\":{"
+            "\"clearcoatFactor\":0.5}}}",
+            false,
+            "material extension on node"},
+        {
+            "EXT_texture_webp",
+            "\"mode\":4",
+            "\"mode\":4,\"extensions\":{\"EXT_texture_webp\":{\"source\":0}}",
+            true,
+            "webp texture extension on primitive"},
+        {
+            "EXT_mesh_gpu_instancing",
+            "\"mode\":4",
+            "\"mode\":4,\"extensions\":{\"EXT_mesh_gpu_instancing\":{"
+            "\"attributes\":{\"TRANSLATION\":0}}}",
+            false,
+            "gpu instancing on primitive"},
+    }};
+
+    for (const ObjectExtensionCase& testCase : cases) {
+        SCOPED_TRACE(testCase.label);
+        ExternalGltfFixture fixture = testCase.needsTextureFixture
+            ? makeTexturedExternalBufferTriangleGltf("image.bin")
+            : makeExternalBufferTriangleGltf();
+
+        const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+        const size_t assetPos = fixture.jsonText.find(assetMarker);
+        ASSERT_NE(std::string::npos, assetPos);
+        fixture.jsonText.insert(
+            assetPos + assetMarker.size(),
+            std::string("\"extensionsUsed\":[\"") +
+                testCase.extensionName + "\"],");
+
+        const size_t markerPos = fixture.jsonText.find(testCase.marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            std::string(testCase.marker).size(),
+            testCase.replacement);
+
+        std::unique_ptr<GltfModel> model =
+            parseExternalFixtureWithSolidImage(fixture);
+
+        EXPECT_EQ(nullptr, model);
+    }
+}
+
 TEST(GltfParserTest, RejectsKhrMaterialsUnlitMaterialExtensionTypeMismatch) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
