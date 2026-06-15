@@ -980,13 +980,14 @@ bool hasUnsupportedExtensionsObjectInTileObject(
 }
 
 bool hasUnsupportedTilesetMetadataFields(const nlohmann::json& tilesetJson) {
-    static constexpr std::array<const char*, 6> kMetadataFields = {
+    static constexpr std::array<const char*, 7> kMetadataFields = {
         "properties",
         "schema",
         "schemaUri",
         "statistics",
         "groups",
-        "metadata"};
+        "metadata",
+        "style"};
     return std::any_of(
         kMetadataFields.begin(),
         kMetadataFields.end(),

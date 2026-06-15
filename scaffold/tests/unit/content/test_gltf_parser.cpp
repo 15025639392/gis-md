@@ -2245,9 +2245,10 @@ std::vector<uint8_t> bytesFromString(const std::string& text) {
     return std::vector<uint8_t>(text.begin(), text.end());
 }
 
-std::string makeTilesetJsonWithRootContent(
-    const std::string& contentUri,
-    const std::string& topLevelFields = std::string{}) {
+std::string makeTilesetJsonWithRootContentObject(
+    const std::string& contentObjectJson,
+    const std::string& topLevelFields = std::string{},
+    const std::string& rootFields = std::string{}) {
     return std::string("{") +
         "\"asset\":{\"version\":\"1.0\",\"gltfUpAxis\":\"Z\"}," +
         topLevelFields +
@@ -2255,8 +2256,17 @@ std::string makeTilesetJsonWithRootContent(
         "\"root\":{"
         "\"boundingVolume\":{\"box\":[0,0,0,1,0,0,0,1,0,0,0,1]},"
         "\"geometricError\":0.0,"
-        "\"refine\":\"ADD\","
-        "\"content\":{\"uri\":\"" + contentUri + "\"}}}";
+        "\"refine\":\"ADD\"," +
+        rootFields +
+        "\"content\":" + contentObjectJson + "}}";
+}
+
+std::string makeTilesetJsonWithRootContent(
+    const std::string& contentUri,
+    const std::string& topLevelFields = std::string{}) {
+    return makeTilesetJsonWithRootContentObject(
+        "{\"uri\":\"" + contentUri + "\"}",
+        topLevelFields);
 }
 
 TileContentLoadResult requestTileContentBlocking(
@@ -12364,6 +12374,80 @@ TEST(GltfParserTest, ContentProviderCopiesI3dmFeaturesAcrossNativeGltfInstances)
             &primitive.instances[0].featureProperties.at("Height")));
 
     std::filesystem::remove_all(root);
+}
+
+TEST(GltfParserTest, TilesetRejectsUnsupportedTopLevelMetadataAndStyleFields) {
+    struct FieldCase {
+        const char* fieldJson;
+        const char* label;
+    };
+
+    const std::array<FieldCase, 7> cases = {{
+        {"\"properties\":{\"height\":{\"minimum\":0}},", "properties"},
+        {"\"schema\":{\"classes\":{}},", "schema"},
+        {"\"schemaUri\":\"schema.json\",", "schemaUri"},
+        {"\"statistics\":{},", "statistics"},
+        {"\"groups\":[{}],", "groups"},
+        {"\"metadata\":{},", "metadata"},
+        {"\"style\":{\"color\":\"color('red')\"},", "style"},
+    }};
+
+    for (const FieldCase& testCase : cases) {
+        SCOPED_TRACE(testCase.label);
+        const std::string tilesetJson =
+            makeTilesetJsonWithRootContent("root.glb", testCase.fieldJson);
+        TilesetJsonContentProvider provider(
+            "file:///earth-md/tileset.json",
+            bytesFromString(tilesetJson),
+            testCase.label);
+
+        EXPECT_FALSE(provider.valid());
+        EXPECT_TRUE(provider.rootTiles().empty());
+    }
+}
+
+TEST(GltfParserTest, TilesetFailsTileContentWithUnsupportedMetadataFields) {
+    struct MetadataCase {
+        std::string tilesetJson;
+        const char* label;
+    };
+
+    const std::array<MetadataCase, 3> cases = {{
+        {
+            makeTilesetJsonWithRootContentObject(
+                "{\"uri\":\"root.glb\"}",
+                std::string{},
+                "\"metadata\":{},"),
+            "tile metadata"},
+        {
+            makeTilesetJsonWithRootContentObject(
+                "{\"uri\":\"root.glb\",\"metadata\":{}}"),
+            "content metadata"},
+        {
+            makeTilesetJsonWithRootContentObject(
+                "{\"uri\":\"root.glb\",\"group\":0}"),
+            "content group"},
+    }};
+
+    for (const MetadataCase& testCase : cases) {
+        SCOPED_TRACE(testCase.label);
+        TilesetJsonContentProvider provider(
+            "file:///earth-md/tileset.json",
+            bytesFromString(testCase.tilesetJson),
+            testCase.label);
+
+        ASSERT_TRUE(provider.valid());
+        const std::vector<TileKey> roots = provider.rootTiles();
+        ASSERT_EQ(1u, roots.size());
+        const std::vector<TileKey> children =
+            provider.childTiles(roots.front());
+        ASSERT_EQ(1u, children.size());
+
+        TileContentLoadResult result =
+            requestTileContentBlocking(provider, children.front());
+        EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+        EXPECT_EQ(nullptr, result.gltfModel);
+    }
 }
 
 TEST(GltfParserTest, TilesetContentGltfAllowsSupportedPayloadAndRendersContent) {
