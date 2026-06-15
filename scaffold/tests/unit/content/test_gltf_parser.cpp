@@ -7453,6 +7453,28 @@ TEST(GltfParserTest, ContentProviderDecodesB3dmAndAppliesRtcCenter) {
     EXPECT_NEAR(333.0, transformed.z(), 1e-12);
 }
 
+TEST(GltfParserTest, ContentProviderRejectsMalformedB3dmRtcCenter) {
+    const std::array<std::string, 3> featureTables = {{
+        "{\"BATCH_LENGTH\":0,\"RTC_CENTER\":[1.0,2.0]}",
+        "{\"BATCH_LENGTH\":0,\"RTC_CENTER\":[1.0,\"bad\",3.0]}",
+        "{\"BATCH_LENGTH\":0,\"RTC_CENTER\":true}"}};
+
+    for (const std::string& featureTable : featureTables) {
+        const std::vector<uint8_t> b3dm =
+            makeB3dm(makeTriangleGlb(), featureTable);
+
+        SingleGltfContentProvider provider(
+            TileKey{"Geographic-TMS", 0, 0, 0},
+            std::vector<uint8_t>{},
+            "malformed B3DM RTC_CENTER fixture");
+        TileContentLoadResult result =
+            provider.decodeContent(b3dm.data(), b3dm.size());
+
+        EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+        EXPECT_EQ(nullptr, result.gltfModel);
+    }
+}
+
 TEST(GltfParserTest, ContentProviderRejectsB3dmBatchTableMetadata) {
     const std::vector<uint8_t> b3dm = makeB3dm(
         makeTriangleGlb(),

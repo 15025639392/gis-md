@@ -99,6 +99,32 @@ bool jsonObjectHasOnlyKeys(
 
 std::optional<uint32_t> jsonU32(const nlohmann::json& json);
 
+std::optional<Vec3> jsonRtcCenter(const nlohmann::json& featureJson,
+                                  bool& valid) {
+    auto it = featureJson.find("RTC_CENTER");
+    if (it == featureJson.end()) {
+        return std::nullopt;
+    }
+    if (!it->is_array() || it->size() != 3 ||
+        !(*it)[0].is_number() ||
+        !(*it)[1].is_number() ||
+        !(*it)[2].is_number()) {
+        valid = false;
+        return std::nullopt;
+    }
+    Vec3 value(
+        (*it)[0].get<double>(),
+        (*it)[1].get<double>(),
+        (*it)[2].get<double>());
+    if (!std::isfinite(value.x()) ||
+        !std::isfinite(value.y()) ||
+        !std::isfinite(value.z())) {
+        valid = false;
+        return std::nullopt;
+    }
+    return value;
+}
+
 struct B3dmExtractResult {
     bool isB3dm = false;
     bool valid = false;
@@ -192,14 +218,13 @@ B3dmExtractResult extractB3dmGlb(const uint8_t* data, size_t size) {
                 return result;
             }
         }
-        auto it = parsed.find("RTC_CENTER");
-        if (it != parsed.end() && it->is_array() && it->size() == 3 &&
-            (*it)[0].is_number() && (*it)[1].is_number() &&
-            (*it)[2].is_number()) {
-            result.rtcTransform = Mat4::translation(Vec3(
-                (*it)[0].get<double>(),
-                (*it)[1].get<double>(),
-                (*it)[2].get<double>()));
+        bool validRtc = true;
+        std::optional<Vec3> rtcCenter = jsonRtcCenter(parsed, validRtc);
+        if (!validRtc) {
+            return result;
+        }
+        if (rtcCenter) {
+            result.rtcTransform = Mat4::translation(*rtcCenter);
         }
     } else if (featureTableBinaryByteLength > 0 ||
                batchTableJsonByteLength > 0 ||
