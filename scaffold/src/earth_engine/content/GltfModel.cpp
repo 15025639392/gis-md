@@ -1374,6 +1374,54 @@ bool validCoreTextureSource(const json& imageArray, const json& sourceJson) {
         false);
 }
 
+bool validateTextureJson(
+    const json& textureJson,
+    const json& imageArray,
+    const json* samplers) {
+    if (!textureJson.is_object()) {
+        return false;
+    }
+
+    const auto samplerIt = textureJson.find("sampler");
+    if (samplerIt != textureJson.end()) {
+        if (!samplerIt->is_number_integer()) {
+            return false;
+        }
+        const int samplerIndex = samplerIt->get<int>();
+        if (samplerIndex < 0 ||
+            !samplers ||
+            !samplers->is_array() ||
+            static_cast<size_t>(samplerIndex) >= samplers->size()) {
+            return false;
+        }
+    }
+
+    const auto sourceIt = textureJson.find("source");
+    const std::optional<int> webpSourceIndex =
+        webpTextureSourceIndex(textureJson);
+    if (sourceIt == textureJson.end() && !webpSourceIndex) {
+        return false;
+    }
+    if (sourceIt != textureJson.end() &&
+        !validCoreTextureSource(imageArray, *sourceIt)) {
+        return false;
+    }
+    if (webpSourceIndex) {
+        if (*webpSourceIndex < 0 ||
+            !imageArray.is_array() ||
+            static_cast<size_t>(*webpSourceIndex) >= imageArray.size()) {
+            return false;
+        }
+        const json& imageJson =
+            imageArray[static_cast<size_t>(*webpSourceIndex)];
+        if (!validImageSourceFields(imageJson, true) ||
+            imageSourceDeclaresNonWebp(imageJson)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 std::optional<std::vector<GltfTexture>> loadTextures(
     const json& doc,
     const std::vector<std::vector<uint8_t>>& buffers,
@@ -3559,6 +3607,19 @@ bool validateSceneGraph(const json& doc,
         for (const json& image : *imagesIt) {
             if (!validImageSourceFields(image, webpImagesAllowed) ||
                 !imageBufferViewReferenceInRange(doc, image)) {
+                return false;
+            }
+        }
+    }
+    if (texturesIt != doc.end()) {
+        const json emptyImages = json::array();
+        const json& imageArray =
+            imagesIt == doc.end() ? emptyImages : *imagesIt;
+        for (const json& texture : *texturesIt) {
+            if (!validateTextureJson(
+                    texture,
+                    imageArray,
+                    samplersIt == doc.end() ? nullptr : &*samplersIt)) {
                 return false;
             }
         }

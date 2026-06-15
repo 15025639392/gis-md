@@ -4701,6 +4701,21 @@ TEST(GltfParserTest, RejectsUnreferencedSamplerWithInvalidWrap) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsUnreferencedTextureWithoutSource) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker = "\"scene\":0";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "\"samplers\":[{}],\"textures\":[{\"sampler\":0}],\"scene\":0");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsTextureWithNegativeSamplerIndex) {
     ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf(
