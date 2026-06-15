@@ -661,6 +661,77 @@ std::vector<uint8_t> makeTriangleGlbBytes() {
     return glb;
 }
 
+std::vector<uint8_t> makeNativeGpuInstancedTriangleGlbBytes() {
+    std::vector<uint8_t> bin;
+    const size_t positionsOffset = bin.size();
+    appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f);
+    appendPod<float>(bin, 1.0f); appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f);
+    appendPod<float>(bin, 0.0f); appendPod<float>(bin, 1.0f); appendPod<float>(bin, 0.0f);
+
+    const size_t normalsOffset = bin.size();
+    for (int i = 0; i < 3; ++i) {
+        appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f); appendPod<float>(bin, 1.0f);
+    }
+
+    const size_t uvOffset = bin.size();
+    appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f);
+    appendPod<float>(bin, 1.0f); appendPod<float>(bin, 0.0f);
+    appendPod<float>(bin, 0.0f); appendPod<float>(bin, 1.0f);
+
+    const size_t indicesOffset = bin.size();
+    appendPod<uint16_t>(bin, 0); appendPod<uint16_t>(bin, 1); appendPod<uint16_t>(bin, 2);
+    pad4(bin, 0);
+
+    const size_t translationsOffset = bin.size();
+    appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f); appendPod<float>(bin, 5.0f);
+    appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f); appendPod<float>(bin, 25.0f);
+    pad4(bin, 0);
+
+    const std::string jsonText =
+        std::string("{") +
+        "\"asset\":{\"version\":\"2.0\"}," +
+        "\"extensionsUsed\":[\"EXT_mesh_gpu_instancing\"]," +
+        "\"extensionsRequired\":[\"EXT_mesh_gpu_instancing\"]," +
+        "\"scene\":0," +
+        "\"scenes\":[{\"nodes\":[0]}]," +
+        "\"nodes\":[{\"mesh\":0,\"extensions\":{\"EXT_mesh_gpu_instancing\":{"
+        "\"attributes\":{\"TRANSLATION\":4}}}}]," +
+        "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},\"indices\":3,\"mode\":4}]}]," +
+        "\"buffers\":[{\"byteLength\":" + std::to_string(bin.size()) + "}]," +
+        "\"bufferViews\":[" +
+        "{\"buffer\":0,\"byteOffset\":" + std::to_string(positionsOffset) + ",\"byteLength\":36}," +
+        "{\"buffer\":0,\"byteOffset\":" + std::to_string(normalsOffset) + ",\"byteLength\":36}," +
+        "{\"buffer\":0,\"byteOffset\":" + std::to_string(uvOffset) + ",\"byteLength\":24}," +
+        "{\"buffer\":0,\"byteOffset\":" + std::to_string(indicesOffset) + ",\"byteLength\":6}," +
+        "{\"buffer\":0,\"byteOffset\":" + std::to_string(translationsOffset) + ",\"byteLength\":24}" +
+        "]," +
+        "\"accessors\":[" +
+        "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}," +
+        "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}," +
+        "{\"bufferView\":2,\"componentType\":5126,\"count\":3,\"type\":\"VEC2\"}," +
+        "{\"bufferView\":3,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}," +
+        "{\"bufferView\":4,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}" +
+        "]}";
+
+    std::vector<uint8_t> jsonBytes(jsonText.begin(), jsonText.end());
+    pad4(jsonBytes, 0x20);
+
+    std::vector<uint8_t> glb;
+    appendPod<uint32_t>(glb, 0x46546C67u);
+    appendPod<uint32_t>(glb, 2u);
+    appendPod<uint32_t>(
+        glb,
+        static_cast<uint32_t>(
+            12 + 8 + jsonBytes.size() + 8 + bin.size()));
+    appendPod<uint32_t>(glb, static_cast<uint32_t>(jsonBytes.size()));
+    appendPod<uint32_t>(glb, 0x4E4F534Au);
+    glb.insert(glb.end(), jsonBytes.begin(), jsonBytes.end());
+    appendPod<uint32_t>(glb, static_cast<uint32_t>(bin.size()));
+    appendPod<uint32_t>(glb, 0x004E4942u);
+    glb.insert(glb.end(), bin.begin(), bin.end());
+    return glb;
+}
+
 std::vector<uint8_t> makeI3dmBytes(std::vector<uint8_t> gltfPayload,
                                    const std::vector<Vec3>& positions) {
     std::vector<uint8_t> featureBinary;
@@ -3973,6 +4044,80 @@ void testTilesetContentProviderLoadsGltfRenderContent() {
           "Tileset: loaded content provider GLB renders through GltfPrimitive command");
 }
 
+void testTilesetContentProviderLoadsNativeGpuInstancingGltf() {
+    DummyRenderDevice device;
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    auto contentProvider = std::make_unique<SingleGltfContentProvider>(
+        rootKey,
+        makeNativeGpuInstancedTriangleGlbBytes(),
+        "native EXT_mesh_gpu_instancing GLB fixture");
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTestAccess::requestMissingTile(tileset, rootKey);
+
+    TilesetTile* root = nullptr;
+    for (int i = 0; i < 100; ++i) {
+        TilesetTestAccess::processPendingUploads(tileset);
+        root = TilesetTestAccess::findTile(tileset, rootKey);
+        if (root &&
+            root->loadState == TileLoadState::Done &&
+            root->contentKind == TileContentKind::Render &&
+            root->gltfModel) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    check(root != nullptr,
+          "Tileset: native glTF instancing provider creates the requested tile");
+    if (!root) return;
+
+    check(root->loadState == TileLoadState::Done &&
+              root->contentKind == TileContentKind::Render &&
+              root->gltfModel != nullptr,
+          "Tileset: native glTF instancing content reaches render state");
+    check(root->gltfModel &&
+              root->gltfModel->primitives.size() == 1 &&
+              root->gltfModel->primitives.front().instances.size() == 2,
+          "Tileset: native EXT_mesh_gpu_instancing parses two instances");
+    check(root->gltfPrimitiveResources.size() == 1 &&
+              root->gltfPrimitiveResources.front().instanceCount == 2 &&
+              root->gltfPrimitiveResources.front().instanceBuffer != nullptr,
+          "Tileset: native EXT_mesh_gpu_instancing prepares one GPU instance buffer");
+    if (!root->gltfPrimitiveResources.empty()) {
+        const auto* instanceBuffer = dynamic_cast<const DummyBuffer*>(
+            root->gltfPrimitiveResources.front().instanceBuffer.get());
+        check(instanceBuffer &&
+                  instanceBuffer->bytes().size() ==
+                      2u * (16u + 9u) * sizeof(float),
+              "Tileset: native EXT_mesh_gpu_instancing uploads instance matrices");
+    }
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+    check(commands.size() == 1 &&
+              commands.front().kind ==
+                  RenderCommandKind::GltfPrimitiveInstanced &&
+              commands.front().instanceCount == 2 &&
+              commands.front().instanceBuffer != nullptr &&
+              !commands.front().blend &&
+              commands.front().depthWrite,
+          "Tileset: native EXT_mesh_gpu_instancing renders as opaque GPU instancing");
+}
+
 void testTilesetJsonProviderLoadsExplicitGltfTile() {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
@@ -7032,6 +7177,7 @@ int main() {
     testTilesetGltfBlendInstancesSplitForSorting();
     testTilesetGltfTransmissionInstancesSplitForSorting();
     testTilesetContentProviderLoadsGltfRenderContent();
+    testTilesetContentProviderLoadsNativeGpuInstancingGltf();
     testTilesetJsonProviderLoadsExplicitGltfTile();
     testTilesetJsonGltfUpAxisZKeepsZUpContent();
     testTilesetJsonI3dmDefaultUpAxisKeepsInstancePositionsTileLocal();
