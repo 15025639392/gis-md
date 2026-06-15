@@ -99,6 +99,11 @@ uint32_t readU32LE(const uint8_t* p) {
            (uint32_t(p[3]) << 24);
 }
 
+uint16_t readU16LE(const uint8_t* p) {
+    return uint16_t(p[0]) |
+           static_cast<uint16_t>(uint16_t(p[1]) << 8);
+}
+
 std::string trimRightJsonPadding(std::string value) {
     while (!value.empty() &&
            (value.back() == '\0' ||
@@ -490,6 +495,21 @@ bool encodedImageLooksLikeAvif(const std::vector<uint8_t>& encoded) {
     return false;
 }
 
+bool encodedImageLooksLikeBasisUniversal(const std::vector<uint8_t>& encoded) {
+    constexpr size_t kBasisUniversalHeaderSize = 77u;
+    constexpr uint16_t kFirstBasisUniversalVersion = 0x10u;
+    if (encoded.size() < kBasisUniversalHeaderSize ||
+        encoded[0] != 's' ||
+        encoded[1] != 'B') {
+        return false;
+    }
+    const uint16_t version = readU16LE(encoded.data() + 2u);
+    const uint16_t headerSize = readU16LE(encoded.data() + 4u);
+    return version >= kFirstBasisUniversalVersion &&
+           headerSize >= kBasisUniversalHeaderSize &&
+           headerSize <= encoded.size();
+}
+
 bool encodedImageUsesUnsupportedFormat(
     const std::vector<uint8_t>& encoded,
     bool allowWebp) {
@@ -499,7 +519,8 @@ bool encodedImageUsesUnsupportedFormat(
     return encodedImageLooksLikeKtx(encoded) ||
            encodedImageLooksLikeDds(encoded) ||
            encodedImageLooksLikeAstc(encoded) ||
-           encodedImageLooksLikeAvif(encoded);
+           encodedImageLooksLikeAvif(encoded) ||
+           encodedImageLooksLikeBasisUniversal(encoded);
 }
 
 struct ParsedInput {

@@ -81,6 +81,15 @@ std::vector<uint8_t> makeFakeWebpBytes() {
         1, 2, 3, 4};
 }
 
+std::vector<uint8_t> makeFakeBasisUniversalBytes() {
+    std::vector<uint8_t> bytes(77u, 0u);
+    bytes[0] = 's';
+    bytes[1] = 'B';
+    bytes[2] = 0x10u;
+    bytes[4] = static_cast<uint8_t>(bytes.size());
+    return bytes;
+}
+
 bool bytesLookLikeFakeWebp(const uint8_t* data, size_t size) {
     return size == 16u &&
            data[0] == 'R' &&
@@ -5567,7 +5576,7 @@ TEST(GltfParserTest, RejectsExternalKtxAndAstcImagesWithoutDecoder) {
         const char* label;
     };
 
-    const std::array<UnsupportedUriCase, 2> cases = {{
+    const std::array<UnsupportedUriCase, 3> cases = {{
         {
             "textures/texture.KTX?rev=1",
             {
@@ -5582,6 +5591,10 @@ TEST(GltfParserTest, RejectsExternalKtxAndAstcImagesWithoutDecoder) {
                 static_cast<uint8_t>(0xA1u),
                 0x5Cu},
             "ASTC URI"},
+        {
+            "textures/texture.basis?rev=1",
+            makeFakeBasisUniversalBytes(),
+            "Basis URI"},
     }};
 
     for (const UnsupportedUriCase& testCase : cases) {
@@ -5687,6 +5700,9 @@ TEST(GltfParserTest, RejectsUnsupportedEncodedImageSignaturesBeforeDecoder) {
                 0, 0, 0, 0,
                 'a', 'v', 'i', 'f'},
             "AVIF compatible brand"},
+        {
+            makeFakeBasisUniversalBytes(),
+            "Basis Universal"},
     };
 
     for (const EncodedCase& testCase : cases) {
@@ -5757,6 +5773,9 @@ TEST(GltfParserTest, RejectsUnsupportedBufferViewImageSignaturesBeforeDecoder) {
                 0, 0, 0, 0,
                 'a', 'v', 'i', 'f'},
             "AVIF compatible brand"},
+        {
+            makeFakeBasisUniversalBytes(),
+            "Basis Universal"},
     };
 
     for (const EncodedCase& testCase : cases) {
@@ -5765,6 +5784,51 @@ TEST(GltfParserTest, RejectsUnsupportedBufferViewImageSignaturesBeforeDecoder) {
                 true,
                 "image/png",
                 testCase.bytes);
+        bool decodedImage = false;
+
+        std::unique_ptr<GltfModel> model = GltfParser::parse(
+            reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+            fixture.jsonText.size(),
+            [&](const std::string& uri) {
+                return uri == "triangle.bin" ? fixture.bin
+                                             : std::vector<uint8_t>{};
+            },
+            [&](const uint8_t*, size_t) -> std::optional<GltfImage> {
+                decodedImage = true;
+                GltfImage image;
+                image.width = 1;
+                image.height = 1;
+                image.channels = 4;
+                image.pixels = {255, 255, 255, 255};
+                return image;
+            });
+
+        EXPECT_EQ(nullptr, model) << testCase.label;
+        EXPECT_FALSE(decodedImage) << testCase.label;
+    }
+}
+
+TEST(GltfParserTest, RejectsUnsupportedDataUriImageSignaturesBeforeDecoder) {
+    struct EncodedCase {
+        std::vector<uint8_t> bytes;
+        const char* label;
+    };
+
+    const std::vector<EncodedCase> cases = {
+        {
+            {
+                static_cast<uint8_t>(0xABu), 'K', 'T', 'X', ' ', '2', '0',
+                static_cast<uint8_t>(0xBBu), 0x0Du, 0x0Au, 0x1Au, 0x0Au},
+            "KTX2"},
+        {
+            makeFakeBasisUniversalBytes(),
+            "Basis Universal"},
+    };
+
+    for (const EncodedCase& testCase : cases) {
+        ExternalGltfFixture fixture =
+            makeTexturedExternalBufferTriangleGltf(
+                "data:image/png;base64," + base64Encode(testCase.bytes));
         bool decodedImage = false;
 
         std::unique_ptr<GltfModel> model = GltfParser::parse(
