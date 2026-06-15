@@ -4909,6 +4909,58 @@ TEST(GltfParserTest, ParsesKhrTextureTransformTexCoordOneWhenProvided) {
     EXPECT_NEAR(0.0f, primitive.vertexTexCoords[1][1][1], 1e-6f);
 }
 
+TEST(GltfParserTest, RejectsMalformedKhrTextureTransformPayloads) {
+    struct TransformCase {
+        const char* payload;
+        const char* label;
+    };
+
+    const std::array<TransformCase, 6> cases = {{
+        {"true", "non-object transform"},
+        {"{\"offset\":[0.25]}", "short offset"},
+        {"{\"scale\":[2,\"bad\"]}", "non-numeric scale"},
+        {"{\"rotation\":\"90\"}", "string rotation"},
+        {"{\"texCoord\":1.5}", "non-integer texCoord"},
+        {"{\"texCoord\":-1}", "negative texCoord"}}};
+
+    const std::string transformMarker =
+        "\"KHR_texture_transform\":{\"offset\":[0.25,0.5],"
+        "\"scale\":[2,3],\"rotation\":1.57079632679}";
+    for (const TransformCase& testCase : cases) {
+        ExternalGltfFixture fixture =
+            makeFullMaterialExternalBufferTriangleGltf();
+        const size_t transformPos = fixture.jsonText.find(transformMarker);
+        ASSERT_NE(std::string::npos, transformPos) << testCase.label;
+        fixture.jsonText.replace(
+            transformPos,
+            transformMarker.size(),
+            std::string("\"KHR_texture_transform\":") + testCase.payload);
+
+        std::unique_ptr<GltfModel> model =
+            parseExternalFixtureWithSolidImage(fixture);
+
+        EXPECT_EQ(nullptr, model) << testCase.label;
+    }
+}
+
+TEST(GltfParserTest, RejectsUnknownTextureInfoExtensionSibling) {
+    ExternalGltfFixture fixture = makeFullMaterialExternalBufferTriangleGltf();
+    const std::string transformMarker =
+        "\"KHR_texture_transform\":{\"offset\":[0.25,0.5],"
+        "\"scale\":[2,3],\"rotation\":1.57079632679}";
+    const size_t transformPos = fixture.jsonText.find(transformMarker);
+    ASSERT_NE(std::string::npos, transformPos);
+    fixture.jsonText.replace(
+        transformPos,
+        transformMarker.size(),
+        transformMarker + ",\"KHR_unknown_texture_info\":{}");
+
+    std::unique_ptr<GltfModel> model =
+        parseExternalFixtureWithSolidImage(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsTextureTexCoordWhenPrimitiveMissingSet) {
     ExternalGltfFixture fixture = makeFullMaterialExternalBufferTriangleGltf();
     const std::string marker = "\"rotation\":1.57079632679";
