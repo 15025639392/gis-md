@@ -4094,6 +4094,19 @@ std::optional<std::pair<Vec3, Vec3>> skinVertex(
     return std::make_pair(Vec3(finalPosition), Vec3(normal));
 }
 
+bool finiteVec3Value(const glm::dvec3& value) {
+    return std::isfinite(value.x) &&
+           std::isfinite(value.y) &&
+           std::isfinite(value.z);
+}
+
+bool finiteValues(const std::vector<double>& values) {
+    return std::all_of(
+        values.begin(),
+        values.end(),
+        [](double value) { return std::isfinite(value); });
+}
+
 std::optional<std::vector<GltfMorphTarget>> readMorphTargets(
     const json& doc,
     const std::vector<std::vector<uint8_t>>& buffers,
@@ -4128,12 +4141,20 @@ std::optional<std::vector<GltfMorphTarget>> readMorphTargets(
             if (it.key() == "POSITION") {
                 target.positionDeltas.resize(vertexCount);
                 for (size_t i = 0; i < vertexCount; ++i) {
-                    target.positionDeltas[i] = Vec3(readVec3(*span, i));
+                    const glm::dvec3 delta = readVec3(*span, i);
+                    if (!finiteVec3Value(delta)) {
+                        return std::nullopt;
+                    }
+                    target.positionDeltas[i] = Vec3(delta);
                 }
             } else if (it.key() == "NORMAL") {
                 target.normalDeltas.resize(vertexCount);
                 for (size_t i = 0; i < vertexCount; ++i) {
-                    target.normalDeltas[i] = Vec3(readVec3(*span, i));
+                    const glm::dvec3 delta = readVec3(*span, i);
+                    if (!finiteVec3Value(delta)) {
+                        return std::nullopt;
+                    }
+                    target.normalDeltas[i] = Vec3(delta);
                 }
             } else if (it.key() == "TANGENT") {
                 if (!hasBaseTangents) {
@@ -4141,7 +4162,11 @@ std::optional<std::vector<GltfMorphTarget>> readMorphTargets(
                 }
                 target.tangentDeltas.resize(vertexCount);
                 for (size_t i = 0; i < vertexCount; ++i) {
-                    target.tangentDeltas[i] = Vec3(readVec3(*span, i));
+                    const glm::dvec3 delta = readVec3(*span, i);
+                    if (!finiteVec3Value(delta)) {
+                        return std::nullopt;
+                    }
+                    target.tangentDeltas[i] = Vec3(delta);
                 }
             } else {
                 return std::nullopt;
@@ -4288,6 +4313,9 @@ std::optional<std::vector<GltfAnimationRuntime>> parseAnimations(
                 return std::nullopt;
             }
             raw.runtime.outputValues = readAccessorFlat(*output);
+            if (!finiteValues(raw.runtime.outputValues)) {
+                return std::nullopt;
+            }
             raw.runtime.interpolation = *interpolation;
             raw.outputAccessorCount = static_cast<int>(output->count);
             raw.outputAccessorComponents = output->components;

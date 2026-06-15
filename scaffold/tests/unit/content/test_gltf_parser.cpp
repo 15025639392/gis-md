@@ -553,7 +553,8 @@ std::vector<uint8_t> makeSkinnedTriangleGlb(
 std::vector<uint8_t> makeAnimatedTranslationTriangleGlb(
     const std::string& interpolation = "LINEAR",
     bool malformedCubicOutput = false,
-    bool duplicateAnimationTarget = false) {
+    bool duplicateAnimationTarget = false,
+    bool nonFiniteOutput = false) {
     std::vector<uint8_t> bin;
     const size_t positionsOffset = bin.size();
     appendF32(bin, 0.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
@@ -576,14 +577,24 @@ std::vector<uint8_t> makeAnimatedTranslationTriangleGlb(
     int outputAccessorCount = 2;
     if (interpolation == "CUBICSPLINE" && !malformedCubicOutput) {
         outputAccessorCount = 6;
-        appendF32(bin, 0.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
+        appendF32(
+            bin,
+            nonFiniteOutput
+                ? std::numeric_limits<float>::infinity()
+                : 0.0f);
+        appendF32(bin, 0.0f); appendF32(bin, 0.0f);
         appendF32(bin, 0.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
         appendF32(bin, 0.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
         appendF32(bin, 0.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
         appendF32(bin, 10.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
         appendF32(bin, 0.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
     } else {
-        appendF32(bin, 0.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
+        appendF32(
+            bin,
+            nonFiniteOutput
+                ? std::numeric_limits<float>::infinity()
+                : 0.0f);
+        appendF32(bin, 0.0f); appendF32(bin, 0.0f);
         appendF32(bin, 10.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
     }
     const size_t outputByteLength = bin.size() - outputOffset;
@@ -707,7 +718,8 @@ std::vector<uint8_t> makeDualAnimationTranslationTriangleGlb() {
     return glb;
 }
 
-std::vector<uint8_t> makeAnimatedMorphWeightTriangleGlb() {
+std::vector<uint8_t> makeAnimatedMorphWeightTriangleGlb(
+    bool nonFiniteMorphDelta = false) {
     std::vector<uint8_t> bin;
     const size_t positionsOffset = bin.size();
     appendF32(bin, 0.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
@@ -720,7 +732,12 @@ std::vector<uint8_t> makeAnimatedMorphWeightTriangleGlb() {
     }
 
     const size_t morphOffset = bin.size();
-    appendF32(bin, 10.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
+    appendF32(
+        bin,
+        nonFiniteMorphDelta
+            ? std::numeric_limits<float>::quiet_NaN()
+            : 10.0f);
+    appendF32(bin, 0.0f); appendF32(bin, 0.0f);
     appendF32(bin, 0.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
     appendF32(bin, 0.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
 
@@ -3641,6 +3658,15 @@ TEST(GltfParserTest, RejectsMalformedCubicSplineOutputCount) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsAnimationOutputWithNonFiniteValue) {
+    const std::vector<uint8_t> glb =
+        makeAnimatedTranslationTriangleGlb("LINEAR", false, false, true);
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsUnsupportedAnimationInterpolation) {
     const std::vector<uint8_t> glb =
         makeAnimatedTranslationTriangleGlb("CATMULLROMSPLINE");
@@ -3673,6 +3699,15 @@ TEST(GltfParserTest, UpdatesLinearMorphWeightAnimation) {
     EXPECT_TRUE(model->updateAnimation(0.5));
     EXPECT_NEAR(5.0, model->primitives[0].vertices[0].positionEcef.x(), 1e-12);
     EXPECT_NEAR(1.0, model->primitives[0].vertices[1].positionEcef.x(), 1e-12);
+}
+
+TEST(GltfParserTest, RejectsMorphTargetWithNonFiniteDelta) {
+    const std::vector<uint8_t> glb =
+        makeAnimatedMorphWeightTriangleGlb(true);
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
+
+    EXPECT_EQ(nullptr, model);
 }
 
 TEST(GltfParserTest, UpdatesMorphTangentWeightAnimation) {
