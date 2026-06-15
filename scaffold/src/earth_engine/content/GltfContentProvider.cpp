@@ -46,6 +46,9 @@ constexpr size_t kB3dmLegacy2HeaderLength = 24;
 constexpr uint32_t kB3dmLegacySentinel = 570425344u;
 constexpr uint32_t kI3dmMagic = 0x6d643369u;
 constexpr size_t kI3dmHeaderLength = 32;
+constexpr uint32_t kPntsMagic = 0x73746e70u;
+constexpr size_t kPntsHeaderLength = 28;
+constexpr uint32_t kCmptMagic = 0x74706d63u;
 
 uint32_t readU32LE(const uint8_t* p) {
     return uint32_t(p[0]) |
@@ -754,6 +757,15 @@ struct DecodedI3dmInstances {
     std::optional<glm::dvec3> rtcCenter;
 };
 
+struct PntsHeader {
+    uint32_t version = 0;
+    uint32_t byteLength = 0;
+    uint32_t featureTableJsonByteLength = 0;
+    uint32_t featureTableBinaryByteLength = 0;
+    uint32_t batchTableJsonByteLength = 0;
+    uint32_t batchTableBinaryByteLength = 0;
+};
+
 bool checkedRange(size_t bufferSize,
                   uint32_t offset,
                   uint32_t count,
@@ -1328,6 +1340,241 @@ TileContentLoadResult decodeI3dmContent(
     return result;
 }
 
+std::optional<PntsHeader> parsePntsHeader(const uint8_t* data, size_t size) {
+    if (!data || size < 4 || readU32LE(data) != kPntsMagic) {
+        return std::nullopt;
+    }
+    if (size < kPntsHeaderLength) {
+        return std::nullopt;
+    }
+
+    PntsHeader header;
+    header.version = readU32LE(data + 4);
+    header.byteLength = readU32LE(data + 8);
+    header.featureTableJsonByteLength = readU32LE(data + 12);
+    header.featureTableBinaryByteLength = readU32LE(data + 16);
+    header.batchTableJsonByteLength = readU32LE(data + 20);
+    header.batchTableBinaryByteLength = readU32LE(data + 24);
+
+    if (header.version != 1 ||
+        header.byteLength > size ||
+        header.byteLength < kPntsHeaderLength) {
+        return std::nullopt;
+    }
+
+    uint64_t offset = kPntsHeaderLength;
+    const uint32_t sectionLengths[] = {
+        header.featureTableJsonByteLength,
+        header.featureTableBinaryByteLength,
+        header.batchTableJsonByteLength,
+        header.batchTableBinaryByteLength};
+    for (uint32_t sectionLength : sectionLengths) {
+        offset += sectionLength;
+        if (offset > header.byteLength) {
+            return std::nullopt;
+        }
+    }
+    return header;
+}
+
+std::optional<std::array<float, 4>> pntsConstantRgba(
+    const nlohmann::json& featureJson) {
+    auto it = featureJson.find("CONSTANT_RGBA");
+    if (it == featureJson.end()) {
+        return std::nullopt;
+    }
+    if (!it->is_array() || it->size() != 4) {
+        return std::nullopt;
+    }
+    std::array<float, 4> color{};
+    for (size_t i = 0; i < 4; ++i) {
+        std::optional<uint32_t> component = jsonU32((*it)[i]);
+        if (!component || *component > 255u) {
+            return std::nullopt;
+        }
+        const float normalized =
+            static_cast<float>(*component) / 255.0f;
+        color[i] = i < 3 ? std::pow(normalized, 2.2f) : normalized;
+    }
+    return color;
+}
+
+float pntsSrgbByteToLinear(uint8_t value) {
+    return std::pow(static_cast<float>(value) / 255.0f, 2.2f);
+}
+
+std::unique_ptr<GltfModel> parsePntsModel(const uint8_t* data,
+                                          const PntsHeader& header) {
+    if (header.featureTableJsonByteLength == 0 ||
+        header.batchTableJsonByteLength != 0 ||
+        header.batchTableBinaryByteLength != 0) {
+        return nullptr;
+    }
+
+    const uint8_t* featureJsonBytes = data + kPntsHeaderLength;
+    const uint8_t* featureBinary =
+        featureJsonBytes + header.featureTableJsonByteLength;
+    const size_t featureBinarySize = header.featureTableBinaryByteLength;
+    const std::string featureJsonText = trimRightJsonPadding(std::string(
+        reinterpret_cast<const char*>(featureJsonBytes),
+        header.featureTableJsonByteLength));
+    auto featureJson =
+        nlohmann::json::parse(featureJsonText, nullptr, false);
+    if (featureJson.is_discarded() || !featureJson.is_object()) {
+        return nullptr;
+    }
+
+    if (featureJson.contains("extensions") ||
+        featureJson.contains("POSITION_QUANTIZED") ||
+        featureJson.contains("RGB565") ||
+        featureJson.contains("NORMAL") ||
+        featureJson.contains("NORMAL_OCT16P") ||
+        featureJson.contains("BATCH_ID") ||
+        featureJson.contains("BATCH_LENGTH")) {
+        return nullptr;
+    }
+
+    auto pointsLengthIt = featureJson.find("POINTS_LENGTH");
+    if (pointsLengthIt == featureJson.end()) {
+        return nullptr;
+    }
+    std::optional<uint32_t> pointsLength = jsonU32(*pointsLengthIt);
+    if (!pointsLength) {
+        return nullptr;
+    }
+    if (*pointsLength == 0) {
+        return std::make_unique<GltfModel>();
+    }
+
+    bool valid = true;
+    const std::optional<uint32_t> positionOffset =
+        semanticOffset(featureJson, "POSITION", valid);
+    if (!valid || !positionOffset ||
+        !checkedRange(
+            featureBinarySize,
+            *positionOffset,
+            *pointsLength,
+            12u)) {
+        return nullptr;
+    }
+
+    const std::optional<glm::dvec3> rtcCenter =
+        jsonVec3(featureJson, "RTC_CENTER", valid);
+    if (!valid) {
+        return nullptr;
+    }
+
+    std::optional<uint32_t> rgbOffset =
+        semanticOffset(featureJson, "RGB", valid);
+    if (!valid) {
+        return nullptr;
+    }
+    std::optional<uint32_t> rgbaOffset =
+        semanticOffset(featureJson, "RGBA", valid);
+    if (!valid) {
+        return nullptr;
+    }
+    if (rgbOffset && rgbaOffset) {
+        return nullptr;
+    }
+    if (rgbOffset &&
+        !checkedRange(featureBinarySize, *rgbOffset, *pointsLength, 3u)) {
+        return nullptr;
+    }
+    if (rgbaOffset &&
+        !checkedRange(featureBinarySize, *rgbaOffset, *pointsLength, 4u)) {
+        return nullptr;
+    }
+
+    std::optional<std::array<float, 4>> constantColor =
+        pntsConstantRgba(featureJson);
+    if (featureJson.contains("CONSTANT_RGBA") && !constantColor) {
+        return nullptr;
+    }
+
+    auto model = std::make_unique<GltfModel>();
+    GltfPrimitive primitive;
+    primitive.primitiveMode = GltfPrimitiveMode::Points;
+    primitive.metallicFactor = 0.0f;
+    primitive.roughnessFactor = 0.9f;
+    primitive.unlit = true;
+    if (constantColor) {
+        primitive.baseColorFactor = *constantColor;
+        primitive.alphaMode = GltfAlphaMode::Blend;
+    }
+
+    primitive.vertices.reserve(*pointsLength);
+    primitive.indices.reserve(*pointsLength);
+    if (rgbOffset || rgbaOffset) {
+        primitive.vertexColors.reserve(*pointsLength);
+        if (rgbaOffset) {
+            primitive.alphaMode = GltfAlphaMode::Blend;
+        }
+    }
+
+    for (uint32_t i = 0; i < *pointsLength; ++i) {
+        const uint8_t* p =
+            featureBinary + *positionOffset + static_cast<size_t>(i) * 12u;
+        glm::dvec3 position(
+            readF32LE(p),
+            readF32LE(p + 4),
+            readF32LE(p + 8));
+        if (!finiteVec3(position)) {
+            return nullptr;
+        }
+        if (rtcCenter) {
+            position += *rtcCenter;
+        }
+
+        SurfaceVertex vertex;
+        vertex.positionEcef = Vec3(position);
+        vertex.normalEcef = Vec3::unitZ();
+        primitive.vertices.push_back(vertex);
+        primitive.indices.push_back(i);
+
+        if (rgbOffset) {
+            const uint8_t* c =
+                featureBinary + *rgbOffset + static_cast<size_t>(i) * 3u;
+            primitive.vertexColors.push_back({
+                pntsSrgbByteToLinear(c[0]),
+                pntsSrgbByteToLinear(c[1]),
+                pntsSrgbByteToLinear(c[2]),
+                1.0f});
+        } else if (rgbaOffset) {
+            const uint8_t* c =
+                featureBinary + *rgbaOffset + static_cast<size_t>(i) * 4u;
+            primitive.vertexColors.push_back({
+                pntsSrgbByteToLinear(c[0]),
+                pntsSrgbByteToLinear(c[1]),
+                pntsSrgbByteToLinear(c[2]),
+                static_cast<float>(c[3]) / 255.0f});
+        }
+    }
+
+    model->primitives.push_back(std::move(primitive));
+    return model;
+}
+
+TileContentLoadResult decodePntsContent(const uint8_t* data,
+                                        size_t size,
+                                        const Mat4& baseTransform) {
+    std::optional<PntsHeader> header = parsePntsHeader(data, size);
+    if (!header) {
+        return TileContentLoadResult::failed();
+    }
+    std::unique_ptr<GltfModel> model = parsePntsModel(data, *header);
+    if (!model) {
+        return TileContentLoadResult::failed();
+    }
+    if (model->primitives.empty()) {
+        return TileContentLoadResult::empty();
+    }
+    TileContentLoadResult result =
+        TileContentLoadResult::render(std::move(model));
+    result.contentTransform = baseTransform;
+    return result;
+}
+
 TileContentLoadResult decodeGltfLikeContent(
     const uint8_t* data,
     size_t size,
@@ -1347,6 +1594,12 @@ TileContentLoadResult decodeGltfLikeContent(
             contentUrl,
             resolver,
             imageDecoder);
+    }
+    if (data && size >= 4 && readU32LE(data) == kPntsMagic) {
+        return decodePntsContent(data, size, baseTransform);
+    }
+    if (data && size >= 4 && readU32LE(data) == kCmptMagic) {
+        return TileContentLoadResult::failed();
     }
 
     Mat4 contentTransform = baseTransform;

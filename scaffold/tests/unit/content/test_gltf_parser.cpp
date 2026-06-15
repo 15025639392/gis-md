@@ -1509,6 +1509,44 @@ std::vector<uint8_t> makeI3dmWithFeatureTable(
     return i3dm;
 }
 
+std::vector<uint8_t> makePnts(const std::string& featureTableJson,
+                              std::vector<uint8_t> featureBinary,
+                              const std::string& batchTableJson =
+                                  std::string{}) {
+    std::vector<uint8_t> featureBytes(
+        featureTableJson.begin(),
+        featureTableJson.end());
+    pad4(featureBytes, 0x20);
+    pad4(featureBinary, 0);
+
+    std::vector<uint8_t> batchBytes(
+        batchTableJson.begin(),
+        batchTableJson.end());
+    if (!batchBytes.empty()) {
+        pad4(batchBytes, 0x20);
+    }
+
+    std::vector<uint8_t> pnts;
+    pnts.push_back('p');
+    pnts.push_back('n');
+    pnts.push_back('t');
+    pnts.push_back('s');
+    appendU32(pnts, 1u);
+    appendU32(
+        pnts,
+        static_cast<uint32_t>(
+            28 + featureBytes.size() + featureBinary.size() +
+            batchBytes.size()));
+    appendU32(pnts, static_cast<uint32_t>(featureBytes.size()));
+    appendU32(pnts, static_cast<uint32_t>(featureBinary.size()));
+    appendU32(pnts, static_cast<uint32_t>(batchBytes.size()));
+    appendU32(pnts, 0u);
+    pnts.insert(pnts.end(), featureBytes.begin(), featureBytes.end());
+    pnts.insert(pnts.end(), featureBinary.begin(), featureBinary.end());
+    pnts.insert(pnts.end(), batchBytes.begin(), batchBytes.end());
+    return pnts;
+}
+
 TileContentLoadStatus decodeI3dmStatus(const std::vector<uint8_t>& i3dm) {
     SingleGltfContentProvider provider(
         TileKey{"Geographic-TMS", 0, 0, 0},
@@ -7011,6 +7049,167 @@ TEST(GltfParserTest, RejectsExternalUnsupportedCompressedTextureAssetsWhenProvid
         GTEST_SKIP()
             << "No EARTH_ENGINE_TEST_UNSUPPORTED_*_GLTF_PATH values set";
     }
+}
+
+TEST(GltfParserTest, ContentProviderDecodesPntsPositionRgbAndRtcCenter) {
+    std::vector<uint8_t> featureBinary;
+    appendF32(featureBinary, 1.0f);
+    appendF32(featureBinary, 2.0f);
+    appendF32(featureBinary, 3.0f);
+    appendF32(featureBinary, -4.0f);
+    appendF32(featureBinary, 5.0f);
+    appendF32(featureBinary, 6.0f);
+    const size_t rgbOffset = featureBinary.size();
+    featureBinary.insert(
+        featureBinary.end(),
+        {255u, 128u, 0u, 0u, 255u, 64u});
+
+    const std::string featureJson =
+        std::string("{") +
+        "\"POINTS_LENGTH\":2,"
+        "\"RTC_CENTER\":[100.0,200.0,300.0],"
+        "\"POSITION\":{\"byteOffset\":0},"
+        "\"RGB\":{\"byteOffset\":" +
+        std::to_string(rgbOffset) + "}}";
+    const std::vector<uint8_t> pnts = makePnts(featureJson, featureBinary);
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "PNTS RGB fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(pnts.data(), pnts.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives[0];
+    EXPECT_EQ(GltfPrimitiveMode::Points, primitive.primitiveMode);
+    EXPECT_TRUE(primitive.unlit);
+    EXPECT_FLOAT_EQ(0.0f, primitive.metallicFactor);
+    EXPECT_NEAR(0.9f, primitive.roughnessFactor, 1e-6f);
+    ASSERT_EQ(2u, primitive.vertices.size());
+    EXPECT_NEAR(101.0, primitive.vertices[0].positionEcef.x(), 1e-6);
+    EXPECT_NEAR(202.0, primitive.vertices[0].positionEcef.y(), 1e-6);
+    EXPECT_NEAR(303.0, primitive.vertices[0].positionEcef.z(), 1e-6);
+    EXPECT_NEAR(96.0, primitive.vertices[1].positionEcef.x(), 1e-6);
+    EXPECT_NEAR(205.0, primitive.vertices[1].positionEcef.y(), 1e-6);
+    EXPECT_NEAR(306.0, primitive.vertices[1].positionEcef.z(), 1e-6);
+    EXPECT_EQ((std::vector<uint32_t>{0u, 1u}), primitive.indices);
+    ASSERT_EQ(2u, primitive.vertexColors.size());
+    EXPECT_NEAR(1.0f, primitive.vertexColors[0][0], 1e-6f);
+    EXPECT_NEAR(
+        std::pow(128.0f / 255.0f, 2.2f),
+        primitive.vertexColors[0][1],
+        1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexColors[0][2], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexColors[0][3], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexColors[1][0], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexColors[1][1], 1e-6f);
+    EXPECT_NEAR(
+        std::pow(64.0f / 255.0f, 2.2f),
+        primitive.vertexColors[1][2],
+        1e-6f);
+}
+
+TEST(GltfParserTest, ContentProviderDecodesPntsConstantRgbaMaterialColor) {
+    std::vector<uint8_t> featureBinary;
+    appendF32(featureBinary, 1.0f);
+    appendF32(featureBinary, 2.0f);
+    appendF32(featureBinary, 3.0f);
+
+    const std::string featureJson =
+        "{\"POINTS_LENGTH\":1,"
+        "\"POSITION\":{\"byteOffset\":0},"
+        "\"CONSTANT_RGBA\":[64,128,255,127]}";
+    const std::vector<uint8_t> pnts = makePnts(featureJson, featureBinary);
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "PNTS constant color fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(pnts.data(), pnts.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives[0];
+    EXPECT_TRUE(primitive.vertexColors.empty());
+    EXPECT_EQ(GltfAlphaMode::Blend, primitive.alphaMode);
+    EXPECT_NEAR(
+        std::pow(64.0f / 255.0f, 2.2f),
+        primitive.baseColorFactor[0],
+        1e-6f);
+    EXPECT_NEAR(
+        std::pow(128.0f / 255.0f, 2.2f),
+        primitive.baseColorFactor[1],
+        1e-6f);
+    EXPECT_NEAR(1.0f, primitive.baseColorFactor[2], 1e-6f);
+    EXPECT_NEAR(127.0f / 255.0f, primitive.baseColorFactor[3], 1e-6f);
+}
+
+TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) {
+    auto decodeStatus = [](const std::string& featureJson,
+                           std::vector<uint8_t> featureBinary,
+                           const std::string& batchJson = std::string{}) {
+        const std::vector<uint8_t> pnts =
+            makePnts(featureJson, std::move(featureBinary), batchJson);
+        SingleGltfContentProvider provider(
+            TileKey{"Geographic-TMS", 0, 0, 0},
+            std::vector<uint8_t>{},
+            "unsupported PNTS fixture");
+        return provider.decodeContent(pnts.data(), pnts.size()).status;
+    };
+
+    std::vector<uint8_t> positionBinary;
+    appendF32(positionBinary, 1.0f);
+    appendF32(positionBinary, 2.0f);
+    appendF32(positionBinary, 3.0f);
+
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus(
+            "{\"POINTS_LENGTH\":1,"
+            "\"POSITION_QUANTIZED\":{\"byteOffset\":0},"
+            "\"QUANTIZED_VOLUME_OFFSET\":[0,0,0],"
+            "\"QUANTIZED_VOLUME_SCALE\":[1,1,1]}",
+            {0, 0, 0, 0, 0, 0}));
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus(
+            "{\"POINTS_LENGTH\":1,"
+            "\"POSITION\":{\"byteOffset\":0},"
+            "\"NORMAL\":{\"byteOffset\":12}}",
+            positionBinary));
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus(
+            "{\"POINTS_LENGTH\":1,\"POSITION\":{\"byteOffset\":0}}",
+            positionBinary,
+            "{\"name\":[\"feature\"]}"));
+}
+
+TEST(GltfParserTest, ContentProviderRejectsUnsupportedCmptContent) {
+    std::vector<uint8_t> cmpt;
+    cmpt.push_back('c');
+    cmpt.push_back('m');
+    cmpt.push_back('p');
+    cmpt.push_back('t');
+    appendU32(cmpt, 1u);
+    appendU32(cmpt, 16u);
+    appendU32(cmpt, 0u);
+    appendU32(cmpt, 0u);
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "CMPT fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(cmpt.data(), cmpt.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(nullptr, result.gltfModel);
 }
 
 TEST(GltfParserTest, ContentProviderDecodesB3dmAndAppliesRtcCenter) {

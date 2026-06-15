@@ -777,6 +777,53 @@ std::vector<uint8_t> makeI3dmBytes(std::vector<uint8_t> gltfPayload,
     return i3dm;
 }
 
+std::vector<uint8_t> makePntsBytes() {
+    std::vector<uint8_t> featureBinary;
+    const size_t positionsOffset = featureBinary.size();
+    appendPod<float>(featureBinary, 1.0f);
+    appendPod<float>(featureBinary, 2.0f);
+    appendPod<float>(featureBinary, 3.0f);
+    appendPod<float>(featureBinary, 4.0f);
+    appendPod<float>(featureBinary, 5.0f);
+    appendPod<float>(featureBinary, 6.0f);
+    const size_t rgbOffset = featureBinary.size();
+    featureBinary.insert(
+        featureBinary.end(),
+        {255u, 0u, 0u, 0u, 128u, 255u});
+    pad4(featureBinary, 0);
+
+    const std::string featureJson =
+        std::string("{") +
+        "\"POINTS_LENGTH\":2,"
+        "\"RTC_CENTER\":[10.0,20.0,30.0],"
+        "\"POSITION\":{\"byteOffset\":" +
+        std::to_string(positionsOffset) + "},"
+        "\"RGB\":{\"byteOffset\":" + std::to_string(rgbOffset) + "}" +
+        "}";
+    std::vector<uint8_t> featureBytes(
+        featureJson.begin(),
+        featureJson.end());
+    pad4(featureBytes, 0x20);
+
+    std::vector<uint8_t> pnts;
+    pnts.push_back('p');
+    pnts.push_back('n');
+    pnts.push_back('t');
+    pnts.push_back('s');
+    appendPod<uint32_t>(pnts, 1u);
+    appendPod<uint32_t>(
+        pnts,
+        static_cast<uint32_t>(
+            28 + featureBytes.size() + featureBinary.size()));
+    appendPod<uint32_t>(pnts, static_cast<uint32_t>(featureBytes.size()));
+    appendPod<uint32_t>(pnts, static_cast<uint32_t>(featureBinary.size()));
+    appendPod<uint32_t>(pnts, 0u);
+    appendPod<uint32_t>(pnts, 0u);
+    pnts.insert(pnts.end(), featureBytes.begin(), featureBytes.end());
+    pnts.insert(pnts.end(), featureBinary.begin(), featureBinary.end());
+    return pnts;
+}
+
 struct ExternalGltfBytes {
     std::vector<uint8_t> jsonBytes;
     std::vector<uint8_t> binBytes;
@@ -4500,6 +4547,118 @@ void testTilesetJsonI3dmDefaultUpAxisKeepsInstancePositionsTileLocal() {
     std::filesystem::remove_all(root);
 }
 
+void testTilesetJsonProviderLoadsPntsPointCloud() {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth-md-tileset-json-pnts";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "models");
+    writeBytes(root / "models" / "points.pnts", makePntsBytes());
+
+    const std::string tilesetJson = R"json({
+      "asset": {"version": "1.1"},
+      "geometricError": 100,
+      "root": {
+        "boundingVolume": {"region": [-0.01, -0.01, 0.01, 0.01, 0, 100]},
+        "geometricError": 64,
+        "content": {"uri": "models/points.pnts"}
+      }
+    })json";
+    auto provider = std::make_unique<TilesetJsonContentProvider>(
+        "file://" + (root / "tileset.json").generic_string(),
+        std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
+        "pnts tileset fixture");
+    TilesetJsonContentProvider* rawProvider = provider.get();
+    check(rawProvider->valid(),
+          "TilesetJsonContentProvider: PNTS tileset parses");
+    const std::vector<TileKey> roots = rawProvider->rootTiles();
+    if (roots.empty()) {
+        check(false, "TilesetJsonContentProvider: PNTS root exists");
+        std::filesystem::remove_all(root);
+        return;
+    }
+    const std::vector<TileKey> rootChildren =
+        rawProvider->childTiles(roots.front());
+    if (rootChildren.empty()) {
+        check(false,
+              "TilesetJsonContentProvider: PNTS content child exists");
+        std::filesystem::remove_all(root);
+        return;
+    }
+
+    DummyRenderDevice device;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{},
+        std::move(provider));
+
+    TilesetTestAccess::requestMissingTile(tileset, roots.front());
+    TilesetTestAccess::processPendingUploads(tileset);
+    const TileKey contentKey = rootChildren.front();
+    TilesetTestAccess::requestMissingTile(tileset, contentKey);
+    TilesetTile* contentTile = nullptr;
+    for (int i = 0; i < 100; ++i) {
+        TilesetTestAccess::processPendingUploads(tileset);
+        contentTile = TilesetTestAccess::findTile(tileset, contentKey);
+        if (contentTile &&
+            contentTile->loadState == TileLoadState::Done &&
+            contentTile->contentKind == TileContentKind::Render &&
+            contentTile->gltfModel) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    check(contentTile &&
+              contentTile->gltfModel &&
+              contentTile->gltfModel->primitives.size() == 1 &&
+              contentTile->gltfModel->primitives.front().primitiveMode ==
+                  GltfPrimitiveMode::Points,
+          "Tileset: PNTS content loads as one point primitive");
+    if (contentTile &&
+        contentTile->gltfModel &&
+        !contentTile->gltfModel->primitives.empty()) {
+        const GltfPrimitive& primitive =
+            contentTile->gltfModel->primitives.front();
+        check(primitive.vertices.size() == 2 &&
+                  primitive.indices == std::vector<uint32_t>{0u, 1u} &&
+                  primitive.vertexColors.size() == 2,
+              "Tileset: PNTS content preserves point count, indices, and RGB colors");
+        check(std::abs(primitive.vertices[0].positionEcef.x() - 11.0) <
+                  1e-12 &&
+                  std::abs(primitive.vertices[0].positionEcef.y() - 22.0) <
+                      1e-12 &&
+                  std::abs(primitive.vertices[0].positionEcef.z() - 33.0) <
+                      1e-12,
+              "Tileset: PNTS content applies RTC_CENTER to point positions");
+    }
+    check(contentTile &&
+              contentTile->gltfPrimitiveResources.size() == 1,
+          "Tileset: PNTS content prepares one point resource set");
+
+    if (contentTile) {
+        Renderer renderer(nullptr);
+        RenderCommandList commands;
+        TilesetTestAccess::buildTileDrawCommand(
+            tileset,
+            renderer,
+            *contentTile,
+            commands,
+            1.0f);
+        check(commands.size() == 1 &&
+                  commands.front().kind == RenderCommandKind::GltfPrimitive &&
+                  commands.front().primitive ==
+                      RenderCommand::PrimitiveType::Points,
+              "Tileset: PNTS content renders through Points draw topology");
+    }
+
+    std::filesystem::remove_all(root);
+}
+
 void expectTilesetJsonTileFailsExplicitly(
     std::unique_ptr<TilesetJsonContentProvider> provider,
     const TileKey& key,
@@ -7299,6 +7458,7 @@ int main() {
     testTilesetJsonProviderLoadsExplicitGltfTile();
     testTilesetJsonGltfUpAxisZKeepsZUpContent();
     testTilesetJsonI3dmDefaultUpAxisKeepsInstancePositionsTileLocal();
+    testTilesetJsonProviderLoadsPntsPointCloud();
     testTilesetJsonUnsupportedMultipleContentsFailsTile();
     testTilesetJsonProviderParsesViewerRequestVolume();
     testTilesetJsonTopLevelUnknownRequiredExtensionInvalidatesProvider();
