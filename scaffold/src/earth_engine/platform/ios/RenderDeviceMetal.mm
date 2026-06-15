@@ -41,13 +41,17 @@ private:
 
 class MetalShaderProgram : public ShaderProgram {
 public:
-    MetalShaderProgram(id<MTLRenderPipelineState> pso,
+    MetalShaderProgram(id<MTLRenderPipelineState> opaquePso,
+                       id<MTLRenderPipelineState> blendedPso,
                        id<MTLDepthStencilState> depthState)
-        : pso_(pso), depthState_(depthState) {}
-    id<MTLRenderPipelineState> pso() const { return pso_; }
+        : opaquePso_(opaquePso), blendedPso_(blendedPso), depthState_(depthState) {}
+    id<MTLRenderPipelineState> pso(bool blend) const {
+        return blend ? blendedPso_ : opaquePso_;
+    }
     id<MTLDepthStencilState> depthState() const { return depthState_; }
 private:
-    id<MTLRenderPipelineState> pso_;
+    id<MTLRenderPipelineState> opaquePso_;
+    id<MTLRenderPipelineState> blendedPso_;
     id<MTLDepthStencilState> depthState_;
 };
 
@@ -438,7 +442,6 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
     pipeDesc.fragmentFunction = fragmentFunc;
     pipeDesc.vertexDescriptor = vd;
     pipeDesc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
-    pipeDesc.colorAttachments[0].blendingEnabled = YES;
     pipeDesc.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
     pipeDesc.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
     pipeDesc.colorAttachments[0].rgbBlendOperation = MTLBlendOperationAdd;
@@ -447,16 +450,31 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
     pipeDesc.colorAttachments[0].alphaBlendOperation = MTLBlendOperationAdd;
     pipeDesc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
 
-    id<MTLRenderPipelineState> pso =
+    pipeDesc.colorAttachments[0].blendingEnabled = NO;
+    id<MTLRenderPipelineState> opaquePso =
         [impl_->device newRenderPipelineStateWithDescriptor:pipeDesc error:&error];
-    if (!pso) {
+    if (!opaquePso) {
         if (error) {
-            NSLog(@"Metal pipeline error: %@", error.localizedDescription);
+            NSLog(@"Metal opaque pipeline error: %@", error.localizedDescription);
         }
         return nullptr;
     }
 
-    return std::make_unique<MetalShaderProgram>(pso, impl_->depthReadWrite);
+    error = nil;
+    pipeDesc.colorAttachments[0].blendingEnabled = YES;
+    id<MTLRenderPipelineState> blendedPso =
+        [impl_->device newRenderPipelineStateWithDescriptor:pipeDesc error:&error];
+    if (!blendedPso) {
+        if (error) {
+            NSLog(@"Metal blended pipeline error: %@", error.localizedDescription);
+        }
+        return nullptr;
+    }
+
+    return std::make_unique<MetalShaderProgram>(
+        opaquePso,
+        blendedPso,
+        impl_->depthReadWrite);
 }
 
 std::unique_ptr<Framebuffer> RenderDeviceMetal::createFramebuffer(const FramebufferDesc& /*desc*/) {
@@ -527,7 +545,7 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
 
         if (!program || !vb) continue;
 
-        [impl_->currentEncoder setRenderPipelineState:program->pso()];
+        [impl_->currentEncoder setRenderPipelineState:program->pso(cmd.blend)];
         id<MTLDepthStencilState> depthState = impl_->depthDisabled;
         if (cmd.depthTest) {
             depthState = cmd.depthWrite ? impl_->depthReadWrite : impl_->depthReadOnly;

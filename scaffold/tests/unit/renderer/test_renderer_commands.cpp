@@ -644,6 +644,25 @@ TEST(RendererCommandTest, MvpValidatorAcceptsBlendedGltfWithReadOnlyDepth) {
     EXPECT_FALSE(error.has_value());
 }
 
+TEST(RendererCommandTest, MvpValidatorKeepsAlphaMaskGltfOpaque) {
+    RenderCommand gltf;
+    gltf.kind = RenderCommandKind::GltfPrimitive;
+    gltf.owner = "gltf_mask_primitive";
+    gltf.pass = "color";
+    gltf.depthTest = true;
+    gltf.depthWrite = true;
+    gltf.cullFace = true;
+    gltf.blend = false;
+    gltf.uniforms["u_alphaMode"] = {1.0f};
+    gltf.uniforms["u_alphaCutoff"] = {0.5f};
+    gltf.frameId = 42;
+    gltf.generation = 7;
+
+    RenderCommandList commands{gltf};
+    auto error = validateMvpRenderCommands(commands, 42);
+    EXPECT_FALSE(error.has_value());
+}
+
 TEST(RendererCommandTest, MvpValidatorRejectsBlendedGltfDepthWrites) {
     RenderCommand gltf;
     gltf.kind = RenderCommandKind::GltfPrimitive;
