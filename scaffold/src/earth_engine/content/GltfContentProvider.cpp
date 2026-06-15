@@ -971,6 +971,25 @@ bool contentObjectHasUnsupportedMetadataFields(
             contentJson.contains("group"));
 }
 
+bool contentObjectHasMalformedUriFields(
+    const nlohmann::json& contentJson) {
+    if (!contentJson.is_object()) {
+        return true;
+    }
+
+    auto uriIt = contentJson.find("uri");
+    if (uriIt != contentJson.end()) {
+        return !uriIt->is_string() || uriIt->get<std::string>().empty();
+    }
+
+    auto urlIt = contentJson.find("url");
+    if (urlIt != contentJson.end()) {
+        return !urlIt->is_string() || urlIt->get<std::string>().empty();
+    }
+
+    return false;
+}
+
 bool isSupportedGltfExtensionForTilesetContentGltf(
     const std::string& extensionName) {
     static constexpr std::array<const char*, 13> kSupportedGltfExtensions = {
@@ -1076,6 +1095,15 @@ bool hasUnsupportedTileMetadataFields(const nlohmann::json& tileJson) {
         }
     }
     return false;
+}
+
+bool hasMalformedTileContentUri(const nlohmann::json& tileJson) {
+    if (!tileJson.is_object()) {
+        return false;
+    }
+    auto contentIt = tileJson.find("content");
+    return contentIt != tileJson.end() &&
+           contentObjectHasMalformedUriFields(*contentIt);
 }
 
 bool hasUnsupportedMultipleContents(const nlohmann::json& tileJson) {
@@ -3071,6 +3099,8 @@ bool TilesetJsonContentProvider::parseTilesetJson(
             hasUnsupportedTileRequiredExtensions(tileJson);
         const bool unsupportedMetadata =
             hasUnsupportedTileMetadataFields(tileJson);
+        const bool malformedContentUri =
+            hasMalformedTileContentUri(tileJson);
 
         Mat4 tileTransform = inheritedTransform;
         auto transformIt = tileJson.find("transform");
@@ -3128,7 +3158,8 @@ bool TilesetJsonContentProvider::parseTilesetJson(
         if (unsupportedMultipleContents ||
             unsupportedImplicitTiling ||
             unsupportedRequiredExtensions ||
-            unsupportedMetadata) {
+            unsupportedMetadata ||
+            malformedContentUri) {
             record.contentKind = TileRecordContentKind::Unsupported;
         } else if (!contentUri || contentUri->empty()) {
             record.contentKind = TileRecordContentKind::Empty;

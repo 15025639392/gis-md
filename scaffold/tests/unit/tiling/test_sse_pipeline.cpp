@@ -5796,6 +5796,61 @@ void testTilesetJsonUnsupportedTileObjectExtensionFailsTile() {
         "Tileset: unsupported tile object extension fails explicitly");
 }
 
+void testTilesetJsonMalformedContentUriFailsTile() {
+    struct MalformedContentCase {
+        std::string contentJson;
+        std::string label;
+    };
+
+    const std::array<MalformedContentCase, 5> cases = {{
+        {"7", "non-object content"},
+        {"{\"uri\":7}", "non-string uri"},
+        {"{\"url\":7}", "non-string legacy url"},
+        {"{\"uri\":\"\"}", "empty uri"},
+        {"{\"uri\":7,\"url\":\"fallback.glb\"}", "malformed uri with url fallback"}}};
+
+    for (const MalformedContentCase& testCase : cases) {
+        const std::string tilesetJson =
+            std::string("{") +
+            "\"asset\":{\"version\":\"1.1\"},"
+            "\"geometricError\":100,"
+            "\"root\":{"
+            "\"boundingVolume\":{\"region\":[-0.01,-0.01,0.01,0.01,0,100]},"
+            "\"geometricError\":64,"
+            "\"content\":" +
+            testCase.contentJson +
+            "}}";
+
+        auto provider = std::make_unique<TilesetJsonContentProvider>(
+            "file:///malformed-content-uri-" + testCase.label +
+                "/tileset.json",
+            std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
+            "malformed " + testCase.label + " fixture");
+        TilesetJsonContentProvider* rawProvider = provider.get();
+        check(rawProvider->valid(),
+              "TilesetJsonContentProvider: malformed " +
+                  testCase.label +
+                  " keeps parseable tile metadata");
+        const std::vector<TileKey> roots = rawProvider->rootTiles();
+        if (roots.empty()) return;
+        const std::vector<TileKey> rootChildren =
+            rawProvider->childTiles(roots.front());
+        check(rootChildren.size() == 1 &&
+                  rawProvider->supportsTile(rootChildren.front()),
+              "TilesetJsonContentProvider: malformed " +
+                  testCase.label +
+                  " tile stays addressable");
+        if (rootChildren.empty()) return;
+
+        expectTilesetJsonTileFailsExplicitly(
+            std::move(provider),
+            rootChildren.front(),
+            "Tileset: malformed " +
+                testCase.label +
+                " fails explicitly");
+    }
+}
+
 void testTilesetJsonUnsupportedTileMetadataFieldsFailTile() {
     struct MetadataFieldCase {
         std::string tileBodyJson;
@@ -8519,6 +8574,7 @@ int main() {
     testTilesetJsonUnsupportedTileRequiredExtensionFailsTile();
     testTilesetJsonUnsupportedTileExtensionsUsedFailsTile();
     testTilesetJsonUnsupportedTileObjectExtensionFailsTile();
+    testTilesetJsonMalformedContentUriFailsTile();
     testTilesetJsonUnsupportedTileMetadataFieldsFailTile();
     testTilesetJsonUnsupportedImplicitTilingFailsTile();
     testTilesetJsonProviderLoadsExternalTilesetContent();
