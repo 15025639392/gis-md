@@ -8061,6 +8061,31 @@ TEST(GltfParserTest, RejectsDeclaredObjectSupportedExtensionsWithoutPayload) {
     }
 }
 
+TEST(GltfParserTest, RejectsSupportedObjectExtensionsAtTopLevel) {
+    for (std::string_view extensionName : kSupportedGltfObjectExtensions) {
+        SCOPED_TRACE(std::string(extensionName));
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+        const size_t assetPos = fixture.jsonText.find(assetMarker);
+        ASSERT_NE(std::string::npos, assetPos);
+        fixture.jsonText.insert(
+            assetPos + assetMarker.size(),
+            "\"extensionsUsed\":[\"" + std::string(extensionName) + "\"],");
+
+        const std::string sceneMarker = "\"scene\":0,";
+        const size_t scenePos = fixture.jsonText.find(sceneMarker);
+        ASSERT_NE(std::string::npos, scenePos);
+        fixture.jsonText.insert(
+            scenePos,
+            "\"extensions\":{\"" + std::string(extensionName) + "\":{}},");
+
+        std::unique_ptr<GltfModel> model =
+            parseExternalFixtureWithSolidImage(fixture);
+
+        EXPECT_EQ(nullptr, model);
+    }
+}
+
 TEST(GltfParserTest, RejectsKhrMaterialsUnlitMaterialExtensionTypeMismatch) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
