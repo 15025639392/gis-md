@@ -425,6 +425,9 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyAlphaModesConsistently) {
     const std::string glsl = renderer_testing::gltfFragmentGLSL();
     EXPECT_NE(
         std::string::npos,
+        glsl.find("u_alphaMode > 0.5 && u_alphaMode < 1.5"));
+    EXPECT_NE(
+        std::string::npos,
         glsl.find("base.a < u_alphaCutoff"));
     EXPECT_NE(std::string::npos, glsl.find("discard;"));
     EXPECT_NE(
@@ -435,6 +438,9 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyAlphaModesConsistently) {
         glsl.find("alpha * clamp(u_renderOpacity"));
 
     const std::string msl = renderer_testing::gltfFragmentMSL();
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("u_alphaMode > 0.5 && u_alphaMode < 1.5"));
     EXPECT_NE(
         std::string::npos,
         msl.find("base.a < u_alphaCutoff"));
