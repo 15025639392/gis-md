@@ -8,6 +8,7 @@ using namespace earth_engine;
 
 namespace earth_engine {
 namespace renderer_testing {
+const char* gltfVertexGLSL();
 const char* gltfFragmentGLSL();
 const char* gltfFragmentMSL();
 const char* gltfInstancedVertexGLSL();
@@ -169,6 +170,15 @@ TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     ASSERT_TRUE(cmd.uniforms.count("u_alphaCutoff"));
     ASSERT_TRUE(cmd.uniforms.count("u_renderOpacity"));
     ASSERT_TRUE(cmd.uniforms.count("u_unlit"));
+}
+
+TEST(RendererCommandTest, GltfGlesVertexShadersSetExplicitPointSize) {
+    const std::string vertex = renderer_testing::gltfVertexGLSL();
+    const std::string instancedVertex =
+        renderer_testing::gltfInstancedVertexGLSL();
+
+    EXPECT_NE(std::string::npos, vertex.find("gl_PointSize = 1.0;"));
+    EXPECT_NE(std::string::npos, instancedVertex.find("gl_PointSize = 1.0;"));
 }
 
 TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsTransmission) {

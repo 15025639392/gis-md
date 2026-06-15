@@ -161,6 +161,7 @@ void main() {
     v_texcoord23 = a_texcoord23;
     v_texcoord45 = a_texcoord45;
     v_texcoord67 = a_texcoord67;
+    gl_PointSize = 1.0;
     gl_Position = u_modelViewProjection * vec4(a_position, 1.0);
 }
 )glsl";
@@ -731,6 +732,7 @@ void main() {
     v_texcoord23 = a_texcoord23;
     v_texcoord45 = a_texcoord45;
     v_texcoord67 = a_texcoord67;
+    gl_PointSize = 1.0;
     gl_Position = u_modelViewProjection * localPosition;
 }
 )glsl";
@@ -1692,6 +1694,10 @@ makeTileGeometry(int gridSize) {
 }
 
 namespace renderer_testing {
+
+const char* gltfVertexGLSL() {
+    return kGltfVertexGLSL;
+}
 
 const char* gltfFragmentGLSL() {
     return kGltfFragmentGLSL;
