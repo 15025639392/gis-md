@@ -1302,6 +1302,25 @@ std::optional<int> webpTextureSourceIndex(const json& textureJson) {
     return sourceIt->get<int>();
 }
 
+bool validCoreTextureSource(const json& imageArray, const json& sourceJson) {
+    if (!sourceJson.is_number_integer()) {
+        return false;
+    }
+    const int sourceIndex = sourceJson.get<int>();
+    if (sourceIndex < 0) {
+        return false;
+    }
+    if (!imageArray.is_array()) {
+        return false;
+    }
+    if (static_cast<size_t>(sourceIndex) >= imageArray.size()) {
+        return false;
+    }
+    return validImageSourceFields(
+        imageArray[static_cast<size_t>(sourceIndex)],
+        false);
+}
+
 std::optional<std::vector<GltfTexture>> loadTextures(
     const json& doc,
     const std::vector<std::vector<uint8_t>>& buffers,
@@ -1345,11 +1364,12 @@ std::optional<std::vector<GltfTexture>> loadTextures(
             webpTextureSourceIndex(textureJson);
         const bool useWebpSource = webpSourceIndex.has_value();
         const auto sourceIt = textureJson.find("source");
+        if (sourceIt != textureJson.end() &&
+            !validCoreTextureSource(imageArray, *sourceIt)) {
+            return std::nullopt;
+        }
         if (!useWebpSource && sourceIt == textureJson.end()) {
             continue;
-        }
-        if (!useWebpSource && !sourceIt->is_number_integer()) {
-            return std::nullopt;
         }
         const int sourceIndex = useWebpSource
             ? *webpSourceIndex

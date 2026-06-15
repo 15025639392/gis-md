@@ -585,6 +585,31 @@ std::unique_ptr<GltfModel> makeTriangleGltfModel() {
     return model;
 }
 
+GltfPrimitive makeTransparentTrianglePrimitiveAt(const Vec3& center) {
+    GltfPrimitive primitive;
+    primitive.vertices.resize(3);
+    primitive.vertices[0].positionEcef =
+        center + Vec3(-1.0, -1.0, 0.0);
+    primitive.vertices[1].positionEcef =
+        center + Vec3(2.0, -1.0, 0.0);
+    primitive.vertices[2].positionEcef =
+        center + Vec3(-1.0, 2.0, 0.0);
+    for (SurfaceVertex& vertex : primitive.vertices) {
+        vertex.normalEcef = Vec3::unitZ();
+    }
+    primitive.vertices[0].uv = {0.0f, 0.0f};
+    primitive.vertices[1].uv = {1.0f, 0.0f};
+    primitive.vertices[2].uv = {0.0f, 1.0f};
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 1.0f}};
+    primitive.indices = {0, 1, 2};
+    primitive.alphaMode = GltfAlphaMode::Blend;
+    primitive.baseColorFactor = {1.0f, 1.0f, 1.0f, 0.5f};
+    return primitive;
+}
+
 std::unique_ptr<GltfModel> makeTexturedTriangleGltfModel() {
     auto model = makeTriangleGltfModel();
     GltfTexture texture;
@@ -7385,6 +7410,67 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
           "Scene: terrain sampling is still owned by primary tileset after render");
 }
 
+void testSceneSortsTransparentGltfByCameraDepth() {
+    DummyRenderDevice device;
+    Scene scene;
+    check(scene.setRenderDevice(&device),
+          "Scene: dummy render device initializes transparent glTF path");
+    scene.setViewport(800, 600, 1.0f);
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
+    const Vec3 cameraPosition = target + Vec3(1000000.0, 0.0, 0.0);
+    scene.camera().lookAt(cameraPosition, target, Vec3::unitZ());
+
+    auto contentTileset = std::make_unique<Tileset>(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{},
+        &device,
+        TilesetOptions{});
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(
+        *contentTileset,
+        rootKey);
+    check(root != nullptr,
+          "Scene: transparent glTF root tile is created");
+    if (!root) return;
+
+    auto model = std::make_unique<GltfModel>();
+    model->primitives.push_back(
+        makeTransparentTrianglePrimitiveAt(target + Vec3(900000.0, 0.0, 0.0)));
+    model->primitives.push_back(makeTransparentTrianglePrimitiveAt(target));
+    root->gltfModel = std::move(model);
+    root->loadState = TileLoadState::Done;
+    root->contentKind = TileContentKind::Render;
+    scene.setTileset(std::move(contentTileset));
+
+    scene.update(1.0 / 60.0);
+    scene.render();
+
+    std::vector<RenderCommand> transparentGltf;
+    for (const RenderCommand& cmd : device.submittedCommands) {
+        if (cmd.kind == RenderCommandKind::GltfPrimitive && cmd.blend) {
+            transparentGltf.push_back(cmd);
+        }
+    }
+    check(transparentGltf.size() == 2u,
+          "Scene: transparent glTF primitives are submitted");
+    if (transparentGltf.size() != 2u) return;
+
+    check(transparentGltf[0].hasTranslucentSortDepth &&
+              transparentGltf[1].hasTranslucentSortDepth,
+          "Scene: transparent glTF world centers resolve to camera sort depths");
+    check(transparentGltf[0].translucentSortDepth >
+              transparentGltf[1].translucentSortDepth,
+          "Scene: transparent glTF commands are sorted back-to-front");
+    check(std::abs(transparentGltf[0].translucentSortDepth - 1000000.0) <
+              1.0 &&
+              std::abs(transparentGltf[1].translucentSortDepth - 100000.0) <
+                  1.0,
+          "Scene: transparent glTF sort depths are computed from camera direction");
+}
+
 void testTilesetLodTransitionsUseNativeDeltaState() {
     TilesetOptions options;
     options.enableLodTransitionPeriod = true;
@@ -8495,6 +8581,7 @@ int main() {
     testSceneSelectorViewOverrideFeedsMultipleViews();
     testSceneOcclusionCallbackFeedsPrimaryAndAdditionalTilesets();
     testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain();
+    testSceneSortsTransparentGltfByCameraDepth();
     testTilesetLodTransitionsUseNativeDeltaState();
     testTilesetLodTransitionsIgnoreEmptyContent();
     testTilesetOcclusionStopsRefinementBeforeChildLoads();
