@@ -2072,12 +2072,126 @@ void writeBytes(const std::filesystem::path& path,
               static_cast<std::streamsize>(bytes.size()));
 }
 
-std::vector<uint8_t> readFile(const char* path) {
+std::vector<uint8_t> readFile(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) return {};
     return std::vector<uint8_t>(
         std::istreambuf_iterator<char>(in),
         std::istreambuf_iterator<char>());
+}
+
+std::vector<uint8_t> readFile(const char* path) {
+    return readFile(std::filesystem::path(path));
+}
+
+std::vector<std::string> pathListFromEnv(const char* envName) {
+    const char* value = std::getenv(envName);
+    if (!value || std::string(value).empty()) {
+        return {};
+    }
+
+#ifdef _WIN32
+    constexpr char kPathSeparator = ';';
+#else
+    constexpr char kPathSeparator = ':';
+#endif
+
+    std::vector<std::string> paths;
+    const std::string pathList(value);
+    size_t start = 0;
+    while (start <= pathList.size()) {
+        const size_t end = pathList.find(kPathSeparator, start);
+        std::string path = pathList.substr(
+            start,
+            end == std::string::npos ? std::string::npos : end - start);
+        if (!path.empty()) {
+            paths.push_back(std::move(path));
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1u;
+    }
+    return paths;
+}
+
+std::string stripUriQueryAndFragment(std::string uri) {
+    const size_t end = uri.find_first_of("?#");
+    if (end != std::string::npos) {
+        uri.erase(end);
+    }
+    return uri;
+}
+
+GltfParser::ExternalResourceResolver localGltfResourceResolver(
+    const std::filesystem::path& gltfPath) {
+    const std::filesystem::path baseDirectory =
+        std::filesystem::absolute(gltfPath).parent_path();
+    return [baseDirectory](const std::string& uri) {
+        constexpr const char* kFilePrefix = "file://";
+        std::string resourceUri = stripUriQueryAndFragment(uri);
+        if (resourceUri.rfind(kFilePrefix, 0) == 0) {
+            resourceUri.erase(0, std::string(kFilePrefix).size());
+        }
+        std::filesystem::path resourcePath(resourceUri);
+        if (resourcePath.is_relative()) {
+            resourcePath = baseDirectory / resourcePath;
+        }
+        return readFile(resourcePath);
+    };
+}
+
+GltfParser::ImageDecoder solidGltfImageDecoder(bool* decodedImage) {
+    return [decodedImage](
+               const uint8_t* data,
+               size_t size) -> std::optional<GltfImage> {
+        EXPECT_NE(nullptr, data);
+        EXPECT_GT(size, 0u);
+        if (decodedImage) {
+            *decodedImage = true;
+        }
+        GltfImage image;
+        image.width = 1;
+        image.height = 1;
+        image.channels = 4;
+        image.pixels = {255, 255, 255, 255};
+        return image;
+    };
+}
+
+std::unique_ptr<DecodedImage> makeSolidDecodedImage(
+    bool* decodedImage,
+    const uint8_t* data,
+    size_t size) {
+    EXPECT_NE(nullptr, data);
+    EXPECT_GT(size, 0u);
+    if (decodedImage) {
+        *decodedImage = true;
+    }
+    auto image = std::make_unique<DecodedImage>();
+    image->width = 1;
+    image->height = 1;
+    image->channels = 4;
+    image->pixels = {255, 255, 255, 255};
+    return image;
+}
+
+void expectRenderableModelGeometry(const GltfModel& model) {
+    EXPECT_GT(model.primitives.size(), 0u);
+    EXPECT_GT(model.vertexCount(), 0u);
+    const bool hasIndexedPrimitive = std::any_of(
+        model.primitives.begin(),
+        model.primitives.end(),
+        [](const GltfPrimitive& primitive) {
+            return !primitive.vertices.empty() && !primitive.indices.empty();
+        });
+    EXPECT_TRUE(hasIndexedPrimitive);
+    for (const GltfPrimitive& primitive : model.primitives) {
+        EXPECT_FALSE(primitive.vertices.empty());
+        for (uint32_t index : primitive.indices) {
+            EXPECT_LT(index, primitive.vertices.size());
+        }
+    }
 }
 
 struct UnsupportedExternalGltfCase {
@@ -10069,6 +10183,69 @@ TEST(GltfParserTest, ParsesExternalRobotExpressiveWhenProvided) {
     EXPECT_TRUE(model->hasRuntimeAnimation());
     EXPECT_TRUE(model->updateAnimation(0.5));
     EXPECT_GT(model->currentAnimationRevision(), 0u);
+}
+
+TEST(GltfParserTest, ParsesExternalRegressionAssetsWhenProvided) {
+    const std::vector<std::string> paths =
+        pathListFromEnv("EARTH_ENGINE_TEST_GLTF_PATHS");
+    if (paths.empty()) {
+        GTEST_SKIP() << "EARTH_ENGINE_TEST_GLTF_PATHS not set";
+    }
+
+    for (const std::string& pathString : paths) {
+        SCOPED_TRACE(pathString);
+        const std::filesystem::path path =
+            std::filesystem::absolute(pathString);
+        const std::vector<uint8_t> bytes = readFile(path);
+        ASSERT_FALSE(bytes.empty());
+
+        bool parserDecodedImage = false;
+        std::unique_ptr<GltfModel> model = GltfParser::parse(
+            bytes.data(),
+            bytes.size(),
+            localGltfResourceResolver(path),
+            solidGltfImageDecoder(&parserDecodedImage));
+        ASSERT_NE(nullptr, model);
+        expectRenderableModelGeometry(*model);
+        if (parserDecodedImage) {
+            const bool hasDecodedTexture = std::any_of(
+                model->textures.begin(),
+                model->textures.end(),
+                [](const GltfTexture& texture) {
+                    return !texture.image.pixels.empty();
+                });
+            EXPECT_TRUE(hasDecodedTexture);
+        }
+
+        bool providerDecodedImage = false;
+        TestPlatformBridge bridge(
+            [&](const uint8_t* data,
+                size_t size) -> std::unique_ptr<DecodedImage> {
+                return makeSolidDecodedImage(
+                    &providerDecodedImage,
+                    data,
+                    size);
+            });
+        SingleGltfContentProvider provider(
+            TileKey{"Geographic-TMS", 0, 0, 0},
+            "file://" + path.generic_string(),
+            path.filename().generic_string());
+        provider.setPlatformBridge(&bridge);
+        TileContentLoadResult result =
+            provider.decodeContent(bytes.data(), bytes.size());
+        EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+        ASSERT_NE(nullptr, result.gltfModel);
+        expectRenderableModelGeometry(*result.gltfModel);
+        if (providerDecodedImage) {
+            const bool hasDecodedTexture = std::any_of(
+                result.gltfModel->textures.begin(),
+                result.gltfModel->textures.end(),
+                [](const GltfTexture& texture) {
+                    return !texture.image.pixels.empty();
+                });
+            EXPECT_TRUE(hasDecodedTexture);
+        }
+    }
 }
 
 TEST(GltfParserTest, ContentProviderDecodesExternalRobotExpressiveWhenProvided) {
