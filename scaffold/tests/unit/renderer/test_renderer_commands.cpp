@@ -130,14 +130,20 @@ TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     ASSERT_TRUE(cmd.uniforms.count("u_hasSpecularTextures"));
     ASSERT_TRUE(cmd.uniforms.count("u_specularFactor"));
     ASSERT_TRUE(cmd.uniforms.count("u_specularColorFactor"));
+    ASSERT_TRUE(cmd.uniforms.count("u_clearcoatFactors"));
+    ASSERT_TRUE(cmd.uniforms.count("u_hasClearcoatTextures"));
     ASSERT_TRUE(cmd.uniforms.count("u_emissiveFactor"));
     ASSERT_TRUE(cmd.uniforms.count("u_textureCoordSets"));
     ASSERT_TRUE(cmd.uniforms.count("u_emissiveTexCoordSet"));
     ASSERT_TRUE(cmd.uniforms.count("u_specularTexCoordSets"));
+    ASSERT_TRUE(cmd.uniforms.count("u_clearcoatTexCoordSets"));
     ASSERT_TRUE(cmd.uniforms.count("u_baseColorTexOffsetScale"));
     ASSERT_TRUE(cmd.uniforms.count("u_baseColorTexRotationSinCos"));
     ASSERT_TRUE(cmd.uniforms.count("u_specularTexOffsetScale"));
     ASSERT_TRUE(cmd.uniforms.count("u_specularColorTexOffsetScale"));
+    ASSERT_TRUE(cmd.uniforms.count("u_clearcoatTexOffsetScale"));
+    ASSERT_TRUE(cmd.uniforms.count("u_clearcoatRoughnessTexOffsetScale"));
+    ASSERT_TRUE(cmd.uniforms.count("u_clearcoatNormalTexOffsetScale"));
     ASSERT_TRUE(cmd.uniforms.count("u_alphaMode"));
     ASSERT_TRUE(cmd.uniforms.count("u_alphaCutoff"));
     ASSERT_TRUE(cmd.uniforms.count("u_renderOpacity"));
@@ -196,6 +202,54 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsSpecular) {
     EXPECT_NE(
         std::string::npos,
         msl.find("mix(dielectricSpecular, base.rgb, metallic)"));
+}
+
+TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsClearcoat) {
+    const std::string glsl = renderer_testing::gltfFragmentGLSL();
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("uniform sampler2D u_clearcoatTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("uniform sampler2D u_clearcoatRoughnessTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("uniform sampler2D u_clearcoatNormalTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("clearcoat *= texture(u_clearcoatTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("texture(u_clearcoatRoughnessTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("perturbClearcoatNormal"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("color = color * (1.0 - coatWeight)"));
+
+    const std::string msl = renderer_testing::gltfFragmentMSL();
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("texture2d<float> u_clearcoatTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("texture2d<float> u_clearcoatRoughnessTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("texture2d<float> u_clearcoatNormalTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("clearcoat *= u_clearcoatTexture.sample"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("u_clearcoatRoughnessTexture.sample"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("u_clearcoatNormalTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("color = color * (1.0 - coatWeight)"));
 }
 
 TEST(RendererCommandTest, GltfFragmentShadersUseBaseColorForUnlitMaterials) {

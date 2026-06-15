@@ -384,7 +384,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     GLuint currentProgram = 0;
     GLuint currentArrayBuffer = 0;
     GLuint currentElementArrayBuffer = 0;
-    std::array<GLuint, 8> currentTextures{};
+    std::array<GLuint, 16> currentTextures{};
     bool attrib0Enabled = false;
     bool attrib1Enabled = false;
     bool attrib2Enabled = false;
@@ -702,6 +702,9 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             setSampler("u_emissiveTexture", 4);
             setSampler("u_specularTexture", 5);
             setSampler("u_specularColorTexture", 6);
+            setSampler("u_clearcoatTexture", 7);
+            setSampler("u_clearcoatRoughnessTexture", 8);
+            setSampler("u_clearcoatNormalTexture", 9);
         }
         for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
             std::string name = "u_overlayTexture" + std::to_string(i);

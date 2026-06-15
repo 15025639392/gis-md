@@ -403,13 +403,14 @@ bool validateAsset(const json& doc) {
 }
 
 bool isSupportedExtensionName(const std::string& name) {
-    static constexpr std::array<const char*, 8> kSupportedExtensions = {
+    static constexpr std::array<const char*, 9> kSupportedExtensions = {
         "KHR_texture_transform",
         "KHR_mesh_quantization",
         "KHR_materials_unlit",
         "KHR_materials_emissive_strength",
         "KHR_materials_ior",
         "KHR_materials_specular",
+        "KHR_materials_clearcoat",
         "EXT_texture_webp",
         "EXT_mesh_gpu_instancing"};
     return std::find(
@@ -475,9 +476,13 @@ bool isTextureInfoExtensionParentPath(const std::vector<std::string>& path) {
            (path.size() == 5 &&
             path[0] == "materials" &&
             path[2] == "extensions" &&
-            path[3] == "KHR_materials_specular" &&
-            (path[4] == "specularTexture" ||
-             path[4] == "specularColorTexture"));
+            ((path[3] == "KHR_materials_specular" &&
+              (path[4] == "specularTexture" ||
+               path[4] == "specularColorTexture")) ||
+             (path[3] == "KHR_materials_clearcoat" &&
+              (path[4] == "clearcoatTexture" ||
+               path[4] == "clearcoatRoughnessTexture" ||
+               path[4] == "clearcoatNormalTexture"))));
 }
 
 bool isMaterialExtensionParentPath(const std::vector<std::string>& path) {
@@ -511,7 +516,8 @@ bool extensionsObjectSupportedAtPath(
         if (it.key() == "KHR_materials_unlit" ||
             it.key() == "KHR_materials_emissive_strength" ||
             it.key() == "KHR_materials_ior" ||
-            it.key() == "KHR_materials_specular") {
+            it.key() == "KHR_materials_specular" ||
+            it.key() == "KHR_materials_clearcoat") {
             if (!isMaterialExtensionParentPath(ownerPath)) {
                 return false;
             }
@@ -596,12 +602,13 @@ bool documentHasObjectExtension(
 }
 
 bool supportedObjectExtensionsAreDeclared(const json& doc) {
-    constexpr std::array<const char*, 7> kObjectExtensions = {
+    constexpr std::array<const char*, 8> kObjectExtensions = {
         "KHR_texture_transform",
         "KHR_materials_unlit",
         "KHR_materials_emissive_strength",
         "KHR_materials_ior",
         "KHR_materials_specular",
+        "KHR_materials_clearcoat",
         "EXT_texture_webp",
         "EXT_mesh_gpu_instancing"};
     for (const char* extensionName : kObjectExtensions) {
@@ -735,7 +742,8 @@ std::optional<std::vector<uint8_t>> bufferViewBytes(
 std::optional<std::vector<uint8_t>> embeddedImageBytes(
     const json& doc,
     const std::vector<std::vector<uint8_t>>& buffers,
-    const json& imageJson) {
+    const json& imageJson,
+    bool allowWebp = false) {
     auto bufferViewIt = imageJson.find("bufferView");
     if (bufferViewIt == imageJson.end()) {
         return std::nullopt;
@@ -747,7 +755,7 @@ std::optional<std::vector<uint8_t>> embeddedImageBytes(
         return std::nullopt;
     }
     const std::string mimeType = mimeTypeIt->get<std::string>();
-    if (!supportedCoreImageMimeType(mimeType)) {
+    if (!supportedImageMimeType(mimeType, allowWebp)) {
         return std::nullopt;
     }
     return bufferViewBytes(doc, buffers, bufferViewIt->get<int>());
@@ -1052,7 +1060,11 @@ std::optional<std::vector<GltfTexture>> loadTextures(
                 encoded = externalResourceResolver(uri);
             }
         } else if (bufferViewIt != imageJson.end()) {
-            auto bytes = embeddedImageBytes(doc, buffers, imageJson);
+            auto bytes = embeddedImageBytes(
+                doc,
+                buffers,
+                imageJson,
+                useWebpSource);
             if (!bytes) {
                 return std::nullopt;
             }
@@ -2255,6 +2267,36 @@ bool validateMaterialExtensions(const json& material) {
         }
     }
 
+    const auto clearcoatIt = extensionsIt->find("KHR_materials_clearcoat");
+    if (clearcoatIt != extensionsIt->end()) {
+        if (unlitIt != extensionsIt->end() ||
+            extensionsIt->contains("KHR_materials_pbrSpecularGlossiness") ||
+            !clearcoatIt->is_object()) {
+            return false;
+        }
+        const auto factorIt = clearcoatIt->find("clearcoatFactor");
+        if (factorIt != clearcoatIt->end()) {
+            const auto factor = numberProperty(
+                *clearcoatIt,
+                "clearcoatFactor",
+                0.0f);
+            if (!factor || *factor < 0.0f || *factor > 1.0f) {
+                return false;
+            }
+        }
+        const auto roughnessIt =
+            clearcoatIt->find("clearcoatRoughnessFactor");
+        if (roughnessIt != clearcoatIt->end()) {
+            const auto roughness = numberProperty(
+                *clearcoatIt,
+                "clearcoatRoughnessFactor",
+                0.0f);
+            if (!roughness || *roughness < 0.0f || *roughness > 1.0f) {
+                return false;
+            }
+        }
+    }
+
     const auto iorIt = extensionsIt->find("KHR_materials_ior");
     if (iorIt == extensionsIt->end()) {
         return true;
@@ -2370,6 +2412,37 @@ std::array<float, 3> materialSpecularColorFactor(
     return factor;
 }
 
+float materialClearcoatFactor(const json& material, bool& strictFailure) {
+    const json* clearcoat =
+        materialObjectExtension(material, "KHR_materials_clearcoat");
+    if (!clearcoat) {
+        return 0.0f;
+    }
+    const auto factor = numberProperty(*clearcoat, "clearcoatFactor", 0.0f);
+    if (!factor || *factor < 0.0f || *factor > 1.0f) {
+        strictFailure = true;
+        return 0.0f;
+    }
+    return *factor;
+}
+
+float materialClearcoatRoughnessFactor(
+    const json& material,
+    bool& strictFailure) {
+    const json* clearcoat =
+        materialObjectExtension(material, "KHR_materials_clearcoat");
+    if (!clearcoat) {
+        return 0.0f;
+    }
+    const auto roughness =
+        numberProperty(*clearcoat, "clearcoatRoughnessFactor", 0.0f);
+    if (!roughness || *roughness < 0.0f || *roughness > 1.0f) {
+        strictFailure = true;
+        return 0.0f;
+    }
+    return *roughness;
+}
+
 bool validateMaterialJson(const json& material, size_t textureCount) {
     if (!material.is_object()) {
         return false;
@@ -2449,6 +2522,34 @@ bool validateMaterialJson(const json& material, size_t textureCount) {
                     "specularColorTexture",
                     textureCount)) {
                 return false;
+            }
+        }
+        const auto clearcoatIt =
+            extensionsIt->find("KHR_materials_clearcoat");
+        if (clearcoatIt != extensionsIt->end()) {
+            if (!clearcoatIt->is_object() ||
+                !validateMaterialTextureInfo(
+                    *clearcoatIt,
+                    "clearcoatTexture",
+                    textureCount) ||
+                !validateMaterialTextureInfo(
+                    *clearcoatIt,
+                    "clearcoatRoughnessTexture",
+                    textureCount)) {
+                return false;
+            }
+            const auto clearcoatNormalIt =
+                clearcoatIt->find("clearcoatNormalTexture");
+            if (clearcoatNormalIt != clearcoatIt->end()) {
+                if (!validateTextureInfoShape(
+                        *clearcoatNormalIt,
+                        textureCount) ||
+                    !numberProperty(
+                        *clearcoatNormalIt,
+                        "scale",
+                        1.0f)) {
+                    return false;
+                }
             }
         }
     }
@@ -4332,6 +4433,10 @@ std::optional<GltfPrimitive> parsePrimitive(
                 materialSpecularFactor(material, strictFailure);
             primitive.specularColorFactor =
                 materialSpecularColorFactor(material, strictFailure);
+            primitive.clearcoatFactor =
+                materialClearcoatFactor(material, strictFailure);
+            primitive.clearcoatRoughnessFactor =
+                materialClearcoatRoughnessFactor(material, strictFailure);
             if (strictFailure) {
                 return std::nullopt;
             }
@@ -4368,6 +4473,70 @@ std::optional<GltfPrimitive> parsePrimitive(
                     }
                 } else if (
                     specularColorTextureIt != specularExtension->end()) {
+                    strictFailure = true;
+                    return std::nullopt;
+                }
+            }
+
+            const json* clearcoatExtension =
+                materialObjectExtension(material, "KHR_materials_clearcoat");
+            if (clearcoatExtension) {
+                auto clearcoatTextureIt =
+                    clearcoatExtension->find("clearcoatTexture");
+                if (clearcoatTextureIt != clearcoatExtension->end() &&
+                    clearcoatTextureIt->is_object()) {
+                    primitive.clearcoatTexture = parseTextureBinding(
+                        *clearcoatTextureIt,
+                        textures,
+                        strictFailure);
+                    if (strictFailure || !primitive.clearcoatTexture) {
+                        return std::nullopt;
+                    }
+                } else if (clearcoatTextureIt != clearcoatExtension->end()) {
+                    strictFailure = true;
+                    return std::nullopt;
+                }
+
+                auto clearcoatRoughnessTextureIt =
+                    clearcoatExtension->find("clearcoatRoughnessTexture");
+                if (clearcoatRoughnessTextureIt != clearcoatExtension->end() &&
+                    clearcoatRoughnessTextureIt->is_object()) {
+                    primitive.clearcoatRoughnessTexture = parseTextureBinding(
+                        *clearcoatRoughnessTextureIt,
+                        textures,
+                        strictFailure);
+                    if (strictFailure ||
+                        !primitive.clearcoatRoughnessTexture) {
+                        return std::nullopt;
+                    }
+                } else if (
+                    clearcoatRoughnessTextureIt != clearcoatExtension->end()) {
+                    strictFailure = true;
+                    return std::nullopt;
+                }
+
+                auto clearcoatNormalTextureIt =
+                    clearcoatExtension->find("clearcoatNormalTexture");
+                if (clearcoatNormalTextureIt != clearcoatExtension->end() &&
+                    clearcoatNormalTextureIt->is_object()) {
+                    primitive.clearcoatNormalTexture = parseTextureBinding(
+                        *clearcoatNormalTextureIt,
+                        textures,
+                        strictFailure);
+                    if (strictFailure || !primitive.clearcoatNormalTexture) {
+                        return std::nullopt;
+                    }
+                    if (auto scale = numberProperty(
+                            *clearcoatNormalTextureIt,
+                            "scale",
+                            1.0f)) {
+                        primitive.clearcoatNormalTextureScale = *scale;
+                    } else {
+                        strictFailure = true;
+                        return std::nullopt;
+                    }
+                } else if (
+                    clearcoatNormalTextureIt != clearcoatExtension->end()) {
                     strictFailure = true;
                     return std::nullopt;
                 }
@@ -4456,6 +4625,9 @@ std::optional<GltfPrimitive> parsePrimitive(
         !hasTexCoordSet(primitive.metallicRoughnessTexture) ||
         !hasTexCoordSet(primitive.specularTexture) ||
         !hasTexCoordSet(primitive.specularColorTexture) ||
+        !hasTexCoordSet(primitive.clearcoatTexture) ||
+        !hasTexCoordSet(primitive.clearcoatRoughnessTexture) ||
+        !hasTexCoordSet(primitive.clearcoatNormalTexture) ||
         !hasTexCoordSet(primitive.normalTexture) ||
         !hasTexCoordSet(primitive.occlusionTexture) ||
         !hasTexCoordSet(primitive.emissiveTexture)) {
@@ -5301,6 +5473,12 @@ std::unique_ptr<GltfModel> GltfParser::parse(
         !documentHasObjectExtension(
             input->document,
             "KHR_materials_specular")) {
+        return nullptr;
+    }
+    if (declaredExtension(input->document, "KHR_materials_clearcoat") &&
+        !documentHasObjectExtension(
+            input->document,
+            "KHR_materials_clearcoat")) {
         return nullptr;
     }
     if (declaredExtension(input->document, "EXT_texture_webp") &&

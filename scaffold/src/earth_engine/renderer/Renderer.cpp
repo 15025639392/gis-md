@@ -187,13 +187,18 @@ uniform sampler2D u_occlusionTexture;
 uniform sampler2D u_emissiveTexture;
 uniform sampler2D u_specularTexture;
 uniform sampler2D u_specularColorTexture;
+uniform sampler2D u_clearcoatTexture;
+uniform sampler2D u_clearcoatRoughnessTexture;
+uniform sampler2D u_clearcoatNormalTexture;
 uniform float u_hasBaseColorTexture;
 uniform vec4 u_materialFactors;       // metallic, roughness, normal scale, occlusion strength
 uniform float u_dielectricSpecularF0;
 uniform vec4 u_hasMaterialTextures;   // metallicRoughness, normal, occlusion, emissive
 uniform vec2 u_hasSpecularTextures;   // specular, specularColor
+uniform vec3 u_hasClearcoatTextures;  // clearcoat, roughness, normal
 uniform float u_specularFactor;
 uniform vec3 u_specularColorFactor;
+uniform vec3 u_clearcoatFactors;      // factor, roughness, normal scale
 uniform vec3 u_emissiveFactor;
 uniform float u_alphaMode;
 uniform float u_alphaCutoff;
@@ -207,6 +212,12 @@ uniform vec4 u_specularTexOffsetScale;
 uniform vec2 u_specularTexRotationSinCos;
 uniform vec4 u_specularColorTexOffsetScale;
 uniform vec2 u_specularColorTexRotationSinCos;
+uniform vec4 u_clearcoatTexOffsetScale;
+uniform vec2 u_clearcoatTexRotationSinCos;
+uniform vec4 u_clearcoatRoughnessTexOffsetScale;
+uniform vec2 u_clearcoatRoughnessTexRotationSinCos;
+uniform vec4 u_clearcoatNormalTexOffsetScale;
+uniform vec2 u_clearcoatNormalTexRotationSinCos;
 uniform vec4 u_normalTexOffsetScale;
 uniform vec2 u_normalTexRotationSinCos;
 uniform vec4 u_occlusionTexOffsetScale;
@@ -216,6 +227,7 @@ uniform vec2 u_emissiveTexRotationSinCos;
 uniform vec4 u_textureCoordSets;      // baseColor, metallicRoughness, normal, occlusion
 uniform float u_emissiveTexCoordSet;
 uniform vec2 u_specularTexCoordSets;  // specular, specularColor
+uniform vec3 u_clearcoatTexCoordSets; // clearcoat, roughness, normal
 
 out vec4 fragColor;
 
@@ -244,9 +256,7 @@ vec3 applyTbn(vec3 tangent, vec3 bitangent, vec3 n, vec3 mapNormal) {
     return perturbedLenSq > 1e-8 ? normalize(perturbed) : n;
 }
 
-vec3 perturbNormal(vec3 n, vec2 uv, vec4 tangentInput) {
-    vec3 mapNormal = texture(u_normalTexture, uv).rgb * 2.0 - 1.0;
-    mapNormal.xy *= u_materialFactors.z;
+vec3 perturbNormalFromMap(vec3 n, vec2 uv, vec4 tangentInput, vec3 mapNormal) {
     float mapNormalLenSq = dot(mapNormal, mapNormal);
     if (mapNormalLenSq < 1e-8) {
         return n;
@@ -287,9 +297,26 @@ vec3 perturbNormal(vec3 n, vec2 uv, vec4 tangentInput) {
     return applyTbn(tangent, bitangent, n, mapNormal);
 }
 
+vec3 perturbNormal(vec3 n, vec2 uv, vec4 tangentInput, float normalScale) {
+    vec3 mapNormal = texture(u_normalTexture, uv).rgb * 2.0 - 1.0;
+    mapNormal.xy *= normalScale;
+    return perturbNormalFromMap(n, uv, tangentInput, mapNormal);
+}
+
+vec3 perturbClearcoatNormal(
+    vec3 n,
+    vec2 uv,
+    vec4 tangentInput,
+    float normalScale) {
+    vec3 mapNormal = texture(u_clearcoatNormalTexture, uv).rgb * 2.0 - 1.0;
+    mapNormal.xy *= normalScale;
+    return perturbNormalFromMap(n, uv, tangentInput, mapNormal);
+}
+
 void main() {
     float faceSign = gl_FrontFacing ? 1.0 : -1.0;
     vec3 N = normalize(v_normal) * faceSign;
+    vec3 geometryN = N;
     vec3 L = normalize(u_lightDir);
     vec2 baseColorUv = transformUv(
         uvFromSet(u_textureCoordSets.x),
@@ -326,7 +353,7 @@ void main() {
             uvFromSet(u_textureCoordSets.z),
             u_normalTexOffsetScale,
             u_normalTexRotationSinCos);
-        N = perturbNormal(N, normalUv, v_tangent);
+        N = perturbNormal(N, normalUv, v_tangent, u_materialFactors.z);
         NdotL = max(dot(N, L), 0.0);
     }
 
@@ -347,6 +374,39 @@ void main() {
             u_emissiveTexOffsetScale,
             u_emissiveTexRotationSinCos);
         emissive *= texture(u_emissiveTexture, emissiveUv).rgb;
+    }
+
+    float clearcoat = clamp(u_clearcoatFactors.x, 0.0, 1.0);
+    float clearcoatRoughness = clamp(u_clearcoatFactors.y, 0.0, 1.0);
+    if (u_hasClearcoatTextures.x > 0.5) {
+        vec2 clearcoatUv = transformUv(
+            uvFromSet(u_clearcoatTexCoordSets.x),
+            u_clearcoatTexOffsetScale,
+            u_clearcoatTexRotationSinCos);
+        clearcoat *= texture(u_clearcoatTexture, clearcoatUv).r;
+    }
+    if (u_hasClearcoatTextures.y > 0.5) {
+        vec2 clearcoatRoughnessUv = transformUv(
+            uvFromSet(u_clearcoatTexCoordSets.y),
+            u_clearcoatRoughnessTexOffsetScale,
+            u_clearcoatRoughnessTexRotationSinCos);
+        clearcoatRoughness = clamp(
+            clearcoatRoughness *
+                texture(u_clearcoatRoughnessTexture, clearcoatRoughnessUv).g,
+            0.0,
+            1.0);
+    }
+    vec3 clearcoatNormal = geometryN;
+    if (u_hasClearcoatTextures.z > 0.5) {
+        vec2 clearcoatNormalUv = transformUv(
+            uvFromSet(u_clearcoatTexCoordSets.z),
+            u_clearcoatNormalTexOffsetScale,
+            u_clearcoatNormalTexRotationSinCos);
+        clearcoatNormal = perturbClearcoatNormal(
+            geometryN,
+            clearcoatNormalUv,
+            v_tangent,
+            u_clearcoatFactors.z);
     }
 
     float diffuse = smoothstep(0.0, 1.0, NdotL);
@@ -377,6 +437,17 @@ void main() {
     vec3 color = diffuseColor * (0.38 * occlusion + 0.62 * diffuse) +
                  specularColor * specular +
                  emissive;
+    if (clearcoat > 0.0) {
+        float clearcoatNdotL = max(dot(clearcoatNormal, L), 0.0);
+        float clearcoatPower = mix(160.0, 8.0, clearcoatRoughness);
+        float clearcoatSpecular =
+            pow(clearcoatNdotL, clearcoatPower) * (1.0 - clearcoatRoughness);
+        float clearcoatFresnel =
+            0.04 + 0.96 * pow(1.0 - clearcoatNdotL, 5.0);
+        float coatWeight = clamp(clearcoat * clearcoatFresnel, 0.0, 1.0);
+        color = color * (1.0 - coatWeight) +
+                vec3(clearcoatSpecular) * coatWeight;
+    }
     fragColor = vec4(color, alpha * clamp(u_renderOpacity, 0.0, 1.0));
 }
 )glsl";
@@ -854,6 +925,15 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              constant float4& u_specularColorTexOffsetScale [[buffer(32)]],
                              constant float2& u_specularColorTexRotationSinCos [[buffer(33)]],
                              constant float2& u_specularTexCoordSets [[buffer(34)]],
+                             constant float3& u_clearcoatFactors [[buffer(35)]],
+                             constant float3& u_hasClearcoatTextures [[buffer(36)]],
+                             constant float4& u_clearcoatTexOffsetScale [[buffer(37)]],
+                             constant float2& u_clearcoatTexRotationSinCos [[buffer(38)]],
+                             constant float4& u_clearcoatRoughnessTexOffsetScale [[buffer(39)]],
+                             constant float2& u_clearcoatRoughnessTexRotationSinCos [[buffer(40)]],
+                             constant float4& u_clearcoatNormalTexOffsetScale [[buffer(41)]],
+                             constant float2& u_clearcoatNormalTexRotationSinCos [[buffer(42)]],
+                             constant float3& u_clearcoatTexCoordSets [[buffer(43)]],
                              texture2d<float> u_baseColorTexture [[texture(0)]],
                              texture2d<float> u_metallicRoughnessTexture [[texture(1)]],
                              texture2d<float> u_normalTexture [[texture(2)]],
@@ -861,15 +941,22 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              texture2d<float> u_emissiveTexture [[texture(4)]],
                              texture2d<float> u_specularTexture [[texture(5)]],
                              texture2d<float> u_specularColorTexture [[texture(6)]],
+                             texture2d<float> u_clearcoatTexture [[texture(7)]],
+                             texture2d<float> u_clearcoatRoughnessTexture [[texture(8)]],
+                             texture2d<float> u_clearcoatNormalTexture [[texture(9)]],
                              sampler u_baseColorSampler [[sampler(0)]],
                              sampler u_metallicRoughnessSampler [[sampler(1)]],
                              sampler u_normalSampler [[sampler(2)]],
                              sampler u_occlusionSampler [[sampler(3)]],
                              sampler u_emissiveSampler [[sampler(4)]],
                              sampler u_specularSampler [[sampler(5)]],
-                             sampler u_specularColorSampler [[sampler(6)]]) {
+                             sampler u_specularColorSampler [[sampler(6)]],
+                             sampler u_clearcoatSampler [[sampler(7)]],
+                             sampler u_clearcoatRoughnessSampler [[sampler(8)]],
+                             sampler u_clearcoatNormalSampler [[sampler(9)]]) {
     float faceSign = frontFacing ? 1.0 : -1.0;
     float3 n = normalize(in.normal) * faceSign;
+    float3 geometryN = n;
     float3 light = normalize(u_lightDir);
     float2 baseColorUv = gltfTransformUv(
         gltfUvFromSet(in, u_textureCoordSets.x),
@@ -936,6 +1023,45 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
             u_emissiveSampler,
             emissiveUv).rgb;
     }
+    float clearcoat = clamp(u_clearcoatFactors.x, 0.0, 1.0);
+    float clearcoatRoughness = clamp(u_clearcoatFactors.y, 0.0, 1.0);
+    if (u_hasClearcoatTextures.x > 0.5) {
+        float2 clearcoatUv = gltfTransformUv(
+            gltfUvFromSet(in, u_clearcoatTexCoordSets.x),
+            u_clearcoatTexOffsetScale,
+            u_clearcoatTexRotationSinCos);
+        clearcoat *= u_clearcoatTexture.sample(
+            u_clearcoatSampler,
+            clearcoatUv).r;
+    }
+    if (u_hasClearcoatTextures.y > 0.5) {
+        float2 clearcoatRoughnessUv = gltfTransformUv(
+            gltfUvFromSet(in, u_clearcoatTexCoordSets.y),
+            u_clearcoatRoughnessTexOffsetScale,
+            u_clearcoatRoughnessTexRotationSinCos);
+        clearcoatRoughness = clamp(
+            clearcoatRoughness *
+                u_clearcoatRoughnessTexture.sample(
+                    u_clearcoatRoughnessSampler,
+                    clearcoatRoughnessUv).g,
+            0.0,
+            1.0);
+    }
+    float3 clearcoatNormal = geometryN;
+    if (u_hasClearcoatTextures.z > 0.5) {
+        float2 clearcoatNormalUv = gltfTransformUv(
+            gltfUvFromSet(in, u_clearcoatTexCoordSets.z),
+            u_clearcoatNormalTexOffsetScale,
+            u_clearcoatNormalTexRotationSinCos);
+        clearcoatNormal = gltfPerturbNormal(
+            geometryN,
+            clearcoatNormalUv,
+            in.localPosition,
+            in.tangent,
+            u_clearcoatFactors.z,
+            u_clearcoatNormalTexture,
+            u_clearcoatNormalSampler);
+    }
     float diffuse = smoothstep(0.0, 1.0, ndotl);
     float specPower = mix(96.0, 8.0, roughness);
     float specular = pow(max(ndotl, 0.0), specPower) * (1.0 - roughness);
@@ -968,6 +1094,18 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
     float3 color = diffuseColor * (0.38 * occlusion + 0.62 * diffuse) +
                    specularColor * specular +
                    emissive;
+    if (clearcoat > 0.0) {
+        float clearcoatNdotL = max(dot(clearcoatNormal, light), 0.0);
+        float clearcoatPower = mix(160.0, 8.0, clearcoatRoughness);
+        float clearcoatSpecular =
+            pow(clearcoatNdotL, clearcoatPower) *
+            (1.0 - clearcoatRoughness);
+        float clearcoatFresnel =
+            0.04 + 0.96 * pow(1.0 - clearcoatNdotL, 5.0);
+        float coatWeight = clamp(clearcoat * clearcoatFresnel, 0.0, 1.0);
+        color = color * (1.0 - coatWeight) +
+                float3(clearcoatSpecular) * coatWeight;
+    }
     return float4(color, alpha * clamp(u_renderOpacity, 0.0, 1.0));
 }
 )msl";
@@ -1370,10 +1508,13 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
     cmd.uniforms["u_hasSpecularTextures"] = {0.0f, 0.0f};
     cmd.uniforms["u_specularFactor"] = {1.0f};
     cmd.uniforms["u_specularColorFactor"] = {1.0f, 1.0f, 1.0f};
+    cmd.uniforms["u_clearcoatFactors"] = {0.0f, 0.0f, 1.0f};
+    cmd.uniforms["u_hasClearcoatTextures"] = {0.0f, 0.0f, 0.0f};
     cmd.uniforms["u_emissiveFactor"] = {0.0f, 0.0f, 0.0f};
     cmd.uniforms["u_textureCoordSets"] = {0.0f, 0.0f, 0.0f, 0.0f};
     cmd.uniforms["u_emissiveTexCoordSet"] = {0.0f};
     cmd.uniforms["u_specularTexCoordSets"] = {0.0f, 0.0f};
+    cmd.uniforms["u_clearcoatTexCoordSets"] = {0.0f, 0.0f, 0.0f};
     cmd.uniforms["u_alphaMode"] = {0.0f};
     cmd.uniforms["u_alphaCutoff"] = {0.5f};
     cmd.uniforms["u_renderOpacity"] = {1.0f};
@@ -1396,6 +1537,15 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
     setTextureTransformDefaults(
         "u_specularColorTexOffsetScale",
         "u_specularColorTexRotationSinCos");
+    setTextureTransformDefaults(
+        "u_clearcoatTexOffsetScale",
+        "u_clearcoatTexRotationSinCos");
+    setTextureTransformDefaults(
+        "u_clearcoatRoughnessTexOffsetScale",
+        "u_clearcoatRoughnessTexRotationSinCos");
+    setTextureTransformDefaults(
+        "u_clearcoatNormalTexOffsetScale",
+        "u_clearcoatNormalTexRotationSinCos");
     setTextureTransformDefaults(
         "u_normalTexOffsetScale",
         "u_normalTexRotationSinCos");

@@ -56,6 +56,9 @@ struct GltfPrimitiveRenderResources {
     TextureBinding metallicRoughnessTexture;
     TextureBinding specularTexture;
     TextureBinding specularColorTexture;
+    TextureBinding clearcoatTexture;
+    TextureBinding clearcoatRoughnessTexture;
+    TextureBinding clearcoatNormalTexture;
     TextureBinding normalTexture;
     TextureBinding occlusionTexture;
     TextureBinding emissiveTexture;
@@ -71,6 +74,9 @@ struct GltfPrimitiveRenderResources {
     float dielectricSpecularF0 = 0.04f;
     float specularFactor = 1.0f;
     std::array<float, 3> specularColorFactor = {1.0f, 1.0f, 1.0f};
+    float clearcoatFactor = 0.0f;
+    float clearcoatRoughnessFactor = 0.0f;
+    float clearcoatNormalTextureScale = 1.0f;
     float normalTextureScale = 1.0f;
     float occlusionTextureStrength = 1.0f;
     std::array<float, 3> emissiveFactor = {0.0f, 0.0f, 0.0f};

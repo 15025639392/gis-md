@@ -3167,6 +3167,107 @@ void testTilesetGltfSpecularMaterialUploadsUniformsAndTextures() {
           "Tileset: glTF specular texture uploads KHR_texture_transform uniforms");
 }
 
+void testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures() {
+    DummyRenderDevice device;
+    device.allowTextureCreation = true;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: glTF clearcoat material root tile is created");
+    if (!root) return;
+
+    root->gltfModel = makeTexturedTriangleGltfModel();
+    GltfPrimitive& primitive = root->gltfModel->primitives[0];
+    primitive.clearcoatFactor = 0.75f;
+    primitive.clearcoatRoughnessFactor = 0.25f;
+    primitive.clearcoatNormalTextureScale = 0.6f;
+    GltfTextureBinding clearcoatBinding;
+    clearcoatBinding.textureIndex = 0u;
+    clearcoatBinding.texCoord = 1;
+    clearcoatBinding.transform.offset = {0.125f, 0.25f};
+    clearcoatBinding.transform.scale = {0.5f, 0.75f};
+    clearcoatBinding.transform.rotation = 1.57079632679f;
+    primitive.clearcoatTexture = clearcoatBinding;
+    GltfTextureBinding clearcoatRoughnessBinding;
+    clearcoatRoughnessBinding.textureIndex = 0u;
+    clearcoatRoughnessBinding.texCoord = 0;
+    primitive.clearcoatRoughnessTexture = clearcoatRoughnessBinding;
+    GltfTextureBinding clearcoatNormalBinding;
+    clearcoatNormalBinding.textureIndex = 0u;
+    clearcoatNormalBinding.texCoord = 1;
+    primitive.clearcoatNormalTexture = clearcoatNormalBinding;
+    root->contentKind = TileContentKind::Render;
+    root->loadState = TileLoadState::ContentLoaded;
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 1,
+          "Tileset: glTF clearcoat material emits one primitive draw command");
+    if (commands.empty()) return;
+
+    const RenderCommand& cmd = commands.front();
+    check(cmd.uniforms.count("u_clearcoatFactors") &&
+              cmd.uniforms.at("u_clearcoatFactors").size() == 3 &&
+              std::abs(cmd.uniforms.at("u_clearcoatFactors")[0] - 0.75f) <
+                  1e-6f &&
+              std::abs(cmd.uniforms.at("u_clearcoatFactors")[1] - 0.25f) <
+                  1e-6f &&
+              std::abs(cmd.uniforms.at("u_clearcoatFactors")[2] - 0.6f) <
+                  1e-6f,
+          "Tileset: glTF clearcoat material uploads clearcoat factors");
+    check(cmd.uniforms.count("u_hasClearcoatTextures") &&
+              cmd.uniforms.at("u_hasClearcoatTextures").size() == 3 &&
+              cmd.uniforms.at("u_hasClearcoatTextures")[0] == 1.0f &&
+              cmd.uniforms.at("u_hasClearcoatTextures")[1] == 1.0f &&
+              cmd.uniforms.at("u_hasClearcoatTextures")[2] == 1.0f,
+          "Tileset: glTF clearcoat material reports all clearcoat textures");
+    check(cmd.textures.size() >= 10 &&
+              cmd.textures[7] ==
+                  root->gltfPrimitiveResources.front().clearcoatTexture.texture &&
+              cmd.textures[8] ==
+                  root->gltfPrimitiveResources.front()
+                      .clearcoatRoughnessTexture.texture &&
+              cmd.textures[9] ==
+                  root->gltfPrimitiveResources.front()
+                      .clearcoatNormalTexture.texture,
+          "Tileset: glTF clearcoat textures bind to material slots 7, 8, and 9");
+    check(cmd.uniforms.count("u_clearcoatTexCoordSets") &&
+              cmd.uniforms.at("u_clearcoatTexCoordSets").size() == 3 &&
+              cmd.uniforms.at("u_clearcoatTexCoordSets")[0] == 1.0f &&
+              cmd.uniforms.at("u_clearcoatTexCoordSets")[1] == 0.0f &&
+              cmd.uniforms.at("u_clearcoatTexCoordSets")[2] == 1.0f,
+          "Tileset: glTF clearcoat material uploads texture coordinate sets");
+    check(cmd.uniforms.count("u_clearcoatTexOffsetScale") &&
+              cmd.uniforms.at("u_clearcoatTexOffsetScale").size() == 4 &&
+              std::abs(cmd.uniforms.at("u_clearcoatTexOffsetScale")[0] -
+                       0.125f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_clearcoatTexOffsetScale")[1] -
+                       0.25f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_clearcoatTexOffsetScale")[2] -
+                       0.5f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_clearcoatTexOffsetScale")[3] -
+                       0.75f) < 1e-6f &&
+              cmd.uniforms.count("u_clearcoatTexRotationSinCos") &&
+              std::abs(cmd.uniforms.at("u_clearcoatTexRotationSinCos")[0] -
+                       1.0f) < 1e-6f,
+          "Tileset: glTF clearcoat texture uploads KHR_texture_transform uniforms");
+}
+
 void testTilesetGltfPointAndLineModesReachDrawCommands() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
@@ -6512,6 +6613,7 @@ int main() {
     testTilesetGltfUnlitMaterialUploadsUniform();
     testTilesetGltfIorMaterialUploadsSpecularF0();
     testTilesetGltfSpecularMaterialUploadsUniformsAndTextures();
+    testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures();
     testTilesetGltfPointAndLineModesReachDrawCommands();
     testTilesetGltfDoubleSidedDisablesCullOnly();
     testTilesetGltfOpaqueInstancesUseGpuInstancing();
