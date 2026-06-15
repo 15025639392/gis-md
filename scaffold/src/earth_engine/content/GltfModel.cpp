@@ -1234,6 +1234,15 @@ bool validImageSourceFields(const json& imageJson, bool allowWebp = false) {
     if (mimeTypeIt != imageJson.end() && !mimeTypeIt->is_string()) {
         return false;
     }
+    if (uriIt == imageJson.end() && bufferViewIt == imageJson.end()) {
+        return false;
+    }
+    if (uriIt != imageJson.end() && uriIt->get<std::string>().empty()) {
+        return false;
+    }
+    if (bufferViewIt != imageJson.end() && bufferViewIt->get<int>() < 0) {
+        return false;
+    }
     if (mimeTypeIt != imageJson.end() &&
         !supportedImageMimeType(mimeTypeIt->get<std::string>(), allowWebp)) {
         return false;
