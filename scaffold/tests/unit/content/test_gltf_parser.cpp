@@ -61,7 +61,8 @@ std::vector<uint8_t> makeTriangleGlb(
     int tangentComponentType = 0,
     std::string tangentType = std::string{},
     bool zeroTangent = false,
-    float tangentW = 1.0f) {
+    float tangentW = 1.0f,
+    bool legacyBatchIds = false) {
     const bool hasColor = colorComponentType != 0;
     if (hasColor && colorType.empty()) {
         colorType = "VEC4";
@@ -159,6 +160,17 @@ std::vector<uint8_t> makeTriangleGlb(
         tangentByteLength = bin.size() - tangentOffset;
     }
 
+    size_t batchIdOffset = 0;
+    size_t batchIdByteLength = 0;
+    if (legacyBatchIds) {
+        pad4(bin, 0);
+        batchIdOffset = bin.size();
+        appendU16(bin, 1);
+        appendU16(bin, 0);
+        appendU16(bin, 1);
+        batchIdByteLength = bin.size() - batchIdOffset;
+    }
+
     if ((bin.size() % 2u) != 0u) {
         bin.push_back(0);
     }
@@ -224,6 +236,21 @@ std::vector<uint8_t> makeTriangleGlb(
             tangentType +
             "\"}";
     }
+    if (legacyBatchIds) {
+        const int batchIdAccessor = nextAccessor++;
+        attributes +=
+            ",\"_BATCHID\":" + std::to_string(batchIdAccessor);
+        bufferViews +=
+            ",{\"buffer\":0,\"byteOffset\":" +
+            std::to_string(batchIdOffset) +
+            ",\"byteLength\":" +
+            std::to_string(batchIdByteLength) +
+            "}";
+        accessors +=
+            ",{\"bufferView\":" +
+            std::to_string(batchIdAccessor) +
+            ",\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}";
+    }
     const int indexAccessor = nextAccessor;
     bufferViews +=
         ",{\"buffer\":0,\"byteOffset\":" +
@@ -276,6 +303,24 @@ std::vector<uint8_t> makeTriangleGlb(
     appendU32(glb, 0x004E4942u);
     glb.insert(glb.end(), bin.begin(), bin.end());
     return glb;
+}
+
+std::vector<uint8_t> makeLegacyBatchIdTriangleGlb() {
+    return makeTriangleGlb(
+        {1.0f, 1.0f, 1.0f, 1.0f},
+        false,
+        5126,
+        false,
+        0,
+        false,
+        0,
+        false,
+        std::string{},
+        0,
+        std::string{},
+        false,
+        1.0f,
+        true);
 }
 
 std::vector<uint8_t> makeQuadPrimitiveModeGlb(int mode, bool indexed = true) {
@@ -7643,6 +7688,39 @@ TEST(GltfParserTest, ContentProviderRejectsB3dmBatchTableMetadata) {
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
+TEST(GltfParserTest, ContentProviderDecodesB3dmBatchTableWithBatchIds) {
+    const std::vector<uint8_t> b3dm = makeB3dm(
+        makeLegacyBatchIdTriangleGlb(),
+        "{\"BATCH_LENGTH\":2}",
+        "{\"name\":[\"zero\",\"one\"],\"Height\":[100,200]}");
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "B3DM batch table with batch IDs fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(b3dm.data(), b3dm.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives[0];
+    EXPECT_EQ((std::vector<uint32_t>{1u, 0u, 1u}), primitive.featureIds);
+    ASSERT_EQ(3u, primitive.featureProperties.size());
+    EXPECT_EQ(
+        "one",
+        *std::get_if<std::string>(&primitive.featureProperties[0].at("name")));
+    EXPECT_EQ(
+        "zero",
+        *std::get_if<std::string>(&primitive.featureProperties[1].at("name")));
+    EXPECT_EQ(
+        200u,
+        *std::get_if<uint64_t>(&primitive.featureProperties[0].at("Height")));
+    EXPECT_EQ(
+        100u,
+        *std::get_if<uint64_t>(&primitive.featureProperties[1].at("Height")));
+}
+
 TEST(GltfParserTest, ContentProviderRejectsB3dmPositiveBatchLength) {
     const std::vector<uint8_t> b3dm = makeB3dm(
         makeTriangleGlb(),
@@ -7652,6 +7730,23 @@ TEST(GltfParserTest, ContentProviderRejectsB3dmPositiveBatchLength) {
         TileKey{"Geographic-TMS", 0, 0, 0},
         std::vector<uint8_t>{},
         "B3DM batch length fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(b3dm.data(), b3dm.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(nullptr, result.gltfModel);
+}
+
+TEST(GltfParserTest, ContentProviderRejectsB3dmBatchIdOutsideBatchLength) {
+    const std::vector<uint8_t> b3dm = makeB3dm(
+        makeLegacyBatchIdTriangleGlb(),
+        "{\"BATCH_LENGTH\":1}",
+        "{\"name\":[\"zero\"]}");
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "B3DM out-of-range batch ID fixture");
     TileContentLoadResult result =
         provider.decodeContent(b3dm.data(), b3dm.size());
 

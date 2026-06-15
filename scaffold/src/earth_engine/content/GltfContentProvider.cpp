@@ -132,7 +132,14 @@ struct B3dmExtractResult {
     const uint8_t* glbData = nullptr;
     size_t glbSize = 0;
     Mat4 rtcTransform = Mat4::identity();
+    std::optional<uint32_t> batchLength;
+    std::vector<std::map<std::string, GltfFeaturePropertyValue>>
+        batchTableRows;
 };
+
+std::optional<std::vector<std::map<std::string, GltfFeaturePropertyValue>>>
+parseJsonBatchTableRows(const std::string& batchJsonText,
+                        uint32_t featureCount);
 
 B3dmExtractResult extractB3dmGlb(const uint8_t* data, size_t size) {
     B3dmExtractResult result;
@@ -185,7 +192,6 @@ B3dmExtractResult extractB3dmGlb(const uint8_t* data, size_t size) {
 
     if (featureTableJsonByteLength > 0) {
         if (featureTableBinaryByteLength > 0 ||
-            batchTableJsonByteLength > 0 ||
             batchTableBinaryByteLength > 0) {
             return result;
         }
@@ -215,9 +221,38 @@ B3dmExtractResult extractB3dmGlb(const uint8_t* data, size_t size) {
         auto batchLengthIt = parsed.find("BATCH_LENGTH");
         if (batchLengthIt != parsed.end()) {
             std::optional<uint32_t> batchLength = jsonU32(*batchLengthIt);
-            if (!batchLength || *batchLength > 0u) {
+            if (!batchLength) {
                 return result;
             }
+            result.batchLength = *batchLength;
+        } else if (batchTableJsonByteLength > 0) {
+            return result;
+        }
+        if (batchTableJsonByteLength > 0) {
+            if (!result.batchLength) {
+                return result;
+            }
+            const size_t batchTableJsonOffset =
+                featureStart +
+                static_cast<size_t>(featureTableJsonByteLength) +
+                static_cast<size_t>(featureTableBinaryByteLength);
+            const size_t batchTableJsonEnd =
+                batchTableJsonOffset +
+                static_cast<size_t>(batchTableJsonByteLength);
+            if (batchTableJsonEnd > size ||
+                batchTableJsonEnd > glbStart) {
+                return result;
+            }
+            const std::string batchJsonText =
+                trimRightJsonPadding(std::string(
+                    reinterpret_cast<const char*>(data + batchTableJsonOffset),
+                    static_cast<size_t>(batchTableJsonByteLength)));
+            auto rows =
+                parseJsonBatchTableRows(batchJsonText, *result.batchLength);
+            if (!rows) {
+                return result;
+            }
+            result.batchTableRows = std::move(*rows);
         }
         bool validRtc = true;
         std::optional<Vec3> rtcCenter = jsonRtcCenter(parsed, validRtc);
@@ -1461,6 +1496,36 @@ parseJsonBatchTableRows(const std::string& batchJsonText,
     return rows;
 }
 
+bool applyB3dmBatchMetadata(GltfModel& model,
+                            const B3dmExtractResult& b3dm) {
+    if (!b3dm.batchLength || *b3dm.batchLength == 0u) {
+        return true;
+    }
+    if (model.primitives.empty()) {
+        return false;
+    }
+
+    for (GltfPrimitive& primitive : model.primitives) {
+        if (primitive.featureIds.size() != primitive.vertices.size()) {
+            return false;
+        }
+        for (uint32_t featureId : primitive.featureIds) {
+            if (featureId >= *b3dm.batchLength) {
+                return false;
+            }
+        }
+        if (!b3dm.batchTableRows.empty()) {
+            primitive.featureProperties.clear();
+            primitive.featureProperties.reserve(primitive.featureIds.size());
+            for (uint32_t featureId : primitive.featureIds) {
+                primitive.featureProperties.push_back(
+                    b3dm.batchTableRows[featureId]);
+            }
+        }
+    }
+    return true;
+}
+
 std::optional<std::vector<std::map<std::string, GltfFeaturePropertyValue>>>
 parseI3dmJsonBatchTable(const uint8_t* data,
                         const I3dmHeader& header,
@@ -2497,9 +2562,20 @@ TileContentLoadResult decodeGltfLikeContent(
     }
     contentTransform = contentTransform * gltfUpAxisTransform;
 
+    GltfParserOptions parserOptions;
+    parserOptions.allowLegacyBatchIdAttribute =
+        b3dm.isB3dm && b3dm.batchLength && *b3dm.batchLength > 0u;
     std::unique_ptr<GltfModel> model =
-        GltfParser::parse(data, size, resolver, imageDecoder);
+        GltfParser::parse(
+            data,
+            size,
+            resolver,
+            imageDecoder,
+            parserOptions);
     if (!model || model->primitives.empty()) {
+        return TileContentLoadResult::failed();
+    }
+    if (b3dm.isB3dm && !applyB3dmBatchMetadata(*model, b3dm)) {
         return TileContentLoadResult::failed();
     }
     TileContentLoadResult result =

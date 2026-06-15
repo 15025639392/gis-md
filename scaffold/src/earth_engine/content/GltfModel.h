@@ -252,6 +252,10 @@ struct GltfModel {
     bool updateAnimation(double timeSeconds);
 };
 
+struct GltfParserOptions {
+    bool allowLegacyBatchIdAttribute = false;
+};
+
 class GltfParser {
 public:
     using ExternalResourceResolver =
@@ -270,6 +274,12 @@ public:
         size_t size,
         const ExternalResourceResolver& externalResourceResolver,
         const ImageDecoder& imageDecoder);
+    static std::unique_ptr<GltfModel> parse(
+        const uint8_t* data,
+        size_t size,
+        const ExternalResourceResolver& externalResourceResolver,
+        const ImageDecoder& imageDecoder,
+        const GltfParserOptions& options);
 };
 
 } // namespace earth_engine

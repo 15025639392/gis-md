@@ -86,7 +86,8 @@ bool attributeSemanticStartsWith(
     return semantic.rfind(prefix, 0) == 0;
 }
 
-bool primitiveAttributeSemanticSupported(const std::string& semantic);
+bool primitiveAttributeSemanticSupported(const std::string& semantic,
+                                         bool allowLegacyBatchIdAttribute);
 bool morphTargetSemanticSupported(const std::string& semantic);
 
 uint32_t readU32LE(const uint8_t* p) {
@@ -2993,7 +2994,8 @@ bool validateGpuInstancingNodeExtensionShape(
     return true;
 }
 
-bool validateSceneGraph(const json& doc) {
+bool validateSceneGraph(const json& doc,
+                        bool allowLegacyBatchIdAttribute) {
     const auto nodesIt = doc.find("nodes");
     if (nodesIt != doc.end() && !nodesIt->is_array()) {
         return false;
@@ -3157,7 +3159,9 @@ bool validateSceneGraph(const json& doc) {
                 for (auto it = attributesIt->begin();
                      it != attributesIt->end();
                      ++it) {
-                    if (!primitiveAttributeSemanticSupported(it.key())) {
+                    if (!primitiveAttributeSemanticSupported(
+                            it.key(),
+                            allowLegacyBatchIdAttribute)) {
                         return false;
                     }
                     if (!it.value().is_number_integer()) {
@@ -3739,6 +3743,15 @@ bool validColorAccessor(const AccessorSpan& span) {
            span.normalized;
 }
 
+bool validFeatureIdAccessor(const AccessorSpan& span) {
+    return span.type == "SCALAR" &&
+           span.components == 1 &&
+           !span.normalized &&
+           (span.componentType == 5121 ||
+            span.componentType == 5123 ||
+            span.componentType == 5125);
+}
+
 bool validTangentAccessor(const AccessorSpan& span) {
     return span.type == "VEC4" &&
            span.components == 4 &&
@@ -3759,7 +3772,8 @@ bool validTangentAccessor(
         meshQuantizationEnabled);
 }
 
-bool primitiveAttributeSemanticSupported(const std::string& semantic) {
+bool primitiveAttributeSemanticSupported(const std::string& semantic,
+                                         bool allowLegacyBatchIdAttribute) {
     if (semantic == "POSITION" ||
         semantic == "NORMAL" ||
         semantic == "TANGENT" ||
@@ -3778,7 +3792,7 @@ bool primitiveAttributeSemanticSupported(const std::string& semantic) {
     }
 
     if (semantic == "_BATCHID") {
-        return false;
+        return allowLegacyBatchIdAttribute;
     }
 
     if (!semantic.empty() && semantic[0] == '_') {
@@ -3809,14 +3823,17 @@ std::array<float, 4> readVertexColor(const AccessorSpan& span, size_t index) {
 bool primitiveAttributesAreSupported(
     const json& doc,
     const std::vector<std::vector<uint8_t>>& buffers,
-    const json& attrs) {
+    const json& attrs,
+    bool allowLegacyBatchIdAttribute) {
     for (auto it = attrs.begin(); it != attrs.end(); ++it) {
         if (!it.value().is_number_integer()) {
             return false;
         }
 
         const std::string& semantic = it.key();
-        if (!primitiveAttributeSemanticSupported(semantic)) {
+        if (!primitiveAttributeSemanticSupported(
+                semantic,
+                allowLegacyBatchIdAttribute)) {
             return false;
         }
         if (!semantic.empty() && semantic[0] == '_') {
@@ -4539,6 +4556,7 @@ std::optional<GltfPrimitive> parsePrimitive(
     int nodeIndex,
     const json& primitiveJson,
     bool meshQuantizationEnabled,
+    bool allowLegacyBatchIdAttribute,
     bool& strictFailure) {
     const auto primitiveMode = integerProperty(primitiveJson, "mode", 4);
     if (!primitiveMode || !validRenderablePrimitiveMode(*primitiveMode)) {
@@ -4552,7 +4570,11 @@ std::optional<GltfPrimitive> parsePrimitive(
     }
 
     const json& attrs = primitiveJson["attributes"];
-    if (!primitiveAttributesAreSupported(doc, buffers, attrs)) {
+    if (!primitiveAttributesAreSupported(
+            doc,
+            buffers,
+            attrs,
+            allowLegacyBatchIdAttribute)) {
         strictFailure = true;
         return std::nullopt;
     }
@@ -5185,6 +5207,21 @@ std::optional<GltfPrimitive> parsePrimitive(
             positions->count,
             {1.0f, 1.0f, 1.0f, 1.0f});
     }
+    std::optional<AccessorSpan> batchIds;
+    if (allowLegacyBatchIdAttribute && attrs.contains("_BATCHID")) {
+        if (!attrs["_BATCHID"].is_number_integer()) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        batchIds = accessorSpan(doc, buffers, attrs["_BATCHID"].get<int>());
+        if (!batchIds ||
+            !validFeatureIdAccessor(*batchIds) ||
+            batchIds->count != positions->count) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        primitive.featureIds.resize(positions->count);
+    }
     if (tangents) {
         primitive.vertexTangents.resize(positions->count);
         primitive.runtime.baseTangents.resize(positions->count);
@@ -5292,6 +5329,11 @@ std::optional<GltfPrimitive> parsePrimitive(
         if (colors) {
             primitive.vertexColors[i] = readVertexColor(*colors, i);
         }
+        if (batchIds) {
+            primitive.featureIds[i] = readIndexComponent(
+                accessorElementPtr(*batchIds, i),
+                batchIds->componentType);
+        }
     }
     if (primitiveJson.contains("indices")) {
         if (!primitiveJson["indices"].is_number_integer()) {
@@ -5347,6 +5389,7 @@ void traverseNode(
     int nodeIndex,
     GltfModel& model,
     bool meshQuantizationEnabled,
+    bool allowLegacyBatchIdAttribute,
     bool& strictFailure) {
     const auto& nodes = doc.value("nodes", json::array());
     const auto& meshes = doc.value("meshes", json::array());
@@ -5391,6 +5434,7 @@ void traverseNode(
                         nodeIndex,
                         primitiveJson,
                         meshQuantizationEnabled,
+                        allowLegacyBatchIdAttribute,
                         strictFailure)) {
                     if (!nativeInstances->empty()) {
                         primitive->instances = *nativeInstances;
@@ -5419,6 +5463,7 @@ void traverseNode(
             child.get<int>(),
             model,
             meshQuantizationEnabled,
+            allowLegacyBatchIdAttribute,
             strictFailure);
         if (strictFailure) return;
     }
@@ -5985,13 +6030,29 @@ std::unique_ptr<GltfModel> GltfParser::parse(
     size_t size,
     const ExternalResourceResolver& externalResourceResolver,
     const ImageDecoder& imageDecoder) {
+    return parse(
+        data,
+        size,
+        externalResourceResolver,
+        imageDecoder,
+        GltfParserOptions{});
+}
+
+std::unique_ptr<GltfModel> GltfParser::parse(
+    const uint8_t* data,
+    size_t size,
+    const ExternalResourceResolver& externalResourceResolver,
+    const ImageDecoder& imageDecoder,
+    const GltfParserOptions& options) {
     auto input = parseInput(data, size);
     if (!input) return nullptr;
     if (!validateAsset(input->document) ||
         hasUnsupportedDeclaredExtensions(input->document) ||
         hasUnsupportedObjectExtensions(input->document) ||
         !supportedObjectExtensionsAreDeclared(input->document) ||
-        !validateSceneGraph(input->document)) {
+        !validateSceneGraph(
+            input->document,
+            options.allowLegacyBatchIdAttribute)) {
         return nullptr;
     }
     if (declaredExtension(input->document, "KHR_materials_unlit") &&
@@ -6121,6 +6182,7 @@ std::unique_ptr<GltfModel> GltfParser::parse(
             rootNodeIndex,
             *model,
             meshQuantizationEnabled,
+            options.allowLegacyBatchIdAttribute,
             strictFailure);
     };
 
