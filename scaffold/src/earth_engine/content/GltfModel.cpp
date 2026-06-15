@@ -2169,6 +2169,35 @@ glm::dmat4 readMat4(const AccessorSpan& span, size_t index) {
     return matrix;
 }
 
+bool finiteVec2Value(const glm::dvec2& value) {
+    return std::isfinite(value.x) &&
+           std::isfinite(value.y);
+}
+
+bool finiteVec3Value(const glm::dvec3& value) {
+    return std::isfinite(value.x) &&
+           std::isfinite(value.y) &&
+           std::isfinite(value.z);
+}
+
+bool finiteVec4Value(const glm::dvec4& value) {
+    return std::isfinite(value.x) &&
+           std::isfinite(value.y) &&
+           std::isfinite(value.z) &&
+           std::isfinite(value.w);
+}
+
+bool finiteMat4Value(const glm::dmat4& value) {
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            if (!std::isfinite(value[column][row])) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 std::vector<uint32_t> readIndices(const AccessorSpan& span) {
     if (span.components != 1) return {};
     std::vector<uint32_t> indices;
@@ -3706,7 +3735,13 @@ std::vector<SkinRecord> parseSkins(
                 skin.valid = false;
             } else {
                 for (size_t i = 0; i < skin.joints.size(); ++i) {
-                    skin.inverseBindMatrices[i] = readMat4(*inverseBindSpan, i);
+                    const glm::dmat4 inverseBind =
+                        readMat4(*inverseBindSpan, i);
+                    if (!finiteMat4Value(inverseBind)) {
+                        skin.valid = false;
+                        break;
+                    }
+                    skin.inverseBindMatrices[i] = inverseBind;
                 }
             }
         }
@@ -3810,6 +3845,10 @@ std::optional<std::vector<GltfVertexSkinning>> readVertexSkinning(
     for (size_t i = 0; i < expectedCount; ++i) {
         const glm::dvec4 jointValues = readVec4(*joints, i);
         const glm::dvec4 weightValues = readVec4(*weights, i);
+        if (!finiteVec4Value(jointValues) ||
+            !finiteVec4Value(weightValues)) {
+            return std::nullopt;
+        }
         double weightSum = 0.0;
         for (int k = 0; k < 4; ++k) {
             result[i].joints[static_cast<size_t>(k)] =
@@ -3951,14 +3990,20 @@ bool morphTargetSemanticSupported(const std::string& semantic) {
            semantic == "TANGENT";
 }
 
-std::array<float, 4> readVertexColor(const AccessorSpan& span, size_t index) {
+std::optional<std::array<float, 4>> readVertexColor(
+    const AccessorSpan& span,
+    size_t index) {
     std::array<float, 4> color = {1.0f, 1.0f, 1.0f, 1.0f};
     for (int component = 0; component < span.components; ++component) {
-        color[static_cast<size_t>(component)] = static_cast<float>(
-            readComponent(
-                accessorComponentPtr(span, index, component),
-                span.componentType,
-                span.normalized));
+        const double value = readComponent(
+            accessorComponentPtr(span, index, component),
+            span.componentType,
+            span.normalized);
+        const float converted = static_cast<float>(value);
+        if (!std::isfinite(value) || !std::isfinite(converted)) {
+            return std::nullopt;
+        }
+        color[static_cast<size_t>(component)] = converted;
     }
     return color;
 }
@@ -4092,12 +4137,6 @@ std::optional<std::pair<Vec3, Vec3>> skinVertex(
         normal = glm::dvec3(0.0, 0.0, 1.0);
     }
     return std::make_pair(Vec3(finalPosition), Vec3(normal));
-}
-
-bool finiteVec3Value(const glm::dvec3& value) {
-    return std::isfinite(value.x) &&
-           std::isfinite(value.y) &&
-           std::isfinite(value.z);
 }
 
 bool finiteValues(const std::vector<double>& values) {
@@ -5418,6 +5457,11 @@ std::optional<GltfPrimitive> parsePrimitive(
         const glm::dvec3 localPosition = readVec3(*positions, i);
         const glm::dvec3 localNormal =
             normals ? readVec3(*normals, i) : glm::dvec3(0.0, 0.0, 1.0);
+        if (!finiteVec3Value(localPosition) ||
+            (normals && !finiteVec3Value(localNormal))) {
+            strictFailure = true;
+            return std::nullopt;
+        }
         std::optional<std::array<float, 4>> localTangent;
         if (tangents) {
             localTangent = readTangent(*tangents, i);
@@ -5489,6 +5533,10 @@ std::optional<GltfPrimitive> parsePrimitive(
                 continue;
             }
             const glm::dvec2 uv = readVec2(*texCoordSpans[texCoordSet], i);
+            if (!finiteVec2Value(uv)) {
+                strictFailure = true;
+                return std::nullopt;
+            }
             const std::array<float, 2> texCoord = {
                 static_cast<float>(uv.x),
                 static_cast<float>(uv.y)};
@@ -5500,7 +5548,12 @@ std::optional<GltfPrimitive> parsePrimitive(
             }
         }
         if (colors) {
-            primitive.vertexColors[i] = readVertexColor(*colors, i);
+            const auto color = readVertexColor(*colors, i);
+            if (!color) {
+                strictFailure = true;
+                return std::nullopt;
+            }
+            primitive.vertexColors[i] = *color;
         }
         if (batchIds) {
             primitive.featureIds[i] = readIndexComponent(

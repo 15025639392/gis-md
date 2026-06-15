@@ -48,6 +48,14 @@ void pad4(std::vector<uint8_t>& bytes, uint8_t pad) {
     }
 }
 
+enum class NonFiniteTriangleAttribute {
+    None,
+    Position,
+    Normal,
+    TexCoord,
+    Color
+};
+
 std::vector<uint8_t> makeTriangleGlb(
     std::array<float, 4> baseColor = {1.0f, 1.0f, 1.0f, 1.0f},
     bool doubleSided = false,
@@ -63,7 +71,9 @@ std::vector<uint8_t> makeTriangleGlb(
     bool zeroTangent = false,
     float tangentW = 1.0f,
     bool legacyBatchIds = false,
-    bool declareMeshQuantization = false) {
+    bool declareMeshQuantization = false,
+    NonFiniteTriangleAttribute nonFiniteAttribute =
+        NonFiniteTriangleAttribute::None) {
     const bool hasColor = colorComponentType != 0;
     if (hasColor && colorType.empty()) {
         colorType = "VEC4";
@@ -75,13 +85,24 @@ std::vector<uint8_t> makeTriangleGlb(
 
     std::vector<uint8_t> bin;
     const size_t positionsOffset = bin.size();
-    appendF32(bin, 0.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
+    appendF32(
+        bin,
+        nonFiniteAttribute == NonFiniteTriangleAttribute::Position
+            ? std::numeric_limits<float>::quiet_NaN()
+            : 0.0f);
+    appendF32(bin, 0.0f); appendF32(bin, 0.0f);
     appendF32(bin, 1.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
     appendF32(bin, 0.0f); appendF32(bin, 1.0f); appendF32(bin, 0.0f);
 
     const size_t normalsOffset = bin.size();
     for (int i = 0; i < 3; ++i) {
-        appendF32(bin, 0.0f); appendF32(bin, 0.0f); appendF32(bin, 1.0f);
+        appendF32(
+            bin,
+            i == 0 &&
+                    nonFiniteAttribute == NonFiniteTriangleAttribute::Normal
+                ? std::numeric_limits<float>::infinity()
+                : 0.0f);
+        appendF32(bin, 0.0f); appendF32(bin, 1.0f);
     }
 
     const size_t uvOffset = bin.size();
@@ -94,7 +115,12 @@ std::vector<uint8_t> makeTriangleGlb(
         appendU16(bin, 65535); appendU16(bin, 0);
         appendU16(bin, 0); appendU16(bin, 65535);
     } else {
-        appendF32(bin, 0.0f); appendF32(bin, 0.0f);
+        appendF32(
+            bin,
+            nonFiniteAttribute == NonFiniteTriangleAttribute::TexCoord
+                ? std::numeric_limits<float>::quiet_NaN()
+                : 0.0f);
+        appendF32(bin, 0.0f);
         appendF32(bin, 1.0f); appendF32(bin, 0.0f);
         appendF32(bin, 0.0f); appendF32(bin, 1.0f);
     }
@@ -126,7 +152,14 @@ std::vector<uint8_t> makeTriangleGlb(
                 } else if (colorComponentType == 5123) {
                     appendU16(bin, u16Colors[vertex][component]);
                 } else {
-                    appendF32(bin, f32Colors[vertex][component]);
+                    appendF32(
+                        bin,
+                        vertex == 0 &&
+                                component == 0 &&
+                                nonFiniteAttribute ==
+                                    NonFiniteTriangleAttribute::Color
+                            ? std::numeric_limits<float>::infinity()
+                            : f32Colors[vertex][component]);
                 }
             }
         }
@@ -311,6 +344,27 @@ std::vector<uint8_t> makeTriangleGlb(
     return glb;
 }
 
+std::vector<uint8_t> makeTriangleGlbWithNonFiniteAttribute(
+    NonFiniteTriangleAttribute attribute) {
+    return makeTriangleGlb(
+        {1.0f, 1.0f, 1.0f, 1.0f},
+        false,
+        5126,
+        false,
+        0,
+        false,
+        attribute == NonFiniteTriangleAttribute::Color ? 5126 : 0,
+        false,
+        std::string{},
+        0,
+        std::string{},
+        false,
+        1.0f,
+        false,
+        false,
+        attribute);
+}
+
 std::vector<uint8_t> makeLegacyBatchIdTriangleGlb() {
     return makeTriangleGlb(
         {1.0f, 1.0f, 1.0f, 1.0f},
@@ -463,7 +517,9 @@ std::vector<uint8_t> makeSparsePositionTriangleGlb(
 
 std::vector<uint8_t> makeSkinnedTriangleGlb(
     bool omitWeightsAttribute = false,
-    bool invalidJointIndex = false) {
+    bool invalidJointIndex = false,
+    bool nonFiniteWeight = false,
+    bool nonFiniteInverseBind = false) {
     std::vector<uint8_t> bin;
     const size_t positionsOffset = bin.size();
     appendF32(bin, 1.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
@@ -483,14 +539,23 @@ std::vector<uint8_t> makeSkinnedTriangleGlb(
 
     const size_t weightsOffset = bin.size();
     for (int i = 0; i < 3; ++i) {
-        appendF32(bin, 1.0f); appendF32(bin, 0.0f);
+        appendF32(
+            bin,
+            i == 0 && nonFiniteWeight
+                ? std::numeric_limits<float>::quiet_NaN()
+                : 1.0f);
+        appendF32(bin, 0.0f);
         appendF32(bin, 0.0f); appendF32(bin, 0.0f);
     }
 
     const size_t inverseBindOffset = bin.size();
     for (int column = 0; column < 4; ++column) {
         for (int row = 0; row < 4; ++row) {
-            appendF32(bin, column == row ? 1.0f : 0.0f);
+            appendF32(
+                bin,
+                column == 0 && row == 0 && nonFiniteInverseBind
+                    ? std::numeric_limits<float>::infinity()
+                    : (column == row ? 1.0f : 0.0f));
         }
     }
 
@@ -1773,6 +1838,46 @@ TEST(GltfParserTest, ParsesTriangleGlbWithNodeTransform) {
     EXPECT_NEAR(0.0f, first.uv[1], 1e-6f);
     EXPECT_TRUE(model->primitives[0].vertexColors.empty());
     EXPECT_GT(model->byteSize(), 0);
+}
+
+TEST(GltfParserTest, RejectsPositionAccessorWithNonFiniteFloat) {
+    const std::vector<uint8_t> glb =
+        makeTriangleGlbWithNonFiniteAttribute(
+            NonFiniteTriangleAttribute::Position);
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsNormalAccessorWithNonFiniteFloat) {
+    const std::vector<uint8_t> glb =
+        makeTriangleGlbWithNonFiniteAttribute(
+            NonFiniteTriangleAttribute::Normal);
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsTexcoordAccessorWithNonFiniteFloat) {
+    const std::vector<uint8_t> glb =
+        makeTriangleGlbWithNonFiniteAttribute(
+            NonFiniteTriangleAttribute::TexCoord);
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsColorAccessorWithNonFiniteFloat) {
+    const std::vector<uint8_t> glb =
+        makeTriangleGlbWithNonFiniteAttribute(
+            NonFiniteTriangleAttribute::Color);
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
+
+    EXPECT_EQ(nullptr, model);
 }
 
 TEST(GltfParserTest, RejectsTopLevelArrayJson) {
@@ -3455,6 +3560,24 @@ TEST(GltfParserTest, RejectsSkinNodeWithoutWeightsAttribute) {
 
 TEST(GltfParserTest, RejectsSkinWithInvalidJointNode) {
     const std::vector<uint8_t> glb = makeSkinnedTriangleGlb(false, true);
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsSkinWeightsWithNonFiniteFloat) {
+    const std::vector<uint8_t> glb =
+        makeSkinnedTriangleGlb(false, false, true, false);
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsSkinInverseBindWithNonFiniteFloat) {
+    const std::vector<uint8_t> glb =
+        makeSkinnedTriangleGlb(false, false, false, true);
     std::unique_ptr<GltfModel> model =
         GltfParser::parse(glb.data(), glb.size());
 
