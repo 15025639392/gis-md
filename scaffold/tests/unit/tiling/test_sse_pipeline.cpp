@@ -4724,6 +4724,122 @@ void testTilesetContentProviderSplitsNativeGpuInstancingBlendTrsGltf() {
           "Tileset: native EXT_mesh_gpu_instancing BLEND TRS bakes rotation and scale into split vertices");
 }
 
+void testTilesetContentProviderBatchesI3dmNativeGpuInstancingOpaqueGltf() {
+    DummyRenderDevice device;
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    auto contentProvider = std::make_unique<SingleGltfContentProvider>(
+        rootKey,
+        makeI3dmBytes(
+            makeNativeGpuInstancedTriangleGlbBytes(),
+            {Vec3(0.0, 0.0, 0.0), Vec3(10.0, 0.0, 0.0)}),
+        "I3DM native EXT_mesh_gpu_instancing opaque fixture");
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTestAccess::requestMissingTile(tileset, rootKey);
+
+    TilesetTile* root = nullptr;
+    for (int i = 0; i < 100; ++i) {
+        TilesetTestAccess::processPendingUploads(tileset);
+        root = TilesetTestAccess::findTile(tileset, rootKey);
+        if (root &&
+            root->loadState == TileLoadState::Done &&
+            root->contentKind == TileContentKind::Render &&
+            root->gltfModel) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    check(root != nullptr,
+          "Tileset: I3DM native EXT_mesh_gpu_instancing opaque creates the requested tile");
+    if (!root) return;
+
+    check(root->gltfModel &&
+              root->gltfModel->primitives.size() == 1 &&
+              root->gltfModel->primitives.front().instances.size() == 4,
+          "Tileset: I3DM and native EXT_mesh_gpu_instancing combine into four opaque instances");
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 1 &&
+              root->gltfPrimitiveResources.size() == 1u &&
+              commands.front().kind ==
+                  RenderCommandKind::GltfPrimitiveInstanced &&
+              commands.front().instanceCount == 4 &&
+              commands.front().instanceBuffer != nullptr &&
+              !commands.front().blend &&
+              commands.front().depthWrite,
+          "Tileset: I3DM native EXT_mesh_gpu_instancing opaque stays batched as one GPU-instanced command");
+    check(std::abs(root->localOrigin.x() - (5.0 + 1.0 / 3.0)) < 1e-12 &&
+              std::abs(root->localOrigin.y() - (1.0 / 3.0)) < 1e-12 &&
+              std::abs(root->localOrigin.z() - 15.0) < 1e-12,
+          "Tileset: I3DM native EXT_mesh_gpu_instancing opaque local origin averages combined instance centroids");
+
+    const auto* instanceBuffer =
+        commands.empty()
+            ? nullptr
+            : dynamic_cast<const DummyBuffer*>(commands.front().instanceBuffer);
+    std::array<float, 100> packed{};
+    const bool hasPackedInstances =
+        instanceBuffer &&
+        instanceBuffer->bytes().size() == packed.size() * sizeof(float);
+    if (hasPackedInstances) {
+        std::memcpy(
+            packed.data(),
+            instanceBuffer->bytes().data(),
+            packed.size() * sizeof(float));
+    }
+
+    const std::array<std::array<float, 3>, 4> expectedTranslations = {{
+        {-5.0f - 1.0f / 3.0f, -1.0f / 3.0f, -10.0f},
+        {-5.0f - 1.0f / 3.0f, -1.0f / 3.0f, 10.0f},
+        {5.0f - 1.0f / 3.0f, -1.0f / 3.0f, -10.0f},
+        {5.0f - 1.0f / 3.0f, -1.0f / 3.0f, 10.0f},
+    }};
+    bool matricesMatch = hasPackedInstances;
+    for (size_t instanceIndex = 0; instanceIndex < 4; ++instanceIndex) {
+        const float* instance = packed.data() + instanceIndex * 25u;
+        matricesMatch = matricesMatch &&
+            std::abs(instance[0] - 1.0f) < 1e-6f &&
+            std::abs(instance[5] - 1.0f) < 1e-6f &&
+            std::abs(instance[10] - 1.0f) < 1e-6f &&
+            std::abs(instance[15] - 1.0f) < 1e-6f &&
+            std::abs(instance[12] -
+                     expectedTranslations[instanceIndex][0]) < 1e-5f &&
+            std::abs(instance[13] -
+                     expectedTranslations[instanceIndex][1]) < 1e-5f &&
+            std::abs(instance[14] -
+                     expectedTranslations[instanceIndex][2]) < 1e-5f;
+        const float* normal = instance + 16u;
+        matricesMatch = matricesMatch &&
+            std::abs(normal[0] - 1.0f) < 1e-6f &&
+            std::abs(normal[4] - 1.0f) < 1e-6f &&
+            std::abs(normal[8] - 1.0f) < 1e-6f &&
+            std::abs(normal[1]) < 1e-6f &&
+            std::abs(normal[2]) < 1e-6f &&
+            std::abs(normal[3]) < 1e-6f &&
+            std::abs(normal[5]) < 1e-6f &&
+            std::abs(normal[6]) < 1e-6f &&
+            std::abs(normal[7]) < 1e-6f;
+    }
+    check(matricesMatch,
+          "Tileset: I3DM native EXT_mesh_gpu_instancing opaque uploads combined instance matrices");
+}
+
 void testTilesetContentProviderSplitsI3dmNativeGpuInstancingBlendGltf() {
     DummyRenderDevice device;
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -9016,6 +9132,7 @@ int main() {
     testTilesetContentProviderUploadsNativeGpuInstancingTrsMatrices();
     testTilesetContentProviderSplitsNativeGpuInstancingBlendGltf();
     testTilesetContentProviderSplitsNativeGpuInstancingBlendTrsGltf();
+    testTilesetContentProviderBatchesI3dmNativeGpuInstancingOpaqueGltf();
     testTilesetContentProviderSplitsI3dmNativeGpuInstancingBlendGltf();
     testTilesetJsonProviderLoadsExplicitGltfTile();
     testTilesetJsonGltfUpAxisZKeepsZUpContent();
