@@ -5075,6 +5075,42 @@ TEST(GltfParserTest, RejectsUnreferencedBufferViewImageWithoutMimeType) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsUnreferencedImageBufferViewOutOfRange) {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf(
+            "data:image/png;base64,AQIDBA==");
+    const std::string marker =
+        "\"images\":[{\"uri\":\"data:image/png;base64,AQIDBA==\"}]";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        marker.substr(0, marker.size() - 1u) +
+            ",{\"bufferView\":99,\"mimeType\":\"image/png\"}]");
+    bool decodedImage = false;
+
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            return uri == "triangle.bin" ? fixture.bin
+                                         : std::vector<uint8_t>{7};
+        },
+        [&](const uint8_t*, size_t) -> std::optional<GltfImage> {
+            decodedImage = true;
+            GltfImage image;
+            image.width = 1;
+            image.height = 1;
+            image.channels = 4;
+            image.pixels = {255, 255, 255, 255};
+            return image;
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(decodedImage);
+}
+
 TEST(GltfParserTest, RejectsImageWithUriAndBufferView) {
     ExternalGltfFixture fixture =
         makeBufferViewImageExternalBufferTriangleGltf();

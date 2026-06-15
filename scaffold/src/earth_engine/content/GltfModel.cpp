@@ -1268,6 +1268,28 @@ bool validImageSourceFields(const json& imageJson, bool allowWebp = false) {
     return true;
 }
 
+bool imageBufferViewReferenceInRange(const json& doc, const json& imageJson) {
+    const auto bufferViewIt = imageJson.find("bufferView");
+    if (bufferViewIt == imageJson.end()) {
+        return true;
+    }
+    if (!bufferViewIt->is_number_integer()) {
+        return false;
+    }
+    const int bufferViewIndex = bufferViewIt->get<int>();
+    if (bufferViewIndex < 0) {
+        return false;
+    }
+    const auto bufferViewsIt = doc.find("bufferViews");
+    if (bufferViewsIt == doc.end() || !bufferViewsIt->is_array()) {
+        return false;
+    }
+    if (static_cast<size_t>(bufferViewIndex) >= bufferViewsIt->size()) {
+        return false;
+    }
+    return (*bufferViewsIt)[static_cast<size_t>(bufferViewIndex)].is_object();
+}
+
 bool imageSourceDeclaresNonWebp(const json& imageJson) {
     const auto mimeTypeIt = imageJson.find("mimeType");
     if (mimeTypeIt != imageJson.end() &&
@@ -3405,7 +3427,8 @@ bool validateSceneGraph(const json& doc,
         const bool webpImagesAllowed =
             declaredExtension(doc, "EXT_texture_webp");
         for (const json& image : *imagesIt) {
-            if (!validImageSourceFields(image, webpImagesAllowed)) {
+            if (!validImageSourceFields(image, webpImagesAllowed) ||
+                !imageBufferViewReferenceInRange(doc, image)) {
                 return false;
             }
         }
