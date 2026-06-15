@@ -1533,6 +1533,11 @@ std::vector<uint8_t> readFile(const char* path) {
         std::istreambuf_iterator<char>());
 }
 
+struct UnsupportedExternalGltfCase {
+    const char* env;
+    const char* label;
+};
+
 } // namespace
 
 TEST(GltfParserTest, ParsesTriangleGlbWithNodeTransform) {
@@ -5415,6 +5420,52 @@ TEST(GltfParserTest, ContentProviderDecodesExternalI3dmWhenProvided) {
     EXPECT_GT(result.gltfModel->primitives.size(), 0u);
     ASSERT_FALSE(result.gltfModel->primitives.empty());
     EXPECT_GT(result.gltfModel->primitives[0].instances.size(), 0u);
+}
+
+TEST(GltfParserTest, RejectsExternalUnsupportedCompressedTextureAssetsWhenProvided) {
+    const std::array<UnsupportedExternalGltfCase, 4> cases = {{
+        {
+            "EARTH_ENGINE_TEST_UNSUPPORTED_DRACO_GLTF_PATH",
+            "KHR_draco_mesh_compression"},
+        {
+            "EARTH_ENGINE_TEST_UNSUPPORTED_MESHOPT_GLTF_PATH",
+            "EXT_meshopt_compression"},
+        {
+            "EARTH_ENGINE_TEST_UNSUPPORTED_KTX2_GLTF_PATH",
+            "KHR_texture_basisu"},
+        {
+            "EARTH_ENGINE_TEST_UNSUPPORTED_WEBP_GLTF_PATH",
+            "EXT_texture_webp"}}};
+
+    bool ranCase = false;
+    for (const UnsupportedExternalGltfCase& fixtureCase : cases) {
+        const char* path = std::getenv(fixtureCase.env);
+        if (!path || std::string(path).empty()) {
+            continue;
+        }
+        ranCase = true;
+
+        const std::vector<uint8_t> bytes = readFile(path);
+        ASSERT_FALSE(bytes.empty()) << fixtureCase.label;
+        std::unique_ptr<GltfModel> model =
+            GltfParser::parse(bytes.data(), bytes.size());
+        EXPECT_EQ(nullptr, model) << fixtureCase.label;
+
+        SingleGltfContentProvider provider(
+            TileKey{"Geographic-TMS", 0, 0, 0},
+            "file://" + std::filesystem::path(path).generic_string(),
+            fixtureCase.label);
+        TileContentLoadResult result =
+            provider.decodeContent(bytes.data(), bytes.size());
+        EXPECT_EQ(TileContentLoadStatus::Failed, result.status)
+            << fixtureCase.label;
+        EXPECT_EQ(nullptr, result.gltfModel) << fixtureCase.label;
+    }
+
+    if (!ranCase) {
+        GTEST_SKIP()
+            << "No EARTH_ENGINE_TEST_UNSUPPORTED_*_GLTF_PATH values set";
+    }
 }
 
 TEST(GltfParserTest, ContentProviderDecodesB3dmAndAppliesRtcCenter) {
