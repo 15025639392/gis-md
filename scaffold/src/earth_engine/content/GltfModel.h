@@ -7,8 +7,12 @@
 #include <cstdint>
 #include <array>
 #include <functional>
+#include <limits>
+#include <map>
 #include <memory>
 #include <optional>
+#include <string>
+#include <variant>
 #include <vector>
 
 namespace earth_engine {
@@ -71,8 +75,13 @@ struct GltfTextureBinding {
     GltfTextureTransform transform;
 };
 
+using GltfFeaturePropertyValue =
+    std::variant<std::monostate, bool, int64_t, uint64_t, double, std::string>;
+
 struct GltfInstance {
     Mat4 transform = Mat4::identity();
+    uint32_t featureId = std::numeric_limits<uint32_t>::max();
+    std::map<std::string, GltfFeaturePropertyValue> featureProperties;
 };
 
 struct GltfVertexSkinning {

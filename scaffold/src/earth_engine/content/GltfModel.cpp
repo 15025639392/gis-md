@@ -16,6 +16,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 
 namespace earth_engine {
 namespace {
@@ -27,6 +28,25 @@ constexpr uint32_t kGlbJsonChunk = 0x4E4F534Au;
 constexpr uint32_t kGlbBinChunk = 0x004E4942u;
 
 std::optional<size_t> jsonSizeValue(const json& value);
+
+int64_t gltfFeaturePropertyExtraByteSize(
+    const GltfFeaturePropertyValue& value) {
+    if (const auto* text = std::get_if<std::string>(&value)) {
+        return static_cast<int64_t>(text->size());
+    }
+    return 0;
+}
+
+int64_t gltfInstanceFeatureByteSize(const GltfInstance& instance) {
+    int64_t bytes = 0;
+    for (const auto& property : instance.featureProperties) {
+        bytes += static_cast<int64_t>(
+            sizeof(std::pair<const std::string, GltfFeaturePropertyValue>));
+        bytes += static_cast<int64_t>(property.first.size());
+        bytes += gltfFeaturePropertyExtraByteSize(property.second);
+    }
+    return bytes;
+}
 
 bool validTexCoordSetIndex(int texCoord) {
     return texCoord >= 0 &&
@@ -5784,6 +5804,9 @@ int64_t GltfModel::byteSize() const {
             primitive.indices.size() * sizeof(uint32_t));
         bytes += static_cast<int64_t>(
             primitive.instances.size() * sizeof(GltfInstance));
+        for (const GltfInstance& instance : primitive.instances) {
+            bytes += gltfInstanceFeatureByteSize(instance);
+        }
     }
     for (const GltfTexture& texture : textures) {
         bytes += static_cast<int64_t>(texture.image.pixels.size());

@@ -29,6 +29,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -1026,6 +1027,8 @@ struct DecodedI3dmInstances {
     std::vector<glm::dvec3> positions;
     std::vector<glm::dquat> rotations;
     std::vector<glm::dvec3> scales;
+    std::vector<std::map<std::string, GltfFeaturePropertyValue>>
+        featureProperties;
     std::optional<glm::dvec3> rtcCenter;
 };
 
@@ -1323,6 +1326,80 @@ void recenterI3dmInstances(DecodedI3dmInstances& instances) {
     }
 }
 
+std::optional<GltfFeaturePropertyValue> jsonFeaturePropertyValue(
+    const nlohmann::json& value) {
+    if (value.is_null()) {
+        return GltfFeaturePropertyValue(std::monostate{});
+    }
+    if (value.is_boolean()) {
+        return GltfFeaturePropertyValue(value.get<bool>());
+    }
+    if (value.is_number_unsigned()) {
+        return GltfFeaturePropertyValue(value.get<uint64_t>());
+    }
+    if (value.is_number_integer()) {
+        return GltfFeaturePropertyValue(value.get<int64_t>());
+    }
+    if (value.is_number_float()) {
+        const double number = value.get<double>();
+        if (!std::isfinite(number)) {
+            return std::nullopt;
+        }
+        return GltfFeaturePropertyValue(number);
+    }
+    if (value.is_string()) {
+        return GltfFeaturePropertyValue(value.get<std::string>());
+    }
+    return std::nullopt;
+}
+
+std::optional<std::vector<std::map<std::string, GltfFeaturePropertyValue>>>
+parseI3dmJsonBatchTable(const uint8_t* data,
+                        const I3dmHeader& header,
+                        uint32_t instancesLength) {
+    if (header.batchTableBinaryByteLength > 0) {
+        return std::nullopt;
+    }
+    if (header.batchTableJsonByteLength == 0) {
+        return std::vector<
+            std::map<std::string, GltfFeaturePropertyValue>>{};
+    }
+
+    const size_t batchTableJsonOffset =
+        kI3dmHeaderLength +
+        header.featureTableJsonByteLength +
+        header.featureTableBinaryByteLength;
+    const std::string batchJsonText = trimRightJsonPadding(std::string(
+        reinterpret_cast<const char*>(data + batchTableJsonOffset),
+        header.batchTableJsonByteLength));
+    auto batchJson =
+        nlohmann::json::parse(batchJsonText, nullptr, false);
+    if (batchJson.is_discarded() || !batchJson.is_object()) {
+        return std::nullopt;
+    }
+    if (batchJson.contains("extensions") || batchJson.contains("HIERARCHY")) {
+        return std::nullopt;
+    }
+
+    std::vector<std::map<std::string, GltfFeaturePropertyValue>> rows(
+        instancesLength);
+    for (auto it = batchJson.begin(); it != batchJson.end(); ++it) {
+        if (it.key().empty() || !it.value().is_array() ||
+            it.value().size() != instancesLength) {
+            return std::nullopt;
+        }
+        for (uint32_t i = 0; i < instancesLength; ++i) {
+            std::optional<GltfFeaturePropertyValue> propertyValue =
+                jsonFeaturePropertyValue(it.value()[i]);
+            if (!propertyValue) {
+                return std::nullopt;
+            }
+            rows[i][it.key()] = std::move(*propertyValue);
+        }
+    }
+    return rows;
+}
+
 std::optional<DecodedI3dmInstances> decodeI3dmInstances(
     const uint8_t* data,
     const I3dmHeader& header,
@@ -1461,6 +1538,15 @@ std::optional<DecodedI3dmInstances> decodeI3dmInstances(
         }
     }
 
+    std::optional<
+        std::vector<std::map<std::string, GltfFeaturePropertyValue>>>
+        featureProperties =
+            parseI3dmJsonBatchTable(data, header, count);
+    if (!featureProperties) {
+        return std::nullopt;
+    }
+    instances.featureProperties = std::move(*featureProperties);
+
     recenterI3dmInstances(instances);
     return instances;
 }
@@ -1477,6 +1563,10 @@ std::vector<GltfInstance> makeGltfInstances(
         transform = glm::scale(transform, decoded.scales[i]);
         GltfInstance instance;
         instance.transform = Mat4(transform) * gltfUpAxisTransform;
+        instance.featureId = static_cast<uint32_t>(i);
+        if (decoded.featureProperties.size() == decoded.positions.size()) {
+            instance.featureProperties = decoded.featureProperties[i];
+        }
         instances.push_back(instance);
     }
     return instances;
@@ -1499,6 +1589,8 @@ std::optional<std::vector<GltfInstance>> combineI3dmAndNativeGltfInstances(
             GltfInstance instance;
             instance.transform =
                 i3dmInstance.transform * nativeInstance.transform;
+            instance.featureId = i3dmInstance.featureId;
+            instance.featureProperties = i3dmInstance.featureProperties;
             combined.push_back(instance);
         }
     }
@@ -1557,8 +1649,7 @@ TileContentLoadResult decodeI3dmContent(
     const GltfParser::ImageDecoder& imageDecoder) {
     std::optional<I3dmHeader> header = parseI3dmHeader(data, size);
     if (!header) return TileContentLoadResult::failed();
-    if (header->batchTableJsonByteLength > 0 ||
-        header->batchTableBinaryByteLength > 0) {
+    if (header->batchTableBinaryByteLength > 0) {
         return TileContentLoadResult::failed();
     }
 

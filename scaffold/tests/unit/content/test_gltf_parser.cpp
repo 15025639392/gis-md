@@ -13,6 +13,7 @@
 #include <limits>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 #include <functional>
 
@@ -7613,7 +7614,7 @@ TEST(GltfParserTest, ContentProviderRejectsI3dmBatchIdFeatureSemantic) {
     EXPECT_EQ(TileContentLoadStatus::Failed, decodeI3dmStatus(i3dm));
 }
 
-TEST(GltfParserTest, ContentProviderRejectsI3dmBatchTableMetadata) {
+TEST(GltfParserTest, ContentProviderDecodesI3dmJsonBatchTableProperties) {
     std::vector<uint8_t> featureBinary;
     appendF32(featureBinary, 0.0f);
     appendF32(featureBinary, 0.0f);
@@ -7623,9 +7624,77 @@ TEST(GltfParserTest, ContentProviderRejectsI3dmBatchTableMetadata) {
         "{\"INSTANCES_LENGTH\":1,"
         "\"POSITION\":{\"byteOffset\":0}}",
         std::move(featureBinary),
-        "{\"name\":[\"instance\"]}");
+        "{\"Height\":[20],"
+        "\"name\":[\"instance\"],"
+        "\"enabled\":[true],"
+        "\"nullable\":[null]}");
 
-    EXPECT_EQ(TileContentLoadStatus::Failed, decodeI3dmStatus(i3dm));
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "I3DM JSON batch table fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(i3dm.data(), i3dm.size());
+
+    ASSERT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives[0];
+    ASSERT_EQ(1u, primitive.instances.size());
+
+    const GltfInstance& instance = primitive.instances[0];
+    EXPECT_EQ(0u, instance.featureId);
+    ASSERT_EQ(4u, instance.featureProperties.size());
+    ASSERT_NE(nullptr,
+              std::get_if<uint64_t>(&instance.featureProperties.at("Height")));
+    EXPECT_EQ(
+        20u,
+        *std::get_if<uint64_t>(
+            &instance.featureProperties.at("Height")));
+    ASSERT_NE(nullptr,
+              std::get_if<std::string>(
+                  &instance.featureProperties.at("name")));
+    EXPECT_EQ(
+        "instance",
+        *std::get_if<std::string>(
+            &instance.featureProperties.at("name")));
+    ASSERT_NE(nullptr,
+              std::get_if<bool>(
+                  &instance.featureProperties.at("enabled")));
+    EXPECT_TRUE(
+        *std::get_if<bool>(
+            &instance.featureProperties.at("enabled")));
+    EXPECT_TRUE(
+        std::holds_alternative<std::monostate>(
+            instance.featureProperties.at("nullable")));
+}
+
+TEST(GltfParserTest, ContentProviderRejectsMalformedI3dmJsonBatchTable) {
+    auto decodeStatus = [](const std::string& batchJson) {
+        std::vector<uint8_t> featureBinary;
+        appendF32(featureBinary, 0.0f);
+        appendF32(featureBinary, 0.0f);
+        appendF32(featureBinary, 0.0f);
+        const std::vector<uint8_t> i3dm = makeI3dmWithFeatureTable(
+            "{\"INSTANCES_LENGTH\":1,"
+            "\"POSITION\":{\"byteOffset\":0}}",
+            std::move(featureBinary),
+            batchJson);
+        return decodeI3dmStatus(i3dm);
+    };
+
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus("{\"Height\":[20,21]}"));
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus("{\"Height\":{\"byteOffset\":0}}"));
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus("{\"Height\":[{\"value\":20}]}"));
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus("{\"HIERARCHY\":{\"instances\":[]}}"));
 }
 
 TEST(GltfParserTest, ContentProviderRejectsI3dmEastNorthUpTypeMismatch) {
