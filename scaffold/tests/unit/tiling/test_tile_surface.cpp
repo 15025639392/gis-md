@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <optional>
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 
@@ -275,14 +276,17 @@ TEST(TileSurfaceTest, EllipsoidMeshClampsMinimumGridSize) {
 }
 
 TEST(TileSurfaceTest, ParentFallbackUvWindowSelectsChildQuadrant) {
-    auto scheme = TileScheme::createXYZWebMercator();
+    auto scheme = TileScheme::createGeographicTMS();
 
-    TileKey child{"XYZ-WebMercator", 2, 2, 1};
-    TileKey parent{"XYZ-WebMercator", 1, 1, 0};
-    TileTextureWindow window = TileSurface::textureWindow(
+    TileKey child{"Geographic-TMS", 2, 2, 0};
+    TileKey parent{"Geographic-TMS", 1, 1, 0};
+    TileTextureWindow nativeWindow = TileSurface::computeTranslationAndScale(
         scheme->tileToRectangle(child),
         scheme->tileToRectangle(parent));
+    TileTextureWindow window =
+        TileSurface::textureWindowForNorthWestUv(nativeWindow);
 
+    EXPECT_NEAR(0.0f, nativeWindow.offsetV, 1e-6f);
     EXPECT_NEAR(0.0f, window.offsetU, 1e-6f);
     EXPECT_NEAR(0.5f, window.offsetV, 1e-6f);
     EXPECT_NEAR(0.5f, window.scaleU, 1e-6f);
@@ -316,9 +320,11 @@ TEST(TileSurfaceTest, OpenGlobusPolarParentTextureWindowUsesGeographicV) {
                                            2);
     TileKey parent = TilePlanBuilder::parentKey(child);
 
-    TileTextureWindow window = TileSurface::textureWindow(
+    TileTextureWindow nativeWindow = TileSurface::computeTranslationAndScale(
         scheme->tileToRectangle(child),
         scheme->tileToRectangle(parent));
+    TileTextureWindow window =
+        TileSurface::textureWindowForNorthWestUv(nativeWindow);
 
     EXPECT_GE(window.offsetU, 0.0f);
     EXPECT_GE(window.offsetV, 0.0f);
@@ -374,6 +380,42 @@ TEST(TileSurfaceTest, SurfaceTileTerrainSamplesParentTileByCartographicCrop) {
     EXPECT_NEAR(expected, center.height(), 1e-3);
     EXPECT_GT(expected, 0.0);
     EXPECT_LT(expected, 300.0);
+}
+
+TEST(TileSurfaceTest, UpsampledChildMeshIsClippedFromParentRenderMesh) {
+    Rectangle parentBounds = Rectangle::fromDegrees(0.0, 0.0, 2.0, 2.0);
+    Rectangle childBounds = Rectangle::fromDegrees(1.0, 1.0, 2.0, 2.0);
+
+    SurfaceTileMesh parentMesh = TileSurface::buildEllipsoidMesh(parentBounds, 1);
+    ASSERT_EQ(4u, parentMesh.vertices.size());
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    Cartographic raised = ellipsoid.cartesianToCartographic(
+        parentMesh.vertices[1].positionEcef);
+    parentMesh.vertices[1].positionEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(
+            raised.longitude(),
+            raised.latitude(),
+            1000.0));
+
+    std::optional<SurfaceTileMesh> childMesh =
+        TileSurface::upsampleChildMeshFromParent(
+            parentMesh,
+            parentBounds,
+            childBounds);
+
+    ASSERT_TRUE(childMesh.has_value());
+    EXPECT_GT(childMesh->vertices.size(), 0u);
+    EXPECT_GT(childMesh->indices.size(), 0u);
+    EXPECT_TRUE(childMesh->hasHeightRange);
+    EXPECT_GT(childMesh->maximumHeight, 900.0);
+
+    for (const SurfaceVertex& vertex : childMesh->vertices) {
+        EXPECT_GE(vertex.uv[0], 0.0f);
+        EXPECT_LE(vertex.uv[0], 1.0f);
+        EXPECT_GE(vertex.uv[1], 0.0f);
+        EXPECT_LE(vertex.uv[1], 1.0f);
+    }
 }
 
 TEST(TileSurfaceTest, SurfaceTileTerrainCanAddSkirt) {

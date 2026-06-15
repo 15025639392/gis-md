@@ -4,6 +4,7 @@
 #include "../scene/Camera.h"
 #include "../core/math/Vec3.h"
 #include "../core/math/Mat4.h"
+#include "../tiling/TileKey.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -75,7 +76,8 @@ layout(location = 2) in vec2 a_texcoord;
 
 uniform mat4 u_modelViewProjection;
 uniform vec4 u_tileUV;
-uniform vec3 u_tileOrigin;
+uniform float u_tileOpacity;
+uniform float u_transitionOpacity;
 
 out vec2 v_texcoord;
 out vec3 v_normal;
@@ -83,12 +85,14 @@ out float v_tileOpacity;
 out float v_transitionOpacity;
 
 void main() {
+    // cesium-native RTC: tile origin is baked into the MVP matrix
+    // (computed in CPU double precision). a_position is relative
+    // to the tile center — small values, good float precision.
     v_texcoord = u_tileUV.xy + a_texcoord * u_tileUV.zw;
-    vec3 worldPos = a_position + u_tileOrigin;
     v_normal = normalize(a_normal);
-    v_tileOpacity = 1.0;
-    v_transitionOpacity = 1.0;
-    gl_Position = u_modelViewProjection * vec4(worldPos, 1.0);
+    v_tileOpacity = u_tileOpacity;
+    v_transitionOpacity = u_transitionOpacity;
+    gl_Position = u_modelViewProjection * vec4(a_position, 1.0);
 }
 )glsl";
 
@@ -105,23 +109,302 @@ uniform vec3 u_lightDir;
 out vec4 fragColor;
 
 void main() {
-    vec4 color = texture(u_tileTexture, v_texcoord);
+    vec4 baseColor = texture(u_tileTexture, v_texcoord);
     vec3 N = normalize(v_normal);
     vec3 L = normalize(u_lightDir);
     float NdotL = max(dot(N, L), 0.0);
 
-    // cesium-native PBR: metallic=0, roughness=1
-    //   Diffuse: baseColor/π * (1 - F) * NdotL ≈ baseColor * 0.318 * (1-F) * NdotL
-    //   Fresnel: F = F0 + (1-F0) * (1 - NdotL)^5, with F0 = 0.04 (dielectric)
-    //   At grazing angles, Fresnel adds ~4-8% specular
-    float F0 = 0.04;
-    float F = F0 + (1.0 - F0) * pow(1.0 - NdotL, 5.0);
-    float diffuse = NdotL * 0.318;  // 1/π
-    float ambient = 0.03;
+    // Imagery is the primary diagnostic surface in this demo. Keep it readable
+    // even when the light vector is behind the tile; directional light should
+    // hint at curvature, not turn missing-resource states into a black globe.
+    float shade = mix(0.72, 1.0, smoothstep(0.0, 1.0, NdotL));
+    baseColor.rgb *= shade;
+    baseColor.a *= clamp(v_tileOpacity, 0.0, 1.0) * clamp(v_transitionOpacity, 0.0, 1.0);
+    fragColor = baseColor;
+}
+)glsl";
 
-    color.rgb *= ambient + diffuse * (1.0 - F) + F * 0.5 * NdotL;
-    color.a *= clamp(v_tileOpacity, 0.0, 1.0) * clamp(v_transitionOpacity, 0.0, 1.0);
-    fragColor = color;
+// ============================================================
+// glTF primitive shader — TileRenderContent render resources
+// POSITION(vec3) + NORMAL(vec3) + TEXCOORD_0..7(packed vec4 pairs)
+// + COLOR_0(vec4) + TANGENT(vec4) = 120 bytes
+// ============================================================
+
+static const char* kGltfVertexGLSL = R"glsl(
+#version 300 es
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec4 a_texcoord01;
+layout(location = 10) in vec4 a_color;
+layout(location = 11) in vec4 a_tangent;
+layout(location = 12) in vec4 a_texcoord23;
+layout(location = 13) in vec4 a_texcoord45;
+layout(location = 14) in vec4 a_texcoord67;
+
+uniform mat4 u_modelViewProjection;
+
+out vec3 v_normal;
+out vec3 v_position;
+out vec4 v_texcoord01;
+out vec4 v_color;
+out vec4 v_tangent;
+out vec4 v_texcoord23;
+out vec4 v_texcoord45;
+out vec4 v_texcoord67;
+
+void main() {
+    v_normal = normalize(a_normal);
+    v_position = a_position;
+    v_texcoord01 = a_texcoord01;
+    v_color = a_color;
+    v_tangent = a_tangent;
+    v_texcoord23 = a_texcoord23;
+    v_texcoord45 = a_texcoord45;
+    v_texcoord67 = a_texcoord67;
+    gl_Position = u_modelViewProjection * vec4(a_position, 1.0);
+}
+)glsl";
+
+static const char* kGltfFragmentGLSL = R"glsl(
+#version 300 es
+precision highp float;
+
+in vec3 v_normal;
+in vec3 v_position;
+in vec4 v_texcoord01;
+in vec4 v_color;
+in vec4 v_tangent;
+in vec4 v_texcoord23;
+in vec4 v_texcoord45;
+in vec4 v_texcoord67;
+
+uniform vec3 u_lightDir;
+uniform vec4 u_baseColor;
+uniform sampler2D u_baseColorTexture;
+uniform sampler2D u_metallicRoughnessTexture;
+uniform sampler2D u_normalTexture;
+uniform sampler2D u_occlusionTexture;
+uniform sampler2D u_emissiveTexture;
+uniform float u_hasBaseColorTexture;
+uniform vec4 u_materialFactors;       // metallic, roughness, normal scale, occlusion strength
+uniform vec4 u_hasMaterialTextures;   // metallicRoughness, normal, occlusion, emissive
+uniform vec3 u_emissiveFactor;
+uniform float u_alphaMode;
+uniform float u_alphaCutoff;
+uniform float u_renderOpacity;
+uniform float u_unlit;
+uniform vec4 u_baseColorTexOffsetScale;
+uniform vec2 u_baseColorTexRotationSinCos;
+uniform vec4 u_metallicRoughnessTexOffsetScale;
+uniform vec2 u_metallicRoughnessTexRotationSinCos;
+uniform vec4 u_normalTexOffsetScale;
+uniform vec2 u_normalTexRotationSinCos;
+uniform vec4 u_occlusionTexOffsetScale;
+uniform vec2 u_occlusionTexRotationSinCos;
+uniform vec4 u_emissiveTexOffsetScale;
+uniform vec2 u_emissiveTexRotationSinCos;
+uniform vec4 u_textureCoordSets;      // baseColor, metallicRoughness, normal, occlusion
+uniform float u_emissiveTexCoordSet;
+
+out vec4 fragColor;
+
+vec2 uvFromSet(float texCoordSet) {
+    int setIndex = int(floor(texCoordSet + 0.5));
+    if (setIndex == 1) return v_texcoord01.zw;
+    if (setIndex == 2) return v_texcoord23.xy;
+    if (setIndex == 3) return v_texcoord23.zw;
+    if (setIndex == 4) return v_texcoord45.xy;
+    if (setIndex == 5) return v_texcoord45.zw;
+    if (setIndex == 6) return v_texcoord67.xy;
+    if (setIndex == 7) return v_texcoord67.zw;
+    return v_texcoord01.xy;
+}
+
+vec2 transformUv(vec2 uv, vec4 offsetScale, vec2 sinCos) {
+    vec2 scaled = uv * offsetScale.zw;
+    return vec2(
+        scaled.x * sinCos.y + scaled.y * sinCos.x,
+        scaled.y * sinCos.y - scaled.x * sinCos.x) + offsetScale.xy;
+}
+
+vec3 applyTbn(vec3 tangent, vec3 bitangent, vec3 n, vec3 mapNormal) {
+    vec3 perturbed = mat3(tangent, bitangent, n) * mapNormal;
+    float perturbedLenSq = dot(perturbed, perturbed);
+    return perturbedLenSq > 1e-8 ? normalize(perturbed) : n;
+}
+
+vec3 perturbNormal(vec3 n, vec2 uv, vec4 tangentInput) {
+    vec3 mapNormal = texture(u_normalTexture, uv).rgb * 2.0 - 1.0;
+    mapNormal.xy *= u_materialFactors.z;
+    float mapNormalLenSq = dot(mapNormal, mapNormal);
+    if (mapNormalLenSq < 1e-8) {
+        return n;
+    }
+    mapNormal = normalize(mapNormal);
+
+    if (dot(tangentInput.xyz, tangentInput.xyz) > 0.0) {
+        vec3 tangent = tangentInput.xyz - n * dot(n, tangentInput.xyz);
+        if (dot(tangent, tangent) > 1e-8) {
+            tangent = normalize(tangent);
+            vec3 bitangent = cross(n, tangent);
+            float bitangentLenSq = dot(bitangent, bitangent);
+            if (bitangentLenSq > 1e-8) {
+                bitangent = normalize(bitangent) *
+                    (tangentInput.w < 0.0 ? -1.0 : 1.0);
+                return applyTbn(tangent, bitangent, n, mapNormal);
+            }
+        }
+    }
+
+    vec3 dp1 = dFdx(v_position);
+    vec3 dp2 = dFdy(v_position);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+    float det = duv1.x * duv2.y - duv1.y * duv2.x;
+    if (abs(det) < 1e-8) {
+        return n;
+    }
+    vec3 tangent = (dp1 * duv2.y - dp2 * duv1.y) / det;
+    vec3 bitangent = (-dp1 * duv2.x + dp2 * duv1.x) / det;
+    float tangentLenSq = dot(tangent, tangent);
+    float bitangentLenSq = dot(bitangent, bitangent);
+    if (tangentLenSq < 1e-8 || bitangentLenSq < 1e-8) {
+        return n;
+    }
+    tangent = normalize(tangent);
+    bitangent = normalize(bitangent);
+    return applyTbn(tangent, bitangent, n, mapNormal);
+}
+
+void main() {
+    float faceSign = gl_FrontFacing ? 1.0 : -1.0;
+    vec3 N = normalize(v_normal) * faceSign;
+    vec3 L = normalize(u_lightDir);
+    vec2 baseColorUv = transformUv(
+        uvFromSet(u_textureCoordSets.x),
+        u_baseColorTexOffsetScale,
+        u_baseColorTexRotationSinCos);
+    float NdotL = max(dot(N, L), 0.0);
+    vec4 base = u_baseColor * v_color;
+    if (u_hasBaseColorTexture > 0.5) {
+        base *= texture(u_baseColorTexture, baseColorUv);
+    }
+    if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
+        discard;
+    }
+    float alpha = u_alphaMode > 1.5 ? base.a : 1.0;
+    if (u_unlit > 0.5) {
+        fragColor = vec4(base.rgb, alpha * clamp(u_renderOpacity, 0.0, 1.0));
+        return;
+    }
+
+    float metallic = clamp(u_materialFactors.x, 0.0, 1.0);
+    float roughness = clamp(u_materialFactors.y, 0.04, 1.0);
+    if (u_hasMaterialTextures.x > 0.5) {
+        vec2 mrUv = transformUv(
+            uvFromSet(u_textureCoordSets.y),
+            u_metallicRoughnessTexOffsetScale,
+            u_metallicRoughnessTexRotationSinCos);
+        vec4 mr = texture(u_metallicRoughnessTexture, mrUv);
+        roughness = clamp(roughness * mr.g, 0.04, 1.0);
+        metallic = clamp(metallic * mr.b, 0.0, 1.0);
+    }
+
+    if (u_hasMaterialTextures.y > 0.5) {
+        vec2 normalUv = transformUv(
+            uvFromSet(u_textureCoordSets.z),
+            u_normalTexOffsetScale,
+            u_normalTexRotationSinCos);
+        N = perturbNormal(N, normalUv, v_tangent);
+        NdotL = max(dot(N, L), 0.0);
+    }
+
+    float occlusion = 1.0;
+    if (u_hasMaterialTextures.z > 0.5) {
+        vec2 occlusionUv = transformUv(
+            uvFromSet(u_textureCoordSets.w),
+            u_occlusionTexOffsetScale,
+            u_occlusionTexRotationSinCos);
+        float ao = texture(u_occlusionTexture, occlusionUv).r;
+        occlusion = clamp(1.0 + u_materialFactors.w * (ao - 1.0), 0.0, 1.0);
+    }
+
+    vec3 emissive = u_emissiveFactor;
+    if (u_hasMaterialTextures.w > 0.5) {
+        vec2 emissiveUv = transformUv(
+            uvFromSet(u_emissiveTexCoordSet),
+            u_emissiveTexOffsetScale,
+            u_emissiveTexRotationSinCos);
+        emissive *= texture(u_emissiveTexture, emissiveUv).rgb;
+    }
+
+    float diffuse = smoothstep(0.0, 1.0, NdotL);
+    float specPower = mix(96.0, 8.0, roughness);
+    float specular = pow(max(NdotL, 0.0), specPower) * (1.0 - roughness);
+    vec3 dielectricSpecular = vec3(0.04);
+    vec3 specularColor = mix(dielectricSpecular, base.rgb, metallic);
+    vec3 diffuseColor = base.rgb * (1.0 - metallic);
+    vec3 color = diffuseColor * (0.38 * occlusion + 0.62 * diffuse) +
+                 specularColor * specular +
+                 emissive;
+    fragColor = vec4(color, alpha * clamp(u_renderOpacity, 0.0, 1.0));
+}
+)glsl";
+
+static const char* kGltfInstancedVertexGLSL = R"glsl(
+#version 300 es
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec4 a_texcoord01;
+layout(location = 3) in vec4 a_instanceCol0;
+layout(location = 4) in vec4 a_instanceCol1;
+layout(location = 5) in vec4 a_instanceCol2;
+layout(location = 6) in vec4 a_instanceCol3;
+layout(location = 7) in vec3 a_normalCol0;
+layout(location = 8) in vec3 a_normalCol1;
+layout(location = 9) in vec3 a_normalCol2;
+layout(location = 10) in vec4 a_color;
+layout(location = 11) in vec4 a_tangent;
+layout(location = 12) in vec4 a_texcoord23;
+layout(location = 13) in vec4 a_texcoord45;
+layout(location = 14) in vec4 a_texcoord67;
+
+uniform mat4 u_modelViewProjection;
+
+out vec3 v_normal;
+out vec3 v_position;
+out vec4 v_texcoord01;
+out vec4 v_color;
+out vec4 v_tangent;
+out vec4 v_texcoord23;
+out vec4 v_texcoord45;
+out vec4 v_texcoord67;
+
+void main() {
+    mat4 instanceModel = mat4(
+        a_instanceCol0,
+        a_instanceCol1,
+        a_instanceCol2,
+        a_instanceCol3);
+    mat3 instanceNormal = mat3(
+        a_normalCol0,
+        a_normalCol1,
+        a_normalCol2);
+    mat3 instanceTangent = mat3(instanceModel);
+    vec4 localPosition = instanceModel * vec4(a_position, 1.0);
+    v_normal = normalize(instanceNormal * a_normal);
+    v_position = localPosition.xyz;
+    v_texcoord01 = a_texcoord01;
+    v_color = a_color;
+    vec3 tangent = a_tangent.xyz;
+    if (dot(tangent, tangent) > 0.0) {
+        tangent = normalize(instanceTangent * tangent);
+    }
+    v_tangent = vec4(tangent, a_tangent.w);
+    v_texcoord23 = a_texcoord23;
+    v_texcoord45 = a_texcoord45;
+    v_texcoord67 = a_texcoord67;
+    gl_Position = u_modelViewProjection * localPosition;
 }
 )glsl";
 
@@ -379,9 +662,315 @@ fragment float4 tileFragment(VertexOut in [[stage_in]],
 
     float3 n = normalize(in.normal);
     float diffuse = max(dot(n, normalize(u_lightDir)), 0.0);
-    color.rgb *= 0.45 + diffuse * 0.55;
+    float shade = mix(0.72, 1.0, smoothstep(0.0, 1.0, diffuse));
+    color.rgb *= shade;
     color.a *= clamp(u_tileOpacity, 0.0, 1.0) * clamp(u_transitionOpacity, 0.0, 1.0);
     return color;
+}
+)msl";
+
+static const char* kGltfVertexMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct GltfVertexIn {
+    float3 position [[attribute(0)]];
+    float3 normal   [[attribute(1)]];
+    float4 texcoord01 [[attribute(2)]];
+    float4 color    [[attribute(10)]];
+    float4 tangent  [[attribute(11)]];
+    float4 texcoord23 [[attribute(12)]];
+    float4 texcoord45 [[attribute(13)]];
+    float4 texcoord67 [[attribute(14)]];
+};
+
+struct GltfVertexOut {
+    float4 position [[position]];
+    float3 normal;
+    float3 localPosition;
+    float4 texcoord01;
+    float4 color;
+    float4 tangent;
+    float4 texcoord23;
+    float4 texcoord45;
+    float4 texcoord67;
+};
+
+vertex GltfVertexOut gltfVertex(GltfVertexIn in [[stage_in]],
+                                 constant float4x4& u_modelViewProjection [[buffer(1)]]) {
+    GltfVertexOut out;
+    out.position = u_modelViewProjection * float4(in.position, 1.0);
+    out.normal = normalize(in.normal);
+    out.localPosition = in.position;
+    out.texcoord01 = in.texcoord01;
+    out.color = in.color;
+    out.tangent = in.tangent;
+    out.texcoord23 = in.texcoord23;
+    out.texcoord45 = in.texcoord45;
+    out.texcoord67 = in.texcoord67;
+    return out;
+}
+)msl";
+
+static const char* kGltfFragmentMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+float2 gltfTransformUv(float2 uv, float4 offsetScale, float2 sinCos) {
+    float2 scaled = uv * offsetScale.zw;
+    return float2(
+        scaled.x * sinCos.y + scaled.y * sinCos.x,
+        scaled.y * sinCos.y - scaled.x * sinCos.x) + offsetScale.xy;
+}
+
+float2 gltfUvFromSet(GltfVertexOut in, float texCoordSet) {
+    int setIndex = int(floor(texCoordSet + 0.5));
+    if (setIndex == 1) return in.texcoord01.zw;
+    if (setIndex == 2) return in.texcoord23.xy;
+    if (setIndex == 3) return in.texcoord23.zw;
+    if (setIndex == 4) return in.texcoord45.xy;
+    if (setIndex == 5) return in.texcoord45.zw;
+    if (setIndex == 6) return in.texcoord67.xy;
+    if (setIndex == 7) return in.texcoord67.zw;
+    return in.texcoord01.xy;
+}
+
+float3 gltfApplyTbn(float3 tangent,
+                    float3 bitangent,
+                    float3 n,
+                    float3 mapNormal) {
+    float3 perturbed = float3x3(tangent, bitangent, n) * mapNormal;
+    float perturbedLenSq = dot(perturbed, perturbed);
+    return perturbedLenSq > 1e-8 ? normalize(perturbed) : n;
+}
+
+float3 gltfPerturbNormal(float3 n,
+                         float2 uv,
+                         float3 localPosition,
+                         float4 tangentInput,
+                         float normalScale,
+                         texture2d<float> normalTexture,
+                         sampler normalSampler) {
+    float3 mapNormal = normalTexture.sample(normalSampler, uv).rgb * 2.0 - 1.0;
+    mapNormal.xy *= normalScale;
+    float mapNormalLenSq = dot(mapNormal, mapNormal);
+    if (mapNormalLenSq < 1e-8) {
+        return n;
+    }
+    mapNormal = normalize(mapNormal);
+    if (dot(tangentInput.xyz, tangentInput.xyz) > 0.0) {
+        float3 tangent = tangentInput.xyz - n * dot(n, tangentInput.xyz);
+        if (dot(tangent, tangent) > 1e-8) {
+            tangent = normalize(tangent);
+            float3 bitangent = cross(n, tangent);
+            float bitangentLenSq = dot(bitangent, bitangent);
+            if (bitangentLenSq > 1e-8) {
+                bitangent = normalize(bitangent) *
+                    (tangentInput.w < 0.0 ? -1.0 : 1.0);
+                return gltfApplyTbn(tangent, bitangent, n, mapNormal);
+            }
+        }
+    }
+    float3 dp1 = dfdx(localPosition);
+    float3 dp2 = dfdy(localPosition);
+    float2 duv1 = dfdx(uv);
+    float2 duv2 = dfdy(uv);
+    float det = duv1.x * duv2.y - duv1.y * duv2.x;
+    if (fabs(det) < 1e-8) {
+        return n;
+    }
+    float3 tangent = (dp1 * duv2.y - dp2 * duv1.y) / det;
+    float3 bitangent = (-dp1 * duv2.x + dp2 * duv1.x) / det;
+    float tangentLenSq = dot(tangent, tangent);
+    float bitangentLenSq = dot(bitangent, bitangent);
+    if (tangentLenSq < 1e-8 || bitangentLenSq < 1e-8) {
+        return n;
+    }
+    tangent = normalize(tangent);
+    bitangent = normalize(bitangent);
+    return gltfApplyTbn(tangent, bitangent, n, mapNormal);
+}
+
+fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
+                             bool frontFacing [[front_facing]],
+                             constant float3& u_lightDir [[buffer(0)]],
+                             constant float4& u_baseColor [[buffer(5)]],
+                             constant float& u_renderOpacity [[buffer(6)]],
+                             constant float& u_hasBaseColorTexture [[buffer(7)]],
+                             constant float& u_alphaMode [[buffer(8)]],
+                             constant float& u_alphaCutoff [[buffer(9)]],
+                             constant float4& u_materialFactors [[buffer(10)]],
+                             constant float4& u_hasMaterialTextures [[buffer(11)]],
+                             constant float3& u_emissiveFactor [[buffer(12)]],
+                             constant float4& u_baseColorTexOffsetScale [[buffer(13)]],
+                             constant float2& u_baseColorTexRotationSinCos [[buffer(14)]],
+                             constant float4& u_metallicRoughnessTexOffsetScale [[buffer(15)]],
+                             constant float2& u_metallicRoughnessTexRotationSinCos [[buffer(16)]],
+                             constant float4& u_normalTexOffsetScale [[buffer(17)]],
+                             constant float2& u_normalTexRotationSinCos [[buffer(18)]],
+                             constant float4& u_occlusionTexOffsetScale [[buffer(19)]],
+                             constant float2& u_occlusionTexRotationSinCos [[buffer(20)]],
+                             constant float4& u_emissiveTexOffsetScale [[buffer(21)]],
+                             constant float2& u_emissiveTexRotationSinCos [[buffer(22)]],
+                             constant float4& u_textureCoordSets [[buffer(23)]],
+                             constant float& u_emissiveTexCoordSet [[buffer(24)]],
+                             constant float& u_unlit [[buffer(25)]],
+                             texture2d<float> u_baseColorTexture [[texture(0)]],
+                             texture2d<float> u_metallicRoughnessTexture [[texture(1)]],
+                             texture2d<float> u_normalTexture [[texture(2)]],
+                             texture2d<float> u_occlusionTexture [[texture(3)]],
+                             texture2d<float> u_emissiveTexture [[texture(4)]],
+                             sampler u_baseColorSampler [[sampler(0)]],
+                             sampler u_metallicRoughnessSampler [[sampler(1)]],
+                             sampler u_normalSampler [[sampler(2)]],
+                             sampler u_occlusionSampler [[sampler(3)]],
+                             sampler u_emissiveSampler [[sampler(4)]]) {
+    float faceSign = frontFacing ? 1.0 : -1.0;
+    float3 n = normalize(in.normal) * faceSign;
+    float3 light = normalize(u_lightDir);
+    float2 baseColorUv = gltfTransformUv(
+        gltfUvFromSet(in, u_textureCoordSets.x),
+        u_baseColorTexOffsetScale,
+        u_baseColorTexRotationSinCos);
+    float4 base = u_baseColor * in.color;
+    if (u_hasBaseColorTexture > 0.5) {
+        base *= u_baseColorTexture.sample(u_baseColorSampler, baseColorUv);
+    }
+    if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
+        discard_fragment();
+    }
+    float alpha = u_alphaMode > 1.5 ? base.a : 1.0;
+    if (u_unlit > 0.5) {
+        return float4(base.rgb, alpha * clamp(u_renderOpacity, 0.0, 1.0));
+    }
+    float metallic = clamp(u_materialFactors.x, 0.0, 1.0);
+    float roughness = clamp(u_materialFactors.y, 0.04, 1.0);
+    if (u_hasMaterialTextures.x > 0.5) {
+        float2 mrUv = gltfTransformUv(
+            gltfUvFromSet(in, u_textureCoordSets.y),
+            u_metallicRoughnessTexOffsetScale,
+            u_metallicRoughnessTexRotationSinCos);
+        float4 mr = u_metallicRoughnessTexture.sample(
+            u_metallicRoughnessSampler,
+            mrUv);
+        roughness = clamp(roughness * mr.g, 0.04, 1.0);
+        metallic = clamp(metallic * mr.b, 0.0, 1.0);
+    }
+    float ndotl = max(dot(n, light), 0.0);
+    if (u_hasMaterialTextures.y > 0.5) {
+        float2 normalUv = gltfTransformUv(
+            gltfUvFromSet(in, u_textureCoordSets.z),
+            u_normalTexOffsetScale,
+            u_normalTexRotationSinCos);
+        n = gltfPerturbNormal(
+            n,
+            normalUv,
+            in.localPosition,
+            in.tangent,
+            u_materialFactors.z,
+            u_normalTexture,
+            u_normalSampler);
+        ndotl = max(dot(n, light), 0.0);
+    }
+    float occlusion = 1.0;
+    if (u_hasMaterialTextures.z > 0.5) {
+        float2 occlusionUv = gltfTransformUv(
+            gltfUvFromSet(in, u_textureCoordSets.w),
+            u_occlusionTexOffsetScale,
+            u_occlusionTexRotationSinCos);
+        float ao = u_occlusionTexture.sample(
+            u_occlusionSampler,
+            occlusionUv).r;
+        occlusion = clamp(1.0 + u_materialFactors.w * (ao - 1.0), 0.0, 1.0);
+    }
+    float3 emissive = u_emissiveFactor;
+    if (u_hasMaterialTextures.w > 0.5) {
+        float2 emissiveUv = gltfTransformUv(
+            gltfUvFromSet(in, u_emissiveTexCoordSet),
+            u_emissiveTexOffsetScale,
+            u_emissiveTexRotationSinCos);
+        emissive *= u_emissiveTexture.sample(
+            u_emissiveSampler,
+            emissiveUv).rgb;
+    }
+    float diffuse = smoothstep(0.0, 1.0, ndotl);
+    float specPower = mix(96.0, 8.0, roughness);
+    float specular = pow(max(ndotl, 0.0), specPower) * (1.0 - roughness);
+    float3 specularColor = mix(float3(0.04), base.rgb, metallic);
+    float3 diffuseColor = base.rgb * (1.0 - metallic);
+    float3 color = diffuseColor * (0.38 * occlusion + 0.62 * diffuse) +
+                   specularColor * specular +
+                   emissive;
+    return float4(color, alpha * clamp(u_renderOpacity, 0.0, 1.0));
+}
+)msl";
+
+static const char* kGltfInstancedVertexMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct GltfInstancedVertexIn {
+    float3 position     [[attribute(0)]];
+    float3 normal       [[attribute(1)]];
+    float4 texcoord01   [[attribute(2)]];
+    float4 instanceCol0 [[attribute(3)]];
+    float4 instanceCol1 [[attribute(4)]];
+    float4 instanceCol2 [[attribute(5)]];
+    float4 instanceCol3 [[attribute(6)]];
+    float3 normalCol0   [[attribute(7)]];
+    float3 normalCol1   [[attribute(8)]];
+    float3 normalCol2   [[attribute(9)]];
+    float4 color        [[attribute(10)]];
+    float4 tangent      [[attribute(11)]];
+    float4 texcoord23   [[attribute(12)]];
+    float4 texcoord45   [[attribute(13)]];
+    float4 texcoord67   [[attribute(14)]];
+};
+
+struct GltfVertexOut {
+    float4 position [[position]];
+    float3 normal;
+    float3 localPosition;
+    float4 texcoord01;
+    float4 color;
+    float4 tangent;
+    float4 texcoord23;
+    float4 texcoord45;
+    float4 texcoord67;
+};
+
+vertex GltfVertexOut
+gltfInstancedVertex(GltfInstancedVertexIn in [[stage_in]],
+                    constant float4x4& u_modelViewProjection [[buffer(1)]]) {
+    GltfVertexOut out;
+    float4x4 instanceModel = float4x4(
+        in.instanceCol0,
+        in.instanceCol1,
+        in.instanceCol2,
+        in.instanceCol3);
+    float3x3 instanceNormal = float3x3(
+        in.normalCol0,
+        in.normalCol1,
+        in.normalCol2);
+    float3x3 instanceTangent = float3x3(
+        instanceModel[0].xyz,
+        instanceModel[1].xyz,
+        instanceModel[2].xyz);
+    float4 localPosition = instanceModel * float4(in.position, 1.0);
+    out.position = u_modelViewProjection * localPosition;
+    out.normal = normalize(instanceNormal * in.normal);
+    out.localPosition = localPosition.xyz;
+    out.texcoord01 = in.texcoord01;
+    out.color = in.color;
+    float3 tangent = in.tangent.xyz;
+    if (dot(tangent, tangent) > 0.0) {
+        tangent = normalize(instanceTangent * tangent);
+    }
+    out.tangent = float4(tangent, in.tangent.w);
+    out.texcoord23 = in.texcoord23;
+    out.texcoord45 = in.texcoord45;
+    out.texcoord67 = in.texcoord67;
+    return out;
 }
 )msl";
 
@@ -424,6 +1013,26 @@ makeTileGeometry(int gridSize) {
     return {verts, indices};
 }
 
+namespace renderer_testing {
+
+const char* gltfFragmentGLSL() {
+    return kGltfFragmentGLSL;
+}
+
+const char* gltfFragmentMSL() {
+    return kGltfFragmentMSL;
+}
+
+const char* gltfInstancedVertexGLSL() {
+    return kGltfInstancedVertexGLSL;
+}
+
+const char* gltfInstancedVertexMSL() {
+    return kGltfInstancedVertexMSL;
+}
+
+} // namespace renderer_testing
+
 // ============================================================
 // Renderer::Impl
 // ============================================================
@@ -442,8 +1051,16 @@ struct Renderer::Impl {
     std::unique_ptr<Buffer> tileIndexBuffer;  // shared 64×64 grid IBO
     int tileIndexCount = 0;
 
+    // glTF TileRenderContent
+    std::unique_ptr<ShaderProgram> gltfShader;
+    std::unique_ptr<ShaderProgram> gltfInstancedShader;
+
     // Color (vector)
     std::unique_ptr<ShaderProgram> colorShader;
+
+    // cesium-native: retained raster attachments (IPrepareRendererResources)
+    // Keyed by geometry tile cache key (schemeId/z/x/y).
+    std::unordered_map<std::string, RasterAttachment> rasterAttachments;
 
     bool initialized = false;
 };
@@ -506,6 +1123,27 @@ bool Renderer::initialize(const GlobeMesh& mesh) {
         }
     }
 
+    // ---- glTF primitive shader ----
+    ShaderDesc gltfSd;
+    gltfSd.vertexSource = isMetal ? kGltfVertexMSL : kGltfVertexGLSL;
+    gltfSd.fragmentSource = isMetal ? kGltfFragmentMSL : kGltfFragmentGLSL;
+    impl_->gltfShader = dev->createShader(gltfSd);
+    if (!impl_->gltfShader) {
+        fprintf(stderr, "[Renderer] gltfShader failed\n");
+        return false;
+    }
+
+    ShaderDesc gltfInstancedSd;
+    gltfInstancedSd.vertexSource =
+        isMetal ? kGltfInstancedVertexMSL : kGltfInstancedVertexGLSL;
+    gltfInstancedSd.fragmentSource =
+        isMetal ? kGltfFragmentMSL : kGltfFragmentGLSL;
+    impl_->gltfInstancedShader = dev->createShader(gltfInstancedSd);
+    if (!impl_->gltfInstancedShader) {
+        fprintf(stderr, "[Renderer] gltfInstancedShader failed\n");
+        return false;
+    }
+
     // Shared index buffer for surface tiles (64×64 grid)
     auto [tileVerts, tileIndices] = makeTileGeometry(64);
     (void)tileVerts;  // VBOs are per-tile now
@@ -541,6 +1179,8 @@ void Renderer::dispose() {
     impl_->globeIndexBuffer.reset();
     impl_->surfaceTileShader.reset();
     impl_->tileIndexBuffer.reset();
+    impl_->gltfShader.reset();
+    impl_->gltfInstancedShader.reset();
     impl_->colorShader.reset();
     impl_->globeIndexCount = 0;
     impl_->tileIndexCount = 0;
@@ -557,6 +1197,11 @@ int Renderer::globeIndexCount() const { return impl_->globeIndexCount; }
 ShaderProgram* Renderer::colorShader() const { return impl_->colorShader.get(); }
 Buffer* Renderer::tileIndexBuffer() const { return impl_->tileIndexBuffer.get(); }
 int Renderer::tileIndexCount() const { return impl_->tileIndexCount; }
+ShaderProgram* Renderer::gltfShader() const { return impl_->gltfShader.get(); }
+
+ShaderProgram* Renderer::gltfInstancedShader() const {
+    return impl_->gltfInstancedShader.get();
+}
 
 // ---- Command builders ----
 
@@ -630,12 +1275,131 @@ RenderCommand Renderer::makeSurfaceTileCommand(Texture* texture,
     return cmd;
 }
 
+RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
+                                                 Buffer* indexBuffer,
+                                                 int indexCount,
+                                                 int vertexCount) const {
+    RenderCommand cmd;
+    cmd.kind = RenderCommandKind::GltfPrimitive;
+    cmd.owner = "gltf_primitive";
+    cmd.pass = "color";
+    cmd.shader = impl_->gltfShader.get();
+    cmd.vertexBuffer = vertexBuffer;
+    cmd.indexBuffer = indexBuffer;
+    cmd.indexCount = indexCount;
+    cmd.vertexCount = vertexCount;
+    cmd.vertexStride = 120;  // POSITION/NORMAL + TEXCOORD_0..7 + COLOR_0 + TANGENT
+    cmd.primitive = RenderCommand::PrimitiveType::Triangles;
+    cmd.indexType = RenderCommand::IndexType::UInt32;
+    cmd.depthTest = true;
+    cmd.depthWrite = true;
+    cmd.blend = false;
+    cmd.cullFace = true;
+    cmd.uniforms["u_baseColor"] = {0.82f, 0.84f, 0.88f, 1.0f};
+    cmd.uniforms["u_hasBaseColorTexture"] = {0.0f};
+    cmd.uniforms["u_materialFactors"] = {1.0f, 1.0f, 1.0f, 1.0f};
+    cmd.uniforms["u_hasMaterialTextures"] = {0.0f, 0.0f, 0.0f, 0.0f};
+    cmd.uniforms["u_emissiveFactor"] = {0.0f, 0.0f, 0.0f};
+    cmd.uniforms["u_textureCoordSets"] = {0.0f, 0.0f, 0.0f, 0.0f};
+    cmd.uniforms["u_emissiveTexCoordSet"] = {0.0f};
+    cmd.uniforms["u_alphaMode"] = {0.0f};
+    cmd.uniforms["u_alphaCutoff"] = {0.5f};
+    cmd.uniforms["u_renderOpacity"] = {1.0f};
+    cmd.uniforms["u_unlit"] = {0.0f};
+    auto setTextureTransformDefaults = [&cmd](
+        const char* offsetScaleName,
+        const char* rotationName) {
+        cmd.uniforms[offsetScaleName] = {0.0f, 0.0f, 1.0f, 1.0f};
+        cmd.uniforms[rotationName] = {0.0f, 1.0f};
+    };
+    setTextureTransformDefaults(
+        "u_baseColorTexOffsetScale",
+        "u_baseColorTexRotationSinCos");
+    setTextureTransformDefaults(
+        "u_metallicRoughnessTexOffsetScale",
+        "u_metallicRoughnessTexRotationSinCos");
+    setTextureTransformDefaults(
+        "u_normalTexOffsetScale",
+        "u_normalTexRotationSinCos");
+    setTextureTransformDefaults(
+        "u_occlusionTexOffsetScale",
+        "u_occlusionTexRotationSinCos");
+    setTextureTransformDefaults(
+        "u_emissiveTexOffsetScale",
+        "u_emissiveTexRotationSinCos");
+    return cmd;
+}
+
+RenderCommand Renderer::makeGltfPrimitiveInstancedCommand(
+    Buffer* vertexBuffer,
+    Buffer* indexBuffer,
+    Buffer* instanceBuffer,
+    int indexCount,
+    int vertexCount,
+    int instanceCount) const {
+    RenderCommand cmd = makeGltfPrimitiveCommand(
+        vertexBuffer,
+        indexBuffer,
+        indexCount,
+        vertexCount);
+    cmd.kind = RenderCommandKind::GltfPrimitiveInstanced;
+    cmd.owner = "gltf_primitive_instanced";
+    cmd.shader = impl_->gltfInstancedShader.get();
+    cmd.instanceBuffer = instanceBuffer;
+    cmd.instanceCount = instanceCount;
+    cmd.instanceStride = kGltfInstanceMatrixStride;
+    return cmd;
+}
+
 std::array<float, 16> Renderer::earthModelMatrix() {
     constexpr float kEarthRadius = 6378137.0f;
     glm::mat4 m = glm::scale(glm::mat4(1.0f), glm::vec3(kEarthRadius));
     std::array<float, 16> result;
     std::memcpy(result.data(), glm::value_ptr(m), 16 * sizeof(float));
     return result;
+}
+
+// ── cesium-native IPrepareRendererResources retained attachment ──
+
+std::string Renderer::attachmentKey(const TileKey& key) {
+    return key.schemeId + "/" + std::to_string(key.z) + "/" +
+           std::to_string(key.x) + "/" + std::to_string(key.y);
+}
+
+static std::string attachmentKeyWithOverlay(const TileKey& key, int32_t overlayIndex) {
+    return key.schemeId + "/" + std::to_string(key.z) + "/" +
+           std::to_string(key.x) + "/" + std::to_string(key.y) +
+           "/o" + std::to_string(overlayIndex);
+}
+
+void Renderer::attachRasterInMainThread(
+    const TileKey& geometryKey,
+    int32_t overlayIndex,
+    const RasterOverlayTile& rasterTile,
+    Texture* texture,
+    float translationU, float translationV,
+    float scaleU, float scaleV) {
+    std::string key = attachmentKeyWithOverlay(geometryKey, overlayIndex);
+    impl_->rasterAttachments[key] = RasterAttachment{
+        &rasterTile, texture, translationU, translationV, scaleU, scaleV
+    };
+}
+
+void Renderer::detachRasterInMainThread(
+    const TileKey& geometryKey,
+    int32_t overlayIndex) noexcept {
+    std::string key = attachmentKeyWithOverlay(geometryKey, overlayIndex);
+    impl_->rasterAttachments.erase(key);
+}
+
+const RasterAttachment* Renderer::getAttachedRaster(
+    const TileKey& geometryKey, int32_t overlayIndex) const {
+    std::string key = attachmentKeyWithOverlay(geometryKey, overlayIndex);
+    auto it = impl_->rasterAttachments.find(key);
+    if (it != impl_->rasterAttachments.end()) {
+        return &it->second;
+    }
+    return nullptr;
 }
 
 } // namespace earth_engine

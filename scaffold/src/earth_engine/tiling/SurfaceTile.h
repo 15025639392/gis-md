@@ -32,6 +32,10 @@ enum class SurfaceTileSampling {
     GeographicVToWgs84Ecef
 };
 
+enum class RasterOverlayProjection {
+    Geographic = 0
+};
+
 struct SurfaceVertex {
     Vec3 positionEcef;
     Vec3 positionHighEcef;
@@ -60,16 +64,79 @@ struct WaterMask {
     bool valid() const { return !data.empty() || allWater; }
 };
 
+/// cesium-native RasterOverlayDetails equivalent.
+/// Stores the set of projections and their corresponding texture coordinate
+/// rectangles for a geometry tile. The current rectangle overlay provider
+/// exposes Geographic projection details.
+struct RasterOverlayDetails {
+    /// Projections for which texture coordinates exist.
+    std::vector<RasterOverlayProjection> rasterOverlayProjections;
+
+    /// Texture coordinate rectangles for each projection.
+    /// Index-aligned with rasterOverlayProjections.
+    std::vector<Rectangle> rasterOverlayRectangles;
+
+    bool empty() const { return rasterOverlayRectangles.empty(); }
+
+    const Rectangle* findRectangleForOverlayProjection(
+        RasterOverlayProjection projection) const {
+        for (size_t i = 0; i < rasterOverlayProjections.size(); ++i) {
+            if (rasterOverlayProjections[i] == projection &&
+                i < rasterOverlayRectangles.size()) {
+                return &rasterOverlayRectangles[i];
+            }
+        }
+        return nullptr;
+    }
+
+    int32_t textureCoordinateIDForProjection(
+        RasterOverlayProjection projection) const {
+        for (size_t i = 0; i < rasterOverlayProjections.size(); ++i) {
+            if (rasterOverlayProjections[i] == projection &&
+                i < rasterOverlayRectangles.size()) {
+                return static_cast<int32_t>(i);
+            }
+        }
+        return -1;
+    }
+
+    void setGeographicRectangle(const Rectangle& rectangle) {
+        rasterOverlayProjections = {RasterOverlayProjection::Geographic};
+        rasterOverlayRectangles = {rectangle};
+    }
+};
+
 struct SurfaceTileMesh {
     std::vector<SurfaceVertex> vertices;
     std::vector<uint32_t> indices;
     int gridSize = 0;
     SurfaceTileMeshWinding winding = SurfaceTileMeshWinding::Outward;
     SurfaceTileSampling sampling = SurfaceTileSampling::WebMercatorVToWgs84Ecef;
+    /// cesium-native quantized-mesh meshCenter / RTC origin.
+    /// Geometry vertices remain absolute ECEF in this project; upload code
+    /// subtracts this origin to produce small GPU coordinates.
+    bool hasLocalOriginEcef = false;
+    Vec3 localOriginEcef = Vec3::zero();
+    /// cesium-native QuantizedMeshLoadResult::updatedBoundingVolume height range.
+    /// These are the QuantizedMesh header minimum/maximum heights, not
+    /// necessarily the min/max of the simplified vertex set.
+    bool hasHeightRange = false;
+    double minimumHeight = 0.0;
+    double maximumHeight = 0.0;
+    /// Quantized-mesh header horizon occlusion point, expressed in
+    /// ellipsoid-scaled ECEF like cesium-native.
+    bool hasHorizonOcclusionPoint = false;
+    Vec3 horizonOcclusionPoint = Vec3::zero();
     SkirtMetadata skirtMeta;
     WaterMask waterMask;
-    // cesium-native: availability rectangles from QM metadata (extension ID=4)
-    std::vector<std::array<int, 4>> metadataAvailability;
+    // cesium-native: availability rectangles from QM metadata (extension ID=4).
+    // Each entry: {levelOffset, startX, startY, endX, endY}
+    // levelOffset = sub-array index in the "available" JSON.
+    // Actual absolute level = tileLevel + levelOffset
+    // Aligned with cesium-native loadAvailabilityRectangles startingLevel + i.
+    std::vector<std::array<int, 5>> metadataAvailability;
+    /// cesium-native TileRenderContent::getRasterOverlayDetails equivalent.
+    RasterOverlayDetails rasterOverlayDetails;
 };
 
 struct SurfaceNormalMap {

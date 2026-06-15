@@ -6,6 +6,7 @@
 #import <QuartzCore/CAMetalLayer.h>
 #import <CoreFoundation/CoreFoundation.h>
 #import <objc/runtime.h>
+#include <algorithm>
 #include <string>
 #include <stdexcept>
 #include <cstring>
@@ -18,12 +19,15 @@ namespace earth_engine {
 
 class MetalTexture : public Texture {
 public:
-    MetalTexture(id<MTLTexture> tex) : tex_(tex) {}
+    MetalTexture(id<MTLTexture> tex, id<MTLSamplerState> sampler)
+        : tex_(tex), sampler_(sampler) {}
     int width() const override { return static_cast<int>(tex_.width); }
     int height() const override { return static_cast<int>(tex_.height); }
     id<MTLTexture> mtl() const { return tex_; }
+    id<MTLSamplerState> sampler() const { return sampler_; }
 private:
     id<MTLTexture> tex_;
+    id<MTLSamplerState> sampler_;
 };
 
 class MetalBuffer : public Buffer {
@@ -74,6 +78,24 @@ static id<MTLDepthStencilState> makeDepthState(id<MTLDevice> device,
     desc.depthCompareFunction = enabled ? MTLCompareFunctionGreaterEqual : MTLCompareFunctionAlways;
     desc.depthWriteEnabled = enabled && write;
     return [device newDepthStencilStateWithDescriptor:desc];
+}
+
+static MTLSamplerMinMagFilter toMetalFilter(TextureDesc::Filter filter) {
+    return filter == TextureDesc::Filter::Nearest
+        ? MTLSamplerMinMagFilterNearest
+        : MTLSamplerMinMagFilterLinear;
+}
+
+static MTLSamplerAddressMode toMetalAddressMode(TextureDesc::Wrap wrap) {
+    switch (wrap) {
+        case TextureDesc::Wrap::Repeat:
+            return MTLSamplerAddressModeRepeat;
+        case TextureDesc::Wrap::MirroredRepeat:
+            return MTLSamplerAddressModeMirrorRepeat;
+        case TextureDesc::Wrap::Clamp:
+        default:
+            return MTLSamplerAddressModeClampToEdge;
+    }
 }
 
 // ============================================================
@@ -129,8 +151,12 @@ std::string RenderDeviceMetal::rendererString() const {
 // ============================================================
 
 std::unique_ptr<Texture> RenderDeviceMetal::createTexture(const TextureDesc& desc) {
+    MTLPixelFormat pixelFormat = MTLPixelFormatRGBA8Unorm;
+    if (desc.format == TextureDesc::Format::R8) {
+        pixelFormat = MTLPixelFormatR8Unorm;
+    }
     MTLTextureDescriptor* texDesc = [MTLTextureDescriptor
-        texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+        texture2DDescriptorWithPixelFormat:pixelFormat
                                      width:static_cast<NSUInteger>(desc.width)
                                     height:static_cast<NSUInteger>(desc.height)
                                  mipmapped:desc.mipmap];
@@ -145,10 +171,25 @@ std::unique_ptr<Texture> RenderDeviceMetal::createTexture(const TextureDesc& des
         [tex replaceRegion:region
                mipmapLevel:0
                  withBytes:desc.data
-               bytesPerRow:static_cast<NSUInteger>(desc.width * 4)];
+               bytesPerRow:static_cast<NSUInteger>(
+                   desc.width *
+                   (desc.format == TextureDesc::Format::R8 ? 1 : 4))];
     }
 
-    return std::make_unique<MetalTexture>(tex);
+    MTLSamplerDescriptor* samplerDesc = [MTLSamplerDescriptor new];
+    samplerDesc.minFilter = toMetalFilter(desc.minFilter);
+    samplerDesc.magFilter = toMetalFilter(desc.magFilter);
+    samplerDesc.mipFilter = desc.mipmap
+        ? MTLSamplerMipFilterLinear
+        : MTLSamplerMipFilterNotMipmapped;
+    samplerDesc.maxAnisotropy =
+        static_cast<NSUInteger>(std::max(1.0f, desc.maxAnisotropy));
+    samplerDesc.sAddressMode = toMetalAddressMode(desc.wrapS);
+    samplerDesc.tAddressMode = toMetalAddressMode(desc.wrapT);
+    id<MTLSamplerState> sampler =
+        [impl_->device newSamplerStateWithDescriptor:samplerDesc];
+
+    return std::make_unique<MetalTexture>(tex, sampler ?: impl_->linearClampSampler);
 }
 
 bool RenderDeviceMetal::updateTextureRegion(Texture* texture,
@@ -234,6 +275,8 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
     enum class PipelineLayout {
         Surface,
         Tile,
+        Gltf,
+        GltfInstanced,
         Color,
         DebugLine
     };
@@ -252,6 +295,16 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
     }
     if (!vertexFunc || !fragmentFunc) {
         fprintf(stderr, "[createShader] tile not found, trying colorVertex / colorFragment\n");
+    }
+    if (!vertexFunc || !fragmentFunc) {
+        vertexFunc = [library newFunctionWithName:@"gltfInstancedVertex"];
+        fragmentFunc = [library newFunctionWithName:@"gltfFragment"];
+        if (vertexFunc && fragmentFunc) layout = PipelineLayout::GltfInstanced;
+    }
+    if (!vertexFunc || !fragmentFunc) {
+        vertexFunc = [library newFunctionWithName:@"gltfVertex"];
+        fragmentFunc = [library newFunctionWithName:@"gltfFragment"];
+        if (vertexFunc && fragmentFunc) layout = PipelineLayout::Gltf;
     }
     if (!vertexFunc || !fragmentFunc) {
         vertexFunc = [library newFunctionWithName:@"colorVertex"];
@@ -289,7 +342,7 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
         vd.attributes[0].offset = 0;
         vd.attributes[0].bufferIndex = 0;
         vd.layouts[0].stride = 12;
-    } else {
+    } else if (layout == PipelineLayout::Surface) {
         vd.attributes[0].format = MTLVertexFormatFloat3;   // position
         vd.attributes[0].offset = 0;
         vd.attributes[0].bufferIndex = 0;
@@ -300,6 +353,83 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
         vd.attributes[2].offset = 24;
         vd.attributes[2].bufferIndex = 0;
         vd.layouts[0].stride = 32;
+    } else if (layout == PipelineLayout::Gltf) {
+        vd.attributes[0].format = MTLVertexFormatFloat3;   // position
+        vd.attributes[0].offset = 0;
+        vd.attributes[0].bufferIndex = 0;
+        vd.attributes[1].format = MTLVertexFormatFloat3;   // normal
+        vd.attributes[1].offset = 12;
+        vd.attributes[1].bufferIndex = 0;
+        vd.attributes[2].format = MTLVertexFormatFloat4;   // texcoord 0/1
+        vd.attributes[2].offset = 24;
+        vd.attributes[2].bufferIndex = 0;
+        vd.attributes[10].format = MTLVertexFormatFloat4;  // COLOR_0
+        vd.attributes[10].offset = 40;
+        vd.attributes[10].bufferIndex = 0;
+        vd.attributes[11].format = MTLVertexFormatFloat4;  // TANGENT
+        vd.attributes[11].offset = 56;
+        vd.attributes[11].bufferIndex = 0;
+        vd.attributes[12].format = MTLVertexFormatFloat4;  // texcoord 2/3
+        vd.attributes[12].offset = 72;
+        vd.attributes[12].bufferIndex = 0;
+        vd.attributes[13].format = MTLVertexFormatFloat4;  // texcoord 4/5
+        vd.attributes[13].offset = 88;
+        vd.attributes[13].bufferIndex = 0;
+        vd.attributes[14].format = MTLVertexFormatFloat4;  // texcoord 6/7
+        vd.attributes[14].offset = 104;
+        vd.attributes[14].bufferIndex = 0;
+        vd.layouts[0].stride = 120;
+    } else if (layout == PipelineLayout::GltfInstanced) {
+        vd.attributes[0].format = MTLVertexFormatFloat3;   // position
+        vd.attributes[0].offset = 0;
+        vd.attributes[0].bufferIndex = 0;
+        vd.attributes[1].format = MTLVertexFormatFloat3;   // normal
+        vd.attributes[1].offset = 12;
+        vd.attributes[1].bufferIndex = 0;
+        vd.attributes[2].format = MTLVertexFormatFloat4;   // texcoord 0/1
+        vd.attributes[2].offset = 24;
+        vd.attributes[2].bufferIndex = 0;
+        vd.attributes[10].format = MTLVertexFormatFloat4;  // COLOR_0
+        vd.attributes[10].offset = 40;
+        vd.attributes[10].bufferIndex = 0;
+        vd.attributes[11].format = MTLVertexFormatFloat4;  // TANGENT
+        vd.attributes[11].offset = 56;
+        vd.attributes[11].bufferIndex = 0;
+        vd.attributes[12].format = MTLVertexFormatFloat4;  // texcoord 2/3
+        vd.attributes[12].offset = 72;
+        vd.attributes[12].bufferIndex = 0;
+        vd.attributes[13].format = MTLVertexFormatFloat4;  // texcoord 4/5
+        vd.attributes[13].offset = 88;
+        vd.attributes[13].bufferIndex = 0;
+        vd.attributes[14].format = MTLVertexFormatFloat4;  // texcoord 6/7
+        vd.attributes[14].offset = 104;
+        vd.attributes[14].bufferIndex = 0;
+        vd.layouts[0].stride = 120;
+
+        vd.attributes[3].format = MTLVertexFormatFloat4;   // instance matrix col0
+        vd.attributes[3].offset = 0;
+        vd.attributes[3].bufferIndex = 7;
+        vd.attributes[4].format = MTLVertexFormatFloat4;
+        vd.attributes[4].offset = 16;
+        vd.attributes[4].bufferIndex = 7;
+        vd.attributes[5].format = MTLVertexFormatFloat4;
+        vd.attributes[5].offset = 32;
+        vd.attributes[5].bufferIndex = 7;
+        vd.attributes[6].format = MTLVertexFormatFloat4;
+        vd.attributes[6].offset = 48;
+        vd.attributes[6].bufferIndex = 7;
+        vd.attributes[7].format = MTLVertexFormatFloat3;   // normal matrix col0
+        vd.attributes[7].offset = 64;
+        vd.attributes[7].bufferIndex = 7;
+        vd.attributes[8].format = MTLVertexFormatFloat3;
+        vd.attributes[8].offset = 76;
+        vd.attributes[8].bufferIndex = 7;
+        vd.attributes[9].format = MTLVertexFormatFloat3;
+        vd.attributes[9].offset = 88;
+        vd.attributes[9].bufferIndex = 7;
+        vd.layouts[7].stride = kGltfInstanceMatrixStride;
+        vd.layouts[7].stepFunction = MTLVertexStepFunctionPerInstance;
+        vd.layouts[7].stepRate = 1;
     }
     vd.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
 
@@ -393,6 +523,7 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
         auto* program = static_cast<MetalShaderProgram*>(cmd.shader);
         auto* vb = static_cast<MetalBuffer*>(cmd.vertexBuffer);
         auto* ib = static_cast<MetalBuffer*>(cmd.indexBuffer);
+        auto* instanceBuffer = static_cast<MetalBuffer*>(cmd.instanceBuffer);
 
         if (!program || !vb) continue;
 
@@ -405,6 +536,12 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
 
         // 顶点 buffer
         [impl_->currentEncoder setVertexBuffer:vb->mtl() offset:0 atIndex:0];
+        if (cmd.kind == RenderCommandKind::GltfPrimitiveInstanced &&
+            instanceBuffer) {
+            [impl_->currentEncoder setVertexBuffer:instanceBuffer->mtl()
+                                            offset:0
+                                           atIndex:7];
+        }
 
         // Uniform data: set vertex/fragment bytes
         auto setUniform = [&](const std::string& name, int bufferIndex) {
@@ -477,17 +614,76 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
                                              length:transitionOpacityIt->second.size() * sizeof(float)
                                             atIndex:4];
         }
+        auto baseColorIt = cmd.uniforms.find("u_baseColor");
+        if (baseColorIt != cmd.uniforms.end()) {
+            [impl_->currentEncoder setFragmentBytes:baseColorIt->second.data()
+                                             length:baseColorIt->second.size() * sizeof(float)
+                                            atIndex:5];
+        }
+        auto renderOpacityIt = cmd.uniforms.find("u_renderOpacity");
+        if (renderOpacityIt != cmd.uniforms.end()) {
+            [impl_->currentEncoder setFragmentBytes:renderOpacityIt->second.data()
+                                             length:renderOpacityIt->second.size() * sizeof(float)
+                                            atIndex:6];
+        }
+        auto hasBaseColorTextureIt =
+            cmd.uniforms.find("u_hasBaseColorTexture");
+        if (hasBaseColorTextureIt != cmd.uniforms.end()) {
+            [impl_->currentEncoder setFragmentBytes:hasBaseColorTextureIt->second.data()
+                                             length:hasBaseColorTextureIt->second.size() * sizeof(float)
+                                            atIndex:7];
+        }
+        auto alphaModeIt = cmd.uniforms.find("u_alphaMode");
+        if (alphaModeIt != cmd.uniforms.end()) {
+            [impl_->currentEncoder setFragmentBytes:alphaModeIt->second.data()
+                                             length:alphaModeIt->second.size() * sizeof(float)
+                                            atIndex:8];
+        }
+        auto alphaCutoffIt = cmd.uniforms.find("u_alphaCutoff");
+        if (alphaCutoffIt != cmd.uniforms.end()) {
+            [impl_->currentEncoder setFragmentBytes:alphaCutoffIt->second.data()
+                                             length:alphaCutoffIt->second.size() * sizeof(float)
+                                            atIndex:9];
+        }
+        auto setFragmentUniform = [&](const char* name, NSUInteger index) {
+            auto it = cmd.uniforms.find(name);
+            if (it != cmd.uniforms.end()) {
+                [impl_->currentEncoder setFragmentBytes:it->second.data()
+                                                 length:it->second.size() * sizeof(float)
+                                                atIndex:index];
+            }
+        };
+        setFragmentUniform("u_materialFactors", 10);
+        setFragmentUniform("u_hasMaterialTextures", 11);
+        setFragmentUniform("u_emissiveFactor", 12);
+        setFragmentUniform("u_baseColorTexOffsetScale", 13);
+        setFragmentUniform("u_baseColorTexRotationSinCos", 14);
+        setFragmentUniform("u_metallicRoughnessTexOffsetScale", 15);
+        setFragmentUniform("u_metallicRoughnessTexRotationSinCos", 16);
+        setFragmentUniform("u_normalTexOffsetScale", 17);
+        setFragmentUniform("u_normalTexRotationSinCos", 18);
+        setFragmentUniform("u_occlusionTexOffsetScale", 19);
+        setFragmentUniform("u_occlusionTexRotationSinCos", 20);
+        setFragmentUniform("u_emissiveTexOffsetScale", 21);
+        setFragmentUniform("u_emissiveTexRotationSinCos", 22);
+        setFragmentUniform("u_textureCoordSets", 23);
+        setFragmentUniform("u_emissiveTexCoordSet", 24);
+        setFragmentUniform("u_unlit", 25);
 
         // 纹理绑定
-        if (!cmd.textures.empty() && cmd.textures[0]) {
-            auto* metalTex = static_cast<MetalTexture*>(cmd.textures[0]);
-            [impl_->currentEncoder setFragmentTexture:metalTex->mtl() atIndex:0];
-            [impl_->currentEncoder setFragmentSamplerState:impl_->linearClampSampler atIndex:0];
-        }
-        if (cmd.textures.size() > 1 && cmd.textures[1]) {
-            auto* metalTex = static_cast<MetalTexture*>(cmd.textures[1]);
-            [impl_->currentEncoder setFragmentTexture:metalTex->mtl() atIndex:1];
-            [impl_->currentEncoder setFragmentSamplerState:impl_->linearClampSampler atIndex:0];
+        const NSUInteger maxMaterialTextures = 5;
+        const NSUInteger materialTextureCount =
+            std::min<NSUInteger>(cmd.textures.size(), maxMaterialTextures);
+        for (NSUInteger textureIndex = 0;
+             textureIndex < materialTextureCount;
+             ++textureIndex) {
+            if (!cmd.textures[textureIndex]) continue;
+            auto* metalTex =
+                static_cast<MetalTexture*>(cmd.textures[textureIndex]);
+            [impl_->currentEncoder setFragmentTexture:metalTex->mtl()
+                                              atIndex:textureIndex];
+            [impl_->currentEncoder setFragmentSamplerState:metalTex->sampler()
+                                                   atIndex:textureIndex];
         }
 
         // 混合状态
@@ -501,6 +697,7 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
         MTLPrimitiveType primType = MTLPrimitiveTypeTriangle;
         switch (cmd.primitive) {
             case RenderCommand::PrimitiveType::Triangles: primType = MTLPrimitiveTypeTriangle; break;
+            case RenderCommand::PrimitiveType::TriangleStrip: primType = MTLPrimitiveTypeTriangleStrip; break;
             case RenderCommand::PrimitiveType::Lines:     primType = MTLPrimitiveTypeLine; break;
             case RenderCommand::PrimitiveType::LineStrip: primType = MTLPrimitiveTypeLineStrip; break;
             case RenderCommand::PrimitiveType::Points:    primType = MTLPrimitiveTypePoint; break;
@@ -511,15 +708,31 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
                                        ? MTLIndexTypeUInt32
                                        : MTLIndexTypeUInt16;
             NSUInteger indexSize = (cmd.indexType == RenderCommand::IndexType::UInt32) ? 4 : 2;
-            [impl_->currentEncoder drawIndexedPrimitives:primType
-                                              indexCount:static_cast<NSUInteger>(cmd.indexCount)
-                                               indexType:idxType
-                                             indexBuffer:ib->mtl()
-                                       indexBufferOffset:static_cast<NSUInteger>(cmd.indexOffset * static_cast<int>(indexSize))];
+            if (cmd.instanceCount > 0) {
+                [impl_->currentEncoder drawIndexedPrimitives:primType
+                                                  indexCount:static_cast<NSUInteger>(cmd.indexCount)
+                                                   indexType:idxType
+                                                 indexBuffer:ib->mtl()
+                                           indexBufferOffset:static_cast<NSUInteger>(cmd.indexOffset * static_cast<int>(indexSize))
+                                               instanceCount:static_cast<NSUInteger>(cmd.instanceCount)];
+            } else {
+                [impl_->currentEncoder drawIndexedPrimitives:primType
+                                                  indexCount:static_cast<NSUInteger>(cmd.indexCount)
+                                                   indexType:idxType
+                                                 indexBuffer:ib->mtl()
+                                           indexBufferOffset:static_cast<NSUInteger>(cmd.indexOffset * static_cast<int>(indexSize))];
+            }
         } else {
-            [impl_->currentEncoder drawPrimitives:primType
-                                       vertexStart:0
-                                       vertexCount:static_cast<NSUInteger>(cmd.vertexCount)];
+            if (cmd.instanceCount > 0) {
+                [impl_->currentEncoder drawPrimitives:primType
+                                           vertexStart:0
+                                           vertexCount:static_cast<NSUInteger>(cmd.vertexCount)
+                                         instanceCount:static_cast<NSUInteger>(cmd.instanceCount)];
+            } else {
+                [impl_->currentEncoder drawPrimitives:primType
+                                           vertexStart:0
+                                           vertexCount:static_cast<NSUInteger>(cmd.vertexCount)];
+            }
         }
     }
 }

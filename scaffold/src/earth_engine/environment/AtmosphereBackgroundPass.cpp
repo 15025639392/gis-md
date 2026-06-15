@@ -41,6 +41,7 @@ uniform float u_fov;
 uniform float u_aspect;
 uniform float u_sunIntensity;
 uniform float u_sunAngularRadius;
+uniform float u_sunDiskEnabled;
 uniform float u_opacity;
 uniform vec2 u_resolution;
 
@@ -186,33 +187,74 @@ void main() {
     float horizonAir = (1.0 - smoothstep(0.0, 0.18, abs(viewUp))) * (1.0 - spaceFactor);
     color = mix(color, horizonColor, clamp(horizonAir * 0.22, 0.0, 0.22));
 
-    // ---- Sun disk ----
+    // ---- Sun disk and stellar glow ----
     float cosTheta = dot(rayDir, sun);
-    float sunRadius = max(u_sunAngularRadius, 0.0001);
+    float baseSunRadius = max(u_sunAngularRadius, 0.0001);
+    float sunRadius = baseSunRadius * 0.5;
+    float glowRadius = baseSunRadius * 2.0;
     float sunAngle = sqrt(max(2.0 * (1.0 - cosTheta), 0.0));
     float sunR = sunAngle / sunRadius;
+    float glowR = sunAngle / glowRadius;
 
     float diskMask = 1.0 - smoothstep(0.97, 1.03, sunR);
     float limb = sqrt(max(1.0 - sunR * sunR, 0.0));
-    float limbDarkening = mix(0.68, 1.0, pow(limb, 0.42));
-    vec3 solarCore = vec3(1.0, 0.985, 0.90);
-    vec3 solarEdge = vec3(1.0, 0.72, 0.36);
+    float limbDarkening = mix(0.72, 1.0, pow(limb, 0.42));
+    vec3 solarCore = vec3(1.0, 0.82, 0.28);
+    vec3 solarEdge = vec3(1.0, 0.42, 0.08);
     vec3 diskColor = mix(solarEdge, solarCore, pow(limb, 0.28)) * limbDarkening;
 
-    float coronaR = max(sunR - 1.0, 0.0);
-    float innerCorona = exp(-coronaR * coronaR * 2.6);
-    float outerCorona = 1.0 / (1.0 + coronaR * coronaR * 18.0);
-    float forwardScatter = smoothstep(0.72, 1.0, cosTheta);
-    vec3 coronaColor = vec3(1.0, 0.80, 0.46) * innerCorona * 0.22 +
-                       vec3(0.72, 0.84, 1.0) * outerCorona * 0.045;
+    float coronaR = max(glowR - 1.0, 0.0);
+    float innerCorona = exp(-coronaR * coronaR * 1.25);
+    float outerCorona = 1.0 / (1.0 + coronaR * coronaR * 4.2);
+    float forwardScatter = smoothstep(0.68, 1.0, cosTheta);
+
+    vec3 sunView = vec3(
+        dot(sun, u_camRight),
+        dot(sun, u_camUp),
+        dot(sun, u_camForward));
+    float sunInFront = smoothstep(0.0, 0.035, sunView.z);
+    vec2 screenUv = vec2(ndcX, ndcY);
+    vec2 sunScreenUv = sunView.xy / max(sunView.z * tanFovHalf, 0.0001);
+    vec2 screenDelta = screenUv - sunScreenUv;
+    float screenDist = length(screenDelta);
+
+    float axialHorizontal =
+        smoothstep(0.075, 0.0, abs(screenDelta.y)) *
+        smoothstep(0.95, 0.0, abs(screenDelta.x)) *
+        exp(-screenDist * 3.2);
+    float axialVertical =
+        smoothstep(0.075, 0.0, abs(screenDelta.x)) *
+        smoothstep(0.95, 0.0, abs(screenDelta.y)) *
+        exp(-screenDist * 3.2);
+    float diagonalA =
+        smoothstep(0.055, 0.0, abs(screenDelta.x - screenDelta.y)) *
+        smoothstep(0.82, 0.0, screenDist) *
+        exp(-screenDist * 4.0);
+    float diagonalB =
+        smoothstep(0.055, 0.0, abs(screenDelta.x + screenDelta.y)) *
+        smoothstep(0.82, 0.0, screenDist) *
+        exp(-screenDist * 4.0);
+    float stellarRays =
+        (axialHorizontal + axialVertical) * 0.22 +
+        (diagonalA + diagonalB) * 0.075;
+    stellarRays *= sunInFront * forwardScatter * (0.35 + 0.65 * spaceFactor);
+
+    vec3 coronaColor = vec3(1.0, 0.58, 0.16) * innerCorona * 0.34 +
+                       vec3(1.0, 0.76, 0.28) * outerCorona * 0.12 +
+                       vec3(1.0, 0.66, 0.22) * stellarRays;
     coronaColor *= forwardScatter * (0.45 + 0.55 * spaceFactor);
 
-    color += diskMask * diskColor * u_sunIntensity * 1.15;
-    color += coronaColor * u_sunIntensity;
+    float sunEnabled = step(0.5, u_sunDiskEnabled);
+    color += sunEnabled * diskMask * diskColor * u_sunIntensity * 1.45;
+    color += sunEnabled * coronaColor * u_sunIntensity;
 
     float skyAlpha = mix(1.0, 0.18, spaceFactor);
     float limbAlpha = pathScatterAmount * spaceFactor;
-    fragColor = vec4(color, clamp(max(skyAlpha, limbAlpha), 0.0, 1.0));
+    float sunAlpha = sunEnabled * sunInFront * forwardScatter *
+        clamp(diskMask + innerCorona * 0.32 + outerCorona * 0.10 + stellarRays * 0.28,
+              0.0,
+              1.0);
+    fragColor = vec4(color, clamp(max(max(skyAlpha, limbAlpha), sunAlpha), 0.0, 1.0));
 }
 )";
 
@@ -317,6 +359,7 @@ RenderCommand AtmosphereBackgroundPass::buildCommand(
     cmd.uniforms["u_aspect"] = {static_cast<float>(viewportWidth) / static_cast<float>(viewportHeight)};
     cmd.uniforms["u_sunIntensity"] = {static_cast<float>(params.sunIntensity)};
     cmd.uniforms["u_sunAngularRadius"] = {static_cast<float>(params.sunAngularRadius)};
+    cmd.uniforms["u_sunDiskEnabled"] = {params.disableSunDisk ? 0.0f : 1.0f};
     cmd.uniforms["u_opacity"] = {opacity};
     cmd.uniforms["u_resolution"] = {static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)};
 

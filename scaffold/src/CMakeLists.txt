@@ -57,6 +57,16 @@ target_sources(earth_engine_core PRIVATE
 )
 
 # ============================================================
+# content
+# ============================================================
+target_sources(earth_engine_core PRIVATE
+    earth_engine/content/GltfModel.h
+    earth_engine/content/GltfModel.cpp
+    earth_engine/content/GltfContentProvider.h
+    earth_engine/content/GltfContentProvider.cpp
+)
+
+# ============================================================
 # camera
 # ============================================================
 target_sources(earth_engine_core PRIVATE
@@ -73,6 +83,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/renderer/RenderCommand.cpp
     earth_engine/renderer/Renderer.h
     earth_engine/renderer/Renderer.cpp
+    earth_engine/renderer/IPrepareRendererResources.h
     earth_engine/renderer/TileTextureCache.h
     earth_engine/renderer/TileTextureCache.cpp
 )
@@ -104,11 +115,10 @@ target_sources(earth_engine_core PRIVATE
 target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/CrsProfile.h
     earth_engine/tiling/CrsProfile.cpp
-    earth_engine/tiling/TileGroupKey.h
-    earth_engine/tiling/LayerTilePlan.h
-    earth_engine/tiling/LayerTilePlan.cpp
     earth_engine/tiling/TileKey.h
     earth_engine/tiling/TileKey.cpp
+    earth_engine/tiling/TileRefine.h
+    earth_engine/tiling/TileBoundingVolume.h
     earth_engine/tiling/TileScheme.h
     earth_engine/tiling/TileScheme.cpp
     earth_engine/tiling/SurfaceTile.h
@@ -116,10 +126,6 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileSurface.cpp
     earth_engine/tiling/TilePlan.h
     earth_engine/tiling/TilePlan.cpp
-    earth_engine/tiling/TileQuadTree.h
-    earth_engine/tiling/TileQuadTree.cpp
-    earth_engine/tiling/TileRequestScheduler.h
-    earth_engine/tiling/TileRequestScheduler.cpp
     earth_engine/tiling/TilesetTile.h
     earth_engine/tiling/RasterMappedToTilesetTile.h
     earth_engine/tiling/RasterMappedToTilesetTile.cpp
@@ -142,28 +148,28 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/providers/HeightmapTerrainProvider.cpp
     earth_engine/providers/QuantizedMeshTerrainProvider.h
     earth_engine/providers/QuantizedMeshTerrainProvider.cpp
+    earth_engine/providers/RasterOverlayTile.h
+    earth_engine/providers/RasterOverlayTile.cpp
+    earth_engine/providers/RasterOverlayTileProvider.h
+    earth_engine/providers/RasterOverlayTileProvider.cpp
 )
 
 # ============================================================
 # layers
 # ============================================================
 target_sources(earth_engine_core PRIVATE
-    earth_engine/layers/BasemapLayer.h
-    earth_engine/layers/BasemapLayer.cpp
-    earth_engine/layers/BasemapLayerStack.h
-    earth_engine/layers/BasemapLayerStack.cpp
     earth_engine/layers/VectorLayer.h
     earth_engine/layers/VectorLayer.cpp
-    earth_engine/layers/TerrainLayer.h
-    earth_engine/layers/TerrainLayer.cpp
+    earth_engine/layers/RasterOverlay.h
+    earth_engine/layers/RasterOverlay.cpp
+    earth_engine/layers/ActivatedRasterOverlay.h
+    earth_engine/layers/ActivatedRasterOverlay.cpp
 )
 
 # ============================================================
 # debug
 # ============================================================
 target_sources(earth_engine_core PRIVATE
-    earth_engine/debug/DebugOverlay.h
-    earth_engine/debug/DebugOverlay.cpp
     earth_engine/debug/PerfTimer.h
 )
 
@@ -303,14 +309,26 @@ find_package(glm CONFIG QUIET)
 if(glm_FOUND)
     target_link_libraries(earth_engine_core PUBLIC glm::glm)
 else()
+    set(_EARTH_ENGINE_GLM_HINTS
+        ${GLM_INCLUDE_DIR}
+        $ENV{GLM_INCLUDE_DIR}
+        ${CMAKE_CURRENT_LIST_DIR}/../third_party/glm/include
+        $ENV{VCPKG_ROOT}/installed/$ENV{VCPKG_DEFAULT_TRIPLET}/include
+        $ENV{VCPKG_ROOT}/packages/glm_arm64-android/include
+        ${CMAKE_CURRENT_LIST_DIR}/../../../globe/third_party/vcpkg/packages/glm_arm64-android/include
+    )
     find_path(GLM_INCLUDE_DIR glm/glm.hpp
-        HINTS /opt/homebrew/include /usr/local/include
+        HINTS
+            ${_EARTH_ENGINE_GLM_HINTS}
+            /opt/homebrew/include
+            /usr/local/include
         NO_CMAKE_FIND_ROOT_PATH
     )
     if(NOT GLM_INCLUDE_DIR)
         message(FATAL_ERROR "GLM headers not found. Install glm or set GLM_INCLUDE_DIR.")
     endif()
     target_include_directories(earth_engine_core PUBLIC ${GLM_INCLUDE_DIR})
+    unset(_EARTH_ENGINE_GLM_HINTS)
 endif()
 
 find_package(nlohmann_json CONFIG QUIET)

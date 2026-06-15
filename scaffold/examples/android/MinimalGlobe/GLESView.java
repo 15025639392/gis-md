@@ -249,12 +249,6 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
 
     // --- Debug panel native methods ---
     public native String nativeGetDiagnosticsString();
-    public native boolean nativeGetDebugOverlayEnabled();
-    public native boolean nativeGetTerrainEnabled();
-    public native boolean nativeGetNormalMapDebugEnabled();
-    public native void nativeSetDebugOverlay(boolean enabled);
-    public native void nativeSetTerrainEnabled(boolean enabled);
-    public native void nativeSetNormalMapDebug(boolean enabled);
     public native void nativeAddDemoVectorLayer();
     public native void nativeResetCamera();
 }

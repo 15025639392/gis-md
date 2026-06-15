@@ -4,6 +4,19 @@
 #include <cmath>
 
 namespace earth_engine {
+namespace {
+
+bool clampTileCoordinate(double& coordinate) {
+    constexpr double kTileCoordinateEpsilon = 1e-12;
+    if (coordinate < -kTileCoordinateEpsilon ||
+        coordinate > 1.0 + kTileCoordinateEpsilon) {
+        return false;
+    }
+    coordinate = std::clamp(coordinate, 0.0, 1.0);
+    return true;
+}
+
+} // namespace
 
 TerrainTile::TerrainTile(TileKey key,
                           const TileScheme& scheme,
@@ -26,8 +39,9 @@ float TerrainTile::sampleHeight(double lngRad, double latRad,
     // QM-rasterized grids cover the full tile without padding.
     // No skirt-trim remapping is needed (unlike Mapbox RGB terrain).
 
-    // 超出范围 → 尝试父瓦片
-    if (u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0) {
+    // ECEF→cartographic round-trips can move exact tile-edge points a few
+    // ulps outside the source rectangle; keep those on the owning tile.
+    if (!clampTileCoordinate(u) || !clampTileCoordinate(v)) {
         if (parentTile) return parentTile->sampleHeight(lngRad, latRad);
         return 0.0f;
     }

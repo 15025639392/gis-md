@@ -156,9 +156,9 @@ TEST(GeographicTMSSchemeTest, CesiumSampleTileContainsServiceArea) {
         106.508 * M_PI / 180.0, 29.617 * M_PI / 180.0, 12);
 
     EXPECT_EQ(12, key.z);
-    EXPECT_EQ(6521, key.x);
-    EXPECT_EQ(2722, key.y);
+    EXPECT_EQ(6519, key.x);
+    EXPECT_EQ(2721, key.y);
 
-    Rectangle sample = scheme->tileToRectangle(TileKey{"Geographic-TMS", 12, 6487, 2685});
+    Rectangle sample = scheme->tileToRectangle(TileKey{"Geographic-TMS", 12, 6489, 2687});
     EXPECT_TRUE(sample.contains(105.17 * M_PI / 180.0, 28.1 * M_PI / 180.0));
 }

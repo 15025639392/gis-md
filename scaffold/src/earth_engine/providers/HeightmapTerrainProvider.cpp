@@ -103,11 +103,21 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
     AsyncSystem::pool().enqueue(
         [this, url, key, token = std::move(token),
          callback = std::move(callback)]() mutable {
-            if (token.isCancelled()) { callback(key, nullptr); return; }
+            if (token.isCancelled()) {
+                callback(key, TerrainTileLoadResult::cancelled());
+                return;
+            }
             auto body = httpGet(url);
-            if (token.isCancelled() || body.empty()) { callback(key, nullptr); return; }
+            if (token.isCancelled()) {
+                callback(key, TerrainTileLoadResult::cancelled());
+                return;
+            }
+            if (body.empty()) {
+                callback(key, TerrainTileLoadResult::retryLater());
+                return;
+            }
             auto hm = decodeTile(body.data(), body.size());
-            callback(key, std::move(hm));
+            callback(key, TerrainTileLoadResult::success(std::move(hm)));
         });
 }
 

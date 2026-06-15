@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <optional>
 
 namespace earth_engine {
 
@@ -89,9 +90,10 @@ public:
 
 private:
     /// 射线-椭球相交（WGS84）
-    /// @return 交点 ECEF 坐标，无交点返回 Vec3::zero()
-    static Vec3 rayEllipsoidIntersection(const Vec3& rayOrigin,
-                                          const Vec3& rayDirection);
+    /// @return 交点 ECEF 坐标，无交点返回 std::nullopt。
+    static std::optional<Vec3> rayEllipsoidIntersection(
+        const Vec3& rayOrigin,
+        const Vec3& rayDirection);
 
     /// 射线-三角形相交（Möller–Trumbore）
     static bool rayTriangleIntersection(const Vec3& rayOrigin,

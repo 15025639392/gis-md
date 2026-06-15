@@ -81,7 +81,7 @@ struct TextureDesc {
     enum class Filter { Linear, Nearest } minFilter = Filter::Linear;
     Filter magFilter = Filter::Linear;
     float maxAnisotropy = 1.0f;
-    enum class Wrap { Clamp, Repeat } wrapS = Wrap::Clamp, wrapT = Wrap::Clamp;
+    enum class Wrap { Clamp, Repeat, MirroredRepeat } wrapS = Wrap::Clamp, wrapT = Wrap::Clamp;
 };
 
 struct BufferDesc {

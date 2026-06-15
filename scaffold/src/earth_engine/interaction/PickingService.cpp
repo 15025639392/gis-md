@@ -17,45 +17,30 @@ namespace earth_engine {
 // 射线-椭球相交
 // ============================================================
 
-Vec3 PickingService::rayEllipsoidIntersection(const Vec3& origin,
-                                                const Vec3& direction) {
+std::optional<Vec3> PickingService::rayEllipsoidIntersection(
+    const Vec3& origin,
+    const Vec3& direction) {
     const auto& e = Ellipsoid::WGS84();
-    double a = e.semiMajorAxis();
-    double b = e.semiMinorAxis();
-    double s = a / b;  // z 轴缩放因子
+    auto interval = e.rayIntersectionInterval(origin, direction);
+    if (!interval) {
+        return std::nullopt;
+    }
 
-    // 缩放到单位球空间
-    double ox = origin.x();
-    double oy = origin.y();
-    double oz = origin.z() * s;
-    double dx = direction.x();
-    double dy = direction.y();
-    double dz = direction.z() * s;
+    double t = interval->entryDistance;
+    if (t <= 0.0) {
+        auto originCartographic = e.tryCartesianToCartographic(origin);
+        if (originCartographic &&
+            std::abs(originCartographic->height()) < 1e-6) {
+            return origin;
+        }
+        t = interval->exitDistance;
+    }
 
-    // Ray-sphere: |o + t*d|² = a²
-    double A = dx * dx + dy * dy + dz * dz;
-    double B = 2.0 * (ox * dx + oy * dy + oz * dz);
-    double C = ox * ox + oy * oy + oz * oz - a * a;
+    if (t <= 0.0) {
+        return std::nullopt;
+    }
 
-    double discriminant = B * B - 4.0 * A * C;
-    if (discriminant < 0.0) return Vec3::zero();
-
-    double sqrtD = std::sqrt(discriminant);
-    double t0 = (-B - sqrtD) / (2.0 * A);
-    double t1 = (-B + sqrtD) / (2.0 * A);
-
-    // 取最小的正 t
-    double t = -1.0;
-    if (t0 > 0.0) t = t0;
-    else if (t1 > 0.0) t = t1;
-
-    if (t <= 0.0) return Vec3::zero();
-
-    return Vec3(
-        origin.x() + t * direction.x(),
-        origin.y() + t * direction.y(),
-        origin.z() + t * direction.z()
-    );
+    return origin + direction * t;
 }
 
 // ============================================================
@@ -297,14 +282,17 @@ PickResult PickingService::pickEllipsoid(
         static_cast<double>(screenYPixels),
         viewportWidthPixels, viewportHeightPixels);
 
-    Vec3 hit = rayEllipsoidIntersection(ray.origin(), ray.direction());
+    auto hit = rayEllipsoidIntersection(ray.origin(), ray.direction());
 
-    if (hit.x() != 0.0 || hit.y() != 0.0 || hit.z() != 0.0) {
+    if (hit) {
+        auto cartographic = Ellipsoid::WGS84().tryCartesianToCartographic(*hit);
+        if (!cartographic) {
+            return result;
+        }
         result.hitType = PickResult::HitType::Ellipsoid;
-        result.worldPosition = hit;
-        result.cartographic =
-            Ellipsoid::WGS84().cartesianToCartographic(hit);
-        result.distance = (hit - ray.origin()).length();
+        result.worldPosition = *hit;
+        result.cartographic = *cartographic;
+        result.distance = (*hit - ray.origin()).length();
     }
 
     return result;

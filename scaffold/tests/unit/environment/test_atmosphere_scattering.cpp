@@ -35,12 +35,13 @@ static double midnightJD() {
 class AtmosphereScatteringTest : public ::testing::Test {
 protected:
     SkyGradient gradient_;
+    Vec3 localUp_ = Vec3::unitX();  // Greenwich equator test point.
 };
 
 TEST_F(AtmosphereScatteringTest, ZenithBlueAtNoon) {
     // 夏至中午：天顶应该是蓝色
     Vec3 sunDir = SunDirection::compute(juneSolsticeJD());
-    gradient_.update(sunDir, 0.0);  // sea level
+    gradient_.update(sunDir, localUp_, 0.0);  // sea level
 
     auto& zenith = gradient_.zenithColor();
     // 蓝色分量应大于红色分量（Rayleigh 散射）
@@ -54,7 +55,7 @@ TEST_F(AtmosphereScatteringTest, ZenithBlueAtNoon) {
 TEST_F(AtmosphereScatteringTest, HorizonBrighterThanZenith) {
     // 地平线应该比天顶亮（更长的大气路径 → 更多散射光）
     Vec3 sunDir = SunDirection::compute(juneSolsticeJD());
-    gradient_.update(sunDir, 0.0);
+    gradient_.update(sunDir, localUp_, 0.0);
 
     auto& zenith = gradient_.zenithColor();
     auto& horizon = gradient_.horizonColor();
@@ -68,7 +69,7 @@ TEST_F(AtmosphereScatteringTest, HorizonBrighterThanZenith) {
 TEST_F(AtmosphereScatteringTest, NightSkyIsDark) {
     // 午夜：天空应该非常暗
     Vec3 sunDir = SunDirection::compute(midnightJD());
-    gradient_.update(sunDir, 0.0);
+    gradient_.update(sunDir, localUp_, 0.0);
 
     auto& zenith = gradient_.zenithColor();
     auto& ambient = gradient_.ambientColor();
@@ -83,11 +84,11 @@ TEST_F(AtmosphereScatteringTest, NightSkyIsDark) {
 
 TEST_F(AtmosphereScatteringTest, SunElevationMatchesSunDirection) {
     Vec3 sunDir = SunDirection::compute(juneSolsticeJD());
-    gradient_.update(sunDir, 0.0);
+    gradient_.update(sunDir, localUp_, 0.0);
 
     double elevation = gradient_.sunElevation();
-    // 太阳方向的 Z 分量应与仰角一致
-    double expectedElev = std::asin(sunDir.z());
+    // 太阳方向相对当前位置椭球法线的夹角应与仰角一致
+    double expectedElev = std::asin(sunDir.dot(localUp_));
     EXPECT_NEAR(elevation, expectedElev, 1e-6);
 }
 
@@ -95,12 +96,12 @@ TEST_F(AtmosphereScatteringTest, CameraAltitudeReducesAtmosphere) {
     Vec3 sunDir = SunDirection::compute(juneSolsticeJD());
 
     // 地面
-    gradient_.update(sunDir, 0.0);
+    gradient_.update(sunDir, localUp_, 0.0);
     auto groundHorizon = gradient_.horizonColor();
     float groundBrightness = groundHorizon[0] + groundHorizon[1] + groundHorizon[2];
 
     // 高空（100km，大气层顶）
-    gradient_.update(sunDir, 100000.0);
+    gradient_.update(sunDir, localUp_, 100000.0);
     auto spaceHorizon = gradient_.horizonColor();
     float spaceBrightness = spaceHorizon[0] + spaceHorizon[1] + spaceHorizon[2];
 
@@ -125,7 +126,7 @@ TEST_F(AtmosphereScatteringTest, AllColorsInValidRange) {
 
     for (const auto& tc : cases) {
         Vec3 sunDir = SunDirection::compute(tc.jd);
-        gradient_.update(sunDir, tc.altitude);
+        gradient_.update(sunDir, localUp_, tc.altitude);
 
         auto& z = gradient_.zenithColor();
         auto& h = gradient_.horizonColor();

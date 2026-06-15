@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <cmath>
 #include <glm/gtc/constants.hpp>
+#include <limits>
+#include <vector>
 
 namespace earth_engine {
 namespace {
@@ -78,20 +80,28 @@ TileSurfaceVertex TileSurface::vertexForUnitUv(const Rectangle& tileBounds,
 TileTextureWindow TileSurface::computeTranslationAndScale(
     const Rectangle& geometryBounds,
     const Rectangle& imageryBounds) {
-    const double imgWidth = imageryBounds.east() - imageryBounds.west();
-    const double imgHeight = imageryBounds.north() - imageryBounds.south();
+    const double imgWidth = imageryBounds.width();
+    const double imgHeight = imageryBounds.height();
     if (imgWidth <= 0.0 || imgHeight <= 0.0) return {};
 
-    const double geoWidth = geometryBounds.east() - geometryBounds.west();
-    const double geoHeight = geometryBounds.north() - geometryBounds.south();
+    const double geoWidth = geometryBounds.width();
+    const double geoHeight = geometryBounds.height();
+    if (geoWidth <= 0.0 || geoHeight <= 0.0) return {};
 
     TileTextureWindow window;
     window.offsetU = static_cast<float>(
         (geometryBounds.west() - imageryBounds.west()) / imgWidth);
     window.scaleU = static_cast<float>(geoWidth / imgWidth);
     window.offsetV = static_cast<float>(
-        (imageryBounds.north() - geometryBounds.north()) / imgHeight);
+        (geometryBounds.south() - imageryBounds.south()) / imgHeight);
     window.scaleV = static_cast<float>(geoHeight / imgHeight);
+    return window;
+}
+
+TileTextureWindow TileSurface::textureWindowForNorthWestUv(
+    const TileTextureWindow& nativeWindow) {
+    TileTextureWindow window = nativeWindow;
+    window.offsetV = 1.0f - nativeWindow.offsetV - nativeWindow.scaleV;
     return window;
 }
 
@@ -104,6 +114,7 @@ SurfaceTileMesh TileSurface::buildEllipsoidMesh(const Rectangle& tileBounds,
     mesh.gridSize = safeGrid;
     mesh.winding = SurfaceTileMeshWinding::Outward;
     mesh.sampling = samplingForBounds(tileBounds);
+    mesh.rasterOverlayDetails.setGeographicRectangle(tileBounds);
     mesh.vertices.reserve(static_cast<size_t>(n * n));
     mesh.indices.reserve(static_cast<size_t>(safeGrid * safeGrid * 6));
 
@@ -178,6 +189,7 @@ SurfaceTileMesh TileSurface::buildTerrainMesh(const Rectangle& tileBounds,
     mesh.gridSize = safeGrid;
     mesh.winding = SurfaceTileMeshWinding::Outward;
     mesh.sampling = samplingForBounds(tileBounds);
+    mesh.rasterOverlayDetails.setGeographicRectangle(tileBounds);
     mesh.vertices.reserve(static_cast<size_t>(n * n));
     mesh.indices.reserve(static_cast<size_t>(safeGrid * safeGrid * 6));
 
@@ -428,6 +440,221 @@ SurfaceTileMesh TileSurface::buildTerrainMesh(const Rectangle& tileBounds,
     }
 
     return mesh;
+}
+
+std::optional<SurfaceTileMesh> TileSurface::upsampleChildMeshFromParent(
+    const SurfaceTileMesh& parentMesh,
+    const Rectangle& parentBounds,
+    const Rectangle& childBounds) {
+    if (parentMesh.vertices.empty() || parentMesh.indices.size() < 3) {
+        return std::nullopt;
+    }
+
+    const double parentWidth = parentBounds.width();
+    const double parentHeight = parentBounds.height();
+    if (parentWidth <= 0.0 || parentHeight <= 0.0) {
+        return std::nullopt;
+    }
+
+    auto longitudeOffset = [&](double longitude) {
+        double offset = longitude - parentBounds.west();
+        if (parentBounds.crossesAntimeridian() && offset < 0.0) {
+            offset += glm::two_pi<double>();
+        }
+        return offset;
+    };
+
+    double uMin = longitudeOffset(childBounds.west()) / parentWidth;
+    double uMax = longitudeOffset(childBounds.east()) / parentWidth;
+    if (parentBounds.crossesAntimeridian() && uMax < uMin) {
+        uMax += 1.0;
+    }
+    double vMin = (parentBounds.north() - childBounds.north()) / parentHeight;
+    double vMax = (parentBounds.north() - childBounds.south()) / parentHeight;
+
+    uMin = std::clamp(uMin, 0.0, 1.0);
+    uMax = std::clamp(uMax, 0.0, 1.0);
+    vMin = std::clamp(vMin, 0.0, 1.0);
+    vMax = std::clamp(vMax, 0.0, 1.0);
+    if (uMax <= uMin || vMax <= vMin) {
+        return std::nullopt;
+    }
+
+    struct ClipVertex {
+        SurfaceVertex vertex;
+        double u = 0.0;
+        double v = 0.0;
+    };
+
+    auto interpolate = [](const ClipVertex& a,
+                          const ClipVertex& b,
+                          double t) {
+        t = std::clamp(t, 0.0, 1.0);
+        ClipVertex out;
+        out.u = mix(a.u, b.u, t);
+        out.v = mix(a.v, b.v, t);
+        setPosition(
+            out.vertex,
+            a.vertex.positionEcef +
+                (b.vertex.positionEcef - a.vertex.positionEcef) * t);
+
+        Vec3 normal = a.vertex.normalEcef +
+                      (b.vertex.normalEcef - a.vertex.normalEcef) * t;
+        if (normal.lengthSquared() > 0.0) {
+            normal = normal.normalized();
+        } else {
+            normal = Ellipsoid::WGS84().geodeticSurfaceNormal(
+                out.vertex.positionEcef);
+        }
+        out.vertex.normalEcef = normal;
+        out.vertex.uv = {
+            static_cast<float>(out.u),
+            static_cast<float>(out.v)
+        };
+        return out;
+    };
+
+    auto clipPolygon = [&](const std::vector<ClipVertex>& input,
+                           int axis,
+                           double threshold,
+                           bool keepGreater) {
+        std::vector<ClipVertex> output;
+        if (input.empty()) return output;
+        output.reserve(input.size() + 1);
+
+        auto component = [axis](const ClipVertex& v) {
+            return axis == 0 ? v.u : v.v;
+        };
+        auto inside = [&](const ClipVertex& v) {
+            const double c = component(v);
+            constexpr double kEpsilon = 1e-12;
+            return keepGreater ? c >= threshold - kEpsilon
+                               : c <= threshold + kEpsilon;
+        };
+
+        ClipVertex previous = input.back();
+        bool previousInside = inside(previous);
+        for (const ClipVertex& current : input) {
+            const bool currentInside = inside(current);
+            if (currentInside != previousInside) {
+                const double denom = component(current) - component(previous);
+                if (std::abs(denom) > 1e-15) {
+                    const double t = (threshold - component(previous)) / denom;
+                    output.push_back(interpolate(previous, current, t));
+                }
+            }
+            if (currentInside) {
+                output.push_back(current);
+            }
+            previous = current;
+            previousInside = currentInside;
+        }
+        return output;
+    };
+
+    SurfaceTileMesh child;
+    child.gridSize = 0;
+    child.winding = parentMesh.winding;
+    child.sampling = parentMesh.sampling;
+    child.waterMask = parentMesh.waterMask;
+    child.metadataAvailability = parentMesh.metadataAvailability;
+    child.rasterOverlayDetails.setGeographicRectangle(childBounds);
+
+    const uint32_t indexBegin = parentMesh.skirtMeta.noSkirtIndicesCount > 0
+        ? parentMesh.skirtMeta.noSkirtIndicesBegin
+        : 0;
+    const uint32_t indexEnd = parentMesh.skirtMeta.noSkirtIndicesCount > 0
+        ? indexBegin + parentMesh.skirtMeta.noSkirtIndicesCount
+        : static_cast<uint32_t>(parentMesh.indices.size());
+    const uint32_t safeIndexEnd = std::min<uint32_t>(
+        indexEnd,
+        static_cast<uint32_t>(parentMesh.indices.size()));
+
+    double minHeight = std::numeric_limits<double>::max();
+    double maxHeight = std::numeric_limits<double>::lowest();
+    const auto& ellipsoid = Ellipsoid::WGS84();
+
+    auto appendVertex = [&](ClipVertex vertex) {
+        vertex.u = (vertex.u - uMin) / (uMax - uMin);
+        vertex.v = (vertex.v - vMin) / (vMax - vMin);
+        vertex.u = std::clamp(vertex.u, 0.0, 1.0);
+        vertex.v = std::clamp(vertex.v, 0.0, 1.0);
+        vertex.vertex.uv = {
+            static_cast<float>(vertex.u),
+            static_cast<float>(vertex.v)
+        };
+        setPosition(vertex.vertex, vertex.vertex.positionEcef);
+        if (vertex.vertex.normalEcef.lengthSquared() > 0.0) {
+            vertex.vertex.normalEcef = vertex.vertex.normalEcef.normalized();
+        } else {
+            vertex.vertex.normalEcef =
+                ellipsoid.geodeticSurfaceNormal(vertex.vertex.positionEcef);
+        }
+
+        const Cartographic cart =
+            ellipsoid.cartesianToCartographic(vertex.vertex.positionEcef);
+        minHeight = std::min(minHeight, cart.height());
+        maxHeight = std::max(maxHeight, cart.height());
+
+        child.vertices.push_back(vertex.vertex);
+        return static_cast<uint32_t>(child.vertices.size() - 1);
+    };
+
+    for (uint32_t i = indexBegin; i + 2 < safeIndexEnd; i += 3) {
+        const uint32_t ia = parentMesh.indices[i];
+        const uint32_t ib = parentMesh.indices[i + 1];
+        const uint32_t ic = parentMesh.indices[i + 2];
+        if (ia >= parentMesh.vertices.size() ||
+            ib >= parentMesh.vertices.size() ||
+            ic >= parentMesh.vertices.size()) {
+            continue;
+        }
+
+        std::vector<ClipVertex> polygon = {
+            ClipVertex{parentMesh.vertices[ia],
+                       parentMesh.vertices[ia].uv[0],
+                       parentMesh.vertices[ia].uv[1]},
+            ClipVertex{parentMesh.vertices[ib],
+                       parentMesh.vertices[ib].uv[0],
+                       parentMesh.vertices[ib].uv[1]},
+            ClipVertex{parentMesh.vertices[ic],
+                       parentMesh.vertices[ic].uv[0],
+                       parentMesh.vertices[ic].uv[1]}
+        };
+
+        polygon = clipPolygon(polygon, 0, uMin, true);
+        polygon = clipPolygon(polygon, 0, uMax, false);
+        polygon = clipPolygon(polygon, 1, vMin, true);
+        polygon = clipPolygon(polygon, 1, vMax, false);
+        if (polygon.size() < 3) {
+            continue;
+        }
+
+        const uint32_t base = appendVertex(polygon[0]);
+        uint32_t previous = appendVertex(polygon[1]);
+        for (size_t p = 2; p < polygon.size(); ++p) {
+            const uint32_t current = appendVertex(polygon[p]);
+            child.indices.push_back(base);
+            child.indices.push_back(previous);
+            child.indices.push_back(current);
+            previous = current;
+        }
+    }
+
+    if (child.vertices.empty() || child.indices.empty()) {
+        return std::nullopt;
+    }
+
+    child.skirtMeta.noSkirtVerticesBegin = 0;
+    child.skirtMeta.noSkirtVerticesCount =
+        static_cast<uint32_t>(child.vertices.size());
+    child.skirtMeta.noSkirtIndicesBegin = 0;
+    child.skirtMeta.noSkirtIndicesCount =
+        static_cast<uint32_t>(child.indices.size());
+    child.hasHeightRange = true;
+    child.minimumHeight = minHeight;
+    child.maximumHeight = maxHeight;
+    return child;
 }
 
 SurfaceNormalMap TileSurface::buildNormalMap(const SurfaceTileMesh& mesh) {

@@ -6,6 +6,7 @@
 #include "../core/math/Vec3.h"
 
 #include <array>
+#include <optional>
 
 namespace earth_engine {
 
@@ -32,9 +33,16 @@ public:
                                              double u,
                                              double v);
 
-    // cesium-native: RasterOverlayUtilities::computeTranslationAndScale
+    // cesium-native: RasterOverlayUtilities::computeTranslationAndScale.
+    // Returns translation/scale in projected overlay UV space, where V grows
+    // from the projection rectangle's minimumY (south) to maximumY (north).
     static TileTextureWindow computeTranslationAndScale(const Rectangle& geometryBounds,
                                                          const Rectangle& imageryBounds);
+
+    /// Convert native projected-overlay translation/scale to this renderer's
+    /// current mesh UV convention: V=0 at the north edge and V=1 at the south.
+    static TileTextureWindow textureWindowForNorthWestUv(
+        const TileTextureWindow& nativeWindow);
 
     static SurfaceTileMesh buildEllipsoidMesh(const Rectangle& tileBounds,
                                               int gridSize);
@@ -49,6 +57,18 @@ public:
                                             double skirtHeightMeters = 0.0,
                                             const TerrainTile* parentTile = nullptr,
                                             bool useRawQuantizedMesh = true);
+
+    /// cesium-native RasterOverlayUtilities::upsampleGltfForRasterOverlays
+    /// equivalent for this engine's native SurfaceTileMesh content.
+    ///
+    /// The child mesh is cut from the parent's rendered triangles in parent
+    /// overlay UV space, with all floating vertex attributes interpolated from
+    /// the parent. It does not resample an ancestor heightmap or rebuild an
+    /// ellipsoid grid.
+    static std::optional<SurfaceTileMesh> upsampleChildMeshFromParent(
+        const SurfaceTileMesh& parentMesh,
+        const Rectangle& parentBounds,
+        const Rectangle& childBounds);
 
     /// 从 SurfaceTile mesh 顶点法线派生 OpenGlobus-style normal map。
     /// normal 以 ECEF/world space 单位向量编码到 RGBA8：rgb = normal * 0.5 + 0.5。

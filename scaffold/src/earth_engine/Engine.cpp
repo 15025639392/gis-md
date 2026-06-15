@@ -2,9 +2,7 @@
 #include "scene/Scene.h"
 #include "scene/Camera.h"
 #include "renderer/RenderDevice.h"
-#include "layers/BasemapLayer.h"
 #include "layers/VectorLayer.h"
-#include "layers/TerrainLayer.h"
 #include "tiling/Tileset.h"
 #include "interaction/InputEvent.h"
 #include "interaction/PickingService.h"
@@ -12,6 +10,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <utility>
 
 namespace earth_engine {
 
@@ -137,35 +136,6 @@ Camera& Engine::camera() {
     return scene_->camera();
 }
 
-void Engine::addLayer(std::unique_ptr<BasemapLayer> layer) {
-    scene_->addLayer(std::move(layer));
-}
-
-std::unique_ptr<BasemapLayer> Engine::removeLayer(const std::string& layerId) {
-    return scene_->removeLayer(layerId);
-}
-
-void Engine::moveLayer(const std::string& layerId, size_t index) {
-    scene_->moveLayer(layerId, index);
-}
-
-size_t Engine::layerCount() const {
-    return scene_->layerCount();
-}
-
-int Engine::visibleTileCount() const {
-    return scene_->visibleTileCount();
-}
-
-int Engine::cachedTileCount() const {
-    return scene_->cachedTileCount();
-}
-
-std::vector<BasemapLayerStack::ControlPointResult>
-Engine::verifyControlPoint(double lngRad, double latRad, int zoom) const {
-    return scene_->verifyControlPoint(lngRad, latRad, zoom);
-}
-
 // ---- 矢量图层 ----
 
 void Engine::addVectorLayer(std::unique_ptr<VectorLayer> layer) {
@@ -180,18 +150,29 @@ size_t Engine::vectorLayerCount() const {
     return scene_->vectorLayerCount();
 }
 
-// ---- 地形 ----
-
-void Engine::setTerrainLayer(std::unique_ptr<TerrainLayer> layer) {
-    scene_->setTerrainLayer(std::move(layer));
-}
-
-void Engine::setTerrainEnabled(bool enabled) {
-    scene_->setTerrainEnabled(enabled);
-}
-
 void Engine::setTileset(std::unique_ptr<Tileset> tileset) {
     scene_->setTileset(std::move(tileset));
+}
+
+void Engine::addTileset(std::unique_ptr<Tileset> tileset) {
+    scene_->addTileset(std::move(tileset));
+}
+
+void Engine::setSelectorViewOverride(
+    std::vector<FrameState::SelectorView> selectorViews) {
+    scene_->setSelectorViewOverride(std::move(selectorViews));
+}
+
+void Engine::clearSelectorViewOverride() {
+    scene_->clearSelectorViewOverride();
+}
+
+void Engine::setOcclusionCallback(Tileset::OcclusionCallback callback) {
+    scene_->setOcclusionCallback(std::move(callback));
+}
+
+void Engine::clearOcclusionCallback() {
+    scene_->clearOcclusionCallback();
 }
 
 bool Engine::hasTerrain() const {
@@ -240,22 +221,6 @@ void Engine::getClearColor(float& r, float& g, float& b, float& a) const {
     g = fs.clearG;
     b = fs.clearB;
     a = fs.clearA;
-}
-
-void Engine::setDebugOverlayEnabled(bool enabled) {
-    scene_->setDebugOverlayEnabled(enabled);
-}
-
-bool Engine::debugOverlayEnabled() const {
-    return scene_->debugOverlayEnabled();
-}
-
-void Engine::setNormalMapDebugEnabled(bool enabled) {
-    // Forward to all basemap layers through the Scene's layer stack.
-    auto& stack = scene_->layerStack();
-    for (auto& layer : stack.layers()) {
-        layer->setNormalMapDebugEnabled(enabled);
-    }
 }
 
 const Diagnostics& Engine::diagnostics() const {

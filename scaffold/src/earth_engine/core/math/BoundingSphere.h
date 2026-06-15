@@ -17,14 +17,14 @@ public:
     constexpr double getRadius() const noexcept { return radius_; }
 
     /// Determines on which side of a plane this sphere is located.
-    /// Returns: < 0 = Inside (entire sphere on normal side),
-    ///          > 0 = Outside (entire sphere on opposite side),
+    /// Returns: < 0 = Outside (entire sphere on opposite side),
+    ///          > 0 = Inside (entire sphere on normal side),
     ///          == 0 = Intersecting.
     int intersectPlane(const Plane& plane) const noexcept {
         const double d = plane.getPointDistance(center_);
-        if (d < -radius_) return -1;  // Inside
-        if (d > radius_) return 1;    // Outside
-        return 0;                      // Intersecting
+        if (d < -radius_) return -1;  // Outside
+        if (d < radius_) return 0;     // Intersecting
+        return 1;                      // Inside
     }
 
     /// Computes the squared distance from a position to the closest point

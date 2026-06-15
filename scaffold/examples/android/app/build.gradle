@@ -19,7 +19,10 @@ android {
 
         externalNativeBuild {
             cmake {
-                arguments "-DGLM_INCLUDE_DIR=/Users/ldy/Desktop/work/globe/third_party/vcpkg/packages/glm_arm64-android/include"
+                def glmIncludeDir = System.getenv("GLM_INCLUDE_DIR")
+                if (glmIncludeDir != null && !glmIncludeDir.isBlank()) {
+                    arguments "-DGLM_INCLUDE_DIR=${glmIncludeDir}"
+                }
                 cppFlags "-std=c++17"
             }
         }

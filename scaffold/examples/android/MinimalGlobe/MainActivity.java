@@ -9,12 +9,10 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
-import android.widget.CompoundButton;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
-import android.widget.ToggleButton;
 
 public class MainActivity extends Activity {
 
@@ -22,9 +20,6 @@ public class MainActivity extends Activity {
     private View mDebugPanel;
     private Button mDebugButton;
     private TextView mDiagnosticsText;
-    private ToggleButton mToggleOverlay;
-    private ToggleButton mToggleTerrain;
-    private ToggleButton mToggleNormalMap;
     private Button mBtnAddVectorLayer;
     private Button mBtnResetCamera;
     private Handler mHandler;
@@ -94,39 +89,6 @@ public class MainActivity extends Activity {
         mDiagnosticsText.setPadding(0, 12, 0, 12);
         panel.addView(mDiagnosticsText);
 
-        // Toggles row 1
-        LinearLayout toggles1 = new LinearLayout(this);
-        toggles1.setOrientation(LinearLayout.HORIZONTAL);
-
-        mToggleOverlay = new ToggleButton(this);
-        mToggleOverlay.setText("Overlay");
-        mToggleOverlay.setTextOn("Overlay ON");
-        mToggleOverlay.setTextOff("Overlay OFF");
-        mToggleOverlay.setOnCheckedChangeListener((btn, on) -> setDebugOverlay(on));
-        toggles1.addView(mToggleOverlay);
-
-        mToggleTerrain = new ToggleButton(this);
-        mToggleTerrain.setText("Terrain");
-        mToggleTerrain.setTextOn("Terrain ON");
-        mToggleTerrain.setTextOff("Terrain OFF");
-        mToggleTerrain.setOnCheckedChangeListener((btn, on) -> setTerrainEnabled(on));
-        toggles1.addView(mToggleTerrain);
-
-        panel.addView(toggles1);
-
-        // Toggles row 2
-        LinearLayout toggles2 = new LinearLayout(this);
-        toggles2.setOrientation(LinearLayout.HORIZONTAL);
-
-        mToggleNormalMap = new ToggleButton(this);
-        mToggleNormalMap.setText("NormalMap");
-        mToggleNormalMap.setTextOn("Norm ON");
-        mToggleNormalMap.setTextOff("Norm OFF");
-        mToggleNormalMap.setOnCheckedChangeListener((btn, on) -> setNormalMapDebug(on));
-        toggles2.addView(mToggleNormalMap);
-
-        panel.addView(toggles2);
-
         // Action buttons
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
@@ -161,7 +123,6 @@ public class MainActivity extends Activity {
         } else {
             mDebugPanel.setVisibility(View.VISIBLE);
             refreshDiagnostics();
-            refreshToggles();
         }
     }
 
@@ -173,16 +134,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void refreshToggles() {
-        mToggleOverlay.setChecked(mGLView.nativeGetDebugOverlayEnabled());
-        mToggleTerrain.setChecked(mGLView.nativeGetTerrainEnabled());
-        mToggleNormalMap.setChecked(mGLView.nativeGetNormalMapDebugEnabled());
-    }
-
-    // --- Toggle actions (call through to GLESView native) ---
-    private void setDebugOverlay(boolean on) { mGLView.nativeSetDebugOverlay(on); }
-    private void setTerrainEnabled(boolean on) { mGLView.nativeSetTerrainEnabled(on); }
-    private void setNormalMapDebug(boolean on) { mGLView.nativeSetNormalMapDebug(on); }
+    // --- Actions (call through to GLESView native) ---
     private void addDemoVectorLayer() { mGLView.nativeAddDemoVectorLayer(); }
     private void resetCamera() { mGLView.nativeResetCamera(); }
 

@@ -148,6 +148,7 @@ std::unique_ptr<Texture> RenderDeviceGLES::createTexture(const TextureDesc& desc
     }
 
     GLenum type = GL_UNSIGNED_BYTE;
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexImage2D(GL_TEXTURE_2D, 0, internalFormat,
                  desc.width, desc.height, 0,
                  format, type, desc.data);
@@ -169,8 +170,19 @@ std::unique_ptr<Texture> RenderDeviceGLES::createTexture(const TextureDesc& desc
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, anisotropy);
     }
 
-    GLint wrapS = desc.wrapS == TextureDesc::Wrap::Repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE;
-    GLint wrapT = desc.wrapT == TextureDesc::Wrap::Repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+    auto toGlWrap = [](TextureDesc::Wrap wrap) {
+        switch (wrap) {
+            case TextureDesc::Wrap::Repeat:
+                return GL_REPEAT;
+            case TextureDesc::Wrap::MirroredRepeat:
+                return GL_MIRRORED_REPEAT;
+            case TextureDesc::Wrap::Clamp:
+            default:
+                return GL_CLAMP_TO_EDGE;
+        }
+    };
+    GLint wrapS = toGlWrap(desc.wrapS);
+    GLint wrapT = toGlWrap(desc.wrapT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapS);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapT);
 
@@ -365,8 +377,8 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     submitCount++;
     const double submitStartMs = perf::nowMs();
     int surfaceCommands = 0;
+    int gltfCommands = 0;
     int vectorCommands = 0;
-    int debugCommands = 0;
     int environmentCommands = 0;
 
     GLuint currentProgram = 0;
@@ -385,6 +397,9 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     bool attrib9Enabled = false;
     bool attrib10Enabled = false;
     bool attrib11Enabled = false;
+    bool attrib12Enabled = false;
+    bool attrib13Enabled = false;
+    bool attrib14Enabled = false;
     bool depthTestEnabled = true;
     bool blendEnabled = false;
     bool polygonOffsetEnabled = false;
@@ -407,11 +422,12 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             case RenderCommandKind::GlobeSurface:
                 ++surfaceCommands;
                 break;
+            case RenderCommandKind::GltfPrimitive:
+            case RenderCommandKind::GltfPrimitiveInstanced:
+                ++gltfCommands;
+                break;
             case RenderCommandKind::VectorOverlay:
                 ++vectorCommands;
-                break;
-            case RenderCommandKind::DebugOverlay:
-                ++debugCommands;
                 break;
             case RenderCommandKind::SkyBackground:
             case RenderCommandKind::AtmosphereBackground:
@@ -424,6 +440,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         auto* program = static_cast<GLShaderProgram*>(cmd.shader);
         auto* vb = static_cast<GLBuffer*>(cmd.vertexBuffer);
         auto* ib = static_cast<GLBuffer*>(cmd.indexBuffer);
+        auto* instanceBuffer = static_cast<GLBuffer*>(cmd.instanceBuffer);
 
         if (!program || !vb) continue;
 
@@ -453,29 +470,110 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             glBindBuffer(GL_ARRAY_BUFFER, currentArrayBuffer);
         }
 
-        if (cmd.vertexStride == 32) {
-            // Unified surface tile: POSITION(12) + NORMAL(12) + TEXCOORD_0(8) = 32 bytes
+        const bool isGltfVertexLayout =
+            (cmd.kind == RenderCommandKind::GltfPrimitive ||
+             cmd.kind == RenderCommandKind::GltfPrimitiveInstanced) &&
+            cmd.vertexStride == 120;
+        if (cmd.vertexStride == 32 || isGltfVertexLayout) {
+            // Surface: POSITION(12) + NORMAL(12) + TEXCOORD_0(8) = 32 bytes.
+            // glTF: POSITION/NORMAL + 8 packed TEXCOORD sets + COLOR_0 + TANGENT.
+            const GLsizei vertexStride =
+                static_cast<GLsizei>(cmd.vertexStride);
             setAttribEnabled(0, attrib0Enabled, true);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 32,
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, vertexStride,
                                   reinterpret_cast<void*>(0));
             glVertexAttribDivisor(0, 0);
             setAttribEnabled(1, attrib1Enabled, true);
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 32,
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, vertexStride,
                                   reinterpret_cast<void*>(12));
             glVertexAttribDivisor(1, 0);
             setAttribEnabled(2, attrib2Enabled, true);
-            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 32,
+            glVertexAttribPointer(2,
+                                  isGltfVertexLayout ? 4 : 2,
+                                  GL_FLOAT,
+                                  GL_FALSE,
+                                  vertexStride,
                                   reinterpret_cast<void*>(24));
             glVertexAttribDivisor(2, 0);
-            setAttribEnabled(3, attrib3Enabled, false);
-            setAttribEnabled(4, attrib4Enabled, false);
-            setAttribEnabled(5, attrib5Enabled, false);
-            setAttribEnabled(6, attrib6Enabled, false);
-            setAttribEnabled(7, attrib7Enabled, false);
-            setAttribEnabled(8, attrib8Enabled, false);
-            setAttribEnabled(9, attrib9Enabled, false);
-            setAttribEnabled(10, attrib10Enabled, false);
-            setAttribEnabled(11, attrib11Enabled, false);
+            if (isGltfVertexLayout) {
+                setAttribEnabled(10, attrib10Enabled, true);
+                glVertexAttribPointer(10, 4, GL_FLOAT, GL_FALSE, vertexStride,
+                                      reinterpret_cast<void*>(40));
+                glVertexAttribDivisor(10, 0);
+                setAttribEnabled(11, attrib11Enabled, true);
+                glVertexAttribPointer(11, 4, GL_FLOAT, GL_FALSE, vertexStride,
+                                      reinterpret_cast<void*>(56));
+                glVertexAttribDivisor(11, 0);
+                setAttribEnabled(12, attrib12Enabled, true);
+                glVertexAttribPointer(12, 4, GL_FLOAT, GL_FALSE, vertexStride,
+                                      reinterpret_cast<void*>(72));
+                glVertexAttribDivisor(12, 0);
+                setAttribEnabled(13, attrib13Enabled, true);
+                glVertexAttribPointer(13, 4, GL_FLOAT, GL_FALSE, vertexStride,
+                                      reinterpret_cast<void*>(88));
+                glVertexAttribDivisor(13, 0);
+                setAttribEnabled(14, attrib14Enabled, true);
+                glVertexAttribPointer(14, 4, GL_FLOAT, GL_FALSE, vertexStride,
+                                      reinterpret_cast<void*>(104));
+                glVertexAttribDivisor(14, 0);
+            } else {
+                setAttribEnabled(10, attrib10Enabled, false);
+                setAttribEnabled(11, attrib11Enabled, false);
+                setAttribEnabled(12, attrib12Enabled, false);
+                setAttribEnabled(13, attrib13Enabled, false);
+                setAttribEnabled(14, attrib14Enabled, false);
+            }
+            if (cmd.kind == RenderCommandKind::GltfPrimitiveInstanced &&
+                instanceBuffer &&
+                cmd.instanceStride == kGltfInstanceMatrixStride) {
+                if (currentArrayBuffer != instanceBuffer->glId()) {
+                    currentArrayBuffer = instanceBuffer->glId();
+                    glBindBuffer(GL_ARRAY_BUFFER, currentArrayBuffer);
+                }
+                setAttribEnabled(3, attrib3Enabled, true);
+                glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE,
+                                      kGltfInstanceMatrixStride,
+                                      reinterpret_cast<void*>(0));
+                glVertexAttribDivisor(3, 1);
+                setAttribEnabled(4, attrib4Enabled, true);
+                glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE,
+                                      kGltfInstanceMatrixStride,
+                                      reinterpret_cast<void*>(16));
+                glVertexAttribDivisor(4, 1);
+                setAttribEnabled(5, attrib5Enabled, true);
+                glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE,
+                                      kGltfInstanceMatrixStride,
+                                      reinterpret_cast<void*>(32));
+                glVertexAttribDivisor(5, 1);
+                setAttribEnabled(6, attrib6Enabled, true);
+                glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE,
+                                      kGltfInstanceMatrixStride,
+                                      reinterpret_cast<void*>(48));
+                glVertexAttribDivisor(6, 1);
+                setAttribEnabled(7, attrib7Enabled, true);
+                glVertexAttribPointer(7, 3, GL_FLOAT, GL_FALSE,
+                                      kGltfInstanceMatrixStride,
+                                      reinterpret_cast<void*>(64));
+                glVertexAttribDivisor(7, 1);
+                setAttribEnabled(8, attrib8Enabled, true);
+                glVertexAttribPointer(8, 3, GL_FLOAT, GL_FALSE,
+                                      kGltfInstanceMatrixStride,
+                                      reinterpret_cast<void*>(76));
+                glVertexAttribDivisor(8, 1);
+                setAttribEnabled(9, attrib9Enabled, true);
+                glVertexAttribPointer(9, 3, GL_FLOAT, GL_FALSE,
+                                      kGltfInstanceMatrixStride,
+                                      reinterpret_cast<void*>(88));
+                glVertexAttribDivisor(9, 1);
+            } else {
+                setAttribEnabled(3, attrib3Enabled, false);
+                setAttribEnabled(4, attrib4Enabled, false);
+                setAttribEnabled(5, attrib5Enabled, false);
+                setAttribEnabled(6, attrib6Enabled, false);
+                setAttribEnabled(7, attrib7Enabled, false);
+                setAttribEnabled(8, attrib8Enabled, false);
+                setAttribEnabled(9, attrib9Enabled, false);
+            }
         } else if (cmd.vertexStride == 20) {
             // Terrain tile: pos(12) + uv(8), normal computed in shader
             setAttribEnabled(0, attrib0Enabled, true);
@@ -496,6 +594,9 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             setAttribEnabled(9, attrib9Enabled, false);
             setAttribEnabled(10, attrib10Enabled, false);
             setAttribEnabled(11, attrib11Enabled, false);
+            setAttribEnabled(12, attrib12Enabled, false);
+            setAttribEnabled(13, attrib13Enabled, false);
+            setAttribEnabled(14, attrib14Enabled, false);
         } else if (cmd.vertexStride > 0) {
             // 显式 vertex stride（VectorLayer、SkyBox、Atmosphere 等使用）
             // 根据 stride 推断分量数：8=vec2, 12=vec3
@@ -517,6 +618,9 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             setAttribEnabled(9, attrib9Enabled, false);
             setAttribEnabled(10, attrib10Enabled, false);
             setAttribEnabled(11, attrib11Enabled, false);
+            setAttribEnabled(12, attrib12Enabled, false);
+            setAttribEnabled(13, attrib13Enabled, false);
+            setAttribEnabled(14, attrib14Enabled, false);
             glVertexAttribDivisor(3, 0);
             glVertexAttribDivisor(4, 0);
             glVertexAttribDivisor(5, 0);
@@ -526,6 +630,9 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             glVertexAttribDivisor(9, 0);
             glVertexAttribDivisor(10, 0);
             glVertexAttribDivisor(11, 0);
+            glVertexAttribDivisor(12, 0);
+            glVertexAttribDivisor(13, 0);
+            glVertexAttribDivisor(14, 0);
         } else {
             // Globe vertex: float3 pos + float3 normal + float2 tex = 32 bytes
             constexpr int kGlobeStride = 32;
@@ -550,6 +657,9 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             setAttribEnabled(9, attrib9Enabled, false);
             setAttribEnabled(10, attrib10Enabled, false);
             setAttribEnabled(11, attrib11Enabled, false);
+            setAttribEnabled(12, attrib12Enabled, false);
+            setAttribEnabled(13, attrib13Enabled, false);
+            setAttribEnabled(14, attrib14Enabled, false);
             glVertexAttribDivisor(3, 0);
             glVertexAttribDivisor(4, 0);
             glVertexAttribDivisor(5, 0);
@@ -579,6 +689,22 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                 glBindTexture(GL_TEXTURE_2D, currentTextures[textureIndex]);
             }
         }
+        auto setSampler = [&](const char* name, int unit) {
+            int loc = program->uniformLocation(name);
+            if (loc >= 0) glUniform1i(loc, unit);
+        };
+        if (!cmd.textures.empty()) {
+            setSampler("u_tileTexture", 0);
+            setSampler("u_baseColorTexture", 0);
+            setSampler("u_metallicRoughnessTexture", 1);
+            setSampler("u_normalTexture", 2);
+            setSampler("u_occlusionTexture", 3);
+            setSampler("u_emissiveTexture", 4);
+        }
+        for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
+            std::string name = "u_overlayTexture" + std::to_string(i);
+            setSampler(name.c_str(), i + 1);
+        }
 
         // ---- Uniforms ----
         if (cmd.kind == RenderCommandKind::SurfaceTile && cmd.hasSurfaceTileUniforms) {
@@ -607,7 +733,8 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                 set1(opacityName.c_str(), cmd.surfaceOverlayOpacities[i]);
             }
             set3("u_lightDir", cmd.surfaceLightDir);
-            set3("u_tileOrigin", cmd.surfaceTileOrigin);
+            // u_tileOrigin removed — RTC is now baked into u_modelViewProjection
+            // via CPU double-precision matrix multiplication in Scene.cpp.
             set3("u_fogColor", cmd.surfaceFogColor);
             set1("u_fogDensity", cmd.surfaceFogDensity);
             set1("u_tileOpacity", cmd.surfaceTileOpacity);
@@ -715,7 +842,11 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                                reinterpret_cast<void*>(static_cast<intptr_t>(cmd.indexOffset)));
             }
         } else {
-            glDrawArrays(mode, 0, cmd.vertexCount);
+            if (cmd.instanceCount > 0) {
+                glDrawArraysInstanced(mode, 0, cmd.vertexCount, cmd.instanceCount);
+            } else {
+                glDrawArrays(mode, 0, cmd.vertexCount);
+            }
         }
     }
 
@@ -760,6 +891,18 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         glVertexAttribDivisor(11, 0);
         glDisableVertexAttribArray(11);
     }
+    if (attrib12Enabled) {
+        glVertexAttribDivisor(12, 0);
+        glDisableVertexAttribArray(12);
+    }
+    if (attrib13Enabled) {
+        glVertexAttribDivisor(13, 0);
+        glDisableVertexAttribArray(13);
+    }
+    if (attrib14Enabled) {
+        glVertexAttribDivisor(14, 0);
+        glDisableVertexAttribArray(14);
+    }
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     for (int textureUnit = 5; textureUnit >= 0; --textureUnit) {
@@ -771,14 +914,14 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     if (submitCount <= 1 || submitCount % 120 == 0 || submitMs >= 25.0) {
         GLenum err = glGetError();
         __android_log_print(ANDROID_LOG_INFO, "GLES",
-            "submit #%d: %zu commands, ms=%.3f surface=%d vector=%d env=%d debug=%d glError=%d",
+            "submit #%d: %zu commands, ms=%.3f surface=%d gltf=%d vector=%d env=%d glError=%d",
             submitCount,
             commands.size(),
             submitMs,
             surfaceCommands,
+            gltfCommands,
             vectorCommands,
             environmentCommands,
-            debugCommands,
             err);
     }
 }

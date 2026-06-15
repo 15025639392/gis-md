@@ -15,7 +15,6 @@ namespace {
     constexpr double kDegToRad = glm::pi<double>() / 180.0;
     constexpr double kEpsilon1 = 1e-1;
     constexpr double kEpsilon12 = 1e-12;
-    constexpr double kEpsilon15 = 1e-15;
 
     double normalizeTwoPi(double radians) {
         double x = std::fmod(radians, glm::two_pi<double>());
@@ -76,9 +75,19 @@ Vec3 Ellipsoid::cartographicToCartesian(const Cartographic& cart) const {
 }
 
 Cartographic Ellipsoid::cartesianToCartographic(const Vec3& ecef) const {
-    Vec3 surface = projectToSurface(ecef);
-    Vec3 normal = geodeticSurfaceNormal(surface);
-    Vec3 heightVec = ecef - surface;
+    auto cartographic = tryCartesianToCartographic(ecef);
+    return cartographic.value_or(Cartographic::fromRadians(0.0, 0.0, 0.0));
+}
+
+std::optional<Cartographic> Ellipsoid::tryCartesianToCartographic(
+    const Vec3& ecef) const {
+    auto surface = tryScaleToGeodeticSurface(ecef);
+    if (!surface) {
+        return std::nullopt;
+    }
+
+    Vec3 normal = geodeticSurfaceNormal(*surface);
+    Vec3 heightVec = ecef - *surface;
 
     double lng = std::atan2(normal.y(), normal.x());
     double lat = std::asin(std::clamp(normal.z(), -1.0, 1.0));
@@ -107,33 +116,52 @@ Vec3 Ellipsoid::geodeticSurfaceNormal(const Vec3& ecef) const {
 }
 
 Vec3 Ellipsoid::projectToSurface(const Vec3& point) const {
+    return scaleToGeodeticSurface(point);
+}
+
+Vec3 Ellipsoid::scaleToGeodeticSurface(const Vec3& point) const {
+    auto surface = tryScaleToGeodeticSurface(point);
+    return surface.value_or(Vec3::zero());
+}
+
+std::optional<Vec3> Ellipsoid::tryScaleToGeodeticSurface(
+    const Vec3& point) const {
     const double px = point.x();
     const double py = point.y();
     const double pz = point.z();
-    const double length = point.length();
-    if (length <= 0.0) {
-        return cartographicToCartesian(Cartographic::fromRadians(0.0, 0.0, 0.0));
-    }
 
+    const double invA = 1.0 / a_;
+    const double invB = 1.0 / b_;
     const double invA2 = 1.0 / (a_ * a_);
     const double invB2 = 1.0 / (b_ * b_);
-    const double x2 = px * px * invA2;
-    const double y2 = py * py * invA2;
-    const double z2 = pz * pz * invB2;
-    const double norm = x2 + y2 + z2;
-    const double ratio = std::sqrt(1.0 / norm);
-    Vec3 first = point * ratio;
-    if (norm < kEpsilon1) {
-        return first;
+
+    const double x2 = px * px * invA * invA;
+    const double y2 = py * py * invA * invA;
+    const double z2 = pz * pz * invB * invB;
+
+    const double squaredNorm = x2 + y2 + z2;
+    const double ratio = std::sqrt(1.0 / squaredNorm);
+    const Vec3 intersection = point * ratio;
+
+    if (squaredNorm < kEpsilon1) {
+        return std::isfinite(ratio) ? std::optional<Vec3>(intersection)
+                                    : std::nullopt;
     }
 
-    const Vec3 firstScaled(first.x() * invA2, first.y() * invA2, first.z() * invB2);
-    double lambda = ((1.0 - ratio) * length) / firstScaled.length();
+    const Vec3 gradient(intersection.x() * invA2 * 2.0,
+                        intersection.y() * invA2 * 2.0,
+                        intersection.z() * invB2 * 2.0);
+    double lambda =
+        ((1.0 - ratio) * point.length()) / (0.5 * gradient.length());
+    double correction = 0.0;
 
     double mx = 0.0;
     double my = 0.0;
     double mz = 0.0;
-    for (int i = 0; i < 32; ++i) {
+    double func = 0.0;
+    do {
+        lambda -= correction;
+
         mx = 1.0 / (1.0 + lambda * invA2);
         my = 1.0 / (1.0 + lambda * invA2);
         mz = 1.0 / (1.0 + lambda * invB2);
@@ -141,26 +169,38 @@ Vec3 Ellipsoid::projectToSurface(const Vec3& point) const {
         const double mx2 = mx * mx;
         const double my2 = my * my;
         const double mz2 = mz * mz;
-        const double func = x2 * mx2 + y2 * my2 + z2 * mz2 - 1.0;
-        if (std::abs(func) < kEpsilon12) {
-            break;
-        }
+        const double mx3 = mx2 * mx;
+        const double my3 = my2 * my;
+        const double mz3 = mz2 * mz;
 
-        lambda += (0.5 * func) /
-            (x2 * mx2 * mx * invA2 +
-             y2 * my2 * my * invA2 +
-             z2 * mz2 * mz * invB2);
-    }
+        func = x2 * mx2 + y2 * my2 + z2 * mz2 - 1.0;
+        const double denominator =
+            x2 * mx3 * invA2 +
+            y2 * my3 * invA2 +
+            z2 * mz3 * invB2;
+        const double derivative = -2.0 * denominator;
+        correction = func / derivative;
+    } while (std::abs(func) > kEpsilon12);
 
     return Vec3(px * mx, py * my, pz * mz);
 }
 
-Vec3 Ellipsoid::scaleToGeodeticSurface(const Vec3& point) const {
-    return projectToSurface(point);
-}
-
 std::optional<Vec3> Ellipsoid::rayIntersection(const Vec3& origin,
                                                const Vec3& direction) const {
+    auto interval = rayIntersectionInterval(origin, direction);
+    if (!interval) {
+        return std::nullopt;
+    }
+    return origin + direction * interval->entryDistance;
+}
+
+std::optional<RayEllipsoidIntersectionInterval>
+Ellipsoid::rayIntersectionInterval(const Vec3& origin,
+                                   const Vec3& direction) const {
+    if (a_ == 0.0 || b_ == 0.0) {
+        return std::nullopt;
+    }
+
     const Vec3 q(origin.x() / a_, origin.y() / a_, origin.z() / b_);
     const Vec3 w(direction.x() / a_, direction.y() / a_, direction.z() / b_);
     const double q2 = q.dot(q);
@@ -180,8 +220,7 @@ std::optional<Vec3> Ellipsoid::rayIntersection(const Vec3& origin,
         const double qw2 = qw * qw;
         difference = q2 - 1.0;
         product = w2 * difference;
-        const double eps = std::abs(qw2 - product);
-        if (eps > kEpsilon15 && qw2 < product) {
+        if (qw2 < product) {
             return std::nullopt;
         }
         if (qw2 > product) {
@@ -189,10 +228,12 @@ std::optional<Vec3> Ellipsoid::rayIntersection(const Vec3& origin,
             temp = -qw + std::sqrt(discriminant);
             const double root0 = temp / w2;
             const double root1 = difference / temp;
-            return origin + direction * std::min(root0, root1);
+            return root0 < root1
+                ? RayEllipsoidIntersectionInterval{root0, root1}
+                : RayEllipsoidIntersectionInterval{root1, root0};
         }
         const double root = std::sqrt(difference / w2);
-        return origin + direction * root;
+        return RayEllipsoidIntersectionInterval{root, root};
     }
 
     if (q2 < 1.0) {
@@ -200,11 +241,11 @@ std::optional<Vec3> Ellipsoid::rayIntersection(const Vec3& origin,
         product = w2 * difference;
         discriminant = qw * qw - product;
         temp = -qw + std::sqrt(discriminant);
-        return origin + direction * (temp / w2);
+        return RayEllipsoidIntersectionInterval{0.0, temp / w2};
     }
 
     if (qw < 0.0) {
-        return origin + direction * (-qw / w2);
+        return RayEllipsoidIntersectionInterval{0.0, -qw / w2};
     }
     return std::nullopt;
 }
@@ -339,7 +380,7 @@ GeodesicDirectResult Ellipsoid::direct(const Cartographic& start,
 }
 
 const Ellipsoid& Ellipsoid::WGS84() {
-    static const Ellipsoid wgs84(6378137.0, 6356752.314245);
+    static const Ellipsoid wgs84(6378137.0, 6356752.3142451793);
     return wgs84;
 }
 

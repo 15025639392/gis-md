@@ -6,8 +6,12 @@
 #include "earth_engine/platform/ios/RenderDeviceMetal.h"
 #include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
-#include "earth_engine/layers/BasemapLayer.h"
+#include "earth_engine/providers/RasterOverlayTileProvider.h"
+#include "earth_engine/providers/TerrainProvider.h"
+#include "earth_engine/layers/RasterOverlay.h"
+#include "earth_engine/layers/ActivatedRasterOverlay.h"
 #include "earth_engine/tiling/TileScheme.h"
+#include "earth_engine/tiling/Tileset.h"
 #include "earth_engine/environment/TimeController.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
@@ -21,6 +25,7 @@
 #import <QuartzCore/CADisplayLink.h>
 #include <chrono>
 #include <memory>
+#include <vector>
 
 using namespace earth_engine;
 
@@ -28,11 +33,30 @@ namespace {
 
 constexpr const char* kGaodeSatelliteTemplate =
     "https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
-constexpr bool kEnableDebugOverlayForDemo = false;
-constexpr bool kShowNormalMapForDemo = false;
 constexpr bool kUseGaodeSatelliteForDemo = true;
 
 } // anonymous namespace
+
+class FlatTerrainProvider final : public TerrainProvider {
+public:
+    std::string id() const override { return "flat-terrain"; }
+    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 14; }
+    int tileSize() const override { return 17; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     HeightmapCallback callback) override {
+        auto heightmap = std::make_unique<DecodedHeightmap>();
+        heightmap->tileSize = tileSize();
+        heightmap->heights.assign(static_cast<size_t>(tileSize() * tileSize()), 0.0f);
+        callback(key, TerrainTileLoadResult::success(std::move(heightmap)));
+    }
+    std::unique_ptr<DecodedHeightmap> decodeTile(const uint8_t*, size_t) override {
+        return nullptr;
+    }
+};
 
 @interface MetalView ()
 @property (nonatomic, retain) CADisplayLink* displayLink;
@@ -42,6 +66,8 @@ constexpr bool kUseGaodeSatelliteForDemo = true;
     std::unique_ptr<RenderDeviceMetal> _renderDevice;
     std::unique_ptr<Engine> _engine;
     std::unique_ptr<MacPlatformBridge> _platformBridge;
+    std::vector<std::unique_ptr<RasterOverlay>> _rasterOverlays;
+    std::vector<std::unique_ptr<ActivatedRasterOverlay>> _activatedRasterOverlays;
     BOOL _engineReady;
     BOOL _initialized;
     int _frameCount;
@@ -120,12 +146,30 @@ constexpr bool kUseGaodeSatelliteForDemo = true;
             scheme = TileScheme::createXYZWebMercator();
         }
 
-        auto layer = std::make_unique<BasemapLayer>(
-            std::move(provider), std::move(scheme), _renderDevice.get());
-        layer->setNormalMapDebugEnabled(kShowNormalMapForDemo);
-        _engine->addLayer(std::move(layer));
+        _rasterOverlays.clear();
+        _activatedRasterOverlays.clear();
 
-        _engine->setDebugOverlayEnabled(kEnableDebugOverlayForDemo);
+        auto overlay = std::make_unique<RasterOverlay>(
+            std::move(provider), std::move(scheme), RasterOverlay::Options{});
+        auto activeOverlay = std::make_unique<ActivatedRasterOverlay>(*overlay);
+        activeOverlay->setTileProvider(std::make_unique<RasterOverlayTileProvider>(
+            overlay->getProvider(),
+            overlay->getTileScheme(),
+            _renderDevice.get()));
+        activeOverlay->getTileProvider()->setOwner(overlay.get());
+
+        std::vector<ActivatedRasterOverlay*> rasterOverlays{activeOverlay.get()};
+        _rasterOverlays.push_back(std::move(overlay));
+        _activatedRasterOverlays.push_back(std::move(activeOverlay));
+
+        TilesetOptions tilesetOptions;
+        auto tileset = std::make_unique<Tileset>(
+            std::make_unique<FlatTerrainProvider>(),
+            TileScheme::createXYZWebMercator(),
+            std::move(rasterOverlays),
+            _renderDevice.get(),
+            tilesetOptions);
+        _engine->setTileset(std::move(tileset));
 
         // Match Android demo: default view over Chongqing, China
         {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TerrainProvider.h"
+#include <nlohmann/json.hpp>
 #include <array>
 #include <string>
 #include <unordered_set>
@@ -42,14 +43,22 @@ public:
     const std::string& urlTemplate() const { return urlTemplate_; }
 
     bool supportsTile(const TileKey& key) const override;
+    TileAvailabilityState availabilityState(const TileKey& key) const override;
     std::string buildUrl(const TileKey& key) const override;
 
     /// cesium-native: dynamically add availability from QM metadata
     void addAvailabilityRects(int level, const std::vector<std::array<int, 4>>& rects);
+    void addAvailabilityRectsForTile(
+        const TileKey& subtreeKey,
+        int level,
+        const std::vector<std::array<int, 4>>& rects);
     /// cesium-native: track loaded subtrees for sparse datasets
     bool isSubtreeLoaded(int subtreeLevel, uint64_t mortonIndex) const;
     void markSubtreeLoaded(int subtreeLevel, uint64_t mortonIndex);
+    void markSubtreeLoadedForTile(const TileKey& subtreeKey);
     int availabilityLevels() const { return availabilityLevels_; }
+    bool isAvailabilityBoundaryLevel(int level) const;
+    void applyAvailabilityUpdates(const DecodedHeightmap& heightmap);
 
     void requestTile(const TileKey& key,
                      CancellationToken token,
@@ -59,12 +68,64 @@ public:
         const uint8_t* data, size_t len) override;
 
 private:
+    struct LayerConfig {
+        std::string urlTemplate;
+        std::string layerJsonUrl;
+        std::string version;
+        std::string extensionsToRequest;
+        std::vector<std::vector<std::array<int, 4>>> availabilityRanges;
+        std::vector<std::unordered_set<uint64_t>> loadedSubtrees;
+        bool hasAvailability = false;
+        int availabilityLevels = -1;
+        int minZoom = 0;
+        int maxZoom = 15;
+    };
+    struct LayerAvailabilityRequest {
+        size_t layerIndex = 0;
+        TileKey subtreeKey;
+        std::string url;
+    };
+
+    bool appendLayerFromJson(const nlohmann::json& j,
+                             const std::string& layerJsonUrl);
+    bool appendParentLayers(const nlohmann::json& j,
+                            const std::string& layerJsonUrl);
+    size_t firstAvailableLayerIndex(const TileKey& key) const;
+    const LayerConfig* firstAvailableLayer(const TileKey& key) const;
+    LayerConfig* firstAvailableLayer(const TileKey& key);
+    std::vector<LayerAvailabilityRequest>
+    collectUnderlyingLayerAvailabilityRequests(const TileKey& key) const;
+    TileAvailabilityState availabilityStateInLayer(
+        const LayerConfig& layer,
+        const TileKey& key) const;
+    uint32_t maximumAvailableLevelAtTileCenter(
+        const LayerConfig& layer,
+        const TileKey& key) const;
+    bool isSubtreeLoadedInLayer(
+        const LayerConfig& layer,
+        int subtreeLevel,
+        uint64_t mortonIndex) const;
+    void markSubtreeLoadedInLayer(
+        LayerConfig& layer,
+        int subtreeLevel,
+        uint64_t mortonIndex);
+    void addAvailabilityRectsToLayer(
+        LayerConfig& layer,
+        int level,
+        const std::vector<std::array<int, 4>>& rects);
+    std::string buildUrlForLayer(const LayerConfig& layer,
+                                 const TileKey& key) const;
+    void syncLegacyFieldsFromPrimaryLayer();
     std::vector<uint8_t> httpGet(const std::string& url);
+    std::vector<LayerConfig> layers_;
     std::string urlTemplate_;
     std::string attribution_;
     std::string layerJsonUrl_;
+    std::string version_;
+    std::string extensionsToRequest_;
     std::vector<std::vector<std::array<int, 4>>> availabilityRanges_;
     std::vector<std::unordered_set<uint64_t>> loadedSubtrees_;
+    bool hasAvailability_ = false;
     int availabilityLevels_ = -1;  // -1 = not using subtree mode
     int minZoom_ = 0;
     int maxZoom_ = 15;

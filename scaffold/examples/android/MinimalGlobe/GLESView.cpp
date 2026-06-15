@@ -8,6 +8,7 @@
 #include <algorithm>
 
 #include "earth_engine/Engine.h"
+#include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/scene/Camera.h"
@@ -17,8 +18,9 @@
 #include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/providers/HeightmapTerrainProvider.h"
 #include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
-#include "earth_engine/layers/BasemapLayer.h"
-#include "earth_engine/layers/TerrainLayer.h"
+#include "earth_engine/providers/RasterOverlayTileProvider.h"
+#include "earth_engine/layers/RasterOverlay.h"
+#include "earth_engine/layers/ActivatedRasterOverlay.h"
 #include "earth_engine/layers/VectorLayer.h"
 #include "earth_engine/tiling/Tileset.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -49,6 +51,8 @@ static int gWidth = 0, gHeight = 0;
 static std::unique_ptr<RenderDeviceGLES> gRenderDevice;
 static std::unique_ptr<Engine> gEngine;
 static std::unique_ptr<AndroidPlatformBridge> gPlatformBridge;
+static std::vector<std::unique_ptr<RasterOverlay>> gRasterOverlays;
+static std::vector<std::unique_ptr<ActivatedRasterOverlay>> gActivatedRasterOverlays;
 static bool gEngineReady = false;
 
 // JNI_OnLoad — 存储 JavaVM 引用
@@ -65,7 +69,6 @@ static bool gDragStarted = false;
 static bool gTouchMoved = false;
 
 // Debug panel state
-static bool gNormalMapDebugEnabled = false;
 static bool gDebugPinchActive = false;
 
 static double androidUptimeSeconds();
@@ -93,11 +96,12 @@ static constexpr const char* kGaodeSatelliteTemplate =
     "https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
 static constexpr const char* kGaodeRoadNetTemplate =
     "https://webst0{s}.is.autonavi.com/appmaptile?style=8&x={x}&y={y}&z={z}";
+static constexpr const char* kRobotExpressiveGlbUrl =
+    "https://maptalks.org/maptalks.three/demo/data/RobotExpressive.glb";
 static constexpr bool kEnableTerrainForDemo = true;
-static constexpr bool kEnableDebugOverlayForDemo = false;
-static constexpr bool kShowNormalMapForDemo = false;
 static constexpr bool kUseGaodeSatelliteForDemo = true;
 static constexpr bool kEnableGaodeRoadNetOverlayForDemo = true;
+static constexpr bool kEnableRobotExpressiveGltfDemo = true;
 /// Use QuantizedMesh terrain (cesium-native format) instead of RGB heightmap.
 static constexpr bool kUseQuantizedMeshTerrain = true;
 
@@ -260,9 +264,31 @@ static bool createEngine() {
                 terrainProvider = std::move(hm);
             }
 
-            // 2. Imagery layers (basemap + optional road overlay)
-            std::vector<BasemapLayer*> imageryLayers;
-            std::vector<std::unique_ptr<BasemapLayer>> ownedLayers;
+            // 2. Raster overlays (basemap + optional road overlay)
+            gRasterOverlays.clear();
+            gActivatedRasterOverlays.clear();
+            std::vector<ActivatedRasterOverlay*> rasterOverlays;
+
+            auto addRasterOverlay = [&](std::unique_ptr<ImageryProvider> provider,
+                                        std::unique_ptr<TileScheme> scheme,
+                                        float opacity) {
+                auto overlay = std::make_unique<RasterOverlay>(
+                    std::move(provider),
+                    std::move(scheme),
+                    RasterOverlay::Options{});
+                overlay->setOpacity(opacity);
+
+                auto active = std::make_unique<ActivatedRasterOverlay>(*overlay);
+                active->setTileProvider(std::make_unique<RasterOverlayTileProvider>(
+                    overlay->getProvider(),
+                    overlay->getTileScheme(),
+                    gRenderDevice.get()));
+                active->getTileProvider()->setOwner(overlay.get());
+
+                rasterOverlays.push_back(active.get());
+                gRasterOverlays.push_back(std::move(overlay));
+                gActivatedRasterOverlays.push_back(std::move(active));
+            };
 
             if (kUseGaodeSatelliteForDemo) {
                 auto xyz = std::make_unique<XYZImageryProvider>(
@@ -271,10 +297,10 @@ static bool createEngine() {
                 xyz->setOpenGlobusGroupedY(true);
                 xyz->setOpenGlobusPolarGroupsEnabled(false);
                 xyz->setPlatformBridge(gPlatformBridge.get());
-                auto layer = std::make_unique<BasemapLayer>(
-                    std::move(xyz), TileScheme::createOpenGlobusEarth(), gRenderDevice.get());
-                imageryLayers.push_back(layer.get());
-                ownedLayers.push_back(std::move(layer));
+                addRasterOverlay(
+                    std::move(xyz),
+                    TileScheme::createOpenGlobusEarth(),
+                    1.0f);
                 LOGI("Gaode satellite basemap enabled");
 
                 if (kEnableGaodeRoadNetOverlayForDemo) {
@@ -284,43 +310,62 @@ static bool createEngine() {
                     road->setOpenGlobusGroupedY(true);
                     road->setOpenGlobusPolarGroupsEnabled(false);
                     road->setPlatformBridge(gPlatformBridge.get());
-                    auto roadLayer = std::make_unique<BasemapLayer>(
-                        std::move(road), TileScheme::createOpenGlobusEarth(), gRenderDevice.get());
-                    imageryLayers.push_back(roadLayer.get());
-                    ownedLayers.push_back(std::move(roadLayer));
+                    addRasterOverlay(
+                        std::move(road),
+                        TileScheme::createOpenGlobusEarth(),
+                        0.92f);
                     LOGI("Gaode road network overlay enabled");
                 }
             } else {
                 auto dbg = std::make_unique<DebugImageryProvider>();
-                auto layer = std::make_unique<BasemapLayer>(
-                    std::move(dbg), TileScheme::createXYZWebMercator(), gRenderDevice.get());
-                imageryLayers.push_back(layer.get());
-                ownedLayers.push_back(std::move(layer));
-            }
-
-            // Keep owned layers alive in the engine
-            for (auto& l : ownedLayers) {
-                gEngine->addLayer(std::move(l));
+                addRasterOverlay(
+                    std::move(dbg),
+                    TileScheme::createXYZWebMercator(),
+                    1.0f);
             }
 
             // 3. Create unified Tileset
+            TilesetOptions tilesetOptions;
+            tilesetOptions.mainThreadLoadingTimeLimit = 4.0;
+            tilesetOptions.tileCacheUnloadTimeLimit = 2.0;
             auto tileset = std::make_unique<Tileset>(
                 std::move(terrainProvider),
                 TileScheme::createGeographicTMS(),
-                std::move(imageryLayers),
-                gRenderDevice.get());
+                std::move(rasterOverlays),
+                gRenderDevice.get(),
+                tilesetOptions);
             gEngine->setTileset(std::move(tileset));
-            gEngine->setTerrainEnabled(true);
             LOGI("Unified Tileset created (cesium-native architecture)");
+
+            if (kEnableRobotExpressiveGltfDemo) {
+                const TileKey robotKey{"Geographic-TMS", 0, 1, 0};
+                auto gltfProvider = std::make_unique<SingleGltfContentProvider>(
+                    robotKey,
+                    std::string(kRobotExpressiveGlbUrl),
+                    "RobotExpressive GLB");
+                gltfProvider->setPlatformBridge(gPlatformBridge.get());
+                gltfProvider->setEastNorthUpPlacementDegrees(
+                    106.508,
+                    29.617,
+                    650.0,
+                    420.0);
+
+                auto robotTileset = std::make_unique<Tileset>(
+                    std::unique_ptr<TerrainProvider>{},
+                    TileScheme::createGeographicTMS(),
+                    std::vector<ActivatedRasterOverlay*>{},
+                    gRenderDevice.get(),
+                    tilesetOptions,
+                    std::move(gltfProvider));
+                gEngine->addTileset(std::move(robotTileset));
+                LOGI("RobotExpressive glTF tileset added: %s",
+                     kRobotExpressiveGlbUrl);
+            }
         }
 
         // Keep the feature path available, but avoid covering the basemap while
         // validating XYZ Web Mercator tile alignment.
         // addDemoVectorLayer();
-
-        gEngine->setDebugOverlayEnabled(kEnableDebugOverlayForDemo);
-        LOGI("Debug overlay %s",
-             kEnableDebugOverlayForDemo ? "enabled" : "disabled");
 
         // 设置模拟时间为固定的白天时间（2026-06-10 14:00 UTC+8 = 06:00 UTC）
         // 对应 JD 2461188.75，确保看到完整大气散射效果
@@ -364,7 +409,8 @@ static void renderFrame() {
              "missing=%d unsupported=%d kicked=%d retained=%d "
              "visZ=%d-%d targetZ=%d-%d texZ=%d-%d lod=%.0f "
              "eq=%d qRender=%d qWalk=%d qFrustum=%d qFade=%d qBal=%d qHz=%d qEq2=%d "
-             "grp=%d/%d/%d gen=%llu | "
+             "grp=%d/%d/%d loadQ=%d/%d/%d pend=%d/%d/%d "
+             "state=%d/%d/%d/%d/%d/%d/%d content=%d/%d/%d/%d unloadQ=%d gen=%llu | "
              "sun=(%.2f,%.2f,%.2f) | FPS=%.1f draw=%d",
              gFrameCount, diag.visibleTiles, diag.cachedTextures,
              diag.renderSurfaceTiles, diag.surfaceMeshCount,
@@ -397,6 +443,24 @@ static void renderFrame() {
              diag.mercatorTileCount,
              diag.northPolarTileCount,
              diag.southPolarTileCount,
+             diag.loadQueuePreloadRequests,
+             diag.loadQueueNormalRequests,
+             diag.loadQueueUrgentRequests,
+             diag.pendingTerrainRequests,
+             diag.pendingTerrainUploads,
+             diag.pendingTerrainTerminalResults,
+             diag.terrainLoadUnloadingTiles,
+             diag.terrainLoadFailedTemporarilyTiles,
+             diag.terrainLoadUnloadedTiles,
+             diag.terrainLoadContentLoadingTiles,
+             diag.terrainLoadContentLoadedTiles,
+             diag.terrainLoadDoneTiles,
+             diag.terrainLoadFailedTiles,
+             diag.terrainContentUnknownTiles,
+             diag.terrainContentEmptyTiles,
+             diag.terrainContentExternalTiles,
+             diag.terrainContentRenderTiles,
+             diag.terrainUnloadQueueTiles,
              static_cast<unsigned long long>(diag.maxSurfaceGeneration),
              sunDir.x(), sunDir.y(), sunDir.z(),
              diag.fps, diag.drawCalls);
@@ -702,20 +766,26 @@ Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
         Ellipsoid::WGS84().cartesianToCartographic(gEngine->camera().position()).height();
     const double cameraDist = gEngine->camera().position().distanceTo(Vec3::zero());
 
-    char buf[1024];
+    char buf[1600];
     snprintf(buf, sizeof(buf),
         "FPS: %.1f  |  Frame: %.1f ms\n"
         "CPU: %.1f ms  |  begin %.1f upd %.1f build %.1f submit %.1f end %.1f\n"
-        "Update: cam %.1f env %.1f base %.1f terr %.1f\n"
-        "Draw calls: %d  |  GPU tex: %d\n"
-        "Visible tiles: %d  |  Cached: %d\n"
+        "Update: cam %.1f env %.1f base %.1f terr %.1f content %.1f\n"
+        "Draw calls: %d  |  GPU tex: %d  |  glTF prim: %d\n"
+        "Visible tiles: terrain %d content %d/%d  |  Cached: %d\n"
         "Surface meshes: %d (%d ellip, %d terr, %d ready, %d parent, %d trans)\n"
         "Attachments: %d exact, %d parent, %d missing, %d unsup, %d kicked, %d retained\n"
         "Zoom: %d-%d  |  Img: %d-%d -> tex %d-%d\n"
         "LOD: %.0f px  |  EqZoom: %d\n"
         "QuadTree: %d render, %d walk, %d frustum, %d fade, %d balanced\n"
+        "Occlusion: %d occ, %d wait, %d culled-vis\n"
         "Groups: %d merc, %d N, %d S\n"
         "Camera: ellAlt=%.0fm sphAlt=%.0fm dist=%.0fm\n"
+        "LoadQ: %d pre, %d norm, %d urgent  |  Terrain pending: %d req, %d upload, %d terminal\n"
+        "Content pending: %d req, %d upload, %d terminal\n"
+        "LoadState: unloading %d, retry %d, unloaded %d, loading %d, loaded %d, done %d, failed %d\n"
+        "Content: unknown %d, empty %d, external %d, render %d  |  UnloadQ: %d\n"
+        "Raster overlay: missing projections %d\n"
         "Mesh: %d KB  |  Terrain tiles: %d (gen %llu)",
         diag.fps, diag.frameTimeMs,
         diag.engineFrameCpuMs,
@@ -728,8 +798,10 @@ Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
         diag.environmentUpdateMs,
         diag.basemapStackUpdateMs,
         diag.terrainUpdateMs,
-        diag.drawCalls, diag.gpuTextureCount,
-        diag.visibleTiles, diag.cachedTextures,
+        diag.contentTilesetUpdateMs,
+        diag.drawCalls, diag.gpuTextureCount, diag.renderGltfPrimitives,
+        diag.visibleTiles, diag.contentVisibleTiles, diag.contentTilesets,
+        diag.cachedTextures,
         diag.surfaceMeshCount, diag.ellipsoidSurfaceMeshes,
         diag.terrainSurfaceMeshes, diag.terrainReadySurfaceMeshes,
         diag.terrainParentFallbackMeshes, diag.terrainTransitionSurfaceMeshes,
@@ -744,53 +816,37 @@ Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
         diag.quadtreeRenderingNodes, diag.quadtreeWalkthroughNodes,
         diag.quadtreeInFrustumNodes, diag.quadtreeFadingNodes,
         diag.quadtreeNeighborBalancedTiles,
+        diag.quadtreeSelectionOccludedNodes,
+        diag.quadtreeSelectionWaitingForOcclusionResultsNodes,
+        diag.quadtreeCulledTilesVisited,
         diag.mercatorTileCount, diag.northPolarTileCount,
         diag.southPolarTileCount,
         ellipsoidAltitude, sphericalAltitude, cameraDist,
+        diag.loadQueuePreloadRequests,
+        diag.loadQueueNormalRequests,
+        diag.loadQueueUrgentRequests,
+        diag.pendingTerrainRequests,
+        diag.pendingTerrainUploads,
+        diag.pendingTerrainTerminalResults,
+        diag.pendingContentRequests,
+        diag.pendingContentUploads,
+        diag.pendingContentTerminalResults,
+        diag.terrainLoadUnloadingTiles,
+        diag.terrainLoadFailedTemporarilyTiles,
+        diag.terrainLoadUnloadedTiles,
+        diag.terrainLoadContentLoadingTiles,
+        diag.terrainLoadContentLoadedTiles,
+        diag.terrainLoadDoneTiles,
+        diag.terrainLoadFailedTiles,
+        diag.terrainContentUnknownTiles,
+        diag.terrainContentEmptyTiles,
+        diag.terrainContentExternalTiles,
+        diag.terrainContentRenderTiles,
+        diag.terrainUnloadQueueTiles,
+        diag.missingRasterOverlayProjections,
         diag.surfaceMeshBytes / 1024, diag.terrainCachedTiles,
         static_cast<unsigned long long>(diag.terrainGeneration));
     return env->NewStringUTF(buf);
-}
-
-JNIEXPORT jboolean JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativeGetDebugOverlayEnabled(
-    JNIEnv* /* env */, jobject /* this */) {
-    return gEngine ? gEngine->debugOverlayEnabled() : JNI_FALSE;
-}
-
-JNIEXPORT jboolean JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativeGetTerrainEnabled(
-    JNIEnv* /* env */, jobject /* this */) {
-    return gEngine ? gEngine->hasTerrain() : JNI_FALSE;
-}
-
-JNIEXPORT jboolean JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativeGetNormalMapDebugEnabled(
-    JNIEnv* /* env */, jobject /* this */) {
-    (void)gEngine;
-    // Normal map debug is per-layer; demo always has one basemap layer.
-    // Enable flag is stored globally on the JNI side.
-    return gNormalMapDebugEnabled ? JNI_TRUE : JNI_FALSE;
-}
-
-JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativeSetDebugOverlay(
-    JNIEnv* /* env */, jobject /* this */, jboolean enabled) {
-    if (gEngine) gEngine->setDebugOverlayEnabled(enabled);
-}
-
-JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativeSetTerrainEnabled(
-    JNIEnv* /* env */, jobject /* this */, jboolean enabled) {
-    if (gEngine) gEngine->setTerrainEnabled(enabled);
-}
-
-JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativeSetNormalMapDebug(
-    JNIEnv* /* env */, jobject /* this */, jboolean enabled) {
-    gNormalMapDebugEnabled = enabled;
-    if (gEngine) gEngine->setNormalMapDebugEnabled(enabled);
-    LOGI("Normal map debug: %s", enabled ? "ON" : "OFF");
 }
 
 JNIEXPORT void JNICALL
@@ -805,7 +861,6 @@ Java_com_earthengine_minimalglobe_GLESView_nativeResetCamera(
     JNIEnv* /* env */, jobject /* this */) {
     if (!gEngine) return;
     // Reset to default East-Asia viewpoint
-    gEngine->setDebugOverlayEnabled(gEngine->debugOverlayEnabled()); // no-op, preserve
     auto& cam = gEngine->camera();
     // Default position: 7 earth radii above East Asia
     constexpr double kDefaultDistRadii = 7.0;

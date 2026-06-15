@@ -26,10 +26,13 @@ public:
     /// 获取当前大气参数
     const AtmosphereParameters& parameters() const { return params_; }
 
-    /// 根据 ECEF 太阳方向 + 相机海拔高度更新颜色
+    /// 根据 ECEF 太阳方向、当前位置椭球法线 + 相机海拔高度更新颜色
     /// @param sunDirECEF 太阳方向单位向量（地心→太阳）
+    /// @param localUpECEF 当前观察位置的椭球面外法线（单位向量）
     /// @param cameraAltitudeMeters 相机距椭球表面高度（米），默认 0（地面）
-    void update(const Vec3& sunDirECEF, double cameraAltitudeMeters = 0.0);
+    void update(const Vec3& sunDirECEF,
+                const Vec3& localUpECEF,
+                double cameraAltitudeMeters = 0.0);
 
     /// 天顶颜色（RGBA，0..1）
     const std::array<float, 4>& zenithColor() const { return zenith_; }

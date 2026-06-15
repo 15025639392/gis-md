@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
 
@@ -36,6 +37,60 @@ bool pointInTriangle(double px, double py,
     outV = (dot00 * dot12 - dot01 * dot02) * inv;
 
     return (outU >= 0) && (outV >= 0) && (outU + outV <= 1.0);
+}
+
+int jsonUint32OrDefault(const nlohmann::json& object, const char* name) {
+    auto it = object.find(name);
+    if (it == object.end()) return 0;
+
+    uint64_t value = 0;
+    if (it->is_number_unsigned()) {
+        value = it->get<uint64_t>();
+    } else if (it->is_number_integer()) {
+        const int64_t signedValue = it->get<int64_t>();
+        if (signedValue < 0) return 0;
+        value = static_cast<uint64_t>(signedValue);
+    } else {
+        return 0;
+    }
+
+    constexpr uint64_t kMaxUint32 = 0xffffffffull;
+    if (value > kMaxUint32) return 0;
+    return value > static_cast<uint64_t>(std::numeric_limits<int>::max())
+        ? std::numeric_limits<int>::max()
+        : static_cast<int>(value);
+}
+
+std::vector<std::array<int, 5>> parseMetadataAvailabilityJson(
+    const std::string& metadataJson) {
+    std::vector<std::array<int, 5>> availability;
+    auto j = nlohmann::json::parse(metadataJson, nullptr, false);
+    if (j.is_discarded() ||
+        !j.contains("available") ||
+        !j["available"].is_array()) {
+        return availability;
+    }
+
+    int subArrayIndex = 0;
+    for (const auto& levelRanges : j["available"]) {
+        if (!levelRanges.is_array()) {
+            ++subArrayIndex;
+            continue;
+        }
+        for (const auto& range : levelRanges) {
+            if (!range.is_object()) continue;
+            availability.push_back({
+                subArrayIndex,
+                jsonUint32OrDefault(range, "startX"),
+                jsonUint32OrDefault(range, "startY"),
+                jsonUint32OrDefault(range, "endX"),
+                jsonUint32OrDefault(range, "endY")
+            });
+        }
+        ++subArrayIndex;
+    }
+
+    return availability;
 }
 
 } // namespace
@@ -267,6 +322,73 @@ std::unique_ptr<DecodedHeightmap> QuantizedMeshParser::parseAndRasterize(
     return hm;
 }
 
+std::vector<std::array<int, 5>> QuantizedMeshParser::parseMetadataAvailability(
+    const uint8_t* data, size_t len) {
+    if (len < kHeaderSize || !data) return {};
+
+    uint32_t vertexCount = 0;
+    std::memcpy(&vertexCount, data + 88, sizeof(uint32_t));
+    if (vertexCount == 0 || vertexCount > 500000) return {};
+
+    size_t offset = kHeaderSize;
+    const size_t vertexAttributeBytes =
+        static_cast<size_t>(vertexCount) * 3u * sizeof(uint16_t);
+    if (offset + vertexAttributeBytes > len) return {};
+    offset += vertexAttributeBytes;
+
+    const bool idx32 = vertexCount > 65536;
+    const size_t indexSize = idx32 ? sizeof(uint32_t) : sizeof(uint16_t);
+    if (idx32 && (offset % 4) != 0) offset += 2;
+    if (offset + sizeof(uint32_t) > len) return {};
+
+    uint32_t triangleCount = 0;
+    std::memcpy(&triangleCount, data + offset, sizeof(uint32_t));
+    offset += sizeof(uint32_t);
+
+    const size_t indicesCount = static_cast<size_t>(triangleCount) * 3u;
+    if (indicesCount > (len - offset) / indexSize) return {};
+    offset += indicesCount * indexSize;
+
+    for (int edge = 0; edge < 4; ++edge) {
+        if (offset + sizeof(uint32_t) > len) return {};
+        uint32_t edgeCount = 0;
+        std::memcpy(&edgeCount, data + offset, sizeof(uint32_t));
+        offset += sizeof(uint32_t);
+        if (static_cast<size_t>(edgeCount) > (len - offset) / indexSize) {
+            return {};
+        }
+        offset += static_cast<size_t>(edgeCount) * indexSize;
+    }
+
+    constexpr size_t kExtHeaderSize = 5;
+    while (offset + kExtHeaderSize <= len) {
+        const uint8_t extId = data[offset];
+        offset += sizeof(uint8_t);
+
+        uint32_t extLen = 0;
+        std::memcpy(&extLen, data + offset, sizeof(uint32_t));
+        offset += sizeof(uint32_t);
+
+        if (offset + extLen > len) break;
+        if (extId == 4 && extLen >= sizeof(uint32_t)) {
+            uint32_t metadataJsonLength = 0;
+            std::memcpy(&metadataJsonLength, data + offset, sizeof(uint32_t));
+            const size_t jsonOffset = offset + sizeof(uint32_t);
+            const size_t maxJsonLength = extLen - sizeof(uint32_t);
+            if (metadataJsonLength <= maxJsonLength &&
+                jsonOffset + metadataJsonLength <= len) {
+                return parseMetadataAvailabilityJson(std::string(
+                    reinterpret_cast<const char*>(data + jsonOffset),
+                    metadataJsonLength));
+            }
+        }
+
+        offset += extLen;
+    }
+
+    return {};
+}
+
 std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     const uint8_t* data, size_t len, const Rectangle& bounds) {
 
@@ -334,7 +456,6 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     auto readEdge = [&]() -> std::vector<uint32_t> {
         uint32_t ec = readU32();
         std::vector<uint32_t> out(ec);
-        size_t eb = idx32 ? 4 : 2;
         for (uint32_t i = 0; i < ec; ++i) {
             uint32_t code;
             if (idx32) { std::memcpy(&code, data + offset, 4); offset += 4; }
@@ -346,6 +467,17 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     auto west  = readEdge(), south = readEdge(), east = readEdge(), north = readEdge();
 
     auto mesh = std::make_unique<SurfaceTileMesh>();
+    mesh->rasterOverlayDetails.setGeographicRectangle(bounds);
+    mesh->hasLocalOriginEcef = true;
+    mesh->localOriginEcef =
+        Vec3(hdr.boundingSphereX, hdr.boundingSphereY, hdr.boundingSphereZ);
+    mesh->hasHeightRange = true;
+    mesh->minimumHeight = hdr.minimumHeight;
+    mesh->maximumHeight = hdr.maximumHeight;
+    mesh->horizonOcclusionPoint =
+        Vec3(hdr.horizonOcclusionX, hdr.horizonOcclusionY, hdr.horizonOcclusionZ);
+    mesh->hasHorizonOcclusionPoint =
+        mesh->horizonOcclusionPoint.lengthSquared() > 0.0;
 
     // --- Parse extensions (oct-encoded normals, water mask, metadata) ---
     WaterMask waterMask;
@@ -391,24 +523,23 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
             uint8_t v = data[offset];
             waterMask.allWater = (v != 0);
             waterMask.allLand = !waterMask.allWater;
-        } else if (extId == 4 && extLen > 0) {
-            // cesium-native: metadata JSON with availability rectangles
-            std::string metadataJson(reinterpret_cast<const char*>(data + offset), extLen);
-            // Parse "available" array: [[{startX,startY,endX,endY},...],...]
-            auto j = nlohmann::json::parse(metadataJson, nullptr, false);
-            if (!j.is_discarded() && j.contains("available") && j["available"].is_array()) {
-                for (const auto& levelRanges : j["available"]) {
-                    if (!levelRanges.is_array()) continue;
-                    for (const auto& range : levelRanges) {
-                        if (!range.is_object()) continue;
-                        mesh->metadataAvailability.push_back({
-                            range.value("startX", 0),
-                            range.value("startY", 0),
-                            range.value("endX", 0),
-                            range.value("endY", 0)
-                        });
-                    }
-                }
+        } else if (extId == 4 && extLen >= sizeof(uint32_t)) {
+            // cesium-native: metadata JSON with availability rectangles.
+            // Extension payload starts with uint32 metadataJsonLength, then JSON.
+            // Format: "available": [[{startX,startY,endX,endY},...],...]
+            // Each sub-array i corresponds to level (startingLevel + i).
+            // Aligned with cesium-native loadAvailabilityRectangles.
+            uint32_t metadataJsonLength = 0;
+            std::memcpy(&metadataJsonLength, data + offset, sizeof(uint32_t));
+            const size_t jsonOffset = offset + sizeof(uint32_t);
+            const size_t maxJsonLength = extLen - sizeof(uint32_t);
+            if (metadataJsonLength <= maxJsonLength &&
+                jsonOffset + metadataJsonLength <= len) {
+                std::string metadataJson(
+                    reinterpret_cast<const char*>(data + jsonOffset),
+                    metadataJsonLength);
+                mesh->metadataAvailability =
+                    parseMetadataAvailabilityJson(metadataJson);
             }
         }
         offset += extLen;
@@ -498,13 +629,13 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
         for (size_t i = 0; i < edgeIdx.size(); ++i) {
             size_t ei = reverse ? (edgeIdx.size() - 1 - i) : i;
             const SurfaceVertex& top = mesh->vertices[edgeIdx[ei]];
-            Cartographic cart = ellipsoid.cartographicToCartesian(top.positionEcef);
+            Cartographic cart = ellipsoid.cartesianToCartographic(top.positionEcef);
             Cartographic sc = Cartographic::fromRadians(
                 cart.longitude() + lo, cart.latitude() + la, cart.height() - skirtH);
 
             SurfaceVertex sv;
             sv.positionEcef = ellipsoid.cartographicToCartesian(sc);
-            sv.normalEcef = ellipsoid.geodeticSurfaceNormal(sv.positionEcef);
+            sv.normalEcef = top.normalEcef;
             sv.uv = top.uv;
             mesh->vertices.push_back(sv);
         }
@@ -519,34 +650,59 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
         }
     };
 
-    // cesium-native QuantizedMeshLoader::addSkirts: sort by UV before assembling.
-    // West: sort by v asc (south→north)
-    // South: sort by u desc (east→west)
-    // East: sort by v desc (north→south)
-    // North: sort by u asc (west→east)
-    auto sortByU = [&](const std::vector<uint32_t>& idx, bool desc) {
-        std::vector<uint32_t> s = idx;
-        std::sort(s.begin(), s.end(), [&](uint32_t a, uint32_t b) {
-            double ua = (uBuf.size() > a) ? (static_cast<double>(uBuf[a]) / 32767.0) : 0.0;
-            double ub = (uBuf.size() > b) ? (static_cast<double>(uBuf[b]) / 32767.0) : 0.0;
-            return desc ? (ua > ub) : (ua < ub);
-        });
-        return s;
-    };
-    auto sortByV = [&](const std::vector<uint32_t>& idx, bool desc) {
-        std::vector<uint32_t> s = idx;
-        std::sort(s.begin(), s.end(), [&](uint32_t a, uint32_t b) {
-            double va = (vBuf.size() > a) ? (static_cast<double>(vBuf[a]) / 32767.0) : 0.0;
-            double vb = (vBuf.size() > b) ? (static_cast<double>(vBuf[b]) / 32767.0) : 0.0;
-            return desc ? (va > vb) : (va < vb);
-        });
-        return s;
+    // cesium-native QuantizedMeshLoader::addSkirts:
+    // Use std::partial_sort_copy into a pre-allocated buffer, matching
+    // the cesium-native pattern exactly.
+    // West edge: partial_sort_copy by v ascending (south→north)
+    // South edge: partial_sort_copy by u descending (east→west)
+    // East edge: partial_sort_copy by v descending (north→south)
+    // North edge: partial_sort_copy by u ascending (west→east)
+    uint32_t maxEdgeVertexCount = std::max({
+        static_cast<uint32_t>(west.size()),
+        static_cast<uint32_t>(south.size()),
+        static_cast<uint32_t>(east.size()),
+        static_cast<uint32_t>(north.size())});
+    std::vector<uint32_t> sortEdgeIndices(maxEdgeVertexCount);
+
+    auto partialSortEdge = [&](const std::vector<uint32_t>& edge,
+                                auto comparator) -> std::vector<uint32_t> {
+        if (edge.empty()) return {};
+        uint32_t count = static_cast<uint32_t>(edge.size());
+        std::partial_sort_copy(
+            edge.begin(), edge.end(),
+            sortEdgeIndices.begin(),
+            sortEdgeIndices.begin() + count,
+            comparator);
+        return std::vector<uint32_t>(
+            sortEdgeIndices.begin(),
+            sortEdgeIndices.begin() + count);
     };
 
-    addSkirtEdge(sortByV(west, false), -lonOff, 0, false);
-    addSkirtEdge(sortByU(south, true), 0, -latOff, false);
-    addSkirtEdge(sortByV(east, true), lonOff, 0, false);
-    addSkirtEdge(sortByU(north, false), 0, latOff, false);
+    // West: sort by v asc (uBuf/vBuf are 16-bit quantized, [0,32767])
+    auto sortedWest = partialSortEdge(west,
+        [&](uint32_t a, uint32_t b) {
+            return vBuf[a] < vBuf[b];
+        });
+    // South: sort by u desc
+    auto sortedSouth = partialSortEdge(south,
+        [&](uint32_t a, uint32_t b) {
+            return uBuf[a] > uBuf[b];
+        });
+    // East: sort by v desc
+    auto sortedEast = partialSortEdge(east,
+        [&](uint32_t a, uint32_t b) {
+            return vBuf[a] > vBuf[b];
+        });
+    // North: sort by u asc
+    auto sortedNorth = partialSortEdge(north,
+        [&](uint32_t a, uint32_t b) {
+            return uBuf[a] < uBuf[b];
+        });
+
+    addSkirtEdge(sortedWest,  -lonOff, 0,       false);
+    addSkirtEdge(sortedSouth, 0,       -latOff, false);
+    addSkirtEdge(sortedEast,  lonOff,  0,       false);
+    addSkirtEdge(sortedNorth, 0,       latOff,  false);
 
     mesh->waterMask = std::move(waterMask);
     return mesh;

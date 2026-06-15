@@ -16,7 +16,7 @@ constexpr double kEpsilon = 1e-6;  // 容差：~0.1 mm 量级
 TEST(EllipsoidTest, Wgs84Constants) {
     const auto& e = Ellipsoid::WGS84();
     EXPECT_DOUBLE_EQ(6378137.0, e.semiMajorAxis());
-    EXPECT_DOUBLE_EQ(6356752.314245, e.semiMinorAxis());
+    EXPECT_DOUBLE_EQ(6356752.3142451793, e.semiMinorAxis());
     EXPECT_NEAR(1.0 / 298.257223563, e.flattening(), 1e-12);
 }
 
@@ -98,8 +98,8 @@ TEST(EllipsoidTest, NorthPole) {
 
     EXPECT_NEAR(0.0, ecef.x(), 0.01);
     EXPECT_NEAR(0.0, ecef.y(), 0.01);
-    // z ≈ semi-minor axis (6356752.314245)
-    EXPECT_NEAR(6356752.314245, ecef.z(), 0.01);
+    // z ≈ semi-minor axis (6356752.3142451793)
+    EXPECT_NEAR(6356752.3142451793, ecef.z(), 0.01);
 }
 
 TEST(EllipsoidTest, East90Degrees) {
@@ -141,6 +141,19 @@ TEST(EllipsoidTest, ProjectToSurfaceMatchesEllipsoidHeightZero) {
     EXPECT_NEAR(0.0, back.height(), 1e-5);
 }
 
+TEST(EllipsoidTest, TryScaleToGeodeticSurfaceMatchesCesiumNativeCenterBehavior) {
+    const auto& e = Ellipsoid::WGS84();
+
+    EXPECT_FALSE(e.tryScaleToGeodeticSurface(Vec3::zero()).has_value());
+    EXPECT_FALSE(e.tryCartesianToCartographic(Vec3::zero()).has_value());
+
+    auto nearCenter = e.tryScaleToGeodeticSurface(Vec3(1.0, 0.0, 0.0));
+    ASSERT_TRUE(nearCenter.has_value());
+    EXPECT_NEAR(e.semiMajorAxis(), nearCenter->x(), 1e-6);
+    EXPECT_NEAR(0.0, nearCenter->y(), 1e-12);
+    EXPECT_NEAR(0.0, nearCenter->z(), 1e-12);
+}
+
 TEST(EllipsoidTest, RayIntersectionHasExplicitMissAndHit) {
     const auto& e = Ellipsoid::WGS84();
     Vec3 origin(0.0, 0.0, 7000000.0);
@@ -153,6 +166,31 @@ TEST(EllipsoidTest, RayIntersectionHasExplicitMissAndHit) {
 
     auto miss = e.rayIntersection(origin, outward);
     EXPECT_FALSE(miss.has_value());
+}
+
+TEST(EllipsoidTest, RayIntersectionIntervalMatchesCesiumNative) {
+    const Ellipsoid unitSphere(1.0, 1.0);
+
+    auto outside = unitSphere.rayIntersectionInterval(
+        Vec3(2.0, 0.0, 0.0),
+        Vec3(-1.0, 0.0, 0.0));
+    ASSERT_TRUE(outside.has_value());
+    EXPECT_NEAR(1.0, outside->entryDistance, 1e-12);
+    EXPECT_NEAR(3.0, outside->exitDistance, 1e-12);
+
+    auto inside = Ellipsoid::WGS84().rayIntersectionInterval(
+        Vec3(20000.0, 0.0, 0.0),
+        Vec3(1.0, 0.0, 0.0));
+    ASSERT_TRUE(inside.has_value());
+    EXPECT_DOUBLE_EQ(0.0, inside->entryDistance);
+    EXPECT_NEAR(Ellipsoid::WGS84().semiMajorAxis() - 20000.0,
+                inside->exitDistance,
+                1e-6);
+
+    EXPECT_FALSE(unitSphere
+                     .rayIntersectionInterval(Vec3(1.0, 0.0, 0.0),
+                                              Vec3(0.0, 0.0, 1.0))
+                     .has_value());
 }
 
 TEST(EllipsoidTest, VincentyInverseBeijingShanghaiDistance) {
@@ -210,6 +248,29 @@ TEST(TransformsTest, EcefToEnuMovesOriginToZero) {
     EXPECT_NEAR(0.0, enu.x(), 1e-6);
     EXPECT_NEAR(0.0, enu.y(), 1e-6);
     EXPECT_NEAR(0.0, enu.z(), 1e-6);
+}
+
+TEST(TransformsTest, EastNorthUpToFixedFrameMatchesCesiumNativeSpecialCases) {
+    auto columnMatches = [](const Mat4& m,
+                            int col,
+                            const Vec3& expected,
+                            double epsilon = 1e-12) {
+        return std::abs(m(0, col) - expected.x()) < epsilon &&
+               std::abs(m(1, col) - expected.y()) < epsilon &&
+               std::abs(m(2, col) - expected.z()) < epsilon;
+    };
+
+    Mat4 zeroFrame = Transforms::eastNorthUpToFixedFrame(Vec3::zero());
+    EXPECT_TRUE(columnMatches(zeroFrame, 0, Vec3(0.0, 1.0, 0.0)));
+    EXPECT_TRUE(columnMatches(zeroFrame, 1, Vec3(-1.0, 0.0, 0.0)));
+    EXPECT_TRUE(columnMatches(zeroFrame, 2, Vec3(0.0, 0.0, 1.0)));
+
+    double polarRadius = Ellipsoid::WGS84().semiMinorAxis();
+    Mat4 southPoleFrame =
+        Transforms::eastNorthUpToFixedFrame(Vec3(0.0, 0.0, -polarRadius));
+    EXPECT_TRUE(columnMatches(southPoleFrame, 0, Vec3(0.0, 1.0, 0.0)));
+    EXPECT_TRUE(columnMatches(southPoleFrame, 1, Vec3(1.0, 0.0, 0.0)));
+    EXPECT_TRUE(columnMatches(southPoleFrame, 2, Vec3(0.0, 0.0, -1.0)));
 }
 
 TEST(TransformsTest, EnuToEcefRoundtrip) {

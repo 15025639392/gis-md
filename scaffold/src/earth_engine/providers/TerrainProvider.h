@@ -9,8 +9,24 @@
 #include <vector>
 #include <functional>
 #include <cstdint>
+#include <array>
+#include <utility>
 
 namespace earth_engine {
+
+enum class TileAvailabilityState {
+    NotAvailable,
+    Available,
+    Unknown
+};
+
+enum class TerrainTileLoadStatus {
+    Success,
+    Empty,
+    RetryLater,
+    Failed,
+    Cancelled
+};
 
 /// 解码后的高度图数据。
 /// 高度为 WGS84 ellipsoid height（meter）。
@@ -42,8 +58,57 @@ struct DecodedHeightmap {
     /// the optimized triangulation instead of using the regular grid.
     std::vector<uint8_t> rawData;
 
-    /// cesium-native: availability rectangles from QM metadata (extension ID=4)
-    std::vector<std::array<int, 4>> metadataAvailability;
+    /// cesium-native: availability rectangles from QM metadata (extension ID=4).
+    /// Each entry: {levelOffset, startX, startY, endX, endY}
+    std::vector<std::array<int, 5>> metadataAvailability;
+    bool metadataAvailabilityProcessed = false;
+
+    /// cesium-native LayerJsonTerrainLoader: when loading a tile from an
+    /// upper layer, availability metadata for matching underlying layers is
+    /// loaded at the same time. These updates are applied on the main thread.
+    struct QuantizedMeshAvailabilityUpdate {
+        int layerIndex = -1;
+        TileKey subtreeKey;
+        std::vector<std::array<int, 5>> metadataAvailability;
+    };
+    std::vector<QuantizedMeshAvailabilityUpdate> quantizedMeshAvailabilityUpdates;
+};
+
+struct TerrainTileLoadResult {
+    TerrainTileLoadStatus status = TerrainTileLoadStatus::Failed;
+    std::unique_ptr<DecodedHeightmap> heightmap;
+
+    static TerrainTileLoadResult success(std::unique_ptr<DecodedHeightmap> hm) {
+        TerrainTileLoadResult result;
+        result.status = hm ? TerrainTileLoadStatus::Success
+                           : TerrainTileLoadStatus::Failed;
+        result.heightmap = std::move(hm);
+        return result;
+    }
+
+    static TerrainTileLoadResult empty() {
+        TerrainTileLoadResult result;
+        result.status = TerrainTileLoadStatus::Empty;
+        return result;
+    }
+
+    static TerrainTileLoadResult retryLater() {
+        TerrainTileLoadResult result;
+        result.status = TerrainTileLoadStatus::RetryLater;
+        return result;
+    }
+
+    static TerrainTileLoadResult failed() {
+        TerrainTileLoadResult result;
+        result.status = TerrainTileLoadStatus::Failed;
+        return result;
+    }
+
+    static TerrainTileLoadResult cancelled() {
+        TerrainTileLoadResult result;
+        result.status = TerrainTileLoadStatus::Cancelled;
+        return result;
+    }
 };
 
 /// 地形数据 Provider 抽象接口。
@@ -71,15 +136,26 @@ public:
     /// Whether this provider can serve the tile. Providers with metadata
     /// availability should reject unsupported tiles before network request.
     virtual bool supportsTile(const TileKey& key) const {
-        (void)key;
-        return true;
+        return availabilityState(key) == TileAvailabilityState::Available;
+    }
+
+    /// cesium-native LayerJsonTerrainLoader::tileIsAvailableInLayer equivalent.
+    /// Available means the content can be requested now. Unknown means a
+    /// metadata availability subtree has not been loaded yet.
+    virtual TileAvailabilityState availabilityState(const TileKey& key) const {
+        if (key.schemeId != schemeId() ||
+            key.z < minZoom() ||
+            key.z > maxZoom()) {
+            return TileAvailabilityState::NotAvailable;
+        }
+        return TileAvailabilityState::Available;
     }
 
     /// 构建瓦片请求 URL
     virtual std::string buildUrl(const TileKey& key) const = 0;
 
     using HeightmapCallback = std::function<void(
-        const TileKey&, std::unique_ptr<DecodedHeightmap>)>;
+        const TileKey&, TerrainTileLoadResult)>;
 
     /// 异步请求高度图瓦片
     virtual void requestTile(const TileKey& key,

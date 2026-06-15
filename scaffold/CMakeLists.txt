@@ -27,6 +27,18 @@ endif()
 
 # 子目录
 add_subdirectory(src)
+
+option(BUILD_SSE_PIPELINE_TEST "Build lightweight engine regression test" ON)
+if(BUILD_SSE_PIPELINE_TEST)
+    add_executable(test_sse_pipeline
+        tests/unit/tiling/test_sse_pipeline.cpp
+    )
+    target_link_libraries(test_sse_pipeline PRIVATE earth_engine_core)
+    if(BUILD_TESTING)
+        add_test(NAME test_sse_pipeline COMMAND test_sse_pipeline)
+    endif()
+endif()
+
 if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()

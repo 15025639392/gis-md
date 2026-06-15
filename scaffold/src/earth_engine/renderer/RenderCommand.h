@@ -11,6 +11,7 @@
 namespace earth_engine {
 
 static constexpr int kMaxSurfaceImageryOverlays = 4;
+static constexpr int kGltfInstanceMatrixStride = 100;
 
 enum class RenderCommandKind {
     Unknown,
@@ -18,8 +19,9 @@ enum class RenderCommandKind {
     AtmosphereBackground,  // order 5: atmospheric scattering
     GlobeSurface,          // order 10
     SurfaceTile,           // order 10
-    VectorOverlay,         // order 30
-    DebugOverlay           // order 40
+    GltfPrimitive,         // order 15
+    GltfPrimitiveInstanced, // order 15
+    VectorOverlay          // order 30
 };
 
 /// 单条渲染命令。
@@ -42,7 +44,7 @@ struct RenderCommand {
     int vertexCount = 0;       // glDrawArrays 的顶点数（indexBuffer 为 null 时使用）
     int indexCount = 0;        // glDrawElements 的索引数
     int indexOffset = 0;
-    int vertexStride = 0;      // 每顶点字节数（0 = 后端自动检测，32=globe, 8=tile, 12=vec3）
+    int vertexStride = 0;      // bytes per vertex (0=auto, 32=surface, 120=glTF)
     int instanceCount = 0;
     int instanceStride = 0;
     enum class PrimitiveType { Triangles, TriangleStrip, Lines, LineStrip, Points } primitive = PrimitiveType::Triangles;
@@ -55,6 +57,14 @@ struct RenderCommand {
     bool cullFace = true;
     enum class BlendFactor { SrcAlpha, OneMinusSrcAlpha } blendSrc = BlendFactor::SrcAlpha;
     enum class BlendFactorDst { OneMinusSrcAlpha, One } blendDst = BlendFactorDst::OneMinusSrcAlpha;
+
+    // World-space center used by camera-aware transparent sorting.
+    // glTF BLEND and fade commands are only valid once Scene has converted this
+    // to a camera-space translucentSortDepth for the current frame.
+    bool hasWorldSortCenter = false;
+    std::array<double, 3> worldSortCenter{0.0, 0.0, 0.0};
+    bool hasTranslucentSortDepth = false;
+    double translucentSortDepth = 0.0;
 
     // Uniform 数据（name → float 数组）
     // 平台后端根据 shader uniform layout 解释
@@ -88,7 +98,7 @@ struct RenderCommandValidationError {
     std::string message;
 };
 
-/// MVP 3D globe 主链路固定顺序：surface -> vector -> debug。
+/// MVP 3D globe 主链路固定顺序：surface -> vector。
 int mvpRenderOrder(RenderCommandKind kind);
 
 /// 对 MVP 主链路的 pass/depth/cull/blend 状态做硬校验。

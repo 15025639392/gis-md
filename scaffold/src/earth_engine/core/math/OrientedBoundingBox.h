@@ -1,8 +1,11 @@
 #pragma once
 
+#include "BoundingSphere.h"
 #include "Vec3.h"
 #include "Mat4.h"
 #include "Plane.h"
+
+#include <cmath>
 
 namespace earth_engine {
 
@@ -43,8 +46,8 @@ public:
 
         const double distanceToPlane = n.dot(center_) + plane.getDistance();
 
-        if (distanceToPlane < -radEffective) return -1;  // Outside
-        if (distanceToPlane > radEffective)  return 1;   // Inside
+        if (distanceToPlane <= -radEffective) return -1;  // Outside
+        if (distanceToPlane >= radEffective)  return 1;   // Inside
         return 0;  // Intersecting
     }
 
@@ -61,14 +64,68 @@ public:
     double computeDistanceSquaredToPosition(const Vec3& position) const noexcept {
         const Vec3 offset = position - center_;
 
-        // Project offset onto each axis to get local coordinates
-        double p0 = offset.dot(halfAxes_[0].normalized());
-        double p1 = offset.dot(halfAxes_[1].normalized());
-        double p2 = offset.dot(halfAxes_[2].normalized());
+        Vec3 u = halfAxes_[0];
+        Vec3 v = halfAxes_[1];
+        Vec3 w = halfAxes_[2];
 
-        double h0 = halfAxes_[0].length();
-        double h1 = halfAxes_[1].length();
-        double h2 = halfAxes_[2].length();
+        const double h0 = u.length();
+        const double h1 = v.length();
+        const double h2 = w.length();
+        const bool uValid = h0 > 0.0;
+        const bool vValid = h1 > 0.0;
+        const bool wValid = h2 > 0.0;
+
+        if (uValid) u = u / h0;
+        if (vValid) v = v / h1;
+        if (wValid) w = w / h2;
+
+        const int degenerateAxes =
+            (uValid ? 0 : 1) + (vValid ? 0 : 1) + (wValid ? 0 : 1);
+        if (degenerateAxes == 1) {
+            Vec3 validAxis1 = v;
+            Vec3 validAxis2 = w;
+            if (!vValid) {
+                validAxis1 = u;
+            } else if (!wValid) {
+                validAxis2 = u;
+            }
+
+            const Vec3 validAxis3 = validAxis1.cross(validAxis2);
+            if (!uValid) {
+                u = validAxis3;
+            } else if (!vValid) {
+                v = validAxis3;
+            } else {
+                w = validAxis3;
+            }
+        } else if (degenerateAxes == 2) {
+            Vec3 validAxis1 = uValid ? u : (vValid ? v : w);
+            Vec3 crossVector = Vec3::unitY();
+            if (std::abs(validAxis1.dot(crossVector)) > 1.0 - 1e-3) {
+                crossVector = Vec3::unitX();
+            }
+
+            const Vec3 validAxis2 = validAxis1.cross(crossVector).normalized();
+            const Vec3 validAxis3 = validAxis1.cross(validAxis2).normalized();
+            if (uValid) {
+                v = validAxis2;
+                w = validAxis3;
+            } else if (vValid) {
+                w = validAxis2;
+                u = validAxis3;
+            } else {
+                u = validAxis2;
+                v = validAxis3;
+            }
+        } else if (degenerateAxes == 3) {
+            u = Vec3::unitX();
+            v = Vec3::unitY();
+            w = Vec3::unitZ();
+        }
+
+        const double p0 = offset.dot(u);
+        const double p1 = offset.dot(v);
+        const double p2 = offset.dot(w);
 
         double dSq = 0.0;
         auto clampDist = [&](double p, double h) {

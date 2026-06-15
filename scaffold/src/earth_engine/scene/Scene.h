@@ -4,16 +4,12 @@
 #include "../camera/CameraController.h"
 #include "../globe/Globe.h"
 #include "../renderer/Renderer.h"
-#include "../layers/BasemapLayer.h"
-#include "../layers/BasemapLayerStack.h"
 #include "../layers/VectorLayer.h"
-#include "../layers/TerrainLayer.h"
 #include "../tiling/Tileset.h"
 #include "../interaction/InputEvent.h"
 #include "../interaction/InputManager.h"
 #include "../interaction/PickingService.h"
 #include "../interaction/SelectionManager.h"
-#include "../debug/DebugOverlay.h"
 #include "../environment/TimeController.h"
 #include "../environment/SunDirection.h"
 #include "../environment/SkyGradient.h"
@@ -46,6 +42,11 @@ public:
     void setViewport(int widthPixels, int heightPixels, float dpr = 1.0f);
     void update(double deltaSeconds);
     void render();
+    void setSelectorViewOverride(
+        std::vector<FrameState::SelectorView> selectorViews);
+    void clearSelectorViewOverride();
+    void setOcclusionCallback(Tileset::OcclusionCallback callback);
+    void clearOcclusionCallback();
 
     const FrameState& frameState() const { return frameState_; }
 
@@ -53,41 +54,17 @@ public:
     const Diagnostics& diagnostics() const { return frameState_.diagnostics; }
     Diagnostics& mutableDiagnostics() { return frameState_.diagnostics; }
 
-    // ---- 底图图层管理 ----
-    void addLayer(std::unique_ptr<BasemapLayer> layer);
-    std::unique_ptr<BasemapLayer> removeLayer(const std::string& layerId);
-    void moveLayer(const std::string& layerId, size_t index);
-    size_t layerCount() const;
-    int visibleTileCount() const { return layerStack_.visibleTileCount(); }
-    int cachedTileCount() const { return layerStack_.cachedTileCount(); }
-
-    /// 控制点验证（跨图层/跨 scheme）
-    std::vector<BasemapLayerStack::ControlPointResult>
-    verifyControlPoint(double lngRad, double latRad, int zoom = 10) const;
-
-    /// 获取图层栈（供高级操作）
-    BasemapLayerStack& layerStack() { return layerStack_; }
-    const BasemapLayerStack& layerStack() const { return layerStack_; }
-
     // ---- 矢量图层管理 ----
     void addVectorLayer(std::unique_ptr<VectorLayer> layer);
     std::unique_ptr<VectorLayer> removeVectorLayer(const std::string& layerId);
     size_t vectorLayerCount() const { return vectorLayers_.size(); }
 
-    // ---- 地形 ----
-
-    /// 设置地形图层（Scene 获得所有权）
-    void setTerrainLayer(std::unique_ptr<TerrainLayer> layer);
-
-    /// 启用/禁用地形渲染
-    void setTerrainEnabled(bool enabled);
-
-    /// 是否有地形数据
-    bool hasTerrain() const;
-
     // ---- 统一 Tileset（cesium-native 对齐） ----
     void setTileset(std::unique_ptr<Tileset> tileset);
+    void addTileset(std::unique_ptr<Tileset> tileset);
     Tileset* tileset() const { return tileset_.get(); }
+    size_t additionalTilesetCount() const { return additionalTilesets_.size(); }
+    bool hasTerrain() const { return tileset_ != nullptr; }
 
     // ---- 输入事件（归一化） ----
     void onInputEvent(const InputEvent& event);
@@ -106,39 +83,33 @@ public:
     Vec3 sunDirection() const;
     const SkyGradient& skyGradient() const { return *skyGradient_; }
 
-    // ---- 调试叠加层 ----
-    void setDebugOverlayEnabled(bool enabled);
-    bool debugOverlayEnabled() const;
-
 private:
     void configureCameraSurfacePicker();
     void setupSelectionCallbacks();
     void setupInputCallback();
     bool pickInteractionFocus(float screenX, float screenY, Vec3& outPoint) const;
     void updateInteractionFocus(const InputEvent& event);
+    void populateSelectorViews();
 
     std::unique_ptr<Camera> camera_;
     std::unique_ptr<CameraController> cameraController_;
     std::unique_ptr<Renderer> renderer_;
-    std::unique_ptr<DebugOverlay> debugOverlay_;
     GlobeMesh globeMesh_;
     FrameState frameState_;
     RenderCommandList renderCommands_;
     RenderDevice* renderDevice_ = nullptr;
     uint64_t frameId_ = 0;
     double elapsedTime_ = 0.0;
-
-    BasemapLayerStack layerStack_;
+    bool hasSelectorViewOverride_ = false;
+    std::vector<FrameState::SelectorView> selectorViewOverride_;
 
     // 矢量图层
     std::vector<std::unique_ptr<VectorLayer>> vectorLayers_;
 
-    // 地形
-    std::unique_ptr<TerrainLayer> terrainLayer_;
-    bool terrainEnabled_ = false;
-
     // 统一 Tileset（cesium-native 对齐）
     std::unique_ptr<Tileset> tileset_;
+    std::vector<std::unique_ptr<Tileset>> additionalTilesets_;
+    Tileset::OcclusionCallback occlusionCallback_;
 
     // 交互
     std::unique_ptr<InputManager> inputManager_;

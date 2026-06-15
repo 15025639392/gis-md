@@ -1,6 +1,8 @@
 #include "RenderCommand.h"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
 namespace earth_engine {
 namespace {
@@ -68,6 +70,46 @@ bool surfaceTileBlendAllowed(const RenderCommand& cmd) {
     return tileOpacity < 0.999f || transitionOpacity < 0.999f;
 }
 
+bool gltfPrimitiveBlendAllowed(const RenderCommand& cmd) {
+    const bool blendMaterial = uniformScalar(cmd, "u_alphaMode", 0.0f) > 1.5f;
+    return blendMaterial ||
+           uniformScalar(cmd, "u_renderOpacity", 1.0f) < 0.999f;
+}
+
+bool isGltfPrimitiveCommand(const RenderCommand& cmd) {
+    return cmd.kind == RenderCommandKind::GltfPrimitive ||
+           cmd.kind == RenderCommandKind::GltfPrimitiveInstanced;
+}
+
+bool isTranslucentGltfPrimitiveCommand(const RenderCommand& cmd) {
+    return isGltfPrimitiveCommand(cmd) && cmd.blend;
+}
+
+bool mvpCommandLess(const RenderCommand& a, const RenderCommand& b) {
+    const int orderA = mvpRenderOrder(a.kind);
+    const int orderB = mvpRenderOrder(b.kind);
+    if (orderA != orderB) {
+        return orderA < orderB;
+    }
+
+    const bool translucentA = isTranslucentGltfPrimitiveCommand(a);
+    const bool translucentB = isTranslucentGltfPrimitiveCommand(b);
+    if (translucentA != translucentB) {
+        return !translucentA && translucentB;
+    }
+    if (!translucentA) {
+        return false;
+    }
+
+    if (a.hasTranslucentSortDepth != b.hasTranslucentSortDepth) {
+        return a.hasTranslucentSortDepth;
+    }
+    if (!a.hasTranslucentSortDepth) {
+        return false;
+    }
+    return a.translucentSortDepth > b.translucentSortDepth;
+}
+
 bool surfaceTileCullStateAllowed(const RenderCommand& cmd) {
     // Terrain-primary Quantized Mesh tiles may include skirts and mixed LOD
     // borders whose visibility relies on two-sided rendering. GlobeSurface and
@@ -95,12 +137,13 @@ int mvpRenderOrder(RenderCommandKind kind) {
             return 10;
         case RenderCommandKind::SurfaceTile:
             return 10;
+        case RenderCommandKind::GltfPrimitive:
+        case RenderCommandKind::GltfPrimitiveInstanced:
+            return 15;
         case RenderCommandKind::AtmosphereBackground:
             return 20;
         case RenderCommandKind::VectorOverlay:
             return 30;
-        case RenderCommandKind::DebugOverlay:
-            return 40;
         case RenderCommandKind::Unknown:
         default:
             return 100;
@@ -112,6 +155,8 @@ validateMvpRenderCommands(const RenderCommandList& commands,
                           uint64_t expectedFrameId) {
     std::optional<RenderCommandValidationError> error;
     int lastOrder = -1;
+    bool sawTranslucentGltf = false;
+    double lastTranslucentGltfDepth = std::numeric_limits<double>::infinity();
 
     for (size_t i = 0; i < commands.size(); ++i) {
         const RenderCommand& cmd = commands[i];
@@ -167,6 +212,63 @@ validateMvpRenderCommands(const RenderCommandList& commands,
                 }
                 break;
 
+            case RenderCommandKind::GltfPrimitive:
+            case RenderCommandKind::GltfPrimitiveInstanced:
+                if (!requireColorPass(i, cmd, error)) return error;
+                if (!cmd.blend && sawTranslucentGltf) {
+                    fail(i, cmd, "GltfPrimitive opaque command follows translucent command", error);
+                    return error;
+                }
+                if (cmd.blend) {
+                    sawTranslucentGltf = true;
+                    if (!cmd.hasTranslucentSortDepth ||
+                        !std::isfinite(cmd.translucentSortDepth)) {
+                        fail(i, cmd, "GltfPrimitive blended command missing translucent sort depth", error);
+                        return error;
+                    }
+                    if (cmd.translucentSortDepth >
+                        lastTranslucentGltfDepth + 1e-6) {
+                        fail(i, cmd, "GltfPrimitive translucent commands are not back-to-front sorted", error);
+                        return error;
+                    }
+                    lastTranslucentGltfDepth = cmd.translucentSortDepth;
+                }
+                if (cmd.depthTest != true) {
+                    fail(i, cmd, "GltfPrimitive depthTest violates MVP fixed state", error);
+                    return error;
+                }
+                if (cmd.depthWrite == cmd.blend) {
+                    fail(i, cmd, "GltfPrimitive depthWrite violates alpha blend state", error);
+                    return error;
+                }
+                if (cmd.blend != (cmd.blend && gltfPrimitiveBlendAllowed(cmd))) {
+                    fail(i, cmd, "GltfPrimitive blend violates MVP fixed state", error);
+                    return error;
+                }
+                if (expectedFrameId != 0 && cmd.frameId != expectedFrameId) {
+                    fail(i, cmd, "GltfPrimitive frameId is stale for current FrameState", error);
+                    return error;
+                }
+                if (cmd.generation == 0) {
+                    fail(i, cmd, "GltfPrimitive generation must be non-zero", error);
+                    return error;
+                }
+                if (cmd.kind == RenderCommandKind::GltfPrimitiveInstanced) {
+                    if (cmd.instanceCount <= 0) {
+                        fail(i, cmd, "GltfPrimitiveInstanced requires instanceCount", error);
+                        return error;
+                    }
+                    if (!cmd.instanceBuffer) {
+                        fail(i, cmd, "GltfPrimitiveInstanced requires instanceBuffer", error);
+                        return error;
+                    }
+                    if (cmd.instanceStride <= 0) {
+                        fail(i, cmd, "GltfPrimitiveInstanced requires instanceStride", error);
+                        return error;
+                    }
+                }
+                break;
+
             case RenderCommandKind::VectorOverlay:
                 if (!requireColorPass(i, cmd, error)) return error;
                 break;
@@ -174,10 +276,6 @@ validateMvpRenderCommands(const RenderCommandList& commands,
             case RenderCommandKind::AtmosphereBackground:
                 if (!requireColorPass(i, cmd, error)) return error;
                 if (!requireState(i, cmd, true, false, false, true, "AtmosphereBackground", error)) return error;
-                break;
-
-            case RenderCommandKind::DebugOverlay:
-                if (!requireColorPass(i, cmd, error)) return error;
                 break;
 
             case RenderCommandKind::Unknown:
@@ -192,7 +290,7 @@ validateMvpRenderCommands(const RenderCommandList& commands,
 void sortMvpRenderCommands(RenderCommandList& commands) {
     std::stable_sort(commands.begin(), commands.end(),
         [](const RenderCommand& a, const RenderCommand& b) {
-            return mvpRenderOrder(a.kind) < mvpRenderOrder(b.kind);
+            return mvpCommandLess(a, b);
         });
 }
 

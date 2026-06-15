@@ -5,6 +5,7 @@
 #include "../core/math/Rectangle.h"
 #include "../core/math/Vec3.h"
 #include <vector>
+#include <array>
 #include <cstdint>
 #include <cstring>
 
@@ -34,6 +35,12 @@ public:
     static std::unique_ptr<SurfaceTileMesh> parseToSurfaceTileMesh(
         const uint8_t* data, size_t len,
         const Rectangle& bounds);
+
+    /// cesium-native QuantizedMeshLoader::loadMetadata equivalent.
+    /// Parses only Quantized Mesh extension ID=4 availability rectangles.
+    /// Each entry: {levelOffset, startX, startY, endX, endY}.
+    static std::vector<std::array<int, 5>> parseMetadataAvailability(
+        const uint8_t* data, size_t len);
 
 private:
     static int32_t zigZagDecode(int32_t value) noexcept {

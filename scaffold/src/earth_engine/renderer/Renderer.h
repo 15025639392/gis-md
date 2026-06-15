@@ -2,18 +2,35 @@
 
 #include "RenderDevice.h"
 #include "RenderCommand.h"
+#include "IPrepareRendererResources.h"
 #include <memory>
 #include <array>
+#include <string>
+#include <unordered_map>
 
 namespace earth_engine {
 
 struct GlobeMesh;
 struct FrameState;
+class RasterOverlayTile;
+struct TileKey;
+
+/// Stores a retained mapping from geometry tile → raster texture + UV transform.
+/// Set by RasterMappedToTilesetTile during attach, read by Tileset during
+/// render command construction.
+struct RasterAttachment {
+    const RasterOverlayTile* tile = nullptr;
+    Texture* texture = nullptr;
+    float offsetU = 0.0f;
+    float offsetV = 0.0f;
+    float scaleU = 1.0f;
+    float scaleV = 1.0f;
+};
 
 /// 平台无关渲染器。
 /// 管理共享 GPU 资源（shader、几何 buffer），供 Scene 和各 Layer 使用。
-/// 不自行决定渲染什么——由 Scene 收集 RenderCommands 后统一提交。
-class Renderer {
+/// 实现 IPrepareRendererResources 以支持 retained raster attachment。
+class Renderer : public IPrepareRendererResources {
 public:
     /// @param device 平台渲染设备（生命周期由调用者管理，必须长于 Renderer）
     explicit Renderer(RenderDevice* device);
@@ -49,6 +66,12 @@ public:
     Buffer* tileIndexBuffer() const;
     int tileIndexCount() const;
 
+    /// glTF primitive shader.
+    ShaderProgram* gltfShader() const;
+
+    /// glTF primitive shader with EXT_mesh_gpu_instancing-style instance data.
+    ShaderProgram* gltfInstancedShader() const;
+
     /// 地球模型矩阵（单位球 → ECEF meters）
     static std::array<float, 16> earthModelMatrix();
 
@@ -62,9 +85,47 @@ public:
                                           Buffer* indexBuffer = nullptr,
                                           int indexCount = 0) const;
 
+    /// Build a glTF primitive command. The vertex layout matches
+    /// POSITION(12) + NORMAL(12) + TEXCOORD_0..7 packed pairs (64)
+    /// + COLOR_0(16) + TANGENT(16).
+    RenderCommand makeGltfPrimitiveCommand(Buffer* vertexBuffer,
+                                            Buffer* indexBuffer,
+                                            int indexCount,
+                                            int vertexCount) const;
 
+    /// Build an instanced glTF primitive command. The per-instance layout is:
+    /// mat4 relative model matrix (64 bytes) + mat3 normal matrix (36 bytes).
+    RenderCommand makeGltfPrimitiveInstancedCommand(Buffer* vertexBuffer,
+                                                    Buffer* indexBuffer,
+                                                    Buffer* instanceBuffer,
+                                                    int indexCount,
+                                                    int vertexCount,
+                                                    int instanceCount) const;
+
+    // ── IPrepareRendererResources implementation ──
+
+    /// cesium-native: attachRasterInMainThread.
+    void attachRasterInMainThread(
+        const TileKey& geometryKey,
+        int32_t overlayIndex,
+        const RasterOverlayTile& rasterTile,
+        Texture* texture,
+        float translationU, float translationV,
+        float scaleU, float scaleV) override;
+
+    /// cesium-native: detachRasterInMainThread.
+    void detachRasterInMainThread(
+        const TileKey& geometryKey,
+        int32_t overlayIndex) noexcept override;
+
+    /// Query the retained raster attachment for a geometry tile + overlay slot.
+    /// Returns nullptr if no attachment exists.
+    const RasterAttachment* getAttachedRaster(const TileKey& geometryKey,
+                                               int32_t overlayIndex) const;
 
 private:
+    static std::string attachmentKey(const TileKey& key);
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

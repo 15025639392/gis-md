@@ -6,6 +6,27 @@
 
 namespace earth_engine {
 
+namespace {
+    constexpr double kEpsilon14 = 1e-14;
+
+    bool equalsEpsilon(double left, double right, double epsilon) {
+        return std::abs(left - right) <= epsilon;
+    }
+
+    bool equalsZero(const Vec3& value, double epsilon) {
+        return equalsEpsilon(value.x(), 0.0, epsilon) &&
+               equalsEpsilon(value.y(), 0.0, epsilon) &&
+               equalsEpsilon(value.z(), 0.0, epsilon);
+    }
+
+    double sign(double value) {
+        if (value == 0.0 || value != value) {
+            return value;
+        }
+        return value > 0.0 ? 1.0 : -1.0;
+    }
+}
+
 double Transforms::toRadians(double deg) {
     return deg * glm::pi<double>() / 180.0;
 }
@@ -14,48 +35,53 @@ double Transforms::toDegrees(double rad) {
     return rad * 180.0 / glm::pi<double>();
 }
 
+Mat4 Transforms::eastNorthUpToFixedFrame(const Vec3& originEcef) {
+    return eastNorthUpToFixedFrame(originEcef, Ellipsoid::WGS84());
+}
+
+Mat4 Transforms::eastNorthUpToFixedFrame(const Vec3& originEcef,
+                                         const Ellipsoid& ellipsoid) {
+    const glm::dvec3 origin = originEcef.raw();
+
+    if (equalsZero(originEcef, kEpsilon14)) {
+        return Mat4(glm::dmat4(
+            glm::dvec4(0.0, 1.0, 0.0, 0.0),
+            glm::dvec4(-1.0, 0.0, 0.0, 0.0),
+            glm::dvec4(0.0, 0.0, 1.0, 0.0),
+            glm::dvec4(origin, 1.0)));
+    }
+
+    if (equalsEpsilon(originEcef.x(), 0.0, kEpsilon14) &&
+        equalsEpsilon(originEcef.y(), 0.0, kEpsilon14)) {
+        const double poleSign = sign(originEcef.z());
+        return Mat4(glm::dmat4(
+            glm::dvec4(0.0, 1.0, 0.0, 0.0),
+            glm::dvec4(-poleSign, 0.0, 0.0, 0.0),
+            glm::dvec4(0.0, 0.0, poleSign, 0.0),
+            glm::dvec4(origin, 1.0)));
+    }
+
+    const Vec3 upVec = ellipsoid.geodeticSurfaceNormal(originEcef);
+    const glm::dvec3 up = upVec.raw();
+    const glm::dvec3 east =
+        glm::normalize(glm::dvec3(-origin.y, origin.x, 0.0));
+    const glm::dvec3 north = glm::cross(up, east);
+
+    return Mat4(glm::dmat4(
+        glm::dvec4(east, 0.0),
+        glm::dvec4(north, 0.0),
+        glm::dvec4(up, 0.0),
+        glm::dvec4(origin, 1.0)));
+}
+
 Mat4 Transforms::ecefToEnu(const Cartographic& origin) {
-    double lng = origin.longitude();
-    double lat = origin.latitude();
     Vec3 originEcef = Ellipsoid::WGS84().cartographicToCartesian(origin);
-
-    double sinLng = std::sin(lng);
-    double cosLng = std::cos(lng);
-    double sinLat = std::sin(lat);
-    double cosLat = std::cos(lat);
-
-    // ENU axes expressed in ECEF coordinates.
-    // East  = (-sinLng,            cosLng,          0)
-    // North = (-sinLat*cosLng,    -sinLat*sinLng,  cosLat)
-    // Up    = ( cosLat*cosLng,     cosLat*sinLng,  sinLat)
-    //
-    // GLM stores columns, so rows below encode dot(axis, point - origin).
-    glm::dmat4 m(1.0);
-    const glm::dvec3 east(-sinLng, cosLng, 0.0);
-    const glm::dvec3 north(-sinLat * cosLng, -sinLat * sinLng, cosLat);
-    const glm::dvec3 up(cosLat * cosLng, cosLat * sinLng, sinLat);
-    const glm::dvec3 originRaw = originEcef.raw();
-
-    m[0][0] = east.x;
-    m[1][0] = east.y;
-    m[2][0] = east.z;
-    m[3][0] = -glm::dot(east, originRaw);
-
-    m[0][1] = north.x;
-    m[1][1] = north.y;
-    m[2][1] = north.z;
-    m[3][1] = -glm::dot(north, originRaw);
-
-    m[0][2] = up.x;
-    m[1][2] = up.y;
-    m[2][2] = up.z;
-    m[3][2] = -glm::dot(up, originRaw);
-
-    return Mat4(m);
+    return eastNorthUpToFixedFrame(originEcef).inverse();
 }
 
 Mat4 Transforms::enuToEcef(const Cartographic& origin) {
-    return ecefToEnu(origin).inverse();
+    Vec3 originEcef = Ellipsoid::WGS84().cartographicToCartesian(origin);
+    return eastNorthUpToFixedFrame(originEcef);
 }
 
 } // namespace earth_engine

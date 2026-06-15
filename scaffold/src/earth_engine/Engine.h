@@ -1,8 +1,8 @@
 #pragma once
 
 #include "core/math/Vec3.h"
-#include "layers/BasemapLayerStack.h"
 #include "scene/FrameState.h"
+#include "tiling/Tileset.h"
 #include <memory>
 #include <cstdint>
 #include <vector>
@@ -13,10 +13,7 @@ namespace earth_engine {
 class Camera;
 class RenderDevice;
 class Scene;
-class BasemapLayer;
 class VectorLayer;
-class Tileset;
-class TerrainLayer;
 struct InputEvent;
 struct PickResult;
 
@@ -66,26 +63,6 @@ public:
     void onDragMove(float xPixels, float yPixels);
     void onDragEnd();
 
-    // ---- 图层 ----
-
-    /// 添加底图图层
-    void addLayer(std::unique_ptr<BasemapLayer> layer);
-
-    /// 移除图层（返回所有权）
-    std::unique_ptr<BasemapLayer> removeLayer(const std::string& layerId);
-
-    /// 移动图层位置
-    void moveLayer(const std::string& layerId, size_t index);
-
-    /// 图层数量
-    size_t layerCount() const;
-    int visibleTileCount() const;
-    int cachedTileCount() const;
-
-    /// 控制点验证（跨图层/跨 scheme）
-    std::vector<BasemapLayerStack::ControlPointResult>
-    verifyControlPoint(double lngRad, double latRad, int zoom = 10) const;
-
     // ---- 矢量图层 ----
 
     /// 添加矢量图层
@@ -97,16 +74,18 @@ public:
     /// 矢量图层数量
     size_t vectorLayerCount() const;
 
-    // ---- 地形 ----
-
-    /// 设置地形图层
-    void setTerrainLayer(std::unique_ptr<TerrainLayer> layer);
-
-    /// cesium-native 对齐：设置统一 Tileset（替代 BasemapLayer + TerrainLayer）
+    /// cesium-native 对齐：设置统一 Tileset。
     void setTileset(std::unique_ptr<Tileset> tileset);
+    /// 添加并列 3D Tiles / glTF 内容 Tileset；不参与地形采样。
+    void addTileset(std::unique_ptr<Tileset> tileset);
 
-    /// 启用/禁用地形
-    void setTerrainEnabled(bool enabled);
+    /// cesium-native 对齐：设置 selector 的视图/frustum 列表。
+    /// 传入空列表表示本帧没有可选择视图；clear 后回到主相机视图。
+    void setSelectorViewOverride(
+        std::vector<FrameState::SelectorView> selectorViews);
+    void clearSelectorViewOverride();
+    void setOcclusionCallback(Tileset::OcclusionCallback callback);
+    void clearOcclusionCallback();
 
     /// 是否有地形数据
     bool hasTerrain() const;
@@ -137,15 +116,6 @@ public:
     Vec3 sunDirection() const;
     /// 天空 clear color（RGBA，环境系统计算）
     void getClearColor(float& r, float& g, float& b, float& a) const;
-
-    // ---- 调试 ----
-
-    /// 开关调试叠加层（瓦片边框）
-    void setDebugOverlayEnabled(bool enabled);
-    bool debugOverlayEnabled() const;
-
-    /// 开关法线贴图调试渲染（作用于所有底图图层）
-    void setNormalMapDebugEnabled(bool enabled);
 
     /// 运行时诊断（FPS、draw calls、visible tiles 等）
     const Diagnostics& diagnostics() const;
