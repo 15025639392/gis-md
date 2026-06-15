@@ -4846,6 +4846,42 @@ void testTilesetJsonUnsupportedMultipleContentsFailsTile() {
             "unsupported multiple contents fixture",
             "TilesetJsonContentProvider");
 
+    const std::string emptyMultipleContentsJson = R"json({
+      "asset": {"version": "1.1"},
+      "geometricError": 100,
+      "root": {
+        "boundingVolume": {"region": [-0.01, -0.01, 0.01, 0.01, 0, 100]},
+        "geometricError": 64,
+        "children": [{
+          "boundingVolume": {"region": [-0.005, -0.005, 0.005, 0.005, 0, 50]},
+          "geometricError": 16,
+          "contents": []
+        }]
+      }
+    })json";
+    runCase(emptyMultipleContentsJson,
+            "file:///unsupported-empty-multiple-contents/tileset.json",
+            "unsupported empty multiple contents fixture",
+            "TilesetJsonContentProvider empty contents");
+
+    const std::string malformedMultipleContentsJson = R"json({
+      "asset": {"version": "1.1"},
+      "geometricError": 100,
+      "root": {
+        "boundingVolume": {"region": [-0.01, -0.01, 0.01, 0.01, 0, 100]},
+        "geometricError": 64,
+        "children": [{
+          "boundingVolume": {"region": [-0.005, -0.005, 0.005, 0.005, 0, 50]},
+          "geometricError": 16,
+          "contents": {"uri": "a.glb"}
+        }]
+      }
+    })json";
+    runCase(malformedMultipleContentsJson,
+            "file:///unsupported-malformed-multiple-contents/tileset.json",
+            "unsupported malformed multiple contents fixture",
+            "TilesetJsonContentProvider malformed contents");
+
     const std::string legacyMultipleContentsJson = R"json({
       "asset": {"version": "1.0"},
       "extensionsUsed": ["3DTILES_multiple_contents"],

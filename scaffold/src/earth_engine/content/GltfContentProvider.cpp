@@ -864,8 +864,7 @@ bool hasUnsupportedTileMetadataFields(const nlohmann::json& tileJson) {
 
 bool hasUnsupportedMultipleContents(const nlohmann::json& tileJson) {
     auto contentsIt = tileJson.find("contents");
-    if (contentsIt != tileJson.end() && contentsIt->is_array() &&
-        !contentsIt->empty()) {
+    if (contentsIt != tileJson.end()) {
         return true;
     }
 
