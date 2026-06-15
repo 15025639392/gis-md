@@ -1997,6 +1997,46 @@ std::vector<uint8_t> makeI3dmWithFeatureTable(
     return i3dm;
 }
 
+std::vector<uint8_t> makeExternalI3dmWithFeatureTable(
+    const std::string& featureJson,
+    std::vector<uint8_t> featureBinary,
+    const std::string& gltfUri,
+    const std::string& batchTableJson = std::string{}) {
+    std::vector<uint8_t> featureBytes(featureJson.begin(), featureJson.end());
+    pad4(featureBytes, 0x20);
+    pad4(featureBinary, 0);
+    std::vector<uint8_t> batchBytes(
+        batchTableJson.begin(),
+        batchTableJson.end());
+    if (!batchBytes.empty()) {
+        pad4(batchBytes, 0x20);
+    }
+    std::vector<uint8_t> payload(gltfUri.begin(), gltfUri.end());
+    pad4(payload, 0x20);
+
+    std::vector<uint8_t> i3dm;
+    i3dm.push_back('i');
+    i3dm.push_back('3');
+    i3dm.push_back('d');
+    i3dm.push_back('m');
+    appendU32(i3dm, 1u);
+    appendU32(
+        i3dm,
+        static_cast<uint32_t>(
+            32 + featureBytes.size() + featureBinary.size() +
+            batchBytes.size() + payload.size()));
+    appendU32(i3dm, static_cast<uint32_t>(featureBytes.size()));
+    appendU32(i3dm, static_cast<uint32_t>(featureBinary.size()));
+    appendU32(i3dm, static_cast<uint32_t>(batchBytes.size()));
+    appendU32(i3dm, 0u);
+    appendU32(i3dm, 0u);
+    i3dm.insert(i3dm.end(), featureBytes.begin(), featureBytes.end());
+    i3dm.insert(i3dm.end(), featureBinary.begin(), featureBinary.end());
+    i3dm.insert(i3dm.end(), batchBytes.begin(), batchBytes.end());
+    i3dm.insert(i3dm.end(), payload.begin(), payload.end());
+    return i3dm;
+}
+
 std::vector<uint8_t> makePnts(const std::string& featureTableJson,
                               std::vector<uint8_t> featureBinary,
                               const std::string& batchTableJson =
@@ -12124,6 +12164,82 @@ TEST(GltfParserTest, ContentProviderCombinesI3dmAndNativeGltfInstances) {
     EXPECT_NEAR(136.0, third.x(), 1e-6);
     EXPECT_NEAR(244.0, third.y(), 1e-6);
     EXPECT_NEAR(366.0, third.z(), 1e-6);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(GltfParserTest, ContentProviderCopiesI3dmFeaturesAcrossNativeGltfInstances) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth-md-i3dm-native-feature-instances";
+    std::filesystem::remove_all(root);
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
+    writeBytes(
+        root / "tiles" / "models" / "triangle.gltf",
+        std::vector<uint8_t>(
+            fixture.jsonText.begin(),
+            fixture.jsonText.end()));
+    writeBytes(root / "tiles" / "models" / "triangle.bin", fixture.bin);
+
+    std::vector<uint8_t> featureBinary;
+    appendF32(featureBinary, 0.0f);
+    appendF32(featureBinary, 0.0f);
+    appendF32(featureBinary, 0.0f);
+    appendF32(featureBinary, 10.0f);
+    appendF32(featureBinary, 0.0f);
+    appendF32(featureBinary, 0.0f);
+    const size_t batchIdOffset = featureBinary.size();
+    appendU16(featureBinary, 1u);
+    appendU16(featureBinary, 0u);
+
+    const std::vector<uint8_t> i3dm = makeExternalI3dmWithFeatureTable(
+        std::string("{\"INSTANCES_LENGTH\":2,") +
+        "\"RTC_CENTER\":[100.0,200.0,300.0],"
+        "\"POSITION\":{\"byteOffset\":0},"
+        "\"BATCH_ID\":{\"byteOffset\":" +
+        std::to_string(batchIdOffset) + "}}",
+        std::move(featureBinary),
+        "models/triangle.gltf",
+        "{\"name\":[\"zero\",\"one\"],\"Height\":[10,20]}");
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        "file://" + (root / "tiles" / "tile.i3dm").generic_string(),
+        "external native-instanced I3DM feature fixture");
+
+    TileContentLoadResult result =
+        provider.decodeContent(i3dm.data(), i3dm.size());
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives[0];
+    ASSERT_EQ(4u, primitive.instances.size());
+
+    EXPECT_EQ(1u, primitive.instances[0].featureId);
+    EXPECT_EQ(1u, primitive.instances[1].featureId);
+    EXPECT_EQ(0u, primitive.instances[2].featureId);
+    EXPECT_EQ(0u, primitive.instances[3].featureId);
+    ASSERT_EQ(2u, primitive.instances[0].featureProperties.size());
+    ASSERT_EQ(2u, primitive.instances[2].featureProperties.size());
+    EXPECT_EQ(
+        "one",
+        *std::get_if<std::string>(
+            &primitive.instances[0].featureProperties.at("name")));
+    EXPECT_EQ(
+        "one",
+        *std::get_if<std::string>(
+            &primitive.instances[1].featureProperties.at("name")));
+    EXPECT_EQ(
+        "zero",
+        *std::get_if<std::string>(
+            &primitive.instances[2].featureProperties.at("name")));
+    EXPECT_EQ(
+        10u,
+        *std::get_if<uint64_t>(
+            &primitive.instances[2].featureProperties.at("Height")));
+    EXPECT_EQ(
+        20u,
+        *std::get_if<uint64_t>(
+            &primitive.instances[0].featureProperties.at("Height")));
 
     std::filesystem::remove_all(root);
 }
