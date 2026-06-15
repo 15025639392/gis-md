@@ -381,6 +381,13 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsClearcoat) {
         glsl.find("perturbClearcoatNormal"));
     EXPECT_NE(
         std::string::npos,
+        glsl.find("clearcoatNormal = perturbClearcoatNormal(\n"
+                  "            geometryN,\n"
+                  "            clearcoatNormalUv,\n"
+                  "            v_tangent,\n"
+                  "            u_clearcoatFactors.z);"));
+    EXPECT_NE(
+        std::string::npos,
         glsl.find("color = color * (1.0 - coatWeight)"));
 
     const std::string msl = renderer_testing::gltfFragmentMSL();
@@ -402,6 +409,16 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsClearcoat) {
     EXPECT_NE(
         std::string::npos,
         msl.find("u_clearcoatNormalTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("clearcoatNormal = gltfPerturbNormal(\n"
+                 "            geometryN,\n"
+                 "            clearcoatNormalUv,\n"
+                 "            in.localPosition,\n"
+                 "            in.tangent,\n"
+                 "            u_clearcoatFactors.z,\n"
+                 "            u_clearcoatNormalTexture,\n"
+                 "            u_clearcoatNormalSampler);"));
     EXPECT_NE(
         std::string::npos,
         msl.find("color = color * (1.0 - coatWeight)"));
