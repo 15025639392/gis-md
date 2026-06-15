@@ -233,6 +233,21 @@ uint32_t readIndexComponent(const uint8_t* p, int componentType) {
     }
 }
 
+const std::array<int8_t, 256>& base64DecodeTable() {
+    static const std::array<int8_t, 256> table = [] {
+        std::array<int8_t, 256> values{};
+        values.fill(-1);
+        const std::string alphabet =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for (size_t i = 0; i < alphabet.size(); ++i) {
+            values[static_cast<uint8_t>(alphabet[i])] =
+                static_cast<int8_t>(i);
+        }
+        return values;
+    }();
+    return table;
+}
+
 std::optional<std::vector<uint8_t>> decodeBase64DataUri(const std::string& uri) {
     const std::string marker = ";base64,";
     const size_t markerPos = uri.find(marker);
@@ -240,28 +255,54 @@ std::optional<std::vector<uint8_t>> decodeBase64DataUri(const std::string& uri) 
         return std::nullopt;
     }
 
-    static constexpr int8_t kInvalid = -1;
-    std::array<int8_t, 256> table{};
-    table.fill(kInvalid);
-    const std::string alphabet =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    for (size_t i = 0; i < alphabet.size(); ++i) {
-        table[static_cast<uint8_t>(alphabet[i])] = static_cast<int8_t>(i);
+    std::string payload;
+    payload.reserve(uri.size() - markerPos - marker.size());
+    for (size_t i = markerPos + marker.size(); i < uri.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(uri[i]);
+        if (std::isspace(c)) {
+            continue;
+        }
+        payload.push_back(static_cast<char>(c));
     }
 
+    if (payload.empty() || payload.size() % 4u != 0u) {
+        return std::nullopt;
+    }
+    const size_t firstPadding = payload.find('=');
+    size_t paddingCount = 0;
+    if (firstPadding != std::string::npos) {
+        paddingCount = payload.size() - firstPadding;
+        if (paddingCount > 2u) {
+            return std::nullopt;
+        }
+        for (size_t i = firstPadding; i < payload.size(); ++i) {
+            if (payload[i] != '=') {
+                return std::nullopt;
+            }
+        }
+    }
+
+    const auto& table = base64DecodeTable();
     std::vector<uint8_t> output;
-    int value = 0;
-    int bits = -8;
-    for (char c : uri.substr(markerPos + marker.size())) {
-        if (std::isspace(static_cast<unsigned char>(c))) continue;
-        if (c == '=') break;
-        const int8_t decoded = table[static_cast<uint8_t>(c)];
-        if (decoded == kInvalid) return std::nullopt;
-        value = (value << 6) | decoded;
-        bits += 6;
-        if (bits >= 0) {
-            output.push_back(static_cast<uint8_t>((value >> bits) & 0xff));
-            bits -= 8;
+    output.reserve((payload.size() / 4u) * 3u - paddingCount);
+    for (size_t i = 0; i < payload.size(); i += 4u) {
+        uint32_t packed = 0;
+        for (size_t j = 0; j < 4u; ++j) {
+            const char c = payload[i + j];
+            const int8_t decoded = c == '='
+                ? 0
+                : table[static_cast<uint8_t>(c)];
+            if (decoded < 0) {
+                return std::nullopt;
+            }
+            packed = (packed << 6u) | static_cast<uint32_t>(decoded);
+        }
+        output.push_back(static_cast<uint8_t>((packed >> 16u) & 0xffu));
+        if (payload[i + 2u] != '=') {
+            output.push_back(static_cast<uint8_t>((packed >> 8u) & 0xffu));
+        }
+        if (payload[i + 3u] != '=') {
+            output.push_back(static_cast<uint8_t>(packed & 0xffu));
         }
     }
     return output;
@@ -1493,11 +1534,8 @@ std::optional<std::vector<GltfTexture>> loadTextures(
         if (useWebpSource && imageSourceDeclaresNonWebp(imageJson)) {
             return std::nullopt;
         }
-        if (!imageDecoder) {
-            continue;
-        }
-
         std::vector<uint8_t> encoded;
+        bool loadedEncoded = false;
         const auto uriIt = imageJson.find("uri");
         const auto bufferViewIt = imageJson.find("bufferView");
         if (uriIt != imageJson.end() && !uriIt->get<std::string>().empty()) {
@@ -1508,8 +1546,10 @@ std::optional<std::vector<GltfTexture>> loadTextures(
                     return std::nullopt;
                 }
                 encoded = std::move(*decoded);
-            } else if (externalResourceResolver) {
+                loadedEncoded = true;
+            } else if (imageDecoder && externalResourceResolver) {
                 encoded = externalResourceResolver(uri);
+                loadedEncoded = true;
             }
         } else if (bufferViewIt != imageJson.end()) {
             auto bytes = embeddedImageBytes(
@@ -1521,15 +1561,24 @@ std::optional<std::vector<GltfTexture>> loadTextures(
                 return std::nullopt;
             }
             encoded = std::move(*bytes);
+            loadedEncoded = true;
         }
 
-        if (encoded.empty()) {
-            return std::nullopt;
+        if (loadedEncoded) {
+            if (encoded.empty()) {
+                return std::nullopt;
+            }
+            if (useWebpSource && !encodedImageLooksLikeWebp(encoded)) {
+                return std::nullopt;
+            }
+            if (encodedImageUsesUnsupportedFormat(encoded, useWebpSource)) {
+                return std::nullopt;
+            }
         }
-        if (useWebpSource && !encodedImageLooksLikeWebp(encoded)) {
-            return std::nullopt;
+        if (!imageDecoder) {
+            continue;
         }
-        if (encodedImageUsesUnsupportedFormat(encoded, useWebpSource)) {
+        if (!loadedEncoded) {
             return std::nullopt;
         }
         std::optional<GltfImage> image =

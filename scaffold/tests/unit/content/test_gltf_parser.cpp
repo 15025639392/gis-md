@@ -4588,6 +4588,59 @@ TEST(GltfParserTest, RejectsBaseColorTextureMalformedBase64DataUri) {
     EXPECT_FALSE(decodedImage);
 }
 
+TEST(GltfParserTest, RejectsBaseColorTextureDataUriWithTrailingBytesAfterPadding) {
+    const ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf(
+            "data:image/png;base64,AQIDBA==AAAA");
+    bool resolvedImageUri = false;
+    bool decodedImage = false;
+
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            if (uri == "triangle.bin") {
+                return fixture.bin;
+            }
+            resolvedImageUri = true;
+            return std::vector<uint8_t>{7};
+        },
+        [&](const uint8_t*, size_t) -> std::optional<GltfImage> {
+            decodedImage = true;
+            GltfImage image;
+            image.width = 1;
+            image.height = 1;
+            image.channels = 4;
+            image.pixels = {255, 255, 255, 255};
+            return image;
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(resolvedImageUri);
+    EXPECT_FALSE(decodedImage);
+}
+
+TEST(GltfParserTest, RejectsBaseColorTextureMalformedDataUriWithoutImageDecoder) {
+    const ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf(
+            "data:image/png;base64,AQIDBA==AAAA");
+    bool resolvedImageUri = false;
+
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            if (uri == "triangle.bin") {
+                return fixture.bin;
+            }
+            resolvedImageUri = true;
+            return std::vector<uint8_t>{7};
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(resolvedImageUri);
+}
+
 TEST(GltfParserTest, RejectsBaseColorTextureExternalImageResolvingEmpty) {
     const ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf("image.bin");
@@ -6298,6 +6351,62 @@ TEST(GltfParserTest, RejectsBufferDataUriWithInvalidBase64AndDoesNotResolve) {
         markerPos,
         marker.size(),
         "\"uri\":\"data:application/octet-stream;base64,@@@@\"");
+    bool resolvedDataUri = false;
+
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            if (uri.rfind("data:", 0) == 0) {
+                resolvedDataUri = true;
+            }
+            return fixture.bin;
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(resolvedDataUri);
+}
+
+TEST(GltfParserTest, RejectsBufferDataUriWithTrailingBytesAfterPadding) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    std::string encoded = base64Encode(fixture.bin);
+    ASSERT_EQ('=', encoded.back());
+    encoded += "AAAA";
+    const std::string marker = "\"uri\":\"triangle.bin\"";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "\"uri\":\"data:application/octet-stream;base64," + encoded + "\"");
+    bool resolvedDataUri = false;
+
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            if (uri.rfind("data:", 0) == 0) {
+                resolvedDataUri = true;
+            }
+            return fixture.bin;
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(resolvedDataUri);
+}
+
+TEST(GltfParserTest, RejectsBufferDataUriWithMissingRequiredPadding) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    std::string encoded = base64Encode(fixture.bin);
+    ASSERT_EQ('=', encoded.back());
+    encoded.pop_back();
+    const std::string marker = "\"uri\":\"triangle.bin\"";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "\"uri\":\"data:application/octet-stream;base64," + encoded + "\"");
     bool resolvedDataUri = false;
 
     std::unique_ptr<GltfModel> model = GltfParser::parse(
