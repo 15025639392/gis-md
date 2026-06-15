@@ -5853,6 +5853,44 @@ TEST(GltfParserTest, RejectsUnsupportedSceneControlAndLightingExtensions) {
     }
 }
 
+TEST(GltfParserTest, RejectsUnsupportedVendorRegistryExtensions) {
+    const std::array<const char*, 20> unsupportedExtensions = {
+        "ADOBE_materials_clearcoat_specular",
+        "ADOBE_materials_clearcoat_tint",
+        "ADOBE_materials_thin_transparency",
+        "AGI_stk_metadata",
+        "FB_geometry_metadata",
+        "GODOT_single_root",
+        "GRIFFEL_bim_data",
+        "KHR_techniques_webgl",
+        "KHR_xmp",
+        "MPEG_accessor_timed",
+        "MPEG_animation_timing",
+        "MPEG_audio_spatial",
+        "MPEG_buffer_circular",
+        "MPEG_media",
+        "MPEG_mesh_linking",
+        "MPEG_scene_dynamic",
+        "MPEG_viewport_recommended",
+        "MSFT_packing_normalRoughnessMetallic",
+        "MSFT_packing_occlusionRoughnessMetallic",
+        "NV_materials_mdl"};
+
+    for (const char* extension : unsupportedExtensions) {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string marker = "\"asset\":{\"version\":\"2.0\"},";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.insert(
+            markerPos + marker.size(),
+            std::string("\"extensionsUsed\":[\"") + extension + "\"],");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << extension;
+    }
+}
+
 TEST(GltfParserTest, RejectsUnsupportedNativeMetadataObjectExtensions) {
     struct ObjectExtensionCase {
         const char* marker;
