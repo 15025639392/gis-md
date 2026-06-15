@@ -3102,6 +3102,87 @@ void testTilesetGltfUnlitMaterialUploadsUniform() {
           "Tileset: glTF unlit command keeps source material factors for diagnostics");
 }
 
+void testTilesetGltfEmissiveMaterialUploadsUniformsAndTextures() {
+    DummyRenderDevice device;
+    device.allowTextureCreation = true;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: glTF emissive material root tile is created");
+    if (!root) return;
+
+    root->gltfModel = makeTexturedTriangleGltfModel();
+    GltfPrimitive& primitive = root->gltfModel->primitives[0];
+    primitive.alphaMode = GltfAlphaMode::Opaque;
+    primitive.emissiveFactor = {0.25f, 0.5f, 0.75f};
+    GltfTextureBinding emissiveBinding;
+    emissiveBinding.textureIndex = 0u;
+    emissiveBinding.texCoord = 1;
+    emissiveBinding.transform.offset = {0.125f, 0.25f};
+    emissiveBinding.transform.scale = {0.5f, 0.75f};
+    emissiveBinding.transform.rotation = 1.57079632679f;
+    primitive.emissiveTexture = emissiveBinding;
+    root->contentKind = TileContentKind::Render;
+    root->loadState = TileLoadState::ContentLoaded;
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 1,
+          "Tileset: glTF emissive material emits one primitive draw command");
+    if (commands.empty()) return;
+
+    const RenderCommand& cmd = commands.front();
+    check(cmd.uniforms.count("u_emissiveFactor") &&
+              cmd.uniforms.at("u_emissiveFactor").size() == 3 &&
+              std::abs(cmd.uniforms.at("u_emissiveFactor")[0] - 0.25f) <
+                  1e-6f &&
+              std::abs(cmd.uniforms.at("u_emissiveFactor")[1] - 0.5f) <
+                  1e-6f &&
+              std::abs(cmd.uniforms.at("u_emissiveFactor")[2] - 0.75f) <
+                  1e-6f,
+          "Tileset: glTF emissive material uploads emissiveFactor");
+    check(cmd.uniforms.count("u_hasMaterialTextures") &&
+              cmd.uniforms.at("u_hasMaterialTextures").size() == 4 &&
+              cmd.uniforms.at("u_hasMaterialTextures")[3] == 1.0f,
+          "Tileset: glTF emissive material reports emissive texture presence");
+    check(cmd.textures.size() >= 5 &&
+              cmd.textures[4] ==
+                  root->gltfPrimitiveResources.front().emissiveTexture.texture,
+          "Tileset: glTF emissive texture binds to material slot 4");
+    check(cmd.uniforms.count("u_emissiveTexCoordSet") &&
+              cmd.uniforms.at("u_emissiveTexCoordSet").front() == 1.0f,
+          "Tileset: glTF emissive material uploads texture coordinate set");
+    check(cmd.uniforms.count("u_emissiveTexOffsetScale") &&
+              cmd.uniforms.at("u_emissiveTexOffsetScale").size() == 4 &&
+              std::abs(cmd.uniforms.at("u_emissiveTexOffsetScale")[0] -
+                       0.125f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_emissiveTexOffsetScale")[1] -
+                       0.25f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_emissiveTexOffsetScale")[2] -
+                       0.5f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_emissiveTexOffsetScale")[3] -
+                       0.75f) < 1e-6f &&
+              cmd.uniforms.count("u_emissiveTexRotationSinCos") &&
+              std::abs(cmd.uniforms.at("u_emissiveTexRotationSinCos")[0] -
+                       1.0f) < 1e-6f,
+          "Tileset: glTF emissive texture uploads KHR_texture_transform uniforms");
+}
+
 void testTilesetGltfIorMaterialUploadsSpecularF0() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
@@ -7164,6 +7245,7 @@ int main() {
     testTilesetGltfTangentsUseModelLinearTransform();
     testTilesetGltfMaskMaterialStaysOpaqueCommand();
     testTilesetGltfUnlitMaterialUploadsUniform();
+    testTilesetGltfEmissiveMaterialUploadsUniformsAndTextures();
     testTilesetGltfIorMaterialUploadsSpecularF0();
     testTilesetGltfAnisotropyMaterialUploadsUniformsAndTextures();
     testTilesetGltfPbrSpecularGlossinessUploadsUniformsAndTextures();
