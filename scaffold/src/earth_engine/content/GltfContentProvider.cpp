@@ -1431,24 +1431,8 @@ std::optional<GltfFeaturePropertyValue> jsonFeaturePropertyValue(
 }
 
 std::optional<std::vector<std::map<std::string, GltfFeaturePropertyValue>>>
-parseI3dmJsonBatchTable(const uint8_t* data,
-                        const I3dmHeader& header,
+parseJsonBatchTableRows(const std::string& batchJsonText,
                         uint32_t featureCount) {
-    if (header.batchTableBinaryByteLength > 0) {
-        return std::nullopt;
-    }
-    if (header.batchTableJsonByteLength == 0) {
-        return std::vector<
-            std::map<std::string, GltfFeaturePropertyValue>>{};
-    }
-
-    const size_t batchTableJsonOffset =
-        kI3dmHeaderLength +
-        header.featureTableJsonByteLength +
-        header.featureTableBinaryByteLength;
-    const std::string batchJsonText = trimRightJsonPadding(std::string(
-        reinterpret_cast<const char*>(data + batchTableJsonOffset),
-        header.batchTableJsonByteLength));
     auto batchJson =
         nlohmann::json::parse(batchJsonText, nullptr, false);
     if (batchJson.is_discarded() || !batchJson.is_object()) {
@@ -1475,6 +1459,28 @@ parseI3dmJsonBatchTable(const uint8_t* data,
         }
     }
     return rows;
+}
+
+std::optional<std::vector<std::map<std::string, GltfFeaturePropertyValue>>>
+parseI3dmJsonBatchTable(const uint8_t* data,
+                        const I3dmHeader& header,
+                        uint32_t featureCount) {
+    if (header.batchTableBinaryByteLength > 0) {
+        return std::nullopt;
+    }
+    if (header.batchTableJsonByteLength == 0) {
+        return std::vector<
+            std::map<std::string, GltfFeaturePropertyValue>>{};
+    }
+
+    const size_t batchTableJsonOffset =
+        kI3dmHeaderLength +
+        header.featureTableJsonByteLength +
+        header.featureTableBinaryByteLength;
+    const std::string batchJsonText = trimRightJsonPadding(std::string(
+        reinterpret_cast<const char*>(data + batchTableJsonOffset),
+        header.batchTableJsonByteLength));
+    return parseJsonBatchTableRows(batchJsonText, featureCount);
 }
 
 std::optional<DecodedI3dmInstances> decodeI3dmInstances(
@@ -1933,7 +1939,6 @@ float pntsSrgbByteToLinear(uint8_t value) {
 std::unique_ptr<GltfModel> parsePntsModel(const uint8_t* data,
                                           const PntsHeader& header) {
     if (header.featureTableJsonByteLength == 0 ||
-        header.batchTableJsonByteLength != 0 ||
         header.batchTableBinaryByteLength != 0) {
         return nullptr;
     }
@@ -1974,9 +1979,7 @@ std::unique_ptr<GltfModel> parsePntsModel(const uint8_t* data,
         featureJson.contains("POSITION_QUANTIZED") ||
         featureJson.contains("RGB565") ||
         featureJson.contains("NORMAL") ||
-        featureJson.contains("NORMAL_OCT16P") ||
-        featureJson.contains("BATCH_ID") ||
-        featureJson.contains("BATCH_LENGTH")) {
+        featureJson.contains("NORMAL_OCT16P")) {
         return nullptr;
     }
 
@@ -1988,11 +1991,63 @@ std::unique_ptr<GltfModel> parsePntsModel(const uint8_t* data,
     if (!pointsLength) {
         return nullptr;
     }
+
+    bool valid = true;
+    std::optional<uint32_t> batchLength;
+    auto batchLengthIt = featureJson.find("BATCH_LENGTH");
+    if (batchLengthIt != featureJson.end()) {
+        batchLength = jsonU32(*batchLengthIt);
+        if (!batchLength) {
+            return nullptr;
+        }
+    }
+
+    const std::optional<uint32_t> batchIdOffset =
+        semanticOffset(featureJson, "BATCH_ID", valid);
+    const std::optional<I3dmBatchIdComponentType> batchIdComponentType =
+        i3dmBatchIdComponentType(featureJson, valid);
+    const bool hasBatchIdSemantic = batchIdOffset.has_value();
+    if (!valid ||
+        hasBatchIdSemantic != batchIdComponentType.has_value()) {
+        return nullptr;
+    }
+    if (batchIdOffset &&
+        !checkedRange(
+            featureBinarySize,
+            *batchIdOffset,
+            *pointsLength,
+            i3dmBatchIdStride(*batchIdComponentType))) {
+        return nullptr;
+    }
+    if (header.batchTableJsonByteLength > 0 &&
+        hasBatchIdSemantic &&
+        !batchLength) {
+        return nullptr;
+    }
+
+    const uint32_t featureCount = batchLength.value_or(*pointsLength);
+    std::optional<
+        std::vector<std::map<std::string, GltfFeaturePropertyValue>>>
+        featurePropertyRows;
+    if (header.batchTableJsonByteLength > 0) {
+        const size_t batchTableJsonOffset =
+            kPntsHeaderLength +
+            header.featureTableJsonByteLength +
+            header.featureTableBinaryByteLength;
+        const std::string batchJsonText = trimRightJsonPadding(std::string(
+            reinterpret_cast<const char*>(data + batchTableJsonOffset),
+            header.batchTableJsonByteLength));
+        featurePropertyRows =
+            parseJsonBatchTableRows(batchJsonText, featureCount);
+        if (!featurePropertyRows) {
+            return nullptr;
+        }
+    }
+
     if (*pointsLength == 0) {
         return std::make_unique<GltfModel>();
     }
 
-    bool valid = true;
     const std::optional<uint32_t> positionOffset =
         semanticOffset(featureJson, "POSITION", valid);
     if (!valid || !positionOffset ||
@@ -2051,6 +2106,11 @@ std::unique_ptr<GltfModel> parsePntsModel(const uint8_t* data,
 
     primitive.vertices.reserve(*pointsLength);
     primitive.indices.reserve(*pointsLength);
+    const bool preserveFeatureIds =
+        hasBatchIdSemantic || featurePropertyRows.has_value();
+    if (preserveFeatureIds) {
+        primitive.featureIds.reserve(*pointsLength);
+    }
     if (rgbOffset || rgbaOffset) {
         primitive.vertexColors.reserve(*pointsLength);
         if (rgbaOffset) {
@@ -2058,6 +2118,7 @@ std::unique_ptr<GltfModel> parsePntsModel(const uint8_t* data,
         }
     }
 
+    uint32_t maxFeatureId = 0u;
     for (uint32_t i = 0; i < *pointsLength; ++i) {
         const uint8_t* p =
             featureBinary + *positionOffset + static_cast<size_t>(i) * 12u;
@@ -2078,6 +2139,19 @@ std::unique_ptr<GltfModel> parsePntsModel(const uint8_t* data,
         primitive.vertices.push_back(vertex);
         primitive.indices.push_back(i);
 
+        uint32_t featureId = i;
+        if (batchIdOffset) {
+            featureId = readI3dmBatchId(
+                featureBinary,
+                *batchIdOffset,
+                i,
+                *batchIdComponentType);
+        }
+        if (preserveFeatureIds) {
+            primitive.featureIds.push_back(featureId);
+        }
+        maxFeatureId = std::max(maxFeatureId, featureId);
+
         if (rgbOffset) {
             const uint8_t* c =
                 featureBinary + *rgbOffset + static_cast<size_t>(i) * 3u;
@@ -2094,6 +2168,21 @@ std::unique_ptr<GltfModel> parsePntsModel(const uint8_t* data,
                 pntsSrgbByteToLinear(c[1]),
                 pntsSrgbByteToLinear(c[2]),
                 static_cast<float>(c[3]) / 255.0f});
+        }
+    }
+    if (batchLength && preserveFeatureIds && maxFeatureId >= *batchLength) {
+        return nullptr;
+    }
+    if (featurePropertyRows) {
+        primitive.featureProperties.reserve(*pointsLength);
+        for (uint32_t i = 0; i < *pointsLength; ++i) {
+            const uint32_t featureId =
+                primitive.featureIds.empty() ? i : primitive.featureIds[i];
+            if (featureId >= featurePropertyRows->size()) {
+                return nullptr;
+            }
+            primitive.featureProperties.push_back(
+                (*featurePropertyRows)[featureId]);
         }
     }
 

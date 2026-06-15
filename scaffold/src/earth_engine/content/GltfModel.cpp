@@ -37,9 +37,10 @@ int64_t gltfFeaturePropertyExtraByteSize(
     return 0;
 }
 
-int64_t gltfInstanceFeatureByteSize(const GltfInstance& instance) {
+int64_t gltfFeaturePropertiesByteSize(
+    const std::map<std::string, GltfFeaturePropertyValue>& properties) {
     int64_t bytes = 0;
-    for (const auto& property : instance.featureProperties) {
+    for (const auto& property : properties) {
         bytes += static_cast<int64_t>(
             sizeof(std::pair<const std::string, GltfFeaturePropertyValue>));
         bytes += static_cast<int64_t>(property.first.size());
@@ -5807,9 +5808,15 @@ int64_t GltfModel::byteSize() const {
         bytes += static_cast<int64_t>(
             primitive.indices.size() * sizeof(uint32_t));
         bytes += static_cast<int64_t>(
+            primitive.featureIds.size() * sizeof(uint32_t));
+        for (const auto& properties : primitive.featureProperties) {
+            bytes += gltfFeaturePropertiesByteSize(properties);
+        }
+        bytes += static_cast<int64_t>(
             primitive.instances.size() * sizeof(GltfInstance));
         for (const GltfInstance& instance : primitive.instances) {
-            bytes += gltfInstanceFeatureByteSize(instance);
+            bytes += gltfFeaturePropertiesByteSize(
+                instance.featureProperties);
         }
     }
     for (const GltfTexture& texture : textures) {

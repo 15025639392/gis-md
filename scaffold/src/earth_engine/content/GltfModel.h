@@ -114,6 +114,9 @@ struct GltfPrimitive {
     std::vector<std::array<float, 4>> vertexColors;
     std::vector<std::array<float, 4>> vertexTangents;
     std::vector<uint32_t> indices;
+    std::vector<uint32_t> featureIds;
+    std::vector<std::map<std::string, GltfFeaturePropertyValue>>
+        featureProperties;
     std::vector<GltfInstance> instances;
     GltfPrimitiveRuntime runtime;
     GltfPrimitiveMode primitiveMode = GltfPrimitiveMode::Triangles;

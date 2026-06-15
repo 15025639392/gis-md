@@ -7202,6 +7202,114 @@ TEST(GltfParserTest, ContentProviderDecodesPntsConstantRgbaMaterialColor) {
     EXPECT_NEAR(127.0f / 255.0f, primitive.baseColorFactor[3], 1e-6f);
 }
 
+TEST(GltfParserTest, ContentProviderDecodesPntsJsonBatchTablePerPoint) {
+    std::vector<uint8_t> featureBinary;
+    appendF32(featureBinary, 1.0f);
+    appendF32(featureBinary, 2.0f);
+    appendF32(featureBinary, 3.0f);
+    appendF32(featureBinary, 4.0f);
+    appendF32(featureBinary, 5.0f);
+    appendF32(featureBinary, 6.0f);
+
+    const std::string featureJson =
+        "{\"POINTS_LENGTH\":2,\"POSITION\":{\"byteOffset\":0}}";
+    const std::vector<uint8_t> pnts = makePnts(
+        featureJson,
+        featureBinary,
+        "{\"name\":[\"first\",\"second\"],"
+        "\"Height\":[10,20],"
+        "\"enabled\":[true,false],"
+        "\"nullable\":[null,null]}");
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "PNTS per-point batch table fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(pnts.data(), pnts.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives[0];
+    EXPECT_EQ((std::vector<uint32_t>{0u, 1u}), primitive.featureIds);
+    ASSERT_EQ(2u, primitive.featureProperties.size());
+    ASSERT_EQ(4u, primitive.featureProperties[0].size());
+    ASSERT_EQ(4u, primitive.featureProperties[1].size());
+    EXPECT_EQ(
+        "first",
+        *std::get_if<std::string>(&primitive.featureProperties[0].at("name")));
+    EXPECT_EQ(
+        "second",
+        *std::get_if<std::string>(&primitive.featureProperties[1].at("name")));
+    EXPECT_EQ(
+        10u,
+        *std::get_if<uint64_t>(&primitive.featureProperties[0].at("Height")));
+    EXPECT_EQ(
+        20u,
+        *std::get_if<uint64_t>(&primitive.featureProperties[1].at("Height")));
+    EXPECT_EQ(
+        true,
+        *std::get_if<bool>(&primitive.featureProperties[0].at("enabled")));
+    EXPECT_EQ(
+        false,
+        *std::get_if<bool>(&primitive.featureProperties[1].at("enabled")));
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(
+        primitive.featureProperties[0].at("nullable")));
+}
+
+TEST(GltfParserTest, ContentProviderDecodesPntsBatchIdsToJsonBatchTableRows) {
+    std::vector<uint8_t> featureBinary;
+    appendF32(featureBinary, 1.0f);
+    appendF32(featureBinary, 2.0f);
+    appendF32(featureBinary, 3.0f);
+    appendF32(featureBinary, 4.0f);
+    appendF32(featureBinary, 5.0f);
+    appendF32(featureBinary, 6.0f);
+    const size_t batchIdOffset = featureBinary.size();
+    featureBinary.push_back(1u);
+    featureBinary.push_back(0u);
+
+    const std::string featureJson =
+        std::string("{") +
+        "\"POINTS_LENGTH\":2,"
+        "\"POSITION\":{\"byteOffset\":0},"
+        "\"BATCH_ID\":{\"byteOffset\":" +
+        std::to_string(batchIdOffset) +
+        ",\"componentType\":\"UNSIGNED_BYTE\"},"
+        "\"BATCH_LENGTH\":2}";
+    const std::vector<uint8_t> pnts = makePnts(
+        featureJson,
+        featureBinary,
+        "{\"name\":[\"zero\",\"one\"],\"Height\":[100,200]}");
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "PNTS batch ID batch table fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(pnts.data(), pnts.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives[0];
+    EXPECT_EQ((std::vector<uint32_t>{1u, 0u}), primitive.featureIds);
+    ASSERT_EQ(2u, primitive.featureProperties.size());
+    EXPECT_EQ(
+        "one",
+        *std::get_if<std::string>(&primitive.featureProperties[0].at("name")));
+    EXPECT_EQ(
+        "zero",
+        *std::get_if<std::string>(&primitive.featureProperties[1].at("name")));
+    EXPECT_EQ(
+        200u,
+        *std::get_if<uint64_t>(&primitive.featureProperties[0].at("Height")));
+    EXPECT_EQ(
+        100u,
+        *std::get_if<uint64_t>(&primitive.featureProperties[1].at("Height")));
+}
+
 TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) {
     auto decodeStatus = [](const std::string& featureJson,
                            std::vector<uint8_t> featureBinary,
@@ -7240,7 +7348,37 @@ TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) 
         decodeStatus(
             "{\"POINTS_LENGTH\":1,\"POSITION\":{\"byteOffset\":0}}",
             positionBinary,
+            "{\"name\":[\"feature\",\"extra\"]}"));
+
+    std::vector<uint8_t> batchIdBinary = positionBinary;
+    batchIdBinary.push_back(0u);
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus(
+            "{\"POINTS_LENGTH\":1,"
+            "\"POSITION\":{\"byteOffset\":0},"
+            "\"BATCH_ID\":{\"byteOffset\":12,"
+            "\"componentType\":\"UNSIGNED_BYTE\"}}",
+            batchIdBinary,
             "{\"name\":[\"feature\"]}"));
+
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus(
+            "{\"POINTS_LENGTH\":1,"
+            "\"POSITION\":{\"byteOffset\":0},"
+            "\"BATCH_ID\":{\"byteOffset\":12,"
+            "\"componentType\":\"BYTE\"},"
+            "\"BATCH_LENGTH\":1}",
+            batchIdBinary,
+            "{\"name\":[\"feature\"]}"));
+
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus(
+            "{\"POINTS_LENGTH\":1,\"POSITION\":{\"byteOffset\":0}}",
+            positionBinary,
+            "{\"name\":[{\"nested\":true}]}"));
 }
 
 TEST(GltfParserTest, ContentProviderDecodesEmptyCmptContent) {
