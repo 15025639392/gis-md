@@ -5015,6 +5015,97 @@ void testTilesetJsonTopLevelUnsupportedExtensionsUsedInvalidatesProvider() {
           "TilesetJsonContentProvider: invalid extensionsUsed tileset exposes no roots");
 }
 
+void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
+    const std::string supportedTopLevelJson = R"json({
+      "asset": {"version": "1.0"},
+      "extensionsUsed": ["3DTILES_content_gltf"],
+      "extensions": {
+        "3DTILES_content_gltf": {
+          "extensionsUsed": ["KHR_materials_unlit"]
+        }
+      },
+      "geometricError": 100,
+      "root": {
+        "boundingVolume": {"region": [-0.01, -0.01, 0.01, 0.01, 0, 100]},
+        "geometricError": 64
+      }
+    })json";
+    TilesetJsonContentProvider supportedProvider(
+        "file:///supported-content-gltf-extension/tileset.json",
+        std::vector<uint8_t>(
+            supportedTopLevelJson.begin(),
+            supportedTopLevelJson.end()),
+        "supported 3DTILES_content_gltf fixture");
+    check(supportedProvider.valid(),
+          "TilesetJsonContentProvider: supported 3DTILES_content_gltf declaration stays valid");
+    check(!supportedProvider.rootTiles().empty(),
+          "TilesetJsonContentProvider: supported 3DTILES_content_gltf exposes roots");
+
+    const std::string unsupportedTopLevelJson = R"json({
+      "asset": {"version": "1.0"},
+      "extensionsUsed": ["3DTILES_content_gltf"],
+      "extensions": {
+        "3DTILES_content_gltf": {
+          "extensionsRequired": ["CESIUM_mesh_vector"],
+          "extensionsUsed": ["CESIUM_mesh_vector"]
+        }
+      },
+      "geometricError": 100,
+      "root": {
+        "boundingVolume": {"region": [-0.01, -0.01, 0.01, 0.01, 0, 100]},
+        "geometricError": 64
+      }
+    })json";
+    TilesetJsonContentProvider unsupportedProvider(
+        "file:///unsupported-content-gltf-extension/tileset.json",
+        std::vector<uint8_t>(
+            unsupportedTopLevelJson.begin(),
+            unsupportedTopLevelJson.end()),
+        "unsupported 3DTILES_content_gltf fixture");
+    check(!unsupportedProvider.valid(),
+          "TilesetJsonContentProvider: unsupported 3DTILES_content_gltf glTF extension invalidates provider");
+    check(unsupportedProvider.rootTiles().empty(),
+          "TilesetJsonContentProvider: unsupported 3DTILES_content_gltf exposes no roots");
+
+    const std::string tileObjectJson = R"json({
+      "asset": {"version": "1.1"},
+      "geometricError": 100,
+      "root": {
+        "boundingVolume": {"region": [-0.01, -0.01, 0.01, 0.01, 0, 100]},
+        "geometricError": 64,
+        "content": {
+          "uri": "tile.glb",
+          "extensions": {
+            "3DTILES_content_gltf": {
+              "extensionsUsed": ["KHR_materials_unlit"]
+            }
+          }
+        }
+      }
+    })json";
+
+    auto tileProvider = std::make_unique<TilesetJsonContentProvider>(
+        "file:///misplaced-content-gltf-extension/tileset.json",
+        std::vector<uint8_t>(tileObjectJson.begin(), tileObjectJson.end()),
+        "misplaced 3DTILES_content_gltf fixture");
+    TilesetJsonContentProvider* rawProvider = tileProvider.get();
+    check(rawProvider->valid(),
+          "TilesetJsonContentProvider: misplaced 3DTILES_content_gltf keeps parseable metadata");
+    const std::vector<TileKey> roots = rawProvider->rootTiles();
+    if (roots.empty()) return;
+    const std::vector<TileKey> rootChildren =
+        rawProvider->childTiles(roots.front());
+    check(rootChildren.size() == 1 &&
+              rawProvider->supportsTile(rootChildren.front()),
+          "TilesetJsonContentProvider: misplaced 3DTILES_content_gltf tile stays addressable");
+    if (rootChildren.empty()) return;
+
+    expectTilesetJsonTileFailsExplicitly(
+        std::move(tileProvider),
+        rootChildren.front(),
+        "Tileset: misplaced 3DTILES_content_gltf fails explicitly");
+}
+
 void testTilesetJsonTopLevelMetadataFieldsInvalidateProvider() {
     struct MetadataFieldCase {
         std::string fieldJson;
@@ -7823,6 +7914,7 @@ int main() {
     testTilesetJsonProviderParsesViewerRequestVolume();
     testTilesetJsonTopLevelUnknownRequiredExtensionInvalidatesProvider();
     testTilesetJsonTopLevelUnsupportedExtensionsUsedInvalidatesProvider();
+    testTilesetJsonContentGltfExtensionSemanticsAreStrict();
     testTilesetJsonTopLevelMetadataFieldsInvalidateProvider();
     testTilesetJsonUnsupportedTileRequiredExtensionFailsTile();
     testTilesetJsonUnsupportedTileExtensionsUsedFailsTile();

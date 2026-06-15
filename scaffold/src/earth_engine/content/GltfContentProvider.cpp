@@ -702,25 +702,24 @@ std::optional<TileBoundingVolume> parseViewerRequestVolume(
     return transformBoundingVolume(transform, *volume);
 }
 
-bool isSupportedTilesetJsonExtension(const std::string& extensionName) {
-    return extensionName == "3DTILES_content_gltf";
-}
-
 bool canFailTilesetJsonExtensionPerTile(const std::string& extensionName) {
     return extensionName == "3DTILES_implicit_tiling" ||
            extensionName == "3DTILES_multiple_contents";
 }
 
 bool tilesetJsonExtensionAllowed(const std::string& extensionName,
-                                 bool allowPerTileFailure) {
-    return isSupportedTilesetJsonExtension(extensionName) ||
+                                 bool allowPerTileFailure,
+                                 bool allowContentGltf) {
+    return (allowContentGltf &&
+            extensionName == "3DTILES_content_gltf") ||
            (allowPerTileFailure &&
             canFailTilesetJsonExtensionPerTile(extensionName));
 }
 
 bool hasUnsupportedDeclaredExtensionsOnObject(
     const nlohmann::json& json,
-    bool allowPerTileFailure = false) {
+    bool allowPerTileFailure = false,
+    bool allowContentGltf = false) {
     auto checkArray = [&](const char* name) {
         auto extensionsIt = json.find(name);
         if (extensionsIt == json.end()) {
@@ -735,7 +734,8 @@ bool hasUnsupportedDeclaredExtensionsOnObject(
             }
             if (!tilesetJsonExtensionAllowed(
                     extension.get<std::string>(),
-                    allowPerTileFailure)) {
+                    allowPerTileFailure,
+                    allowContentGltf)) {
                 return true;
             }
         }
@@ -772,12 +772,16 @@ bool hasUnsupportedDeclaredExtensionsInTileObject(
 
 bool extensionsObjectHasUnsupportedTilesetExtension(
     const nlohmann::json& extensions,
-    bool allowPerTileFailure) {
+    bool allowPerTileFailure,
+    bool allowContentGltf) {
     if (!extensions.is_object()) {
         return true;
     }
     for (auto it = extensions.begin(); it != extensions.end(); ++it) {
-        if (!tilesetJsonExtensionAllowed(it.key(), allowPerTileFailure)) {
+        if (!tilesetJsonExtensionAllowed(
+                it.key(),
+                allowPerTileFailure,
+                allowContentGltf)) {
             return true;
         }
     }
@@ -786,12 +790,14 @@ bool extensionsObjectHasUnsupportedTilesetExtension(
 
 bool hasUnsupportedDirectExtensionsObject(
     const nlohmann::json& value,
-    bool allowPerTileFailure = false) {
+    bool allowPerTileFailure = false,
+    bool allowContentGltf = false) {
     auto extensionsIt = value.find("extensions");
     return extensionsIt != value.end() &&
            extensionsObjectHasUnsupportedTilesetExtension(
                *extensionsIt,
-               allowPerTileFailure);
+               allowPerTileFailure,
+               allowContentGltf);
 }
 
 bool hasUnsupportedExtensionsObjectInTileObject(
@@ -837,6 +843,69 @@ bool contentObjectHasUnsupportedMetadataFields(
     return contentJson.is_object() &&
            (contentJson.contains("metadata") ||
             contentJson.contains("group"));
+}
+
+bool isSupportedGltfExtensionForTilesetContentGltf(
+    const std::string& extensionName) {
+    static constexpr std::array<const char*, 13> kSupportedGltfExtensions = {
+        "KHR_texture_transform",
+        "KHR_mesh_quantization",
+        "KHR_materials_unlit",
+        "KHR_materials_emissive_strength",
+        "KHR_materials_ior",
+        "KHR_materials_pbrSpecularGlossiness",
+        "KHR_materials_transmission",
+        "KHR_materials_anisotropy",
+        "KHR_materials_specular",
+        "KHR_materials_clearcoat",
+        "KHR_materials_sheen",
+        "EXT_texture_webp",
+        "EXT_mesh_gpu_instancing"};
+    return std::find(
+        kSupportedGltfExtensions.begin(),
+        kSupportedGltfExtensions.end(),
+        extensionName) != kSupportedGltfExtensions.end();
+}
+
+bool gltfContentExtensionArrayHasUnsupportedEntries(
+    const nlohmann::json& extensionJson,
+    const char* fieldName) {
+    auto fieldIt = extensionJson.find(fieldName);
+    if (fieldIt == extensionJson.end()) {
+        return false;
+    }
+    if (!fieldIt->is_array()) {
+        return true;
+    }
+    for (const auto& extension : *fieldIt) {
+        if (!extension.is_string() ||
+            !isSupportedGltfExtensionForTilesetContentGltf(
+                extension.get<std::string>())) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool hasUnsupportedContentGltfExtensionPayload(
+    const nlohmann::json& tilesetJson) {
+    auto extensionsIt = tilesetJson.find("extensions");
+    if (extensionsIt == tilesetJson.end() || !extensionsIt->is_object()) {
+        return false;
+    }
+    auto contentGltfIt = extensionsIt->find("3DTILES_content_gltf");
+    if (contentGltfIt == extensionsIt->end()) {
+        return false;
+    }
+    if (!contentGltfIt->is_object()) {
+        return true;
+    }
+    return gltfContentExtensionArrayHasUnsupportedEntries(
+               *contentGltfIt,
+               "extensionsRequired") ||
+           gltfContentExtensionArrayHasUnsupportedEntries(
+               *contentGltfIt,
+               "extensionsUsed");
 }
 
 bool hasUnsupportedTileMetadataFields(const nlohmann::json& tileJson) {
@@ -2480,8 +2549,9 @@ bool TilesetJsonContentProvider::parseTilesetJson(
     if (rootIt == parsed.end() || !rootIt->is_object()) {
         return false;
     }
-    if (hasUnsupportedDeclaredExtensionsOnObject(parsed, true) ||
-        hasUnsupportedDirectExtensionsObject(parsed, true) ||
+    if (hasUnsupportedDeclaredExtensionsOnObject(parsed, true, true) ||
+        hasUnsupportedDirectExtensionsObject(parsed, true, true) ||
+        hasUnsupportedContentGltfExtensionPayload(parsed) ||
         hasUnsupportedTilesetMetadataFields(parsed)) {
         return false;
     }
