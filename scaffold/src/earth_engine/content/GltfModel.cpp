@@ -885,21 +885,16 @@ bool extensionsObjectSupportedAtPath(
         return false;
     }
     for (auto it = extensions.begin(); it != extensions.end(); ++it) {
+        if (!isSupportedGltfObjectExtension(it.key())) {
+            return false;
+        }
         if (it.key() == "KHR_texture_transform") {
             if (!isTextureInfoExtensionParentPath(ownerPath)) {
                 return false;
             }
             continue;
         }
-        if (it.key() == "KHR_materials_unlit" ||
-            it.key() == "KHR_materials_emissive_strength" ||
-            it.key() == "KHR_materials_ior" ||
-            it.key() == "KHR_materials_pbrSpecularGlossiness" ||
-            it.key() == "KHR_materials_transmission" ||
-            it.key() == "KHR_materials_anisotropy" ||
-            it.key() == "KHR_materials_specular" ||
-            it.key() == "KHR_materials_clearcoat" ||
-            it.key() == "KHR_materials_sheen") {
+        if (isSupportedGltfMaterialExtension(it.key())) {
             if (!isMaterialExtensionParentPath(ownerPath)) {
                 return false;
             }
@@ -994,6 +989,17 @@ bool supportedObjectExtensionsAreDeclared(const json& doc) {
         const std::string extensionName(extensionNameView);
         if (documentHasObjectExtension(doc, extensionName) &&
             !declaredExtension(doc, extensionName.c_str())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool declaredObjectExtensionsHavePayloads(const json& doc) {
+    for (std::string_view extensionNameView : kSupportedGltfObjectExtensions) {
+        const std::string extensionName(extensionNameView);
+        if (declaredExtension(doc, extensionName.c_str()) &&
+            !documentHasObjectExtension(doc, extensionName)) {
             return false;
         }
     }
@@ -7136,83 +7142,14 @@ std::unique_ptr<GltfModel> GltfParser::parse(
         !requiredExtensionsAreUsed(input->document) ||
         hasUnsupportedObjectExtensions(input->document) ||
         !supportedObjectExtensionsAreDeclared(input->document) ||
+        !declaredObjectExtensionsHavePayloads(input->document) ||
         !validateSceneGraph(
             input->document,
             options.allowLegacyBatchIdAttribute)) {
         return nullptr;
     }
-    if (declaredExtension(input->document, "KHR_materials_unlit") &&
-        !documentHasObjectExtension(
-            input->document,
-            "KHR_materials_unlit")) {
-        return nullptr;
-    }
-    if (declaredExtension(input->document, "KHR_texture_transform") &&
-        !documentHasObjectExtension(input->document, "KHR_texture_transform")) {
-        return nullptr;
-    }
-    if (declaredExtension(
-            input->document,
-            "KHR_materials_emissive_strength") &&
-        !documentHasObjectExtension(
-            input->document,
-            "KHR_materials_emissive_strength")) {
-        return nullptr;
-    }
-    if (declaredExtension(input->document, "KHR_materials_ior") &&
-        !documentHasObjectExtension(input->document, "KHR_materials_ior")) {
-        return nullptr;
-    }
-    if (declaredExtension(
-            input->document,
-            "KHR_materials_pbrSpecularGlossiness") &&
-        !documentHasObjectExtension(
-            input->document,
-            "KHR_materials_pbrSpecularGlossiness")) {
-        return nullptr;
-    }
-    if (declaredExtension(input->document, "KHR_materials_transmission") &&
-        !documentHasObjectExtension(
-            input->document,
-            "KHR_materials_transmission")) {
-        return nullptr;
-    }
-    if (declaredExtension(input->document, "KHR_materials_anisotropy") &&
-        !documentHasObjectExtension(
-            input->document,
-            "KHR_materials_anisotropy")) {
-        return nullptr;
-    }
-    if (declaredExtension(input->document, "KHR_materials_specular") &&
-        !documentHasObjectExtension(
-            input->document,
-            "KHR_materials_specular")) {
-        return nullptr;
-    }
-    if (declaredExtension(input->document, "KHR_materials_clearcoat") &&
-        !documentHasObjectExtension(
-            input->document,
-            "KHR_materials_clearcoat")) {
-        return nullptr;
-    }
-    if (declaredExtension(input->document, "KHR_materials_sheen") &&
-        !documentHasObjectExtension(
-            input->document,
-            "KHR_materials_sheen")) {
-        return nullptr;
-    }
-    if (declaredExtension(input->document, "EXT_texture_webp") &&
-        !documentHasObjectExtension(input->document, "EXT_texture_webp")) {
-        return nullptr;
-    }
     if (declaredExtension(input->document, "EXT_texture_webp") &&
         !imageDecoder) {
-        return nullptr;
-    }
-    if (declaredExtension(input->document, "EXT_mesh_gpu_instancing") &&
-        !documentHasObjectExtension(
-            input->document,
-            "EXT_mesh_gpu_instancing")) {
         return nullptr;
     }
     if (declaredExtension(input->document, "EXT_mesh_gpu_instancing")) {

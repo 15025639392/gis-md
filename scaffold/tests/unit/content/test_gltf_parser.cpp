@@ -16,6 +16,7 @@
 #include <limits>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -8041,6 +8042,23 @@ TEST(GltfParserTest, RejectsKhrMaterialsSheenDeclarationWithoutMaterialExtension
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
 
     EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsDeclaredObjectSupportedExtensionsWithoutPayload) {
+    for (std::string_view extensionName : kSupportedGltfObjectExtensions) {
+        SCOPED_TRACE(std::string(extensionName));
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string marker = "\"asset\":{\"version\":\"2.0\"},";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.insert(
+            markerPos + marker.size(),
+            "\"extensionsUsed\":[\"" + std::string(extensionName) + "\"],");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model);
+    }
 }
 
 TEST(GltfParserTest, RejectsKhrMaterialsUnlitMaterialExtensionTypeMismatch) {
