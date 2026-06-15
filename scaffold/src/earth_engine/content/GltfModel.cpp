@@ -248,6 +248,11 @@ bool supportedCoreImageMimeType(const std::string& mimeType) {
     return mimeType == "image/png" || mimeType == "image/jpeg";
 }
 
+bool supportedImageMimeType(const std::string& mimeType, bool allowWebp) {
+    return supportedCoreImageMimeType(mimeType) ||
+           (allowWebp && mimeType == "image/webp");
+}
+
 std::optional<std::string> dataUriMimeType(const std::string& uri) {
     constexpr const char* prefix = "data:";
     constexpr size_t prefixLength = 5u;
@@ -266,13 +271,13 @@ std::optional<std::string> dataUriMimeType(const std::string& uri) {
     return mediaType;
 }
 
-bool validImageDataUriSource(const std::string& uri) {
+bool validImageDataUriSource(const std::string& uri, bool allowWebp) {
     if (uri.rfind("data:", 0) != 0) {
         return true;
     }
     const auto mimeType = dataUriMimeType(uri);
     return mimeType &&
-           supportedCoreImageMimeType(*mimeType) &&
+           supportedImageMimeType(*mimeType, allowWebp) &&
            uri.find(";base64,") != std::string::npos;
 }
 
@@ -398,13 +403,14 @@ bool validateAsset(const json& doc) {
 }
 
 bool isSupportedExtensionName(const std::string& name) {
-    static constexpr std::array<const char*, 7> kSupportedExtensions = {
+    static constexpr std::array<const char*, 8> kSupportedExtensions = {
         "KHR_texture_transform",
         "KHR_mesh_quantization",
         "KHR_materials_unlit",
         "KHR_materials_emissive_strength",
         "KHR_materials_ior",
         "KHR_materials_specular",
+        "EXT_texture_webp",
         "EXT_mesh_gpu_instancing"};
     return std::find(
         kSupportedExtensions.begin(),
@@ -484,6 +490,11 @@ bool isNodeExtensionParentPath(const std::vector<std::string>& path) {
            path[0] == "nodes";
 }
 
+bool isTextureExtensionParentPath(const std::vector<std::string>& path) {
+    return path.size() == 2 &&
+           path[0] == "textures";
+}
+
 bool extensionsObjectSupportedAtPath(
     const json& extensions,
     const std::vector<std::string>& ownerPath) {
@@ -508,6 +519,12 @@ bool extensionsObjectSupportedAtPath(
         }
         if (it.key() == "EXT_mesh_gpu_instancing") {
             if (!isNodeExtensionParentPath(ownerPath)) {
+                return false;
+            }
+            continue;
+        }
+        if (it.key() == "EXT_texture_webp") {
+            if (!isTextureExtensionParentPath(ownerPath)) {
                 return false;
             }
             continue;
@@ -579,12 +596,13 @@ bool documentHasObjectExtension(
 }
 
 bool supportedObjectExtensionsAreDeclared(const json& doc) {
-    constexpr std::array<const char*, 6> kObjectExtensions = {
+    constexpr std::array<const char*, 7> kObjectExtensions = {
         "KHR_texture_transform",
         "KHR_materials_unlit",
         "KHR_materials_emissive_strength",
         "KHR_materials_ior",
         "KHR_materials_specular",
+        "EXT_texture_webp",
         "EXT_mesh_gpu_instancing"};
     for (const char* extensionName : kObjectExtensions) {
         if (documentHasObjectExtension(doc, extensionName) &&
@@ -874,7 +892,7 @@ std::optional<GltfSampler> parseSampler(const json& doc, int samplerIndex) {
     return sampler;
 }
 
-bool validImageSourceFields(const json& imageJson) {
+bool validImageSourceFields(const json& imageJson, bool allowWebp = false) {
     if (!imageJson.is_object()) {
         return false;
     }
@@ -893,11 +911,11 @@ bool validImageSourceFields(const json& imageJson) {
         return false;
     }
     if (mimeTypeIt != imageJson.end() &&
-        !supportedCoreImageMimeType(mimeTypeIt->get<std::string>())) {
+        !supportedImageMimeType(mimeTypeIt->get<std::string>(), allowWebp)) {
         return false;
     }
     if (uriIt != imageJson.end() &&
-        !validImageDataUriSource(uriIt->get<std::string>())) {
+        !validImageDataUriSource(uriIt->get<std::string>(), allowWebp)) {
         return false;
     }
     if (uriIt != imageJson.end() && bufferViewIt != imageJson.end()) {
@@ -908,9 +926,46 @@ bool validImageSourceFields(const json& imageJson) {
             return false;
         }
         const std::string mimeType = mimeTypeIt->get<std::string>();
-        return supportedCoreImageMimeType(mimeType);
+        return supportedImageMimeType(mimeType, allowWebp);
     }
     return true;
+}
+
+bool imageSourceDeclaresNonWebp(const json& imageJson) {
+    const auto mimeTypeIt = imageJson.find("mimeType");
+    if (mimeTypeIt != imageJson.end() &&
+        mimeTypeIt->is_string() &&
+        mimeTypeIt->get<std::string>() != "image/webp") {
+        return true;
+    }
+    const auto uriIt = imageJson.find("uri");
+    if (uriIt != imageJson.end() && uriIt->is_string()) {
+        const auto mimeType = dataUriMimeType(uriIt->get<std::string>());
+        return mimeType && *mimeType != "image/webp";
+    }
+    return false;
+}
+
+std::optional<int> webpTextureSourceIndex(const json& textureJson) {
+    const auto extensionsIt = textureJson.find("extensions");
+    if (extensionsIt == textureJson.end()) {
+        return std::nullopt;
+    }
+    if (!extensionsIt->is_object()) {
+        return std::nullopt;
+    }
+    const auto webpIt = extensionsIt->find("EXT_texture_webp");
+    if (webpIt == extensionsIt->end()) {
+        return std::nullopt;
+    }
+    if (!webpIt->is_object()) {
+        return -1;
+    }
+    const auto sourceIt = webpIt->find("source");
+    if (sourceIt == webpIt->end() || !sourceIt->is_number_integer()) {
+        return -1;
+    }
+    return sourceIt->get<int>();
 }
 
 std::optional<std::vector<GltfTexture>> loadTextures(
@@ -952,14 +1007,19 @@ std::optional<std::vector<GltfTexture>> loadTextures(
         }
         result[textureIndex].sampler = *sampler;
 
+        const std::optional<int> webpSourceIndex =
+            webpTextureSourceIndex(textureJson);
+        const bool useWebpSource = webpSourceIndex.has_value();
         const auto sourceIt = textureJson.find("source");
-        if (sourceIt == textureJson.end()) {
+        if (!useWebpSource && sourceIt == textureJson.end()) {
             continue;
         }
-        if (!sourceIt->is_number_integer()) {
+        if (!useWebpSource && !sourceIt->is_number_integer()) {
             return std::nullopt;
         }
-        const int sourceIndex = sourceIt->get<int>();
+        const int sourceIndex = useWebpSource
+            ? *webpSourceIndex
+            : sourceIt->get<int>();
         if (sourceIndex < 0) {
             return std::nullopt;
         }
@@ -971,7 +1031,10 @@ std::optional<std::vector<GltfTexture>> loadTextures(
         }
 
         const json& imageJson = imageArray[static_cast<size_t>(sourceIndex)];
-        if (!validImageSourceFields(imageJson)) {
+        if (!validImageSourceFields(imageJson, useWebpSource)) {
+            return std::nullopt;
+        }
+        if (useWebpSource && imageSourceDeclaresNonWebp(imageJson)) {
             return std::nullopt;
         }
         if (!imageDecoder) {
@@ -2522,8 +2585,10 @@ bool validateSceneGraph(const json& doc) {
         if (!imagesIt->is_array()) {
             return false;
         }
+        const bool webpImagesAllowed =
+            declaredExtension(doc, "EXT_texture_webp");
         for (const json& image : *imagesIt) {
-            if (!validImageSourceFields(image)) {
+            if (!validImageSourceFields(image, webpImagesAllowed)) {
                 return false;
             }
         }
@@ -5236,6 +5301,10 @@ std::unique_ptr<GltfModel> GltfParser::parse(
         !documentHasObjectExtension(
             input->document,
             "KHR_materials_specular")) {
+        return nullptr;
+    }
+    if (declaredExtension(input->document, "EXT_texture_webp") &&
+        !documentHasObjectExtension(input->document, "EXT_texture_webp")) {
         return nullptr;
     }
     if (declaredExtension(input->document, "EXT_mesh_gpu_instancing") &&

@@ -3163,6 +3163,73 @@ TEST(GltfParserTest, ParsesBaseColorTextureDataUriAndSampler) {
     EXPECT_TRUE(model->primitives[0].doubleSided);
 }
 
+TEST(GltfParserTest, ParsesExtTextureWebpTextureExtension) {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf(
+            "data:image/png;base64,CQkJCQ==");
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":[\"EXT_texture_webp\"],"
+        "\"extensionsRequired\":[\"EXT_texture_webp\"],");
+
+    const std::string textureMarker =
+        "\"textures\":[{\"source\":0,\"sampler\":0}]";
+    const size_t texturePos = fixture.jsonText.find(textureMarker);
+    ASSERT_NE(std::string::npos, texturePos);
+    fixture.jsonText.replace(
+        texturePos,
+        textureMarker.size(),
+        "\"textures\":[{\"source\":0,\"sampler\":0,"
+        "\"extensions\":{\"EXT_texture_webp\":{\"source\":1}}}]");
+
+    const std::string imageMarker =
+        "\"images\":[{\"uri\":\"data:image/png;base64,CQkJCQ==\"}]";
+    const size_t imagePos = fixture.jsonText.find(imageMarker);
+    ASSERT_NE(std::string::npos, imagePos);
+    fixture.jsonText.replace(
+        imagePos,
+        imageMarker.size(),
+        "\"images\":["
+        "{\"uri\":\"data:image/png;base64,CQkJCQ==\"},"
+        "{\"uri\":\"data:image/webp;base64,AQIDBA==\"}]");
+
+    bool decodedWebp = false;
+    bool decodedFallback = false;
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            return uri == "triangle.bin" ? fixture.bin
+                                         : std::vector<uint8_t>{};
+        },
+        [&](const uint8_t* data, size_t size) -> std::optional<GltfImage> {
+            EXPECT_EQ(4u, size);
+            if (size == 0) {
+                return std::nullopt;
+            }
+            decodedWebp = data[0] == 1u;
+            decodedFallback = data[0] == 9u;
+            GltfImage image;
+            image.width = 1;
+            image.height = 1;
+            image.channels = 4;
+            image.pixels = {16, 32, 64, 255};
+            return image;
+        });
+
+    ASSERT_NE(nullptr, model);
+    EXPECT_TRUE(decodedWebp);
+    EXPECT_FALSE(decodedFallback);
+    ASSERT_EQ(1u, model->textures.size());
+    EXPECT_EQ(1, model->textures[0].image.width);
+    ASSERT_EQ(1u, model->primitives.size());
+    ASSERT_TRUE(model->primitives[0].baseColorTexture);
+    EXPECT_EQ(0u, model->primitives[0].baseColorTexture->textureIndex);
+}
+
 TEST(GltfParserTest, RejectsBaseColorTextureDataUriWithUnsupportedMimeType) {
     const ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf(
@@ -4401,11 +4468,10 @@ TEST(GltfParserTest, RejectsUnsupportedRequiredExtension) {
 }
 
 TEST(GltfParserTest, RejectsUnsupportedCompressionAndTextureExtensions) {
-    const std::array<const char*, 4> unsupportedExtensions = {
+    const std::array<const char*, 3> unsupportedExtensions = {
         "KHR_draco_mesh_compression",
         "EXT_meshopt_compression",
-        "KHR_texture_basisu",
-        "EXT_texture_webp"};
+        "KHR_texture_basisu"};
 
     for (const char* extension : unsupportedExtensions) {
         ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
@@ -5236,7 +5302,28 @@ TEST(GltfParserTest, RejectsUnsupportedBasisuTextureExtensionWithoutTranscoder) 
     EXPECT_EQ(nullptr, model);
 }
 
-TEST(GltfParserTest, RejectsUnsupportedTextureExtensionWithoutDecoder) {
+TEST(GltfParserTest, RejectsExtTextureWebpDeclarationWithoutTextureExtension) {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf("image.bin");
+    const std::string marker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.insert(
+        markerPos + marker.size(),
+        "\"extensionsUsed\":[\"EXT_texture_webp\"],");
+
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            return uri == "triangle.bin" ? fixture.bin
+                                         : std::vector<uint8_t>{9, 8, 7, 6};
+        });
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsExtTextureWebpObjectExtensionWithoutDeclaration) {
     ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf("image.bin");
     const std::string marker =
@@ -5258,6 +5345,119 @@ TEST(GltfParserTest, RejectsUnsupportedTextureExtensionWithoutDecoder) {
         });
 
     EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsExtTextureWebpWithoutDecoder) {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf("image.bin");
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":[\"EXT_texture_webp\"],");
+
+    const std::string textureMarker =
+        "\"textures\":[{\"source\":0,\"sampler\":0}]";
+    const size_t texturePos = fixture.jsonText.find(textureMarker);
+    ASSERT_NE(std::string::npos, texturePos);
+    fixture.jsonText.replace(
+        texturePos,
+        textureMarker.size(),
+        "\"textures\":[{\"source\":0,\"sampler\":0,"
+        "\"extensions\":{\"EXT_texture_webp\":{\"source\":0}}}]");
+
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            return uri == "triangle.bin" ? fixture.bin
+                                         : std::vector<uint8_t>{9, 8, 7, 6};
+        });
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsExtTextureWebpInvalidSource) {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf("image.bin");
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":[\"EXT_texture_webp\"],");
+
+    const std::string textureMarker =
+        "\"textures\":[{\"source\":0,\"sampler\":0}]";
+    const size_t texturePos = fixture.jsonText.find(textureMarker);
+    ASSERT_NE(std::string::npos, texturePos);
+    fixture.jsonText.replace(
+        texturePos,
+        textureMarker.size(),
+        "\"textures\":[{\"source\":0,\"sampler\":0,"
+        "\"extensions\":{\"EXT_texture_webp\":{\"source\":7}}}]");
+
+    bool decodedImage = false;
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            return uri == "triangle.bin" ? fixture.bin
+                                         : std::vector<uint8_t>{9, 8, 7, 6};
+        },
+        [&](const uint8_t*, size_t) -> std::optional<GltfImage> {
+            decodedImage = true;
+            return std::nullopt;
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(decodedImage);
+}
+
+TEST(GltfParserTest, RejectsExtTextureWebpExplicitNonWebpSource) {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf("image.bin");
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":[\"EXT_texture_webp\"],");
+
+    const std::string textureMarker =
+        "\"textures\":[{\"source\":0,\"sampler\":0}]";
+    const size_t texturePos = fixture.jsonText.find(textureMarker);
+    ASSERT_NE(std::string::npos, texturePos);
+    fixture.jsonText.replace(
+        texturePos,
+        textureMarker.size(),
+        "\"textures\":[{\"source\":0,\"sampler\":0,"
+        "\"extensions\":{\"EXT_texture_webp\":{\"source\":0}}}]");
+
+    const std::string imageMarker = "\"images\":[{\"uri\":\"image.bin\"}]";
+    const size_t imagePos = fixture.jsonText.find(imageMarker);
+    ASSERT_NE(std::string::npos, imagePos);
+    fixture.jsonText.replace(
+        imagePos,
+        imageMarker.size(),
+        "\"images\":[{\"uri\":\"image.bin\",\"mimeType\":\"image/png\"}]");
+
+    bool decodedImage = false;
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            return uri == "triangle.bin" ? fixture.bin
+                                         : std::vector<uint8_t>{9, 8, 7, 6};
+        },
+        [&](const uint8_t*, size_t) -> std::optional<GltfImage> {
+            decodedImage = true;
+            return std::nullopt;
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(decodedImage);
 }
 
 TEST(GltfParserTest, RejectsKhrTextureTransformOutsideTextureInfo) {
@@ -5349,6 +5549,82 @@ TEST(GltfParserTest, ContentProviderResolvesExternalImageRelativeToGltfUrl) {
     std::filesystem::remove_all(root);
 }
 
+TEST(GltfParserTest, ContentProviderDecodesExternalWebpTextureExtension) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth-md-gltf-external-webp";
+    std::filesystem::remove_all(root);
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf("fallback.png");
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":[\"EXT_texture_webp\"],"
+        "\"extensionsRequired\":[\"EXT_texture_webp\"],");
+
+    const std::string textureMarker =
+        "\"textures\":[{\"source\":0,\"sampler\":0}]";
+    const size_t texturePos = fixture.jsonText.find(textureMarker);
+    ASSERT_NE(std::string::npos, texturePos);
+    fixture.jsonText.replace(
+        texturePos,
+        textureMarker.size(),
+        "\"textures\":[{\"source\":0,\"sampler\":0,"
+        "\"extensions\":{\"EXT_texture_webp\":{\"source\":1}}}]");
+
+    const std::string imageMarker =
+        "\"images\":[{\"uri\":\"fallback.png\"}]";
+    const size_t imagePos = fixture.jsonText.find(imageMarker);
+    ASSERT_NE(std::string::npos, imagePos);
+    fixture.jsonText.replace(
+        imagePos,
+        imageMarker.size(),
+        "\"images\":[{\"uri\":\"fallback.png\"},{\"uri\":\"texture.webp\"}]");
+    writeBytes(root / "models" / "triangle.bin", fixture.bin);
+    writeBytes(root / "models" / "fallback.png", {9, 9, 9, 9});
+    writeBytes(root / "models" / "texture.webp", {1, 2, 3, 4});
+
+    bool decodedWebp = false;
+    bool decodedFallback = false;
+    TestPlatformBridge bridge(
+        [&](const uint8_t* data, size_t size) -> std::unique_ptr<DecodedImage> {
+            EXPECT_EQ(4u, size);
+            if (size == 0) {
+                return nullptr;
+            }
+            decodedWebp = data[0] == 1u;
+            decodedFallback = data[0] == 9u;
+            auto image = std::make_unique<DecodedImage>();
+            image->width = 1;
+            image->height = 1;
+            image->channels = 4;
+            image->pixels = {20, 40, 80, 255};
+            return image;
+        });
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        "file://" + (root / "models" / "triangle.gltf").generic_string(),
+        "external WebP texture fixture");
+    provider.setPlatformBridge(&bridge);
+    TileContentLoadResult result = provider.decodeContent(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    EXPECT_TRUE(decodedWebp);
+    EXPECT_FALSE(decodedFallback);
+    ASSERT_EQ(1u, result.gltfModel->textures.size());
+    EXPECT_EQ(1, result.gltfModel->textures[0].image.width);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    ASSERT_TRUE(result.gltfModel->primitives[0].baseColorTexture);
+
+    std::filesystem::remove_all(root);
+}
+
 TEST(GltfParserTest, ParsesExternalRobotExpressiveWhenProvided) {
     const char* path = std::getenv("EARTH_ENGINE_TEST_GLTF_PATH");
     if (!path || std::string(path).empty()) {
@@ -5423,7 +5699,7 @@ TEST(GltfParserTest, ContentProviderDecodesExternalI3dmWhenProvided) {
 }
 
 TEST(GltfParserTest, RejectsExternalUnsupportedCompressedTextureAssetsWhenProvided) {
-    const std::array<UnsupportedExternalGltfCase, 4> cases = {{
+    const std::array<UnsupportedExternalGltfCase, 3> cases = {{
         {
             "EARTH_ENGINE_TEST_UNSUPPORTED_DRACO_GLTF_PATH",
             "KHR_draco_mesh_compression"},
@@ -5432,10 +5708,7 @@ TEST(GltfParserTest, RejectsExternalUnsupportedCompressedTextureAssetsWhenProvid
             "EXT_meshopt_compression"},
         {
             "EARTH_ENGINE_TEST_UNSUPPORTED_KTX2_GLTF_PATH",
-            "KHR_texture_basisu"},
-        {
-            "EARTH_ENGINE_TEST_UNSUPPORTED_WEBP_GLTF_PATH",
-            "EXT_texture_webp"}}};
+            "KHR_texture_basisu"}}};
 
     bool ranCase = false;
     for (const UnsupportedExternalGltfCase& fixtureCase : cases) {
