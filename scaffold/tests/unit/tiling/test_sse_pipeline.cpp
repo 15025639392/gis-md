@@ -303,6 +303,34 @@ void check(bool condition, const std::string& name) {
     }
 }
 
+bool uniformNear(const RenderCommand& cmd,
+                 const char* name,
+                 std::initializer_list<float> expected,
+                 float epsilon = 1e-6f) {
+    auto it = cmd.uniforms.find(name);
+    if (it == cmd.uniforms.end() || it->second.size() != expected.size()) {
+        return false;
+    }
+    size_t index = 0;
+    for (float value : expected) {
+        if (std::abs(it->second[index] - value) >= epsilon) {
+            return false;
+        }
+        ++index;
+    }
+    return true;
+}
+
+void checkTextureTransformUniforms(const RenderCommand& cmd,
+                                   const char* offsetScaleName,
+                                   const char* rotationName,
+                                   const std::string& name) {
+    check(
+        uniformNear(cmd, offsetScaleName, {0.375f, 0.625f, 1.25f, 1.5f}) &&
+            uniformNear(cmd, rotationName, {1.0f, 0.0f}),
+        name);
+}
+
 FrameState::SelectorView makeSelectorView(const Camera& camera,
                                           int viewportWidth,
                                           int viewportHeight) {
@@ -3573,6 +3601,9 @@ void testTilesetGltfSpecularMaterialUploadsUniformsAndTextures() {
     GltfTextureBinding specularColorBinding;
     specularColorBinding.textureIndex = 0u;
     specularColorBinding.texCoord = 0;
+    specularColorBinding.transform.offset = {0.375f, 0.625f};
+    specularColorBinding.transform.scale = {1.25f, 1.5f};
+    specularColorBinding.transform.rotation = 1.57079632679f;
     primitive.specularColorTexture = specularColorBinding;
     root->contentKind = TileContentKind::Render;
     root->loadState = TileLoadState::ContentLoaded;
@@ -3635,6 +3666,11 @@ void testTilesetGltfSpecularMaterialUploadsUniformsAndTextures() {
               std::abs(cmd.uniforms.at("u_specularTexRotationSinCos")[0] -
                        1.0f) < 1e-6f,
           "Tileset: glTF specular texture uploads KHR_texture_transform uniforms");
+    checkTextureTransformUniforms(
+        cmd,
+        "u_specularColorTexOffsetScale",
+        "u_specularColorTexRotationSinCos",
+        "Tileset: glTF specularColor texture uploads KHR_texture_transform uniforms");
 }
 
 void testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures() {
@@ -3669,10 +3705,16 @@ void testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures() {
     GltfTextureBinding clearcoatRoughnessBinding;
     clearcoatRoughnessBinding.textureIndex = 0u;
     clearcoatRoughnessBinding.texCoord = 0;
+    clearcoatRoughnessBinding.transform.offset = {0.375f, 0.625f};
+    clearcoatRoughnessBinding.transform.scale = {1.25f, 1.5f};
+    clearcoatRoughnessBinding.transform.rotation = 1.57079632679f;
     primitive.clearcoatRoughnessTexture = clearcoatRoughnessBinding;
     GltfTextureBinding clearcoatNormalBinding;
     clearcoatNormalBinding.textureIndex = 0u;
     clearcoatNormalBinding.texCoord = 1;
+    clearcoatNormalBinding.transform.offset = {0.375f, 0.625f};
+    clearcoatNormalBinding.transform.scale = {1.25f, 1.5f};
+    clearcoatNormalBinding.transform.rotation = 1.57079632679f;
     primitive.clearcoatNormalTexture = clearcoatNormalBinding;
     root->contentKind = TileContentKind::Render;
     root->loadState = TileLoadState::ContentLoaded;
@@ -3736,6 +3778,16 @@ void testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures() {
               std::abs(cmd.uniforms.at("u_clearcoatTexRotationSinCos")[0] -
                        1.0f) < 1e-6f,
           "Tileset: glTF clearcoat texture uploads KHR_texture_transform uniforms");
+    checkTextureTransformUniforms(
+        cmd,
+        "u_clearcoatRoughnessTexOffsetScale",
+        "u_clearcoatRoughnessTexRotationSinCos",
+        "Tileset: glTF clearcoat roughness texture uploads KHR_texture_transform uniforms");
+    checkTextureTransformUniforms(
+        cmd,
+        "u_clearcoatNormalTexOffsetScale",
+        "u_clearcoatNormalTexRotationSinCos",
+        "Tileset: glTF clearcoat normal texture uploads KHR_texture_transform uniforms");
 }
 
 void testTilesetGltfSheenMaterialUploadsUniformsAndTextures() {
@@ -3769,6 +3821,9 @@ void testTilesetGltfSheenMaterialUploadsUniformsAndTextures() {
     GltfTextureBinding sheenRoughnessBinding;
     sheenRoughnessBinding.textureIndex = 0u;
     sheenRoughnessBinding.texCoord = 0;
+    sheenRoughnessBinding.transform.offset = {0.375f, 0.625f};
+    sheenRoughnessBinding.transform.scale = {1.25f, 1.5f};
+    sheenRoughnessBinding.transform.rotation = 1.57079632679f;
     primitive.sheenRoughnessTexture = sheenRoughnessBinding;
     root->contentKind = TileContentKind::Render;
     root->loadState = TileLoadState::ContentLoaded;
@@ -3833,6 +3888,11 @@ void testTilesetGltfSheenMaterialUploadsUniformsAndTextures() {
               std::abs(cmd.uniforms.at("u_sheenColorTexRotationSinCos")[0] -
                        1.0f) < 1e-6f,
           "Tileset: glTF sheen color texture uploads KHR_texture_transform uniforms");
+    checkTextureTransformUniforms(
+        cmd,
+        "u_sheenRoughnessTexOffsetScale",
+        "u_sheenRoughnessTexRotationSinCos",
+        "Tileset: glTF sheen roughness texture uploads KHR_texture_transform uniforms");
 }
 
 void testTilesetGltfPointAndLineModesReachDrawCommands() {
