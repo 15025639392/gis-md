@@ -715,7 +715,8 @@ std::vector<uint8_t> makeTriangleGlbBytes() {
 }
 
 std::vector<uint8_t> makeNativeGpuInstancedTriangleGlbBytes(
-    bool blendMaterial = false) {
+    bool blendMaterial = false,
+    bool includeRotationScale = false) {
     std::vector<uint8_t> bin;
     const size_t positionsOffset = bin.size();
     appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f);
@@ -741,12 +742,42 @@ std::vector<uint8_t> makeNativeGpuInstancedTriangleGlbBytes(
     appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f); appendPod<float>(bin, 25.0f);
     pad4(bin, 0);
 
+    size_t rotationsOffset = 0;
+    size_t scalesOffset = 0;
+    if (includeRotationScale) {
+        rotationsOffset = bin.size();
+        appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f);
+        appendPod<float>(bin, 0.0f); appendPod<float>(bin, 1.0f);
+        constexpr float kSqrtHalf = 0.7071067811865476f;
+        appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f);
+        appendPod<float>(bin, kSqrtHalf); appendPod<float>(bin, kSqrtHalf);
+        pad4(bin, 0);
+
+        scalesOffset = bin.size();
+        appendPod<float>(bin, 2.0f); appendPod<float>(bin, 3.0f); appendPod<float>(bin, 4.0f);
+        appendPod<float>(bin, 1.0f); appendPod<float>(bin, 2.0f); appendPod<float>(bin, 1.0f);
+        pad4(bin, 0);
+    }
+
     const std::string materialJson = blendMaterial
         ? "\"materials\":[{\"alphaMode\":\"BLEND\","
           "\"pbrMetallicRoughness\":{\"baseColorFactor\":[1,1,1,0.5]}}],"
         : "";
     const std::string primitiveMaterialJson =
         blendMaterial ? ",\"material\":0" : "";
+    const std::string instanceAttributesJson = includeRotationScale
+        ? "\"TRANSLATION\":4,\"ROTATION\":5,\"SCALE\":6"
+        : "\"TRANSLATION\":4";
+    const std::string extraBufferViewsJson = includeRotationScale
+        ? ",{\"buffer\":0,\"byteOffset\":" +
+              std::to_string(rotationsOffset) + ",\"byteLength\":32}" +
+          ",{\"buffer\":0,\"byteOffset\":" +
+              std::to_string(scalesOffset) + ",\"byteLength\":24}"
+        : "";
+    const std::string extraAccessorsJson = includeRotationScale
+        ? ",{\"bufferView\":5,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"}"
+          ",{\"bufferView\":6,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}"
+        : "";
 
     const std::string jsonText =
         std::string("{") +
@@ -756,7 +787,7 @@ std::vector<uint8_t> makeNativeGpuInstancedTriangleGlbBytes(
         "\"scene\":0," +
         "\"scenes\":[{\"nodes\":[0]}]," +
         "\"nodes\":[{\"mesh\":0,\"extensions\":{\"EXT_mesh_gpu_instancing\":{"
-        "\"attributes\":{\"TRANSLATION\":4}}}}]," +
+        "\"attributes\":{" + instanceAttributesJson + "}}}}]," +
         "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},\"indices\":3,\"mode\":4" +
         primitiveMaterialJson +
         "}]}]," +
@@ -768,6 +799,7 @@ std::vector<uint8_t> makeNativeGpuInstancedTriangleGlbBytes(
         "{\"buffer\":0,\"byteOffset\":" + std::to_string(uvOffset) + ",\"byteLength\":24}," +
         "{\"buffer\":0,\"byteOffset\":" + std::to_string(indicesOffset) + ",\"byteLength\":6}," +
         "{\"buffer\":0,\"byteOffset\":" + std::to_string(translationsOffset) + ",\"byteLength\":24}" +
+        extraBufferViewsJson +
         "]," +
         "\"accessors\":[" +
         "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}," +
@@ -775,6 +807,7 @@ std::vector<uint8_t> makeNativeGpuInstancedTriangleGlbBytes(
         "{\"bufferView\":2,\"componentType\":5126,\"count\":3,\"type\":\"VEC2\"}," +
         "{\"bufferView\":3,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}," +
         "{\"bufferView\":4,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}" +
+        extraAccessorsJson +
         "]}";
 
     std::vector<uint8_t> jsonBytes(jsonText.begin(), jsonText.end());
@@ -4405,6 +4438,108 @@ void testTilesetContentProviderLoadsNativeGpuInstancingGltf() {
               !commands.front().blend &&
               commands.front().depthWrite,
           "Tileset: native EXT_mesh_gpu_instancing renders as opaque GPU instancing");
+}
+
+void testTilesetContentProviderUploadsNativeGpuInstancingTrsMatrices() {
+    DummyRenderDevice device;
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    auto contentProvider = std::make_unique<SingleGltfContentProvider>(
+        rootKey,
+        makeNativeGpuInstancedTriangleGlbBytes(false, true),
+        "native EXT_mesh_gpu_instancing TRS GLB fixture");
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTestAccess::requestMissingTile(tileset, rootKey);
+
+    TilesetTile* root = nullptr;
+    for (int i = 0; i < 100; ++i) {
+        TilesetTestAccess::processPendingUploads(tileset);
+        root = TilesetTestAccess::findTile(tileset, rootKey);
+        if (root &&
+            root->loadState == TileLoadState::Done &&
+            root->contentKind == TileContentKind::Render &&
+            root->gltfModel) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    check(root != nullptr,
+          "Tileset: native glTF instancing TRS provider creates the requested tile");
+    if (!root) return;
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 1 &&
+              commands.front().kind ==
+                  RenderCommandKind::GltfPrimitiveInstanced &&
+              commands.front().instanceCount == 2,
+          "Tileset: native EXT_mesh_gpu_instancing TRS still uses one opaque instanced command");
+    check(std::abs(root->localOrigin.x()) < 1e-12 &&
+              std::abs(root->localOrigin.y() - (2.0 / 3.0)) < 1e-12 &&
+              std::abs(root->localOrigin.z() - 15.0) < 1e-12,
+          "Tileset: native EXT_mesh_gpu_instancing TRS local origin uses transformed instance centroids");
+
+    const auto* instanceBuffer =
+        commands.empty()
+            ? nullptr
+            : dynamic_cast<const DummyBuffer*>(commands.front().instanceBuffer);
+    std::array<float, 50> packed{};
+    const bool hasPackedInstances =
+        instanceBuffer &&
+        instanceBuffer->bytes().size() >= packed.size() * sizeof(float);
+    if (hasPackedInstances) {
+        std::memcpy(
+            packed.data(),
+            instanceBuffer->bytes().data(),
+            packed.size() * sizeof(float));
+    }
+
+    constexpr float kTwoThirds = 2.0f / 3.0f;
+    const std::array<float, 25> expectedFirst = {
+        2.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 3.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 4.0f, 0.0f,
+        0.0f, -kTwoThirds, -10.0f, 1.0f,
+        0.5f, 0.0f, 0.0f,
+        0.0f, 1.0f / 3.0f, 0.0f,
+        0.0f, 0.0f, 0.25f};
+    const std::array<float, 25> expectedSecond = {
+        0.0f, 1.0f, 0.0f, 0.0f,
+        -2.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, -kTwoThirds, 10.0f, 1.0f,
+        0.0f, 1.0f, 0.0f,
+        -0.5f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f};
+
+    auto packedNear = [&](size_t offset,
+                          const std::array<float, 25>& expected) {
+        for (size_t i = 0; i < expected.size(); ++i) {
+            if (std::abs(packed[offset + i] - expected[i]) > 1e-5f) {
+                return false;
+            }
+        }
+        return true;
+    };
+    check(hasPackedInstances &&
+              packedNear(0, expectedFirst) &&
+              packedNear(25, expectedSecond),
+          "Tileset: native EXT_mesh_gpu_instancing uploads TRS model and normal matrices");
 }
 
 void testTilesetContentProviderSplitsNativeGpuInstancingBlendGltf() {
@@ -8769,6 +8904,7 @@ int main() {
     testTilesetGltfTransmissionInstancesSplitForSorting();
     testTilesetContentProviderLoadsGltfRenderContent();
     testTilesetContentProviderLoadsNativeGpuInstancingGltf();
+    testTilesetContentProviderUploadsNativeGpuInstancingTrsMatrices();
     testTilesetContentProviderSplitsNativeGpuInstancingBlendGltf();
     testTilesetContentProviderSplitsI3dmNativeGpuInstancingBlendGltf();
     testTilesetJsonProviderLoadsExplicitGltfTile();
