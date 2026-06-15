@@ -3359,6 +3359,13 @@ bool gpuInstancingAttributeSemanticSupported(const std::string& semantic) {
            semantic == "SCALE";
 }
 
+bool nodeHasGpuInstancingExtension(const json& node) {
+    const auto extensionsIt = node.find("extensions");
+    return extensionsIt != node.end() &&
+           extensionsIt->is_object() &&
+           extensionsIt->contains("EXT_mesh_gpu_instancing");
+}
+
 bool validateGpuInstancingNodeExtensionShape(
     const json& node,
     const json* accessors) {
@@ -5428,6 +5435,68 @@ std::vector<int> sceneRootNodes(const json& doc) {
     return roots;
 }
 
+std::vector<uint8_t> traversedNodeMask(const json& doc) {
+    const auto& nodes = doc.value("nodes", json::array());
+    std::vector<uint8_t> visited(nodes.size(), 0u);
+    std::vector<int> stack = sceneRootNodes(doc);
+    while (!stack.empty()) {
+        const int nodeIndex = stack.back();
+        stack.pop_back();
+        if (nodeIndex < 0 ||
+            static_cast<size_t>(nodeIndex) >= nodes.size() ||
+            visited[static_cast<size_t>(nodeIndex)] != 0u) {
+            continue;
+        }
+        visited[static_cast<size_t>(nodeIndex)] = 1u;
+        const json& node = nodes[static_cast<size_t>(nodeIndex)];
+        if (!node.is_object()) {
+            continue;
+        }
+        for (const json& child : node.value("children", json::array())) {
+            if (child.is_number_integer()) {
+                stack.push_back(child.get<int>());
+            }
+        }
+    }
+    return visited;
+}
+
+std::optional<std::vector<std::vector<GltfInstance>>>
+parseAllGpuInstancingInstances(
+    const json& doc,
+    const std::vector<std::vector<uint8_t>>& buffers,
+    const std::vector<NodeRecord>& nodeRecords,
+    const std::vector<uint8_t>& cacheMask) {
+    const auto& nodes = doc.value("nodes", json::array());
+    std::vector<std::vector<GltfInstance>> instancesByNode(nodes.size());
+    for (size_t nodeIndex = 0; nodeIndex < nodes.size(); ++nodeIndex) {
+        const json& node = nodes[nodeIndex];
+        if (!node.is_object() || !nodeHasGpuInstancingExtension(node)) {
+            continue;
+        }
+
+        const glm::dmat4 nodeGlobalTransform =
+            nodeIndex < nodeRecords.size()
+                ? nodeRecords[nodeIndex].globalTransform
+                : glm::dmat4(1.0);
+        bool strictFailure = false;
+        std::optional<std::vector<GltfInstance>> instances =
+            parseGpuInstancingInstances(
+                doc,
+                buffers,
+                node,
+                nodeGlobalTransform,
+                strictFailure);
+        if (!instances || strictFailure || instances->empty()) {
+            return std::nullopt;
+        }
+        if (nodeIndex < cacheMask.size() && cacheMask[nodeIndex] != 0u) {
+            instancesByNode[nodeIndex] = std::move(*instances);
+        }
+    }
+    return instancesByNode;
+}
+
 std::optional<GltfPrimitive> parsePrimitive(
     const json& doc,
     const std::vector<std::vector<uint8_t>>& buffers,
@@ -6281,6 +6350,7 @@ void traverseNode(
     const std::vector<GltfTexture>& textures,
     const std::vector<NodeRecord>& nodeRecords,
     const std::vector<SkinRecord>& skins,
+    const std::vector<std::vector<GltfInstance>>& nativeInstancesByNode,
     int nodeIndex,
     GltfModel& model,
     bool meshQuantizationEnabled,
@@ -6294,18 +6364,14 @@ void traverseNode(
     }
 
     const json& node = nodes[static_cast<size_t>(nodeIndex)];
-    const glm::dmat4 nodeGlobalTransform =
-        static_cast<size_t>(nodeIndex) < nodeRecords.size()
-            ? nodeRecords[static_cast<size_t>(nodeIndex)].globalTransform
-            : glm::dmat4(1.0);
-    std::optional<std::vector<GltfInstance>> nativeInstances =
-        parseGpuInstancingInstances(
-            doc,
-            buffers,
-            node,
-            nodeGlobalTransform,
-            strictFailure);
-    if (!nativeInstances || strictFailure) {
+    const std::vector<GltfInstance>* nativeInstances = nullptr;
+    if (static_cast<size_t>(nodeIndex) < nativeInstancesByNode.size()) {
+        nativeInstances =
+            &nativeInstancesByNode[static_cast<size_t>(nodeIndex)];
+    }
+    if (nodeHasGpuInstancingExtension(node) &&
+        (!nativeInstances || nativeInstances->empty())) {
+        strictFailure = true;
         return;
     }
     if (node.contains("mesh")) {
@@ -6331,7 +6397,7 @@ void traverseNode(
                         meshQuantizationEnabled,
                         allowLegacyBatchIdAttribute,
                         strictFailure)) {
-                    if (!nativeInstances->empty()) {
+                    if (nativeInstances && !nativeInstances->empty()) {
                         primitive->instances = *nativeInstances;
                     }
                     model.primitives.push_back(std::move(*primitive));
@@ -6355,6 +6421,7 @@ void traverseNode(
             textures,
             nodeRecords,
             skins,
+            nativeInstancesByNode,
             child.get<int>(),
             model,
             meshQuantizationEnabled,
@@ -7062,6 +7129,20 @@ std::unique_ptr<GltfModel> GltfParser::parse(
         !validateAllSkinAccessorSemantics(input->document, buffers)) {
         return nullptr;
     }
+
+    std::vector<NodeRecord> nodeRecords = parseNodes(input->document);
+    applyMeshDefaultWeights(input->document, nodeRecords);
+    std::optional<std::vector<std::vector<GltfInstance>>>
+        nativeInstancesByNode =
+            parseAllGpuInstancingInstances(
+                input->document,
+                buffers,
+                nodeRecords,
+                traversedNodeMask(input->document));
+    if (!nativeInstancesByNode) {
+        return nullptr;
+    }
+
     auto model = std::make_unique<GltfModel>();
     auto textures = loadTextures(
         input->document,
@@ -7073,8 +7154,6 @@ std::unique_ptr<GltfModel> GltfParser::parse(
     }
     model->textures = std::move(*textures);
 
-    std::vector<NodeRecord> nodeRecords = parseNodes(input->document);
-    applyMeshDefaultWeights(input->document, nodeRecords);
     const std::vector<SkinRecord> skins =
         parseSkins(input->document, buffers, nodeRecords.size());
     std::optional<std::vector<GltfAnimationRuntime>> animations =
@@ -7092,6 +7171,7 @@ std::unique_ptr<GltfModel> GltfParser::parse(
             model->textures,
             nodeRecords,
             skins,
+            *nativeInstancesByNode,
             rootNodeIndex,
             *model,
             meshQuantizationEnabled,
