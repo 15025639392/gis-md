@@ -32,6 +32,10 @@ void appendU16(std::vector<uint8_t>& bytes, uint16_t value) {
     bytes.push_back(static_cast<uint8_t>((value >> 8) & 0xffu));
 }
 
+void appendI16(std::vector<uint8_t>& bytes, int16_t value) {
+    appendU16(bytes, static_cast<uint16_t>(value));
+}
+
 void appendF32(std::vector<uint8_t>& bytes, float value) {
     const uint8_t* p = reinterpret_cast<const uint8_t*>(&value);
     bytes.insert(bytes.end(), p, p + sizeof(float));
@@ -1229,6 +1233,111 @@ void appendAccessorToExternalFixture(
         markerPos,
         marker.size(),
         marker + "," + accessorJson);
+}
+
+ExternalGltfFixture makeGpuInstancedExternalGltf(
+    bool normalizedShortRotation = false) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const size_t originalByteLength = fixture.bin.size();
+
+    const size_t translationsOffset = fixture.bin.size();
+    appendF32(fixture.bin, 1.0f);
+    appendF32(fixture.bin, 2.0f);
+    appendF32(fixture.bin, 3.0f);
+    appendF32(fixture.bin, 4.0f);
+    appendF32(fixture.bin, 5.0f);
+    appendF32(fixture.bin, 6.0f);
+
+    const size_t rotationsOffset = fixture.bin.size();
+    if (normalizedShortRotation) {
+        appendI16(fixture.bin, 0);
+        appendI16(fixture.bin, 0);
+        appendI16(fixture.bin, 0);
+        appendI16(fixture.bin, 32767);
+        appendI16(fixture.bin, 0);
+        appendI16(fixture.bin, 0);
+        appendI16(fixture.bin, 23170);
+        appendI16(fixture.bin, 23170);
+    } else {
+        appendF32(fixture.bin, 0.0f);
+        appendF32(fixture.bin, 0.0f);
+        appendF32(fixture.bin, 0.0f);
+        appendF32(fixture.bin, 1.0f);
+        constexpr float kSqrtHalf = 0.7071067811865476f;
+        appendF32(fixture.bin, 0.0f);
+        appendF32(fixture.bin, 0.0f);
+        appendF32(fixture.bin, kSqrtHalf);
+        appendF32(fixture.bin, kSqrtHalf);
+    }
+    const size_t rotationsByteLength =
+        fixture.bin.size() - rotationsOffset;
+
+    const size_t scalesOffset = fixture.bin.size();
+    appendF32(fixture.bin, 2.0f);
+    appendF32(fixture.bin, 3.0f);
+    appendF32(fixture.bin, 4.0f);
+    appendF32(fixture.bin, 1.0f);
+    appendF32(fixture.bin, 2.0f);
+    appendF32(fixture.bin, 1.0f);
+    pad4(fixture.bin, 0);
+
+    const std::string oldByteLength =
+        "\"byteLength\":" + std::to_string(originalByteLength);
+    const size_t byteLengthPos = fixture.jsonText.find(oldByteLength);
+    if (byteLengthPos != std::string::npos) {
+        fixture.jsonText.replace(
+            byteLengthPos,
+            oldByteLength.size(),
+            "\"byteLength\":" + std::to_string(fixture.bin.size()));
+    }
+
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    if (assetPos != std::string::npos) {
+        fixture.jsonText.insert(
+            assetPos + assetMarker.size(),
+            "\"extensionsUsed\":[\"EXT_mesh_gpu_instancing\"],"
+            "\"extensionsRequired\":[\"EXT_mesh_gpu_instancing\"],");
+    }
+
+    const std::string nodeMarker =
+        "{\"mesh\":0,\"translation\":[10,20,30]}";
+    const size_t nodePos = fixture.jsonText.find(nodeMarker);
+    if (nodePos != std::string::npos) {
+        fixture.jsonText.replace(
+            nodePos,
+            nodeMarker.size(),
+            "{\"mesh\":0,\"translation\":[10,20,30],"
+            "\"extensions\":{\"EXT_mesh_gpu_instancing\":{"
+            "\"attributes\":{\"TRANSLATION\":4,\"ROTATION\":5,\"SCALE\":6}}}}");
+    }
+
+    const std::string accessorsMarker = "],\"accessors\":[";
+    const size_t accessorsPos = fixture.jsonText.find(accessorsMarker);
+    if (accessorsPos != std::string::npos) {
+        const std::string extraViews =
+            ",{\"buffer\":0,\"byteOffset\":" +
+            std::to_string(translationsOffset) +
+            ",\"byteLength\":24}" +
+            ",{\"buffer\":0,\"byteOffset\":" +
+            std::to_string(rotationsOffset) +
+            ",\"byteLength\":" +
+            std::to_string(rotationsByteLength) + "}" +
+            ",{\"buffer\":0,\"byteOffset\":" +
+            std::to_string(scalesOffset) +
+            ",\"byteLength\":24}";
+        fixture.jsonText.insert(accessorsPos, extraViews);
+    }
+
+    const std::string rotationAccessor = normalizedShortRotation
+        ? "{\"bufferView\":5,\"componentType\":5122,\"normalized\":true,\"count\":2,\"type\":\"VEC4\"}"
+        : "{\"bufferView\":5,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"}";
+    appendAccessorToExternalFixture(
+        fixture,
+        "{\"bufferView\":4,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"},"
+        + rotationAccessor + ","
+        "{\"bufferView\":6,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}");
+    return fixture;
 }
 
 std::unique_ptr<GltfModel> parseExternalFixtureWithSolidImage(
@@ -4099,7 +4208,44 @@ TEST(GltfParserTest, RejectsUnsupportedMaterialExtensionsWithoutShaderSupport) {
     }
 }
 
-TEST(GltfParserTest, RejectsUnsupportedNativeGpuInstancingExtension) {
+TEST(GltfParserTest, ParsesExtMeshGpuInstancingNodeExtension) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives[0];
+    ASSERT_EQ(2u, primitive.instances.size());
+
+    const Vec3 source = primitive.vertices[1].positionEcef;
+    const Vec3 first = primitive.instances[0].transform * source;
+    EXPECT_NEAR(13.0, first.x(), 1e-6);
+    EXPECT_NEAR(22.0, first.y(), 1e-6);
+    EXPECT_NEAR(33.0, first.z(), 1e-6);
+
+    const Vec3 second = primitive.instances[1].transform * source;
+    EXPECT_NEAR(14.0, second.x(), 1e-6);
+    EXPECT_NEAR(26.0, second.y(), 1e-6);
+    EXPECT_NEAR(36.0, second.z(), 1e-6);
+}
+
+TEST(GltfParserTest, ParsesExtMeshGpuInstancingNormalizedShortRotation) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf(true);
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives[0];
+    ASSERT_EQ(2u, primitive.instances.size());
+
+    const Vec3 source = primitive.vertices[1].positionEcef;
+    const Vec3 second = primitive.instances[1].transform * source;
+    EXPECT_NEAR(14.0, second.x(), 1e-3);
+    EXPECT_NEAR(26.0, second.y(), 1e-3);
+    EXPECT_NEAR(36.0, second.z(), 1e-3);
+}
+
+TEST(GltfParserTest, RejectsExtMeshGpuInstancingDeclarationWithoutNodeExtension) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string marker = "\"asset\":{\"version\":\"2.0\"},";
     const size_t markerPos = fixture.jsonText.find(marker);
@@ -4113,7 +4259,7 @@ TEST(GltfParserTest, RejectsUnsupportedNativeGpuInstancingExtension) {
     EXPECT_EQ(nullptr, model);
 }
 
-TEST(GltfParserTest, RejectsGpuInstancingObjectExtensionWithoutSupport) {
+TEST(GltfParserTest, RejectsGpuInstancingObjectExtensionWithoutDeclaration) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string marker =
         "{\"mesh\":0,\"translation\":[10,20,30]}";
@@ -4125,6 +4271,65 @@ TEST(GltfParserTest, RejectsGpuInstancingObjectExtensionWithoutSupport) {
         "{\"mesh\":0,\"translation\":[10,20,30],"
         "\"extensions\":{\"EXT_mesh_gpu_instancing\":{"
         "\"attributes\":{\"TRANSLATION\":0}}}}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsGpuInstancingFeatureIdAttributeWithoutMetadataSupport) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
+    const std::string marker = "\"SCALE\":6}";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "\"SCALE\":6,\"_FEATURE_ID_0\":4}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsGpuInstancingMismatchedAttributeCounts) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
+    const std::string marker =
+        "{\"bufferView\":6,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "{\"bufferView\":6,\"componentType\":5126,\"count\":1,\"type\":\"VEC3\"}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsGpuInstancingUnsignedRotationAccessor) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
+    const std::string marker =
+        "{\"bufferView\":5,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"}";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "{\"bufferView\":5,\"componentType\":5121,\"normalized\":true,\"count\":2,\"type\":\"VEC4\"}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsGpuInstancingWithRuntimeAnimations) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
+    const std::string marker = "\"buffers\"";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.insert(markerPos, "\"animations\":[{}],");
 
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
 
@@ -4622,6 +4827,52 @@ TEST(GltfParserTest, ContentProviderResolvesExternalI3dmGltfRelativeToTileUrl) {
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     EXPECT_EQ(2u, result.gltfModel->primitives[0].instances.size());
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(GltfParserTest, ContentProviderCombinesI3dmAndNativeGltfInstances) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth-md-i3dm-native-gltf-instances";
+    std::filesystem::remove_all(root);
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
+    writeBytes(
+        root / "tiles" / "models" / "triangle.gltf",
+        std::vector<uint8_t>(
+            fixture.jsonText.begin(),
+            fixture.jsonText.end()));
+    writeBytes(root / "tiles" / "models" / "triangle.bin", fixture.bin);
+
+    const std::vector<uint8_t> i3dm =
+        makeI3dm({}, 0u, "models/triangle.gltf");
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        "file://" + (root / "tiles" / "tile.i3dm").generic_string(),
+        "external native-instanced I3DM fixture");
+
+    TileContentLoadResult result =
+        provider.decodeContent(i3dm.data(), i3dm.size());
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives[0];
+    ASSERT_EQ(4u, primitive.instances.size());
+
+    const Vec3 source = primitive.vertices[1].positionEcef;
+    const Vec3 first =
+        result.contentTransform *
+        (primitive.instances[0].transform * source);
+    EXPECT_NEAR(113.0, first.x(), 1e-6);
+    EXPECT_NEAR(222.0, first.y(), 1e-6);
+    EXPECT_NEAR(333.0, first.z(), 1e-6);
+
+    const Vec3 third =
+        result.contentTransform *
+        (primitive.instances[2].transform * source);
+    EXPECT_NEAR(136.0, third.x(), 1e-6);
+    EXPECT_NEAR(244.0, third.y(), 1e-6);
+    EXPECT_NEAR(366.0, third.z(), 1e-6);
 
     std::filesystem::remove_all(root);
 }

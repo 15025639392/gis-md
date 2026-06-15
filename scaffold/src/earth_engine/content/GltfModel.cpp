@@ -398,10 +398,11 @@ bool validateAsset(const json& doc) {
 }
 
 bool isSupportedExtensionName(const std::string& name) {
-    static constexpr std::array<const char*, 3> kSupportedExtensions = {
+    static constexpr std::array<const char*, 4> kSupportedExtensions = {
         "KHR_texture_transform",
         "KHR_mesh_quantization",
-        "KHR_materials_unlit"};
+        "KHR_materials_unlit",
+        "EXT_mesh_gpu_instancing"};
     return std::find(
         kSupportedExtensions.begin(),
         kSupportedExtensions.end(),
@@ -469,6 +470,11 @@ bool isMaterialExtensionParentPath(const std::vector<std::string>& path) {
            path[0] == "materials";
 }
 
+bool isNodeExtensionParentPath(const std::vector<std::string>& path) {
+    return path.size() == 2 &&
+           path[0] == "nodes";
+}
+
 bool extensionsObjectSupportedAtPath(
     const json& extensions,
     const std::vector<std::string>& ownerPath) {
@@ -484,6 +490,12 @@ bool extensionsObjectSupportedAtPath(
         }
         if (it.key() == "KHR_materials_unlit") {
             if (!isMaterialExtensionParentPath(ownerPath)) {
+                return false;
+            }
+            continue;
+        }
+        if (it.key() == "EXT_mesh_gpu_instancing") {
+            if (!isNodeExtensionParentPath(ownerPath)) {
                 return false;
             }
             continue;
@@ -555,9 +567,10 @@ bool documentHasObjectExtension(
 }
 
 bool supportedObjectExtensionsAreDeclared(const json& doc) {
-    constexpr std::array<const char*, 2> kObjectExtensions = {
+    constexpr std::array<const char*, 3> kObjectExtensions = {
         "KHR_texture_transform",
-        "KHR_materials_unlit"};
+        "KHR_materials_unlit",
+        "EXT_mesh_gpu_instancing"};
     for (const char* extensionName : kObjectExtensions) {
         if (documentHasObjectExtension(doc, extensionName) &&
             !declaredExtension(doc, extensionName)) {
@@ -2188,6 +2201,53 @@ bool validateMaterialJson(const json& material, size_t textureCount) {
     return true;
 }
 
+bool gpuInstancingAttributeSemanticSupported(const std::string& semantic) {
+    return semantic == "TRANSLATION" ||
+           semantic == "ROTATION" ||
+           semantic == "SCALE";
+}
+
+bool validateGpuInstancingNodeExtensionShape(
+    const json& node,
+    const json* accessors) {
+    const auto extensionsIt = node.find("extensions");
+    if (extensionsIt == node.end()) {
+        return true;
+    }
+    if (!extensionsIt->is_object()) {
+        return false;
+    }
+    const auto instancingIt =
+        extensionsIt->find("EXT_mesh_gpu_instancing");
+    if (instancingIt == extensionsIt->end()) {
+        return true;
+    }
+    if (!node.contains("mesh") || !instancingIt->is_object()) {
+        return false;
+    }
+    const auto attributesIt = instancingIt->find("attributes");
+    if (attributesIt == instancingIt->end() ||
+        !attributesIt->is_object() ||
+        attributesIt->empty()) {
+        return false;
+    }
+    if (!accessors || !accessors->is_array()) {
+        return false;
+    }
+    for (auto it = attributesIt->begin(); it != attributesIt->end(); ++it) {
+        if (!gpuInstancingAttributeSemanticSupported(it.key()) ||
+            !it.value().is_number_integer()) {
+            return false;
+        }
+        const int accessorIndex = it.value().get<int>();
+        if (accessorIndex < 0 ||
+            static_cast<size_t>(accessorIndex) >= accessors->size()) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool validateSceneGraph(const json& doc) {
     const auto nodesIt = doc.find("nodes");
     if (nodesIt != doc.end() && !nodesIt->is_array()) {
@@ -2285,6 +2345,11 @@ bool validateSceneGraph(const json& doc) {
                 return false;
             }
             if (node.contains("camera")) {
+                return false;
+            }
+            if (!validateGpuInstancingNodeExtensionShape(
+                    node,
+                    accessorsIt == doc.end() ? nullptr : &*accessorsIt)) {
                 return false;
             }
             if (node.contains("children") &&
@@ -3476,6 +3541,178 @@ glm::dmat4 composeTrs(const std::array<double, 3>& translation,
            glm::scale(glm::dmat4(1.0), fromArray3(scale));
 }
 
+bool finiteVec3(const glm::dvec3& value) {
+    return std::isfinite(value.x) &&
+           std::isfinite(value.y) &&
+           std::isfinite(value.z);
+}
+
+bool finiteVec4(const glm::dvec4& value) {
+    return std::isfinite(value.x) &&
+           std::isfinite(value.y) &&
+           std::isfinite(value.z) &&
+           std::isfinite(value.w);
+}
+
+bool validInstanceVec3Accessor(const AccessorSpan& span) {
+    return span.type == "VEC3" &&
+           span.components == 3 &&
+           span.componentType == 5126 &&
+           !span.normalized;
+}
+
+bool validInstanceRotationAccessor(const AccessorSpan& span) {
+    if (span.type != "VEC4" || span.components != 4) {
+        return false;
+    }
+    if (span.componentType == 5126) {
+        return !span.normalized;
+    }
+    return (span.componentType == 5120 ||
+            span.componentType == 5122) &&
+           span.normalized;
+}
+
+std::optional<std::vector<GltfInstance>> parseGpuInstancingInstances(
+    const json& doc,
+    const std::vector<std::vector<uint8_t>>& buffers,
+    const json& node,
+    const glm::dmat4& nodeGlobalTransform,
+    bool& strictFailure) {
+    const auto extensionsIt = node.find("extensions");
+    if (extensionsIt == node.end()) {
+        return std::vector<GltfInstance>{};
+    }
+    if (!extensionsIt->is_object()) {
+        strictFailure = true;
+        return std::nullopt;
+    }
+    const auto instancingIt =
+        extensionsIt->find("EXT_mesh_gpu_instancing");
+    if (instancingIt == extensionsIt->end()) {
+        return std::vector<GltfInstance>{};
+    }
+    if (!node.contains("mesh") || !instancingIt->is_object()) {
+        strictFailure = true;
+        return std::nullopt;
+    }
+    const auto attributesIt = instancingIt->find("attributes");
+    if (attributesIt == instancingIt->end() ||
+        !attributesIt->is_object() ||
+        attributesIt->empty()) {
+        strictFailure = true;
+        return std::nullopt;
+    }
+
+    const json& attributes = *attributesIt;
+    auto readAttribute = [&](const char* name)
+        -> std::optional<AccessorSpan> {
+        const auto it = attributes.find(name);
+        if (it == attributes.end()) {
+            return std::nullopt;
+        }
+        if (!it->is_number_integer()) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        auto span = accessorSpan(doc, buffers, it->get<int>());
+        if (!span) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        return span;
+    };
+
+    std::optional<AccessorSpan> translations =
+        readAttribute("TRANSLATION");
+    if (strictFailure) return std::nullopt;
+    std::optional<AccessorSpan> rotations =
+        readAttribute("ROTATION");
+    if (strictFailure) return std::nullopt;
+    std::optional<AccessorSpan> scales =
+        readAttribute("SCALE");
+    if (strictFailure) return std::nullopt;
+
+    if ((translations && !validInstanceVec3Accessor(*translations)) ||
+        (rotations && !validInstanceRotationAccessor(*rotations)) ||
+        (scales && !validInstanceVec3Accessor(*scales))) {
+        strictFailure = true;
+        return std::nullopt;
+    }
+
+    size_t count = 0;
+    auto syncCount = [&](const std::optional<AccessorSpan>& span) {
+        if (!span) return true;
+        if (count == 0u) {
+            count = span->count;
+            return true;
+        }
+        return count == span->count;
+    };
+    if (!syncCount(translations) ||
+        !syncCount(rotations) ||
+        !syncCount(scales) ||
+        count == 0u) {
+        strictFailure = true;
+        return std::nullopt;
+    }
+
+    std::vector<GltfInstance> instances(count);
+    for (size_t i = 0; i < count; ++i) {
+        glm::dmat4 transform(1.0);
+        if (translations) {
+            const glm::dvec3 translation = readVec3(*translations, i);
+            if (!finiteVec3(translation)) {
+                strictFailure = true;
+                return std::nullopt;
+            }
+            transform = glm::translate(transform, translation);
+        }
+        if (rotations) {
+            const glm::dvec4 rotation = readVec4(*rotations, i);
+            const double lengthSquared = glm::dot(rotation, rotation);
+            if (!finiteVec4(rotation) ||
+                !std::isfinite(lengthSquared) ||
+                lengthSquared <= 0.0) {
+                strictFailure = true;
+                return std::nullopt;
+            }
+            transform =
+                transform *
+                glm::mat4_cast(glm::dquat(
+                    rotation.w,
+                    rotation.x,
+                    rotation.y,
+                    rotation.z));
+        }
+        if (scales) {
+            const glm::dvec3 scale = readVec3(*scales, i);
+            if (!finiteVec3(scale)) {
+                strictFailure = true;
+                return std::nullopt;
+            }
+            transform = glm::scale(transform, scale);
+        }
+        instances[i].transform = Mat4(transform);
+    }
+
+    const glm::dmat3 nodeLinear(nodeGlobalTransform);
+    const double determinant = glm::determinant(nodeLinear);
+    if (!std::isfinite(determinant) || std::abs(determinant) <= 1e-14) {
+        strictFailure = true;
+        return std::nullopt;
+    }
+    const glm::dmat4 inverseNodeTransform =
+        glm::inverse(nodeGlobalTransform);
+    for (GltfInstance& instance : instances) {
+        instance.transform = Mat4(
+            nodeGlobalTransform *
+            instance.transform.raw() *
+            inverseNodeTransform);
+    }
+    return instances;
+}
+
 std::vector<GltfNodeRuntime> toRuntimeNodes(
     const std::vector<NodeRecord>& records) {
     std::vector<GltfNodeRuntime> nodes(records.size());
@@ -4057,6 +4294,20 @@ void traverseNode(
     }
 
     const json& node = nodes[static_cast<size_t>(nodeIndex)];
+    const glm::dmat4 nodeGlobalTransform =
+        static_cast<size_t>(nodeIndex) < nodeRecords.size()
+            ? nodeRecords[static_cast<size_t>(nodeIndex)].globalTransform
+            : glm::dmat4(1.0);
+    std::optional<std::vector<GltfInstance>> nativeInstances =
+        parseGpuInstancingInstances(
+            doc,
+            buffers,
+            node,
+            nodeGlobalTransform,
+            strictFailure);
+    if (!nativeInstances || strictFailure) {
+        return;
+    }
     if (node.contains("mesh")) {
         if (!node["mesh"].is_number_integer()) {
             strictFailure = true;
@@ -4079,6 +4330,9 @@ void traverseNode(
                         primitiveJson,
                         meshQuantizationEnabled,
                         strictFailure)) {
+                    if (!nativeInstances->empty()) {
+                        primitive->instances = *nativeInstances;
+                    }
                     model.primitives.push_back(std::move(*primitive));
                 }
                 if (strictFailure) return;
@@ -4674,6 +4928,20 @@ std::unique_ptr<GltfModel> GltfParser::parse(
             input->document,
             "KHR_materials_unlit")) {
         return nullptr;
+    }
+    if (declaredExtension(input->document, "EXT_mesh_gpu_instancing") &&
+        !documentHasObjectExtension(
+            input->document,
+            "EXT_mesh_gpu_instancing")) {
+        return nullptr;
+    }
+    if (declaredExtension(input->document, "EXT_mesh_gpu_instancing")) {
+        const auto animationsIt = input->document.find("animations");
+        if (animationsIt != input->document.end()) {
+            if (!animationsIt->is_array() || !animationsIt->empty()) {
+                return nullptr;
+            }
+        }
     }
     const bool meshQuantizationEnabled =
         declaredExtension(input->document, "KHR_mesh_quantization");

@@ -3118,6 +3118,54 @@ void testTilesetGltfDoubleSidedDisablesCullOnly() {
           "Tileset: glTF doubleSided material stays opaque and depth-writing");
 }
 
+void testTilesetGltfOpaqueInstancesUseGpuInstancing() {
+    DummyRenderDevice device;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: glTF opaque instancing root tile is created");
+    if (!root) return;
+
+    root->gltfModel = makeTriangleGltfModel();
+    GltfPrimitive& primitive = root->gltfModel->primitives[0];
+    GltfInstance firstInstance;
+    firstInstance.transform = Mat4::translation(Vec3(1.0, 2.0, 3.0));
+    GltfInstance secondInstance;
+    secondInstance.transform = Mat4::translation(Vec3(4.0, 5.0, 6.0));
+    primitive.instances = {firstInstance, secondInstance};
+    root->contentKind = TileContentKind::Render;
+    root->loadState = TileLoadState::ContentLoaded;
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 1,
+          "Tileset: glTF opaque instances stay in one draw command");
+    if (commands.empty()) return;
+
+    const RenderCommand& cmd = commands.front();
+    check(cmd.kind == RenderCommandKind::GltfPrimitiveInstanced &&
+              cmd.instanceCount == 2 &&
+              cmd.instanceBuffer != nullptr &&
+              !cmd.blend &&
+              cmd.depthWrite,
+          "Tileset: glTF opaque instances use GPU instanced draw command");
+}
+
 void testTilesetGltfBlendInstancesSplitForSorting() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
@@ -6328,6 +6376,7 @@ int main() {
     testTilesetGltfUnlitMaterialUploadsUniform();
     testTilesetGltfPointAndLineModesReachDrawCommands();
     testTilesetGltfDoubleSidedDisablesCullOnly();
+    testTilesetGltfOpaqueInstancesUseGpuInstancing();
     testTilesetGltfBlendInstancesSplitForSorting();
     testTilesetContentProviderLoadsGltfRenderContent();
     testTilesetJsonProviderLoadsExplicitGltfTile();

@@ -1162,6 +1162,29 @@ std::vector<GltfInstance> makeGltfInstances(
     return instances;
 }
 
+std::optional<std::vector<GltfInstance>> combineI3dmAndNativeGltfInstances(
+    const std::vector<GltfInstance>& i3dmInstances,
+    const std::vector<GltfInstance>& nativeInstances) {
+    if (nativeInstances.empty()) {
+        return i3dmInstances;
+    }
+    if (i3dmInstances.size() >
+            std::numeric_limits<size_t>::max() / nativeInstances.size()) {
+        return std::nullopt;
+    }
+    std::vector<GltfInstance> combined;
+    combined.reserve(i3dmInstances.size() * nativeInstances.size());
+    for (const GltfInstance& i3dmInstance : i3dmInstances) {
+        for (const GltfInstance& nativeInstance : nativeInstances) {
+            GltfInstance instance;
+            instance.transform =
+                i3dmInstance.transform * nativeInstance.transform;
+            combined.push_back(instance);
+        }
+    }
+    return combined;
+}
+
 GltfParser::ImageDecoder makeImageDecoder(PlatformBridge* platformBridge) {
     if (!platformBridge) {
         return GltfParser::ImageDecoder{};
@@ -1275,7 +1298,14 @@ TileContentLoadResult decodeI3dmContent(
     std::vector<GltfInstance> instances =
         makeGltfInstances(*decoded, gltfUpAxisTransform);
     for (GltfPrimitive& primitive : model->primitives) {
-        primitive.instances = instances;
+        std::optional<std::vector<GltfInstance>> combined =
+            combineI3dmAndNativeGltfInstances(
+                instances,
+                primitive.instances);
+        if (!combined) {
+            return TileContentLoadResult::failed();
+        }
+        primitive.instances = std::move(*combined);
     }
 
     TileContentLoadResult result =
