@@ -7637,11 +7637,30 @@ TEST(GltfParserTest, ParsesExternalRobotExpressiveWhenProvided) {
 
     const std::vector<uint8_t> bytes = readFile(path);
     ASSERT_FALSE(bytes.empty());
-    std::unique_ptr<GltfModel> model = GltfParser::parse(bytes.data(), bytes.size());
+    bool decodedEmbeddedImage = false;
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        bytes.data(),
+        bytes.size(),
+        GltfParser::ExternalResourceResolver{},
+        [&](const uint8_t* data, size_t size) -> std::optional<GltfImage> {
+            EXPECT_NE(nullptr, data);
+            EXPECT_GT(size, 0u);
+            decodedEmbeddedImage = true;
+            GltfImage image;
+            image.width = 1;
+            image.height = 1;
+            image.channels = 4;
+            image.pixels = {255, 255, 255, 255};
+            return image;
+        });
     ASSERT_NE(nullptr, model);
     EXPECT_GT(model->primitives.size(), 0u);
     EXPECT_GT(model->vertexCount(), 0u);
     EXPECT_GT(model->indexCount(), 0u);
+    if (decodedEmbeddedImage) {
+        ASSERT_FALSE(model->textures.empty());
+        EXPECT_GT(model->textures[0].image.pixels.size(), 0u);
+    }
     const bool hasSkinnedPrimitive = std::any_of(
         model->primitives.begin(),
         model->primitives.end(),
@@ -7660,10 +7679,24 @@ TEST(GltfParserTest, ContentProviderDecodesExternalRobotExpressiveWhenProvided) 
 
     const std::vector<uint8_t> bytes = readFile(path);
     ASSERT_FALSE(bytes.empty());
+    bool decodedEmbeddedImage = false;
+    TestPlatformBridge bridge(
+        [&](const uint8_t* data, size_t size) -> std::unique_ptr<DecodedImage> {
+            EXPECT_NE(nullptr, data);
+            EXPECT_GT(size, 0u);
+            decodedEmbeddedImage = true;
+            auto image = std::make_unique<DecodedImage>();
+            image->width = 1;
+            image->height = 1;
+            image->channels = 4;
+            image->pixels = {255, 255, 255, 255};
+            return image;
+        });
     SingleGltfContentProvider provider(
         TileKey{"Geographic-TMS", 0, 0, 0},
         std::vector<uint8_t>{},
         "RobotExpressive fixture");
+    provider.setPlatformBridge(&bridge);
     TileContentLoadResult result =
         provider.decodeContent(bytes.data(), bytes.size());
     EXPECT_EQ(TileContentLoadStatus::Render, result.status);
@@ -7671,6 +7704,10 @@ TEST(GltfParserTest, ContentProviderDecodesExternalRobotExpressiveWhenProvided) 
     EXPECT_GT(result.gltfModel->primitives.size(), 0u);
     EXPECT_GT(result.gltfModel->vertexCount(), 0u);
     EXPECT_GT(result.gltfModel->indexCount(), 0u);
+    if (decodedEmbeddedImage) {
+        ASSERT_FALSE(result.gltfModel->textures.empty());
+        EXPECT_GT(result.gltfModel->textures[0].image.pixels.size(), 0u);
+    }
     const bool hasSkinnedPrimitive = std::any_of(
         result.gltfModel->primitives.begin(),
         result.gltfModel->primitives.end(),
