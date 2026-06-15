@@ -3984,7 +3984,7 @@ bool primitiveAttributeSemanticSupported(const std::string& semantic,
         return texCoordSetIndexFromSemantic(semantic).has_value();
     }
 
-    if (attributeSemanticStartsWith(semantic, "_FEATURE_ID_")) {
+    if (attributeSemanticStartsWith(semantic, "_FEATURE_ID")) {
         return false;
     }
 

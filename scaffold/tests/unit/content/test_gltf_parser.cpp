@@ -7205,6 +7205,26 @@ TEST(GltfParserTest, RejectsFeatureIdAttributeWithoutMetadataSupport) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsMalformedFeatureIdAttributePrefix) {
+    const std::array<const char*, 2> semantics = {
+        "_FEATURE_ID",
+        "_FEATURE_IDABC"};
+
+    for (const char* semantic : semantics) {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string marker = "\"TEXCOORD_0\":2";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.insert(
+            markerPos + marker.size(),
+            std::string(",\"") + semantic + "\":2");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << semantic;
+    }
+}
+
 TEST(GltfParserTest, RejectsLegacyBatchIdAttributeWithoutMetadataSupport) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string marker = "\"TEXCOORD_0\":2";
