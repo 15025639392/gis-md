@@ -3333,6 +3333,11 @@ void testTilesetGltfIorMaterialUploadsSpecularF0() {
 
     root->gltfModel = makeTriangleGltfModel();
     root->gltfModel->primitives[0].dielectricSpecularF0 = 1.0f / 9.0f;
+    GltfPrimitive fullReflectancePrimitive =
+        root->gltfModel->primitives[0];
+    fullReflectancePrimitive.dielectricSpecularF0 = 1.0f;
+    root->gltfModel->primitives.push_back(
+        std::move(fullReflectancePrimitive));
     root->contentKind = TileContentKind::Render;
     root->loadState = TileLoadState::ContentLoaded;
 
@@ -3345,15 +3350,21 @@ void testTilesetGltfIorMaterialUploadsSpecularF0() {
         commands,
         1.0f);
 
-    check(commands.size() == 1,
-          "Tileset: glTF IOR material emits one primitive draw command");
-    if (commands.empty()) return;
+    check(commands.size() == 2,
+          "Tileset: glTF IOR materials emit primitive draw commands");
+    if (commands.size() < 2) return;
 
     const RenderCommand& cmd = commands.front();
     check(cmd.uniforms.count("u_dielectricSpecularF0") &&
               std::abs(cmd.uniforms.at("u_dielectricSpecularF0").front() -
                        1.0f / 9.0f) < 1e-6f,
           "Tileset: glTF IOR material uploads dielectric specular F0");
+    const RenderCommand& fullReflectanceCmd = commands[1];
+    check(fullReflectanceCmd.uniforms.count("u_dielectricSpecularF0") &&
+              std::abs(
+                  fullReflectanceCmd.uniforms.at("u_dielectricSpecularF0")
+                      .front() - 1.0f) < 1e-6f,
+          "Tileset: glTF IOR zero material uploads full-reflectance F0");
 }
 
 void testTilesetGltfAnisotropyMaterialUploadsUniformsAndTextures() {
