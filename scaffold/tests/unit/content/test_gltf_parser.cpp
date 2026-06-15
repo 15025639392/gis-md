@@ -6564,6 +6564,18 @@ TEST(GltfParserTest, RejectsFeatureIdAttributeWithoutMetadataSupport) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsLegacyBatchIdAttributeWithoutMetadataSupport) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker = "\"TEXCOORD_0\":2";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.insert(markerPos + marker.size(), ",\"_BATCHID\":2");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsMeshFeaturesPrimitiveExtensionWithoutSupport) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string marker = "\"mode\":4";

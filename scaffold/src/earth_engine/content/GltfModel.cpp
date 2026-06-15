@@ -3776,6 +3776,10 @@ bool primitiveAttributeSemanticSupported(const std::string& semantic) {
         return false;
     }
 
+    if (semantic == "_BATCHID") {
+        return false;
+    }
+
     if (!semantic.empty() && semantic[0] == '_') {
         return true;
     }
