@@ -7200,6 +7200,10 @@ std::unique_ptr<GltfModel> GltfParser::parse(
         !documentHasObjectExtension(input->document, "EXT_texture_webp")) {
         return nullptr;
     }
+    if (declaredExtension(input->document, "EXT_texture_webp") &&
+        !imageDecoder) {
+        return nullptr;
+    }
     if (declaredExtension(input->document, "EXT_mesh_gpu_instancing") &&
         !documentHasObjectExtension(
             input->document,

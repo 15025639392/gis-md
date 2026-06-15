@@ -9186,6 +9186,36 @@ TEST(GltfParserTest, RejectsExtTextureWebpWithoutDecoder) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsUnusedExtTextureWebpDataUriWithoutDecoder) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":[\"EXT_texture_webp\"],"
+        "\"extensionsRequired\":[\"EXT_texture_webp\"],");
+
+    const std::string bufferMarker = "\"buffers\":[";
+    const size_t bufferPos = fixture.jsonText.find(bufferMarker);
+    ASSERT_NE(std::string::npos, bufferPos);
+    fixture.jsonText.insert(
+        bufferPos,
+        "\"textures\":[{\"extensions\":{\"EXT_texture_webp\":{\"source\":0}}}],"
+        "\"images\":[{\"uri\":\"data:image/webp;base64,"
+        "UklGRgQAAABXRUJQAQIDBA==\"}],");
+
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            return uri == "triangle.bin" ? fixture.bin
+                                         : std::vector<uint8_t>{};
+        });
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsExtTextureWebpInvalidSource) {
     ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf("image.bin");
