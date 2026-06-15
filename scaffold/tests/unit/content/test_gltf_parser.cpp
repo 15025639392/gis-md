@@ -4,13 +4,16 @@
 #include "earth_engine/content/GltfModel.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdlib>
 #include <array>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <variant>
@@ -2192,6 +2195,50 @@ void expectRenderableModelGeometry(const GltfModel& model) {
             EXPECT_LT(index, primitive.vertices.size());
         }
     }
+}
+
+std::vector<uint8_t> bytesFromString(const std::string& text) {
+    return std::vector<uint8_t>(text.begin(), text.end());
+}
+
+std::string makeTilesetJsonWithRootContent(
+    const std::string& contentUri,
+    const std::string& topLevelFields = std::string{}) {
+    return std::string("{") +
+        "\"asset\":{\"version\":\"1.0\",\"gltfUpAxis\":\"Z\"}," +
+        topLevelFields +
+        "\"geometricError\":1000.0,"
+        "\"root\":{"
+        "\"boundingVolume\":{\"box\":[0,0,0,1,0,0,0,1,0,0,0,1]},"
+        "\"geometricError\":0.0,"
+        "\"refine\":\"ADD\","
+        "\"content\":{\"uri\":\"" + contentUri + "\"}}}";
+}
+
+TileContentLoadResult requestTileContentBlocking(
+    TilesetContentProvider& provider,
+    const TileKey& key) {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    TileContentLoadResult result;
+    provider.requestTileContent(
+        key,
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult loaded) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                result = std::move(loaded);
+                done = true;
+            }
+            cv.notify_one();
+        });
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        cv.wait_for(lock, std::chrono::seconds(5), [&] { return done; });
+    }
+    EXPECT_TRUE(done);
+    return result;
 }
 
 struct UnsupportedExternalGltfCase {
@@ -12014,4 +12061,65 @@ TEST(GltfParserTest, ContentProviderCombinesI3dmAndNativeGltfInstances) {
     EXPECT_NEAR(366.0, third.z(), 1e-6);
 
     std::filesystem::remove_all(root);
+}
+
+TEST(GltfParserTest, TilesetContentGltfAllowsSupportedPayloadAndRendersContent) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth-md-tileset-content-gltf-supported";
+    std::filesystem::remove_all(root);
+    writeBytes(root / "root.glb", makeTriangleGlb());
+
+    const std::string tilesetJson = makeTilesetJsonWithRootContent(
+        "root.glb",
+        "\"extensionsUsed\":[\"3DTILES_content_gltf\"],"
+        "\"extensions\":{\"3DTILES_content_gltf\":{"
+        "\"extensionsUsed\":[\"KHR_mesh_quantization\"]}},");
+    TilesetJsonContentProvider provider(
+        "file://" + (root / "tileset.json").generic_string(),
+        bytesFromString(tilesetJson),
+        "3DTILES_content_gltf supported fixture");
+
+    ASSERT_TRUE(provider.valid());
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    const std::vector<TileKey> children = provider.childTiles(roots.front());
+    ASSERT_EQ(1u, children.size());
+
+    TileContentLoadResult result =
+        requestTileContentBlocking(provider, children.front());
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    expectRenderableModelGeometry(*result.gltfModel);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(GltfParserTest, TilesetContentGltfRejectsUndeclaredPayload) {
+    const std::string tilesetJson = makeTilesetJsonWithRootContent(
+        "root.glb",
+        "\"extensions\":{\"3DTILES_content_gltf\":{"
+        "\"extensionsUsed\":[\"KHR_mesh_quantization\"]}},");
+    TilesetJsonContentProvider provider(
+        "file:///earth-md/tileset.json",
+        bytesFromString(tilesetJson),
+        "undeclared 3DTILES_content_gltf fixture");
+
+    EXPECT_FALSE(provider.valid());
+    EXPECT_TRUE(provider.rootTiles().empty());
+}
+
+TEST(GltfParserTest, TilesetContentGltfRejectsUnsupportedGltfExtensions) {
+    const std::string tilesetJson = makeTilesetJsonWithRootContent(
+        "root.glb",
+        "\"extensionsUsed\":[\"3DTILES_content_gltf\"],"
+        "\"extensions\":{\"3DTILES_content_gltf\":{"
+        "\"extensionsUsed\":[\"KHR_draco_mesh_compression\"]}},");
+    TilesetJsonContentProvider provider(
+        "file:///earth-md/tileset.json",
+        bytesFromString(tilesetJson),
+        "unsupported 3DTILES_content_gltf fixture");
+
+    EXPECT_FALSE(provider.valid());
+    EXPECT_TRUE(provider.rootTiles().empty());
 }
