@@ -403,7 +403,7 @@ bool validateAsset(const json& doc) {
 }
 
 bool isSupportedExtensionName(const std::string& name) {
-    static constexpr std::array<const char*, 9> kSupportedExtensions = {
+    static constexpr std::array<const char*, 10> kSupportedExtensions = {
         "KHR_texture_transform",
         "KHR_mesh_quantization",
         "KHR_materials_unlit",
@@ -411,6 +411,7 @@ bool isSupportedExtensionName(const std::string& name) {
         "KHR_materials_ior",
         "KHR_materials_specular",
         "KHR_materials_clearcoat",
+        "KHR_materials_sheen",
         "EXT_texture_webp",
         "EXT_mesh_gpu_instancing"};
     return std::find(
@@ -482,7 +483,10 @@ bool isTextureInfoExtensionParentPath(const std::vector<std::string>& path) {
              (path[3] == "KHR_materials_clearcoat" &&
               (path[4] == "clearcoatTexture" ||
                path[4] == "clearcoatRoughnessTexture" ||
-               path[4] == "clearcoatNormalTexture"))));
+               path[4] == "clearcoatNormalTexture")) ||
+             (path[3] == "KHR_materials_sheen" &&
+              (path[4] == "sheenColorTexture" ||
+               path[4] == "sheenRoughnessTexture"))));
 }
 
 bool isMaterialExtensionParentPath(const std::vector<std::string>& path) {
@@ -517,7 +521,8 @@ bool extensionsObjectSupportedAtPath(
             it.key() == "KHR_materials_emissive_strength" ||
             it.key() == "KHR_materials_ior" ||
             it.key() == "KHR_materials_specular" ||
-            it.key() == "KHR_materials_clearcoat") {
+            it.key() == "KHR_materials_clearcoat" ||
+            it.key() == "KHR_materials_sheen") {
             if (!isMaterialExtensionParentPath(ownerPath)) {
                 return false;
             }
@@ -602,13 +607,14 @@ bool documentHasObjectExtension(
 }
 
 bool supportedObjectExtensionsAreDeclared(const json& doc) {
-    constexpr std::array<const char*, 8> kObjectExtensions = {
+    constexpr std::array<const char*, 9> kObjectExtensions = {
         "KHR_texture_transform",
         "KHR_materials_unlit",
         "KHR_materials_emissive_strength",
         "KHR_materials_ior",
         "KHR_materials_specular",
         "KHR_materials_clearcoat",
+        "KHR_materials_sheen",
         "EXT_texture_webp",
         "EXT_mesh_gpu_instancing"};
     for (const char* extensionName : kObjectExtensions) {
@@ -2297,6 +2303,28 @@ bool validateMaterialExtensions(const json& material) {
         }
     }
 
+    const auto sheenIt = extensionsIt->find("KHR_materials_sheen");
+    if (sheenIt != extensionsIt->end()) {
+        if (unlitIt != extensionsIt->end() ||
+            extensionsIt->contains("KHR_materials_pbrSpecularGlossiness") ||
+            !sheenIt->is_object()) {
+            return false;
+        }
+        const auto colorFactorIt = sheenIt->find("sheenColorFactor");
+        if (colorFactorIt != sheenIt->end() &&
+            !jsonNumberArrayInRange(*colorFactorIt, 3u, 0.0, 1.0)) {
+            return false;
+        }
+        const auto roughnessIt = sheenIt->find("sheenRoughnessFactor");
+        if (roughnessIt != sheenIt->end()) {
+            const auto roughness =
+                numberProperty(*sheenIt, "sheenRoughnessFactor", 0.0f);
+            if (!roughness || *roughness < 0.0f || *roughness > 1.0f) {
+                return false;
+            }
+        }
+    }
+
     const auto iorIt = extensionsIt->find("KHR_materials_ior");
     if (iorIt == extensionsIt->end()) {
         return true;
@@ -2443,6 +2471,46 @@ float materialClearcoatRoughnessFactor(
     return *roughness;
 }
 
+std::array<float, 3> materialSheenColorFactor(
+    const json& material,
+    bool& strictFailure) {
+    std::array<float, 3> factor = {0.0f, 0.0f, 0.0f};
+    const json* sheen =
+        materialObjectExtension(material, "KHR_materials_sheen");
+    if (!sheen) {
+        return factor;
+    }
+    const auto factorIt = sheen->find("sheenColorFactor");
+    if (factorIt == sheen->end()) {
+        return factor;
+    }
+    if (!readFloatArray(*factorIt, factor) ||
+        std::any_of(factor.begin(), factor.end(), [](float component) {
+            return component < 0.0f || component > 1.0f;
+        })) {
+        strictFailure = true;
+        return {0.0f, 0.0f, 0.0f};
+    }
+    return factor;
+}
+
+float materialSheenRoughnessFactor(
+    const json& material,
+    bool& strictFailure) {
+    const json* sheen =
+        materialObjectExtension(material, "KHR_materials_sheen");
+    if (!sheen) {
+        return 0.0f;
+    }
+    const auto roughness =
+        numberProperty(*sheen, "sheenRoughnessFactor", 0.0f);
+    if (!roughness || *roughness < 0.0f || *roughness > 1.0f) {
+        strictFailure = true;
+        return 0.0f;
+    }
+    return *roughness;
+}
+
 bool validateMaterialJson(const json& material, size_t textureCount) {
     if (!material.is_object()) {
         return false;
@@ -2550,6 +2618,20 @@ bool validateMaterialJson(const json& material, size_t textureCount) {
                         1.0f)) {
                     return false;
                 }
+            }
+        }
+        const auto sheenIt = extensionsIt->find("KHR_materials_sheen");
+        if (sheenIt != extensionsIt->end()) {
+            if (!sheenIt->is_object() ||
+                !validateMaterialTextureInfo(
+                    *sheenIt,
+                    "sheenColorTexture",
+                    textureCount) ||
+                !validateMaterialTextureInfo(
+                    *sheenIt,
+                    "sheenRoughnessTexture",
+                    textureCount)) {
+                return false;
             }
         }
     }
@@ -4437,6 +4519,10 @@ std::optional<GltfPrimitive> parsePrimitive(
                 materialClearcoatFactor(material, strictFailure);
             primitive.clearcoatRoughnessFactor =
                 materialClearcoatRoughnessFactor(material, strictFailure);
+            primitive.sheenColorFactor =
+                materialSheenColorFactor(material, strictFailure);
+            primitive.sheenRoughnessFactor =
+                materialSheenRoughnessFactor(material, strictFailure);
             if (strictFailure) {
                 return std::nullopt;
             }
@@ -4542,6 +4628,43 @@ std::optional<GltfPrimitive> parsePrimitive(
                 }
             }
 
+            const json* sheenExtension =
+                materialObjectExtension(material, "KHR_materials_sheen");
+            if (sheenExtension) {
+                auto sheenColorTextureIt =
+                    sheenExtension->find("sheenColorTexture");
+                if (sheenColorTextureIt != sheenExtension->end() &&
+                    sheenColorTextureIt->is_object()) {
+                    primitive.sheenColorTexture = parseTextureBinding(
+                        *sheenColorTextureIt,
+                        textures,
+                        strictFailure);
+                    if (strictFailure || !primitive.sheenColorTexture) {
+                        return std::nullopt;
+                    }
+                } else if (sheenColorTextureIt != sheenExtension->end()) {
+                    strictFailure = true;
+                    return std::nullopt;
+                }
+
+                auto sheenRoughnessTextureIt =
+                    sheenExtension->find("sheenRoughnessTexture");
+                if (sheenRoughnessTextureIt != sheenExtension->end() &&
+                    sheenRoughnessTextureIt->is_object()) {
+                    primitive.sheenRoughnessTexture = parseTextureBinding(
+                        *sheenRoughnessTextureIt,
+                        textures,
+                        strictFailure);
+                    if (strictFailure || !primitive.sheenRoughnessTexture) {
+                        return std::nullopt;
+                    }
+                } else if (
+                    sheenRoughnessTextureIt != sheenExtension->end()) {
+                    strictFailure = true;
+                    return std::nullopt;
+                }
+            }
+
             auto normalIt = material.find("normalTexture");
             if (normalIt != material.end() && normalIt->is_object()) {
                 primitive.normalTexture =
@@ -4628,6 +4751,8 @@ std::optional<GltfPrimitive> parsePrimitive(
         !hasTexCoordSet(primitive.clearcoatTexture) ||
         !hasTexCoordSet(primitive.clearcoatRoughnessTexture) ||
         !hasTexCoordSet(primitive.clearcoatNormalTexture) ||
+        !hasTexCoordSet(primitive.sheenColorTexture) ||
+        !hasTexCoordSet(primitive.sheenRoughnessTexture) ||
         !hasTexCoordSet(primitive.normalTexture) ||
         !hasTexCoordSet(primitive.occlusionTexture) ||
         !hasTexCoordSet(primitive.emissiveTexture)) {
@@ -5479,6 +5604,12 @@ std::unique_ptr<GltfModel> GltfParser::parse(
         !documentHasObjectExtension(
             input->document,
             "KHR_materials_clearcoat")) {
+        return nullptr;
+    }
+    if (declaredExtension(input->document, "KHR_materials_sheen") &&
+        !documentHasObjectExtension(
+            input->document,
+            "KHR_materials_sheen")) {
         return nullptr;
     }
     if (declaredExtension(input->document, "EXT_texture_webp") &&

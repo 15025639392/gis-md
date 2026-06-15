@@ -190,15 +190,20 @@ uniform sampler2D u_specularColorTexture;
 uniform sampler2D u_clearcoatTexture;
 uniform sampler2D u_clearcoatRoughnessTexture;
 uniform sampler2D u_clearcoatNormalTexture;
+uniform sampler2D u_sheenColorTexture;
+uniform sampler2D u_sheenRoughnessTexture;
 uniform float u_hasBaseColorTexture;
 uniform vec4 u_materialFactors;       // metallic, roughness, normal scale, occlusion strength
 uniform float u_dielectricSpecularF0;
 uniform vec4 u_hasMaterialTextures;   // metallicRoughness, normal, occlusion, emissive
 uniform vec2 u_hasSpecularTextures;   // specular, specularColor
 uniform vec3 u_hasClearcoatTextures;  // clearcoat, roughness, normal
+uniform vec2 u_hasSheenTextures;      // color, roughness
 uniform float u_specularFactor;
 uniform vec3 u_specularColorFactor;
 uniform vec3 u_clearcoatFactors;      // factor, roughness, normal scale
+uniform vec3 u_sheenColorFactor;
+uniform float u_sheenRoughnessFactor;
 uniform vec3 u_emissiveFactor;
 uniform float u_alphaMode;
 uniform float u_alphaCutoff;
@@ -218,6 +223,10 @@ uniform vec4 u_clearcoatRoughnessTexOffsetScale;
 uniform vec2 u_clearcoatRoughnessTexRotationSinCos;
 uniform vec4 u_clearcoatNormalTexOffsetScale;
 uniform vec2 u_clearcoatNormalTexRotationSinCos;
+uniform vec4 u_sheenColorTexOffsetScale;
+uniform vec2 u_sheenColorTexRotationSinCos;
+uniform vec4 u_sheenRoughnessTexOffsetScale;
+uniform vec2 u_sheenRoughnessTexRotationSinCos;
 uniform vec4 u_normalTexOffsetScale;
 uniform vec2 u_normalTexRotationSinCos;
 uniform vec4 u_occlusionTexOffsetScale;
@@ -228,6 +237,7 @@ uniform vec4 u_textureCoordSets;      // baseColor, metallicRoughness, normal, o
 uniform float u_emissiveTexCoordSet;
 uniform vec2 u_specularTexCoordSets;  // specular, specularColor
 uniform vec3 u_clearcoatTexCoordSets; // clearcoat, roughness, normal
+uniform vec2 u_sheenTexCoordSets;     // color, roughness
 
 out vec4 fragColor;
 
@@ -376,6 +386,27 @@ void main() {
         emissive *= texture(u_emissiveTexture, emissiveUv).rgb;
     }
 
+    vec3 sheenColor = max(u_sheenColorFactor, vec3(0.0));
+    float sheenRoughness = clamp(u_sheenRoughnessFactor, 0.0, 1.0);
+    if (u_hasSheenTextures.x > 0.5) {
+        vec2 sheenColorUv = transformUv(
+            uvFromSet(u_sheenTexCoordSets.x),
+            u_sheenColorTexOffsetScale,
+            u_sheenColorTexRotationSinCos);
+        sheenColor *= texture(u_sheenColorTexture, sheenColorUv).rgb;
+    }
+    if (u_hasSheenTextures.y > 0.5) {
+        vec2 sheenRoughnessUv = transformUv(
+            uvFromSet(u_sheenTexCoordSets.y),
+            u_sheenRoughnessTexOffsetScale,
+            u_sheenRoughnessTexRotationSinCos);
+        sheenRoughness = clamp(
+            sheenRoughness *
+                texture(u_sheenRoughnessTexture, sheenRoughnessUv).a,
+            0.0,
+            1.0);
+    }
+
     float clearcoat = clamp(u_clearcoatFactors.x, 0.0, 1.0);
     float clearcoatRoughness = clamp(u_clearcoatFactors.y, 0.0, 1.0);
     if (u_hasClearcoatTextures.x > 0.5) {
@@ -437,6 +468,12 @@ void main() {
     vec3 color = diffuseColor * (0.38 * occlusion + 0.62 * diffuse) +
                  specularColor * specular +
                  emissive;
+    if (dot(sheenColor, sheenColor) > 0.0) {
+        float sheenNdotL = max(dot(N, L), 0.0);
+        float sheenPower = mix(2.0, 0.5, sheenRoughness);
+        float sheen = pow(1.0 - sheenNdotL, sheenPower) * sheenNdotL;
+        color += sheenColor * sheen * (1.0 - metallic);
+    }
     if (clearcoat > 0.0) {
         float clearcoatNdotL = max(dot(clearcoatNormal, L), 0.0);
         float clearcoatPower = mix(160.0, 8.0, clearcoatRoughness);
@@ -934,6 +971,14 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              constant float4& u_clearcoatNormalTexOffsetScale [[buffer(41)]],
                              constant float2& u_clearcoatNormalTexRotationSinCos [[buffer(42)]],
                              constant float3& u_clearcoatTexCoordSets [[buffer(43)]],
+                             constant float3& u_sheenColorFactor [[buffer(44)]],
+                             constant float& u_sheenRoughnessFactor [[buffer(45)]],
+                             constant float2& u_hasSheenTextures [[buffer(46)]],
+                             constant float4& u_sheenColorTexOffsetScale [[buffer(47)]],
+                             constant float2& u_sheenColorTexRotationSinCos [[buffer(48)]],
+                             constant float4& u_sheenRoughnessTexOffsetScale [[buffer(49)]],
+                             constant float2& u_sheenRoughnessTexRotationSinCos [[buffer(50)]],
+                             constant float2& u_sheenTexCoordSets [[buffer(51)]],
                              texture2d<float> u_baseColorTexture [[texture(0)]],
                              texture2d<float> u_metallicRoughnessTexture [[texture(1)]],
                              texture2d<float> u_normalTexture [[texture(2)]],
@@ -944,6 +989,8 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              texture2d<float> u_clearcoatTexture [[texture(7)]],
                              texture2d<float> u_clearcoatRoughnessTexture [[texture(8)]],
                              texture2d<float> u_clearcoatNormalTexture [[texture(9)]],
+                             texture2d<float> u_sheenColorTexture [[texture(10)]],
+                             texture2d<float> u_sheenRoughnessTexture [[texture(11)]],
                              sampler u_baseColorSampler [[sampler(0)]],
                              sampler u_metallicRoughnessSampler [[sampler(1)]],
                              sampler u_normalSampler [[sampler(2)]],
@@ -953,7 +1000,9 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              sampler u_specularColorSampler [[sampler(6)]],
                              sampler u_clearcoatSampler [[sampler(7)]],
                              sampler u_clearcoatRoughnessSampler [[sampler(8)]],
-                             sampler u_clearcoatNormalSampler [[sampler(9)]]) {
+                             sampler u_clearcoatNormalSampler [[sampler(9)]],
+                             sampler u_sheenColorSampler [[sampler(10)]],
+                             sampler u_sheenRoughnessSampler [[sampler(11)]]) {
     float faceSign = frontFacing ? 1.0 : -1.0;
     float3 n = normalize(in.normal) * faceSign;
     float3 geometryN = n;
@@ -1022,6 +1071,30 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
         emissive *= u_emissiveTexture.sample(
             u_emissiveSampler,
             emissiveUv).rgb;
+    }
+    float3 sheenColor = max(u_sheenColorFactor, float3(0.0));
+    float sheenRoughness = clamp(u_sheenRoughnessFactor, 0.0, 1.0);
+    if (u_hasSheenTextures.x > 0.5) {
+        float2 sheenColorUv = gltfTransformUv(
+            gltfUvFromSet(in, u_sheenTexCoordSets.x),
+            u_sheenColorTexOffsetScale,
+            u_sheenColorTexRotationSinCos);
+        sheenColor *= u_sheenColorTexture.sample(
+            u_sheenColorSampler,
+            sheenColorUv).rgb;
+    }
+    if (u_hasSheenTextures.y > 0.5) {
+        float2 sheenRoughnessUv = gltfTransformUv(
+            gltfUvFromSet(in, u_sheenTexCoordSets.y),
+            u_sheenRoughnessTexOffsetScale,
+            u_sheenRoughnessTexRotationSinCos);
+        sheenRoughness = clamp(
+            sheenRoughness *
+                u_sheenRoughnessTexture.sample(
+                    u_sheenRoughnessSampler,
+                    sheenRoughnessUv).a,
+            0.0,
+            1.0);
     }
     float clearcoat = clamp(u_clearcoatFactors.x, 0.0, 1.0);
     float clearcoatRoughness = clamp(u_clearcoatFactors.y, 0.0, 1.0);
@@ -1094,6 +1167,12 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
     float3 color = diffuseColor * (0.38 * occlusion + 0.62 * diffuse) +
                    specularColor * specular +
                    emissive;
+    if (dot(sheenColor, sheenColor) > 0.0) {
+        float sheenNdotL = max(dot(n, light), 0.0);
+        float sheenPower = mix(2.0, 0.5, sheenRoughness);
+        float sheen = pow(1.0 - sheenNdotL, sheenPower) * sheenNdotL;
+        color += sheenColor * sheen * (1.0 - metallic);
+    }
     if (clearcoat > 0.0) {
         float clearcoatNdotL = max(dot(clearcoatNormal, light), 0.0);
         float clearcoatPower = mix(160.0, 8.0, clearcoatRoughness);
@@ -1510,11 +1589,15 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
     cmd.uniforms["u_specularColorFactor"] = {1.0f, 1.0f, 1.0f};
     cmd.uniforms["u_clearcoatFactors"] = {0.0f, 0.0f, 1.0f};
     cmd.uniforms["u_hasClearcoatTextures"] = {0.0f, 0.0f, 0.0f};
+    cmd.uniforms["u_sheenColorFactor"] = {0.0f, 0.0f, 0.0f};
+    cmd.uniforms["u_sheenRoughnessFactor"] = {0.0f};
+    cmd.uniforms["u_hasSheenTextures"] = {0.0f, 0.0f};
     cmd.uniforms["u_emissiveFactor"] = {0.0f, 0.0f, 0.0f};
     cmd.uniforms["u_textureCoordSets"] = {0.0f, 0.0f, 0.0f, 0.0f};
     cmd.uniforms["u_emissiveTexCoordSet"] = {0.0f};
     cmd.uniforms["u_specularTexCoordSets"] = {0.0f, 0.0f};
     cmd.uniforms["u_clearcoatTexCoordSets"] = {0.0f, 0.0f, 0.0f};
+    cmd.uniforms["u_sheenTexCoordSets"] = {0.0f, 0.0f};
     cmd.uniforms["u_alphaMode"] = {0.0f};
     cmd.uniforms["u_alphaCutoff"] = {0.5f};
     cmd.uniforms["u_renderOpacity"] = {1.0f};
@@ -1546,6 +1629,12 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
     setTextureTransformDefaults(
         "u_clearcoatNormalTexOffsetScale",
         "u_clearcoatNormalTexRotationSinCos");
+    setTextureTransformDefaults(
+        "u_sheenColorTexOffsetScale",
+        "u_sheenColorTexRotationSinCos");
+    setTextureTransformDefaults(
+        "u_sheenRoughnessTexOffsetScale",
+        "u_sheenRoughnessTexRotationSinCos");
     setTextureTransformDefaults(
         "u_normalTexOffsetScale",
         "u_normalTexRotationSinCos");

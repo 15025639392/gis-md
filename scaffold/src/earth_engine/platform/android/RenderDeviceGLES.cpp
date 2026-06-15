@@ -705,6 +705,8 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             setSampler("u_clearcoatTexture", 7);
             setSampler("u_clearcoatRoughnessTexture", 8);
             setSampler("u_clearcoatNormalTexture", 9);
+            setSampler("u_sheenColorTexture", 10);
+            setSampler("u_sheenRoughnessTexture", 11);
         }
         for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
             std::string name = "u_overlayTexture" + std::to_string(i);

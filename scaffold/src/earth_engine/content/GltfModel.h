@@ -119,12 +119,16 @@ struct GltfPrimitive {
     float clearcoatFactor = 0.0f;
     float clearcoatRoughnessFactor = 0.0f;
     float clearcoatNormalTextureScale = 1.0f;
+    std::array<float, 3> sheenColorFactor = {0.0f, 0.0f, 0.0f};
+    float sheenRoughnessFactor = 0.0f;
     std::optional<GltfTextureBinding> metallicRoughnessTexture;
     std::optional<GltfTextureBinding> specularTexture;
     std::optional<GltfTextureBinding> specularColorTexture;
     std::optional<GltfTextureBinding> clearcoatTexture;
     std::optional<GltfTextureBinding> clearcoatRoughnessTexture;
     std::optional<GltfTextureBinding> clearcoatNormalTexture;
+    std::optional<GltfTextureBinding> sheenColorTexture;
+    std::optional<GltfTextureBinding> sheenRoughnessTexture;
     std::optional<GltfTextureBinding> normalTexture;
     float normalTextureScale = 1.0f;
     std::optional<GltfTextureBinding> occlusionTexture;

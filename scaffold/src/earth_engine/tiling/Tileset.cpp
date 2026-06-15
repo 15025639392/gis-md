@@ -3963,6 +3963,9 @@ void Tileset::ensureGltfRenderResources(TilesetTile& tile) {
                     primitive.clearcoatRoughnessFactor;
                 resources.clearcoatNormalTextureScale =
                     primitive.clearcoatNormalTextureScale;
+                resources.sheenColorFactor = primitive.sheenColorFactor;
+                resources.sheenRoughnessFactor =
+                    primitive.sheenRoughnessFactor;
                 resources.normalTextureScale = primitive.normalTextureScale;
                 resources.occlusionTextureStrength =
                     primitive.occlusionTextureStrength;
@@ -4002,6 +4005,12 @@ void Tileset::ensureGltfRenderResources(TilesetTile& tile) {
                 resources.clearcoatNormalTexture = makeGltfTextureBinding(
                     primitive.clearcoatNormalTexture,
                     tile.gltfTextureResources);
+                resources.sheenColorTexture = makeGltfTextureBinding(
+                    primitive.sheenColorTexture,
+                    tile.gltfTextureResources);
+                resources.sheenRoughnessTexture = makeGltfTextureBinding(
+                    primitive.sheenRoughnessTexture,
+                    tile.gltfTextureResources);
                 resources.normalTexture = makeGltfTextureBinding(
                     primitive.normalTexture,
                     tile.gltfTextureResources);
@@ -4032,6 +4041,10 @@ void Tileset::ensureGltfRenderResources(TilesetTile& tile) {
                      !resources.clearcoatRoughnessTexture.texture) ||
                     (primitive.clearcoatNormalTexture &&
                      !resources.clearcoatNormalTexture.texture) ||
+                    (primitive.sheenColorTexture &&
+                     !resources.sheenColorTexture.texture) ||
+                    (primitive.sheenRoughnessTexture &&
+                     !resources.sheenRoughnessTexture.texture) ||
                     (primitive.normalTexture &&
                      !resources.normalTexture.texture) ||
                     (primitive.occlusionTexture &&
@@ -4049,6 +4062,9 @@ void Tileset::ensureGltfRenderResources(TilesetTile& tile) {
                         primitive.clearcoatRoughnessTexture) ||
                     !bindingHasTexCoordSet(
                         primitive.clearcoatNormalTexture) ||
+                    !bindingHasTexCoordSet(primitive.sheenColorTexture) ||
+                    !bindingHasTexCoordSet(
+                        primitive.sheenRoughnessTexture) ||
                     !bindingHasTexCoordSet(primitive.normalTexture) ||
                     !bindingHasTexCoordSet(primitive.occlusionTexture) ||
                     !bindingHasTexCoordSet(primitive.emissiveTexture)) {
@@ -4248,6 +4264,14 @@ void Tileset::buildGltfDrawCommands(Renderer& renderer,
             primitive.clearcoatRoughnessFactor,
             primitive.clearcoatNormalTextureScale
         };
+        cmd.uniforms["u_sheenColorFactor"] = {
+            primitive.sheenColorFactor[0],
+            primitive.sheenColorFactor[1],
+            primitive.sheenColorFactor[2]
+        };
+        cmd.uniforms["u_sheenRoughnessFactor"] = {
+            primitive.sheenRoughnessFactor
+        };
         cmd.uniforms["u_hasMaterialTextures"] = {
             primitive.metallicRoughnessTexture.texture ? 1.0f : 0.0f,
             primitive.normalTexture.texture ? 1.0f : 0.0f,
@@ -4262,6 +4286,10 @@ void Tileset::buildGltfDrawCommands(Renderer& renderer,
             primitive.clearcoatTexture.texture ? 1.0f : 0.0f,
             primitive.clearcoatRoughnessTexture.texture ? 1.0f : 0.0f,
             primitive.clearcoatNormalTexture.texture ? 1.0f : 0.0f
+        };
+        cmd.uniforms["u_hasSheenTextures"] = {
+            primitive.sheenColorTexture.texture ? 1.0f : 0.0f,
+            primitive.sheenRoughnessTexture.texture ? 1.0f : 0.0f
         };
         cmd.uniforms["u_emissiveFactor"] = {
             primitive.emissiveFactor[0],
@@ -4285,6 +4313,10 @@ void Tileset::buildGltfDrawCommands(Renderer& renderer,
             static_cast<float>(primitive.clearcoatTexture.texCoord),
             static_cast<float>(primitive.clearcoatRoughnessTexture.texCoord),
             static_cast<float>(primitive.clearcoatNormalTexture.texCoord)
+        };
+        cmd.uniforms["u_sheenTexCoordSets"] = {
+            static_cast<float>(primitive.sheenColorTexture.texCoord),
+            static_cast<float>(primitive.sheenRoughnessTexture.texCoord)
         };
         cmd.uniforms["u_alphaMode"] = {
             alphaModeUniform(primitive.alphaMode)
@@ -4339,6 +4371,14 @@ void Tileset::buildGltfDrawCommands(Renderer& renderer,
             "u_clearcoatNormalTexRotationSinCos",
             primitive.clearcoatNormalTexture);
         setTransformUniforms(
+            "u_sheenColorTexOffsetScale",
+            "u_sheenColorTexRotationSinCos",
+            primitive.sheenColorTexture);
+        setTransformUniforms(
+            "u_sheenRoughnessTexOffsetScale",
+            "u_sheenRoughnessTexRotationSinCos",
+            primitive.sheenRoughnessTexture);
+        setTransformUniforms(
             "u_normalTexOffsetScale",
             "u_normalTexRotationSinCos",
             primitive.normalTexture);
@@ -4351,7 +4391,7 @@ void Tileset::buildGltfDrawCommands(Renderer& renderer,
             "u_emissiveTexRotationSinCos",
             primitive.emissiveTexture);
 
-        cmd.textures.resize(10, nullptr);
+        cmd.textures.resize(12, nullptr);
         cmd.textures[0] = primitive.baseColorTexture.texture;
         cmd.textures[1] = primitive.metallicRoughnessTexture.texture;
         cmd.textures[2] = primitive.normalTexture.texture;
@@ -4362,6 +4402,8 @@ void Tileset::buildGltfDrawCommands(Renderer& renderer,
         cmd.textures[7] = primitive.clearcoatTexture.texture;
         cmd.textures[8] = primitive.clearcoatRoughnessTexture.texture;
         cmd.textures[9] = primitive.clearcoatNormalTexture.texture;
+        cmd.textures[10] = primitive.sheenColorTexture.texture;
+        cmd.textures[11] = primitive.sheenRoughnessTexture.texture;
         cmd.cullFace = !primitive.doubleSided;
         if (transitionOpacity < 0.999f ||
             primitive.alphaMode == GltfAlphaMode::Blend) {

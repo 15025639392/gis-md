@@ -59,6 +59,8 @@ struct GltfPrimitiveRenderResources {
     TextureBinding clearcoatTexture;
     TextureBinding clearcoatRoughnessTexture;
     TextureBinding clearcoatNormalTexture;
+    TextureBinding sheenColorTexture;
+    TextureBinding sheenRoughnessTexture;
     TextureBinding normalTexture;
     TextureBinding occlusionTexture;
     TextureBinding emissiveTexture;
@@ -77,6 +79,8 @@ struct GltfPrimitiveRenderResources {
     float clearcoatFactor = 0.0f;
     float clearcoatRoughnessFactor = 0.0f;
     float clearcoatNormalTextureScale = 1.0f;
+    std::array<float, 3> sheenColorFactor = {0.0f, 0.0f, 0.0f};
+    float sheenRoughnessFactor = 0.0f;
     float normalTextureScale = 1.0f;
     float occlusionTextureStrength = 1.0f;
     std::array<float, 3> emissiveFactor = {0.0f, 0.0f, 0.0f};

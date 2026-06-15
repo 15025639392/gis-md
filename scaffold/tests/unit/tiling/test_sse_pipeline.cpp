@@ -3268,6 +3268,103 @@ void testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures() {
           "Tileset: glTF clearcoat texture uploads KHR_texture_transform uniforms");
 }
 
+void testTilesetGltfSheenMaterialUploadsUniformsAndTextures() {
+    DummyRenderDevice device;
+    device.allowTextureCreation = true;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: glTF sheen material root tile is created");
+    if (!root) return;
+
+    root->gltfModel = makeTexturedTriangleGltfModel();
+    GltfPrimitive& primitive = root->gltfModel->primitives[0];
+    primitive.sheenColorFactor = {0.2f, 0.4f, 0.6f};
+    primitive.sheenRoughnessFactor = 0.35f;
+    GltfTextureBinding sheenColorBinding;
+    sheenColorBinding.textureIndex = 0u;
+    sheenColorBinding.texCoord = 1;
+    sheenColorBinding.transform.offset = {0.125f, 0.25f};
+    sheenColorBinding.transform.scale = {0.5f, 0.75f};
+    sheenColorBinding.transform.rotation = 1.57079632679f;
+    primitive.sheenColorTexture = sheenColorBinding;
+    GltfTextureBinding sheenRoughnessBinding;
+    sheenRoughnessBinding.textureIndex = 0u;
+    sheenRoughnessBinding.texCoord = 0;
+    primitive.sheenRoughnessTexture = sheenRoughnessBinding;
+    root->contentKind = TileContentKind::Render;
+    root->loadState = TileLoadState::ContentLoaded;
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 1,
+          "Tileset: glTF sheen material emits one primitive draw command");
+    if (commands.empty()) return;
+
+    const RenderCommand& cmd = commands.front();
+    check(cmd.uniforms.count("u_sheenColorFactor") &&
+              cmd.uniforms.at("u_sheenColorFactor").size() == 3 &&
+              std::abs(cmd.uniforms.at("u_sheenColorFactor")[0] - 0.2f) <
+                  1e-6f &&
+              std::abs(cmd.uniforms.at("u_sheenColorFactor")[1] - 0.4f) <
+                  1e-6f &&
+              std::abs(cmd.uniforms.at("u_sheenColorFactor")[2] - 0.6f) <
+                  1e-6f,
+          "Tileset: glTF sheen material uploads sheenColorFactor");
+    check(cmd.uniforms.count("u_sheenRoughnessFactor") &&
+              std::abs(
+                  cmd.uniforms.at("u_sheenRoughnessFactor").front() -
+                  0.35f) < 1e-6f,
+          "Tileset: glTF sheen material uploads sheenRoughnessFactor");
+    check(cmd.uniforms.count("u_hasSheenTextures") &&
+              cmd.uniforms.at("u_hasSheenTextures").size() == 2 &&
+              cmd.uniforms.at("u_hasSheenTextures")[0] == 1.0f &&
+              cmd.uniforms.at("u_hasSheenTextures")[1] == 1.0f,
+          "Tileset: glTF sheen material reports both sheen textures");
+    check(cmd.textures.size() >= 12 &&
+              cmd.textures[10] ==
+                  root->gltfPrimitiveResources.front()
+                      .sheenColorTexture.texture &&
+              cmd.textures[11] ==
+                  root->gltfPrimitiveResources.front()
+                      .sheenRoughnessTexture.texture,
+          "Tileset: glTF sheen textures bind to material slots 10 and 11");
+    check(cmd.uniforms.count("u_sheenTexCoordSets") &&
+              cmd.uniforms.at("u_sheenTexCoordSets").size() == 2 &&
+              cmd.uniforms.at("u_sheenTexCoordSets")[0] == 1.0f &&
+              cmd.uniforms.at("u_sheenTexCoordSets")[1] == 0.0f,
+          "Tileset: glTF sheen material uploads texture coordinate sets");
+    check(cmd.uniforms.count("u_sheenColorTexOffsetScale") &&
+              cmd.uniforms.at("u_sheenColorTexOffsetScale").size() == 4 &&
+              std::abs(cmd.uniforms.at("u_sheenColorTexOffsetScale")[0] -
+                       0.125f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_sheenColorTexOffsetScale")[1] -
+                       0.25f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_sheenColorTexOffsetScale")[2] -
+                       0.5f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_sheenColorTexOffsetScale")[3] -
+                       0.75f) < 1e-6f &&
+              cmd.uniforms.count("u_sheenColorTexRotationSinCos") &&
+              std::abs(cmd.uniforms.at("u_sheenColorTexRotationSinCos")[0] -
+                       1.0f) < 1e-6f,
+          "Tileset: glTF sheen color texture uploads KHR_texture_transform uniforms");
+}
+
 void testTilesetGltfPointAndLineModesReachDrawCommands() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
@@ -6614,6 +6711,7 @@ int main() {
     testTilesetGltfIorMaterialUploadsSpecularF0();
     testTilesetGltfSpecularMaterialUploadsUniformsAndTextures();
     testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures();
+    testTilesetGltfSheenMaterialUploadsUniformsAndTextures();
     testTilesetGltfPointAndLineModesReachDrawCommands();
     testTilesetGltfDoubleSidedDisablesCullOnly();
     testTilesetGltfOpaqueInstancesUseGpuInstancing();

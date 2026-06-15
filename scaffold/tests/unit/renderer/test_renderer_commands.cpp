@@ -132,11 +132,15 @@ TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     ASSERT_TRUE(cmd.uniforms.count("u_specularColorFactor"));
     ASSERT_TRUE(cmd.uniforms.count("u_clearcoatFactors"));
     ASSERT_TRUE(cmd.uniforms.count("u_hasClearcoatTextures"));
+    ASSERT_TRUE(cmd.uniforms.count("u_sheenColorFactor"));
+    ASSERT_TRUE(cmd.uniforms.count("u_sheenRoughnessFactor"));
+    ASSERT_TRUE(cmd.uniforms.count("u_hasSheenTextures"));
     ASSERT_TRUE(cmd.uniforms.count("u_emissiveFactor"));
     ASSERT_TRUE(cmd.uniforms.count("u_textureCoordSets"));
     ASSERT_TRUE(cmd.uniforms.count("u_emissiveTexCoordSet"));
     ASSERT_TRUE(cmd.uniforms.count("u_specularTexCoordSets"));
     ASSERT_TRUE(cmd.uniforms.count("u_clearcoatTexCoordSets"));
+    ASSERT_TRUE(cmd.uniforms.count("u_sheenTexCoordSets"));
     ASSERT_TRUE(cmd.uniforms.count("u_baseColorTexOffsetScale"));
     ASSERT_TRUE(cmd.uniforms.count("u_baseColorTexRotationSinCos"));
     ASSERT_TRUE(cmd.uniforms.count("u_specularTexOffsetScale"));
@@ -144,6 +148,8 @@ TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     ASSERT_TRUE(cmd.uniforms.count("u_clearcoatTexOffsetScale"));
     ASSERT_TRUE(cmd.uniforms.count("u_clearcoatRoughnessTexOffsetScale"));
     ASSERT_TRUE(cmd.uniforms.count("u_clearcoatNormalTexOffsetScale"));
+    ASSERT_TRUE(cmd.uniforms.count("u_sheenColorTexOffsetScale"));
+    ASSERT_TRUE(cmd.uniforms.count("u_sheenRoughnessTexOffsetScale"));
     ASSERT_TRUE(cmd.uniforms.count("u_alphaMode"));
     ASSERT_TRUE(cmd.uniforms.count("u_alphaCutoff"));
     ASSERT_TRUE(cmd.uniforms.count("u_renderOpacity"));
@@ -250,6 +256,42 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsClearcoat) {
     EXPECT_NE(
         std::string::npos,
         msl.find("color = color * (1.0 - coatWeight)"));
+}
+
+TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsSheen) {
+    const std::string glsl = renderer_testing::gltfFragmentGLSL();
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("uniform sampler2D u_sheenColorTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("uniform sampler2D u_sheenRoughnessTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("sheenColor *= texture(u_sheenColorTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("texture(u_sheenRoughnessTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("color += sheenColor * sheen"));
+
+    const std::string msl = renderer_testing::gltfFragmentMSL();
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("texture2d<float> u_sheenColorTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("texture2d<float> u_sheenRoughnessTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("sheenColor *= u_sheenColorTexture.sample"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("u_sheenRoughnessTexture.sample"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("color += sheenColor * sheen"));
 }
 
 TEST(RendererCommandTest, GltfFragmentShadersUseBaseColorForUnlitMaterials) {
