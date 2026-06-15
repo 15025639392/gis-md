@@ -10182,6 +10182,132 @@ TEST(GltfParserTest, ContentProviderDecodesPntsPositionRgbAndRtcCenter) {
         1e-6f);
 }
 
+TEST(GltfParserTest, ContentProviderDecodesPntsQuantizedPositionAndRtcCenter) {
+    std::vector<uint8_t> featureBinary;
+    appendU16(featureBinary, 0u);
+    appendU16(featureBinary, 0u);
+    appendU16(featureBinary, 0u);
+    appendU16(featureBinary, 65535u);
+    appendU16(featureBinary, 65535u);
+    appendU16(featureBinary, 65535u);
+
+    const std::string featureJson =
+        "{\"POINTS_LENGTH\":2,"
+        "\"RTC_CENTER\":[1.0,2.0,3.0],"
+        "\"POSITION_QUANTIZED\":{\"byteOffset\":0},"
+        "\"QUANTIZED_VOLUME_OFFSET\":[10.0,20.0,30.0],"
+        "\"QUANTIZED_VOLUME_SCALE\":[100.0,200.0,300.0]}";
+    const std::vector<uint8_t> pnts = makePnts(featureJson, featureBinary);
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "PNTS quantized position fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(pnts.data(), pnts.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives[0];
+    ASSERT_EQ(2u, primitive.vertices.size());
+    EXPECT_NEAR(11.0, primitive.vertices[0].positionEcef.x(), 1e-6);
+    EXPECT_NEAR(22.0, primitive.vertices[0].positionEcef.y(), 1e-6);
+    EXPECT_NEAR(33.0, primitive.vertices[0].positionEcef.z(), 1e-6);
+    EXPECT_NEAR(111.0, primitive.vertices[1].positionEcef.x(), 1e-6);
+    EXPECT_NEAR(222.0, primitive.vertices[1].positionEcef.y(), 1e-6);
+    EXPECT_NEAR(333.0, primitive.vertices[1].positionEcef.z(), 1e-6);
+}
+
+TEST(GltfParserTest, ContentProviderDecodesPntsNormals) {
+    std::vector<uint8_t> featureBinary;
+    appendF32(featureBinary, 1.0f);
+    appendF32(featureBinary, 2.0f);
+    appendF32(featureBinary, 3.0f);
+    appendF32(featureBinary, 4.0f);
+    appendF32(featureBinary, 5.0f);
+    appendF32(featureBinary, 6.0f);
+    const size_t normalOffset = featureBinary.size();
+    appendF32(featureBinary, 0.0f);
+    appendF32(featureBinary, 0.0f);
+    appendF32(featureBinary, 2.0f);
+    appendF32(featureBinary, 0.0f);
+    appendF32(featureBinary, 3.0f);
+    appendF32(featureBinary, 0.0f);
+
+    const std::string featureJson =
+        std::string("{") +
+        "\"POINTS_LENGTH\":2,"
+        "\"POSITION\":{\"byteOffset\":0},"
+        "\"NORMAL\":{\"byteOffset\":" +
+        std::to_string(normalOffset) + "}}";
+    const std::vector<uint8_t> pnts = makePnts(featureJson, featureBinary);
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "PNTS normal fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(pnts.data(), pnts.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives[0];
+    EXPECT_FALSE(primitive.unlit);
+    ASSERT_EQ(2u, primitive.vertices.size());
+    EXPECT_NEAR(0.0, primitive.vertices[0].normalEcef.x(), 1e-6);
+    EXPECT_NEAR(0.0, primitive.vertices[0].normalEcef.y(), 1e-6);
+    EXPECT_NEAR(1.0, primitive.vertices[0].normalEcef.z(), 1e-6);
+    EXPECT_NEAR(0.0, primitive.vertices[1].normalEcef.x(), 1e-6);
+    EXPECT_NEAR(1.0, primitive.vertices[1].normalEcef.y(), 1e-6);
+    EXPECT_NEAR(0.0, primitive.vertices[1].normalEcef.z(), 1e-6);
+}
+
+TEST(GltfParserTest, ContentProviderDecodesPntsOctEncodedNormals) {
+    std::vector<uint8_t> featureBinary;
+    appendF32(featureBinary, 1.0f);
+    appendF32(featureBinary, 2.0f);
+    appendF32(featureBinary, 3.0f);
+    const size_t normalOffset = featureBinary.size();
+    featureBinary.insert(featureBinary.end(), {128u, 128u});
+
+    const std::string featureJson =
+        std::string("{") +
+        "\"POINTS_LENGTH\":1,"
+        "\"POSITION\":{\"byteOffset\":0},"
+        "\"NORMAL_OCT16P\":{\"byteOffset\":" +
+        std::to_string(normalOffset) + "}}";
+    const std::vector<uint8_t> pnts = makePnts(featureJson, featureBinary);
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "PNTS oct normal fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(pnts.data(), pnts.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives[0];
+    EXPECT_FALSE(primitive.unlit);
+    ASSERT_EQ(1u, primitive.vertices.size());
+    const double expectedScale = std::sqrt(1.0 + 1.0 + 253.0 * 253.0);
+    EXPECT_NEAR(
+        1.0 / expectedScale,
+        primitive.vertices[0].normalEcef.x(),
+        1e-6);
+    EXPECT_NEAR(
+        1.0 / expectedScale,
+        primitive.vertices[0].normalEcef.y(),
+        1e-6);
+    EXPECT_NEAR(
+        253.0 / expectedScale,
+        primitive.vertices[0].normalEcef.z(),
+        1e-6);
+}
+
 TEST(GltfParserTest, ContentProviderDecodesPntsConstantRgbaMaterialColor) {
     std::vector<uint8_t> featureBinary;
     appendF32(featureBinary, 1.0f);
@@ -10217,6 +10343,144 @@ TEST(GltfParserTest, ContentProviderDecodesPntsConstantRgbaMaterialColor) {
         1e-6f);
     EXPECT_NEAR(1.0f, primitive.baseColorFactor[2], 1e-6f);
     EXPECT_NEAR(127.0f / 255.0f, primitive.baseColorFactor[3], 1e-6f);
+}
+
+TEST(GltfParserTest, ContentProviderDecodesPntsRgb565) {
+    std::vector<uint8_t> featureBinary;
+    appendF32(featureBinary, 1.0f);
+    appendF32(featureBinary, 2.0f);
+    appendF32(featureBinary, 3.0f);
+    const size_t rgb565Offset = featureBinary.size();
+    appendU16(featureBinary, 33800u);
+
+    const std::string featureJson =
+        std::string("{") +
+        "\"POINTS_LENGTH\":1,"
+        "\"POSITION\":{\"byteOffset\":0},"
+        "\"RGB565\":{\"byteOffset\":" +
+        std::to_string(rgb565Offset) + "},"
+        "\"CONSTANT_RGBA\":[0,0,0,127]}";
+    const std::vector<uint8_t> pnts = makePnts(featureJson, featureBinary);
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "PNTS RGB565 fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(pnts.data(), pnts.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives[0];
+    EXPECT_EQ(GltfAlphaMode::Opaque, primitive.alphaMode);
+    EXPECT_NEAR(1.0f, primitive.baseColorFactor[0], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.baseColorFactor[1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.baseColorFactor[2], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.baseColorFactor[3], 1e-6f);
+    ASSERT_EQ(1u, primitive.vertexColors.size());
+    EXPECT_NEAR(
+        std::pow(16.0f / 31.0f, 2.2f),
+        primitive.vertexColors[0][0],
+        1e-6f);
+    EXPECT_NEAR(
+        std::pow(32.0f / 63.0f, 2.2f),
+        primitive.vertexColors[0][1],
+        1e-6f);
+    EXPECT_NEAR(
+        std::pow(8.0f / 31.0f, 2.2f),
+        primitive.vertexColors[0][2],
+        1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexColors[0][3], 1e-6f);
+}
+
+TEST(GltfParserTest, ContentProviderPrefersPntsRgbOverConstantRgba) {
+    std::vector<uint8_t> featureBinary;
+    appendF32(featureBinary, 1.0f);
+    appendF32(featureBinary, 2.0f);
+    appendF32(featureBinary, 3.0f);
+    const size_t rgbOffset = featureBinary.size();
+    featureBinary.insert(featureBinary.end(), {255u, 128u, 0u});
+
+    const std::string featureJson =
+        std::string("{") +
+        "\"POINTS_LENGTH\":1,"
+        "\"POSITION\":{\"byteOffset\":0},"
+        "\"RGB\":{\"byteOffset\":" +
+        std::to_string(rgbOffset) + "},"
+        "\"CONSTANT_RGBA\":[0,0,0,127]}";
+    const std::vector<uint8_t> pnts = makePnts(featureJson, featureBinary);
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "PNTS RGB and constant color fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(pnts.data(), pnts.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives[0];
+    EXPECT_EQ(GltfAlphaMode::Opaque, primitive.alphaMode);
+    EXPECT_NEAR(1.0f, primitive.baseColorFactor[0], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.baseColorFactor[1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.baseColorFactor[2], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.baseColorFactor[3], 1e-6f);
+    ASSERT_EQ(1u, primitive.vertexColors.size());
+    EXPECT_NEAR(1.0f, primitive.vertexColors[0][0], 1e-6f);
+    EXPECT_NEAR(
+        std::pow(128.0f / 255.0f, 2.2f),
+        primitive.vertexColors[0][1],
+        1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexColors[0][2], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexColors[0][3], 1e-6f);
+}
+
+TEST(GltfParserTest, ContentProviderPrefersPntsRgbaOverConstantRgba) {
+    std::vector<uint8_t> featureBinary;
+    appendF32(featureBinary, 1.0f);
+    appendF32(featureBinary, 2.0f);
+    appendF32(featureBinary, 3.0f);
+    const size_t rgbaOffset = featureBinary.size();
+    featureBinary.insert(featureBinary.end(), {64u, 128u, 255u, 63u});
+
+    const std::string featureJson =
+        std::string("{") +
+        "\"POINTS_LENGTH\":1,"
+        "\"POSITION\":{\"byteOffset\":0},"
+        "\"RGBA\":{\"byteOffset\":" +
+        std::to_string(rgbaOffset) + "},"
+        "\"CONSTANT_RGBA\":[0,0,0,127]}";
+    const std::vector<uint8_t> pnts = makePnts(featureJson, featureBinary);
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "PNTS RGBA and constant color fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(pnts.data(), pnts.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives[0];
+    EXPECT_EQ(GltfAlphaMode::Blend, primitive.alphaMode);
+    EXPECT_NEAR(1.0f, primitive.baseColorFactor[0], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.baseColorFactor[1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.baseColorFactor[2], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.baseColorFactor[3], 1e-6f);
+    ASSERT_EQ(1u, primitive.vertexColors.size());
+    EXPECT_NEAR(
+        std::pow(64.0f / 255.0f, 2.2f),
+        primitive.vertexColors[0][0],
+        1e-6f);
+    EXPECT_NEAR(
+        std::pow(128.0f / 255.0f, 2.2f),
+        primitive.vertexColors[0][1],
+        1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexColors[0][2], 1e-6f);
+    EXPECT_NEAR(63.0f / 255.0f, primitive.vertexColors[0][3], 1e-6f);
 }
 
 TEST(GltfParserTest, ContentProviderDecodesPntsJsonBatchTablePerPoint) {
@@ -10345,14 +10609,45 @@ TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) 
     appendF32(positionBinary, 2.0f);
     appendF32(positionBinary, 3.0f);
 
+    std::vector<uint8_t> colorConflictBinary = positionBinary;
+    const size_t rgbOffset = colorConflictBinary.size();
+    colorConflictBinary.insert(colorConflictBinary.end(), {255u, 0u, 0u});
+    const size_t rgb565Offset = colorConflictBinary.size();
+    appendU16(colorConflictBinary, 33800u);
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus(
+            std::string("{\"POINTS_LENGTH\":1,"
+                        "\"POSITION\":{\"byteOffset\":0},"
+                        "\"RGB\":{\"byteOffset\":") +
+                std::to_string(rgbOffset) +
+                "},\"RGB565\":{\"byteOffset\":" +
+                std::to_string(rgb565Offset) + "}}",
+            colorConflictBinary));
+
     EXPECT_EQ(
         TileContentLoadStatus::Failed,
         decodeStatus(
             "{\"POINTS_LENGTH\":1,"
             "\"POSITION_QUANTIZED\":{\"byteOffset\":0},"
-            "\"QUANTIZED_VOLUME_OFFSET\":[0,0,0],"
-            "\"QUANTIZED_VOLUME_SCALE\":[1,1,1]}",
+            "\"QUANTIZED_VOLUME_OFFSET\":[0,0,0]}",
             {0, 0, 0, 0, 0, 0}));
+
+    std::vector<uint8_t> positionConflictBinary = positionBinary;
+    const size_t quantizedPositionOffset = positionConflictBinary.size();
+    appendU16(positionConflictBinary, 0u);
+    appendU16(positionConflictBinary, 0u);
+    appendU16(positionConflictBinary, 0u);
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus(
+            std::string("{\"POINTS_LENGTH\":1,"
+                        "\"POSITION\":{\"byteOffset\":0},"
+                        "\"POSITION_QUANTIZED\":{\"byteOffset\":") +
+                std::to_string(quantizedPositionOffset) +
+                "},\"QUANTIZED_VOLUME_OFFSET\":[0,0,0],"
+                "\"QUANTIZED_VOLUME_SCALE\":[1,1,1]}",
+            positionConflictBinary));
     EXPECT_EQ(
         TileContentLoadStatus::Failed,
         decodeStatus(
@@ -10360,6 +10655,24 @@ TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) 
             "\"POSITION\":{\"byteOffset\":0},"
             "\"NORMAL\":{\"byteOffset\":12}}",
             positionBinary));
+
+    std::vector<uint8_t> normalConflictBinary = positionBinary;
+    const size_t normalOffset = normalConflictBinary.size();
+    appendF32(normalConflictBinary, 0.0f);
+    appendF32(normalConflictBinary, 0.0f);
+    appendF32(normalConflictBinary, 1.0f);
+    const size_t octNormalOffset = normalConflictBinary.size();
+    normalConflictBinary.insert(normalConflictBinary.end(), {128u, 128u});
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus(
+            std::string("{\"POINTS_LENGTH\":1,"
+                        "\"POSITION\":{\"byteOffset\":0},"
+                        "\"NORMAL\":{\"byteOffset\":") +
+                std::to_string(normalOffset) +
+                "},\"NORMAL_OCT16P\":{\"byteOffset\":" +
+                std::to_string(octNormalOffset) + "}}",
+            normalConflictBinary));
     EXPECT_EQ(
         TileContentLoadStatus::Failed,
         decodeStatus(

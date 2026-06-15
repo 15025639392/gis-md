@@ -1500,8 +1500,8 @@ uint32_t readI3dmBatchId(const uint8_t* binary,
     return 0u;
 }
 
-glm::dvec3 octDecodeInRange(uint16_t x, uint16_t y) {
-    constexpr double range = 65535.0;
+glm::dvec3 octDecodeInRange(uint16_t x, uint16_t y, uint16_t rangeMax) {
+    const double range = static_cast<double>(rangeMax);
     glm::dvec3 result(
         double(x) / range * 2.0 - 1.0,
         double(y) / range * 2.0 - 1.0,
@@ -1517,6 +1517,10 @@ glm::dvec3 octDecodeInRange(uint16_t x, uint16_t y) {
     }
     const double length = glm::length(result);
     return length > 0.0 ? result / length : glm::dvec3(0.0, 0.0, 1.0);
+}
+
+glm::dvec3 octDecodeInRange(uint16_t x, uint16_t y) {
+    return octDecodeInRange(x, y, 65535u);
 }
 
 glm::dquat rotationFromUpRight(glm::dvec3 up, glm::dvec3 right) {
@@ -2115,6 +2119,22 @@ float pntsSrgbByteToLinear(uint8_t value) {
     return std::pow(static_cast<float>(value) / 255.0f, 2.2f);
 }
 
+std::array<float, 4> pntsRgb565ToLinear(uint16_t value) {
+    constexpr uint16_t kMask5 = (1u << 5u) - 1u;
+    constexpr uint16_t kMask6 = (1u << 6u) - 1u;
+    constexpr float kNormalize5 = 1.0f / 31.0f;
+    constexpr float kNormalize6 = 1.0f / 63.0f;
+
+    const uint16_t red = static_cast<uint16_t>(value >> 11u);
+    const uint16_t green = static_cast<uint16_t>((value >> 5u) & kMask6);
+    const uint16_t blue = static_cast<uint16_t>(value & kMask5);
+    return {
+        std::pow(static_cast<float>(red) * kNormalize5, 2.2f),
+        std::pow(static_cast<float>(green) * kNormalize6, 2.2f),
+        std::pow(static_cast<float>(blue) * kNormalize5, 2.2f),
+        1.0f};
+}
+
 std::unique_ptr<GltfModel> parsePntsModel(const uint8_t* data,
                                           const PntsHeader& header) {
     if (header.featureTableJsonByteLength == 0 ||
@@ -2154,11 +2174,7 @@ std::unique_ptr<GltfModel> parsePntsModel(const uint8_t* data,
         return nullptr;
     }
 
-    if (featureJson.contains("extensions") ||
-        featureJson.contains("POSITION_QUANTIZED") ||
-        featureJson.contains("RGB565") ||
-        featureJson.contains("NORMAL") ||
-        featureJson.contains("NORMAL_OCT16P")) {
+    if (featureJson.contains("extensions")) {
         return nullptr;
     }
 
@@ -2229,12 +2245,31 @@ std::unique_ptr<GltfModel> parsePntsModel(const uint8_t* data,
 
     const std::optional<uint32_t> positionOffset =
         semanticOffset(featureJson, "POSITION", valid);
-    if (!valid || !positionOffset ||
+    const std::optional<uint32_t> positionQuantizedOffset =
+        semanticOffset(featureJson, "POSITION_QUANTIZED", valid);
+    if (!valid ||
+        positionOffset.has_value() == positionQuantizedOffset.has_value()) {
+        return nullptr;
+    }
+    const std::optional<glm::dvec3> quantizedVolumeOffset =
+        jsonVec3(featureJson, "QUANTIZED_VOLUME_OFFSET", valid);
+    const std::optional<glm::dvec3> quantizedVolumeScale =
+        jsonVec3(featureJson, "QUANTIZED_VOLUME_SCALE", valid);
+    if (!valid ||
+        (positionQuantizedOffset &&
+         (!quantizedVolumeOffset || !quantizedVolumeScale))) {
+        return nullptr;
+    }
+    if (positionOffset &&
+        !checkedRange(featureBinarySize, *positionOffset, *pointsLength, 12u)) {
+        return nullptr;
+    }
+    if (positionQuantizedOffset &&
         !checkedRange(
             featureBinarySize,
-            *positionOffset,
+            *positionQuantizedOffset,
             *pointsLength,
-            12u)) {
+            6u)) {
         return nullptr;
     }
 
@@ -2254,7 +2289,16 @@ std::unique_ptr<GltfModel> parsePntsModel(const uint8_t* data,
     if (!valid) {
         return nullptr;
     }
-    if (rgbOffset && rgbaOffset) {
+    std::optional<uint32_t> rgb565Offset =
+        semanticOffset(featureJson, "RGB565", valid);
+    if (!valid) {
+        return nullptr;
+    }
+    const size_t colorSemanticCount =
+        (rgbOffset ? 1u : 0u) +
+        (rgbaOffset ? 1u : 0u) +
+        (rgb565Offset ? 1u : 0u);
+    if (colorSemanticCount > 1u) {
         return nullptr;
     }
     if (rgbOffset &&
@@ -2263,6 +2307,33 @@ std::unique_ptr<GltfModel> parsePntsModel(const uint8_t* data,
     }
     if (rgbaOffset &&
         !checkedRange(featureBinarySize, *rgbaOffset, *pointsLength, 4u)) {
+        return nullptr;
+    }
+    if (rgb565Offset &&
+        !checkedRange(featureBinarySize, *rgb565Offset, *pointsLength, 2u)) {
+        return nullptr;
+    }
+
+    std::optional<uint32_t> normalOffset =
+        semanticOffset(featureJson, "NORMAL", valid);
+    if (!valid) {
+        return nullptr;
+    }
+    std::optional<uint32_t> normalOct16pOffset =
+        semanticOffset(featureJson, "NORMAL_OCT16P", valid);
+    if (!valid || (normalOffset && normalOct16pOffset)) {
+        return nullptr;
+    }
+    if (normalOffset &&
+        !checkedRange(featureBinarySize, *normalOffset, *pointsLength, 12u)) {
+        return nullptr;
+    }
+    if (normalOct16pOffset &&
+        !checkedRange(
+            featureBinarySize,
+            *normalOct16pOffset,
+            *pointsLength,
+            2u)) {
         return nullptr;
     }
 
@@ -2277,8 +2348,14 @@ std::unique_ptr<GltfModel> parsePntsModel(const uint8_t* data,
     primitive.primitiveMode = GltfPrimitiveMode::Points;
     primitive.metallicFactor = 0.0f;
     primitive.roughnessFactor = 0.9f;
-    primitive.unlit = true;
-    if (constantColor) {
+    const bool hasNormal =
+        normalOffset.has_value() || normalOct16pOffset.has_value();
+    primitive.unlit = !hasNormal;
+    const bool hasPerPointColor =
+        rgbOffset.has_value() ||
+        rgbaOffset.has_value() ||
+        rgb565Offset.has_value();
+    if (constantColor && !hasPerPointColor) {
         primitive.baseColorFactor = *constantColor;
         primitive.alphaMode = GltfAlphaMode::Blend;
     }
@@ -2290,7 +2367,7 @@ std::unique_ptr<GltfModel> parsePntsModel(const uint8_t* data,
     if (preserveFeatureIds) {
         primitive.featureIds.reserve(*pointsLength);
     }
-    if (rgbOffset || rgbaOffset) {
+    if (hasPerPointColor) {
         primitive.vertexColors.reserve(*pointsLength);
         if (rgbaOffset) {
             primitive.alphaMode = GltfAlphaMode::Blend;
@@ -2299,22 +2376,55 @@ std::unique_ptr<GltfModel> parsePntsModel(const uint8_t* data,
 
     uint32_t maxFeatureId = 0u;
     for (uint32_t i = 0; i < *pointsLength; ++i) {
-        const uint8_t* p =
-            featureBinary + *positionOffset + static_cast<size_t>(i) * 12u;
-        glm::dvec3 position(
-            readF32LE(p),
-            readF32LE(p + 4),
-            readF32LE(p + 8));
-        if (!finiteVec3(position)) {
-            return nullptr;
+        glm::dvec3 position(0.0);
+        if (positionOffset) {
+            const uint8_t* p =
+                featureBinary + *positionOffset + static_cast<size_t>(i) * 12u;
+            position = glm::dvec3(
+                readF32LE(p),
+                readF32LE(p + 4),
+                readF32LE(p + 8));
+        } else {
+            const glm::dvec3 q =
+                readFeatureVec3U16(featureBinary, *positionQuantizedOffset, i);
+            position =
+                q / 65535.0 * *quantizedVolumeScale + *quantizedVolumeOffset;
         }
         if (rtcCenter) {
             position += *rtcCenter;
         }
+        if (!finiteVec3(position)) {
+            return nullptr;
+        }
+
+        glm::dvec3 normal = Vec3::unitZ().raw();
+        if (normalOffset) {
+            const uint8_t* n =
+                featureBinary + *normalOffset + static_cast<size_t>(i) * 12u;
+            normal = glm::dvec3(
+                readF32LE(n),
+                readF32LE(n + 4),
+                readF32LE(n + 8));
+            if (!finiteVec3(normal)) {
+                return nullptr;
+            }
+            const double lenSq = glm::dot(normal, normal);
+            normal = std::isfinite(lenSq) && lenSq > 0.0
+                         ? glm::normalize(normal)
+                         : Vec3::unitZ().raw();
+        } else if (normalOct16pOffset) {
+            const uint8_t* n =
+                featureBinary + *normalOct16pOffset +
+                static_cast<size_t>(i) * 2u;
+            normal = octDecodeInRange(n[0], n[1], 255u);
+            if (!finiteVec3(normal)) {
+                return nullptr;
+            }
+        }
 
         SurfaceVertex vertex;
         vertex.positionEcef = Vec3(position);
-        vertex.normalEcef = Vec3::unitZ();
+        vertex.normalEcef = Vec3(normal);
         primitive.vertices.push_back(vertex);
         primitive.indices.push_back(i);
 
@@ -2347,6 +2457,11 @@ std::unique_ptr<GltfModel> parsePntsModel(const uint8_t* data,
                 pntsSrgbByteToLinear(c[1]),
                 pntsSrgbByteToLinear(c[2]),
                 static_cast<float>(c[3]) / 255.0f});
+        } else if (rgb565Offset) {
+            const uint8_t* c =
+                featureBinary + *rgb565Offset + static_cast<size_t>(i) * 2u;
+            primitive.vertexColors.push_back(
+                pntsRgb565ToLinear(readU16LE(c)));
         }
     }
     if (batchLength && preserveFeatureIds && maxFeatureId >= *batchLength) {
