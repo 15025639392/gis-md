@@ -1445,7 +1445,8 @@ private:
 std::vector<uint8_t> makeB3dm(std::vector<uint8_t> glb,
                               const std::string& featureTableJson,
                               const std::string& batchTableJson =
-                                  std::string{}) {
+                                  std::string{},
+                              std::vector<uint8_t> batchTableBinary = {}) {
     std::vector<uint8_t> featureBytes(
         featureTableJson.begin(),
         featureTableJson.end());
@@ -1456,6 +1457,7 @@ std::vector<uint8_t> makeB3dm(std::vector<uint8_t> glb,
     if (!batchBytes.empty()) {
         pad4(batchBytes, 0x20);
     }
+    pad4(batchTableBinary, 0);
 
     std::vector<uint8_t> b3dm;
     b3dm.push_back('b');
@@ -1466,13 +1468,17 @@ std::vector<uint8_t> makeB3dm(std::vector<uint8_t> glb,
     appendU32(
         b3dm,
         static_cast<uint32_t>(
-            28 + featureBytes.size() + batchBytes.size() + glb.size()));
+            28 + featureBytes.size() + batchBytes.size() +
+            batchTableBinary.size() + glb.size()));
     appendU32(b3dm, static_cast<uint32_t>(featureBytes.size()));
     appendU32(b3dm, 0u);
     appendU32(b3dm, static_cast<uint32_t>(batchBytes.size()));
-    appendU32(b3dm, 0u);
+    appendU32(b3dm, static_cast<uint32_t>(batchTableBinary.size()));
     b3dm.insert(b3dm.end(), featureBytes.begin(), featureBytes.end());
     b3dm.insert(b3dm.end(), batchBytes.begin(), batchBytes.end());
+    b3dm.insert(b3dm.end(),
+                batchTableBinary.begin(),
+                batchTableBinary.end());
     b3dm.insert(b3dm.end(), glb.begin(), glb.end());
     return b3dm;
 }
@@ -1538,7 +1544,8 @@ std::vector<uint8_t> makeI3dm(std::vector<uint8_t> gltfPayload,
 std::vector<uint8_t> makeI3dmWithFeatureTable(
     const std::string& featureJson,
     std::vector<uint8_t> featureBinary,
-    const std::string& batchTableJson = std::string{}) {
+    const std::string& batchTableJson = std::string{},
+    std::vector<uint8_t> batchTableBinary = {}) {
     std::vector<uint8_t> featureBytes(featureJson.begin(), featureJson.end());
     pad4(featureBytes, 0x20);
     pad4(featureBinary, 0);
@@ -1548,6 +1555,7 @@ std::vector<uint8_t> makeI3dmWithFeatureTable(
     if (!batchBytes.empty()) {
         pad4(batchBytes, 0x20);
     }
+    pad4(batchTableBinary, 0);
 
     const std::vector<uint8_t> payload = makeTriangleGlb();
 
@@ -1561,15 +1569,18 @@ std::vector<uint8_t> makeI3dmWithFeatureTable(
         i3dm,
         static_cast<uint32_t>(
             32 + featureBytes.size() + featureBinary.size() +
-            batchBytes.size() + payload.size()));
+            batchBytes.size() + batchTableBinary.size() + payload.size()));
     appendU32(i3dm, static_cast<uint32_t>(featureBytes.size()));
     appendU32(i3dm, static_cast<uint32_t>(featureBinary.size()));
     appendU32(i3dm, static_cast<uint32_t>(batchBytes.size()));
-    appendU32(i3dm, 0u);
+    appendU32(i3dm, static_cast<uint32_t>(batchTableBinary.size()));
     appendU32(i3dm, 1u);
     i3dm.insert(i3dm.end(), featureBytes.begin(), featureBytes.end());
     i3dm.insert(i3dm.end(), featureBinary.begin(), featureBinary.end());
     i3dm.insert(i3dm.end(), batchBytes.begin(), batchBytes.end());
+    i3dm.insert(i3dm.end(),
+                batchTableBinary.begin(),
+                batchTableBinary.end());
     i3dm.insert(i3dm.end(), payload.begin(), payload.end());
     return i3dm;
 }
@@ -1577,7 +1588,8 @@ std::vector<uint8_t> makeI3dmWithFeatureTable(
 std::vector<uint8_t> makePnts(const std::string& featureTableJson,
                               std::vector<uint8_t> featureBinary,
                               const std::string& batchTableJson =
-                                  std::string{}) {
+                                  std::string{},
+                              std::vector<uint8_t> batchTableBinary = {}) {
     std::vector<uint8_t> featureBytes(
         featureTableJson.begin(),
         featureTableJson.end());
@@ -1590,6 +1602,7 @@ std::vector<uint8_t> makePnts(const std::string& featureTableJson,
     if (!batchBytes.empty()) {
         pad4(batchBytes, 0x20);
     }
+    pad4(batchTableBinary, 0);
 
     std::vector<uint8_t> pnts;
     pnts.push_back('p');
@@ -1601,14 +1614,17 @@ std::vector<uint8_t> makePnts(const std::string& featureTableJson,
         pnts,
         static_cast<uint32_t>(
             28 + featureBytes.size() + featureBinary.size() +
-            batchBytes.size()));
+            batchBytes.size() + batchTableBinary.size()));
     appendU32(pnts, static_cast<uint32_t>(featureBytes.size()));
     appendU32(pnts, static_cast<uint32_t>(featureBinary.size()));
     appendU32(pnts, static_cast<uint32_t>(batchBytes.size()));
-    appendU32(pnts, 0u);
+    appendU32(pnts, static_cast<uint32_t>(batchTableBinary.size()));
     pnts.insert(pnts.end(), featureBytes.begin(), featureBytes.end());
     pnts.insert(pnts.end(), featureBinary.begin(), featureBinary.end());
     pnts.insert(pnts.end(), batchBytes.begin(), batchBytes.end());
+    pnts.insert(pnts.end(),
+                batchTableBinary.begin(),
+                batchTableBinary.end());
     return pnts;
 }
 
@@ -7426,6 +7442,28 @@ TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) 
             "{\"name\":[{\"nested\":true}]}"));
 }
 
+TEST(GltfParserTest, ContentProviderRejectsPntsBinaryBatchTable) {
+    std::vector<uint8_t> positionBinary;
+    appendF32(positionBinary, 1.0f);
+    appendF32(positionBinary, 2.0f);
+    appendF32(positionBinary, 3.0f);
+    const std::vector<uint8_t> pnts = makePnts(
+        "{\"POINTS_LENGTH\":1,\"POSITION\":{\"byteOffset\":0}}",
+        std::move(positionBinary),
+        "{\"name\":[\"feature\"]}",
+        {0u, 1u, 2u, 3u});
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "PNTS binary batch table fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(pnts.data(), pnts.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(nullptr, result.gltfModel);
+}
+
 TEST(GltfParserTest, ContentProviderDecodesEmptyCmptContent) {
     const std::vector<uint8_t> cmpt = makeCmpt({});
 
@@ -7747,6 +7785,24 @@ TEST(GltfParserTest, ContentProviderRejectsB3dmBatchIdOutsideBatchLength) {
         TileKey{"Geographic-TMS", 0, 0, 0},
         std::vector<uint8_t>{},
         "B3DM out-of-range batch ID fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(b3dm.data(), b3dm.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(nullptr, result.gltfModel);
+}
+
+TEST(GltfParserTest, ContentProviderRejectsB3dmBinaryBatchTable) {
+    const std::vector<uint8_t> b3dm = makeB3dm(
+        makeLegacyBatchIdTriangleGlb(),
+        "{\"BATCH_LENGTH\":2}",
+        "{\"name\":[\"zero\",\"one\"]}",
+        {0u, 1u, 2u, 3u});
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "B3DM binary batch table fixture");
     TileContentLoadResult result =
         provider.decodeContent(b3dm.data(), b3dm.size());
 
@@ -8097,6 +8153,21 @@ TEST(GltfParserTest, ContentProviderRejectsMalformedI3dmJsonBatchTable) {
     EXPECT_EQ(
         TileContentLoadStatus::Failed,
         decodeStatus("{\"HIERARCHY\":{\"instances\":[]}}"));
+}
+
+TEST(GltfParserTest, ContentProviderRejectsI3dmBinaryBatchTable) {
+    std::vector<uint8_t> featureBinary;
+    appendF32(featureBinary, 0.0f);
+    appendF32(featureBinary, 0.0f);
+    appendF32(featureBinary, 0.0f);
+    const std::vector<uint8_t> i3dm = makeI3dmWithFeatureTable(
+        "{\"INSTANCES_LENGTH\":1,"
+        "\"POSITION\":{\"byteOffset\":0}}",
+        std::move(featureBinary),
+        "{\"Height\":[20]}",
+        {0u, 1u, 2u, 3u});
+
+    EXPECT_EQ(TileContentLoadStatus::Failed, decodeI3dmStatus(i3dm));
 }
 
 TEST(GltfParserTest, ContentProviderRejectsI3dmEastNorthUpTypeMismatch) {
