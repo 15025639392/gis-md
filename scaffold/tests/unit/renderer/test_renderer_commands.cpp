@@ -153,6 +153,56 @@ TEST(RendererCommandTest, GltfFragmentShadersUseBaseColorForUnlitMaterials) {
         msl.find("return float4(base.rgb, alpha * clamp(u_renderOpacity"));
 }
 
+TEST(RendererCommandTest, GltfFragmentShadersApplyAlphaModesConsistently) {
+    const std::string glsl = renderer_testing::gltfFragmentGLSL();
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("base.a < u_alphaCutoff"));
+    EXPECT_NE(std::string::npos, glsl.find("discard;"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("float alpha = u_alphaMode > 1.5 ? base.a : 1.0"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("alpha * clamp(u_renderOpacity"));
+
+    const std::string msl = renderer_testing::gltfFragmentMSL();
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("base.a < u_alphaCutoff"));
+    EXPECT_NE(std::string::npos, msl.find("discard_fragment();"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("float alpha = u_alphaMode > 1.5 ? base.a : 1.0"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("alpha * clamp(u_renderOpacity"));
+}
+
+TEST(RendererCommandTest, GltfFragmentShadersApplyOcclusionAndEmissive) {
+    const std::string glsl = renderer_testing::gltfFragmentGLSL();
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("occlusion = clamp(1.0 + u_materialFactors.w * (ao - 1.0)"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("vec3 emissive = u_emissiveFactor"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("emissive *= texture(u_emissiveTexture"));
+
+    const std::string msl = renderer_testing::gltfFragmentMSL();
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("occlusion = clamp(1.0 + u_materialFactors.w * (ao - 1.0)"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("float3 emissive = u_emissiveFactor"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("emissive *= u_emissiveTexture.sample"));
+}
+
 TEST(RendererCommandTest, GltfFragmentShadersFlipBackFaceNormals) {
     const std::string glsl = renderer_testing::gltfFragmentGLSL();
     EXPECT_NE(std::string::npos, glsl.find("gl_FrontFacing ? 1.0 : -1.0"));
