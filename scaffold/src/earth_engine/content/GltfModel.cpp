@@ -5045,6 +5045,10 @@ std::unique_ptr<GltfModel> GltfParser::parse(
             "KHR_materials_unlit")) {
         return nullptr;
     }
+    if (declaredExtension(input->document, "KHR_texture_transform") &&
+        !documentHasObjectExtension(input->document, "KHR_texture_transform")) {
+        return nullptr;
+    }
     if (declaredExtension(
             input->document,
             "KHR_materials_emissive_strength") &&
