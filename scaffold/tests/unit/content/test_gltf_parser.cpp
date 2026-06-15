@@ -7594,24 +7594,181 @@ TEST(GltfParserTest, ContentProviderDecodesZeroInstanceI3dmAsEmpty) {
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
-TEST(GltfParserTest, ContentProviderRejectsI3dmBatchIdFeatureSemantic) {
+TEST(GltfParserTest, ContentProviderDecodesI3dmBatchIdFeatureProperties) {
     std::vector<uint8_t> featureBinary;
     const size_t positionsOffset = featureBinary.size();
     appendF32(featureBinary, 0.0f);
     appendF32(featureBinary, 0.0f);
     appendF32(featureBinary, 0.0f);
+    appendF32(featureBinary, 10.0f);
+    appendF32(featureBinary, 0.0f);
+    appendF32(featureBinary, 0.0f);
     const size_t batchIdOffset = featureBinary.size();
+    appendU16(featureBinary, 1u);
     appendU32(featureBinary, 0u);
 
     const std::vector<uint8_t> i3dm = makeI3dmWithFeatureTable(
-        std::string("{\"INSTANCES_LENGTH\":1,") +
+        std::string("{\"INSTANCES_LENGTH\":2,") +
         "\"POSITION\":{\"byteOffset\":" +
         std::to_string(positionsOffset) + "}," +
         "\"BATCH_ID\":{\"byteOffset\":" +
-        std::to_string(batchIdOffset) + "}}",
-        std::move(featureBinary));
+        std::to_string(batchIdOffset) +
+        ",\"componentType\":\"UNSIGNED_SHORT\"}}",
+        std::move(featureBinary),
+        "{\"Height\":[10,20],\"name\":[\"low\",\"high\"]}");
 
-    EXPECT_EQ(TileContentLoadStatus::Failed, decodeI3dmStatus(i3dm));
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "I3DM BATCH_ID fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(i3dm.data(), i3dm.size());
+
+    ASSERT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives[0];
+    ASSERT_EQ(2u, primitive.instances.size());
+
+    EXPECT_EQ(1u, primitive.instances[0].featureId);
+    ASSERT_NE(
+        nullptr,
+        std::get_if<uint64_t>(
+            &primitive.instances[0].featureProperties.at("Height")));
+    EXPECT_EQ(
+        20u,
+        *std::get_if<uint64_t>(
+            &primitive.instances[0].featureProperties.at("Height")));
+    EXPECT_EQ(
+        "high",
+        *std::get_if<std::string>(
+            &primitive.instances[0].featureProperties.at("name")));
+
+    EXPECT_EQ(0u, primitive.instances[1].featureId);
+    EXPECT_EQ(
+        10u,
+        *std::get_if<uint64_t>(
+            &primitive.instances[1].featureProperties.at("Height")));
+    EXPECT_EQ(
+        "low",
+        *std::get_if<std::string>(
+            &primitive.instances[1].featureProperties.at("name")));
+}
+
+TEST(GltfParserTest, ContentProviderDecodesI3dmBatchIdComponentTypes) {
+    auto decodeSingleInstance = [](const std::string& batchIdObject,
+                                   std::vector<uint8_t> batchIdBytes) {
+        std::vector<uint8_t> featureBinary;
+        appendF32(featureBinary, 0.0f);
+        appendF32(featureBinary, 0.0f);
+        appendF32(featureBinary, 0.0f);
+        const size_t batchIdOffset = featureBinary.size();
+        featureBinary.insert(
+            featureBinary.end(),
+            batchIdBytes.begin(),
+            batchIdBytes.end());
+
+        std::string batchIdJson = batchIdObject;
+        const std::string marker = "$OFFSET";
+        const size_t markerPos = batchIdJson.find(marker);
+        if (markerPos != std::string::npos) {
+            batchIdJson.replace(
+                markerPos,
+                marker.size(),
+                std::to_string(batchIdOffset));
+        }
+
+        const std::vector<uint8_t> i3dm = makeI3dmWithFeatureTable(
+            std::string("{\"INSTANCES_LENGTH\":1,") +
+            "\"POSITION\":{\"byteOffset\":0},"
+            "\"BATCH_ID\":" + batchIdJson + "}",
+            std::move(featureBinary),
+            "{\"Height\":[10,20,30]}");
+
+        SingleGltfContentProvider provider(
+            TileKey{"Geographic-TMS", 0, 0, 0},
+            std::vector<uint8_t>{},
+            "I3DM BATCH_ID component fixture");
+        TileContentLoadResult result =
+            provider.decodeContent(i3dm.data(), i3dm.size());
+        return result;
+    };
+
+    std::vector<uint8_t> defaultUshort;
+    appendU16(defaultUshort, 2u);
+    TileContentLoadResult defaultResult =
+        decodeSingleInstance("{\"byteOffset\":$OFFSET}", defaultUshort);
+    ASSERT_EQ(TileContentLoadStatus::Render, defaultResult.status);
+    ASSERT_NE(nullptr, defaultResult.gltfModel);
+    ASSERT_EQ(1u, defaultResult.gltfModel->primitives.size());
+    ASSERT_EQ(1u, defaultResult.gltfModel->primitives[0].instances.size());
+    EXPECT_EQ(
+        2u,
+        defaultResult.gltfModel->primitives[0].instances[0].featureId);
+
+    TileContentLoadResult ubyteResult = decodeSingleInstance(
+        "{\"byteOffset\":$OFFSET,\"componentType\":\"UNSIGNED_BYTE\"}",
+        {static_cast<uint8_t>(2u)});
+    ASSERT_EQ(TileContentLoadStatus::Render, ubyteResult.status);
+    ASSERT_NE(nullptr, ubyteResult.gltfModel);
+    EXPECT_EQ(2u, ubyteResult.gltfModel->primitives[0].instances[0].featureId);
+
+    std::vector<uint8_t> uintBytes;
+    appendU32(uintBytes, 2u);
+    TileContentLoadResult uintResult = decodeSingleInstance(
+        "{\"byteOffset\":$OFFSET,\"componentType\":\"UNSIGNED_INT\"}",
+        uintBytes);
+    ASSERT_EQ(TileContentLoadStatus::Render, uintResult.status);
+    ASSERT_NE(nullptr, uintResult.gltfModel);
+    EXPECT_EQ(2u, uintResult.gltfModel->primitives[0].instances[0].featureId);
+}
+
+TEST(GltfParserTest, ContentProviderRejectsMalformedI3dmBatchId) {
+    auto makeWithBatchId = [](const std::string& batchIdJson,
+                              std::vector<uint8_t> featureBinary,
+                              const std::string& batchJson) {
+        return makeI3dmWithFeatureTable(
+            std::string("{\"INSTANCES_LENGTH\":1,") +
+            "\"POSITION\":{\"byteOffset\":0}," +
+            "\"BATCH_ID\":" + batchIdJson + "}",
+            std::move(featureBinary),
+            batchJson);
+    };
+
+    std::vector<uint8_t> invalidComponentBinary;
+    appendF32(invalidComponentBinary, 0.0f);
+    appendF32(invalidComponentBinary, 0.0f);
+    appendF32(invalidComponentBinary, 0.0f);
+    appendU16(invalidComponentBinary, 0u);
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeI3dmStatus(makeWithBatchId(
+            "{\"byteOffset\":12,\"componentType\":\"FLOAT\"}",
+            std::move(invalidComponentBinary),
+            "{\"Height\":[10]}")));
+
+    std::vector<uint8_t> outOfRangeBinary;
+    appendF32(outOfRangeBinary, 0.0f);
+    appendF32(outOfRangeBinary, 0.0f);
+    appendF32(outOfRangeBinary, 0.0f);
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeI3dmStatus(makeWithBatchId(
+            "{\"byteOffset\":12}",
+            std::move(outOfRangeBinary),
+            "{\"Height\":[10]}")));
+
+    std::vector<uint8_t> mismatchedBatchRowsBinary;
+    appendF32(mismatchedBatchRowsBinary, 0.0f);
+    appendF32(mismatchedBatchRowsBinary, 0.0f);
+    appendF32(mismatchedBatchRowsBinary, 0.0f);
+    appendU16(mismatchedBatchRowsBinary, 2u);
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeI3dmStatus(makeWithBatchId(
+            "{\"byteOffset\":12}",
+            std::move(mismatchedBatchRowsBinary),
+            "{\"Height\":[10,20]}")));
 }
 
 TEST(GltfParserTest, ContentProviderDecodesI3dmJsonBatchTableProperties) {

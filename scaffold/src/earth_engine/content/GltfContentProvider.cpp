@@ -1007,6 +1007,12 @@ struct I3dmHeader {
     uint32_t gltfFormat = 0;
 };
 
+enum class I3dmBatchIdComponentType {
+    UnsignedByte,
+    UnsignedShort,
+    UnsignedInt
+};
+
 struct I3dmFeatureTable {
     uint32_t instancesLength = 0;
     std::optional<glm::dvec3> rtcCenter;
@@ -1021,12 +1027,16 @@ struct I3dmFeatureTable {
     std::optional<uint32_t> normalRightOct32p;
     std::optional<uint32_t> scale;
     std::optional<uint32_t> scaleNonUniform;
+    std::optional<uint32_t> batchId;
+    I3dmBatchIdComponentType batchIdComponentType =
+        I3dmBatchIdComponentType::UnsignedShort;
 };
 
 struct DecodedI3dmInstances {
     std::vector<glm::dvec3> positions;
     std::vector<glm::dquat> rotations;
     std::vector<glm::dvec3> scales;
+    std::vector<uint32_t> featureIds;
     std::vector<std::map<std::string, GltfFeaturePropertyValue>>
         featureProperties;
     std::optional<glm::dvec3> rtcCenter;
@@ -1093,6 +1103,37 @@ std::optional<uint32_t> semanticOffset(const nlohmann::json& featureJson,
         return std::nullopt;
     }
     return offset;
+}
+
+std::optional<I3dmBatchIdComponentType> i3dmBatchIdComponentType(
+    const nlohmann::json& featureJson,
+    bool& valid) {
+    auto it = featureJson.find("BATCH_ID");
+    if (it == featureJson.end()) return std::nullopt;
+    if (!it->is_object()) {
+        valid = false;
+        return std::nullopt;
+    }
+    auto componentTypeIt = it->find("componentType");
+    if (componentTypeIt == it->end()) {
+        return I3dmBatchIdComponentType::UnsignedShort;
+    }
+    if (!componentTypeIt->is_string()) {
+        valid = false;
+        return std::nullopt;
+    }
+    const std::string componentType = componentTypeIt->get<std::string>();
+    if (componentType == "UNSIGNED_BYTE") {
+        return I3dmBatchIdComponentType::UnsignedByte;
+    }
+    if (componentType == "UNSIGNED_SHORT") {
+        return I3dmBatchIdComponentType::UnsignedShort;
+    }
+    if (componentType == "UNSIGNED_INT") {
+        return I3dmBatchIdComponentType::UnsignedInt;
+    }
+    valid = false;
+    return std::nullopt;
 }
 
 bool finiteVec3(const glm::dvec3& value) {
@@ -1183,11 +1224,10 @@ std::optional<I3dmFeatureTable> parseI3dmFeatureTable(
     if (featureJson.is_discarded() || !featureJson.is_object()) {
         return std::nullopt;
     }
-    if (featureJson.contains("extensions") ||
-        featureJson.contains("BATCH_ID")) {
+    if (featureJson.contains("extensions")) {
         return std::nullopt;
     }
-    static constexpr std::array<const char*, 13> kAllowedFeatureKeys = {
+    static constexpr std::array<const char*, 14> kAllowedFeatureKeys = {
         "INSTANCES_LENGTH",
         "RTC_CENTER",
         "QUANTIZED_VOLUME_OFFSET",
@@ -1200,7 +1240,8 @@ std::optional<I3dmFeatureTable> parseI3dmFeatureTable(
         "NORMAL_UP_OCT32P",
         "NORMAL_RIGHT_OCT32P",
         "SCALE",
-        "SCALE_NON_UNIFORM"};
+        "SCALE_NON_UNIFORM",
+        "BATCH_ID"};
     if (!jsonObjectHasOnlyKeys(featureJson, kAllowedFeatureKeys)) {
         return std::nullopt;
     }
@@ -1240,6 +1281,12 @@ std::optional<I3dmFeatureTable> parseI3dmFeatureTable(
     table.scale = semanticOffset(featureJson, "SCALE", valid);
     table.scaleNonUniform =
         semanticOffset(featureJson, "SCALE_NON_UNIFORM", valid);
+    table.batchId = semanticOffset(featureJson, "BATCH_ID", valid);
+    std::optional<I3dmBatchIdComponentType> batchIdComponentType =
+        i3dmBatchIdComponentType(featureJson, valid);
+    if (batchIdComponentType) {
+        table.batchIdComponentType = *batchIdComponentType;
+    }
     if (!valid) return std::nullopt;
 
     if (!table.position && !table.positionQuantized) return std::nullopt;
@@ -1272,6 +1319,36 @@ glm::dvec3 readFeatureVec3U16(const uint8_t* binary,
         readU16LE(p),
         readU16LE(p + 2),
         readU16LE(p + 4));
+}
+
+size_t i3dmBatchIdStride(I3dmBatchIdComponentType componentType) {
+    switch (componentType) {
+        case I3dmBatchIdComponentType::UnsignedByte:
+            return 1u;
+        case I3dmBatchIdComponentType::UnsignedShort:
+            return 2u;
+        case I3dmBatchIdComponentType::UnsignedInt:
+            return 4u;
+    }
+    return 0u;
+}
+
+uint32_t readI3dmBatchId(const uint8_t* binary,
+                         uint32_t offset,
+                         uint32_t index,
+                         I3dmBatchIdComponentType componentType) {
+    const uint8_t* p =
+        binary + offset +
+        static_cast<size_t>(index) * i3dmBatchIdStride(componentType);
+    switch (componentType) {
+        case I3dmBatchIdComponentType::UnsignedByte:
+            return *p;
+        case I3dmBatchIdComponentType::UnsignedShort:
+            return readU16LE(p);
+        case I3dmBatchIdComponentType::UnsignedInt:
+            return readU32LE(p);
+    }
+    return 0u;
 }
 
 glm::dvec3 octDecodeInRange(uint16_t x, uint16_t y) {
@@ -1356,7 +1433,7 @@ std::optional<GltfFeaturePropertyValue> jsonFeaturePropertyValue(
 std::optional<std::vector<std::map<std::string, GltfFeaturePropertyValue>>>
 parseI3dmJsonBatchTable(const uint8_t* data,
                         const I3dmHeader& header,
-                        uint32_t instancesLength) {
+                        uint32_t featureCount) {
     if (header.batchTableBinaryByteLength > 0) {
         return std::nullopt;
     }
@@ -1382,13 +1459,13 @@ parseI3dmJsonBatchTable(const uint8_t* data,
     }
 
     std::vector<std::map<std::string, GltfFeaturePropertyValue>> rows(
-        instancesLength);
+        featureCount);
     for (auto it = batchJson.begin(); it != batchJson.end(); ++it) {
         if (it.key().empty() || !it.value().is_array() ||
-            it.value().size() != instancesLength) {
+            it.value().size() != featureCount) {
             return std::nullopt;
         }
-        for (uint32_t i = 0; i < instancesLength; ++i) {
+        for (uint32_t i = 0; i < featureCount; ++i) {
             std::optional<GltfFeaturePropertyValue> propertyValue =
                 jsonFeaturePropertyValue(it.value()[i]);
             if (!propertyValue) {
@@ -1445,12 +1522,21 @@ std::optional<DecodedI3dmInstances> decodeI3dmInstances(
         !checkedRange(binarySize, *table->scaleNonUniform, count, 12)) {
         return std::nullopt;
     }
+    if (table->batchId &&
+        !checkedRange(
+            binarySize,
+            *table->batchId,
+            count,
+            i3dmBatchIdStride(table->batchIdComponentType))) {
+        return std::nullopt;
+    }
 
     DecodedI3dmInstances instances;
     instances.rtcCenter = table->rtcCenter;
     instances.positions.resize(count, glm::dvec3(0.0));
     instances.rotations.resize(count, glm::dquat(1.0, 0.0, 0.0, 0.0));
     instances.scales.resize(count, glm::dvec3(1.0));
+    instances.featureIds.resize(count, 0u);
 
     if (table->position) {
         for (uint32_t i = 0; i < count; ++i) {
@@ -1538,14 +1624,46 @@ std::optional<DecodedI3dmInstances> decodeI3dmInstances(
         }
     }
 
+    uint32_t featureCount = count;
+    if (table->batchId) {
+        uint32_t maxFeatureId = 0u;
+        for (uint32_t i = 0; i < count; ++i) {
+            const uint32_t featureId = readI3dmBatchId(
+                binary,
+                *table->batchId,
+                i,
+                table->batchIdComponentType);
+            instances.featureIds[i] = featureId;
+            maxFeatureId = std::max(maxFeatureId, featureId);
+        }
+        if (count > 0u &&
+            maxFeatureId == std::numeric_limits<uint32_t>::max()) {
+            return std::nullopt;
+        }
+        featureCount = count == 0u ? 0u : maxFeatureId + 1u;
+    } else {
+        for (uint32_t i = 0; i < count; ++i) {
+            instances.featureIds[i] = i;
+        }
+    }
+
     std::optional<
         std::vector<std::map<std::string, GltfFeaturePropertyValue>>>
         featureProperties =
-            parseI3dmJsonBatchTable(data, header, count);
+            parseI3dmJsonBatchTable(data, header, featureCount);
     if (!featureProperties) {
         return std::nullopt;
     }
-    instances.featureProperties = std::move(*featureProperties);
+    if (!featureProperties->empty()) {
+        instances.featureProperties.resize(count);
+        for (uint32_t i = 0; i < count; ++i) {
+            const uint32_t featureId = instances.featureIds[i];
+            if (featureId >= featureProperties->size()) {
+                return std::nullopt;
+            }
+            instances.featureProperties[i] = (*featureProperties)[featureId];
+        }
+    }
 
     recenterI3dmInstances(instances);
     return instances;
@@ -1563,7 +1681,10 @@ std::vector<GltfInstance> makeGltfInstances(
         transform = glm::scale(transform, decoded.scales[i]);
         GltfInstance instance;
         instance.transform = Mat4(transform) * gltfUpAxisTransform;
-        instance.featureId = static_cast<uint32_t>(i);
+        instance.featureId =
+            decoded.featureIds.size() == decoded.positions.size()
+                ? decoded.featureIds[i]
+                : static_cast<uint32_t>(i);
         if (decoded.featureProperties.size() == decoded.positions.size()) {
             instance.featureProperties = decoded.featureProperties[i];
         }
