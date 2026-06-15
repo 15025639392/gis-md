@@ -4863,6 +4863,61 @@ TEST(GltfParserTest, RejectsExtTextureWebpBufferViewBytesWithoutWebpSignature) {
     EXPECT_FALSE(decodedImage);
 }
 
+TEST(GltfParserTest, RejectsExtTextureWebpDataUriBytesWithoutWebpSignature) {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf(
+            "data:image/png;base64,CQkJCQ==");
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":[\"EXT_texture_webp\"],"
+        "\"extensionsRequired\":[\"EXT_texture_webp\"],");
+
+    const std::string textureMarker =
+        "\"textures\":[{\"source\":0,\"sampler\":0}]";
+    const size_t texturePos = fixture.jsonText.find(textureMarker);
+    ASSERT_NE(std::string::npos, texturePos);
+    fixture.jsonText.replace(
+        texturePos,
+        textureMarker.size(),
+        "\"textures\":[{\"source\":0,\"sampler\":0,"
+        "\"extensions\":{\"EXT_texture_webp\":{\"source\":1}}}]");
+
+    const std::string imageMarker =
+        "\"images\":[{\"uri\":\"data:image/png;base64,CQkJCQ==\"}]";
+    const size_t imagePos = fixture.jsonText.find(imageMarker);
+    ASSERT_NE(std::string::npos, imagePos);
+    fixture.jsonText.replace(
+        imagePos,
+        imageMarker.size(),
+        "\"images\":["
+        "{\"uri\":\"data:image/png;base64,CQkJCQ==\"},"
+        "{\"uri\":\"data:image/webp;base64,CQgHBg==\"}]");
+
+    bool decodedImage = false;
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            return uri == "triangle.bin" ? fixture.bin
+                                         : std::vector<uint8_t>{};
+        },
+        [&](const uint8_t*, size_t) -> std::optional<GltfImage> {
+            decodedImage = true;
+            GltfImage image;
+            image.width = 1;
+            image.height = 1;
+            image.channels = 4;
+            image.pixels = {255, 255, 255, 255};
+            return image;
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(decodedImage);
+}
+
 TEST(GltfParserTest, RejectsBaseColorTextureDataUriWithUnsupportedMimeType) {
     const ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf(
