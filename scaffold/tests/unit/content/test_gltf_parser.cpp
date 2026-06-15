@@ -7293,6 +7293,40 @@ TEST(GltfParserTest, ContentProviderDecodesSingleInnerCmptWithRuntimeAnimation) 
         1e-12);
 }
 
+TEST(GltfParserTest, ContentProviderRejectsCmptWithUnsupportedInnerContent) {
+    const std::vector<uint8_t> unsupportedB3dm = makeB3dm(
+        makeTriangleGlb(),
+        "{\"BATCH_LENGTH\":1}",
+        "{\"name\":[\"building\"]}");
+    const std::vector<uint8_t> cmpt =
+        makeCmpt({makeTriangleGlb(), unsupportedB3dm});
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "unsupported inner CMPT fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(cmpt.data(), cmpt.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(nullptr, result.gltfModel);
+}
+
+TEST(GltfParserTest, ContentProviderRejectsMultiInnerCmptWithRuntimeAnimation) {
+    const std::vector<uint8_t> cmpt =
+        makeCmpt({makeAnimatedTranslationTriangleGlb(), makeTriangleGlb()});
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "animated multi-inner CMPT fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(cmpt.data(), cmpt.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(nullptr, result.gltfModel);
+}
+
 TEST(GltfParserTest, ContentProviderDecodesCmptWithB3dmAndPnts) {
     std::vector<uint8_t> pntsBinary;
     appendF32(pntsBinary, 4.0f);
