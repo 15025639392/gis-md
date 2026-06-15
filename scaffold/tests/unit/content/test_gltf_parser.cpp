@@ -1512,6 +1512,24 @@ void appendAccessorToExternalFixture(
         marker + "," + accessorJson);
 }
 
+void appendUnreferencedMeshToExternalFixture(
+    ExternalGltfFixture& fixture,
+    const std::string& primitiveJson,
+    const std::string& meshPrefix = std::string{}) {
+    const std::string primitive =
+        "{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},"
+        "\"indices\":3,\"mode\":4}";
+    const std::string marker =
+        "\"meshes\":[{\"primitives\":[" + primitive + "]}]";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "\"meshes\":[{\"primitives\":[" + primitive + "]},{" +
+            meshPrefix + "\"primitives\":[" + primitiveJson + "]}]");
+}
+
 enum class GpuInstanceRotationEncoding {
     Float,
     ZeroFloat,
@@ -5940,6 +5958,55 @@ TEST(GltfParserTest, RejectsUnreferencedUnsupportedPrimitiveMode) {
         marker.size(),
         "\"meshes\":[{\"primitives\":[" + primitive +
             "]},{\"primitives\":[" + linePrimitive + "]}]");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsUnreferencedPrimitiveMissingPosition) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    appendUnreferencedMeshToExternalFixture(
+        fixture,
+        "{\"attributes\":{\"NORMAL\":1},\"mode\":4}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsUnreferencedAttributeCountMismatch) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    appendAccessorToExternalFixture(
+        fixture,
+        "{\"bufferView\":1,\"componentType\":5126,\"count\":1,\"type\":\"VEC3\"}");
+    appendUnreferencedMeshToExternalFixture(
+        fixture,
+        "{\"attributes\":{\"POSITION\":0,\"NORMAL\":4},\"mode\":4}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsUnreferencedIndexModeCountMismatch) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    appendUnreferencedMeshToExternalFixture(
+        fixture,
+        "{\"attributes\":{\"POSITION\":0},\"indices\":3,\"mode\":1}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsUnreferencedMeshMorphWeightCountMismatch) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    appendUnreferencedMeshToExternalFixture(
+        fixture,
+        "{\"attributes\":{\"POSITION\":0},\"mode\":4,"
+        "\"targets\":[{\"POSITION\":0}]}",
+        "\"weights\":[1.0,0.0],");
 
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
 

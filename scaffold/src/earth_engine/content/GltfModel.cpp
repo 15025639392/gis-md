@@ -4331,6 +4331,249 @@ bool morphTargetSemanticSupported(const std::string& semantic) {
            semantic == "TANGENT";
 }
 
+bool validatePrimitiveAccessorSemantics(
+    const json& doc,
+    const std::vector<std::vector<uint8_t>>& buffers,
+    const json& primitiveJson,
+    bool meshQuantizationEnabled,
+    bool allowLegacyBatchIdAttribute) {
+    const auto primitiveMode = integerProperty(primitiveJson, "mode", 4);
+    if (!primitiveMode || !validRenderablePrimitiveMode(*primitiveMode)) {
+        return false;
+    }
+    const auto attrsIt = primitiveJson.find("attributes");
+    if (attrsIt == primitiveJson.end() || !attrsIt->is_object()) {
+        return false;
+    }
+    const json& attrs = *attrsIt;
+    const auto positionIt = attrs.find("POSITION");
+    if (positionIt == attrs.end() || !positionIt->is_number_integer()) {
+        return false;
+    }
+    const auto positions =
+        accessorSpan(doc, buffers, positionIt->get<int>());
+    if (!positions ||
+        !validQuantizedVectorAccessor(
+            *positions,
+            "VEC3",
+            3,
+            meshQuantizationEnabled)) {
+        return false;
+    }
+
+    const bool hasJoints = attrs.contains("JOINTS_0");
+    const bool hasWeights = attrs.contains("WEIGHTS_0");
+    if (hasJoints != hasWeights) {
+        return false;
+    }
+
+    std::optional<AccessorSpan> tangents;
+    for (auto it = attrs.begin(); it != attrs.end(); ++it) {
+        const std::string& semantic = it.key();
+        if (!primitiveAttributeSemanticSupported(
+                semantic,
+                allowLegacyBatchIdAttribute) ||
+            !it.value().is_number_integer()) {
+            return false;
+        }
+        const auto span = accessorSpan(doc, buffers, it.value().get<int>());
+        if (!span || span->count != positions->count) {
+            return false;
+        }
+
+        if (semantic == "POSITION") {
+            if (!validQuantizedVectorAccessor(
+                    *span,
+                    "VEC3",
+                    3,
+                    meshQuantizationEnabled)) {
+                return false;
+            }
+        } else if (semantic == "NORMAL") {
+            if (!validQuantizedVectorAccessor(
+                    *span,
+                    "VEC3",
+                    3,
+                    meshQuantizationEnabled)) {
+                return false;
+            }
+        } else if (semantic == "TANGENT") {
+            if (!validTangentAccessor(*span, meshQuantizationEnabled)) {
+                return false;
+            }
+            tangents = *span;
+        } else if (attributeSemanticStartsWith(semantic, "TEXCOORD_")) {
+            if (!validTexCoordAccessor(*span, meshQuantizationEnabled)) {
+                return false;
+            }
+        } else if (semantic == "COLOR_0") {
+            if (!validColorAccessor(*span)) {
+                return false;
+            }
+        } else if (semantic == "JOINTS_0") {
+            if (span->components != 4 ||
+                (span->componentType != 5121 &&
+                 span->componentType != 5123)) {
+                return false;
+            }
+        } else if (semantic == "WEIGHTS_0") {
+            const bool validFloatWeights =
+                span->components == 4 &&
+                span->componentType == 5126 &&
+                !span->normalized;
+            const bool validNormalizedIntegerWeights =
+                span->components == 4 &&
+                (span->componentType == 5121 ||
+                 span->componentType == 5123) &&
+                span->normalized;
+            if (!validFloatWeights && !validNormalizedIntegerWeights) {
+                return false;
+            }
+        } else if (semantic == "_BATCHID") {
+            if (!allowLegacyBatchIdAttribute ||
+                !validFeatureIdAccessor(*span)) {
+                return false;
+            }
+        } else if (semantic.empty() || semantic[0] != '_') {
+            return false;
+        }
+    }
+
+    if (primitiveJson.contains("targets")) {
+        if (!primitiveJson["targets"].is_array()) {
+            return false;
+        }
+        for (const json& targetJson : primitiveJson["targets"]) {
+            if (!targetJson.is_object()) {
+                return false;
+            }
+            for (auto it = targetJson.begin(); it != targetJson.end(); ++it) {
+                if (!morphTargetSemanticSupported(it.key()) ||
+                    !it.value().is_number_integer()) {
+                    return false;
+                }
+                if (it.key() == "TANGENT" && !tangents) {
+                    return false;
+                }
+                const auto span =
+                    accessorSpan(doc, buffers, it.value().get<int>());
+                if (!span ||
+                    span->components != 3 ||
+                    span->componentType != 5126 ||
+                    span->count != positions->count) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    std::vector<uint32_t> indices;
+    if (primitiveJson.contains("indices")) {
+        if (!primitiveJson["indices"].is_number_integer()) {
+            return false;
+        }
+        const auto indexSpan = accessorSpan(
+            doc,
+            buffers,
+            primitiveJson["indices"].get<int>());
+        if (!indexSpan ||
+            indexSpan->components != 1 ||
+            indexSpan->normalized ||
+            (indexSpan->componentType != 5121 &&
+             indexSpan->componentType != 5123 &&
+             indexSpan->componentType != 5125)) {
+            return false;
+        }
+        indices = readIndices(*indexSpan);
+    } else {
+        indices.resize(positions->count);
+        for (size_t i = 0; i < positions->count; ++i) {
+            indices[i] = static_cast<uint32_t>(i);
+        }
+    }
+
+    GltfPrimitiveMode renderMode = *renderModeForPrimitiveMode(*primitiveMode);
+    return normalizeIndicesForPrimitiveMode(
+               indices,
+               *primitiveMode,
+               renderMode) &&
+           std::all_of(
+               indices.begin(),
+               indices.end(),
+               [vertexCount = positions->count](uint32_t index) {
+                   return index < vertexCount;
+               });
+}
+
+bool validateAllPrimitiveAccessorSemantics(
+    const json& doc,
+    const std::vector<std::vector<uint8_t>>& buffers,
+    bool meshQuantizationEnabled,
+    bool allowLegacyBatchIdAttribute) {
+    const auto meshesIt = doc.find("meshes");
+    if (meshesIt != doc.end()) {
+        if (!meshesIt->is_array()) {
+            return false;
+        }
+        for (size_t meshIndex = 0; meshIndex < meshesIt->size(); ++meshIndex) {
+            const json& mesh = (*meshesIt)[meshIndex];
+            if (!mesh.is_object()) {
+                return false;
+            }
+            const size_t morphTargetCount =
+                meshMorphTargetCount(doc, static_cast<int>(meshIndex));
+            if (mesh.contains("weights") &&
+                (!jsonNumberArray(mesh["weights"]) ||
+                 mesh["weights"].size() != morphTargetCount)) {
+                return false;
+            }
+            const auto primitivesIt = mesh.find("primitives");
+            if (primitivesIt == mesh.end() || !primitivesIt->is_array()) {
+                return false;
+            }
+            for (const json& primitiveJson : *primitivesIt) {
+                if (!primitiveJson.is_object() ||
+                    !validatePrimitiveAccessorSemantics(
+                        doc,
+                        buffers,
+                        primitiveJson,
+                        meshQuantizationEnabled,
+                        allowLegacyBatchIdAttribute)) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    const auto nodesIt = doc.find("nodes");
+    if (nodesIt != doc.end()) {
+        if (!nodesIt->is_array()) {
+            return false;
+        }
+        for (const json& node : *nodesIt) {
+            if (!node.is_object() || !node.contains("weights")) {
+                continue;
+            }
+            if (!jsonNumberArray(node["weights"]) ||
+                !node.contains("mesh") ||
+                !node["mesh"].is_number_integer()) {
+                return false;
+            }
+            const int meshIndex = node["mesh"].get<int>();
+            if (meshIndex < 0 ||
+                meshesIt == doc.end() ||
+                !meshesIt->is_array() ||
+                static_cast<size_t>(meshIndex) >= meshesIt->size() ||
+                node["weights"].size() != meshMorphTargetCount(
+                    doc,
+                    meshIndex)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 std::optional<std::array<float, 4>> readVertexColor(
     const AccessorSpan& span,
     size_t index) {
@@ -6764,7 +7007,12 @@ std::unique_ptr<GltfModel> GltfParser::parse(
     }
     std::vector<std::vector<uint8_t>> buffers = std::move(*loadedBuffers);
     if (!validateAllBufferViews(input->document, buffers) ||
-        !validateAllAccessors(input->document, buffers)) {
+        !validateAllAccessors(input->document, buffers) ||
+        !validateAllPrimitiveAccessorSemantics(
+            input->document,
+            buffers,
+            meshQuantizationEnabled,
+            options.allowLegacyBatchIdAttribute)) {
         return nullptr;
     }
     auto model = std::make_unique<GltfModel>();
