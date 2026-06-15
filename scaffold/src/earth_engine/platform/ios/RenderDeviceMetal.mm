@@ -695,9 +695,14 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
         setFragmentUniform("u_sheenRoughnessTexOffsetScale", 49);
         setFragmentUniform("u_sheenRoughnessTexRotationSinCos", 50);
         setFragmentUniform("u_sheenTexCoordSets", 51);
+        setFragmentUniform("u_anisotropyFactors", 52);
+        setFragmentUniform("u_hasAnisotropyTexture", 53);
+        setFragmentUniform("u_anisotropyTexOffsetScale", 54);
+        setFragmentUniform("u_anisotropyTexRotationSinCos", 55);
+        setFragmentUniform("u_anisotropyTexCoordSet", 56);
 
         // 纹理绑定
-        const NSUInteger maxMaterialTextures = 12;
+        const NSUInteger maxMaterialTextures = 13;
         const NSUInteger materialTextureCount =
             std::min<NSUInteger>(cmd.textures.size(), maxMaterialTextures);
         for (NSUInteger textureIndex = 0;

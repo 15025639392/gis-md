@@ -403,12 +403,13 @@ bool validateAsset(const json& doc) {
 }
 
 bool isSupportedExtensionName(const std::string& name) {
-    static constexpr std::array<const char*, 10> kSupportedExtensions = {
+    static constexpr std::array<const char*, 11> kSupportedExtensions = {
         "KHR_texture_transform",
         "KHR_mesh_quantization",
         "KHR_materials_unlit",
         "KHR_materials_emissive_strength",
         "KHR_materials_ior",
+        "KHR_materials_anisotropy",
         "KHR_materials_specular",
         "KHR_materials_clearcoat",
         "KHR_materials_sheen",
@@ -477,7 +478,9 @@ bool isTextureInfoExtensionParentPath(const std::vector<std::string>& path) {
            (path.size() == 5 &&
             path[0] == "materials" &&
             path[2] == "extensions" &&
-            ((path[3] == "KHR_materials_specular" &&
+            ((path[3] == "KHR_materials_anisotropy" &&
+              path[4] == "anisotropyTexture") ||
+             (path[3] == "KHR_materials_specular" &&
               (path[4] == "specularTexture" ||
                path[4] == "specularColorTexture")) ||
              (path[3] == "KHR_materials_clearcoat" &&
@@ -520,6 +523,7 @@ bool extensionsObjectSupportedAtPath(
         if (it.key() == "KHR_materials_unlit" ||
             it.key() == "KHR_materials_emissive_strength" ||
             it.key() == "KHR_materials_ior" ||
+            it.key() == "KHR_materials_anisotropy" ||
             it.key() == "KHR_materials_specular" ||
             it.key() == "KHR_materials_clearcoat" ||
             it.key() == "KHR_materials_sheen") {
@@ -607,11 +611,12 @@ bool documentHasObjectExtension(
 }
 
 bool supportedObjectExtensionsAreDeclared(const json& doc) {
-    constexpr std::array<const char*, 9> kObjectExtensions = {
+    constexpr std::array<const char*, 10> kObjectExtensions = {
         "KHR_texture_transform",
         "KHR_materials_unlit",
         "KHR_materials_emissive_strength",
         "KHR_materials_ior",
+        "KHR_materials_anisotropy",
         "KHR_materials_specular",
         "KHR_materials_clearcoat",
         "KHR_materials_sheen",
@@ -2249,6 +2254,29 @@ bool validateMaterialExtensions(const json& material) {
         }
     }
 
+    const auto anisotropyIt =
+        extensionsIt->find("KHR_materials_anisotropy");
+    if (anisotropyIt != extensionsIt->end()) {
+        if (unlitIt != extensionsIt->end() ||
+            extensionsIt->contains("KHR_materials_pbrSpecularGlossiness") ||
+            !anisotropyIt->is_object()) {
+            return false;
+        }
+        const auto strengthIt = anisotropyIt->find("anisotropyStrength");
+        if (strengthIt != anisotropyIt->end()) {
+            const auto strength =
+                numberProperty(*anisotropyIt, "anisotropyStrength", 0.0f);
+            if (!strength || *strength < 0.0f || *strength > 1.0f) {
+                return false;
+            }
+        }
+        const auto rotationIt = anisotropyIt->find("anisotropyRotation");
+        if (rotationIt != anisotropyIt->end() &&
+            !numberProperty(*anisotropyIt, "anisotropyRotation", 0.0f)) {
+            return false;
+        }
+    }
+
     const auto specularIt = extensionsIt->find("KHR_materials_specular");
     if (specularIt != extensionsIt->end()) {
         if (unlitIt != extensionsIt->end() ||
@@ -2440,6 +2468,40 @@ std::array<float, 3> materialSpecularColorFactor(
     return factor;
 }
 
+float materialAnisotropyStrength(
+    const json& material,
+    bool& strictFailure) {
+    const json* anisotropy =
+        materialObjectExtension(material, "KHR_materials_anisotropy");
+    if (!anisotropy) {
+        return 0.0f;
+    }
+    const auto strength =
+        numberProperty(*anisotropy, "anisotropyStrength", 0.0f);
+    if (!strength || *strength < 0.0f || *strength > 1.0f) {
+        strictFailure = true;
+        return 0.0f;
+    }
+    return *strength;
+}
+
+float materialAnisotropyRotation(
+    const json& material,
+    bool& strictFailure) {
+    const json* anisotropy =
+        materialObjectExtension(material, "KHR_materials_anisotropy");
+    if (!anisotropy) {
+        return 0.0f;
+    }
+    const auto rotation =
+        numberProperty(*anisotropy, "anisotropyRotation", 0.0f);
+    if (!rotation) {
+        strictFailure = true;
+        return 0.0f;
+    }
+    return *rotation;
+}
+
 float materialClearcoatFactor(const json& material, bool& strictFailure) {
     const json* clearcoat =
         materialObjectExtension(material, "KHR_materials_clearcoat");
@@ -2577,6 +2639,17 @@ bool validateMaterialJson(const json& material, size_t textureCount) {
 
     const auto extensionsIt = material.find("extensions");
     if (extensionsIt != material.end() && extensionsIt->is_object()) {
+        const auto anisotropyIt =
+            extensionsIt->find("KHR_materials_anisotropy");
+        if (anisotropyIt != extensionsIt->end()) {
+            if (!anisotropyIt->is_object() ||
+                !validateMaterialTextureInfo(
+                    *anisotropyIt,
+                    "anisotropyTexture",
+                    textureCount)) {
+                return false;
+            }
+        }
         const auto specularIt =
             extensionsIt->find("KHR_materials_specular");
         if (specularIt != extensionsIt->end()) {
@@ -4515,6 +4588,10 @@ std::optional<GltfPrimitive> parsePrimitive(
                 materialSpecularFactor(material, strictFailure);
             primitive.specularColorFactor =
                 materialSpecularColorFactor(material, strictFailure);
+            primitive.anisotropyStrength =
+                materialAnisotropyStrength(material, strictFailure);
+            primitive.anisotropyRotation =
+                materialAnisotropyRotation(material, strictFailure);
             primitive.clearcoatFactor =
                 materialClearcoatFactor(material, strictFailure);
             primitive.clearcoatRoughnessFactor =
@@ -4526,6 +4603,27 @@ std::optional<GltfPrimitive> parsePrimitive(
             if (strictFailure) {
                 return std::nullopt;
             }
+            const json* anisotropyExtension =
+                materialObjectExtension(material, "KHR_materials_anisotropy");
+            if (anisotropyExtension) {
+                auto anisotropyTextureIt =
+                    anisotropyExtension->find("anisotropyTexture");
+                if (anisotropyTextureIt != anisotropyExtension->end() &&
+                    anisotropyTextureIt->is_object()) {
+                    primitive.anisotropyTexture = parseTextureBinding(
+                        *anisotropyTextureIt,
+                        textures,
+                        strictFailure);
+                    if (strictFailure || !primitive.anisotropyTexture) {
+                        return std::nullopt;
+                    }
+                } else if (
+                    anisotropyTextureIt != anisotropyExtension->end()) {
+                    strictFailure = true;
+                    return std::nullopt;
+                }
+            }
+
             const json* specularExtension =
                 materialObjectExtension(material, "KHR_materials_specular");
             if (specularExtension) {
@@ -4746,6 +4844,7 @@ std::optional<GltfPrimitive> parsePrimitive(
     };
     if (!hasTexCoordSet(primitive.baseColorTexture) ||
         !hasTexCoordSet(primitive.metallicRoughnessTexture) ||
+        !hasTexCoordSet(primitive.anisotropyTexture) ||
         !hasTexCoordSet(primitive.specularTexture) ||
         !hasTexCoordSet(primitive.specularColorTexture) ||
         !hasTexCoordSet(primitive.clearcoatTexture) ||
@@ -4758,6 +4857,21 @@ std::optional<GltfPrimitive> parsePrimitive(
         !hasTexCoordSet(primitive.emissiveTexture)) {
         strictFailure = true;
         return std::nullopt;
+    }
+    const bool anisotropyActive =
+        primitive.anisotropyStrength > 0.0f ||
+        primitive.anisotropyTexture.has_value();
+    if (anisotropyActive && !tangents.has_value()) {
+        const int anisotropyTexCoord =
+            primitive.anisotropyTexture
+                ? primitive.anisotropyTexture->texCoord
+                : 0;
+        if (!validTexCoordSetIndex(anisotropyTexCoord) ||
+            !texCoordSpans[static_cast<size_t>(anisotropyTexCoord)]
+                .has_value()) {
+            strictFailure = true;
+            return std::nullopt;
+        }
     }
     primitive.vertices.resize(positions->count);
     for (size_t texCoordSet = 0;
@@ -5592,6 +5706,12 @@ std::unique_ptr<GltfModel> GltfParser::parse(
     }
     if (declaredExtension(input->document, "KHR_materials_ior") &&
         !documentHasObjectExtension(input->document, "KHR_materials_ior")) {
+        return nullptr;
+    }
+    if (declaredExtension(input->document, "KHR_materials_anisotropy") &&
+        !documentHasObjectExtension(
+            input->document,
+            "KHR_materials_anisotropy")) {
         return nullptr;
     }
     if (declaredExtension(input->document, "KHR_materials_specular") &&

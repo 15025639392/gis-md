@@ -116,12 +116,15 @@ struct GltfPrimitive {
     float dielectricSpecularF0 = 0.04f;
     float specularFactor = 1.0f;
     std::array<float, 3> specularColorFactor = {1.0f, 1.0f, 1.0f};
+    float anisotropyStrength = 0.0f;
+    float anisotropyRotation = 0.0f;
     float clearcoatFactor = 0.0f;
     float clearcoatRoughnessFactor = 0.0f;
     float clearcoatNormalTextureScale = 1.0f;
     std::array<float, 3> sheenColorFactor = {0.0f, 0.0f, 0.0f};
     float sheenRoughnessFactor = 0.0f;
     std::optional<GltfTextureBinding> metallicRoughnessTexture;
+    std::optional<GltfTextureBinding> anisotropyTexture;
     std::optional<GltfTextureBinding> specularTexture;
     std::optional<GltfTextureBinding> specularColorTexture;
     std::optional<GltfTextureBinding> clearcoatTexture;

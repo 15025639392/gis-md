@@ -3072,6 +3072,85 @@ void testTilesetGltfIorMaterialUploadsSpecularF0() {
           "Tileset: glTF IOR material uploads dielectric specular F0");
 }
 
+void testTilesetGltfAnisotropyMaterialUploadsUniformsAndTextures() {
+    DummyRenderDevice device;
+    device.allowTextureCreation = true;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: glTF anisotropy material root tile is created");
+    if (!root) return;
+
+    root->gltfModel = makeTexturedTriangleGltfModel();
+    GltfPrimitive& primitive = root->gltfModel->primitives[0];
+    primitive.anisotropyStrength = 0.8f;
+    primitive.anisotropyRotation = 0.25f;
+    GltfTextureBinding anisotropyBinding;
+    anisotropyBinding.textureIndex = 0u;
+    anisotropyBinding.texCoord = 1;
+    anisotropyBinding.transform.offset = {0.125f, 0.25f};
+    anisotropyBinding.transform.scale = {0.5f, 0.75f};
+    anisotropyBinding.transform.rotation = 1.57079632679f;
+    primitive.anisotropyTexture = anisotropyBinding;
+    root->contentKind = TileContentKind::Render;
+    root->loadState = TileLoadState::ContentLoaded;
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 1,
+          "Tileset: glTF anisotropy material emits one primitive draw command");
+    if (commands.empty()) return;
+
+    const RenderCommand& cmd = commands.front();
+    check(cmd.uniforms.count("u_anisotropyFactors") &&
+              cmd.uniforms.at("u_anisotropyFactors").size() == 2 &&
+              std::abs(cmd.uniforms.at("u_anisotropyFactors")[0] - 0.8f) <
+                  1e-6f &&
+              std::abs(cmd.uniforms.at("u_anisotropyFactors")[1] - 0.25f) <
+                  1e-6f,
+          "Tileset: glTF anisotropy material uploads factors");
+    check(cmd.uniforms.count("u_hasAnisotropyTexture") &&
+              cmd.uniforms.at("u_hasAnisotropyTexture").front() == 1.0f,
+          "Tileset: glTF anisotropy material reports texture presence");
+    check(cmd.textures.size() >= 13 &&
+              cmd.textures[12] ==
+                  root->gltfPrimitiveResources.front()
+                      .anisotropyTexture.texture,
+          "Tileset: glTF anisotropy texture binds to material slot 12");
+    check(cmd.uniforms.count("u_anisotropyTexCoordSet") &&
+              cmd.uniforms.at("u_anisotropyTexCoordSet").front() == 1.0f,
+          "Tileset: glTF anisotropy material uploads texture coordinate set");
+    check(cmd.uniforms.count("u_anisotropyTexOffsetScale") &&
+              cmd.uniforms.at("u_anisotropyTexOffsetScale").size() == 4 &&
+              std::abs(cmd.uniforms.at("u_anisotropyTexOffsetScale")[0] -
+                       0.125f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_anisotropyTexOffsetScale")[1] -
+                       0.25f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_anisotropyTexOffsetScale")[2] -
+                       0.5f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_anisotropyTexOffsetScale")[3] -
+                       0.75f) < 1e-6f &&
+              cmd.uniforms.count("u_anisotropyTexRotationSinCos") &&
+              std::abs(cmd.uniforms.at("u_anisotropyTexRotationSinCos")[0] -
+                       1.0f) < 1e-6f,
+          "Tileset: glTF anisotropy texture uploads KHR_texture_transform uniforms");
+}
+
 void testTilesetGltfSpecularMaterialUploadsUniformsAndTextures() {
     DummyRenderDevice device;
     device.allowTextureCreation = true;
@@ -6709,6 +6788,7 @@ int main() {
     testTilesetGltfMaskMaterialStaysOpaqueCommand();
     testTilesetGltfUnlitMaterialUploadsUniform();
     testTilesetGltfIorMaterialUploadsSpecularF0();
+    testTilesetGltfAnisotropyMaterialUploadsUniformsAndTextures();
     testTilesetGltfSpecularMaterialUploadsUniformsAndTextures();
     testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures();
     testTilesetGltfSheenMaterialUploadsUniformsAndTextures();

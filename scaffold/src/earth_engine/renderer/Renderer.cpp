@@ -185,6 +185,7 @@ uniform sampler2D u_metallicRoughnessTexture;
 uniform sampler2D u_normalTexture;
 uniform sampler2D u_occlusionTexture;
 uniform sampler2D u_emissiveTexture;
+uniform sampler2D u_anisotropyTexture;
 uniform sampler2D u_specularTexture;
 uniform sampler2D u_specularColorTexture;
 uniform sampler2D u_clearcoatTexture;
@@ -196,11 +197,13 @@ uniform float u_hasBaseColorTexture;
 uniform vec4 u_materialFactors;       // metallic, roughness, normal scale, occlusion strength
 uniform float u_dielectricSpecularF0;
 uniform vec4 u_hasMaterialTextures;   // metallicRoughness, normal, occlusion, emissive
+uniform float u_hasAnisotropyTexture;
 uniform vec2 u_hasSpecularTextures;   // specular, specularColor
 uniform vec3 u_hasClearcoatTextures;  // clearcoat, roughness, normal
 uniform vec2 u_hasSheenTextures;      // color, roughness
 uniform float u_specularFactor;
 uniform vec3 u_specularColorFactor;
+uniform vec2 u_anisotropyFactors;     // strength, rotation
 uniform vec3 u_clearcoatFactors;      // factor, roughness, normal scale
 uniform vec3 u_sheenColorFactor;
 uniform float u_sheenRoughnessFactor;
@@ -213,6 +216,8 @@ uniform vec4 u_baseColorTexOffsetScale;
 uniform vec2 u_baseColorTexRotationSinCos;
 uniform vec4 u_metallicRoughnessTexOffsetScale;
 uniform vec2 u_metallicRoughnessTexRotationSinCos;
+uniform vec4 u_anisotropyTexOffsetScale;
+uniform vec2 u_anisotropyTexRotationSinCos;
 uniform vec4 u_specularTexOffsetScale;
 uniform vec2 u_specularTexRotationSinCos;
 uniform vec4 u_specularColorTexOffsetScale;
@@ -235,6 +240,7 @@ uniform vec4 u_emissiveTexOffsetScale;
 uniform vec2 u_emissiveTexRotationSinCos;
 uniform vec4 u_textureCoordSets;      // baseColor, metallicRoughness, normal, occlusion
 uniform float u_emissiveTexCoordSet;
+uniform float u_anisotropyTexCoordSet;
 uniform vec2 u_specularTexCoordSets;  // specular, specularColor
 uniform vec3 u_clearcoatTexCoordSets; // clearcoat, roughness, normal
 uniform vec2 u_sheenTexCoordSets;     // color, roughness
@@ -321,6 +327,82 @@ vec3 perturbClearcoatNormal(
     vec3 mapNormal = texture(u_clearcoatNormalTexture, uv).rgb * 2.0 - 1.0;
     mapNormal.xy *= normalScale;
     return perturbNormalFromMap(n, uv, tangentInput, mapNormal);
+}
+
+bool tangentSpaceBasis(
+    vec3 n,
+    vec2 uv,
+    vec4 tangentInput,
+    out vec3 tangent,
+    out vec3 bitangent) {
+    if (dot(tangentInput.xyz, tangentInput.xyz) > 0.0) {
+        tangent = tangentInput.xyz - n * dot(n, tangentInput.xyz);
+        if (dot(tangent, tangent) > 1e-8) {
+            tangent = normalize(tangent);
+            bitangent = cross(n, tangent);
+            float bitangentLenSq = dot(bitangent, bitangent);
+            if (bitangentLenSq > 1e-8) {
+                bitangent = normalize(bitangent) *
+                    (tangentInput.w < 0.0 ? -1.0 : 1.0);
+                return true;
+            }
+        }
+    }
+
+    vec3 dp1 = dFdx(v_position);
+    vec3 dp2 = dFdy(v_position);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+    float det = duv1.x * duv2.y - duv1.y * duv2.x;
+    if (abs(det) < 1e-8) {
+        return false;
+    }
+    tangent = (dp1 * duv2.y - dp2 * duv1.y) / det;
+    bitangent = (-dp1 * duv2.x + dp2 * duv1.x) / det;
+    if (dot(tangent, tangent) < 1e-8 ||
+        dot(bitangent, bitangent) < 1e-8) {
+        return false;
+    }
+    tangent = normalize(tangent);
+    bitangent = normalize(bitangent);
+    return true;
+}
+
+vec2 rotateDirection(vec2 direction, float rotation) {
+    float s = sin(rotation);
+    float c = cos(rotation);
+    return vec2(
+        direction.x * c - direction.y * s,
+        direction.x * s + direction.y * c);
+}
+
+float anisotropicSpecular(
+    float isotropicSpecular,
+    float roughness,
+    float strength,
+    vec3 n,
+    vec3 l,
+    vec3 tangent,
+    vec3 bitangent) {
+    if (strength <= 0.0) {
+        return isotropicSpecular;
+    }
+    vec3 planarL = l - n * dot(n, l);
+    float planarLenSq = dot(planarL, planarL);
+    if (planarLenSq < 1e-8) {
+        return isotropicSpecular;
+    }
+    planarL = normalize(planarL);
+    float along = abs(dot(planarL, tangent));
+    float directionalRoughness =
+        clamp(mix(roughness, 1.0, strength * along), 0.04, 1.0);
+    float directionalPower = mix(96.0, 8.0, directionalRoughness);
+    float directionalSpecular =
+        pow(max(dot(n, l), 0.0), directionalPower) *
+        (1.0 - directionalRoughness);
+    float perpendicularWeight = abs(dot(planarL, bitangent));
+    float blendWeight = clamp(strength * max(along, perpendicularWeight), 0.0, 1.0);
+    return mix(isotropicSpecular, directionalSpecular, blendWeight);
 }
 
 void main() {
@@ -440,9 +522,61 @@ void main() {
             u_clearcoatFactors.z);
     }
 
+    float anisotropyStrength = clamp(u_anisotropyFactors.x, 0.0, 1.0);
+    vec2 anisotropyDirection = vec2(1.0, 0.0);
+    vec3 anisotropyTangent;
+    vec3 anisotropyBitangent;
+    bool hasAnisotropyBasis = false;
+    if (anisotropyStrength > 0.0) {
+        vec2 anisotropyUv = transformUv(
+            uvFromSet(u_anisotropyTexCoordSet),
+            u_anisotropyTexOffsetScale,
+            u_anisotropyTexRotationSinCos);
+        if (u_hasAnisotropyTexture > 0.5) {
+            vec3 anisotropySample =
+                texture(u_anisotropyTexture, anisotropyUv).rgb;
+            anisotropyDirection = anisotropySample.rg * 2.0 - 1.0;
+            anisotropyStrength *= anisotropySample.b;
+        }
+        anisotropyStrength = clamp(anisotropyStrength, 0.0, 1.0);
+        if (anisotropyStrength > 0.0) {
+            if (dot(anisotropyDirection, anisotropyDirection) < 1e-8) {
+                anisotropyDirection = vec2(1.0, 0.0);
+            }
+            anisotropyDirection = normalize(
+                rotateDirection(anisotropyDirection, u_anisotropyFactors.y));
+            hasAnisotropyBasis = tangentSpaceBasis(
+                N,
+                anisotropyUv,
+                v_tangent,
+                anisotropyTangent,
+                anisotropyBitangent);
+            if (hasAnisotropyBasis) {
+                vec3 baseTangent = anisotropyTangent;
+                vec3 baseBitangent = anisotropyBitangent;
+                anisotropyTangent = normalize(
+                    baseTangent * anisotropyDirection.x +
+                    baseBitangent * anisotropyDirection.y);
+                anisotropyBitangent = normalize(
+                    -baseTangent * anisotropyDirection.y +
+                    baseBitangent * anisotropyDirection.x);
+            }
+        }
+    }
+
     float diffuse = smoothstep(0.0, 1.0, NdotL);
     float specPower = mix(96.0, 8.0, roughness);
     float specular = pow(max(NdotL, 0.0), specPower) * (1.0 - roughness);
+    if (hasAnisotropyBasis) {
+        specular = anisotropicSpecular(
+            specular,
+            roughness,
+            anisotropyStrength,
+            N,
+            L,
+            anisotropyTangent,
+            anisotropyBitangent);
+    }
     float specularStrength = clamp(u_specularFactor, 0.0, 1.0);
     if (u_hasSpecularTextures.x > 0.5) {
         vec2 specularUv = transformUv(
@@ -929,6 +1063,94 @@ float3 gltfPerturbNormal(float3 n,
     return gltfApplyTbn(tangent, bitangent, n, mapNormal);
 }
 
+struct GltfAnisotropyBasis {
+    float3 tangent;
+    float3 bitangent;
+    bool valid;
+};
+
+GltfAnisotropyBasis gltfTangentSpaceBasis(float3 n,
+                                          float2 uv,
+                                          float3 localPosition,
+                                          float4 tangentInput) {
+    GltfAnisotropyBasis basis;
+    basis.tangent = float3(1.0, 0.0, 0.0);
+    basis.bitangent = float3(0.0, 1.0, 0.0);
+    basis.valid = false;
+
+    if (dot(tangentInput.xyz, tangentInput.xyz) > 0.0) {
+        float3 tangent = tangentInput.xyz - n * dot(n, tangentInput.xyz);
+        if (dot(tangent, tangent) > 1e-8) {
+            tangent = normalize(tangent);
+            float3 bitangent = cross(n, tangent);
+            float bitangentLenSq = dot(bitangent, bitangent);
+            if (bitangentLenSq > 1e-8) {
+                basis.tangent = tangent;
+                basis.bitangent = normalize(bitangent) *
+                    (tangentInput.w < 0.0 ? -1.0 : 1.0);
+                basis.valid = true;
+                return basis;
+            }
+        }
+    }
+
+    float3 dp1 = dfdx(localPosition);
+    float3 dp2 = dfdy(localPosition);
+    float2 duv1 = dfdx(uv);
+    float2 duv2 = dfdy(uv);
+    float det = duv1.x * duv2.y - duv1.y * duv2.x;
+    if (fabs(det) < 1e-8) {
+        return basis;
+    }
+    float3 tangent = (dp1 * duv2.y - dp2 * duv1.y) / det;
+    float3 bitangent = (-dp1 * duv2.x + dp2 * duv1.x) / det;
+    if (dot(tangent, tangent) < 1e-8 ||
+        dot(bitangent, bitangent) < 1e-8) {
+        return basis;
+    }
+    basis.tangent = normalize(tangent);
+    basis.bitangent = normalize(bitangent);
+    basis.valid = true;
+    return basis;
+}
+
+float2 gltfRotateDirection(float2 direction, float rotation) {
+    float s = sin(rotation);
+    float c = cos(rotation);
+    return float2(
+        direction.x * c - direction.y * s,
+        direction.x * s + direction.y * c);
+}
+
+float gltfAnisotropicSpecular(float isotropicSpecular,
+                              float roughness,
+                              float strength,
+                              float3 n,
+                              float3 light,
+                              float3 tangent,
+                              float3 bitangent) {
+    if (strength <= 0.0) {
+        return isotropicSpecular;
+    }
+    float3 planarLight = light - n * dot(n, light);
+    float planarLenSq = dot(planarLight, planarLight);
+    if (planarLenSq < 1e-8) {
+        return isotropicSpecular;
+    }
+    planarLight = normalize(planarLight);
+    float along = fabs(dot(planarLight, tangent));
+    float directionalRoughness =
+        clamp(mix(roughness, 1.0, strength * along), 0.04, 1.0);
+    float directionalPower = mix(96.0, 8.0, directionalRoughness);
+    float directionalSpecular =
+        pow(max(dot(n, light), 0.0), directionalPower) *
+        (1.0 - directionalRoughness);
+    float perpendicularWeight = fabs(dot(planarLight, bitangent));
+    float blendWeight =
+        clamp(strength * max(along, perpendicularWeight), 0.0, 1.0);
+    return mix(isotropicSpecular, directionalSpecular, blendWeight);
+}
+
 fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              bool frontFacing [[front_facing]],
                              constant float3& u_lightDir [[buffer(0)]],
@@ -979,6 +1201,11 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              constant float4& u_sheenRoughnessTexOffsetScale [[buffer(49)]],
                              constant float2& u_sheenRoughnessTexRotationSinCos [[buffer(50)]],
                              constant float2& u_sheenTexCoordSets [[buffer(51)]],
+                             constant float2& u_anisotropyFactors [[buffer(52)]],
+                             constant float& u_hasAnisotropyTexture [[buffer(53)]],
+                             constant float4& u_anisotropyTexOffsetScale [[buffer(54)]],
+                             constant float2& u_anisotropyTexRotationSinCos [[buffer(55)]],
+                             constant float& u_anisotropyTexCoordSet [[buffer(56)]],
                              texture2d<float> u_baseColorTexture [[texture(0)]],
                              texture2d<float> u_metallicRoughnessTexture [[texture(1)]],
                              texture2d<float> u_normalTexture [[texture(2)]],
@@ -991,6 +1218,7 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              texture2d<float> u_clearcoatNormalTexture [[texture(9)]],
                              texture2d<float> u_sheenColorTexture [[texture(10)]],
                              texture2d<float> u_sheenRoughnessTexture [[texture(11)]],
+                             texture2d<float> u_anisotropyTexture [[texture(12)]],
                              sampler u_baseColorSampler [[sampler(0)]],
                              sampler u_metallicRoughnessSampler [[sampler(1)]],
                              sampler u_normalSampler [[sampler(2)]],
@@ -1002,7 +1230,8 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              sampler u_clearcoatRoughnessSampler [[sampler(8)]],
                              sampler u_clearcoatNormalSampler [[sampler(9)]],
                              sampler u_sheenColorSampler [[sampler(10)]],
-                             sampler u_sheenRoughnessSampler [[sampler(11)]]) {
+                             sampler u_sheenRoughnessSampler [[sampler(11)]],
+                             sampler u_anisotropySampler [[sampler(12)]]) {
     float faceSign = frontFacing ? 1.0 : -1.0;
     float3 n = normalize(in.normal) * faceSign;
     float3 geometryN = n;
@@ -1135,9 +1364,61 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
             u_clearcoatNormalTexture,
             u_clearcoatNormalSampler);
     }
+    float anisotropyStrength = clamp(u_anisotropyFactors.x, 0.0, 1.0);
+    float2 anisotropyDirection = float2(1.0, 0.0);
+    GltfAnisotropyBasis anisotropyBasis;
+    anisotropyBasis.tangent = float3(1.0, 0.0, 0.0);
+    anisotropyBasis.bitangent = float3(0.0, 1.0, 0.0);
+    anisotropyBasis.valid = false;
+    if (anisotropyStrength > 0.0) {
+        float2 anisotropyUv = gltfTransformUv(
+            gltfUvFromSet(in, u_anisotropyTexCoordSet),
+            u_anisotropyTexOffsetScale,
+            u_anisotropyTexRotationSinCos);
+        if (u_hasAnisotropyTexture > 0.5) {
+            float3 anisotropySample = u_anisotropyTexture.sample(
+                u_anisotropySampler,
+                anisotropyUv).rgb;
+            anisotropyDirection = anisotropySample.rg * 2.0 - 1.0;
+            anisotropyStrength *= anisotropySample.b;
+        }
+        anisotropyStrength = clamp(anisotropyStrength, 0.0, 1.0);
+        if (anisotropyStrength > 0.0) {
+            if (dot(anisotropyDirection, anisotropyDirection) < 1e-8) {
+                anisotropyDirection = float2(1.0, 0.0);
+            }
+            anisotropyDirection = normalize(
+                gltfRotateDirection(anisotropyDirection, u_anisotropyFactors.y));
+            anisotropyBasis = gltfTangentSpaceBasis(
+                n,
+                anisotropyUv,
+                in.localPosition,
+                in.tangent);
+            if (anisotropyBasis.valid) {
+                float3 baseTangent = anisotropyBasis.tangent;
+                float3 baseBitangent = anisotropyBasis.bitangent;
+                anisotropyBasis.tangent = normalize(
+                    baseTangent * anisotropyDirection.x +
+                    baseBitangent * anisotropyDirection.y);
+                anisotropyBasis.bitangent = normalize(
+                    -baseTangent * anisotropyDirection.y +
+                    baseBitangent * anisotropyDirection.x);
+            }
+        }
+    }
     float diffuse = smoothstep(0.0, 1.0, ndotl);
     float specPower = mix(96.0, 8.0, roughness);
     float specular = pow(max(ndotl, 0.0), specPower) * (1.0 - roughness);
+    if (anisotropyBasis.valid) {
+        specular = gltfAnisotropicSpecular(
+            specular,
+            roughness,
+            anisotropyStrength,
+            n,
+            light,
+            anisotropyBasis.tangent,
+            anisotropyBasis.bitangent);
+    }
     float specularStrength = clamp(u_specularFactor, 0.0, 1.0);
     if (u_hasSpecularTextures.x > 0.5) {
         float2 specularUv = gltfTransformUv(
@@ -1584,6 +1865,8 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
     cmd.uniforms["u_materialFactors"] = {1.0f, 1.0f, 1.0f, 1.0f};
     cmd.uniforms["u_dielectricSpecularF0"] = {0.04f};
     cmd.uniforms["u_hasMaterialTextures"] = {0.0f, 0.0f, 0.0f, 0.0f};
+    cmd.uniforms["u_anisotropyFactors"] = {0.0f, 0.0f};
+    cmd.uniforms["u_hasAnisotropyTexture"] = {0.0f};
     cmd.uniforms["u_hasSpecularTextures"] = {0.0f, 0.0f};
     cmd.uniforms["u_specularFactor"] = {1.0f};
     cmd.uniforms["u_specularColorFactor"] = {1.0f, 1.0f, 1.0f};
@@ -1595,6 +1878,7 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
     cmd.uniforms["u_emissiveFactor"] = {0.0f, 0.0f, 0.0f};
     cmd.uniforms["u_textureCoordSets"] = {0.0f, 0.0f, 0.0f, 0.0f};
     cmd.uniforms["u_emissiveTexCoordSet"] = {0.0f};
+    cmd.uniforms["u_anisotropyTexCoordSet"] = {0.0f};
     cmd.uniforms["u_specularTexCoordSets"] = {0.0f, 0.0f};
     cmd.uniforms["u_clearcoatTexCoordSets"] = {0.0f, 0.0f, 0.0f};
     cmd.uniforms["u_sheenTexCoordSets"] = {0.0f, 0.0f};
@@ -1614,6 +1898,9 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
     setTextureTransformDefaults(
         "u_metallicRoughnessTexOffsetScale",
         "u_metallicRoughnessTexRotationSinCos");
+    setTextureTransformDefaults(
+        "u_anisotropyTexOffsetScale",
+        "u_anisotropyTexRotationSinCos");
     setTextureTransformDefaults(
         "u_specularTexOffsetScale",
         "u_specularTexRotationSinCos");
