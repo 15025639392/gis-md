@@ -689,7 +689,8 @@ std::vector<uint8_t> makeTriangleGlbBytes() {
     return glb;
 }
 
-std::vector<uint8_t> makeNativeGpuInstancedTriangleGlbBytes() {
+std::vector<uint8_t> makeNativeGpuInstancedTriangleGlbBytes(
+    bool blendMaterial = false) {
     std::vector<uint8_t> bin;
     const size_t positionsOffset = bin.size();
     appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f);
@@ -715,6 +716,13 @@ std::vector<uint8_t> makeNativeGpuInstancedTriangleGlbBytes() {
     appendPod<float>(bin, 0.0f); appendPod<float>(bin, 0.0f); appendPod<float>(bin, 25.0f);
     pad4(bin, 0);
 
+    const std::string materialJson = blendMaterial
+        ? "\"materials\":[{\"alphaMode\":\"BLEND\","
+          "\"pbrMetallicRoughness\":{\"baseColorFactor\":[1,1,1,0.5]}}],"
+        : "";
+    const std::string primitiveMaterialJson =
+        blendMaterial ? ",\"material\":0" : "";
+
     const std::string jsonText =
         std::string("{") +
         "\"asset\":{\"version\":\"2.0\"}," +
@@ -724,7 +732,10 @@ std::vector<uint8_t> makeNativeGpuInstancedTriangleGlbBytes() {
         "\"scenes\":[{\"nodes\":[0]}]," +
         "\"nodes\":[{\"mesh\":0,\"extensions\":{\"EXT_mesh_gpu_instancing\":{"
         "\"attributes\":{\"TRANSLATION\":4}}}}]," +
-        "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},\"indices\":3,\"mode\":4}]}]," +
+        "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},\"indices\":3,\"mode\":4" +
+        primitiveMaterialJson +
+        "}]}]," +
+        materialJson +
         "\"buffers\":[{\"byteLength\":" + std::to_string(bin.size()) + "}]," +
         "\"bufferViews\":[" +
         "{\"buffer\":0,\"byteOffset\":" + std::to_string(positionsOffset) + ",\"byteLength\":36}," +
@@ -4331,6 +4342,79 @@ void testTilesetContentProviderLoadsNativeGpuInstancingGltf() {
               !commands.front().blend &&
               commands.front().depthWrite,
           "Tileset: native EXT_mesh_gpu_instancing renders as opaque GPU instancing");
+}
+
+void testTilesetContentProviderSplitsNativeGpuInstancingBlendGltf() {
+    DummyRenderDevice device;
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    auto contentProvider = std::make_unique<SingleGltfContentProvider>(
+        rootKey,
+        makeNativeGpuInstancedTriangleGlbBytes(true),
+        "native EXT_mesh_gpu_instancing BLEND GLB fixture");
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTestAccess::requestMissingTile(tileset, rootKey);
+
+    TilesetTile* root = nullptr;
+    for (int i = 0; i < 100; ++i) {
+        TilesetTestAccess::processPendingUploads(tileset);
+        root = TilesetTestAccess::findTile(tileset, rootKey);
+        if (root &&
+            root->loadState == TileLoadState::Done &&
+            root->contentKind == TileContentKind::Render &&
+            root->gltfModel) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    check(root != nullptr,
+          "Tileset: native EXT_mesh_gpu_instancing BLEND provider creates the requested tile");
+    if (!root) return;
+
+    check(root->gltfModel &&
+              root->gltfModel->primitives.size() == 1 &&
+              root->gltfModel->primitives.front().alphaMode ==
+                  GltfAlphaMode::Blend &&
+              root->gltfModel->primitives.front().instances.size() == 2,
+          "Tileset: native EXT_mesh_gpu_instancing BLEND parses two transparent instances");
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 2 &&
+              root->gltfPrimitiveResources.size() == 2u,
+          "Tileset: native EXT_mesh_gpu_instancing BLEND splits into sortable commands");
+    if (commands.size() < 2) return;
+
+    bool splitCommands = true;
+    for (const RenderCommand& cmd : commands) {
+        splitCommands = splitCommands &&
+            cmd.kind == RenderCommandKind::GltfPrimitive &&
+            cmd.instanceCount == 0 &&
+            cmd.instanceBuffer == nullptr &&
+            cmd.blend &&
+            !cmd.depthWrite &&
+            cmd.hasWorldSortCenter;
+    }
+    check(splitCommands,
+          "Tileset: native EXT_mesh_gpu_instancing BLEND does not use one translucent instanced command");
+    check(std::abs(commands[0].worldSortCenter[2] - 5.0) < 1e-9 &&
+              std::abs(commands[1].worldSortCenter[2] - 25.0) < 1e-9,
+          "Tileset: native EXT_mesh_gpu_instancing BLEND carries per-instance sort centers");
 }
 
 void testTilesetJsonProviderLoadsExplicitGltfTile() {
@@ -8282,6 +8366,7 @@ int main() {
     testTilesetGltfTransmissionInstancesSplitForSorting();
     testTilesetContentProviderLoadsGltfRenderContent();
     testTilesetContentProviderLoadsNativeGpuInstancingGltf();
+    testTilesetContentProviderSplitsNativeGpuInstancingBlendGltf();
     testTilesetJsonProviderLoadsExplicitGltfTile();
     testTilesetJsonGltfUpAxisZKeepsZUpContent();
     testTilesetJsonI3dmDefaultUpAxisKeepsInstancePositionsTileLocal();
