@@ -181,6 +181,28 @@ TEST(RendererCommandTest, GltfGlesVertexShadersSetExplicitPointSize) {
     EXPECT_NE(std::string::npos, instancedVertex.find("gl_PointSize = 1.0;"));
 }
 
+TEST(RendererCommandTest, GltfFragmentShadersApplyCesiumTextureTransformFormula) {
+    const std::string expectedBody =
+        "vec2 scaled = uv * offsetScale.zw;\n"
+        "    return vec2(\n"
+        "        scaled.x * sinCos.y + scaled.y * sinCos.x,\n"
+        "        scaled.y * sinCos.y - scaled.x * sinCos.x) + offsetScale.xy;";
+
+    const std::string glsl = renderer_testing::gltfFragmentGLSL();
+    EXPECT_NE(std::string::npos, glsl.find("vec2 transformUv("));
+    EXPECT_NE(std::string::npos, glsl.find(expectedBody));
+
+    const std::string expectedMetalBody =
+        "float2 scaled = uv * offsetScale.zw;\n"
+        "    return float2(\n"
+        "        scaled.x * sinCos.y + scaled.y * sinCos.x,\n"
+        "        scaled.y * sinCos.y - scaled.x * sinCos.x) + offsetScale.xy;";
+
+    const std::string msl = renderer_testing::gltfFragmentMSL();
+    EXPECT_NE(std::string::npos, msl.find("float2 gltfTransformUv("));
+    EXPECT_NE(std::string::npos, msl.find(expectedMetalBody));
+}
+
 TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsTransmission) {
     const std::string glsl = renderer_testing::gltfFragmentGLSL();
     EXPECT_NE(
