@@ -187,6 +187,7 @@ uniform sampler2D u_occlusionTexture;
 uniform sampler2D u_emissiveTexture;
 uniform float u_hasBaseColorTexture;
 uniform vec4 u_materialFactors;       // metallic, roughness, normal scale, occlusion strength
+uniform float u_dielectricSpecularF0;
 uniform vec4 u_hasMaterialTextures;   // metallicRoughness, normal, occlusion, emissive
 uniform vec3 u_emissiveFactor;
 uniform float u_alphaMode;
@@ -341,7 +342,8 @@ void main() {
     float diffuse = smoothstep(0.0, 1.0, NdotL);
     float specPower = mix(96.0, 8.0, roughness);
     float specular = pow(max(NdotL, 0.0), specPower) * (1.0 - roughness);
-    vec3 dielectricSpecular = vec3(0.04);
+    vec3 dielectricSpecular =
+        vec3(clamp(u_dielectricSpecularF0, 0.0, 1.0));
     vec3 specularColor = mix(dielectricSpecular, base.rgb, metallic);
     vec3 diffuseColor = base.rgb * (1.0 - metallic);
     vec3 color = diffuseColor * (0.38 * occlusion + 0.62 * diffuse) +
@@ -815,6 +817,7 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              constant float4& u_textureCoordSets [[buffer(23)]],
                              constant float& u_emissiveTexCoordSet [[buffer(24)]],
                              constant float& u_unlit [[buffer(25)]],
+                             constant float& u_dielectricSpecularF0 [[buffer(26)]],
                              texture2d<float> u_baseColorTexture [[texture(0)]],
                              texture2d<float> u_metallicRoughnessTexture [[texture(1)]],
                              texture2d<float> u_normalTexture [[texture(2)]],
@@ -896,7 +899,8 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
     float diffuse = smoothstep(0.0, 1.0, ndotl);
     float specPower = mix(96.0, 8.0, roughness);
     float specular = pow(max(ndotl, 0.0), specPower) * (1.0 - roughness);
-    float3 specularColor = mix(float3(0.04), base.rgb, metallic);
+    float3 specularColor =
+        mix(float3(clamp(u_dielectricSpecularF0, 0.0, 1.0)), base.rgb, metallic);
     float3 diffuseColor = base.rgb * (1.0 - metallic);
     float3 color = diffuseColor * (0.38 * occlusion + 0.62 * diffuse) +
                    specularColor * specular +
@@ -1298,6 +1302,7 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
     cmd.uniforms["u_baseColor"] = {0.82f, 0.84f, 0.88f, 1.0f};
     cmd.uniforms["u_hasBaseColorTexture"] = {0.0f};
     cmd.uniforms["u_materialFactors"] = {1.0f, 1.0f, 1.0f, 1.0f};
+    cmd.uniforms["u_dielectricSpecularF0"] = {0.04f};
     cmd.uniforms["u_hasMaterialTextures"] = {0.0f, 0.0f, 0.0f, 0.0f};
     cmd.uniforms["u_emissiveFactor"] = {0.0f, 0.0f, 0.0f};
     cmd.uniforms["u_textureCoordSets"] = {0.0f, 0.0f, 0.0f, 0.0f};

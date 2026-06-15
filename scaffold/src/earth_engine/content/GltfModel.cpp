@@ -398,11 +398,12 @@ bool validateAsset(const json& doc) {
 }
 
 bool isSupportedExtensionName(const std::string& name) {
-    static constexpr std::array<const char*, 5> kSupportedExtensions = {
+    static constexpr std::array<const char*, 6> kSupportedExtensions = {
         "KHR_texture_transform",
         "KHR_mesh_quantization",
         "KHR_materials_unlit",
         "KHR_materials_emissive_strength",
+        "KHR_materials_ior",
         "EXT_mesh_gpu_instancing"};
     return std::find(
         kSupportedExtensions.begin(),
@@ -490,7 +491,8 @@ bool extensionsObjectSupportedAtPath(
             continue;
         }
         if (it.key() == "KHR_materials_unlit" ||
-            it.key() == "KHR_materials_emissive_strength") {
+            it.key() == "KHR_materials_emissive_strength" ||
+            it.key() == "KHR_materials_ior") {
             if (!isMaterialExtensionParentPath(ownerPath)) {
                 return false;
             }
@@ -569,10 +571,11 @@ bool documentHasObjectExtension(
 }
 
 bool supportedObjectExtensionsAreDeclared(const json& doc) {
-    constexpr std::array<const char*, 4> kObjectExtensions = {
+    constexpr std::array<const char*, 5> kObjectExtensions = {
         "KHR_texture_transform",
         "KHR_materials_unlit",
         "KHR_materials_emissive_strength",
+        "KHR_materials_ior",
         "EXT_mesh_gpu_instancing"};
     for (const char* extensionName : kObjectExtensions) {
         if (documentHasObjectExtension(doc, extensionName) &&
@@ -2094,6 +2097,18 @@ bool materialHasKhrMaterialsUnlit(const json& material) {
     return unlitIt != extensionsIt->end() && unlitIt->is_object();
 }
 
+bool validMaterialIor(float ior) {
+    return ior == 0.0f || ior >= 1.0f;
+}
+
+float dielectricSpecularF0FromIor(float ior) {
+    if (ior == 0.0f) {
+        return 1.0f;
+    }
+    const float f0 = (ior - 1.0f) / (ior + 1.0f);
+    return f0 * f0;
+}
+
 bool validateMaterialExtensions(const json& material) {
     const auto extensionsIt = material.find("extensions");
     if (extensionsIt == material.end()) {
@@ -2108,21 +2123,36 @@ bool validateMaterialExtensions(const json& material) {
     }
     const auto emissiveStrengthIt =
         extensionsIt->find("KHR_materials_emissive_strength");
-    if (emissiveStrengthIt == extensionsIt->end()) {
+    if (emissiveStrengthIt != extensionsIt->end()) {
+        if (unlitIt != extensionsIt->end() ||
+            !emissiveStrengthIt->is_object()) {
+            return false;
+        }
+        const auto strengthIt = emissiveStrengthIt->find("emissiveStrength");
+        if (strengthIt != emissiveStrengthIt->end()) {
+            const auto strength = numberProperty(
+                *emissiveStrengthIt,
+                "emissiveStrength",
+                1.0f);
+            if (!strength || *strength < 0.0f) {
+                return false;
+            }
+        }
+    }
+
+    const auto iorIt = extensionsIt->find("KHR_materials_ior");
+    if (iorIt == extensionsIt->end()) {
         return true;
     }
-    if (!emissiveStrengthIt->is_object()) {
+    if (unlitIt != extensionsIt->end() || !iorIt->is_object()) {
         return false;
     }
-    const auto strengthIt = emissiveStrengthIt->find("emissiveStrength");
-    if (strengthIt == emissiveStrengthIt->end()) {
+    const auto iorPropertyIt = iorIt->find("ior");
+    if (iorPropertyIt == iorIt->end()) {
         return true;
     }
-    const auto strength = numberProperty(
-        *emissiveStrengthIt,
-        "emissiveStrength",
-        1.0f);
-    return strength.has_value() && *strength >= 0.0f;
+    const auto ior = numberProperty(*iorIt, "ior", 1.5f);
+    return ior.has_value() && validMaterialIor(*ior);
 }
 
 float materialEmissiveStrength(const json& material, bool& strictFailure) {
@@ -2148,6 +2178,27 @@ float materialEmissiveStrength(const json& material, bool& strictFailure) {
         return 1.0f;
     }
     return *strength;
+}
+
+float materialDielectricSpecularF0(const json& material, bool& strictFailure) {
+    const auto extensionsIt = material.find("extensions");
+    if (extensionsIt == material.end() || !extensionsIt->is_object()) {
+        return dielectricSpecularF0FromIor(1.5f);
+    }
+    const auto iorIt = extensionsIt->find("KHR_materials_ior");
+    if (iorIt == extensionsIt->end()) {
+        return dielectricSpecularF0FromIor(1.5f);
+    }
+    if (!iorIt->is_object()) {
+        strictFailure = true;
+        return dielectricSpecularF0FromIor(1.5f);
+    }
+    const auto ior = numberProperty(*iorIt, "ior", 1.5f);
+    if (!ior || !validMaterialIor(*ior)) {
+        strictFailure = true;
+        return dielectricSpecularF0FromIor(1.5f);
+    }
+    return dielectricSpecularF0FromIor(*ior);
 }
 
 bool validateMaterialJson(const json& material, size_t textureCount) {
@@ -4082,6 +4133,12 @@ std::optional<GltfPrimitive> parsePrimitive(
                 return std::nullopt;
             }
 
+            primitive.dielectricSpecularF0 =
+                materialDielectricSpecularF0(material, strictFailure);
+            if (strictFailure) {
+                return std::nullopt;
+            }
+
             auto normalIt = material.find("normalTexture");
             if (normalIt != material.end() && normalIt->is_object()) {
                 primitive.normalTexture =
@@ -4994,6 +5051,10 @@ std::unique_ptr<GltfModel> GltfParser::parse(
         !documentHasObjectExtension(
             input->document,
             "KHR_materials_emissive_strength")) {
+        return nullptr;
+    }
+    if (declaredExtension(input->document, "KHR_materials_ior") &&
+        !documentHasObjectExtension(input->document, "KHR_materials_ior")) {
         return nullptr;
     }
     if (declaredExtension(input->document, "EXT_mesh_gpu_instancing") &&

@@ -3031,6 +3031,47 @@ void testTilesetGltfUnlitMaterialUploadsUniform() {
           "Tileset: glTF unlit command keeps source material factors for diagnostics");
 }
 
+void testTilesetGltfIorMaterialUploadsSpecularF0() {
+    DummyRenderDevice device;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: glTF IOR material root tile is created");
+    if (!root) return;
+
+    root->gltfModel = makeTriangleGltfModel();
+    root->gltfModel->primitives[0].dielectricSpecularF0 = 1.0f / 9.0f;
+    root->contentKind = TileContentKind::Render;
+    root->loadState = TileLoadState::ContentLoaded;
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 1,
+          "Tileset: glTF IOR material emits one primitive draw command");
+    if (commands.empty()) return;
+
+    const RenderCommand& cmd = commands.front();
+    check(cmd.uniforms.count("u_dielectricSpecularF0") &&
+              std::abs(cmd.uniforms.at("u_dielectricSpecularF0").front() -
+                       1.0f / 9.0f) < 1e-6f,
+          "Tileset: glTF IOR material uploads dielectric specular F0");
+}
+
 void testTilesetGltfPointAndLineModesReachDrawCommands() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
@@ -6374,6 +6415,7 @@ int main() {
     testTilesetGltfTangentsUseModelLinearTransform();
     testTilesetGltfMaskMaterialStaysOpaqueCommand();
     testTilesetGltfUnlitMaterialUploadsUniform();
+    testTilesetGltfIorMaterialUploadsSpecularF0();
     testTilesetGltfPointAndLineModesReachDrawCommands();
     testTilesetGltfDoubleSidedDisablesCullOnly();
     testTilesetGltfOpaqueInstancesUseGpuInstancing();

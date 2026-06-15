@@ -125,6 +125,7 @@ TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     ASSERT_TRUE(cmd.uniforms.count("u_baseColor"));
     ASSERT_TRUE(cmd.uniforms.count("u_hasBaseColorTexture"));
     ASSERT_TRUE(cmd.uniforms.count("u_materialFactors"));
+    ASSERT_TRUE(cmd.uniforms.count("u_dielectricSpecularF0"));
     ASSERT_TRUE(cmd.uniforms.count("u_hasMaterialTextures"));
     ASSERT_TRUE(cmd.uniforms.count("u_emissiveFactor"));
     ASSERT_TRUE(cmd.uniforms.count("u_textureCoordSets"));
@@ -135,6 +136,24 @@ TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     ASSERT_TRUE(cmd.uniforms.count("u_alphaCutoff"));
     ASSERT_TRUE(cmd.uniforms.count("u_renderOpacity"));
     ASSERT_TRUE(cmd.uniforms.count("u_unlit"));
+}
+
+TEST(RendererCommandTest, GltfFragmentShadersApplyDielectricSpecularF0) {
+    const std::string glsl = renderer_testing::gltfFragmentGLSL();
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("uniform float u_dielectricSpecularF0"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("clamp(u_dielectricSpecularF0, 0.0, 1.0)"));
+
+    const std::string msl = renderer_testing::gltfFragmentMSL();
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("constant float& u_dielectricSpecularF0"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("clamp(u_dielectricSpecularF0, 0.0, 1.0)"));
 }
 
 TEST(RendererCommandTest, GltfFragmentShadersUseBaseColorForUnlitMaterials) {

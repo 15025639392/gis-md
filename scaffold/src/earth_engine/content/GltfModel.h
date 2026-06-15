@@ -113,6 +113,7 @@ struct GltfPrimitive {
     std::optional<GltfTextureBinding> baseColorTexture;
     float metallicFactor = 1.0f;
     float roughnessFactor = 1.0f;
+    float dielectricSpecularF0 = 0.04f;
     std::optional<GltfTextureBinding> metallicRoughnessTexture;
     std::optional<GltfTextureBinding> normalTexture;
     float normalTextureScale = 1.0f;

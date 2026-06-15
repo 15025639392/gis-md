@@ -3953,6 +3953,8 @@ void Tileset::ensureGltfRenderResources(TilesetTile& tile) {
                 resources.baseColorFactor = primitive.baseColorFactor;
                 resources.metallicFactor = primitive.metallicFactor;
                 resources.roughnessFactor = primitive.roughnessFactor;
+                resources.dielectricSpecularF0 =
+                    primitive.dielectricSpecularF0;
                 resources.normalTextureScale = primitive.normalTextureScale;
                 resources.occlusionTextureStrength =
                     primitive.occlusionTextureStrength;
@@ -4188,6 +4190,9 @@ void Tileset::buildGltfDrawCommands(Renderer& renderer,
             primitive.roughnessFactor,
             primitive.normalTextureScale,
             primitive.occlusionTextureStrength
+        };
+        cmd.uniforms["u_dielectricSpecularF0"] = {
+            primitive.dielectricSpecularF0
         };
         cmd.uniforms["u_hasMaterialTextures"] = {
             primitive.metallicRoughnessTexture.texture ? 1.0f : 0.0f,

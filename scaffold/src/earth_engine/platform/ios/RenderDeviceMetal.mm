@@ -669,6 +669,7 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
         setFragmentUniform("u_textureCoordSets", 23);
         setFragmentUniform("u_emissiveTexCoordSet", 24);
         setFragmentUniform("u_unlit", 25);
+        setFragmentUniform("u_dielectricSpecularF0", 26);
 
         // 纹理绑定
         const NSUInteger maxMaterialTextures = 5;
