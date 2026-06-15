@@ -15,6 +15,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 
@@ -467,6 +468,41 @@ bool hasUnsupportedDeclaredExtensions(const json& doc) {
     };
     return checkArray(doc, "extensionsRequired") ||
            checkArray(doc, "extensionsUsed");
+}
+
+bool requiredExtensionsAreUsed(const json& doc) {
+    const auto requiredIt = doc.find("extensionsRequired");
+    if (requiredIt == doc.end()) {
+        return true;
+    }
+    if (!requiredIt->is_array()) {
+        return false;
+    }
+    if (requiredIt->empty()) {
+        return true;
+    }
+    const auto usedIt = doc.find("extensionsUsed");
+    if (usedIt == doc.end() || !usedIt->is_array()) {
+        return false;
+    }
+    std::unordered_set<std::string> usedExtensions;
+    usedExtensions.reserve(usedIt->size());
+    for (const json& extension : *usedIt) {
+        if (!extension.is_string()) {
+            return false;
+        }
+        usedExtensions.insert(extension.get<std::string>());
+    }
+    for (const json& extension : *requiredIt) {
+        if (!extension.is_string()) {
+            return false;
+        }
+        if (usedExtensions.find(extension.get<std::string>()) ==
+            usedExtensions.end()) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool declaredExtension(const json& doc, const char* extensionName) {
@@ -6050,6 +6086,7 @@ std::unique_ptr<GltfModel> GltfParser::parse(
     if (!input) return nullptr;
     if (!validateAsset(input->document) ||
         hasUnsupportedDeclaredExtensions(input->document) ||
+        !requiredExtensionsAreUsed(input->document) ||
         hasUnsupportedObjectExtensions(input->document) ||
         !supportedObjectExtensionsAreDeclared(input->document) ||
         !validateSceneGraph(

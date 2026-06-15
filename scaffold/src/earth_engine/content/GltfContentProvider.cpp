@@ -777,6 +777,41 @@ bool tilesetJsonExtensionAllowed(const std::string& extensionName,
             canFailTilesetJsonExtensionPerTile(extensionName));
 }
 
+bool requiredExtensionsAreUsedOnObject(const nlohmann::json& json) {
+    auto requiredIt = json.find("extensionsRequired");
+    if (requiredIt == json.end()) {
+        return true;
+    }
+    if (!requiredIt->is_array()) {
+        return false;
+    }
+    if (requiredIt->empty()) {
+        return true;
+    }
+    auto usedIt = json.find("extensionsUsed");
+    if (usedIt == json.end() || !usedIt->is_array()) {
+        return false;
+    }
+    std::unordered_set<std::string> usedExtensions;
+    usedExtensions.reserve(usedIt->size());
+    for (const auto& extension : *usedIt) {
+        if (!extension.is_string()) {
+            return false;
+        }
+        usedExtensions.insert(extension.get<std::string>());
+    }
+    for (const auto& extension : *requiredIt) {
+        if (!extension.is_string()) {
+            return false;
+        }
+        if (usedExtensions.find(extension.get<std::string>()) ==
+            usedExtensions.end()) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool hasUnsupportedDeclaredExtensionsOnObject(
     const nlohmann::json& json,
     bool allowPerTileFailure = false,
@@ -803,7 +838,8 @@ bool hasUnsupportedDeclaredExtensionsOnObject(
         return false;
     };
 
-    return checkArray("extensionsRequired") ||
+    return !requiredExtensionsAreUsedOnObject(json) ||
+           checkArray("extensionsRequired") ||
            checkArray("extensionsUsed");
 }
 
@@ -961,7 +997,8 @@ bool hasUnsupportedContentGltfExtensionPayload(
     if (!contentGltfIt->is_object()) {
         return true;
     }
-    return gltfContentExtensionArrayHasUnsupportedEntries(
+    return !requiredExtensionsAreUsedOnObject(*contentGltfIt) ||
+           gltfContentExtensionArrayHasUnsupportedEntries(
                *contentGltfIt,
                "extensionsRequired") ||
            gltfContentExtensionArrayHasUnsupportedEntries(
