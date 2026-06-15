@@ -1469,6 +1469,7 @@ void appendAccessorToExternalFixture(
 enum class GpuInstanceRotationEncoding {
     Float,
     ZeroFloat,
+    NormalizedByte,
     NormalizedShort,
     NormalizedUnsignedByte,
     NormalizedUnsignedShort
@@ -1506,6 +1507,16 @@ ExternalGltfFixture makeGpuInstancedExternalGltf(
             for (int i = 0; i < 8; ++i) {
                 appendF32(fixture.bin, 0.0f);
             }
+            break;
+        case GpuInstanceRotationEncoding::NormalizedByte:
+            fixture.bin.push_back(0);
+            fixture.bin.push_back(0);
+            fixture.bin.push_back(0);
+            fixture.bin.push_back(127);
+            fixture.bin.push_back(0);
+            fixture.bin.push_back(0);
+            fixture.bin.push_back(90);
+            fixture.bin.push_back(90);
             break;
         case GpuInstanceRotationEncoding::NormalizedShort:
             appendI16(fixture.bin, 0);
@@ -1604,6 +1615,10 @@ ExternalGltfFixture makeGpuInstancedExternalGltf(
         case GpuInstanceRotationEncoding::ZeroFloat:
             rotationAccessor =
                 "{\"bufferView\":5,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"}";
+            break;
+        case GpuInstanceRotationEncoding::NormalizedByte:
+            rotationAccessor =
+                "{\"bufferView\":5,\"componentType\":5120,\"normalized\":true,\"count\":2,\"type\":\"VEC4\"}";
             break;
         case GpuInstanceRotationEncoding::NormalizedShort:
             rotationAccessor =
@@ -6256,6 +6271,39 @@ TEST(GltfParserTest, ParsesExtMeshGpuInstancingUnderParentTransform) {
     const Vec3 second = primitive.instances[1].transform * source;
     EXPECT_NEAR(74.0, second.x(), 1e-5);
     EXPECT_NEAR(14.0, second.y(), 1e-5);
+    EXPECT_NEAR(36.0, second.z(), 1e-6);
+}
+
+TEST(GltfParserTest, RejectsExtMeshGpuInstancingUnderSingularNodeTransform) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
+    const std::string nodeMarker =
+        "{\"mesh\":0,\"translation\":[10,20,30],";
+    const size_t nodePos = fixture.jsonText.find(nodeMarker);
+    ASSERT_NE(std::string::npos, nodePos);
+    fixture.jsonText.replace(
+        nodePos,
+        nodeMarker.size(),
+        "{\"mesh\":0,\"translation\":[10,20,30],\"scale\":[0,1,1],");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, ParsesExtMeshGpuInstancingNormalizedByteRotation) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf(
+        GpuInstanceRotationEncoding::NormalizedByte);
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives[0];
+    ASSERT_EQ(2u, primitive.instances.size());
+
+    const Vec3 source = primitive.vertices[1].positionEcef;
+    const Vec3 second = primitive.instances[1].transform * source;
+    EXPECT_NEAR(14.0, second.x(), 1e-5);
+    EXPECT_NEAR(26.0, second.y(), 1e-5);
     EXPECT_NEAR(36.0, second.z(), 1e-6);
 }
 
