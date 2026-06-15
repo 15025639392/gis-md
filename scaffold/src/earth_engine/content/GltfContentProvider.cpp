@@ -163,16 +163,22 @@ B3dmExtractResult extractB3dmGlb(const uint8_t* data, size_t size) {
     uint32_t featureTableBinaryByteLength = readU32LE(data + 16);
     uint32_t batchTableJsonByteLength = readU32LE(data + 20);
     uint32_t batchTableBinaryByteLength = readU32LE(data + 24);
+    bool legacyHeader = false;
+    std::optional<uint32_t> legacyBatchLength;
 
     // Match cesium-native B3dmToGltfConverter legacy header detection.
     if (batchTableJsonByteLength >= kB3dmLegacySentinel) {
         headerLength = kB3dmLegacy1HeaderLength;
+        legacyHeader = true;
+        legacyBatchLength = readU32LE(data + 12);
         featureTableJsonByteLength = 0;
         featureTableBinaryByteLength = 0;
         batchTableJsonByteLength = readU32LE(data + 16);
         batchTableBinaryByteLength = 0;
     } else if (batchTableBinaryByteLength >= kB3dmLegacySentinel) {
         headerLength = kB3dmLegacy2HeaderLength;
+        legacyHeader = true;
+        legacyBatchLength = readU32LE(data + 20);
         featureTableJsonByteLength = 0;
         featureTableBinaryByteLength = 0;
         batchTableJsonByteLength = readU32LE(data + 12);
@@ -263,9 +269,31 @@ B3dmExtractResult extractB3dmGlb(const uint8_t* data, size_t size) {
             result.rtcTransform = Mat4::translation(*rtcCenter);
         }
     } else if (featureTableBinaryByteLength > 0 ||
-               batchTableJsonByteLength > 0 ||
                batchTableBinaryByteLength > 0) {
         return result;
+    } else if (batchTableJsonByteLength > 0) {
+        if (!legacyHeader || !legacyBatchLength) {
+            return result;
+        }
+        result.batchLength = *legacyBatchLength;
+        const size_t batchTableJsonOffset = headerLength;
+        const size_t batchTableJsonEnd =
+            batchTableJsonOffset +
+            static_cast<size_t>(batchTableJsonByteLength);
+        if (batchTableJsonEnd > size || batchTableJsonEnd > glbStart) {
+            return result;
+        }
+        const std::string batchJsonText = trimRightJsonPadding(std::string(
+            reinterpret_cast<const char*>(data + batchTableJsonOffset),
+            static_cast<size_t>(batchTableJsonByteLength)));
+        auto rows =
+            parseJsonBatchTableRows(batchJsonText, *result.batchLength);
+        if (!rows) {
+            return result;
+        }
+        result.batchTableRows = std::move(*rows);
+    } else if (legacyHeader && legacyBatchLength) {
+        result.batchLength = *legacyBatchLength;
     }
 
     result.glbData = data + glbStart;

@@ -1829,6 +1829,67 @@ std::vector<uint8_t> makeB3dm(std::vector<uint8_t> glb,
     return b3dm;
 }
 
+std::vector<uint8_t> makeLegacyB3dmHeader1(
+    std::vector<uint8_t> glb,
+    uint32_t batchLength,
+    const std::string& batchTableJson = std::string{}) {
+    std::vector<uint8_t> batchBytes(
+        batchTableJson.begin(),
+        batchTableJson.end());
+    if (!batchBytes.empty()) {
+        pad4(batchBytes, 0x20);
+    }
+
+    std::vector<uint8_t> b3dm;
+    b3dm.push_back('b');
+    b3dm.push_back('3');
+    b3dm.push_back('d');
+    b3dm.push_back('m');
+    appendU32(b3dm, 1u);
+    appendU32(
+        b3dm,
+        static_cast<uint32_t>(20 + batchBytes.size() + glb.size()));
+    appendU32(b3dm, batchLength);
+    appendU32(b3dm, static_cast<uint32_t>(batchBytes.size()));
+    b3dm.insert(b3dm.end(), batchBytes.begin(), batchBytes.end());
+    b3dm.insert(b3dm.end(), glb.begin(), glb.end());
+    return b3dm;
+}
+
+std::vector<uint8_t> makeLegacyB3dmHeader2(
+    std::vector<uint8_t> glb,
+    uint32_t batchLength,
+    const std::string& batchTableJson = std::string{},
+    std::vector<uint8_t> batchTableBinary = {}) {
+    std::vector<uint8_t> batchBytes(
+        batchTableJson.begin(),
+        batchTableJson.end());
+    if (!batchBytes.empty()) {
+        pad4(batchBytes, 0x20);
+    }
+    pad4(batchTableBinary, 0);
+
+    std::vector<uint8_t> b3dm;
+    b3dm.push_back('b');
+    b3dm.push_back('3');
+    b3dm.push_back('d');
+    b3dm.push_back('m');
+    appendU32(b3dm, 1u);
+    appendU32(
+        b3dm,
+        static_cast<uint32_t>(
+            24 + batchBytes.size() + batchTableBinary.size() + glb.size()));
+    appendU32(b3dm, static_cast<uint32_t>(batchBytes.size()));
+    appendU32(b3dm, static_cast<uint32_t>(batchTableBinary.size()));
+    appendU32(b3dm, batchLength);
+    b3dm.insert(b3dm.end(), batchBytes.begin(), batchBytes.end());
+    b3dm.insert(b3dm.end(),
+                batchTableBinary.begin(),
+                batchTableBinary.end());
+    b3dm.insert(b3dm.end(), glb.begin(), glb.end());
+    return b3dm;
+}
+
 std::vector<uint8_t> makeI3dm(std::vector<uint8_t> gltfPayload,
                               uint32_t gltfFormat,
                               const std::string& gltfUri = std::string{}) {
@@ -11033,6 +11094,77 @@ TEST(GltfParserTest, ContentProviderDecodesB3dmAndAppliesRtcCenter) {
     EXPECT_NEAR(333.0, transformed.z(), 1e-12);
 }
 
+TEST(GltfParserTest, ContentProviderDecodesLegacyB3dmHeaders) {
+    const std::array<std::vector<uint8_t>, 2> legacyTiles = {{
+        makeLegacyB3dmHeader1(makeTriangleGlb(), 0u),
+        makeLegacyB3dmHeader2(makeTriangleGlb(), 0u)}};
+
+    for (const std::vector<uint8_t>& b3dm : legacyTiles) {
+        SingleGltfContentProvider provider(
+            TileKey{"Geographic-TMS", 0, 0, 0},
+            std::vector<uint8_t>{},
+            "legacy B3DM fixture");
+        TileContentLoadResult result =
+            provider.decodeContent(b3dm.data(), b3dm.size());
+
+        EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+        ASSERT_NE(nullptr, result.gltfModel);
+        ASSERT_EQ(1u, result.gltfModel->primitives.size());
+        ASSERT_EQ(3u, result.gltfModel->primitives[0].vertices.size());
+        const Vec3 first =
+            result.contentTransform *
+            result.gltfModel->primitives[0].vertices[0].positionEcef;
+        EXPECT_NEAR(10.0, first.x(), 1e-12);
+        EXPECT_NEAR(20.0, first.y(), 1e-12);
+        EXPECT_NEAR(30.0, first.z(), 1e-12);
+    }
+}
+
+TEST(GltfParserTest, ContentProviderDecodesLegacyB3dmBatchTableWithBatchIds) {
+    const std::array<std::vector<uint8_t>, 2> legacyTiles = {{
+        makeLegacyB3dmHeader1(
+            makeLegacyBatchIdTriangleGlb(),
+            2u,
+            "{\"name\":[\"zero\",\"one\"],\"Height\":[100,200]}"),
+        makeLegacyB3dmHeader2(
+            makeLegacyBatchIdTriangleGlb(),
+            2u,
+            "{\"name\":[\"zero\",\"one\"],\"Height\":[100,200]}")}};
+
+    for (const std::vector<uint8_t>& b3dm : legacyTiles) {
+        SingleGltfContentProvider provider(
+            TileKey{"Geographic-TMS", 0, 0, 0},
+            std::vector<uint8_t>{},
+            "legacy B3DM batch table fixture");
+        TileContentLoadResult result =
+            provider.decodeContent(b3dm.data(), b3dm.size());
+
+        EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+        ASSERT_NE(nullptr, result.gltfModel);
+        ASSERT_EQ(1u, result.gltfModel->primitives.size());
+        const GltfPrimitive& primitive = result.gltfModel->primitives[0];
+        EXPECT_EQ((std::vector<uint32_t>{1u, 0u, 1u}),
+                  primitive.featureIds);
+        ASSERT_EQ(3u, primitive.featureProperties.size());
+        EXPECT_EQ(
+            "one",
+            *std::get_if<std::string>(
+                &primitive.featureProperties[0].at("name")));
+        EXPECT_EQ(
+            "zero",
+            *std::get_if<std::string>(
+                &primitive.featureProperties[1].at("name")));
+        EXPECT_EQ(
+            200u,
+            *std::get_if<uint64_t>(
+                &primitive.featureProperties[0].at("Height")));
+        EXPECT_EQ(
+            100u,
+            *std::get_if<uint64_t>(
+                &primitive.featureProperties[1].at("Height")));
+    }
+}
+
 TEST(GltfParserTest, ContentProviderRejectsMalformedB3dmRtcCenter) {
     const std::array<std::string, 3> featureTables = {{
         "{\"BATCH_LENGTH\":0,\"RTC_CENTER\":[1.0,2.0]}",
@@ -11070,6 +11202,36 @@ TEST(GltfParserTest, ContentProviderRejectsB3dmBatchTableMetadata) {
 
     EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
+}
+
+TEST(GltfParserTest, ContentProviderRejectsB3dmUnsupportedMetadataExtensions) {
+    auto decodeStatus = [](const std::vector<uint8_t>& b3dm) {
+        SingleGltfContentProvider provider(
+            TileKey{"Geographic-TMS", 0, 0, 0},
+            std::vector<uint8_t>{},
+            "B3DM unsupported metadata fixture");
+        return provider.decodeContent(b3dm.data(), b3dm.size()).status;
+    };
+
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus(makeB3dm(
+            makeTriangleGlb(),
+            "{\"BATCH_LENGTH\":0,\"extensions\":{\"VENDOR_feature\":{}}}")));
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus(makeB3dm(
+            makeLegacyBatchIdTriangleGlb(),
+            "{\"BATCH_LENGTH\":2}",
+            "{\"HIERARCHY\":{\"instances\":[]},"
+            "\"name\":[\"zero\",\"one\"]}")));
+    EXPECT_EQ(
+        TileContentLoadStatus::Failed,
+        decodeStatus(makeB3dm(
+            makeLegacyBatchIdTriangleGlb(),
+            "{\"BATCH_LENGTH\":2}",
+            "{\"extensions\":{\"3DTILES_batch_table_hierarchy\":{"
+            "\"instances\":[]}},\"name\":[\"zero\",\"one\"]}")));
 }
 
 TEST(GltfParserTest, ContentProviderDecodesB3dmBatchTableWithBatchIds) {
@@ -11136,6 +11298,31 @@ TEST(GltfParserTest, ContentProviderRejectsB3dmPositiveBatchLength) {
 
     EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
+}
+
+TEST(GltfParserTest, ContentProviderRejectsLegacyB3dmUnmappedBatchTable) {
+    const std::array<std::vector<uint8_t>, 2> legacyTiles = {{
+        makeLegacyB3dmHeader1(
+            makeTriangleGlb(),
+            1u,
+            "{\"name\":[\"building\"]}"),
+        makeLegacyB3dmHeader2(
+            makeLegacyBatchIdTriangleGlb(),
+            2u,
+            "{\"name\":[\"zero\",\"one\"]}",
+            {0u, 1u, 2u, 3u})}};
+
+    for (const std::vector<uint8_t>& b3dm : legacyTiles) {
+        SingleGltfContentProvider provider(
+            TileKey{"Geographic-TMS", 0, 0, 0},
+            std::vector<uint8_t>{},
+            "legacy B3DM unsupported batch table fixture");
+        TileContentLoadResult result =
+            provider.decodeContent(b3dm.data(), b3dm.size());
+
+        EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+        EXPECT_EQ(nullptr, result.gltfModel);
+    }
 }
 
 TEST(GltfParserTest, ContentProviderRejectsB3dmBatchIdOutsideBatchLength) {
