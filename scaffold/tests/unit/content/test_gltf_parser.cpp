@@ -48,6 +48,30 @@ void pad4(std::vector<uint8_t>& bytes, uint8_t pad) {
     }
 }
 
+std::vector<uint8_t> makeFakeWebpBytes() {
+    return {
+        'R', 'I', 'F', 'F',
+        4, 0, 0, 0,
+        'W', 'E', 'B', 'P',
+        1, 2, 3, 4};
+}
+
+bool bytesLookLikeFakeWebp(const uint8_t* data, size_t size) {
+    return size == 16u &&
+           data[0] == 'R' &&
+           data[1] == 'I' &&
+           data[2] == 'F' &&
+           data[3] == 'F' &&
+           data[8] == 'W' &&
+           data[9] == 'E' &&
+           data[10] == 'B' &&
+           data[11] == 'P' &&
+           data[12] == 1u &&
+           data[13] == 2u &&
+           data[14] == 3u &&
+           data[15] == 4u;
+}
+
 enum class NonFiniteTriangleAttribute {
     None,
     Position,
@@ -1293,7 +1317,14 @@ ExternalGltfFixture makeBufferViewImageExternalBufferTriangleGltf(
     ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf("image.bin");
     const size_t imageOffset = fixture.bin.size();
-    fixture.bin.insert(fixture.bin.end(), {9, 8, 7, 6});
+    const std::vector<uint8_t> imageBytes =
+        mimeType == "image/webp"
+            ? makeFakeWebpBytes()
+            : std::vector<uint8_t>{9, 8, 7, 6};
+    fixture.bin.insert(
+        fixture.bin.end(),
+        imageBytes.begin(),
+        imageBytes.end());
 
     const std::string oldBuffer =
         "\"buffers\":[{\"uri\":\"triangle.bin\",\"byteLength\":" +
@@ -1321,7 +1352,8 @@ ExternalGltfFixture makeBufferViewImageExternalBufferTriangleGltf(
         "{\"buffer\":0,\"byteOffset\":96,\"byteLength\":6}";
     const std::string imageBufferView =
         lastBufferView + ",{\"buffer\":0,\"byteOffset\":" +
-        std::to_string(imageOffset) + ",\"byteLength\":4}";
+        std::to_string(imageOffset) + ",\"byteLength\":" +
+        std::to_string(imageBytes.size()) + "}";
     const size_t bufferViewPos = fixture.jsonText.find(lastBufferView);
     if (bufferViewPos != std::string::npos) {
         fixture.jsonText.replace(
@@ -4054,7 +4086,7 @@ TEST(GltfParserTest, ParsesExtTextureWebpTextureExtension) {
         imageMarker.size(),
         "\"images\":["
         "{\"uri\":\"data:image/png;base64,CQkJCQ==\"},"
-        "{\"uri\":\"data:image/webp;base64,AQIDBA==\"}]");
+        "{\"uri\":\"data:image/webp;base64,UklGRgQAAABXRUJQAQIDBA==\"}]");
 
     bool decodedWebp = false;
     bool decodedFallback = false;
@@ -4066,11 +4098,10 @@ TEST(GltfParserTest, ParsesExtTextureWebpTextureExtension) {
                                          : std::vector<uint8_t>{};
         },
         [&](const uint8_t* data, size_t size) -> std::optional<GltfImage> {
-            EXPECT_EQ(4u, size);
             if (size == 0) {
                 return std::nullopt;
             }
-            decodedWebp = data[0] == 1u;
+            decodedWebp = bytesLookLikeFakeWebp(data, size);
             decodedFallback = data[0] == 9u;
             GltfImage image;
             image.width = 1;
@@ -4121,7 +4152,7 @@ TEST(GltfParserTest, RejectsExtTextureWebpDecoderFailure) {
         imageMarker.size(),
         "\"images\":["
         "{\"uri\":\"data:image/png;base64,CQkJCQ==\"},"
-        "{\"uri\":\"data:image/webp;base64,AQIDBA==\"}]");
+        "{\"uri\":\"data:image/webp;base64,UklGRgQAAABXRUJQAQIDBA==\"}]");
 
     bool decodedWebp = false;
     bool decodedFallback = false;
@@ -4133,8 +4164,7 @@ TEST(GltfParserTest, RejectsExtTextureWebpDecoderFailure) {
                                          : std::vector<uint8_t>{};
         },
         [&](const uint8_t* data, size_t size) -> std::optional<GltfImage> {
-            EXPECT_EQ(4u, size);
-            decodedWebp = size > 0 && data[0] == 1u;
+            decodedWebp = bytesLookLikeFakeWebp(data, size);
             decodedFallback = size > 0 && data[0] == 9u;
             return std::nullopt;
         });
@@ -4173,7 +4203,7 @@ TEST(GltfParserTest, ParsesExtTextureWebpWithoutFallbackSource) {
     fixture.jsonText.replace(
         imagePos,
         imageMarker.size(),
-        "\"images\":[{\"uri\":\"data:image/webp;base64,AQIDBA==\"}]");
+        "\"images\":[{\"uri\":\"data:image/webp;base64,UklGRgQAAABXRUJQAQIDBA==\"}]");
 
     bool decodedWebp = false;
     std::unique_ptr<GltfModel> model = GltfParser::parse(
@@ -4184,7 +4214,7 @@ TEST(GltfParserTest, ParsesExtTextureWebpWithoutFallbackSource) {
                                          : std::vector<uint8_t>{};
         },
         [&](const uint8_t* data, size_t size) -> std::optional<GltfImage> {
-            decodedWebp = size == 4u && data[0] == 1u;
+            decodedWebp = bytesLookLikeFakeWebp(data, size);
             GltfImage image;
             image.width = 1;
             image.height = 1;
@@ -4231,13 +4261,7 @@ TEST(GltfParserTest, ParsesExtTextureWebpBufferViewImage) {
                                          : std::vector<uint8_t>{};
         },
         [&](const uint8_t* data, size_t size) -> std::optional<GltfImage> {
-            EXPECT_EQ(4u, size);
-            decodedWebp =
-                size == 4u &&
-                data[0] == 9u &&
-                data[1] == 8u &&
-                data[2] == 7u &&
-                data[3] == 6u;
+            decodedWebp = bytesLookLikeFakeWebp(data, size);
             GltfImage image;
             image.width = 1;
             image.height = 1;
@@ -4255,7 +4279,7 @@ TEST(GltfParserTest, ParsesExtTextureWebpBufferViewImage) {
 TEST(GltfParserTest, RejectsBaseColorTextureDataUriWithUnsupportedMimeType) {
     const ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf(
-            "data:image/webp;base64,AQIDBA==");
+            "data:image/webp;base64,UklGRgQAAABXRUJQAQIDBA==");
     bool decodedImage = false;
 
     std::unique_ptr<GltfModel> model = GltfParser::parse(
@@ -8324,6 +8348,90 @@ TEST(GltfParserTest, RejectsExtTextureWebpExplicitNonWebpSource) {
     EXPECT_FALSE(decodedImage);
 }
 
+TEST(GltfParserTest, RejectsExtTextureWebpExternalPngUriWithoutMimeType) {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf("texture.png");
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":[\"EXT_texture_webp\"],");
+
+    const std::string textureMarker =
+        "\"textures\":[{\"source\":0,\"sampler\":0}]";
+    const size_t texturePos = fixture.jsonText.find(textureMarker);
+    ASSERT_NE(std::string::npos, texturePos);
+    fixture.jsonText.replace(
+        texturePos,
+        textureMarker.size(),
+        "\"textures\":[{\"source\":0,\"sampler\":0,"
+        "\"extensions\":{\"EXT_texture_webp\":{\"source\":0}}}]");
+
+    bool decodedImage = false;
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            return uri == "triangle.bin" ? fixture.bin
+                                         : makeFakeWebpBytes();
+        },
+        [&](const uint8_t*, size_t) -> std::optional<GltfImage> {
+            decodedImage = true;
+            GltfImage image;
+            image.width = 1;
+            image.height = 1;
+            image.channels = 4;
+            image.pixels = {255, 255, 255, 255};
+            return image;
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(decodedImage);
+}
+
+TEST(GltfParserTest, RejectsExtTextureWebpBytesWithoutWebpSignature) {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf("texture.webp");
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":[\"EXT_texture_webp\"],");
+
+    const std::string textureMarker =
+        "\"textures\":[{\"source\":0,\"sampler\":0}]";
+    const size_t texturePos = fixture.jsonText.find(textureMarker);
+    ASSERT_NE(std::string::npos, texturePos);
+    fixture.jsonText.replace(
+        texturePos,
+        textureMarker.size(),
+        "\"textures\":[{\"source\":0,\"sampler\":0,"
+        "\"extensions\":{\"EXT_texture_webp\":{\"source\":0}}}]");
+
+    bool decodedImage = false;
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            return uri == "triangle.bin" ? fixture.bin
+                                         : std::vector<uint8_t>{9, 8, 7, 6};
+        },
+        [&](const uint8_t*, size_t) -> std::optional<GltfImage> {
+            decodedImage = true;
+            GltfImage image;
+            image.width = 1;
+            image.height = 1;
+            image.channels = 4;
+            image.pixels = {255, 255, 255, 255};
+            return image;
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(decodedImage);
+}
+
 TEST(GltfParserTest, RejectsExtTextureWebpDataUriWithNonWebpMimeSource) {
     ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf(
@@ -8491,17 +8599,16 @@ TEST(GltfParserTest, ContentProviderDecodesExternalWebpTextureExtension) {
         "\"images\":[{\"uri\":\"fallback.png\"},{\"uri\":\"texture.webp\"}]");
     writeBytes(root / "models" / "triangle.bin", fixture.bin);
     writeBytes(root / "models" / "fallback.png", {9, 9, 9, 9});
-    writeBytes(root / "models" / "texture.webp", {1, 2, 3, 4});
+    writeBytes(root / "models" / "texture.webp", makeFakeWebpBytes());
 
     bool decodedWebp = false;
     bool decodedFallback = false;
     TestPlatformBridge bridge(
         [&](const uint8_t* data, size_t size) -> std::unique_ptr<DecodedImage> {
-            EXPECT_EQ(4u, size);
             if (size == 0) {
                 return nullptr;
             }
-            decodedWebp = data[0] == 1u;
+            decodedWebp = bytesLookLikeFakeWebp(data, size);
             decodedFallback = data[0] == 9u;
             auto image = std::make_unique<DecodedImage>();
             image->width = 1;

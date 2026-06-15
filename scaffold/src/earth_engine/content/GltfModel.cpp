@@ -1213,6 +1213,12 @@ bool imageSourceDeclaresNonWebp(const json& imageJson) {
     }
     const auto uriIt = imageJson.find("uri");
     if (uriIt != imageJson.end() && uriIt->is_string()) {
+        const std::string uri = uriIt->get<std::string>();
+        if (uriPathEndsWith(uri, ".png") ||
+            uriPathEndsWith(uri, ".jpg") ||
+            uriPathEndsWith(uri, ".jpeg")) {
+            return true;
+        }
         const auto mimeType = dataUriMimeType(uriIt->get<std::string>());
         return mimeType && *mimeType != "image/webp";
     }
@@ -1337,6 +1343,9 @@ std::optional<std::vector<GltfTexture>> loadTextures(
         }
 
         if (encoded.empty()) continue;
+        if (useWebpSource && !encodedImageLooksLikeWebp(encoded)) {
+            return std::nullopt;
+        }
         if (encodedImageUsesUnsupportedFormat(encoded, useWebpSource)) {
             return std::nullopt;
         }
