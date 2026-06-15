@@ -10914,6 +10914,59 @@ TEST(GltfParserTest, ContentProviderDecodesCmptWithB3dmAndPnts) {
         1e-6f);
 }
 
+TEST(GltfParserTest, ContentProviderDecodesNestedCmptContent) {
+    std::vector<uint8_t> pntsBinary;
+    appendF32(pntsBinary, 7.0f);
+    appendF32(pntsBinary, 8.0f);
+    appendF32(pntsBinary, 9.0f);
+    const std::vector<uint8_t> pnts = makePnts(
+        "{\"POINTS_LENGTH\":1,"
+        "\"RTC_CENTER\":[10.0,20.0,30.0],"
+        "\"POSITION\":{\"byteOffset\":0}}",
+        pntsBinary);
+    const std::vector<uint8_t> nestedB3dm = makeB3dm(
+        makeTriangleGlb(),
+        "{\"BATCH_LENGTH\":0,\"RTC_CENTER\":[1.0,2.0,3.0]}");
+    const std::vector<uint8_t> nestedCmpt = makeCmpt({nestedB3dm, pnts});
+    const std::vector<uint8_t> cmpt =
+        makeCmpt({makeTriangleGlb(), nestedCmpt});
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "nested CMPT fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(cmpt.data(), cmpt.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(3u, result.gltfModel->primitives.size());
+    EXPECT_EQ(
+        GltfPrimitiveMode::Triangles,
+        result.gltfModel->primitives[0].primitiveMode);
+    EXPECT_EQ(
+        GltfPrimitiveMode::Triangles,
+        result.gltfModel->primitives[1].primitiveMode);
+    EXPECT_EQ(
+        GltfPrimitiveMode::Points,
+        result.gltfModel->primitives[2].primitiveMode);
+
+    const Vec3 firstNestedTriangle =
+        result.contentTransform *
+        result.gltfModel->primitives[1].vertices[0].positionEcef;
+    EXPECT_NEAR(11.0, firstNestedTriangle.x(), 1e-12);
+    EXPECT_NEAR(22.0, firstNestedTriangle.y(), 1e-12);
+    EXPECT_NEAR(33.0, firstNestedTriangle.z(), 1e-12);
+
+    ASSERT_EQ(1u, result.gltfModel->primitives[2].vertices.size());
+    const Vec3 nestedPoint =
+        result.contentTransform *
+        result.gltfModel->primitives[2].vertices[0].positionEcef;
+    EXPECT_NEAR(17.0, nestedPoint.x(), 1e-12);
+    EXPECT_NEAR(28.0, nestedPoint.y(), 1e-12);
+    EXPECT_NEAR(39.0, nestedPoint.z(), 1e-12);
+}
+
 TEST(GltfParserTest, ContentProviderDecodesCmptWithInstancedI3dm) {
     std::vector<uint8_t> pntsBinary;
     appendF32(pntsBinary, 1.0f);
