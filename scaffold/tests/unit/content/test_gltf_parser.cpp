@@ -5024,6 +5024,52 @@ TEST(GltfParserTest, RejectsKhrTextureTransformObjectExtensionWithoutDeclaration
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsKhrMaterialsUnlitObjectExtensionWithoutDeclaration) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string primitiveMarker = "\"mode\":4}";
+    const size_t primitivePos = fixture.jsonText.find(primitiveMarker);
+    ASSERT_NE(std::string::npos, primitivePos);
+    fixture.jsonText.replace(
+        primitivePos,
+        primitiveMarker.size(),
+        "\"mode\":4,\"material\":0}");
+
+    const std::string buffersMarker = "\"buffers\"";
+    const size_t buffersPos = fixture.jsonText.find(buffersMarker);
+    ASSERT_NE(std::string::npos, buffersPos);
+    fixture.jsonText.insert(
+        buffersPos,
+        "\"materials\":[{\"extensions\":{"
+        "\"KHR_materials_unlit\":{}}}],");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsKhrMaterialsEmissiveStrengthObjectExtensionWithoutDeclaration) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string primitiveMarker = "\"mode\":4}";
+    const size_t primitivePos = fixture.jsonText.find(primitiveMarker);
+    ASSERT_NE(std::string::npos, primitivePos);
+    fixture.jsonText.replace(
+        primitivePos,
+        primitiveMarker.size(),
+        "\"mode\":4,\"material\":0}");
+
+    const std::string buffersMarker = "\"buffers\"";
+    const size_t buffersPos = fixture.jsonText.find(buffersMarker);
+    ASSERT_NE(std::string::npos, buffersPos);
+    fixture.jsonText.insert(
+        buffersPos,
+        "\"materials\":[{\"extensions\":{"
+        "\"KHR_materials_emissive_strength\":{\"emissiveStrength\":2.0}}}],");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsKhrMaterialsIorObjectExtensionWithoutDeclaration) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string primitiveMarker = "\"mode\":4}";
