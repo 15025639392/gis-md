@@ -1264,7 +1264,7 @@ std::optional<std::vector<GltfTexture>> loadTextures(
         if (!image || image->width <= 0 || image->height <= 0 ||
             (image->channels != 3 && image->channels != 4) ||
             image->pixels.empty()) {
-            continue;
+            return std::nullopt;
         }
         result[textureIndex].image = std::move(*image);
     }
