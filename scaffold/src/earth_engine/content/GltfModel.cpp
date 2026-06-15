@@ -304,6 +304,38 @@ bool validImageDataUriSource(const std::string& uri, bool allowWebp) {
            uri.find(";base64,") != std::string::npos;
 }
 
+bool encodedImageLooksLikeWebp(const std::vector<uint8_t>& encoded) {
+    return encoded.size() >= 12u &&
+           encoded[0] == 'R' &&
+           encoded[1] == 'I' &&
+           encoded[2] == 'F' &&
+           encoded[3] == 'F' &&
+           encoded[8] == 'W' &&
+           encoded[9] == 'E' &&
+           encoded[10] == 'B' &&
+           encoded[11] == 'P';
+}
+
+bool encodedImageLooksLikeKtx2(const std::vector<uint8_t>& encoded) {
+    static constexpr std::array<uint8_t, 12> kKtx2Identifier = {
+        static_cast<uint8_t>(0xABu), 'K', 'T', 'X', ' ', '2', '0',
+        static_cast<uint8_t>(0xBBu), 0x0Du, 0x0Au, 0x1Au, 0x0Au};
+    return encoded.size() >= kKtx2Identifier.size() &&
+           std::equal(
+               kKtx2Identifier.begin(),
+               kKtx2Identifier.end(),
+               encoded.begin());
+}
+
+bool encodedImageUsesUnsupportedFormat(
+    const std::vector<uint8_t>& encoded,
+    bool allowWebp) {
+    if (!allowWebp && encodedImageLooksLikeWebp(encoded)) {
+        return true;
+    }
+    return encodedImageLooksLikeKtx2(encoded);
+}
+
 struct ParsedInput {
     json document;
     std::vector<uint8_t> binaryChunk;
@@ -1265,6 +1297,9 @@ std::optional<std::vector<GltfTexture>> loadTextures(
         }
 
         if (encoded.empty()) continue;
+        if (encodedImageUsesUnsupportedFormat(encoded, useWebpSource)) {
+            return std::nullopt;
+        }
         std::optional<GltfImage> image =
             imageDecoder(encoded.data(), encoded.size());
         if (!image || image->width <= 0 || image->height <= 0 ||

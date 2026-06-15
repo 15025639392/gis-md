@@ -4575,6 +4575,63 @@ TEST(GltfParserTest, RejectsImageWithUnsupportedExplicitMimeType) {
     EXPECT_FALSE(decodedImage);
 }
 
+TEST(GltfParserTest, RejectsExternalWebpCoreImageWithoutTextureExtension) {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf("texture.webp");
+    bool decodedImage = false;
+    const std::vector<uint8_t> webpHeader = {
+        'R', 'I', 'F', 'F',
+        0, 0, 0, 0,
+        'W', 'E', 'B', 'P'};
+
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            return uri == "triangle.bin" ? fixture.bin : webpHeader;
+        },
+        [&](const uint8_t*, size_t) -> std::optional<GltfImage> {
+            decodedImage = true;
+            GltfImage image;
+            image.width = 1;
+            image.height = 1;
+            image.channels = 4;
+            image.pixels = {255, 255, 255, 255};
+            return image;
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(decodedImage);
+}
+
+TEST(GltfParserTest, RejectsExternalKtx2ImageWithoutBasisuSupport) {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf("texture.ktx2");
+    bool decodedImage = false;
+    const std::vector<uint8_t> ktx2Header = {
+        static_cast<uint8_t>(0xABu), 'K', 'T', 'X', ' ', '2', '0',
+        static_cast<uint8_t>(0xBBu), 0x0Du, 0x0Au, 0x1Au, 0x0Au};
+
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            return uri == "triangle.bin" ? fixture.bin : ktx2Header;
+        },
+        [&](const uint8_t*, size_t) -> std::optional<GltfImage> {
+            decodedImage = true;
+            GltfImage image;
+            image.width = 1;
+            image.height = 1;
+            image.channels = 4;
+            image.pixels = {255, 255, 255, 255};
+            return image;
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(decodedImage);
+}
+
 TEST(GltfParserTest, ParsesBaseColorTextureBufferViewImage) {
     const ExternalGltfFixture fixture =
         makeBufferViewImageExternalBufferTriangleGltf();
