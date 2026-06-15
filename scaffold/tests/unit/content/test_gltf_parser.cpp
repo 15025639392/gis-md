@@ -619,7 +619,9 @@ std::vector<uint8_t> makeAnimatedTranslationTriangleGlb(
     const std::string& interpolation = "LINEAR",
     bool malformedCubicOutput = false,
     bool duplicateAnimationTarget = false,
-    bool nonFiniteOutput = false) {
+    bool nonFiniteOutput = false,
+    bool rotationAnimation = false,
+    bool zeroRotationOutput = false) {
     std::vector<uint8_t> bin;
     const size_t positionsOffset = bin.size();
     appendF32(bin, 0.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
@@ -640,7 +642,44 @@ std::vector<uint8_t> makeAnimatedTranslationTriangleGlb(
 
     const size_t outputOffset = bin.size();
     int outputAccessorCount = 2;
-    if (interpolation == "CUBICSPLINE" && !malformedCubicOutput) {
+    if (rotationAnimation) {
+        constexpr float kSqrtHalf = 0.7071067811865476f;
+        auto appendRotationValue = [&](bool secondKeyframe) {
+            if (zeroRotationOutput) {
+                appendF32(bin, 0.0f);
+                appendF32(bin, 0.0f);
+                appendF32(bin, 0.0f);
+                appendF32(bin, 0.0f);
+                return;
+            }
+            appendF32(
+                bin,
+                nonFiniteOutput
+                    ? std::numeric_limits<float>::infinity()
+                    : 0.0f);
+            appendF32(bin, 0.0f);
+            appendF32(bin, secondKeyframe ? kSqrtHalf : 0.0f);
+            appendF32(bin, secondKeyframe ? kSqrtHalf : 1.0f);
+        };
+        auto appendRotationTangent = [&]() {
+            appendF32(bin, 0.0f);
+            appendF32(bin, 0.0f);
+            appendF32(bin, 0.0f);
+            appendF32(bin, 0.0f);
+        };
+        if (interpolation == "CUBICSPLINE" && !malformedCubicOutput) {
+            outputAccessorCount = 6;
+            appendRotationTangent();
+            appendRotationValue(false);
+            appendRotationTangent();
+            appendRotationTangent();
+            appendRotationValue(true);
+            appendRotationTangent();
+        } else {
+            appendRotationValue(false);
+            appendRotationValue(true);
+        }
+    } else if (interpolation == "CUBICSPLINE" && !malformedCubicOutput) {
         outputAccessorCount = 6;
         appendF32(
             bin,
@@ -673,7 +712,8 @@ std::vector<uint8_t> makeAnimatedTranslationTriangleGlb(
         "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1},\"indices\":2,\"mode\":4}]}]," +
         "\"animations\":[{\"samplers\":[{\"input\":3,\"output\":4,\"interpolation\":\"" +
         interpolation +
-        "\"}],\"channels\":[{\"sampler\":0,\"target\":{\"node\":0,\"path\":\"translation\"}}" +
+        "\"}],\"channels\":[{\"sampler\":0,\"target\":{\"node\":0,\"path\":\"" +
+        (rotationAnimation ? "rotation" : "translation") + "\"}}" +
         (duplicateAnimationTarget
              ? ",{\"sampler\":0,\"target\":{\"node\":0,\"path\":\"translation\"}}"
              : "") +
@@ -693,7 +733,8 @@ std::vector<uint8_t> makeAnimatedTranslationTriangleGlb(
         "{\"bufferView\":2,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}," +
         "{\"bufferView\":3,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"}," +
         "{\"bufferView\":4,\"componentType\":5126,\"count\":" +
-        std::to_string(outputAccessorCount) + ",\"type\":\"VEC3\"}" +
+        std::to_string(outputAccessorCount) + ",\"type\":\"" +
+        (rotationAnimation ? "VEC4" : "VEC3") + "\"}" +
         "]}";
 
     std::vector<uint8_t> jsonBytes(jsonText.begin(), jsonText.end());
@@ -1371,6 +1412,7 @@ void appendAccessorToExternalFixture(
 
 enum class GpuInstanceRotationEncoding {
     Float,
+    ZeroFloat,
     NormalizedShort,
     NormalizedUnsignedByte,
     NormalizedUnsignedShort
@@ -1404,6 +1446,11 @@ ExternalGltfFixture makeGpuInstancedExternalGltf(
             appendF32(fixture.bin, kSqrtHalf);
             break;
         }
+        case GpuInstanceRotationEncoding::ZeroFloat:
+            for (int i = 0; i < 8; ++i) {
+                appendF32(fixture.bin, 0.0f);
+            }
+            break;
         case GpuInstanceRotationEncoding::NormalizedShort:
             appendI16(fixture.bin, 0);
             appendI16(fixture.bin, 0);
@@ -1498,6 +1545,7 @@ ExternalGltfFixture makeGpuInstancedExternalGltf(
     std::string rotationAccessor;
     switch (rotationEncoding) {
         case GpuInstanceRotationEncoding::Float:
+        case GpuInstanceRotationEncoding::ZeroFloat:
             rotationAccessor =
                 "{\"bufferView\":5,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"}";
             break;
@@ -3602,6 +3650,49 @@ TEST(GltfParserTest, UpdatesLinearTranslationAnimation) {
     EXPECT_NEAR(0.0, model->primitives[0].vertices[0].positionEcef.z(), 1e-12);
 }
 
+TEST(GltfParserTest, UpdatesLinearRotationAnimation) {
+    const std::vector<uint8_t> glb =
+        makeAnimatedTranslationTriangleGlb(
+            "LINEAR",
+            false,
+            false,
+            false,
+            true);
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
+
+    ASSERT_NE(nullptr, model);
+    ASSERT_TRUE(model->hasRuntimeAnimation());
+    ASSERT_EQ(1u, model->primitives.size());
+    ASSERT_EQ(3u, model->primitives[0].vertices.size());
+
+    EXPECT_TRUE(model->updateAnimation(0.5));
+    EXPECT_NEAR(
+        0.7071067811865476,
+        model->primitives[0].vertices[1].positionEcef.x(),
+        1e-12);
+    EXPECT_NEAR(
+        0.7071067811865476,
+        model->primitives[0].vertices[1].positionEcef.y(),
+        1e-12);
+    EXPECT_NEAR(0.0, model->primitives[0].vertices[1].positionEcef.z(), 1e-12);
+}
+
+TEST(GltfParserTest, RejectsAnimationRotationWithZeroLengthOutput) {
+    const std::vector<uint8_t> glb =
+        makeAnimatedTranslationTriangleGlb(
+            "LINEAR",
+            false,
+            false,
+            false,
+            true,
+            true);
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, PausesRuntimeAnimationWithoutChangingPose) {
     const std::vector<uint8_t> glb = makeAnimatedTranslationTriangleGlb();
     std::unique_ptr<GltfModel> model =
@@ -4763,6 +4854,44 @@ TEST(GltfParserTest, ParsesExternalBufferGltfWithResolver) {
     EXPECT_NEAR(30.0, first.positionEcef.z(), 1e-12);
 }
 
+TEST(GltfParserTest, NormalizesNodeRotationQuaternion) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker = "{\"mesh\":0,\"translation\":[10,20,30]}";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "{\"mesh\":0,\"translation\":[10,20,30],"
+        "\"rotation\":[0,0,1.4142135623730951,1.4142135623730951]}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    ASSERT_EQ(3u, model->primitives[0].vertices.size());
+    const SurfaceVertex& second = model->primitives[0].vertices[1];
+    EXPECT_NEAR(10.0, second.positionEcef.x(), 1e-12);
+    EXPECT_NEAR(21.0, second.positionEcef.y(), 1e-12);
+    EXPECT_NEAR(30.0, second.positionEcef.z(), 1e-12);
+}
+
+TEST(GltfParserTest, RejectsNodeZeroLengthRotationQuaternion) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker = "{\"mesh\":0,\"translation\":[10,20,30]}";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "{\"mesh\":0,\"translation\":[10,20,30],"
+        "\"rotation\":[0,0,0,0]}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsNodeTranslationTypeMismatch) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string marker = "\"translation\":[10,20,30]";
@@ -5367,8 +5496,8 @@ TEST(GltfParserTest, ParsesExtMeshGpuInstancingNormalizedShortRotation) {
 
     const Vec3 source = primitive.vertices[1].positionEcef;
     const Vec3 second = primitive.instances[1].transform * source;
-    EXPECT_NEAR(14.0, second.x(), 1e-3);
-    EXPECT_NEAR(26.0, second.y(), 1e-3);
+    EXPECT_NEAR(14.0, second.x(), 1e-5);
+    EXPECT_NEAR(26.0, second.y(), 1e-5);
     EXPECT_NEAR(36.0, second.z(), 1e-3);
 }
 
@@ -5384,8 +5513,8 @@ TEST(GltfParserTest, ParsesExtMeshGpuInstancingNormalizedUnsignedByteRotation) {
 
     const Vec3 source = primitive.vertices[1].positionEcef;
     const Vec3 second = primitive.instances[1].transform * source;
-    EXPECT_NEAR(14.0, second.x(), 2e-2);
-    EXPECT_NEAR(26.0, second.y(), 2e-2);
+    EXPECT_NEAR(14.0, second.x(), 1e-5);
+    EXPECT_NEAR(26.0, second.y(), 1e-5);
     EXPECT_NEAR(36.0, second.z(), 1e-6);
 }
 
@@ -5401,9 +5530,17 @@ TEST(GltfParserTest, ParsesExtMeshGpuInstancingNormalizedUnsignedShortRotation) 
 
     const Vec3 source = primitive.vertices[1].positionEcef;
     const Vec3 second = primitive.instances[1].transform * source;
-    EXPECT_NEAR(14.0, second.x(), 1e-4);
-    EXPECT_NEAR(26.0, second.y(), 1e-4);
+    EXPECT_NEAR(14.0, second.x(), 1e-5);
+    EXPECT_NEAR(26.0, second.y(), 1e-5);
     EXPECT_NEAR(36.0, second.z(), 1e-6);
+}
+
+TEST(GltfParserTest, RejectsGpuInstancingZeroLengthRotation) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf(
+        GpuInstanceRotationEncoding::ZeroFloat);
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
 }
 
 TEST(GltfParserTest, RejectsExtMeshGpuInstancingDeclarationWithoutNodeExtension) {

@@ -2349,6 +2349,18 @@ bool jsonNumberArrayAtLeast(
         });
 }
 
+bool jsonQuaternionArrayNonZero(const json& value) {
+    if (!jsonNumberArray(value, 4u)) {
+        return false;
+    }
+    const double x = value[0].get<double>();
+    const double y = value[1].get<double>();
+    const double z = value[2].get<double>();
+    const double w = value[3].get<double>();
+    const double lengthSquared = x * x + y * y + z * z + w * w;
+    return std::isfinite(lengthSquared) && lengthSquared > 0.0;
+}
+
 bool jsonNodeIndexArray(const json& value, size_t nodeCount) {
     if (!value.is_array()) {
         return false;
@@ -3254,7 +3266,7 @@ bool validateSceneGraph(const json& doc,
                 return false;
             }
             if (node.contains("rotation") &&
-                !jsonNumberArray(node["rotation"], 4u)) {
+                !jsonQuaternionArrayNonZero(node["rotation"])) {
                 return false;
             }
             if (node.contains("scale") &&
@@ -3476,6 +3488,21 @@ bool validateSceneGraph(const json& doc,
     return true;
 }
 
+glm::dquat normalizedRotationFromNodeJson(const json& node) {
+    if (!node.contains("rotation") ||
+        !node["rotation"].is_array() ||
+        node["rotation"].size() != 4) {
+        return glm::dquat(1.0, 0.0, 0.0, 0.0);
+    }
+
+    const glm::dquat rotation(
+        node["rotation"][3].get<double>(),
+        node["rotation"][0].get<double>(),
+        node["rotation"][1].get<double>(),
+        node["rotation"][2].get<double>());
+    return glm::normalize(rotation);
+}
+
 glm::dmat4 nodeLocalTransform(const json& node) {
     if (node.contains("matrix") && node["matrix"].is_array() &&
         node["matrix"].size() == 16) {
@@ -3495,15 +3522,7 @@ glm::dmat4 nodeLocalTransform(const json& node) {
             node["translation"][2].get<double>());
     }
 
-    glm::dquat rotation(1.0, 0.0, 0.0, 0.0);
-    if (node.contains("rotation") && node["rotation"].is_array() &&
-        node["rotation"].size() == 4) {
-        rotation = glm::dquat(
-            node["rotation"][3].get<double>(),
-            node["rotation"][0].get<double>(),
-            node["rotation"][1].get<double>(),
-            node["rotation"][2].get<double>());
-    }
+    const glm::dquat rotation = normalizedRotationFromNodeJson(node);
 
     glm::dvec3 scale(1.0);
     if (node.contains("scale") && node["scale"].is_array() &&
@@ -3589,11 +3608,7 @@ std::vector<NodeRecord> parseNodes(const json& doc) {
             if (node.contains("rotation") &&
                 node["rotation"].is_array() &&
                 node["rotation"].size() == 4) {
-                nodes[i].rotation = glm::dquat(
-                    node["rotation"][3].get<double>(),
-                    node["rotation"][0].get<double>(),
-                    node["rotation"][1].get<double>(),
-                    node["rotation"][2].get<double>());
+                nodes[i].rotation = normalizedRotationFromNodeJson(node);
             }
             if (node.contains("scale") &&
                 node["scale"].is_array() &&
@@ -4279,6 +4294,32 @@ struct RawAnimationSampler {
     int outputAccessorComponents = 0;
 };
 
+bool animationRotationKeyframesHaveNonZeroValues(
+    const RawAnimationSampler& raw,
+    size_t keyframes) {
+    const size_t outputElementsPerKey =
+        animationOutputElementsPerKey(raw.runtime.interpolation);
+    for (size_t keyframe = 0; keyframe < keyframes; ++keyframe) {
+        const size_t valueElement = keyframe * outputElementsPerKey +
+            (raw.runtime.interpolation == GltfAnimationInterpolation::CubicSpline
+                 ? 1u
+                 : 0u);
+        const size_t offset = valueElement * 4u;
+        if (offset + 3u >= raw.runtime.outputValues.size()) {
+            return false;
+        }
+        const double x = raw.runtime.outputValues[offset + 0u];
+        const double y = raw.runtime.outputValues[offset + 1u];
+        const double z = raw.runtime.outputValues[offset + 2u];
+        const double w = raw.runtime.outputValues[offset + 3u];
+        const double lengthSquared = x * x + y * y + z * z + w * w;
+        if (!std::isfinite(lengthSquared) || lengthSquared <= 0.0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 std::optional<std::vector<GltfAnimationRuntime>> parseAnimations(
     const json& doc,
     const std::vector<std::vector<uint8_t>>& buffers,
@@ -4472,6 +4513,12 @@ std::optional<std::vector<GltfAnimationRuntime>> parseAnimations(
                     static_cast<int>(keyframes * outputElementsPerKey))) {
                 return std::nullopt;
             }
+            if (*path == GltfAnimationPath::Rotation &&
+                !animationRotationKeyframesHaveNonZeroValues(
+                    raw,
+                    keyframes)) {
+                return std::nullopt;
+            }
             if (raw.runtime.outputComponents != 0 &&
                 raw.runtime.outputComponents != expectedComponents) {
                 return std::nullopt;
@@ -4659,13 +4706,20 @@ std::optional<std::vector<GltfInstance>> parseGpuInstancingInstances(
                 strictFailure = true;
                 return std::nullopt;
             }
-            transform =
-                transform *
-                glm::mat4_cast(glm::dquat(
+            const glm::dquat normalizedRotation =
+                glm::normalize(glm::dquat(
                     rotation.w,
                     rotation.x,
                     rotation.y,
                     rotation.z));
+            if (!std::isfinite(normalizedRotation.w) ||
+                !std::isfinite(normalizedRotation.x) ||
+                !std::isfinite(normalizedRotation.y) ||
+                !std::isfinite(normalizedRotation.z)) {
+                strictFailure = true;
+                return std::nullopt;
+            }
+            transform = transform * glm::mat4_cast(normalizedRotation);
         }
         if (scales) {
             const glm::dvec3 scale = readVec3(*scales, i);
@@ -6203,10 +6257,17 @@ bool GltfModel::updateAnimation(double timeSeconds) {
             case GltfAnimationPath::Rotation:
                 if (values.size() == 4) {
                     glm::dquat q(values[3], values[0], values[1], values[2]);
-                    if (glm::dot(q, q) > 0.0) {
-                        q = glm::normalize(q);
-                    } else {
-                        q = glm::dquat(1.0, 0.0, 0.0, 0.0);
+                    const double lengthSquared = glm::dot(q, q);
+                    if (!std::isfinite(lengthSquared) ||
+                        lengthSquared <= 0.0) {
+                        return false;
+                    }
+                    q = glm::normalize(q);
+                    if (!std::isfinite(q.w) ||
+                        !std::isfinite(q.x) ||
+                        !std::isfinite(q.y) ||
+                        !std::isfinite(q.z)) {
+                        return false;
                     }
                     node.rotation = toArrayQuat(q);
                     node.localTransform =
