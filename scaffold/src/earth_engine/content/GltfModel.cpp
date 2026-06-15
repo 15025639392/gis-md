@@ -3402,6 +3402,101 @@ bool validateGpuInstancingNodeExtensionShape(
     return true;
 }
 
+bool validateNodeHierarchy(const json& nodes, const json* scenes) {
+    if (!nodes.is_array()) {
+        return false;
+    }
+    const size_t nodeCount = nodes.size();
+    std::vector<int> parent(nodeCount, -1);
+
+    for (size_t nodeIndex = 0; nodeIndex < nodeCount; ++nodeIndex) {
+        const json& node = nodes[nodeIndex];
+        if (!node.is_object()) {
+            return false;
+        }
+        const auto childrenIt = node.find("children");
+        if (childrenIt == node.end()) {
+            continue;
+        }
+        if (!jsonNodeIndexArray(*childrenIt, nodeCount)) {
+            return false;
+        }
+        std::unordered_set<int> seenChildren;
+        seenChildren.reserve(childrenIt->size());
+        for (const json& child : *childrenIt) {
+            const int childIndex = child.get<int>();
+            if (!seenChildren.insert(childIndex).second ||
+                parent[static_cast<size_t>(childIndex)] != -1) {
+                return false;
+            }
+            parent[static_cast<size_t>(childIndex)] =
+                static_cast<int>(nodeIndex);
+        }
+    }
+
+    if (scenes) {
+        if (!scenes->is_array()) {
+            return false;
+        }
+        for (const json& scene : *scenes) {
+            if (!scene.is_object()) {
+                return false;
+            }
+            const auto sceneNodesIt = scene.find("nodes");
+            if (sceneNodesIt == scene.end()) {
+                continue;
+            }
+            if (!jsonNodeIndexArray(*sceneNodesIt, nodeCount)) {
+                return false;
+            }
+            std::unordered_set<int> sceneRoots;
+            sceneRoots.reserve(sceneNodesIt->size());
+            for (const json& sceneNode : *sceneNodesIt) {
+                const int sceneNodeIndex = sceneNode.get<int>();
+                if (!sceneRoots.insert(sceneNodeIndex).second ||
+                    parent[static_cast<size_t>(sceneNodeIndex)] != -1) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    std::vector<uint8_t> visitState(nodeCount, 0u);
+    for (size_t start = 0; start < nodeCount; ++start) {
+        if (visitState[start] != 0u) {
+            continue;
+        }
+
+        std::vector<std::pair<size_t, size_t>> stack;
+        stack.emplace_back(start, 0u);
+        visitState[start] = 1u;
+        while (!stack.empty()) {
+            auto& frame = stack.back();
+            const json& node = nodes[frame.first];
+            const auto childrenIt = node.find("children");
+            if (childrenIt == node.end() ||
+                frame.second >= childrenIt->size()) {
+                visitState[frame.first] = 2u;
+                stack.pop_back();
+                continue;
+            }
+
+            const int childIndex =
+                (*childrenIt)[frame.second++].get<int>();
+            const size_t child = static_cast<size_t>(childIndex);
+            if (visitState[child] == 1u) {
+                return false;
+            }
+            if (visitState[child] == 0u) {
+                visitState[child] = 1u;
+                stack.emplace_back(child, 0u);
+            }
+        }
+    }
+
+    return true;
+}
+
 bool validateSceneGraph(const json& doc,
                         bool allowLegacyBatchIdAttribute) {
     const auto nodesIt = doc.find("nodes");
@@ -3709,6 +3804,12 @@ bool validateSceneGraph(const json& doc,
             static_cast<size_t>(sceneIndex) >= scenesIt->size()) {
             return false;
         }
+    }
+    if (nodesIt != doc.end() &&
+        !validateNodeHierarchy(
+            *nodesIt,
+            scenesIt == doc.end() ? nullptr : &*scenesIt)) {
+        return false;
     }
     return true;
 }

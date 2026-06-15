@@ -5805,6 +5805,81 @@ TEST(GltfParserTest, RejectsNodeChildrenIndexOutOfRange) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsNodeChildCycle) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker =
+        "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30]}]";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30]},"
+        "{\"children\":[2]},{\"children\":[1]}]");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsNodeDuplicateChildReference) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker =
+        "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30]}]";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30],"
+        "\"children\":[1,1]},{}]");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsNodeWithMultipleParents) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker =
+        "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30]}]";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30],"
+        "\"children\":[2]},{\"children\":[2]},{}]");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsSceneRootNodeThatIsAlsoAChild) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string sceneMarker = "\"scenes\":[{\"nodes\":[0]}]";
+    const size_t scenePos = fixture.jsonText.find(sceneMarker);
+    ASSERT_NE(std::string::npos, scenePos);
+    fixture.jsonText.replace(
+        scenePos,
+        sceneMarker.size(),
+        "\"scenes\":[{\"nodes\":[0,1]}]");
+    const std::string nodeMarker =
+        "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30]}]";
+    const size_t nodePos = fixture.jsonText.find(nodeMarker);
+    ASSERT_NE(std::string::npos, nodePos);
+    fixture.jsonText.replace(
+        nodePos,
+        nodeMarker.size(),
+        "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30],"
+        "\"children\":[1]},{}]");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsNodeSkinWithoutMesh) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
