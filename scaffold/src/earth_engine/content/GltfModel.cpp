@@ -276,6 +276,40 @@ bool supportedImageMimeType(const std::string& mimeType, bool allowWebp) {
            (allowWebp && mimeType == "image/webp");
 }
 
+bool uriPathEndsWith(std::string uri, const char* extension) {
+    const size_t fragment = uri.find('#');
+    if (fragment != std::string::npos) {
+        uri.resize(fragment);
+    }
+    const size_t query = uri.find('?');
+    if (query != std::string::npos) {
+        uri.resize(query);
+    }
+    std::transform(
+        uri.begin(),
+        uri.end(),
+        uri.begin(),
+        [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+    const std::string ext(extension);
+    return uri.size() >= ext.size() &&
+           uri.compare(uri.size() - ext.size(), ext.size(), ext) == 0;
+}
+
+bool imageUriUsesUnsupportedFormat(
+    const std::string& uri,
+    bool allowWebp) {
+    if (uri.rfind("data:", 0) == 0) {
+        return false;
+    }
+    if (!allowWebp && uriPathEndsWith(uri, ".webp")) {
+        return true;
+    }
+    return uriPathEndsWith(uri, ".ktx2") ||
+           uriPathEndsWith(uri, ".basis");
+}
+
 std::optional<std::string> dataUriMimeType(const std::string& uri) {
     constexpr const char* prefix = "data:";
     constexpr size_t prefixLength = 5u;
@@ -1149,6 +1183,10 @@ bool validImageSourceFields(const json& imageJson, bool allowWebp = false) {
     }
     if (uriIt != imageJson.end() &&
         !validImageDataUriSource(uriIt->get<std::string>(), allowWebp)) {
+        return false;
+    }
+    if (uriIt != imageJson.end() &&
+        imageUriUsesUnsupportedFormat(uriIt->get<std::string>(), allowWebp)) {
         return false;
     }
     if (uriIt != imageJson.end() && bufferViewIt != imageJson.end()) {

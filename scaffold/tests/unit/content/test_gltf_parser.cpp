@@ -4628,6 +4628,26 @@ TEST(GltfParserTest, RejectsExternalWebpCoreImageWithoutTextureExtension) {
     EXPECT_FALSE(decodedImage);
 }
 
+TEST(GltfParserTest, RejectsExternalWebpCoreImageWithoutDecoder) {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf("textures/texture.webp?rev=1");
+    bool resolvedImage = false;
+
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            if (uri == "triangle.bin") {
+                return fixture.bin;
+            }
+            resolvedImage = true;
+            return std::vector<uint8_t>{'R', 'I', 'F', 'F'};
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(resolvedImage);
+}
+
 TEST(GltfParserTest, RejectsExternalKtx2ImageWithoutBasisuSupport) {
     ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf("texture.ktx2");
@@ -4654,6 +4674,27 @@ TEST(GltfParserTest, RejectsExternalKtx2ImageWithoutBasisuSupport) {
 
     EXPECT_EQ(nullptr, model);
     EXPECT_FALSE(decodedImage);
+}
+
+TEST(GltfParserTest, RejectsExternalKtx2ImageWithoutDecoder) {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf("TEXTURE.KTX2#main");
+    bool resolvedImage = false;
+
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            if (uri == "triangle.bin") {
+                return fixture.bin;
+            }
+            resolvedImage = true;
+            return std::vector<uint8_t>{
+                static_cast<uint8_t>(0xABu), 'K', 'T', 'X'};
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(resolvedImage);
 }
 
 TEST(GltfParserTest, ParsesBaseColorTextureBufferViewImage) {
