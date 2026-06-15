@@ -684,8 +684,17 @@ bool hasUnsupportedRequiredExtensions(
 
 bool hasUnsupportedMultipleContents(const nlohmann::json& tileJson) {
     auto contentsIt = tileJson.find("contents");
-    return contentsIt != tileJson.end() && contentsIt->is_array() &&
-           !contentsIt->empty();
+    if (contentsIt != tileJson.end() && contentsIt->is_array() &&
+        !contentsIt->empty()) {
+        return true;
+    }
+
+    auto extensionsIt = tileJson.find("extensions");
+    if (extensionsIt == tileJson.end() || !extensionsIt->is_object()) {
+        return false;
+    }
+    return extensionsIt->find("3DTILES_multiple_contents") !=
+           extensionsIt->end();
 }
 
 bool hasUnsupportedImplicitTiling(const nlohmann::json& tileJson) {

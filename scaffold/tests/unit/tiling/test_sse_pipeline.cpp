@@ -4500,8 +4500,52 @@ void testTilesetJsonI3dmDefaultUpAxisKeepsInstancePositionsTileLocal() {
     std::filesystem::remove_all(root);
 }
 
+void expectTilesetJsonTileFailsExplicitly(
+    std::unique_ptr<TilesetJsonContentProvider> provider,
+    const TileKey& key,
+    const std::string& name);
+
 void testTilesetJsonUnsupportedMultipleContentsFailsTile() {
-    const std::string tilesetJson = R"json({
+    auto runCase = [](const std::string& tilesetJson,
+                      const std::string& url,
+                      const std::string& name,
+                      const std::string& checkName) {
+        auto provider = std::make_unique<TilesetJsonContentProvider>(
+            url,
+            std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
+            name);
+        TilesetJsonContentProvider* rawProvider = provider.get();
+        check(rawProvider->valid(),
+              checkName +
+                  ": unsupported contents fixture keeps parseable metadata");
+        const std::vector<TileKey> roots = rawProvider->rootTiles();
+        check(roots.size() == 1,
+              checkName +
+                  ": unsupported contents fixture creates wrapper root");
+        if (roots.empty()) return;
+
+        const std::vector<TileKey> rootChildren =
+            rawProvider->childTiles(roots.front());
+        check(rootChildren.size() == 1,
+              checkName +
+                  ": unsupported contents fixture keeps parsed root tile");
+        if (rootChildren.empty()) return;
+
+        const std::vector<TileKey> unsupportedChildren =
+            rawProvider->childTiles(rootChildren.front());
+        check(unsupportedChildren.size() == 1 &&
+                  rawProvider->supportsTile(unsupportedChildren.front()),
+              checkName + ": unsupported contents child stays addressable");
+        if (unsupportedChildren.empty()) return;
+
+        expectTilesetJsonTileFailsExplicitly(
+            std::move(provider),
+            unsupportedChildren.front(),
+            checkName +
+                ": unsupported multiple contents fails explicitly instead of disappearing");
+    };
+
+    const std::string coreMultipleContentsJson = R"json({
       "asset": {"version": "1.1"},
       "geometricError": 100,
       "root": {
@@ -4517,51 +4561,37 @@ void testTilesetJsonUnsupportedMultipleContentsFailsTile() {
         }]
       }
     })json";
+    runCase(coreMultipleContentsJson,
+            "file:///unsupported-multiple-contents/tileset.json",
+            "unsupported multiple contents fixture",
+            "TilesetJsonContentProvider");
 
-    auto provider = std::make_unique<TilesetJsonContentProvider>(
-        "file:///unsupported-multiple-contents/tileset.json",
-        std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
-        "unsupported multiple contents fixture");
-    TilesetJsonContentProvider* rawProvider = provider.get();
-    check(rawProvider->valid(),
-          "TilesetJsonContentProvider: unsupported contents fixture keeps parseable metadata");
-    const std::vector<TileKey> roots = rawProvider->rootTiles();
-    check(roots.size() == 1,
-          "TilesetJsonContentProvider: unsupported contents fixture creates wrapper root");
-    if (roots.empty()) return;
-
-    const std::vector<TileKey> rootChildren =
-        rawProvider->childTiles(roots.front());
-    check(rootChildren.size() == 1,
-          "TilesetJsonContentProvider: unsupported contents fixture keeps parsed root tile");
-    if (rootChildren.empty()) return;
-
-    const std::vector<TileKey> unsupportedChildren =
-        rawProvider->childTiles(rootChildren.front());
-    check(unsupportedChildren.size() == 1 &&
-              rawProvider->supportsTile(unsupportedChildren.front()),
-          "TilesetJsonContentProvider: unsupported contents child stays addressable");
-    if (unsupportedChildren.empty()) return;
-
-    DummyRenderDevice device;
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
-        std::move(scheme),
-        {},
-        &device,
-        TilesetOptions{},
-        std::move(provider));
-
-    const TileKey unsupportedKey = unsupportedChildren.front();
-    TilesetTestAccess::requestMissingTile(tileset, unsupportedKey);
-    TilesetTestAccess::processPendingUploads(tileset);
-    TilesetTile* unsupportedTile =
-        TilesetTestAccess::findTile(tileset, unsupportedKey);
-    check(unsupportedTile &&
-              unsupportedTile->loadState == TileLoadState::Failed &&
-              unsupportedTile->contentKind == TileContentKind::Unknown,
-          "Tileset: unsupported multiple contents fails explicitly instead of disappearing");
+    const std::string legacyMultipleContentsJson = R"json({
+      "asset": {"version": "1.0"},
+      "extensionsUsed": ["3DTILES_multiple_contents"],
+      "extensionsRequired": ["3DTILES_multiple_contents"],
+      "geometricError": 100,
+      "root": {
+        "boundingVolume": {"region": [-0.01, -0.01, 0.01, 0.01, 0, 100]},
+        "geometricError": 64,
+        "children": [{
+          "boundingVolume": {"region": [-0.005, -0.005, 0.005, 0.005, 0, 50]},
+          "geometricError": 16,
+          "extensions": {
+            "3DTILES_multiple_contents": {
+              "content": [
+                {"uri": "a.b3dm"},
+                {"uri": "b.b3dm"}
+              ]
+            }
+          }
+        }]
+      }
+    })json";
+    runCase(legacyMultipleContentsJson,
+            "file:///unsupported-legacy-multiple-contents/tileset.json",
+            "unsupported legacy multiple contents fixture",
+            "TilesetJsonContentProvider legacy");
 }
 
 void testTilesetJsonProviderParsesViewerRequestVolume() {
