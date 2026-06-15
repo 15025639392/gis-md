@@ -3244,6 +3244,84 @@ void testTilesetGltfPbrSpecularGlossinessUploadsUniformsAndTextures() {
           "Tileset: glTF spec-gloss texture uploads KHR_texture_transform uniforms");
 }
 
+void testTilesetGltfTransmissionMaterialUploadsUniformsAndTextures() {
+    DummyRenderDevice device;
+    device.allowTextureCreation = true;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: glTF transmission material root tile is created");
+    if (!root) return;
+
+    root->gltfModel = makeTexturedTriangleGltfModel();
+    GltfPrimitive& primitive = root->gltfModel->primitives[0];
+    primitive.alphaMode = GltfAlphaMode::Opaque;
+    primitive.transmissionFactor = 0.65f;
+    GltfTextureBinding transmissionBinding;
+    transmissionBinding.textureIndex = 0u;
+    transmissionBinding.texCoord = 1;
+    transmissionBinding.transform.offset = {0.125f, 0.25f};
+    transmissionBinding.transform.scale = {0.5f, 0.75f};
+    transmissionBinding.transform.rotation = 1.57079632679f;
+    primitive.transmissionTexture = transmissionBinding;
+    root->contentKind = TileContentKind::Render;
+    root->loadState = TileLoadState::ContentLoaded;
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 1,
+          "Tileset: glTF transmission material emits one primitive draw command");
+    if (commands.empty()) return;
+
+    const RenderCommand& cmd = commands.front();
+    check(cmd.blend && !cmd.depthWrite,
+          "Tileset: glTF transmission material becomes a translucent command");
+    check(cmd.uniforms.count("u_transmissionFactor") &&
+              std::abs(cmd.uniforms.at("u_transmissionFactor").front() -
+                       0.65f) < 1e-6f,
+          "Tileset: glTF transmission material uploads transmissionFactor");
+    check(cmd.uniforms.count("u_hasTransmissionTexture") &&
+              cmd.uniforms.at("u_hasTransmissionTexture").front() == 1.0f,
+          "Tileset: glTF transmission material reports texture presence");
+    check(cmd.textures.size() >= 15 &&
+              cmd.textures[14] ==
+                  root->gltfPrimitiveResources.front()
+                      .transmissionTexture.texture,
+          "Tileset: glTF transmission texture binds to material slot 14");
+    check(cmd.uniforms.count("u_transmissionTexCoordSet") &&
+              cmd.uniforms.at("u_transmissionTexCoordSet").front() == 1.0f,
+          "Tileset: glTF transmission material uploads texture coordinate set");
+    check(cmd.uniforms.count("u_transmissionTexOffsetScale") &&
+              cmd.uniforms.at("u_transmissionTexOffsetScale").size() == 4 &&
+              std::abs(cmd.uniforms.at("u_transmissionTexOffsetScale")[0] -
+                       0.125f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_transmissionTexOffsetScale")[1] -
+                       0.25f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_transmissionTexOffsetScale")[2] -
+                       0.5f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_transmissionTexOffsetScale")[3] -
+                       0.75f) < 1e-6f &&
+              cmd.uniforms.count("u_transmissionTexRotationSinCos") &&
+              std::abs(cmd.uniforms.at("u_transmissionTexRotationSinCos")[0] -
+                       1.0f) < 1e-6f,
+          "Tileset: glTF transmission texture uploads KHR_texture_transform uniforms");
+}
+
 void testTilesetGltfSpecularMaterialUploadsUniformsAndTextures() {
     DummyRenderDevice device;
     device.allowTextureCreation = true;
@@ -3747,6 +3825,67 @@ void testTilesetGltfBlendInstancesSplitForSorting() {
     }
     check(verticesBakedPerInstance,
           "Tileset: split BLEND instance vertices are baked relative to shared local origin");
+}
+
+void testTilesetGltfTransmissionInstancesSplitForSorting() {
+    DummyRenderDevice device;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: glTF transmission instancing root tile is created");
+    if (!root) return;
+
+    root->gltfModel = makeTriangleGltfModel();
+    GltfPrimitive& primitive = root->gltfModel->primitives[0];
+    primitive.transmissionFactor = 0.5f;
+    GltfInstance nearInstance;
+    nearInstance.transform = Mat4::translation(Vec3(0.0, 0.0, 5.0));
+    GltfInstance farInstance;
+    farInstance.transform = Mat4::translation(Vec3(0.0, 0.0, 25.0));
+    primitive.instances = {nearInstance, farInstance};
+    root->contentKind = TileContentKind::Render;
+    root->loadState = TileLoadState::ContentLoaded;
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 2 &&
+              root->gltfPrimitiveResources.size() == 2u,
+          "Tileset: glTF transmission instances become separate sortable draw commands");
+    if (commands.size() < 2) return;
+
+    bool splitCommands = true;
+    for (const RenderCommand& cmd : commands) {
+        splitCommands = splitCommands &&
+            cmd.kind == RenderCommandKind::GltfPrimitive &&
+            cmd.instanceCount == 0 &&
+            cmd.instanceBuffer == nullptr &&
+            cmd.blend &&
+            !cmd.depthWrite &&
+            cmd.hasWorldSortCenter &&
+            cmd.uniforms.count("u_transmissionFactor") &&
+            std::abs(cmd.uniforms.at("u_transmissionFactor").front() -
+                     0.5f) < 1e-6f;
+    }
+    check(splitCommands,
+          "Tileset: split transmission instance commands are non-instanced translucent primitives");
+    check(std::abs(commands[0].worldSortCenter[2] - 5.0) < 1e-9 &&
+              std::abs(commands[1].worldSortCenter[2] - 25.0) < 1e-9,
+          "Tileset: split transmission instance commands carry per-instance sort centers");
 }
 
 void testTilesetContentProviderLoadsGltfRenderContent() {
@@ -6883,6 +7022,7 @@ int main() {
     testTilesetGltfIorMaterialUploadsSpecularF0();
     testTilesetGltfAnisotropyMaterialUploadsUniformsAndTextures();
     testTilesetGltfPbrSpecularGlossinessUploadsUniformsAndTextures();
+    testTilesetGltfTransmissionMaterialUploadsUniformsAndTextures();
     testTilesetGltfSpecularMaterialUploadsUniformsAndTextures();
     testTilesetGltfClearcoatMaterialUploadsUniformsAndTextures();
     testTilesetGltfSheenMaterialUploadsUniformsAndTextures();
@@ -6890,6 +7030,7 @@ int main() {
     testTilesetGltfDoubleSidedDisablesCullOnly();
     testTilesetGltfOpaqueInstancesUseGpuInstancing();
     testTilesetGltfBlendInstancesSplitForSorting();
+    testTilesetGltfTransmissionInstancesSplitForSorting();
     testTilesetContentProviderLoadsGltfRenderContent();
     testTilesetJsonProviderLoadsExplicitGltfTile();
     testTilesetJsonGltfUpAxisZKeepsZUpContent();

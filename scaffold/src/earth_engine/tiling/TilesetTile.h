@@ -58,6 +58,7 @@ struct GltfPrimitiveRenderResources {
     TextureBinding specularTexture;
     TextureBinding specularColorTexture;
     TextureBinding specularGlossinessTexture;
+    TextureBinding transmissionTexture;
     TextureBinding clearcoatTexture;
     TextureBinding clearcoatRoughnessTexture;
     TextureBinding clearcoatNormalTexture;
@@ -84,6 +85,7 @@ struct GltfPrimitiveRenderResources {
         1.0f,
         1.0f};
     float specularGlossinessGlossinessFactor = 1.0f;
+    float transmissionFactor = 0.0f;
     float anisotropyStrength = 0.0f;
     float anisotropyRotation = 0.0f;
     float clearcoatFactor = 0.0f;

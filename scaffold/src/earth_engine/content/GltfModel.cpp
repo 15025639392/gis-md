@@ -403,13 +403,14 @@ bool validateAsset(const json& doc) {
 }
 
 bool isSupportedExtensionName(const std::string& name) {
-    static constexpr std::array<const char*, 12> kSupportedExtensions = {
+    static constexpr std::array<const char*, 13> kSupportedExtensions = {
         "KHR_texture_transform",
         "KHR_mesh_quantization",
         "KHR_materials_unlit",
         "KHR_materials_emissive_strength",
         "KHR_materials_ior",
         "KHR_materials_pbrSpecularGlossiness",
+        "KHR_materials_transmission",
         "KHR_materials_anisotropy",
         "KHR_materials_specular",
         "KHR_materials_clearcoat",
@@ -482,6 +483,8 @@ bool isTextureInfoExtensionParentPath(const std::vector<std::string>& path) {
             ((path[3] == "KHR_materials_pbrSpecularGlossiness" &&
               (path[4] == "diffuseTexture" ||
                path[4] == "specularGlossinessTexture")) ||
+             (path[3] == "KHR_materials_transmission" &&
+              path[4] == "transmissionTexture") ||
              (path[3] == "KHR_materials_anisotropy" &&
               path[4] == "anisotropyTexture") ||
              (path[3] == "KHR_materials_specular" &&
@@ -528,6 +531,7 @@ bool extensionsObjectSupportedAtPath(
             it.key() == "KHR_materials_emissive_strength" ||
             it.key() == "KHR_materials_ior" ||
             it.key() == "KHR_materials_pbrSpecularGlossiness" ||
+            it.key() == "KHR_materials_transmission" ||
             it.key() == "KHR_materials_anisotropy" ||
             it.key() == "KHR_materials_specular" ||
             it.key() == "KHR_materials_clearcoat" ||
@@ -616,12 +620,13 @@ bool documentHasObjectExtension(
 }
 
 bool supportedObjectExtensionsAreDeclared(const json& doc) {
-    constexpr std::array<const char*, 11> kObjectExtensions = {
+    constexpr std::array<const char*, 12> kObjectExtensions = {
         "KHR_texture_transform",
         "KHR_materials_unlit",
         "KHR_materials_emissive_strength",
         "KHR_materials_ior",
         "KHR_materials_pbrSpecularGlossiness",
+        "KHR_materials_transmission",
         "KHR_materials_anisotropy",
         "KHR_materials_specular",
         "KHR_materials_clearcoat",
@@ -2265,6 +2270,7 @@ bool validateMaterialExtensions(const json& material) {
     if (pbrSpecGlossIt != extensionsIt->end()) {
         if (unlitIt != extensionsIt->end() ||
             extensionsIt->contains("KHR_materials_ior") ||
+            extensionsIt->contains("KHR_materials_transmission") ||
             extensionsIt->contains("KHR_materials_anisotropy") ||
             extensionsIt->contains("KHR_materials_specular") ||
             extensionsIt->contains("KHR_materials_clearcoat") ||
@@ -2291,6 +2297,26 @@ bool validateMaterialExtensions(const json& material) {
                 "glossinessFactor",
                 1.0f);
             if (!glossiness || *glossiness < 0.0f || *glossiness > 1.0f) {
+                return false;
+            }
+        }
+    }
+
+    const auto transmissionIt =
+        extensionsIt->find("KHR_materials_transmission");
+    if (transmissionIt != extensionsIt->end()) {
+        if (unlitIt != extensionsIt->end() ||
+            extensionsIt->contains("KHR_materials_pbrSpecularGlossiness") ||
+            !transmissionIt->is_object()) {
+            return false;
+        }
+        const auto factorIt = transmissionIt->find("transmissionFactor");
+        if (factorIt != transmissionIt->end()) {
+            const auto factor = numberProperty(
+                *transmissionIt,
+                "transmissionFactor",
+                0.0f);
+            if (!factor || *factor < 0.0f || *factor > 1.0f) {
                 return false;
             }
         }
@@ -2579,6 +2605,23 @@ float materialSpecularGlossinessGlossinessFactor(
     return *glossiness;
 }
 
+float materialTransmissionFactor(
+    const json& material,
+    bool& strictFailure) {
+    const json* transmission =
+        materialObjectExtension(material, "KHR_materials_transmission");
+    if (!transmission) {
+        return 0.0f;
+    }
+    const auto factor =
+        numberProperty(*transmission, "transmissionFactor", 0.0f);
+    if (!factor || *factor < 0.0f || *factor > 1.0f) {
+        strictFailure = true;
+        return 0.0f;
+    }
+    return *factor;
+}
+
 float materialAnisotropyStrength(
     const json& material,
     bool& strictFailure) {
@@ -2761,6 +2804,17 @@ bool validateMaterialJson(const json& material, size_t textureCount) {
                 !validateMaterialTextureInfo(
                     *pbrSpecGlossIt,
                     "specularGlossinessTexture",
+                    textureCount)) {
+                return false;
+            }
+        }
+        const auto transmissionIt =
+            extensionsIt->find("KHR_materials_transmission");
+        if (transmissionIt != extensionsIt->end()) {
+            if (!transmissionIt->is_object() ||
+                !validateMaterialTextureInfo(
+                    *transmissionIt,
+                    "transmissionTexture",
                     textureCount)) {
                 return false;
             }
@@ -4782,6 +4836,8 @@ std::optional<GltfPrimitive> parsePrimitive(
                 materialSpecularFactor(material, strictFailure);
             primitive.specularColorFactor =
                 materialSpecularColorFactor(material, strictFailure);
+            primitive.transmissionFactor =
+                materialTransmissionFactor(material, strictFailure);
             primitive.anisotropyStrength =
                 materialAnisotropyStrength(material, strictFailure);
             primitive.anisotropyRotation =
@@ -4796,6 +4852,28 @@ std::optional<GltfPrimitive> parsePrimitive(
                 materialSheenRoughnessFactor(material, strictFailure);
             if (strictFailure) {
                 return std::nullopt;
+            }
+            const json* transmissionExtension =
+                materialObjectExtension(
+                    material,
+                    "KHR_materials_transmission");
+            if (transmissionExtension) {
+                auto transmissionTextureIt =
+                    transmissionExtension->find("transmissionTexture");
+                if (transmissionTextureIt != transmissionExtension->end() &&
+                    transmissionTextureIt->is_object()) {
+                    primitive.transmissionTexture = parseTextureBinding(
+                        *transmissionTextureIt,
+                        textures,
+                        strictFailure);
+                    if (strictFailure || !primitive.transmissionTexture) {
+                        return std::nullopt;
+                    }
+                } else if (
+                    transmissionTextureIt != transmissionExtension->end()) {
+                    strictFailure = true;
+                    return std::nullopt;
+                }
             }
             const json* anisotropyExtension =
                 materialObjectExtension(material, "KHR_materials_anisotropy");
@@ -5042,6 +5120,7 @@ std::optional<GltfPrimitive> parsePrimitive(
         !hasTexCoordSet(primitive.specularTexture) ||
         !hasTexCoordSet(primitive.specularColorTexture) ||
         !hasTexCoordSet(primitive.specularGlossinessTexture) ||
+        !hasTexCoordSet(primitive.transmissionTexture) ||
         !hasTexCoordSet(primitive.clearcoatTexture) ||
         !hasTexCoordSet(primitive.clearcoatRoughnessTexture) ||
         !hasTexCoordSet(primitive.clearcoatNormalTexture) ||
@@ -5909,6 +5988,12 @@ std::unique_ptr<GltfModel> GltfParser::parse(
         !documentHasObjectExtension(
             input->document,
             "KHR_materials_pbrSpecularGlossiness")) {
+        return nullptr;
+    }
+    if (declaredExtension(input->document, "KHR_materials_transmission") &&
+        !documentHasObjectExtension(
+            input->document,
+            "KHR_materials_transmission")) {
         return nullptr;
     }
     if (declaredExtension(input->document, "KHR_materials_anisotropy") &&

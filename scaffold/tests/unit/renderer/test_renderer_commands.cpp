@@ -135,6 +135,8 @@ TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     ASSERT_TRUE(cmd.uniforms.count("u_specularGlossinessWorkflow"));
     ASSERT_TRUE(cmd.uniforms.count("u_specularGlossinessFactor"));
     ASSERT_TRUE(cmd.uniforms.count("u_hasSpecularGlossinessTexture"));
+    ASSERT_TRUE(cmd.uniforms.count("u_transmissionFactor"));
+    ASSERT_TRUE(cmd.uniforms.count("u_hasTransmissionTexture"));
     ASSERT_TRUE(cmd.uniforms.count("u_clearcoatFactors"));
     ASSERT_TRUE(cmd.uniforms.count("u_hasClearcoatTextures"));
     ASSERT_TRUE(cmd.uniforms.count("u_sheenColorFactor"));
@@ -146,6 +148,7 @@ TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     ASSERT_TRUE(cmd.uniforms.count("u_anisotropyTexCoordSet"));
     ASSERT_TRUE(cmd.uniforms.count("u_specularTexCoordSets"));
     ASSERT_TRUE(cmd.uniforms.count("u_specularGlossinessTexCoordSet"));
+    ASSERT_TRUE(cmd.uniforms.count("u_transmissionTexCoordSet"));
     ASSERT_TRUE(cmd.uniforms.count("u_clearcoatTexCoordSets"));
     ASSERT_TRUE(cmd.uniforms.count("u_sheenTexCoordSets"));
     ASSERT_TRUE(cmd.uniforms.count("u_baseColorTexOffsetScale"));
@@ -155,6 +158,8 @@ TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     ASSERT_TRUE(cmd.uniforms.count("u_specularTexOffsetScale"));
     ASSERT_TRUE(cmd.uniforms.count("u_specularColorTexOffsetScale"));
     ASSERT_TRUE(cmd.uniforms.count("u_specularGlossinessTexOffsetScale"));
+    ASSERT_TRUE(cmd.uniforms.count("u_transmissionTexOffsetScale"));
+    ASSERT_TRUE(cmd.uniforms.count("u_transmissionTexRotationSinCos"));
     ASSERT_TRUE(cmd.uniforms.count("u_clearcoatTexOffsetScale"));
     ASSERT_TRUE(cmd.uniforms.count("u_clearcoatRoughnessTexOffsetScale"));
     ASSERT_TRUE(cmd.uniforms.count("u_clearcoatNormalTexOffsetScale"));
@@ -164,6 +169,42 @@ TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     ASSERT_TRUE(cmd.uniforms.count("u_alphaCutoff"));
     ASSERT_TRUE(cmd.uniforms.count("u_renderOpacity"));
     ASSERT_TRUE(cmd.uniforms.count("u_unlit"));
+}
+
+TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsTransmission) {
+    const std::string glsl = renderer_testing::gltfFragmentGLSL();
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("uniform sampler2D u_transmissionTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("uniform float u_transmissionFactor"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("texture(u_transmissionTexture, transmissionUv).r"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("diffuseColor *= 1.0 - transmission"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("alpha *= 1.0 - transmission"));
+
+    const std::string msl = renderer_testing::gltfFragmentMSL();
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("texture2d<float> u_transmissionTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("constant float& u_transmissionFactor"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("u_transmissionTexture.sample"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("diffuseColor *= 1.0 - transmission"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("alpha *= 1.0 - transmission"));
 }
 
 TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsPbrSpecularGlossiness) {

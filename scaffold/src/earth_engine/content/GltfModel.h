@@ -122,6 +122,7 @@ struct GltfPrimitive {
         1.0f,
         1.0f};
     float specularGlossinessGlossinessFactor = 1.0f;
+    float transmissionFactor = 0.0f;
     float anisotropyStrength = 0.0f;
     float anisotropyRotation = 0.0f;
     float clearcoatFactor = 0.0f;
@@ -134,6 +135,7 @@ struct GltfPrimitive {
     std::optional<GltfTextureBinding> specularTexture;
     std::optional<GltfTextureBinding> specularColorTexture;
     std::optional<GltfTextureBinding> specularGlossinessTexture;
+    std::optional<GltfTextureBinding> transmissionTexture;
     std::optional<GltfTextureBinding> clearcoatTexture;
     std::optional<GltfTextureBinding> clearcoatRoughnessTexture;
     std::optional<GltfTextureBinding> clearcoatNormalTexture;

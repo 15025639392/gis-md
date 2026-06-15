@@ -189,6 +189,7 @@ uniform sampler2D u_anisotropyTexture;
 uniform sampler2D u_specularTexture;
 uniform sampler2D u_specularColorTexture;
 uniform sampler2D u_specularGlossinessTexture;
+uniform sampler2D u_transmissionTexture;
 uniform sampler2D u_clearcoatTexture;
 uniform sampler2D u_clearcoatRoughnessTexture;
 uniform sampler2D u_clearcoatNormalTexture;
@@ -207,6 +208,8 @@ uniform vec3 u_specularColorFactor;
 uniform float u_specularGlossinessWorkflow;
 uniform vec4 u_specularGlossinessFactor; // specular rgb, glossiness
 uniform float u_hasSpecularGlossinessTexture;
+uniform float u_transmissionFactor;
+uniform float u_hasTransmissionTexture;
 uniform vec2 u_anisotropyFactors;     // strength, rotation
 uniform vec3 u_clearcoatFactors;      // factor, roughness, normal scale
 uniform vec3 u_sheenColorFactor;
@@ -228,6 +231,8 @@ uniform vec4 u_specularColorTexOffsetScale;
 uniform vec2 u_specularColorTexRotationSinCos;
 uniform vec4 u_specularGlossinessTexOffsetScale;
 uniform vec2 u_specularGlossinessTexRotationSinCos;
+uniform vec4 u_transmissionTexOffsetScale;
+uniform vec2 u_transmissionTexRotationSinCos;
 uniform vec4 u_clearcoatTexOffsetScale;
 uniform vec2 u_clearcoatTexRotationSinCos;
 uniform vec4 u_clearcoatRoughnessTexOffsetScale;
@@ -249,6 +254,7 @@ uniform float u_emissiveTexCoordSet;
 uniform float u_anisotropyTexCoordSet;
 uniform vec2 u_specularTexCoordSets;  // specular, specularColor
 uniform float u_specularGlossinessTexCoordSet;
+uniform float u_transmissionTexCoordSet;
 uniform vec3 u_clearcoatTexCoordSets; // clearcoat, roughness, normal
 uniform vec2 u_sheenTexCoordSets;     // color, roughness
 
@@ -551,6 +557,16 @@ void main() {
             specGlossSpecularColor.b);
     }
 
+    float transmission = clamp(u_transmissionFactor, 0.0, 1.0);
+    if (transmission > 0.0 && u_hasTransmissionTexture > 0.5) {
+        vec2 transmissionUv = transformUv(
+            uvFromSet(u_transmissionTexCoordSet),
+            u_transmissionTexOffsetScale,
+            u_transmissionTexRotationSinCos);
+        transmission *= texture(u_transmissionTexture, transmissionUv).r;
+    }
+    transmission = clamp(transmission, 0.0, 1.0);
+
     float anisotropyStrength = clamp(u_anisotropyFactors.x, 0.0, 1.0);
     vec2 anisotropyDirection = vec2(1.0, 0.0);
     vec3 anisotropyTangent;
@@ -636,6 +652,7 @@ void main() {
         specularColor = mix(dielectricSpecular, base.rgb, metallic);
         diffuseColor = base.rgb * (1.0 - metallic);
     }
+    diffuseColor *= 1.0 - transmission;
     vec3 color = diffuseColor * (0.38 * occlusion + 0.62 * diffuse) +
                  specularColor * specular +
                  emissive;
@@ -656,6 +673,7 @@ void main() {
         color = color * (1.0 - coatWeight) +
                 vec3(clearcoatSpecular) * coatWeight;
     }
+    alpha *= 1.0 - transmission;
     fragColor = vec4(color, alpha * clamp(u_renderOpacity, 0.0, 1.0));
 }
 )glsl";
@@ -1249,6 +1267,11 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              constant float4& u_specularGlossinessTexOffsetScale [[buffer(60)]],
                              constant float2& u_specularGlossinessTexRotationSinCos [[buffer(61)]],
                              constant float& u_specularGlossinessTexCoordSet [[buffer(62)]],
+                             constant float& u_transmissionFactor [[buffer(63)]],
+                             constant float& u_hasTransmissionTexture [[buffer(64)]],
+                             constant float4& u_transmissionTexOffsetScale [[buffer(65)]],
+                             constant float2& u_transmissionTexRotationSinCos [[buffer(66)]],
+                             constant float& u_transmissionTexCoordSet [[buffer(67)]],
                              texture2d<float> u_baseColorTexture [[texture(0)]],
                              texture2d<float> u_metallicRoughnessTexture [[texture(1)]],
                              texture2d<float> u_normalTexture [[texture(2)]],
@@ -1263,6 +1286,7 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              texture2d<float> u_sheenRoughnessTexture [[texture(11)]],
                              texture2d<float> u_anisotropyTexture [[texture(12)]],
                              texture2d<float> u_specularGlossinessTexture [[texture(13)]],
+                             texture2d<float> u_transmissionTexture [[texture(14)]],
                              sampler u_baseColorSampler [[sampler(0)]],
                              sampler u_metallicRoughnessSampler [[sampler(1)]],
                              sampler u_normalSampler [[sampler(2)]],
@@ -1276,7 +1300,8 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              sampler u_sheenColorSampler [[sampler(10)]],
                              sampler u_sheenRoughnessSampler [[sampler(11)]],
                              sampler u_anisotropySampler [[sampler(12)]],
-                             sampler u_specularGlossinessSampler [[sampler(13)]]) {
+                             sampler u_specularGlossinessSampler [[sampler(13)]],
+                             sampler u_transmissionSampler [[sampler(14)]]) {
     float faceSign = frontFacing ? 1.0 : -1.0;
     float3 n = normalize(in.normal) * faceSign;
     float3 geometryN = n;
@@ -1432,6 +1457,17 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
             max(specGlossSpecularColor.r, specGlossSpecularColor.g),
             specGlossSpecularColor.b);
     }
+    float transmission = clamp(u_transmissionFactor, 0.0, 1.0);
+    if (transmission > 0.0 && u_hasTransmissionTexture > 0.5) {
+        float2 transmissionUv = gltfTransformUv(
+            gltfUvFromSet(in, u_transmissionTexCoordSet),
+            u_transmissionTexOffsetScale,
+            u_transmissionTexRotationSinCos);
+        transmission *= u_transmissionTexture.sample(
+            u_transmissionSampler,
+            transmissionUv).r;
+    }
+    transmission = clamp(transmission, 0.0, 1.0);
     float anisotropyStrength = clamp(u_anisotropyFactors.x, 0.0, 1.0);
     float2 anisotropyDirection = float2(1.0, 0.0);
     GltfAnisotropyBasis anisotropyBasis;
@@ -1520,6 +1556,7 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
         specularColor = mix(dielectricSpecular, base.rgb, metallic);
         diffuseColor = base.rgb * (1.0 - metallic);
     }
+    diffuseColor *= 1.0 - transmission;
     float3 color = diffuseColor * (0.38 * occlusion + 0.62 * diffuse) +
                    specularColor * specular +
                    emissive;
@@ -1541,6 +1578,7 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
         color = color * (1.0 - coatWeight) +
                 float3(clearcoatSpecular) * coatWeight;
     }
+    alpha *= 1.0 - transmission;
     return float4(color, alpha * clamp(u_renderOpacity, 0.0, 1.0));
 }
 )msl";
@@ -1952,6 +1990,8 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
         1.0f,
         1.0f};
     cmd.uniforms["u_hasSpecularGlossinessTexture"] = {0.0f};
+    cmd.uniforms["u_transmissionFactor"] = {0.0f};
+    cmd.uniforms["u_hasTransmissionTexture"] = {0.0f};
     cmd.uniforms["u_clearcoatFactors"] = {0.0f, 0.0f, 1.0f};
     cmd.uniforms["u_hasClearcoatTextures"] = {0.0f, 0.0f, 0.0f};
     cmd.uniforms["u_sheenColorFactor"] = {0.0f, 0.0f, 0.0f};
@@ -1963,6 +2003,7 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
     cmd.uniforms["u_anisotropyTexCoordSet"] = {0.0f};
     cmd.uniforms["u_specularTexCoordSets"] = {0.0f, 0.0f};
     cmd.uniforms["u_specularGlossinessTexCoordSet"] = {0.0f};
+    cmd.uniforms["u_transmissionTexCoordSet"] = {0.0f};
     cmd.uniforms["u_clearcoatTexCoordSets"] = {0.0f, 0.0f, 0.0f};
     cmd.uniforms["u_sheenTexCoordSets"] = {0.0f, 0.0f};
     cmd.uniforms["u_alphaMode"] = {0.0f};
@@ -1993,6 +2034,9 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
     setTextureTransformDefaults(
         "u_specularGlossinessTexOffsetScale",
         "u_specularGlossinessTexRotationSinCos");
+    setTextureTransformDefaults(
+        "u_transmissionTexOffsetScale",
+        "u_transmissionTexRotationSinCos");
     setTextureTransformDefaults(
         "u_clearcoatTexOffsetScale",
         "u_clearcoatTexRotationSinCos");
