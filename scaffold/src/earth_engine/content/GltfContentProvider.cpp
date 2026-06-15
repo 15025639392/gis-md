@@ -2534,6 +2534,12 @@ std::optional<CmptHeader> parseCmptHeader(const uint8_t* data, size_t size) {
         header.byteLength < kCmptHeaderLength) {
         return std::nullopt;
     }
+    const uint32_t payloadByteLength =
+        header.byteLength - static_cast<uint32_t>(kCmptHeaderLength);
+    if (header.tilesLength >
+        payloadByteLength / static_cast<uint32_t>(kCmptInnerHeaderLength)) {
+        return std::nullopt;
+    }
     return header;
 }
 

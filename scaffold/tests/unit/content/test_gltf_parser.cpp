@@ -11121,6 +11121,27 @@ TEST(GltfParserTest, ContentProviderRejectsInvalidCmptInnerContent) {
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
+TEST(GltfParserTest, ContentProviderRejectsCmptImpossibleTileCount) {
+    std::vector<uint8_t> cmpt;
+    cmpt.push_back('c');
+    cmpt.push_back('m');
+    cmpt.push_back('p');
+    cmpt.push_back('t');
+    appendU32(cmpt, 1u);
+    appendU32(cmpt, 16u);
+    appendU32(cmpt, std::numeric_limits<uint32_t>::max());
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "impossible CMPT tile count fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(cmpt.data(), cmpt.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(nullptr, result.gltfModel);
+}
+
 TEST(GltfParserTest, ContentProviderDecodesSingleInnerCmptWithRuntimeAnimation) {
     const std::vector<uint8_t> cmpt =
         makeCmpt({makeAnimatedTranslationTriangleGlb()});
