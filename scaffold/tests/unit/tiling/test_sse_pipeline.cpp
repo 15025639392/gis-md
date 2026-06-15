@@ -4480,6 +4480,98 @@ void testTilesetContentProviderSplitsNativeGpuInstancingBlendGltf() {
           "Tileset: native EXT_mesh_gpu_instancing BLEND carries per-instance sort centers");
 }
 
+void testTilesetContentProviderSplitsI3dmNativeGpuInstancingBlendGltf() {
+    DummyRenderDevice device;
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    auto contentProvider = std::make_unique<SingleGltfContentProvider>(
+        rootKey,
+        makeI3dmBytes(
+            makeNativeGpuInstancedTriangleGlbBytes(true),
+            {Vec3(0.0, 0.0, 0.0), Vec3(10.0, 0.0, 0.0)}),
+        "I3DM native EXT_mesh_gpu_instancing BLEND fixture");
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTestAccess::requestMissingTile(tileset, rootKey);
+
+    TilesetTile* root = nullptr;
+    for (int i = 0; i < 100; ++i) {
+        TilesetTestAccess::processPendingUploads(tileset);
+        root = TilesetTestAccess::findTile(tileset, rootKey);
+        if (root &&
+            root->loadState == TileLoadState::Done &&
+            root->contentKind == TileContentKind::Render &&
+            root->gltfModel) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    check(root != nullptr,
+          "Tileset: I3DM native EXT_mesh_gpu_instancing BLEND creates the requested tile");
+    if (!root) return;
+
+    check(root->gltfModel &&
+              root->gltfModel->primitives.size() == 1 &&
+              root->gltfModel->primitives.front().alphaMode ==
+                  GltfAlphaMode::Blend &&
+              root->gltfModel->primitives.front().instances.size() == 4,
+          "Tileset: I3DM and native EXT_mesh_gpu_instancing combine into four transparent instances");
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 4 &&
+              root->gltfPrimitiveResources.size() == 4u,
+          "Tileset: I3DM native EXT_mesh_gpu_instancing BLEND splits every combined instance");
+    if (commands.size() < 4) return;
+
+    bool splitCommands = true;
+    for (const RenderCommand& cmd : commands) {
+        splitCommands = splitCommands &&
+            cmd.kind == RenderCommandKind::GltfPrimitive &&
+            cmd.instanceCount == 0 &&
+            cmd.instanceBuffer == nullptr &&
+            cmd.blend &&
+            !cmd.depthWrite &&
+            cmd.hasWorldSortCenter;
+    }
+    check(splitCommands,
+          "Tileset: I3DM native EXT_mesh_gpu_instancing BLEND never submits one translucent instanced command");
+
+    const double expectedX[4] = {
+        1.0 / 3.0,
+        1.0 / 3.0,
+        10.0 + 1.0 / 3.0,
+        10.0 + 1.0 / 3.0
+    };
+    const double expectedZ[4] = {5.0, 25.0, 5.0, 25.0};
+    bool sortCentersMatch = true;
+    for (size_t i = 0; i < 4; ++i) {
+        sortCentersMatch = sortCentersMatch &&
+            std::abs(commands[i].worldSortCenter[0] - expectedX[i]) <
+                1e-9 &&
+            std::abs(commands[i].worldSortCenter[1] - 1.0 / 3.0) <
+                1e-9 &&
+            std::abs(commands[i].worldSortCenter[2] - expectedZ[i]) <
+                1e-9;
+    }
+    check(sortCentersMatch,
+          "Tileset: I3DM native EXT_mesh_gpu_instancing BLEND carries per-combined-instance sort centers");
+}
+
 void testTilesetJsonProviderLoadsExplicitGltfTile() {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
@@ -8678,6 +8770,7 @@ int main() {
     testTilesetContentProviderLoadsGltfRenderContent();
     testTilesetContentProviderLoadsNativeGpuInstancingGltf();
     testTilesetContentProviderSplitsNativeGpuInstancingBlendGltf();
+    testTilesetContentProviderSplitsI3dmNativeGpuInstancingBlendGltf();
     testTilesetJsonProviderLoadsExplicitGltfTile();
     testTilesetJsonGltfUpAxisZKeepsZUpContent();
     testTilesetJsonI3dmDefaultUpAxisKeepsInstancePositionsTileLocal();

@@ -3617,7 +3617,10 @@ TEST(GltfParserTest, ParsesKhrMaterialsPbrSpecularGlossinessMaterialExtension) {
         "\"diffuseFactor\":[0.2,0.3,0.4,0.5],"
         "\"specularFactor\":[0.6,0.7,0.8],"
         "\"glossinessFactor\":0.9,"
-        "\"diffuseTexture\":{\"index\":0,\"texCoord\":0},"
+        "\"diffuseTexture\":{\"index\":0,\"texCoord\":0,"
+        "\"extensions\":{\"KHR_texture_transform\":{"
+        "\"offset\":[0.375,0.625],\"scale\":[0.25,0.5],"
+        "\"rotation\":0.78539816339}}},"
         "\"specularGlossinessTexture\":{\"index\":0,\"texCoord\":0,"
         "\"extensions\":{\"KHR_texture_transform\":{"
         "\"offset\":[0.125,0.25],\"scale\":[0.5,0.75],"
@@ -3638,6 +3641,26 @@ TEST(GltfParserTest, ParsesKhrMaterialsPbrSpecularGlossinessMaterialExtension) {
     EXPECT_NEAR(0.5f, primitive.baseColorFactor[3], 1e-6f);
     ASSERT_TRUE(primitive.baseColorTexture);
     EXPECT_EQ(0u, primitive.baseColorTexture->textureIndex);
+    EXPECT_NEAR(
+        0.375f,
+        primitive.baseColorTexture->transform.offset[0],
+        1e-6f);
+    EXPECT_NEAR(
+        0.625f,
+        primitive.baseColorTexture->transform.offset[1],
+        1e-6f);
+    EXPECT_NEAR(
+        0.25f,
+        primitive.baseColorTexture->transform.scale[0],
+        1e-6f);
+    EXPECT_NEAR(
+        0.5f,
+        primitive.baseColorTexture->transform.scale[1],
+        1e-6f);
+    EXPECT_NEAR(
+        0.78539816339f,
+        primitive.baseColorTexture->transform.rotation,
+        1e-6f);
     EXPECT_NEAR(
         0.6f,
         primitive.specularGlossinessSpecularFactor[0],
