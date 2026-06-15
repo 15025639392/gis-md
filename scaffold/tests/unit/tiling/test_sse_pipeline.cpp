@@ -5041,6 +5041,60 @@ void testTilesetJsonRequiredExtensionMustAlsoBeUsed() {
           "TilesetJsonContentProvider: required-only extension tileset exposes no roots");
 }
 
+void testTilesetJsonDuplicateExtensionDeclarationsInvalidateProvider() {
+    const std::string duplicateTopLevelJson = R"json({
+      "asset": {"version": "1.1"},
+      "extensionsUsed": ["3DTILES_content_gltf", "3DTILES_content_gltf"],
+      "extensions": {
+        "3DTILES_content_gltf": {
+          "extensionsUsed": ["KHR_materials_unlit"]
+        }
+      },
+      "geometricError": 100,
+      "root": {
+        "boundingVolume": {"region": [-0.01, -0.01, 0.01, 0.01, 0, 100]},
+        "geometricError": 64
+      }
+    })json";
+
+    TilesetJsonContentProvider topLevelProvider(
+        "file:///duplicate-top-level-extension/tileset.json",
+        std::vector<uint8_t>(
+            duplicateTopLevelJson.begin(),
+            duplicateTopLevelJson.end()),
+        "duplicate top-level extension fixture");
+    check(!topLevelProvider.valid(),
+          "TilesetJsonContentProvider: duplicate top-level extension invalidates provider");
+    check(topLevelProvider.rootTiles().empty(),
+          "TilesetJsonContentProvider: duplicate top-level extension exposes no roots");
+
+    const std::string duplicateContentGltfJson = R"json({
+      "asset": {"version": "1.1"},
+      "extensionsUsed": ["3DTILES_content_gltf"],
+      "extensions": {
+        "3DTILES_content_gltf": {
+          "extensionsUsed": ["KHR_materials_unlit", "KHR_materials_unlit"]
+        }
+      },
+      "geometricError": 100,
+      "root": {
+        "boundingVolume": {"region": [-0.01, -0.01, 0.01, 0.01, 0, 100]},
+        "geometricError": 64
+      }
+    })json";
+
+    TilesetJsonContentProvider contentGltfProvider(
+        "file:///duplicate-content-gltf-extension/tileset.json",
+        std::vector<uint8_t>(
+            duplicateContentGltfJson.begin(),
+            duplicateContentGltfJson.end()),
+        "duplicate 3DTILES_content_gltf extension fixture");
+    check(!contentGltfProvider.valid(),
+          "TilesetJsonContentProvider: duplicate 3DTILES_content_gltf extension invalidates provider");
+    check(contentGltfProvider.rootTiles().empty(),
+          "TilesetJsonContentProvider: duplicate 3DTILES_content_gltf extension exposes no roots");
+}
+
 void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
     const std::string supportedTopLevelJson = R"json({
       "asset": {"version": "1.0"},
@@ -7966,6 +8020,7 @@ int main() {
     testTilesetJsonTopLevelUnknownRequiredExtensionInvalidatesProvider();
     testTilesetJsonTopLevelUnsupportedExtensionsUsedInvalidatesProvider();
     testTilesetJsonRequiredExtensionMustAlsoBeUsed();
+    testTilesetJsonDuplicateExtensionDeclarationsInvalidateProvider();
     testTilesetJsonContentGltfExtensionSemanticsAreStrict();
     testTilesetJsonTopLevelMetadataFieldsInvalidateProvider();
     testTilesetJsonUnsupportedTileRequiredExtensionFailsTile();

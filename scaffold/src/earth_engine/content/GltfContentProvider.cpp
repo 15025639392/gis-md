@@ -824,12 +824,18 @@ bool hasUnsupportedDeclaredExtensionsOnObject(
         if (!extensionsIt->is_array()) {
             return true;
         }
+        std::unordered_set<std::string> seenExtensions;
+        seenExtensions.reserve(extensionsIt->size());
         for (const auto& extension : *extensionsIt) {
             if (!extension.is_string()) {
                 return true;
             }
+            const std::string extensionName = extension.get<std::string>();
+            if (!seenExtensions.insert(extensionName).second) {
+                return true;
+            }
             if (!tilesetJsonExtensionAllowed(
-                    extension.get<std::string>(),
+                    extensionName,
                     allowPerTileFailure,
                     allowContentGltf)) {
                 return true;
@@ -974,10 +980,15 @@ bool gltfContentExtensionArrayHasUnsupportedEntries(
     if (!fieldIt->is_array()) {
         return true;
     }
+    std::unordered_set<std::string> seenExtensions;
+    seenExtensions.reserve(fieldIt->size());
     for (const auto& extension : *fieldIt) {
-        if (!extension.is_string() ||
-            !isSupportedGltfExtensionForTilesetContentGltf(
-                extension.get<std::string>())) {
+        if (!extension.is_string()) {
+            return true;
+        }
+        const std::string extensionName = extension.get<std::string>();
+        if (!seenExtensions.insert(extensionName).second ||
+            !isSupportedGltfExtensionForTilesetContentGltf(extensionName)) {
             return true;
         }
     }

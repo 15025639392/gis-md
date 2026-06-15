@@ -456,11 +456,17 @@ bool hasUnsupportedDeclaredExtensions(const json& doc) {
         if (!extensions.is_array()) {
             return true;
         }
+        std::unordered_set<std::string> seenExtensions;
+        seenExtensions.reserve(extensions.size());
         for (const json& extension : extensions) {
             if (!extension.is_string()) {
                 return true;
             }
-            if (!isSupportedExtensionName(extension.get<std::string>())) {
+            const std::string extensionName = extension.get<std::string>();
+            if (!seenExtensions.insert(extensionName).second) {
+                return true;
+            }
+            if (!isSupportedExtensionName(extensionName)) {
                 return true;
             }
         }
