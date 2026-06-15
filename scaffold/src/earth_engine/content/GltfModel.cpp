@@ -1448,7 +1448,9 @@ std::optional<std::vector<GltfTexture>> loadTextures(
             encoded = std::move(*bytes);
         }
 
-        if (encoded.empty()) continue;
+        if (encoded.empty()) {
+            return std::nullopt;
+        }
         if (useWebpSource && !encodedImageLooksLikeWebp(encoded)) {
             return std::nullopt;
         }
