@@ -4072,7 +4072,7 @@ std::vector<SkinRecord> parseSkins(
                 skinJson["inverseBindMatrices"].get<int>());
             if (!inverseBindSpan || inverseBindSpan->components != 16 ||
                 inverseBindSpan->componentType != 5126 ||
-                inverseBindSpan->count < skin.joints.size()) {
+                inverseBindSpan->count != skin.joints.size()) {
                 skin.valid = false;
             } else {
                 for (size_t i = 0; i < skin.joints.size(); ++i) {
@@ -4567,6 +4567,52 @@ bool validateAllPrimitiveAccessorSemantics(
                 node["weights"].size() != meshMorphTargetCount(
                     doc,
                     meshIndex)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool validateAllSkinAccessorSemantics(
+    const json& doc,
+    const std::vector<std::vector<uint8_t>>& buffers) {
+    const auto skinsIt = doc.find("skins");
+    if (skinsIt == doc.end()) {
+        return true;
+    }
+    if (!skinsIt->is_array()) {
+        return false;
+    }
+
+    for (const json& skinJson : *skinsIt) {
+        if (!skinJson.is_object()) {
+            return false;
+        }
+        const auto jointsIt = skinJson.find("joints");
+        if (jointsIt == skinJson.end() ||
+            !jointsIt->is_array() ||
+            jointsIt->empty()) {
+            return false;
+        }
+        if (!skinJson.contains("inverseBindMatrices")) {
+            continue;
+        }
+        if (!skinJson["inverseBindMatrices"].is_number_integer()) {
+            return false;
+        }
+        const auto inverseBindSpan = accessorSpan(
+            doc,
+            buffers,
+            skinJson["inverseBindMatrices"].get<int>());
+        if (!inverseBindSpan ||
+            inverseBindSpan->components != 16 ||
+            inverseBindSpan->componentType != 5126 ||
+            inverseBindSpan->count != jointsIt->size()) {
+            return false;
+        }
+        for (size_t i = 0; i < inverseBindSpan->count; ++i) {
+            if (!finiteMat4Value(readMat4(*inverseBindSpan, i))) {
                 return false;
             }
         }
@@ -7012,7 +7058,8 @@ std::unique_ptr<GltfModel> GltfParser::parse(
             input->document,
             buffers,
             meshQuantizationEnabled,
-            options.allowLegacyBatchIdAttribute)) {
+            options.allowLegacyBatchIdAttribute) ||
+        !validateAllSkinAccessorSemantics(input->document, buffers)) {
         return nullptr;
     }
     auto model = std::make_unique<GltfModel>();

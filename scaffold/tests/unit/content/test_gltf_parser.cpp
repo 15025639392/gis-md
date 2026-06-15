@@ -613,7 +613,8 @@ std::vector<uint8_t> makeSkinnedTriangleGlb(
     bool omitWeightsAttribute = false,
     bool invalidJointIndex = false,
     bool nonFiniteWeight = false,
-    bool nonFiniteInverseBind = false) {
+    bool nonFiniteInverseBind = false,
+    bool extraInverseBindMatrix = false) {
     std::vector<uint8_t> bin;
     const size_t positionsOffset = bin.size();
     appendF32(bin, 1.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
@@ -643,13 +644,19 @@ std::vector<uint8_t> makeSkinnedTriangleGlb(
     }
 
     const size_t inverseBindOffset = bin.size();
-    for (int column = 0; column < 4; ++column) {
-        for (int row = 0; row < 4; ++row) {
-            appendF32(
-                bin,
-                column == 0 && row == 0 && nonFiniteInverseBind
-                    ? std::numeric_limits<float>::infinity()
-                    : (column == row ? 1.0f : 0.0f));
+    const int inverseBindCount = extraInverseBindMatrix ? 2 : 1;
+    for (int matrix = 0; matrix < inverseBindCount; ++matrix) {
+        for (int column = 0; column < 4; ++column) {
+            for (int row = 0; row < 4; ++row) {
+                appendF32(
+                    bin,
+                    matrix == 0 &&
+                            column == 0 &&
+                            row == 0 &&
+                            nonFiniteInverseBind
+                        ? std::numeric_limits<float>::infinity()
+                        : (column == row ? 1.0f : 0.0f));
+            }
         }
     }
 
@@ -681,7 +688,7 @@ std::vector<uint8_t> makeSkinnedTriangleGlb(
         "{\"buffer\":0,\"byteOffset\":" + std::to_string(normalsOffset) + ",\"byteLength\":36}," +
         "{\"buffer\":0,\"byteOffset\":" + std::to_string(jointsOffset) + ",\"byteLength\":24}," +
         "{\"buffer\":0,\"byteOffset\":" + std::to_string(weightsOffset) + ",\"byteLength\":48}," +
-        "{\"buffer\":0,\"byteOffset\":" + std::to_string(inverseBindOffset) + ",\"byteLength\":64}," +
+        "{\"buffer\":0,\"byteOffset\":" + std::to_string(inverseBindOffset) + ",\"byteLength\":" + std::to_string(64 * inverseBindCount) + "}," +
         "{\"buffer\":0,\"byteOffset\":" + std::to_string(indicesOffset) + ",\"byteLength\":6}" +
         "]," +
         "\"accessors\":[" +
@@ -689,7 +696,7 @@ std::vector<uint8_t> makeSkinnedTriangleGlb(
         "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}," +
         "{\"bufferView\":2,\"componentType\":5123,\"count\":3,\"type\":\"VEC4\"}," +
         "{\"bufferView\":3,\"componentType\":5126,\"count\":3,\"type\":\"VEC4\"}," +
-        "{\"bufferView\":4,\"componentType\":5126,\"count\":1,\"type\":\"MAT4\"}," +
+        "{\"bufferView\":4,\"componentType\":5126,\"count\":" + std::to_string(inverseBindCount) + ",\"type\":\"MAT4\"}," +
         "{\"bufferView\":5,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}" +
         "]}";
 
@@ -3843,6 +3850,15 @@ TEST(GltfParserTest, RejectsSkinWeightsWithNonFiniteFloat) {
 TEST(GltfParserTest, RejectsSkinInverseBindWithNonFiniteFloat) {
     const std::vector<uint8_t> glb =
         makeSkinnedTriangleGlb(false, false, false, true);
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsSkinInverseBindMatricesCountMismatch) {
+    const std::vector<uint8_t> glb =
+        makeSkinnedTriangleGlb(false, false, false, false, true);
     std::unique_ptr<GltfModel> model =
         GltfParser::parse(glb.data(), glb.size());
 
