@@ -5741,13 +5741,17 @@ TEST(GltfParserTest, RejectsUnsupportedRequiredExtension) {
 }
 
 TEST(GltfParserTest, RejectsUnsupportedCompressionAndTextureExtensions) {
-    const std::array<const char*, 6> unsupportedExtensions = {
+    const std::array<const char*, 10> unsupportedExtensions = {
         "KHR_draco_mesh_compression",
         "EXT_meshopt_compression",
         "KHR_meshopt_compression",
         "KHR_texture_basisu",
         "EXT_texture_avif",
-        "MSFT_texture_dds"};
+        "MSFT_texture_dds",
+        "KHR_texture_video",
+        "KHR_texture_procedurals",
+        "EXT_texture_procedurals_mx_1_39",
+        "MPEG_texture_video"};
 
     for (const char* extension : unsupportedExtensions) {
         ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
@@ -5814,6 +5818,41 @@ TEST(GltfParserTest, RejectsUnsupportedGaussianSplattingExtensions) {
     }
 }
 
+TEST(GltfParserTest, RejectsUnsupportedSceneControlAndLightingExtensions) {
+    const std::array<const char*, 17> unsupportedExtensions = {
+        "KHR_accessor_float64",
+        "KHR_animation_pointer",
+        "KHR_audio_graph",
+        "KHR_collision_shapes",
+        "KHR_interactivity",
+        "KHR_lights_punctual",
+        "KHR_node_hoverability",
+        "KHR_node_selectability",
+        "KHR_node_visibility",
+        "KHR_physics_rigid_bodies",
+        "KHR_xmp_json_ld",
+        "EXT_lights_ies",
+        "EXT_lights_image_based",
+        "EXT_mesh_manifold",
+        "AGI_articulations",
+        "MSFT_lod",
+        "CESIUM_primitive_outline"};
+
+    for (const char* extension : unsupportedExtensions) {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string marker = "\"asset\":{\"version\":\"2.0\"},";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.insert(
+            markerPos + marker.size(),
+            std::string("\"extensionsUsed\":[\"") + extension + "\"],");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << extension;
+    }
+}
+
 TEST(GltfParserTest, RejectsUnsupportedNativeMetadataObjectExtensions) {
     struct ObjectExtensionCase {
         const char* marker;
@@ -5844,6 +5883,63 @@ TEST(GltfParserTest, RejectsUnsupportedNativeMetadataObjectExtensions) {
             "\"mode\":4",
             "\"mode\":4,\"extensions\":{\"EXT_structural_metadata\":{\"propertyAttributes\":[0]}}",
             "primitive EXT_structural_metadata"},
+    }};
+
+    for (const ObjectExtensionCase& testCase : cases) {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const size_t markerPos = fixture.jsonText.find(testCase.marker);
+        ASSERT_NE(std::string::npos, markerPos) << testCase.label;
+        fixture.jsonText.replace(
+            markerPos,
+            std::string(testCase.marker).size(),
+            testCase.replacement);
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << testCase.label;
+    }
+}
+
+TEST(GltfParserTest, RejectsUnsupportedRuntimeObjectExtensions) {
+    struct ObjectExtensionCase {
+        const char* marker;
+        const char* replacement;
+        const char* label;
+    };
+
+    const std::array<ObjectExtensionCase, 7> cases = {{
+        {
+            "\"scene\":0,",
+            "\"extensions\":{\"KHR_lights_punctual\":{\"lights\":[]}},\"scene\":0,",
+            "top-level KHR_lights_punctual"},
+        {
+            "\"scene\":0,",
+            "\"extensions\":{\"KHR_xmp_json_ld\":{\"packets\":[]}},\"scene\":0,",
+            "top-level KHR_xmp_json_ld"},
+        {
+            "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30]}]",
+            "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30],"
+            "\"extensions\":{\"KHR_lights_punctual\":{\"light\":0}}}]",
+            "node KHR_lights_punctual"},
+        {
+            "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30]}]",
+            "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30],"
+            "\"extensions\":{\"KHR_node_visibility\":{\"visible\":false}}}]",
+            "node KHR_node_visibility"},
+        {
+            "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},\"indices\":3,\"mode\":4}]}]",
+            "\"meshes\":[{\"extensions\":{\"EXT_mesh_manifold\":{\"manifold\":true}},"
+            "\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},\"indices\":3,\"mode\":4}]}]",
+            "mesh EXT_mesh_manifold"},
+        {
+            "\"mode\":4",
+            "\"mode\":4,\"extensions\":{\"CESIUM_primitive_outline\":{\"indices\":3}}",
+            "primitive CESIUM_primitive_outline"},
+        {
+            "\"buffers\":[",
+            "\"materials\":[{\"extensions\":{\"KHR_materials_iridescence\":{\"iridescenceFactor\":1.0}}}],"
+            "\"buffers\":[",
+            "material KHR_materials_iridescence"},
     }};
 
     for (const ObjectExtensionCase& testCase : cases) {
@@ -5897,10 +5993,11 @@ TEST(GltfParserTest, ParsesExtrasWithExtensionNamedApplicationData) {
 }
 
 TEST(GltfParserTest, RejectsUnsupportedMaterialExtensionsWithoutRuntimeSupport) {
-    const std::array<const char*, 5> unsupportedExtensions = {
+    const std::array<const char*, 6> unsupportedExtensions = {
         "KHR_materials_diffuse_transmission",
         "KHR_materials_dispersion",
         "KHR_materials_iridescence",
+        "KHR_materials_subsurface",
         "KHR_materials_variants",
         "KHR_materials_volume"};
 
