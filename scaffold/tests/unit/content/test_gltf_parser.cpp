@@ -6696,6 +6696,32 @@ TEST(GltfParserTest, RejectsUnsupportedGaussianSplattingExtensions) {
     }
 }
 
+TEST(GltfParserTest, RejectsUnsupportedCesiumNativeGeneratedExtensions) {
+    const std::array<const char*, 8> unsupportedExtensions = {
+        "CESIUM_RTC",
+        "CESIUM_tile_edges",
+        "EXT_implicit_ellipsoid_region",
+        "EXT_implicit_cylinder_region",
+        "KHR_implicit_shapes",
+        "EXT_mesh_polygon",
+        "EXT_primitive_voxels",
+        "MAXAR_mesh_variants"};
+
+    for (const char* extension : unsupportedExtensions) {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string marker = "\"asset\":{\"version\":\"2.0\"},";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.insert(
+            markerPos + marker.size(),
+            std::string("\"extensionsUsed\":[\"") + extension + "\"],");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << extension;
+    }
+}
+
 TEST(GltfParserTest, RejectsUnsupportedSceneControlAndLightingExtensions) {
     const std::array<const char*, 19> unsupportedExtensions = {
         "KHR_accessor_float64",
@@ -6802,6 +6828,64 @@ TEST(GltfParserTest, RejectsUnsupportedNativeMetadataObjectExtensions) {
             "\"mode\":4",
             "\"mode\":4,\"extensions\":{\"EXT_structural_metadata\":{\"propertyAttributes\":[0]}}",
             "primitive EXT_structural_metadata"},
+    }};
+
+    for (const ObjectExtensionCase& testCase : cases) {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const size_t markerPos = fixture.jsonText.find(testCase.marker);
+        ASSERT_NE(std::string::npos, markerPos) << testCase.label;
+        fixture.jsonText.replace(
+            markerPos,
+            std::string(testCase.marker).size(),
+            testCase.replacement);
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << testCase.label;
+    }
+}
+
+TEST(GltfParserTest, RejectsUnsupportedCesiumNativeGeneratedObjectExtensions) {
+    struct ObjectExtensionCase {
+        const char* marker;
+        const char* replacement;
+        const char* label;
+    };
+
+    const std::array<ObjectExtensionCase, 6> cases = {{
+        {
+            "\"scene\":0,",
+            "\"extensions\":{\"CESIUM_RTC\":{\"center\":[1,2,3]}},\"scene\":0,",
+            "top-level CESIUM_RTC"},
+        {
+            "\"scene\":0,",
+            "\"extensions\":{\"KHR_implicit_shapes\":{\"shapes\":[{"
+            "\"type\":\"ellipsoid\",\"extensions\":{"
+            "\"EXT_implicit_ellipsoid_region\":{"
+            "\"semiMajorAxisRadius\":6378137,"
+            "\"semiMinorAxisRadius\":6356752.314245}}}]}},\"scene\":0,",
+            "top-level KHR_implicit_shapes"},
+        {
+            "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30]}]",
+            "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30],"
+            "\"extensions\":{\"MAXAR_mesh_variants\":{\"mappings\":[]}}}]",
+            "node MAXAR_mesh_variants"},
+        {
+            "\"mode\":4",
+            "\"mode\":4,\"extensions\":{\"CESIUM_tile_edges\":{"
+            "\"left\":3,\"bottom\":3,\"right\":3,\"top\":3}}",
+            "primitive CESIUM_tile_edges"},
+        {
+            "\"mode\":4",
+            "\"mode\":4,\"extensions\":{\"EXT_mesh_polygon\":{"
+            "\"count\":1,\"loopIndices\":3,\"loopIndicesOffsets\":3,"
+            "\"indicesOffsets\":3}}",
+            "primitive EXT_mesh_polygon"},
+        {
+            "\"mode\":4",
+            "\"mode\":4,\"extensions\":{\"EXT_primitive_voxels\":{"
+            "\"shape\":0,\"dimensions\":[1,1,1]}}",
+            "primitive EXT_primitive_voxels"},
     }};
 
     for (const ObjectExtensionCase& testCase : cases) {
