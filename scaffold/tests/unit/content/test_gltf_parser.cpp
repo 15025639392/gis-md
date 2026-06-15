@@ -7474,6 +7474,84 @@ TEST(GltfParserTest, RejectsUnsupportedMaterialExtensionsWithoutRuntimeSupport) 
     }
 }
 
+TEST(GltfParserTest, RejectsDeclaredUnsupportedMaterialExtensionPayloads) {
+    const std::array<const char*, 5> unsupportedExtensions = {
+        "KHR_materials_diffuse_transmission",
+        "KHR_materials_dispersion",
+        "KHR_materials_iridescence",
+        "KHR_materials_subsurface",
+        "KHR_materials_volume"};
+
+    for (const char* extension : unsupportedExtensions) {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+        const size_t assetPos = fixture.jsonText.find(assetMarker);
+        ASSERT_NE(std::string::npos, assetPos) << extension;
+        fixture.jsonText.insert(
+            assetPos + assetMarker.size(),
+            std::string("\"extensionsUsed\":[\"") + extension + "\"],"
+            "\"extensionsRequired\":[\"" + extension + "\"],");
+
+        const std::string primitiveMarker = "\"mode\":4}";
+        const size_t primitivePos = fixture.jsonText.find(primitiveMarker);
+        ASSERT_NE(std::string::npos, primitivePos) << extension;
+        fixture.jsonText.replace(
+            primitivePos,
+            primitiveMarker.size(),
+            "\"mode\":4,\"material\":0}");
+
+        const std::string buffersMarker = "\"buffers\"";
+        const size_t buffersPos = fixture.jsonText.find(buffersMarker);
+        ASSERT_NE(std::string::npos, buffersPos) << extension;
+        fixture.jsonText.insert(
+            buffersPos,
+            std::string("\"materials\":[{\"extensions\":{\"") +
+                extension + "\":{}}}],");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << extension;
+    }
+}
+
+TEST(GltfParserTest, RejectsDeclaredKhrMaterialsVariantsPayload) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":[\"KHR_materials_variants\"],"
+        "\"extensionsRequired\":[\"KHR_materials_variants\"],");
+
+    const std::string sceneMarker = "\"scene\":0,";
+    const size_t scenePos = fixture.jsonText.find(sceneMarker);
+    ASSERT_NE(std::string::npos, scenePos);
+    fixture.jsonText.insert(
+        scenePos,
+        "\"extensions\":{\"KHR_materials_variants\":{"
+        "\"variants\":[{\"name\":\"default\"}]}},");
+
+    const std::string primitiveMarker = "\"mode\":4}";
+    const size_t primitivePos = fixture.jsonText.find(primitiveMarker);
+    ASSERT_NE(std::string::npos, primitivePos);
+    fixture.jsonText.replace(
+        primitivePos,
+        primitiveMarker.size(),
+        "\"mode\":4,\"material\":0,"
+        "\"extensions\":{\"KHR_materials_variants\":{"
+        "\"mappings\":[{\"material\":0,\"variants\":[0]}]}}}");
+
+    const std::string buffersMarker = "\"buffers\"";
+    const size_t buffersPos = fixture.jsonText.find(buffersMarker);
+    ASSERT_NE(std::string::npos, buffersPos);
+    fixture.jsonText.insert(buffersPos, "\"materials\":[{}],");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, ParsesExtMeshGpuInstancingNodeExtension) {
     ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
