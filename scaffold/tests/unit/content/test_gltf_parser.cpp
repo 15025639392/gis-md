@@ -7265,6 +7265,34 @@ TEST(GltfParserTest, ContentProviderRejectsInvalidCmptInnerContent) {
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
+TEST(GltfParserTest, ContentProviderDecodesSingleInnerCmptWithRuntimeAnimation) {
+    const std::vector<uint8_t> cmpt =
+        makeCmpt({makeAnimatedTranslationTriangleGlb()});
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "animated single-inner CMPT fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(cmpt.data(), cmpt.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_TRUE(result.gltfModel->hasRuntimeAnimation());
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    ASSERT_EQ(3u, result.gltfModel->primitives[0].vertices.size());
+    EXPECT_NEAR(
+        0.0,
+        result.gltfModel->primitives[0].vertices[0].positionEcef.x(),
+        1e-12);
+
+    EXPECT_TRUE(result.gltfModel->updateAnimation(0.5));
+    EXPECT_NEAR(
+        5.0,
+        result.gltfModel->primitives[0].vertices[0].positionEcef.x(),
+        1e-12);
+}
+
 TEST(GltfParserTest, ContentProviderDecodesCmptWithB3dmAndPnts) {
     std::vector<uint8_t> pntsBinary;
     appendF32(pntsBinary, 4.0f);
