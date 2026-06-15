@@ -8062,38 +8062,44 @@ TEST(GltfParserTest, RejectsDeclaredDracoPrimitiveExtensionBeforeLoadingBuffers)
 }
 
 TEST(GltfParserTest, RejectsDeclaredMeshoptBufferViewExtensionBeforeLoadingBuffers) {
-    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
-    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
-    const size_t assetPos = fixture.jsonText.find(assetMarker);
-    ASSERT_NE(std::string::npos, assetPos);
-    fixture.jsonText.insert(
-        assetPos + assetMarker.size(),
-        "\"extensionsUsed\":[\"EXT_meshopt_compression\"],"
-        "\"extensionsRequired\":[\"EXT_meshopt_compression\"],");
+    const std::array<const char*, 2> extensionNames = {
+        "EXT_meshopt_compression",
+        "KHR_meshopt_compression"};
 
-    const std::string bufferViewMarker =
-        "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36}";
-    const size_t bufferViewPos = fixture.jsonText.find(bufferViewMarker);
-    ASSERT_NE(std::string::npos, bufferViewPos);
-    fixture.jsonText.replace(
-        bufferViewPos,
-        bufferViewMarker.size(),
-        "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36,"
-        "\"extensions\":{\"EXT_meshopt_compression\":{"
-        "\"buffer\":0,\"byteOffset\":0,\"byteLength\":1,"
-        "\"byteStride\":12,\"count\":3,\"mode\":\"ATTRIBUTES\"}}}");
+    for (const char* extensionName : extensionNames) {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+        const size_t assetPos = fixture.jsonText.find(assetMarker);
+        ASSERT_NE(std::string::npos, assetPos);
+        fixture.jsonText.insert(
+            assetPos + assetMarker.size(),
+            std::string("\"extensionsUsed\":[\"") + extensionName + "\"],"
+            "\"extensionsRequired\":[\"" + extensionName + "\"],");
 
-    bool resolvedResource = false;
-    std::unique_ptr<GltfModel> model = GltfParser::parse(
-        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
-        fixture.jsonText.size(),
-        [&](const std::string&) {
-            resolvedResource = true;
-            return fixture.bin;
-        });
+        const std::string bufferViewMarker =
+            "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36}";
+        const size_t bufferViewPos = fixture.jsonText.find(bufferViewMarker);
+        ASSERT_NE(std::string::npos, bufferViewPos);
+        fixture.jsonText.replace(
+            bufferViewPos,
+            bufferViewMarker.size(),
+            std::string("{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36,"
+            "\"extensions\":{\"") + extensionName + "\":{"
+            "\"buffer\":0,\"byteOffset\":0,\"byteLength\":1,"
+            "\"byteStride\":12,\"count\":3,\"mode\":\"ATTRIBUTES\"}}}");
 
-    EXPECT_EQ(nullptr, model);
-    EXPECT_FALSE(resolvedResource);
+        bool resolvedResource = false;
+        std::unique_ptr<GltfModel> model = GltfParser::parse(
+            reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+            fixture.jsonText.size(),
+            [&](const std::string&) {
+                resolvedResource = true;
+                return fixture.bin;
+            });
+
+        EXPECT_EQ(nullptr, model) << extensionName;
+        EXPECT_FALSE(resolvedResource) << extensionName;
+    }
 }
 
 TEST(GltfParserTest, RejectsDeclaredBasisuTextureExtensionBeforeDecode) {
