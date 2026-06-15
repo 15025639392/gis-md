@@ -1397,11 +1397,19 @@ private:
 };
 
 std::vector<uint8_t> makeB3dm(std::vector<uint8_t> glb,
-                              const std::string& featureTableJson) {
+                              const std::string& featureTableJson,
+                              const std::string& batchTableJson =
+                                  std::string{}) {
     std::vector<uint8_t> featureBytes(
         featureTableJson.begin(),
         featureTableJson.end());
     pad4(featureBytes, 0x20);
+    std::vector<uint8_t> batchBytes(
+        batchTableJson.begin(),
+        batchTableJson.end());
+    if (!batchBytes.empty()) {
+        pad4(batchBytes, 0x20);
+    }
 
     std::vector<uint8_t> b3dm;
     b3dm.push_back('b');
@@ -1411,12 +1419,14 @@ std::vector<uint8_t> makeB3dm(std::vector<uint8_t> glb,
     appendU32(b3dm, 1u);
     appendU32(
         b3dm,
-        static_cast<uint32_t>(28 + featureBytes.size() + glb.size()));
+        static_cast<uint32_t>(
+            28 + featureBytes.size() + batchBytes.size() + glb.size()));
     appendU32(b3dm, static_cast<uint32_t>(featureBytes.size()));
     appendU32(b3dm, 0u);
-    appendU32(b3dm, 0u);
+    appendU32(b3dm, static_cast<uint32_t>(batchBytes.size()));
     appendU32(b3dm, 0u);
     b3dm.insert(b3dm.end(), featureBytes.begin(), featureBytes.end());
+    b3dm.insert(b3dm.end(), batchBytes.begin(), batchBytes.end());
     b3dm.insert(b3dm.end(), glb.begin(), glb.end());
     return b3dm;
 }
@@ -1481,10 +1491,17 @@ std::vector<uint8_t> makeI3dm(std::vector<uint8_t> gltfPayload,
 
 std::vector<uint8_t> makeI3dmWithFeatureTable(
     const std::string& featureJson,
-    std::vector<uint8_t> featureBinary) {
+    std::vector<uint8_t> featureBinary,
+    const std::string& batchTableJson = std::string{}) {
     std::vector<uint8_t> featureBytes(featureJson.begin(), featureJson.end());
     pad4(featureBytes, 0x20);
     pad4(featureBinary, 0);
+    std::vector<uint8_t> batchBytes(
+        batchTableJson.begin(),
+        batchTableJson.end());
+    if (!batchBytes.empty()) {
+        pad4(batchBytes, 0x20);
+    }
 
     const std::vector<uint8_t> payload = makeTriangleGlb();
 
@@ -1497,14 +1514,16 @@ std::vector<uint8_t> makeI3dmWithFeatureTable(
     appendU32(
         i3dm,
         static_cast<uint32_t>(
-            32 + featureBytes.size() + featureBinary.size() + payload.size()));
+            32 + featureBytes.size() + featureBinary.size() +
+            batchBytes.size() + payload.size()));
     appendU32(i3dm, static_cast<uint32_t>(featureBytes.size()));
     appendU32(i3dm, static_cast<uint32_t>(featureBinary.size()));
-    appendU32(i3dm, 0u);
+    appendU32(i3dm, static_cast<uint32_t>(batchBytes.size()));
     appendU32(i3dm, 0u);
     appendU32(i3dm, 1u);
     i3dm.insert(i3dm.end(), featureBytes.begin(), featureBytes.end());
     i3dm.insert(i3dm.end(), featureBinary.begin(), featureBinary.end());
+    i3dm.insert(i3dm.end(), batchBytes.begin(), batchBytes.end());
     i3dm.insert(i3dm.end(), payload.begin(), payload.end());
     return i3dm;
 }
@@ -7372,6 +7391,39 @@ TEST(GltfParserTest, ContentProviderDecodesB3dmAndAppliesRtcCenter) {
     EXPECT_NEAR(333.0, transformed.z(), 1e-12);
 }
 
+TEST(GltfParserTest, ContentProviderRejectsB3dmBatchTableMetadata) {
+    const std::vector<uint8_t> b3dm = makeB3dm(
+        makeTriangleGlb(),
+        "{\"BATCH_LENGTH\":1}",
+        "{\"name\":[\"building\"]}");
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "B3DM batch table fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(b3dm.data(), b3dm.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(nullptr, result.gltfModel);
+}
+
+TEST(GltfParserTest, ContentProviderRejectsB3dmPositiveBatchLength) {
+    const std::vector<uint8_t> b3dm = makeB3dm(
+        makeTriangleGlb(),
+        "{\"BATCH_LENGTH\":1}");
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "B3DM batch length fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(b3dm.data(), b3dm.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(nullptr, result.gltfModel);
+}
+
 TEST(GltfParserTest, ContentProviderDecodesEmbeddedI3dmInstancesAndRtcCenter) {
     const std::vector<uint8_t> i3dm = makeI3dm(makeTriangleGlb(), 1u);
 
@@ -7402,6 +7454,41 @@ TEST(GltfParserTest, ContentProviderDecodesEmbeddedI3dmInstancesAndRtcCenter) {
     EXPECT_NEAR(130.0, second.x(), 1e-12);
     EXPECT_NEAR(240.0, second.y(), 1e-12);
     EXPECT_NEAR(360.0, second.z(), 1e-12);
+}
+
+TEST(GltfParserTest, ContentProviderRejectsI3dmBatchIdFeatureSemantic) {
+    std::vector<uint8_t> featureBinary;
+    const size_t positionsOffset = featureBinary.size();
+    appendF32(featureBinary, 0.0f);
+    appendF32(featureBinary, 0.0f);
+    appendF32(featureBinary, 0.0f);
+    const size_t batchIdOffset = featureBinary.size();
+    appendU32(featureBinary, 0u);
+
+    const std::vector<uint8_t> i3dm = makeI3dmWithFeatureTable(
+        std::string("{\"INSTANCES_LENGTH\":1,") +
+        "\"POSITION\":{\"byteOffset\":" +
+        std::to_string(positionsOffset) + "}," +
+        "\"BATCH_ID\":{\"byteOffset\":" +
+        std::to_string(batchIdOffset) + "}}",
+        std::move(featureBinary));
+
+    EXPECT_EQ(TileContentLoadStatus::Failed, decodeI3dmStatus(i3dm));
+}
+
+TEST(GltfParserTest, ContentProviderRejectsI3dmBatchTableMetadata) {
+    std::vector<uint8_t> featureBinary;
+    appendF32(featureBinary, 0.0f);
+    appendF32(featureBinary, 0.0f);
+    appendF32(featureBinary, 0.0f);
+
+    const std::vector<uint8_t> i3dm = makeI3dmWithFeatureTable(
+        "{\"INSTANCES_LENGTH\":1,"
+        "\"POSITION\":{\"byteOffset\":0}}",
+        std::move(featureBinary),
+        "{\"name\":[\"instance\"]}");
+
+    EXPECT_EQ(TileContentLoadStatus::Failed, decodeI3dmStatus(i3dm));
 }
 
 TEST(GltfParserTest, ContentProviderRejectsI3dmEastNorthUpTypeMismatch) {

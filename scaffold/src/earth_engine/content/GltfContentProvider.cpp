@@ -78,6 +78,8 @@ std::string trimRightJsonPadding(std::string value) {
     return value;
 }
 
+std::optional<uint32_t> jsonU32(const nlohmann::json& json);
+
 struct B3dmExtractResult {
     bool isB3dm = false;
     bool valid = false;
@@ -136,6 +138,12 @@ B3dmExtractResult extractB3dmGlb(const uint8_t* data, size_t size) {
     const size_t glbStart = static_cast<size_t>(glbStart64);
 
     if (featureTableJsonByteLength > 0) {
+        if (featureTableBinaryByteLength > 0 ||
+            batchTableJsonByteLength > 0 ||
+            batchTableBinaryByteLength > 0) {
+            return result;
+        }
+
         const size_t featureStart = headerLength;
         const size_t featureEnd =
             featureStart + static_cast<size_t>(featureTableJsonByteLength);
@@ -149,6 +157,16 @@ B3dmExtractResult extractB3dmGlb(const uint8_t* data, size_t size) {
         if (parsed.is_discarded()) {
             return result;
         }
+        if (parsed.contains("extensions")) {
+            return result;
+        }
+        auto batchLengthIt = parsed.find("BATCH_LENGTH");
+        if (batchLengthIt != parsed.end()) {
+            std::optional<uint32_t> batchLength = jsonU32(*batchLengthIt);
+            if (!batchLength || *batchLength > 0u) {
+                return result;
+            }
+        }
         auto it = parsed.find("RTC_CENTER");
         if (it != parsed.end() && it->is_array() && it->size() == 3 &&
             (*it)[0].is_number() && (*it)[1].is_number() &&
@@ -158,6 +176,10 @@ B3dmExtractResult extractB3dmGlb(const uint8_t* data, size_t size) {
                 (*it)[1].get<double>(),
                 (*it)[2].get<double>()));
         }
+    } else if (featureTableBinaryByteLength > 0 ||
+               batchTableJsonByteLength > 0 ||
+               batchTableBinaryByteLength > 0) {
+        return result;
     }
 
     result.glbData = data + glbStart;
@@ -996,6 +1018,10 @@ std::optional<I3dmFeatureTable> parseI3dmFeatureTable(
     if (featureJson.is_discarded() || !featureJson.is_object()) {
         return std::nullopt;
     }
+    if (featureJson.contains("extensions") ||
+        featureJson.contains("BATCH_ID")) {
+        return std::nullopt;
+    }
 
     auto instancesIt = featureJson.find("INSTANCES_LENGTH");
     if (instancesIt == featureJson.end()) return std::nullopt;
@@ -1352,6 +1378,10 @@ TileContentLoadResult decodeI3dmContent(
     const GltfParser::ImageDecoder& imageDecoder) {
     std::optional<I3dmHeader> header = parseI3dmHeader(data, size);
     if (!header) return TileContentLoadResult::failed();
+    if (header->batchTableJsonByteLength > 0 ||
+        header->batchTableBinaryByteLength > 0) {
+        return TileContentLoadResult::failed();
+    }
 
     std::optional<DecodedI3dmInstances> decoded =
         decodeI3dmInstances(data, *header, baseTransform);
