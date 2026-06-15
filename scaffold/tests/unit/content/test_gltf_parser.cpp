@@ -7909,38 +7909,20 @@ TEST(GltfParserTest, ParsesExtMeshGpuInstancingNormalizedShortRotation) {
     EXPECT_NEAR(36.0, second.z(), 1e-3);
 }
 
-TEST(GltfParserTest, ParsesExtMeshGpuInstancingNormalizedUnsignedByteRotation) {
+TEST(GltfParserTest, RejectsExtMeshGpuInstancingNormalizedUnsignedByteRotation) {
     ExternalGltfFixture fixture = makeGpuInstancedExternalGltf(
         GpuInstanceRotationEncoding::NormalizedUnsignedByte);
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
 
-    ASSERT_NE(nullptr, model);
-    ASSERT_EQ(1u, model->primitives.size());
-    const GltfPrimitive& primitive = model->primitives[0];
-    ASSERT_EQ(2u, primitive.instances.size());
-
-    const Vec3 source = primitive.vertices[1].positionEcef;
-    const Vec3 second = primitive.instances[1].transform * source;
-    EXPECT_NEAR(14.0, second.x(), 1e-5);
-    EXPECT_NEAR(26.0, second.y(), 1e-5);
-    EXPECT_NEAR(36.0, second.z(), 1e-6);
+    EXPECT_EQ(nullptr, model);
 }
 
-TEST(GltfParserTest, ParsesExtMeshGpuInstancingNormalizedUnsignedShortRotation) {
+TEST(GltfParserTest, RejectsExtMeshGpuInstancingNormalizedUnsignedShortRotation) {
     ExternalGltfFixture fixture = makeGpuInstancedExternalGltf(
         GpuInstanceRotationEncoding::NormalizedUnsignedShort);
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
 
-    ASSERT_NE(nullptr, model);
-    ASSERT_EQ(1u, model->primitives.size());
-    const GltfPrimitive& primitive = model->primitives[0];
-    ASSERT_EQ(2u, primitive.instances.size());
-
-    const Vec3 source = primitive.vertices[1].positionEcef;
-    const Vec3 second = primitive.instances[1].transform * source;
-    EXPECT_NEAR(14.0, second.x(), 1e-5);
-    EXPECT_NEAR(26.0, second.y(), 1e-5);
-    EXPECT_NEAR(36.0, second.z(), 1e-6);
+    EXPECT_EQ(nullptr, model);
 }
 
 TEST(GltfParserTest, RejectsGpuInstancingZeroLengthRotation) {

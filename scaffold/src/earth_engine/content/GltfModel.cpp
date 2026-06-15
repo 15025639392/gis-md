@@ -5359,9 +5359,7 @@ bool validInstanceRotationAccessor(const AccessorSpan& span) {
         return !span.normalized;
     }
     return (span.componentType == 5120 ||
-            span.componentType == 5121 ||
-            span.componentType == 5122 ||
-            span.componentType == 5123) &&
+            span.componentType == 5122) &&
            span.normalized;
 }
 
