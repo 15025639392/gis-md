@@ -996,6 +996,28 @@ TEST(RendererCommandTest, GltfPrimitiveBlendAllowedForAlphaModeBlend) {
     EXPECT_FALSE(error.has_value());
 }
 
+TEST(RendererCommandTest, GltfPrimitiveBlendAllowedForTransmission) {
+    RenderCommand gltf;
+    gltf.kind = RenderCommandKind::GltfPrimitive;
+    gltf.owner = "gltf_transmission";
+    gltf.pass = "color";
+    gltf.depthTest = true;
+    gltf.depthWrite = false;
+    gltf.cullFace = true;
+    gltf.blend = true;
+    gltf.frameId = 42;
+    gltf.generation = 7;
+    gltf.uniforms["u_alphaMode"] = {0.0f};
+    gltf.uniforms["u_renderOpacity"] = {1.0f};
+    gltf.uniforms["u_transmissionFactor"] = {0.5f};
+    gltf.hasTranslucentSortDepth = true;
+    gltf.translucentSortDepth = 10.0;
+
+    RenderCommandList commands{gltf};
+    auto error = validateMvpRenderCommands(commands, 42);
+    EXPECT_FALSE(error.has_value());
+}
+
 TEST(RendererCommandTest, GltfPrimitiveBlendRejectedWithoutOpacityReason) {
     RenderCommand gltf;
     gltf.kind = RenderCommandKind::GltfPrimitive;

@@ -72,7 +72,10 @@ bool surfaceTileBlendAllowed(const RenderCommand& cmd) {
 
 bool gltfPrimitiveBlendAllowed(const RenderCommand& cmd) {
     const bool blendMaterial = uniformScalar(cmd, "u_alphaMode", 0.0f) > 1.5f;
+    const bool transmissiveMaterial =
+        uniformScalar(cmd, "u_transmissionFactor", 0.0f) > 0.0f;
     return blendMaterial ||
+           transmissiveMaterial ||
            uniformScalar(cmd, "u_renderOpacity", 1.0f) < 0.999f;
 }
 
