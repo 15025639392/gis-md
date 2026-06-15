@@ -5843,7 +5843,7 @@ TEST(GltfParserTest, RejectsUnsupportedGaussianSplattingExtensions) {
 }
 
 TEST(GltfParserTest, RejectsUnsupportedSceneControlAndLightingExtensions) {
-    const std::array<const char*, 17> unsupportedExtensions = {
+    const std::array<const char*, 19> unsupportedExtensions = {
         "KHR_accessor_float64",
         "KHR_animation_pointer",
         "KHR_audio_graph",
@@ -5858,6 +5858,8 @@ TEST(GltfParserTest, RejectsUnsupportedSceneControlAndLightingExtensions) {
         "EXT_lights_ies",
         "EXT_lights_image_based",
         "EXT_mesh_manifold",
+        "EXT_mesh_primitive_edge_visibility",
+        "EXT_mesh_primitive_restart",
         "AGI_articulations",
         "MSFT_lod",
         "CESIUM_primitive_outline"};
@@ -5878,7 +5880,7 @@ TEST(GltfParserTest, RejectsUnsupportedSceneControlAndLightingExtensions) {
 }
 
 TEST(GltfParserTest, RejectsUnsupportedVendorRegistryExtensions) {
-    const std::array<const char*, 20> unsupportedExtensions = {
+    const std::array<const char*, 21> unsupportedExtensions = {
         "ADOBE_materials_clearcoat_specular",
         "ADOBE_materials_clearcoat_tint",
         "ADOBE_materials_thin_transparency",
@@ -5896,6 +5898,7 @@ TEST(GltfParserTest, RejectsUnsupportedVendorRegistryExtensions) {
         "MPEG_mesh_linking",
         "MPEG_scene_dynamic",
         "MPEG_viewport_recommended",
+        "EXT_texture_astc",
         "MSFT_packing_normalRoughnessMetallic",
         "MSFT_packing_occlusionRoughnessMetallic",
         "NV_materials_mdl"};
