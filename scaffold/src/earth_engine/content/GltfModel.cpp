@@ -1008,11 +1008,12 @@ std::optional<std::vector<std::vector<uint8_t>>> loadBuffers(
         if (buffer.size() < declaredLength) {
             return std::nullopt;
         }
-        if (i == 0 && uri.empty() && !binaryChunk.empty() &&
-            buffer.size() - declaredLength > 3u) {
-            return std::nullopt;
-        }
         if (buffer.size() > declaredLength) {
+            const bool glbBinaryBuffer =
+                i == 0 && uri.empty() && !binaryChunk.empty();
+            if (!glbBinaryBuffer || buffer.size() - declaredLength > 3u) {
+                return std::nullopt;
+            }
             buffer.resize(declaredLength);
         }
         buffers.push_back(std::move(buffer));

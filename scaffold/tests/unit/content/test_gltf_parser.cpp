@@ -48,6 +48,26 @@ void pad4(std::vector<uint8_t>& bytes, uint8_t pad) {
     }
 }
 
+std::string base64Encode(const std::vector<uint8_t>& bytes) {
+    static constexpr char kAlphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string encoded;
+    encoded.reserve(((bytes.size() + 2u) / 3u) * 4u);
+    for (size_t i = 0; i < bytes.size(); i += 3u) {
+        const uint32_t b0 = bytes[i];
+        const bool hasB1 = i + 1u < bytes.size();
+        const bool hasB2 = i + 2u < bytes.size();
+        const uint32_t b1 = hasB1 ? bytes[i + 1u] : 0u;
+        const uint32_t b2 = hasB2 ? bytes[i + 2u] : 0u;
+        const uint32_t packed = (b0 << 16u) | (b1 << 8u) | b2;
+        encoded.push_back(kAlphabet[(packed >> 18u) & 0x3fu]);
+        encoded.push_back(kAlphabet[(packed >> 12u) & 0x3fu]);
+        encoded.push_back(hasB1 ? kAlphabet[(packed >> 6u) & 0x3fu] : '=');
+        encoded.push_back(hasB2 ? kAlphabet[packed & 0x3fu] : '=');
+    }
+    return encoded;
+}
+
 std::vector<uint8_t> makeFakeWebpBytes() {
     return {
         'R', 'I', 'F', 'F',
@@ -6324,6 +6344,71 @@ TEST(GltfParserTest, RejectsBufferDeclaredLengthExceedsResolvedBytes) {
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
 
     EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsExternalBufferDeclaredLengthSmallerThanResolvedBytes) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    fixture.bin.insert(fixture.bin.end(), {0u, 1u, 2u, 3u});
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, ParsesBufferDataUriWithExactDeclaredLengthAndDoesNotResolve) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker = "\"uri\":\"triangle.bin\"";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "\"uri\":\"data:application/octet-stream;base64," +
+            base64Encode(fixture.bin) + "\"");
+    bool resolvedDataUri = false;
+
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            if (uri.rfind("data:", 0) == 0) {
+                resolvedDataUri = true;
+            }
+            return fixture.bin;
+        });
+
+    ASSERT_NE(nullptr, model);
+    EXPECT_FALSE(resolvedDataUri);
+    EXPECT_EQ(3u, model->vertexCount());
+    EXPECT_EQ(3u, model->indexCount());
+}
+
+TEST(GltfParserTest, RejectsBufferDataUriDeclaredLengthSmallerThanDecodedBytes) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    std::vector<uint8_t> decoded = fixture.bin;
+    decoded.insert(decoded.end(), {0u, 1u, 2u, 3u});
+    const std::string marker = "\"uri\":\"triangle.bin\"";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "\"uri\":\"data:application/octet-stream;base64," +
+            base64Encode(decoded) + "\"");
+    bool resolvedDataUri = false;
+
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string& uri) {
+            if (uri.rfind("data:", 0) == 0) {
+                resolvedDataUri = true;
+            }
+            return fixture.bin;
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(resolvedDataUri);
 }
 
 TEST(GltfParserTest, ParsesCustomPrimitiveAttributeWithValidAccessor) {
