@@ -398,10 +398,11 @@ bool validateAsset(const json& doc) {
 }
 
 bool isSupportedExtensionName(const std::string& name) {
-    static constexpr std::array<const char*, 4> kSupportedExtensions = {
+    static constexpr std::array<const char*, 5> kSupportedExtensions = {
         "KHR_texture_transform",
         "KHR_mesh_quantization",
         "KHR_materials_unlit",
+        "KHR_materials_emissive_strength",
         "EXT_mesh_gpu_instancing"};
     return std::find(
         kSupportedExtensions.begin(),
@@ -488,7 +489,8 @@ bool extensionsObjectSupportedAtPath(
             }
             continue;
         }
-        if (it.key() == "KHR_materials_unlit") {
+        if (it.key() == "KHR_materials_unlit" ||
+            it.key() == "KHR_materials_emissive_strength") {
             if (!isMaterialExtensionParentPath(ownerPath)) {
                 return false;
             }
@@ -567,9 +569,10 @@ bool documentHasObjectExtension(
 }
 
 bool supportedObjectExtensionsAreDeclared(const json& doc) {
-    constexpr std::array<const char*, 3> kObjectExtensions = {
+    constexpr std::array<const char*, 4> kObjectExtensions = {
         "KHR_texture_transform",
         "KHR_materials_unlit",
+        "KHR_materials_emissive_strength",
         "EXT_mesh_gpu_instancing"};
     for (const char* extensionName : kObjectExtensions) {
         if (documentHasObjectExtension(doc, extensionName) &&
@@ -2100,7 +2103,51 @@ bool validateMaterialExtensions(const json& material) {
         return false;
     }
     const auto unlitIt = extensionsIt->find("KHR_materials_unlit");
-    return unlitIt == extensionsIt->end() || unlitIt->is_object();
+    if (unlitIt != extensionsIt->end() && !unlitIt->is_object()) {
+        return false;
+    }
+    const auto emissiveStrengthIt =
+        extensionsIt->find("KHR_materials_emissive_strength");
+    if (emissiveStrengthIt == extensionsIt->end()) {
+        return true;
+    }
+    if (!emissiveStrengthIt->is_object()) {
+        return false;
+    }
+    const auto strengthIt = emissiveStrengthIt->find("emissiveStrength");
+    if (strengthIt == emissiveStrengthIt->end()) {
+        return true;
+    }
+    const auto strength = numberProperty(
+        *emissiveStrengthIt,
+        "emissiveStrength",
+        1.0f);
+    return strength.has_value() && *strength >= 0.0f;
+}
+
+float materialEmissiveStrength(const json& material, bool& strictFailure) {
+    const auto extensionsIt = material.find("extensions");
+    if (extensionsIt == material.end() || !extensionsIt->is_object()) {
+        return 1.0f;
+    }
+    const auto emissiveStrengthIt =
+        extensionsIt->find("KHR_materials_emissive_strength");
+    if (emissiveStrengthIt == extensionsIt->end()) {
+        return 1.0f;
+    }
+    if (!emissiveStrengthIt->is_object()) {
+        strictFailure = true;
+        return 1.0f;
+    }
+    const auto strength = numberProperty(
+        *emissiveStrengthIt,
+        "emissiveStrength",
+        1.0f);
+    if (!strength || *strength < 0.0f) {
+        strictFailure = true;
+        return 1.0f;
+    }
+    return *strength;
 }
 
 bool validateMaterialJson(const json& material, size_t textureCount) {
@@ -4079,6 +4126,14 @@ std::optional<GltfPrimitive> parsePrimitive(
                 strictFailure = true;
                 return std::nullopt;
             }
+            const float emissiveStrength =
+                materialEmissiveStrength(material, strictFailure);
+            if (strictFailure) {
+                return std::nullopt;
+            }
+            for (float& component : primitive.emissiveFactor) {
+                component *= emissiveStrength;
+            }
             auto emissiveTextureIt = material.find("emissiveTexture");
             if (emissiveTextureIt != material.end() &&
                 emissiveTextureIt->is_object()) {
@@ -4931,6 +4986,14 @@ std::unique_ptr<GltfModel> GltfParser::parse(
         !documentHasObjectExtension(
             input->document,
             "KHR_materials_unlit")) {
+        return nullptr;
+    }
+    if (declaredExtension(
+            input->document,
+            "KHR_materials_emissive_strength") &&
+        !documentHasObjectExtension(
+            input->document,
+            "KHR_materials_emissive_strength")) {
         return nullptr;
     }
     if (declaredExtension(input->document, "EXT_mesh_gpu_instancing") &&
