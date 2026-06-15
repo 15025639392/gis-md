@@ -733,6 +733,9 @@ bool hasUnsupportedObjectExtensions(
             return true;
         }
         for (auto it = value.begin(); it != value.end(); ++it) {
+            if (it.key() == "extras") {
+                continue;
+            }
             path.push_back(it.key());
             if (hasUnsupportedObjectExtensions(*it, path)) {
                 return true;
@@ -768,6 +771,9 @@ bool documentHasObjectExtension(
             return true;
         }
         for (auto it = value.begin(); it != value.end(); ++it) {
+            if (it.key() == "extras") {
+                continue;
+            }
             if (documentHasObjectExtension(*it, extensionName)) {
                 return true;
             }

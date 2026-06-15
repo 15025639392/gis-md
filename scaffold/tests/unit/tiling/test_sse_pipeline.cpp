@@ -5075,6 +5075,63 @@ void testTilesetJsonTopLevelUnsupportedExtensionsUsedInvalidatesProvider() {
           "TilesetJsonContentProvider: invalid extensionsUsed tileset exposes no roots");
 }
 
+void testTilesetJsonExtrasDoNotDeclareExtensions() {
+    const std::string tilesetJson = R"json({
+      "asset": {"version": "1.1"},
+      "extras": {
+        "extensionsRequired": ["EARTH_app_private"],
+        "extensions": {
+          "3DTILES_metadata": {"class": "ignored"}
+        }
+      },
+      "geometricError": 100,
+      "root": {
+        "extras": {
+          "extensionsUsed": ["3DTILES_metadata"],
+          "extensions": {
+            "3DTILES_metadata": {"class": "ignored"}
+          }
+        },
+        "boundingVolume": {"region": [-0.01, -0.01, 0.01, 0.01, 0, 100]},
+        "geometricError": 64,
+        "content": {
+          "extras": {
+            "extensionsRequired": ["EARTH_content_private"],
+            "extensions": {
+              "3DTILES_metadata": {"class": "ignored"}
+            }
+          }
+        }
+      }
+    })json";
+
+    TilesetJsonContentProvider provider(
+        "file:///extras-extension-data/tileset.json",
+        std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
+        "extras extension data fixture");
+    check(provider.valid(),
+          "TilesetJsonContentProvider: extras extension-looking data remains valid");
+    const std::vector<TileKey> roots = provider.rootTiles();
+    check(!roots.empty(),
+          "TilesetJsonContentProvider: extras extension-looking data exposes roots");
+    if (roots.empty()) return;
+
+    const std::vector<TileKey> children = provider.childTiles(roots.front());
+    check(children.size() == 1 && provider.supportsTile(children.front()),
+          "TilesetJsonContentProvider: extras extension-looking child stays addressable");
+    if (children.empty()) return;
+
+    TileContentLoadStatus status = TileContentLoadStatus::Failed;
+    provider.requestTileContent(
+        children.front(),
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult result) {
+            status = result.status;
+        });
+    check(status == TileContentLoadStatus::Empty,
+          "TilesetJsonContentProvider: extras extension-looking data does not mark tile unsupported");
+}
+
 void testTilesetJsonTopLevelPerTileExtensionPayloadInvalidatesProvider() {
     struct ExtensionPayloadCase {
         std::string label;
@@ -8184,6 +8241,7 @@ int main() {
     testTilesetJsonProviderParsesViewerRequestVolume();
     testTilesetJsonTopLevelUnknownRequiredExtensionInvalidatesProvider();
     testTilesetJsonTopLevelUnsupportedExtensionsUsedInvalidatesProvider();
+    testTilesetJsonExtrasDoNotDeclareExtensions();
     testTilesetJsonTopLevelPerTileExtensionPayloadInvalidatesProvider();
     testTilesetJsonRequiredExtensionMustAlsoBeUsed();
     testTilesetJsonDuplicateExtensionDeclarationsInvalidateProvider();

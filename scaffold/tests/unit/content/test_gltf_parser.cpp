@@ -5495,6 +5495,88 @@ TEST(GltfParserTest, RejectsUnsupportedFeatureMetadataExtensions) {
     }
 }
 
+TEST(GltfParserTest, RejectsUnsupportedNativeMetadataObjectExtensions) {
+    struct ObjectExtensionCase {
+        const char* marker;
+        const char* replacement;
+        const char* label;
+    };
+
+    const std::array<ObjectExtensionCase, 5> cases = {{
+        {
+            "\"scene\":0,",
+            "\"extensions\":{\"EXT_structural_metadata\":{\"schema\":{\"classes\":{}}}},\"scene\":0,",
+            "top-level EXT_structural_metadata"},
+        {
+            "\"scene\":0,",
+            "\"extensions\":{\"EXT_feature_metadata\":{\"schema\":{\"classes\":{}}}},\"scene\":0,",
+            "top-level EXT_feature_metadata"},
+        {
+            "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30]}]",
+            "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30],"
+            "\"extensions\":{\"EXT_instance_features\":{\"featureIds\":[{\"featureCount\":1}]}}}]",
+            "node EXT_instance_features"},
+        {
+            "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},\"indices\":3,\"mode\":4}]}]",
+            "\"meshes\":[{\"extensions\":{\"EXT_mesh_features\":{\"featureIds\":[]}},"
+            "\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},\"indices\":3,\"mode\":4}]}]",
+            "mesh EXT_mesh_features"},
+        {
+            "\"mode\":4",
+            "\"mode\":4,\"extensions\":{\"EXT_structural_metadata\":{\"propertyAttributes\":[0]}}",
+            "primitive EXT_structural_metadata"},
+    }};
+
+    for (const ObjectExtensionCase& testCase : cases) {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const size_t markerPos = fixture.jsonText.find(testCase.marker);
+        ASSERT_NE(std::string::npos, markerPos) << testCase.label;
+        fixture.jsonText.replace(
+            markerPos,
+            std::string(testCase.marker).size(),
+            testCase.replacement);
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << testCase.label;
+    }
+}
+
+TEST(GltfParserTest, ParsesExtrasWithExtensionNamedApplicationData) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker = "\"scene\":0,";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.insert(
+        markerPos,
+        "\"extras\":{\"extensions\":{"
+        "\"KHR_materials_unlit\":{\"note\":true},"
+        "\"EXT_structural_metadata\":{\"ignored\":true}}},");
+    const std::string nodeMarker =
+        "{\"mesh\":0,\"translation\":[10,20,30]}";
+    const size_t nodePos = fixture.jsonText.find(nodeMarker);
+    ASSERT_NE(std::string::npos, nodePos);
+    fixture.jsonText.replace(
+        nodePos,
+        nodeMarker.size(),
+        "{\"mesh\":0,\"translation\":[10,20,30],"
+        "\"extras\":{\"extensionsUsed\":[\"KHR_materials_unlit\"],"
+        "\"extensions\":{\"EXT_structural_metadata\":{\"ignored\":true}}}}");
+    const std::string primitiveMarker = "\"mode\":4";
+    const size_t primitivePos = fixture.jsonText.find(primitiveMarker);
+    ASSERT_NE(std::string::npos, primitivePos);
+    fixture.jsonText.replace(
+        primitivePos,
+        primitiveMarker.size(),
+        "\"mode\":4,\"extras\":{\"extensions\":{"
+        "\"3DTILES_metadata\":{\"ignored\":true}}}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+}
+
 TEST(GltfParserTest, RejectsUnsupportedMaterialExtensionsWithoutRuntimeSupport) {
     const std::array<const char*, 5> unsupportedExtensions = {
         "KHR_materials_diffuse_transmission",

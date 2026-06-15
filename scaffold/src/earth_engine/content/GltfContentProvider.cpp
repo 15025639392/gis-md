@@ -856,7 +856,9 @@ bool hasUnsupportedDeclaredExtensionsInTileObject(
             return true;
         }
         for (auto it = value.begin(); it != value.end(); ++it) {
-            if (it.key() == "children" || it.key() == "extensions") {
+            if (it.key() == "children" ||
+                it.key() == "extensions" ||
+                it.key() == "extras") {
                 continue;
             }
             if (hasUnsupportedDeclaredExtensionsInTileObject(*it)) {
@@ -929,7 +931,9 @@ bool hasUnsupportedExtensionsObjectInTileObject(
             return true;
         }
         for (auto it = value.begin(); it != value.end(); ++it) {
-            if (it.key() == "children" || it.key() == "extensions") {
+            if (it.key() == "children" ||
+                it.key() == "extensions" ||
+                it.key() == "extras") {
                 continue;
             }
             if (hasUnsupportedExtensionsObjectInTileObject(*it)) {
