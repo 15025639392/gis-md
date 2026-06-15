@@ -5700,6 +5700,48 @@ TEST(GltfParserTest, ParsesExtMeshGpuInstancingNodeExtension) {
     EXPECT_NEAR(36.0, second.z(), 1e-6);
 }
 
+TEST(GltfParserTest, ParsesExtMeshGpuInstancingUnderParentTransform) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
+    const std::string nodeMarker =
+        "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30],"
+        "\"extensions\":{\"EXT_mesh_gpu_instancing\":{"
+        "\"attributes\":{\"TRANSLATION\":4,\"ROTATION\":5,\"SCALE\":6}}}}]";
+    const size_t nodePos = fixture.jsonText.find(nodeMarker);
+    ASSERT_NE(std::string::npos, nodePos);
+    fixture.jsonText.replace(
+        nodePos,
+        nodeMarker.size(),
+        "\"nodes\":["
+        "{\"translation\":[100,0,0],"
+        "\"rotation\":[0,0,0.7071067811865476,0.7071067811865476],"
+        "\"children\":[1]},"
+        "{\"mesh\":0,\"translation\":[10,20,30],"
+        "\"extensions\":{\"EXT_mesh_gpu_instancing\":{"
+        "\"attributes\":{\"TRANSLATION\":4,\"ROTATION\":5,\"SCALE\":6}}}}]");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives[0];
+    ASSERT_EQ(2u, primitive.instances.size());
+
+    const Vec3 source = primitive.vertices[1].positionEcef;
+    EXPECT_NEAR(80.0, source.x(), 1e-6);
+    EXPECT_NEAR(11.0, source.y(), 1e-6);
+    EXPECT_NEAR(30.0, source.z(), 1e-6);
+
+    const Vec3 first = primitive.instances[0].transform * source;
+    EXPECT_NEAR(78.0, first.x(), 1e-6);
+    EXPECT_NEAR(13.0, first.y(), 1e-6);
+    EXPECT_NEAR(33.0, first.z(), 1e-6);
+
+    const Vec3 second = primitive.instances[1].transform * source;
+    EXPECT_NEAR(74.0, second.x(), 1e-5);
+    EXPECT_NEAR(14.0, second.y(), 1e-5);
+    EXPECT_NEAR(36.0, second.z(), 1e-6);
+}
+
 TEST(GltfParserTest, ParsesExtMeshGpuInstancingNormalizedShortRotation) {
     ExternalGltfFixture fixture = makeGpuInstancedExternalGltf(
         GpuInstanceRotationEncoding::NormalizedShort);
@@ -6036,6 +6078,34 @@ TEST(GltfParserTest, RejectsGpuInstancingFeatureIdAttributeWithoutMetadataSuppor
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsGpuInstancingCustomAttributeWithoutRendererSupport) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
+    const std::string marker = "\"SCALE\":6}";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "\"SCALE\":6,\"_CUSTOM\":4}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsGpuInstancingEmptyAttributes) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
+    const std::string marker =
+        "\"attributes\":{\"TRANSLATION\":4,\"ROTATION\":5,\"SCALE\":6}";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(markerPos, marker.size(), "\"attributes\":{}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsGpuInstancingMismatchedAttributeCounts) {
     ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
     const std::string marker =
@@ -6046,6 +6116,39 @@ TEST(GltfParserTest, RejectsGpuInstancingMismatchedAttributeCounts) {
         markerPos,
         marker.size(),
         "{\"bufferView\":6,\"componentType\":5126,\"count\":1,\"type\":\"VEC3\"}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsGpuInstancingNonFloatTranslationAccessor) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
+    const std::string marker =
+        "{\"bufferView\":4,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "{\"bufferView\":4,\"componentType\":5123,\"normalized\":true,"
+        "\"count\":2,\"type\":\"VEC3\"}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsGpuInstancingWrongScaleAccessorType) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
+    const std::string marker =
+        "{\"bufferView\":6,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "{\"bufferView\":6,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"}");
 
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
 

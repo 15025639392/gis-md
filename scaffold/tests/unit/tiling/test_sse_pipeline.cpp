@@ -5369,6 +5369,56 @@ void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
     check(unsupportedProvider.rootTiles().empty(),
           "TilesetJsonContentProvider: unsupported 3DTILES_content_gltf exposes no roots");
 
+    const std::array<const char*, 13> unsupportedGltfExtensions = {
+        "KHR_draco_mesh_compression",
+        "EXT_meshopt_compression",
+        "KHR_texture_basisu",
+        "EXT_mesh_features",
+        "EXT_instance_features",
+        "EXT_structural_metadata",
+        "EXT_feature_metadata",
+        "KHR_gaussian_splatting",
+        "KHR_gaussian_splatting_compression_spz",
+        "KHR_gaussian_splatting_compression_spz_2",
+        "KHR_spz_gaussian_splats_compression",
+        "KHR_materials_iridescence",
+        "KHR_materials_volume"};
+
+    for (const char* extension : unsupportedGltfExtensions) {
+        const std::string unsupportedPayloadJson =
+            std::string("{") +
+            "\"asset\":{\"version\":\"1.0\"},"
+            "\"extensionsUsed\":[\"3DTILES_content_gltf\"],"
+            "\"extensions\":{"
+            "\"3DTILES_content_gltf\":{"
+            "\"extensionsRequired\":[\"" + extension + "\"],"
+            "\"extensionsUsed\":[\"" + extension + "\"]"
+            "}},"
+            "\"geometricError\":100,"
+            "\"root\":{"
+            "\"boundingVolume\":{\"region\":[-0.01,-0.01,0.01,0.01,0,100]},"
+            "\"geometricError\":64"
+            "}}";
+        TilesetJsonContentProvider unsupportedPayloadProvider(
+            "file:///unsupported-content-gltf-payload-" +
+                std::string(extension) +
+                "/tileset.json",
+            std::vector<uint8_t>(
+                unsupportedPayloadJson.begin(),
+                unsupportedPayloadJson.end()),
+            std::string("unsupported 3DTILES_content_gltf ") +
+                extension +
+                " payload fixture");
+        check(!unsupportedPayloadProvider.valid(),
+              std::string("TilesetJsonContentProvider: 3DTILES_content_gltf rejects unsupported ") +
+                  extension +
+                  " declaration");
+        check(unsupportedPayloadProvider.rootTiles().empty(),
+              std::string("TilesetJsonContentProvider: unsupported 3DTILES_content_gltf ") +
+                  extension +
+                  " payload exposes no roots");
+    }
+
     const std::string requiredOnlyPayloadJson = R"json({
       "asset": {"version": "1.0"},
       "extensionsUsed": ["3DTILES_content_gltf"],
