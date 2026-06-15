@@ -4615,6 +4615,115 @@ void testTilesetContentProviderSplitsNativeGpuInstancingBlendGltf() {
           "Tileset: native EXT_mesh_gpu_instancing BLEND carries per-instance sort centers");
 }
 
+void testTilesetContentProviderSplitsNativeGpuInstancingBlendTrsGltf() {
+    DummyRenderDevice device;
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    auto contentProvider = std::make_unique<SingleGltfContentProvider>(
+        rootKey,
+        makeNativeGpuInstancedTriangleGlbBytes(true, true),
+        "native EXT_mesh_gpu_instancing BLEND TRS GLB fixture");
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTestAccess::requestMissingTile(tileset, rootKey);
+
+    TilesetTile* root = nullptr;
+    for (int i = 0; i < 100; ++i) {
+        TilesetTestAccess::processPendingUploads(tileset);
+        root = TilesetTestAccess::findTile(tileset, rootKey);
+        if (root &&
+            root->loadState == TileLoadState::Done &&
+            root->contentKind == TileContentKind::Render &&
+            root->gltfModel) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    check(root != nullptr,
+          "Tileset: native EXT_mesh_gpu_instancing BLEND TRS provider creates the requested tile");
+    if (!root) return;
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 2 &&
+              root->gltfPrimitiveResources.size() == 2u,
+          "Tileset: native EXT_mesh_gpu_instancing BLEND TRS splits into sortable commands");
+    if (commands.size() < 2) return;
+
+    bool splitCommands = true;
+    for (const RenderCommand& cmd : commands) {
+        splitCommands = splitCommands &&
+            cmd.kind == RenderCommandKind::GltfPrimitive &&
+            cmd.instanceCount == 0 &&
+            cmd.instanceBuffer == nullptr &&
+            cmd.blend &&
+            !cmd.depthWrite &&
+            cmd.hasWorldSortCenter;
+    }
+    check(splitCommands,
+          "Tileset: native EXT_mesh_gpu_instancing BLEND TRS never submits one translucent instanced command");
+    check(std::abs(root->localOrigin.x()) < 1e-12 &&
+              std::abs(root->localOrigin.y() - (2.0 / 3.0)) < 1e-12 &&
+              std::abs(root->localOrigin.z() - 15.0) < 1e-12,
+          "Tileset: native EXT_mesh_gpu_instancing BLEND TRS local origin uses transformed centroids");
+    check(std::abs(commands[0].worldSortCenter[0] - (2.0 / 3.0)) <
+                  1e-9 &&
+              std::abs(commands[0].worldSortCenter[1] - 1.0) < 1e-9 &&
+              std::abs(commands[0].worldSortCenter[2] - 5.0) < 1e-9 &&
+              std::abs(commands[1].worldSortCenter[0] + (2.0 / 3.0)) <
+                  1e-9 &&
+              std::abs(commands[1].worldSortCenter[1] - (1.0 / 3.0)) <
+                  1e-9 &&
+              std::abs(commands[1].worldSortCenter[2] - 25.0) < 1e-9,
+          "Tileset: native EXT_mesh_gpu_instancing BLEND TRS carries transformed sort centers");
+
+    const auto* firstVertices =
+        dynamic_cast<const DummyBuffer*>(commands[0].vertexBuffer);
+    const auto* secondVertices =
+        dynamic_cast<const DummyBuffer*>(commands[1].vertexBuffer);
+    constexpr size_t kGltfGpuVertexBytes = 120u;
+    bool secondVertexBakedPerInstance = false;
+    if (firstVertices && secondVertices &&
+        firstVertices->bytes().size() >=
+            kGltfGpuVertexBytes + 3u * sizeof(float) &&
+        secondVertices->bytes().size() >=
+            kGltfGpuVertexBytes + 3u * sizeof(float)) {
+        std::array<float, 3> firstSecondVertex{};
+        std::array<float, 3> secondSecondVertex{};
+        std::memcpy(
+            firstSecondVertex.data(),
+            firstVertices->bytes().data() + kGltfGpuVertexBytes,
+            sizeof(firstSecondVertex));
+        std::memcpy(
+            secondSecondVertex.data(),
+            secondVertices->bytes().data() + kGltfGpuVertexBytes,
+            sizeof(secondSecondVertex));
+        secondVertexBakedPerInstance =
+            std::abs(firstSecondVertex[0] - 2.0f) < 1e-5f &&
+            std::abs(firstSecondVertex[1] + (2.0f / 3.0f)) < 1e-5f &&
+            std::abs(firstSecondVertex[2] + 10.0f) < 1e-5f &&
+            std::abs(secondSecondVertex[0]) < 1e-5f &&
+            std::abs(secondSecondVertex[1] - (1.0f / 3.0f)) < 1e-5f &&
+            std::abs(secondSecondVertex[2] - 10.0f) < 1e-5f;
+    }
+    check(secondVertexBakedPerInstance,
+          "Tileset: native EXT_mesh_gpu_instancing BLEND TRS bakes rotation and scale into split vertices");
+}
+
 void testTilesetContentProviderSplitsI3dmNativeGpuInstancingBlendGltf() {
     DummyRenderDevice device;
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -8906,6 +9015,7 @@ int main() {
     testTilesetContentProviderLoadsNativeGpuInstancingGltf();
     testTilesetContentProviderUploadsNativeGpuInstancingTrsMatrices();
     testTilesetContentProviderSplitsNativeGpuInstancingBlendGltf();
+    testTilesetContentProviderSplitsNativeGpuInstancingBlendTrsGltf();
     testTilesetContentProviderSplitsI3dmNativeGpuInstancingBlendGltf();
     testTilesetJsonProviderLoadsExplicitGltfTile();
     testTilesetJsonGltfUpAxisZKeepsZUpContent();
