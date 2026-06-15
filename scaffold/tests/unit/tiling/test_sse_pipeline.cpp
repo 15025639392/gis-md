@@ -824,6 +824,27 @@ std::vector<uint8_t> makePntsBytes() {
     return pnts;
 }
 
+std::vector<uint8_t> makeCmptBytes(
+    const std::vector<std::vector<uint8_t>>& innerTiles) {
+    size_t byteLength = 16u;
+    for (const std::vector<uint8_t>& inner : innerTiles) {
+        byteLength += inner.size();
+    }
+
+    std::vector<uint8_t> cmpt;
+    cmpt.push_back('c');
+    cmpt.push_back('m');
+    cmpt.push_back('p');
+    cmpt.push_back('t');
+    appendPod<uint32_t>(cmpt, 1u);
+    appendPod<uint32_t>(cmpt, static_cast<uint32_t>(byteLength));
+    appendPod<uint32_t>(cmpt, static_cast<uint32_t>(innerTiles.size()));
+    for (const std::vector<uint8_t>& inner : innerTiles) {
+        cmpt.insert(cmpt.end(), inner.begin(), inner.end());
+    }
+    return cmpt;
+}
+
 struct ExternalGltfBytes {
     std::vector<uint8_t> jsonBytes;
     std::vector<uint8_t> binBytes;
@@ -4659,6 +4680,106 @@ void testTilesetJsonProviderLoadsPntsPointCloud() {
     std::filesystem::remove_all(root);
 }
 
+void testTilesetJsonProviderLoadsCmptCompositeContent() {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth-md-tileset-json-cmpt";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "models");
+    writeBytes(
+        root / "models" / "composite.cmpt",
+        makeCmptBytes({makeTriangleGlbBytes(), makePntsBytes()}));
+
+    const std::string tilesetJson = R"json({
+      "asset": {"version": "1.1"},
+      "geometricError": 100,
+      "root": {
+        "boundingVolume": {"region": [-0.01, -0.01, 0.01, 0.01, 0, 100]},
+        "geometricError": 64,
+        "content": {"uri": "models/composite.cmpt"}
+      }
+    })json";
+    auto provider = std::make_unique<TilesetJsonContentProvider>(
+        "file://" + (root / "tileset.json").generic_string(),
+        std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
+        "cmpt tileset fixture");
+    TilesetJsonContentProvider* rawProvider = provider.get();
+    check(rawProvider->valid(),
+          "TilesetJsonContentProvider: CMPT tileset parses");
+    const std::vector<TileKey> roots = rawProvider->rootTiles();
+    if (roots.empty()) {
+        check(false, "TilesetJsonContentProvider: CMPT root exists");
+        std::filesystem::remove_all(root);
+        return;
+    }
+    const std::vector<TileKey> rootChildren =
+        rawProvider->childTiles(roots.front());
+    if (rootChildren.empty()) {
+        check(false,
+              "TilesetJsonContentProvider: CMPT content child exists");
+        std::filesystem::remove_all(root);
+        return;
+    }
+
+    DummyRenderDevice device;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{},
+        std::move(provider));
+
+    TilesetTestAccess::requestMissingTile(tileset, roots.front());
+    TilesetTestAccess::processPendingUploads(tileset);
+    const TileKey contentKey = rootChildren.front();
+    TilesetTestAccess::requestMissingTile(tileset, contentKey);
+    TilesetTile* contentTile = nullptr;
+    for (int i = 0; i < 100; ++i) {
+        TilesetTestAccess::processPendingUploads(tileset);
+        contentTile = TilesetTestAccess::findTile(tileset, contentKey);
+        if (contentTile &&
+            contentTile->loadState == TileLoadState::Done &&
+            contentTile->contentKind == TileContentKind::Render &&
+            contentTile->gltfModel) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    check(contentTile &&
+              contentTile->gltfModel &&
+              contentTile->gltfModel->primitives.size() == 2 &&
+              contentTile->gltfModel->primitives[0].primitiveMode ==
+                  GltfPrimitiveMode::Triangles &&
+              contentTile->gltfModel->primitives[1].primitiveMode ==
+                  GltfPrimitiveMode::Points,
+          "Tileset: CMPT content merges GLB and PNTS primitives");
+    check(contentTile &&
+              contentTile->gltfPrimitiveResources.size() == 2,
+          "Tileset: CMPT content prepares one resource per inner primitive");
+
+    if (contentTile) {
+        Renderer renderer(nullptr);
+        RenderCommandList commands;
+        TilesetTestAccess::buildTileDrawCommand(
+            tileset,
+            renderer,
+            *contentTile,
+            commands,
+            1.0f);
+        check(commands.size() == 2 &&
+                  commands[0].primitive ==
+                      RenderCommand::PrimitiveType::Triangles &&
+                  commands[1].primitive ==
+                      RenderCommand::PrimitiveType::Points,
+              "Tileset: CMPT content renders inner primitive topologies");
+    }
+
+    std::filesystem::remove_all(root);
+}
+
 void expectTilesetJsonTileFailsExplicitly(
     std::unique_ptr<TilesetJsonContentProvider> provider,
     const TileKey& key,
@@ -7459,6 +7580,7 @@ int main() {
     testTilesetJsonGltfUpAxisZKeepsZUpContent();
     testTilesetJsonI3dmDefaultUpAxisKeepsInstancePositionsTileLocal();
     testTilesetJsonProviderLoadsPntsPointCloud();
+    testTilesetJsonProviderLoadsCmptCompositeContent();
     testTilesetJsonUnsupportedMultipleContentsFailsTile();
     testTilesetJsonProviderParsesViewerRequestVolume();
     testTilesetJsonTopLevelUnknownRequiredExtensionInvalidatesProvider();

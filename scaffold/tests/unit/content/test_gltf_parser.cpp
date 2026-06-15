@@ -1547,6 +1547,27 @@ std::vector<uint8_t> makePnts(const std::string& featureTableJson,
     return pnts;
 }
 
+std::vector<uint8_t> makeCmpt(
+    const std::vector<std::vector<uint8_t>>& innerTiles) {
+    size_t byteLength = 16u;
+    for (const std::vector<uint8_t>& inner : innerTiles) {
+        byteLength += inner.size();
+    }
+
+    std::vector<uint8_t> cmpt;
+    cmpt.push_back('c');
+    cmpt.push_back('m');
+    cmpt.push_back('p');
+    cmpt.push_back('t');
+    appendU32(cmpt, 1u);
+    appendU32(cmpt, static_cast<uint32_t>(byteLength));
+    appendU32(cmpt, static_cast<uint32_t>(innerTiles.size()));
+    for (const std::vector<uint8_t>& inner : innerTiles) {
+        cmpt.insert(cmpt.end(), inner.begin(), inner.end());
+    }
+    return cmpt;
+}
+
 TileContentLoadStatus decodeI3dmStatus(const std::vector<uint8_t>& i3dm) {
     SingleGltfContentProvider provider(
         TileKey{"Geographic-TMS", 0, 0, 0},
@@ -7190,7 +7211,21 @@ TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) 
             "{\"name\":[\"feature\"]}"));
 }
 
-TEST(GltfParserTest, ContentProviderRejectsUnsupportedCmptContent) {
+TEST(GltfParserTest, ContentProviderDecodesEmptyCmptContent) {
+    const std::vector<uint8_t> cmpt = makeCmpt({});
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "empty CMPT fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(cmpt.data(), cmpt.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Empty, result.status);
+    EXPECT_EQ(nullptr, result.gltfModel);
+}
+
+TEST(GltfParserTest, ContentProviderRejectsInvalidCmptInnerContent) {
     std::vector<uint8_t> cmpt;
     cmpt.push_back('c');
     cmpt.push_back('m');
@@ -7198,18 +7233,117 @@ TEST(GltfParserTest, ContentProviderRejectsUnsupportedCmptContent) {
     cmpt.push_back('t');
     appendU32(cmpt, 1u);
     appendU32(cmpt, 16u);
-    appendU32(cmpt, 0u);
-    appendU32(cmpt, 0u);
+    appendU32(cmpt, 1u);
 
     SingleGltfContentProvider provider(
         TileKey{"Geographic-TMS", 0, 0, 0},
         std::vector<uint8_t>{},
-        "CMPT fixture");
+        "invalid CMPT fixture");
     TileContentLoadResult result =
         provider.decodeContent(cmpt.data(), cmpt.size());
 
     EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
+}
+
+TEST(GltfParserTest, ContentProviderDecodesCmptWithB3dmAndPnts) {
+    std::vector<uint8_t> pntsBinary;
+    appendF32(pntsBinary, 4.0f);
+    appendF32(pntsBinary, 5.0f);
+    appendF32(pntsBinary, 6.0f);
+    const size_t rgbOffset = pntsBinary.size();
+    pntsBinary.insert(pntsBinary.end(), {255u, 0u, 128u});
+    const std::string pntsJson =
+        std::string("{") +
+        "\"POINTS_LENGTH\":1,"
+        "\"RTC_CENTER\":[10.0,20.0,30.0],"
+        "\"POSITION\":{\"byteOffset\":0},"
+        "\"RGB\":{\"byteOffset\":" +
+        std::to_string(rgbOffset) + "}}";
+    const std::vector<uint8_t> pnts = makePnts(pntsJson, pntsBinary);
+    const std::vector<uint8_t> b3dm = makeB3dm(
+        makeTriangleGlb(),
+        "{\"BATCH_LENGTH\":0,\"RTC_CENTER\":[1.0,2.0,3.0]}");
+    const std::vector<uint8_t> cmpt = makeCmpt({b3dm, pnts});
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "CMPT fixture");
+    provider.setContentTransform(
+        Mat4::translation(Vec3(100.0, 200.0, 300.0)));
+    TileContentLoadResult result =
+        provider.decodeContent(cmpt.data(), cmpt.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(2u, result.gltfModel->primitives.size());
+    EXPECT_EQ(GltfPrimitiveMode::Triangles,
+              result.gltfModel->primitives[0].primitiveMode);
+    EXPECT_EQ(GltfPrimitiveMode::Points,
+              result.gltfModel->primitives[1].primitiveMode);
+
+    const Vec3 triangleFirst =
+        result.contentTransform *
+        result.gltfModel->primitives[0].vertices[0].positionEcef;
+    EXPECT_NEAR(111.0, triangleFirst.x(), 1e-12);
+    EXPECT_NEAR(222.0, triangleFirst.y(), 1e-12);
+    EXPECT_NEAR(333.0, triangleFirst.z(), 1e-12);
+
+    ASSERT_EQ(1u, result.gltfModel->primitives[1].vertices.size());
+    const Vec3 point =
+        result.contentTransform *
+        result.gltfModel->primitives[1].vertices[0].positionEcef;
+    EXPECT_NEAR(114.0, point.x(), 1e-12);
+    EXPECT_NEAR(225.0, point.y(), 1e-12);
+    EXPECT_NEAR(336.0, point.z(), 1e-12);
+    ASSERT_EQ(1u, result.gltfModel->primitives[1].vertexColors.size());
+    EXPECT_NEAR(1.0f, result.gltfModel->primitives[1].vertexColors[0][0],
+                1e-6f);
+    EXPECT_NEAR(
+        std::pow(128.0f / 255.0f, 2.2f),
+        result.gltfModel->primitives[1].vertexColors[0][2],
+        1e-6f);
+}
+
+TEST(GltfParserTest, ContentProviderDecodesCmptWithInstancedI3dm) {
+    std::vector<uint8_t> pntsBinary;
+    appendF32(pntsBinary, 1.0f);
+    appendF32(pntsBinary, 2.0f);
+    appendF32(pntsBinary, 3.0f);
+    const std::vector<uint8_t> pnts = makePnts(
+        "{\"POINTS_LENGTH\":1,\"POSITION\":{\"byteOffset\":0}}",
+        pntsBinary);
+    const std::vector<uint8_t> i3dm = makeI3dm(makeTriangleGlb(), 1u);
+    const std::vector<uint8_t> cmpt = makeCmpt({i3dm, pnts});
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "CMPT I3DM fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(cmpt.data(), cmpt.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(2u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives[0];
+    ASSERT_EQ(2u, primitive.instances.size());
+
+    const Vec3 source = primitive.vertices[0].positionEcef;
+    const Vec3 first =
+        result.contentTransform *
+        (primitive.instances[0].transform * source);
+    EXPECT_NEAR(110.0, first.x(), 1e-12);
+    EXPECT_NEAR(220.0, first.y(), 1e-12);
+    EXPECT_NEAR(330.0, first.z(), 1e-12);
+
+    const Vec3 second =
+        result.contentTransform *
+        (primitive.instances[1].transform * source);
+    EXPECT_NEAR(130.0, second.x(), 1e-12);
+    EXPECT_NEAR(240.0, second.y(), 1e-12);
+    EXPECT_NEAR(360.0, second.z(), 1e-12);
 }
 
 TEST(GltfParserTest, ContentProviderDecodesB3dmAndAppliesRtcCenter) {

@@ -49,6 +49,8 @@ constexpr size_t kI3dmHeaderLength = 32;
 constexpr uint32_t kPntsMagic = 0x73746e70u;
 constexpr size_t kPntsHeaderLength = 28;
 constexpr uint32_t kCmptMagic = 0x74706d63u;
+constexpr size_t kCmptHeaderLength = 16;
+constexpr size_t kCmptInnerHeaderLength = 12;
 
 uint32_t readU32LE(const uint8_t* p) {
     return uint32_t(p[0]) |
@@ -470,7 +472,11 @@ bool urlLooksLikeGltf(const std::string& url) {
            (lowerPath.size() >= 5 &&
             lowerPath.substr(lowerPath.size() - 5) == ".b3dm") ||
            (lowerPath.size() >= 5 &&
-            lowerPath.substr(lowerPath.size() - 5) == ".i3dm");
+            lowerPath.substr(lowerPath.size() - 5) == ".i3dm") ||
+           (lowerPath.size() >= 5 &&
+            lowerPath.substr(lowerPath.size() - 5) == ".pnts") ||
+           (lowerPath.size() >= 5 &&
+            lowerPath.substr(lowerPath.size() - 5) == ".cmpt");
 }
 
 bool bytesLookLikeJson(const uint8_t* data, size_t size) {
@@ -764,6 +770,12 @@ struct PntsHeader {
     uint32_t featureTableBinaryByteLength = 0;
     uint32_t batchTableJsonByteLength = 0;
     uint32_t batchTableBinaryByteLength = 0;
+};
+
+struct CmptHeader {
+    uint32_t version = 0;
+    uint32_t byteLength = 0;
+    uint32_t tilesLength = 0;
 };
 
 bool checkedRange(size_t bufferSize,
@@ -1340,6 +1352,15 @@ TileContentLoadResult decodeI3dmContent(
     return result;
 }
 
+TileContentLoadResult decodeGltfLikeContent(
+    const uint8_t* data,
+    size_t size,
+    const Mat4& baseTransform,
+    const Mat4& gltfUpAxisTransform,
+    const std::string& contentUrl,
+    const GltfParser::ExternalResourceResolver& resolver,
+    const GltfParser::ImageDecoder& imageDecoder);
+
 std::optional<PntsHeader> parsePntsHeader(const uint8_t* data, size_t size) {
     if (!data || size < 4 || readU32LE(data) != kPntsMagic) {
         return std::nullopt;
@@ -1575,6 +1596,247 @@ TileContentLoadResult decodePntsContent(const uint8_t* data,
     return result;
 }
 
+std::optional<CmptHeader> parseCmptHeader(const uint8_t* data, size_t size) {
+    if (!data || size < 4 || readU32LE(data) != kCmptMagic) {
+        return std::nullopt;
+    }
+    if (size < kCmptHeaderLength) {
+        return std::nullopt;
+    }
+
+    CmptHeader header;
+    header.version = readU32LE(data + 4);
+    header.byteLength = readU32LE(data + 8);
+    header.tilesLength = readU32LE(data + 12);
+
+    if (header.version != 1 ||
+        header.byteLength > size ||
+        header.byteLength < kCmptHeaderLength) {
+        return std::nullopt;
+    }
+    return header;
+}
+
+bool transformAlmostIdentity(const Mat4& transform) {
+    const glm::dmat4 identity(1.0);
+    const glm::dmat4& m = transform.raw();
+    for (int c = 0; c < 4; ++c) {
+        for (int r = 0; r < 4; ++r) {
+            if (std::abs(m[c][r] - identity[c][r]) > 1e-14) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool transformStaticVertex(SurfaceVertex& vertex,
+                           const glm::dmat4& transform,
+                           const glm::dmat3& normalMatrix) {
+    const glm::dvec4 position =
+        transform * glm::dvec4(vertex.positionEcef.raw(), 1.0);
+    if (!std::isfinite(position.w) || std::abs(position.w) <= 1e-14) {
+        return false;
+    }
+    const glm::dvec3 transformedPosition =
+        glm::dvec3(position) / position.w;
+    if (!finiteVec3(transformedPosition)) {
+        return false;
+    }
+    vertex.positionEcef = Vec3(transformedPosition);
+
+    glm::dvec3 normal = normalMatrix * vertex.normalEcef.raw();
+    const double lenSq = glm::dot(normal, normal);
+    if (std::isfinite(lenSq) && lenSq > 0.0) {
+        normal = glm::normalize(normal);
+    } else {
+        normal = Vec3::unitZ().raw();
+    }
+    if (!finiteVec3(normal)) {
+        return false;
+    }
+    vertex.normalEcef = Vec3(normal);
+    return true;
+}
+
+bool bakePrimitiveTransform(GltfPrimitive& primitive,
+                            const Mat4& transform) {
+    if (transformAlmostIdentity(transform)) {
+        return true;
+    }
+
+    if (!primitive.instances.empty()) {
+        for (GltfInstance& instance : primitive.instances) {
+            instance.transform = transform * instance.transform;
+        }
+        return true;
+    }
+
+    const glm::dmat4& m = transform.raw();
+    const glm::dmat3 linear(m);
+    const double det = glm::determinant(linear);
+    if (!std::isfinite(det) || std::abs(det) <= 1e-14) {
+        return false;
+    }
+    const glm::dmat3 normalMatrix = glm::transpose(glm::inverse(linear));
+    for (SurfaceVertex& vertex : primitive.vertices) {
+        if (!transformStaticVertex(vertex, m, normalMatrix)) {
+            return false;
+        }
+    }
+
+    if (primitive.vertexTangents.size() == primitive.vertices.size()) {
+        for (std::array<float, 4>& tangent : primitive.vertexTangents) {
+            glm::dvec3 direction(tangent[0], tangent[1], tangent[2]);
+            direction = linear * direction;
+            const double lenSq = glm::dot(direction, direction);
+            if (std::isfinite(lenSq) && lenSq > 0.0) {
+                direction = glm::normalize(direction);
+            } else {
+                direction = glm::dvec3(0.0);
+            }
+            tangent[0] = static_cast<float>(direction.x);
+            tangent[1] = static_cast<float>(direction.y);
+            tangent[2] = static_cast<float>(direction.z);
+        }
+    }
+    return true;
+}
+
+void offsetTextureBinding(std::optional<GltfTextureBinding>& binding,
+                          size_t textureOffset) {
+    if (binding) {
+        binding->textureIndex += textureOffset;
+    }
+}
+
+void offsetPrimitiveTextureBindings(GltfPrimitive& primitive,
+                                    size_t textureOffset) {
+    if (primitive.baseColorTextureIndex) {
+        *primitive.baseColorTextureIndex += textureOffset;
+    }
+    offsetTextureBinding(primitive.baseColorTexture, textureOffset);
+    offsetTextureBinding(primitive.metallicRoughnessTexture, textureOffset);
+    offsetTextureBinding(primitive.anisotropyTexture, textureOffset);
+    offsetTextureBinding(primitive.specularTexture, textureOffset);
+    offsetTextureBinding(primitive.specularColorTexture, textureOffset);
+    offsetTextureBinding(primitive.specularGlossinessTexture, textureOffset);
+    offsetTextureBinding(primitive.transmissionTexture, textureOffset);
+    offsetTextureBinding(primitive.clearcoatTexture, textureOffset);
+    offsetTextureBinding(primitive.clearcoatRoughnessTexture, textureOffset);
+    offsetTextureBinding(primitive.clearcoatNormalTexture, textureOffset);
+    offsetTextureBinding(primitive.sheenColorTexture, textureOffset);
+    offsetTextureBinding(primitive.sheenRoughnessTexture, textureOffset);
+    offsetTextureBinding(primitive.normalTexture, textureOffset);
+    offsetTextureBinding(primitive.occlusionTexture, textureOffset);
+    offsetTextureBinding(primitive.emissiveTexture, textureOffset);
+}
+
+bool appendCompositeModel(GltfModel& composite,
+                          std::unique_ptr<GltfModel> model,
+                          const Mat4& innerTransform) {
+    if (!model) {
+        return false;
+    }
+    if (model->hasRuntimeAnimation()) {
+        return false;
+    }
+
+    const size_t textureOffset = composite.textures.size();
+    composite.textures.insert(
+        composite.textures.end(),
+        std::make_move_iterator(model->textures.begin()),
+        std::make_move_iterator(model->textures.end()));
+
+    for (GltfPrimitive& primitive : model->primitives) {
+        offsetPrimitiveTextureBindings(primitive, textureOffset);
+        if (!bakePrimitiveTransform(primitive, innerTransform)) {
+            return false;
+        }
+        composite.primitives.push_back(std::move(primitive));
+    }
+    return true;
+}
+
+TileContentLoadResult decodeCmptContent(
+    const uint8_t* data,
+    size_t size,
+    const Mat4& baseTransform,
+    const Mat4& gltfUpAxisTransform,
+    const std::string& contentUrl,
+    const GltfParser::ExternalResourceResolver& resolver,
+    const GltfParser::ImageDecoder& imageDecoder) {
+    std::optional<CmptHeader> header = parseCmptHeader(data, size);
+    if (!header) {
+        return TileContentLoadResult::failed();
+    }
+
+    size_t offset = kCmptHeaderLength;
+    std::vector<TileContentLoadResult> renderResults;
+    renderResults.reserve(header->tilesLength);
+    for (uint32_t i = 0; i < header->tilesLength; ++i) {
+        if (offset + kCmptInnerHeaderLength > header->byteLength) {
+            return TileContentLoadResult::failed();
+        }
+        const uint32_t innerByteLength = readU32LE(data + offset + 8);
+        if (innerByteLength < kCmptInnerHeaderLength ||
+            static_cast<uint64_t>(offset) + innerByteLength >
+                header->byteLength) {
+            return TileContentLoadResult::failed();
+        }
+
+        TileContentLoadResult inner = decodeGltfLikeContent(
+            data + offset,
+            innerByteLength,
+            Mat4::identity(),
+            gltfUpAxisTransform,
+            contentUrl,
+            resolver,
+            imageDecoder);
+        if (inner.status == TileContentLoadStatus::Empty) {
+            offset += innerByteLength;
+            continue;
+        }
+        if (inner.status != TileContentLoadStatus::Render ||
+            !inner.gltfModel ||
+            inner.gltfModel->primitives.empty()) {
+            return TileContentLoadResult::failed();
+        }
+        renderResults.push_back(std::move(inner));
+        offset += innerByteLength;
+    }
+
+    if (offset != header->byteLength) {
+        return TileContentLoadResult::failed();
+    }
+    if (renderResults.empty()) {
+        return TileContentLoadResult::empty();
+    }
+    if (renderResults.size() == 1) {
+        TileContentLoadResult result = std::move(renderResults.front());
+        result.contentTransform = baseTransform * result.contentTransform;
+        return result;
+    }
+
+    auto composite = std::make_unique<GltfModel>();
+    for (TileContentLoadResult& inner : renderResults) {
+        if (!appendCompositeModel(
+                *composite,
+                std::move(inner.gltfModel),
+                inner.contentTransform)) {
+            return TileContentLoadResult::failed();
+        }
+    }
+    if (composite->primitives.empty()) {
+        return TileContentLoadResult::empty();
+    }
+
+    TileContentLoadResult result =
+        TileContentLoadResult::render(std::move(composite));
+    result.contentTransform = baseTransform;
+    return result;
+}
+
 TileContentLoadResult decodeGltfLikeContent(
     const uint8_t* data,
     size_t size,
@@ -1599,7 +1861,14 @@ TileContentLoadResult decodeGltfLikeContent(
         return decodePntsContent(data, size, baseTransform);
     }
     if (data && size >= 4 && readU32LE(data) == kCmptMagic) {
-        return TileContentLoadResult::failed();
+        return decodeCmptContent(
+            data,
+            size,
+            baseTransform,
+            gltfUpAxisTransform,
+            contentUrl,
+            resolver,
+            imageDecoder);
     }
 
     Mat4 contentTransform = baseTransform;
