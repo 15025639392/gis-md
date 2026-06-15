@@ -1281,8 +1281,16 @@ void appendAccessorToExternalFixture(
         marker + "," + accessorJson);
 }
 
+enum class GpuInstanceRotationEncoding {
+    Float,
+    NormalizedShort,
+    NormalizedUnsignedByte,
+    NormalizedUnsignedShort
+};
+
 ExternalGltfFixture makeGpuInstancedExternalGltf(
-    bool normalizedShortRotation = false) {
+    GpuInstanceRotationEncoding rotationEncoding =
+        GpuInstanceRotationEncoding::Float) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const size_t originalByteLength = fixture.bin.size();
 
@@ -1295,25 +1303,49 @@ ExternalGltfFixture makeGpuInstancedExternalGltf(
     appendF32(fixture.bin, 6.0f);
 
     const size_t rotationsOffset = fixture.bin.size();
-    if (normalizedShortRotation) {
-        appendI16(fixture.bin, 0);
-        appendI16(fixture.bin, 0);
-        appendI16(fixture.bin, 0);
-        appendI16(fixture.bin, 32767);
-        appendI16(fixture.bin, 0);
-        appendI16(fixture.bin, 0);
-        appendI16(fixture.bin, 23170);
-        appendI16(fixture.bin, 23170);
-    } else {
-        appendF32(fixture.bin, 0.0f);
-        appendF32(fixture.bin, 0.0f);
-        appendF32(fixture.bin, 0.0f);
-        appendF32(fixture.bin, 1.0f);
-        constexpr float kSqrtHalf = 0.7071067811865476f;
-        appendF32(fixture.bin, 0.0f);
-        appendF32(fixture.bin, 0.0f);
-        appendF32(fixture.bin, kSqrtHalf);
-        appendF32(fixture.bin, kSqrtHalf);
+    switch (rotationEncoding) {
+        case GpuInstanceRotationEncoding::Float: {
+            appendF32(fixture.bin, 0.0f);
+            appendF32(fixture.bin, 0.0f);
+            appendF32(fixture.bin, 0.0f);
+            appendF32(fixture.bin, 1.0f);
+            constexpr float kSqrtHalf = 0.7071067811865476f;
+            appendF32(fixture.bin, 0.0f);
+            appendF32(fixture.bin, 0.0f);
+            appendF32(fixture.bin, kSqrtHalf);
+            appendF32(fixture.bin, kSqrtHalf);
+            break;
+        }
+        case GpuInstanceRotationEncoding::NormalizedShort:
+            appendI16(fixture.bin, 0);
+            appendI16(fixture.bin, 0);
+            appendI16(fixture.bin, 0);
+            appendI16(fixture.bin, 32767);
+            appendI16(fixture.bin, 0);
+            appendI16(fixture.bin, 0);
+            appendI16(fixture.bin, 23170);
+            appendI16(fixture.bin, 23170);
+            break;
+        case GpuInstanceRotationEncoding::NormalizedUnsignedByte:
+            fixture.bin.push_back(0);
+            fixture.bin.push_back(0);
+            fixture.bin.push_back(0);
+            fixture.bin.push_back(255);
+            fixture.bin.push_back(0);
+            fixture.bin.push_back(0);
+            fixture.bin.push_back(180);
+            fixture.bin.push_back(180);
+            break;
+        case GpuInstanceRotationEncoding::NormalizedUnsignedShort:
+            appendU16(fixture.bin, 0);
+            appendU16(fixture.bin, 0);
+            appendU16(fixture.bin, 0);
+            appendU16(fixture.bin, 65535);
+            appendU16(fixture.bin, 0);
+            appendU16(fixture.bin, 0);
+            appendU16(fixture.bin, 46341);
+            appendU16(fixture.bin, 46341);
+            break;
     }
     const size_t rotationsByteLength =
         fixture.bin.size() - rotationsOffset;
@@ -1375,9 +1407,25 @@ ExternalGltfFixture makeGpuInstancedExternalGltf(
         fixture.jsonText.insert(accessorsPos, extraViews);
     }
 
-    const std::string rotationAccessor = normalizedShortRotation
-        ? "{\"bufferView\":5,\"componentType\":5122,\"normalized\":true,\"count\":2,\"type\":\"VEC4\"}"
-        : "{\"bufferView\":5,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"}";
+    std::string rotationAccessor;
+    switch (rotationEncoding) {
+        case GpuInstanceRotationEncoding::Float:
+            rotationAccessor =
+                "{\"bufferView\":5,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"}";
+            break;
+        case GpuInstanceRotationEncoding::NormalizedShort:
+            rotationAccessor =
+                "{\"bufferView\":5,\"componentType\":5122,\"normalized\":true,\"count\":2,\"type\":\"VEC4\"}";
+            break;
+        case GpuInstanceRotationEncoding::NormalizedUnsignedByte:
+            rotationAccessor =
+                "{\"bufferView\":5,\"componentType\":5121,\"normalized\":true,\"count\":2,\"type\":\"VEC4\"}";
+            break;
+        case GpuInstanceRotationEncoding::NormalizedUnsignedShort:
+            rotationAccessor =
+                "{\"bufferView\":5,\"componentType\":5123,\"normalized\":true,\"count\":2,\"type\":\"VEC4\"}";
+            break;
+    }
     appendAccessorToExternalFixture(
         fixture,
         "{\"bufferView\":4,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"},"
@@ -5098,7 +5146,8 @@ TEST(GltfParserTest, ParsesExtMeshGpuInstancingNodeExtension) {
 }
 
 TEST(GltfParserTest, ParsesExtMeshGpuInstancingNormalizedShortRotation) {
-    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf(true);
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf(
+        GpuInstanceRotationEncoding::NormalizedShort);
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
 
     ASSERT_NE(nullptr, model);
@@ -5111,6 +5160,40 @@ TEST(GltfParserTest, ParsesExtMeshGpuInstancingNormalizedShortRotation) {
     EXPECT_NEAR(14.0, second.x(), 1e-3);
     EXPECT_NEAR(26.0, second.y(), 1e-3);
     EXPECT_NEAR(36.0, second.z(), 1e-3);
+}
+
+TEST(GltfParserTest, ParsesExtMeshGpuInstancingNormalizedUnsignedByteRotation) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf(
+        GpuInstanceRotationEncoding::NormalizedUnsignedByte);
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives[0];
+    ASSERT_EQ(2u, primitive.instances.size());
+
+    const Vec3 source = primitive.vertices[1].positionEcef;
+    const Vec3 second = primitive.instances[1].transform * source;
+    EXPECT_NEAR(14.0, second.x(), 2e-2);
+    EXPECT_NEAR(26.0, second.y(), 2e-2);
+    EXPECT_NEAR(36.0, second.z(), 1e-6);
+}
+
+TEST(GltfParserTest, ParsesExtMeshGpuInstancingNormalizedUnsignedShortRotation) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf(
+        GpuInstanceRotationEncoding::NormalizedUnsignedShort);
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives[0];
+    ASSERT_EQ(2u, primitive.instances.size());
+
+    const Vec3 source = primitive.vertices[1].positionEcef;
+    const Vec3 second = primitive.instances[1].transform * source;
+    EXPECT_NEAR(14.0, second.x(), 1e-4);
+    EXPECT_NEAR(26.0, second.y(), 1e-4);
+    EXPECT_NEAR(36.0, second.z(), 1e-6);
 }
 
 TEST(GltfParserTest, RejectsExtMeshGpuInstancingDeclarationWithoutNodeExtension) {
@@ -5406,7 +5489,7 @@ TEST(GltfParserTest, RejectsGpuInstancingMismatchedAttributeCounts) {
     EXPECT_EQ(nullptr, model);
 }
 
-TEST(GltfParserTest, RejectsGpuInstancingUnsignedRotationAccessor) {
+TEST(GltfParserTest, RejectsGpuInstancingUnnormalizedUnsignedRotationAccessor) {
     ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
     const std::string marker =
         "{\"bufferView\":5,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"}";
@@ -5415,7 +5498,7 @@ TEST(GltfParserTest, RejectsGpuInstancingUnsignedRotationAccessor) {
     fixture.jsonText.replace(
         markerPos,
         marker.size(),
-        "{\"bufferView\":5,\"componentType\":5121,\"normalized\":true,\"count\":2,\"type\":\"VEC4\"}");
+        "{\"bufferView\":5,\"componentType\":5121,\"count\":2,\"type\":\"VEC4\"}");
 
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
 
