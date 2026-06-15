@@ -4979,6 +4979,50 @@ void testTilesetJsonTopLevelUnsupportedExtensionsUsedInvalidatesProvider() {
           "TilesetJsonContentProvider: invalid extensionsUsed tileset exposes no roots");
 }
 
+void testTilesetJsonTopLevelMetadataFieldsInvalidateProvider() {
+    struct MetadataFieldCase {
+        std::string fieldJson;
+        std::string label;
+    };
+
+    const std::array<MetadataFieldCase, 6> cases = {{
+        {"\"properties\":{\"height\":{\"minimum\":0,\"maximum\":1}}",
+         "properties"},
+        {"\"schema\":{\"classes\":{\"building\":{\"properties\":{}}}}",
+         "schema"},
+        {"\"schemaUri\":\"schema.json\"", "schemaUri"},
+        {"\"statistics\":{\"classes\":{}}", "statistics"},
+        {"\"groups\":[{\"class\":\"building\",\"properties\":{}}]",
+         "groups"},
+        {"\"metadata\":{\"class\":\"building\",\"properties\":{}}",
+         "metadata"}}};
+
+    for (const MetadataFieldCase& testCase : cases) {
+        const std::string tilesetJson =
+            std::string("{") +
+            "\"asset\":{\"version\":\"1.1\"}," +
+            testCase.fieldJson + "," +
+            "\"geometricError\":100,"
+            "\"root\":{"
+            "\"boundingVolume\":{\"region\":[-0.01,-0.01,0.01,0.01,0,100]},"
+            "\"geometricError\":64"
+            "}}";
+
+        TilesetJsonContentProvider provider(
+            "file:///unsupported-metadata-" + testCase.label + "/tileset.json",
+            std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
+            "unsupported " + testCase.label + " metadata fixture");
+        check(!provider.valid(),
+              "TilesetJsonContentProvider: top-level " +
+                  testCase.label +
+                  " metadata invalidates provider");
+        check(provider.rootTiles().empty(),
+              "TilesetJsonContentProvider: top-level " +
+                  testCase.label +
+                  " metadata exposes no roots");
+    }
+}
+
 void testTilesetJsonUnsupportedTileRequiredExtensionFailsTile() {
     const std::string tilesetJson = R"json({
       "asset": {"version": "1.1"},
@@ -5089,6 +5133,67 @@ void testTilesetJsonUnsupportedTileObjectExtensionFailsTile() {
         std::move(provider),
         rootChildren.front(),
         "Tileset: unsupported tile object extension fails explicitly");
+}
+
+void testTilesetJsonUnsupportedTileMetadataFieldsFailTile() {
+    struct MetadataFieldCase {
+        std::string tileBodyJson;
+        std::string label;
+    };
+
+    const std::array<MetadataFieldCase, 3> cases = {{
+        {
+            "\"metadata\":{\"class\":\"building\",\"properties\":{\"name\":\"A\"}},"
+            "\"content\":{\"uri\":\"tile.glb\"}",
+            "tile metadata"},
+        {
+            "\"content\":{"
+            "\"uri\":\"tile.glb\","
+            "\"metadata\":{\"class\":\"building\",\"properties\":{\"name\":\"A\"}}"
+            "}",
+            "content metadata"},
+        {
+            "\"content\":{\"uri\":\"tile.glb\",\"group\":0}",
+            "content group"}}};
+
+    for (const MetadataFieldCase& testCase : cases) {
+        const std::string tilesetJson =
+            std::string("{") +
+            "\"asset\":{\"version\":\"1.1\"},"
+            "\"geometricError\":100,"
+            "\"root\":{"
+            "\"boundingVolume\":{\"region\":[-0.01,-0.01,0.01,0.01,0,100]},"
+            "\"geometricError\":64," +
+            testCase.tileBodyJson +
+            "}}";
+
+        auto provider = std::make_unique<TilesetJsonContentProvider>(
+            "file:///unsupported-" + testCase.label + "/tileset.json",
+            std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
+            "unsupported " + testCase.label + " fixture");
+        TilesetJsonContentProvider* rawProvider = provider.get();
+        check(rawProvider->valid(),
+              "TilesetJsonContentProvider: unsupported " +
+                  testCase.label +
+                  " keeps parseable tile metadata");
+        const std::vector<TileKey> roots = rawProvider->rootTiles();
+        if (roots.empty()) return;
+        const std::vector<TileKey> rootChildren =
+            rawProvider->childTiles(roots.front());
+        check(rootChildren.size() == 1 &&
+                  rawProvider->supportsTile(rootChildren.front()),
+              "TilesetJsonContentProvider: unsupported " +
+                  testCase.label +
+                  " tile stays addressable");
+        if (rootChildren.empty()) return;
+
+        expectTilesetJsonTileFailsExplicitly(
+            std::move(provider),
+            rootChildren.front(),
+            "Tileset: unsupported " +
+                testCase.label +
+                " fails explicitly");
+    }
 }
 
 void testTilesetJsonUnsupportedImplicitTilingFailsTile() {
@@ -7682,9 +7787,11 @@ int main() {
     testTilesetJsonProviderParsesViewerRequestVolume();
     testTilesetJsonTopLevelUnknownRequiredExtensionInvalidatesProvider();
     testTilesetJsonTopLevelUnsupportedExtensionsUsedInvalidatesProvider();
+    testTilesetJsonTopLevelMetadataFieldsInvalidateProvider();
     testTilesetJsonUnsupportedTileRequiredExtensionFailsTile();
     testTilesetJsonUnsupportedTileExtensionsUsedFailsTile();
     testTilesetJsonUnsupportedTileObjectExtensionFailsTile();
+    testTilesetJsonUnsupportedTileMetadataFieldsFailTile();
     testTilesetJsonUnsupportedImplicitTilingFailsTile();
     testTilesetJsonProviderLoadsExternalTilesetContent();
     testTilesetViewerRequestVolumeGatesContentLoadQueue();

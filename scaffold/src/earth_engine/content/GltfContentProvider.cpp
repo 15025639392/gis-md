@@ -793,6 +793,50 @@ bool hasUnsupportedExtensionsObjectInTileObject(
     return false;
 }
 
+bool hasUnsupportedTilesetMetadataFields(const nlohmann::json& tilesetJson) {
+    static constexpr std::array<const char*, 6> kMetadataFields = {
+        "properties",
+        "schema",
+        "schemaUri",
+        "statistics",
+        "groups",
+        "metadata"};
+    return std::any_of(
+        kMetadataFields.begin(),
+        kMetadataFields.end(),
+        [&](const char* field) { return tilesetJson.contains(field); });
+}
+
+bool contentObjectHasUnsupportedMetadataFields(
+    const nlohmann::json& contentJson) {
+    return contentJson.is_object() &&
+           (contentJson.contains("metadata") ||
+            contentJson.contains("group"));
+}
+
+bool hasUnsupportedTileMetadataFields(const nlohmann::json& tileJson) {
+    if (!tileJson.is_object()) {
+        return false;
+    }
+    if (tileJson.contains("metadata")) {
+        return true;
+    }
+    auto contentIt = tileJson.find("content");
+    if (contentIt != tileJson.end() &&
+        contentObjectHasUnsupportedMetadataFields(*contentIt)) {
+        return true;
+    }
+    auto contentsIt = tileJson.find("contents");
+    if (contentsIt != tileJson.end() && contentsIt->is_array()) {
+        for (const auto& content : *contentsIt) {
+            if (contentObjectHasUnsupportedMetadataFields(content)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 bool hasUnsupportedMultipleContents(const nlohmann::json& tileJson) {
     auto contentsIt = tileJson.find("contents");
     if (contentsIt != tileJson.end() && contentsIt->is_array() &&
@@ -2374,7 +2418,8 @@ bool TilesetJsonContentProvider::parseTilesetJson(
         return false;
     }
     if (hasUnsupportedDeclaredExtensionsOnObject(parsed, true) ||
-        hasUnsupportedDirectExtensionsObject(parsed, true)) {
+        hasUnsupportedDirectExtensionsObject(parsed, true) ||
+        hasUnsupportedTilesetMetadataFields(parsed)) {
         return false;
     }
     const Mat4 gltfUpAxisTransform = parseGltfUpAxisTransform(parsed);
@@ -2402,6 +2447,8 @@ bool TilesetJsonContentProvider::parseTilesetJson(
             hasUnsupportedImplicitTiling(tileJson);
         const bool unsupportedRequiredExtensions =
             hasUnsupportedTileRequiredExtensions(tileJson);
+        const bool unsupportedMetadata =
+            hasUnsupportedTileMetadataFields(tileJson);
 
         Mat4 tileTransform = inheritedTransform;
         auto transformIt = tileJson.find("transform");
@@ -2458,7 +2505,8 @@ bool TilesetJsonContentProvider::parseTilesetJson(
         std::optional<std::string> contentUri = parseContentUri(tileJson);
         if (unsupportedMultipleContents ||
             unsupportedImplicitTiling ||
-            unsupportedRequiredExtensions) {
+            unsupportedRequiredExtensions ||
+            unsupportedMetadata) {
             record.contentKind = TileRecordContentKind::Unsupported;
         } else if (!contentUri || contentUri->empty()) {
             record.contentKind = TileRecordContentKind::Empty;
