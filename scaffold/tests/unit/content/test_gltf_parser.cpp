@@ -1389,6 +1389,42 @@ ExternalGltfFixture makeTexturedExternalBufferTriangleGltf(
     return fixture;
 }
 
+ExternalGltfFixture makeExternalWebpTextureExtensionGltf() {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf("fallback.png");
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    if (assetPos != std::string::npos) {
+        fixture.jsonText.insert(
+            assetPos + assetMarker.size(),
+            "\"extensionsUsed\":[\"EXT_texture_webp\"],"
+            "\"extensionsRequired\":[\"EXT_texture_webp\"],");
+    }
+
+    const std::string textureMarker =
+        "\"textures\":[{\"source\":0,\"sampler\":0}]";
+    const size_t texturePos = fixture.jsonText.find(textureMarker);
+    if (texturePos != std::string::npos) {
+        fixture.jsonText.replace(
+            texturePos,
+            textureMarker.size(),
+            "\"textures\":[{\"source\":0,\"sampler\":0,"
+            "\"extensions\":{\"EXT_texture_webp\":{\"source\":1}}}]");
+    }
+
+    const std::string imageMarker =
+        "\"images\":[{\"uri\":\"fallback.png\"}]";
+    const size_t imagePos = fixture.jsonText.find(imageMarker);
+    if (imagePos != std::string::npos) {
+        fixture.jsonText.replace(
+            imagePos,
+            imageMarker.size(),
+            "\"images\":[{\"uri\":\"fallback.png\"},"
+            "{\"uri\":\"texture.webp\"}]");
+    }
+    return fixture;
+}
+
 ExternalGltfFixture makeBufferViewImageExternalBufferTriangleGltf(
     bool includeMimeType = true,
     const std::string& mimeType = "image/png",
@@ -12560,6 +12596,109 @@ TEST(GltfParserTest, TilesetContentGltfAllowsEveryParserSupportedExtensionPayloa
         requestTileContentBlocking(provider, children.front());
     EXPECT_EQ(TileContentLoadStatus::Render, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
+    expectRenderableModelGeometry(*result.gltfModel);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(GltfParserTest, TilesetContentGltfRejectsWebpContentWithoutDecoder) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth-md-tileset-content-gltf-webp-no-decoder";
+    std::filesystem::remove_all(root);
+    ExternalGltfFixture fixture = makeExternalWebpTextureExtensionGltf();
+    writeBytes(
+        root / "root.gltf",
+        std::vector<uint8_t>(
+            fixture.jsonText.begin(),
+            fixture.jsonText.end()));
+    writeBytes(root / "triangle.bin", fixture.bin);
+    writeBytes(root / "fallback.png", {9, 9, 9, 9});
+    writeBytes(root / "texture.webp", makeFakeWebpBytes());
+
+    const std::string tilesetJson = makeTilesetJsonWithRootContent(
+        "root.gltf",
+        "\"extensionsUsed\":[\"3DTILES_content_gltf\"],"
+        "\"extensionsRequired\":[\"3DTILES_content_gltf\"],"
+        "\"extensions\":{\"3DTILES_content_gltf\":{"
+        "\"extensionsUsed\":[\"EXT_texture_webp\"],"
+        "\"extensionsRequired\":[\"EXT_texture_webp\"]}},");
+    TilesetJsonContentProvider provider(
+        "file://" + (root / "tileset.json").generic_string(),
+        bytesFromString(tilesetJson),
+        "3DTILES_content_gltf WebP without decoder fixture");
+
+    ASSERT_TRUE(provider.valid());
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    const std::vector<TileKey> children = provider.childTiles(roots.front());
+    ASSERT_EQ(1u, children.size());
+
+    TileContentLoadResult result =
+        requestTileContentBlocking(provider, children.front());
+    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(nullptr, result.gltfModel);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(GltfParserTest, TilesetContentGltfDecodesWebpContentWithDecoder) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth-md-tileset-content-gltf-webp-decoder";
+    std::filesystem::remove_all(root);
+    ExternalGltfFixture fixture = makeExternalWebpTextureExtensionGltf();
+    writeBytes(
+        root / "root.gltf",
+        std::vector<uint8_t>(
+            fixture.jsonText.begin(),
+            fixture.jsonText.end()));
+    writeBytes(root / "triangle.bin", fixture.bin);
+    writeBytes(root / "fallback.png", {9, 9, 9, 9});
+    writeBytes(root / "texture.webp", makeFakeWebpBytes());
+
+    const std::string tilesetJson = makeTilesetJsonWithRootContent(
+        "root.gltf",
+        "\"extensionsUsed\":[\"3DTILES_content_gltf\"],"
+        "\"extensionsRequired\":[\"3DTILES_content_gltf\"],"
+        "\"extensions\":{\"3DTILES_content_gltf\":{"
+        "\"extensionsUsed\":[\"EXT_texture_webp\"],"
+        "\"extensionsRequired\":[\"EXT_texture_webp\"]}},");
+    TilesetJsonContentProvider provider(
+        "file://" + (root / "tileset.json").generic_string(),
+        bytesFromString(tilesetJson),
+        "3DTILES_content_gltf WebP decoder fixture");
+
+    bool decodedWebp = false;
+    bool decodedFallback = false;
+    TestPlatformBridge bridge(
+        [&](const uint8_t* data, size_t size) -> std::unique_ptr<DecodedImage> {
+            if (size == 0) {
+                return nullptr;
+            }
+            decodedWebp = bytesLookLikeFakeWebp(data, size);
+            decodedFallback = data[0] == 9u;
+            auto image = std::make_unique<DecodedImage>();
+            image->width = 1;
+            image->height = 1;
+            image->channels = 4;
+            image->pixels = {20, 40, 80, 255};
+            return image;
+        });
+    provider.setPlatformBridge(&bridge);
+
+    ASSERT_TRUE(provider.valid());
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    const std::vector<TileKey> children = provider.childTiles(roots.front());
+    ASSERT_EQ(1u, children.size());
+
+    TileContentLoadResult result =
+        requestTileContentBlocking(provider, children.front());
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    EXPECT_TRUE(decodedWebp);
+    EXPECT_FALSE(decodedFallback);
     expectRenderableModelGeometry(*result.gltfModel);
 
     std::filesystem::remove_all(root);
