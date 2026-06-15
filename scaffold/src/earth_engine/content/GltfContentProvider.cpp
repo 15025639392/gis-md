@@ -903,6 +903,25 @@ bool hasUnsupportedDirectExtensionsObject(
                allowContentGltf);
 }
 
+bool declaredTilesetExtensionOnObject(
+    const nlohmann::json& json,
+    const char* extensionName) {
+    auto arrayContains = [extensionName](const nlohmann::json& extensions) {
+        return extensions.is_array() &&
+               std::any_of(
+                   extensions.begin(),
+                   extensions.end(),
+                   [extensionName](const nlohmann::json& extension) {
+                       return extension.is_string() &&
+                              extension.get<std::string>() == extensionName;
+                   });
+    };
+    return arrayContains(json.value("extensionsRequired",
+                                    nlohmann::json::array())) ||
+           arrayContains(json.value("extensionsUsed",
+                                    nlohmann::json::array()));
+}
+
 bool hasUnsupportedExtensionsObjectInTileObject(
     const nlohmann::json& value) {
     if (value.is_object()) {
@@ -993,6 +1012,21 @@ bool gltfContentExtensionArrayHasUnsupportedEntries(
         }
     }
     return false;
+}
+
+bool hasUndeclaredContentGltfExtensionPayload(
+    const nlohmann::json& tilesetJson) {
+    // 3DTILES_content_gltf may be only a top-level declaration for direct
+    // glTF content; a payload is optional and only valid when declared.
+    const bool declared = declaredTilesetExtensionOnObject(
+        tilesetJson,
+        "3DTILES_content_gltf");
+    auto extensionsIt = tilesetJson.find("extensions");
+    const bool hasPayload =
+        extensionsIt != tilesetJson.end() &&
+        extensionsIt->is_object() &&
+        extensionsIt->find("3DTILES_content_gltf") != extensionsIt->end();
+    return hasPayload && !declared;
 }
 
 bool hasUnsupportedContentGltfExtensionPayload(
@@ -3000,7 +3034,8 @@ bool TilesetJsonContentProvider::parseTilesetJson(
         return false;
     }
     if (hasUnsupportedDeclaredExtensionsOnObject(parsed, true, true) ||
-        hasUnsupportedDirectExtensionsObject(parsed, true, true) ||
+        hasUnsupportedDirectExtensionsObject(parsed, false, true) ||
+        hasUndeclaredContentGltfExtensionPayload(parsed) ||
         hasUnsupportedContentGltfExtensionPayload(parsed) ||
         hasUnsupportedTilesetMetadataFields(parsed)) {
         return false;

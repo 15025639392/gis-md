@@ -5474,8 +5474,9 @@ TEST(GltfParserTest, RejectsUnsupportedCompressionAndTextureExtensions) {
 }
 
 TEST(GltfParserTest, RejectsUnsupportedFeatureMetadataExtensions) {
-    const std::array<const char*, 3> unsupportedExtensions = {
+    const std::array<const char*, 4> unsupportedExtensions = {
         "EXT_mesh_features",
+        "EXT_instance_features",
         "EXT_structural_metadata",
         "EXT_feature_metadata"};
 

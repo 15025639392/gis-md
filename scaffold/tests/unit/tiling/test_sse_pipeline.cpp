@@ -5015,6 +5015,66 @@ void testTilesetJsonTopLevelUnsupportedExtensionsUsedInvalidatesProvider() {
           "TilesetJsonContentProvider: invalid extensionsUsed tileset exposes no roots");
 }
 
+void testTilesetJsonTopLevelPerTileExtensionPayloadInvalidatesProvider() {
+    struct ExtensionPayloadCase {
+        std::string label;
+        std::string extension;
+        std::string payload;
+    };
+
+    const std::array<ExtensionPayloadCase, 2> cases = {{
+        {
+            "implicit tiling",
+            "3DTILES_implicit_tiling",
+            "\"3DTILES_implicit_tiling\":{"
+            "\"subdivisionScheme\":\"QUADTREE\","
+            "\"subtreeLevels\":2,"
+            "\"maximumLevel\":1,"
+            "\"subtrees\":{\"uri\":\"subtrees/{level}/{x}/{y}.subtree\"}"
+            "}"},
+        {
+            "multiple contents",
+            "3DTILES_multiple_contents",
+            "\"3DTILES_multiple_contents\":{"
+            "\"content\":[{\"uri\":\"a.b3dm\"},{\"uri\":\"b.b3dm\"}]"
+            "}"}}};
+
+    for (const ExtensionPayloadCase& testCase : cases) {
+        const std::string tilesetJson =
+            std::string("{") +
+            "\"asset\":{\"version\":\"1.0\"},"
+            "\"extensionsUsed\":[\"" +
+            testCase.extension +
+            "\"],"
+            "\"extensionsRequired\":[\"" +
+            testCase.extension +
+            "\"],"
+            "\"extensions\":{" +
+            testCase.payload +
+            "},"
+            "\"geometricError\":100,"
+            "\"root\":{"
+            "\"boundingVolume\":{\"region\":[-0.01,-0.01,0.01,0.01,0,100]},"
+            "\"geometricError\":64"
+            "}}";
+
+        TilesetJsonContentProvider provider(
+            "file:///unsupported-top-level-" + testCase.label +
+                "-extension/tileset.json",
+            std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
+            "unsupported top-level " + testCase.label +
+                " extension fixture");
+        check(!provider.valid(),
+              "TilesetJsonContentProvider: top-level " +
+                  testCase.label +
+                  " payload invalidates provider");
+        check(provider.rootTiles().empty(),
+              "TilesetJsonContentProvider: top-level " +
+                  testCase.label +
+                  " payload exposes no roots");
+    }
+}
+
 void testTilesetJsonRequiredExtensionMustAlsoBeUsed() {
     const std::string tilesetJson = R"json({
       "asset": {"version": "1.1"},
@@ -5096,6 +5156,51 @@ void testTilesetJsonDuplicateExtensionDeclarationsInvalidateProvider() {
 }
 
 void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
+    const std::string declarationWithoutPayloadJson = R"json({
+      "asset": {"version": "1.0"},
+      "extensionsUsed": ["3DTILES_content_gltf"],
+      "geometricError": 100,
+      "root": {
+        "boundingVolume": {"region": [-0.01, -0.01, 0.01, 0.01, 0, 100]},
+        "geometricError": 64,
+        "content": {"uri": "tile.glb"}
+      }
+    })json";
+    TilesetJsonContentProvider declarationWithoutPayloadProvider(
+        "file:///content-gltf-declaration-without-payload/tileset.json",
+        std::vector<uint8_t>(
+            declarationWithoutPayloadJson.begin(),
+            declarationWithoutPayloadJson.end()),
+        "3DTILES_content_gltf declaration without payload fixture");
+    check(declarationWithoutPayloadProvider.valid(),
+          "TilesetJsonContentProvider: 3DTILES_content_gltf declaration without payload remains valid");
+    check(!declarationWithoutPayloadProvider.rootTiles().empty(),
+          "TilesetJsonContentProvider: 3DTILES_content_gltf declaration without payload exposes roots");
+
+    const std::string payloadWithoutDeclarationJson = R"json({
+      "asset": {"version": "1.0"},
+      "extensions": {
+        "3DTILES_content_gltf": {
+          "extensionsUsed": ["KHR_materials_unlit"]
+        }
+      },
+      "geometricError": 100,
+      "root": {
+        "boundingVolume": {"region": [-0.01, -0.01, 0.01, 0.01, 0, 100]},
+        "geometricError": 64
+      }
+    })json";
+    TilesetJsonContentProvider payloadWithoutDeclarationProvider(
+        "file:///content-gltf-payload-without-declaration/tileset.json",
+        std::vector<uint8_t>(
+            payloadWithoutDeclarationJson.begin(),
+            payloadWithoutDeclarationJson.end()),
+        "3DTILES_content_gltf payload without declaration fixture");
+    check(!payloadWithoutDeclarationProvider.valid(),
+          "TilesetJsonContentProvider: 3DTILES_content_gltf payload without declaration invalidates provider");
+    check(payloadWithoutDeclarationProvider.rootTiles().empty(),
+          "TilesetJsonContentProvider: 3DTILES_content_gltf payload without declaration exposes no roots");
+
     const std::string supportedTopLevelJson = R"json({
       "asset": {"version": "1.0"},
       "extensionsUsed": ["3DTILES_content_gltf"],
@@ -8019,6 +8124,7 @@ int main() {
     testTilesetJsonProviderParsesViewerRequestVolume();
     testTilesetJsonTopLevelUnknownRequiredExtensionInvalidatesProvider();
     testTilesetJsonTopLevelUnsupportedExtensionsUsedInvalidatesProvider();
+    testTilesetJsonTopLevelPerTileExtensionPayloadInvalidatesProvider();
     testTilesetJsonRequiredExtensionMustAlsoBeUsed();
     testTilesetJsonDuplicateExtensionDeclarationsInvalidateProvider();
     testTilesetJsonContentGltfExtensionSemanticsAreStrict();
