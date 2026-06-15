@@ -7555,6 +7555,22 @@ TEST(GltfParserTest, ContentProviderDecodesEmbeddedI3dmInstancesAndRtcCenter) {
     EXPECT_NEAR(360.0, second.z(), 1e-12);
 }
 
+TEST(GltfParserTest, ContentProviderDecodesZeroInstanceI3dmAsEmpty) {
+    const std::vector<uint8_t> i3dm = makeI3dmWithFeatureTable(
+        "{\"INSTANCES_LENGTH\":0,\"POSITION\":{\"byteOffset\":0}}",
+        {0u});
+
+    SingleGltfContentProvider provider(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        std::vector<uint8_t>{},
+        "zero-instance I3DM fixture");
+    TileContentLoadResult result =
+        provider.decodeContent(i3dm.data(), i3dm.size());
+
+    EXPECT_EQ(TileContentLoadStatus::Empty, result.status);
+    EXPECT_EQ(nullptr, result.gltfModel);
+}
+
 TEST(GltfParserTest, ContentProviderRejectsI3dmBatchIdFeatureSemantic) {
     std::vector<uint8_t> featureBinary;
     const size_t positionsOffset = featureBinary.size();

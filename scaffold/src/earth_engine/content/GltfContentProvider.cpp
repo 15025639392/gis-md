@@ -1528,6 +1528,9 @@ TileContentLoadResult decodeI3dmContent(
 
     std::vector<GltfInstance> instances =
         makeGltfInstances(*decoded, gltfUpAxisTransform);
+    if (instances.empty()) {
+        return TileContentLoadResult::empty();
+    }
     for (GltfPrimitive& primitive : model->primitives) {
         std::optional<std::vector<GltfInstance>> combined =
             combineI3dmAndNativeGltfInstances(
