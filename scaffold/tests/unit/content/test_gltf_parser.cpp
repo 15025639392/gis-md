@@ -7300,6 +7300,131 @@ TEST(GltfParserTest, RejectsUnsupportedNativeMetadataObjectExtensions) {
     }
 }
 
+TEST(GltfParserTest, RejectsDeclaredStructuralMetadataPropertyTables) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.insert(
+        markerPos + marker.size(),
+        "\"extensionsUsed\":[\"EXT_structural_metadata\"],"
+        "\"extensionsRequired\":[\"EXT_structural_metadata\"],"
+        "\"extensions\":{\"EXT_structural_metadata\":{"
+        "\"schema\":{\"classes\":{\"building\":{\"properties\":{"
+        "\"height\":{\"type\":\"SCALAR\",\"componentType\":\"UINT16\"}}}}},"
+        "\"propertyTables\":[{\"class\":\"building\",\"count\":1,"
+        "\"properties\":{\"height\":{\"values\":0}}}]"
+        "}},");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsDeclaredLegacyFeatureMetadataTables) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.insert(
+        markerPos + marker.size(),
+        "\"extensionsUsed\":[\"EXT_feature_metadata\"],"
+        "\"extensionsRequired\":[\"EXT_feature_metadata\"],"
+        "\"extensions\":{\"EXT_feature_metadata\":{"
+        "\"schema\":{\"classes\":{\"building\":{\"properties\":{"
+        "\"height\":{\"type\":\"SCALAR\",\"componentType\":\"UINT16\"}}}}},"
+        "\"featureTables\":{\"batch\":{\"class\":\"building\",\"count\":1,"
+        "\"properties\":{\"height\":{\"accessor\":0}}}}"
+        "}},");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsDeclaredMeshFeatureIdPropertyTablePayload) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":["
+        "\"EXT_mesh_features\",\"EXT_structural_metadata\"],"
+        "\"extensionsRequired\":["
+        "\"EXT_mesh_features\",\"EXT_structural_metadata\"],"
+        "\"extensions\":{\"EXT_structural_metadata\":{"
+        "\"schema\":{\"classes\":{\"building\":{\"properties\":{"
+        "\"height\":{\"type\":\"SCALAR\",\"componentType\":\"UINT16\"}}}}},"
+        "\"propertyTables\":[{\"class\":\"building\",\"count\":3,"
+        "\"properties\":{\"height\":{\"values\":0}}}]"
+        "}},");
+
+    const std::string primitiveMarker = "\"mode\":4";
+    const size_t primitivePos = fixture.jsonText.find(primitiveMarker);
+    ASSERT_NE(std::string::npos, primitivePos);
+    fixture.jsonText.replace(
+        primitivePos,
+        primitiveMarker.size(),
+        "\"mode\":4,\"extensions\":{\"EXT_mesh_features\":{"
+        "\"featureIds\":[{\"featureCount\":3,\"attribute\":0,"
+        "\"propertyTable\":0,\"label\":\"batch\"}]}}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsDeclaredInstanceFeatureIdPropertyTablePayload) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
+    const std::string usedMarker =
+        "\"extensionsUsed\":[\"EXT_mesh_gpu_instancing\"],";
+    const size_t usedPos = fixture.jsonText.find(usedMarker);
+    ASSERT_NE(std::string::npos, usedPos);
+    fixture.jsonText.replace(
+        usedPos,
+        usedMarker.size(),
+        "\"extensionsUsed\":["
+        "\"EXT_mesh_gpu_instancing\","
+        "\"EXT_instance_features\","
+        "\"EXT_structural_metadata\"],");
+
+    const std::string requiredMarker =
+        "\"extensionsRequired\":[\"EXT_mesh_gpu_instancing\"],";
+    const size_t requiredPos = fixture.jsonText.find(requiredMarker);
+    ASSERT_NE(std::string::npos, requiredPos);
+    fixture.jsonText.replace(
+        requiredPos,
+        requiredMarker.size(),
+        "\"extensionsRequired\":["
+        "\"EXT_mesh_gpu_instancing\","
+        "\"EXT_instance_features\","
+        "\"EXT_structural_metadata\"],"
+        "\"extensions\":{\"EXT_structural_metadata\":{"
+        "\"schema\":{\"classes\":{\"building\":{\"properties\":{"
+        "\"height\":{\"type\":\"SCALAR\",\"componentType\":\"UINT16\"}}}}},"
+        "\"propertyTables\":[{\"class\":\"building\",\"count\":2,"
+        "\"properties\":{\"height\":{\"values\":0}}}]"
+        "}},");
+
+    const std::string nodeMarker =
+        "\"extensions\":{\"EXT_mesh_gpu_instancing\":{"
+        "\"attributes\":{\"TRANSLATION\":4,\"ROTATION\":5,\"SCALE\":6}}}";
+    const size_t nodePos = fixture.jsonText.find(nodeMarker);
+    ASSERT_NE(std::string::npos, nodePos);
+    fixture.jsonText.replace(
+        nodePos,
+        nodeMarker.size(),
+        "\"extensions\":{\"EXT_mesh_gpu_instancing\":{"
+        "\"attributes\":{\"TRANSLATION\":4,\"ROTATION\":5,\"SCALE\":6}},"
+        "\"EXT_instance_features\":{\"featureIds\":[{"
+        "\"featureCount\":2,\"attribute\":0,\"propertyTable\":0}]}}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsUnsupportedCesiumNativeGeneratedObjectExtensions) {
     struct ObjectExtensionCase {
         const char* marker;
