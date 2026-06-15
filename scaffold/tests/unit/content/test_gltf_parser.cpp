@@ -12095,6 +12095,40 @@ TEST(GltfParserTest, TilesetContentGltfAllowsSupportedPayloadAndRendersContent) 
     std::filesystem::remove_all(root);
 }
 
+TEST(GltfParserTest, TilesetContentGltfAllowsRequiredSupportedPayloadAndRendersContent) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth-md-tileset-content-gltf-required-supported";
+    std::filesystem::remove_all(root);
+    writeBytes(root / "root.glb", makeTriangleGlb());
+
+    const std::string tilesetJson = makeTilesetJsonWithRootContent(
+        "root.glb",
+        "\"extensionsUsed\":[\"3DTILES_content_gltf\"],"
+        "\"extensionsRequired\":[\"3DTILES_content_gltf\"],"
+        "\"extensions\":{\"3DTILES_content_gltf\":{"
+        "\"extensionsUsed\":[\"KHR_mesh_quantization\"],"
+        "\"extensionsRequired\":[\"KHR_mesh_quantization\"]}},");
+    TilesetJsonContentProvider provider(
+        "file://" + (root / "tileset.json").generic_string(),
+        bytesFromString(tilesetJson),
+        "required 3DTILES_content_gltf supported fixture");
+
+    ASSERT_TRUE(provider.valid());
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    const std::vector<TileKey> children = provider.childTiles(roots.front());
+    ASSERT_EQ(1u, children.size());
+
+    TileContentLoadResult result =
+        requestTileContentBlocking(provider, children.front());
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    expectRenderableModelGeometry(*result.gltfModel);
+
+    std::filesystem::remove_all(root);
+}
+
 TEST(GltfParserTest, TilesetContentGltfRejectsUndeclaredPayload) {
     const std::string tilesetJson = makeTilesetJsonWithRootContent(
         "root.glb",
@@ -12104,6 +12138,21 @@ TEST(GltfParserTest, TilesetContentGltfRejectsUndeclaredPayload) {
         "file:///earth-md/tileset.json",
         bytesFromString(tilesetJson),
         "undeclared 3DTILES_content_gltf fixture");
+
+    EXPECT_FALSE(provider.valid());
+    EXPECT_TRUE(provider.rootTiles().empty());
+}
+
+TEST(GltfParserTest, TilesetContentGltfRejectsRequiredGltfExtensionMissingUsed) {
+    const std::string tilesetJson = makeTilesetJsonWithRootContent(
+        "root.glb",
+        "\"extensionsUsed\":[\"3DTILES_content_gltf\"],"
+        "\"extensions\":{\"3DTILES_content_gltf\":{"
+        "\"extensionsRequired\":[\"KHR_mesh_quantization\"]}},");
+    TilesetJsonContentProvider provider(
+        "file:///earth-md/tileset.json",
+        bytesFromString(tilesetJson),
+        "missing used glTF extension payload fixture");
 
     EXPECT_FALSE(provider.valid());
     EXPECT_TRUE(provider.rootTiles().empty());
@@ -12122,4 +12171,31 @@ TEST(GltfParserTest, TilesetContentGltfRejectsUnsupportedGltfExtensions) {
 
     EXPECT_FALSE(provider.valid());
     EXPECT_TRUE(provider.rootTiles().empty());
+}
+
+TEST(GltfParserTest, TilesetContentGltfRejectsMalformedGltfExtensionArrays) {
+    const std::array<std::string, 4> payloads = {{
+        "\"extensionsUsed\":{}",
+        "\"extensionsUsed\":[7]",
+        "\"extensionsUsed\":[\"KHR_mesh_quantization\","
+            "\"KHR_mesh_quantization\"]",
+        "\"extensionsUsed\":[\"KHR_mesh_quantization\"],"
+            "\"extensionsRequired\":[\"KHR_mesh_quantization\","
+            "\"KHR_mesh_quantization\"]"}};
+
+    for (const std::string& payload : payloads) {
+        SCOPED_TRACE(payload);
+        const std::string tilesetJson = makeTilesetJsonWithRootContent(
+            "root.glb",
+            "\"extensionsUsed\":[\"3DTILES_content_gltf\"],"
+            "\"extensions\":{\"3DTILES_content_gltf\":{" +
+                payload + "}},");
+        TilesetJsonContentProvider provider(
+            "file:///earth-md/tileset.json",
+            bytesFromString(tilesetJson),
+            "malformed 3DTILES_content_gltf payload fixture");
+
+        EXPECT_FALSE(provider.valid());
+        EXPECT_TRUE(provider.rootTiles().empty());
+    }
 }
