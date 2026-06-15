@@ -664,29 +664,109 @@ bool canFailTilesetJsonExtensionPerTile(const std::string& extensionName) {
            extensionName == "3DTILES_multiple_contents";
 }
 
-bool hasUnsupportedRequiredExtensions(
+bool tilesetJsonExtensionAllowed(const std::string& extensionName,
+                                 bool allowPerTileFailure) {
+    return isSupportedTilesetJsonExtension(extensionName) ||
+           (allowPerTileFailure &&
+            canFailTilesetJsonExtensionPerTile(extensionName));
+}
+
+bool hasUnsupportedDeclaredExtensionsOnObject(
     const nlohmann::json& json,
     bool allowPerTileFailure = false) {
-    auto requiredIt = json.find("extensionsRequired");
-    if (requiredIt == json.end()) {
-        return false;
-    }
-    if (!requiredIt->is_array()) {
-        return true;
-    }
-    for (const auto& extension : *requiredIt) {
-        if (!extension.is_string()) {
+    auto checkArray = [&](const char* name) {
+        auto extensionsIt = json.find(name);
+        if (extensionsIt == json.end()) {
+            return false;
+        }
+        if (!extensionsIt->is_array()) {
             return true;
         }
-        const std::string extensionName = extension.get<std::string>();
-        if (isSupportedTilesetJsonExtension(extensionName)) {
-            continue;
+        for (const auto& extension : *extensionsIt) {
+            if (!extension.is_string()) {
+                return true;
+            }
+            if (!tilesetJsonExtensionAllowed(
+                    extension.get<std::string>(),
+                    allowPerTileFailure)) {
+                return true;
+            }
         }
-        if (allowPerTileFailure &&
-            canFailTilesetJsonExtensionPerTile(extensionName)) {
-            continue;
+        return false;
+    };
+
+    return checkArray("extensionsRequired") ||
+           checkArray("extensionsUsed");
+}
+
+bool hasUnsupportedDeclaredExtensionsInTileObject(
+    const nlohmann::json& value) {
+    if (value.is_object()) {
+        if (hasUnsupportedDeclaredExtensionsOnObject(value)) {
+            return true;
         }
+        for (auto it = value.begin(); it != value.end(); ++it) {
+            if (it.key() == "children" || it.key() == "extensions") {
+                continue;
+            }
+            if (hasUnsupportedDeclaredExtensionsInTileObject(*it)) {
+                return true;
+            }
+        }
+    } else if (value.is_array()) {
+        for (const auto& element : value) {
+            if (hasUnsupportedDeclaredExtensionsInTileObject(element)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool extensionsObjectHasUnsupportedTilesetExtension(
+    const nlohmann::json& extensions,
+    bool allowPerTileFailure) {
+    if (!extensions.is_object()) {
         return true;
+    }
+    for (auto it = extensions.begin(); it != extensions.end(); ++it) {
+        if (!tilesetJsonExtensionAllowed(it.key(), allowPerTileFailure)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool hasUnsupportedDirectExtensionsObject(
+    const nlohmann::json& value,
+    bool allowPerTileFailure = false) {
+    auto extensionsIt = value.find("extensions");
+    return extensionsIt != value.end() &&
+           extensionsObjectHasUnsupportedTilesetExtension(
+               *extensionsIt,
+               allowPerTileFailure);
+}
+
+bool hasUnsupportedExtensionsObjectInTileObject(
+    const nlohmann::json& value) {
+    if (value.is_object()) {
+        if (hasUnsupportedDirectExtensionsObject(value)) {
+            return true;
+        }
+        for (auto it = value.begin(); it != value.end(); ++it) {
+            if (it.key() == "children" || it.key() == "extensions") {
+                continue;
+            }
+            if (hasUnsupportedExtensionsObjectInTileObject(*it)) {
+                return true;
+            }
+        }
+    } else if (value.is_array()) {
+        for (const auto& element : value) {
+            if (hasUnsupportedExtensionsObjectInTileObject(element)) {
+                return true;
+            }
+        }
     }
     return false;
 }
@@ -721,13 +801,15 @@ bool hasUnsupportedImplicitTiling(const nlohmann::json& tileJson) {
 }
 
 bool hasUnsupportedTileRequiredExtensions(const nlohmann::json& tileJson) {
-    if (hasUnsupportedRequiredExtensions(tileJson)) {
+    if (hasUnsupportedDeclaredExtensionsInTileObject(tileJson) ||
+        hasUnsupportedExtensionsObjectInTileObject(tileJson)) {
         return true;
     }
 
     auto contentIt = tileJson.find("content");
     return contentIt != tileJson.end() && contentIt->is_object() &&
-           hasUnsupportedRequiredExtensions(*contentIt);
+           (hasUnsupportedDeclaredExtensionsInTileObject(*contentIt) ||
+            hasUnsupportedExtensionsObjectInTileObject(*contentIt));
 }
 
 struct I3dmHeader {
@@ -2261,7 +2343,8 @@ bool TilesetJsonContentProvider::parseTilesetJson(
     if (rootIt == parsed.end() || !rootIt->is_object()) {
         return false;
     }
-    if (hasUnsupportedRequiredExtensions(parsed, true)) {
+    if (hasUnsupportedDeclaredExtensionsOnObject(parsed, true) ||
+        hasUnsupportedDirectExtensionsObject(parsed, true)) {
         return false;
     }
     const Mat4 gltfUpAxisTransform = parseGltfUpAxisTransform(parsed);
