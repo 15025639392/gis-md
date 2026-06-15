@@ -4721,6 +4721,51 @@ TEST(GltfParserTest, RejectsExternalKtx2ImageWithoutDecoder) {
     EXPECT_FALSE(resolvedImage);
 }
 
+TEST(GltfParserTest, RejectsExternalKtxAndAstcImagesWithoutDecoder) {
+    struct UnsupportedUriCase {
+        const char* uri;
+        std::vector<uint8_t> bytes;
+        const char* label;
+    };
+
+    const std::array<UnsupportedUriCase, 2> cases = {{
+        {
+            "textures/texture.KTX?rev=1",
+            {
+                static_cast<uint8_t>(0xABu), 'K', 'T', 'X', ' ', '1', '1',
+                static_cast<uint8_t>(0xBBu), 0x0Du, 0x0Au, 0x1Au, 0x0Au},
+            "KTX1 URI"},
+        {
+            "textures/texture.astc#main",
+            {
+                0x13u,
+                static_cast<uint8_t>(0xABu),
+                static_cast<uint8_t>(0xA1u),
+                0x5Cu},
+            "ASTC URI"},
+    }};
+
+    for (const UnsupportedUriCase& testCase : cases) {
+        ExternalGltfFixture fixture =
+            makeTexturedExternalBufferTriangleGltf(testCase.uri);
+        bool resolvedImage = false;
+
+        std::unique_ptr<GltfModel> model = GltfParser::parse(
+            reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+            fixture.jsonText.size(),
+            [&](const std::string& uri) {
+                if (uri == "triangle.bin") {
+                    return fixture.bin;
+                }
+                resolvedImage = true;
+                return testCase.bytes;
+            });
+
+        EXPECT_EQ(nullptr, model) << testCase.label;
+        EXPECT_FALSE(resolvedImage) << testCase.label;
+    }
+}
+
 TEST(GltfParserTest, RejectsExternalAvifImageWithoutDecoder) {
     ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf("textures/texture.AVIF?rev=1");
@@ -4759,6 +4804,76 @@ TEST(GltfParserTest, RejectsExternalDdsImageWithoutDecoder) {
 
     EXPECT_EQ(nullptr, model);
     EXPECT_FALSE(resolvedImage);
+}
+
+TEST(GltfParserTest, RejectsUnsupportedEncodedImageSignaturesBeforeDecoder) {
+    struct EncodedCase {
+        std::vector<uint8_t> bytes;
+        const char* label;
+    };
+
+    const std::vector<EncodedCase> cases = {
+        {
+            {
+                static_cast<uint8_t>(0xABu), 'K', 'T', 'X', ' ', '1', '1',
+                static_cast<uint8_t>(0xBBu), 0x0Du, 0x0Au, 0x1Au, 0x0Au},
+            "KTX1"},
+        {
+            {
+                static_cast<uint8_t>(0xABu), 'K', 'T', 'X', ' ', '2', '0',
+                static_cast<uint8_t>(0xBBu), 0x0Du, 0x0Au, 0x1Au, 0x0Au},
+            "KTX2"},
+        {
+            {'D', 'D', 'S', ' '},
+            "DDS"},
+        {
+            {
+                0x13u,
+                static_cast<uint8_t>(0xABu),
+                static_cast<uint8_t>(0xA1u),
+                0x5Cu},
+            "ASTC"},
+        {
+            {
+                0, 0, 0, 20,
+                'f', 't', 'y', 'p',
+                'a', 'v', 'i', 'f',
+                0, 0, 0, 0},
+            "AVIF major brand"},
+        {
+            {
+                0, 0, 0, 24,
+                'f', 't', 'y', 'p',
+                'm', 'i', 'f', '1',
+                0, 0, 0, 0,
+                'a', 'v', 'i', 'f'},
+            "AVIF compatible brand"},
+    };
+
+    for (const EncodedCase& testCase : cases) {
+        ExternalGltfFixture fixture =
+            makeTexturedExternalBufferTriangleGltf("image.bin");
+        bool decodedImage = false;
+
+        std::unique_ptr<GltfModel> model = GltfParser::parse(
+            reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+            fixture.jsonText.size(),
+            [&](const std::string& uri) {
+                return uri == "triangle.bin" ? fixture.bin : testCase.bytes;
+            },
+            [&](const uint8_t*, size_t) -> std::optional<GltfImage> {
+                decodedImage = true;
+                GltfImage image;
+                image.width = 1;
+                image.height = 1;
+                image.channels = 4;
+                image.pixels = {255, 255, 255, 255};
+                return image;
+            });
+
+        EXPECT_EQ(nullptr, model) << testCase.label;
+        EXPECT_FALSE(decodedImage) << testCase.label;
+    }
 }
 
 TEST(GltfParserTest, ParsesBaseColorTextureBufferViewImage) {

@@ -306,10 +306,12 @@ bool imageUriUsesUnsupportedFormat(
     if (!allowWebp && uriPathEndsWith(uri, ".webp")) {
         return true;
     }
-    return uriPathEndsWith(uri, ".ktx2") ||
+    return uriPathEndsWith(uri, ".ktx") ||
+           uriPathEndsWith(uri, ".ktx2") ||
            uriPathEndsWith(uri, ".basis") ||
            uriPathEndsWith(uri, ".avif") ||
-           uriPathEndsWith(uri, ".dds");
+           uriPathEndsWith(uri, ".dds") ||
+           uriPathEndsWith(uri, ".astc");
 }
 
 std::optional<std::string> dataUriMimeType(const std::string& uri) {
@@ -352,15 +354,65 @@ bool encodedImageLooksLikeWebp(const std::vector<uint8_t>& encoded) {
            encoded[11] == 'P';
 }
 
-bool encodedImageLooksLikeKtx2(const std::vector<uint8_t>& encoded) {
+template <size_t N>
+bool encodedImageStartsWith(
+    const std::vector<uint8_t>& encoded,
+    const std::array<uint8_t, N>& prefix) {
+    return encoded.size() >= prefix.size() &&
+           std::equal(prefix.begin(), prefix.end(), encoded.begin());
+}
+
+bool encodedImageLooksLikeKtx(const std::vector<uint8_t>& encoded) {
+    static constexpr std::array<uint8_t, 12> kKtx1Identifier = {
+        static_cast<uint8_t>(0xABu), 'K', 'T', 'X', ' ', '1', '1',
+        static_cast<uint8_t>(0xBBu), 0x0Du, 0x0Au, 0x1Au, 0x0Au};
     static constexpr std::array<uint8_t, 12> kKtx2Identifier = {
         static_cast<uint8_t>(0xABu), 'K', 'T', 'X', ' ', '2', '0',
         static_cast<uint8_t>(0xBBu), 0x0Du, 0x0Au, 0x1Au, 0x0Au};
-    return encoded.size() >= kKtx2Identifier.size() &&
-           std::equal(
-               kKtx2Identifier.begin(),
-               kKtx2Identifier.end(),
-               encoded.begin());
+    return encodedImageStartsWith(encoded, kKtx1Identifier) ||
+           encodedImageStartsWith(encoded, kKtx2Identifier);
+}
+
+bool encodedImageLooksLikeDds(const std::vector<uint8_t>& encoded) {
+    static constexpr std::array<uint8_t, 4> kDdsIdentifier = {
+        'D', 'D', 'S', ' '};
+    return encodedImageStartsWith(encoded, kDdsIdentifier);
+}
+
+bool encodedImageLooksLikeAstc(const std::vector<uint8_t>& encoded) {
+    static constexpr std::array<uint8_t, 4> kAstcIdentifier = {
+        0x13u,
+        static_cast<uint8_t>(0xABu),
+        static_cast<uint8_t>(0xA1u),
+        0x5Cu};
+    return encodedImageStartsWith(encoded, kAstcIdentifier);
+}
+
+bool encodedImageLooksLikeAvif(const std::vector<uint8_t>& encoded) {
+    if (encoded.size() < 12u ||
+        encoded[4] != 'f' ||
+        encoded[5] != 't' ||
+        encoded[6] != 'y' ||
+        encoded[7] != 'p') {
+        return false;
+    }
+    auto isAvifBrand = [&encoded](size_t offset) {
+        return offset + 4u <= encoded.size() &&
+               encoded[offset] == 'a' &&
+               encoded[offset + 1u] == 'v' &&
+               encoded[offset + 2u] == 'i' &&
+               (encoded[offset + 3u] == 'f' ||
+                encoded[offset + 3u] == 's');
+    };
+    if (isAvifBrand(8u)) {
+        return true;
+    }
+    for (size_t offset = 16u; offset + 4u <= encoded.size(); offset += 4u) {
+        if (isAvifBrand(offset)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool encodedImageUsesUnsupportedFormat(
@@ -369,7 +421,10 @@ bool encodedImageUsesUnsupportedFormat(
     if (!allowWebp && encodedImageLooksLikeWebp(encoded)) {
         return true;
     }
-    return encodedImageLooksLikeKtx2(encoded);
+    return encodedImageLooksLikeKtx(encoded) ||
+           encodedImageLooksLikeDds(encoded) ||
+           encodedImageLooksLikeAstc(encoded) ||
+           encodedImageLooksLikeAvif(encoded);
 }
 
 struct ParsedInput {
