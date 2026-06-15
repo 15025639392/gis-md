@@ -127,11 +127,17 @@ TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     ASSERT_TRUE(cmd.uniforms.count("u_materialFactors"));
     ASSERT_TRUE(cmd.uniforms.count("u_dielectricSpecularF0"));
     ASSERT_TRUE(cmd.uniforms.count("u_hasMaterialTextures"));
+    ASSERT_TRUE(cmd.uniforms.count("u_hasSpecularTextures"));
+    ASSERT_TRUE(cmd.uniforms.count("u_specularFactor"));
+    ASSERT_TRUE(cmd.uniforms.count("u_specularColorFactor"));
     ASSERT_TRUE(cmd.uniforms.count("u_emissiveFactor"));
     ASSERT_TRUE(cmd.uniforms.count("u_textureCoordSets"));
     ASSERT_TRUE(cmd.uniforms.count("u_emissiveTexCoordSet"));
+    ASSERT_TRUE(cmd.uniforms.count("u_specularTexCoordSets"));
     ASSERT_TRUE(cmd.uniforms.count("u_baseColorTexOffsetScale"));
     ASSERT_TRUE(cmd.uniforms.count("u_baseColorTexRotationSinCos"));
+    ASSERT_TRUE(cmd.uniforms.count("u_specularTexOffsetScale"));
+    ASSERT_TRUE(cmd.uniforms.count("u_specularColorTexOffsetScale"));
     ASSERT_TRUE(cmd.uniforms.count("u_alphaMode"));
     ASSERT_TRUE(cmd.uniforms.count("u_alphaCutoff"));
     ASSERT_TRUE(cmd.uniforms.count("u_renderOpacity"));
@@ -154,6 +160,42 @@ TEST(RendererCommandTest, GltfFragmentShadersApplyDielectricSpecularF0) {
     EXPECT_NE(
         std::string::npos,
         msl.find("clamp(u_dielectricSpecularF0, 0.0, 1.0)"));
+}
+
+TEST(RendererCommandTest, GltfFragmentShadersApplyKhrMaterialsSpecular) {
+    const std::string glsl = renderer_testing::gltfFragmentGLSL();
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("uniform sampler2D u_specularTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("uniform sampler2D u_specularColorTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("specularStrength *= texture(u_specularTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("u_specularColorFactor"));
+    EXPECT_NE(
+        std::string::npos,
+        glsl.find("mix(dielectricSpecular, base.rgb, metallic)"));
+
+    const std::string msl = renderer_testing::gltfFragmentMSL();
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("texture2d<float> u_specularTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("texture2d<float> u_specularColorTexture"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("specularStrength *= u_specularTexture.sample"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("u_specularColorFactor"));
+    EXPECT_NE(
+        std::string::npos,
+        msl.find("mix(dielectricSpecular, base.rgb, metallic)"));
 }
 
 TEST(RendererCommandTest, GltfFragmentShadersUseBaseColorForUnlitMaterials) {

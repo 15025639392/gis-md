@@ -114,7 +114,11 @@ struct GltfPrimitive {
     float metallicFactor = 1.0f;
     float roughnessFactor = 1.0f;
     float dielectricSpecularF0 = 0.04f;
+    float specularFactor = 1.0f;
+    std::array<float, 3> specularColorFactor = {1.0f, 1.0f, 1.0f};
     std::optional<GltfTextureBinding> metallicRoughnessTexture;
+    std::optional<GltfTextureBinding> specularTexture;
+    std::optional<GltfTextureBinding> specularColorTexture;
     std::optional<GltfTextureBinding> normalTexture;
     float normalTextureScale = 1.0f;
     std::optional<GltfTextureBinding> occlusionTexture;

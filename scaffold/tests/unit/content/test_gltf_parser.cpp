@@ -2531,6 +2531,92 @@ TEST(GltfParserTest, ParsesKhrMaterialsIorDefaultValue) {
     EXPECT_NEAR(0.04f, model->primitives[0].dielectricSpecularF0, 1e-6f);
 }
 
+TEST(GltfParserTest, ParsesKhrMaterialsSpecularMaterialExtension) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":[\"KHR_materials_specular\"],"
+        "\"extensionsRequired\":[\"KHR_materials_specular\"],");
+
+    const std::string primitiveMarker = "\"mode\":4}";
+    const size_t primitivePos = fixture.jsonText.find(primitiveMarker);
+    ASSERT_NE(std::string::npos, primitivePos);
+    fixture.jsonText.replace(
+        primitivePos,
+        primitiveMarker.size(),
+        "\"mode\":4,\"material\":0}");
+
+    const std::string buffersMarker = "\"buffers\"";
+    const size_t buffersPos = fixture.jsonText.find(buffersMarker);
+    ASSERT_NE(std::string::npos, buffersPos);
+    fixture.jsonText.insert(
+        buffersPos,
+        "\"materials\":[{\"extensions\":{\"KHR_materials_specular\":{"
+        "\"specularFactor\":0.25,"
+        "\"specularColorFactor\":[2.0,0.5,0.25]}}}],");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives[0];
+    EXPECT_NEAR(0.25f, primitive.specularFactor, 1e-6f);
+    EXPECT_NEAR(2.0f, primitive.specularColorFactor[0], 1e-6f);
+    EXPECT_NEAR(0.5f, primitive.specularColorFactor[1], 1e-6f);
+    EXPECT_NEAR(0.25f, primitive.specularColorFactor[2], 1e-6f);
+}
+
+TEST(GltfParserTest, ParsesKhrMaterialsSpecularTextureBindings) {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf("image.bin");
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":["
+        "\"KHR_materials_specular\","
+        "\"KHR_texture_transform\"],"
+        "\"extensionsRequired\":["
+        "\"KHR_materials_specular\","
+        "\"KHR_texture_transform\"],");
+
+    const std::string materialMarker = "\"materials\":[{";
+    const size_t materialPos = fixture.jsonText.find(materialMarker);
+    ASSERT_NE(std::string::npos, materialPos);
+    fixture.jsonText.replace(
+        materialPos,
+        materialMarker.size(),
+        "\"materials\":[{\"extensions\":{\"KHR_materials_specular\":{"
+        "\"specularTexture\":{\"index\":0,\"texCoord\":0,"
+        "\"extensions\":{\"KHR_texture_transform\":{"
+        "\"offset\":[0.25,0.5],\"scale\":[2,3],"
+        "\"rotation\":1.57079632679}}},"
+        "\"specularColorTexture\":{\"index\":0,\"texCoord\":0}}},");
+
+    std::unique_ptr<GltfModel> model =
+        parseExternalFixtureWithSolidImage(fixture);
+
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives[0];
+    ASSERT_TRUE(primitive.specularTexture);
+    ASSERT_TRUE(primitive.specularColorTexture);
+    EXPECT_EQ(0u, primitive.specularTexture->textureIndex);
+    EXPECT_EQ(0, primitive.specularTexture->texCoord);
+    EXPECT_NEAR(0.25f, primitive.specularTexture->transform.offset[0], 1e-6f);
+    EXPECT_NEAR(0.5f, primitive.specularTexture->transform.offset[1], 1e-6f);
+    EXPECT_NEAR(2.0f, primitive.specularTexture->transform.scale[0], 1e-6f);
+    EXPECT_NEAR(3.0f, primitive.specularTexture->transform.scale[1], 1e-6f);
+    EXPECT_NEAR(
+        1.57079632679f,
+        primitive.specularTexture->transform.rotation,
+        1e-6f);
+}
+
 TEST(GltfParserTest, RejectsMaterialDoubleSidedTypeMismatch) {
     ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf(
@@ -4359,7 +4445,7 @@ TEST(GltfParserTest, RejectsUnsupportedFeatureMetadataExtensions) {
 }
 
 TEST(GltfParserTest, RejectsUnsupportedMaterialExtensionsWithoutRuntimeSupport) {
-    const std::array<const char*, 11> unsupportedExtensions = {
+    const std::array<const char*, 10> unsupportedExtensions = {
         "KHR_materials_anisotropy",
         "KHR_materials_clearcoat",
         "KHR_materials_diffuse_transmission",
@@ -4367,7 +4453,6 @@ TEST(GltfParserTest, RejectsUnsupportedMaterialExtensionsWithoutRuntimeSupport) 
         "KHR_materials_iridescence",
         "KHR_materials_pbrSpecularGlossiness",
         "KHR_materials_sheen",
-        "KHR_materials_specular",
         "KHR_materials_transmission",
         "KHR_materials_variants",
         "KHR_materials_volume"};
@@ -4492,6 +4577,29 @@ TEST(GltfParserTest, RejectsKhrMaterialsIorObjectExtensionWithoutDeclaration) {
         buffersPos,
         "\"materials\":[{\"extensions\":{"
         "\"KHR_materials_ior\":{\"ior\":2.0}}}],");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsKhrMaterialsSpecularObjectExtensionWithoutDeclaration) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string primitiveMarker = "\"mode\":4}";
+    const size_t primitivePos = fixture.jsonText.find(primitiveMarker);
+    ASSERT_NE(std::string::npos, primitivePos);
+    fixture.jsonText.replace(
+        primitivePos,
+        primitiveMarker.size(),
+        "\"mode\":4,\"material\":0}");
+
+    const std::string buffersMarker = "\"buffers\"";
+    const size_t buffersPos = fixture.jsonText.find(buffersMarker);
+    ASSERT_NE(std::string::npos, buffersPos);
+    fixture.jsonText.insert(
+        buffersPos,
+        "\"materials\":[{\"extensions\":{"
+        "\"KHR_materials_specular\":{\"specularFactor\":0.5}}}],");
 
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
 
@@ -4642,6 +4750,20 @@ TEST(GltfParserTest, RejectsKhrMaterialsIorDeclarationWithoutMaterialExtension) 
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsKhrMaterialsSpecularDeclarationWithoutMaterialExtension) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.insert(
+        markerPos + marker.size(),
+        "\"extensionsUsed\":[\"KHR_materials_specular\"],");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsKhrMaterialsUnlitMaterialExtensionTypeMismatch) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
@@ -4730,6 +4852,36 @@ TEST(GltfParserTest, RejectsKhrMaterialsIorTypeMismatch) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsKhrMaterialsSpecularTypeMismatch) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":[\"KHR_materials_specular\"],");
+
+    const std::string primitiveMarker = "\"mode\":4}";
+    const size_t primitivePos = fixture.jsonText.find(primitiveMarker);
+    ASSERT_NE(std::string::npos, primitivePos);
+    fixture.jsonText.replace(
+        primitivePos,
+        primitiveMarker.size(),
+        "\"mode\":4,\"material\":0}");
+
+    const std::string buffersMarker = "\"buffers\"";
+    const size_t buffersPos = fixture.jsonText.find(buffersMarker);
+    ASSERT_NE(std::string::npos, buffersPos);
+    fixture.jsonText.insert(
+        buffersPos,
+        "\"materials\":[{\"extensions\":{"
+        "\"KHR_materials_specular\":true}}],");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsKhrMaterialsIorBelowOneNonZeroValue) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
@@ -4754,6 +4906,67 @@ TEST(GltfParserTest, RejectsKhrMaterialsIorBelowOneNonZeroValue) {
         buffersPos,
         "\"materials\":[{\"extensions\":{"
         "\"KHR_materials_ior\":{\"ior\":0.5}}}],");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsKhrMaterialsSpecularFactorOutsideUnitRange) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":[\"KHR_materials_specular\"],");
+
+    const std::string primitiveMarker = "\"mode\":4}";
+    const size_t primitivePos = fixture.jsonText.find(primitiveMarker);
+    ASSERT_NE(std::string::npos, primitivePos);
+    fixture.jsonText.replace(
+        primitivePos,
+        primitiveMarker.size(),
+        "\"mode\":4,\"material\":0}");
+
+    const std::string buffersMarker = "\"buffers\"";
+    const size_t buffersPos = fixture.jsonText.find(buffersMarker);
+    ASSERT_NE(std::string::npos, buffersPos);
+    fixture.jsonText.insert(
+        buffersPos,
+        "\"materials\":[{\"extensions\":{"
+        "\"KHR_materials_specular\":{\"specularFactor\":1.5}}}],");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsKhrMaterialsSpecularNegativeColorFactor) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":[\"KHR_materials_specular\"],");
+
+    const std::string primitiveMarker = "\"mode\":4}";
+    const size_t primitivePos = fixture.jsonText.find(primitiveMarker);
+    ASSERT_NE(std::string::npos, primitivePos);
+    fixture.jsonText.replace(
+        primitivePos,
+        primitiveMarker.size(),
+        "\"mode\":4,\"material\":0}");
+
+    const std::string buffersMarker = "\"buffers\"";
+    const size_t buffersPos = fixture.jsonText.find(buffersMarker);
+    ASSERT_NE(std::string::npos, buffersPos);
+    fixture.jsonText.insert(
+        buffersPos,
+        "\"materials\":[{\"extensions\":{"
+        "\"KHR_materials_specular\":{"
+        "\"specularColorFactor\":[1.0,-0.1,1.0]}}}],");
 
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
 
@@ -4850,6 +5063,39 @@ TEST(GltfParserTest, RejectsKhrMaterialsIorWithUnlitMaterial) {
         "\"materials\":[{\"extensions\":{"
         "\"KHR_materials_unlit\":{},"
         "\"KHR_materials_ior\":{\"ior\":2.0}}}],");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsKhrMaterialsSpecularWithUnlitMaterial) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":["
+        "\"KHR_materials_unlit\","
+        "\"KHR_materials_specular\"],");
+
+    const std::string primitiveMarker = "\"mode\":4}";
+    const size_t primitivePos = fixture.jsonText.find(primitiveMarker);
+    ASSERT_NE(std::string::npos, primitivePos);
+    fixture.jsonText.replace(
+        primitivePos,
+        primitiveMarker.size(),
+        "\"mode\":4,\"material\":0}");
+
+    const std::string buffersMarker = "\"buffers\"";
+    const size_t buffersPos = fixture.jsonText.find(buffersMarker);
+    ASSERT_NE(std::string::npos, buffersPos);
+    fixture.jsonText.insert(
+        buffersPos,
+        "\"materials\":[{\"extensions\":{"
+        "\"KHR_materials_unlit\":{},"
+        "\"KHR_materials_specular\":{\"specularFactor\":0.5}}}],");
 
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
 

@@ -3072,6 +3072,101 @@ void testTilesetGltfIorMaterialUploadsSpecularF0() {
           "Tileset: glTF IOR material uploads dielectric specular F0");
 }
 
+void testTilesetGltfSpecularMaterialUploadsUniformsAndTextures() {
+    DummyRenderDevice device;
+    device.allowTextureCreation = true;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: glTF specular material root tile is created");
+    if (!root) return;
+
+    root->gltfModel = makeTexturedTriangleGltfModel();
+    GltfPrimitive& primitive = root->gltfModel->primitives[0];
+    primitive.specularFactor = 0.25f;
+    primitive.specularColorFactor = {2.0f, 0.5f, 0.25f};
+    GltfTextureBinding specularBinding;
+    specularBinding.textureIndex = 0u;
+    specularBinding.texCoord = 1;
+    specularBinding.transform.offset = {0.125f, 0.25f};
+    specularBinding.transform.scale = {0.5f, 0.75f};
+    specularBinding.transform.rotation = 1.57079632679f;
+    primitive.specularTexture = specularBinding;
+    GltfTextureBinding specularColorBinding;
+    specularColorBinding.textureIndex = 0u;
+    specularColorBinding.texCoord = 0;
+    primitive.specularColorTexture = specularColorBinding;
+    root->contentKind = TileContentKind::Render;
+    root->loadState = TileLoadState::ContentLoaded;
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 1,
+          "Tileset: glTF specular material emits one primitive draw command");
+    if (commands.empty()) return;
+
+    const RenderCommand& cmd = commands.front();
+    check(cmd.uniforms.count("u_specularFactor") &&
+              std::abs(cmd.uniforms.at("u_specularFactor").front() - 0.25f) <
+                  1e-6f,
+          "Tileset: glTF specular material uploads specularFactor");
+    check(cmd.uniforms.count("u_specularColorFactor") &&
+              cmd.uniforms.at("u_specularColorFactor").size() == 3 &&
+              std::abs(cmd.uniforms.at("u_specularColorFactor")[0] - 2.0f) <
+                  1e-6f &&
+              std::abs(cmd.uniforms.at("u_specularColorFactor")[1] - 0.5f) <
+                  1e-6f &&
+              std::abs(cmd.uniforms.at("u_specularColorFactor")[2] - 0.25f) <
+                  1e-6f,
+          "Tileset: glTF specular material uploads specularColorFactor");
+    check(cmd.uniforms.count("u_hasSpecularTextures") &&
+              cmd.uniforms.at("u_hasSpecularTextures").size() == 2 &&
+              cmd.uniforms.at("u_hasSpecularTextures")[0] == 1.0f &&
+              cmd.uniforms.at("u_hasSpecularTextures")[1] == 1.0f,
+          "Tileset: glTF specular material reports both specular textures");
+    check(cmd.textures.size() >= 7 &&
+              cmd.textures[5] ==
+                  root->gltfPrimitiveResources.front().specularTexture.texture &&
+              cmd.textures[6] ==
+                  root->gltfPrimitiveResources.front()
+                      .specularColorTexture.texture,
+          "Tileset: glTF specular textures bind to material slots 5 and 6");
+    check(cmd.uniforms.count("u_specularTexCoordSets") &&
+              cmd.uniforms.at("u_specularTexCoordSets").size() == 2 &&
+              cmd.uniforms.at("u_specularTexCoordSets")[0] == 1.0f &&
+              cmd.uniforms.at("u_specularTexCoordSets")[1] == 0.0f,
+          "Tileset: glTF specular material uploads texture coordinate sets");
+    check(cmd.uniforms.count("u_specularTexOffsetScale") &&
+              cmd.uniforms.at("u_specularTexOffsetScale").size() == 4 &&
+              std::abs(cmd.uniforms.at("u_specularTexOffsetScale")[0] -
+                       0.125f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_specularTexOffsetScale")[1] -
+                       0.25f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_specularTexOffsetScale")[2] -
+                       0.5f) < 1e-6f &&
+              std::abs(cmd.uniforms.at("u_specularTexOffsetScale")[3] -
+                       0.75f) < 1e-6f &&
+              cmd.uniforms.count("u_specularTexRotationSinCos") &&
+              std::abs(cmd.uniforms.at("u_specularTexRotationSinCos")[0] -
+                       1.0f) < 1e-6f,
+          "Tileset: glTF specular texture uploads KHR_texture_transform uniforms");
+}
+
 void testTilesetGltfPointAndLineModesReachDrawCommands() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
@@ -6416,6 +6511,7 @@ int main() {
     testTilesetGltfMaskMaterialStaysOpaqueCommand();
     testTilesetGltfUnlitMaterialUploadsUniform();
     testTilesetGltfIorMaterialUploadsSpecularF0();
+    testTilesetGltfSpecularMaterialUploadsUniformsAndTextures();
     testTilesetGltfPointAndLineModesReachDrawCommands();
     testTilesetGltfDoubleSidedDisablesCullOnly();
     testTilesetGltfOpaqueInstancesUseGpuInstancing();

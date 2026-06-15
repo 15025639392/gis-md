@@ -398,12 +398,13 @@ bool validateAsset(const json& doc) {
 }
 
 bool isSupportedExtensionName(const std::string& name) {
-    static constexpr std::array<const char*, 6> kSupportedExtensions = {
+    static constexpr std::array<const char*, 7> kSupportedExtensions = {
         "KHR_texture_transform",
         "KHR_mesh_quantization",
         "KHR_materials_unlit",
         "KHR_materials_emissive_strength",
         "KHR_materials_ior",
+        "KHR_materials_specular",
         "EXT_mesh_gpu_instancing"};
     return std::find(
         kSupportedExtensions.begin(),
@@ -460,11 +461,17 @@ bool isTextureInfoExtensionParentPath(const std::vector<std::string>& path) {
          path[3] == "metallicRoughnessTexture")) {
         return true;
     }
-    return path.size() == 3 &&
-           path[0] == "materials" &&
-           (path[2] == "normalTexture" ||
-            path[2] == "occlusionTexture" ||
-            path[2] == "emissiveTexture");
+    return (path.size() == 3 &&
+            path[0] == "materials" &&
+            (path[2] == "normalTexture" ||
+             path[2] == "occlusionTexture" ||
+             path[2] == "emissiveTexture")) ||
+           (path.size() == 5 &&
+            path[0] == "materials" &&
+            path[2] == "extensions" &&
+            path[3] == "KHR_materials_specular" &&
+            (path[4] == "specularTexture" ||
+             path[4] == "specularColorTexture"));
 }
 
 bool isMaterialExtensionParentPath(const std::vector<std::string>& path) {
@@ -492,7 +499,8 @@ bool extensionsObjectSupportedAtPath(
         }
         if (it.key() == "KHR_materials_unlit" ||
             it.key() == "KHR_materials_emissive_strength" ||
-            it.key() == "KHR_materials_ior") {
+            it.key() == "KHR_materials_ior" ||
+            it.key() == "KHR_materials_specular") {
             if (!isMaterialExtensionParentPath(ownerPath)) {
                 return false;
             }
@@ -571,11 +579,12 @@ bool documentHasObjectExtension(
 }
 
 bool supportedObjectExtensionsAreDeclared(const json& doc) {
-    constexpr std::array<const char*, 5> kObjectExtensions = {
+    constexpr std::array<const char*, 6> kObjectExtensions = {
         "KHR_texture_transform",
         "KHR_materials_unlit",
         "KHR_materials_emissive_strength",
         "KHR_materials_ior",
+        "KHR_materials_specular",
         "EXT_mesh_gpu_instancing"};
     for (const char* extensionName : kObjectExtensions) {
         if (documentHasObjectExtension(doc, extensionName) &&
@@ -2030,6 +2039,25 @@ bool jsonNumberArrayInRange(
         });
 }
 
+bool jsonNumberArrayAtLeast(
+    const json& value,
+    size_t expectedSize,
+    double minimum) {
+    if (!value.is_array() || value.size() != expectedSize) {
+        return false;
+    }
+    return std::all_of(
+        value.begin(),
+        value.end(),
+        [minimum](const json& element) {
+            if (!element.is_number()) {
+                return false;
+            }
+            const double value = element.get<double>();
+            return std::isfinite(value) && value >= minimum;
+        });
+}
+
 bool jsonNodeIndexArray(const json& value, size_t nodeCount) {
     if (!value.is_array()) {
         return false;
@@ -2140,6 +2168,30 @@ bool validateMaterialExtensions(const json& material) {
         }
     }
 
+    const auto specularIt = extensionsIt->find("KHR_materials_specular");
+    if (specularIt != extensionsIt->end()) {
+        if (unlitIt != extensionsIt->end() ||
+            extensionsIt->contains("KHR_materials_pbrSpecularGlossiness") ||
+            !specularIt->is_object()) {
+            return false;
+        }
+        const auto factorIt = specularIt->find("specularFactor");
+        if (factorIt != specularIt->end()) {
+            const auto factor = numberProperty(
+                *specularIt,
+                "specularFactor",
+                1.0f);
+            if (!factor || *factor < 0.0f || *factor > 1.0f) {
+                return false;
+            }
+        }
+        const auto colorFactorIt = specularIt->find("specularColorFactor");
+        if (colorFactorIt != specularIt->end() &&
+            !jsonNumberArrayAtLeast(*colorFactorIt, 3u, 0.0)) {
+            return false;
+        }
+    }
+
     const auto iorIt = extensionsIt->find("KHR_materials_ior");
     if (iorIt == extensionsIt->end()) {
         return true;
@@ -2199,6 +2251,60 @@ float materialDielectricSpecularF0(const json& material, bool& strictFailure) {
         return dielectricSpecularF0FromIor(1.5f);
     }
     return dielectricSpecularF0FromIor(*ior);
+}
+
+const json* materialObjectExtension(
+    const json& material,
+    const char* extensionName) {
+    const auto extensionsIt = material.find("extensions");
+    if (extensionsIt == material.end() || !extensionsIt->is_object()) {
+        return nullptr;
+    }
+    const auto extensionIt = extensionsIt->find(extensionName);
+    if (extensionIt == extensionsIt->end()) {
+        return nullptr;
+    }
+    if (!extensionIt->is_object()) {
+        return nullptr;
+    }
+    return &*extensionIt;
+}
+
+float materialSpecularFactor(const json& material, bool& strictFailure) {
+    const json* specular =
+        materialObjectExtension(material, "KHR_materials_specular");
+    if (!specular) {
+        return 1.0f;
+    }
+    const auto factor = numberProperty(*specular, "specularFactor", 1.0f);
+    if (!factor || *factor < 0.0f || *factor > 1.0f) {
+        strictFailure = true;
+        return 1.0f;
+    }
+    return *factor;
+}
+
+std::array<float, 3> materialSpecularColorFactor(
+    const json& material,
+    bool& strictFailure) {
+    std::array<float, 3> factor = {1.0f, 1.0f, 1.0f};
+    const json* specular =
+        materialObjectExtension(material, "KHR_materials_specular");
+    if (!specular) {
+        return factor;
+    }
+    const auto factorIt = specular->find("specularColorFactor");
+    if (factorIt == specular->end()) {
+        return factor;
+    }
+    if (!readFloatArray(*factorIt, factor) ||
+        std::any_of(factor.begin(), factor.end(), [](float component) {
+            return component < 0.0f;
+        })) {
+        strictFailure = true;
+        return {1.0f, 1.0f, 1.0f};
+    }
+    return factor;
 }
 
 bool validateMaterialJson(const json& material, size_t textureCount) {
@@ -2262,6 +2368,25 @@ bool validateMaterialJson(const json& material, size_t textureCount) {
                 "metallicRoughnessTexture",
                 textureCount)) {
             return false;
+        }
+    }
+
+    const auto extensionsIt = material.find("extensions");
+    if (extensionsIt != material.end() && extensionsIt->is_object()) {
+        const auto specularIt =
+            extensionsIt->find("KHR_materials_specular");
+        if (specularIt != extensionsIt->end()) {
+            if (!specularIt->is_object() ||
+                !validateMaterialTextureInfo(
+                    *specularIt,
+                    "specularTexture",
+                    textureCount) ||
+                !validateMaterialTextureInfo(
+                    *specularIt,
+                    "specularColorTexture",
+                    textureCount)) {
+                return false;
+            }
         }
     }
 
@@ -4138,6 +4263,50 @@ std::optional<GltfPrimitive> parsePrimitive(
             if (strictFailure) {
                 return std::nullopt;
             }
+            primitive.specularFactor =
+                materialSpecularFactor(material, strictFailure);
+            primitive.specularColorFactor =
+                materialSpecularColorFactor(material, strictFailure);
+            if (strictFailure) {
+                return std::nullopt;
+            }
+            const json* specularExtension =
+                materialObjectExtension(material, "KHR_materials_specular");
+            if (specularExtension) {
+                auto specularTextureIt =
+                    specularExtension->find("specularTexture");
+                if (specularTextureIt != specularExtension->end() &&
+                    specularTextureIt->is_object()) {
+                    primitive.specularTexture = parseTextureBinding(
+                        *specularTextureIt,
+                        textures,
+                        strictFailure);
+                    if (strictFailure || !primitive.specularTexture) {
+                        return std::nullopt;
+                    }
+                } else if (specularTextureIt != specularExtension->end()) {
+                    strictFailure = true;
+                    return std::nullopt;
+                }
+
+                auto specularColorTextureIt =
+                    specularExtension->find("specularColorTexture");
+                if (specularColorTextureIt != specularExtension->end() &&
+                    specularColorTextureIt->is_object()) {
+                    primitive.specularColorTexture = parseTextureBinding(
+                        *specularColorTextureIt,
+                        textures,
+                        strictFailure);
+                    if (strictFailure ||
+                        !primitive.specularColorTexture) {
+                        return std::nullopt;
+                    }
+                } else if (
+                    specularColorTextureIt != specularExtension->end()) {
+                    strictFailure = true;
+                    return std::nullopt;
+                }
+            }
 
             auto normalIt = material.find("normalTexture");
             if (normalIt != material.end() && normalIt->is_object()) {
@@ -4220,6 +4389,8 @@ std::optional<GltfPrimitive> parsePrimitive(
     };
     if (!hasTexCoordSet(primitive.baseColorTexture) ||
         !hasTexCoordSet(primitive.metallicRoughnessTexture) ||
+        !hasTexCoordSet(primitive.specularTexture) ||
+        !hasTexCoordSet(primitive.specularColorTexture) ||
         !hasTexCoordSet(primitive.normalTexture) ||
         !hasTexCoordSet(primitive.occlusionTexture) ||
         !hasTexCoordSet(primitive.emissiveTexture)) {
@@ -5059,6 +5230,12 @@ std::unique_ptr<GltfModel> GltfParser::parse(
     }
     if (declaredExtension(input->document, "KHR_materials_ior") &&
         !documentHasObjectExtension(input->document, "KHR_materials_ior")) {
+        return nullptr;
+    }
+    if (declaredExtension(input->document, "KHR_materials_specular") &&
+        !documentHasObjectExtension(
+            input->document,
+            "KHR_materials_specular")) {
         return nullptr;
     }
     if (declaredExtension(input->document, "EXT_mesh_gpu_instancing") &&

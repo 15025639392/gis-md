@@ -700,6 +700,8 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             setSampler("u_normalTexture", 2);
             setSampler("u_occlusionTexture", 3);
             setSampler("u_emissiveTexture", 4);
+            setSampler("u_specularTexture", 5);
+            setSampler("u_specularColorTexture", 6);
         }
         for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
             std::string name = "u_overlayTexture" + std::to_string(i);

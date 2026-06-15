@@ -3955,6 +3955,9 @@ void Tileset::ensureGltfRenderResources(TilesetTile& tile) {
                 resources.roughnessFactor = primitive.roughnessFactor;
                 resources.dielectricSpecularF0 =
                     primitive.dielectricSpecularF0;
+                resources.specularFactor = primitive.specularFactor;
+                resources.specularColorFactor =
+                    primitive.specularColorFactor;
                 resources.normalTextureScale = primitive.normalTextureScale;
                 resources.occlusionTextureStrength =
                     primitive.occlusionTextureStrength;
@@ -3979,6 +3982,12 @@ void Tileset::ensureGltfRenderResources(TilesetTile& tile) {
                 resources.metallicRoughnessTexture = makeGltfTextureBinding(
                     primitive.metallicRoughnessTexture,
                     tile.gltfTextureResources);
+                resources.specularTexture = makeGltfTextureBinding(
+                    primitive.specularTexture,
+                    tile.gltfTextureResources);
+                resources.specularColorTexture = makeGltfTextureBinding(
+                    primitive.specularColorTexture,
+                    tile.gltfTextureResources);
                 resources.normalTexture = makeGltfTextureBinding(
                     primitive.normalTexture,
                     tile.gltfTextureResources);
@@ -3999,6 +4008,10 @@ void Tileset::ensureGltfRenderResources(TilesetTile& tile) {
                      !resources.baseColorTexture.texture) ||
                     (primitive.metallicRoughnessTexture &&
                      !resources.metallicRoughnessTexture.texture) ||
+                    (primitive.specularTexture &&
+                     !resources.specularTexture.texture) ||
+                    (primitive.specularColorTexture &&
+                     !resources.specularColorTexture.texture) ||
                     (primitive.normalTexture &&
                      !resources.normalTexture.texture) ||
                     (primitive.occlusionTexture &&
@@ -4008,6 +4021,9 @@ void Tileset::ensureGltfRenderResources(TilesetTile& tile) {
                     !bindingHasTexCoordSet(baseColorBinding) ||
                     !bindingHasTexCoordSet(
                         primitive.metallicRoughnessTexture) ||
+                    !bindingHasTexCoordSet(primitive.specularTexture) ||
+                    !bindingHasTexCoordSet(
+                        primitive.specularColorTexture) ||
                     !bindingHasTexCoordSet(primitive.normalTexture) ||
                     !bindingHasTexCoordSet(primitive.occlusionTexture) ||
                     !bindingHasTexCoordSet(primitive.emissiveTexture)) {
@@ -4194,11 +4210,23 @@ void Tileset::buildGltfDrawCommands(Renderer& renderer,
         cmd.uniforms["u_dielectricSpecularF0"] = {
             primitive.dielectricSpecularF0
         };
+        cmd.uniforms["u_specularFactor"] = {
+            primitive.specularFactor
+        };
+        cmd.uniforms["u_specularColorFactor"] = {
+            primitive.specularColorFactor[0],
+            primitive.specularColorFactor[1],
+            primitive.specularColorFactor[2]
+        };
         cmd.uniforms["u_hasMaterialTextures"] = {
             primitive.metallicRoughnessTexture.texture ? 1.0f : 0.0f,
             primitive.normalTexture.texture ? 1.0f : 0.0f,
             primitive.occlusionTexture.texture ? 1.0f : 0.0f,
             primitive.emissiveTexture.texture ? 1.0f : 0.0f
+        };
+        cmd.uniforms["u_hasSpecularTextures"] = {
+            primitive.specularTexture.texture ? 1.0f : 0.0f,
+            primitive.specularColorTexture.texture ? 1.0f : 0.0f
         };
         cmd.uniforms["u_emissiveFactor"] = {
             primitive.emissiveFactor[0],
@@ -4213,6 +4241,10 @@ void Tileset::buildGltfDrawCommands(Renderer& renderer,
         };
         cmd.uniforms["u_emissiveTexCoordSet"] = {
             static_cast<float>(primitive.emissiveTexture.texCoord)
+        };
+        cmd.uniforms["u_specularTexCoordSets"] = {
+            static_cast<float>(primitive.specularTexture.texCoord),
+            static_cast<float>(primitive.specularColorTexture.texCoord)
         };
         cmd.uniforms["u_alphaMode"] = {
             alphaModeUniform(primitive.alphaMode)
@@ -4247,6 +4279,14 @@ void Tileset::buildGltfDrawCommands(Renderer& renderer,
             "u_metallicRoughnessTexRotationSinCos",
             primitive.metallicRoughnessTexture);
         setTransformUniforms(
+            "u_specularTexOffsetScale",
+            "u_specularTexRotationSinCos",
+            primitive.specularTexture);
+        setTransformUniforms(
+            "u_specularColorTexOffsetScale",
+            "u_specularColorTexRotationSinCos",
+            primitive.specularColorTexture);
+        setTransformUniforms(
             "u_normalTexOffsetScale",
             "u_normalTexRotationSinCos",
             primitive.normalTexture);
@@ -4259,12 +4299,14 @@ void Tileset::buildGltfDrawCommands(Renderer& renderer,
             "u_emissiveTexRotationSinCos",
             primitive.emissiveTexture);
 
-        cmd.textures.resize(5, nullptr);
+        cmd.textures.resize(7, nullptr);
         cmd.textures[0] = primitive.baseColorTexture.texture;
         cmd.textures[1] = primitive.metallicRoughnessTexture.texture;
         cmd.textures[2] = primitive.normalTexture.texture;
         cmd.textures[3] = primitive.occlusionTexture.texture;
         cmd.textures[4] = primitive.emissiveTexture.texture;
+        cmd.textures[5] = primitive.specularTexture.texture;
+        cmd.textures[6] = primitive.specularColorTexture.texture;
         cmd.cullFace = !primitive.doubleSided;
         if (transitionOpacity < 0.999f ||
             primitive.alphaMode == GltfAlphaMode::Blend) {

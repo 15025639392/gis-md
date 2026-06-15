@@ -670,9 +670,17 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
         setFragmentUniform("u_emissiveTexCoordSet", 24);
         setFragmentUniform("u_unlit", 25);
         setFragmentUniform("u_dielectricSpecularF0", 26);
+        setFragmentUniform("u_hasSpecularTextures", 27);
+        setFragmentUniform("u_specularFactor", 28);
+        setFragmentUniform("u_specularColorFactor", 29);
+        setFragmentUniform("u_specularTexOffsetScale", 30);
+        setFragmentUniform("u_specularTexRotationSinCos", 31);
+        setFragmentUniform("u_specularColorTexOffsetScale", 32);
+        setFragmentUniform("u_specularColorTexRotationSinCos", 33);
+        setFragmentUniform("u_specularTexCoordSets", 34);
 
         // 纹理绑定
-        const NSUInteger maxMaterialTextures = 5;
+        const NSUInteger maxMaterialTextures = 7;
         const NSUInteger materialTextureCount =
             std::min<NSUInteger>(cmd.textures.size(), maxMaterialTextures);
         for (NSUInteger textureIndex = 0;
