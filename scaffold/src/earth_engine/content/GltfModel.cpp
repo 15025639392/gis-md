@@ -1008,6 +1008,10 @@ std::optional<std::vector<std::vector<uint8_t>>> loadBuffers(
         if (buffer.size() < declaredLength) {
             return std::nullopt;
         }
+        if (i == 0 && uri.empty() && !binaryChunk.empty() &&
+            buffer.size() - declaredLength > 3u) {
+            return std::nullopt;
+        }
         if (buffer.size() > declaredLength) {
             buffer.resize(declaredLength);
         }

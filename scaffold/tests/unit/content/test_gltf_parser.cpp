@@ -2146,6 +2146,48 @@ TEST(GltfParserTest, RejectsGlbWhenFirstChunkIsNotJson) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, ParsesGlbWithSpecPaddingAfterBinaryBuffer) {
+    auto chunks = triangleGlbJsonAndBinChunks();
+    std::string jsonText(chunks.first.begin(), chunks.first.end());
+    const std::string marker = "\"buffers\":[{\"byteLength\":";
+    const size_t markerPos = jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    const size_t lengthStart = markerPos + marker.size();
+    const size_t lengthEnd = jsonText.find('}', lengthStart);
+    ASSERT_NE(std::string::npos, lengthEnd);
+    jsonText.replace(
+        lengthStart,
+        lengthEnd - lengthStart,
+        std::to_string(chunks.second.size() + 1u));
+
+    std::vector<uint8_t> jsonBytes(jsonText.begin(), jsonText.end());
+    pad4(jsonBytes, 0x20);
+    chunks.second.insert(chunks.second.end(), {0u, 0u, 0u, 0u});
+    const std::vector<uint8_t> glb = makeGlbFromChunks({
+        {0x4E4F534Au, jsonBytes},
+        {0x004E4942u, chunks.second}});
+
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
+
+    ASSERT_NE(nullptr, model);
+    EXPECT_EQ(3u, model->vertexCount());
+    EXPECT_EQ(3u, model->indexCount());
+}
+
+TEST(GltfParserTest, RejectsGlbWithTooMuchBinaryPadding) {
+    auto chunks = triangleGlbJsonAndBinChunks();
+    chunks.second.insert(chunks.second.end(), {0u, 0u, 0u, 0u});
+    const std::vector<uint8_t> glb = makeGlbFromChunks({
+        {0x4E4F534Au, chunks.first},
+        {0x004E4942u, chunks.second}});
+
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, ParsesIndexedTriangleStripModeAsTriangleList) {
     const std::vector<uint8_t> glb = makeQuadPrimitiveModeGlb(5);
     std::unique_ptr<GltfModel> model = GltfParser::parse(glb.data(), glb.size());
