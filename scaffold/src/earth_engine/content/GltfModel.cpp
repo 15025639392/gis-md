@@ -440,28 +440,46 @@ std::optional<ParsedInput> parseInput(const uint8_t* data, size_t size) {
         const uint32_t totalLength = readU32LE(data + 8);
         if (version != 2 || totalLength > size) return std::nullopt;
 
-        std::string jsonChunk;
-        std::vector<uint8_t> binChunk;
         size_t offset = 12;
-        while (offset + 8 <= totalLength) {
+        if (offset + 8 > totalLength) return std::nullopt;
+        const uint32_t jsonChunkLength = readU32LE(data + offset);
+        const uint32_t jsonChunkType = readU32LE(data + offset + 4);
+        offset += 8;
+        if (jsonChunkType != kGlbJsonChunk ||
+            offset + jsonChunkLength > totalLength) {
+            return std::nullopt;
+        }
+        std::string jsonChunk(
+            reinterpret_cast<const char*>(data + offset),
+            jsonChunkLength);
+        offset += jsonChunkLength;
+
+        std::vector<uint8_t> binChunk;
+        if (offset + 8 <= totalLength) {
             const uint32_t chunkLength = readU32LE(data + offset);
             const uint32_t chunkType = readU32LE(data + offset + 4);
             offset += 8;
-            if (offset + chunkLength > totalLength) return std::nullopt;
-            if (chunkType == kGlbJsonChunk) {
-                jsonChunk.assign(
-                    reinterpret_cast<const char*>(data + offset),
-                    chunkLength);
-            } else if (chunkType == kGlbBinChunk) {
-                binChunk.assign(data + offset, data + offset + chunkLength);
+            if (chunkType != kGlbBinChunk ||
+                offset + chunkLength > totalLength) {
+                return std::nullopt;
             }
-            offset += chunkLength;
+            binChunk.assign(data + offset, data + offset + chunkLength);
         }
         if (jsonChunk.empty()) return std::nullopt;
         json doc = json::parse(trimRightJsonPadding(std::move(jsonChunk)),
                                nullptr,
                                false);
         if (doc.is_discarded()) return std::nullopt;
+        if (!binChunk.empty()) {
+            const auto buffersIt = doc.find("buffers");
+            if (buffersIt == doc.end() ||
+                !buffersIt->is_array() ||
+                buffersIt->empty() ||
+                !(*buffersIt)[0].is_object() ||
+                (*buffersIt)[0].contains("uri")) {
+                return std::nullopt;
+            }
+        }
         return ParsedInput{std::move(doc), std::move(binChunk)};
     }
 

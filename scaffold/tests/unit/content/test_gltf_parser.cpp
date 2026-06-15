@@ -370,6 +370,52 @@ std::vector<uint8_t> makeTriangleGlb(
     return glb;
 }
 
+uint32_t readTestU32LE(const std::vector<uint8_t>& bytes, size_t offset) {
+    return uint32_t(bytes[offset]) |
+           (uint32_t(bytes[offset + 1]) << 8) |
+           (uint32_t(bytes[offset + 2]) << 16) |
+           (uint32_t(bytes[offset + 3]) << 24);
+}
+
+std::vector<uint8_t> makeGlbFromChunks(
+    const std::vector<std::pair<uint32_t, std::vector<uint8_t>>>& chunks) {
+    size_t byteLength = 12u;
+    for (const auto& chunk : chunks) {
+        byteLength += 8u + chunk.second.size();
+    }
+
+    std::vector<uint8_t> glb;
+    appendU32(glb, 0x46546C67u);
+    appendU32(glb, 2u);
+    appendU32(glb, static_cast<uint32_t>(byteLength));
+    for (const auto& chunk : chunks) {
+        appendU32(glb, static_cast<uint32_t>(chunk.second.size()));
+        appendU32(glb, chunk.first);
+        glb.insert(glb.end(), chunk.second.begin(), chunk.second.end());
+    }
+    return glb;
+}
+
+std::pair<std::vector<uint8_t>, std::vector<uint8_t>>
+triangleGlbJsonAndBinChunks() {
+    const std::vector<uint8_t> glb = makeTriangleGlb();
+    const uint32_t jsonLength = readTestU32LE(glb, 12u);
+    const size_t jsonOffset = 20u;
+    const size_t binHeaderOffset = jsonOffset + jsonLength;
+    const uint32_t binLength = readTestU32LE(glb, binHeaderOffset);
+    const size_t binOffset = binHeaderOffset + 8u;
+
+    return {
+        std::vector<uint8_t>(
+            glb.begin() + static_cast<std::ptrdiff_t>(jsonOffset),
+            glb.begin() + static_cast<std::ptrdiff_t>(
+                jsonOffset + jsonLength)),
+        std::vector<uint8_t>(
+            glb.begin() + static_cast<std::ptrdiff_t>(binOffset),
+            glb.begin() + static_cast<std::ptrdiff_t>(
+                binOffset + binLength))};
+}
+
 std::vector<uint8_t> makeTriangleGlbWithNonFiniteAttribute(
     NonFiniteTriangleAttribute attribute) {
     return makeTriangleGlb(
@@ -2056,6 +2102,46 @@ TEST(GltfParserTest, RejectsAssetMinVersionGreaterThanVersion) {
         "\"asset\":{\"version\":\"2.0\",\"minVersion\":\"2.1\"}");
 
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsGlbWithBinaryChunkAndFirstBufferUri) {
+    auto chunks = triangleGlbJsonAndBinChunks();
+    std::string jsonText(chunks.first.begin(), chunks.first.end());
+    const std::string marker = "\"buffers\":[{";
+    const size_t markerPos = jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    jsonText.insert(markerPos + marker.size(), "\"uri\":\"external.bin\",");
+
+    std::vector<uint8_t> jsonBytes(jsonText.begin(), jsonText.end());
+    pad4(jsonBytes, 0x20);
+    const std::vector<uint8_t> glb = makeGlbFromChunks({
+        {0x4E4F534Au, jsonBytes},
+        {0x004E4942u, chunks.second}});
+
+    bool resolvedExternalBuffer = false;
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        glb.data(),
+        glb.size(),
+        [&](const std::string& uri) {
+            resolvedExternalBuffer = true;
+            return uri == "external.bin" ? chunks.second
+                                         : std::vector<uint8_t>{};
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(resolvedExternalBuffer);
+}
+
+TEST(GltfParserTest, RejectsGlbWhenFirstChunkIsNotJson) {
+    auto chunks = triangleGlbJsonAndBinChunks();
+    const std::vector<uint8_t> glb = makeGlbFromChunks({
+        {0x004E4942u, chunks.second},
+        {0x4E4F534Au, chunks.first}});
+
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
 
     EXPECT_EQ(nullptr, model);
 }
