@@ -7306,6 +7306,114 @@ TEST(GltfParserTest, RejectsUnsupportedBasisuTextureExtensionWithoutTranscoder) 
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsDeclaredDracoPrimitiveExtensionBeforeLoadingBuffers) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":[\"KHR_draco_mesh_compression\"],"
+        "\"extensionsRequired\":[\"KHR_draco_mesh_compression\"],");
+
+    const std::string primitiveMarker = "\"mode\":4";
+    const size_t primitivePos = fixture.jsonText.find(primitiveMarker);
+    ASSERT_NE(std::string::npos, primitivePos);
+    fixture.jsonText.replace(
+        primitivePos,
+        primitiveMarker.size(),
+        "\"mode\":4,"
+        "\"extensions\":{\"KHR_draco_mesh_compression\":{"
+        "\"bufferView\":0,\"attributes\":{\"POSITION\":0}}}");
+
+    bool resolvedResource = false;
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string&) {
+            resolvedResource = true;
+            return fixture.bin;
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(resolvedResource);
+}
+
+TEST(GltfParserTest, RejectsDeclaredMeshoptBufferViewExtensionBeforeLoadingBuffers) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":[\"EXT_meshopt_compression\"],"
+        "\"extensionsRequired\":[\"EXT_meshopt_compression\"],");
+
+    const std::string bufferViewMarker =
+        "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36}";
+    const size_t bufferViewPos = fixture.jsonText.find(bufferViewMarker);
+    ASSERT_NE(std::string::npos, bufferViewPos);
+    fixture.jsonText.replace(
+        bufferViewPos,
+        bufferViewMarker.size(),
+        "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36,"
+        "\"extensions\":{\"EXT_meshopt_compression\":{"
+        "\"buffer\":0,\"byteOffset\":0,\"byteLength\":1,"
+        "\"byteStride\":12,\"count\":3,\"mode\":\"ATTRIBUTES\"}}}");
+
+    bool resolvedResource = false;
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string&) {
+            resolvedResource = true;
+            return fixture.bin;
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(resolvedResource);
+}
+
+TEST(GltfParserTest, RejectsDeclaredBasisuTextureExtensionBeforeDecode) {
+    ExternalGltfFixture fixture =
+        makeTexturedExternalBufferTriangleGltf("image.bin");
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    ASSERT_NE(std::string::npos, assetPos);
+    fixture.jsonText.insert(
+        assetPos + assetMarker.size(),
+        "\"extensionsUsed\":[\"KHR_texture_basisu\"],"
+        "\"extensionsRequired\":[\"KHR_texture_basisu\"],");
+
+    const std::string textureMarker =
+        "\"textures\":[{\"source\":0,\"sampler\":0}]";
+    const size_t texturePos = fixture.jsonText.find(textureMarker);
+    ASSERT_NE(std::string::npos, texturePos);
+    fixture.jsonText.replace(
+        texturePos,
+        textureMarker.size(),
+        "\"textures\":[{\"source\":0,\"sampler\":0,"
+        "\"extensions\":{\"KHR_texture_basisu\":{\"source\":0}}}]");
+
+    bool resolvedResource = false;
+    bool decodedImage = false;
+    std::unique_ptr<GltfModel> model = GltfParser::parse(
+        reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+        fixture.jsonText.size(),
+        [&](const std::string&) {
+            resolvedResource = true;
+            return std::vector<uint8_t>{9, 8, 7, 6};
+        },
+        [&](const uint8_t*, size_t) -> std::optional<GltfImage> {
+            decodedImage = true;
+            return std::nullopt;
+        });
+
+    EXPECT_EQ(nullptr, model);
+    EXPECT_FALSE(resolvedResource);
+    EXPECT_FALSE(decodedImage);
+}
+
 TEST(GltfParserTest, RejectsExtTextureWebpDeclarationWithoutTextureExtension) {
     ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf("image.bin");
