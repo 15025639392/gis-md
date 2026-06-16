@@ -5956,6 +5956,32 @@ void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
     check(payloadWithoutDeclarationProvider.rootTiles().empty(),
           "TilesetJsonContentProvider: 3DTILES_content_gltf payload without declaration exposes no roots");
 
+    const std::string payloadWithUnknownFieldJson = R"json({
+      "asset": {"version": "1.0"},
+      "extensionsUsed": ["3DTILES_content_gltf"],
+      "extensions": {
+        "3DTILES_content_gltf": {
+          "extensionsUsed": ["KHR_materials_unlit"],
+          "decoder": "custom"
+        }
+      },
+      "geometricError": 100,
+      "root": {
+        "boundingVolume": {"region": [-0.01, -0.01, 0.01, 0.01, 0, 100]},
+        "geometricError": 64
+      }
+    })json";
+    TilesetJsonContentProvider payloadWithUnknownFieldProvider(
+        "file:///content-gltf-payload-unknown-field/tileset.json",
+        std::vector<uint8_t>(
+            payloadWithUnknownFieldJson.begin(),
+            payloadWithUnknownFieldJson.end()),
+        "3DTILES_content_gltf payload with unknown field fixture");
+    check(!payloadWithUnknownFieldProvider.valid(),
+          "TilesetJsonContentProvider: 3DTILES_content_gltf payload unknown field invalidates provider");
+    check(payloadWithUnknownFieldProvider.rootTiles().empty(),
+          "TilesetJsonContentProvider: 3DTILES_content_gltf payload unknown field exposes no roots");
+
     const std::string supportedTopLevelJson = R"json({
       "asset": {"version": "1.0"},
       "extensionsUsed": ["3DTILES_content_gltf"],

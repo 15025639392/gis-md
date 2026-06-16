@@ -1143,6 +1143,14 @@ bool hasUnsupportedContentGltfExtensionPayload(
     if (!contentGltfIt->is_object()) {
         return true;
     }
+    static constexpr std::array<const char*, 2> kAllowedContentGltfKeys = {
+        "extensionsRequired",
+        "extensionsUsed"};
+    if (!jsonObjectHasOnlyKeys(
+            *contentGltfIt,
+            kAllowedContentGltfKeys)) {
+        return true;
+    }
     return !requiredExtensionsAreUsedOnObject(*contentGltfIt) ||
            gltfContentExtensionArrayHasUnsupportedEntries(
                *contentGltfIt,
