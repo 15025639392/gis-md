@@ -4151,6 +4151,121 @@ TEST(GltfParserTest, RejectsMaterialOcclusionAndEmissiveOutOfRange) {
     }
 }
 
+TEST(GltfParserTest, RejectsUnknownTextureInfoFields) {
+    {
+        ExternalGltfFixture fixture =
+            makeTexturedExternalBufferTriangleGltf(
+                "data:image/png;base64,AQIDBA==");
+        const std::string marker =
+            "\"baseColorTexture\":{\"index\":0,\"texCoord\":0}";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "\"baseColorTexture\":{\"index\":0,\"texCoord\":0,"
+            "\"vendorUv\":1}");
+
+        std::unique_ptr<GltfModel> model =
+            parseExternalFixtureWithSolidImage(fixture);
+
+        EXPECT_EQ(nullptr, model) << "core textureInfo";
+    }
+
+    {
+        ExternalGltfFixture fixture = makeFullMaterialExternalBufferTriangleGltf();
+        const std::string marker =
+            "\"normalTexture\":{\"index\":2,\"texCoord\":0,\"scale\":0.35}";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "\"normalTexture\":{\"index\":2,\"texCoord\":0,\"scale\":0.35,"
+            "\"strength\":0.5}");
+
+        std::unique_ptr<GltfModel> model =
+            parseExternalFixtureWithSolidImage(fixture);
+
+        EXPECT_EQ(nullptr, model) << "normalTextureInfo";
+    }
+
+    {
+        ExternalGltfFixture fixture = makeFullMaterialExternalBufferTriangleGltf();
+        const std::string marker =
+            "\"occlusionTexture\":{\"index\":3,\"texCoord\":0,"
+            "\"strength\":0.65}";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "\"occlusionTexture\":{\"index\":3,\"texCoord\":0,"
+            "\"strength\":0.65,\"scale\":0.5}");
+
+        std::unique_ptr<GltfModel> model =
+            parseExternalFixtureWithSolidImage(fixture);
+
+        EXPECT_EQ(nullptr, model) << "occlusionTextureInfo";
+    }
+}
+
+TEST(GltfParserTest, RejectsUnknownMaterialExtensionTextureInfoFields) {
+    {
+        ExternalGltfFixture fixture =
+            makeTexturedExternalBufferTriangleGltf("image.bin");
+        const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+        const size_t assetPos = fixture.jsonText.find(assetMarker);
+        ASSERT_NE(std::string::npos, assetPos);
+        fixture.jsonText.insert(
+            assetPos + assetMarker.size(),
+            "\"extensionsUsed\":[\"KHR_materials_specular\"],"
+            "\"extensionsRequired\":[\"KHR_materials_specular\"],");
+
+        const std::string materialMarker = "\"materials\":[{";
+        const size_t materialPos = fixture.jsonText.find(materialMarker);
+        ASSERT_NE(std::string::npos, materialPos);
+        fixture.jsonText.replace(
+            materialPos,
+            materialMarker.size(),
+            "\"materials\":[{\"extensions\":{\"KHR_materials_specular\":{"
+            "\"specularTexture\":{\"index\":0,\"texCoord\":0,"
+            "\"vendorUv\":1}}},");
+
+        std::unique_ptr<GltfModel> model =
+            parseExternalFixtureWithSolidImage(fixture);
+
+        EXPECT_EQ(nullptr, model) << "specularTexture";
+    }
+
+    {
+        ExternalGltfFixture fixture =
+            makeTexturedExternalBufferTriangleGltf("image.bin");
+        const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+        const size_t assetPos = fixture.jsonText.find(assetMarker);
+        ASSERT_NE(std::string::npos, assetPos);
+        fixture.jsonText.insert(
+            assetPos + assetMarker.size(),
+            "\"extensionsUsed\":[\"KHR_materials_clearcoat\"],"
+            "\"extensionsRequired\":[\"KHR_materials_clearcoat\"],");
+
+        const std::string materialMarker = "\"materials\":[{";
+        const size_t materialPos = fixture.jsonText.find(materialMarker);
+        ASSERT_NE(std::string::npos, materialPos);
+        fixture.jsonText.replace(
+            materialPos,
+            materialMarker.size(),
+            "\"materials\":[{\"extensions\":{\"KHR_materials_clearcoat\":{"
+            "\"clearcoatNormalTexture\":{\"index\":0,\"texCoord\":0,"
+            "\"scale\":0.5,\"strength\":0.5}}},");
+
+        std::unique_ptr<GltfModel> model =
+            parseExternalFixtureWithSolidImage(fixture);
+
+        EXPECT_EQ(nullptr, model) << "clearcoatNormalTexture";
+    }
+}
+
 TEST(GltfParserTest, RejectsUnreferencedMaterialElementTypeMismatch) {
     ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf(
@@ -13606,6 +13721,22 @@ TEST(GltfParserTest, TilesetContentGltfRejectsUnsupportedGltfExtensions) {
         "file:///earth-md/tileset.json",
         bytesFromString(tilesetJson),
         "unsupported 3DTILES_content_gltf fixture");
+
+    EXPECT_FALSE(provider.valid());
+    EXPECT_TRUE(provider.rootTiles().empty());
+}
+
+TEST(GltfParserTest, TilesetContentGltfRejectsUnknownPayloadFields) {
+    const std::string tilesetJson = makeTilesetJsonWithRootContent(
+        "root.glb",
+        "\"extensionsUsed\":[\"3DTILES_content_gltf\"],"
+        "\"extensions\":{\"3DTILES_content_gltf\":{"
+        "\"extensionsUsed\":[\"KHR_mesh_quantization\"],"
+        "\"profile\":\"mobile\"}},");
+    TilesetJsonContentProvider provider(
+        "file:///earth-md/tileset.json",
+        bytesFromString(tilesetJson),
+        "unknown 3DTILES_content_gltf payload field fixture");
 
     EXPECT_FALSE(provider.valid());
     EXPECT_TRUE(provider.rootTiles().empty());

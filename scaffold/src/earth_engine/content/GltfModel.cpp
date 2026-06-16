@@ -2826,10 +2826,15 @@ bool jsonNodeIndexArray(const json& value, size_t nodeCount) {
     return true;
 }
 
-bool validateTextureInfoShape(
+template <size_t N>
+bool validateTextureInfoShapeWithKeys(
     const json& textureInfo,
-    size_t textureCount) {
+    size_t textureCount,
+    const std::array<const char*, N>& allowedKeys) {
     if (!textureInfo.is_object()) {
+        return false;
+    }
+    if (!jsonObjectHasOnlyKeys(textureInfo, allowedKeys)) {
         return false;
     }
     const auto textureIndex = integerProperty(textureInfo, "index", -1);
@@ -2852,6 +2857,56 @@ bool validateTextureInfoShape(
         return false;
     }
     return validTexCoordSetIndex(resolvedTexCoord);
+}
+
+bool validateTextureInfoShape(
+    const json& textureInfo,
+    size_t textureCount) {
+    static constexpr std::array<const char*, 4> kAllowedTextureInfoKeys = {
+        "index",
+        "texCoord",
+        "extensions",
+        "extras"};
+    return validateTextureInfoShapeWithKeys(
+        textureInfo,
+        textureCount,
+        kAllowedTextureInfoKeys);
+}
+
+bool validateNormalTextureInfoShape(
+    const json& textureInfo,
+    size_t textureCount) {
+    static constexpr std::array<const char*, 5> kAllowedNormalTextureInfoKeys = {
+        "index",
+        "texCoord",
+        "scale",
+        "extensions",
+        "extras"};
+    return validateTextureInfoShapeWithKeys(
+        textureInfo,
+        textureCount,
+        kAllowedNormalTextureInfoKeys) &&
+           numberProperty(textureInfo, "scale", 1.0f).has_value();
+}
+
+bool validateOcclusionTextureInfoShape(
+    const json& textureInfo,
+    size_t textureCount) {
+    static constexpr std::array<const char*, 5>
+        kAllowedOcclusionTextureInfoKeys = {
+            "index",
+            "texCoord",
+            "strength",
+            "extensions",
+            "extras"};
+    const auto strength = numberProperty(textureInfo, "strength", 1.0f);
+    return validateTextureInfoShapeWithKeys(
+               textureInfo,
+               textureCount,
+               kAllowedOcclusionTextureInfoKeys) &&
+           strength &&
+           *strength >= 0.0f &&
+           *strength <= 1.0f;
 }
 
 bool validateMaterialTextureInfo(
@@ -3591,13 +3646,9 @@ bool validateMaterialJson(const json& material, size_t textureCount) {
             const auto clearcoatNormalIt =
                 clearcoatIt->find("clearcoatNormalTexture");
             if (clearcoatNormalIt != clearcoatIt->end()) {
-                if (!validateTextureInfoShape(
+                if (!validateNormalTextureInfoShape(
                         *clearcoatNormalIt,
-                        textureCount) ||
-                    !numberProperty(
-                        *clearcoatNormalIt,
-                        "scale",
-                        1.0f)) {
+                        textureCount)) {
                     return false;
                 }
             }
@@ -3620,18 +3671,15 @@ bool validateMaterialJson(const json& material, size_t textureCount) {
 
     const auto normalIt = material.find("normalTexture");
     if (normalIt != material.end()) {
-        if (!validateTextureInfoShape(*normalIt, textureCount) ||
-            !numberProperty(*normalIt, "scale", 1.0f)) {
+        if (!validateNormalTextureInfoShape(*normalIt, textureCount)) {
             return false;
         }
     }
     const auto occlusionIt = material.find("occlusionTexture");
     if (occlusionIt != material.end()) {
-        const auto strength = numberProperty(*occlusionIt, "strength", 1.0f);
-        if (!validateTextureInfoShape(*occlusionIt, textureCount) ||
-            !strength ||
-            *strength < 0.0f ||
-            *strength > 1.0f) {
+        if (!validateOcclusionTextureInfoShape(
+                *occlusionIt,
+                textureCount)) {
             return false;
         }
     }
