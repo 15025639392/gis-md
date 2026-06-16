@@ -5333,6 +5333,22 @@ TEST(GltfParserTest, RejectsTextureWithOutOfRangeSourceIndex) {
     EXPECT_FALSE(decodedImage);
 }
 
+TEST(GltfParserTest, RejectsTextureInfoIndexIntegerOverflow) {
+    ExternalGltfFixture fixture = makeFullMaterialExternalBufferTriangleGltf();
+    const std::string marker = "\"baseColorTexture\":{\"index\":0";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "\"baseColorTexture\":{\"index\":4294967296");
+
+    std::unique_ptr<GltfModel> model =
+        parseExternalFixtureWithSolidImage(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsTexturesTypeMismatch) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string marker = "\"scene\":0";
@@ -8314,6 +8330,21 @@ TEST(GltfParserTest, RejectsGpuInstancingCustomAttributeWithoutRendererSupport) 
         markerPos,
         marker.size(),
         "\"SCALE\":6,\"_CUSTOM\":4}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsGpuInstancingAccessorIndexIntegerOverflow) {
+    ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
+    const std::string marker = "\"TRANSLATION\":4";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "\"TRANSLATION\":4294967300");
 
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
 

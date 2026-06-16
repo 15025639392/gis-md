@@ -30,6 +30,7 @@ constexpr uint32_t kGlbJsonChunk = 0x4E4F534Au;
 constexpr uint32_t kGlbBinChunk = 0x004E4942u;
 
 std::optional<size_t> jsonSizeValue(const json& value);
+std::optional<int> jsonIntValue(const json& value);
 
 int64_t gltfFeaturePropertyExtraByteSize(
     const GltfFeaturePropertyValue& value) {
@@ -759,10 +760,11 @@ bool accessorUsesMeshQuantization(
     const json& accessors,
     const std::string& semantic,
     const json& accessorIndexJson) {
-    if (!accessorIndexJson.is_number_integer()) {
+    const auto accessorIndexValue = jsonIntValue(accessorIndexJson);
+    if (!accessorIndexValue) {
         return false;
     }
-    const int accessorIndex = accessorIndexJson.get<int>();
+    const int accessorIndex = *accessorIndexValue;
     if (accessorIndex < 0 ||
         static_cast<size_t>(accessorIndex) >= accessors.size()) {
         return false;
@@ -1113,10 +1115,14 @@ std::optional<std::vector<uint8_t>> bufferViewBytes(
         return std::nullopt;
     }
     const auto bufferIt = view.find("buffer");
-    if (bufferIt == view.end() || !bufferIt->is_number_integer()) {
+    if (bufferIt == view.end()) {
         return std::nullopt;
     }
-    const int bufferIndex = bufferIt->get<int>();
+    const auto bufferIndexValue = jsonIntValue(*bufferIt);
+    if (!bufferIndexValue) {
+        return std::nullopt;
+    }
+    const int bufferIndex = *bufferIndexValue;
     if (bufferIndex < 0 || static_cast<size_t>(bufferIndex) >= buffers.size()) {
         return std::nullopt;
     }
@@ -1161,7 +1167,8 @@ std::optional<std::vector<uint8_t>> embeddedImageBytes(
         return std::nullopt;
     }
     auto mimeTypeIt = imageJson.find("mimeType");
-    if (!bufferViewIt->is_number_integer() ||
+    const auto bufferViewIndex = jsonIntValue(*bufferViewIt);
+    if (!bufferViewIndex ||
         mimeTypeIt == imageJson.end() ||
         !mimeTypeIt->is_string()) {
         return std::nullopt;
@@ -1170,7 +1177,7 @@ std::optional<std::vector<uint8_t>> embeddedImageBytes(
     if (!supportedImageMimeType(mimeType, allowWebp)) {
         return std::nullopt;
     }
-    return bufferViewBytes(doc, buffers, bufferViewIt->get<int>());
+    return bufferViewBytes(doc, buffers, *bufferViewIndex);
 }
 
 std::optional<GltfTextureFilter> parseMagFilter(int filter) {
@@ -1241,6 +1248,26 @@ bool trianglePrimitiveMode(int primitiveMode) {
            primitiveMode == 6;
 }
 
+std::optional<int> jsonIntValue(const json& value) {
+    if (value.is_number_unsigned()) {
+        const uint64_t unsignedValue = value.get<uint64_t>();
+        if (unsignedValue >
+            static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+            return std::nullopt;
+        }
+        return static_cast<int>(unsignedValue);
+    }
+    if (!value.is_number_integer()) {
+        return std::nullopt;
+    }
+    const int64_t signedValue = value.get<int64_t>();
+    if (signedValue < std::numeric_limits<int>::min() ||
+        signedValue > std::numeric_limits<int>::max()) {
+        return std::nullopt;
+    }
+    return static_cast<int>(signedValue);
+}
+
 std::optional<int> samplerIntProperty(
     const json& object,
     const char* name,
@@ -1249,10 +1276,7 @@ std::optional<int> samplerIntProperty(
     if (it == object.end()) {
         return defaultValue;
     }
-    if (!it->is_number_integer()) {
-        return std::nullopt;
-    }
-    return it->get<int>();
+    return jsonIntValue(*it);
 }
 
 bool validateSamplerJson(const json& samplerJson) {
@@ -1324,7 +1348,10 @@ bool validImageSourceFields(const json& imageJson, bool allowWebp = false) {
     if (uriIt != imageJson.end() && !uriIt->is_string()) {
         return false;
     }
-    if (bufferViewIt != imageJson.end() && !bufferViewIt->is_number_integer()) {
+    const auto bufferViewIndex = bufferViewIt == imageJson.end()
+        ? std::optional<int>()
+        : jsonIntValue(*bufferViewIt);
+    if (bufferViewIt != imageJson.end() && !bufferViewIndex) {
         return false;
     }
     if (mimeTypeIt != imageJson.end() && !mimeTypeIt->is_string()) {
@@ -1336,7 +1363,7 @@ bool validImageSourceFields(const json& imageJson, bool allowWebp = false) {
     if (uriIt != imageJson.end() && uriIt->get<std::string>().empty()) {
         return false;
     }
-    if (bufferViewIt != imageJson.end() && bufferViewIt->get<int>() < 0) {
+    if (bufferViewIndex && *bufferViewIndex < 0) {
         return false;
     }
     if (mimeTypeIt != imageJson.end() &&
@@ -1369,21 +1396,18 @@ bool imageBufferViewReferenceInRange(const json& doc, const json& imageJson) {
     if (bufferViewIt == imageJson.end()) {
         return true;
     }
-    if (!bufferViewIt->is_number_integer()) {
-        return false;
-    }
-    const int bufferViewIndex = bufferViewIt->get<int>();
-    if (bufferViewIndex < 0) {
+    const auto bufferViewIndex = jsonIntValue(*bufferViewIt);
+    if (!bufferViewIndex || *bufferViewIndex < 0) {
         return false;
     }
     const auto bufferViewsIt = doc.find("bufferViews");
     if (bufferViewsIt == doc.end() || !bufferViewsIt->is_array()) {
         return false;
     }
-    if (static_cast<size_t>(bufferViewIndex) >= bufferViewsIt->size()) {
+    if (static_cast<size_t>(*bufferViewIndex) >= bufferViewsIt->size()) {
         return false;
     }
-    return (*bufferViewsIt)[static_cast<size_t>(bufferViewIndex)].is_object();
+    return (*bufferViewsIt)[static_cast<size_t>(*bufferViewIndex)].is_object();
 }
 
 bool imageSourceDeclaresNonWebp(const json& imageJson) {
@@ -1423,28 +1447,25 @@ std::optional<int> webpTextureSourceIndex(const json& textureJson) {
         return -1;
     }
     const auto sourceIt = webpIt->find("source");
-    if (sourceIt == webpIt->end() || !sourceIt->is_number_integer()) {
+    if (sourceIt == webpIt->end()) {
         return -1;
     }
-    return sourceIt->get<int>();
+    return jsonIntValue(*sourceIt).value_or(-1);
 }
 
 bool validCoreTextureSource(const json& imageArray, const json& sourceJson) {
-    if (!sourceJson.is_number_integer()) {
-        return false;
-    }
-    const int sourceIndex = sourceJson.get<int>();
-    if (sourceIndex < 0) {
+    const auto sourceIndex = jsonIntValue(sourceJson);
+    if (!sourceIndex || *sourceIndex < 0) {
         return false;
     }
     if (!imageArray.is_array()) {
         return false;
     }
-    if (static_cast<size_t>(sourceIndex) >= imageArray.size()) {
+    if (static_cast<size_t>(*sourceIndex) >= imageArray.size()) {
         return false;
     }
     return validImageSourceFields(
-        imageArray[static_cast<size_t>(sourceIndex)],
+        imageArray[static_cast<size_t>(*sourceIndex)],
         false);
 }
 
@@ -1458,14 +1479,12 @@ bool validateTextureJson(
 
     const auto samplerIt = textureJson.find("sampler");
     if (samplerIt != textureJson.end()) {
-        if (!samplerIt->is_number_integer()) {
-            return false;
-        }
-        const int samplerIndex = samplerIt->get<int>();
-        if (samplerIndex < 0 ||
+        const auto samplerIndex = jsonIntValue(*samplerIt);
+        if (!samplerIndex ||
+            *samplerIndex < 0 ||
             !samplers ||
             !samplers->is_array() ||
-            static_cast<size_t>(samplerIndex) >= samplers->size()) {
+            static_cast<size_t>(*samplerIndex) >= samplers->size()) {
             return false;
         }
     }
@@ -1521,13 +1540,11 @@ std::optional<std::vector<GltfTexture>> loadTextures(
         int samplerIndex = -1;
         const auto samplerIt = textureJson.find("sampler");
         if (samplerIt != textureJson.end()) {
-            if (!samplerIt->is_number_integer()) {
+            const auto parsedSamplerIndex = jsonIntValue(*samplerIt);
+            if (!parsedSamplerIndex || *parsedSamplerIndex < 0) {
                 return std::nullopt;
             }
-            samplerIndex = samplerIt->get<int>();
-            if (samplerIndex < 0) {
-                return std::nullopt;
-            }
+            samplerIndex = *parsedSamplerIndex;
         }
         auto sampler = parseSampler(doc, samplerIndex);
         if (!sampler) {
@@ -1546,9 +1563,12 @@ std::optional<std::vector<GltfTexture>> loadTextures(
         if (!useWebpSource && sourceIt == textureJson.end()) {
             continue;
         }
+        const auto coreSourceIndex = sourceIt == textureJson.end()
+            ? std::optional<int>()
+            : jsonIntValue(*sourceIt);
         const int sourceIndex = useWebpSource
             ? *webpSourceIndex
-            : sourceIt->get<int>();
+            : coreSourceIndex.value_or(-1);
         if (sourceIndex < 0) {
             return std::nullopt;
         }
@@ -1654,10 +1674,7 @@ std::optional<int> integerProperty(
     if (it == object.end()) {
         return defaultValue;
     }
-    if (!it->is_number_integer()) {
-        return std::nullopt;
-    }
-    return it->get<int>();
+    return jsonIntValue(*it);
 }
 
 std::optional<float> numberProperty(
@@ -1822,6 +1839,13 @@ struct AccessorSpan {
 };
 
 std::optional<size_t> jsonSizeValue(const json& value) {
+    if (value.is_number_unsigned()) {
+        const uint64_t unsignedValue = value.get<uint64_t>();
+        if (unsignedValue > std::numeric_limits<size_t>::max()) {
+            return std::nullopt;
+        }
+        return static_cast<size_t>(unsignedValue);
+    }
     if (!value.is_number_integer()) {
         return std::nullopt;
     }
@@ -1843,11 +1867,11 @@ std::optional<size_t> jsonSizeProperty(const json& object,
 }
 
 std::optional<int> jsonIntProperty(const json& object, const char* name) {
-    auto it = object.find(name);
-    if (it == object.end() || !it->is_number_integer()) {
+    const auto it = object.find(name);
+    if (it == object.end()) {
         return std::nullopt;
     }
-    return it->get<int>();
+    return jsonIntValue(*it);
 }
 
 const uint8_t* accessorElementPtr(const AccessorSpan& span, size_t index) {
@@ -2720,10 +2744,11 @@ bool jsonNodeIndexArray(const json& value, size_t nodeCount) {
         return false;
     }
     for (const json& nodeIndex : value) {
-        if (!nodeIndex.is_number_integer()) {
+        const auto indexValue = jsonIntValue(nodeIndex);
+        if (!indexValue) {
             return false;
         }
-        const int index = nodeIndex.get<int>();
+        const int index = *indexValue;
         if (index < 0 || static_cast<size_t>(index) >= nodeCount) {
             return false;
         }
@@ -3526,11 +3551,12 @@ bool validateGpuInstancingNodeExtensionShape(
         return false;
     }
     for (auto it = attributesIt->begin(); it != attributesIt->end(); ++it) {
+        const auto accessorIndexValue = jsonIntValue(it.value());
         if (!gpuInstancingAttributeSemanticSupported(it.key()) ||
-            !it.value().is_number_integer()) {
+            !accessorIndexValue) {
             return false;
         }
-        const int accessorIndex = it.value().get<int>();
+        const int accessorIndex = *accessorIndexValue;
         if (accessorIndex < 0 ||
             static_cast<size_t>(accessorIndex) >= accessors->size()) {
             return false;
@@ -3760,27 +3786,23 @@ bool validateSceneGraph(const json& doc,
                 return false;
             }
             if (node.contains("mesh")) {
-                if (!node["mesh"].is_number_integer()) {
-                    return false;
-                }
-                const int meshIndex = node["mesh"].get<int>();
-                if (meshIndex < 0 ||
+                const auto meshIndex = jsonIntValue(node["mesh"]);
+                if (!meshIndex ||
+                    *meshIndex < 0 ||
                     meshesIt == doc.end() ||
-                    static_cast<size_t>(meshIndex) >= meshesIt->size()) {
+                    static_cast<size_t>(*meshIndex) >= meshesIt->size()) {
                     return false;
                 }
             }
             if (node.contains("skin")) {
-                if (!node["skin"].is_number_integer()) {
-                    return false;
-                }
                 if (!node.contains("mesh")) {
                     return false;
                 }
-                const int skinIndex = node["skin"].get<int>();
-                if (skinIndex < 0 ||
+                const auto skinIndex = jsonIntValue(node["skin"]);
+                if (!skinIndex ||
+                    *skinIndex < 0 ||
                     skinsIt == doc.end() ||
-                    static_cast<size_t>(skinIndex) >= skinsIt->size()) {
+                    static_cast<size_t>(*skinIndex) >= skinsIt->size()) {
                     return false;
                 }
             }
@@ -3818,48 +3840,39 @@ bool validateSceneGraph(const json& doc,
                             allowLegacyBatchIdAttribute)) {
                         return false;
                     }
-                    if (!it.value().is_number_integer()) {
-                        return false;
-                    }
-                    const int accessorIndex = it.value().get<int>();
-                    if (accessorIndex < 0 ||
+                    const auto accessorIndex = jsonIntValue(it.value());
+                    if (!accessorIndex ||
+                        *accessorIndex < 0 ||
                         accessorsIt == doc.end() ||
-                        static_cast<size_t>(accessorIndex) >=
+                        static_cast<size_t>(*accessorIndex) >=
                             accessorsIt->size()) {
                         return false;
                     }
                 }
                 if (primitive.contains("indices")) {
-                    if (!primitive["indices"].is_number_integer()) {
-                        return false;
-                    }
-                    const int accessorIndex = primitive["indices"].get<int>();
-                    if (accessorIndex < 0 ||
+                    const auto accessorIndex = jsonIntValue(primitive["indices"]);
+                    if (!accessorIndex ||
+                        *accessorIndex < 0 ||
                         accessorsIt == doc.end() ||
-                        static_cast<size_t>(accessorIndex) >=
+                        static_cast<size_t>(*accessorIndex) >=
                             accessorsIt->size()) {
                         return false;
                     }
                 }
                 if (primitive.contains("material")) {
-                    if (!primitive["material"].is_number_integer()) {
-                        return false;
-                    }
-                    const int materialIndex = primitive["material"].get<int>();
-                    if (materialIndex < 0 ||
+                    const auto materialIndex = jsonIntValue(primitive["material"]);
+                    if (!materialIndex ||
+                        *materialIndex < 0 ||
                         materialsIt == doc.end() ||
-                        static_cast<size_t>(materialIndex) >=
+                        static_cast<size_t>(*materialIndex) >=
                             materialsIt->size()) {
                         return false;
                     }
                 }
-                if (primitive.contains("mode") &&
-                    !primitive["mode"].is_number_integer()) {
-                    return false;
-                }
                 if (primitive.contains("mode")) {
-                    const int primitiveMode = primitive["mode"].get<int>();
-                    if (!validRenderablePrimitiveMode(primitiveMode)) {
+                    const auto primitiveMode = jsonIntValue(primitive["mode"]);
+                    if (!primitiveMode ||
+                        !validRenderablePrimitiveMode(*primitiveMode)) {
                         return false;
                     }
                 }
@@ -3877,13 +3890,11 @@ bool validateSceneGraph(const json& doc,
                             if (!morphTargetSemanticSupported(it.key())) {
                                 return false;
                             }
-                            if (!it.value().is_number_integer()) {
-                                return false;
-                            }
-                            const int accessorIndex = it.value().get<int>();
-                            if (accessorIndex < 0 ||
+                            const auto accessorIndex = jsonIntValue(it.value());
+                            if (!accessorIndex ||
+                                *accessorIndex < 0 ||
                                 accessorsIt == doc.end() ||
-                                static_cast<size_t>(accessorIndex) >=
+                                static_cast<size_t>(*accessorIndex) >=
                                     accessorsIt->size()) {
                                 return false;
                             }
@@ -3906,23 +3917,20 @@ bool validateSceneGraph(const json& doc,
                 return false;
             }
             if (skin.contains("inverseBindMatrices")) {
-                if (!skin["inverseBindMatrices"].is_number_integer()) {
-                    return false;
-                }
-                const int accessorIndex = skin["inverseBindMatrices"].get<int>();
-                if (accessorIndex < 0 ||
+                const auto accessorIndex =
+                    jsonIntValue(skin["inverseBindMatrices"]);
+                if (!accessorIndex ||
+                    *accessorIndex < 0 ||
                     accessorsIt == doc.end() ||
-                    static_cast<size_t>(accessorIndex) >= accessorsIt->size()) {
+                    static_cast<size_t>(*accessorIndex) >= accessorsIt->size()) {
                     return false;
                 }
             }
             if (skin.contains("skeleton")) {
-                if (!skin["skeleton"].is_number_integer()) {
-                    return false;
-                }
-                const int skeleton = skin["skeleton"].get<int>();
-                if (skeleton < 0 ||
-                    static_cast<size_t>(skeleton) >= nodeCount) {
+                const auto skeleton = jsonIntValue(skin["skeleton"]);
+                if (!skeleton ||
+                    *skeleton < 0 ||
+                    static_cast<size_t>(*skeleton) >= nodeCount) {
                     return false;
                 }
             }
@@ -3945,13 +3953,11 @@ bool validateSceneGraph(const json& doc,
         }
     }
     if (doc.contains("scene")) {
-        if (!doc["scene"].is_number_integer()) {
-            return false;
-        }
-        const int sceneIndex = doc["scene"].get<int>();
-        if (sceneIndex < 0 ||
+        const auto sceneIndex = jsonIntValue(doc["scene"]);
+        if (!sceneIndex ||
+            *sceneIndex < 0 ||
             scenesIt == doc.end() ||
-            static_cast<size_t>(sceneIndex) >= scenesIt->size()) {
+            static_cast<size_t>(*sceneIndex) >= scenesIt->size()) {
             return false;
         }
     }
