@@ -640,12 +640,47 @@ bool versionGreater(
            (lhs.first == rhs.first && lhs.second > rhs.second);
 }
 
+bool validateTopLevelJsonKeys(const json& doc) {
+    static constexpr std::array<const char*, 19> kAllowedTopLevelKeys = {
+        "extensions",
+        "extras",
+        "extensionsUsed",
+        "extensionsRequired",
+        "accessors",
+        "animations",
+        "asset",
+        "buffers",
+        "bufferViews",
+        "cameras",
+        "images",
+        "materials",
+        "meshes",
+        "nodes",
+        "samplers",
+        "scene",
+        "scenes",
+        "skins",
+        "textures"};
+    return jsonObjectHasOnlyKeys(doc, kAllowedTopLevelKeys);
+}
+
+bool validateAssetJsonKeys(const json& asset) {
+    static constexpr std::array<const char*, 6> kAllowedAssetKeys = {
+        "extensions",
+        "extras",
+        "copyright",
+        "generator",
+        "version",
+        "minVersion"};
+    return jsonObjectHasOnlyKeys(asset, kAllowedAssetKeys);
+}
+
 bool validateAsset(const json& doc) {
-    if (!doc.is_object()) {
+    if (!validateTopLevelJsonKeys(doc)) {
         return false;
     }
     const auto assetIt = doc.find("asset");
-    if (assetIt == doc.end() || !assetIt->is_object()) {
+    if (assetIt == doc.end() || !validateAssetJsonKeys(*assetIt)) {
         return false;
     }
     const json& asset = *assetIt;
@@ -5582,6 +5617,44 @@ bool animationRotationKeyframesHaveNonZeroValues(
     return true;
 }
 
+bool validateAnimationJsonKeys(const json& animation) {
+    static constexpr std::array<const char*, 5> kAllowedAnimationKeys = {
+        "name",
+        "extensions",
+        "extras",
+        "channels",
+        "samplers"};
+    return jsonObjectHasOnlyKeys(animation, kAllowedAnimationKeys);
+}
+
+bool validateAnimationSamplerJsonKeys(const json& sampler) {
+    static constexpr std::array<const char*, 5> kAllowedSamplerKeys = {
+        "extensions",
+        "extras",
+        "input",
+        "interpolation",
+        "output"};
+    return jsonObjectHasOnlyKeys(sampler, kAllowedSamplerKeys);
+}
+
+bool validateAnimationChannelJsonKeys(const json& channel) {
+    static constexpr std::array<const char*, 4> kAllowedChannelKeys = {
+        "extensions",
+        "extras",
+        "sampler",
+        "target"};
+    return jsonObjectHasOnlyKeys(channel, kAllowedChannelKeys);
+}
+
+bool validateAnimationChannelTargetJsonKeys(const json& target) {
+    static constexpr std::array<const char*, 4> kAllowedTargetKeys = {
+        "extensions",
+        "extras",
+        "node",
+        "path"};
+    return jsonObjectHasOnlyKeys(target, kAllowedTargetKeys);
+}
+
 std::optional<std::vector<GltfAnimationRuntime>> parseAnimations(
     const json& doc,
     const std::vector<std::vector<uint8_t>>& buffers,
@@ -5598,7 +5671,7 @@ std::optional<std::vector<GltfAnimationRuntime>> parseAnimations(
     animations.reserve(animationsJson.size());
 
     for (const json& animationJson : animationsJson) {
-        if (!animationJson.is_object()) {
+        if (!validateAnimationJsonKeys(animationJson)) {
             return std::nullopt;
         }
 
@@ -5613,16 +5686,16 @@ std::optional<std::vector<GltfAnimationRuntime>> parseAnimations(
         std::vector<RawAnimationSampler> rawSamplers;
         rawSamplers.reserve(samplersJson.size());
         for (const json& samplerJson : samplersJson) {
-            const auto inputIndex = samplerJson.is_object() &&
-                    samplerJson.contains("input")
+            if (!validateAnimationSamplerJsonKeys(samplerJson)) {
+                return std::nullopt;
+            }
+            const auto inputIndex = samplerJson.contains("input")
                 ? jsonIntValue(samplerJson["input"])
                 : std::optional<int>();
-            const auto outputIndex = samplerJson.is_object() &&
-                    samplerJson.contains("output")
+            const auto outputIndex = samplerJson.contains("output")
                 ? jsonIntValue(samplerJson["output"])
                 : std::optional<int>();
-            if (!samplerJson.is_object() ||
-                !inputIndex ||
+            if (!inputIndex ||
                 !outputIndex) {
                 return std::nullopt;
             }
@@ -5693,14 +5766,16 @@ std::optional<std::vector<GltfAnimationRuntime>> parseAnimations(
         std::vector<std::pair<int, GltfAnimationPath>> animatedTargets;
         animatedTargets.reserve(channelsJson.size());
         for (const json& channelJson : channelsJson) {
-            const auto samplerIndex = channelJson.is_object() &&
-                    channelJson.contains("sampler")
+            if (!validateAnimationChannelJsonKeys(channelJson)) {
+                return std::nullopt;
+            }
+            const auto samplerIndex = channelJson.contains("sampler")
                 ? jsonIntValue(channelJson["sampler"])
                 : std::optional<int>();
-            if (!channelJson.is_object() ||
-                !samplerIndex ||
+            if (!samplerIndex ||
                 !channelJson.contains("target") ||
-                !channelJson["target"].is_object()) {
+                !validateAnimationChannelTargetJsonKeys(
+                    channelJson["target"])) {
                 return std::nullopt;
             }
 

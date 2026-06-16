@@ -2445,6 +2445,37 @@ TEST(GltfParserTest, RejectsMissingAssetObject) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsUnknownTopLevelAndAssetFields) {
+    {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string marker = "\"asset\":{\"version\":\"2.0\"},";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.insert(
+            markerPos + marker.size(),
+            "\"profile\":\"mobile\",");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "top-level";
+    }
+
+    {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string marker = "\"asset\":{\"version\":\"2.0\"}";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "\"asset\":{\"version\":\"2.0\",\"profile\":\"mobile\"}");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "asset";
+    }
+}
+
 TEST(GltfParserTest, RejectsAssetVersionTypeMismatch) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string marker = "\"version\":\"2.0\"";
@@ -4764,6 +4795,92 @@ TEST(GltfParserTest, RejectsAnimationChannelsTypeMismatch) {
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
 
     EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsUnknownAnimationObjectFields) {
+    auto makeAnimatedFixture = [] {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        appendAccessorToExternalFixture(
+            fixture,
+            "{\"bufferView\":0,\"componentType\":5126,"
+            "\"count\":1,\"type\":\"SCALAR\"},"
+            "{\"bufferView\":0,\"componentType\":5126,"
+            "\"count\":1,\"type\":\"VEC3\"}");
+        const std::string marker = "\"scene\":0";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        if (markerPos != std::string::npos) {
+            fixture.jsonText.replace(
+                markerPos,
+                marker.size(),
+                "\"animations\":[{\"samplers\":[{\"input\":4,\"output\":5}],"
+                "\"channels\":[{\"sampler\":0,"
+                "\"target\":{\"node\":0,\"path\":\"translation\"}}]}],"
+                "\"scene\":0");
+        }
+        return fixture;
+    };
+
+    {
+        ExternalGltfFixture fixture = makeAnimatedFixture();
+        const std::string marker = "\"animations\":[{\"samplers\"";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "\"animations\":[{\"profile\":\"mobile\",\"samplers\"");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "animation";
+    }
+
+    {
+        ExternalGltfFixture fixture = makeAnimatedFixture();
+        const std::string marker = "{\"input\":4,\"output\":5}";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "{\"input\":4,\"output\":5,\"rate\":30}");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "animation sampler";
+    }
+
+    {
+        ExternalGltfFixture fixture = makeAnimatedFixture();
+        const std::string marker = "{\"sampler\":0,\"target\"";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "{\"sampler\":0,\"weight\":1,\"target\"");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "animation channel";
+    }
+
+    {
+        ExternalGltfFixture fixture = makeAnimatedFixture();
+        const std::string marker =
+            "\"target\":{\"node\":0,\"path\":\"translation\"}";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "\"target\":{\"node\":0,\"path\":\"translation\","
+            "\"space\":\"local\"}");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "animation target";
+    }
 }
 
 TEST(GltfParserTest, RejectsAnimationWithoutChannels) {
