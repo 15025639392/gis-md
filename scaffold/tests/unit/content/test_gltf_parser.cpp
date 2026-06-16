@@ -4385,6 +4385,30 @@ TEST(GltfParserTest, ClampsRuntimeAnimationWhenLoopingDisabled) {
     EXPECT_NEAR(10.0, model->primitives[0].vertices[0].positionEcef.x(), 1e-12);
 }
 
+TEST(GltfParserTest, RejectsNonFiniteRuntimeAnimationTimeWithoutChangingPose) {
+    const std::vector<uint8_t> glb = makeAnimatedTranslationTriangleGlb();
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
+
+    ASSERT_NE(nullptr, model);
+    ASSERT_TRUE(model->updateAnimation(0.5));
+    const uint64_t revision = model->currentAnimationRevision();
+    ASSERT_GT(revision, 0u);
+    ASSERT_EQ(1u, model->primitives.size());
+    ASSERT_FALSE(model->primitives[0].vertices.empty());
+    const double animatedX =
+        model->primitives[0].vertices[0].positionEcef.x();
+    EXPECT_NEAR(5.0, animatedX, 1e-12);
+
+    EXPECT_FALSE(model->updateAnimation(
+        std::numeric_limits<double>::infinity()));
+    EXPECT_EQ(revision, model->currentAnimationRevision());
+    EXPECT_NEAR(
+        animatedX,
+        model->primitives[0].vertices[0].positionEcef.x(),
+        1e-12);
+}
+
 TEST(GltfParserTest, SelectsRuntimeAnimationByIndex) {
     const std::vector<uint8_t> glb = makeDualAnimationTranslationTriangleGlb();
     std::unique_ptr<GltfModel> model =

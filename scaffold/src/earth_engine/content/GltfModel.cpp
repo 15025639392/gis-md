@@ -7341,6 +7341,9 @@ bool GltfModel::updateAnimation(double timeSeconds) {
     if (animation.durationSeconds <= 0.0 || animation.channels.empty()) {
         return false;
     }
+    if (!std::isfinite(timeSeconds)) {
+        return false;
+    }
 
     double localTime = 0.0;
     if (animationLooping) {
@@ -7351,6 +7354,9 @@ bool GltfModel::updateAnimation(double timeSeconds) {
     } else {
         localTime =
             std::clamp(timeSeconds, 0.0, animation.durationSeconds);
+    }
+    if (!std::isfinite(localTime)) {
+        return false;
     }
     if (lastAnimationTimeSeconds >= 0.0 &&
         std::abs(localTime - lastAnimationTimeSeconds) < 1e-6) {
