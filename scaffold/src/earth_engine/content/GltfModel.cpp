@@ -3926,6 +3926,65 @@ bool validateNodeHierarchy(const json& nodes, const json* scenes) {
     return true;
 }
 
+bool validateNodeJsonKeys(const json& node) {
+    static constexpr std::array<const char*, 12> kAllowedNodeKeys = {
+        "name",
+        "extensions",
+        "extras",
+        "camera",
+        "children",
+        "skin",
+        "matrix",
+        "mesh",
+        "rotation",
+        "scale",
+        "translation",
+        "weights"};
+    return jsonObjectHasOnlyKeys(node, kAllowedNodeKeys);
+}
+
+bool validateMeshJsonKeys(const json& mesh) {
+    static constexpr std::array<const char*, 5> kAllowedMeshKeys = {
+        "name",
+        "extensions",
+        "extras",
+        "primitives",
+        "weights"};
+    return jsonObjectHasOnlyKeys(mesh, kAllowedMeshKeys);
+}
+
+bool validatePrimitiveJsonKeys(const json& primitive) {
+    static constexpr std::array<const char*, 7> kAllowedPrimitiveKeys = {
+        "extensions",
+        "extras",
+        "attributes",
+        "indices",
+        "material",
+        "mode",
+        "targets"};
+    return jsonObjectHasOnlyKeys(primitive, kAllowedPrimitiveKeys);
+}
+
+bool validateSkinJsonKeys(const json& skin) {
+    static constexpr std::array<const char*, 6> kAllowedSkinKeys = {
+        "name",
+        "extensions",
+        "extras",
+        "inverseBindMatrices",
+        "skeleton",
+        "joints"};
+    return jsonObjectHasOnlyKeys(skin, kAllowedSkinKeys);
+}
+
+bool validateSceneJsonKeys(const json& scene) {
+    static constexpr std::array<const char*, 4> kAllowedSceneKeys = {
+        "name",
+        "extensions",
+        "extras",
+        "nodes"};
+    return jsonObjectHasOnlyKeys(scene, kAllowedSceneKeys);
+}
+
 bool validateSceneGraph(const json& doc,
                         bool allowLegacyBatchIdAttribute) {
     const auto nodesIt = doc.find("nodes");
@@ -4008,7 +4067,7 @@ bool validateSceneGraph(const json& doc,
 
     if (nodesIt != doc.end()) {
         for (const json& node : *nodesIt) {
-            if (!node.is_object()) {
+            if (!validateNodeJsonKeys(node)) {
                 return false;
             }
 
@@ -4077,7 +4136,7 @@ bool validateSceneGraph(const json& doc,
 
     if (meshesIt != doc.end()) {
         for (const json& mesh : *meshesIt) {
-            if (!mesh.is_object()) {
+            if (!validateMeshJsonKeys(mesh)) {
                 return false;
             }
             if (mesh.contains("weights") && !jsonNumberArray(mesh["weights"])) {
@@ -4090,7 +4149,7 @@ bool validateSceneGraph(const json& doc,
                 return false;
             }
             for (const json& primitive : *primitivesIt) {
-                if (!primitive.is_object()) {
+                if (!validatePrimitiveJsonKeys(primitive)) {
                     return false;
                 }
                 const auto attributesIt = primitive.find("attributes");
@@ -4173,7 +4232,7 @@ bool validateSceneGraph(const json& doc,
 
     if (skinsIt != doc.end()) {
         for (const json& skin : *skinsIt) {
-            if (!skin.is_object()) {
+            if (!validateSkinJsonKeys(skin)) {
                 return false;
             }
             const auto jointsIt = skin.find("joints");
@@ -4209,7 +4268,7 @@ bool validateSceneGraph(const json& doc,
             return false;
         }
         for (const json& scene : *scenesIt) {
-            if (!scene.is_object()) {
+            if (!validateSceneJsonKeys(scene)) {
                 return false;
             }
             if (scene.contains("nodes") &&

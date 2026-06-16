@@ -7281,6 +7281,87 @@ TEST(GltfParserTest, RejectsDefaultSceneIndexOutOfRange) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsUnknownSceneGraphObjectFields) {
+    {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string marker =
+            "{\"mesh\":0,\"translation\":[10,20,30]}";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "{\"mesh\":0,\"translation\":[10,20,30],\"lod\":0}");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "node";
+    }
+
+    {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string marker = "\"meshes\":[{\"primitives\":";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "\"meshes\":[{\"profile\":\"mobile\",\"primitives\":");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "mesh";
+    }
+
+    {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string marker =
+            "{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},"
+            "\"indices\":3,\"mode\":4}";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},"
+            "\"indices\":3,\"mode\":4,\"vendorMode\":1}");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "primitive";
+    }
+
+    {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string marker = "\"asset\":{\"version\":\"2.0\"},";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.insert(
+            markerPos + marker.size(),
+            "\"skins\":[{\"joints\":[0],\"bindShapeMatrix\":["
+            "1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]}],");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "skin";
+    }
+
+    {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string marker = "\"scenes\":[{\"nodes\":[0]}]";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "\"scenes\":[{\"nodes\":[0],\"renderPass\":\"main\"}]");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "scene";
+    }
+}
+
 TEST(GltfParserTest, RejectsBuffersTypeMismatch) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string marker =
