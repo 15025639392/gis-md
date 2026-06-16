@@ -243,20 +243,26 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
 
         if (loadState == RasterOverlayTile::LoadState::Loaded ||
             loadState == RasterOverlayTile::LoadState::Done) {
-            // Promote loading → ready
-            if (_pReadyTile != nullptr && state_ != State::Unattached) {
-                detachFromTile(pPrepRenderer);
-            }
-            _pReadyTile = _pLoadingTile;
-            _pLoadingTile = nullptr;
-            readyTexture_ = _pReadyTile->getTexture();
+            const bool canRetargetAttachedRaster =
+                pPrepRenderer != nullptr || state_ == State::Unattached ||
+                _pReadyTile == nullptr;
+            if (canRetargetAttachedRaster) {
+                // Promote loading -> ready. Without renderer resources, this
+                // may make the raster cover-ready for selection, but it must
+                // stay Unattached until buildTileDrawCommand can attach it.
+                if (_pReadyTile != nullptr && state_ != State::Unattached) {
+                    detachFromTile(pPrepRenderer);
+                }
+                _pReadyTile = _pLoadingTile;
+                _pLoadingTile = nullptr;
+                readyTexture_ = _pReadyTile->getTexture();
 
-            // Compute UV transform from the tile's bounds
-            if (geometryRectangle) {
-                computeTranslationAndScale(
-                    *geometryRectangle, _pReadyTile->getRectangle());
+                // Compute UV transform from the tile's bounds
+                if (geometryRectangle) {
+                    computeTranslationAndScale(
+                        *geometryRectangle, _pReadyTile->getRectangle());
+                }
             }
-            // state_ set in Step 6
         } else if (loadState == RasterOverlayTile::LoadState::Failed) {
             originalFailed_ = true;
         }
@@ -281,17 +287,22 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
         if (candidate &&
             candidate->getState() >= RasterOverlayTile::LoadState::Loaded &&
             _pReadyTile != candidate) {
-            if (_pReadyTile != nullptr && state_ != State::Unattached) {
-                detachFromTile(pPrepRenderer);
-            }
-            _pReadyTile = candidate;
-            tileProvider.markUsed(*_pReadyTile);
-            readyTexture_ = _pReadyTile->getTexture();
-            // cesium-native: recompute UV for CURRENT child bounds.
-            if (geometryRectangle) {
-                computeTranslationAndScale(
-                    *geometryRectangle,
-                    _pReadyTile->getRectangle());
+            const bool canRetargetAttachedRaster =
+                pPrepRenderer != nullptr || state_ == State::Unattached ||
+                _pReadyTile == nullptr;
+            if (canRetargetAttachedRaster) {
+                if (_pReadyTile != nullptr && state_ != State::Unattached) {
+                    detachFromTile(pPrepRenderer);
+                }
+                _pReadyTile = candidate;
+                tileProvider.markUsed(*_pReadyTile);
+                readyTexture_ = _pReadyTile->getTexture();
+                // cesium-native: recompute UV for CURRENT child bounds.
+                if (geometryRectangle) {
+                    computeTranslationAndScale(
+                        *geometryRectangle,
+                        _pReadyTile->getRectangle());
+                }
             }
         }
 
@@ -321,9 +332,9 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                 *_pReadyTile,
                 static_cast<Texture*>(_pReadyTile->getRendererResources()),
                 offsetU_, offsetV_, scaleU_, scaleV_);
+            state_ = (_pLoadingTile != nullptr) ? State::TemporarilyAttached
+                                                 : State::Attached;
         }
-        state_ = (_pLoadingTile != nullptr) ? State::TemporarilyAttached
-                                             : State::Attached;
     }
 
     // ── Step 7: Return MoreDetailAvailable ──

@@ -102,7 +102,7 @@ static constexpr const char* kRobotExpressiveGlbUrl =
 static constexpr bool kEnableTerrainForDemo = true;
 static constexpr bool kUseGaodeSatelliteForDemo = true;
 static constexpr bool kEnableGaodeRoadNetOverlayForDemo = true;
-static constexpr bool kEnableRobotExpressiveGltfDemo = true;
+static constexpr bool kEnableRobotExpressiveGltfDemo = false;
 /// Use QuantizedMesh terrain (cesium-native format) instead of RGB heightmap.
 static constexpr bool kUseQuantizedMeshTerrain = true;
 

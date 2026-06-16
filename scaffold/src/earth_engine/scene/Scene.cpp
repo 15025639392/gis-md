@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <limits>
 #include <utility>
+#include <unordered_set>
 
 namespace earth_engine {
 namespace {
@@ -584,9 +585,53 @@ void Scene::render() {
     diag.terrainReadySurfaceMeshes = 0;
     diag.terrainTransitionSurfaceMeshes = 0;
     diag.ellipsoidSurfaceMeshes = 0;
+    std::unordered_set<const Texture*> surfaceTextures;
+    bool sawSurfaceGeometryZoom = false;
+    bool sawSurfaceTextureZoom = false;
     for (const RenderCommand& cmd : commands) {
         if (cmd.kind == RenderCommandKind::SurfaceTile) {
             ++diag.renderSurfaceTiles;
+            ++diag.surfaceMeshCount;
+            ++diag.terrainSurfaceMeshes;
+            ++diag.terrainReadySurfaceMeshes;
+            if (!cmd.textures.empty()) {
+                ++diag.imageryExactAttachments;
+                for (const Texture* texture : cmd.textures) {
+                    if (texture) {
+                        surfaceTextures.insert(texture);
+                    }
+                }
+                if (cmd.surfaceGeometryZoom >= 0) {
+                    if (!sawSurfaceGeometryZoom) {
+                        diag.imageryMinTargetZoom = cmd.surfaceGeometryZoom;
+                        diag.imageryMaxTargetZoom = cmd.surfaceGeometryZoom;
+                        sawSurfaceGeometryZoom = true;
+                    } else {
+                        diag.imageryMinTargetZoom =
+                            std::min(diag.imageryMinTargetZoom,
+                                     cmd.surfaceGeometryZoom);
+                        diag.imageryMaxTargetZoom =
+                            std::max(diag.imageryMaxTargetZoom,
+                                     cmd.surfaceGeometryZoom);
+                    }
+                }
+                if (cmd.surfaceTextureZoom >= 0) {
+                    if (!sawSurfaceTextureZoom) {
+                        diag.imageryMinTextureZoom = cmd.surfaceTextureZoom;
+                        diag.imageryMaxTextureZoom = cmd.surfaceTextureZoom;
+                        sawSurfaceTextureZoom = true;
+                    } else {
+                        diag.imageryMinTextureZoom =
+                            std::min(diag.imageryMinTextureZoom,
+                                     cmd.surfaceTextureZoom);
+                        diag.imageryMaxTextureZoom =
+                            std::max(diag.imageryMaxTextureZoom,
+                                     cmd.surfaceTextureZoom);
+                    }
+                }
+            } else {
+                ++diag.imageryMissingTiles;
+            }
         } else if (cmd.kind == RenderCommandKind::GltfPrimitive ||
                    cmd.kind == RenderCommandKind::GltfPrimitiveInstanced) {
             ++diag.renderGltfPrimitives;
@@ -673,7 +718,10 @@ void Scene::render() {
         diag.terrainContentRenderTiles += loadDiag.contentRenderTiles;
         diag.surfaceMeshBytes += static_cast<int>(tileset->totalBytesUsed());
     }
-    diag.gpuTextureCount = diag.cachedTextures;
+    diag.gpuTextureCount = static_cast<int>(surfaceTextures.size());
+    if (diag.gpuTextureCount == 0) {
+        diag.gpuTextureCount = diag.cachedTextures;
+    }
     diag.imageryAttachments =
         diag.imageryExactAttachments + diag.imageryParentFallbackAttachments;
     diagnosticsMs = perf::nowMs() - diagnosticsStartMs;

@@ -254,6 +254,7 @@ private:
     void createRasterOverlayUpsampledChildren(TilesetTile& tile);
     void resetTileSelectionState();
     bool isTileRenderable(const TilesetTile& tile) const;
+    void prepareRasterOverlaysForSelection(TilesetTile& tile);
     bool hasLoadedTerrainContent(const TilesetTile& tile) const;
     bool isAvailabilityBoundaryTile(const TilesetTile& tile) const;
     bool canRefine(const TilesetTile& tile) const;

@@ -87,6 +87,8 @@ struct RenderCommand {
     int surfaceOverlayTextureCount = 0;
     float surfaceGeneration = 0.0f;
     float surfaceHasWaterMask = 0.0f;
+    int surfaceGeometryZoom = -1;
+    int surfaceTextureZoom = -1;
 };
 
 /// 渲染命令列表（每帧一帧）

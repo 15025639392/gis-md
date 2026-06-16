@@ -1605,7 +1605,7 @@ void testRasterMappedAttachedUnknownReportsMoreDetail() {
           "RasterMappedToTilesetTile: unloaded tile reports unknown detail");
 
     RasterOverlayTile* loadingTile = mapped.getLoadingTile();
-    loadingTile->setState(RasterOverlayTile::LoadState::Loaded);
+    loadingTile->setTexture(std::make_unique<DummyTexture>(4, 4));
 
     const auto promotedUpdate = mapped.update(
         geometryKey,
@@ -1618,8 +1618,25 @@ void testRasterMappedAttachedUnknownReportsMoreDetail() {
         nullptr,
         0);
     check(promotedUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown &&
-              mapped.getState() == RasterMappedToTilesetTile::State::Attached,
-          "RasterMappedToTilesetTile: promoted Unknown availability is preserved");
+              mapped.getState() == RasterMappedToTilesetTile::State::Unattached &&
+              mapped.getReadyTile() == loadingTile,
+          "RasterMappedToTilesetTile: no-renderer promotion is cover-ready but not attached");
+
+    Renderer renderer(nullptr);
+    const auto rendererUpdate = mapped.update(
+        geometryKey,
+        details,
+        512.0,
+        512.0,
+        provider,
+        &renderer,
+        missingProjections,
+        nullptr,
+        0);
+    check(rendererUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown &&
+              mapped.getState() == RasterMappedToTilesetTile::State::Attached &&
+              renderer.getAttachedRaster(geometryKey, 0) != nullptr,
+          "RasterMappedToTilesetTile: renderer update attaches promoted ready raster");
 
     const auto attachedUpdate = mapped.update(
         geometryKey,
@@ -1627,7 +1644,7 @@ void testRasterMappedAttachedUnknownReportsMoreDetail() {
         512.0,
         512.0,
         provider,
-        nullptr,
+        &renderer,
         missingProjections,
         nullptr,
         0);
@@ -1814,7 +1831,7 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
         parentMissing,
         nullptr,
         0);
-    parentMapped->getLoadingTile()->setState(RasterOverlayTile::LoadState::Loaded);
+    parentMapped->getLoadingTile()->setTexture(std::make_unique<DummyTexture>(4, 4));
     parentMapped->getLoadingTile()->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
     parentMapped->update(
@@ -1827,6 +1844,10 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
         parentMissing,
         nullptr,
         0);
+    RasterOverlayTile* parentReady = parentMapped->getReadyTile();
+    check(parentReady != nullptr &&
+              parentMapped->getState() == RasterMappedToTilesetTile::State::Unattached,
+          "RasterMappedToTilesetTile: parent fallback is cover-ready before renderer attach");
     parent.rasterOverlays[0] = std::move(parentMapped);
 
     RasterMappedToTilesetTile childMapped;
@@ -1855,11 +1876,32 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
 
     check(fallbackUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown,
           "RasterMappedToTilesetTile: loading child with ancestor raster reports unknown detail");
-    check(childMapped.getState() ==
-              RasterMappedToTilesetTile::State::TemporarilyAttached,
-          "RasterMappedToTilesetTile: ancestor raster is attached as temporary fallback");
+    check(childMapped.getReadyTile() == parentReady &&
+              childMapped.getState() == RasterMappedToTilesetTile::State::Unattached,
+          "RasterMappedToTilesetTile: ancestor raster is cover-ready before renderer attach");
     check(!childMapped.isMoreDetailAvailable(),
           "RasterMappedToTilesetTile: temporary ancestor raster does not trigger upsample children");
+
+    Renderer renderer(nullptr);
+    const auto rendererFallbackUpdate = childMapped.update(
+        child.key,
+        childDetails,
+        512.0,
+        512.0,
+        provider,
+        &renderer,
+        childMissing,
+        &parent,
+        0);
+
+    check(rendererFallbackUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown,
+          "RasterMappedToTilesetTile: renderer fallback keeps loading-child detail unknown");
+    check(childMapped.getState() ==
+              RasterMappedToTilesetTile::State::TemporarilyAttached &&
+              renderer.getAttachedRaster(child.key, 0) != nullptr,
+          "RasterMappedToTilesetTile: build-stage update attaches ancestor raster as temporary fallback");
+    check(!childMapped.isMoreDetailAvailable(),
+          "RasterMappedToTilesetTile: attached temporary ancestor still does not trigger upsample children");
 }
 
 void testRasterOverlayNativeTranslationAndRendererWindow() {
@@ -3395,6 +3437,73 @@ void testTilesetPrefetchesRasterFromBoundingRegionBeforeRenderContent() {
     check(loadingTile &&
               loadingTile->getState() == RasterOverlayTile::LoadState::Loading,
           "Tileset: prefetch starts throttled rectangle imagery loading");
+}
+
+void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+
+    auto terrainProvider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(terrainProvider),
+        std::move(scheme),
+        {&activated},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: prebuild raster promotion root tile is created");
+    if (!root) return;
+
+    const Rectangle preciseRectangle =
+        Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
+    root->bounds = preciseRectangle;
+    root->mesh = std::make_unique<SurfaceTileMesh>();
+    root->mesh->rasterOverlayDetails.setGeographicRectangle(preciseRectangle);
+    root->meshReady = true;
+    root->gpuVertexBuffer = std::make_unique<DummyBuffer>(32);
+    root->geometricError = 100.0;
+    root->loadState = TileLoadState::Done;
+    root->contentKind = TileContentKind::Render;
+    root->rasterOverlays.resize(1);
+
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    RasterMappedToTilesetTile* mapped = root->rasterOverlays[0].get();
+    RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
+    check(loadingTile != nullptr,
+          "Tileset: prebuild raster promotion creates loading raster");
+    if (!mapped || !loadingTile) return;
+
+    loadingTile->setTexture(std::make_unique<DummyTexture>(4, 4));
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    check(mapped->getReadyTile() == loadingTile &&
+              mapped->getState() == RasterMappedToTilesetTile::State::Unattached,
+          "Tileset: prebuild raster promotion makes tile ready without renderer attach");
+    check(TilesetTestAccess::isTileRenderable(tileset, *root),
+          "Tileset: selector renderability sees promoted raster before build");
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(!commands.empty() &&
+              mapped->getState() == RasterMappedToTilesetTile::State::Attached &&
+              renderer.getAttachedRaster(rootKey, 0) != nullptr,
+          "Tileset: build command attaches pre-promoted raster and emits draw command");
 }
 
 void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
@@ -9649,6 +9758,7 @@ int main() {
     testTilesetRasterTargetPixelsUseRenderContentRectangle();
     testTilesetEnsuresOverlayProviderBeforeMapping();
     testTilesetPrefetchesRasterFromBoundingRegionBeforeRenderContent();
+    testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach();
     testTilesetRasterMoreDetailCreatesUpsampledChildren();
     testTilesetGltfRenderContentBuildsPrimitiveCommands();
     testTilesetGltfTangentsUseModelLinearTransform();

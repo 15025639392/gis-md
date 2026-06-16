@@ -27,6 +27,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        enterImmersiveMode();
         mHandler = new Handler(Looper.getMainLooper());
 
         FrameLayout root = new FrameLayout(this);
@@ -40,22 +41,24 @@ public class MainActivity extends Activity {
         // Debug button (floating)
         mDebugButton = new Button(this);
         mDebugButton.setText("⚙");
-        mDebugButton.setTextSize(20);
+        mDebugButton.setTextSize(18);
         mDebugButton.setTextColor(Color.WHITE);
         mDebugButton.setBackgroundColor(0x88000000);
         FrameLayout.LayoutParams btnParams = new FrameLayout.LayoutParams(
-                120, 120, Gravity.TOP | Gravity.END);
-        btnParams.setMargins(0, 100, 20, 0);
+                dp(48), dp(48), Gravity.TOP | Gravity.END);
+        btnParams.setMargins(0, dp(24), dp(12), 0);
         mDebugButton.setOnClickListener(v -> toggleDebugPanel());
         root.addView(mDebugButton, btnParams);
 
         // Debug panel (initially hidden)
         mDebugPanel = createDebugPanel();
         mDebugPanel.setVisibility(View.GONE);
-        root.addView(mDebugPanel, new FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM));
+                dp(220),
+                Gravity.BOTTOM);
+        panelParams.setMargins(dp(8), 0, dp(8), dp(8));
+        root.addView(mDebugPanel, panelParams);
 
         setContentView(root);
 
@@ -72,35 +75,37 @@ public class MainActivity extends Activity {
     private View createDebugPanel() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setBackgroundColor(0xDD000000);
-        panel.setPadding(32, 32, 32, 32);
-        panel.setGravity(Gravity.CENTER_HORIZONTAL);
+        panel.setBackgroundColor(0xCC000000);
+        panel.setPadding(dp(12), dp(10), dp(12), dp(10));
 
         TextView title = new TextView(this);
-        title.setText("🔧 Debug Panel");
+        title.setText("Debug");
         title.setTextColor(Color.WHITE);
-        title.setTextSize(18);
+        title.setTextSize(12);
         panel.addView(title);
 
         // Diagnostics
         mDiagnosticsText = new TextView(this);
-        mDiagnosticsText.setTextColor(0xFFAAAAAA);
-        mDiagnosticsText.setTextSize(11);
-        mDiagnosticsText.setPadding(0, 12, 0, 12);
+        mDiagnosticsText.setTextColor(0xFFE0E0E0);
+        mDiagnosticsText.setTextSize(9);
+        mDiagnosticsText.setIncludeFontPadding(false);
+        mDiagnosticsText.setPadding(0, dp(6), 0, dp(6));
         panel.addView(mDiagnosticsText);
 
         // Action buttons
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
-        actions.setGravity(Gravity.CENTER);
+        actions.setGravity(Gravity.START);
 
         mBtnAddVectorLayer = new Button(this);
-        mBtnAddVectorLayer.setText("+ Vector Demo");
+        mBtnAddVectorLayer.setText("+ Vector");
+        mBtnAddVectorLayer.setTextSize(10);
         mBtnAddVectorLayer.setOnClickListener(v -> addDemoVectorLayer());
         actions.addView(mBtnAddVectorLayer);
 
         mBtnResetCamera = new Button(this);
-        mBtnResetCamera.setText("Reset Cam");
+        mBtnResetCamera.setText("Reset");
+        mBtnResetCamera.setTextSize(10);
         mBtnResetCamera.setOnClickListener(v -> resetCamera());
         actions.addView(mBtnResetCamera);
 
@@ -108,13 +113,31 @@ public class MainActivity extends Activity {
 
         // Close button
         Button closeBtn = new Button(this);
-        closeBtn.setText("Close Panel");
+        closeBtn.setText("Close");
+        closeBtn.setTextSize(10);
         closeBtn.setTextColor(Color.WHITE);
         closeBtn.setBackgroundColor(0x88000000);
         closeBtn.setOnClickListener(v -> toggleDebugPanel());
         panel.addView(closeBtn);
 
-        return new ScrollView(this) {{ addView(panel); }};
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(false);
+        scroll.addView(panel);
+        return scroll;
+    }
+
+    private void enterImmersiveMode() {
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     private void toggleDebugPanel() {
@@ -148,6 +171,15 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        enterImmersiveMode();
         mGLView.onResume();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            enterImmersiveMode();
+        }
     }
 }
