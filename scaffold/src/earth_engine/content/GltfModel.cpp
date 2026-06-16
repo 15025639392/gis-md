@@ -783,7 +783,11 @@ bool accessorUsesMeshQuantization(
         return false;
     }
 
-    const int componentType = componentTypeIt->get<int>();
+    const auto componentTypeValue = jsonIntValue(*componentTypeIt);
+    if (!componentTypeValue) {
+        return false;
+    }
+    const int componentType = *componentTypeValue;
     if (!meshQuantizationDeclarationComponentType(componentType)) {
         return false;
     }
@@ -2174,7 +2178,12 @@ std::optional<AccessorSpan> accessorSpan(
         if (!accessor["bufferView"].is_number_integer()) {
             return std::nullopt;
         }
-        const int bufferViewIndex = accessor["bufferView"].get<int>();
+        const auto bufferViewIndexValue =
+            jsonIntValue(accessor["bufferView"]);
+        if (!bufferViewIndexValue) {
+            return std::nullopt;
+        }
+        const int bufferViewIndex = *bufferViewIndexValue;
         const auto bufferViewsIt = doc.find("bufferViews");
         if (bufferViewsIt == doc.end() || !bufferViewsIt->is_array()) {
             return std::nullopt;
@@ -2409,7 +2418,12 @@ bool validateAccessorJson(
         if (!accessor["bufferView"].is_number_integer()) {
             return false;
         }
-        const int bufferViewIndex = accessor["bufferView"].get<int>();
+        const auto bufferViewIndexValue =
+            jsonIntValue(accessor["bufferView"]);
+        if (!bufferViewIndexValue) {
+            return false;
+        }
+        const int bufferViewIndex = *bufferViewIndexValue;
         const auto bufferViewsIt = doc.find("bufferViews");
         if (bufferViewsIt == doc.end() || !bufferViewsIt->is_array()) {
             return false;
@@ -3587,7 +3601,11 @@ bool validateNodeHierarchy(const json& nodes, const json* scenes) {
         std::unordered_set<int> seenChildren;
         seenChildren.reserve(childrenIt->size());
         for (const json& child : *childrenIt) {
-            const int childIndex = child.get<int>();
+            const auto childIndexValue = jsonIntValue(child);
+            if (!childIndexValue) {
+                return false;
+            }
+            const int childIndex = *childIndexValue;
             if (!seenChildren.insert(childIndex).second ||
                 parent[static_cast<size_t>(childIndex)] != -1) {
                 return false;
@@ -3615,7 +3633,11 @@ bool validateNodeHierarchy(const json& nodes, const json* scenes) {
             std::unordered_set<int> sceneRoots;
             sceneRoots.reserve(sceneNodesIt->size());
             for (const json& sceneNode : *sceneNodesIt) {
-                const int sceneNodeIndex = sceneNode.get<int>();
+                const auto sceneNodeIndexValue = jsonIntValue(sceneNode);
+                if (!sceneNodeIndexValue) {
+                    return false;
+                }
+                const int sceneNodeIndex = *sceneNodeIndexValue;
                 if (!sceneRoots.insert(sceneNodeIndex).second ||
                     parent[static_cast<size_t>(sceneNodeIndex)] != -1) {
                     return false;
@@ -3644,8 +3666,12 @@ bool validateNodeHierarchy(const json& nodes, const json* scenes) {
                 continue;
             }
 
-            const int childIndex =
-                (*childrenIt)[frame.second++].get<int>();
+            const auto childIndexValue =
+                jsonIntValue((*childrenIt)[frame.second++]);
+            if (!childIndexValue) {
+                return false;
+            }
+            const int childIndex = *childIndexValue;
             const size_t child = static_cast<size_t>(childIndex);
             if (visitState[child] == 1u) {
                 return false;
@@ -4057,7 +4083,11 @@ void resolveNodeGlobalTransforms(
     record.globalResolved = true;
     const json& node = nodeArray[static_cast<size_t>(nodeIndex)];
     for (const json& child : node.value("children", json::array())) {
-        const int childIndex = child.get<int>();
+        const auto childIndexValue = jsonIntValue(child);
+        if (!childIndexValue) {
+            continue;
+        }
+        const int childIndex = *childIndexValue;
         if (childIndex >= 0 && static_cast<size_t>(childIndex) < nodes.size()) {
             nodes[static_cast<size_t>(childIndex)].parent = nodeIndex;
         }
@@ -4101,8 +4131,8 @@ std::vector<NodeRecord> parseNodes(const json& doc) {
                     node["scale"][2].get<double>());
             }
         }
-        nodes[i].mesh = node.value("mesh", -1);
-        nodes[i].skin = node.value("skin", -1);
+        nodes[i].mesh = jsonIntProperty(node, "mesh").value_or(-1);
+        nodes[i].skin = jsonIntProperty(node, "skin").value_or(-1);
         if (node.contains("weights") && node["weights"].is_array()) {
             nodes[i].weights.reserve(node["weights"].size());
             for (const json& weight : node["weights"]) {
@@ -4110,24 +4140,26 @@ std::vector<NodeRecord> parseNodes(const json& doc) {
             }
         }
         for (const json& child : node.value("children", json::array())) {
-            if (child.is_number_integer()) {
-                nodes[i].children.push_back(child.get<int>());
+            if (const auto childIndex = jsonIntValue(child)) {
+                nodes[i].children.push_back(*childIndex);
             }
         }
     }
 
     const auto& scenes = doc.value("scenes", json::array());
-    const int defaultScene = doc.value("scene", 0);
+    const int defaultScene = jsonIntProperty(doc, "scene").value_or(0);
     if (!scenes.empty() &&
         defaultScene >= 0 &&
         static_cast<size_t>(defaultScene) < scenes.size()) {
         for (const json& node : scenes[static_cast<size_t>(defaultScene)]
                  .value("nodes", json::array())) {
-            resolveNodeGlobalTransforms(
-                doc,
-                node.get<int>(),
-                glm::dmat4(1.0),
-                nodes);
+            if (const auto nodeIndex = jsonIntValue(node)) {
+                resolveNodeGlobalTransforms(
+                    doc,
+                    *nodeIndex,
+                    glm::dmat4(1.0),
+                    nodes);
+            }
         }
     }
 
@@ -4206,7 +4238,12 @@ std::vector<SkinRecord> parseSkins(
                 skin.valid = false;
                 continue;
             }
-            const int jointIndex = joint.get<int>();
+            const auto jointIndexValue = jsonIntValue(joint);
+            if (!jointIndexValue) {
+                skin.valid = false;
+                continue;
+            }
+            const int jointIndex = *jointIndexValue;
             if (jointIndex < 0 ||
                 static_cast<size_t>(jointIndex) >= nodeCount) {
                 skin.valid = false;
@@ -4222,10 +4259,17 @@ std::vector<SkinRecord> parseSkins(
                 skins.push_back(std::move(skin));
                 continue;
             }
+            const auto inverseBindAccessor =
+                jsonIntValue(skinJson["inverseBindMatrices"]);
+            if (!inverseBindAccessor) {
+                skin.valid = false;
+                skins.push_back(std::move(skin));
+                continue;
+            }
             const auto inverseBindSpan = accessorSpan(
                 doc,
                 buffers,
-                skinJson["inverseBindMatrices"].get<int>());
+                *inverseBindAccessor);
             if (!inverseBindSpan || inverseBindSpan->components != 16 ||
                 inverseBindSpan->componentType != 5126 ||
                 inverseBindSpan->count != skin.joints.size()) {
@@ -4246,7 +4290,13 @@ std::vector<SkinRecord> parseSkins(
             if (!skinJson["skeleton"].is_number_integer()) {
                 skin.valid = false;
             } else {
-                const int skeleton = skinJson["skeleton"].get<int>();
+                const auto skeletonValue = jsonIntValue(skinJson["skeleton"]);
+                if (!skeletonValue) {
+                    skin.valid = false;
+                    skins.push_back(std::move(skin));
+                    continue;
+                }
+                const int skeleton = *skeletonValue;
                 if (skeleton < 0 ||
                     static_cast<size_t>(skeleton) >= nodeCount) {
                     skin.valid = false;
@@ -4318,9 +4368,14 @@ std::optional<std::vector<GltfVertexSkinning>> readVertexSkinning(
         return std::nullopt;
     }
 
-    const auto joints = accessorSpan(doc, buffers, attrs["JOINTS_0"].get<int>());
-    const auto weights =
-        accessorSpan(doc, buffers, attrs["WEIGHTS_0"].get<int>());
+    const auto jointsAccessorIndex = jsonIntValue(attrs["JOINTS_0"]);
+    const auto weightsAccessorIndex = jsonIntValue(attrs["WEIGHTS_0"]);
+    if (!jointsAccessorIndex || !weightsAccessorIndex) {
+        return std::nullopt;
+    }
+
+    const auto joints = accessorSpan(doc, buffers, *jointsAccessorIndex);
+    const auto weights = accessorSpan(doc, buffers, *weightsAccessorIndex);
     if (!joints || !weights || joints->components != 4 ||
         weights->components != 4 || joints->count != expectedCount ||
         weights->count != expectedCount) {
@@ -4506,8 +4561,12 @@ bool validatePrimitiveAccessorSemantics(
     if (positionIt == attrs.end() || !positionIt->is_number_integer()) {
         return false;
     }
+    const auto positionAccessorIndex = jsonIntValue(*positionIt);
+    if (!positionAccessorIndex) {
+        return false;
+    }
     const auto positions =
-        accessorSpan(doc, buffers, positionIt->get<int>());
+        accessorSpan(doc, buffers, *positionAccessorIndex);
     if (!positions ||
         !validQuantizedVectorAccessor(
             *positions,
@@ -4532,7 +4591,11 @@ bool validatePrimitiveAccessorSemantics(
             !it.value().is_number_integer()) {
             return false;
         }
-        const auto span = accessorSpan(doc, buffers, it.value().get<int>());
+        const auto accessorIndex = jsonIntValue(it.value());
+        if (!accessorIndex) {
+            return false;
+        }
+        const auto span = accessorSpan(doc, buffers, *accessorIndex);
         if (!span || span->count != positions->count) {
             return false;
         }
@@ -4611,8 +4674,12 @@ bool validatePrimitiveAccessorSemantics(
                 if (it.key() == "TANGENT" && !tangents) {
                     return false;
                 }
+                const auto accessorIndex = jsonIntValue(it.value());
+                if (!accessorIndex) {
+                    return false;
+                }
                 const auto span =
-                    accessorSpan(doc, buffers, it.value().get<int>());
+                    accessorSpan(doc, buffers, *accessorIndex);
                 if (!span ||
                     span->components != 3 ||
                     span->componentType != 5126 ||
@@ -4628,10 +4695,14 @@ bool validatePrimitiveAccessorSemantics(
         if (!primitiveJson["indices"].is_number_integer()) {
             return false;
         }
+        const auto indexAccessor = jsonIntValue(primitiveJson["indices"]);
+        if (!indexAccessor) {
+            return false;
+        }
         const auto indexSpan = accessorSpan(
             doc,
             buffers,
-            primitiveJson["indices"].get<int>());
+            *indexAccessor);
         if (!indexSpan ||
             indexSpan->components != 1 ||
             indexSpan->normalized ||
@@ -4715,7 +4786,11 @@ bool validateAllPrimitiveAccessorSemantics(
                 !node["mesh"].is_number_integer()) {
                 return false;
             }
-            const int meshIndex = node["mesh"].get<int>();
+            const auto meshIndexValue = jsonIntValue(node["mesh"]);
+            if (!meshIndexValue) {
+                return false;
+            }
+            const int meshIndex = *meshIndexValue;
             if (meshIndex < 0 ||
                 meshesIt == doc.end() ||
                 !meshesIt->is_array() ||
@@ -4757,10 +4832,15 @@ bool validateAllSkinAccessorSemantics(
         if (!skinJson["inverseBindMatrices"].is_number_integer()) {
             return false;
         }
+        const auto inverseBindAccessor =
+            jsonIntValue(skinJson["inverseBindMatrices"]);
+        if (!inverseBindAccessor) {
+            return false;
+        }
         const auto inverseBindSpan = accessorSpan(
             doc,
             buffers,
-            skinJson["inverseBindMatrices"].get<int>());
+            *inverseBindAccessor);
         if (!inverseBindSpan ||
             inverseBindSpan->components != 16 ||
             inverseBindSpan->componentType != 5126 ||
@@ -4811,7 +4891,9 @@ bool primitiveAttributesAreSupported(
             return false;
         }
         if (!semantic.empty() && semantic[0] == '_') {
-            if (!accessorSpan(doc, buffers, it.value().get<int>())) {
+            const auto accessorIndex = jsonIntValue(it.value());
+            if (!accessorIndex ||
+                !accessorSpan(doc, buffers, *accessorIndex)) {
                 return false;
             }
         }
@@ -4957,7 +5039,11 @@ std::optional<std::vector<GltfMorphTarget>> readMorphTargets(
             if (!it.value().is_number_integer()) {
                 return std::nullopt;
             }
-            const auto span = accessorSpan(doc, buffers, it.value().get<int>());
+            const auto accessorIndex = jsonIntValue(it.value());
+            if (!accessorIndex) {
+                return std::nullopt;
+            }
+            const auto span = accessorSpan(doc, buffers, *accessorIndex);
             if (!span || span->components != 3 ||
                 span->componentType != 5126 ||
                 span->count != vertexCount) {
@@ -5423,7 +5509,12 @@ std::optional<std::vector<GltfInstance>> parseGpuInstancingInstances(
             strictFailure = true;
             return std::nullopt;
         }
-        auto span = accessorSpan(doc, buffers, it->get<int>());
+        const auto accessorIndex = jsonIntValue(*it);
+        if (!accessorIndex) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        auto span = accessorSpan(doc, buffers, *accessorIndex);
         if (!span) {
             strictFailure = true;
             return std::nullopt;
@@ -5573,7 +5664,7 @@ std::vector<int> sceneRootNodes(const json& doc) {
     const auto& nodes = doc.value("nodes", json::array());
     std::vector<int> roots;
     if (!scenes.empty()) {
-        const int requestedScene = doc.value("scene", 0);
+        const int requestedScene = jsonIntProperty(doc, "scene").value_or(0);
         const size_t sceneIndex =
             requestedScene >= 0 &&
                     static_cast<size_t>(requestedScene) < scenes.size()
@@ -5582,8 +5673,8 @@ std::vector<int> sceneRootNodes(const json& doc) {
         for (const json& node : scenes[sceneIndex].value(
                  "nodes",
                  json::array())) {
-            if (node.is_number_integer()) {
-                roots.push_back(node.get<int>());
+            if (const auto nodeIndex = jsonIntValue(node)) {
+                roots.push_back(*nodeIndex);
             }
         }
     } else if (!nodes.empty()) {
@@ -5610,8 +5701,8 @@ std::vector<uint8_t> traversedNodeMask(const json& doc) {
             continue;
         }
         for (const json& child : node.value("children", json::array())) {
-            if (child.is_number_integer()) {
-                stack.push_back(child.get<int>());
+            if (const auto childIndex = jsonIntValue(child)) {
+                stack.push_back(*childIndex);
             }
         }
     }
@@ -5690,10 +5781,15 @@ std::optional<GltfPrimitive> parsePrimitive(
         return std::nullopt;
     }
 
+    const auto positionAccessorIndex = jsonIntValue(attrs["POSITION"]);
+    if (!positionAccessorIndex) {
+        strictFailure = true;
+        return std::nullopt;
+    }
     const auto positions = accessorSpan(
         doc,
         buffers,
-        attrs["POSITION"].get<int>());
+        *positionAccessorIndex);
     if (!positions ||
         !validQuantizedVectorAccessor(
             *positions,
@@ -5710,7 +5806,12 @@ std::optional<GltfPrimitive> parsePrimitive(
             strictFailure = true;
             return std::nullopt;
         }
-        normals = accessorSpan(doc, buffers, attrs["NORMAL"].get<int>());
+        const auto normalAccessorIndex = jsonIntValue(attrs["NORMAL"]);
+        if (!normalAccessorIndex) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        normals = accessorSpan(doc, buffers, *normalAccessorIndex);
         if (!normals ||
             !validQuantizedVectorAccessor(
                 *normals,
@@ -5729,7 +5830,12 @@ std::optional<GltfPrimitive> parsePrimitive(
             strictFailure = true;
             return std::nullopt;
         }
-        tangents = accessorSpan(doc, buffers, attrs["TANGENT"].get<int>());
+        const auto tangentAccessorIndex = jsonIntValue(attrs["TANGENT"]);
+        if (!tangentAccessorIndex) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        tangents = accessorSpan(doc, buffers, *tangentAccessorIndex);
         if (!tangents ||
             !validTangentAccessor(*tangents, meshQuantizationEnabled) ||
             tangents->count != positions->count) {
@@ -5750,7 +5856,12 @@ std::optional<GltfPrimitive> parsePrimitive(
             strictFailure = true;
             return std::nullopt;
         }
-        auto span = accessorSpan(doc, buffers, it->get<int>());
+        const auto texCoordAccessorIndex = jsonIntValue(*it);
+        if (!texCoordAccessorIndex) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        auto span = accessorSpan(doc, buffers, *texCoordAccessorIndex);
         if (!span ||
             !validTexCoordAccessor(*span, meshQuantizationEnabled) ||
             span->count != positions->count) {
@@ -5766,7 +5877,12 @@ std::optional<GltfPrimitive> parsePrimitive(
             strictFailure = true;
             return std::nullopt;
         }
-        colors = accessorSpan(doc, buffers, attrs["COLOR_0"].get<int>());
+        const auto colorAccessorIndex = jsonIntValue(attrs["COLOR_0"]);
+        if (!colorAccessorIndex) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        colors = accessorSpan(doc, buffers, *colorAccessorIndex);
         if (!colors || !validColorAccessor(*colors) ||
             colors->count != positions->count) {
             strictFailure = true;
@@ -5818,7 +5934,12 @@ std::optional<GltfPrimitive> parsePrimitive(
             return std::nullopt;
         }
         const auto& materials = doc.value("materials", json::array());
-        const int materialIndex = primitiveJson["material"].get<int>();
+        const auto materialIndexValue = jsonIntValue(primitiveJson["material"]);
+        if (!materialIndexValue) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        const int materialIndex = *materialIndexValue;
         if (materialIndex >= 0 &&
             static_cast<size_t>(materialIndex) < materials.size()) {
             const json& material = materials[static_cast<size_t>(materialIndex)];
@@ -6320,7 +6441,12 @@ std::optional<GltfPrimitive> parsePrimitive(
             strictFailure = true;
             return std::nullopt;
         }
-        batchIds = accessorSpan(doc, buffers, attrs["_BATCHID"].get<int>());
+        const auto batchIdAccessorIndex = jsonIntValue(attrs["_BATCHID"]);
+        if (!batchIdAccessorIndex) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        batchIds = accessorSpan(doc, buffers, *batchIdAccessorIndex);
         if (!batchIds ||
             !validFeatureIdAccessor(*batchIds) ||
             batchIds->count != positions->count) {
@@ -6461,10 +6587,15 @@ std::optional<GltfPrimitive> parsePrimitive(
             strictFailure = true;
             return std::nullopt;
         }
+        const auto indexAccessor = jsonIntValue(primitiveJson["indices"]);
+        if (!indexAccessor) {
+            strictFailure = true;
+            return std::nullopt;
+        }
         const auto indexSpan = accessorSpan(
             doc,
             buffers,
-            primitiveJson["indices"].get<int>());
+            *indexAccessor);
         if (!indexSpan ||
             indexSpan->components != 1 ||
             indexSpan->normalized ||
@@ -6536,7 +6667,12 @@ void traverseNode(
             strictFailure = true;
             return;
         }
-        const int meshIndex = node["mesh"].get<int>();
+        const auto meshIndexValue = jsonIntValue(node["mesh"]);
+        if (!meshIndexValue) {
+            strictFailure = true;
+            return;
+        }
+        const int meshIndex = *meshIndexValue;
         if (meshIndex >= 0 && static_cast<size_t>(meshIndex) < meshes.size()) {
             const auto& primitives =
                 meshes[static_cast<size_t>(meshIndex)].value(
@@ -6572,6 +6708,11 @@ void traverseNode(
             strictFailure = true;
             return;
         }
+        const auto childIndex = jsonIntValue(child);
+        if (!childIndex) {
+            strictFailure = true;
+            return;
+        }
         traverseNode(
             doc,
             buffers,
@@ -6579,7 +6720,7 @@ void traverseNode(
             nodeRecords,
             skins,
             nativeInstancesByNode,
-            child.get<int>(),
+            *childIndex,
             model,
             meshQuantizationEnabled,
             allowLegacyBatchIdAttribute,
@@ -7272,7 +7413,8 @@ std::unique_ptr<GltfModel> GltfParser::parse(
     };
 
     if (!scenes.empty()) {
-        const int requestedScene = input->document.value("scene", 0);
+        const int requestedScene =
+            jsonIntProperty(input->document, "scene").value_or(0);
         const size_t sceneIndex =
             requestedScene >= 0 &&
                     static_cast<size_t>(requestedScene) < scenes.size()
@@ -7285,7 +7427,12 @@ std::unique_ptr<GltfModel> GltfParser::parse(
                 strictFailure = true;
                 break;
             }
-            traverseRoot(node.get<int>());
+            const auto nodeIndex = jsonIntValue(node);
+            if (!nodeIndex) {
+                strictFailure = true;
+                break;
+            }
+            traverseRoot(*nodeIndex);
             if (strictFailure) break;
         }
     } else if (!nodes.empty()) {

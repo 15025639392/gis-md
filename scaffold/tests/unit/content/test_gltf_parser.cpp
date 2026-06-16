@@ -2871,6 +2871,22 @@ TEST(GltfParserTest, RejectsAccessorElementTypeMismatch) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsReferencedAccessorBufferViewIntegerOverflow) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker =
+        "\"bufferView\":0,\"componentType\":5126";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "\"bufferView\":4294967296,\"componentType\":5126");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsAccessorComponentTypeTypeMismatch) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string marker = "\"componentType\":5126";
@@ -2903,6 +2919,18 @@ TEST(GltfParserTest, RejectsUnreferencedAccessorBufferViewOutOfRange) {
     appendAccessorToExternalFixture(
         fixture,
         "{\"bufferView\":99,\"componentType\":5126,"
+        "\"count\":1,\"type\":\"VEC3\"}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsUnreferencedAccessorBufferViewIntegerOverflow) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    appendAccessorToExternalFixture(
+        fixture,
+        "{\"bufferView\":4294967296,\"componentType\":5126,"
         "\"count\":1,\"type\":\"VEC3\"}");
 
     std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
