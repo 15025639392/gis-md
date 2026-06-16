@@ -1,13 +1,14 @@
 #pragma once
 
-#include "../providers/RasterOverlayTile.h"
-
+#include <cstdint>
 #include <memory>
 
 namespace earth_engine {
 
 class RasterOverlay;
+class RasterOverlayTile;
 class RasterOverlayTileProvider;
+class RenderDevice;
 
 /// cesium-native ActivatedRasterOverlay equivalent.
 ///
@@ -25,25 +26,17 @@ public:
     ActivatedRasterOverlay(const ActivatedRasterOverlay&) = delete;
     ActivatedRasterOverlay& operator=(const ActivatedRasterOverlay&) = delete;
 
-    // ── Provider management ──
+    /// Ensure the runtime provider exists. This mirrors cesium-native
+    /// activation, where an overlay has runtime state before its tiles are
+    /// mapped to already-loaded geometry.
+    RasterOverlayTileProvider* ensureTileProvider(RenderDevice* device);
 
-    /// cesium-native: set the real tile provider (resolves ready event).
-    void setTileProvider(std::unique_ptr<RasterOverlayTileProvider> provider);
-
-    /// cesium-native: the active tile provider (null before setTileProvider).
+    /// cesium-native: the active tile provider (null until ensureTileProvider).
     RasterOverlayTileProvider* getTileProvider() { return tileProvider_.get(); }
     const RasterOverlayTileProvider* getTileProvider() const { return tileProvider_.get(); }
 
-    /// cesium-native: the placeholder tile (valid even before provider is ready).
+    /// cesium-native: the placeholder tile from the ensured provider.
     RasterOverlayTile* getPlaceholderTile();
-
-    // ── Tile loading with throttling ──
-
-    /// cesium-native: get a tile (delegates to provider, or placeholder).
-    RasterOverlayTile* getTile(const TileKey& key);
-
-    /// cesium-native: throttled tile load.
-    bool loadTileThrottled(RasterOverlayTile& tile);
 
     void processPendingUploads();
     void setFrameNumber(uint64_t frameNumber);
@@ -52,7 +45,7 @@ public:
 
     /// Maximum simultaneous tile loads (aligned with RasterOverlayOptions).
     int getMaximumSimultaneousTileLoads() const { return maximumSimultaneousTileLoads_; }
-    void setMaximumSimultaneousTileLoads(int n) { maximumSimultaneousTileLoads_ = n; }
+    void setMaximumSimultaneousTileLoads(int n);
     int getThrottledTilesCurrentlyLoading() const;
 
     bool visible() const;
@@ -67,7 +60,6 @@ public:
 private:
     RasterOverlay& overlay_;
     std::unique_ptr<RasterOverlayTileProvider> tileProvider_;
-    std::unique_ptr<RasterOverlayTile> placeholderTile_;
     int maximumSimultaneousTileLoads_ = 20;
 };
 

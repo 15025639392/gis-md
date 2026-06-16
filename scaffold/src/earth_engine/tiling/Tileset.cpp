@@ -1523,7 +1523,13 @@ Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
       tileScheme_(std::move(tileScheme)),
       rasterOverlays_(std::move(rasterOverlays)),
       device_(device),
-      options_(std::move(options)) {}
+      options_(std::move(options)) {
+    for (ActivatedRasterOverlay* overlay : rasterOverlays_) {
+        if (overlay) {
+            overlay->ensureTileProvider(device_);
+        }
+    }
+}
 
 Tileset::~Tileset() {
     std::unique_lock<std::mutex> lock(pendingMutex_);
@@ -2357,8 +2363,103 @@ void Tileset::ensureTileChildren(TilesetTile& tile) {
     }
 }
 
+void Tileset::createRasterOverlayUpsampledChildren(TilesetTile& tile) {
+    if (!tile.mesh || tile.children.size() >= 4) {
+        return;
+    }
+
+    const RasterOverlayDetails& details = tile.mesh->rasterOverlayDetails;
+    const Rectangle* subdivisionRectangle = nullptr;
+    for (const auto& mapped : tile.rasterOverlays) {
+        if (!mapped || !mapped->isMoreDetailAvailable()) {
+            continue;
+        }
+        const RasterOverlayTile* readyTile = mapped->getReadyTile();
+        if (!readyTile) {
+            continue;
+        }
+        subdivisionRectangle = details.findRectangleForOverlayProjection(
+            readyTile->getTileProvider().getProjection());
+        if (subdivisionRectangle) {
+            break;
+        }
+    }
+
+    if (!subdivisionRectangle) {
+        return;
+    }
+
+    const double centerLng =
+        subdivisionRectangle->west() + subdivisionRectangle->width() * 0.5;
+    const double centerLat =
+        subdivisionRectangle->south() + subdivisionRectangle->height() * 0.5;
+
+    const int childZ = tile.key.z + 1;
+    const int childX = tile.key.x * 2;
+    const int childY = tile.key.y * 2;
+    const std::array<Rectangle, 4> childBounds = {
+        Rectangle(
+            subdivisionRectangle->west(),
+            subdivisionRectangle->south(),
+            centerLng,
+            centerLat),
+        Rectangle(
+            centerLng,
+            subdivisionRectangle->south(),
+            subdivisionRectangle->east(),
+            centerLat),
+        Rectangle(
+            subdivisionRectangle->west(),
+            centerLat,
+            centerLng,
+            subdivisionRectangle->north()),
+        Rectangle(
+            centerLng,
+            centerLat,
+            subdivisionRectangle->east(),
+            subdivisionRectangle->north())
+    };
+
+    tile.refine = TileRefine::Replace;
+    if (tile.geometricError <= 0.0) {
+        tile.geometricError = cesiumTerrainGeometricError(tile.bounds);
+    }
+
+    for (size_t i = 0; i < childBounds.size(); ++i) {
+        const int dx = static_cast<int>(i % 2);
+        const int dy = static_cast<int>(i / 2);
+        TileKey childKey{tile.key.schemeId, childZ, childX + dx, childY + dy};
+        TilesetTile* child = ensureTile(childKey);
+        if (!child) {
+            continue;
+        }
+
+        child->parent = &tile;
+        child->bounds = childBounds[i];
+        child->boundingVolume = TileBoundingVolume::fromRegion(
+            childBounds[i],
+            terrainMinimumHeight(tile),
+            terrainMaximumHeight(tile));
+        child->contentBoundingVolume = child->boundingVolume;
+        child->geometricError = tile.geometricError * 0.5;
+        child->refine = TileRefine::Replace;
+        child->upsampledFromParent = true;
+        child->unconditionallyRefine = false;
+        inheritTerrainHeightRange(*child, tile);
+
+        if (std::find(tile.children.begin(), tile.children.end(), child) ==
+            tile.children.end()) {
+            tile.children.push_back(child);
+        }
+    }
+}
+
 bool Tileset::canRefine(const TilesetTile& tile) const {
     if (tile.upsampledFromParent) return false;
+
+    if (!tile.children.empty()) {
+        return true;
+    }
 
     if (contentProvider_) {
         if (!contentProvider_->childTiles(tile.key).empty()) {
@@ -2913,6 +3014,17 @@ void Tileset::update(const FrameState& frameState) {
     selectTiles(frameState);
     const double computeMs = perf::nowMs() - computeStartMs;
 
+    for (const TileKey& key : tilePlan_.visibleTiles) {
+        if (TilesetTile* tile = ensureTile(key)) {
+            prefetchRasterOverlays(*tile);
+        }
+    }
+    for (const TileLoadRequest& request : loadQueue_) {
+        if (TilesetTile* tile = ensureTile(request.key)) {
+            prefetchRasterOverlays(*tile);
+        }
+    }
+
     // Request the selector's load queue, not the render list. Descendants may
     // continue loading while a renderable ancestor is selected.
     const double requestStartMs = perf::nowMs();
@@ -3149,6 +3261,86 @@ void Tileset::requestMissingTiles(const std::vector<TileLoadRequest>& loadReques
                 }
                 pendingCondition_.notify_all();
             });
+    }
+}
+
+void Tileset::prefetchRasterOverlays(TilesetTile& tile) {
+    if (rasterOverlays_.empty()) {
+        return;
+    }
+
+    // Once render content exists, buildTileDrawCommand drives the full
+    // promote/attach/update state machine with renderer resources. This method
+    // is only the cesium-native bounding-volume mapOverlayToTile path, used to
+    // start imagery requests while geometry is still loading.
+    if (tile.mesh != nullptr || tile.meshReady) {
+        return;
+    }
+
+    if (tile.rasterOverlays.size() < rasterOverlays_.size()) {
+        tile.rasterOverlays.resize(rasterOverlays_.size());
+    }
+
+    std::optional<Rectangle> boundingRegionRectangle;
+    if (tile.boundingVolume &&
+        tile.boundingVolume->kind == TileBoundingVolumeKind::Region) {
+        boundingRegionRectangle = tile.boundingVolume->region;
+    }
+    const Rectangle& rasterTargetRectangle = boundingRegionRectangle
+        ? *boundingRegionRectangle
+        : tile.bounds;
+    const RasterTargetScreenPixels rasterScreenPixels =
+        computeDesiredRasterScreenPixels(
+            rasterTargetRectangle,
+            tile.geometricError,
+            options_.maximumScreenSpaceError);
+
+    RasterOverlayDetails emptyDetails;
+    for (size_t i = 0; i < rasterOverlays_.size() && i < tile.rasterOverlays.size(); ++i) {
+        ActivatedRasterOverlay* activeOverlay = rasterOverlays_[i];
+        if (!activeOverlay || !activeOverlay->visible()) {
+            continue;
+        }
+
+        RasterOverlayTileProvider* activeProvider =
+            activeOverlay->ensureTileProvider(device_);
+        if (!activeProvider) {
+            continue;
+        }
+
+        auto& mapped = tile.rasterOverlays[i];
+        if (!mapped) {
+            mapped = std::make_unique<RasterMappedToTilesetTile>();
+        }
+
+        RasterOverlayTile* loadingTile = mapped->getLoadingTile();
+        if (loadingTile &&
+            loadingTile->getState() != RasterOverlayTile::LoadState::Placeholder) {
+            if (loadingTile->getState() == RasterOverlayTile::LoadState::Unloaded ||
+                loadingTile->getState() == RasterOverlayTile::LoadState::Loading ||
+                loadingTile->getState() == RasterOverlayTile::LoadState::Failed) {
+                mapped->loadThrottled(*activeProvider);
+            }
+            continue;
+        }
+        if (mapped->getReadyTile()) {
+            continue;
+        }
+
+        std::vector<RasterOverlayProjection> ignoredMissingProjections;
+        mapped->update(
+            tile.key,
+            emptyDetails,
+            rasterScreenPixels.x,
+            rasterScreenPixels.y,
+            *activeProvider,
+            nullptr,
+            ignoredMissingProjections,
+            tile.parent,
+            i,
+            tile.boundingVolume ? &*tile.boundingVolume : nullptr,
+            false);
+        mapped->loadThrottled(*activeProvider);
     }
 }
 
@@ -4518,37 +4710,72 @@ void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
         tile.mesh ? tile.mesh->rasterOverlayDetails : RasterOverlayDetails{};
 
     // ── cesium-native: drive 7-step state machine for each overlay ──
+    std::optional<size_t> firstMoreDetailAvailable;
+    std::optional<size_t> firstUnknownAvailability;
     for (size_t i = 0; i < rasterOverlays_.size() && i < tile.rasterOverlays.size(); ++i) {
         auto* activeOverlay = rasterOverlays_[i];
-        if (!activeOverlay || !activeOverlay->visible() ||
-            !activeOverlay->getTileProvider()) {
+        if (!activeOverlay || !activeOverlay->visible()) {
             continue;
         }
+        RasterOverlayTileProvider* activeProvider =
+            activeOverlay->ensureTileProvider(device_);
+        if (!activeProvider) continue;
         auto& overlay = tile.rasterOverlays[i];
         if (!overlay) {
             overlay = std::make_unique<RasterMappedToTilesetTile>();
         }
         const RasterOverlayProjection projection =
-            activeOverlay->getTileProvider()->getProjection();
+            activeProvider->getProjection();
         const Rectangle* geometryRectangle =
             overlayDetails.findRectangleForOverlayProjection(projection);
+        std::optional<Rectangle> boundingRegionRectangle;
+        if (!geometryRectangle &&
+            tile.boundingVolume &&
+            tile.boundingVolume->kind == TileBoundingVolumeKind::Region) {
+            boundingRegionRectangle = tile.boundingVolume->region;
+        }
+        const Rectangle& rasterTargetRectangle = geometryRectangle
+            ? *geometryRectangle
+            : (boundingRegionRectangle ? *boundingRegionRectangle : tile.bounds);
         const RasterTargetScreenPixels rasterScreenPixels =
             computeDesiredRasterScreenPixels(
-                geometryRectangle ? *geometryRectangle : tile.bounds,
+                rasterTargetRectangle,
                 tile.geometricError,
                 options_.maximumScreenSpaceError);
-        overlay->update(tile.key,
-                        overlayDetails,
-                        rasterScreenPixels.x,
-                        rasterScreenPixels.y,
-                        *activeOverlay->getTileProvider(), &renderer,
-                        tile.missingRasterOverlayProjections,
-                        tile.parent, i);
+        const RasterMappedToTilesetTile::MoreDetail moreDetail =
+            overlay->update(
+                tile.key,
+                overlayDetails,
+                rasterScreenPixels.x,
+                rasterScreenPixels.y,
+                *activeProvider,
+                &renderer,
+                tile.missingRasterOverlayProjections,
+                tile.parent,
+                i,
+                tile.boundingVolume ? &*tile.boundingVolume : nullptr,
+                tile.mesh != nullptr);
         if (!tile.missingRasterOverlayProjections.empty()) {
             unloadTileContent(tile, &renderer);
             return;
         }
-        overlay->loadThrottled(*activeOverlay->getTileProvider());
+        if (moreDetail == RasterMappedToTilesetTile::MoreDetail::Yes &&
+            !firstMoreDetailAvailable) {
+            firstMoreDetailAvailable = i;
+        } else if (
+            moreDetail == RasterMappedToTilesetTile::MoreDetail::Unknown &&
+            !firstUnknownAvailability) {
+            firstUnknownAvailability = i;
+        }
+        overlay->loadThrottled(*activeProvider);
+    }
+
+    const bool shouldCreateRasterUpsampledChildren =
+        firstMoreDetailAvailable &&
+        (!firstUnknownAvailability ||
+         *firstUnknownAvailability > *firstMoreDetailAvailable);
+    if (shouldCreateRasterUpsampledChildren && tile.children.empty()) {
+        createRasterOverlayUpsampledChildren(tile);
     }
 
     // ── cesium-native retained mode: one draw command per overlay layer ──

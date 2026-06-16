@@ -3,11 +3,13 @@
 #include "../providers/RasterOverlayTileProvider.h"
 #include "../renderer/IPrepareRendererResources.h"
 #include "../tiling/TileSurface.h"
+#include "TileBoundingVolume.h"
 #include "TilesetTile.h"
 #include "TileKey.h"
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 namespace earth_engine {
 namespace {
@@ -60,6 +62,34 @@ RasterOverlayTile* findTileOverlay(
     return nullptr;
 }
 
+const Rectangle* findRectangleForProjection(
+    const RasterOverlayDetails& overlayDetails,
+    RasterOverlayProjection projection,
+    int32_t* textureCoordinateID = nullptr) {
+    for (size_t i = 0; i < overlayDetails.rasterOverlayProjections.size(); ++i) {
+        if (overlayDetails.rasterOverlayProjections[i] == projection &&
+            i < overlayDetails.rasterOverlayRectangles.size()) {
+            if (textureCoordinateID) {
+                *textureCoordinateID = static_cast<int32_t>(i);
+            }
+            return &overlayDetails.rasterOverlayRectangles[i];
+        }
+    }
+    return nullptr;
+}
+
+std::optional<Rectangle> preciseRectangleFromBoundingVolume(
+    const TileBoundingVolume* boundingVolume) {
+    if (!boundingVolume ||
+        boundingVolume->kind != TileBoundingVolumeKind::Region) {
+        return std::nullopt;
+    }
+
+    // The current local raster provider exposes Geographic projection. For a
+    // bounding region, the projected rectangle is exactly the region rectangle.
+    return boundingVolume->region;
+}
+
 } // namespace
 
 RasterMappedToTilesetTile::RasterMappedToTilesetTile() = default;
@@ -74,11 +104,13 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
     IPrepareRendererResources* pPrepRenderer,
     std::vector<RasterOverlayProjection>& missingProjections,
     const TilesetTile* parentTile,
-    size_t overlayIndex) {
+    size_t overlayIndex,
+    const TileBoundingVolume* boundingVolume,
+    bool hasRenderContentDetails) {
 
-    // cesium-native: store geometry key + overlay index for attach/detach.
+    // cesium-native: store geometry key + overlay slot for attach/detach.
     geometryKey_ = geometryKey;
-    overlayIndex_ = static_cast<int32_t>(overlayIndex);
+    overlaySlot_ = static_cast<int32_t>(overlayIndex);
 
     // ── Step 1: Already-Attached fast path ──
     // cesium-native: if getState() == Attached, report MoreDetailAvailable
@@ -128,22 +160,73 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
     }
 
     const RasterOverlayProjection projection = tileProvider.getProjection();
-    const Rectangle* geometryRectangle =
-        overlayDetails.findRectangleForOverlayProjection(projection);
+    int32_t readyTextureCoordinateID = textureCoordinateID_;
+    const Rectangle* geometryRectangle = hasRenderContentDetails
+        ? findRectangleForProjection(
+              overlayDetails,
+              projection,
+              &readyTextureCoordinateID)
+        : nullptr;
+    std::optional<Rectangle> boundingVolumeRectangle;
+    if (!geometryRectangle && !hasRenderContentDetails) {
+        boundingVolumeRectangle =
+            preciseRectangleFromBoundingVolume(boundingVolume);
+        if (boundingVolumeRectangle) {
+            geometryRectangle = &*boundingVolumeRectangle;
+        }
+    }
 
-    // If no loading tile yet, create one via the Provider
+    // cesium-native RasterOverlayCollection::updateTileOverlays:
+    // placeholder mappings are retried once the provider is ready.
+    if (_pLoadingTile != nullptr &&
+        _pLoadingTile->getState() == RasterOverlayTile::LoadState::Placeholder &&
+        tileProvider.isReady()) {
+        _pLoadingTile = nullptr;
+        if (_pReadyTile == nullptr) {
+            state_ = State::Unattached;
+        }
+    }
+
+    // If no loading tile yet, create one via the Provider or placeholder.
     if (_pLoadingTile == nullptr) {
-        if (geometryRectangle) {
+        if (!tileProvider.isReady()) {
+            // cesium-native mapOverlayToTile: provider not created/ready yet,
+            // so use the overlay placeholder and do not invent a projection.
+            textureCoordinateID_ = -1;
+            _pLoadingTile = tileProvider.getPlaceholderTile();
+        } else if (hasRenderContentDetails && geometryRectangle) {
             // cesium-native mapOverlayToTile:
-            // ActivatedRasterOverlay::getTile(rectangle, screenPixels) receives
+            // RasterOverlayTileProvider::getTile(rectangle, screenPixels) receives
             // the geometry rectangle from TileRenderContent raster details.
+            textureCoordinateID_ = readyTextureCoordinateID;
             _pLoadingTile = tileProvider.getTile(
                 *geometryRectangle,
                 targetScreenPixelsX,
                 targetScreenPixelsY);
-        } else {
-            addProjectionToList(missingProjections, projection);
+        } else if (hasRenderContentDetails) {
+            // Render content is loaded, but it has no texture coordinates for
+            // this overlay projection. Match cesium-native by recording the
+            // projection at an index after the existing projection list, and
+            // return a placeholder until the tile is reloaded/reprojected.
+            const int32_t existingIndex =
+                static_cast<int32_t>(
+                    overlayDetails.rasterOverlayProjections.size());
+            textureCoordinateID_ =
+                existingIndex + addProjectionToList(
+                    missingProjections,
+                    projection);
             _pLoadingTile = tileProvider.getPlaceholderTile();
+        } else {
+            textureCoordinateID_ =
+                addProjectionToList(missingProjections, projection);
+            if (geometryRectangle) {
+                _pLoadingTile = tileProvider.getTile(
+                    *geometryRectangle,
+                    targetScreenPixelsX,
+                    targetScreenPixelsY);
+            } else {
+                _pLoadingTile = tileProvider.getPlaceholderTile();
+            }
         }
     }
 
@@ -169,7 +252,7 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
             readyTexture_ = _pReadyTile->getTexture();
 
             // Compute UV transform from the tile's bounds
-            if (_pReadyTile->getTexture() && geometryRectangle) {
+            if (geometryRectangle) {
                 computeTranslationAndScale(
                     *geometryRectangle, _pReadyTile->getRectangle());
             }
@@ -234,7 +317,7 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
 
         if (pPrepRenderer && _pReadyTile->getRendererResources()) {
             pPrepRenderer->attachRasterInMainThread(
-                geometryKey, static_cast<int32_t>(overlayIndex),
+                geometryKey, overlaySlot_,
                 *_pReadyTile,
                 static_cast<Texture*>(_pReadyTile->getRendererResources()),
                 offsetU_, offsetV_, scaleU_, scaleV_);
@@ -263,6 +346,7 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
 bool RasterMappedToTilesetTile::isMoreDetailAvailable() const {
     // cesium-native: !_pLoadingTile && !_originalFailed && _pReadyTile
     //   && _pReadyTile->isMoreDetailAvailable() == Yes
+    if (_pLoadingTile != nullptr) return false;
     if (originalFailed_) return false;
     if (_pReadyTile == nullptr) return false;
     return _pReadyTile->isMoreDetailAvailable() ==
@@ -278,7 +362,7 @@ void RasterMappedToTilesetTile::detachFromTile(IPrepareRendererResources* pPrepR
     if (_pReadyTile->getState() != RasterOverlayTile::LoadState::Failed &&
         pPrepRenderer && geometryKey_.z >= 0) {
         pPrepRenderer->detachRasterInMainThread(
-            geometryKey_, getTextureCoordinateID());
+            geometryKey_, overlaySlot_);
     }
 
     state_ = State::Unattached;
@@ -295,14 +379,17 @@ void RasterMappedToTilesetTile::releaseTileReferences(
     scaleU_ = 1.0f;
     scaleV_ = 1.0f;
     originalFailed_ = false;
+    textureCoordinateID_ = -1;
+    overlaySlot_ = 0;
 }
 
 bool RasterMappedToTilesetTile::loadThrottled(RasterOverlayTileProvider& tileProvider) {
     // cesium-native: if no loading tile, nothing to do
     if (_pLoadingTile == nullptr) return true;
-    if (_pLoadingTile->getState() != RasterOverlayTile::LoadState::Placeholder) {
-        tileProvider.markUsed(*_pLoadingTile);
+    if (_pLoadingTile->getState() == RasterOverlayTile::LoadState::Placeholder) {
+        return true;
     }
+    tileProvider.markUsed(*_pLoadingTile);
 
     // cesium-native: delegate to Provider's throttled loading
     return tileProvider.loadTileThrottled(*_pLoadingTile);

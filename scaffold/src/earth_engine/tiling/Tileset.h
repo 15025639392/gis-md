@@ -251,6 +251,7 @@ private:
         TileLoadPriorityGroup group,
         double priority = std::numeric_limits<double>::max());
     void ensureTileChildren(TilesetTile& tile);
+    void createRasterOverlayUpsampledChildren(TilesetTile& tile);
     void resetTileSelectionState();
     bool isTileRenderable(const TilesetTile& tile) const;
     bool hasLoadedTerrainContent(const TilesetTile& tile) const;
@@ -277,6 +278,7 @@ private:
     void requestMissingTiles(const std::vector<TileLoadRequest>& loadRequests);
     void processPendingUploads();
     TilesetTile* ensureTile(const TileKey& key);
+    void prefetchRasterOverlays(TilesetTile& tile);
     void ingestQuantizedMeshAvailability(const TileKey& key,
                                          DecodedHeightmap& heightmap);
     void ensureTileMesh(TilesetTile& tile);

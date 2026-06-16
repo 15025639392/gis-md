@@ -10,33 +10,25 @@ ActivatedRasterOverlay::ActivatedRasterOverlay(RasterOverlay& overlay)
 
 ActivatedRasterOverlay::~ActivatedRasterOverlay() = default;
 
-void ActivatedRasterOverlay::setTileProvider(
-    std::unique_ptr<RasterOverlayTileProvider> provider) {
-    tileProvider_ = std::move(provider);
-    if (tileProvider_) {
+RasterOverlayTileProvider* ActivatedRasterOverlay::ensureTileProvider(
+    RenderDevice* device) {
+    if (!tileProvider_) {
+        tileProvider_ = std::make_unique<RasterOverlayTileProvider>(
+            overlay_.getProvider(),
+            overlay_.getTileScheme(),
+            device);
         tileProvider_->setOwner(&overlay_);
+        tileProvider_->maximumSimultaneousTileLoads =
+            maximumSimultaneousTileLoads_;
+        tileProvider_->setMaximumScreenSpaceError(
+            overlay_.getOptions().maximumScreenSpaceError);
     }
+    return tileProvider_.get();
 }
 
 RasterOverlayTile* ActivatedRasterOverlay::getPlaceholderTile() {
     if (!tileProvider_) return nullptr;
     return tileProvider_->getPlaceholderTile();
-}
-
-RasterOverlayTile* ActivatedRasterOverlay::getTile(const TileKey& key) {
-    if (!tileProvider_) return nullptr;
-    return tileProvider_->getTile(key);
-}
-
-bool ActivatedRasterOverlay::loadTileThrottled(RasterOverlayTile& tile) {
-    if (!tileProvider_) return false;
-
-    if (tileProvider_->getThrottledTilesCurrentlyLoading() >=
-        maximumSimultaneousTileLoads_) {
-        return false;
-    }
-
-    return tileProvider_->loadTile(tile);
 }
 
 void ActivatedRasterOverlay::processPendingUploads() {
@@ -59,6 +51,14 @@ void ActivatedRasterOverlay::trimUnusedTiles() {
 
 int ActivatedRasterOverlay::getCachedTileCount() const {
     return tileProvider_ ? tileProvider_->getCachedTileCount() : 0;
+}
+
+void ActivatedRasterOverlay::setMaximumSimultaneousTileLoads(int n) {
+    maximumSimultaneousTileLoads_ = n > 0 ? n : 20;
+    if (tileProvider_) {
+        tileProvider_->maximumSimultaneousTileLoads =
+            maximumSimultaneousTileLoads_;
+    }
 }
 
 int ActivatedRasterOverlay::getThrottledTilesCurrentlyLoading() const {

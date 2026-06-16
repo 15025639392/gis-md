@@ -50,8 +50,8 @@ public:
     /// Returns the shared placeholder tile if the provider is not yet ready.
     RasterOverlayTile* getTile(const TileKey& key);
 
-    /// cesium-native ActivatedRasterOverlay::getTile(rectangle, screenPixels)
-    /// equivalent: get or create a raster tile for the geometry rectangle.
+    /// cesium-native mapOverlayToTile rectangle path: get or create a raster
+    /// tile for the geometry rectangle.
     RasterOverlayTile* getTile(const Rectangle& rectangle,
                                double targetScreenPixelsX,
                                double targetScreenPixelsY);
@@ -101,6 +101,14 @@ public:
 
     /// Current number of tiles in Loading state.
     int getThrottledTilesCurrentlyLoading() const;
+
+    double getMaximumScreenSpaceError() const {
+        return maximumScreenSpaceError_;
+    }
+    void setMaximumScreenSpaceError(double maximumScreenSpaceError) {
+        maximumScreenSpaceError_ =
+            maximumScreenSpaceError > 0.0 ? maximumScreenSpaceError : 2.0;
+    }
 
     /// Process completed uploads on the main thread.
     /// Should be called once per frame.
@@ -175,6 +183,7 @@ private:
     /// Monotonic frame counter, updated by trimUnusedTiles.
     /// Used to stamp lastUsedFrame on tiles in getTile().
     uint64_t frameNumber_ = 0;
+    double maximumScreenSpaceError_ = 2.0;
 
 };
 

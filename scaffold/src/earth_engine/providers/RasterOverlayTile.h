@@ -113,9 +113,9 @@ public:
     int getMaxZoom() const { return maxZoom_; }
     void setMaxZoom(int maxZoom) { maxZoom_ = maxZoom; }
 
-    /// cesium-native ActivatedRasterOverlay::getTile(rectangle, screenPixels)
-    /// equivalent: this tile is not a provider quadtree tile. It represents
-    /// a raster image for an arbitrary geometry rectangle.
+    /// cesium-native mapOverlayToTile rectangle path: this tile is not a
+    /// provider quadtree tile. It represents a raster image for an arbitrary
+    /// geometry rectangle.
     bool isRectangleTile() const { return rectangleTile_; }
     int getSourceZoom() const { return sourceZoom_; }
     void setRectangleTileLevel(int sourceZoom) {

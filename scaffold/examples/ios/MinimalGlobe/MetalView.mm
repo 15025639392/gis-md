@@ -9,7 +9,6 @@
 #include "earth_engine/platform/ios/RenderDeviceMetal.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/XYZImageryProvider.h"
-#include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
@@ -243,11 +242,6 @@ public:
         auto overlay = std::make_unique<RasterOverlay>(
             std::move(provider), std::move(scheme), RasterOverlay::Options{});
         auto activeOverlay = std::make_unique<ActivatedRasterOverlay>(*overlay);
-        activeOverlay->setTileProvider(std::make_unique<RasterOverlayTileProvider>(
-            overlay->getProvider(),
-            overlay->getTileScheme(),
-            _renderDevice.get()));
-        activeOverlay->getTileProvider()->setOwner(overlay.get());
 
         std::vector<ActivatedRasterOverlay*> rasterOverlays{activeOverlay.get()};
         _rasterOverlays.push_back(std::move(overlay));

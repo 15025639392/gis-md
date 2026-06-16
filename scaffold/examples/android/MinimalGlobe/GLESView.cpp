@@ -6,6 +6,8 @@
 #include <GLES3/gl3.h>
 #include <chrono>
 #include <algorithm>
+#include <memory>
+#include <vector>
 
 #include "earth_engine/Engine.h"
 #include "earth_engine/content/GltfContentProvider.h"
@@ -18,7 +20,6 @@
 #include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/providers/HeightmapTerrainProvider.h"
 #include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
-#include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
 #include "earth_engine/layers/VectorLayer.h"
@@ -89,9 +90,9 @@ static void cancelInputIfNeeded() {
 static constexpr const char* kFabdemTerrainTemplate =
     "http://192.168.1.4:8001/{z}/{x}/{y}.png";
 static constexpr const char* kQuantizedMeshTerrainTemplate =
-    "http://192.168.1.8:8092/{z}/{x}/{y}.terrain";
+    "http://192.168.100.141:8090/{z}/{x}/{y}.terrain";
 static constexpr const char* kQuantizedMeshTerrainLayerJson =
-    "http://192.168.1.8:8092/layer.json";
+    "http://192.168.100.141:8090/layer.json";
 static constexpr const char* kGaodeSatelliteTemplate =
     "https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
 static constexpr const char* kGaodeRoadNetTemplate =
@@ -104,6 +105,164 @@ static constexpr bool kEnableGaodeRoadNetOverlayForDemo = true;
 static constexpr bool kEnableRobotExpressiveGltfDemo = true;
 /// Use QuantizedMesh terrain (cesium-native format) instead of RGB heightmap.
 static constexpr bool kUseQuantizedMeshTerrain = true;
+
+static void clearDemoEngineObjects() {
+    gEngine.reset();
+    gActivatedRasterOverlays.clear();
+    gRasterOverlays.clear();
+    gRenderDevice.reset();
+    gPlatformBridge.reset();
+    gEngineReady = false;
+}
+
+static void setDemoCamera() {
+    if (!gEngine) return;
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const double centerLng = 106.508;
+    const double centerLat = 29.617;
+    auto targetEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromDegrees(centerLng, centerLat, 0.0));
+    auto camEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromDegrees(centerLng, centerLat, 30000.0));
+    Vec3 up = ellipsoid.geodeticSurfaceNormal(targetEcef);
+    gEngine->camera().lookAt(camEcef, targetEcef, up);
+}
+
+static TilesetOptions makeDemoTilesetOptions() {
+    TilesetOptions options;
+    options.mainThreadLoadingTimeLimit = 4.0;
+    options.tileCacheUnloadTimeLimit = 2.0;
+    return options;
+}
+
+static RasterOverlay::Options makeDemoRasterOverlayOptions(float opacity) {
+    RasterOverlay::Options options{};
+    options.maximumSimultaneousTileLoads = 20;
+    options.maximumScreenSpaceError = 2.0;
+    options.minimumZoom = 0;
+    options.maximumZoom = 0;
+    options.visible = true;
+    options.opacity = opacity;
+    return options;
+}
+
+static std::unique_ptr<TerrainProvider> createDemoTerrainProvider() {
+    if (!kEnableTerrainForDemo) {
+        return {};
+    }
+
+    if (kUseQuantizedMeshTerrain) {
+        auto qm = std::make_unique<QuantizedMeshTerrainProvider>(
+            kQuantizedMeshTerrainTemplate, "QuantizedMesh Terrain");
+        qm->setZoomRange(0, 12);
+        qm->setTileSize(65);
+        qm->setFlipYForUrl(false);
+        qm->setPlatformBridge(gPlatformBridge.get());
+        if (!qm->configureFromLayerJsonUrl(kQuantizedMeshTerrainLayerJson)) {
+            LOGE("QuantizedMesh layer.json load failed: %s",
+                 kQuantizedMeshTerrainLayerJson);
+        }
+        return qm;
+    }
+
+    auto hm = std::make_unique<HeightmapTerrainProvider>(
+        kFabdemTerrainTemplate, "Mapbox Terrain-RGB");
+    hm->setZoomRange(0, 14);
+    hm->setEncoding(HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
+    hm->setTileSize(514);
+    hm->setPlatformBridge(gPlatformBridge.get());
+    return hm;
+}
+
+static void addActivatedRasterOverlay(
+    std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+    std::unique_ptr<ImageryProvider> provider,
+    std::unique_ptr<TileScheme> scheme,
+    float opacity) {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::move(provider),
+        std::move(scheme),
+        makeDemoRasterOverlayOptions(opacity));
+    auto active = std::make_unique<ActivatedRasterOverlay>(*overlay);
+
+    rasterOverlays.push_back(active.get());
+    gRasterOverlays.push_back(std::move(overlay));
+    gActivatedRasterOverlays.push_back(std::move(active));
+}
+
+static std::vector<ActivatedRasterOverlay*> createDemoRasterOverlays() {
+    gActivatedRasterOverlays.clear();
+    gRasterOverlays.clear();
+
+    std::vector<ActivatedRasterOverlay*> rasterOverlays;
+    if (kUseGaodeSatelliteForDemo) {
+        auto xyz = std::make_unique<XYZImageryProvider>(
+            kGaodeSatelliteTemplate, "Gaode/Amap satellite");
+        xyz->setZoomRange(0, 18);
+        xyz->setOpenGlobusGroupedY(true);
+        xyz->setOpenGlobusPolarGroupsEnabled(false);
+        xyz->setPlatformBridge(gPlatformBridge.get());
+        addActivatedRasterOverlay(
+            rasterOverlays,
+            std::move(xyz),
+            TileScheme::createOpenGlobusEarth(),
+            1.0f);
+        LOGI("Gaode satellite basemap enabled");
+
+        if (kEnableGaodeRoadNetOverlayForDemo) {
+            auto road = std::make_unique<XYZImageryProvider>(
+                kGaodeRoadNetTemplate, "Gaode/Amap road network");
+            road->setZoomRange(0, 18);
+            road->setOpenGlobusGroupedY(true);
+            road->setOpenGlobusPolarGroupsEnabled(false);
+            road->setPlatformBridge(gPlatformBridge.get());
+            addActivatedRasterOverlay(
+                rasterOverlays,
+                std::move(road),
+                TileScheme::createOpenGlobusEarth(),
+                0.92f);
+            LOGI("Gaode road network overlay enabled");
+        }
+    } else {
+        auto dbg = std::make_unique<DebugImageryProvider>();
+        addActivatedRasterOverlay(
+            rasterOverlays,
+            std::move(dbg),
+            TileScheme::createXYZWebMercator(),
+            1.0f);
+    }
+    return rasterOverlays;
+}
+
+static void addRobotExpressiveTileset(const TilesetOptions& tilesetOptions) {
+    if (!kEnableRobotExpressiveGltfDemo || !gEngine) {
+        return;
+    }
+
+    const TileKey robotKey{"Geographic-TMS", 0, 1, 0};
+    auto gltfProvider = std::make_unique<SingleGltfContentProvider>(
+        robotKey,
+        std::string(kRobotExpressiveGlbUrl),
+        "RobotExpressive GLB");
+    gltfProvider->setPlatformBridge(gPlatformBridge.get());
+    gltfProvider->setEastNorthUpPlacementDegrees(
+        106.508,
+        29.617,
+        650.0,
+        420.0);
+
+    auto robotTileset = std::make_unique<Tileset>(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{},
+        gRenderDevice.get(),
+        tilesetOptions,
+        std::move(gltfProvider));
+    gEngine->addTileset(std::move(robotTileset));
+    LOGI("RobotExpressive glTF tileset added: %s",
+         kRobotExpressiveGlbUrl);
+}
 
 static void addDemoVectorLayer() {
     static constexpr const char* kDemoGeoJson = R"json(
@@ -196,10 +355,7 @@ static bool initEGL(ANativeWindow* window) {
 }
 
 static void destroyEGL() {
-    gEngine.reset();
-    gRenderDevice.reset();
-    gPlatformBridge.reset();
-    gEngineReady = false;
+    clearDemoEngineObjects();
 
     eglMakeCurrent(gDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     if (gContext != EGL_NO_CONTEXT) eglDestroyContext(gDisplay, gContext);
@@ -211,6 +367,7 @@ static void destroyEGL() {
 }
 
 static bool createEngine() {
+    clearDemoEngineObjects();
     gRenderDevice = std::make_unique<RenderDeviceGLES>();
     gEngine = std::make_unique<Engine>(gRenderDevice.get());
 
@@ -224,110 +381,17 @@ static bool createEngine() {
              gEngine->camera().position().y(),
              gEngine->camera().position().z());
 
-        // Default view: Chongqing, China area
-        {
-            const auto& ellipsoid = Ellipsoid::WGS84();
-            const double centerLng = 106.508, centerLat = 29.617;
-            auto targetEcef = ellipsoid.cartographicToCartesian(
-                Cartographic::fromDegrees(centerLng, centerLat, 0.0));
-            auto camEcef = ellipsoid.cartographicToCartesian(
-                Cartographic::fromDegrees(centerLng, centerLat, 30000.0));
-            Vec3 up = ellipsoid.geodeticSurfaceNormal(targetEcef);
-            gEngine->camera().lookAt(camEcef, targetEcef, up);
-        }
+        setDemoCamera();
 
         // 创建 Android JNI HTTP 桥接
         gPlatformBridge = std::make_unique<AndroidPlatformBridge>(gJvm);
 
         // cesium-native aligned: create unified Tileset
         {
-            // 1. Terrain provider (QuantizedMesh or Heightmap)
-            std::unique_ptr<TerrainProvider> terrainProvider;
-            if (kEnableTerrainForDemo && kUseQuantizedMeshTerrain) {
-                auto qm = std::make_unique<QuantizedMeshTerrainProvider>(
-                    kQuantizedMeshTerrainTemplate, "QuantizedMesh Terrain");
-                qm->setZoomRange(0, 12);
-                qm->setTileSize(65);
-                qm->setFlipYForUrl(false);
-                qm->setPlatformBridge(gPlatformBridge.get());
-                if (!qm->configureFromLayerJsonUrl(kQuantizedMeshTerrainLayerJson)) {
-                    LOGE("QuantizedMesh layer.json load failed: %s", kQuantizedMeshTerrainLayerJson);
-                }
-                terrainProvider = std::move(qm);
-            } else {
-                auto hm = std::make_unique<HeightmapTerrainProvider>(
-                    kFabdemTerrainTemplate, "Mapbox Terrain-RGB");
-                hm->setZoomRange(0, 14);
-                hm->setEncoding(HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
-                hm->setTileSize(514);
-                hm->setPlatformBridge(gPlatformBridge.get());
-                terrainProvider = std::move(hm);
-            }
-
-            // 2. Raster overlays (basemap + optional road overlay)
-            gRasterOverlays.clear();
-            gActivatedRasterOverlays.clear();
-            std::vector<ActivatedRasterOverlay*> rasterOverlays;
-
-            auto addRasterOverlay = [&](std::unique_ptr<ImageryProvider> provider,
-                                        std::unique_ptr<TileScheme> scheme,
-                                        float opacity) {
-                auto overlay = std::make_unique<RasterOverlay>(
-                    std::move(provider),
-                    std::move(scheme),
-                    RasterOverlay::Options{});
-                overlay->setOpacity(opacity);
-
-                auto active = std::make_unique<ActivatedRasterOverlay>(*overlay);
-                active->setTileProvider(std::make_unique<RasterOverlayTileProvider>(
-                    overlay->getProvider(),
-                    overlay->getTileScheme(),
-                    gRenderDevice.get()));
-                active->getTileProvider()->setOwner(overlay.get());
-
-                rasterOverlays.push_back(active.get());
-                gRasterOverlays.push_back(std::move(overlay));
-                gActivatedRasterOverlays.push_back(std::move(active));
-            };
-
-            if (kUseGaodeSatelliteForDemo) {
-                auto xyz = std::make_unique<XYZImageryProvider>(
-                    kGaodeSatelliteTemplate, "Gaode/Amap satellite");
-                xyz->setZoomRange(0, 18);
-                xyz->setOpenGlobusGroupedY(true);
-                xyz->setOpenGlobusPolarGroupsEnabled(false);
-                xyz->setPlatformBridge(gPlatformBridge.get());
-                addRasterOverlay(
-                    std::move(xyz),
-                    TileScheme::createOpenGlobusEarth(),
-                    1.0f);
-                LOGI("Gaode satellite basemap enabled");
-
-                if (kEnableGaodeRoadNetOverlayForDemo) {
-                    auto road = std::make_unique<XYZImageryProvider>(
-                        kGaodeRoadNetTemplate, "Gaode/Amap road network");
-                    road->setZoomRange(0, 18);
-                    road->setOpenGlobusGroupedY(true);
-                    road->setOpenGlobusPolarGroupsEnabled(false);
-                    road->setPlatformBridge(gPlatformBridge.get());
-                    addRasterOverlay(
-                        std::move(road),
-                        TileScheme::createOpenGlobusEarth(),
-                        0.92f);
-                    LOGI("Gaode road network overlay enabled");
-                }
-            } else {
-                auto dbg = std::make_unique<DebugImageryProvider>();
-                addRasterOverlay(
-                    std::move(dbg),
-                    TileScheme::createXYZWebMercator(),
-                    1.0f);
-            }
-
-            // 3. Create unified Tileset
-            TilesetOptions tilesetOptions;
-            tilesetOptions.mainThreadLoadingTimeLimit = 4.0;
-            tilesetOptions.tileCacheUnloadTimeLimit = 2.0;
+            auto terrainProvider = createDemoTerrainProvider();
+            std::vector<ActivatedRasterOverlay*> rasterOverlays =
+                createDemoRasterOverlays();
+            const TilesetOptions tilesetOptions = makeDemoTilesetOptions();
             auto tileset = std::make_unique<Tileset>(
                 std::move(terrainProvider),
                 TileScheme::createGeographicTMS(),
@@ -337,30 +401,7 @@ static bool createEngine() {
             gEngine->setTileset(std::move(tileset));
             LOGI("Unified Tileset created (cesium-native architecture)");
 
-            if (kEnableRobotExpressiveGltfDemo) {
-                const TileKey robotKey{"Geographic-TMS", 0, 1, 0};
-                auto gltfProvider = std::make_unique<SingleGltfContentProvider>(
-                    robotKey,
-                    std::string(kRobotExpressiveGlbUrl),
-                    "RobotExpressive GLB");
-                gltfProvider->setPlatformBridge(gPlatformBridge.get());
-                gltfProvider->setEastNorthUpPlacementDegrees(
-                    106.508,
-                    29.617,
-                    650.0,
-                    420.0);
-
-                auto robotTileset = std::make_unique<Tileset>(
-                    std::unique_ptr<TerrainProvider>{},
-                    TileScheme::createGeographicTMS(),
-                    std::vector<ActivatedRasterOverlay*>{},
-                    gRenderDevice.get(),
-                    tilesetOptions,
-                    std::move(gltfProvider));
-                gEngine->addTileset(std::move(robotTileset));
-                LOGI("RobotExpressive glTF tileset added: %s",
-                     kRobotExpressiveGlbUrl);
-            }
+            addRobotExpressiveTileset(tilesetOptions);
         }
 
         // Keep the feature path available, but avoid covering the basemap while
@@ -373,6 +414,7 @@ static bool createEngine() {
         LOGI("Simulation time set to fixed daytime JD 2461188.75 (2026-06-10 14:00 UTC+8)");
     } else {
         LOGE("Engine initialization failed");
+        clearDemoEngineObjects();
     }
     return gEngineReady;
 }
@@ -860,26 +902,25 @@ JNIEXPORT void JNICALL
 Java_com_earthengine_minimalglobe_GLESView_nativeResetCamera(
     JNIEnv* /* env */, jobject /* this */) {
     if (!gEngine) return;
-    // Reset to default East-Asia viewpoint
-    auto& cam = gEngine->camera();
-    // Default position: 7 earth radii above East Asia
-    constexpr double kDefaultDistRadii = 7.0;
-    const double d = kDefaultDistRadii * 6378137.0;
-    cam.lookAt(Vec3(-9465697.8, 35326465.0, 25608443.6), Vec3::zero(), Vec3::unitZ());
-    LOGI("Camera reset to default viewpoint");
+    setDemoCamera();
+    LOGI("Camera reset to Chongqing demo viewpoint");
 }
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_minimalglobe_GLESView_nativePause(
     JNIEnv* /* env */, jobject /* this */) {
     cancelInputIfNeeded();
-    // TODO: 后续阶段通知 PlatformBridge::onEnterBackground()
+    if (gPlatformBridge) {
+        gPlatformBridge->onEnterBackground();
+    }
 }
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_minimalglobe_GLESView_nativeResume(
     JNIEnv* /* env */, jobject /* this */) {
-    // TODO: 后续阶段通知 PlatformBridge::onEnterForeground()
+    if (gPlatformBridge) {
+        gPlatformBridge->onEnterForeground();
+    }
 }
 
 } // extern "C"

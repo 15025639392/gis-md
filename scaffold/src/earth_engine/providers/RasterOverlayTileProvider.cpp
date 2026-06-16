@@ -26,7 +26,6 @@ namespace {
 constexpr uint64_t kRetainedUnusedFrames = 120;
 constexpr int kMaximumCombinedTextureSizeFallback = 2048;
 constexpr size_t kMaximumRasterUploadsPerFrame = 1;
-constexpr double kRasterOverlayMaximumScreenSpaceError = 2.0;
 constexpr double kPi = 3.14159265358979323846264338327950288;
 constexpr double kTwoPi = 2.0 * kPi;
 constexpr double kMaxWebMercatorLat = 1.4844222297453324;
@@ -127,19 +126,22 @@ int computeLevelFromTargetScreenPixels(const TileScheme& scheme,
                                        const ImageryProvider& provider,
                                        const Rectangle& bounds,
                                        double targetScreenPixelsX,
-                                       double targetScreenPixelsY) {
+                                       double targetScreenPixelsY,
+                                       double maximumScreenSpaceError) {
     const int minZoom = std::max(scheme.minZoom(), provider.minZoom());
     const int maxZoom = std::min(scheme.maxZoom(), provider.maxZoom());
     if (maxZoom < minZoom) return scheme.minZoom();
 
     const SchemeDimensions dimensions =
         schemeDimensionsForRectangle(scheme, bounds);
+    const double rasterMaximumScreenSpaceError =
+        std::max(1e-6, maximumScreenSpaceError);
     const double rasterPixelsX =
         std::max(1.0, targetScreenPixelsX) /
-        kRasterOverlayMaximumScreenSpaceError;
+        rasterMaximumScreenSpaceError;
     const double rasterPixelsY =
         std::max(1.0, targetScreenPixelsY) /
-        kRasterOverlayMaximumScreenSpaceError;
+        rasterMaximumScreenSpaceError;
     const double rasterTilesX =
         rasterPixelsX / static_cast<double>(std::max(1, provider.tileWidth()));
     const double rasterTilesY =
@@ -164,6 +166,7 @@ int chooseRectangleSourceZoom(const TileScheme& scheme,
                         const Rectangle& bounds,
                         double targetScreenPixelsX,
                         double targetScreenPixelsY,
+                        double maximumScreenSpaceError,
                         TileRange* outRange = nullptr) {
     const int minZoom = std::max(scheme.minZoom(), provider.minZoom());
     const int maxZoom = std::min(scheme.maxZoom(), provider.maxZoom());
@@ -173,7 +176,12 @@ int chooseRectangleSourceZoom(const TileScheme& scheme,
     }
 
     int zoom = computeLevelFromTargetScreenPixels(
-        scheme, provider, bounds, targetScreenPixelsX, targetScreenPixelsY);
+        scheme,
+        provider,
+        bounds,
+        targetScreenPixelsX,
+        targetScreenPixelsY,
+        maximumScreenSpaceError);
     const int maxTextureSize = maximumCombinedTextureSize(device);
 
     TileRange range = computeRange(scheme, bounds, zoom);
@@ -410,6 +418,7 @@ RasterOverlayTile* RasterOverlayTileProvider::getTile(
         geometryBounds,
         targetScreenPixelsX,
         targetScreenPixelsY,
+        maximumScreenSpaceError_,
         &range);
     (void)range;
 
@@ -580,6 +589,7 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile) {
         tile.getRectangle(),
         tile.getTargetScreenPixelsX(),
         tile.getTargetScreenPixelsY(),
+        maximumScreenSpaceError_,
         &range);
 
     std::vector<TileKey> sourceKeys;

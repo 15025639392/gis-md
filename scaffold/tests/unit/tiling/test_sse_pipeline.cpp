@@ -142,6 +142,10 @@ struct TilesetTestAccess {
         tileset.processPendingUploads();
     }
 
+    static void prefetchRasterOverlays(Tileset& tileset, TilesetTile& tile) {
+        tileset.prefetchRasterOverlays(tile);
+    }
+
     static bool loadQueueEmpty(const Tileset& tileset) {
         return tileset.loadQueue_.empty();
     }
@@ -1029,17 +1033,35 @@ void testActivatedRasterOverlayBindsProviderOwner() {
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
 
-    auto provider = std::make_unique<RasterOverlayTileProvider>(
-        overlay->getProvider(),
-        overlay->getTileScheme(),
-        nullptr);
-    RasterOverlayTileProvider* rawProvider = provider.get();
+    ActivatedRasterOverlay activated(*overlay);
+    RasterOverlayTileProvider* provider = activated.ensureTileProvider(nullptr);
+
+    check(provider && provider->getOwner() == overlay.get(),
+          "ActivatedRasterOverlay: ensureTileProvider binds provider owner like cesium-native");
+}
+
+void testActivatedRasterOverlayEnsuresProvider() {
+    RasterOverlay::Options options = makeRasterOverlayOptions();
+    options.maximumScreenSpaceError = 4.0;
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        options);
 
     ActivatedRasterOverlay activated(*overlay);
-    activated.setTileProvider(std::move(provider));
+    RasterOverlayTileProvider* provider = activated.ensureTileProvider(nullptr);
 
-    check(rawProvider->getOwner() == overlay.get(),
-          "ActivatedRasterOverlay: setTileProvider binds provider owner like cesium-native");
+    check(provider != nullptr,
+          "ActivatedRasterOverlay: ensureTileProvider creates runtime provider");
+    check(provider && provider->getOwner() == overlay.get(),
+          "ActivatedRasterOverlay: ensured provider binds overlay owner");
+    check(provider &&
+              std::abs(provider->getMaximumScreenSpaceError() - 4.0) < 1e-9,
+          "ActivatedRasterOverlay: ensured provider inherits overlay raster SSE");
+    check(activated.getPlaceholderTile() != nullptr &&
+              activated.getPlaceholderTile()->getState() ==
+                  RasterOverlayTile::LoadState::Placeholder,
+          "ActivatedRasterOverlay: ensured provider exposes placeholder tile");
 }
 
 void testTileSelectionKickedStatePreservesOriginalResult() {
@@ -1340,6 +1362,220 @@ void testRasterMappedMissingProjectionUsesPlaceholder() {
           "RasterMappedToTilesetTile: missing projection does not create synthetic tile");
 }
 
+void testRasterMappedProviderNotReadyUsesPlaceholderWithoutMissingProjection() {
+    DebugImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
+    provider.setReady(false);
+    provider.setFrameNumber(1);
+
+    RasterOverlayDetails details;
+    details.setGeographicRectangle(
+        Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0));
+
+    RasterMappedToTilesetTile mapped;
+    std::vector<RasterOverlayProjection> missingProjections;
+    const TileKey geometryKey{"Geographic-TMS", 4, 8, 8};
+    const RasterMappedToTilesetTile::MoreDetail moreDetail = mapped.update(
+        geometryKey,
+        details,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+
+    check(moreDetail == RasterMappedToTilesetTile::MoreDetail::No,
+          "RasterMappedToTilesetTile: provider-not-ready placeholder does not request detail");
+    check(mapped.getLoadingTile() != nullptr &&
+              mapped.getLoadingTile()->getState() ==
+                  RasterOverlayTile::LoadState::Placeholder,
+          "RasterMappedToTilesetTile: provider-not-ready maps to placeholder");
+    check(mapped.getTextureCoordinateID() == -1,
+          "RasterMappedToTilesetTile: provider-not-ready placeholder has no texture coordinate ID");
+    check(mapped.loadThrottled(provider),
+          "RasterMappedToTilesetTile: provider-not-ready placeholder load is a no-op success");
+    check(missingProjections.empty(),
+          "RasterMappedToTilesetTile: provider-not-ready does not report missing projection");
+    check(provider.getCachedTileCount() == 0,
+          "RasterMappedToTilesetTile: provider-not-ready does not create a cache tile");
+}
+
+void testRasterMappedPlaceholderRemapsWhenProviderBecomesReady() {
+    DebugImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
+    provider.setReady(false);
+    provider.setFrameNumber(1);
+
+    RasterOverlayDetails details;
+    const Rectangle preciseRectangle =
+        Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0);
+    details.setGeographicRectangle(preciseRectangle);
+
+    RasterMappedToTilesetTile mapped;
+    std::vector<RasterOverlayProjection> missingProjections;
+    const TileKey geometryKey{"Geographic-TMS", 4, 8, 8};
+    mapped.update(
+        geometryKey,
+        details,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+
+    provider.setReady(true);
+    missingProjections.clear();
+    const auto remapped = mapped.update(
+        geometryKey,
+        details,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+
+    check(remapped == RasterMappedToTilesetTile::MoreDetail::Unknown,
+          "RasterMappedToTilesetTile: provider-ready placeholder remaps to loading real tile");
+    check(mapped.getLoadingTile() != nullptr &&
+              mapped.getLoadingTile()->isRectangleTile() &&
+              mapped.getLoadingTile()->getRectangle() == preciseRectangle,
+          "RasterMappedToTilesetTile: remapped placeholder requests precise rectangle");
+    check(mapped.getTextureCoordinateID() == 0,
+          "RasterMappedToTilesetTile: remapped placeholder restores texture coordinate ID");
+    check(missingProjections.empty(),
+          "RasterMappedToTilesetTile: remapped placeholder does not report missing projection");
+    check(provider.getCachedTileCount() == 1,
+          "RasterMappedToTilesetTile: remapped placeholder creates one real cache tile");
+}
+
+void testRasterMappedLoadedContentMissingProjectionOffsetsTextureCoordinateID() {
+    DebugImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
+    provider.setFrameNumber(1);
+
+    RasterOverlayDetails staleDetails;
+    staleDetails.rasterOverlayProjections.push_back(
+        RasterOverlayProjection::Geographic);
+
+    RasterMappedToTilesetTile mapped;
+    std::vector<RasterOverlayProjection> missingProjections;
+    const TileKey geometryKey{"Geographic-TMS", 4, 8, 8};
+    const RasterMappedToTilesetTile::MoreDetail moreDetail = mapped.update(
+        geometryKey,
+        staleDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+
+    check(moreDetail == RasterMappedToTilesetTile::MoreDetail::No,
+          "RasterMappedToTilesetTile: stale render details use placeholder");
+    check(mapped.getLoadingTile() != nullptr &&
+              mapped.getLoadingTile()->getState() ==
+                  RasterOverlayTile::LoadState::Placeholder,
+          "RasterMappedToTilesetTile: stale render details do not request wrong imagery");
+    check(mapped.getTextureCoordinateID() == 1,
+          "RasterMappedToTilesetTile: missing projection texture coordinate ID follows existing details");
+    check(mapped.loadThrottled(provider),
+          "RasterMappedToTilesetTile: missing-projection placeholder load is a no-op success");
+    check(missingProjections.size() == 1 &&
+              missingProjections.front() == RasterOverlayProjection::Geographic,
+          "RasterMappedToTilesetTile: stale render details record missing projection");
+    check(provider.getCachedTileCount() == 0,
+          "RasterMappedToTilesetTile: stale render details do not create a cache tile");
+}
+
+void testRasterMappedBoundingRegionRequestsPreciseRectangleWithoutRenderContent() {
+    DebugImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
+    provider.setFrameNumber(1);
+
+    const Rectangle regionRectangle =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    const TileBoundingVolume boundingRegion =
+        TileBoundingVolume::fromRegion(regionRectangle, 0.0, 10.0);
+
+    RasterMappedToTilesetTile mapped;
+    RasterOverlayDetails emptyDetails;
+    std::vector<RasterOverlayProjection> missingProjections;
+    const TileKey geometryKey{"Geographic-TMS", 4, 8, 8};
+    const RasterMappedToTilesetTile::MoreDetail moreDetail = mapped.update(
+        geometryKey,
+        emptyDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0,
+        &boundingRegion,
+        false);
+
+    check(moreDetail == RasterMappedToTilesetTile::MoreDetail::Unknown,
+          "RasterMappedToTilesetTile: bounding region real tile reports unknown detail");
+    check(mapped.getLoadingTile() != nullptr &&
+              mapped.getLoadingTile()->isRectangleTile() &&
+              mapped.getLoadingTile()->getRectangle() == regionRectangle,
+          "RasterMappedToTilesetTile: bounding region requests precise rectangle tile");
+    check(mapped.getTextureCoordinateID() == 0,
+          "RasterMappedToTilesetTile: bounding region missing projection gets first texture coordinate ID");
+    check(missingProjections.size() == 1 &&
+              missingProjections.front() == RasterOverlayProjection::Geographic,
+          "RasterMappedToTilesetTile: bounding region records projection needed by later render content");
+    check(provider.getCachedTileCount() == 1,
+          "RasterMappedToTilesetTile: bounding region creates one real cached rectangle tile");
+}
+
+void testRasterMappedNonRegionBoundingVolumeUsesPlaceholder() {
+    DebugImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
+    provider.setFrameNumber(1);
+
+    const TileBoundingVolume sphere =
+        TileBoundingVolume::fromSphere(Vec3::zero(), 1.0);
+
+    RasterMappedToTilesetTile mapped;
+    RasterOverlayDetails emptyDetails;
+    std::vector<RasterOverlayProjection> missingProjections;
+    const TileKey geometryKey{"Geographic-TMS", 4, 8, 8};
+    const RasterMappedToTilesetTile::MoreDetail moreDetail = mapped.update(
+        geometryKey,
+        emptyDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0,
+        &sphere,
+        false);
+
+    check(moreDetail == RasterMappedToTilesetTile::MoreDetail::No,
+          "RasterMappedToTilesetTile: imprecise bounding volume placeholder does not request detail");
+    check(mapped.getLoadingTile() != nullptr &&
+              mapped.getLoadingTile()->getState() ==
+                  RasterOverlayTile::LoadState::Placeholder,
+          "RasterMappedToTilesetTile: imprecise bounding volume maps to placeholder");
+    check(provider.getCachedTileCount() == 0,
+          "RasterMappedToTilesetTile: imprecise bounding volume does not create a cache tile");
+}
+
 void testRasterMappedAttachedUnknownReportsMoreDetail() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -1530,6 +1766,100 @@ void testRasterMappedFailureFallbackMatchesOverlayOwner() {
           "RasterMappedToTilesetTile: failure fallback selects ancestor raster by owner, not slot index");
     check(childMapped.getLoadingTile() == nullptr,
           "RasterMappedToTilesetTile: owner-matched loaded ancestor is promoted to ready");
+    check(std::abs(childMapped.getTranslationU() - 0.0f) < 1e-6f &&
+              std::abs(childMapped.getTranslationV() - 0.0f) < 1e-6f &&
+              std::abs(childMapped.getScaleU() - 0.5f) < 1e-6f &&
+              std::abs(childMapped.getScaleV() - 0.5f) < 1e-6f,
+          "RasterMappedToTilesetTile: ancestor imagery UV window covers child geometry");
+}
+
+void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+
+    RasterOverlayTileProvider provider(
+        overlay->getProvider(),
+        overlay->getTileScheme(),
+        nullptr);
+    provider.setOwner(overlay.get());
+    provider.setFrameNumber(1);
+
+    RasterOverlayDetails parentDetails;
+    parentDetails.setGeographicRectangle(
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
+    RasterOverlayDetails childDetails;
+    childDetails.setGeographicRectangle(
+        Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0));
+
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 2, 2, 1},
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
+    TilesetTile child(
+        TileKey{"Geographic-TMS", 3, 4, 2},
+        Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0),
+        &parent);
+    parent.rasterOverlays.resize(1);
+
+    auto parentMapped = std::make_unique<RasterMappedToTilesetTile>();
+    std::vector<RasterOverlayProjection> parentMissing;
+    parentMapped->update(
+        parent.key,
+        parentDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        parentMissing,
+        nullptr,
+        0);
+    parentMapped->getLoadingTile()->setState(RasterOverlayTile::LoadState::Loaded);
+    parentMapped->getLoadingTile()->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    parentMapped->update(
+        parent.key,
+        parentDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        parentMissing,
+        nullptr,
+        0);
+    parent.rasterOverlays[0] = std::move(parentMapped);
+
+    RasterMappedToTilesetTile childMapped;
+    std::vector<RasterOverlayProjection> childMissing;
+    childMapped.update(
+        child.key,
+        childDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        childMissing,
+        nullptr,
+        0);
+
+    const auto fallbackUpdate = childMapped.update(
+        child.key,
+        childDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        childMissing,
+        &parent,
+        0);
+
+    check(fallbackUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown,
+          "RasterMappedToTilesetTile: loading child with ancestor raster reports unknown detail");
+    check(childMapped.getState() ==
+              RasterMappedToTilesetTile::State::TemporarilyAttached,
+          "RasterMappedToTilesetTile: ancestor raster is attached as temporary fallback");
+    check(!childMapped.isMoreDetailAvailable(),
+          "RasterMappedToTilesetTile: temporary ancestor raster does not trigger upsample children");
 }
 
 void testRasterOverlayNativeTranslationAndRendererWindow() {
@@ -2862,12 +3192,7 @@ void testTilesetMissingRasterProjectionUnloadsRenderContent() {
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
-    auto overlayProvider = std::make_unique<RasterOverlayTileProvider>(
-        overlay->getProvider(),
-        overlay->getTileScheme(),
-        nullptr);
     ActivatedRasterOverlay activated(*overlay);
-    activated.setTileProvider(std::move(overlayProvider));
 
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -2921,12 +3246,7 @@ void testTilesetRasterTargetPixelsUseRenderContentRectangle() {
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
         makeRasterOverlayOptions());
-    auto overlayProvider = std::make_unique<RasterOverlayTileProvider>(
-        overlay->getProvider(),
-        overlay->getTileScheme(),
-        nullptr);
     ActivatedRasterOverlay activated(*overlay);
-    activated.setTileProvider(std::move(overlayProvider));
 
     auto terrainProvider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -2971,6 +3291,193 @@ void testTilesetRasterTargetPixelsUseRenderContentRectangle() {
               loadingTile->getTargetScreenPixelsX() < 80.0 &&
               loadingTile->getTargetScreenPixelsY() < 80.0,
           "Tileset: raster target-pixels are computed from precise rectangle size");
+}
+
+void testTilesetEnsuresOverlayProviderBeforeMapping() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+
+    auto terrainProvider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(terrainProvider),
+        std::move(scheme),
+        {&activated},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: lazy raster-provider root tile is created");
+    if (!root) return;
+
+    const Rectangle preciseRectangle =
+        Rectangle::fromDegrees(-10.0, -5.0, 2.0, 5.0);
+    root->mesh = std::make_unique<SurfaceTileMesh>();
+    root->mesh->rasterOverlayDetails.setGeographicRectangle(preciseRectangle);
+    root->meshReady = true;
+    root->gpuVertexBuffer = std::make_unique<DummyBuffer>(32);
+    root->loadState = TileLoadState::Done;
+    root->contentKind = TileContentKind::Render;
+    root->rasterOverlays.resize(1);
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    RasterMappedToTilesetTile* mapped = root->rasterOverlays[0].get();
+    check(activated.getTileProvider() != nullptr &&
+              activated.getTileProvider()->getOwner() == overlay.get(),
+          "Tileset: lazy activated overlay owns a provider before mapping");
+    check(mapped && mapped->getLoadingTile() &&
+              mapped->getLoadingTile()->getRectangle() == preciseRectangle,
+          "Tileset: lazy provider maps raster using render-content rectangle");
+}
+
+void testTilesetPrefetchesRasterFromBoundingRegionBeforeRenderContent() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+
+    auto terrainProvider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(terrainProvider),
+        std::move(scheme),
+        {&activated},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: prefetch bounding-region root tile is created");
+    if (!root) return;
+
+    const Rectangle regionRectangle =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    root->bounds = Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0);
+    root->boundingVolume = TileBoundingVolume::fromRegion(
+        regionRectangle,
+        0.0,
+        10.0);
+    root->geometricError = 100.0;
+    root->rasterOverlays.resize(1);
+
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+
+    RasterMappedToTilesetTile* mapped = root->rasterOverlays[0].get();
+    RasterOverlayTileProvider* provider = activated.getTileProvider();
+    RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
+    check(provider != nullptr,
+          "Tileset: prefetch uses an ensured raster provider");
+    check(loadingTile != nullptr &&
+              loadingTile->isRectangleTile() &&
+              loadingTile->getRectangle() == regionRectangle,
+          "Tileset: prefetch requests real imagery from bounding-region rectangle before render content");
+    check(mapped && mapped->getTextureCoordinateID() == 0,
+          "Tileset: prefetch bounding-region mapping records projection texture coordinate ID");
+    check(root->missingRasterOverlayProjections.empty(),
+          "Tileset: prefetch does not report render-content missing projection diagnostics");
+    check(provider && provider->getCachedTileCount() == 1,
+          "Tileset: prefetch creates one real raster cache tile");
+    check(loadingTile &&
+              loadingTile->getState() == RasterOverlayTile::LoadState::Loading,
+          "Tileset: prefetch starts throttled rectangle imagery loading");
+}
+
+void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+
+    auto terrainProvider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(terrainProvider),
+        std::move(scheme),
+        {&activated},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: raster-more-detail root tile is created");
+    if (!root) return;
+
+    const Rectangle rootRectangle =
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0);
+    root->bounds = rootRectangle;
+    root->mesh = std::make_unique<SurfaceTileMesh>();
+    root->mesh->rasterOverlayDetails.setGeographicRectangle(rootRectangle);
+    root->meshReady = true;
+    root->gpuVertexBuffer = std::make_unique<DummyBuffer>(32);
+    root->geometricError = 100.0;
+    root->loadState = TileLoadState::Done;
+    root->contentKind = TileContentKind::Render;
+    root->rasterOverlays.resize(1);
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    RasterMappedToTilesetTile* mapped = root->rasterOverlays[0].get();
+    RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
+    check(loadingTile != nullptr,
+          "Tileset: raster-more-detail loading tile is mapped");
+    if (!loadingTile) return;
+
+    loadingTile->setTexture(std::make_unique<DummyTexture>(4, 4));
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+
+    commands.clear();
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(root->children.size() == 4,
+          "Tileset: raster more detail creates four upsampled children");
+    check(TilesetTestAccess::canRefine(tileset, *root),
+          "Tileset: raster upsampled children make parent refinable");
+    bool allUpsampled = root->children.size() == 4;
+    for (TilesetTile* child : root->children) {
+        allUpsampled &= child && child->upsampledFromParent &&
+            child->parent == root &&
+            std::abs(child->geometricError - 50.0) < 1e-9 &&
+            child->boundingVolume &&
+            child->boundingVolume->kind == TileBoundingVolumeKind::Region;
+    }
+    check(allUpsampled,
+          "Tileset: raster more-detail children carry upsample metadata and region bounds");
+    check(root->children.size() == 4 &&
+              root->children[0]->bounds ==
+                  Rectangle::fromDegrees(-20.0, -10.0, -10.0, 0.0) &&
+              root->children[3]->bounds ==
+                  Rectangle::fromDegrees(-10.0, 0.0, 0.0, 10.0),
+          "Tileset: raster more-detail children split the overlay rectangle SW/SE/NW/NE");
 }
 
 void testTilesetGltfRenderContentBuildsPrimitiveCommands() {
@@ -9133,11 +9640,16 @@ int main() {
     testTilesetByteEstimateUsesActualMeshPayload();
     testRasterOverlayProviderRetention();
     testActivatedRasterOverlayBindsProviderOwner();
+    testActivatedRasterOverlayEnsuresProvider();
     testRasterOverlayProviderRectangleTile();
     testRasterMappedUsesRenderContentDetailsRectangle();
     testRasterMappedMissingProjectionUsesPlaceholder();
+    testRasterMappedPlaceholderRemapsWhenProviderBecomesReady();
     testTilesetMissingRasterProjectionUnloadsRenderContent();
     testTilesetRasterTargetPixelsUseRenderContentRectangle();
+    testTilesetEnsuresOverlayProviderBeforeMapping();
+    testTilesetPrefetchesRasterFromBoundingRegionBeforeRenderContent();
+    testTilesetRasterMoreDetailCreatesUpsampledChildren();
     testTilesetGltfRenderContentBuildsPrimitiveCommands();
     testTilesetGltfTangentsUseModelLinearTransform();
     testTilesetGltfMaskMaterialStaysOpaqueCommand();
@@ -9187,8 +9699,13 @@ int main() {
     testTilesetJsonProviderLoadsExternalTilesetContent();
     testTilesetViewerRequestVolumeGatesContentLoadQueue();
     testTilesetUnloadRenderContentReleasesGltfResources();
+    testRasterMappedProviderNotReadyUsesPlaceholderWithoutMissingProjection();
+    testRasterMappedLoadedContentMissingProjectionOffsetsTextureCoordinateID();
+    testRasterMappedBoundingRegionRequestsPreciseRectangleWithoutRenderContent();
+    testRasterMappedNonRegionBoundingVolumeUsesPlaceholder();
     testRasterMappedAttachedUnknownReportsMoreDetail();
     testRasterMappedFailureFallbackMatchesOverlayOwner();
+    testRasterMappedTemporaryAncestorDoesNotReportMoreDetail();
     testRasterOverlayNativeTranslationAndRendererWindow();
     testQuantizedMeshAvailabilityLevels();
     testQuantizedMeshAvailabilityInclusiveCenterBoundary();

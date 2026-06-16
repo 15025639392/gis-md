@@ -13,6 +13,7 @@ namespace earth_engine {
 class RasterOverlayTile;
 class RasterOverlayTileProvider;
 class IPrepareRendererResources;
+struct TileBoundingVolume;
 struct TilesetTile;
 
 /// cesium-native RasterMappedTo3DTile equivalent.
@@ -71,7 +72,9 @@ public:
                       IPrepareRendererResources* pPrepRenderer,
                       std::vector<RasterOverlayProjection>& missingProjections,
                       const TilesetTile* parentTile = nullptr,
-                      size_t overlayIndex = 0);
+                      size_t overlayIndex = 0,
+                      const TileBoundingVolume* boundingVolume = nullptr,
+                      bool hasRenderContentDetails = true);
 
     /// cesium-native: check if a higher-resolution tile could be loaded.
     bool isMoreDetailAvailable() const;
@@ -102,8 +105,8 @@ public:
     RasterOverlayTile* getReadyTile() { return _pReadyTile; }
 
     /// Aligned with getTextureCoordinateID().
-    /// Returns the overlay slot index (identifies which overlay).
-    int32_t getTextureCoordinateID() const { return overlayIndex_; }
+    /// Returns the raster-overlay texture coordinate index for this projection.
+    int32_t getTextureCoordinateID() const { return textureCoordinateID_; }
 
     /// Aligned with getState().
     State getState() const { return state_; }
@@ -150,9 +153,13 @@ private:
     /// the attachment map is keyed by geometry key, not raster key.
     TileKey geometryKey_;
 
-    /// Our index in the parent tile's rasterOverlays vector.
+    /// Raster-overlay texture coordinate index for this projection.
     /// Aligned with cesium-native _textureCoordinateID.
-    int32_t overlayIndex_ = 0;
+    int32_t textureCoordinateID_ = -1;
+
+    /// Our layer slot in the owning tile's rasterOverlays vector.
+    /// This is renderer attachment identity, not a texture-coordinate ID.
+    int32_t overlaySlot_ = 0;
 };
 
 } // namespace earth_engine
