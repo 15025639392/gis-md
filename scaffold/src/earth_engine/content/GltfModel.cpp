@@ -1306,6 +1306,17 @@ bool validateSamplerJson(const json& samplerJson) {
     if (!samplerJson.is_object()) {
         return false;
     }
+    static constexpr std::array<const char*, 7> kAllowedSamplerKeys = {
+        "name",
+        "extensions",
+        "extras",
+        "magFilter",
+        "minFilter",
+        "wrapS",
+        "wrapT"};
+    if (!jsonObjectHasOnlyKeys(samplerJson, kAllowedSamplerKeys)) {
+        return false;
+    }
     auto minFilterValue = samplerIntProperty(samplerJson, "minFilter", 9987);
     auto magFilterValue = samplerIntProperty(samplerJson, "magFilter", 9729);
     auto wrapSValue = samplerIntProperty(samplerJson, "wrapS", 10497);
@@ -1361,6 +1372,16 @@ std::optional<GltfSampler> parseSampler(const json& doc, int samplerIndex) {
 
 bool validImageSourceFields(const json& imageJson, bool allowWebp = false) {
     if (!imageJson.is_object()) {
+        return false;
+    }
+    static constexpr std::array<const char*, 6> kAllowedImageKeys = {
+        "name",
+        "extensions",
+        "extras",
+        "uri",
+        "mimeType",
+        "bufferView"};
+    if (!jsonObjectHasOnlyKeys(imageJson, kAllowedImageKeys)) {
         return false;
     }
 
@@ -1503,6 +1524,15 @@ bool validateTextureJson(
     const json& imageArray,
     const json* samplers) {
     if (!textureJson.is_object()) {
+        return false;
+    }
+    static constexpr std::array<const char*, 5> kAllowedTextureKeys = {
+        "name",
+        "extensions",
+        "extras",
+        "sampler",
+        "source"};
+    if (!jsonObjectHasOnlyKeys(textureJson, kAllowedTextureKeys)) {
         return false;
     }
 

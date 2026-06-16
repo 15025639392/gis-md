@@ -5461,6 +5461,65 @@ TEST(GltfParserTest, RejectsTextureWithInvalidSamplerWrap) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsUnknownSamplerTextureAndImageFields) {
+    {
+        ExternalGltfFixture fixture =
+            makeTexturedExternalBufferTriangleGltf("image.bin");
+        const std::string marker =
+            "\"samplers\":[{\"minFilter\":9728,\"magFilter\":9728,"
+            "\"wrapS\":33648,\"wrapT\":33071}]";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "\"samplers\":[{\"minFilter\":9728,\"magFilter\":9728,"
+            "\"wrapS\":33648,\"wrapT\":33071,\"anisotropy\":4}]");
+
+        std::unique_ptr<GltfModel> model =
+            parseExternalFixtureWithSolidImage(fixture);
+
+        EXPECT_EQ(nullptr, model) << "sampler";
+    }
+
+    {
+        ExternalGltfFixture fixture =
+            makeTexturedExternalBufferTriangleGltf("image.bin");
+        const std::string marker =
+            "\"textures\":[{\"source\":0,\"sampler\":0}]";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "\"textures\":[{\"source\":0,\"sampler\":0,"
+            "\"priority\":1}]");
+
+        std::unique_ptr<GltfModel> model =
+            parseExternalFixtureWithSolidImage(fixture);
+
+        EXPECT_EQ(nullptr, model) << "texture";
+    }
+
+    {
+        ExternalGltfFixture fixture =
+            makeTexturedExternalBufferTriangleGltf("image.bin");
+        const std::string marker = "\"images\":[{\"uri\":\"image.bin\"}]";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "\"images\":[{\"uri\":\"image.bin\","
+            "\"colorSpace\":\"srgb\"}]");
+
+        std::unique_ptr<GltfModel> model =
+            parseExternalFixtureWithSolidImage(fixture);
+
+        EXPECT_EQ(nullptr, model) << "image";
+    }
+}
+
 TEST(GltfParserTest, RejectsTextureWithInvalidSamplerIndex) {
     ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf(
