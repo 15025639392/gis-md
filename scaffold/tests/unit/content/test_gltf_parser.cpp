@@ -12993,6 +12993,140 @@ TEST(GltfParserTest, TilesetRejectsUnsupportedTopLevelMetadataAndStyleFields) {
     }
 }
 
+TEST(GltfParserTest, TilesetRejectsMalformedNumericTileMetadata) {
+    struct MalformedNumericCase {
+        std::string tilesetJson;
+        const char* label;
+    };
+
+    auto wrapRoot = [](const std::string& rootFields,
+                       const std::string& topLevelFields = std::string{}) {
+        return std::string("{") +
+            "\"asset\":{\"version\":\"1.1\"}," +
+            topLevelFields +
+            "\"root\":{" + rootFields + "}}";
+    };
+
+    const std::string validRegion =
+        "\"boundingVolume\":{\"region\":[-0.01,-0.01,0.01,0.01,0,100]},";
+    const std::string validRoot =
+        validRegion + "\"geometricError\":64";
+    const std::array<MalformedNumericCase, 11> cases = {{
+        {
+            wrapRoot(validRoot, "\"geometricError\":-1,"),
+            "negative top-level geometricError"},
+        {
+            wrapRoot(validRoot, "\"geometricError\":\"100\","),
+            "string top-level geometricError"},
+        {
+            wrapRoot(validRegion + "\"geometricError\":-1"),
+            "negative tile geometricError"},
+        {
+            wrapRoot(validRegion + "\"geometricError\":\"64\""),
+            "string tile geometricError"},
+        {
+            wrapRoot(
+                validRegion +
+                "\"geometricError\":64,"
+                "\"transform\":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1,0]"),
+            "oversized transform"},
+        {
+            wrapRoot(
+                validRegion +
+                "\"geometricError\":64,"
+                "\"transform\":[1e999,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]"),
+            "non-finite transform"},
+        {
+            wrapRoot(
+                "\"boundingVolume\":{\"box\":[0,0,0,1,0,0,0,1,0,0,0,1,7]},"
+                "\"geometricError\":64"),
+            "oversized box"},
+        {
+            wrapRoot(
+                "\"boundingVolume\":{\"region\":[-0.01,-0.01,0.01,0.01,0]},"
+                "\"geometricError\":64"),
+            "short region"},
+        {
+            wrapRoot(
+                "\"boundingVolume\":{\"sphere\":[1,2,3,-1]},"
+                "\"geometricError\":64"),
+            "negative sphere radius"},
+        {
+            wrapRoot(
+                validRegion +
+                "\"geometricError\":64,"
+                "\"viewerRequestVolume\":{\"sphere\":[1,2,3,-1]}"),
+            "negative viewerRequestVolume sphere radius"},
+        {
+            wrapRoot(
+                validRegion +
+                "\"geometricError\":64,"
+                "\"content\":{\"uri\":\"tile.glb\","
+                "\"boundingVolume\":{\"sphere\":[1,2,3,-1]}}"),
+            "negative content boundingVolume sphere radius"},
+    }};
+
+    for (const MalformedNumericCase& testCase : cases) {
+        SCOPED_TRACE(testCase.label);
+        TilesetJsonContentProvider provider(
+            "file:///earth-md/malformed-numeric-tileset.json",
+            bytesFromString(testCase.tilesetJson),
+            testCase.label);
+
+        EXPECT_FALSE(provider.valid());
+        EXPECT_TRUE(provider.rootTiles().empty());
+    }
+}
+
+TEST(GltfParserTest, TilesetFailsMalformedExternalTilesetNumericMetadata) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth-md-malformed-external-tileset-numeric";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "external");
+
+    const std::string externalTilesetJson = R"json({
+      "asset": {"version": "1.1"},
+      "geometricError": 50,
+      "root": {
+        "boundingVolume": {"sphere": [1, 2, 3, -1]},
+        "geometricError": 8,
+        "content": {"uri": "../triangle.glb"}
+      }
+    })json";
+    writeBytes(
+        root / "external" / "tileset.json",
+        bytesFromString(externalTilesetJson));
+    writeBytes(root / "triangle.glb", makeTriangleGlb());
+
+    const std::string parentTilesetJson = R"json({
+      "asset": {"version": "1.1"},
+      "geometricError": 100,
+      "root": {
+        "boundingVolume": {"region": [-0.01, -0.01, 0.01, 0.01, 0, 100]},
+        "geometricError": 32,
+        "content": {"uri": "external/tileset.json"}
+      }
+    })json";
+    TilesetJsonContentProvider provider(
+        "file://" + (root / "tileset.json").generic_string(),
+        bytesFromString(parentTilesetJson),
+        "malformed external tileset numeric fixture");
+
+    ASSERT_TRUE(provider.valid());
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    const std::vector<TileKey> children = provider.childTiles(roots.front());
+    ASSERT_EQ(1u, children.size());
+
+    TileContentLoadResult result =
+        requestTileContentBlocking(provider, children.front());
+    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(nullptr, result.gltfModel);
+
+    std::filesystem::remove_all(root);
+}
+
 TEST(GltfParserTest, TilesetFailsTileContentWithUnsupportedMetadataFields) {
     struct MetadataCase {
         std::string tilesetJson;

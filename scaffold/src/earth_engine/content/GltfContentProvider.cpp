@@ -635,6 +635,74 @@ double maxScaleComponent(const Mat4& transform) {
             glm::length(glm::dvec3(m[2]))));
 }
 
+bool finiteMat4(const Mat4& transform) {
+    const glm::dmat4& m = transform.raw();
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            if (!std::isfinite(m[column][row])) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool finiteVec3Value(const Vec3& value) {
+    return std::isfinite(value.x()) &&
+           std::isfinite(value.y()) &&
+           std::isfinite(value.z());
+}
+
+std::optional<double> jsonFiniteDouble(const nlohmann::json& json) {
+    if (!json.is_number()) {
+        return std::nullopt;
+    }
+    const double value = json.get<double>();
+    if (!std::isfinite(value)) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+template <size_t N>
+std::optional<std::array<double, N>> jsonFiniteDoubleArray(
+    const nlohmann::json& json) {
+    if (!json.is_array() || json.size() != N) {
+        return std::nullopt;
+    }
+    std::array<double, N> values{};
+    for (size_t i = 0; i < N; ++i) {
+        std::optional<double> value = jsonFiniteDouble(json[i]);
+        if (!value) {
+            return std::nullopt;
+        }
+        values[i] = *value;
+    }
+    return values;
+}
+
+bool finiteTileBoundingVolume(const TileBoundingVolume& volume) {
+    switch (volume.kind) {
+        case TileBoundingVolumeKind::Region:
+            return std::isfinite(volume.region.west()) &&
+                   std::isfinite(volume.region.south()) &&
+                   std::isfinite(volume.region.east()) &&
+                   std::isfinite(volume.region.north()) &&
+                   std::isfinite(volume.minimumHeight) &&
+                   std::isfinite(volume.maximumHeight);
+        case TileBoundingVolumeKind::Sphere:
+            return finiteVec3Value(volume.sphere.getCenter()) &&
+                   std::isfinite(volume.sphere.getRadius()) &&
+                   volume.sphere.getRadius() >= 0.0;
+        case TileBoundingVolumeKind::Box:
+            return finiteVec3Value(volume.box.getCenter()) &&
+                   finiteVec3Value(volume.box.getHalfAxis(0)) &&
+                   finiteVec3Value(volume.box.getHalfAxis(1)) &&
+                   finiteVec3Value(volume.box.getHalfAxis(2));
+    }
+    return false;
+}
+
 Vec3 transformDirection(const Mat4& transform, const Vec3& direction) {
     const glm::dvec4 v =
         transform.raw() * glm::dvec4(direction.raw(), 0.0);
@@ -664,71 +732,50 @@ TileBoundingVolume transformBoundingVolume(
 }
 
 std::optional<Mat4> parseTransform(const nlohmann::json& json) {
-    if (!json.is_array() || json.size() < 16) return std::nullopt;
-    double a[16] = {};
-    for (int i = 0; i < 16; ++i) {
-        if (!json[static_cast<size_t>(i)].is_number()) {
-            return std::nullopt;
-        }
-        a[i] = json[static_cast<size_t>(i)].get<double>();
-    }
+    const std::optional<std::array<double, 16>> a =
+        jsonFiniteDoubleArray<16>(json);
+    if (!a) return std::nullopt;
     return Mat4(glm::dmat4(
-        glm::dvec4(a[0], a[1], a[2], a[3]),
-        glm::dvec4(a[4], a[5], a[6], a[7]),
-        glm::dvec4(a[8], a[9], a[10], a[11]),
-        glm::dvec4(a[12], a[13], a[14], a[15])));
+        glm::dvec4((*a)[0], (*a)[1], (*a)[2], (*a)[3]),
+        glm::dvec4((*a)[4], (*a)[5], (*a)[6], (*a)[7]),
+        glm::dvec4((*a)[8], (*a)[9], (*a)[10], (*a)[11]),
+        glm::dvec4((*a)[12], (*a)[13], (*a)[14], (*a)[15])));
 }
 
 std::optional<TileBoundingVolume> parseBoundingVolumeJson(
     const nlohmann::json& json) {
     if (!json.is_object()) return std::nullopt;
     auto boxIt = json.find("box");
-    if (boxIt != json.end() && boxIt->is_array() && boxIt->size() >= 12) {
-        double b[12] = {};
-        for (int i = 0; i < 12; ++i) {
-            if (!(*boxIt)[static_cast<size_t>(i)].is_number()) {
-                return std::nullopt;
-            }
-            b[i] = (*boxIt)[static_cast<size_t>(i)].get<double>();
-        }
+    if (boxIt != json.end()) {
+        const std::optional<std::array<double, 12>> b =
+            jsonFiniteDoubleArray<12>(*boxIt);
+        if (!b) return std::nullopt;
         return TileBoundingVolume::fromBox(
-            Vec3(b[0], b[1], b[2]),
-            Vec3(b[3], b[4], b[5]),
-            Vec3(b[6], b[7], b[8]),
-            Vec3(b[9], b[10], b[11]));
+            Vec3((*b)[0], (*b)[1], (*b)[2]),
+            Vec3((*b)[3], (*b)[4], (*b)[5]),
+            Vec3((*b)[6], (*b)[7], (*b)[8]),
+            Vec3((*b)[9], (*b)[10], (*b)[11]));
     }
 
     auto regionIt = json.find("region");
-    if (regionIt != json.end() &&
-        regionIt->is_array() &&
-        regionIt->size() >= 6) {
-        double r[6] = {};
-        for (int i = 0; i < 6; ++i) {
-            if (!(*regionIt)[static_cast<size_t>(i)].is_number()) {
-                return std::nullopt;
-            }
-            r[i] = (*regionIt)[static_cast<size_t>(i)].get<double>();
-        }
+    if (regionIt != json.end()) {
+        const std::optional<std::array<double, 6>> r =
+            jsonFiniteDoubleArray<6>(*regionIt);
+        if (!r) return std::nullopt;
         return TileBoundingVolume::fromRegion(
-            Rectangle(r[0], r[1], r[2], r[3]),
-            r[4],
-            r[5]);
+            Rectangle((*r)[0], (*r)[1], (*r)[2], (*r)[3]),
+            (*r)[4],
+            (*r)[5]);
     }
 
     auto sphereIt = json.find("sphere");
-    if (sphereIt != json.end() &&
-        sphereIt->is_array() &&
-        sphereIt->size() >= 4) {
-        double s[4] = {};
-        for (int i = 0; i < 4; ++i) {
-            if (!(*sphereIt)[static_cast<size_t>(i)].is_number()) {
-                return std::nullopt;
-            }
-            s[i] = (*sphereIt)[static_cast<size_t>(i)].get<double>();
-        }
+    if (sphereIt != json.end()) {
+        const std::optional<std::array<double, 4>> s =
+            jsonFiniteDoubleArray<4>(*sphereIt);
+        if (!s || (*s)[3] < 0.0) return std::nullopt;
         return TileBoundingVolume::fromSphere(
-            Vec3(s[0], s[1], s[2]),
-            s[3]);
+            Vec3((*s)[0], (*s)[1], (*s)[2]),
+            (*s)[3]);
     }
 
     return std::nullopt;
@@ -764,7 +811,8 @@ std::optional<std::string> parseContentUri(const nlohmann::json& tileJson) {
 
 std::optional<TileBoundingVolume> parseContentBoundingVolume(
     const nlohmann::json& tileJson,
-    const Mat4& transform) {
+    const Mat4& transform,
+    bool& valid) {
     auto contentIt = tileJson.find("content");
     if (contentIt == tileJson.end() || !contentIt->is_object()) {
         return std::nullopt;
@@ -775,21 +823,38 @@ std::optional<TileBoundingVolume> parseContentBoundingVolume(
     }
     std::optional<TileBoundingVolume> volume =
         parseBoundingVolumeJson(*bvIt);
-    if (!volume) return std::nullopt;
-    return transformBoundingVolume(transform, *volume);
+    if (!volume) {
+        valid = false;
+        return std::nullopt;
+    }
+    TileBoundingVolume transformed = transformBoundingVolume(transform, *volume);
+    if (!finiteTileBoundingVolume(transformed)) {
+        valid = false;
+        return std::nullopt;
+    }
+    return transformed;
 }
 
 std::optional<TileBoundingVolume> parseViewerRequestVolume(
     const nlohmann::json& tileJson,
-    const Mat4& transform) {
+    const Mat4& transform,
+    bool& valid) {
     auto bvIt = tileJson.find("viewerRequestVolume");
     if (bvIt == tileJson.end()) {
         return std::nullopt;
     }
     std::optional<TileBoundingVolume> volume =
         parseBoundingVolumeJson(*bvIt);
-    if (!volume) return std::nullopt;
-    return transformBoundingVolume(transform, *volume);
+    if (!volume) {
+        valid = false;
+        return std::nullopt;
+    }
+    TileBoundingVolume transformed = transformBoundingVolume(transform, *volume);
+    if (!finiteTileBoundingVolume(transformed)) {
+        valid = false;
+        return std::nullopt;
+    }
+    return transformed;
 }
 
 bool canFailTilesetJsonExtensionPerTile(const std::string& extensionName) {
@@ -3206,6 +3271,14 @@ bool TilesetJsonContentProvider::parseTilesetJson(
         hasUnsupportedTilesetMetadataFields(parsed)) {
         return false;
     }
+    auto topLevelGeometricErrorIt = parsed.find("geometricError");
+    if (topLevelGeometricErrorIt != parsed.end()) {
+        const std::optional<double> geometricError =
+            jsonFiniteDouble(*topLevelGeometricErrorIt);
+        if (!geometricError || *geometricError < 0.0) {
+            return false;
+        }
+    }
     const Mat4 gltfUpAxisTransform = parseGltfUpAxisTransform(parsed);
 
     std::lock_guard<std::mutex> lock(mutex_);
@@ -3243,6 +3316,9 @@ bool TilesetJsonContentProvider::parseTilesetJson(
             if (!localTransform) return std::nullopt;
             tileTransform = inheritedTransform * *localTransform;
         }
+        if (!finiteMat4(tileTransform)) {
+            return std::nullopt;
+        }
 
         auto bvIt = tileJson.find("boundingVolume");
         if (bvIt == tileJson.end()) return std::nullopt;
@@ -3251,14 +3327,28 @@ bool TilesetJsonContentProvider::parseTilesetJson(
         if (!localVolume) return std::nullopt;
         std::optional<TileBoundingVolume> tileVolume =
             transformBoundingVolume(tileTransform, *localVolume);
+        if (!tileVolume || !finiteTileBoundingVolume(*tileVolume)) {
+            return std::nullopt;
+        }
 
         double geometricError = inheritedGeometricError * 0.5;
         auto geometricErrorIt = tileJson.find("geometricError");
-        if (geometricErrorIt != tileJson.end() &&
-            geometricErrorIt->is_number()) {
-            geometricError = geometricErrorIt->get<double>();
+        if (geometricErrorIt != tileJson.end()) {
+            const std::optional<double> parsedGeometricError =
+                jsonFiniteDouble(*geometricErrorIt);
+            if (!parsedGeometricError || *parsedGeometricError < 0.0) {
+                return std::nullopt;
+            }
+            geometricError = *parsedGeometricError;
         }
-        geometricError *= maxScaleComponent(tileTransform);
+        const double tileScale = maxScaleComponent(tileTransform);
+        if (!std::isfinite(tileScale)) {
+            return std::nullopt;
+        }
+        geometricError *= tileScale;
+        if (!std::isfinite(geometricError) || geometricError < 0.0) {
+            return std::nullopt;
+        }
 
         TileRefine refine = inheritedRefine;
         auto refineIt = tileJson.find("refine");
@@ -3279,10 +3369,24 @@ bool TilesetJsonContentProvider::parseTilesetJson(
         record.metadata.bounds = boundsFromVolumeOrWorld(tileVolume);
         record.metadata.hasExplicitBounds = true;
         record.metadata.boundingVolume = tileVolume;
+        bool viewerRequestVolumeValid = true;
         record.metadata.viewerRequestVolume =
-            parseViewerRequestVolume(tileJson, tileTransform);
+            parseViewerRequestVolume(
+                tileJson,
+                tileTransform,
+                viewerRequestVolumeValid);
+        if (!viewerRequestVolumeValid) {
+            return std::nullopt;
+        }
+        bool contentBoundingVolumeValid = true;
         record.metadata.contentBoundingVolume =
-            parseContentBoundingVolume(tileJson, tileTransform);
+            parseContentBoundingVolume(
+                tileJson,
+                tileTransform,
+                contentBoundingVolumeValid);
+        if (!contentBoundingVolumeValid) {
+            return std::nullopt;
+        }
         record.metadata.transform = tileTransform;
         record.metadata.geometricError = geometricError;
         record.metadata.refine = refine;
