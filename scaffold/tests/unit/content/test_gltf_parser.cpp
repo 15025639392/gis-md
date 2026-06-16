@@ -6570,6 +6570,40 @@ TEST(GltfParserTest, RejectsNodeTranslationTypeMismatch) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsNodeGlobalTransformOverflow) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker =
+        "\"nodes\":[{\"mesh\":0,\"translation\":[10,20,30]}]";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "\"nodes\":["
+        "{\"scale\":[1e200,1e200,1e200],\"children\":[1]},"
+        "{\"mesh\":0,\"scale\":[1e200,1e200,1e200]}"
+        "]");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsSingularNodeTransformWithNormals) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker = "{\"mesh\":0,\"translation\":[10,20,30]}";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.replace(
+        markerPos,
+        marker.size(),
+        "{\"mesh\":0,\"scale\":[0,1,1]}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsUnsupportedCamerasArray) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string marker = "\"asset\":{\"version\":\"2.0\"},";

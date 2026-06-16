@@ -2598,6 +2598,17 @@ bool finiteMat4Value(const glm::dmat4& value) {
     return true;
 }
 
+bool finiteMat3Value(const glm::dmat3& value) {
+    for (int column = 0; column < 3; ++column) {
+        for (int row = 0; row < 3; ++row) {
+            if (!std::isfinite(value[column][row])) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 std::vector<uint32_t> readIndices(const AccessorSpan& span) {
     if (span.components != 1) return {};
     std::vector<uint32_t> indices;
@@ -4941,6 +4952,20 @@ std::optional<std::array<float, 4>> transformTangent(
         tangent[3]);
 }
 
+std::optional<glm::dmat3> normalTransformMatrix(
+    const glm::dmat4& transform) {
+    const glm::dmat3 linear(transform);
+    const double determinant = glm::determinant(linear);
+    if (!std::isfinite(determinant) || std::abs(determinant) <= 1e-14) {
+        return std::nullopt;
+    }
+    const glm::dmat3 normalMatrix = glm::transpose(glm::inverse(linear));
+    if (!finiteMat3Value(normalMatrix)) {
+        return std::nullopt;
+    }
+    return normalMatrix;
+}
+
 std::optional<std::vector<glm::dmat4>> computeJointMatrices(
     const std::vector<NodeRecord>& nodes,
     const SkinRecord& skin) {
@@ -4959,6 +4984,9 @@ std::optional<std::vector<glm::dmat4>> computeJointMatrices(
         jointMatrices[i] =
             nodes[static_cast<size_t>(jointNodeIndex)].globalTransform *
             skin.inverseBindMatrices[i];
+        if (!finiteMat4Value(jointMatrices[i])) {
+            return std::nullopt;
+        }
     }
     return jointMatrices;
 }
@@ -5004,11 +5032,24 @@ std::optional<std::pair<Vec3, Vec3>> skinVertex(
         normal += weight * (glm::dmat3(joint) * localNormal);
     }
     glm::dvec3 finalPosition(position);
+    if (!finiteVec4Value(position)) {
+        return std::nullopt;
+    }
     if (std::abs(position.w) > 1e-14) {
         finalPosition /= position.w;
     }
-    if (glm::dot(normal, normal) > 0.0) {
+    if (!finiteVec3Value(finalPosition) || !finiteVec3Value(normal)) {
+        return std::nullopt;
+    }
+    const double normalLengthSquared = glm::dot(normal, normal);
+    if (!std::isfinite(normalLengthSquared)) {
+        return std::nullopt;
+    }
+    if (normalLengthSquared > 0.0) {
         normal = glm::normalize(normal);
+        if (!finiteVec3Value(normal)) {
+            return std::nullopt;
+        }
     } else {
         normal = glm::dvec3(0.0, 0.0, 1.0);
     }
@@ -5454,6 +5495,23 @@ bool finiteVec4(const glm::dvec4& value) {
            std::isfinite(value.w);
 }
 
+bool finiteNodeRecords(const std::vector<NodeRecord>& records) {
+    return std::all_of(
+        records.begin(),
+        records.end(),
+        [](const NodeRecord& record) {
+            return finiteMat4Value(record.localTransform) &&
+                   finiteMat4Value(record.globalTransform) &&
+                   finiteVec3(record.translation) &&
+                   std::isfinite(record.rotation.w) &&
+                   std::isfinite(record.rotation.x) &&
+                   std::isfinite(record.rotation.y) &&
+                   std::isfinite(record.rotation.z) &&
+                   finiteVec3(record.scale) &&
+                   finiteValues(record.weights);
+        });
+}
+
 bool validInstanceVec3Accessor(const AccessorSpan& span) {
     return span.type == "VEC3" &&
            span.components == 3 &&
@@ -5607,9 +5665,17 @@ std::optional<std::vector<GltfInstance>> parseGpuInstancingInstances(
             }
             transform = glm::scale(transform, scale);
         }
+        if (!finiteMat4Value(transform)) {
+            strictFailure = true;
+            return std::nullopt;
+        }
         instances[i].transform = Mat4(transform);
     }
 
+    if (!finiteMat4Value(nodeGlobalTransform)) {
+        strictFailure = true;
+        return std::nullopt;
+    }
     const glm::dmat3 nodeLinear(nodeGlobalTransform);
     const double determinant = glm::determinant(nodeLinear);
     if (!std::isfinite(determinant) || std::abs(determinant) <= 1e-14) {
@@ -5618,11 +5684,20 @@ std::optional<std::vector<GltfInstance>> parseGpuInstancingInstances(
     }
     const glm::dmat4 inverseNodeTransform =
         glm::inverse(nodeGlobalTransform);
+    if (!finiteMat4Value(inverseNodeTransform)) {
+        strictFailure = true;
+        return std::nullopt;
+    }
     for (GltfInstance& instance : instances) {
-        instance.transform = Mat4(
+        const glm::dmat4 finalTransform =
             nodeGlobalTransform *
             instance.transform.raw() *
-            inverseNodeTransform);
+            inverseNodeTransform;
+        if (!finiteMat4Value(finalTransform)) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        instance.transform = Mat4(finalTransform);
     }
     return instances;
 }
@@ -6480,8 +6555,21 @@ std::optional<GltfPrimitive> parsePrimitive(
         nodeIndex >= 0 && static_cast<size_t>(nodeIndex) < nodes.size()
             ? nodes[static_cast<size_t>(nodeIndex)].globalTransform
             : glm::dmat4(1.0);
-    const glm::dmat3 normalMatrix =
-        glm::transpose(glm::inverse(glm::dmat3(transform)));
+    if (!finiteMat4Value(transform)) {
+        strictFailure = true;
+        return std::nullopt;
+    }
+    const bool useSkinning = vertexSkinning && jointMatrices;
+    glm::dmat3 normalMatrix(1.0);
+    if (!useSkinning && (normals || tangents)) {
+        std::optional<glm::dmat3> maybeNormalMatrix =
+            normalTransformMatrix(transform);
+        if (!maybeNormalMatrix) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        normalMatrix = *maybeNormalMatrix;
+    }
     for (size_t i = 0; i < positions->count; ++i) {
         const glm::dvec3 localPosition = readVec3(*positions, i);
         const glm::dvec3 localNormal =
@@ -6504,7 +6592,7 @@ std::optional<GltfPrimitive> parsePrimitive(
         primitive.runtime.baseVertices[i].normalEcef =
             normals ? Vec3(localNormal) : Vec3::zero();
 
-        if (vertexSkinning && jointMatrices) {
+        if (useSkinning) {
             auto skinned = skinVertex(
                 localPosition,
                 localNormal,
@@ -6520,11 +6608,24 @@ std::optional<GltfPrimitive> parsePrimitive(
         } else {
             const glm::dvec3 position =
                 glm::dvec3(transform * glm::dvec4(localPosition, 1.0));
+            if (!finiteVec3Value(position)) {
+                strictFailure = true;
+                return std::nullopt;
+            }
             primitive.vertices[i].positionEcef = Vec3(position);
             if (normals) {
                 glm::dvec3 normal = normalMatrix * localNormal;
-                if (glm::dot(normal, normal) > 0.0) {
+                const double normalLengthSquared = glm::dot(normal, normal);
+                if (!std::isfinite(normalLengthSquared)) {
+                    strictFailure = true;
+                    return std::nullopt;
+                }
+                if (normalLengthSquared > 0.0) {
                     normal = glm::normalize(normal);
+                    if (!finiteVec3Value(normal)) {
+                        strictFailure = true;
+                        return std::nullopt;
+                    }
                 } else {
                     normal = glm::dvec3(0.0, 0.0, 1.0);
                 }
@@ -6533,7 +6634,7 @@ std::optional<GltfPrimitive> parsePrimitive(
         }
         if (localTangent) {
             std::optional<std::array<float, 4>> finalTangent;
-            if (vertexSkinning && jointMatrices) {
+            if (useSkinning) {
                 const auto skinnedTangent = skinDirection(
                     glm::dvec3(
                         (*localTangent)[0],
@@ -6887,18 +6988,32 @@ void resetRuntimeNodes(GltfModel& model) {
     }
 }
 
-void resolveRuntimeNodeGlobals(GltfModel& model) {
+bool resolveRuntimeNodeGlobals(GltfModel& model) {
     std::vector<bool> resolved(model.nodes.size(), false);
+    bool valid = true;
     std::function<void(int, const glm::dmat4&)> visit =
         [&](int nodeIndex, const glm::dmat4& parentTransform) {
+            if (!valid) {
+                return;
+            }
             if (nodeIndex < 0 ||
                 static_cast<size_t>(nodeIndex) >= model.nodes.size()) {
                 return;
             }
             resolved[static_cast<size_t>(nodeIndex)] = true;
             GltfNodeRuntime& node = model.nodes[static_cast<size_t>(nodeIndex)];
-            node.globalTransform =
-                Mat4(parentTransform * node.localTransform.raw());
+            if (!finiteMat4Value(parentTransform) ||
+                !finiteMat4Value(node.localTransform.raw())) {
+                valid = false;
+                return;
+            }
+            const glm::dmat4 globalTransform =
+                parentTransform * node.localTransform.raw();
+            if (!finiteMat4Value(globalTransform)) {
+                valid = false;
+                return;
+            }
+            node.globalTransform = Mat4(globalTransform);
             for (int child : node.children) {
                 visit(child, node.globalTransform.raw());
             }
@@ -6912,6 +7027,7 @@ void resolveRuntimeNodeGlobals(GltfModel& model) {
             visit(static_cast<int>(i), glm::dmat4(1.0));
         }
     }
+    return valid;
 }
 
 std::optional<std::vector<glm::dmat4>> computeRuntimeJointMatrices(
@@ -6937,6 +7053,9 @@ std::optional<std::vector<glm::dmat4>> computeRuntimeJointMatrices(
             model.nodes[static_cast<size_t>(jointNodeIndex)]
                 .globalTransform.raw() *
             skin.inverseBindMatrices[i].raw();
+        if (!finiteMat4Value(jointMatrices[i])) {
+            return std::nullopt;
+        }
     }
     return jointMatrices;
 }
@@ -6976,8 +7095,18 @@ bool rebuildRuntimePrimitive(GltfModel& model, GltfPrimitive& primitive) {
     }
 
     const glm::dmat4 nodeTransform = node.globalTransform.raw();
-    const glm::dmat3 normalMatrix =
-        glm::transpose(glm::inverse(glm::dmat3(nodeTransform)));
+    if (!finiteMat4Value(nodeTransform)) {
+        return false;
+    }
+    glm::dmat3 normalMatrix(1.0);
+    if (!skinned && (runtime.hasNormals || runtime.hasTangents)) {
+        std::optional<glm::dmat3> maybeNormalMatrix =
+            normalTransformMatrix(nodeTransform);
+        if (!maybeNormalMatrix) {
+            return false;
+        }
+        normalMatrix = *maybeNormalMatrix;
+    }
 
     for (size_t i = 0; i < runtime.baseVertices.size(); ++i) {
         const SurfaceVertex& base = runtime.baseVertices[i];
@@ -7044,12 +7173,23 @@ bool rebuildRuntimePrimitive(GltfModel& model, GltfPrimitive& primitive) {
                 primitive.vertexTangents[i] = *tangent;
             }
         } else {
-            primitive.vertices[i].positionEcef = Vec3(glm::dvec3(
-                nodeTransform * glm::dvec4(localPosition, 1.0)));
+            const glm::dvec3 position = glm::dvec3(
+                nodeTransform * glm::dvec4(localPosition, 1.0));
+            if (!finiteVec3Value(position)) {
+                return false;
+            }
+            primitive.vertices[i].positionEcef = Vec3(position);
             if (runtime.hasNormals) {
                 glm::dvec3 normal = normalMatrix * localNormal;
-                if (glm::dot(normal, normal) > 0.0) {
+                const double normalLengthSquared = glm::dot(normal, normal);
+                if (!std::isfinite(normalLengthSquared)) {
+                    return false;
+                }
+                if (normalLengthSquared > 0.0) {
                     normal = glm::normalize(normal);
+                    if (!finiteVec3Value(normal)) {
+                        return false;
+                    }
                 } else {
                     normal = glm::dvec3(0.0, 0.0, 1.0);
                 }
@@ -7078,7 +7218,9 @@ bool rebuildRuntimePrimitive(GltfModel& model, GltfPrimitive& primitive) {
 }
 
 bool rebuildRuntimeModel(GltfModel& model) {
-    resolveRuntimeNodeGlobals(model);
+    if (!resolveRuntimeNodeGlobals(model)) {
+        return false;
+    }
     for (GltfPrimitive& primitive : model.primitives) {
         if (!rebuildRuntimePrimitive(model, primitive)) {
             return false;
@@ -7229,6 +7371,9 @@ bool GltfModel::updateAnimation(double timeSeconds) {
             animation.samplers[static_cast<size_t>(channel.samplerIndex)];
         std::vector<double> values =
             sampleAnimationSampler(sampler, channel.path, localTime);
+        if (!finiteValues(values)) {
+            return false;
+        }
         GltfNodeRuntime& node =
             nodes[static_cast<size_t>(channel.targetNode)];
         switch (channel.path) {
@@ -7373,6 +7518,9 @@ std::unique_ptr<GltfModel> GltfParser::parse(
 
     std::vector<NodeRecord> nodeRecords = parseNodes(input->document);
     applyMeshDefaultWeights(input->document, nodeRecords);
+    if (!finiteNodeRecords(nodeRecords)) {
+        return nullptr;
+    }
     std::optional<std::vector<std::vector<GltfInstance>>>
         nativeInstancesByNode =
             parseAllGpuInstancingInstances(
