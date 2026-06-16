@@ -2234,7 +2234,12 @@ std::optional<AccessorSpan> accessorSpan(
         if (accessor.contains("byteOffset")) {
             return std::nullopt;
         }
-        span.ownedData.assign(count * span.elementBytes, 0u);
+        const auto required =
+            accessorRequiredBytes(count, span.elementBytes, span.elementBytes);
+        if (!required) {
+            return std::nullopt;
+        }
+        span.ownedData.assign(*required, 0u);
         span.stride = span.elementBytes;
     }
 
@@ -2472,6 +2477,9 @@ bool validateAccessorJson(
         span.stride = stride;
     } else {
         if (accessor.contains("byteOffset")) {
+            return false;
+        }
+        if (!accessorRequiredBytes(count, span.elementBytes, span.elementBytes)) {
             return false;
         }
         span.stride = span.elementBytes;

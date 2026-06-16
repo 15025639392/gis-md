@@ -3009,6 +3009,18 @@ TEST(GltfParserTest, RejectsUnreferencedAccessorZeroCount) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsUnreferencedAccessorZeroFillCountOverflow) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    appendAccessorToExternalFixture(
+        fixture,
+        "{\"componentType\":5126,\"count\":18446744073709551615,"
+        "\"type\":\"VEC3\"}");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, ParsesUnreferencedPaddedMatrixAccessor) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     appendAccessorToExternalFixture(
