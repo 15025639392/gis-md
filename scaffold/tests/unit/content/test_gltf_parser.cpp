@@ -2871,6 +2871,104 @@ TEST(GltfParserTest, RejectsAccessorElementTypeMismatch) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsUnknownBufferAccessorObjectFields) {
+    {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string marker =
+            "\"buffers\":[{\"uri\":\"triangle.bin\",\"byteLength\":" +
+            std::to_string(fixture.bin.size()) + "}]";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "\"buffers\":[{\"uri\":\"triangle.bin\",\"byteLength\":" +
+            std::to_string(fixture.bin.size()) + ",\"usage\":\"geometry\"}]");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "buffer";
+    }
+
+    {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string marker =
+            "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36}";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36,"
+            "\"usage\":\"vertex\"}");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "bufferView";
+    }
+
+    {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string marker =
+            "{\"bufferView\":0,\"componentType\":5126,"
+            "\"count\":3,\"type\":\"VEC3\"}";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "{\"bufferView\":0,\"componentType\":5126,"
+            "\"count\":3,\"type\":\"VEC3\",\"format\":\"float32\"}");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "accessor";
+    }
+
+    {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        appendAccessorToExternalFixture(
+            fixture,
+            "{\"componentType\":5126,\"count\":1,\"type\":\"VEC3\","
+            "\"sparse\":{\"count\":1,\"hint\":true,"
+            "\"indices\":{\"bufferView\":3,\"componentType\":5123},"
+            "\"values\":{\"bufferView\":0}}}");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "sparse";
+    }
+
+    {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        appendAccessorToExternalFixture(
+            fixture,
+            "{\"componentType\":5126,\"count\":1,\"type\":\"VEC3\","
+            "\"sparse\":{\"count\":1,"
+            "\"indices\":{\"bufferView\":3,\"componentType\":5123,"
+            "\"byteStride\":2},"
+            "\"values\":{\"bufferView\":0}}}");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "sparse.indices";
+    }
+
+    {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        appendAccessorToExternalFixture(
+            fixture,
+            "{\"componentType\":5126,\"count\":1,\"type\":\"VEC3\","
+            "\"sparse\":{\"count\":1,"
+            "\"indices\":{\"bufferView\":3,\"componentType\":5123},"
+            "\"values\":{\"bufferView\":0,\"encoding\":\"raw\"}}}");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "sparse.values";
+    }
+}
+
 TEST(GltfParserTest, RejectsReferencedAccessorBufferViewIntegerOverflow) {
     ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
     const std::string marker =

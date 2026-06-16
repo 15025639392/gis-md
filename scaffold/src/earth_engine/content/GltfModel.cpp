@@ -1052,6 +1052,75 @@ bool declaredObjectExtensionsHavePayloads(const json& doc) {
     return true;
 }
 
+bool validateBufferJsonKeys(const json& buffer) {
+    static constexpr std::array<const char*, 5> kAllowedBufferKeys = {
+        "name",
+        "extensions",
+        "extras",
+        "uri",
+        "byteLength"};
+    return jsonObjectHasOnlyKeys(buffer, kAllowedBufferKeys);
+}
+
+bool validateBufferViewJsonKeys(const json& bufferView) {
+    static constexpr std::array<const char*, 8> kAllowedBufferViewKeys = {
+        "name",
+        "extensions",
+        "extras",
+        "buffer",
+        "byteOffset",
+        "byteLength",
+        "byteStride",
+        "target"};
+    return jsonObjectHasOnlyKeys(bufferView, kAllowedBufferViewKeys);
+}
+
+bool validateAccessorJsonKeys(const json& accessor) {
+    static constexpr std::array<const char*, 12> kAllowedAccessorKeys = {
+        "name",
+        "extensions",
+        "extras",
+        "bufferView",
+        "byteOffset",
+        "componentType",
+        "normalized",
+        "count",
+        "type",
+        "max",
+        "min",
+        "sparse"};
+    return jsonObjectHasOnlyKeys(accessor, kAllowedAccessorKeys);
+}
+
+bool validateSparseAccessorJsonKeys(const json& sparse) {
+    static constexpr std::array<const char*, 5> kAllowedSparseKeys = {
+        "extensions",
+        "extras",
+        "count",
+        "indices",
+        "values"};
+    return jsonObjectHasOnlyKeys(sparse, kAllowedSparseKeys);
+}
+
+bool validateSparseAccessorIndicesJsonKeys(const json& indices) {
+    static constexpr std::array<const char*, 5> kAllowedSparseIndicesKeys = {
+        "extensions",
+        "extras",
+        "bufferView",
+        "byteOffset",
+        "componentType"};
+    return jsonObjectHasOnlyKeys(indices, kAllowedSparseIndicesKeys);
+}
+
+bool validateSparseAccessorValuesJsonKeys(const json& values) {
+    static constexpr std::array<const char*, 4> kAllowedSparseValuesKeys = {
+        "extensions",
+        "extras",
+        "bufferView",
+        "byteOffset"};
+    return jsonObjectHasOnlyKeys(values, kAllowedSparseValuesKeys);
+}
+
 std::optional<std::vector<std::vector<uint8_t>>> loadBuffers(
     const json& doc,
     const std::vector<uint8_t>& binaryChunk,
@@ -1068,7 +1137,7 @@ std::optional<std::vector<std::vector<uint8_t>>> loadBuffers(
     buffers.reserve(bufferArray.size());
     for (size_t i = 0; i < bufferArray.size(); ++i) {
         const json& bufferJson = bufferArray[i];
-        if (!bufferJson.is_object()) {
+        if (!validateBufferJsonKeys(bufferJson)) {
             return std::nullopt;
         }
 
@@ -2083,6 +2152,9 @@ bool applySparseAccessor(
         return false;
     }
     const json& sparse = *sparseIt;
+    if (!validateSparseAccessorJsonKeys(sparse)) {
+        return false;
+    }
     auto sparseCount = jsonSizeProperty(sparse, "count", 0u);
     if (!sparseCount || *sparseCount > span.count) {
         return false;
@@ -2094,6 +2166,10 @@ bool applySparseAccessor(
     auto valuesIt = sparse.find("values");
     if (indicesIt == sparse.end() || valuesIt == sparse.end() ||
         !indicesIt->is_object() || !valuesIt->is_object()) {
+        return false;
+    }
+    if (!validateSparseAccessorIndicesJsonKeys(*indicesIt) ||
+        !validateSparseAccessorValuesJsonKeys(*valuesIt)) {
         return false;
     }
 
@@ -2192,7 +2268,7 @@ std::optional<AccessorSpan> accessorSpan(
     }
 
     const json& accessor = accessors[static_cast<size_t>(accessorIndex)];
-    if (!accessor.is_object()) {
+    if (!validateAccessorJsonKeys(accessor)) {
         return std::nullopt;
     }
     const auto componentTypeValue = jsonIntProperty(accessor, "componentType");
@@ -2328,7 +2404,7 @@ bool validateAllBufferViews(
     }
 
     for (const json& view : *bufferViewsIt) {
-        if (!view.is_object()) {
+        if (!validateBufferViewJsonKeys(view)) {
             return false;
         }
         const auto bufferIndex = jsonIntProperty(view, "buffer");
@@ -2386,7 +2462,7 @@ bool validateAccessorJson(
     }
 
     const json& accessor = accessors[static_cast<size_t>(accessorIndex)];
-    if (!accessor.is_object()) {
+    if (!validateAccessorJsonKeys(accessor)) {
         return false;
     }
     const auto componentTypeValue = jsonIntProperty(accessor, "componentType");
