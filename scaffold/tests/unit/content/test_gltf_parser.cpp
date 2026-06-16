@@ -4266,6 +4266,42 @@ TEST(GltfParserTest, RejectsUnknownMaterialExtensionTextureInfoFields) {
     }
 }
 
+TEST(GltfParserTest, RejectsUnknownMaterialObjectFields) {
+    {
+        ExternalGltfFixture fixture =
+            makeTexturedExternalBufferTriangleGltf(
+                "data:image/png;base64,AQIDBA==");
+        const std::string marker = "\"materials\":[{";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "\"materials\":[{\"vendorFactor\":1,");
+
+        std::unique_ptr<GltfModel> model =
+            parseExternalFixtureWithSolidImage(fixture);
+
+        EXPECT_EQ(nullptr, model) << "material";
+    }
+
+    {
+        ExternalGltfFixture fixture = makeFullMaterialExternalBufferTriangleGltf();
+        const std::string marker = "\"metallicFactor\":0.4";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "\"metallicFactor\":0.4,\"vendorRoughness\":0.5");
+
+        std::unique_ptr<GltfModel> model =
+            parseExternalFixtureWithSolidImage(fixture);
+
+        EXPECT_EQ(nullptr, model) << "pbrMetallicRoughness";
+    }
+}
+
 TEST(GltfParserTest, RejectsUnreferencedMaterialElementTypeMismatch) {
     ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf(

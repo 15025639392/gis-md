@@ -3515,6 +3515,21 @@ bool validateMaterialJson(const json& material, size_t textureCount) {
     if (!material.is_object()) {
         return false;
     }
+    static constexpr std::array<const char*, 11> kAllowedMaterialKeys = {
+        "name",
+        "extensions",
+        "extras",
+        "pbrMetallicRoughness",
+        "normalTexture",
+        "occlusionTexture",
+        "emissiveTexture",
+        "emissiveFactor",
+        "alphaMode",
+        "alphaCutoff",
+        "doubleSided"};
+    if (!jsonObjectHasOnlyKeys(material, kAllowedMaterialKeys)) {
+        return false;
+    }
     if (!validateMaterialExtensions(material)) {
         return false;
     }
@@ -3543,6 +3558,17 @@ bool validateMaterialJson(const json& material, size_t textureCount) {
             return false;
         }
         const json& pbr = *pbrIt;
+        static constexpr std::array<const char*, 7> kAllowedPbrKeys = {
+            "extensions",
+            "extras",
+            "baseColorFactor",
+            "baseColorTexture",
+            "metallicFactor",
+            "roughnessFactor",
+            "metallicRoughnessTexture"};
+        if (!jsonObjectHasOnlyKeys(pbr, kAllowedPbrKeys)) {
+            return false;
+        }
         if (pbr.contains("baseColorFactor") &&
             !jsonNumberArrayInRange(
                 pbr["baseColorFactor"],
