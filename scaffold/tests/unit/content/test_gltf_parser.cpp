@@ -8252,6 +8252,126 @@ TEST(GltfParserTest, RejectsGpuInstancingObjectExtensionWithoutDeclaration) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, RejectsUnknownFieldsInSupportedExtensionPayloads) {
+    {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+        const size_t assetPos = fixture.jsonText.find(assetMarker);
+        ASSERT_NE(std::string::npos, assetPos);
+        fixture.jsonText.insert(
+            assetPos + assetMarker.size(),
+            "\"extensionsUsed\":[\"KHR_materials_specular\"],"
+            "\"extensionsRequired\":[\"KHR_materials_specular\"],");
+
+        const std::string primitiveMarker = "\"mode\":4}";
+        const size_t primitivePos = fixture.jsonText.find(primitiveMarker);
+        ASSERT_NE(std::string::npos, primitivePos);
+        fixture.jsonText.replace(
+            primitivePos,
+            primitiveMarker.size(),
+            "\"mode\":4,\"material\":0}");
+
+        const std::string buffersMarker = "\"buffers\"";
+        const size_t buffersPos = fixture.jsonText.find(buffersMarker);
+        ASSERT_NE(std::string::npos, buffersPos);
+        fixture.jsonText.insert(
+            buffersPos,
+            "\"materials\":[{\"extensions\":{"
+            "\"KHR_materials_specular\":{"
+            "\"specularFactor\":0.5,\"vendorFactor\":1.0}}}],");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "KHR_materials_specular";
+    }
+
+    {
+        ExternalGltfFixture fixture =
+            makeTexturedExternalBufferTriangleGltf("image.bin");
+        const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+        const size_t assetPos = fixture.jsonText.find(assetMarker);
+        ASSERT_NE(std::string::npos, assetPos);
+        fixture.jsonText.insert(
+            assetPos + assetMarker.size(),
+            "\"extensionsUsed\":[\"KHR_texture_transform\"],"
+            "\"extensionsRequired\":[\"KHR_texture_transform\"],");
+
+        const std::string marker =
+            "\"baseColorTexture\":{\"index\":0,\"texCoord\":0}";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "\"baseColorTexture\":{\"index\":0,\"texCoord\":0,"
+            "\"extensions\":{\"KHR_texture_transform\":{"
+            "\"scale\":[2,2],\"vendorOffset\":[1,1]}}}");
+
+        std::unique_ptr<GltfModel> model =
+            parseExternalFixtureWithSolidImage(fixture);
+
+        EXPECT_EQ(nullptr, model) << "KHR_texture_transform";
+    }
+
+    {
+        ExternalGltfFixture fixture = makeExternalWebpTextureExtensionGltf();
+        const std::string marker =
+            "\"extensions\":{\"EXT_texture_webp\":{\"source\":1}}";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "\"extensions\":{\"EXT_texture_webp\":{"
+            "\"source\":1,\"decoder\":\"custom\"}}");
+
+        std::unique_ptr<GltfModel> model = GltfParser::parse(
+            reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
+            fixture.jsonText.size(),
+            [&](const std::string& uri) {
+                if (uri == "triangle.bin") {
+                    return fixture.bin;
+                }
+                if (uri == "texture.webp") {
+                    return makeFakeWebpBytes();
+                }
+                if (uri == "fallback.png") {
+                    return std::vector<uint8_t>{9, 9, 9, 9};
+                }
+                return std::vector<uint8_t>{};
+            },
+            [](const uint8_t*, size_t) -> std::optional<GltfImage> {
+                GltfImage image;
+                image.width = 1;
+                image.height = 1;
+                image.channels = 4;
+                image.pixels = {255, 255, 255, 255};
+                return image;
+            });
+
+        EXPECT_EQ(nullptr, model) << "EXT_texture_webp";
+    }
+
+    {
+        ExternalGltfFixture fixture = makeGpuInstancedExternalGltf();
+        const std::string marker =
+            "\"extensions\":{\"EXT_mesh_gpu_instancing\":{"
+            "\"attributes\":{\"TRANSLATION\":4,\"ROTATION\":5,\"SCALE\":6}}}";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.replace(
+            markerPos,
+            marker.size(),
+            "\"extensions\":{\"EXT_mesh_gpu_instancing\":{"
+            "\"attributes\":{\"TRANSLATION\":4,\"ROTATION\":5,\"SCALE\":6},"
+            "\"mode\":\"custom\"}}");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << "EXT_mesh_gpu_instancing";
+    }
+}
+
 TEST(GltfParserTest, RejectsKhrTextureTransformObjectExtensionWithoutDeclaration) {
     ExternalGltfFixture fixture =
         makeTexturedExternalBufferTriangleGltf("image.bin");

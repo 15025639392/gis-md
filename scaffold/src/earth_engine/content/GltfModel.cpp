@@ -89,6 +89,25 @@ bool attributeSemanticStartsWith(
     return semantic.rfind(prefix, 0) == 0;
 }
 
+template <size_t N>
+bool jsonObjectHasOnlyKeys(
+    const json& object,
+    const std::array<const char*, N>& allowedKeys) {
+    if (!object.is_object()) {
+        return false;
+    }
+    for (auto it = object.begin(); it != object.end(); ++it) {
+        const bool allowed = std::any_of(
+            allowedKeys.begin(),
+            allowedKeys.end(),
+            [&](const char* key) { return it.key() == key; });
+        if (!allowed) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool primitiveAttributeSemanticSupported(const std::string& semantic,
                                          bool allowLegacyBatchIdAttribute);
 bool morphTargetSemanticSupported(const std::string& semantic);
@@ -1450,6 +1469,12 @@ std::optional<int> webpTextureSourceIndex(const json& textureJson) {
     if (!webpIt->is_object()) {
         return -1;
     }
+    static constexpr std::array<const char*, 2> kAllowedWebpKeys = {
+        "source",
+        "extras"};
+    if (!jsonObjectHasOnlyKeys(*webpIt, kAllowedWebpKeys)) {
+        return -1;
+    }
     const auto sourceIt = webpIt->find("source");
     if (sourceIt == webpIt->end()) {
         return -1;
@@ -1758,6 +1783,18 @@ bool parseTextureTransform(
     }
 
     const json& transformJson = *transformIt;
+    static constexpr std::array<const char*, 5>
+        kAllowedTextureTransformKeys = {
+            "offset",
+            "rotation",
+            "scale",
+            "texCoord",
+            "extras"};
+    if (!jsonObjectHasOnlyKeys(
+            transformJson,
+            kAllowedTextureTransformKeys)) {
+        return false;
+    }
     if (transformJson.contains("offset") &&
         !readFloatArray(transformJson["offset"], transform.offset)) {
         return false;
@@ -2861,14 +2898,26 @@ bool validateMaterialExtensions(const json& material) {
         return false;
     }
     const auto unlitIt = extensionsIt->find("KHR_materials_unlit");
-    if (unlitIt != extensionsIt->end() && !unlitIt->is_object()) {
-        return false;
+    if (unlitIt != extensionsIt->end()) {
+        static constexpr std::array<const char*, 1>
+            kAllowedUnlitKeys = {"extras"};
+        if (!unlitIt->is_object() ||
+            !jsonObjectHasOnlyKeys(*unlitIt, kAllowedUnlitKeys)) {
+            return false;
+        }
     }
     const auto emissiveStrengthIt =
         extensionsIt->find("KHR_materials_emissive_strength");
     if (emissiveStrengthIt != extensionsIt->end()) {
+        static constexpr std::array<const char*, 2>
+            kAllowedEmissiveStrengthKeys = {
+                "emissiveStrength",
+                "extras"};
         if (unlitIt != extensionsIt->end() ||
-            !emissiveStrengthIt->is_object()) {
+            !emissiveStrengthIt->is_object() ||
+            !jsonObjectHasOnlyKeys(
+                *emissiveStrengthIt,
+                kAllowedEmissiveStrengthKeys)) {
             return false;
         }
         const auto strengthIt = emissiveStrengthIt->find("emissiveStrength");
@@ -2886,6 +2935,14 @@ bool validateMaterialExtensions(const json& material) {
     const auto pbrSpecGlossIt =
         extensionsIt->find("KHR_materials_pbrSpecularGlossiness");
     if (pbrSpecGlossIt != extensionsIt->end()) {
+        static constexpr std::array<const char*, 6>
+            kAllowedPbrSpecGlossKeys = {
+                "diffuseFactor",
+                "diffuseTexture",
+                "specularFactor",
+                "specularGlossinessTexture",
+                "glossinessFactor",
+                "extras"};
         if (unlitIt != extensionsIt->end() ||
             extensionsIt->contains("KHR_materials_ior") ||
             extensionsIt->contains("KHR_materials_transmission") ||
@@ -2893,7 +2950,10 @@ bool validateMaterialExtensions(const json& material) {
             extensionsIt->contains("KHR_materials_specular") ||
             extensionsIt->contains("KHR_materials_clearcoat") ||
             extensionsIt->contains("KHR_materials_sheen") ||
-            !pbrSpecGlossIt->is_object()) {
+            !pbrSpecGlossIt->is_object() ||
+            !jsonObjectHasOnlyKeys(
+                *pbrSpecGlossIt,
+                kAllowedPbrSpecGlossKeys)) {
             return false;
         }
         const auto diffuseFactorIt = pbrSpecGlossIt->find("diffuseFactor");
@@ -2923,9 +2983,17 @@ bool validateMaterialExtensions(const json& material) {
     const auto transmissionIt =
         extensionsIt->find("KHR_materials_transmission");
     if (transmissionIt != extensionsIt->end()) {
+        static constexpr std::array<const char*, 3>
+            kAllowedTransmissionKeys = {
+                "transmissionFactor",
+                "transmissionTexture",
+                "extras"};
         if (unlitIt != extensionsIt->end() ||
             extensionsIt->contains("KHR_materials_pbrSpecularGlossiness") ||
-            !transmissionIt->is_object()) {
+            !transmissionIt->is_object() ||
+            !jsonObjectHasOnlyKeys(
+                *transmissionIt,
+                kAllowedTransmissionKeys)) {
             return false;
         }
         const auto factorIt = transmissionIt->find("transmissionFactor");
@@ -2943,9 +3011,18 @@ bool validateMaterialExtensions(const json& material) {
     const auto anisotropyIt =
         extensionsIt->find("KHR_materials_anisotropy");
     if (anisotropyIt != extensionsIt->end()) {
+        static constexpr std::array<const char*, 4>
+            kAllowedAnisotropyKeys = {
+                "anisotropyStrength",
+                "anisotropyRotation",
+                "anisotropyTexture",
+                "extras"};
         if (unlitIt != extensionsIt->end() ||
             extensionsIt->contains("KHR_materials_pbrSpecularGlossiness") ||
-            !anisotropyIt->is_object()) {
+            !anisotropyIt->is_object() ||
+            !jsonObjectHasOnlyKeys(
+                *anisotropyIt,
+                kAllowedAnisotropyKeys)) {
             return false;
         }
         const auto strengthIt = anisotropyIt->find("anisotropyStrength");
@@ -2965,9 +3042,19 @@ bool validateMaterialExtensions(const json& material) {
 
     const auto specularIt = extensionsIt->find("KHR_materials_specular");
     if (specularIt != extensionsIt->end()) {
+        static constexpr std::array<const char*, 5>
+            kAllowedSpecularKeys = {
+                "specularFactor",
+                "specularTexture",
+                "specularColorFactor",
+                "specularColorTexture",
+                "extras"};
         if (unlitIt != extensionsIt->end() ||
             extensionsIt->contains("KHR_materials_pbrSpecularGlossiness") ||
-            !specularIt->is_object()) {
+            !specularIt->is_object() ||
+            !jsonObjectHasOnlyKeys(
+                *specularIt,
+                kAllowedSpecularKeys)) {
             return false;
         }
         const auto factorIt = specularIt->find("specularFactor");
@@ -2989,9 +3076,20 @@ bool validateMaterialExtensions(const json& material) {
 
     const auto clearcoatIt = extensionsIt->find("KHR_materials_clearcoat");
     if (clearcoatIt != extensionsIt->end()) {
+        static constexpr std::array<const char*, 6>
+            kAllowedClearcoatKeys = {
+                "clearcoatFactor",
+                "clearcoatTexture",
+                "clearcoatRoughnessFactor",
+                "clearcoatRoughnessTexture",
+                "clearcoatNormalTexture",
+                "extras"};
         if (unlitIt != extensionsIt->end() ||
             extensionsIt->contains("KHR_materials_pbrSpecularGlossiness") ||
-            !clearcoatIt->is_object()) {
+            !clearcoatIt->is_object() ||
+            !jsonObjectHasOnlyKeys(
+                *clearcoatIt,
+                kAllowedClearcoatKeys)) {
             return false;
         }
         const auto factorIt = clearcoatIt->find("clearcoatFactor");
@@ -3019,9 +3117,17 @@ bool validateMaterialExtensions(const json& material) {
 
     const auto sheenIt = extensionsIt->find("KHR_materials_sheen");
     if (sheenIt != extensionsIt->end()) {
+        static constexpr std::array<const char*, 5>
+            kAllowedSheenKeys = {
+                "sheenColorFactor",
+                "sheenColorTexture",
+                "sheenRoughnessFactor",
+                "sheenRoughnessTexture",
+                "extras"};
         if (unlitIt != extensionsIt->end() ||
             extensionsIt->contains("KHR_materials_pbrSpecularGlossiness") ||
-            !sheenIt->is_object()) {
+            !sheenIt->is_object() ||
+            !jsonObjectHasOnlyKeys(*sheenIt, kAllowedSheenKeys)) {
             return false;
         }
         const auto colorFactorIt = sheenIt->find("sheenColorFactor");
@@ -3043,7 +3149,12 @@ bool validateMaterialExtensions(const json& material) {
     if (iorIt == extensionsIt->end()) {
         return true;
     }
-    if (unlitIt != extensionsIt->end() || !iorIt->is_object()) {
+    static constexpr std::array<const char*, 2> kAllowedIorKeys = {
+        "ior",
+        "extras"};
+    if (unlitIt != extensionsIt->end() ||
+        !iorIt->is_object() ||
+        !jsonObjectHasOnlyKeys(*iorIt, kAllowedIorKeys)) {
         return false;
     }
     const auto iorPropertyIt = iorIt->find("ior");
@@ -3572,6 +3683,12 @@ bool validateGpuInstancingNodeExtensionShape(
     if (!node.contains("mesh") ||
         node.contains("skin") ||
         !instancingIt->is_object()) {
+        return false;
+    }
+    static constexpr std::array<const char*, 2> kAllowedInstancingKeys = {
+        "attributes",
+        "extras"};
+    if (!jsonObjectHasOnlyKeys(*instancingIt, kAllowedInstancingKeys)) {
         return false;
     }
     const auto attributesIt = instancingIt->find("attributes");
