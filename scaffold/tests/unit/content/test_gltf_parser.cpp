@@ -756,7 +756,11 @@ std::vector<uint8_t> makeAnimatedTranslationTriangleGlb(
     bool duplicateAnimationTarget = false,
     bool nonFiniteOutput = false,
     bool rotationAnimation = false,
-    bool zeroRotationOutput = false) {
+    bool zeroRotationOutput = false,
+    const std::string& inputAccessorIndex = "3",
+    const std::string& outputAccessorIndex = "4",
+    const std::string& channelSamplerIndex = "0",
+    const std::string& targetNodeIndex = "0") {
     std::vector<uint8_t> bin;
     const size_t positionsOffset = bin.size();
     appendF32(bin, 0.0f); appendF32(bin, 0.0f); appendF32(bin, 0.0f);
@@ -845,9 +849,17 @@ std::vector<uint8_t> makeAnimatedTranslationTriangleGlb(
         "\"scenes\":[{\"nodes\":[0]}]," +
         "\"nodes\":[{\"mesh\":0}]," +
         "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1},\"indices\":2,\"mode\":4}]}]," +
-        "\"animations\":[{\"samplers\":[{\"input\":3,\"output\":4,\"interpolation\":\"" +
+        "\"animations\":[{\"samplers\":[{\"input\":" +
+        inputAccessorIndex +
+        ",\"output\":" +
+        outputAccessorIndex +
+        ",\"interpolation\":\"" +
         interpolation +
-        "\"}],\"channels\":[{\"sampler\":0,\"target\":{\"node\":0,\"path\":\"" +
+        "\"}],\"channels\":[{\"sampler\":" +
+        channelSamplerIndex +
+        ",\"target\":{\"node\":" +
+        targetNodeIndex +
+        ",\"path\":\"" +
         (rotationAnimation ? "rotation" : "translation") + "\"}}" +
         (duplicateAnimationTarget
              ? ",{\"sampler\":0,\"target\":{\"node\":0,\"path\":\"translation\"}}"
@@ -4481,6 +4493,72 @@ TEST(GltfParserTest, RejectsAnimationOutputWithNonFiniteValue) {
 TEST(GltfParserTest, RejectsUnsupportedAnimationInterpolation) {
     const std::vector<uint8_t> glb =
         makeAnimatedTranslationTriangleGlb("CATMULLROMSPLINE");
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsAnimationInputIndexIntegerOverflow) {
+    const std::vector<uint8_t> glb = makeAnimatedTranslationTriangleGlb(
+        "LINEAR",
+        false,
+        false,
+        false,
+        false,
+        false,
+        "4294967299");
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsAnimationOutputIndexIntegerOverflow) {
+    const std::vector<uint8_t> glb = makeAnimatedTranslationTriangleGlb(
+        "LINEAR",
+        false,
+        false,
+        false,
+        false,
+        false,
+        "3",
+        "4294967300");
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsAnimationChannelSamplerIndexIntegerOverflow) {
+    const std::vector<uint8_t> glb = makeAnimatedTranslationTriangleGlb(
+        "LINEAR",
+        false,
+        false,
+        false,
+        false,
+        false,
+        "3",
+        "4",
+        "4294967296");
+    std::unique_ptr<GltfModel> model =
+        GltfParser::parse(glb.data(), glb.size());
+
+    EXPECT_EQ(nullptr, model);
+}
+
+TEST(GltfParserTest, RejectsAnimationTargetNodeIndexIntegerOverflow) {
+    const std::vector<uint8_t> glb = makeAnimatedTranslationTriangleGlb(
+        "LINEAR",
+        false,
+        false,
+        false,
+        false,
+        false,
+        "3",
+        "4",
+        "0",
+        "4294967296");
     std::unique_ptr<GltfModel> model =
         GltfParser::parse(glb.data(), glb.size());
 

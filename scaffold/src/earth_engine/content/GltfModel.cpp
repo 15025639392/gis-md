@@ -5122,11 +5122,17 @@ std::optional<std::vector<GltfAnimationRuntime>> parseAnimations(
         std::vector<RawAnimationSampler> rawSamplers;
         rawSamplers.reserve(samplersJson.size());
         for (const json& samplerJson : samplersJson) {
+            const auto inputIndex = samplerJson.is_object() &&
+                    samplerJson.contains("input")
+                ? jsonIntValue(samplerJson["input"])
+                : std::optional<int>();
+            const auto outputIndex = samplerJson.is_object() &&
+                    samplerJson.contains("output")
+                ? jsonIntValue(samplerJson["output"])
+                : std::optional<int>();
             if (!samplerJson.is_object() ||
-                !samplerJson.contains("input") ||
-                !samplerJson["input"].is_number_integer() ||
-                !samplerJson.contains("output") ||
-                !samplerJson["output"].is_number_integer()) {
+                !inputIndex ||
+                !outputIndex) {
                 return std::nullopt;
             }
             std::string interpolationText = "LINEAR";
@@ -5145,11 +5151,11 @@ std::optional<std::vector<GltfAnimationRuntime>> parseAnimations(
             const auto input = accessorSpan(
                 doc,
                 buffers,
-                samplerJson["input"].get<int>());
+                *inputIndex);
             const auto output = accessorSpan(
                 doc,
                 buffers,
-                samplerJson["output"].get<int>());
+                *outputIndex);
             if (!input || !output || input->components != 1 ||
                 input->componentType != 5126 || input->count == 0 ||
                 output->componentType != 5126) {
@@ -5196,31 +5202,35 @@ std::optional<std::vector<GltfAnimationRuntime>> parseAnimations(
         std::vector<std::pair<int, GltfAnimationPath>> animatedTargets;
         animatedTargets.reserve(channelsJson.size());
         for (const json& channelJson : channelsJson) {
+            const auto samplerIndex = channelJson.is_object() &&
+                    channelJson.contains("sampler")
+                ? jsonIntValue(channelJson["sampler"])
+                : std::optional<int>();
             if (!channelJson.is_object() ||
-                !channelJson.contains("sampler") ||
-                !channelJson["sampler"].is_number_integer() ||
+                !samplerIndex ||
                 !channelJson.contains("target") ||
                 !channelJson["target"].is_object()) {
                 return std::nullopt;
             }
 
-            const int samplerIndex = channelJson["sampler"].get<int>();
-            if (samplerIndex < 0 ||
-                static_cast<size_t>(samplerIndex) >= rawSamplers.size()) {
+            if (*samplerIndex < 0 ||
+                static_cast<size_t>(*samplerIndex) >= rawSamplers.size()) {
                 return std::nullopt;
             }
 
             const json& target = channelJson["target"];
+            const auto nodeIndex = target.contains("node")
+                ? jsonIntValue(target["node"])
+                : std::optional<int>();
             if (!target.contains("node") ||
-                !target["node"].is_number_integer() ||
+                !nodeIndex ||
                 !target.contains("path") ||
                 !target["path"].is_string()) {
                 return std::nullopt;
             }
-            const int nodeIndex = target["node"].get<int>();
-            if (nodeIndex < 0 ||
-                static_cast<size_t>(nodeIndex) >= nodes.size() ||
-                nodes[static_cast<size_t>(nodeIndex)].hasMatrix) {
+            if (*nodeIndex < 0 ||
+                static_cast<size_t>(*nodeIndex) >= nodes.size() ||
+                nodes[static_cast<size_t>(*nodeIndex)].hasMatrix) {
                 return std::nullopt;
             }
             const auto path =
@@ -5229,17 +5239,17 @@ std::optional<std::vector<GltfAnimationRuntime>> parseAnimations(
             const auto duplicateTarget = std::find_if(
                 animatedTargets.begin(),
                 animatedTargets.end(),
-                [nodeIndex, path](const auto& existing) {
+                [nodeIndex = *nodeIndex, path](const auto& existing) {
                     return existing.first == nodeIndex &&
                            existing.second == *path;
                 });
             if (duplicateTarget != animatedTargets.end()) {
                 return std::nullopt;
             }
-            animatedTargets.emplace_back(nodeIndex, *path);
+            animatedTargets.emplace_back(*nodeIndex, *path);
 
             RawAnimationSampler& raw = rawSamplers[static_cast<size_t>(
-                samplerIndex)];
+                *samplerIndex)];
             const size_t keyframes = raw.runtime.inputTimes.size();
             const size_t outputElementsPerKey =
                 animationOutputElementsPerKey(raw.runtime.interpolation);
@@ -5255,7 +5265,7 @@ std::optional<std::vector<GltfAnimationRuntime>> parseAnimations(
                 case GltfAnimationPath::Weights: {
                     const size_t targetCount = meshMorphTargetCount(
                         doc,
-                        nodes[static_cast<size_t>(nodeIndex)].mesh);
+                        nodes[static_cast<size_t>(*nodeIndex)].mesh);
                     if (targetCount == 0 ||
                         raw.runtime.outputValues.size() %
                             (keyframes * outputElementsPerKey) !=
@@ -5295,12 +5305,12 @@ std::optional<std::vector<GltfAnimationRuntime>> parseAnimations(
                 return std::nullopt;
             }
             raw.runtime.outputComponents = expectedComponents;
-            animation.samplers[static_cast<size_t>(samplerIndex)]
+            animation.samplers[static_cast<size_t>(*samplerIndex)]
                 .outputComponents = expectedComponents;
 
             GltfAnimationChannelRuntime channel;
-            channel.samplerIndex = samplerIndex;
-            channel.targetNode = nodeIndex;
+            channel.samplerIndex = *samplerIndex;
+            channel.targetNode = *nodeIndex;
             channel.path = *path;
             animation.channels.push_back(channel);
         }
