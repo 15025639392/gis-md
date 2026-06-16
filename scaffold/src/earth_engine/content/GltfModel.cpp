@@ -14,6 +14,7 @@
 #include <cstring>
 #include <functional>
 #include <limits>
+#include <map>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -28,6 +29,20 @@ using json = nlohmann::json;
 constexpr uint32_t kGlbMagic = 0x46546C67u;
 constexpr uint32_t kGlbJsonChunk = 0x4E4F534Au;
 constexpr uint32_t kGlbBinChunk = 0x004E4942u;
+constexpr size_t kGltfMaxFeatureIdSets = 8u;
+
+struct StructuralMetadataPropertyTable {
+    std::vector<std::map<std::string, GltfFeaturePropertyValue>> rows;
+};
+
+using StructuralMetadataPropertyTables =
+    std::vector<StructuralMetadataPropertyTable>;
+
+struct MeshFeatureIdBinding {
+    size_t attributeSet = 0;
+    size_t featureCount = 0;
+    std::optional<size_t> propertyTable;
+};
 
 std::optional<size_t> jsonSizeValue(const json& value);
 std::optional<int> jsonIntValue(const json& value);
@@ -60,6 +75,32 @@ bool validTexCoordSetIndex(int texCoord) {
 std::optional<size_t> texCoordSetIndexFromSemantic(
     const std::string& semantic) {
     constexpr const char* prefix = "TEXCOORD_";
+    const size_t prefixLength = std::strlen(prefix);
+    if (semantic.rfind(prefix, 0) != 0 ||
+        semantic.size() == prefixLength) {
+        return std::nullopt;
+    }
+    if (semantic.size() > prefixLength + 1u &&
+        semantic[prefixLength] == '0') {
+        return std::nullopt;
+    }
+    size_t value = 0;
+    for (size_t i = prefixLength; i < semantic.size(); ++i) {
+        const char c = semantic[i];
+        if (!std::isdigit(static_cast<unsigned char>(c))) {
+            return std::nullopt;
+        }
+        value = value * 10u + static_cast<size_t>(c - '0');
+        if (value >= kGltfMaxFeatureIdSets) {
+            return std::nullopt;
+        }
+    }
+    return value;
+}
+
+std::optional<size_t> featureIdSetIndexFromSemantic(
+    const std::string& semantic) {
+    constexpr const char* prefix = "_FEATURE_ID_";
     const size_t prefixLength = std::strlen(prefix);
     if (semantic.rfind(prefix, 0) != 0 ||
         semantic.size() == prefixLength) {
@@ -109,7 +150,8 @@ bool jsonObjectHasOnlyKeys(
 }
 
 bool primitiveAttributeSemanticSupported(const std::string& semantic,
-                                         bool allowLegacyBatchIdAttribute);
+                                         bool allowLegacyBatchIdAttribute,
+                                         bool allowFeatureIdAttributes);
 bool morphTargetSemanticSupported(const std::string& semantic);
 
 uint32_t readU32LE(const uint8_t* p) {
@@ -959,6 +1001,12 @@ bool isTextureExtensionParentPath(const std::vector<std::string>& path) {
            path[0] == "textures";
 }
 
+bool isPrimitiveExtensionParentPath(const std::vector<std::string>& path) {
+    return path.size() == 4 &&
+           path[0] == "meshes" &&
+           path[2] == "primitives";
+}
+
 bool extensionsObjectSupportedAtPath(
     const json& extensions,
     const std::vector<std::string>& ownerPath) {
@@ -989,6 +1037,18 @@ bool extensionsObjectSupportedAtPath(
         }
         if (it.key() == "EXT_texture_webp") {
             if (!isTextureExtensionParentPath(ownerPath)) {
+                return false;
+            }
+            continue;
+        }
+        if (it.key() == "EXT_mesh_features") {
+            if (!isPrimitiveExtensionParentPath(ownerPath)) {
+                return false;
+            }
+            continue;
+        }
+        if (it.key() == "EXT_structural_metadata") {
+            if (!ownerPath.empty()) {
                 return false;
             }
             continue;
@@ -1085,6 +1145,490 @@ bool declaredObjectExtensionsHavePayloads(const json& doc) {
         }
     }
     return true;
+}
+
+const json* topLevelObjectExtension(const json& doc, const char* name) {
+    const auto extensionsIt = doc.find("extensions");
+    if (extensionsIt == doc.end()) {
+        return nullptr;
+    }
+    if (!extensionsIt->is_object()) {
+        return nullptr;
+    }
+    const auto extensionIt = extensionsIt->find(name);
+    if (extensionIt == extensionsIt->end() || !extensionIt->is_object()) {
+        return nullptr;
+    }
+    return &*extensionIt;
+}
+
+const json* primitiveMeshFeaturesExtension(const json& primitive) {
+    const auto extensionsIt = primitive.find("extensions");
+    if (extensionsIt == primitive.end() || !extensionsIt->is_object()) {
+        return nullptr;
+    }
+    const auto meshFeaturesIt = extensionsIt->find("EXT_mesh_features");
+    if (meshFeaturesIt == extensionsIt->end() ||
+        !meshFeaturesIt->is_object()) {
+        return nullptr;
+    }
+    return &*meshFeaturesIt;
+}
+
+bool primitiveAllowsFeatureIdAttributes(const json& doc,
+                                        const json& primitive) {
+    return declaredExtension(doc, "EXT_mesh_features") &&
+           primitiveMeshFeaturesExtension(primitive) != nullptr;
+}
+
+bool metadataIdentifierValid(const std::string& value) {
+    if (value.empty()) {
+        return false;
+    }
+    const unsigned char first = static_cast<unsigned char>(value[0]);
+    if (!std::isalpha(first) && value[0] != '_') {
+        return false;
+    }
+    for (size_t i = 1; i < value.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(value[i]);
+        if (!std::isalnum(c) && value[i] != '_') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool optionalStringPropertyValid(const json& object, const char* name) {
+    const auto it = object.find(name);
+    return it == object.end() || it->is_string();
+}
+
+bool optionalBooleanPropertyValid(const json& object, const char* name) {
+    const auto it = object.find(name);
+    return it == object.end() || it->is_boolean();
+}
+
+bool structuralMetadataComponentTypeSupported(
+    const std::string& componentType) {
+    return componentType == "INT8" ||
+           componentType == "UINT8" ||
+           componentType == "INT16" ||
+           componentType == "UINT16" ||
+           componentType == "INT32" ||
+           componentType == "UINT32" ||
+           componentType == "INT64" ||
+           componentType == "UINT64" ||
+           componentType == "FLOAT32" ||
+           componentType == "FLOAT64";
+}
+
+bool validateStructuralMetadataClassPropertyShape(const json& property) {
+    static constexpr std::array<const char*, 11> kAllowedPropertyKeys = {
+        "name",
+        "description",
+        "extensions",
+        "extras",
+        "type",
+        "componentType",
+        "array",
+        "normalized",
+        "required",
+        "semantic",
+        "count"};
+    if (!jsonObjectHasOnlyKeys(property, kAllowedPropertyKeys) ||
+        !optionalStringPropertyValid(property, "name") ||
+        !optionalStringPropertyValid(property, "description") ||
+        !optionalStringPropertyValid(property, "semantic") ||
+        !optionalBooleanPropertyValid(property, "array") ||
+        !optionalBooleanPropertyValid(property, "normalized") ||
+        !optionalBooleanPropertyValid(property, "required")) {
+        return false;
+    }
+    const auto typeIt = property.find("type");
+    if (typeIt == property.end() ||
+        !typeIt->is_string() ||
+        typeIt->get<std::string>() != "SCALAR") {
+        return false;
+    }
+    const auto componentTypeIt = property.find("componentType");
+    if (componentTypeIt == property.end() ||
+        !componentTypeIt->is_string() ||
+        !structuralMetadataComponentTypeSupported(
+            componentTypeIt->get<std::string>())) {
+        return false;
+    }
+    if (property.value("array", false) ||
+        property.value("normalized", false) ||
+        property.contains("count")) {
+        return false;
+    }
+    return true;
+}
+
+bool validateStructuralMetadataClassShape(const std::string& classId,
+                                          const json& classJson) {
+    static constexpr std::array<const char*, 6> kAllowedClassKeys = {
+        "name",
+        "description",
+        "extensions",
+        "extras",
+        "properties",
+        "parent"};
+    if (!metadataIdentifierValid(classId) ||
+        !jsonObjectHasOnlyKeys(classJson, kAllowedClassKeys) ||
+        !optionalStringPropertyValid(classJson, "name") ||
+        !optionalStringPropertyValid(classJson, "description") ||
+        classJson.contains("parent")) {
+        return false;
+    }
+    const auto propertiesIt = classJson.find("properties");
+    if (propertiesIt == classJson.end() ||
+        !propertiesIt->is_object() ||
+        propertiesIt->empty()) {
+        return false;
+    }
+    for (auto it = propertiesIt->begin(); it != propertiesIt->end(); ++it) {
+        if (!metadataIdentifierValid(it.key()) ||
+            !validateStructuralMetadataClassPropertyShape(it.value())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool validateStructuralMetadataSchemaShape(const json& schema) {
+    static constexpr std::array<const char*, 8> kAllowedSchemaKeys = {
+        "id",
+        "name",
+        "description",
+        "version",
+        "extensions",
+        "extras",
+        "classes",
+        "enums"};
+    if (!jsonObjectHasOnlyKeys(schema, kAllowedSchemaKeys) ||
+        !optionalStringPropertyValid(schema, "id") ||
+        !optionalStringPropertyValid(schema, "name") ||
+        !optionalStringPropertyValid(schema, "description") ||
+        !optionalStringPropertyValid(schema, "version")) {
+        return false;
+    }
+    const auto idIt = schema.find("id");
+    if (idIt != schema.end() &&
+        !metadataIdentifierValid(idIt->get<std::string>())) {
+        return false;
+    }
+    if (schema.contains("enums") &&
+        (!schema["enums"].is_object() || !schema["enums"].empty())) {
+        return false;
+    }
+    const auto classesIt = schema.find("classes");
+    if (classesIt == schema.end() ||
+        !classesIt->is_object() ||
+        classesIt->empty()) {
+        return false;
+    }
+    for (auto it = classesIt->begin(); it != classesIt->end(); ++it) {
+        if (!validateStructuralMetadataClassShape(it.key(), it.value())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool validateStructuralMetadataPropertyTablePropertyShape(
+    const json& property) {
+    static constexpr std::array<const char*, 4> kAllowedPropertyKeys = {
+        "extensions",
+        "extras",
+        "values",
+        "arrayOffsets"};
+    if (!jsonObjectHasOnlyKeys(property, kAllowedPropertyKeys) ||
+        property.contains("arrayOffsets")) {
+        return false;
+    }
+    const auto valuesIt = property.find("values");
+    if (valuesIt == property.end()) {
+        return false;
+    }
+    const auto values = jsonIntValue(*valuesIt);
+    return values && *values >= 0;
+}
+
+bool validateStructuralMetadataPropertyTableShape(
+    const json& schema,
+    const json& table) {
+    static constexpr std::array<const char*, 6> kAllowedTableKeys = {
+        "name",
+        "extensions",
+        "extras",
+        "class",
+        "count",
+        "properties"};
+    if (!jsonObjectHasOnlyKeys(table, kAllowedTableKeys) ||
+        !optionalStringPropertyValid(table, "name")) {
+        return false;
+    }
+    const auto classIt = table.find("class");
+    if (classIt == table.end() || !classIt->is_string()) {
+        return false;
+    }
+    const std::string classId = classIt->get<std::string>();
+    const auto classesIt = schema.find("classes");
+    if (classesIt == schema.end() ||
+        !classesIt->is_object() ||
+        !classesIt->contains(classId)) {
+        return false;
+    }
+    const auto countIt = table.find("count");
+    if (countIt == table.end()) {
+        return false;
+    }
+    const auto count = jsonSizeValue(*countIt);
+    if (!count || *count == 0u) {
+        return false;
+    }
+    const auto propertiesIt = table.find("properties");
+    if (propertiesIt == table.end() ||
+        !propertiesIt->is_object() ||
+        propertiesIt->empty()) {
+        return false;
+    }
+    const json& classProperties =
+        (*classesIt)[classId]["properties"];
+    for (auto it = propertiesIt->begin(); it != propertiesIt->end(); ++it) {
+        if (!metadataIdentifierValid(it.key()) ||
+            !classProperties.contains(it.key()) ||
+            !validateStructuralMetadataPropertyTablePropertyShape(
+                it.value())) {
+            return false;
+        }
+    }
+    for (auto it = classProperties.begin(); it != classProperties.end(); ++it) {
+        const json& classProperty = it.value();
+        if (classProperty.value("required", false) &&
+            !propertiesIt->contains(it.key())) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool primitiveFeatureIdReferencesPropertyTable(const json& primitive) {
+    const json* meshFeatures = primitiveMeshFeaturesExtension(primitive);
+    if (!meshFeatures) {
+        return false;
+    }
+    const auto featureIdsIt = meshFeatures->find("featureIds");
+    if (featureIdsIt == meshFeatures->end() || !featureIdsIt->is_array()) {
+        return false;
+    }
+    return std::any_of(
+        featureIdsIt->begin(),
+        featureIdsIt->end(),
+        [](const json& featureId) {
+            return featureId.is_object() &&
+                   featureId.contains("propertyTable");
+        });
+}
+
+bool documentHasMeshFeaturePropertyTableReference(const json& doc) {
+    const auto meshesIt = doc.find("meshes");
+    if (meshesIt == doc.end() || !meshesIt->is_array()) {
+        return false;
+    }
+    for (const json& mesh : *meshesIt) {
+        if (!mesh.is_object()) {
+            continue;
+        }
+        const auto primitivesIt = mesh.find("primitives");
+        if (primitivesIt == mesh.end() || !primitivesIt->is_array()) {
+            continue;
+        }
+        for (const json& primitive : *primitivesIt) {
+            if (primitive.is_object() &&
+                primitiveFeatureIdReferencesPropertyTable(primitive)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool validateStructuralMetadataExtensionShape(const json& doc) {
+    const json* metadata =
+        topLevelObjectExtension(doc, "EXT_structural_metadata");
+    if (!metadata) {
+        return !declaredExtension(doc, "EXT_structural_metadata");
+    }
+    static constexpr std::array<const char*, 7> kAllowedMetadataKeys = {
+        "extensions",
+        "extras",
+        "schema",
+        "schemaUri",
+        "propertyTables",
+        "propertyTextures",
+        "propertyAttributes"};
+    if (!jsonObjectHasOnlyKeys(*metadata, kAllowedMetadataKeys) ||
+        metadata->contains("schemaUri") ||
+        metadata->contains("propertyTextures") ||
+        metadata->contains("propertyAttributes")) {
+        return false;
+    }
+    const auto schemaIt = metadata->find("schema");
+    if (schemaIt == metadata->end() ||
+        !schemaIt->is_object() ||
+        !validateStructuralMetadataSchemaShape(*schemaIt)) {
+        return false;
+    }
+    const auto tablesIt = metadata->find("propertyTables");
+    if (tablesIt == metadata->end() ||
+        !tablesIt->is_array() ||
+        tablesIt->empty()) {
+        return false;
+    }
+    for (const json& table : *tablesIt) {
+        if (!table.is_object() ||
+            !validateStructuralMetadataPropertyTableShape(
+                *schemaIt,
+                table)) {
+            return false;
+        }
+    }
+    return documentHasMeshFeaturePropertyTableReference(doc);
+}
+
+std::optional<size_t> structuralMetadataPropertyTableCount(const json& doc) {
+    const json* metadata =
+        topLevelObjectExtension(doc, "EXT_structural_metadata");
+    if (!metadata) {
+        return 0u;
+    }
+    const auto tablesIt = metadata->find("propertyTables");
+    if (tablesIt == metadata->end() || !tablesIt->is_array()) {
+        return std::nullopt;
+    }
+    return tablesIt->size();
+}
+
+bool validateMeshFeaturesPrimitiveExtensionShape(const json& doc,
+                                                 const json& primitive) {
+    const auto extensionsIt = primitive.find("extensions");
+    if (extensionsIt == primitive.end()) {
+        return true;
+    }
+    if (!extensionsIt->is_object()) {
+        return false;
+    }
+    const auto meshFeaturesIt = extensionsIt->find("EXT_mesh_features");
+    if (meshFeaturesIt == extensionsIt->end()) {
+        return true;
+    }
+    if (!meshFeaturesIt->is_object()) {
+        return false;
+    }
+    const json* meshFeatures = &*meshFeaturesIt;
+    if (!declaredExtension(doc, "EXT_mesh_features")) {
+        return false;
+    }
+    static constexpr std::array<const char*, 3> kAllowedMeshFeaturesKeys = {
+        "extensions",
+        "extras",
+        "featureIds"};
+    if (!jsonObjectHasOnlyKeys(*meshFeatures, kAllowedMeshFeaturesKeys)) {
+        return false;
+    }
+    const auto featureIdsIt = meshFeatures->find("featureIds");
+    if (featureIdsIt == meshFeatures->end() ||
+        !featureIdsIt->is_array() ||
+        featureIdsIt->size() != 1u) {
+        return false;
+    }
+    const json& featureId = (*featureIdsIt)[0];
+    static constexpr std::array<const char*, 6> kAllowedFeatureIdKeys = {
+        "extensions",
+        "extras",
+        "featureCount",
+        "attribute",
+        "propertyTable",
+        "label"};
+    if (!jsonObjectHasOnlyKeys(featureId, kAllowedFeatureIdKeys)) {
+        return false;
+    }
+    const auto featureCountIt = featureId.find("featureCount");
+    const auto featureCount = featureCountIt == featureId.end()
+        ? std::optional<size_t>()
+        : jsonSizeValue(*featureCountIt);
+    if (!featureCount || *featureCount == 0u) {
+        return false;
+    }
+    const auto attributeIt = featureId.find("attribute");
+    const auto attribute = attributeIt == featureId.end()
+        ? std::optional<int>()
+        : jsonIntValue(*attributeIt);
+    if (!attribute || *attribute < 0 || *attribute >= 8) {
+        return false;
+    }
+    if (featureId.contains("label") &&
+        (!featureId["label"].is_string() ||
+         !metadataIdentifierValid(featureId["label"].get<std::string>()))) {
+        return false;
+    }
+    if (featureId.contains("propertyTable")) {
+        const auto tableIndex = jsonIntValue(featureId["propertyTable"]);
+        const auto tableCount = structuralMetadataPropertyTableCount(doc);
+        if (!tableIndex ||
+            !tableCount ||
+            *tableIndex < 0 ||
+            static_cast<size_t>(*tableIndex) >= *tableCount) {
+            return false;
+        }
+    }
+    const auto attrsIt = primitive.find("attributes");
+    if (attrsIt == primitive.end() || !attrsIt->is_object()) {
+        return false;
+    }
+    const std::string expectedSemantic =
+        "_FEATURE_ID_" + std::to_string(*attribute);
+    if (!attrsIt->contains(expectedSemantic)) {
+        return false;
+    }
+    for (auto it = attrsIt->begin(); it != attrsIt->end(); ++it) {
+        const std::optional<size_t> setIndex =
+            featureIdSetIndexFromSemantic(it.key());
+        if (setIndex && *setIndex != static_cast<size_t>(*attribute)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::optional<MeshFeatureIdBinding> primitiveMeshFeatureIdBinding(
+    const json& primitive) {
+    const json* meshFeatures = primitiveMeshFeaturesExtension(primitive);
+    if (!meshFeatures) {
+        return std::nullopt;
+    }
+    const json& featureId = (*meshFeatures)["featureIds"][0];
+    const auto featureCount = jsonSizeValue(featureId["featureCount"]);
+    const auto attribute = jsonIntValue(featureId["attribute"]);
+    if (!featureCount ||
+        !attribute ||
+        *attribute < 0 ||
+        *attribute >= 8) {
+        return std::nullopt;
+    }
+    MeshFeatureIdBinding binding;
+    binding.attributeSet = static_cast<size_t>(*attribute);
+    binding.featureCount = *featureCount;
+    if (featureId.contains("propertyTable")) {
+        const auto propertyTable = jsonIntValue(featureId["propertyTable"]);
+        if (!propertyTable || *propertyTable < 0) {
+            return std::nullopt;
+        }
+        binding.propertyTable = static_cast<size_t>(*propertyTable);
+    }
+    return binding;
 }
 
 bool validateBufferJsonKeys(const json& buffer) {
@@ -2153,6 +2697,184 @@ std::optional<size_t> bufferViewByteOffset(
         bufferViews[static_cast<size_t>(bufferViewIndex)],
         "byteOffset",
         0u);
+}
+
+std::optional<size_t> structuralMetadataComponentTypeSize(
+    const std::string& componentType) {
+    if (componentType == "INT8" || componentType == "UINT8") {
+        return 1u;
+    }
+    if (componentType == "INT16" || componentType == "UINT16") {
+        return 2u;
+    }
+    if (componentType == "INT32" ||
+        componentType == "UINT32" ||
+        componentType == "FLOAT32") {
+        return 4u;
+    }
+    if (componentType == "INT64" ||
+        componentType == "UINT64" ||
+        componentType == "FLOAT64") {
+        return 8u;
+    }
+    return std::nullopt;
+}
+
+std::optional<GltfFeaturePropertyValue> readStructuralMetadataValue(
+    const uint8_t* p,
+    const std::string& componentType) {
+    if (componentType == "INT8") {
+        int8_t value = 0;
+        std::memcpy(&value, p, sizeof(value));
+        return GltfFeaturePropertyValue(static_cast<int64_t>(value));
+    }
+    if (componentType == "UINT8") {
+        return GltfFeaturePropertyValue(static_cast<uint64_t>(*p));
+    }
+    if (componentType == "INT16") {
+        int16_t value = 0;
+        std::memcpy(&value, p, sizeof(value));
+        return GltfFeaturePropertyValue(static_cast<int64_t>(value));
+    }
+    if (componentType == "UINT16") {
+        uint16_t value = 0;
+        std::memcpy(&value, p, sizeof(value));
+        return GltfFeaturePropertyValue(static_cast<uint64_t>(value));
+    }
+    if (componentType == "INT32") {
+        int32_t value = 0;
+        std::memcpy(&value, p, sizeof(value));
+        return GltfFeaturePropertyValue(static_cast<int64_t>(value));
+    }
+    if (componentType == "UINT32") {
+        uint32_t value = 0;
+        std::memcpy(&value, p, sizeof(value));
+        return GltfFeaturePropertyValue(static_cast<uint64_t>(value));
+    }
+    if (componentType == "INT64") {
+        int64_t value = 0;
+        std::memcpy(&value, p, sizeof(value));
+        return GltfFeaturePropertyValue(value);
+    }
+    if (componentType == "UINT64") {
+        uint64_t value = 0;
+        std::memcpy(&value, p, sizeof(value));
+        return GltfFeaturePropertyValue(value);
+    }
+    if (componentType == "FLOAT32") {
+        float value = 0.0f;
+        std::memcpy(&value, p, sizeof(value));
+        if (!std::isfinite(value)) {
+            return std::nullopt;
+        }
+        return GltfFeaturePropertyValue(static_cast<double>(value));
+    }
+    if (componentType == "FLOAT64") {
+        double value = 0.0;
+        std::memcpy(&value, p, sizeof(value));
+        if (!std::isfinite(value)) {
+            return std::nullopt;
+        }
+        return GltfFeaturePropertyValue(value);
+    }
+    return std::nullopt;
+}
+
+std::optional<std::vector<GltfFeaturePropertyValue>>
+readStructuralMetadataPropertyColumn(
+    const json& doc,
+    const std::vector<std::vector<uint8_t>>& buffers,
+    int bufferViewIndex,
+    const std::string& componentType,
+    size_t count) {
+    const auto componentBytes =
+        structuralMetadataComponentTypeSize(componentType);
+    if (!componentBytes || *componentBytes == 0u || count == 0u) {
+        return std::nullopt;
+    }
+    if (count >
+        std::numeric_limits<size_t>::max() / *componentBytes) {
+        return std::nullopt;
+    }
+    const size_t requiredBytes = count * *componentBytes;
+    const auto viewOffset = bufferViewByteOffset(doc, bufferViewIndex);
+    if (!viewOffset || (*viewOffset % *componentBytes) != 0u) {
+        return std::nullopt;
+    }
+    const auto range = bufferViewRange(
+        doc,
+        buffers,
+        bufferViewIndex,
+        0u,
+        true);
+    if (!range || range->second != requiredBytes) {
+        return std::nullopt;
+    }
+    std::vector<GltfFeaturePropertyValue> values;
+    values.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+        const std::optional<GltfFeaturePropertyValue> value =
+            readStructuralMetadataValue(
+                range->first + i * *componentBytes,
+                componentType);
+        if (!value) {
+            return std::nullopt;
+        }
+        values.push_back(*value);
+    }
+    return values;
+}
+
+std::optional<StructuralMetadataPropertyTables>
+parseStructuralMetadataPropertyTables(
+    const json& doc,
+    const std::vector<std::vector<uint8_t>>& buffers) {
+    const json* metadata =
+        topLevelObjectExtension(doc, "EXT_structural_metadata");
+    if (!metadata) {
+        return StructuralMetadataPropertyTables{};
+    }
+    if (!validateStructuralMetadataExtensionShape(doc)) {
+        return std::nullopt;
+    }
+    const json& schema = metadata->at("schema");
+    const json& classes = schema.at("classes");
+    const json& tablesJson = metadata->at("propertyTables");
+    StructuralMetadataPropertyTables tables;
+    tables.reserve(tablesJson.size());
+    for (const json& tableJson : tablesJson) {
+        const std::string classId = tableJson.at("class").get<std::string>();
+        const json& classProperties =
+            classes.at(classId).at("properties");
+        const size_t count = *jsonSizeValue(tableJson.at("count"));
+        StructuralMetadataPropertyTable table;
+        table.rows.resize(count);
+        const json& properties = tableJson.at("properties");
+        for (auto it = properties.begin(); it != properties.end(); ++it) {
+            const json& propertyJson = it.value();
+            const int valuesBufferView =
+                *jsonIntValue(propertyJson.at("values"));
+            const std::string componentType =
+                classProperties.at(it.key())
+                    .at("componentType")
+                    .get<std::string>();
+            std::optional<std::vector<GltfFeaturePropertyValue>> values =
+                readStructuralMetadataPropertyColumn(
+                    doc,
+                    buffers,
+                    valuesBufferView,
+                    componentType,
+                    count);
+            if (!values) {
+                return std::nullopt;
+            }
+            for (size_t row = 0; row < count; ++row) {
+                table.rows[row][it.key()] = (*values)[row];
+            }
+        }
+        tables.push_back(std::move(table));
+    }
+    return tables;
 }
 
 void materializeAccessorData(AccessorSpan& span) {
@@ -4175,6 +4897,9 @@ bool validateSceneGraph(const json& doc,
             }
         }
     }
+    if (!validateStructuralMetadataExtensionShape(doc)) {
+        return false;
+    }
 
     if (nodesIt != doc.end()) {
         for (const json& node : *nodesIt) {
@@ -4268,12 +4993,20 @@ bool validateSceneGraph(const json& doc,
                     !attributesIt->is_object()) {
                     return false;
                 }
+                if (!validateMeshFeaturesPrimitiveExtensionShape(
+                        doc,
+                        primitive)) {
+                    return false;
+                }
+                const bool allowFeatureIdAttributes =
+                    primitiveAllowsFeatureIdAttributes(doc, primitive);
                 for (auto it = attributesIt->begin();
                      it != attributesIt->end();
                      ++it) {
                     if (!primitiveAttributeSemanticSupported(
                             it.key(),
-                            allowLegacyBatchIdAttribute)) {
+                            allowLegacyBatchIdAttribute,
+                            allowFeatureIdAttributes)) {
                         return false;
                     }
                     const auto accessorIndex = jsonIntValue(it.value());
@@ -4917,7 +5650,8 @@ bool validTangentAccessor(
 }
 
 bool primitiveAttributeSemanticSupported(const std::string& semantic,
-                                         bool allowLegacyBatchIdAttribute) {
+                                         bool allowLegacyBatchIdAttribute,
+                                         bool allowFeatureIdAttributes) {
     if (semantic == "POSITION" ||
         semantic == "NORMAL" ||
         semantic == "TANGENT" ||
@@ -4932,7 +5666,8 @@ bool primitiveAttributeSemanticSupported(const std::string& semantic,
     }
 
     if (attributeSemanticStartsWith(semantic, "_FEATURE_ID")) {
-        return false;
+        return allowFeatureIdAttributes &&
+               featureIdSetIndexFromSemantic(semantic).has_value();
     }
 
     if (attributeSemanticStartsWith(semantic, "_BATCHID")) {
@@ -4967,6 +5702,8 @@ bool validatePrimitiveAccessorSemantics(
         return false;
     }
     const json& attrs = *attrsIt;
+    const bool allowFeatureIdAttributes =
+        primitiveAllowsFeatureIdAttributes(doc, primitiveJson);
     const auto positionIt = attrs.find("POSITION");
     if (positionIt == attrs.end() || !positionIt->is_number_integer()) {
         return false;
@@ -4997,7 +5734,8 @@ bool validatePrimitiveAccessorSemantics(
         const std::string& semantic = it.key();
         if (!primitiveAttributeSemanticSupported(
                 semantic,
-                allowLegacyBatchIdAttribute) ||
+                allowLegacyBatchIdAttribute,
+                allowFeatureIdAttributes) ||
             !it.value().is_number_integer()) {
             return false;
         }
@@ -5060,6 +5798,11 @@ bool validatePrimitiveAccessorSemantics(
             }
         } else if (semantic == "_BATCHID") {
             if (!allowLegacyBatchIdAttribute ||
+                !validFeatureIdAccessor(*span)) {
+                return false;
+            }
+        } else if (featureIdSetIndexFromSemantic(semantic)) {
+            if (!allowFeatureIdAttributes ||
                 !validFeatureIdAccessor(*span)) {
                 return false;
             }
@@ -5288,7 +6031,8 @@ bool primitiveAttributesAreSupported(
     const json& doc,
     const std::vector<std::vector<uint8_t>>& buffers,
     const json& attrs,
-    bool allowLegacyBatchIdAttribute) {
+    bool allowLegacyBatchIdAttribute,
+    bool allowFeatureIdAttributes) {
     for (auto it = attrs.begin(); it != attrs.end(); ++it) {
         if (!it.value().is_number_integer()) {
             return false;
@@ -5297,7 +6041,8 @@ bool primitiveAttributesAreSupported(
         const std::string& semantic = it.key();
         if (!primitiveAttributeSemanticSupported(
                 semantic,
-                allowLegacyBatchIdAttribute)) {
+                allowLegacyBatchIdAttribute,
+                allowFeatureIdAttributes)) {
             return false;
         }
         if (!semantic.empty() && semantic[0] == '_') {
@@ -6265,6 +7010,7 @@ std::optional<GltfPrimitive> parsePrimitive(
     const std::vector<GltfTexture>& textures,
     const std::vector<NodeRecord>& nodes,
     const std::vector<SkinRecord>& skins,
+    const StructuralMetadataPropertyTables& structuralMetadata,
     int nodeIndex,
     const json& primitiveJson,
     bool meshQuantizationEnabled,
@@ -6282,11 +7028,20 @@ std::optional<GltfPrimitive> parsePrimitive(
     }
 
     const json& attrs = primitiveJson["attributes"];
+    const bool allowFeatureIdAttributes =
+        primitiveAllowsFeatureIdAttributes(doc, primitiveJson);
+    const std::optional<MeshFeatureIdBinding> meshFeatureBinding =
+        primitiveMeshFeatureIdBinding(primitiveJson);
+    if (allowFeatureIdAttributes && !meshFeatureBinding) {
+        strictFailure = true;
+        return std::nullopt;
+    }
     if (!primitiveAttributesAreSupported(
             doc,
             buffers,
             attrs,
-            allowLegacyBatchIdAttribute)) {
+            allowLegacyBatchIdAttribute,
+            allowFeatureIdAttributes)) {
         strictFailure = true;
         return std::nullopt;
     }
@@ -6969,6 +7724,36 @@ std::optional<GltfPrimitive> parsePrimitive(
         }
         primitive.featureIds.resize(positions->count);
     }
+    std::optional<AccessorSpan> meshFeatureIds;
+    if (meshFeatureBinding) {
+        if (batchIds) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        const std::string semantic =
+            "_FEATURE_ID_" +
+            std::to_string(meshFeatureBinding->attributeSet);
+        const auto featureIdIt = attrs.find(semantic);
+        if (featureIdIt == attrs.end() ||
+            !featureIdIt->is_number_integer()) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        const auto featureIdAccessorIndex = jsonIntValue(*featureIdIt);
+        if (!featureIdAccessorIndex) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        meshFeatureIds =
+            accessorSpan(doc, buffers, *featureIdAccessorIndex);
+        if (!meshFeatureIds ||
+            !validFeatureIdAccessor(*meshFeatureIds) ||
+            meshFeatureIds->count != positions->count) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        primitive.featureIds.resize(positions->count);
+    }
     if (tangents) {
         primitive.vertexTangents.resize(positions->count);
         primitive.runtime.baseTangents.resize(positions->count);
@@ -7121,6 +7906,40 @@ std::optional<GltfPrimitive> parsePrimitive(
                 accessorElementPtr(*batchIds, i),
                 batchIds->componentType);
         }
+        if (meshFeatureIds && meshFeatureBinding) {
+            const uint32_t featureId = readIndexComponent(
+                accessorElementPtr(*meshFeatureIds, i),
+                meshFeatureIds->componentType);
+            if (static_cast<size_t>(featureId) >=
+                meshFeatureBinding->featureCount) {
+                strictFailure = true;
+                return std::nullopt;
+            }
+            primitive.featureIds[i] = featureId;
+        }
+    }
+    if (meshFeatureBinding && meshFeatureBinding->propertyTable) {
+        const size_t tableIndex = *meshFeatureBinding->propertyTable;
+        if (tableIndex >= structuralMetadata.size()) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        const StructuralMetadataPropertyTable& table =
+            structuralMetadata[tableIndex];
+        if (table.rows.size() != meshFeatureBinding->featureCount) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        primitive.featureProperties.resize(positions->count);
+        for (size_t i = 0; i < positions->count; ++i) {
+            const uint32_t featureId = primitive.featureIds[i];
+            if (static_cast<size_t>(featureId) >= table.rows.size()) {
+                strictFailure = true;
+                return std::nullopt;
+            }
+            primitive.featureProperties[i] =
+                table.rows[static_cast<size_t>(featureId)];
+        }
     }
     if (primitiveJson.contains("indices")) {
         if (!primitiveJson["indices"].is_number_integer()) {
@@ -7178,6 +7997,7 @@ void traverseNode(
     const std::vector<GltfTexture>& textures,
     const std::vector<NodeRecord>& nodeRecords,
     const std::vector<SkinRecord>& skins,
+    const StructuralMetadataPropertyTables& structuralMetadata,
     const std::vector<std::vector<GltfInstance>>& nativeInstancesByNode,
     int nodeIndex,
     GltfModel& model,
@@ -7225,6 +8045,7 @@ void traverseNode(
                         textures,
                         nodeRecords,
                         skins,
+                        structuralMetadata,
                         nodeIndex,
                         primitiveJson,
                         meshQuantizationEnabled,
@@ -7259,6 +8080,7 @@ void traverseNode(
             textures,
             nodeRecords,
             skins,
+            structuralMetadata,
             nativeInstancesByNode,
             *childIndex,
             model,
@@ -7952,6 +8774,11 @@ std::unique_ptr<GltfModel> GltfParser::parse(
         !validateAllSkinAccessorSemantics(input->document, buffers)) {
         return nullptr;
     }
+    std::optional<StructuralMetadataPropertyTables> structuralMetadata =
+        parseStructuralMetadataPropertyTables(input->document, buffers);
+    if (!structuralMetadata) {
+        return nullptr;
+    }
 
     std::vector<NodeRecord> nodeRecords = parseNodes(input->document);
     applyMeshDefaultWeights(input->document, nodeRecords);
@@ -7997,6 +8824,7 @@ std::unique_ptr<GltfModel> GltfParser::parse(
             model->textures,
             nodeRecords,
             skins,
+            *structuralMetadata,
             *nativeInstancesByNode,
             rootNodeIndex,
             *model,

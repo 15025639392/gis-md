@@ -6,7 +6,7 @@
 
 namespace earth_engine {
 
-inline constexpr std::array<std::string_view, 13> kSupportedGltfExtensions = {
+inline constexpr std::array<std::string_view, 15> kSupportedGltfExtensions = {
     "KHR_texture_transform",
     "KHR_mesh_quantization",
     "KHR_materials_unlit",
@@ -19,9 +19,11 @@ inline constexpr std::array<std::string_view, 13> kSupportedGltfExtensions = {
     "KHR_materials_clearcoat",
     "KHR_materials_sheen",
     "EXT_texture_webp",
-    "EXT_mesh_gpu_instancing"};
+    "EXT_mesh_gpu_instancing",
+    "EXT_mesh_features",
+    "EXT_structural_metadata"};
 
-inline constexpr std::array<std::string_view, 12>
+inline constexpr std::array<std::string_view, 14>
     kSupportedGltfObjectExtensions = {
         "KHR_texture_transform",
         "KHR_materials_unlit",
@@ -34,7 +36,9 @@ inline constexpr std::array<std::string_view, 12>
         "KHR_materials_clearcoat",
         "KHR_materials_sheen",
         "EXT_texture_webp",
-        "EXT_mesh_gpu_instancing"};
+        "EXT_mesh_gpu_instancing",
+        "EXT_mesh_features",
+        "EXT_structural_metadata"};
 
 inline constexpr std::array<std::string_view, 9>
     kSupportedGltfMaterialExtensions = {

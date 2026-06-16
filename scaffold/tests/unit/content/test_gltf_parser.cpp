@@ -1276,6 +1276,10 @@ struct ExternalGltfFixture {
     std::vector<uint8_t> bin;
 };
 
+void appendAccessorToExternalFixture(
+    ExternalGltfFixture& fixture,
+    const std::string& accessorJson);
+
 ExternalGltfFixture makeExternalBufferTriangleGltf() {
     std::vector<uint8_t> bin;
     const size_t positionsOffset = bin.size();
@@ -1320,6 +1324,86 @@ ExternalGltfFixture makeExternalBufferTriangleGltf() {
         "{\"bufferView\":2,\"componentType\":5126,\"count\":3,\"type\":\"VEC2\"}," +
         "{\"bufferView\":3,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}" +
         "]}";
+    return fixture;
+}
+
+ExternalGltfFixture makeMeshFeatureMetadataExternalGltf() {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const size_t originalByteLength = fixture.bin.size();
+
+    const size_t featureIdsOffset = fixture.bin.size();
+    fixture.bin.push_back(0);
+    fixture.bin.push_back(1);
+    fixture.bin.push_back(0);
+    pad4(fixture.bin, 0);
+
+    const size_t heightsOffset = fixture.bin.size();
+    appendU16(fixture.bin, 12);
+    appendU16(fixture.bin, 34);
+    pad4(fixture.bin, 0);
+
+    const std::string byteLengthMarker =
+        "\"byteLength\":" + std::to_string(originalByteLength);
+    const size_t byteLengthPos = fixture.jsonText.find(byteLengthMarker);
+    if (byteLengthPos != std::string::npos) {
+        fixture.jsonText.replace(
+            byteLengthPos,
+            byteLengthMarker.size(),
+            "\"byteLength\":" + std::to_string(fixture.bin.size()));
+    }
+
+    const std::string assetMarker = "\"asset\":{\"version\":\"2.0\"},";
+    const size_t assetPos = fixture.jsonText.find(assetMarker);
+    if (assetPos != std::string::npos) {
+        fixture.jsonText.insert(
+            assetPos + assetMarker.size(),
+            "\"extensionsUsed\":["
+            "\"EXT_mesh_features\",\"EXT_structural_metadata\"],"
+            "\"extensionsRequired\":["
+            "\"EXT_mesh_features\",\"EXT_structural_metadata\"],"
+            "\"extensions\":{\"EXT_structural_metadata\":{"
+            "\"schema\":{\"classes\":{\"building\":{\"properties\":{"
+            "\"height\":{\"type\":\"SCALAR\",\"componentType\":\"UINT16\","
+            "\"required\":true}}}}},"
+            "\"propertyTables\":[{\"class\":\"building\",\"count\":2,"
+            "\"properties\":{\"height\":{\"values\":5}}}]"
+            "}},");
+    }
+
+    const std::string attrMarker = "\"TEXCOORD_0\":2";
+    const size_t attrPos = fixture.jsonText.find(attrMarker);
+    if (attrPos != std::string::npos) {
+        fixture.jsonText.insert(attrPos + attrMarker.size(), ",\"_FEATURE_ID_0\":4");
+    }
+
+    const std::string primitiveMarker = "\"mode\":4";
+    const size_t primitivePos = fixture.jsonText.find(primitiveMarker);
+    if (primitivePos != std::string::npos) {
+        fixture.jsonText.replace(
+            primitivePos,
+            primitiveMarker.size(),
+            "\"mode\":4,\"extensions\":{\"EXT_mesh_features\":{"
+            "\"featureIds\":[{\"featureCount\":2,\"attribute\":0,"
+            "\"propertyTable\":0,\"label\":\"batch\"}]}}");
+    }
+
+    const std::string accessorsMarker = "],\"accessors\":[";
+    const size_t accessorsPos = fixture.jsonText.find(accessorsMarker);
+    if (accessorsPos != std::string::npos) {
+        fixture.jsonText.insert(
+            accessorsPos,
+            std::string(",{\"buffer\":0,\"byteOffset\":") +
+                std::to_string(featureIdsOffset) +
+                ",\"byteLength\":3}"
+            ",{\"buffer\":0,\"byteOffset\":" +
+                std::to_string(heightsOffset) +
+                ",\"byteLength\":4}");
+    }
+
+    appendAccessorToExternalFixture(
+        fixture,
+        "{\"bufferView\":4,\"componentType\":5121,\"count\":3,"
+        "\"type\":\"SCALAR\"}");
     return fixture;
 }
 
@@ -7925,10 +8009,8 @@ TEST(GltfParserTest, RejectsUnsupportedCompressionAndTextureExtensions) {
 }
 
 TEST(GltfParserTest, RejectsUnsupportedFeatureMetadataExtensions) {
-    const std::array<const char*, 4> unsupportedExtensions = {
-        "EXT_mesh_features",
+    const std::array<const char*, 2> unsupportedExtensions = {
         "EXT_instance_features",
-        "EXT_structural_metadata",
         "EXT_feature_metadata"};
 
     for (const char* extension : unsupportedExtensions) {
@@ -7944,6 +8026,101 @@ TEST(GltfParserTest, RejectsUnsupportedFeatureMetadataExtensions) {
 
         EXPECT_EQ(nullptr, model) << extension;
     }
+}
+
+TEST(GltfParserTest, ParsesMeshFeatureIdsAndStructuralMetadataPropertyTable) {
+    ExternalGltfFixture fixture = makeMeshFeatureMetadataExternalGltf();
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives[0];
+    ASSERT_EQ(3u, primitive.featureIds.size());
+    EXPECT_EQ(0u, primitive.featureIds[0]);
+    EXPECT_EQ(1u, primitive.featureIds[1]);
+    EXPECT_EQ(0u, primitive.featureIds[2]);
+    ASSERT_EQ(3u, primitive.featureProperties.size());
+    ASSERT_NE(
+        primitive.featureProperties[0].end(),
+        primitive.featureProperties[0].find("height"));
+    ASSERT_NE(
+        primitive.featureProperties[1].end(),
+        primitive.featureProperties[1].find("height"));
+    ASSERT_NE(
+        primitive.featureProperties[2].end(),
+        primitive.featureProperties[2].find("height"));
+    const auto* firstHeight =
+        std::get_if<uint64_t>(&primitive.featureProperties[0].at("height"));
+    const auto* secondHeight =
+        std::get_if<uint64_t>(&primitive.featureProperties[1].at("height"));
+    const auto* thirdHeight =
+        std::get_if<uint64_t>(&primitive.featureProperties[2].at("height"));
+    ASSERT_NE(nullptr, firstHeight);
+    ASSERT_NE(nullptr, secondHeight);
+    ASSERT_NE(nullptr, thirdHeight);
+    EXPECT_EQ(12u, *firstHeight);
+    EXPECT_EQ(34u, *secondHeight);
+    EXPECT_EQ(12u, *thirdHeight);
+}
+
+TEST(GltfParserTest, RejectsUnsupportedMeshFeatureMetadataShapes) {
+    struct MetadataCase {
+        const char* marker;
+        const char* replacement;
+        const char* label;
+    };
+
+    const std::array<MetadataCase, 5> cases = {{
+        {
+            "\"featureIds\":[{\"featureCount\":2,\"attribute\":0,"
+            "\"propertyTable\":0,\"label\":\"batch\"}]",
+            "\"featureIds\":[{\"featureCount\":2,\"attribute\":0,"
+            "\"propertyTable\":0,\"label\":\"batch\"},"
+            "{\"featureCount\":2,\"attribute\":1}]",
+            "multiple feature ID sets"},
+        {
+            "\"propertyTable\":0,\"label\":\"batch\"",
+            "\"propertyTable\":0,\"texture\":{\"index\":0},\"label\":\"batch\"",
+            "feature ID texture"},
+        {
+            "\"schema\":{\"classes\"",
+            "\"schemaUri\":\"schema.json\",\"schema\":{\"classes\"",
+            "external schema"},
+        {
+            "\"propertyTables\":[",
+            "\"propertyTextures\":[],\"propertyTables\":[",
+            "property textures"},
+        {
+            "\"propertyTables\":[{\"class\":\"building\",\"count\":2,",
+            "\"propertyTables\":[{\"class\":\"building\",\"count\":3,",
+            "property table binary count mismatch"},
+    }};
+
+    for (const MetadataCase& testCase : cases) {
+        ExternalGltfFixture fixture = makeMeshFeatureMetadataExternalGltf();
+        const size_t markerPos = fixture.jsonText.find(testCase.marker);
+        ASSERT_NE(std::string::npos, markerPos) << testCase.label;
+        fixture.jsonText.replace(
+            markerPos,
+            std::string(testCase.marker).size(),
+            testCase.replacement);
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << testCase.label;
+    }
+}
+
+TEST(GltfParserTest, RejectsMeshFeatureIdOutsideFeatureCount) {
+    const ExternalGltfFixture baseFixture = makeExternalBufferTriangleGltf();
+    ExternalGltfFixture fixture = makeMeshFeatureMetadataExternalGltf();
+    ASSERT_GT(fixture.bin.size(), baseFixture.bin.size() + 1u);
+    fixture.bin[baseFixture.bin.size() + 1u] = 2u;
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
 }
 
 TEST(GltfParserTest, RejectsUnsupportedGaussianSplattingExtensions) {
@@ -8077,11 +8254,7 @@ TEST(GltfParserTest, RejectsUnsupportedNativeMetadataObjectExtensions) {
         const char* label;
     };
 
-    const std::array<ObjectExtensionCase, 5> cases = {{
-        {
-            "\"scene\":0,",
-            "\"extensions\":{\"EXT_structural_metadata\":{\"schema\":{\"classes\":{}}}},\"scene\":0,",
-            "top-level EXT_structural_metadata"},
+    const std::array<ObjectExtensionCase, 4> cases = {{
         {
             "\"scene\":0,",
             "\"extensions\":{\"EXT_feature_metadata\":{\"schema\":{\"classes\":{}}}},\"scene\":0,",

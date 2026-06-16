@@ -5987,7 +5987,11 @@ void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
       "extensionsUsed": ["3DTILES_content_gltf"],
       "extensions": {
         "3DTILES_content_gltf": {
-          "extensionsUsed": ["KHR_materials_unlit"]
+          "extensionsUsed": [
+            "KHR_materials_unlit",
+            "EXT_mesh_features",
+            "EXT_structural_metadata"
+          ]
         }
       },
       "geometricError": 100,
@@ -6044,9 +6048,7 @@ void testTilesetJsonContentGltfExtensionSemanticsAreStrict() {
         "KHR_texture_procedurals",
         "EXT_texture_procedurals_mx_1_39",
         "MPEG_texture_video",
-        "EXT_mesh_features",
         "EXT_instance_features",
-        "EXT_structural_metadata",
         "EXT_feature_metadata",
         "KHR_gaussian_splatting",
         "KHR_gaussian_splatting_compression_spz",
