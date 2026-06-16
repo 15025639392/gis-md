@@ -1904,6 +1904,24 @@ void Tileset::prepareRasterOverlaysForSelection(TilesetTile& tile) {
     // chance to attach raster textures. Advance loaded/ancestor raster mappings
     // here with no renderer attachment so child coverage decisions are based on
     // current raster state, not on last frame's build phase.
+    if (!rasterOverlays_.empty() &&
+        tile.rasterOverlays.size() >= rasterOverlays_.size()) {
+        bool allVisibleOverlaysReady = true;
+        for (size_t i = 0; i < rasterOverlays_.size(); ++i) {
+            const ActivatedRasterOverlay* activeOverlay = rasterOverlays_[i];
+            if (!activeOverlay || !activeOverlay->visible()) {
+                continue;
+            }
+            const auto& mapped = tile.rasterOverlays[i];
+            if (!mapped || !mapped->getReadyTile()) {
+                allVisibleOverlaysReady = false;
+                break;
+            }
+        }
+        if (allVisibleOverlaysReady) {
+            return;
+        }
+    }
     prefetchRasterOverlays(tile);
 }
 
@@ -5288,9 +5306,13 @@ void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
         createRasterOverlayUpsampledChildren(tile);
     }
 
-    // ── cesium-native retained mode: one draw command per overlay layer ──
-    // Overlay 0 (basemap) renders without blending; overlays 1+ blend on top.
-    // This allows satellite basemap + road network overlay to both be visible.
+    // Build one composite SurfaceTile command per geometry tile. The SurfaceTile
+    // shader already supports a base texture plus overlay textures, so keeping
+    // all visible imagery layers in a single command avoids duplicate geometry
+    // draws and GL state churn for the same tile.
+    RenderCommand surfaceCommand;
+    bool hasSurfaceCommand = false;
+    int overlayTextureCount = 0;
     for (size_t i = 0; i < rasterOverlays_.size() && i < tile.rasterOverlays.size(); ++i) {
         auto* activeOverlay = rasterOverlays_[i];
         if (!activeOverlay || !activeOverlay->visible()) {
@@ -5314,59 +5336,58 @@ void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
         float uvScaleU = attachment ? attachment->scaleU : 1.0f;
         float uvScaleV = attachment ? attachment->scaleV : 1.0f;
 
-        auto cmd = renderer.makeSurfaceTileCommand(
-            tex,
-            tile.gpuVertexBuffer.get(),
-            tile.gpuIndexBuffer.get(),
-            static_cast<int>(tile.mesh->indices.size()));
+        if (!hasSurfaceCommand) {
+            surfaceCommand = renderer.makeSurfaceTileCommand(
+                tex,
+                tile.gpuVertexBuffer.get(),
+                tile.gpuIndexBuffer.get(),
+                static_cast<int>(tile.mesh->indices.size()));
 
-        // cesium-native: validator requires frameId and generation.
-        // frameId must match Scene's frameState_.frameId; generation must be non-zero.
-        cmd.frameId = frameNumber_;
-        cmd.generation = generation_;
+            // cesium-native: validator requires frameId and generation.
+            // frameId must match Scene's frameState_.frameId; generation must be non-zero.
+            surfaceCommand.frameId = frameNumber_;
+            surfaceCommand.generation = generation_;
 
-        cmd.surfaceTileUv = {uvOffU, uvOffV, uvScaleU, uvScaleV};
-        cmd.surfaceGeometryZoom = tile.key.z;
-        cmd.surfaceTextureZoom = attachment && attachment->tile
-            ? rasterTextureSourceZoom(attachment->tile)
-            : tile.key.z;
+            surfaceCommand.surfaceTileUv = {uvOffU, uvOffV, uvScaleU, uvScaleV};
+            surfaceCommand.surfaceGeometryZoom = tile.key.z;
+            surfaceCommand.surfaceTextureZoom = attachment && attachment->tile
+                ? rasterTextureSourceZoom(attachment->tile)
+                : tile.key.z;
 
-        cmd.surfaceTileOrigin = {
-            static_cast<float>(tile.localOrigin.x()),
-            static_cast<float>(tile.localOrigin.y()),
-            static_cast<float>(tile.localOrigin.z())
-        };
+            surfaceCommand.surfaceTileOrigin = {
+                static_cast<float>(tile.localOrigin.x()),
+                static_cast<float>(tile.localOrigin.y()),
+                static_cast<float>(tile.localOrigin.z())
+            };
 
-        // Overlay 0 = basemap (opaque), overlays 1+ = blend on top
-        if (i == 0) {
-            cmd.surfaceTileOpacity = 1.0f;
-            cmd.surfaceTransitionOpacity = transitionOpacity;
+            surfaceCommand.surfaceTileOpacity = 1.0f;
+            surfaceCommand.surfaceTransitionOpacity = transitionOpacity;
             if (transitionOpacity < 0.999f) {
-                cmd.blend = true;
-                cmd.blendSrc = RenderCommand::BlendFactor::SrcAlpha;
-                cmd.blendDst = RenderCommand::BlendFactorDst::OneMinusSrcAlpha;
+                surfaceCommand.blend = true;
+                surfaceCommand.blendSrc = RenderCommand::BlendFactor::SrcAlpha;
+                surfaceCommand.blendDst = RenderCommand::BlendFactorDst::OneMinusSrcAlpha;
             }
-        } else {
-            // cesium-native: overlay layers blend on top of basemap.
-            // Validator allows blend only when opacity < 0.999 or
-            // transitionOpacity < 0.999. Set transition slightly below
-            // threshold (visually identical to 1.0).
-            cmd.blend = true;
-            cmd.blendSrc = RenderCommand::BlendFactor::SrcAlpha;
-            cmd.blendDst = RenderCommand::BlendFactorDst::OneMinusSrcAlpha;
-            cmd.surfaceTileOpacity = 1.0f;
-            cmd.surfaceTransitionOpacity = std::min(transitionOpacity, 0.998f);
-            // Set meaningful opacity from the overlay layer config
-            if (i < rasterOverlays_.size() && rasterOverlays_[i]) {
-                float layerOpacity = rasterOverlays_[i]->opacity();
-                if (layerOpacity < 1.0f) {
-                    cmd.surfaceTileOpacity = layerOpacity;
-                }
-            }
+
+            surfaceCommand.surfaceGeneration = static_cast<float>(generation_);
+            hasSurfaceCommand = true;
+            continue;
         }
 
-        cmd.surfaceGeneration = static_cast<float>(generation_);
-        commands.push_back(std::move(cmd));
+        if (overlayTextureCount >= kMaxSurfaceImageryOverlays) {
+            continue;
+        }
+
+        surfaceCommand.textures.push_back(tex);
+        surfaceCommand.surfaceOverlayTileUvs[overlayTextureCount] = {
+            uvOffU, uvOffV, uvScaleU, uvScaleV};
+        surfaceCommand.surfaceOverlayOpacities[overlayTextureCount] =
+            activeOverlay->opacity();
+        ++overlayTextureCount;
+    }
+
+    if (hasSurfaceCommand) {
+        surfaceCommand.surfaceOverlayTextureCount = overlayTextureCount;
+        commands.push_back(std::move(surfaceCommand));
     }
 }
 

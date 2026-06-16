@@ -3506,6 +3506,89 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
           "Tileset: build command attaches pre-promoted raster and emits draw command");
 }
 
+void testTilesetSurfaceOverlaysCompositeIntoSingleCommand() {
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    auto roadOptions = makeRasterOverlayOptions();
+    roadOptions.opacity = 0.35f;
+    auto roadOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        roadOptions);
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    ActivatedRasterOverlay roadActivated(*roadOverlay);
+
+    auto terrainProvider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(terrainProvider),
+        std::move(scheme),
+        {&baseActivated, &roadActivated},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: composite overlay root tile is created");
+    if (!root) return;
+
+    const Rectangle preciseRectangle =
+        Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
+    root->bounds = preciseRectangle;
+    root->mesh = std::make_unique<SurfaceTileMesh>();
+    root->mesh->rasterOverlayDetails.setGeographicRectangle(preciseRectangle);
+    root->meshReady = true;
+    root->gpuVertexBuffer = std::make_unique<DummyBuffer>(32);
+    root->geometricError = 100.0;
+    root->loadState = TileLoadState::Done;
+    root->contentKind = TileContentKind::Render;
+    root->rasterOverlays.resize(2);
+
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    RasterMappedToTilesetTile* baseMapped = root->rasterOverlays[0].get();
+    RasterMappedToTilesetTile* roadMapped = root->rasterOverlays[1].get();
+    RasterOverlayTile* baseLoading =
+        baseMapped ? baseMapped->getLoadingTile() : nullptr;
+    RasterOverlayTile* roadLoading =
+        roadMapped ? roadMapped->getLoadingTile() : nullptr;
+    check(baseLoading != nullptr && roadLoading != nullptr,
+          "Tileset: composite overlay creates both raster mappings");
+    if (!baseMapped || !roadMapped || !baseLoading || !roadLoading) return;
+
+    baseLoading->setTexture(std::make_unique<DummyTexture>(4, 4));
+    baseLoading->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    roadLoading->setTexture(std::make_unique<DummyTexture>(4, 4));
+    roadLoading->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 1,
+          "Tileset: visible raster overlays composite into one surface draw command");
+    if (commands.empty()) return;
+    const RenderCommand& command = commands.front();
+    check(command.kind == RenderCommandKind::SurfaceTile &&
+              command.textures.size() == 2 &&
+              command.surfaceOverlayTextureCount == 1,
+          "Tileset: composite command carries basemap plus one overlay texture");
+    check(command.surfaceOverlayOpacities[0] == roadOptions.opacity,
+          "Tileset: composite command preserves overlay opacity");
+    check(renderer.getAttachedRaster(rootKey, 0) != nullptr &&
+              renderer.getAttachedRaster(rootKey, 1) != nullptr,
+          "Tileset: composite command still attaches each overlay in renderer state");
+}
+
 void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -9759,6 +9842,7 @@ int main() {
     testTilesetEnsuresOverlayProviderBeforeMapping();
     testTilesetPrefetchesRasterFromBoundingRegionBeforeRenderContent();
     testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach();
+    testTilesetSurfaceOverlaysCompositeIntoSingleCommand();
     testTilesetRasterMoreDetailCreatesUpsampledChildren();
     testTilesetGltfRenderContentBuildsPrimitiveCommands();
     testTilesetGltfTangentsUseModelLinearTransform();
