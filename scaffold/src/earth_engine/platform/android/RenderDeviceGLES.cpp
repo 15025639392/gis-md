@@ -736,6 +736,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                     mvpLoc, 1, GL_FALSE, cmd.surfaceModelViewProjection.data());
             }
             set4("u_tileUV", cmd.surfaceTileUv);
+            set4("u_clipUV", cmd.surfaceClipUv);
             for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
                 std::string uvName = "u_overlayTileUV" + std::to_string(i);
                 std::string opacityName = "u_overlayOpacity" + std::to_string(i);
@@ -749,6 +750,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             set1("u_fogDensity", cmd.surfaceFogDensity);
             set1("u_tileOpacity", cmd.surfaceTileOpacity);
             set1("u_transitionOpacity", cmd.surfaceTransitionOpacity);
+            set1("u_clipEnabled", cmd.surfaceClipEnabled);
             int overlayCountLoc = program->uniformLocation("u_overlayTextureCount");
             if (overlayCountLoc >= 0) {
                 glUniform1i(overlayCountLoc, cmd.surfaceOverlayTextureCount);

@@ -75,6 +75,7 @@ struct RenderCommand {
     bool hasSurfaceTileUniforms = false;
     std::array<float, 16> surfaceModelViewProjection{};
     std::array<float, 4> surfaceTileUv{0.0f, 0.0f, 1.0f, 1.0f};
+    std::array<float, 4> surfaceClipUv{0.0f, 0.0f, 1.0f, 1.0f};
     std::array<std::array<float, 4>, kMaxSurfaceImageryOverlays> surfaceOverlayTileUvs{};
     std::array<float, kMaxSurfaceImageryOverlays> surfaceOverlayOpacities{};
     std::array<float, 3> surfaceLightDir{};
@@ -85,6 +86,7 @@ struct RenderCommand {
     float surfaceTileOpacity = 1.0f;
     float surfaceTransitionOpacity = 1.0f;
     int surfaceOverlayTextureCount = 0;
+    float surfaceClipEnabled = 0.0f;
     float surfaceGeneration = 0.0f;
     float surfaceHasWaterMask = 0.0f;
     int surfaceGeometryZoom = -1;

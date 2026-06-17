@@ -118,10 +118,12 @@ uniform vec4 u_overlayTileUV0;
 uniform vec4 u_overlayTileUV1;
 uniform vec4 u_overlayTileUV2;
 uniform vec4 u_overlayTileUV3;
+uniform vec4 u_clipUV;
 uniform float u_overlayOpacity0;
 uniform float u_overlayOpacity1;
 uniform float u_overlayOpacity2;
 uniform float u_overlayOpacity3;
+uniform float u_clipEnabled;
 out vec4 fragColor;
 
 vec4 alphaOver(vec4 base, vec4 overlay, float opacity) {
@@ -132,6 +134,12 @@ vec4 alphaOver(vec4 base, vec4 overlay, float opacity) {
 }
 
 void main() {
+    if (u_clipEnabled > 0.5 &&
+        (v_gridUv.x < u_clipUV.x || v_gridUv.x > u_clipUV.x + u_clipUV.z ||
+         v_gridUv.y < u_clipUV.y || v_gridUv.y > u_clipUV.y + u_clipUV.w)) {
+        discard;
+    }
+
     vec4 baseColor = texture(u_tileTexture, v_texcoord);
     if (u_overlayTextureCount > 0) {
         vec2 overlayUv = u_overlayTileUV0.xy + v_gridUv * u_overlayTileUV0.zw;

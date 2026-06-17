@@ -13,6 +13,7 @@
 #include "../scene/FrameState.h"
 
 #include <memory>
+#include <array>
 #include <optional>
 #include <vector>
 #include <string>
@@ -316,7 +317,9 @@ private:
     void buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
                               RenderCommandList& commands,
                               float transitionOpacity,
-                              bool allowSynchronousMeshPrep = true);
+                              bool allowSynchronousMeshPrep = true,
+                              const std::optional<std::array<float, 4>>&
+                                  surfaceClipUv = std::nullopt);
     void updateLodTransitions(double deltaSeconds);
     bool wasRenderedInPreviousSelection(const TilesetTile& tile) const;
 

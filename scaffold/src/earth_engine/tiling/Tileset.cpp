@@ -181,6 +181,48 @@ bool overlayCanUsePlaceholder(RasterOverlayFallbackPolicy policy) {
     return policy == RasterOverlayFallbackPolicy::AncestorOrPlaceholder;
 }
 
+std::optional<std::array<float, 4>> clipUvForDescendantBounds(
+    const Rectangle& ancestorBounds,
+    const Rectangle& descendantBounds) {
+    const double ancestorWidth = ancestorBounds.width();
+    const double ancestorHeight = ancestorBounds.height();
+    if (ancestorWidth <= 0.0 || ancestorHeight <= 0.0) {
+        return std::nullopt;
+    }
+
+    auto longitudeOffset = [&](double longitude) {
+        double offset = longitude - ancestorBounds.west();
+        if (ancestorBounds.crossesAntimeridian() && offset < 0.0) {
+            offset += kTwoPiForLongitudeWrap;
+        }
+        return offset;
+    };
+
+    double uMin = longitudeOffset(descendantBounds.west()) / ancestorWidth;
+    double uMax = longitudeOffset(descendantBounds.east()) / ancestorWidth;
+    if (ancestorBounds.crossesAntimeridian() && uMax < uMin) {
+        uMax += 1.0;
+    }
+    double vMin = (ancestorBounds.north() - descendantBounds.north()) /
+                  ancestorHeight;
+    double vMax = (ancestorBounds.north() - descendantBounds.south()) /
+                  ancestorHeight;
+
+    uMin = std::clamp(uMin, 0.0, 1.0);
+    uMax = std::clamp(uMax, 0.0, 1.0);
+    vMin = std::clamp(vMin, 0.0, 1.0);
+    vMax = std::clamp(vMax, 0.0, 1.0);
+    if (uMax <= uMin || vMax <= vMin) {
+        return std::nullopt;
+    }
+
+    return std::array<float, 4>{
+        static_cast<float>(uMin),
+        static_cast<float>(vMin),
+        static_cast<float>(uMax - uMin),
+        static_cast<float>(vMax - vMin)};
+}
+
 bool overlayAttachmentAllowedByPolicy(
     const ActivatedRasterOverlay* activeOverlay,
     const RasterMappedToTilesetTile* mapped,
@@ -5694,10 +5736,13 @@ void Tileset::buildGltfDrawCommands(Renderer& renderer,
     }
 }
 
-void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
-                                   RenderCommandList& commands,
-                                   float transitionOpacity,
-                                   bool allowSynchronousMeshPrep) {
+void Tileset::buildTileDrawCommand(
+    Renderer& renderer,
+    TilesetTile& tile,
+    RenderCommandList& commands,
+    float transitionOpacity,
+    bool allowSynchronousMeshPrep,
+    const std::optional<std::array<float, 4>>& surfaceClipUv) {
     if (tile.gltfModel) {
         buildGltfDrawCommands(renderer, tile, commands, transitionOpacity);
         return;
@@ -5848,6 +5893,10 @@ void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
               baseAttachment->scaleU,
               baseAttachment->scaleV}
         : std::array<float, 4>{0.0f, 0.0f, 1.0f, 1.0f};
+    if (surfaceClipUv) {
+        surfaceCommand.surfaceClipUv = *surfaceClipUv;
+        surfaceCommand.surfaceClipEnabled = 1.0f;
+    }
     surfaceCommand.surfaceGeometryZoom = tile.key.z;
     surfaceCommand.surfaceTextureZoom = baseAttachment && baseAttachment->tile
         ? rasterTextureSourceZoom(baseAttachment->tile.get())
@@ -5946,6 +5995,8 @@ void Tileset::buildRenderCommands(Renderer& renderer,
     int noCommandOther = 0;
 
     std::unordered_set<std::string> renderedGeometryKeys;
+    std::unordered_set<std::string> renderedFullGeometryKeys;
+    std::unordered_set<std::string> renderedClippedGeometryKeys;
     std::unordered_map<std::string, bool> selectedDrawCommandByKey;
     double selectedBuildMs = 0.0;
     double fadeBuildMs = 0.0;
@@ -5987,19 +6038,41 @@ void Tileset::buildRenderCommands(Renderer& renderer,
 
         TilesetTile* commandTile = tile;
         TilesetTile* drawableAncestor = nullptr;
-        if (!hasSurfaceDrawable(*tile)) {
+        std::optional<std::array<float, 4>> surfaceClipUv;
+        if (selectedPass && !tile->gltfModel && !hasSurfaceDrawable(*tile)) {
             drawableAncestor = findNearestDrawableAncestor(*tile);
             if (drawableAncestor &&
                 (resourceSmoothingActiveForFrame_ ||
                  renderPrepBudgetRemaining <= 0)) {
                 commandTile = drawableAncestor;
+                surfaceClipUv = clipUvForDescendantBounds(
+                    commandTile->bounds,
+                    tile->bounds);
+                if (!surfaceClipUv) {
+                    return;
+                }
                 ++ancestorFallbackDrawCount;
             }
         }
 
         const std::string commandCk = terrainCacheKey(commandTile->key);
-        if (!renderedGeometryKeys.insert(commandCk).second) {
+        std::string renderDedupKey = commandCk;
+        if (surfaceClipUv) {
+            if (renderedFullGeometryKeys.count(commandCk) > 0) {
+                return;
+            }
+            renderDedupKey += "|clip:";
+            renderDedupKey += selectedCk;
+        } else if (renderedClippedGeometryKeys.count(commandCk) > 0) {
             return;
+        }
+        if (!renderedGeometryKeys.insert(renderDedupKey).second) {
+            return;
+        }
+        if (surfaceClipUv) {
+            renderedClippedGeometryKeys.insert(commandCk);
+        } else {
+            renderedFullGeometryKeys.insert(commandCk);
         }
 
         commandTile->lastUsedFrame = frameNumber_;
@@ -6031,7 +6104,8 @@ void Tileset::buildRenderCommands(Renderer& renderer,
                 *commandTile,
                 commands,
                 commandOpacity,
-                allowSynchronousMeshPrep);
+                allowSynchronousMeshPrep,
+                surfaceClipUv);
         } else {
             ++deferredRenderPrepCount;
         }

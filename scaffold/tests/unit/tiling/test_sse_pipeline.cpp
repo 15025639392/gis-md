@@ -140,7 +140,7 @@ struct TilesetTestAccess {
     }
 
     static void processPendingUploads(Tileset& tileset) {
-        tileset.processPendingUploads();
+        tileset.processPendingUploads(false, false);
     }
 
     static void prefetchRasterOverlays(Tileset& tileset, TilesetTile& tile) {
@@ -213,6 +213,10 @@ struct TilesetTestAccess {
             tile,
             commands,
             transitionOpacity);
+    }
+
+    static void setInteractionActiveForFrame(Tileset& tileset, bool active) {
+        tileset.interactionActiveForFrame_ = active;
     }
 
     static const Vec3& localOrigin(const TilesetTile& tile) {
@@ -9570,6 +9574,57 @@ void testTilesetCreatesUpsampledChildrenForUnavailableSiblings() {
           "Tileset: upsampled child is renderable after parent-mesh upsample finishes");
 }
 
+void testTilesetAncestorFallbackIsClippedToMissingChild() {
+    InitializedRendererHarness harness;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &harness.device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    TilesetTile* child = TilesetTestAccess::ensureTile(tileset, childKey);
+    check(root != nullptr && child != nullptr,
+          "Tileset: clipped fallback test creates ancestor and child tiles");
+    if (!root || !child) return;
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(12.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+    check(root->meshReady && root->gpuVertexBuffer != nullptr,
+          "Tileset: clipped fallback ancestor has drawable GPU geometry");
+    check(child->gpuVertexBuffer == nullptr,
+          "Tileset: clipped fallback child starts without drawable GPU geometry");
+
+    TilesetTestAccess::renderSelectedTile(tileset, *child);
+    TilesetTestAccess::setInteractionActiveForFrame(tileset, true);
+
+    RenderCommandList commands;
+    tileset.buildRenderCommands(harness.renderer, commands);
+
+    check(commands.size() == 1,
+          "Tileset: clipped fallback emits one ancestor patch command for one missing child");
+    if (commands.empty()) return;
+
+    const RenderCommand& command = commands.front();
+    check(command.kind == RenderCommandKind::SurfaceTile &&
+              command.surfaceGeometryZoom == 0,
+          "Tileset: clipped fallback uses the drawable ancestor geometry");
+    check(command.surfaceClipEnabled > 0.5f,
+          "Tileset: clipped fallback enables surface UV clipping");
+    check(std::abs(command.surfaceClipUv[0] - 0.0f) < 1e-6f &&
+              std::abs(command.surfaceClipUv[1] - 0.5f) < 1e-6f &&
+              std::abs(command.surfaceClipUv[2] - 0.5f) < 1e-6f &&
+              std::abs(command.surfaceClipUv[3] - 0.5f) < 1e-6f,
+          "Tileset: clipped fallback only fills the selected child quadrant");
+}
+
 void testTilesetUpsampledChildQueuesParentUntilSourceReady() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
@@ -10177,6 +10232,7 @@ int main() {
     testTilesetSampleHeightUsesBestLoadedTerrainTile();
     testTilesetSampleHeightFallsBackToLoadedAncestorTerrain();
     testTilesetCreatesUpsampledChildrenForUnavailableSiblings();
+    testTilesetAncestorFallbackIsClippedToMissingChild();
     testTilesetUpsampledChildQueuesParentUntilSourceReady();
     testTilesetUpsampledChildFinalizesContentLoadedParent();
     testTilesetClearChildrenErasesFlatMapDescendants();
