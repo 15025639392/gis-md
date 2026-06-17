@@ -31,10 +31,19 @@ RasterOverlayTile* ActivatedRasterOverlay::getPlaceholderTile() {
     return tileProvider_->getPlaceholderTile().get();
 }
 
-void ActivatedRasterOverlay::processPendingUploads() {
+int ActivatedRasterOverlay::processPendingUploads(bool interactionActive) {
     if (tileProvider_) {
-        tileProvider_->processPendingUploads();
+        return tileProvider_->processPendingUploads(interactionActive);
     }
+    return 0;
+}
+
+bool ActivatedRasterOverlay::hasPendingWork() const {
+    return tileProvider_ && tileProvider_->hasPendingWork();
+}
+
+uint64_t ActivatedRasterOverlay::revision() const {
+    return tileProvider_ ? tileProvider_->revision() : 0;
 }
 
 void ActivatedRasterOverlay::setFrameNumber(uint64_t frameNumber) {

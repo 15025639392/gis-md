@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../tiling/TileKey.h"
+#include "../tiling/SurfaceTile.h"
 #include "../platform/bridge/PlatformBridge.h"
 #include "../threading/CancellationToken.h"
 
@@ -57,6 +58,11 @@ struct DecodedHeightmap {
     /// When non-empty, TileSurface::buildTerrainMesh may reconstruct
     /// the optimized triangulation instead of using the regular grid.
     std::vector<uint8_t> rawData;
+
+    /// Optional worker-prepared surface mesh. The main thread still owns GPU
+    /// resource creation, but it should not re-parse Quantized Mesh bytes when
+    /// the provider has already produced the CPU mesh.
+    std::unique_ptr<SurfaceTileMesh> surfaceMesh;
 
     /// cesium-native: availability rectangles from QM metadata (extension ID=4).
     /// Each entry: {levelOffset, startX, startY, endX, endY}

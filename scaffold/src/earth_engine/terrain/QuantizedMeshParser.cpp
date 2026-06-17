@@ -316,8 +316,35 @@ std::unique_ptr<DecodedHeightmap> QuantizedMeshParser::parseAndRasterize(
     }
 
 #ifdef __ANDROID__
-    __android_log_print(ANDROID_LOG_INFO, "QMParser", "parseAndRasterize OK: %dx%d heights, %u verts, %u tris",
-        n, n, vertexCount, triangleCount);
+    auto edgeStats = [&](int rowStart, int rowStep, int count) {
+        int valid = 0;
+        float minH = std::numeric_limits<float>::max();
+        float maxH = std::numeric_limits<float>::lowest();
+        for (int i = 0; i < count; ++i) {
+            float h = hm->heights[rowStart + i * rowStep];
+            if (hm->isNoData(h)) continue;
+            ++valid;
+            minH = std::min(minH, h);
+            maxH = std::max(maxH, h);
+        }
+        if (valid == 0) {
+            minH = maxH = 0.0f;
+        }
+        return std::tuple<int, float, float>(valid, minH, maxH);
+    };
+    const auto [northValid, northMin, northMax] = edgeStats(0, 1, n);
+    const auto [southValid, southMin, southMax] = edgeStats((n - 1) * n, 1, n);
+    const auto [westValid, westMin, westMax] = edgeStats(0, n, n);
+    const auto [eastValid, eastMin, eastMax] = edgeStats(n - 1, n, n);
+    __android_log_print(
+        ANDROID_LOG_INFO,
+        "QMParser",
+        "parseAndRasterize OK: %dx%d heights, %u verts, %u tris edge N=%d[%.2f..%.2f] S=%d[%.2f..%.2f] W=%d[%.2f..%.2f] E=%d[%.2f..%.2f]",
+        n, n, vertexCount, triangleCount,
+        northValid, northMin, northMax,
+        southValid, southMin, southMax,
+        westValid, westMin, westMax,
+        eastValid, eastMin, eastMax);
 #endif
     return hm;
 }
@@ -392,7 +419,14 @@ std::vector<std::array<int, 5>> QuantizedMeshParser::parseMetadataAvailability(
 std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     const uint8_t* data, size_t len, const Rectangle& bounds) {
 
-    if (len < kHeaderSize || !data) return nullptr;
+    if (len < kHeaderSize || !data) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "QMParser",
+            "parseToSurfaceTileMesh fail: invalid input len=%zu data=%p",
+            len, static_cast<const void*>(data));
+#endif
+        return nullptr;
+    }
 
     // --- Helper readers ---
     size_t offset = 0;
@@ -410,7 +444,14 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     hdr.vertexCount = readU32();
 
     const uint32_t vc = hdr.vertexCount;
-    if (vc == 0 || vc > 500000) return nullptr;
+    if (vc == 0 || vc > 500000) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "QMParser",
+            "parseToSurfaceTileMesh fail: vertexCount=%u len=%zu off=%zu",
+            vc, len, offset);
+#endif
+        return nullptr;
+    }
 
     // --- Parse U/V/Height buffers ---
     auto readU16s = [&](size_t n) -> std::vector<uint16_t> {
@@ -420,7 +461,14 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
         return out;
     };
     auto uBuf = readU16s(vc), vBuf = readU16s(vc), hBuf = readU16s(vc);
-    if (uBuf.empty()) return nullptr;
+    if (uBuf.empty() || vBuf.empty() || hBuf.empty()) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "QMParser",
+            "parseToSurfaceTileMesh fail: u/v/h buffer truncated vc=%u off=%zu len=%zu u=%zu v=%zu h=%zu",
+            vc, offset, len, uBuf.size(), vBuf.size(), hBuf.size());
+#endif
+        return nullptr;
+    }
 
     // Decode zigzag delta
     int32_t uAcc = 0, vAcc = 0, hAcc = 0;
@@ -435,11 +483,47 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
 
     // --- Parse indices ---
     bool idx32 = (vc > 65536);
+    const size_t idxOffset = offset;
     if (idx32 && (offset % 4) != 0) offset += 2;
+    if (offset + 4 > len) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "QMParser",
+            "parseToSurfaceTileMesh fail: missing triCount vc=%u off=%zu len=%zu",
+            vc, offset, len);
+#endif
+        return nullptr;
+    }
     uint32_t triCount = readU32();
+    if (triCount == 0 || triCount > vc * 4) {
+        // Retry with 4-byte alignment like parseAndRasterize.
+        offset = idxOffset;
+        if ((offset % 4) != 0) offset += 2;
+        if (offset + 4 > len) {
+#ifdef __ANDROID__
+            __android_log_print(ANDROID_LOG_ERROR, "QMParser",
+                "parseToSurfaceTileMesh fail: missing aligned triCount vc=%u off=%zu len=%zu",
+                vc, offset, len);
+#endif
+            return nullptr;
+        }
+        triCount = readU32();
+#ifdef __ANDROID__
+        if (triCount > 0 && triCount <= vc * 4) {
+            __android_log_print(ANDROID_LOG_INFO, "QMParser",
+                "aligned triCount=%u", triCount);
+        }
+#endif
+    }
     const uint32_t idxCount = triCount * 3;
     size_t idxByte = idx32 ? 4 : 2;
-    if (offset + idxCount * idxByte > len) return nullptr;
+    if (offset + idxCount * idxByte > len || triCount == 0 || triCount > vc * 4) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "QMParser",
+            "parseToSurfaceTileMesh fail: index overflow vc=%u tri=%u idxCount=%u idxByte=%zu off=%zu len=%zu",
+            vc, triCount, idxCount, idxByte, offset, len);
+#endif
+        return nullptr;
+    }
 
     std::vector<uint32_t> indices(idxCount);
     uint32_t highest = 0;
@@ -450,6 +534,15 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
         uint32_t dec = highest - code;
         indices[i] = dec;
         if (code == 0) ++highest;
+    }
+
+    if (idxCount == 0 || triCount == 0) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "QMParser",
+            "parseToSurfaceTileMesh fail: zero indices vc=%u tri=%u off=%zu len=%zu",
+            vc, triCount, offset, len);
+#endif
+        return nullptr;
     }
 
     // --- Parse edge indices ---
@@ -465,6 +558,15 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
         return out;
     };
     auto west  = readEdge(), south = readEdge(), east = readEdge(), north = readEdge();
+
+    if (offset > len) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "QMParser",
+            "parseToSurfaceTileMesh fail: edge read overflow vc=%u tri=%u off=%zu len=%zu west=%zu south=%zu east=%zu north=%zu",
+            vc, triCount, offset, len, west.size(), south.size(), east.size(), north.size());
+#endif
+        return nullptr;
+    }
 
     auto mesh = std::make_unique<SurfaceTileMesh>();
     mesh->rasterOverlayDetails.setGeographicRectangle(bounds);
@@ -699,10 +801,76 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
             return uBuf[a] < uBuf[b];
         });
 
+#ifdef __ANDROID__
+    auto edgeUvSummary = [&](const char* name, const std::vector<uint32_t>& edge) {
+        if (edge.empty()) {
+            __android_log_print(
+                ANDROID_LOG_INFO,
+                "QMParser",
+                "edge %s count=0",
+                name);
+            return;
+        }
+        const uint32_t first = edge.front();
+        const uint32_t last = edge.back();
+        __android_log_print(
+            ANDROID_LOG_INFO,
+            "QMParser",
+            "edge %s count=%zu first=%u uv=%u/%u last=%u uv=%u/%u",
+            name,
+            edge.size(),
+            first,
+            static_cast<unsigned>(uBuf[first]),
+            static_cast<unsigned>(vBuf[first]),
+            last,
+            static_cast<unsigned>(uBuf[last]),
+            static_cast<unsigned>(vBuf[last]));
+    };
+    __android_log_print(
+        ANDROID_LOG_INFO,
+        "QMParser",
+        "skirt summary vc=%u tri=%u west=%zu south=%zu east=%zu north=%zu skirtH=%.3f lonOff=%.7f latOff=%.7f",
+        vc,
+        triCount,
+        west.size(),
+        south.size(),
+        east.size(),
+        north.size(),
+        skirtH,
+        lonOff,
+        latOff);
+    edgeUvSummary("west", sortedWest);
+    edgeUvSummary("south", sortedSouth);
+    edgeUvSummary("east", sortedEast);
+    edgeUvSummary("north", sortedNorth);
+#endif
+
     addSkirtEdge(sortedWest,  -lonOff, 0,       false);
     addSkirtEdge(sortedSouth, 0,       -latOff, false);
     addSkirtEdge(sortedEast,  lonOff,  0,       false);
     addSkirtEdge(sortedNorth, 0,       latOff,  false);
+
+    mesh->gpuVertices.resize(mesh->vertices.size());
+    const Vec3 localOrigin = mesh->localOriginEcef;
+    for (size_t i = 0; i < mesh->vertices.size(); ++i) {
+        const SurfaceVertex& src = mesh->vertices[i];
+        SurfaceGpuVertex& dst = mesh->gpuVertices[i];
+        const Vec3 rel = src.positionEcef - localOrigin;
+        Vec3 nrm = src.normalEcef;
+        if (nrm.lengthSquared() > 0.0) {
+            nrm = nrm.normalized();
+        } else {
+            nrm = ellipsoid.geodeticSurfaceNormal(src.positionEcef);
+        }
+        dst.pos[0] = static_cast<float>(rel.x());
+        dst.pos[1] = static_cast<float>(rel.y());
+        dst.pos[2] = static_cast<float>(rel.z());
+        dst.nrm[0] = static_cast<float>(nrm.x());
+        dst.nrm[1] = static_cast<float>(nrm.y());
+        dst.nrm[2] = static_cast<float>(nrm.z());
+        dst.uv[0] = src.uv[0];
+        dst.uv[1] = src.uv[1];
+    }
 
     mesh->waterMask = std::move(waterMask);
     return mesh;

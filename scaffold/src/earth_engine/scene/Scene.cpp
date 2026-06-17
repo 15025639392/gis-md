@@ -15,8 +15,99 @@
 #include <utility>
 #include <unordered_set>
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
+
 namespace earth_engine {
 namespace {
+
+#ifdef __ANDROID__
+const char* inputEventTypeName(InputEvent::Type type) {
+    switch (type) {
+        case InputEvent::Type::PointerDown: return "PointerDown";
+        case InputEvent::Type::PointerMove: return "PointerMove";
+        case InputEvent::Type::PointerUp: return "PointerUp";
+        case InputEvent::Type::PinchStart: return "PinchStart";
+        case InputEvent::Type::PinchMove: return "PinchMove";
+        case InputEvent::Type::PinchEnd: return "PinchEnd";
+        case InputEvent::Type::Cancel: return "Cancel";
+        case InputEvent::Type::Key: return "Key";
+    }
+    return "Unknown";
+}
+
+struct NativeInputDiag {
+    double windowStartMs = 0.0;
+    int events = 0;
+    int pointerMoves = 0;
+    int pinchMoves = 0;
+    double focusMs = 0.0;
+    double processMs = 0.0;
+    double totalMs = 0.0;
+    double maxFocusMs = 0.0;
+    double maxProcessMs = 0.0;
+    double maxTotalMs = 0.0;
+};
+
+NativeInputDiag gNativeInputDiag;
+
+void recordNativeInputDiag(const InputEvent& event,
+                           double focusMs,
+                           double processMs,
+                           double totalMs) {
+    const double nowMs = perf::nowMs();
+    if (gNativeInputDiag.windowStartMs <= 0.0) {
+        gNativeInputDiag.windowStartMs = nowMs;
+    }
+
+    ++gNativeInputDiag.events;
+    if (event.type == InputEvent::Type::PointerMove) {
+        ++gNativeInputDiag.pointerMoves;
+    } else if (event.type == InputEvent::Type::PinchMove) {
+        ++gNativeInputDiag.pinchMoves;
+    }
+    gNativeInputDiag.focusMs += focusMs;
+    gNativeInputDiag.processMs += processMs;
+    gNativeInputDiag.totalMs += totalMs;
+    gNativeInputDiag.maxFocusMs = std::max(gNativeInputDiag.maxFocusMs, focusMs);
+    gNativeInputDiag.maxProcessMs = std::max(gNativeInputDiag.maxProcessMs, processMs);
+    gNativeInputDiag.maxTotalMs = std::max(gNativeInputDiag.maxTotalMs, totalMs);
+
+    if (totalMs >= 2.0) {
+        __android_log_print(
+            ANDROID_LOG_INFO,
+            "EarthPerfInput",
+            "DIAG nativeInput slow type=%s total=%.3f focus=%.3f process=%.3f pointers=%d",
+            inputEventTypeName(event.type),
+            totalMs,
+            focusMs,
+            processMs,
+            event.pointerCount);
+    }
+
+    const double windowMs = nowMs - gNativeInputDiag.windowStartMs;
+    if (windowMs >= 1000.0 && gNativeInputDiag.events > 0) {
+        const double inv = 1.0 / static_cast<double>(gNativeInputDiag.events);
+        __android_log_print(
+            ANDROID_LOG_INFO,
+            "EarthPerfInput",
+            "DIAG nativeInputSummary windowMs=%.0f events=%d pointerMove=%d pinchMove=%d focusAvg=%.3f focusMax=%.3f processAvg=%.3f processMax=%.3f totalAvg=%.3f totalMax=%.3f",
+            windowMs,
+            gNativeInputDiag.events,
+            gNativeInputDiag.pointerMoves,
+            gNativeInputDiag.pinchMoves,
+            gNativeInputDiag.focusMs * inv,
+            gNativeInputDiag.maxFocusMs,
+            gNativeInputDiag.processMs * inv,
+            gNativeInputDiag.maxProcessMs,
+            gNativeInputDiag.totalMs * inv,
+            gNativeInputDiag.maxTotalMs);
+        gNativeInputDiag = NativeInputDiag{};
+        gNativeInputDiag.windowStartMs = nowMs;
+    }
+}
+#endif
 
 void updateSurfaceCommandDiagnostics(const RenderCommandList& commands,
                                      uint64_t expectedFrameId,
@@ -1058,10 +1149,23 @@ void Scene::updateInteractionFocus(const InputEvent& event) {
 }
 
 void Scene::onInputEvent(const InputEvent& event) {
+#ifdef __ANDROID__
+    const double inputStartMs = perf::nowMs();
+    const double focusStartMs = inputStartMs;
+    updateInteractionFocus(event);
+    const double focusMs = perf::nowMs() - focusStartMs;
+    const double processStartMs = perf::nowMs();
+    if (inputManager_) {
+        inputManager_->process(event);
+    }
+    const double processMs = perf::nowMs() - processStartMs;
+    recordNativeInputDiag(event, focusMs, processMs, perf::nowMs() - inputStartMs);
+#else
     updateInteractionFocus(event);
     if (inputManager_) {
         inputManager_->process(event);
     }
+#endif
 }
 
 // ---- 环境系统 ----

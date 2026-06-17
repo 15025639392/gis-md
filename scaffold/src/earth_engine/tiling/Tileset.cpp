@@ -85,6 +85,10 @@ constexpr double kDefaultTerrainMinimumHeight = -1000.0;
 constexpr double kDefaultTerrainMaximumHeight = 9000.0;
 constexpr double kPiForLongitudeWrap = 3.14159265358979323846264338327950288;
 constexpr double kTwoPiForLongitudeWrap = kPiForLongitudeWrap * 2.0;
+constexpr double kPostInteractionResourceSmoothingSeconds = 1.25;
+constexpr int kSmoothedMainThreadUploadLimit = 1;
+constexpr int kActiveInteractionRenderPrepBudget = 0;
+constexpr int kRecoveryRenderPrepBudget = 1;
 
 #ifdef __ANDROID__
 bool shouldLogTileTrace(uint64_t frameId) {
@@ -1206,6 +1210,15 @@ int64_t estimateHeightmapBytes(const DecodedHeightmap& heightmap) {
         bytes += static_cast<int64_t>(
             update.metadataAvailability.size() * sizeof(std::array<int, 5>));
     }
+    if (heightmap.surfaceMesh) {
+        bytes += static_cast<int64_t>(
+            heightmap.surfaceMesh->vertices.size() * sizeof(SurfaceVertex));
+        bytes += static_cast<int64_t>(
+            heightmap.surfaceMesh->indices.size() * sizeof(uint32_t));
+        bytes += static_cast<int64_t>(
+            heightmap.surfaceMesh->gpuVertices.size() *
+            sizeof(SurfaceGpuVertex));
+    }
     return bytes;
 }
 
@@ -1630,6 +1643,7 @@ void Tileset::unloadCachedBytes(int64_t maximumCachedBytes,
         }
 
         TilesetTile& tile = *tileIt->second;
+        const int64_t estimatedBytesBeforeUnload = estimateTileBytes(tile);
 
         // cesium-native: skip tiles still referenced by the renderer or by
         // referenced descendants. Native child references propagate to parents;
@@ -1651,7 +1665,6 @@ void Tileset::unloadCachedBytes(int64_t maximumCachedBytes,
         const UnloadTileContentResult removed =
             unloadTileContent(tile, pPrepRenderer);
         if (removed == UnloadTileContentResult::Keep) {
-            updateTotalBytesUsed();
             unloadQueue_.pop_front();
             unloadQueue_.push_back(key);
             unloadQueueMap_[key] = --unloadQueue_.end();
@@ -1664,10 +1677,17 @@ void Tileset::unloadCachedBytes(int64_t maximumCachedBytes,
             clearChildrenRecursively(&tile, pPrepRenderer);
         }
 
-        // Keep byte accounting exact after content or subtree removal.
-        updateTotalBytesUsed();
+        totalBytesUsed_ = std::max<int64_t>(
+            0,
+            totalBytesUsed_ - std::max<int64_t>(0, estimatedBytesBeforeUnload));
+        cacheBytesDirty_ = true;
 
         if (timeBudgetExpired()) break;
+    }
+
+    if (cacheBytesDirty_ && !resourceSmoothingActiveForFrame_) {
+        updateTotalBytesUsed();
+        cacheBytesDirty_ = false;
     }
 }
 
@@ -1817,6 +1837,137 @@ TilesetLoadDiagnostics Tileset::loadDiagnostics() const {
     }
 
     return diag;
+}
+
+void Tileset::markTileResourcesDirty() {
+    ++resourceRevision_;
+    cacheBytesDirty_ = true;
+    hasReusableSelection_ = false;
+}
+
+bool Tileset::hasTilesetPendingWork() const {
+    std::lock_guard<std::mutex> lock(pendingMutex_);
+    return !pendingRequests_.empty() ||
+           !pendingUploads_.empty() ||
+           !pendingTerminalResults_.empty() ||
+           !pendingContentUploads_.empty() ||
+           !pendingContentTerminalResults_.empty();
+}
+
+bool Tileset::hasRasterOverlayPendingWork() const {
+    for (const auto* overlay : rasterOverlays_) {
+        if (overlay && overlay->hasPendingWork()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+uint64_t Tileset::rasterOverlayRevision() const {
+    uint64_t revision = 1469598103934665603ull;
+    for (const auto* overlay : rasterOverlays_) {
+        revision ^= overlay ? overlay->revision() : 0;
+        revision *= 1099511628211ull;
+    }
+    return revision;
+}
+
+uint64_t Tileset::overlayConfigurationSignature() const {
+    uint64_t signature = 1469598103934665603ull;
+    auto mix = [&signature](uint64_t value) {
+        signature ^= value + 0x9e3779b97f4a7c15ull + (signature << 6) +
+                     (signature >> 2);
+    };
+
+    mix(static_cast<uint64_t>(rasterOverlays_.size()));
+    for (const auto* activeOverlay : rasterOverlays_) {
+        if (!activeOverlay) {
+            mix(0);
+            continue;
+        }
+
+        const RasterOverlay& overlay = activeOverlay->getOverlay();
+        const RasterOverlay::Options& options = overlay.getOptions();
+        mix(activeOverlay->visible() ? 1ull : 0ull);
+        mix(static_cast<uint64_t>(options.blocksCompleteRenderable ? 1 : 0));
+        mix(static_cast<uint64_t>(options.role));
+        mix(static_cast<uint64_t>(options.priority));
+        mix(static_cast<uint64_t>(options.fallbackPolicy));
+        mix(static_cast<uint64_t>(std::lround(
+            static_cast<double>(activeOverlay->opacity()) * 1000000.0)));
+        if (const RasterOverlayTileProvider* provider =
+                activeOverlay->getTileProvider()) {
+            mix(provider->isReady() ? 1ull : 0ull);
+        } else {
+            mix(0);
+        }
+    }
+    return signature;
+}
+
+uint64_t Tileset::selectionResourceRevision() const {
+    uint64_t revision = resourceRevision_;
+    revision ^= rasterOverlayRevision() + 0x9e3779b97f4a7c15ull +
+                (revision << 6) + (revision >> 2);
+    return revision;
+}
+
+bool Tileset::selectorViewsEquivalent(
+    const std::vector<FrameState::SelectorView>& lhs,
+    const std::vector<FrameState::SelectorView>& rhs) const {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < lhs.size(); ++i) {
+        const auto& a = lhs[i];
+        const auto& b = rhs[i];
+        if (a.position.distanceTo(b.position) > 1e-3) {
+            return false;
+        }
+        if ((a.direction - b.direction).lengthSquared() > 1e-12) {
+            return false;
+        }
+        if (std::abs(a.verticalFovRadians - b.verticalFovRadians) > 1e-12) {
+            return false;
+        }
+        if (a.viewportHeightPixels != b.viewportHeightPixels) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Tileset::canReuseSelection(
+    const FrameState& frameState,
+    uint64_t resourceRevision,
+    uint64_t overlaySignature) const {
+    if (!hasReusableSelection_) {
+        return false;
+    }
+    if (frameState.viewportWidthPixels != lastSelectionViewportWidth_ ||
+        frameState.viewportHeightPixels != lastSelectionViewportHeight_) {
+        return false;
+    }
+    if (resourceRevision != lastSelectionResourceRevision_ ||
+        overlaySignature != lastSelectionOverlaySignature_) {
+        return false;
+    }
+    if (!selectorViewsEquivalent(
+            frameState.selectorViews,
+            lastSelectorViews_)) {
+        return false;
+    }
+    if (!tilePlan_.tilesFadingOut.empty() ||
+        tilePlan_.fadingNodeCount > 0) {
+        return false;
+    }
+    if (hasTilesetPendingWork() || hasRasterOverlayPendingWork()) {
+        return false;
+    }
+    if (lastRequestIssuedWork_ || lastRequestBlockedByInflight_) {
+        return false;
+    }
+    return true;
 }
 
 std::string Tileset::terrainCacheKey(const TileKey& key) const {
@@ -2696,6 +2847,7 @@ void Tileset::createRasterOverlayUpsampledChildren(TilesetTile& tile) {
         tile.geometricError = cesiumTerrainGeometricError(tile.bounds);
     }
 
+    bool createdOrUpdatedChild = false;
     for (size_t i = 0; i < childBounds.size(); ++i) {
         const int dx = static_cast<int>(i % 2);
         const int dy = static_cast<int>(i / 2);
@@ -2721,7 +2873,11 @@ void Tileset::createRasterOverlayUpsampledChildren(TilesetTile& tile) {
         if (std::find(tile.children.begin(), tile.children.end(), child) ==
             tile.children.end()) {
             tile.children.push_back(child);
+            createdOrUpdatedChild = true;
         }
+    }
+    if (createdOrUpdatedChild) {
+        markTileResourcesDirty();
     }
 }
 
@@ -3482,40 +3638,89 @@ void Tileset::update(const FrameState& frameState) {
     }
     lastCameraPosition_ = camPos;
     lastCameraDirection_ = frameState.camera->direction();
-    lastSelectorViews_ = frameState.selectorViews;
+    const bool interactionActive =
+        frameState.hasInteractionFocus || cameraMoving_;
+    interactionActiveForFrame_ = interactionActive;
+    if (interactionActive) {
+        lastInteractionActiveTimeSeconds_ = frameState.timeSeconds;
+    }
+    const bool postInteractionSmoothing =
+        !interactionActive &&
+        lastInteractionActiveTimeSeconds_ >= 0.0 &&
+        frameState.timeSeconds - lastInteractionActiveTimeSeconds_ <=
+            kPostInteractionResourceSmoothingSeconds;
+    resourceSmoothingActiveForFrame_ =
+        interactionActive || postInteractionSmoothing;
 
     // Process completed terrain tile requests before selection, matching
     // cesium-native's tileStateUpdater-before-visit flow.
     const double uploadStartMs = perf::nowMs();
-    processPendingUploads();
+    const bool terrainOrContentChanged =
+        processPendingUploads(
+            interactionActive,
+            resourceSmoothingActiveForFrame_);
     const double uploadMs = perf::nowMs() - uploadStartMs;
+    (void)terrainOrContentChanged;
 
     // cesium-native: process raster overlay tile uploads.
     // Each ActivatedRasterOverlay's provider has a pending upload queue
     // that must be drained on the main thread to create GPU textures.
     // Without this, raster tiles stay in Loading state forever.
     const double rasterUploadStartMs = perf::nowMs();
+    int rasterUploadsProcessed = 0;
     for (auto* overlay : rasterOverlays_) {
         if (overlay) {
-            overlay->processPendingUploads();
+            rasterUploadsProcessed +=
+                overlay->processPendingUploads(interactionActive);
         }
+    }
+    if (rasterUploadsProcessed > 0) {
+        markTileResourcesDirty();
     }
     const double rasterUploadMs = perf::nowMs() - rasterUploadStartMs;
 
+    const uint64_t currentResourceRevision = selectionResourceRevision();
+    const uint64_t currentOverlaySignature = overlayConfigurationSignature();
+    const bool reusedSelection = canReuseSelection(
+        frameState,
+        currentResourceRevision,
+        currentOverlaySignature);
+
     // cesium-native selector: cull + SSE + renderability + load queue.
     const double computeStartMs = perf::nowMs();
-    selectTiles(frameState);
+    if (reusedSelection) {
+        tilePlan_.frameId = frameState.frameId;
+        loadQueue_.clear();
+        selectedTilesVisited_ = 0;
+        selectedTilesCulled_ = 0;
+        selectedTilesKicked_ = 0;
+        selectedFogCulled_ = 0;
+        selectedNotYetRenderable_ = 0;
+        selectedCulledTilesVisited_ = 0;
+        selectedTilesOccluded_ = 0;
+        selectedTilesWaitingForOcclusionResults_ = 0;
+    } else {
+        selectTiles(frameState);
+        hasReusableSelection_ = true;
+        lastSelectionResourceRevision_ = selectionResourceRevision();
+        lastSelectionOverlaySignature_ = currentOverlaySignature;
+        lastSelectionViewportWidth_ = frameState.viewportWidthPixels;
+        lastSelectionViewportHeight_ = frameState.viewportHeightPixels;
+        lastSelectorViews_ = frameState.selectorViews;
+    }
     const double computeMs = perf::nowMs() - computeStartMs;
 
     const double prefetchStartMs = perf::nowMs();
-    for (const TileKey& key : tilePlan_.visibleTiles) {
-        if (TilesetTile* tile = ensureTile(key)) {
-            prefetchRasterOverlays(*tile);
+    if (!reusedSelection) {
+        for (const TileKey& key : tilePlan_.visibleTiles) {
+            if (TilesetTile* tile = ensureTile(key)) {
+                prefetchRasterOverlays(*tile);
+            }
         }
-    }
-    for (const TileLoadRequest& request : loadQueue_) {
-        if (TilesetTile* tile = ensureTile(request.key)) {
-            prefetchRasterOverlays(*tile);
+        for (const TileLoadRequest& request : loadQueue_) {
+            if (TilesetTile* tile = ensureTile(request.key)) {
+                prefetchRasterOverlays(*tile);
+            }
         }
     }
     const double prefetchMs = perf::nowMs() - prefetchStartMs;
@@ -3523,12 +3728,17 @@ void Tileset::update(const FrameState& frameState) {
     // Request the selector's load queue, not the render list. Descendants may
     // continue loading while a renderable ancestor is selected.
     const double requestStartMs = perf::nowMs();
-    requestMissingTiles(loadQueue_);
+    RequestOutcome requestOutcome;
+    if (!reusedSelection) {
+        requestOutcome = requestMissingTiles(loadQueue_);
+    }
+    lastRequestIssuedWork_ = requestOutcome.issued > 0;
+    lastRequestBlockedByInflight_ = requestOutcome.blockedByInflight;
     const double requestMs = perf::nowMs() - requestStartMs;
 
     char detail[384];
     std::snprintf(detail, sizeof(detail),
-        "render=%zu load=%zu selector=%.2f prefetch=%.2f request=%.2f terrainUpload=%.2f rasterUpload=%.2f cache=%zu pending=%zu visited=%d culled=%d culledVisited=%d fog=%d occluded=%d occWait=%d kicked=%d notReady=%d",
+        "render=%zu load=%zu selector=%.2f prefetch=%.2f request=%.2f terrainUpload=%.2f rasterUpload=%.2f cache=%zu pending=%zu visited=%d culled=%d culledVisited=%d fog=%d occluded=%d occWait=%d kicked=%d notReady=%d reused=%d rasterUploads=%d interaction=%d smoothing=%d",
         tilePlan_.visibleTiles.size(),
         loadQueue_.size(),
         computeMs,
@@ -3545,7 +3755,11 @@ void Tileset::update(const FrameState& frameState) {
         selectedTilesOccluded_,
         selectedTilesWaitingForOcclusionResults_,
         selectedTilesKicked_,
-        selectedNotYetRenderable_);
+        selectedNotYetRenderable_,
+        reusedSelection ? 1 : 0,
+        rasterUploadsProcessed,
+        interactionActive ? 1 : 0,
+        resourceSmoothingActiveForFrame_ ? 1 : 0);
     perf::logTimingAtLeast(frameState.frameId,
                            "Tileset.update",
                            perf::nowMs() - updateStartMs,
@@ -3553,9 +3767,11 @@ void Tileset::update(const FrameState& frameState) {
                            detail);
 }
 
-void Tileset::requestMissingTiles(const std::vector<TileLoadRequest>& loadRequests) {
+Tileset::RequestOutcome Tileset::requestMissingTiles(
+    const std::vector<TileLoadRequest>& loadRequests) {
     const size_t maxRequests = options_.maximumSimultaneousTileLoads;
     const size_t maxInflight = options_.maximumSimultaneousTileLoads;
+    RequestOutcome outcome;
 
     struct RequestTrace {
         size_t considered = 0;
@@ -3609,6 +3825,7 @@ void Tileset::requestMissingTiles(const std::vector<TileLoadRequest>& loadReques
             }
             if (pendingRequests_.size() >= maxInflight) {
                 ++trace.breakInflight;
+                outcome.blockedByInflight = true;
                 break;
             }
         }
@@ -3706,6 +3923,7 @@ void Tileset::requestMissingTiles(const std::vector<TileLoadRequest>& loadReques
             tileState->loadState = TileLoadState::ContentLoading;
             tileState->contentKind = TileContentKind::Unknown;
             ++issued;
+            ++outcome.issued;
             ++trace.issued;
             ++trace.issuedUpsample;
             continue;
@@ -3740,6 +3958,7 @@ void Tileset::requestMissingTiles(const std::vector<TileLoadRequest>& loadReques
                 tile->contentKind = TileContentKind::Unknown;
             }
             ++issued;
+            ++outcome.issued;
             ++trace.issued;
             ++trace.issuedContent;
 
@@ -3815,6 +4034,7 @@ void Tileset::requestMissingTiles(const std::vector<TileLoadRequest>& loadReques
             tile->contentKind = TileContentKind::Unknown;
         }
         ++issued;
+        ++outcome.issued;
         ++trace.issued;
         ++trace.issuedTerrain;
 
@@ -3891,6 +4111,7 @@ void Tileset::requestMissingTiles(const std::vector<TileLoadRequest>& loadReques
             trace.skipEmpty);
     }
 #endif
+    return outcome;
 }
 
 void Tileset::prefetchRasterOverlays(TilesetTile& tile) {
@@ -3979,9 +4200,12 @@ void Tileset::prefetchRasterOverlays(TilesetTile& tile) {
     }
 }
 
-void Tileset::processPendingUploads() {
+bool Tileset::processPendingUploads(bool interactionActive,
+                                    bool resourceSmoothingActive) {
     const double loadStartMs = perf::nowMs();
     const double timeBudgetMs = options_.mainThreadLoadingTimeLimit;
+    bool changed = false;
+    int finalizedUploadsThisFrame = 0;
     const auto timeBudgetExpired = [&]() {
         return timeBudgetMs > 0.0 &&
                perf::nowMs() - loadStartMs >= timeBudgetMs;
@@ -4019,22 +4243,26 @@ void Tileset::processPendingUploads() {
                     tile->unconditionallyRefine = true;
                 }
                 tile->loadState = TileLoadState::Done;
+                markTileResourcesDirty();
                 break;
             }
             case TerrainTileLoadStatus::RetryLater:
             case TerrainTileLoadStatus::Cancelled:
                 tile->contentKind = TileContentKind::Unknown;
                 tile->loadState = TileLoadState::FailedTemporarily;
+                markTileResourcesDirty();
                 break;
             case TerrainTileLoadStatus::Failed:
             case TerrainTileLoadStatus::Success:
                 tile->contentKind = TileContentKind::Unknown;
                 tile->loadState = TileLoadState::Failed;
+                markTileResourcesDirty();
                 break;
         }
     };
 
-    auto processUpload = [this](PendingTerrainUpload& upload) {
+    auto processUpload = [this, resourceSmoothingActive](
+        PendingTerrainUpload& upload) {
         if (upload.heightmap) {
             if (auto* qmProvider = dynamic_cast<QuantizedMeshTerrainProvider*>(
                     terrainProvider_.get())) {
@@ -4046,11 +4274,14 @@ void Tileset::processPendingUploads() {
         if (TilesetTile* tile = ensureTile(upload.key)) {
             tile->loadState = TileLoadState::ContentLoaded;
             tile->contentKind = TileContentKind::Render;
-            ensureTileMesh(*tile);
-            if (!tile->meshReady) {
+            if (!resourceSmoothingActive) {
+                ensureTileMesh(*tile);
+            }
+            if (!resourceSmoothingActive && !tile->meshReady) {
                 tile->contentKind = TileContentKind::Unknown;
                 tile->loadState = TileLoadState::FailedTemporarily;
             }
+            markTileResourcesDirty();
         }
         std::lock_guard<std::mutex> lock(pendingMutex_);
         pendingUploadKeys_.erase(upload.cacheKey);
@@ -4066,22 +4297,26 @@ void Tileset::processPendingUploads() {
                 emptyTiles_.insert(result.cacheKey);
                 tile->contentKind = TileContentKind::Empty;
                 tile->loadState = TileLoadState::Done;
+                markTileResourcesDirty();
                 break;
             case TileContentLoadStatus::External:
                 tile->contentKind = TileContentKind::External;
                 tile->unconditionallyRefine = true;
                 tile->loadState = TileLoadState::Done;
                 ensureTileChildren(*tile);
+                markTileResourcesDirty();
                 break;
             case TileContentLoadStatus::RetryLater:
             case TileContentLoadStatus::Cancelled:
                 tile->contentKind = TileContentKind::Unknown;
                 tile->loadState = TileLoadState::FailedTemporarily;
+                markTileResourcesDirty();
                 break;
             case TileContentLoadStatus::Failed:
             case TileContentLoadStatus::Render:
                 tile->contentKind = TileContentKind::Unknown;
                 tile->loadState = TileLoadState::Failed;
+                markTileResourcesDirty();
                 break;
         }
     };
@@ -4116,6 +4351,7 @@ void Tileset::processPendingUploads() {
             tile->contentKind = TileContentKind::Unknown;
             tile->loadState = TileLoadState::FailedTemporarily;
         }
+        markTileResourcesDirty();
 
         std::lock_guard<std::mutex> lock(pendingMutex_);
         pendingContentUploadKeys_.erase(upload.cacheKey);
@@ -4149,6 +4385,7 @@ void Tileset::processPendingUploads() {
         }
 
         processTerminalResult(*terminalResult);
+        changed = true;
     }
 
     while (true) {
@@ -4177,12 +4414,18 @@ void Tileset::processPendingUploads() {
         }
 
         processContentTerminalResult(*terminalResult);
+        changed = true;
     }
 
     // cesium-native uses one main-thread load queue. Terrain finalization and
     // glTF/content GPU upload must compete under the same priority order and
     // the same time budget.
     while (true) {
+        if (resourceSmoothingActive &&
+            finalizedUploadsThisFrame >= kSmoothedMainThreadUploadLimit) {
+            break;
+        }
+
         std::optional<PendingTerrainUpload> terrainUpload;
         std::optional<PendingContentUpload> contentUpload;
 
@@ -4194,10 +4437,17 @@ void Tileset::processPendingUploads() {
 
             auto bestTerrainIt = pendingUploads_.end();
             if (!pendingUploads_.empty()) {
-                bestTerrainIt = pendingUploads_.begin();
-                for (auto it = std::next(pendingUploads_.begin());
+                for (auto it = pendingUploads_.begin();
                      it != pendingUploads_.end();
                      ++it) {
+                    if (interactionActive &&
+                        it->group != TileLoadPriorityGroup::Urgent) {
+                        continue;
+                    }
+                    if (bestTerrainIt == pendingUploads_.end()) {
+                        bestTerrainIt = it;
+                        continue;
+                    }
                     if (hasHigherPriority(
                             it->group,
                             it->priority,
@@ -4210,10 +4460,17 @@ void Tileset::processPendingUploads() {
 
             auto bestContentIt = pendingContentUploads_.end();
             if (!pendingContentUploads_.empty()) {
-                bestContentIt = pendingContentUploads_.begin();
-                for (auto it = std::next(pendingContentUploads_.begin());
+                for (auto it = pendingContentUploads_.begin();
                      it != pendingContentUploads_.end();
                      ++it) {
+                    if (interactionActive &&
+                        it->group != TileLoadPriorityGroup::Urgent) {
+                        continue;
+                    }
+                    if (bestContentIt == pendingContentUploads_.end()) {
+                        bestContentIt = it;
+                        continue;
+                    }
                     if (hasHigherPriority(
                             it->group,
                             it->priority,
@@ -4248,11 +4505,14 @@ void Tileset::processPendingUploads() {
         } else {
             break;
         }
+        changed = true;
+        ++finalizedUploadsThisFrame;
 
         if (timeBudgetExpired()) {
             break;
         }
     }
+    return changed;
 }
 
 void Tileset::ingestQuantizedMeshAvailability(
@@ -4345,6 +4605,11 @@ void Tileset::ensureTileMesh(TilesetTile& tile) {
                 }
             }
         }
+    }
+
+    if (!tile.mesh && hasOwnTerrain && ownHeightmap->surfaceMesh) {
+        tile.mesh = std::move(ownHeightmap->surfaceMesh);
+        meshSource = SurfaceDrawableSource::OwnTerrain;
     }
 
     if (!tile.mesh && hasOwnTerrain && !ownHeightmap->rawData.empty()) {
@@ -4448,26 +4713,34 @@ void Tileset::ensureTileMesh(TilesetTile& tile) {
     }
 
     if (device_ && !tile.mesh->vertices.empty()) {
-        struct GpuVertex { float pos[3]; float nrm[3]; float uv[2]; };
-        std::vector<GpuVertex> verts(tile.mesh->vertices.size());
-        for (size_t i = 0; i < tile.mesh->vertices.size(); ++i) {
-            const auto& src = tile.mesh->vertices[i];
-            Vec3 rel = src.positionEcef - tile.localOrigin;
-            verts[i].pos[0] = static_cast<float>(rel.x());
-            verts[i].pos[1] = static_cast<float>(rel.y());
-            verts[i].pos[2] = static_cast<float>(rel.z());
-            Vec3 nrm = src.normalEcef;
-            if (nrm.lengthSquared() > 0.0) nrm = nrm.normalized();
-            else nrm = Ellipsoid::WGS84().geodeticSurfaceNormal(src.positionEcef);
-            verts[i].nrm[0] = static_cast<float>(nrm.x());
-            verts[i].nrm[1] = static_cast<float>(nrm.y());
-            verts[i].nrm[2] = static_cast<float>(nrm.z());
-            verts[i].uv[0] = src.uv[0];
-            verts[i].uv[1] = src.uv[1];
+        std::vector<SurfaceGpuVertex> generatedGpuVertices;
+        const std::vector<SurfaceGpuVertex>* gpuVertices =
+            tile.mesh->gpuVertices.size() == tile.mesh->vertices.size()
+                ? &tile.mesh->gpuVertices
+                : nullptr;
+        if (!gpuVertices) {
+            generatedGpuVertices.resize(tile.mesh->vertices.size());
+            for (size_t i = 0; i < tile.mesh->vertices.size(); ++i) {
+                const auto& src = tile.mesh->vertices[i];
+                SurfaceGpuVertex& dst = generatedGpuVertices[i];
+                Vec3 rel = src.positionEcef - tile.localOrigin;
+                dst.pos[0] = static_cast<float>(rel.x());
+                dst.pos[1] = static_cast<float>(rel.y());
+                dst.pos[2] = static_cast<float>(rel.z());
+                Vec3 nrm = src.normalEcef;
+                if (nrm.lengthSquared() > 0.0) nrm = nrm.normalized();
+                else nrm = Ellipsoid::WGS84().geodeticSurfaceNormal(src.positionEcef);
+                dst.nrm[0] = static_cast<float>(nrm.x());
+                dst.nrm[1] = static_cast<float>(nrm.y());
+                dst.nrm[2] = static_cast<float>(nrm.z());
+                dst.uv[0] = src.uv[0];
+                dst.uv[1] = src.uv[1];
+            }
+            gpuVertices = &generatedGpuVertices;
         }
         BufferDesc vbDesc;
-        vbDesc.size = verts.size() * sizeof(GpuVertex);
-        vbDesc.data = verts.data();
+        vbDesc.size = gpuVertices->size() * sizeof(SurfaceGpuVertex);
+        vbDesc.data = gpuVertices->data();
         vbDesc.usage = BufferDesc::Usage::Static;
         vbDesc.type = BufferDesc::Type::Vertex;
         tile.gpuVertexBuffer = device_->createBuffer(vbDesc);
@@ -4512,6 +4785,7 @@ void Tileset::ensureTileMesh(TilesetTile& tile) {
     }
     tile.completeRenderable = isTileCompleteRenderable(tile);
     tile.renderable = tile.completeRenderable;
+    markTileResourcesDirty();
     // Bytes recomputed each frame via updateTotalBytesUsed() before unload.
     // No need to incrementally track here — overlay textures may attach/detach
     // later, and recompute captures the current state.
@@ -5422,13 +5696,17 @@ void Tileset::buildGltfDrawCommands(Renderer& renderer,
 
 void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
                                    RenderCommandList& commands,
-                                   float transitionOpacity) {
+                                   float transitionOpacity,
+                                   bool allowSynchronousMeshPrep) {
     if (tile.gltfModel) {
         buildGltfDrawCommands(renderer, tile, commands, transitionOpacity);
         return;
     }
 
     if (!tile.meshReady) {
+        if (!allowSynchronousMeshPrep) {
+            return;
+        }
         ensureTileMesh(tile);
     }
     if (!hasSurfaceDrawable(tile)) return;
@@ -5638,6 +5916,7 @@ void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
 
 void Tileset::buildRenderCommands(Renderer& renderer,
                                    RenderCommandList& commands) {
+    const double buildCommandsStartMs = perf::nowMs();
     ++frameNumber_;
     const size_t commandsBeforeTileset = commands.size();
 
@@ -5668,47 +5947,116 @@ void Tileset::buildRenderCommands(Renderer& renderer,
 
     std::unordered_set<std::string> renderedGeometryKeys;
     std::unordered_map<std::string, bool> selectedDrawCommandByKey;
+    double selectedBuildMs = 0.0;
+    double fadeBuildMs = 0.0;
+    double detachInactiveMs = 0.0;
+    double trimRasterMs = 0.0;
+    double eligibilityMs = 0.0;
+    double cacheBytesMs = 0.0;
+    double unloadMs = 0.0;
+    double androidDiagnosticsMs = 0.0;
+    int renderPrepBudgetRemaining = interactionActiveForFrame_
+        ? kActiveInteractionRenderPrepBudget
+        : kRecoveryRenderPrepBudget;
+    int synchronousRenderPrepCount = 0;
+    int deferredRenderPrepCount = 0;
+    int ancestorFallbackDrawCount = 0;
+
+    auto findNearestDrawableAncestor = [this](
+        TilesetTile& tile) -> TilesetTile* {
+        for (TilesetTile* ancestor = tile.parent;
+             ancestor;
+             ancestor = ancestor->parent) {
+            if (hasSurfaceDrawable(*ancestor)) {
+                return ancestor;
+            }
+        }
+        return nullptr;
+    };
 
     auto renderTile = [&](const TileKey& key,
                           float transitionOpacity,
                           bool selectedPass) {
-        const std::string renderCk = terrainCacheKey(key);
-        if (!renderedGeometryKeys.insert(renderCk).second) {
-            return;
-        }
-
         TilesetTile* tile = ensureTile(key);
         if (!tile) return;
         ++ensuredTiles;
 
         tile->lastUsedFrame = frameNumber_;
-        // cesium-native: add reference while tile is in the render list
-        tile->addReference();
+        const std::string selectedCk = terrainCacheKey(key);
+        markIneligibleForUnloading(selectedCk);
+
+        TilesetTile* commandTile = tile;
+        TilesetTile* drawableAncestor = nullptr;
+        if (!hasSurfaceDrawable(*tile)) {
+            drawableAncestor = findNearestDrawableAncestor(*tile);
+            if (drawableAncestor &&
+                (resourceSmoothingActiveForFrame_ ||
+                 renderPrepBudgetRemaining <= 0)) {
+                commandTile = drawableAncestor;
+                ++ancestorFallbackDrawCount;
+            }
+        }
+
+        const std::string commandCk = terrainCacheKey(commandTile->key);
+        if (!renderedGeometryKeys.insert(commandCk).second) {
+            return;
+        }
+
+        commandTile->lastUsedFrame = frameNumber_;
+        // cesium-native: add reference while tile content is in the render list.
+        commandTile->addReference();
 
         // cesium-native: mark tile as ineligible for unloading (used this frame)
-        markIneligibleForUnloading(renderCk);
+        markIneligibleForUnloading(commandCk);
 
         const size_t before = commands.size();
-        buildTileDrawCommand(renderer, *tile, commands, transitionOpacity);
-        if (tile->meshReady && tile->gpuVertexBuffer) ++meshReadyTiles;
+        bool allowSynchronousMeshPrep = true;
+        if (!commandTile->gltfModel && !hasSurfaceDrawable(*commandTile)) {
+            if (renderPrepBudgetRemaining > 0) {
+                --renderPrepBudgetRemaining;
+                ++synchronousRenderPrepCount;
+            } else if (drawableAncestor) {
+                allowSynchronousMeshPrep = false;
+            } else {
+                // Root/no-ancestor case: allow one direct prep to avoid a blank
+                // frame. This path is rare and still bounded by traversal size.
+                ++synchronousRenderPrepCount;
+            }
+        }
+        if (allowSynchronousMeshPrep) {
+            const float commandOpacity =
+                commandTile == tile ? transitionOpacity : 1.0f;
+            buildTileDrawCommand(
+                renderer,
+                *commandTile,
+                commands,
+                commandOpacity,
+                allowSynchronousMeshPrep);
+        } else {
+            ++deferredRenderPrepCount;
+        }
+        if (commandTile->meshReady && commandTile->gpuVertexBuffer) {
+            ++meshReadyTiles;
+        }
         if (commands.size() > before) {
             ++drawAttempts;
             if (selectedPass) {
                 ++selectedWithCommand;
-                selectedDrawCommandByKey[renderCk] = true;
+                selectedDrawCommandByKey[selectedCk] = true;
             }
         } else if (selectedPass) {
-            selectedDrawCommandByKey[renderCk] = false;
+            selectedDrawCommandByKey[selectedCk] = false;
             ++selectedNoCommand;
-            if (!hasSurfaceDrawable(*tile)) {
+            if (!hasSurfaceDrawable(*commandTile)) {
                 ++noCommandNoMeshReady;
-            } else if (!tile->gpuVertexBuffer) {
+            } else if (!commandTile->gpuVertexBuffer) {
                 ++noCommandNoGpuBuffer;
             } else {
                 bool hasVisibleRasterOverlay = false;
                 bool hasRasterTexture = false;
                 for (size_t i = 0;
-                     i < rasterOverlays_.size() && i < tile->rasterOverlays.size();
+                     i < rasterOverlays_.size() &&
+                     i < commandTile->rasterOverlays.size();
                      ++i) {
                     auto* activeOverlay = rasterOverlays_[i];
                     if (!activeOverlay || !activeOverlay->visible()) {
@@ -5716,9 +6064,11 @@ void Tileset::buildRenderCommands(Renderer& renderer,
                     }
                     hasVisibleRasterOverlay = true;
                     const RasterAttachment* attachment =
-                        renderer.getAttachedRaster(tile->key, static_cast<int32_t>(i));
+                        renderer.getAttachedRaster(
+                            commandTile->key,
+                            static_cast<int32_t>(i));
                     const RasterMappedToTilesetTile* mapped =
-                        tile->rasterOverlays[i].get();
+                        commandTile->rasterOverlays[i].get();
                     if (overlayDrawableForDiagnostics(
                             activeOverlay,
                             mapped,
@@ -5740,6 +6090,7 @@ void Tileset::buildRenderCommands(Renderer& renderer,
     // Build the tiles selected by the cesium-native-style selector.
     // Selection already handled SSE, culling, renderability fallback, and
     // descendant load continuation; rendering must not reselect or collapse.
+    const double selectedBuildStartMs = perf::nowMs();
     for (const TileKey& key : tilePlan_.visibleTiles) {
         TilesetTile* tile = ensureTile(key);
         const float transitionOpacity =
@@ -5748,47 +6099,78 @@ void Tileset::buildRenderCommands(Renderer& renderer,
                 : 1.0f;
         renderTile(key, transitionOpacity, true);
     }
+    selectedBuildMs = perf::nowMs() - selectedBuildStartMs;
 
     // cesium-native ViewUpdateResult::tilesFadingOut equivalent. These tiles
     // are not selected this frame, but their render content remains referenced
     // until the LOD transition reaches 100%.
+    const double fadeBuildStartMs = perf::nowMs();
     for (const TileTransition& transition : tilePlan_.tilesFadingOut) {
         if (transition.opacity <= 0.001f) {
             continue;
         }
         renderTile(transition.key, transition.opacity, false);
     }
+    fadeBuildMs = perf::nowMs() - fadeBuildStartMs;
 
     // Drop renderer attachments and raw provider pointers for geometry tiles
     // that did not contribute to this frame before provider tile trimming.
+    const double detachInactiveStartMs = perf::nowMs();
     detachInactiveRasterOverlays(&renderer);
+    detachInactiveMs = perf::nowMs() - detachInactiveStartMs;
 
     // Evict raster overlay tiles that have not been referenced recently.
+    const double trimRasterStartMs = perf::nowMs();
     for (auto* overlay : rasterOverlays_) {
         if (overlay) {
             overlay->trimUnusedTiles();
         }
     }
+    trimRasterMs = perf::nowMs() - trimRasterStartMs;
 
     // cesium-native: mark all non-visited tiles as eligible for unloading
+    const double eligibilityStartMs = perf::nowMs();
     for (auto& [ck, tile] : tiles_) {
         if (tile->lastUsedFrame != frameNumber_) {
             markEligibleForUnloading(ck);
         }
     }
+    eligibilityMs = perf::nowMs() - eligibilityStartMs;
 
-    // cesium-native: recompute total bytes before unload to capture
-    // overlay textures that attached/detached this frame.
-    updateTotalBytesUsed();
+    // cesium-native: recompute total bytes when resources changed. Repeating a
+    // full cache walk every frame made settled frames pay for invisible work.
+    const double cacheBytesStartMs = perf::nowMs();
+    if (cacheBytesDirty_) {
+        updateTotalBytesUsed();
+        cacheBytesDirty_ = false;
+    }
+    cacheBytesMs = perf::nowMs() - cacheBytesStartMs;
 
     // cesium-native: byte-budget-based unload (replaces fixed-tile eviction)
     // Pass &renderer as IPrepareRendererResources for proper detach.
     // Note: removeReference() is called in Scene.cpp AFTER renderer_->submit(),
     // matching cesium-native's reference-counting lifecycle where references
     // are held until the GPU has consumed the commands.
-    unloadCachedBytes(options_.maximumCachedBytes, &renderer);
+    const double unloadStartMs = perf::nowMs();
+    bool hasQueuedUnloadingTile = false;
+    for (const std::string& queuedKey : unloadQueue_) {
+        auto tileIt = tiles_.find(queuedKey);
+        if (tileIt != tiles_.end() &&
+            tileIt->second &&
+            tileIt->second->loadState == TileLoadState::Unloading) {
+            hasQueuedUnloadingTile = true;
+            break;
+        }
+    }
+    if (!resourceSmoothingActiveForFrame_ &&
+        (totalBytesUsed_ > options_.maximumCachedBytes ||
+         hasQueuedUnloadingTile)) {
+        unloadCachedBytes(options_.maximumCachedBytes, &renderer);
+    }
+    unloadMs = perf::nowMs() - unloadStartMs;
 
 #ifdef __ANDROID__
+    const double androidDiagnosticsStartMs = perf::nowMs();
     if (frameNumber_ <= 10 || frameNumber_ % 60 == 0) {
         int overlayCached = 0;
         for (auto* overlay : rasterOverlays_) {
@@ -5941,7 +6323,37 @@ void Tileset::buildRenderCommands(Renderer& renderer,
             }
         }
     }
+    androidDiagnosticsMs = perf::nowMs() - androidDiagnosticsStartMs;
 #endif
+
+    char buildBreakdown[384];
+    std::snprintf(
+        buildBreakdown,
+        sizeof(buildBreakdown),
+        "selected=%.2f fade=%.2f detach=%.2f trim=%.2f eligible=%.2f bytes=%.2f unload=%.2f diag=%.2f selectedTiles=%zu fadeTiles=%zu ensured=%d cmds=%zu interaction=%d smoothing=%d prepSync=%d prepDeferred=%d fallback=%d",
+        selectedBuildMs,
+        fadeBuildMs,
+        detachInactiveMs,
+        trimRasterMs,
+        eligibilityMs,
+        cacheBytesMs,
+        unloadMs,
+        androidDiagnosticsMs,
+        tilePlan_.visibleTiles.size(),
+        tilePlan_.tilesFadingOut.size(),
+        ensuredTiles,
+        commands.size() - commandsBeforeTileset,
+        interactionActiveForFrame_ ? 1 : 0,
+        resourceSmoothingActiveForFrame_ ? 1 : 0,
+        synchronousRenderPrepCount,
+        deferredRenderPrepCount,
+        ancestorFallbackDrawCount);
+    perf::logTimingAtLeast(
+        frameNumber_,
+        "Tileset.buildRenderCommands",
+        perf::nowMs() - buildCommandsStartMs,
+        20.0,
+        buildBreakdown);
 
 #ifndef __ANDROID__
     (void)commandsBeforeTileset;

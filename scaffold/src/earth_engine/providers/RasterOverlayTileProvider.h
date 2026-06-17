@@ -15,6 +15,7 @@
 #include <mutex>
 #include <functional>
 #include <chrono>
+#include <atomic>
 
 namespace earth_engine {
 
@@ -115,7 +116,15 @@ public:
 
     /// Process completed uploads on the main thread.
     /// Should be called once per frame.
-    void processPendingUploads();
+    int processPendingUploads(bool interactionActive);
+
+    /// True while HTTP requests or main-thread texture uploads are outstanding.
+    bool hasPendingWork() const;
+
+    /// Monotonic state revision. Increments when raster tile load state or GPU
+    /// texture readiness changes, so tileset selection can be invalidated
+    /// without walking every mapped tile.
+    uint64_t revision() const { return revision_.load(std::memory_order_relaxed); }
 
     // ── Texture cache ──
 
@@ -185,7 +194,7 @@ private:
         std::unique_ptr<DecodedImage> image;
     };
     std::deque<PendingUpload> pendingUploads_;
-    std::mutex pendingMutex_;
+    mutable std::mutex pendingMutex_;
 
     /// Tiles currently in-flight (requested but not yet responded).
     std::unordered_set<std::string> inFlightRequests_;
@@ -193,6 +202,7 @@ private:
     /// Failed tiles (key → first fail timestamp, for retry logic).
     struct FailedRecord { double firstFailTime = 0.0; int retries = 0; };
     std::unordered_map<std::string, FailedRecord> failedTiles_;
+    std::atomic<uint64_t> revision_{0};
 
     /// Monotonic frame counter, updated by trimUnusedTiles.
     /// Used to stamp lastUsedFrame on tiles in getTile().

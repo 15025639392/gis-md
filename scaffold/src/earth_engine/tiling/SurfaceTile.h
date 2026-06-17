@@ -44,6 +44,12 @@ struct SurfaceVertex {
     std::array<float, 2> uv = {0.0f, 0.0f};
 };
 
+struct SurfaceGpuVertex {
+    float pos[3];
+    float nrm[3];
+    float uv[2];
+};
+
 /// cesium-native style skirt metadata (see CesiumGltfContent/SkirtMeshMetadata.h).
 /// Tracks the vertex/index ranges that belong to the real terrain surface
 /// (not the skirt), so downstream operations (e.g. normal map, UV generation)
@@ -109,6 +115,7 @@ struct RasterOverlayDetails {
 struct SurfaceTileMesh {
     std::vector<SurfaceVertex> vertices;
     std::vector<uint32_t> indices;
+    std::vector<SurfaceGpuVertex> gpuVertices;
     int gridSize = 0;
     SurfaceTileMeshWinding winding = SurfaceTileMeshWinding::Outward;
     SurfaceTileSampling sampling = SurfaceTileSampling::WebMercatorVToWgs84Ecef;

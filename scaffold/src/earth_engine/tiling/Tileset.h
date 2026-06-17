@@ -227,6 +227,11 @@ private:
         uint32_t notYetRenderableCount = 0;
     };
 
+    struct RequestOutcome {
+        size_t issued = 0;
+        bool blockedByInflight = false;
+    };
+
     void selectTiles(const FrameState& frameState);
     TraversalDetails visitTileIfNeeded(TilesetTile& tile,
                                        const SelectorFrame& selectorFrame,
@@ -279,8 +284,22 @@ private:
                           const SelectorFrame& selectorFrame,
                           const std::vector<double>& distances) const;
 
-    void requestMissingTiles(const std::vector<TileLoadRequest>& loadRequests);
-    void processPendingUploads();
+    RequestOutcome requestMissingTiles(const std::vector<TileLoadRequest>& loadRequests);
+    bool processPendingUploads(bool interactionActive,
+                               bool resourceSmoothingActive);
+    bool hasTilesetPendingWork() const;
+    bool hasRasterOverlayPendingWork() const;
+    uint64_t rasterOverlayRevision() const;
+    uint64_t overlayConfigurationSignature() const;
+    uint64_t selectionResourceRevision() const;
+    bool selectorViewsEquivalent(
+        const std::vector<FrameState::SelectorView>& lhs,
+        const std::vector<FrameState::SelectorView>& rhs) const;
+    bool canReuseSelection(
+        const FrameState& frameState,
+        uint64_t resourceRevision,
+        uint64_t overlaySignature) const;
+    void markTileResourcesDirty();
     TilesetTile* ensureTile(const TileKey& key);
     void prefetchRasterOverlays(TilesetTile& tile);
     void ingestQuantizedMeshAvailability(const TileKey& key,
@@ -296,7 +315,8 @@ private:
         IPrepareRendererResources* pPrepRenderer);
     void buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
                               RenderCommandList& commands,
-                              float transitionOpacity);
+                              float transitionOpacity,
+                              bool allowSynchronousMeshPrep = true);
     void updateLodTransitions(double deltaSeconds);
     bool wasRenderedInPreviousSelection(const TilesetTile& tile) const;
 
@@ -388,6 +408,18 @@ private:
     std::condition_variable pendingCondition_;
     bool destroying_ = false;
     uint64_t generation_ = 0;
+    uint64_t resourceRevision_ = 1;
+    uint64_t lastSelectionResourceRevision_ = 0;
+    uint64_t lastSelectionOverlaySignature_ = 0;
+    int lastSelectionViewportWidth_ = 0;
+    int lastSelectionViewportHeight_ = 0;
+    bool hasReusableSelection_ = false;
+    bool cacheBytesDirty_ = true;
+    bool lastRequestIssuedWork_ = false;
+    bool lastRequestBlockedByInflight_ = false;
+    bool interactionActiveForFrame_ = false;
+    bool resourceSmoothingActiveForFrame_ = false;
+    double lastInteractionActiveTimeSeconds_ = -1.0;
     Vec3 lastCameraPosition_ = Vec3::zero();
     Vec3 lastCameraDirection_ = Vec3::zero();  // for view-weighted priority
     std::vector<FrameState::SelectorView> lastSelectorViews_;

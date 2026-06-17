@@ -165,6 +165,21 @@ ParsedUrl parseUrl(const std::string& url) {
     return result;
 }
 
+Rectangle geographicTmsRectangle(const TileKey& key) {
+    constexpr double kPi = 3.14159265358979323846264338327950288;
+    const double xTilesAtZ = std::ldexp(1.0, key.z + 1);
+    const double yTilesAtZ = std::ldexp(1.0, key.z);
+    const double west =
+        static_cast<double>(key.x) / xTilesAtZ * 2.0 * kPi - kPi;
+    const double east =
+        static_cast<double>(key.x + 1) / xTilesAtZ * 2.0 * kPi - kPi;
+    const double south =
+        -0.5 * kPi + static_cast<double>(key.y) / yTilesAtZ * kPi;
+    const double north =
+        -0.5 * kPi + static_cast<double>(key.y + 1) / yTilesAtZ * kPi;
+    return Rectangle(west, south, east, north);
+}
+
 std::string composeUrl(const ParsedUrl& url) {
     std::string result;
     if (url.hasScheme) {
@@ -892,6 +907,10 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
             }
             auto hm = decodeTile(body.data(), body.size());
             if (hm) {
+                hm->surfaceMesh = QuantizedMeshParser::parseToSurfaceTileMesh(
+                    body.data(),
+                    body.size(),
+                    geographicTmsRectangle(key));
                 for (const LayerAvailabilityRequest& request :
                      availabilityRequests) {
                     DecodedHeightmap::QuantizedMeshAvailabilityUpdate update;

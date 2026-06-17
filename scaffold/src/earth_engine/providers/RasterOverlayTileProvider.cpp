@@ -26,6 +26,8 @@ namespace {
 constexpr uint64_t kRetainedUnusedFrames = 120;
 constexpr int kMaximumCombinedTextureSizeFallback = 2048;
 constexpr size_t kMaximumRasterUploadsPerFrame = 1;
+constexpr int kInteractionRasterUploadMaxDimension = 512;
+constexpr int64_t kInteractionRasterUploadMaxPixels = 512ll * 512ll;
 constexpr double kPi = 3.14159265358979323846264338327950288;
 constexpr double kTwoPi = 2.0 * kPi;
 constexpr double kMaxWebMercatorLat = 1.4844222297453324;
@@ -52,6 +54,24 @@ bool acquireRasterUploadBudget(uint64_t frameNumber) {
     }
     ++gRasterUploadsThisFrame;
     return true;
+}
+
+bool uploadAllowedDuringInteraction(
+    const std::string& cacheKey,
+    const DecodedImage* image) {
+    if (!image) {
+        return true;
+    }
+    if (cacheKey.rfind("rectangle/", 0) == 0) {
+        return false;
+    }
+    if (image->width > kInteractionRasterUploadMaxDimension ||
+        image->height > kInteractionRasterUploadMaxDimension) {
+        return false;
+    }
+    const int64_t pixels = static_cast<int64_t>(image->width) *
+                           static_cast<int64_t>(image->height);
+    return pixels <= kInteractionRasterUploadMaxPixels;
 }
 
 int maximumCombinedTextureSize(const RenderDevice* device) {
@@ -593,6 +613,7 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile) {
                         std::chrono::steady_clock::now().time_since_epoch()).count();
                 }
                 fr.retries++;
+                self->revision_.fetch_add(1, std::memory_order_relaxed);
             }
         });
 
@@ -724,6 +745,7 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile) {
                         std::chrono::steady_clock::now().time_since_epoch()).count();
                 }
                 fr.retries++;
+                self->revision_.fetch_add(1, std::memory_order_relaxed);
             }
         };
 
@@ -769,7 +791,7 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile) {
     return true;
 }
 
-void RasterOverlayTileProvider::processPendingUploads() {
+int RasterOverlayTileProvider::processPendingUploads(bool interactionActive) {
     // cesium-native: process completed HTTP responses on main thread.
     // Create GPU textures and mark tiles as Loaded.
     std::deque<PendingUpload> batch;
@@ -780,11 +802,26 @@ void RasterOverlayTileProvider::processPendingUploads() {
         // spread the work over frames without reducing the selected detail.
         while (!pendingUploads_.empty() &&
                acquireRasterUploadBudget(frameNumber_)) {
-            batch.push_back(std::move(pendingUploads_.front()));
-            pendingUploads_.pop_front();
+            auto selected = pendingUploads_.begin();
+            if (interactionActive) {
+                selected = std::find_if(
+                    pendingUploads_.begin(),
+                    pendingUploads_.end(),
+                    [](const PendingUpload& upload) {
+                        return uploadAllowedDuringInteraction(
+                            upload.cacheKey,
+                            upload.image.get());
+                    });
+                if (selected == pendingUploads_.end()) {
+                    break;
+                }
+            }
+            batch.push_back(std::move(*selected));
+            pendingUploads_.erase(selected);
         }
     }
 
+    int processed = 0;
     for (auto& upload : batch) {
         auto it = tiles_.find(upload.cacheKey);
         if (it == tiles_.end()) continue;
@@ -793,6 +830,8 @@ void RasterOverlayTileProvider::processPendingUploads() {
         if (!upload.image) {
             tile.setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
             tile.setState(RasterOverlayTile::LoadState::Failed);
+            revision_.fetch_add(1, std::memory_order_relaxed);
+            ++processed;
             continue;
         }
 
@@ -817,6 +856,8 @@ void RasterOverlayTileProvider::processPendingUploads() {
             // cesium-native: transfer texture ownership to the tile.
             // The tile owns its texture; no external cache needed.
             tile.setTexture(std::move(tex));
+            revision_.fetch_add(1, std::memory_order_relaxed);
+            ++processed;
 #ifdef __ANDROID__
             __android_log_print(ANDROID_LOG_INFO, "RasterOverlayTileProvider",
                 "Tile loaded: %d/%d/%d", tile.getTileID().z,
@@ -837,8 +878,16 @@ void RasterOverlayTileProvider::processPendingUploads() {
         } else {
             tile.setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
             tile.setState(RasterOverlayTile::LoadState::Failed);
+            revision_.fetch_add(1, std::memory_order_relaxed);
+            ++processed;
         }
     }
+    return processed;
+}
+
+bool RasterOverlayTileProvider::hasPendingWork() const {
+    std::lock_guard<std::mutex> lock(pendingMutex_);
+    return !pendingUploads_.empty() || !inFlightRequests_.empty();
 }
 
 std::unique_ptr<Texture> RasterOverlayTileProvider::uploadTexture(

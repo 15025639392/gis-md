@@ -8,11 +8,82 @@
 #include "interaction/PickingService.h"
 #include "debug/PerfTimer.h"
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <utility>
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
+
 namespace earth_engine {
+
+#ifdef __ANDROID__
+namespace {
+
+void logAndroidFrameStats(uint64_t frameId, double frameCpuMs) {
+    // DIAGNOSTIC ONLY: per-frame CPU distribution for Android interaction
+    // stutter diagnosis. This avoids relying on gfxinfo, which does not record
+    // this SurfaceView/EGL render path.
+    constexpr int kWindow = 120;
+    static std::array<double, kWindow> samples{};
+    static int count = 0;
+    static double windowStartMs = 0.0;
+    if (windowStartMs <= 0.0) {
+        windowStartMs = perf::nowMs();
+    }
+    samples[static_cast<size_t>(count)] = frameCpuMs;
+    ++count;
+    if (count < kWindow) {
+        return;
+    }
+
+    std::array<double, kWindow> sorted = samples;
+    std::sort(sorted.begin(), sorted.end());
+    auto percentile = [&](double p) {
+        const double index = (kWindow - 1) * p;
+        const int lo = static_cast<int>(index);
+        const int hi = std::min(lo + 1, kWindow - 1);
+        const double t = index - lo;
+        return sorted[static_cast<size_t>(lo)] * (1.0 - t) +
+               sorted[static_cast<size_t>(hi)] * t;
+    };
+
+    int over16 = 0;
+    int over33 = 0;
+    int over50 = 0;
+    for (double sample : samples) {
+        if (sample > 16.67) ++over16;
+        if (sample > 33.33) ++over33;
+        if (sample > 50.0) ++over50;
+    }
+
+    const double nowMs = perf::nowMs();
+    const double windowMs = std::max(1.0, nowMs - windowStartMs);
+    __android_log_print(
+        ANDROID_LOG_INFO,
+        "EarthPerfFrame",
+        "DIAG frame=%llu windowFrames=%d windowMs=%.1f fps=%.1f frameCpuP50=%.2f frameCpuP90=%.2f frameCpuP99=%.2f frameCpuMax=%.2f over16=%d over33=%d over50=%d",
+        static_cast<unsigned long long>(frameId),
+        kWindow,
+        windowMs,
+        (static_cast<double>(kWindow) * 1000.0) / windowMs,
+        percentile(0.50),
+        percentile(0.90),
+        percentile(0.99),
+        sorted.back(),
+        over16,
+        over33,
+        over50);
+
+    count = 0;
+    windowStartMs = nowMs;
+}
+
+} // namespace
+#endif
 
 Engine::Engine(RenderDevice* device)
     : device_(device),
@@ -87,6 +158,9 @@ void Engine::render(double deltaSeconds) {
 
     auto& diag = scene_->mutableDiagnostics();
     diag.engineFrameCpuMs = perf::nowMs() - frameStartMs;
+#ifdef __ANDROID__
+    logAndroidFrameStats(scene_->frameState().frameId, diag.engineFrameCpuMs);
+#endif
     char detail[256];
     std::snprintf(detail, sizeof(detail),
         "begin=%.2f update=%.2f render=%.2f submit=%.2f end=%.2f draw=%d tiles=%d",

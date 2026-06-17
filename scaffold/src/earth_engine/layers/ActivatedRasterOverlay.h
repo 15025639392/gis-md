@@ -38,7 +38,9 @@ public:
     /// cesium-native: the placeholder tile from the ensured provider.
     RasterOverlayTile* getPlaceholderTile();
 
-    void processPendingUploads();
+    int processPendingUploads(bool interactionActive);
+    bool hasPendingWork() const;
+    uint64_t revision() const;
     void setFrameNumber(uint64_t frameNumber);
     void trimUnusedTiles();
     int getCachedTileCount() const;
