@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <glm/glm.hpp>
@@ -1249,14 +1250,39 @@ int64_t Tileset::estimateTileBytes(const TilesetTile& tile) {
     if (tile.heightmap) {
         bytes += estimateHeightmapBytes(*tile.heightmap);
     }
-    // Raster overlays: only count textures that are ACTUALLY loaded
-    // (not placeholder or unattached). Check texture() which is non-null
-    // only when _pReadyTile has been attached.
+    // Raster overlays: count textures through the retained ready tile, so the
+    // Texture* remains owned while the estimate reads its dimensions.
     for (const auto& overlay : tile.rasterOverlays) {
-        if (overlay && overlay->texture()) {
-            bytes += static_cast<int64_t>(overlay->texture()->width() *
-                                          overlay->texture()->height() * 4);
+        const std::shared_ptr<RasterOverlayTile> readyTile =
+            overlay ? overlay->getReadyTileHandle() : nullptr;
+        Texture* texture = readyTile ? readyTile->getTexture() : nullptr;
+        if (!texture) {
+            continue;
         }
+#ifdef __ANDROID__
+        // DIAGNOSTIC ONLY: this estimator runs after raster provider trimming.
+        // Avoid crashing on retained raw pointers while logging the stale state.
+        if (!RasterOverlayTileProvider::isLiveTextureForDiagnostics(texture)) {
+            static int staleTextureLogCount = 0;
+            if (staleTextureLogCount < 20) {
+                __android_log_print(
+                    ANDROID_LOG_WARN,
+                    "EarthPerfCrash",
+                    "stale raster texture in estimateTileBytes tile=%s/%d/%d/%d state=%d readyTile=%p texture=%p",
+                    tile.key.schemeId.c_str(),
+                    tile.key.z,
+                    tile.key.x,
+                    tile.key.y,
+                    static_cast<int>(overlay->getState()),
+                    static_cast<const void*>(readyTile.get()),
+                    static_cast<void*>(texture));
+                ++staleTextureLogCount;
+            }
+            continue;
+        }
+#endif
+        bytes += static_cast<int64_t>(texture->width() *
+                                      texture->height() * 4);
     }
     return bytes;
 }
@@ -1799,11 +1825,19 @@ std::string Tileset::terrainCacheKey(const TileKey& key) const {
 }
 
 float Tileset::sampleHeight(double lngRad, double latRad) const {
+#ifdef __ANDROID__
+    // DIAGNOSTIC ONLY: input picking calls this during drag/pinch; log slow scans.
+    const double diagStartMs = perf::nowMs();
+    size_t diagScannedTiles = 0;
+#endif
     const DecodedHeightmap* bestHeightmap = nullptr;
     Rectangle bestBounds;
     int bestZoom = -1;
 
     for (const auto& [ck, tile] : tiles_) {
+#ifdef __ANDROID__
+        ++diagScannedTiles;
+#endif
         if (!tile || tile->key.z < bestZoom ||
             !tile->bounds.contains(lngRad, latRad)) {
             continue;
@@ -1820,8 +1854,33 @@ float Tileset::sampleHeight(double lngRad, double latRad) const {
     }
 
     if (!bestHeightmap) {
+#ifdef __ANDROID__
+        const double diagMs = perf::nowMs() - diagStartMs;
+        if (diagMs >= 0.5) {
+            __android_log_print(
+                ANDROID_LOG_INFO,
+                "EarthPerfInput",
+                "DIAG sampleHeight ms=%.3f scanned=%zu tiles=%zu bestZoom=-1 hit=0",
+                diagMs,
+                diagScannedTiles,
+                tiles_.size());
+        }
+#endif
         return 0.0f;
     }
+#ifdef __ANDROID__
+    const double diagMs = perf::nowMs() - diagStartMs;
+    if (diagMs >= 0.5) {
+        __android_log_print(
+            ANDROID_LOG_INFO,
+            "EarthPerfInput",
+            "DIAG sampleHeight ms=%.3f scanned=%zu tiles=%zu bestZoom=%d hit=1",
+            diagMs,
+            diagScannedTiles,
+            tiles_.size(),
+            bestZoom);
+    }
+#endif
     return sampleHeightFromDecodedTile(
         *bestHeightmap, bestBounds, lngRad, latRad);
 }
@@ -5513,7 +5572,7 @@ void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
         : std::array<float, 4>{0.0f, 0.0f, 1.0f, 1.0f};
     surfaceCommand.surfaceGeometryZoom = tile.key.z;
     surfaceCommand.surfaceTextureZoom = baseAttachment && baseAttachment->tile
-        ? rasterTextureSourceZoom(baseAttachment->tile)
+        ? rasterTextureSourceZoom(baseAttachment->tile.get())
         : -1;
     surfaceCommand.surfaceTileOrigin = {
         static_cast<float>(tile.localOrigin.x()),

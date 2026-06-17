@@ -151,6 +151,12 @@ else()
 endif()
 add_test(NAME test_terrain_provider COMMAND test_terrain_provider)
 
+add_executable(test_raster_overlay_lifecycle
+    unit/providers/test_raster_overlay_lifecycle.cpp
+)
+target_link_libraries(test_raster_overlay_lifecycle PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_raster_overlay_lifecycle COMMAND test_raster_overlay_lifecycle)
+
 # ============================================================
 # environment tests
 # ============================================================

@@ -1024,7 +1024,7 @@ void testRasterOverlayProviderRetention() {
     TileKey key{scheme->id(), 3, 4, 2};
 
     provider.setFrameNumber(1);
-    RasterOverlayTile* first = provider.getTile(key);
+    auto first = provider.getTile(key);
     check(first != nullptr, "RasterOverlayTileProvider: getTile creates tile");
     check(provider.getCachedTileCount() == 1,
           "RasterOverlayTileProvider: cache has one tile after getTile");
@@ -1041,6 +1041,7 @@ void testRasterOverlayProviderRetention() {
           "RasterOverlayTileProvider: markUsed(TileKey) refreshes retention");
 
     provider.setFrameNumber(243);
+    first.reset();
     provider.trimUnusedTiles();
     check(provider.getCachedTileCount() == 0,
           "RasterOverlayTileProvider: stale tile is eventually trimmed");
@@ -1289,7 +1290,7 @@ void testRasterOverlayProviderRectangleTile() {
     Rectangle geometryBounds = geometryScheme->tileToRectangle(geometryKey);
 
     provider.setFrameNumber(1);
-    RasterOverlayTile* rectangleTile = provider.getTile(
+    auto rectangleTile = provider.getTile(
         geometryBounds, 512.0, 512.0);
     check(rectangleTile != nullptr,
           "RasterOverlayTileProvider: rectangle tile is created");

@@ -19,7 +19,7 @@ struct TileKey;
 /// Set by RasterMappedToTilesetTile during attach, read by Tileset during
 /// render command construction.
 struct RasterAttachment {
-    const RasterOverlayTile* tile = nullptr;
+    std::shared_ptr<const RasterOverlayTile> tile;
     Texture* texture = nullptr;
     float offsetU = 0.0f;
     float offsetV = 0.0f;
@@ -109,7 +109,7 @@ public:
     void attachRasterInMainThread(
         const TileKey& geometryKey,
         int32_t overlayIndex,
-        const RasterOverlayTile& rasterTile,
+        std::shared_ptr<const RasterOverlayTile> rasterTile,
         Texture* texture,
         float translationU, float translationV,
         float scaleU, float scaleV) override;

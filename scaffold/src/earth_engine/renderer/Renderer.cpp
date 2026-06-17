@@ -2173,13 +2173,13 @@ static std::string attachmentKeyWithOverlay(const TileKey& key, int32_t overlayI
 void Renderer::attachRasterInMainThread(
     const TileKey& geometryKey,
     int32_t overlayIndex,
-    const RasterOverlayTile& rasterTile,
+    std::shared_ptr<const RasterOverlayTile> rasterTile,
     Texture* texture,
     float translationU, float translationV,
     float scaleU, float scaleV) {
     std::string key = attachmentKeyWithOverlay(geometryKey, overlayIndex);
     impl_->rasterAttachments[key] = RasterAttachment{
-        &rasterTile, texture, translationU, translationV, scaleU, scaleV
+        std::move(rasterTile), texture, translationU, translationV, scaleU, scaleV
     };
 }
 

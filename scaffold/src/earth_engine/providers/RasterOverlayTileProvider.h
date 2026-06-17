@@ -30,6 +30,9 @@ struct DecodedImage;
 /// request throttling, and frame-based trimming.
 class RasterOverlayTileProvider {
 public:
+    using TilePtr = std::shared_ptr<RasterOverlayTile>;
+    using ConstTilePtr = std::shared_ptr<const RasterOverlayTile>;
+
     // TileLoadedCallback removed — textures are now owned directly by
     // RasterOverlayTile (unique_ptr<Texture>). No external callback needed.
 
@@ -48,24 +51,24 @@ public:
 
     /// cesium-native: get or create a tile for a key.
     /// Returns the shared placeholder tile if the provider is not yet ready.
-    RasterOverlayTile* getTile(const TileKey& key);
+    TilePtr getTile(const TileKey& key);
 
     /// cesium-native mapOverlayToTile rectangle path: get or create a raster
     /// tile for the geometry rectangle.
-    RasterOverlayTile* getTile(const Rectangle& rectangle,
-                               double targetScreenPixelsX,
-                               double targetScreenPixelsY);
+    TilePtr getTile(const Rectangle& rectangle,
+                    double targetScreenPixelsX,
+                    double targetScreenPixelsY);
 
     /// cesium-native: returns whether the provider is ready to serve tiles.
     bool isReady() const { return ready_; }
     void setReady(bool ready) { ready_ = ready; }
 
     /// cesium-native: returns the shared placeholder tile.
-    RasterOverlayTile* getPlaceholderTile();
+    TilePtr getPlaceholderTile();
 
     /// cesium-native: find the best available tile covering the given bounds
     /// at ≤ desiredZoom. Returns nullptr if no tile is available.
-    RasterOverlayTile* resolveTile(const Rectangle& bounds, int desiredZoom);
+    TilePtr resolveTile(const Rectangle& bounds, int desiredZoom);
 
     /// cesium-native: returns the owner RasterOverlay.
     class RasterOverlay* getOwner() const { return owner_; }
@@ -141,6 +144,17 @@ public:
     // Texture ownership: RasterOverlayTile owns its GPU texture
     // via unique_ptr<Texture>. No external callback needed.
 
+#ifdef __ANDROID__
+    // DIAGNOSTIC ONLY: lets Android crash/perf probes detect stale raster
+    // texture raw pointers before dereferencing them.
+    static void registerLiveTextureForDiagnostics(const Texture* texture);
+    static void unregisterLiveTextureForDiagnostics(const Texture* texture);
+    static bool isLiveTextureForDiagnostics(const Texture* texture);
+    static void registerLiveTileForDiagnostics(const RasterOverlayTile* tile);
+    static void unregisterLiveTileForDiagnostics(const RasterOverlayTile* tile);
+    static bool isLiveTileForDiagnostics(const RasterOverlayTile* tile);
+#endif
+
 private:
     /// Internal: create GPU texture from decoded image.
     std::unique_ptr<Texture> uploadTexture(const DecodedImage& image,
@@ -158,11 +172,11 @@ private:
     RenderDevice* device_;
     class RasterOverlay* owner_ = nullptr;
 
-    /// All tiles owned by this provider (key → unique_ptr).
-    std::unordered_map<std::string, std::unique_ptr<RasterOverlayTile>> tiles_;
+    /// All cached tiles retained by this provider (key → shared_ptr).
+    std::unordered_map<std::string, TilePtr> tiles_;
 
     /// cesium-native: shared placeholder tile returned when provider is not ready.
-    std::unique_ptr<RasterOverlayTile> placeholderTile_;
+    TilePtr placeholderTile_;
     bool ready_ = true;
 
     /// Pending GPU uploads (HTTP completed, awaiting main-thread upload).

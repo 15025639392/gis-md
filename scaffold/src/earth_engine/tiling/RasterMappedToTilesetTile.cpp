@@ -9,7 +9,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <optional>
+
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
 
 namespace earth_engine {
 namespace {
@@ -43,19 +48,36 @@ bool hasSameOverlayOwner(const RasterOverlayTile& candidate,
     return owner != nullptr && candidate.getTileProvider().getOwner() == owner;
 }
 
-RasterOverlayTile* findTileOverlay(
+std::shared_ptr<RasterOverlayTile> findTileOverlay(
     const TilesetTile& tile,
     const RasterOverlayTileProvider& provider) {
     for (const auto& mapped : tile.rasterOverlays) {
         if (!mapped) continue;
 
-        RasterOverlayTile* readyTile = mapped->getReadyTile();
+        std::shared_ptr<RasterOverlayTile> readyTile =
+            mapped->getReadyTileHandle();
+#ifdef __ANDROID__
+        // DIAGNOSTIC ONLY: parent mappings can retain raw pointers to provider
+        // tiles that have already been trimmed.
+        if (readyTile &&
+            !RasterOverlayTileProvider::isLiveTileForDiagnostics(readyTile.get())) {
+            continue;
+        }
+#endif
         if (!readyTile || !hasSameOverlayOwner(*readyTile, provider)) {
             continue;
         }
 
-        if (mapped->getLoadingTile()) {
-            return mapped->getLoadingTile();
+        std::shared_ptr<RasterOverlayTile> loadingTile =
+            mapped->getLoadingTileHandle();
+#ifdef __ANDROID__
+        if (loadingTile &&
+            !RasterOverlayTileProvider::isLiveTileForDiagnostics(loadingTile.get())) {
+            loadingTile = nullptr;
+        }
+#endif
+        if (loadingTile) {
+            return loadingTile;
         }
         return readyTile;
     }
@@ -112,6 +134,42 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
     geometryKey_ = geometryKey;
     overlaySlot_ = static_cast<int32_t>(overlayIndex);
 
+#ifdef __ANDROID__
+    // DIAGNOSTIC ONLY: provider trimming currently owns raster tiles with
+    // unique_ptr while mappings retain raw pointers. Detect stale pointers
+    // before Step 1 dereferences them.
+    static int staleTileLogCount = 0;
+    auto clearStaleTile = [&](std::shared_ptr<RasterOverlayTile>& tile,
+                              const char* role) {
+        if (!tile ||
+            RasterOverlayTileProvider::isLiveTileForDiagnostics(tile.get())) {
+            return;
+        }
+        if (staleTileLogCount < 20) {
+            __android_log_print(
+                ANDROID_LOG_WARN,
+                "EarthPerfCrash",
+                "stale raster tile in RasterMappedToTilesetTile::update role=%s geom=%s/%d/%d/%d state=%d tile=%p texture=%p",
+                role,
+                geometryKey.schemeId.c_str(),
+                geometryKey.z,
+                geometryKey.x,
+                geometryKey.y,
+                static_cast<int>(state_),
+                static_cast<void*>(tile.get()),
+                static_cast<void*>(readyTexture_));
+            ++staleTileLogCount;
+        }
+        tile.reset();
+        if (role[0] == 'r') {
+            readyTexture_ = nullptr;
+            state_ = State::Unattached;
+        }
+    };
+    clearStaleTile(_pReadyTile, "ready");
+    clearStaleTile(_pLoadingTile, "loading");
+#endif
+
     // ── Step 1: Already-Attached fast path ──
     // cesium-native: if getState() == Attached, report MoreDetailAvailable
     if (state_ == State::Attached) {
@@ -148,7 +206,7 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
            _pLoadingTile->getState() == RasterOverlayTile::LoadState::Failed &&
            pGeomTile != nullptr) {
         originalFailed_ = true;
-        RasterOverlayTile* overlayTile =
+        std::shared_ptr<RasterOverlayTile> overlayTile =
             findTileOverlay(*pGeomTile, _pLoadingTile->getTileProvider());
         if (overlayTile) {
             _pLoadingTile = overlayTile;
@@ -272,7 +330,7 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
     // cesium-native: while loading, find closest ancestor geometry tile
     // with a ready tile as temporary placeholder.
     if (_pLoadingTile != nullptr) {
-        RasterOverlayTile* candidate = nullptr;
+        std::shared_ptr<RasterOverlayTile> candidate;
         pGeomTile = parentTile;
 
         while (pGeomTile) {
@@ -329,7 +387,7 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
         if (pPrepRenderer && _pReadyTile->getRendererResources()) {
             pPrepRenderer->attachRasterInMainThread(
                 geometryKey, overlaySlot_,
-                *_pReadyTile,
+                _pReadyTile,
                 static_cast<Texture*>(_pReadyTile->getRendererResources()),
                 offsetU_, offsetV_, scaleU_, scaleV_);
             state_ = (_pLoadingTile != nullptr) ? State::TemporarilyAttached

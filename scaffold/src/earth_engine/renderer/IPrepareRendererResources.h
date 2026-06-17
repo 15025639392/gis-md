@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 
 namespace earth_engine {
 
@@ -28,7 +29,7 @@ public:
     /// @param geometryKey   The geometry tile's quadtree key.
     /// @param overlayIndex  Which overlay slot (0-based). Used to key
     ///                      the attachment so multiple overlays can coexist.
-    /// @param rasterTile    The raster overlay tile whose texture is being attached.
+    /// @param rasterTile    Retained raster overlay tile whose texture is attached.
     /// @param texture       The GPU texture (owned by texture cache, non-null).
     /// @param translationU  Horizontal UV offset.
     /// @param translationV  Vertical UV offset.
@@ -37,7 +38,7 @@ public:
     virtual void attachRasterInMainThread(
         const TileKey& geometryKey,
         int32_t overlayIndex,
-        const RasterOverlayTile& rasterTile,
+        std::shared_ptr<const RasterOverlayTile> rasterTile,
         Texture* texture,
         float translationU, float translationV,
         float scaleU, float scaleV) = 0;

@@ -16,8 +16,8 @@ class RasterOverlayTileProvider;
 /// Represents a single imagery tile in a quadtree with its own
 /// async loading lifecycle and LoadState.
 ///
-/// Owned by RasterOverlayTileProvider (unique_ptr).
-/// Referenced by RasterMappedToTilesetTile via raw pointer.
+/// Owned by RasterOverlayTileProvider and active mappings through shared_ptr.
+/// Raw pointers returned by accessors are non-owning views only.
 class RasterOverlayTile {
 public:
     /// cesium-native RasterOverlayTile::LoadState aligned.

@@ -34,6 +34,13 @@ std::mutex gRasterUploadBudgetMutex;
 uint64_t gRasterUploadBudgetFrame = 0;
 size_t gRasterUploadsThisFrame = 0;
 
+#ifdef __ANDROID__
+std::mutex gRasterTextureDiagnosticsMutex;
+std::unordered_set<const Texture*> gLiveRasterTexturesForDiagnostics;
+std::mutex gRasterTileDiagnosticsMutex;
+std::unordered_set<const RasterOverlayTile*> gLiveRasterTilesForDiagnostics;
+#endif
+
 bool acquireRasterUploadBudget(uint64_t frameNumber) {
     std::lock_guard<std::mutex> lock(gRasterUploadBudgetMutex);
     if (gRasterUploadBudgetFrame != frameNumber) {
@@ -364,19 +371,64 @@ RasterOverlayTileProvider::RasterOverlayTileProvider(ImageryProvider& provider,
 
 RasterOverlayTileProvider::~RasterOverlayTileProvider() = default;
 
+#ifdef __ANDROID__
+void RasterOverlayTileProvider::registerLiveTextureForDiagnostics(
+    const Texture* texture) {
+    if (!texture) return;
+    std::lock_guard<std::mutex> lock(gRasterTextureDiagnosticsMutex);
+    gLiveRasterTexturesForDiagnostics.insert(texture);
+}
+
+void RasterOverlayTileProvider::unregisterLiveTextureForDiagnostics(
+    const Texture* texture) {
+    if (!texture) return;
+    std::lock_guard<std::mutex> lock(gRasterTextureDiagnosticsMutex);
+    gLiveRasterTexturesForDiagnostics.erase(texture);
+}
+
+bool RasterOverlayTileProvider::isLiveTextureForDiagnostics(
+    const Texture* texture) {
+    if (!texture) return false;
+    std::lock_guard<std::mutex> lock(gRasterTextureDiagnosticsMutex);
+    return gLiveRasterTexturesForDiagnostics.count(texture) > 0;
+}
+
+void RasterOverlayTileProvider::registerLiveTileForDiagnostics(
+    const RasterOverlayTile* tile) {
+    if (!tile) return;
+    std::lock_guard<std::mutex> lock(gRasterTileDiagnosticsMutex);
+    gLiveRasterTilesForDiagnostics.insert(tile);
+}
+
+void RasterOverlayTileProvider::unregisterLiveTileForDiagnostics(
+    const RasterOverlayTile* tile) {
+    if (!tile) return;
+    std::lock_guard<std::mutex> lock(gRasterTileDiagnosticsMutex);
+    gLiveRasterTilesForDiagnostics.erase(tile);
+}
+
+bool RasterOverlayTileProvider::isLiveTileForDiagnostics(
+    const RasterOverlayTile* tile) {
+    if (!tile) return false;
+    std::lock_guard<std::mutex> lock(gRasterTileDiagnosticsMutex);
+    return gLiveRasterTilesForDiagnostics.count(tile) > 0;
+}
+#endif
+
 std::string RasterOverlayTileProvider::tileCacheKey(const TileKey& key) const {
     return key.schemeId + "/" + std::to_string(key.z) + "/" +
            std::to_string(key.x) + "/" + std::to_string(key.y);
 }
 
-RasterOverlayTile* RasterOverlayTileProvider::getPlaceholderTile() {
+RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getPlaceholderTile() {
     if (!placeholderTile_) {
-        placeholderTile_ = std::make_unique<RasterOverlayTile>(*this);
+        placeholderTile_ = std::make_shared<RasterOverlayTile>(*this);
     }
-    return placeholderTile_.get();
+    return placeholderTile_;
 }
 
-RasterOverlayTile* RasterOverlayTileProvider::getTile(const TileKey& key) {
+RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
+    const TileKey& key) {
     // cesium-native: return placeholder if provider is not yet ready
     if (!ready_) {
         return getPlaceholderTile();
@@ -388,20 +440,19 @@ RasterOverlayTile* RasterOverlayTileProvider::getTile(const TileKey& key) {
     auto it = tiles_.find(ck);
     if (it != tiles_.end()) {
         it->second->lastUsedFrame = frameNumber_;
-        return it->second.get();
+        return it->second;
     }
 
     // Create new tile in Unloaded state
     Rectangle bounds = scheme_.tileToRectangle(key);
-    auto tile = std::make_unique<RasterOverlayTile>(*this, key, bounds, ck);
+    auto tile = std::make_shared<RasterOverlayTile>(*this, key, bounds, ck);
     tile->setMaxZoom(std::min(scheme_.maxZoom(), provider_.maxZoom()));
     tile->lastUsedFrame = frameNumber_;
-    RasterOverlayTile* ptr = tile.get();
-    tiles_[ck] = std::move(tile);
-    return ptr;
+    tiles_[ck] = tile;
+    return tile;
 }
 
-RasterOverlayTile* RasterOverlayTileProvider::getTile(
+RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
     const Rectangle& geometryBounds,
     double targetScreenPixelsX,
     double targetScreenPixelsY) {
@@ -427,7 +478,7 @@ RasterOverlayTile* RasterOverlayTileProvider::getTile(
     auto it = tiles_.find(ck);
     if (it != tiles_.end()) {
         it->second->lastUsedFrame = frameNumber_;
-        return it->second.get();
+        return it->second;
     }
 
     const double centerLng =
@@ -437,19 +488,19 @@ RasterOverlayTile* RasterOverlayTileProvider::getTile(
     TileKey representativeKey = scheme_.positionToTile(
         centerLng, centerLat, sourceZoom);
 
-    auto tile = std::make_unique<RasterOverlayTile>(
+    auto tile = std::make_shared<RasterOverlayTile>(
         *this, representativeKey, geometryBounds, ck);
     tile->setMaxZoom(std::min(scheme_.maxZoom(), provider_.maxZoom()));
     tile->setRectangleTileLevel(sourceZoom);
     tile->setTargetScreenPixels(targetScreenPixelsX, targetScreenPixelsY);
     tile->lastUsedFrame = frameNumber_;
-    RasterOverlayTile* ptr = tile.get();
-    tiles_[ck] = std::move(tile);
-    return ptr;
+    tiles_[ck] = tile;
+    return tile;
 }
 
-RasterOverlayTile* RasterOverlayTileProvider::resolveTile(const Rectangle& bounds,
-                                                           int desiredZoom) {
+RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::resolveTile(
+    const Rectangle& bounds,
+    int desiredZoom) {
     // cesium-native: find the best tile covering the bounds at ≤ desiredZoom.
     // Tries desiredZoom first, then walks up the tree.
     const double centerLng = (bounds.west() + bounds.east()) * 0.5;
@@ -457,7 +508,7 @@ RasterOverlayTile* RasterOverlayTileProvider::resolveTile(const Rectangle& bound
 
     for (int z = desiredZoom; z >= scheme_.minZoom(); --z) {
         TileKey key = scheme_.positionToTile(centerLng, centerLat, z);
-        RasterOverlayTile* tile = getTile(key);
+        TilePtr tile = getTile(key);
 
         // Check if tile is loaded (has a texture)
         if (tile && tile->getState() >= RasterOverlayTile::LoadState::Loaded) {
@@ -842,7 +893,9 @@ void RasterOverlayTileProvider::trimUnusedTiles() {
             ? frameNumber_ - tile.lastUsedFrame
             : 0;
         const bool inFlight = inFlightRequests_.count(it->first) > 0;
-        if (age > kRetainedUnusedFrames && !inFlight) {
+        const bool retainedOutsideProvider = it->second.use_count() > 1;
+        if (age > kRetainedUnusedFrames && !inFlight &&
+            !retainedOutsideProvider) {
             it = tiles_.erase(it);
         } else {
             ++it;

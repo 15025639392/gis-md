@@ -28,7 +28,7 @@ RasterOverlayTileProvider* ActivatedRasterOverlay::ensureTileProvider(
 
 RasterOverlayTile* ActivatedRasterOverlay::getPlaceholderTile() {
     if (!tileProvider_) return nullptr;
-    return tileProvider_->getPlaceholderTile();
+    return tileProvider_->getPlaceholderTile().get();
 }
 
 void ActivatedRasterOverlay::processPendingUploads() {

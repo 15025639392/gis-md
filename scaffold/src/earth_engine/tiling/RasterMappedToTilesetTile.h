@@ -6,6 +6,7 @@
 #include "../renderer/RenderDevice.h"
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace earth_engine {
@@ -97,12 +98,18 @@ public:
     // ── Accessors (aligned with cesium-native naming) ──
 
     /// The loading tile (may be nullptr). Aligned with getLoadingTile().
-    const RasterOverlayTile* getLoadingTile() const { return _pLoadingTile; }
-    RasterOverlayTile* getLoadingTile() { return _pLoadingTile; }
+    const RasterOverlayTile* getLoadingTile() const { return _pLoadingTile.get(); }
+    RasterOverlayTile* getLoadingTile() { return _pLoadingTile.get(); }
+    const std::shared_ptr<RasterOverlayTile>& getLoadingTileHandle() const {
+        return _pLoadingTile;
+    }
 
     /// The ready tile (may be nullptr). Aligned with getReadyTile().
-    const RasterOverlayTile* getReadyTile() const { return _pReadyTile; }
-    RasterOverlayTile* getReadyTile() { return _pReadyTile; }
+    const RasterOverlayTile* getReadyTile() const { return _pReadyTile.get(); }
+    RasterOverlayTile* getReadyTile() { return _pReadyTile.get(); }
+    const std::shared_ptr<RasterOverlayTile>& getReadyTileHandle() const {
+        return _pReadyTile;
+    }
 
     /// Aligned with getTextureCoordinateID().
     /// Returns the raster-overlay texture coordinate index for this projection.
@@ -129,12 +136,12 @@ private:
     State state_ = State::Unattached;
 
     /// The tile we WANT at the desired zoom. May be Loading/Failed.
-    /// Aligned with cesium-native _pLoadingTile.
-    RasterOverlayTile* _pLoadingTile = nullptr;
+    /// Aligned with cesium-native _pLoadingTile and retains tile lifetime.
+    std::shared_ptr<RasterOverlayTile> _pLoadingTile;
 
     /// The tile we RENDER (always Loaded/Done, texture available).
-    /// Aligned with cesium-native _pReadyTile.
-    RasterOverlayTile* _pReadyTile = nullptr;
+    /// Aligned with cesium-native _pReadyTile and retains texture lifetime.
+    std::shared_ptr<RasterOverlayTile> _pReadyTile;
 
     /// Cached pointer to the ready texture (from _pReadyTile->getTexture()).
     Texture* readyTexture_ = nullptr;
