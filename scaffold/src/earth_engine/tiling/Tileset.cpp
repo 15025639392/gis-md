@@ -13,6 +13,7 @@
 #include "../providers/RasterOverlayTileProvider.h"
 #include "../terrain/TerrainTile.h"
 #include "../layers/ActivatedRasterOverlay.h"
+#include "../layers/RasterOverlay.h"
 #include "../debug/PerfTimer.h"
 
 #include <algorithm>
@@ -152,6 +153,64 @@ int rasterSourceZoom(const RasterOverlayTile* tile) {
 int rasterTextureSourceZoom(const RasterOverlayTile* tile) {
     if (!tile) return -1;
     return tile->isRectangleTile() ? tile->getSourceZoom() : tile->getTileID().z;
+}
+
+[[maybe_unused]] const char* surfaceDrawableSourceName(
+    SurfaceDrawableSource source) {
+    switch (source) {
+        case SurfaceDrawableSource::None:
+            return "none";
+        case SurfaceDrawableSource::OwnTerrain:
+            return "ownTerrain";
+        case SurfaceDrawableSource::AncestorUpsample:
+            return "ancestorUpsample";
+        case SurfaceDrawableSource::EllipsoidFallback:
+            return "ellipsoidFallback";
+        case SurfaceDrawableSource::GltfContent:
+            return "gltfContent";
+    }
+    return "unknown";
+}
+
+bool overlayCanUsePlaceholder(RasterOverlayFallbackPolicy policy) {
+    return policy == RasterOverlayFallbackPolicy::AncestorOrPlaceholder;
+}
+
+bool overlayAttachmentAllowedByPolicy(
+    const ActivatedRasterOverlay* activeOverlay,
+    const RasterMappedToTilesetTile* mapped,
+    const RasterAttachment* attachment) {
+    if (!activeOverlay || !activeOverlay->visible() ||
+        !attachment || !attachment->texture) {
+        return false;
+    }
+    if (activeOverlay->getOverlay().fallbackPolicy() ==
+        RasterOverlayFallbackPolicy::SkipUntilReady) {
+        return !mapped || mapped->getLoadingTile() == nullptr;
+    }
+    return true;
+}
+
+bool baseOverlayCanUseSurfacePlaceholder(
+    const ActivatedRasterOverlay* activeOverlay,
+    const Renderer& renderer) {
+    return activeOverlay && activeOverlay->visible() &&
+           activeOverlay->getOverlay().role() ==
+               RasterOverlayRole::BaseImagery &&
+           overlayCanUsePlaceholder(
+               activeOverlay->getOverlay().fallbackPolicy()) &&
+           renderer.surfaceFallbackTexture() != nullptr;
+}
+
+bool overlayDrawableForDiagnostics(
+    const ActivatedRasterOverlay* activeOverlay,
+    const RasterMappedToTilesetTile* mapped,
+    const Renderer& renderer,
+    const RasterAttachment* attachment) {
+    if (overlayAttachmentAllowedByPolicy(activeOverlay, mapped, attachment)) {
+        return true;
+    }
+    return baseOverlayCanUseSurfacePlaceholder(activeOverlay, renderer);
 }
 
 double terrainHeightPadding(double minimumHeight, double maximumHeight) {
@@ -1254,6 +1313,9 @@ void unloadMainThreadRenderResources(TilesetTile& tile) {
     tile.gpuIndexBuffer.reset();
     tile.gltfTextureResources.clear();
     tile.gltfPrimitiveResources.clear();
+    tile.surfaceDrawable = false;
+    tile.surfaceSource = SurfaceDrawableSource::None;
+    tile.completeRenderable = false;
     tile.renderable = false;
 }
 
@@ -1486,6 +1548,8 @@ Tileset::UnloadTileContentResult Tileset::unloadTileContent(
             tile.gpuVertexBuffer.reset();
             tile.gpuIndexBuffer.reset();
             tile.meshReady = false;
+            tile.surfaceDrawable = false;
+            tile.surfaceSource = SurfaceDrawableSource::None;
             terrainCache_.erase(key);
             break;
         case TileContentKind::Empty:
@@ -1497,6 +1561,7 @@ Tileset::UnloadTileContentResult Tileset::unloadTileContent(
 
     tile.contentKind = TileContentKind::Unknown;
     tile.loadState = TileLoadState::Unloaded;
+    tile.completeRenderable = false;
     tile.renderable = false;
     return result;
 }
@@ -1851,12 +1916,26 @@ void Tileset::resetTileSelectionState() {
         tile->inFrustum = false;
         tile->cameraInside = false;
         tile->ancestorMeetsSse = false;
-        tile->renderable = isTileRenderable(*tile);
+        tile->surfaceDrawable = hasSurfaceDrawable(*tile);
+        tile->completeRenderable = isTileCompleteRenderable(*tile);
+        tile->renderable = tile->completeRenderable;
         (void)ck;
     }
 }
 
-bool Tileset::isTileRenderable(const TilesetTile& tile) const {
+bool Tileset::hasSurfaceDrawable(const TilesetTile& tile) const {
+    if (tile.contentKind == TileContentKind::Render) {
+        return tile.meshReady && tile.gpuVertexBuffer != nullptr;
+    }
+    if (tile.contentKind == TileContentKind::External ||
+        tile.contentKind == TileContentKind::Empty) {
+        return tile.loadState == TileLoadState::Done ||
+               tile.loadState == TileLoadState::Failed;
+    }
+    return false;
+}
+
+bool Tileset::isTileCompleteRenderable(const TilesetTile& tile) const {
     if (tile.loadState == TileLoadState::Failed) {
         return true;
     }
@@ -1869,14 +1948,17 @@ bool Tileset::isTileRenderable(const TilesetTile& tile) const {
         return false;
     }
 
-    const bool mappedRastersReady = std::all_of(
-        tile.rasterOverlays.begin(),
-        tile.rasterOverlays.end(),
-        [](const std::unique_ptr<RasterMappedToTilesetTile>& overlay) {
-            return !overlay || overlay->getReadyTile() != nullptr;
-        });
-    if (!mappedRastersReady) {
-        return false;
+    for (size_t i = 0; i < rasterOverlays_.size(); ++i) {
+        const ActivatedRasterOverlay* activeOverlay = rasterOverlays_[i];
+        if (!activeOverlay || !activeOverlay->visible() ||
+            !activeOverlay->getOverlay().blocksCompleteRenderable()) {
+            continue;
+        }
+        if (i >= tile.rasterOverlays.size() ||
+            !tile.rasterOverlays[i] ||
+            tile.rasterOverlays[i]->getReadyTile() == nullptr) {
+            return false;
+        }
     }
 
     switch (tile.contentKind) {
@@ -1890,6 +1972,30 @@ bool Tileset::isTileRenderable(const TilesetTile& tile) const {
     }
 
     return false;
+}
+
+bool Tileset::isTileRenderable(const TilesetTile& tile) const {
+    return isTileCompleteRenderable(tile);
+}
+
+std::vector<size_t> Tileset::rasterOverlayProcessingOrder() const {
+    std::vector<size_t> order;
+    order.reserve(rasterOverlays_.size());
+    for (size_t i = 0; i < rasterOverlays_.size(); ++i) {
+        order.push_back(i);
+    }
+    std::stable_sort(order.begin(), order.end(), [this](size_t a, size_t b) {
+        const ActivatedRasterOverlay* lhs = rasterOverlays_[a];
+        const ActivatedRasterOverlay* rhs = rasterOverlays_[b];
+        const int lhsPriority = lhs
+            ? static_cast<int>(lhs->getOverlay().priority())
+            : static_cast<int>(RasterOverlayPriority::Low);
+        const int rhsPriority = rhs
+            ? static_cast<int>(rhs->getOverlay().priority())
+            : static_cast<int>(RasterOverlayPriority::Low);
+        return lhsPriority > rhsPriority;
+    });
+    return order;
 }
 
 void Tileset::prepareRasterOverlaysForSelection(TilesetTile& tile) {
@@ -1906,19 +2012,20 @@ void Tileset::prepareRasterOverlaysForSelection(TilesetTile& tile) {
     // current raster state, not on last frame's build phase.
     if (!rasterOverlays_.empty() &&
         tile.rasterOverlays.size() >= rasterOverlays_.size()) {
-        bool allVisibleOverlaysReady = true;
+        bool allRequiredOverlaysReady = true;
         for (size_t i = 0; i < rasterOverlays_.size(); ++i) {
             const ActivatedRasterOverlay* activeOverlay = rasterOverlays_[i];
-            if (!activeOverlay || !activeOverlay->visible()) {
+            if (!activeOverlay || !activeOverlay->visible() ||
+                !activeOverlay->getOverlay().blocksCompleteRenderable()) {
                 continue;
             }
             const auto& mapped = tile.rasterOverlays[i];
             if (!mapped || !mapped->getReadyTile()) {
-                allVisibleOverlaysReady = false;
+                allRequiredOverlaysReady = false;
                 break;
             }
         }
-        if (allVisibleOverlaysReady) {
+        if (allRequiredOverlaysReady) {
             return;
         }
     }
@@ -2454,6 +2561,8 @@ void Tileset::ensureTileChildren(TilesetTile& tile) {
             childInfo.state != TileAvailabilityState::Available;
         if (child->upsampledFromParent != upsampled) {
             child->meshReady = false;
+            child->surfaceDrawable = false;
+            child->surfaceSource = SurfaceDrawableSource::None;
             child->mesh.reset();
             child->gpuVertexBuffer.reset();
             child->gpuIndexBuffer.reset();
@@ -3747,7 +3856,11 @@ void Tileset::prefetchRasterOverlays(TilesetTile& tile) {
     const RasterOverlayDetails emptyDetails;
     const RasterOverlayDetails& overlayDetails =
         renderDetails ? *renderDetails : emptyDetails;
-    for (size_t i = 0; i < rasterOverlays_.size() && i < tile.rasterOverlays.size(); ++i) {
+    const std::vector<size_t> overlayOrder = rasterOverlayProcessingOrder();
+    for (size_t i : overlayOrder) {
+        if (i >= tile.rasterOverlays.size()) {
+            continue;
+        }
         ActivatedRasterOverlay* activeOverlay = rasterOverlays_[i];
         if (!activeOverlay || !activeOverlay->visible()) {
             continue;
@@ -3932,6 +4045,8 @@ void Tileset::processPendingUploads() {
         tile->gltfModel = std::move(upload.result.gltfModel);
         tile->gltfContentTransform = upload.result.contentTransform;
         tile->meshReady = false;
+        tile->surfaceDrawable = false;
+        tile->surfaceSource = SurfaceDrawableSource::GltfContent;
         tile->contentKind = TileContentKind::Render;
         tile->loadState = TileLoadState::ContentLoaded;
         ensureGltfRenderResources(*tile);
@@ -4125,23 +4240,36 @@ void Tileset::ensureTileMesh(TilesetTile& tile) {
 #else
         false;
 #endif
-    if (tile.meshReady) {
-        if (tile.contentKind == TileContentKind::Render &&
-            tile.loadState == TileLoadState::ContentLoaded) {
-            tile.loadState = TileLoadState::Done;
-        }
-        return;
-    }
-
     auto it = terrainCache_.find(terrainCacheKey(tile.key));
     const bool hasOwnTerrain = it != terrainCache_.end() && it->second;
     DecodedHeightmap* ownHeightmap = hasOwnTerrain ? it->second.get() : nullptr;
+
+    if (tile.meshReady) {
+        if (hasOwnTerrain &&
+            tile.surfaceSource != SurfaceDrawableSource::OwnTerrain) {
+            tile.meshReady = false;
+            tile.surfaceDrawable = false;
+            tile.surfaceSource = SurfaceDrawableSource::None;
+            tile.mesh.reset();
+            tile.gpuVertexBuffer.reset();
+            tile.gpuIndexBuffer.reset();
+        } else {
+            tile.surfaceDrawable = hasSurfaceDrawable(tile);
+            if (tile.contentKind == TileContentKind::Render &&
+                tile.loadState == TileLoadState::ContentLoaded) {
+                tile.loadState = TileLoadState::Done;
+            }
+            return;
+        }
+    }
 
     if (ownHeightmap) {
         ingestQuantizedMeshAvailability(tile.key, *ownHeightmap);
     }
 
-    if (tile.upsampledFromParent && !hasOwnTerrain) {
+    SurfaceDrawableSource meshSource = SurfaceDrawableSource::None;
+
+    if (!tile.mesh && !hasOwnTerrain) {
         if (!findUpsampleSourceTile(tile, true) && tile.parent) {
             ensureTileMesh(*tile.parent);
         }
@@ -4154,6 +4282,7 @@ void Tileset::ensureTileMesh(TilesetTile& tile) {
                 if (childMesh) {
                     tile.mesh = std::make_unique<SurfaceTileMesh>(
                         std::move(*childMesh));
+                    meshSource = SurfaceDrawableSource::AncestorUpsample;
                 }
             }
         }
@@ -4184,12 +4313,19 @@ void Tileset::ensureTileMesh(TilesetTile& tile) {
                 tile.mesh && tile.mesh->hasHorizonOcclusionPoint ? 1 : 0);
         }
 #endif
+        if (tile.mesh) {
+            meshSource = SurfaceDrawableSource::OwnTerrain;
+        }
     }
 
     if (!tile.mesh) {
-        if (!ownHeightmap) return;
         tile.mesh = std::make_unique<SurfaceTileMesh>();
-        *tile.mesh = TileSurface::buildEllipsoidMesh(tile.bounds, 64);
+        *tile.mesh = TileSurface::buildEllipsoidMesh(
+            tile.bounds,
+            ownHeightmap ? 64 : 16);
+        meshSource = ownHeightmap
+            ? SurfaceDrawableSource::OwnTerrain
+            : SurfaceDrawableSource::EllipsoidFallback;
 #ifdef __ANDROID__
         if (traceMesh) {
             __android_log_print(
@@ -4208,7 +4344,7 @@ void Tileset::ensureTileMesh(TilesetTile& tile) {
                 tile.mesh ? tile.mesh->skirtMeta.noSkirtIndicesCount : 0);
         }
 #endif
-        if (ownHeightmap->valid()) {
+        if (ownHeightmap && ownHeightmap->valid()) {
             const auto& ellipsoid = Ellipsoid::WGS84();
             for (auto& v : tile.mesh->vertices) {
                 Cartographic c = ellipsoid.cartesianToCartographic(v.positionEcef);
@@ -4307,8 +4443,16 @@ void Tileset::ensureTileMesh(TilesetTile& tile) {
     }
 #endif
     tile.meshReady = true;
-    tile.loadState = TileLoadState::Done;
+    tile.surfaceSource = meshSource == SurfaceDrawableSource::None
+        ? SurfaceDrawableSource::EllipsoidFallback
+        : meshSource;
     tile.contentKind = TileContentKind::Render;
+    tile.surfaceDrawable = hasSurfaceDrawable(tile);
+    if (hasOwnTerrain || tile.upsampledFromParent || !terrainProvider_) {
+        tile.loadState = TileLoadState::Done;
+    }
+    tile.completeRenderable = isTileCompleteRenderable(tile);
+    tile.renderable = tile.completeRenderable;
     // Bytes recomputed each frame via updateTotalBytesUsed() before unload.
     // No need to incrementally track here — overlay textures may attach/detach
     // later, and recompute captures the current state.
@@ -5228,7 +5372,7 @@ void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
     if (!tile.meshReady) {
         ensureTileMesh(tile);
     }
-    if (!tile.meshReady || !tile.gpuVertexBuffer) return;
+    if (!hasSurfaceDrawable(tile)) return;
 
     if (tile.rasterOverlays.size() < rasterOverlays_.size()) {
         tile.rasterOverlays.resize(rasterOverlays_.size());
@@ -5240,7 +5384,11 @@ void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
     // ── cesium-native: drive 7-step state machine for each overlay ──
     std::optional<size_t> firstMoreDetailAvailable;
     std::optional<size_t> firstUnknownAvailability;
-    for (size_t i = 0; i < rasterOverlays_.size() && i < tile.rasterOverlays.size(); ++i) {
+    const std::vector<size_t> overlayOrder = rasterOverlayProcessingOrder();
+    for (size_t i : overlayOrder) {
+        if (i >= tile.rasterOverlays.size()) {
+            continue;
+        }
         auto* activeOverlay = rasterOverlays_[i];
         if (!activeOverlay || !activeOverlay->visible()) {
             continue;
@@ -5298,6 +5446,10 @@ void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
         overlay->loadThrottled(*activeProvider);
     }
 
+    tile.surfaceDrawable = hasSurfaceDrawable(tile);
+    tile.completeRenderable = isTileCompleteRenderable(tile);
+    tile.renderable = tile.completeRenderable;
+
     const bool shouldCreateRasterUpsampledChildren =
         firstMoreDetailAvailable &&
         (!firstUnknownAvailability ||
@@ -5306,72 +5458,108 @@ void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
         createRasterOverlayUpsampledChildren(tile);
     }
 
-    // Build one composite SurfaceTile command per geometry tile. The SurfaceTile
-    // shader already supports a base texture plus overlay textures, so keeping
-    // all visible imagery layers in a single command avoids duplicate geometry
-    // draws and GL state churn for the same tile.
-    RenderCommand surfaceCommand;
-    bool hasSurfaceCommand = false;
+    Texture* baseTexture = renderer.surfaceFallbackTexture();
+    const RasterAttachment* baseAttachment = nullptr;
+    bool baseLayerDrawable = false;
+
+    for (size_t i : overlayOrder) {
+        if (i >= tile.rasterOverlays.size()) {
+            continue;
+        }
+        auto* activeOverlay = rasterOverlays_[i];
+        if (!activeOverlay || !activeOverlay->visible() ||
+            activeOverlay->getOverlay().role() != RasterOverlayRole::BaseImagery) {
+            continue;
+        }
+
+        const RasterMappedToTilesetTile* mapped =
+            tile.rasterOverlays[i].get();
+        const RasterAttachment* attachment =
+            renderer.getAttachedRaster(tile.key, static_cast<int32_t>(i));
+        if (overlayAttachmentAllowedByPolicy(
+                activeOverlay,
+                mapped,
+                attachment)) {
+            baseTexture = attachment->texture;
+            baseAttachment = attachment;
+            baseLayerDrawable = true;
+            break;
+        }
+
+        if (baseOverlayCanUseSurfacePlaceholder(activeOverlay, renderer)) {
+            baseTexture = renderer.surfaceFallbackTexture();
+            baseAttachment = nullptr;
+            break;
+        }
+    }
+
+    if (!baseTexture) {
+        return;
+    }
+
+    RenderCommand surfaceCommand = renderer.makeSurfaceTileCommand(
+        baseTexture,
+        tile.gpuVertexBuffer.get(),
+        tile.gpuIndexBuffer.get(),
+        static_cast<int>(tile.mesh->indices.size()));
+    surfaceCommand.frameId = frameNumber_;
+    surfaceCommand.generation = generation_;
+    surfaceCommand.surfaceTileUv = baseAttachment
+        ? std::array<float, 4>{
+              baseAttachment->offsetU,
+              baseAttachment->offsetV,
+              baseAttachment->scaleU,
+              baseAttachment->scaleV}
+        : std::array<float, 4>{0.0f, 0.0f, 1.0f, 1.0f};
+    surfaceCommand.surfaceGeometryZoom = tile.key.z;
+    surfaceCommand.surfaceTextureZoom = baseAttachment && baseAttachment->tile
+        ? rasterTextureSourceZoom(baseAttachment->tile)
+        : -1;
+    surfaceCommand.surfaceTileOrigin = {
+        static_cast<float>(tile.localOrigin.x()),
+        static_cast<float>(tile.localOrigin.y()),
+        static_cast<float>(tile.localOrigin.z())
+    };
+    surfaceCommand.surfaceTileOpacity = 1.0f;
+    surfaceCommand.surfaceTransitionOpacity = transitionOpacity;
+    if (transitionOpacity < 0.999f) {
+        surfaceCommand.blend = true;
+        surfaceCommand.blendSrc = RenderCommand::BlendFactor::SrcAlpha;
+        surfaceCommand.blendDst = RenderCommand::BlendFactorDst::OneMinusSrcAlpha;
+    }
+    surfaceCommand.surfaceGeneration = static_cast<float>(generation_);
+
     int overlayTextureCount = 0;
     for (size_t i = 0; i < rasterOverlays_.size() && i < tile.rasterOverlays.size(); ++i) {
         auto* activeOverlay = rasterOverlays_[i];
         if (!activeOverlay || !activeOverlay->visible()) {
             continue;
         }
+        if (activeOverlay->getOverlay().role() == RasterOverlayRole::BaseImagery &&
+            baseLayerDrawable) {
+            const RasterAttachment* attachment =
+                renderer.getAttachedRaster(tile.key, static_cast<int32_t>(i));
+            if (attachment == baseAttachment) {
+                continue;
+            }
+        }
+        const RasterMappedToTilesetTile* mapped =
+            tile.rasterOverlays[i].get();
         const RasterAttachment* attachment =
             renderer.getAttachedRaster(tile.key, static_cast<int32_t>(i));
-        Texture* tex = (attachment && attachment->texture)
-            ? attachment->texture
-            : nullptr;
-
-        // Fallback: placeholder for basemap layer only
-        if (!tex && i == 0 && !rasterOverlays_.empty()) {
-            RasterOverlayTile* placeholder = activeOverlay->getPlaceholderTile();
-            tex = placeholder ? placeholder->getTexture() : nullptr;
+        if (!overlayAttachmentAllowedByPolicy(
+                activeOverlay,
+                mapped,
+                attachment)) {
+            continue;
         }
+        Texture* tex = attachment->texture;
         if (!tex) continue;
 
         float uvOffU = attachment ? attachment->offsetU : 0.0f;
         float uvOffV = attachment ? attachment->offsetV : 0.0f;
         float uvScaleU = attachment ? attachment->scaleU : 1.0f;
         float uvScaleV = attachment ? attachment->scaleV : 1.0f;
-
-        if (!hasSurfaceCommand) {
-            surfaceCommand = renderer.makeSurfaceTileCommand(
-                tex,
-                tile.gpuVertexBuffer.get(),
-                tile.gpuIndexBuffer.get(),
-                static_cast<int>(tile.mesh->indices.size()));
-
-            // cesium-native: validator requires frameId and generation.
-            // frameId must match Scene's frameState_.frameId; generation must be non-zero.
-            surfaceCommand.frameId = frameNumber_;
-            surfaceCommand.generation = generation_;
-
-            surfaceCommand.surfaceTileUv = {uvOffU, uvOffV, uvScaleU, uvScaleV};
-            surfaceCommand.surfaceGeometryZoom = tile.key.z;
-            surfaceCommand.surfaceTextureZoom = attachment && attachment->tile
-                ? rasterTextureSourceZoom(attachment->tile)
-                : tile.key.z;
-
-            surfaceCommand.surfaceTileOrigin = {
-                static_cast<float>(tile.localOrigin.x()),
-                static_cast<float>(tile.localOrigin.y()),
-                static_cast<float>(tile.localOrigin.z())
-            };
-
-            surfaceCommand.surfaceTileOpacity = 1.0f;
-            surfaceCommand.surfaceTransitionOpacity = transitionOpacity;
-            if (transitionOpacity < 0.999f) {
-                surfaceCommand.blend = true;
-                surfaceCommand.blendSrc = RenderCommand::BlendFactor::SrcAlpha;
-                surfaceCommand.blendDst = RenderCommand::BlendFactorDst::OneMinusSrcAlpha;
-            }
-
-            surfaceCommand.surfaceGeneration = static_cast<float>(generation_);
-            hasSurfaceCommand = true;
-            continue;
-        }
 
         if (overlayTextureCount >= kMaxSurfaceImageryOverlays) {
             continue;
@@ -5385,10 +5573,8 @@ void Tileset::buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
         ++overlayTextureCount;
     }
 
-    if (hasSurfaceCommand) {
-        surfaceCommand.surfaceOverlayTextureCount = overlayTextureCount;
-        commands.push_back(std::move(surfaceCommand));
-    }
+    surfaceCommand.surfaceOverlayTextureCount = overlayTextureCount;
+    commands.push_back(std::move(surfaceCommand));
 }
 
 void Tileset::buildRenderCommands(Renderer& renderer,
@@ -5422,6 +5608,7 @@ void Tileset::buildRenderCommands(Renderer& renderer,
     int noCommandOther = 0;
 
     std::unordered_set<std::string> renderedGeometryKeys;
+    std::unordered_map<std::string, bool> selectedDrawCommandByKey;
 
     auto renderTile = [&](const TileKey& key,
                           float transitionOpacity,
@@ -5449,10 +5636,12 @@ void Tileset::buildRenderCommands(Renderer& renderer,
             ++drawAttempts;
             if (selectedPass) {
                 ++selectedWithCommand;
+                selectedDrawCommandByKey[renderCk] = true;
             }
         } else if (selectedPass) {
+            selectedDrawCommandByKey[renderCk] = false;
             ++selectedNoCommand;
-            if (!tile->meshReady) {
+            if (!hasSurfaceDrawable(*tile)) {
                 ++noCommandNoMeshReady;
             } else if (!tile->gpuVertexBuffer) {
                 ++noCommandNoGpuBuffer;
@@ -5469,17 +5658,15 @@ void Tileset::buildRenderCommands(Renderer& renderer,
                     hasVisibleRasterOverlay = true;
                     const RasterAttachment* attachment =
                         renderer.getAttachedRaster(tile->key, static_cast<int32_t>(i));
-                    if (attachment && attachment->texture) {
+                    const RasterMappedToTilesetTile* mapped =
+                        tile->rasterOverlays[i].get();
+                    if (overlayDrawableForDiagnostics(
+                            activeOverlay,
+                            mapped,
+                            renderer,
+                            attachment)) {
                         hasRasterTexture = true;
                         break;
-                    }
-                    if (i == 0) {
-                        RasterOverlayTile* placeholder =
-                            activeOverlay->getPlaceholderTile();
-                        if (placeholder && placeholder->getTexture()) {
-                            hasRasterTexture = true;
-                            break;
-                        }
                     }
                 }
                 if (hasVisibleRasterOverlay && !hasRasterTexture) {
@@ -5585,10 +5772,48 @@ void Tileset::buildRenderCommands(Renderer& renderer,
                 continue;
             }
 
+            int overlayDrawableCount = 0;
+            int blockedRequiredLayerCount = 0;
+            bool baseLayerDrawable = false;
+            for (size_t i = 0;
+                 i < rasterOverlays_.size() && i < tile->rasterOverlays.size();
+                 ++i) {
+                const ActivatedRasterOverlay* activeOverlay = rasterOverlays_[i];
+                if (!activeOverlay || !activeOverlay->visible()) {
+                    continue;
+                }
+                const RasterMappedToTilesetTile* mapped =
+                    tile->rasterOverlays[i].get();
+                const RasterAttachment* attachment =
+                    renderer.getAttachedRaster(
+                        tile->key,
+                        static_cast<int32_t>(i));
+                const bool drawable = overlayDrawableForDiagnostics(
+                    activeOverlay,
+                    mapped,
+                    renderer,
+                    attachment);
+                if (drawable) {
+                    ++overlayDrawableCount;
+                    if (activeOverlay->getOverlay().role() ==
+                        RasterOverlayRole::BaseImagery) {
+                        baseLayerDrawable = true;
+                    }
+                }
+                if (activeOverlay->getOverlay().blocksCompleteRenderable() &&
+                    (!mapped || !mapped->getReadyTile())) {
+                    ++blockedRequiredLayerCount;
+                }
+            }
+            const std::string visibleCk = terrainCacheKey(tile->key);
+            const auto drawIt = selectedDrawCommandByKey.find(visibleCk);
+            const bool drawCommand =
+                drawIt != selectedDrawCommandByKey.end() && drawIt->second;
+
             __android_log_print(
                 ANDROID_LOG_INFO,
                 "TilesetDiag",
-                "visible frame=%llu key=%d/%d/%d sse=%.2f load=%d sel=%d renderable=%d mesh=%d gpu=%d up=%d children=%zu rasters=%zu",
+                "visible frame=%llu key=%d/%d/%d sse=%.2f load=%d sel=%d surfaceDrawable=%d surfaceSource=%s completeRenderable=%d mesh=%d gpu=%d up=%d children=%zu rasters=%zu baseLayerDrawable=%d overlayDrawableCount=%d blockedRequiredLayerCount=%d drawCommand=%d",
                 static_cast<unsigned long long>(frameNumber_),
                 tile->key.z,
                 tile->key.x,
@@ -5596,12 +5821,18 @@ void Tileset::buildRenderCommands(Renderer& renderer,
                 tile->screenSpaceError,
                 static_cast<int>(tile->loadState),
                 static_cast<int>(tile->selectionState),
-                isTileRenderable(*tile) ? 1 : 0,
+                hasSurfaceDrawable(*tile) ? 1 : 0,
+                surfaceDrawableSourceName(tile->surfaceSource),
+                isTileCompleteRenderable(*tile) ? 1 : 0,
                 tile->meshReady ? 1 : 0,
                 tile->gpuVertexBuffer ? 1 : 0,
                 tile->upsampledFromParent ? 1 : 0,
                 tile->children.size(),
-                tile->rasterOverlays.size());
+                tile->rasterOverlays.size(),
+                baseLayerDrawable ? 1 : 0,
+                overlayDrawableCount,
+                blockedRequiredLayerCount,
+                drawCommand ? 1 : 0);
 
             for (size_t i = 0; i < tile->rasterOverlays.size(); ++i) {
                 const auto& mapped = tile->rasterOverlays[i];

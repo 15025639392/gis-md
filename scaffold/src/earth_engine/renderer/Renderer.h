@@ -65,6 +65,7 @@ public:
     /// Tile 共享索引 buffer（64×64 grid，所有 surface tile 共用）
     Buffer* tileIndexBuffer() const;
     int tileIndexCount() const;
+    Texture* surfaceFallbackTexture() const;
 
     /// glTF primitive shader.
     ShaderProgram* gltfShader() const;

@@ -136,7 +136,12 @@ static TilesetOptions makeDemoTilesetOptions() {
     return options;
 }
 
-static RasterOverlay::Options makeDemoRasterOverlayOptions(float opacity) {
+static RasterOverlay::Options makeDemoRasterOverlayOptions(
+    float opacity,
+    RasterOverlayRole role,
+    RasterOverlayPriority priority,
+    RasterOverlayFallbackPolicy fallbackPolicy,
+    bool blocksCompleteRenderable) {
     RasterOverlay::Options options{};
     options.maximumSimultaneousTileLoads = 20;
     options.maximumScreenSpaceError = 2.0;
@@ -144,6 +149,10 @@ static RasterOverlay::Options makeDemoRasterOverlayOptions(float opacity) {
     options.maximumZoom = 0;
     options.visible = true;
     options.opacity = opacity;
+    options.role = role;
+    options.priority = priority;
+    options.fallbackPolicy = fallbackPolicy;
+    options.blocksCompleteRenderable = blocksCompleteRenderable;
     return options;
 }
 
@@ -179,11 +188,11 @@ static void addActivatedRasterOverlay(
     std::vector<ActivatedRasterOverlay*>& rasterOverlays,
     std::unique_ptr<ImageryProvider> provider,
     std::unique_ptr<TileScheme> scheme,
-    float opacity) {
+    RasterOverlay::Options options) {
     auto overlay = std::make_unique<RasterOverlay>(
         std::move(provider),
         std::move(scheme),
-        makeDemoRasterOverlayOptions(opacity));
+        options);
     auto active = std::make_unique<ActivatedRasterOverlay>(*overlay);
 
     rasterOverlays.push_back(active.get());
@@ -207,7 +216,12 @@ static std::vector<ActivatedRasterOverlay*> createDemoRasterOverlays() {
             rasterOverlays,
             std::move(xyz),
             TileScheme::createOpenGlobusEarth(),
-            1.0f);
+            makeDemoRasterOverlayOptions(
+                1.0f,
+                RasterOverlayRole::BaseImagery,
+                RasterOverlayPriority::High,
+                RasterOverlayFallbackPolicy::AncestorOrPlaceholder,
+                true));
         LOGI("Gaode satellite basemap enabled");
 
         if (kEnableGaodeRoadNetOverlayForDemo) {
@@ -221,7 +235,12 @@ static std::vector<ActivatedRasterOverlay*> createDemoRasterOverlays() {
                 rasterOverlays,
                 std::move(road),
                 TileScheme::createOpenGlobusEarth(),
-                0.92f);
+                makeDemoRasterOverlayOptions(
+                    0.92f,
+                    RasterOverlayRole::AnnotationOverlay,
+                    RasterOverlayPriority::Low,
+                    RasterOverlayFallbackPolicy::SkipUntilReady,
+                    false));
             LOGI("Gaode road network overlay enabled");
         }
     } else {
@@ -230,7 +249,12 @@ static std::vector<ActivatedRasterOverlay*> createDemoRasterOverlays() {
             rasterOverlays,
             std::move(dbg),
             TileScheme::createXYZWebMercator(),
-            1.0f);
+            makeDemoRasterOverlayOptions(
+                1.0f,
+                RasterOverlayRole::BaseImagery,
+                RasterOverlayPriority::High,
+                RasterOverlayFallbackPolicy::AncestorOrPlaceholder,
+                true));
     }
     return rasterOverlays;
 }

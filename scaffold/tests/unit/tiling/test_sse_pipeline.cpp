@@ -3,6 +3,7 @@
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
 #include "earth_engine/layers/RasterOverlay.h"
+#include "earth_engine/globe/Globe.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Transforms.h"
 #include "earth_engine/core/math/OrientedBoundingBox.h"
@@ -464,6 +465,10 @@ RasterOverlay::Options makeRasterOverlayOptions() {
     options.maximumZoom = 0;
     options.visible = true;
     options.opacity = 1.0f;
+    options.role = RasterOverlayRole::BaseImagery;
+    options.priority = RasterOverlayPriority::High;
+    options.fallbackPolicy = RasterOverlayFallbackPolicy::AncestorOrPlaceholder;
+    options.blocksCompleteRenderable = true;
     return options;
 }
 
@@ -553,6 +558,20 @@ public:
     TextureDesc lastTextureDesc;
     int createdTextureCount = 0;
     bool allowTextureCreation = false;
+};
+
+struct InitializedRendererHarness {
+    DummyRenderDevice device;
+    Renderer renderer;
+
+    InitializedRendererHarness() : renderer(&device) {
+        device.allowTextureCreation = true;
+        const GlobeMesh globeMesh = Globe::createMesh(4, 2);
+        check(renderer.initialize(globeMesh),
+              "Renderer test harness initializes shared surface resources");
+        check(renderer.surfaceFallbackTexture() != nullptr,
+              "Renderer test harness creates a surface fallback texture");
+    }
 };
 
 std::unique_ptr<GltfModel> makeTriangleGltfModel() {
@@ -3504,6 +3523,157 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
               mapped->getState() == RasterMappedToTilesetTile::State::Attached &&
               renderer.getAttachedRaster(rootKey, 0) != nullptr,
           "Tileset: build command attaches pre-promoted raster and emits draw command");
+}
+
+void testTilesetSurfaceDrawableDrawsWithPlaceholderBaseImagery() {
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+
+    auto terrainProvider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(terrainProvider),
+        std::move(scheme),
+        {&baseActivated},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: placeholder-base root tile is created");
+    if (!root) return;
+
+    const Rectangle preciseRectangle =
+        Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
+    root->bounds = preciseRectangle;
+    root->mesh = std::make_unique<SurfaceTileMesh>();
+    root->mesh->rasterOverlayDetails.setGeographicRectangle(preciseRectangle);
+    root->mesh->indices = {0, 1, 2};
+    root->meshReady = true;
+    root->gpuVertexBuffer = std::make_unique<DummyBuffer>(96);
+    root->gpuIndexBuffer = std::make_unique<DummyBuffer>(12);
+    root->geometricError = 100.0;
+    root->loadState = TileLoadState::Done;
+    root->contentKind = TileContentKind::Render;
+    root->rasterOverlays.resize(1);
+
+    check(!TilesetTestAccess::isTileRenderable(tileset, *root),
+          "Tileset: required base imagery keeps complete renderable false while loading");
+
+    InitializedRendererHarness rendererHarness;
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        rendererHarness.renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 1,
+          "Tileset: surface drawable emits a draw command before base imagery is ready");
+    if (commands.empty()) return;
+    const RenderCommand& command = commands.front();
+    check(command.kind == RenderCommandKind::SurfaceTile &&
+              command.textures.size() == 1 &&
+              command.textures.front() ==
+                  rendererHarness.renderer.surfaceFallbackTexture() &&
+              command.surfaceOverlayTextureCount == 0 &&
+              command.surfaceTextureZoom == -1,
+          "Tileset: missing base imagery uses the layer placeholder texture without overlays");
+    check(!TilesetTestAccess::isTileRenderable(tileset, *root),
+          "Tileset: placeholder draw does not promote strict complete renderable");
+}
+
+void testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw() {
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    auto roadOptions = makeRasterOverlayOptions();
+    roadOptions.role = RasterOverlayRole::AnnotationOverlay;
+    roadOptions.priority = RasterOverlayPriority::Low;
+    roadOptions.fallbackPolicy = RasterOverlayFallbackPolicy::SkipUntilReady;
+    roadOptions.blocksCompleteRenderable = false;
+    roadOptions.opacity = 0.35f;
+    auto roadOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        roadOptions);
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    ActivatedRasterOverlay roadActivated(*roadOverlay);
+
+    auto terrainProvider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(terrainProvider),
+        std::move(scheme),
+        {&baseActivated, &roadActivated},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: annotation-nonblocking root tile is created");
+    if (!root) return;
+
+    const Rectangle preciseRectangle =
+        Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
+    root->bounds = preciseRectangle;
+    root->mesh = std::make_unique<SurfaceTileMesh>();
+    root->mesh->rasterOverlayDetails.setGeographicRectangle(preciseRectangle);
+    root->mesh->indices = {0, 1, 2};
+    root->meshReady = true;
+    root->gpuVertexBuffer = std::make_unique<DummyBuffer>(96);
+    root->gpuIndexBuffer = std::make_unique<DummyBuffer>(12);
+    root->geometricError = 100.0;
+    root->loadState = TileLoadState::Done;
+    root->contentKind = TileContentKind::Render;
+    root->rasterOverlays.resize(2);
+
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    RasterMappedToTilesetTile* baseMapped = root->rasterOverlays[0].get();
+    RasterMappedToTilesetTile* roadMapped = root->rasterOverlays[1].get();
+    RasterOverlayTile* baseLoading =
+        baseMapped ? baseMapped->getLoadingTile() : nullptr;
+    check(baseLoading != nullptr && roadMapped != nullptr,
+          "Tileset: annotation-nonblocking setup creates base and road mappings");
+    if (!baseMapped || !baseLoading || !roadMapped) return;
+
+    baseLoading->setTexture(std::make_unique<DummyTexture>(4, 4));
+    baseLoading->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+
+    check(baseMapped->getReadyTile() == baseLoading &&
+              roadMapped->getReadyTile() == nullptr &&
+              TilesetTestAccess::isTileRenderable(tileset, *root),
+          "Tileset: ready base imagery completes the tile even while annotation is missing");
+
+    InitializedRendererHarness rendererHarness;
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        rendererHarness.renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 1,
+          "Tileset: missing annotation overlay does not suppress surface draw");
+    if (commands.empty()) return;
+    const RenderCommand& command = commands.front();
+    check(command.kind == RenderCommandKind::SurfaceTile &&
+              command.textures.size() == 1 &&
+              command.surfaceOverlayTextureCount == 0,
+          "Tileset: base imagery draws alone until annotation overlay is ready");
+    check(rendererHarness.renderer.getAttachedRaster(rootKey, 0) != nullptr &&
+              rendererHarness.renderer.getAttachedRaster(rootKey, 1) == nullptr,
+          "Tileset: renderer attaches ready base imagery without a road attachment");
 }
 
 void testTilesetSurfaceOverlaysCompositeIntoSingleCommand() {
@@ -7655,14 +7825,50 @@ void testTilesetRenderContentRequiresDoneState() {
 }
 
 void testTilesetMappedRasterMustBeReadyForRenderability() {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+
+    {
+        auto provider = std::make_unique<SparseTerrainProvider>();
+        auto scheme = TileScheme::createGeographicTMS();
+        Tileset tileset(
+            std::move(provider),
+            std::move(scheme),
+            {},
+            nullptr,
+            TilesetOptions{});
+
+        TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+        check(root != nullptr,
+              "Tileset: mapped-raster renderability root tile is created");
+        if (!root) return;
+
+        TilesetTestAccess::putTerrainCache(
+            tileset,
+            rootKey,
+            makeFlatHeightmap(0.0f));
+        TilesetTestAccess::ensureTileMesh(tileset, *root);
+        check(TilesetTestAccess::isTileRenderable(tileset, *root),
+              "Tileset: Done render content without mapped rasters is renderable");
+    }
+
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    Tileset tileset(
+        std::move(provider),
+        std::move(scheme),
+        {&activated},
+        nullptr,
+        TilesetOptions{});
 
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
-          "Tileset: mapped-raster renderability root tile is created");
+          "Tileset: required-raster renderability root tile is created");
     if (!root) return;
 
     TilesetTestAccess::putTerrainCache(
@@ -7670,8 +7876,6 @@ void testTilesetMappedRasterMustBeReadyForRenderability() {
         rootKey,
         makeFlatHeightmap(0.0f));
     TilesetTestAccess::ensureTileMesh(tileset, *root);
-    check(TilesetTestAccess::isTileRenderable(tileset, *root),
-          "Tileset: Done render content without mapped rasters is renderable");
 
     root->rasterOverlays.resize(1);
     root->rasterOverlays[0] = std::make_unique<RasterMappedToTilesetTile>();
@@ -9842,6 +10046,8 @@ int main() {
     testTilesetEnsuresOverlayProviderBeforeMapping();
     testTilesetPrefetchesRasterFromBoundingRegionBeforeRenderContent();
     testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach();
+    testTilesetSurfaceDrawableDrawsWithPlaceholderBaseImagery();
+    testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw();
     testTilesetSurfaceOverlaysCompositeIntoSingleCommand();
     testTilesetRasterMoreDetailCreatesUpsampledChildren();
     testTilesetGltfRenderContentBuildsPrimitiveCommands();

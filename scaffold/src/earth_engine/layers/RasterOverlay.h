@@ -8,6 +8,25 @@ namespace earth_engine {
 class ImageryProvider;
 class TileScheme;
 
+enum class RasterOverlayRole {
+    BaseImagery,
+    AnnotationOverlay,
+    DataOverlay
+};
+
+enum class RasterOverlayPriority {
+    Low = 0,
+    Normal = 1,
+    High = 2
+};
+
+enum class RasterOverlayFallbackPolicy {
+    ExactOrAncestor,
+    AncestorOrPlaceholder,
+    PreviousAttached,
+    SkipUntilReady
+};
+
 /// cesium-native RasterOverlay equivalent.
 ///
 /// Pure configuration layer — holds the imagery data source, tile scheme,
@@ -19,18 +38,25 @@ class RasterOverlay {
 public:
     struct Options {
         /// Maximum simultaneous tile loads (aligned with RasterOverlayOptions).
-        int maximumSimultaneousTileLoads;
+        int maximumSimultaneousTileLoads = 20;
 
         /// Maximum screen space error for LOD selection.
-        double maximumScreenSpaceError;
+        double maximumScreenSpaceError = 2.0;
 
         /// Minimum/maximum zoom overrides (0 = use provider defaults).
-        int minimumZoom;
-        int maximumZoom;
+        int minimumZoom = 0;
+        int maximumZoom = 0;
 
         /// Runtime presentation flags used by the unified Tileset renderer.
         bool visible = true;
         float opacity = 1.0f;
+
+        /// Layer semantics for draw ordering, request priority, and fallback.
+        RasterOverlayRole role = RasterOverlayRole::BaseImagery;
+        RasterOverlayPriority priority = RasterOverlayPriority::High;
+        RasterOverlayFallbackPolicy fallbackPolicy =
+            RasterOverlayFallbackPolicy::AncestorOrPlaceholder;
+        bool blocksCompleteRenderable = true;
     };
 
     /// @param provider  The imagery data source (ownership transferred).
@@ -65,6 +91,15 @@ public:
 
     float opacity() const { return options_.opacity; }
     void setOpacity(float opacity);
+
+    RasterOverlayRole role() const { return options_.role; }
+    RasterOverlayPriority priority() const { return options_.priority; }
+    RasterOverlayFallbackPolicy fallbackPolicy() const {
+        return options_.fallbackPolicy;
+    }
+    bool blocksCompleteRenderable() const {
+        return options_.blocksCompleteRenderable;
+    }
 
 private:
     std::unique_ptr<ImageryProvider> provider_;

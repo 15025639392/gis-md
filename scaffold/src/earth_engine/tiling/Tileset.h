@@ -253,7 +253,10 @@ private:
     void ensureTileChildren(TilesetTile& tile);
     void createRasterOverlayUpsampledChildren(TilesetTile& tile);
     void resetTileSelectionState();
+    bool hasSurfaceDrawable(const TilesetTile& tile) const;
+    bool isTileCompleteRenderable(const TilesetTile& tile) const;
     bool isTileRenderable(const TilesetTile& tile) const;
+    std::vector<size_t> rasterOverlayProcessingOrder() const;
     void prepareRasterOverlaysForSelection(TilesetTile& tile);
     bool hasLoadedTerrainContent(const TilesetTile& tile) const;
     bool isAvailabilityBoundaryTile(const TilesetTile& tile) const;

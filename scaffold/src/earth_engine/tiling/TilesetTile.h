@@ -39,6 +39,14 @@ enum class TileContentKind {
     Render
 };
 
+enum class SurfaceDrawableSource {
+    None,
+    OwnTerrain,
+    AncestorUpsample,
+    EllipsoidFallback,
+    GltfContent
+};
+
 /// Renderer-side resources for one glTF mesh primitive.
 /// This mirrors cesium-native TileRenderContent::getRenderResources without
 /// mixing platform buffers into the parsed glTF model data.
@@ -156,6 +164,8 @@ struct TilesetTile {
     double terrainMaximumHeight = 0.0;
     /// Whether the mesh is ready for rendering
     bool meshReady = false;
+    bool surfaceDrawable = false;
+    SurfaceDrawableSource surfaceSource = SurfaceDrawableSource::None;
     /// cesium-native UpsampledQuadtreeNode equivalent. The tile is not
     /// requestable; its render content is derived from an ancestor tile.
     bool upsampledFromParent = false;
@@ -176,7 +186,8 @@ struct TilesetTile {
     std::vector<RasterOverlayProjection> missingRasterOverlayProjections;
 
     // ---- LOD state ----
-    bool renderable = false;
+    bool completeRenderable = false;
+    bool renderable = false;  // compatibility alias for completeRenderable
     bool subdivisionDesired = false;
     TileSelectionState previousSelectionState = TileSelectionState::NotVisited;
     TileSelectionState selectionState = TileSelectionState::NotVisited;

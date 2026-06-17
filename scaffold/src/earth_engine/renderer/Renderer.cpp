@@ -80,6 +80,7 @@ uniform float u_tileOpacity;
 uniform float u_transitionOpacity;
 
 out vec2 v_texcoord;
+out vec2 v_gridUv;
 out vec3 v_normal;
 out float v_tileOpacity;
 out float v_transitionOpacity;
@@ -89,6 +90,7 @@ void main() {
     // (computed in CPU double precision). a_position is relative
     // to the tile center — small values, good float precision.
     v_texcoord = u_tileUV.xy + a_texcoord * u_tileUV.zw;
+    v_gridUv = a_texcoord;
     v_normal = normalize(a_normal);
     v_tileOpacity = u_tileOpacity;
     v_transitionOpacity = u_transitionOpacity;
@@ -101,15 +103,52 @@ static const char* kSurfaceTileFragmentGLSL = R"glsl(
 precision mediump float;
 
 in vec2 v_texcoord;
+in vec2 v_gridUv;
 in vec3 v_normal;
 in float v_tileOpacity;
 in float v_transitionOpacity;
 uniform sampler2D u_tileTexture;
+uniform sampler2D u_overlayTexture0;
+uniform sampler2D u_overlayTexture1;
+uniform sampler2D u_overlayTexture2;
+uniform sampler2D u_overlayTexture3;
 uniform vec3 u_lightDir;
+uniform int u_overlayTextureCount;
+uniform vec4 u_overlayTileUV0;
+uniform vec4 u_overlayTileUV1;
+uniform vec4 u_overlayTileUV2;
+uniform vec4 u_overlayTileUV3;
+uniform float u_overlayOpacity0;
+uniform float u_overlayOpacity1;
+uniform float u_overlayOpacity2;
+uniform float u_overlayOpacity3;
 out vec4 fragColor;
+
+vec4 alphaOver(vec4 base, vec4 overlay, float opacity) {
+    overlay.a *= clamp(opacity, 0.0, 1.0);
+    base.rgb = mix(base.rgb, overlay.rgb, overlay.a);
+    base.a = max(base.a, overlay.a);
+    return base;
+}
 
 void main() {
     vec4 baseColor = texture(u_tileTexture, v_texcoord);
+    if (u_overlayTextureCount > 0) {
+        vec2 overlayUv = u_overlayTileUV0.xy + v_gridUv * u_overlayTileUV0.zw;
+        baseColor = alphaOver(baseColor, texture(u_overlayTexture0, overlayUv), u_overlayOpacity0);
+    }
+    if (u_overlayTextureCount > 1) {
+        vec2 overlayUv = u_overlayTileUV1.xy + v_gridUv * u_overlayTileUV1.zw;
+        baseColor = alphaOver(baseColor, texture(u_overlayTexture1, overlayUv), u_overlayOpacity1);
+    }
+    if (u_overlayTextureCount > 2) {
+        vec2 overlayUv = u_overlayTileUV2.xy + v_gridUv * u_overlayTileUV2.zw;
+        baseColor = alphaOver(baseColor, texture(u_overlayTexture2, overlayUv), u_overlayOpacity2);
+    }
+    if (u_overlayTextureCount > 3) {
+        vec2 overlayUv = u_overlayTileUV3.xy + v_gridUv * u_overlayTileUV3.zw;
+        baseColor = alphaOver(baseColor, texture(u_overlayTexture3, overlayUv), u_overlayOpacity3);
+    }
     vec3 N = normalize(v_normal);
     vec3 L = normalize(u_lightDir);
     float NdotL = max(dot(N, L), 0.0);
@@ -1733,6 +1772,7 @@ struct Renderer::Impl {
     // Surface tile (unified, cesium-native glTF layout)
     std::unique_ptr<ShaderProgram> surfaceTileShader;
     std::unique_ptr<Buffer> tileIndexBuffer;  // shared 64×64 grid IBO
+    std::unique_ptr<Texture> surfaceFallbackTexture;
     int tileIndexCount = 0;
 
     // glTF TileRenderContent
@@ -1841,6 +1881,20 @@ bool Renderer::initialize(const GlobeMesh& mesh) {
     if (!impl_->tileIndexBuffer) return false;
     impl_->tileIndexCount = static_cast<int>(tileIndices.size());
 
+    const uint8_t fallbackPixel[4] = {118, 132, 136, 255};
+    TextureDesc fallbackDesc;
+    fallbackDesc.width = 1;
+    fallbackDesc.height = 1;
+    fallbackDesc.format = TextureDesc::Format::RGBA8;
+    fallbackDesc.data = fallbackPixel;
+    fallbackDesc.dataSize = sizeof(fallbackPixel);
+    fallbackDesc.mipmap = false;
+    fallbackDesc.minFilter = TextureDesc::Filter::Linear;
+    fallbackDesc.magFilter = TextureDesc::Filter::Linear;
+    fallbackDesc.wrapS = TextureDesc::Wrap::Clamp;
+    fallbackDesc.wrapT = TextureDesc::Wrap::Clamp;
+    impl_->surfaceFallbackTexture = dev->createTexture(fallbackDesc);
+
     // ---- Color shader (vector layers) ----
     ShaderDesc colorSd;
     colorSd.vertexSource = isMetal ? kColorVertexMSL : kColorVertexGLSL;
@@ -1863,6 +1917,7 @@ void Renderer::dispose() {
     impl_->globeIndexBuffer.reset();
     impl_->surfaceTileShader.reset();
     impl_->tileIndexBuffer.reset();
+    impl_->surfaceFallbackTexture.reset();
     impl_->gltfShader.reset();
     impl_->gltfInstancedShader.reset();
     impl_->colorShader.reset();
@@ -1881,6 +1936,9 @@ int Renderer::globeIndexCount() const { return impl_->globeIndexCount; }
 ShaderProgram* Renderer::colorShader() const { return impl_->colorShader.get(); }
 Buffer* Renderer::tileIndexBuffer() const { return impl_->tileIndexBuffer.get(); }
 int Renderer::tileIndexCount() const { return impl_->tileIndexCount; }
+Texture* Renderer::surfaceFallbackTexture() const {
+    return impl_->surfaceFallbackTexture.get();
+}
 ShaderProgram* Renderer::gltfShader() const { return impl_->gltfShader.get(); }
 
 ShaderProgram* Renderer::gltfInstancedShader() const {
