@@ -4,6 +4,7 @@
 #include "RasterMappedToTilesetTile.h"
 #include "TileScheme.h"
 #include "TilePlan.h"
+#include "../core/resources/FrameResourceBudget.h"
 #include "../core/math/Vec3.h"
 #include "../core/math/OrientedBoundingBox.h"
 #include "../content/GltfContentProvider.h"
@@ -291,9 +292,12 @@ private:
                           const SelectorFrame& selectorFrame,
                           const std::vector<double>& distances) const;
 
-    RequestOutcome requestMissingTiles(const std::vector<TileLoadRequest>& loadRequests);
+    RequestOutcome requestMissingTiles(
+        const std::vector<TileLoadRequest>& loadRequests,
+        FrameResourceBudget* budget = nullptr);
     bool processPendingUploads(bool interactionActive,
-                               bool resourceSmoothingActive);
+                               bool resourceSmoothingActive,
+                               FrameResourceBudget* budget = nullptr);
     bool hasTilesetPendingWork() const;
     bool hasRasterOverlayPendingWork() const;
     uint64_t rasterOverlayRevision() const;
@@ -431,6 +435,7 @@ private:
     bool lastRequestBlockedByInflight_ = false;
     bool interactionActiveForFrame_ = false;
     bool resourceSmoothingActiveForFrame_ = false;
+    FrameResourceBudget frameResourceBudget_;
     double lastInteractionActiveTimeSeconds_ = -1.0;
     Vec3 lastCameraPosition_ = Vec3::zero();
     Vec3 lastCameraDirection_ = Vec3::zero();  // for view-weighted priority

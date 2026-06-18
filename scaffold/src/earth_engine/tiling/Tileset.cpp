@@ -193,6 +193,36 @@ double terrainMaximumHeight(const TilesetTile& tile) {
         : kDefaultTerrainMaximumHeight;
 }
 
+FrameResourceBudgetConfig makeFrameResourceBudgetConfig(
+    const TilesetOptions& options,
+    bool interactionActive,
+    bool resourceSmoothingActive) {
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = options.maximumSimultaneousTileLoads;
+    config.maxTerrainContentNetworkRequestsPerFrame =
+        options.maximumSimultaneousTileLoads;
+    config.maxRasterNetworkRequestsPerFrame =
+        std::max<uint32_t>(
+            64u,
+            static_cast<uint32_t>(options.maximumSimultaneousTileLoads) * 4u);
+    config.maxNetworkInflight = options.maximumSimultaneousTileLoads;
+    config.maxTerrainContentNetworkInflight =
+        options.maximumSimultaneousTileLoads;
+    config.maxRasterNetworkInflight = config.maxRasterNetworkRequestsPerFrame;
+    config.maxMainThreadFinalizesPerFrame =
+        resourceSmoothingActive
+            ? static_cast<uint32_t>(kSmoothedMainThreadUploadLimit)
+            : options.maximumSimultaneousTileLoads;
+    config.maxRasterUploadsPerFrame =
+        resourceSmoothingActive
+            ? std::min<uint32_t>(4u, options.maximumSimultaneousTileLoads)
+            : options.maximumSimultaneousTileLoads;
+    config.mainThreadTimeMs = options.mainThreadLoadingTimeLimit;
+    config.interactionActive = interactionActive;
+    config.smoothingActive = resourceSmoothingActive;
+    return config;
+}
+
 void setTerrainHeightRange(TilesetTile& tile,
                            double minimumHeight,
                            double maximumHeight) {
@@ -1658,6 +1688,9 @@ Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
       rasterOverlays_(std::move(rasterOverlays)),
       device_(device),
       options_(std::move(options)) {
+    frameResourceBudget_.beginFrame(
+        0,
+        makeFrameResourceBudgetConfig(options_, false, false));
     for (ActivatedRasterOverlay* overlay : rasterOverlays_) {
         if (overlay) {
             overlay->ensureTileProvider(device_);
@@ -3523,13 +3556,21 @@ void Tileset::update(const FrameState& frameState) {
     resourceSmoothingActiveForFrame_ =
         interactionActive || postInteractionSmoothing;
 
+    FrameResourceBudgetConfig resourceBudgetConfig =
+        makeFrameResourceBudgetConfig(
+            options_,
+            interactionActive,
+            resourceSmoothingActiveForFrame_);
+    frameResourceBudget_.beginFrame(frameState.frameId, resourceBudgetConfig);
+
     // Process completed terrain tile requests before selection, matching
     // cesium-native's tileStateUpdater-before-visit flow.
     const double uploadStartMs = perf::nowMs();
     const bool terrainOrContentChanged =
         processPendingUploads(
             interactionActive,
-            resourceSmoothingActiveForFrame_);
+            resourceSmoothingActiveForFrame_,
+            &frameResourceBudget_);
     const double uploadMs = perf::nowMs() - uploadStartMs;
     (void)terrainOrContentChanged;
 
@@ -3542,7 +3583,8 @@ void Tileset::update(const FrameState& frameState) {
     for (auto* overlay : rasterOverlays_) {
         if (overlay) {
             rasterUploadsProcessed +=
-                overlay->processPendingUploads(interactionActive);
+                overlay->processPendingUploads(interactionActive,
+                                               &frameResourceBudget_);
         }
     }
     if (rasterUploadsProcessed > 0) {
@@ -3602,7 +3644,7 @@ void Tileset::update(const FrameState& frameState) {
     const double requestStartMs = perf::nowMs();
     RequestOutcome requestOutcome;
     if (!reusedSelection) {
-        requestOutcome = requestMissingTiles(loadQueue_);
+        requestOutcome = requestMissingTiles(loadQueue_, &frameResourceBudget_);
     }
     lastRequestIssuedWork_ = requestOutcome.issued > 0;
     lastRequestBlockedByInflight_ = requestOutcome.blockedByInflight;
@@ -3640,10 +3682,27 @@ void Tileset::update(const FrameState& frameState) {
 }
 
 Tileset::RequestOutcome Tileset::requestMissingTiles(
-    const std::vector<TileLoadRequest>& loadRequests) {
-    const size_t maxRequests = options_.maximumSimultaneousTileLoads;
-    const size_t maxInflight = options_.maximumSimultaneousTileLoads;
+    const std::vector<TileLoadRequest>& loadRequests,
+    FrameResourceBudget* budget) {
+    FrameResourceBudget localBudget;
+    if (!budget) {
+        FrameResourceBudgetConfig config =
+            makeFrameResourceBudgetConfig(options_, false, false);
+        localBudget.beginFrame(frameNumber_, config);
+        budget = &localBudget;
+    }
     RequestOutcome outcome;
+    const auto toFramePriority = [](TileLoadPriorityGroup group) {
+        switch (group) {
+            case TileLoadPriorityGroup::Preload:
+                return FrameResourcePriority::Preload;
+            case TileLoadPriorityGroup::Normal:
+                return FrameResourcePriority::Normal;
+            case TileLoadPriorityGroup::Urgent:
+                return FrameResourcePriority::Urgent;
+        }
+        return FrameResourcePriority::Normal;
+    };
 
     std::vector<TileLoadRequest> sorted = loadRequests;
     // cesium-native: higher priority group first; lower numeric priority wins
@@ -3656,18 +3715,15 @@ Tileset::RequestOutcome Tileset::requestMissingTiles(
             return a.priority < b.priority;
         });
 
-    size_t issued = 0;
     for (const auto& tp : sorted) {
         const TileKey& key = tp.key;
-        if (issued >= maxRequests) {
-            break;
-        }
         {
             std::lock_guard<std::mutex> lock(pendingMutex_);
             if (destroying_) {
                 break;
             }
-            if (pendingRequests_.size() >= maxInflight) {
+            if (!budget->hasNetworkInflightCapacity(
+                    static_cast<uint32_t>(pendingRequests_.size()))) {
                 outcome.blockedByInflight = true;
                 break;
             }
@@ -3726,6 +3782,10 @@ Tileset::RequestOutcome Tileset::requestMissingTiles(
                 if (pendingUploadKeys_.count(ck)) {
                     continue;
                 }
+                if (!budget->tryIssue(FrameResourceLane::TerrainRequest,
+                                      toFramePriority(tp.group))) {
+                    break;
+                }
                 pendingUploadKeys_.insert(ck);
                 pendingUploads_.push_back(
                     PendingTerrainUpload{
@@ -3737,7 +3797,6 @@ Tileset::RequestOutcome Tileset::requestMissingTiles(
             }
             tileState->loadState = TileLoadState::ContentLoading;
             tileState->contentKind = TileContentKind::Unknown;
-            ++issued;
             ++outcome.issued;
             continue;
         }
@@ -3758,6 +3817,10 @@ Tileset::RequestOutcome Tileset::requestMissingTiles(
                 if (emptyTiles_.count(ck)) {
                     continue;
                 }
+                if (!budget->tryIssue(FrameResourceLane::ContentRequest,
+                                      toFramePriority(tp.group))) {
+                    break;
+                }
                 pendingRequests_.insert(ck);
                 pendingContentRequestKeys_.insert(ck);
                 pendingRequestTokens_[ck] = token;
@@ -3766,7 +3829,6 @@ Tileset::RequestOutcome Tileset::requestMissingTiles(
                 tile->loadState = TileLoadState::ContentLoading;
                 tile->contentKind = TileContentKind::Unknown;
             }
-            ++issued;
             ++outcome.issued;
 
             auto* provider = contentProvider_.get();
@@ -3828,6 +3890,10 @@ Tileset::RequestOutcome Tileset::requestMissingTiles(
             if (emptyTiles_.count(ck)) {
                 continue;
             }
+            if (!budget->tryIssue(FrameResourceLane::TerrainRequest,
+                                  toFramePriority(tp.group))) {
+                break;
+            }
             pendingRequests_.insert(ck);
             pendingRequestTokens_[ck] = token;
         }
@@ -3835,7 +3901,6 @@ Tileset::RequestOutcome Tileset::requestMissingTiles(
             tile->loadState = TileLoadState::ContentLoading;
             tile->contentKind = TileContentKind::Unknown;
         }
-        ++issued;
         ++outcome.issued;
 
         auto* provider = terrainProvider_.get();
@@ -3943,7 +4008,7 @@ void Tileset::prefetchRasterOverlays(TilesetTile& tile) {
             loadingTile->getState() != RasterOverlayTile::LoadState::Placeholder) {
             if (loadingTile->getState() == RasterOverlayTile::LoadState::Unloaded ||
                 loadingTile->getState() == RasterOverlayTile::LoadState::Loading) {
-                mapped->loadThrottled(*activeProvider);
+                mapped->loadThrottled(*activeProvider, &frameResourceBudget_);
                 continue;
             }
         }
@@ -3964,20 +4029,27 @@ void Tileset::prefetchRasterOverlays(TilesetTile& tile) {
             i,
             tile.boundingVolume ? &*tile.boundingVolume : nullptr,
             hasRenderContentDetails);
-        mapped->loadThrottled(*activeProvider);
+        mapped->loadThrottled(*activeProvider, &frameResourceBudget_);
     }
 }
 
 bool Tileset::processPendingUploads(bool interactionActive,
-                                    bool resourceSmoothingActive) {
-    const double loadStartMs = perf::nowMs();
-    const double timeBudgetMs = options_.mainThreadLoadingTimeLimit;
+                                    bool resourceSmoothingActive,
+                                    FrameResourceBudget* budget) {
+    FrameResourceBudget localBudget;
+    if (!budget) {
+        FrameResourceBudgetConfig config;
+        config.maxMainThreadFinalizesPerFrame =
+            resourceSmoothingActive
+                ? static_cast<uint32_t>(kSmoothedMainThreadUploadLimit)
+                : options_.maximumSimultaneousTileLoads;
+        config.mainThreadTimeMs = options_.mainThreadLoadingTimeLimit;
+        config.interactionActive = interactionActive;
+        config.smoothingActive = resourceSmoothingActive;
+        localBudget.beginFrame(frameNumber_, config);
+        budget = &localBudget;
+    }
     bool changed = false;
-    int finalizedUploadsThisFrame = 0;
-    const auto timeBudgetExpired = [&]() {
-        return timeBudgetMs > 0.0 &&
-               perf::nowMs() - loadStartMs >= timeBudgetMs;
-    };
     const auto hasHigherPriority =
         [](TileLoadPriorityGroup lhsGroup,
            double lhsPriority,
@@ -3987,6 +4059,17 @@ bool Tileset::processPendingUploads(bool interactionActive,
             return static_cast<int>(lhsGroup) > static_cast<int>(rhsGroup);
         }
         return lhsPriority < rhsPriority;
+    };
+    const auto toFramePriority = [](TileLoadPriorityGroup group) {
+        switch (group) {
+            case TileLoadPriorityGroup::Preload:
+                return FrameResourcePriority::Preload;
+            case TileLoadPriorityGroup::Normal:
+                return FrameResourcePriority::Normal;
+            case TileLoadPriorityGroup::Urgent:
+                return FrameResourcePriority::Urgent;
+        }
+        return FrameResourcePriority::Normal;
     };
 
     auto processTerminalResult =
@@ -4189,11 +4272,6 @@ bool Tileset::processPendingUploads(bool interactionActive,
     // glTF/content GPU upload must compete under the same priority order and
     // the same time budget.
     while (true) {
-        if (resourceSmoothingActive &&
-            finalizedUploadsThisFrame >= kSmoothedMainThreadUploadLimit) {
-            break;
-        }
-
         std::optional<PendingTerrainUpload> terrainUpload;
         std::optional<PendingContentUpload> contentUpload;
 
@@ -4258,14 +4336,25 @@ bool Tileset::processPendingUploads(bool interactionActive,
                      bestTerrainIt->group,
                      bestTerrainIt->priority));
             if (useContent) {
+                if (!budget->tryFinalize(
+                        FrameResourceLane::ContentFinalize,
+                        toFramePriority(bestContentIt->group))) {
+                    break;
+                }
                 contentUpload.emplace(std::move(*bestContentIt));
                 pendingContentUploads_.erase(bestContentIt);
             } else if (bestTerrainIt != pendingUploads_.end()) {
+                if (!budget->tryFinalize(
+                        FrameResourceLane::TerrainFinalize,
+                        toFramePriority(bestTerrainIt->group))) {
+                    break;
+                }
                 terrainUpload.emplace(std::move(*bestTerrainIt));
                 pendingUploads_.erase(bestTerrainIt);
             }
         }
 
+        const double finalizeStartMs = perf::nowMs();
         if (contentUpload) {
             processContentUpload(*contentUpload);
         } else if (terrainUpload) {
@@ -4274,11 +4363,10 @@ bool Tileset::processPendingUploads(bool interactionActive,
             break;
         }
         changed = true;
-        ++finalizedUploadsThisFrame;
-
-        if (timeBudgetExpired()) {
-            break;
-        }
+        budget->recordElapsed(
+            contentUpload ? FrameResourceLane::ContentFinalize
+                          : FrameResourceLane::TerrainFinalize,
+            perf::nowMs() - finalizeStartMs);
     }
     return changed;
 }
@@ -5486,7 +5574,7 @@ void Tileset::buildTileDrawCommand(
             !firstUnknownAvailability) {
             firstUnknownAvailability = i;
         }
-        overlay->loadThrottled(*activeProvider);
+        overlay->loadThrottled(*activeProvider, &frameResourceBudget_);
     }
 
     tile.surfaceDrawable = hasSurfaceDrawable(tile);

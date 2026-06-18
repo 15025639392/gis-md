@@ -38,6 +38,14 @@ target_sources(earth_engine_core PRIVATE
 )
 
 # ============================================================
+# core/resources
+# ============================================================
+target_sources(earth_engine_core PRIVATE
+    earth_engine/core/resources/FrameResourceBudget.h
+    earth_engine/core/resources/FrameResourceBudget.cpp
+)
+
+# ============================================================
 # core/geodesy
 # ============================================================
 target_sources(earth_engine_core PRIVATE

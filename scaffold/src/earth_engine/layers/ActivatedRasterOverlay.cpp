@@ -37,9 +37,11 @@ RasterOverlayTile* ActivatedRasterOverlay::getPlaceholderTile() {
     return tileProvider_->getPlaceholderTile().get();
 }
 
-int ActivatedRasterOverlay::processPendingUploads(bool interactionActive) {
+int ActivatedRasterOverlay::processPendingUploads(
+    bool interactionActive,
+    FrameResourceBudget* budget) {
     if (tileProvider_) {
-        return tileProvider_->processPendingUploads(interactionActive);
+        return tileProvider_->processPendingUploads(interactionActive, budget);
     }
     return 0;
 }

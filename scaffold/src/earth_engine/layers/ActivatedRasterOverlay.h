@@ -8,6 +8,7 @@ namespace earth_engine {
 class RasterOverlay;
 class RasterOverlayTile;
 class RasterOverlayTileProvider;
+class FrameResourceBudget;
 class RenderDevice;
 
 /// cesium-native ActivatedRasterOverlay equivalent.
@@ -38,7 +39,8 @@ public:
     /// cesium-native: the placeholder tile from the ensured provider.
     RasterOverlayTile* getPlaceholderTile();
 
-    int processPendingUploads(bool interactionActive);
+    int processPendingUploads(bool interactionActive,
+                              FrameResourceBudget* budget = nullptr);
     bool hasPendingWork() const;
     uint64_t revision() const;
     void setFrameNumber(uint64_t frameNumber);

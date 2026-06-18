@@ -22,6 +22,7 @@
 namespace earth_engine {
 
 class ImageryProvider;
+class FrameResourceBudget;
 struct DecodedImage;
 
 /// cesium-native RasterOverlayTileProvider equivalent.
@@ -118,10 +119,12 @@ public:
     /// cesium-native: initiate async load for a tile.
     /// Transitions state to Loading and issues HTTP request.
     /// @return true if the load was initiated, false if already loading/loaded.
-    bool loadTile(RasterOverlayTile& tile);
+    bool loadTile(RasterOverlayTile& tile,
+                  FrameResourceBudget* budget = nullptr);
 
     /// cesium-native: throttled load. Returns false if at concurrent limit.
-    bool loadTileThrottled(RasterOverlayTile& tile);
+    bool loadTileThrottled(RasterOverlayTile& tile,
+                           FrameResourceBudget* budget = nullptr);
 
     /// Maximum concurrent tile loads.
     int maximumSimultaneousTileLoads = 20;
@@ -139,7 +142,8 @@ public:
 
     /// Process completed uploads on the main thread.
     /// Should be called once per frame.
-    int processPendingUploads(bool interactionActive);
+    int processPendingUploads(bool interactionActive,
+                              FrameResourceBudget* budget = nullptr);
 
     /// True while HTTP requests or main-thread texture uploads are outstanding.
     bool hasPendingWork() const;
@@ -189,7 +193,8 @@ public:
 private:
     /// Internal: load a rectangle raster tile by combining the provider's
     /// quadtree imagery tiles that overlap its rectangle.
-    bool loadRectangleTile(RasterOverlayTile& tile);
+    bool loadRectangleTile(RasterOverlayTile& tile,
+                           FrameResourceBudget* budget = nullptr);
 
     /// Tile cache key from TileKey.
     std::string tileCacheKey(const TileKey& key) const;

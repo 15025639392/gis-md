@@ -1,0 +1,90 @@
+#pragma once
+
+#include <cstdint>
+
+namespace earth_engine {
+
+enum class FrameResourceLane {
+    TerrainRequest,
+    ContentRequest,
+    RasterRequest,
+    TerrainFinalize,
+    ContentFinalize,
+    RasterTextureUpload,
+    TerminalState
+};
+
+enum class FrameResourcePriority {
+    Preload = 0,
+    Normal = 1,
+    Urgent = 2
+};
+
+struct FrameResourceBudgetConfig {
+    uint32_t maxNetworkRequestsPerFrame = 20;
+    uint32_t maxTerrainContentNetworkRequestsPerFrame = 0;
+    uint32_t maxRasterNetworkRequestsPerFrame = 0;
+    uint32_t maxNetworkInflight = 20;
+    uint32_t maxTerrainContentNetworkInflight = 0;
+    uint32_t maxRasterNetworkInflight = 0;
+    uint32_t maxMainThreadFinalizesPerFrame = 1;
+    uint32_t maxRasterUploadsPerFrame = 1;
+    double mainThreadTimeMs = 0.0;
+    bool interactionActive = false;
+    bool smoothingActive = false;
+};
+
+class FrameResourceBudget {
+public:
+    void beginFrame(uint64_t frameNumber,
+                    const FrameResourceBudgetConfig& config);
+
+    bool canIssue(FrameResourceLane lane,
+                  FrameResourcePriority priority,
+                  int estimatedFanout = 1) const;
+    bool tryIssue(FrameResourceLane lane,
+                  FrameResourcePriority priority,
+                  int estimatedFanout = 1);
+    bool hasNetworkInflightCapacity(FrameResourceLane lane,
+                                    uint32_t currentInflight,
+                                    int estimatedFanout = 1) const;
+    bool hasNetworkInflightCapacity(uint32_t currentInflight,
+                                    int estimatedFanout = 1) const;
+
+    bool canFinalize(FrameResourceLane lane,
+                     FrameResourcePriority priority,
+                     int estimatedCostUnits = 1) const;
+    bool tryFinalize(FrameResourceLane lane,
+                     FrameResourcePriority priority,
+                     int estimatedCostUnits = 1);
+
+    void recordElapsed(FrameResourceLane lane, double elapsedMs);
+    bool mainThreadTimeExpired() const;
+
+    uint64_t frameNumber() const { return frameNumber_; }
+    uint32_t networkRequestsIssued() const { return networkRequestsIssued_; }
+    uint32_t terrainContentNetworkRequestsIssued() const {
+        return terrainContentNetworkRequestsIssued_;
+    }
+    uint32_t rasterNetworkRequestsIssued() const {
+        return rasterNetworkRequestsIssued_;
+    }
+    uint32_t rasterUploadsUsed() const { return rasterUploadsUsed_; }
+    double mainThreadElapsedMs() const { return mainThreadElapsedMs_; }
+
+private:
+    static uint32_t positiveUnits(int estimatedUnits);
+    uint32_t networkRequestLimit(FrameResourceLane lane) const;
+    uint32_t networkInflightLimit(FrameResourceLane lane) const;
+
+    uint64_t frameNumber_ = 0;
+    FrameResourceBudgetConfig config_;
+    uint32_t networkRequestsIssued_ = 0;
+    uint32_t terrainContentNetworkRequestsIssued_ = 0;
+    uint32_t rasterNetworkRequestsIssued_ = 0;
+    uint32_t mainThreadFinalizesUsed_ = 0;
+    uint32_t rasterUploadsUsed_ = 0;
+    double mainThreadElapsedMs_ = 0.0;
+};
+
+} // namespace earth_engine

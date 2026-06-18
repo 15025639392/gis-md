@@ -1,5 +1,6 @@
 #include "RasterOverlayTileProvider.h"
 #include "ImageryProvider.h"
+#include "../core/resources/FrameResourceBudget.h"
 #include "../tiling/TileScheme.h"
 #include "RasterTextureUploader.h"
 #include "../renderer/RenderDevice.h"
@@ -26,16 +27,12 @@ namespace {
 
 constexpr uint64_t kRetainedUnusedFrames = 120;
 constexpr int kMaximumCombinedTextureSizeFallback = 2048;
-constexpr size_t kMaximumRasterUploadsPerFrame = 1;
+constexpr size_t kDefaultMaximumRasterUploadsPerFrame = 20;
 constexpr int kInteractionRasterUploadMaxDimension = 512;
 constexpr int64_t kInteractionRasterUploadMaxPixels = 512ll * 512ll;
 constexpr double kPi = 3.14159265358979323846264338327950288;
 constexpr double kTwoPi = 2.0 * kPi;
 constexpr double kMaxWebMercatorLat = 1.4844222297453324;
-
-std::mutex gRasterUploadBudgetMutex;
-uint64_t gRasterUploadBudgetFrame = 0;
-size_t gRasterUploadsThisFrame = 0;
 
 #ifdef __ANDROID__
 std::mutex gRasterTextureLifetimeGuardMutex;
@@ -43,19 +40,6 @@ std::unordered_set<const Texture*> gLiveRasterTexturesForLifetimeGuard;
 std::mutex gRasterTileLifetimeGuardMutex;
 std::unordered_set<const RasterOverlayTile*> gLiveRasterTilesForLifetimeGuard;
 #endif
-
-bool acquireRasterUploadBudget(uint64_t frameNumber) {
-    std::lock_guard<std::mutex> lock(gRasterUploadBudgetMutex);
-    if (gRasterUploadBudgetFrame != frameNumber) {
-        gRasterUploadBudgetFrame = frameNumber;
-        gRasterUploadsThisFrame = 0;
-    }
-    if (gRasterUploadsThisFrame >= kMaximumRasterUploadsPerFrame) {
-        return false;
-    }
-    ++gRasterUploadsThisFrame;
-    return true;
-}
 
 bool uploadAllowedDuringInteraction(
     const std::string& cacheKey,
@@ -629,9 +613,10 @@ int RasterOverlayTileProvider::getThrottledTilesCurrentlyLoading() const {
     return count;
 }
 
-bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile) {
+bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
+                                         FrameResourceBudget* budget) {
     if (tile.isRectangleTile()) {
-        return loadRectangleTile(tile);
+        return loadRectangleTile(tile, budget);
     }
 
     // cesium-native: only load if Unloaded or Failed.
@@ -656,6 +641,14 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile) {
     // Check if already in-flight
     if (inFlightRequests_.count(ck)) {
         return true;
+    }
+    if (budget &&
+        (!budget->hasNetworkInflightCapacity(
+             FrameResourceLane::RasterRequest,
+             static_cast<uint32_t>(inFlightRequests_.size())) ||
+         !budget->tryIssue(FrameResourceLane::RasterRequest,
+                           FrameResourcePriority::Normal))) {
+        return false;
     }
 
     // Mark as Loading
@@ -692,7 +685,8 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile) {
     return true;
 }
 
-bool RasterOverlayTileProvider::loadTileThrottled(RasterOverlayTile& tile) {
+bool RasterOverlayTileProvider::loadTileThrottled(RasterOverlayTile& tile,
+                                                  FrameResourceBudget* budget) {
     // cesium-native: check throttle limit before loading
     if (tile.getState() == RasterOverlayTile::LoadState::Loading ||
         tile.getState() == RasterOverlayTile::LoadState::Loaded ||
@@ -704,10 +698,11 @@ bool RasterOverlayTileProvider::loadTileThrottled(RasterOverlayTile& tile) {
         return false;  // Throttled
     }
 
-    return loadTile(tile);
+    return loadTile(tile, budget);
 }
 
-bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile) {
+bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
+                                                  FrameResourceBudget* budget) {
     auto state = tile.getState();
     switch (state) {
         case RasterOverlayTile::LoadState::Unloaded:
@@ -750,6 +745,16 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile) {
     if (sourceKeys.empty()) {
         tile.setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
         tile.setState(RasterOverlayTile::LoadState::Failed);
+        return false;
+    }
+    if (budget &&
+        (!budget->hasNetworkInflightCapacity(
+             FrameResourceLane::RasterRequest,
+             static_cast<uint32_t>(inFlightRequests_.size()),
+             static_cast<int>(sourceKeys.size())) ||
+         !budget->tryIssue(FrameResourceLane::RasterRequest,
+                           FrameResourcePriority::Normal,
+                           static_cast<int>(sourceKeys.size())))) {
         return false;
     }
 
@@ -863,17 +868,33 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile) {
     return true;
 }
 
-int RasterOverlayTileProvider::processPendingUploads(bool interactionActive) {
+int RasterOverlayTileProvider::processPendingUploads(
+    bool interactionActive,
+    FrameResourceBudget* budget) {
     // cesium-native: process completed HTTP responses on main thread.
     // Create GPU textures and mark tiles as Loaded.
+    FrameResourceBudget localBudget;
+    if (!budget) {
+        FrameResourceBudgetConfig config;
+        config.maxRasterUploadsPerFrame =
+            static_cast<uint32_t>(kDefaultMaximumRasterUploadsPerFrame);
+        config.interactionActive = interactionActive;
+        config.smoothingActive = interactionActive;
+        localBudget.beginFrame(frameNumber_, config);
+        budget = &localBudget;
+    }
+
     std::deque<PendingUpload> batch;
     {
         std::lock_guard<std::mutex> lock(pendingMutex_);
-        // Rectangle raster tiles can be 512x512+ and mipmapped. Uploading
-        // multiple in one frame causes visible Android main-thread spikes, so
-        // spread the work over frames without reducing the selected detail.
-        while (!pendingUploads_.empty() &&
-               acquireRasterUploadBudget(frameNumber_)) {
+        // Rectangle raster tiles can be 512x512+ and state finalization runs on
+        // the main thread, so let the shared frame budget decide how much work
+        // this frame can absorb.
+        while (!pendingUploads_.empty()) {
+            if (!budget->tryFinalize(FrameResourceLane::RasterTextureUpload,
+                                     FrameResourcePriority::Normal)) {
+                break;
+            }
             auto selected = pendingUploads_.begin();
             if (interactionActive) {
                 selected = std::find_if(
@@ -919,6 +940,7 @@ int RasterOverlayTileProvider::processPendingUploads(bool interactionActive) {
             ? textureUploader_->uploadRasterTexture(*upload.image, uploadOptions)
             : nullptr;
         const double uploadMs = perf::nowMs() - uploadStartMs;
+        budget->recordElapsed(FrameResourceLane::RasterTextureUpload, uploadMs);
 #ifndef __ANDROID__
         (void)uploadMs;
 #endif

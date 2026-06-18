@@ -472,7 +472,9 @@ void RasterMappedToTilesetTile::releaseTileReferences(
     overlaySlot_ = 0;
 }
 
-bool RasterMappedToTilesetTile::loadThrottled(RasterOverlayTileProvider& tileProvider) {
+bool RasterMappedToTilesetTile::loadThrottled(
+    RasterOverlayTileProvider& tileProvider,
+    FrameResourceBudget* budget) {
     // cesium-native: if no loading tile, nothing to do
     if (_pLoadingTile == nullptr) return true;
     if (_pLoadingTile->getState() == RasterOverlayTile::LoadState::Placeholder) {
@@ -481,7 +483,7 @@ bool RasterMappedToTilesetTile::loadThrottled(RasterOverlayTileProvider& tilePro
     tileProvider.markUsed(*_pLoadingTile);
 
     // cesium-native: delegate to Provider's throttled loading
-    return tileProvider.loadTileThrottled(*_pLoadingTile);
+    return tileProvider.loadTileThrottled(*_pLoadingTile, budget);
 }
 
 void RasterMappedToTilesetTile::computeTranslationAndScale(

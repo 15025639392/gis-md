@@ -3,6 +3,8 @@
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/ImageryProvider.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
+#include "earth_engine/providers/RasterTextureUploader.h"
+#include "earth_engine/core/resources/FrameResourceBudget.h"
 #include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
@@ -69,7 +71,174 @@ public:
     }
 };
 
+class ImmediateImageryProvider final : public ImageryProvider {
+public:
+    std::string id() const override { return "immediate"; }
+    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 18; }
+    int tileWidth() const override { return 2; }
+    int tileHeight() const override { return 2; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     TileCallback callback) override {
+        ++requestCount;
+        callback(key, makeImage(2, 2, 64));
+    }
+    std::unique_ptr<DecodedImage> decodeTile(
+        const uint8_t*, size_t) override {
+        return nullptr;
+    }
+
+    int requestCount = 0;
+};
+
+class CountingRasterUploader final : public RasterTextureUploader {
+public:
+    int maxTextureSize() const override { return 2048; }
+
+    std::unique_ptr<Texture> uploadRasterTexture(
+        const DecodedImage& image,
+        const RasterTextureUploadOptions&) override {
+        ++uploadCount;
+        return std::make_unique<TestTexture>(image.width, image.height);
+    }
+
+    int uploadCount = 0;
+};
+
 } // namespace
+
+TEST(RasterOverlayLifecycleTest, SharedFrameBudgetLimitsRasterUploadsPerFrame) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    TileKey firstKey{scheme->id(), 1, 0, 0};
+    TileKey secondKey{scheme->id(), 1, 1, 0};
+    auto firstTile = provider.getTile(firstKey);
+    auto secondTile = provider.getTile(secondKey);
+    ASSERT_TRUE(provider.loadTile(*firstTile));
+    ASSERT_TRUE(provider.loadTile(*secondTile));
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterUploadsPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    provider.setFrameNumber(1);
+    EXPECT_EQ(1, provider.processPendingUploads(false, &budget));
+    EXPECT_EQ(1, uploaderPtr->uploadCount);
+    EXPECT_EQ(1u, budget.rasterUploadsUsed());
+
+    EXPECT_EQ(0, provider.processPendingUploads(false, &budget));
+    EXPECT_EQ(1, uploaderPtr->uploadCount);
+
+    budget.beginFrame(2, config);
+    provider.setFrameNumber(2);
+    EXPECT_EQ(1, provider.processPendingUploads(false, &budget));
+    EXPECT_EQ(2, uploaderPtr->uploadCount);
+}
+
+TEST(RasterOverlayLifecycleTest, DefaultFrameBudgetUploadsMultipleRasterTiles) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    TileKey firstKey{scheme->id(), 1, 0, 0};
+    TileKey secondKey{scheme->id(), 1, 1, 0};
+    auto firstTile = provider.getTile(firstKey);
+    auto secondTile = provider.getTile(secondKey);
+    ASSERT_TRUE(provider.loadTile(*firstTile));
+    ASSERT_TRUE(provider.loadTile(*secondTile));
+
+    provider.setFrameNumber(1);
+    EXPECT_EQ(2, provider.processPendingUploads(false));
+    EXPECT_EQ(2, uploaderPtr->uploadCount);
+}
+
+TEST(RasterOverlayLifecycleTest, FrameBudgetLimitsRasterWorkerRequests) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    TileKey firstKey{scheme->id(), 1, 0, 0};
+    TileKey secondKey{scheme->id(), 1, 1, 0};
+    auto firstTile = provider.getTile(firstKey);
+    auto secondTile = provider.getTile(secondKey);
+
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 1;
+    config.maxNetworkInflight = 2;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    EXPECT_TRUE(provider.loadTileThrottled(*firstTile, &budget));
+    EXPECT_FALSE(provider.loadTileThrottled(*secondTile, &budget));
+    EXPECT_EQ(1, imagery.requestCount);
+    EXPECT_EQ(1u, budget.networkRequestsIssued());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Unloaded,
+              secondTile->getState());
+}
+
+TEST(RasterOverlayLifecycleTest, FrameBudgetAccountsRectangleRequestFanout) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    Rectangle rootBounds =
+        scheme->tileToRectangle(TileKey{scheme->id(), 0, 0, 0});
+    auto rectangleTile = provider.getTile(rootBounds, 8.0, 8.0);
+    ASSERT_NE(nullptr, rectangleTile);
+    ASSERT_TRUE(rectangleTile->isRectangleTile());
+
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 1;
+    config.maxNetworkInflight = 20;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    EXPECT_FALSE(provider.loadTileThrottled(*rectangleTile, &budget));
+    EXPECT_EQ(0, imagery.requestCount);
+    EXPECT_EQ(0u, budget.networkRequestsIssued());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Unloaded,
+              rectangleTile->getState());
+}
+
+TEST(RasterOverlayLifecycleTest, FrameBudgetSeparatesRasterFanoutFromTerrainBudget) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    Rectangle rootBounds =
+        scheme->tileToRectangle(TileKey{scheme->id(), 0, 0, 0});
+    auto rectangleTile = provider.getTile(rootBounds, 8.0, 8.0);
+    ASSERT_NE(nullptr, rectangleTile);
+    ASSERT_TRUE(rectangleTile->isRectangleTile());
+
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 1;
+    config.maxTerrainContentNetworkRequestsPerFrame = 1;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxNetworkInflight = 1;
+    config.maxTerrainContentNetworkInflight = 1;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    EXPECT_TRUE(provider.loadTileThrottled(*rectangleTile, &budget));
+    EXPECT_EQ(4, imagery.requestCount);
+    EXPECT_EQ(4u, budget.networkRequestsIssued());
+    EXPECT_EQ(0u, budget.terrainContentNetworkRequestsIssued());
+    EXPECT_EQ(4u, budget.rasterNetworkRequestsIssued());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loading,
+              rectangleTile->getState());
+}
 
 TEST(RasterOverlayLifecycleTest, MappedReadyTileRetainsProviderCacheUntilReleased) {
     DebugImageryProvider imagery;

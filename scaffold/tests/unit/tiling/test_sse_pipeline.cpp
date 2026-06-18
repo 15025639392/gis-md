@@ -4,6 +4,7 @@
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/globe/Globe.h"
+#include "earth_engine/core/resources/FrameResourceBudget.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Transforms.h"
 #include "earth_engine/core/math/OrientedBoundingBox.h"
@@ -128,6 +129,23 @@ struct TilesetTestAccess {
                 secondPriority}});
     }
 
+    static void requestMissingTilesWithBudget(
+        Tileset& tileset,
+        FrameResourceBudget& budget,
+        const TileKey& firstKey,
+        const TileKey& secondKey) {
+        tileset.requestMissingTiles({
+            Tileset::TileLoadRequest{
+                firstKey,
+                Tileset::TileLoadPriorityGroup::Normal,
+                100.0},
+            Tileset::TileLoadRequest{
+                secondKey,
+                Tileset::TileLoadPriorityGroup::Normal,
+                1.0}},
+            &budget);
+    }
+
     static void requestMissingPreload(Tileset& tileset, const TileKey& key) {
         tileset.requestMissingTiles({
             Tileset::TileLoadRequest{
@@ -144,6 +162,12 @@ struct TilesetTestAccess {
 
     static void processPendingUploads(Tileset& tileset) {
         tileset.processPendingUploads(false, false);
+    }
+
+    static void processPendingUploadsWithBudget(
+        Tileset& tileset,
+        FrameResourceBudget& budget) {
+        tileset.processPendingUploads(false, false, &budget);
     }
 
     static void prefetchRasterOverlays(Tileset& tileset, TilesetTile& tile) {
@@ -8427,6 +8451,142 @@ void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
           "Tileset: lower-priority terrain waits under the same upload budget");
 }
 
+void testTilesetFrameResourceBudgetLimitsWorkerRequests() {
+    TilesetOptions options;
+    options.maximumSimultaneousTileLoads = 2;
+
+    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
+    ManualCompletionTerrainProvider* rawProvider = provider.get();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, options);
+
+    const TileKey lowPriorityKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey highPriorityKey{"Geographic-TMS", 1, 1, 0};
+    TilesetTestAccess::ensureTile(tileset, lowPriorityKey);
+    TilesetTestAccess::ensureTile(tileset, highPriorityKey);
+
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 1;
+    config.maxNetworkInflight = 2;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    TilesetTestAccess::requestMissingTilesWithBudget(
+        tileset,
+        budget,
+        lowPriorityKey,
+        highPriorityKey);
+
+    check(rawProvider->pendingRequests.size() == 1 &&
+              rawProvider->pendingRequests.front().key == highPriorityKey &&
+              budget.networkRequestsIssued() == 1,
+          "Tileset: FrameResourceBudget limits worker requests while preserving priority");
+    check(rawProvider->completeWithHeightmap(
+              highPriorityKey,
+              makeFlatHeightmap(2.0f)),
+          "Tileset: issued FrameResourceBudget request completes before teardown");
+}
+
+void testTilesetFrameResourceBudgetSeparatesRasterFanoutFromTerrainRequests() {
+    TilesetOptions options;
+    options.maximumSimultaneousTileLoads = 2;
+
+    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
+    ManualCompletionTerrainProvider* rawProvider = provider.get();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, options);
+
+    const TileKey lowPriorityKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey highPriorityKey{"Geographic-TMS", 1, 1, 0};
+    TilesetTestAccess::ensureTile(tileset, lowPriorityKey);
+    TilesetTestAccess::ensureTile(tileset, highPriorityKey);
+
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 1;
+    config.maxTerrainContentNetworkRequestsPerFrame = 1;
+    config.maxRasterNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 2;
+    config.maxTerrainContentNetworkInflight = 2;
+    config.maxRasterNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    check(budget.tryIssue(
+              FrameResourceLane::RasterRequest,
+              FrameResourcePriority::Normal,
+              4),
+          "Tileset: setup consumes one rectangle raster fan-out budget");
+
+    TilesetTestAccess::requestMissingTilesWithBudget(
+        tileset,
+        budget,
+        lowPriorityKey,
+        highPriorityKey);
+
+    check(rawProvider->pendingRequests.size() == 1 &&
+              rawProvider->pendingRequests.front().key == highPriorityKey &&
+              budget.rasterNetworkRequestsIssued() == 4 &&
+              budget.terrainContentNetworkRequestsIssued() == 1 &&
+              budget.networkRequestsIssued() == 5,
+          "Tileset: raster fan-out budget does not consume terrain request budget");
+    check(rawProvider->completeWithHeightmap(
+              highPriorityKey,
+              makeFlatHeightmap(2.0f)),
+          "Tileset: terrain request after raster fan-out completes before teardown");
+}
+
+void testTilesetFrameResourceBudgetLimitsMainThreadFinalizes() {
+    TilesetOptions options;
+    options.maximumSimultaneousTileLoads = 2;
+    options.mainThreadLoadingTimeLimit = 0.0;
+
+    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
+    ManualCompletionTerrainProvider* rawProvider = provider.get();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, options);
+
+    const TileKey lowPriorityKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey highPriorityKey{"Geographic-TMS", 1, 1, 0};
+    TilesetTestAccess::ensureTile(tileset, lowPriorityKey);
+    TilesetTestAccess::ensureTile(tileset, highPriorityKey);
+    TilesetTestAccess::requestMissingTilesWithPriorities(
+        tileset,
+        lowPriorityKey,
+        100.0,
+        highPriorityKey,
+        1.0);
+
+    check(rawProvider->pendingRequests.size() == 2,
+          "Tileset: explicit finalize budget test queues both worker requests");
+    check(rawProvider->completeWithHeightmap(
+              lowPriorityKey,
+              makeFlatHeightmap(1.0f)),
+          "Tileset: explicit finalize budget low-priority request completes");
+    check(rawProvider->completeWithHeightmap(
+              highPriorityKey,
+              makeFlatHeightmap(2.0f)),
+          "Tileset: explicit finalize budget high-priority request completes");
+
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    TilesetTestAccess::processPendingUploadsWithBudget(tileset, budget);
+
+    TilesetTile* lowPriorityTile =
+        TilesetTestAccess::findTile(tileset, lowPriorityKey);
+    TilesetTile* highPriorityTile =
+        TilesetTestAccess::findTile(tileset, highPriorityKey);
+    const TilesetLoadDiagnostics diag = tileset.loadDiagnostics();
+    check(highPriorityTile &&
+              highPriorityTile->loadState == TileLoadState::Done &&
+              highPriorityTile->contentKind == TileContentKind::Render &&
+              lowPriorityTile &&
+              lowPriorityTile->loadState == TileLoadState::ContentLoading &&
+              diag.pendingTerrainUploads == 1,
+          "Tileset: FrameResourceBudget limits main-thread finalizes while preserving priority");
+}
+
 void testTilesetPendingMainThreadUploadsDoNotConsumeWorkerSlots() {
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 2;
@@ -11778,6 +11938,9 @@ int main() {
     testTilesetMainThreadPendingUploadsUseNativePriority();
     testTilesetLoadQueueKeepsTraversalPriority();
     testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds();
+    testTilesetFrameResourceBudgetLimitsWorkerRequests();
+    testTilesetFrameResourceBudgetSeparatesRasterFanoutFromTerrainRequests();
+    testTilesetFrameResourceBudgetLimitsMainThreadFinalizes();
     testTilesetPendingMainThreadUploadsDoNotConsumeWorkerSlots();
     testTilesetDestructorWaitsForPendingTerrainCallbacks();
     testTilesetForbidHolesCarriesCulledTileRenderability();

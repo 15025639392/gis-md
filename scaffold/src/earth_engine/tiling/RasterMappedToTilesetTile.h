@@ -12,6 +12,7 @@ namespace earth_engine {
 
 class RasterOverlayTile;
 class RasterOverlayTileProvider;
+class FrameResourceBudget;
 class IPrepareRendererResources;
 class Texture;
 struct TileBoundingVolume;
@@ -94,7 +95,8 @@ public:
     void releaseTileReferences(IPrepareRendererResources* pPrepRenderer);
 
     /// cesium-native: throttled load via the Provider.
-    bool loadThrottled(RasterOverlayTileProvider& tileProvider);
+    bool loadThrottled(RasterOverlayTileProvider& tileProvider,
+                       FrameResourceBudget* budget = nullptr);
 
     /// Compute UV translation/scale from geometry↔imagery rectangles.
     void computeTranslationAndScale(const Rectangle& geometryBounds,
