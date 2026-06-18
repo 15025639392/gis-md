@@ -193,6 +193,56 @@ TEST(EllipsoidTest, RayIntersectionIntervalMatchesCesiumNative) {
                      .has_value());
 }
 
+TEST(EllipsoidTest, RayIntersectionIntervalMatchesCesiumNativeAxisCases) {
+    // Ported from cesium-native CesiumGeometry/test/TestIntersectionTests.cpp:
+    // IntersectionTests::rayEllipsoid outside intersections.
+    const Ellipsoid unitSphere(1.0, 1.0);
+    struct Case {
+        Vec3 origin;
+        Vec3 direction;
+    };
+    const Case cases[] = {
+        {Vec3(2.0, 0.0, 0.0), Vec3(-1.0, 0.0, 0.0)},
+        {Vec3(0.0, 2.0, 0.0), Vec3(0.0, -1.0, 0.0)},
+        {Vec3(0.0, 0.0, 2.0), Vec3(0.0, 0.0, -1.0)},
+        {Vec3(-2.0, 0.0, 0.0), Vec3(1.0, 0.0, 0.0)},
+        {Vec3(0.0, -2.0, 0.0), Vec3(0.0, 1.0, 0.0)},
+        {Vec3(0.0, 0.0, -2.0), Vec3(0.0, 0.0, 1.0)},
+    };
+
+    for (const auto& c : cases) {
+        auto interval = unitSphere.rayIntersectionInterval(c.origin, c.direction);
+        ASSERT_TRUE(interval.has_value());
+        EXPECT_NEAR(1.0, interval->entryDistance, 1e-12);
+        EXPECT_NEAR(3.0, interval->exitDistance, 1e-12);
+    }
+}
+
+TEST(EllipsoidTest, RayIntersectionIntervalMatchesCesiumNativeMissCases) {
+    // Ported from cesium-native CesiumGeometry/test/TestIntersectionTests.cpp:
+    // rays outside pointing away, tangent rays, and parallel miss cases.
+    const Ellipsoid unitSphere(1.0, 1.0);
+    struct Case {
+        Vec3 origin;
+        Vec3 direction;
+    };
+    const Case cases[] = {
+        {Vec3(-2.0, 0.0, 0.0), Vec3(-1.0, 0.0, 0.0)},
+        {Vec3(0.0, -2.0, 0.0), Vec3(0.0, -1.0, 0.0)},
+        {Vec3(0.0, 0.0, -2.0), Vec3(0.0, 0.0, -1.0)},
+        {Vec3(1.0, 0.0, 0.0), Vec3(0.0, 0.0, 1.0)},
+        {Vec3(2.0, 0.0, 0.0), Vec3(0.0, 0.0, 1.0)},
+        {Vec3(2.0, 0.0, 0.0), Vec3(0.0, 0.0, -1.0)},
+        {Vec3(2.0, 0.0, 0.0), Vec3(0.0, 1.0, 0.0)},
+        {Vec3(2.0, 0.0, 0.0), Vec3(0.0, -1.0, 0.0)},
+    };
+
+    for (const auto& c : cases) {
+        EXPECT_FALSE(unitSphere.rayIntersectionInterval(c.origin, c.direction)
+                         .has_value());
+    }
+}
+
 TEST(EllipsoidTest, VincentyInverseBeijingShanghaiDistance) {
     const auto& e = Ellipsoid::WGS84();
     auto beijing = Cartographic::fromDegrees(116.397, 39.908, 0.0);

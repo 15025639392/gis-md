@@ -1,13 +1,15 @@
 #pragma once
 
 #include "RasterOverlayTile.h"
+#include "RasterTextureUploader.h"
+#include "../platform/bridge/PlatformBridge.h"
 #include "../tiling/TileKey.h"
 #include "../tiling/TileScheme.h"
 #include "../tiling/SurfaceTile.h"
 #include "../core/math/Rectangle.h"
-#include "../renderer/RenderDevice.h"
 
 #include <memory>
+#include <vector>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -25,7 +27,7 @@ struct DecodedImage;
 /// cesium-native RasterOverlayTileProvider equivalent.
 ///
 /// Owns the lifecycle of RasterOverlayTile instances. Handles tile creation,
-/// async loading dispatch, texture upload, throttling, and cache management.
+/// async loading dispatch, upload scheduling, throttling, and cache management.
 ///
 /// This owns raster tile runtime state: cache, pending uploads, failed tiles,
 /// request throttling, and frame-based trimming.
@@ -39,14 +41,38 @@ public:
 
     /// @param provider The imagery data source (HTTP fetcher).
     /// @param scheme The tile coordinate scheme.
-    /// @param device GPU device for texture creation (may be null for headless).
+    /// @param textureUploader Resource-prep adapter for GPU texture creation.
+    ///                        May be null for headless lifecycle tests.
     RasterOverlayTileProvider(ImageryProvider& provider,
                               const TileScheme& scheme,
-                              RenderDevice* device);
+                              std::unique_ptr<RasterTextureUploader> textureUploader =
+                                  nullptr);
     ~RasterOverlayTileProvider();
 
     RasterOverlayTileProvider(const RasterOverlayTileProvider&) = delete;
     RasterOverlayTileProvider& operator=(const RasterOverlayTileProvider&) = delete;
+
+    struct RectangleSourceImage {
+        TileKey key;
+        Rectangle bounds;
+        std::unique_ptr<DecodedImage> image;
+    };
+
+    /// Core rectangle composition contract. The returned image is in the target
+    /// rectangle's UV space. Source sampling uses the provider scheme
+    /// projection, so WebMercator source y is sampled in Mercator space.
+    /// Returns nullptr unless every target pixel is covered by a real source.
+    static std::unique_ptr<DecodedImage> composeRectangleImages(
+        const TileScheme& scheme,
+        const Rectangle& targetBounds,
+        int sourceZoom,
+        std::vector<RectangleSourceImage>&& sources,
+        int maximumTextureSize);
+
+    static double projectedVForLatitude(
+        const TileScheme& scheme,
+        const Rectangle& bounds,
+        double lat);
 
     // ── Tile lifecycle ──
 
@@ -86,9 +112,6 @@ public:
     RasterOverlayProjection getProjection() const {
         return RasterOverlayProjection::Geographic;
     }
-
-    /// Returns the render device (may be null).
-    RenderDevice* getRenderDevice() const { return device_; }
 
     // ── Async loading ──
 
@@ -154,21 +177,16 @@ public:
     // via unique_ptr<Texture>. No external callback needed.
 
 #ifdef __ANDROID__
-    // DIAGNOSTIC ONLY: lets Android crash/perf probes detect stale raster
-    // texture raw pointers before dereferencing them.
-    static void registerLiveTextureForDiagnostics(const Texture* texture);
-    static void unregisterLiveTextureForDiagnostics(const Texture* texture);
-    static bool isLiveTextureForDiagnostics(const Texture* texture);
-    static void registerLiveTileForDiagnostics(const RasterOverlayTile* tile);
-    static void unregisterLiveTileForDiagnostics(const RasterOverlayTile* tile);
-    static bool isLiveTileForDiagnostics(const RasterOverlayTile* tile);
+    // Android lifetime guard for retained raster tile/texture raw pointers.
+    static void registerLiveTextureForLifetimeGuard(const Texture* texture);
+    static void unregisterLiveTextureForLifetimeGuard(const Texture* texture);
+    static bool isLiveTextureForLifetimeGuard(const Texture* texture);
+    static void registerLiveTileForLifetimeGuard(const RasterOverlayTile* tile);
+    static void unregisterLiveTileForLifetimeGuard(const RasterOverlayTile* tile);
+    static bool isLiveTileForLifetimeGuard(const RasterOverlayTile* tile);
 #endif
 
 private:
-    /// Internal: create GPU texture from decoded image.
-    std::unique_ptr<Texture> uploadTexture(const DecodedImage& image,
-                                           bool generateMipmaps);
-
     /// Internal: load a rectangle raster tile by combining the provider's
     /// quadtree imagery tiles that overlap its rectangle.
     bool loadRectangleTile(RasterOverlayTile& tile);
@@ -178,7 +196,7 @@ private:
 
     ImageryProvider& provider_;
     const TileScheme& scheme_;
-    RenderDevice* device_;
+    std::unique_ptr<RasterTextureUploader> textureUploader_;
     class RasterOverlay* owner_ = nullptr;
 
     /// All cached tiles retained by this provider (key → shared_ptr).

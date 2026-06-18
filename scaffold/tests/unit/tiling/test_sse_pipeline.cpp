@@ -8,6 +8,7 @@
 #include "earth_engine/core/geodesy/Transforms.h"
 #include "earth_engine/core/math/OrientedBoundingBox.h"
 #include "earth_engine/core/math/Plane.h"
+#include "earth_engine/renderer/IPrepareRendererResources.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
 #include "earth_engine/scene/Scene.h"
@@ -16,6 +17,7 @@
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/TileSurface.h"
 #include "earth_engine/tiling/Tileset.h"
+#include "earth_engine/tiling/SurfaceRasterBinding.h"
 
 #include <atomic>
 #include <array>
@@ -72,8 +74,9 @@ struct TilesetTestAccess {
         return tileset.isTileRenderable(tile);
     }
 
-    static void renderSelectedTile(Tileset& tileset, TilesetTile& tile) {
-        tileset.renderSelectedTile(tile, 1.0, true);
+    static void addTileToCurrentPlan(Tileset& tileset, TilesetTile& tile) {
+        tileset.addTileToCurrentPlan(tile, 1.0, true);
+        tileset.refreshTilePlanRenderEntries();
     }
 
     static bool culledTileReportsMissingRenderableForForbidHoles(
@@ -149,6 +152,58 @@ struct TilesetTestAccess {
 
     static bool loadQueueEmpty(const Tileset& tileset) {
         return tileset.loadQueue_.empty();
+    }
+
+    static size_t loadQueueSize(const Tileset& tileset) {
+        return tileset.loadQueue_.size();
+    }
+
+    static bool loadQueueContainsOnly(const Tileset& tileset,
+                                      const TileKey& key,
+                                      Tileset::TileLoadPriorityGroup group) {
+        return tileset.loadQueue_.size() == 1 &&
+               tileset.loadQueue_.front().key == key &&
+               tileset.loadQueue_.front().group == group;
+    }
+
+    static bool loadQueueContainsOnlyNormal(const Tileset& tileset,
+                                            const TileKey& key) {
+        return loadQueueContainsOnly(
+            tileset,
+            key,
+            Tileset::TileLoadPriorityGroup::Normal);
+    }
+
+    static bool loadQueueContainsNormal(const Tileset& tileset,
+                                        const TileKey& key) {
+        for (const Tileset::TileLoadRequest& request : tileset.loadQueue_) {
+            if (request.key == key &&
+                request.group == Tileset::TileLoadPriorityGroup::Normal) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static bool loadQueueContainsUrgent(const Tileset& tileset,
+                                        const TileKey& key) {
+        for (const Tileset::TileLoadRequest& request : tileset.loadQueue_) {
+            if (request.key == key &&
+                request.group == Tileset::TileLoadPriorityGroup::Urgent) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static bool loadQueueContainsAny(const Tileset& tileset,
+                                     const TileKey& key) {
+        for (const Tileset::TileLoadRequest& request : tileset.loadQueue_) {
+            if (request.key == key) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static void queuePreload(Tileset& tileset, const TileKey& key) {
@@ -265,6 +320,7 @@ struct TilesetTestAccess {
     static void updateLodTransitions(Tileset& tileset,
                                      double deltaSeconds) {
         tileset.updateLodTransitions(deltaSeconds);
+        tileset.refreshTilePlanRenderEntries();
     }
 
     static size_t fadingOutSetSize(const Tileset& tileset) {
@@ -346,12 +402,44 @@ FrameState::SelectorView makeSelectorView(const Camera& camera,
     FrameState::SelectorView view;
     view.position = camera.position();
     view.direction = camera.direction();
-    view.frustum = camera.frustum(
-        static_cast<double>(viewportWidth),
-        static_cast<double>(viewportHeight));
-    view.verticalFovRadians = camera.verticalFovRadians();
+    const double width = static_cast<double>(viewportWidth);
+    const double height = static_cast<double>(viewportHeight);
+    view.projectionMatrix = camera.projectionMatrix(width, height);
+    view.frustum = Frustum::fromViewProjection(
+        view.projectionMatrix * camera.viewMatrix());
     view.viewportHeightPixels = viewportHeight;
     return view;
+}
+
+Camera makeCameraFromCenterPitchHeading(double longitudeDegrees,
+                                        double latitudeDegrees,
+                                        double cameraHeightMeters,
+                                        double pitchRadians,
+                                        double headingRadians) {
+    const Cartographic targetCartographic =
+        Cartographic::fromDegrees(longitudeDegrees, latitudeDegrees, 0.0);
+    const Vec3 target =
+        Ellipsoid::WGS84().cartographicToCartesian(targetCartographic);
+    const Vec3 localUp =
+        Ellipsoid::WGS84().geodeticSurfaceNormal(targetCartographic);
+    const Vec3 east =
+        Vec3(-target.y(), target.x(), 0.0).normalized();
+    const Vec3 north = localUp.cross(east).normalized();
+
+    const double horizontalScale = std::cos(pitchRadians);
+    const Vec3 direction =
+        (east * (std::sin(headingRadians) * horizontalScale) +
+         north * (std::cos(headingRadians) * horizontalScale) +
+         localUp * std::sin(pitchRadians)).normalized();
+    const Vec3 cameraUp =
+        (north * std::cos(headingRadians) -
+         east * std::sin(headingRadians)).normalized();
+
+    Camera camera;
+    camera.lookAt(target - direction * cameraHeightMeters,
+                  target,
+                  cameraUp);
+    return camera;
 }
 
 template <typename T>
@@ -506,6 +594,45 @@ private:
     int height_ = 0;
 };
 
+class RecordingPrepareRendererResources final
+    : public IPrepareRendererResources {
+public:
+    void attachRasterInMainThread(
+        const TileKey& geometryKey,
+        int32_t overlayIndex,
+        std::shared_ptr<const RasterOverlayTile> rasterTile,
+        Texture* texture,
+        float translationU,
+        float translationV,
+        float scaleU,
+        float scaleV) override {
+        ++attachCount;
+        lastGeometryKey = geometryKey;
+        lastOverlayIndex = overlayIndex;
+        lastRasterTile = std::move(rasterTile);
+        lastTexture = texture;
+        lastUv = {translationU, translationV, scaleU, scaleV};
+    }
+
+    void detachRasterInMainThread(
+        const TileKey& geometryKey,
+        int32_t overlayIndex) noexcept override {
+        ++detachCount;
+        lastDetachedGeometryKey = geometryKey;
+        lastDetachedOverlayIndex = overlayIndex;
+    }
+
+    int attachCount = 0;
+    int detachCount = 0;
+    TileKey lastGeometryKey;
+    TileKey lastDetachedGeometryKey;
+    int32_t lastOverlayIndex = -1;
+    int32_t lastDetachedOverlayIndex = -1;
+    std::shared_ptr<const RasterOverlayTile> lastRasterTile;
+    Texture* lastTexture = nullptr;
+    std::array<float, 4> lastUv{0.0f, 0.0f, 1.0f, 1.0f};
+};
+
 class DummyRenderDevice final : public RenderDevice {
 public:
     Backend backendType() const override { return Backend::OpenGLES; }
@@ -573,8 +700,6 @@ struct InitializedRendererHarness {
         const GlobeMesh globeMesh = Globe::createMesh(4, 2);
         check(renderer.initialize(globeMesh),
               "Renderer test harness initializes shared surface resources");
-        check(renderer.surfaceFallbackTexture() != nullptr,
-              "Renderer test harness creates a surface fallback texture");
     }
 };
 
@@ -1646,21 +1771,23 @@ void testRasterMappedAttachedUnknownReportsMoreDetail() {
               mapped.getReadyTile() == loadingTile,
           "RasterMappedToTilesetTile: no-renderer promotion is cover-ready but not attached");
 
-    Renderer renderer(nullptr);
+    RecordingPrepareRendererResources prepResources;
     const auto rendererUpdate = mapped.update(
         geometryKey,
         details,
         512.0,
         512.0,
         provider,
-        &renderer,
+        &prepResources,
         missingProjections,
         nullptr,
         0);
     check(rendererUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown &&
               mapped.getState() == RasterMappedToTilesetTile::State::Attached &&
-              renderer.getAttachedRaster(geometryKey, 0) != nullptr,
-          "RasterMappedToTilesetTile: renderer update attaches promoted ready raster");
+              prepResources.attachCount == 1 &&
+              prepResources.lastRasterTile.get() == loadingTile &&
+              prepResources.lastTexture == loadingTile->getTexture(),
+          "RasterMappedToTilesetTile: resource prep is notified for promoted ready raster");
 
     const auto attachedUpdate = mapped.update(
         geometryKey,
@@ -1668,7 +1795,7 @@ void testRasterMappedAttachedUnknownReportsMoreDetail() {
         512.0,
         512.0,
         provider,
-        &renderer,
+        &prepResources,
         missingProjections,
         nullptr,
         0);
@@ -1871,7 +1998,7 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
     RasterOverlayTile* parentReady = parentMapped->getReadyTile();
     check(parentReady != nullptr &&
               parentMapped->getState() == RasterMappedToTilesetTile::State::Unattached,
-          "RasterMappedToTilesetTile: parent fallback is cover-ready before renderer attach");
+          "RasterMappedToTilesetTile: parent fallback is cover-ready before resource prep");
     parent.rasterOverlays[0] = std::move(parentMapped);
 
     RasterMappedToTilesetTile childMapped;
@@ -1902,28 +2029,30 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
           "RasterMappedToTilesetTile: loading child with ancestor raster reports unknown detail");
     check(childMapped.getReadyTile() == parentReady &&
               childMapped.getState() == RasterMappedToTilesetTile::State::Unattached,
-          "RasterMappedToTilesetTile: ancestor raster is cover-ready before renderer attach");
+          "RasterMappedToTilesetTile: ancestor raster is cover-ready before resource prep");
     check(!childMapped.isMoreDetailAvailable(),
           "RasterMappedToTilesetTile: temporary ancestor raster does not trigger upsample children");
 
-    Renderer renderer(nullptr);
-    const auto rendererFallbackUpdate = childMapped.update(
+    RecordingPrepareRendererResources prepResources;
+    const auto prepFallbackUpdate = childMapped.update(
         child.key,
         childDetails,
         512.0,
         512.0,
         provider,
-        &renderer,
+        &prepResources,
         childMissing,
         &parent,
         0);
 
-    check(rendererFallbackUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown,
-          "RasterMappedToTilesetTile: renderer fallback keeps loading-child detail unknown");
+    check(prepFallbackUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown,
+          "RasterMappedToTilesetTile: ancestor fallback keeps loading-child detail unknown");
     check(childMapped.getState() ==
               RasterMappedToTilesetTile::State::TemporarilyAttached &&
-              renderer.getAttachedRaster(child.key, 0) != nullptr,
-          "RasterMappedToTilesetTile: build-stage update attaches ancestor raster as temporary fallback");
+              prepResources.attachCount == 1 &&
+              prepResources.lastRasterTile.get() == parentReady &&
+              prepResources.lastTexture == parentReady->getTexture(),
+          "RasterMappedToTilesetTile: resource prep sees ancestor raster as temporary fallback");
     check(!childMapped.isMoreDetailAvailable(),
           "RasterMappedToTilesetTile: attached temporary ancestor still does not trigger upsample children");
 }
@@ -3244,6 +3373,58 @@ private:
     TileKey key_;
 };
 
+class SelectionTreeContentProvider final : public TilesetContentProvider {
+public:
+    SelectionTreeContentProvider(
+        std::vector<TileKey> roots,
+        std::vector<std::pair<TileKey, std::vector<TileKey>>> children)
+        : roots_(std::move(roots)),
+          children_(std::move(children)) {}
+
+    std::string id() const override {
+        return "selection-tree-content";
+    }
+
+    bool supportsTile(const TileKey& key) const override {
+        if (std::find(roots_.begin(), roots_.end(), key) != roots_.end()) {
+            return true;
+        }
+        for (const auto& entry : children_) {
+            if (entry.first == key) return true;
+            if (std::find(entry.second.begin(), entry.second.end(), key) !=
+                entry.second.end()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::vector<TileKey> rootTiles() const override {
+        return roots_;
+    }
+
+    std::vector<TileKey> childTiles(const TileKey& key) const override {
+        for (const auto& entry : children_) {
+            if (entry.first == key) return entry.second;
+        }
+        return {};
+    }
+
+    void requestTileContent(const TileKey& key,
+                            CancellationToken,
+                            ContentCallback callback) override {
+        callback(key, TileContentLoadResult::retryLater());
+    }
+
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+
+private:
+    std::vector<TileKey> roots_;
+    std::vector<std::pair<TileKey, std::vector<TileKey>>> children_;
+};
+
 std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     auto hm = std::make_unique<DecodedHeightmap>();
     hm->tileSize = 2;
@@ -3511,7 +3692,7 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     check(mapped->getReadyTile() == loadingTile &&
               mapped->getState() == RasterMappedToTilesetTile::State::Unattached,
-          "Tileset: prebuild raster promotion makes tile ready without renderer attach");
+          "Tileset: prebuild raster promotion makes tile ready before resource prep");
     check(TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: selector renderability sees promoted raster before build");
 
@@ -3526,11 +3707,13 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
 
     check(!commands.empty() &&
               mapped->getState() == RasterMappedToTilesetTile::State::Attached &&
-              renderer.getAttachedRaster(rootKey, 0) != nullptr,
-          "Tileset: build command attaches pre-promoted raster and emits draw command");
+              commands.front().kind == RenderCommandKind::SurfaceTile &&
+              commands.front().textures.size() == 1 &&
+              commands.front().textures.front() == loadingTile->getTexture(),
+          "Tileset: build command emits a surface command from the core ready raster");
 }
 
-void testTilesetSurfaceDrawableDrawsWithPlaceholderBaseImagery() {
+void testTilesetBlockingBaseImageryDoesNotDrawPlaceholderSurface() {
     auto baseOverlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -3578,19 +3761,105 @@ void testTilesetSurfaceDrawableDrawsWithPlaceholderBaseImagery() {
         commands,
         1.0f);
 
-    check(commands.size() == 1,
-          "Tileset: surface drawable emits a draw command before base imagery is ready");
-    if (commands.empty()) return;
-    const RenderCommand& command = commands.front();
-    check(command.kind == RenderCommandKind::SurfaceTile &&
-              command.textures.size() == 1 &&
-              command.textures.front() ==
-                  rendererHarness.renderer.surfaceFallbackTexture() &&
-              command.surfaceOverlayTextureCount == 0 &&
-              command.surfaceTextureZoom == -1,
-          "Tileset: missing base imagery uses the layer placeholder texture without overlays");
+    check(commands.empty(),
+          "Tileset: blocking base imagery does not draw a fallback placeholder surface");
     check(!TilesetTestAccess::isTileRenderable(tileset, *root),
-          "Tileset: placeholder draw does not promote strict complete renderable");
+          "Tileset: missing blocking base imagery keeps strict complete renderable false");
+}
+
+void testTilesetFailedChildBaseImageryUsesAncestorCommandTexture() {
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+
+    auto terrainProvider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(terrainProvider),
+        std::move(scheme),
+        {&baseActivated},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    TilesetTile* parent = TilesetTestAccess::ensureTile(tileset, parentKey);
+    TilesetTile* child = TilesetTestAccess::ensureTile(tileset, childKey);
+    check(parent != nullptr && child != nullptr && child->parent == parent,
+          "Tileset: failed-child base imagery setup creates parent/child tiles");
+    if (!parent || !child) return;
+
+    auto makeRenderableSurface = [](TilesetTile& tile) {
+        tile.mesh = std::make_unique<SurfaceTileMesh>();
+        tile.mesh->rasterOverlayDetails.setGeographicRectangle(tile.bounds);
+        tile.mesh->indices = {0, 1, 2};
+        tile.meshReady = true;
+        tile.gpuVertexBuffer = std::make_unique<DummyBuffer>(96);
+        tile.gpuIndexBuffer = std::make_unique<DummyBuffer>(12);
+        tile.geometricError = 100.0;
+        tile.loadState = TileLoadState::Done;
+        tile.contentKind = TileContentKind::Render;
+        tile.rasterOverlays.resize(1);
+    };
+    makeRenderableSurface(*parent);
+    makeRenderableSurface(*child);
+
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *parent);
+    RasterMappedToTilesetTile* parentMapped =
+        parent->rasterOverlays[0].get();
+    RasterOverlayTile* parentLoading =
+        parentMapped ? parentMapped->getLoadingTile() : nullptr;
+    check(parentLoading != nullptr,
+          "Tileset: failed-child base imagery setup creates parent raster");
+    if (!parentMapped || !parentLoading) return;
+
+    parentLoading->setTexture(std::make_unique<DummyTexture>(8, 8));
+    Texture* parentTexture = parentLoading->getTexture();
+    parentLoading->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *parent);
+    check(parentMapped->getReadyTile() == parentLoading,
+          "Tileset: failed-child base imagery setup promotes parent raster");
+
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *child);
+    RasterMappedToTilesetTile* childMapped = child->rasterOverlays[0].get();
+    RasterOverlayTile* childLoading =
+        childMapped ? childMapped->getLoadingTile() : nullptr;
+    check(childLoading != nullptr,
+          "Tileset: failed-child base imagery setup creates child raster");
+    if (!childMapped || !childLoading || !parentTexture) return;
+
+    childLoading->setTexture(std::make_unique<DummyTexture>(2, 2));
+    Texture* failedChildTexture = childLoading->getTexture();
+    childLoading->setState(RasterOverlayTile::LoadState::Failed);
+
+    InitializedRendererHarness rendererHarness;
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        rendererHarness.renderer,
+        *child,
+        commands,
+        1.0f);
+
+    check(commands.size() == 1 &&
+              commands.front().kind == RenderCommandKind::SurfaceTile,
+          "Tileset: failed child imagery still draws using a real ancestor texture");
+    if (commands.empty()) return;
+
+    check(commands.front().textures.size() == 1 &&
+              commands.front().textures.front() == parentTexture &&
+              commands.front().textures.front() != failedChildTexture &&
+              commands.front().surfaceBaseRasterState ==
+                  static_cast<int>(RasterOverlayTile::LoadState::Done),
+          "Tileset: failed child surface command consumes parent texture without renderer fallback");
+    const SurfaceRasterBinding binding =
+        chooseSurfaceRasterBinding(childMapped);
+    check(binding.kind == SurfaceRasterBindingKind::AncestorTile &&
+              binding.tile == parentLoading,
+          "Tileset: failed child surface binding is the logical ancestor raster");
 }
 
 void testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw() {
@@ -3674,11 +3943,9 @@ void testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw() {
     const RenderCommand& command = commands.front();
     check(command.kind == RenderCommandKind::SurfaceTile &&
               command.textures.size() == 1 &&
+              command.textures.front() == baseLoading->getTexture() &&
               command.surfaceOverlayTextureCount == 0,
           "Tileset: base imagery draws alone until annotation overlay is ready");
-    check(rendererHarness.renderer.getAttachedRaster(rootKey, 0) != nullptr &&
-              rendererHarness.renderer.getAttachedRaster(rootKey, 1) == nullptr,
-          "Tileset: renderer attaches ready base imagery without a road attachment");
 }
 
 void testTilesetSurfaceOverlaysCompositeIntoSingleCommand() {
@@ -3755,13 +4022,12 @@ void testTilesetSurfaceOverlaysCompositeIntoSingleCommand() {
     const RenderCommand& command = commands.front();
     check(command.kind == RenderCommandKind::SurfaceTile &&
               command.textures.size() == 2 &&
+              command.textures[0] == baseLoading->getTexture() &&
+              command.textures[1] == roadLoading->getTexture() &&
               command.surfaceOverlayTextureCount == 1,
           "Tileset: composite command carries basemap plus one overlay texture");
     check(command.surfaceOverlayOpacities[0] == roadOptions.opacity,
           "Tileset: composite command preserves overlay opacity");
-    check(renderer.getAttachedRaster(rootKey, 0) != nullptr &&
-              renderer.getAttachedRaster(rootKey, 1) != nullptr,
-          "Tileset: composite command still attaches each overlay in renderer state");
 }
 
 void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
@@ -7659,7 +7925,7 @@ void testTilesetUnloadRenderContentReleasesGltfResources() {
 }
 
 void testTilesetTotalBytesIncludesDecodedHeightmapPayload() {
-    auto provider = std::make_unique<SparseTerrainProvider>();
+    auto provider = std::make_unique<DefaultZoomTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
 
@@ -7803,7 +8069,7 @@ void testTilesetEmptyContentReachesDone() {
 }
 
 void testTilesetRenderContentRequiresDoneState() {
-    auto provider = std::make_unique<SparseTerrainProvider>();
+    auto provider = std::make_unique<DefaultZoomTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -7862,7 +8128,7 @@ void testTilesetMappedRasterMustBeReadyForRenderability() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
 
-    auto provider = std::make_unique<SparseTerrainProvider>();
+    auto provider = std::make_unique<DefaultZoomTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
         std::move(provider),
@@ -8433,6 +8699,712 @@ void testTilesetAdditiveRefinementRendersParentAndChildren() {
           "Tileset: render diagnostics count ADD parent render list entries");
 }
 
+void testTilesetAdditiveRefinementRendersFailedChildHoleAndSiblings() {
+    // Aligns cesium-native "Render any tiles even when one of children can't
+    // be rendered for additive refinement": ADD keeps the parent and renders
+    // every renderable descendant, including terminal Failed empty-content
+    // holes, without kicking the sibling set back to the ancestor.
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::vector<TileKey> childKeys = {
+        {"Geographic-TMS", 1, 0, 0},
+        {"Geographic-TMS", 1, 1, 0},
+        {"Geographic-TMS", 1, 0, 1}};
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, childKeys}});
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: ADD failed-child root tile is created");
+    if (!root) return;
+
+    root->loadState = TileLoadState::Done;
+    root->contentKind = TileContentKind::Empty;
+    root->refine = TileRefine::Add;
+    root->geometricError = 40000.0;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(root->children.size() == childKeys.size(),
+          "Tileset: ADD failed-child children are linked");
+    if (root->children.size() != childKeys.size()) return;
+
+    for (size_t i = 0; i < root->children.size(); ++i) {
+        TilesetTile* child = root->children[i];
+        if (!child) continue;
+        child->refine = TileRefine::Replace;
+        child->geometricError = 0.0;
+        if (i == 0) {
+            child->loadState = TileLoadState::Failed;
+            child->contentKind = TileContentKind::Empty;
+        } else {
+            child->loadState = TileLoadState::Done;
+            child->contentKind = TileContentKind::Empty;
+        }
+    }
+
+    bool allChildrenRenderable = true;
+    for (TilesetTile* child : root->children) {
+        allChildrenRenderable =
+            allChildrenRenderable &&
+            child &&
+            TilesetTestAccess::isTileRenderable(tileset, *child);
+    }
+    check(TilesetTestAccess::isTileRenderable(tileset, *root) &&
+              allChildrenRenderable,
+          "Tileset: ADD failed-child setup is renderable before selection");
+
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    Camera camera;
+    camera.lookAt(center + center.normalized() * 1000000.0,
+                  center,
+                  Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 143;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const auto& visibleTiles = tileset.tilePlan().visibleTiles;
+    const auto visibleEnd = visibleTiles.end();
+    const bool rootVisible =
+        std::find(visibleTiles.begin(), visibleEnd, rootKey) != visibleEnd;
+    size_t visibleChildCount = 0;
+    for (const TileKey& childKey : childKeys) {
+        if (std::find(visibleTiles.begin(), visibleEnd, childKey) !=
+            visibleEnd) {
+            ++visibleChildCount;
+        }
+    }
+
+    check(rootVisible,
+          "Tileset: ADD failed-child keeps additive parent visible");
+    check(visibleChildCount == childKeys.size(),
+          "Tileset: ADD failed-child renders failed hole and ready siblings");
+    check(tileset.tilePlan().selectionKickedCount == 0,
+          "Tileset: ADD failed-child selection does not kick descendants");
+}
+
+void testTilesetReplaceRefinementRendersChildrenWhenReady() {
+    // Aligns cesium-native "Child should be chosen when parent doesn't meet
+    // SSE": with REPLACE refinement, loaded renderable children replace their
+    // parent once the parent requires refinement.
+    auto provider = std::make_unique<DefaultZoomTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: replace-refine root tile is created");
+    if (!root) return;
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+    root->refine = TileRefine::Replace;
+    root->geometricError = 40000.0;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    std::vector<TileKey> childKeys;
+    for (TilesetTile* child : root->children) {
+        if (!child) continue;
+        childKeys.push_back(child->key);
+        child->upsampledFromParent = false;
+        TilesetTestAccess::putTerrainCache(
+            tileset,
+            child->key,
+            makeFlatHeightmap(0.0f));
+        TilesetTestAccess::ensureTileMesh(tileset, *child);
+    }
+    bool allChildrenRenderable = !childKeys.empty();
+    for (TilesetTile* child : root->children) {
+        allChildrenRenderable =
+            allChildrenRenderable &&
+            child &&
+            TilesetTestAccess::isTileRenderable(tileset, *child);
+    }
+    check(childKeys.size() == 4 && allChildrenRenderable,
+          "Tileset: replace-refine children are ready before selection");
+
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    Camera camera;
+    camera.lookAt(center + center.normalized() * 1000000.0,
+                  center,
+                  Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 136;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const auto& visibleTiles = tileset.tilePlan().visibleTiles;
+    const auto visibleEnd = visibleTiles.end();
+    const bool rootVisible =
+        std::find(visibleTiles.begin(), visibleEnd, rootKey) != visibleEnd;
+    size_t visibleChildCount = 0;
+    for (const TileKey& childKey : childKeys) {
+        if (std::find(visibleTiles.begin(), visibleEnd, childKey) !=
+            visibleEnd) {
+            ++visibleChildCount;
+        }
+    }
+    check(!rootVisible && root->selectionState == TileSelectionState::Refined,
+          "Tileset: REPLACE parent is refined instead of rendered when children are ready");
+    check(visibleChildCount == childKeys.size() && visibleChildCount > 0,
+          "Tileset: REPLACE refinement renders all ready children like cesium-native");
+}
+
+void testTilesetReplaceRefinementFallsBackToParentWhileChildrenLoad() {
+    // Aligns cesium-native REPLACE first-frame behavior: when the parent
+    // needs refinement but none of its children are renderable yet, the
+    // renderable parent remains selected while children enter the load queue.
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::vector<TileKey> childKeys = {
+        {"Geographic-TMS", 1, 0, 0},
+        {"Geographic-TMS", 1, 1, 0},
+        {"Geographic-TMS", 1, 0, 1},
+        {"Geographic-TMS", 1, 1, 1}};
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, childKeys}});
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: replace-loading-children root tile is created");
+    if (!root) return;
+
+    root->loadState = TileLoadState::Done;
+    root->contentKind = TileContentKind::Empty;
+    root->refine = TileRefine::Replace;
+    root->geometricError = 40000.0;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(root->children.size() == childKeys.size(),
+          "Tileset: replace-loading-children children are linked");
+    if (root->children.size() != childKeys.size()) return;
+    for (TilesetTile* child : root->children) {
+        if (!child) continue;
+        child->loadState = TileLoadState::Unloaded;
+        child->contentKind = TileContentKind::Unknown;
+        child->geometricError = 0.0;
+    }
+
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    Camera camera;
+    camera.lookAt(center + center.normalized() * 1000000.0,
+                  center,
+                  Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 144;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const auto& visibleTiles = tileset.tilePlan().visibleTiles;
+    const auto visibleEnd = visibleTiles.end();
+    const bool rootVisible =
+        std::find(visibleTiles.begin(), visibleEnd, rootKey) != visibleEnd;
+    bool anyChildVisible = false;
+    bool allChildrenQueued = true;
+    for (const TileKey& childKey : childKeys) {
+        anyChildVisible |=
+            std::find(visibleTiles.begin(), visibleEnd, childKey) != visibleEnd;
+        allChildrenQueued &= TilesetTestAccess::loadQueueContainsAny(
+            tileset,
+            childKey);
+    }
+
+    check(rootVisible && root->selectionState == TileSelectionState::Rendered,
+          "Tileset: REPLACE loading children render parent fallback first");
+    check(!anyChildVisible,
+          "Tileset: REPLACE loading children are not selected as holes");
+    check(allChildrenQueued,
+          "Tileset: REPLACE loading children enter selector load queue");
+    check(tileset.tilePlan().selectionKickedCount ==
+              static_cast<int>(childKeys.size()),
+          "Tileset: REPLACE loading children mark descendants as kicked");
+}
+
+void testTilesetReplaceRefinementRendersFailedChildrenAsHoles() {
+    // Aligns cesium-native replace refinement: terminal Failed children are
+    // renderable empty content, so they still replace the parent rather than
+    // forcing a parent fallback.
+    auto provider = std::make_unique<DefaultZoomTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: replace-failed-children root tile is created");
+    if (!root) return;
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+    root->refine = TileRefine::Replace;
+    root->geometricError = 40000.0;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    std::vector<TileKey> childKeys;
+    for (TilesetTile* child : root->children) {
+        if (!child) continue;
+        childKeys.push_back(child->key);
+        child->upsampledFromParent = false;
+        child->loadState = TileLoadState::Failed;
+        child->contentKind = TileContentKind::Empty;
+        child->meshReady = false;
+        child->mesh.reset();
+    }
+    bool allChildrenRenderable = !childKeys.empty();
+    for (TilesetTile* child : root->children) {
+        allChildrenRenderable =
+            allChildrenRenderable &&
+            child &&
+            TilesetTestAccess::isTileRenderable(tileset, *child);
+    }
+    check(childKeys.size() == 4 && allChildrenRenderable,
+          "Tileset: failed replace children are renderable empty content before selection");
+
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    Camera camera;
+    camera.lookAt(center + center.normalized() * 1000000.0,
+                  center,
+                  Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 137;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const auto& visibleTiles = tileset.tilePlan().visibleTiles;
+    const auto visibleEnd = visibleTiles.end();
+    const bool rootVisible =
+        std::find(visibleTiles.begin(), visibleEnd, rootKey) != visibleEnd;
+    size_t visibleChildCount = 0;
+    for (const TileKey& childKey : childKeys) {
+        if (std::find(visibleTiles.begin(), visibleEnd, childKey) !=
+            visibleEnd) {
+            ++visibleChildCount;
+        }
+    }
+
+    check(!rootVisible && root->selectionState == TileSelectionState::Refined,
+          "Tileset: REPLACE failed children prevent parent fallback like cesium-native");
+    check(visibleChildCount == childKeys.size() && visibleChildCount > 0,
+          "Tileset: REPLACE refinement renders failed children as empty holes");
+    check(tileset.tilePlan().selectionKickedCount == 0,
+          "Tileset: REPLACE failed children are not kicked as non-renderable descendants");
+}
+
+void runTilesetUnconditionallyRefinedChildSelectionTest(TilesetOptions options,
+                                                        const char* label) {
+    // Aligns cesium-native "An unconditionally-refined tile is not rendered":
+    // the selector may fall back to a renderable ancestor, but the
+    // unconditionally-refined tile itself must not become a render tile while
+    // its required descendant is still unavailable.
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey grandchildKey{"Geographic-TMS", 2, 0, 0};
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, {childKey}},
+            {childKey, {grandchildKey}}});
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        nullptr,
+        options,
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          std::string("Tileset: unconditionally-refined selector root is created ") + label);
+    if (!root) return;
+
+    root->loadState = TileLoadState::Done;
+    root->contentKind = TileContentKind::Empty;
+    root->refine = TileRefine::Replace;
+    root->geometricError = 40000.0;
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    root->boundingVolume = TileBoundingVolume::fromSphere(center, 1000000.0);
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    TilesetTile* child = TilesetTestAccess::findTile(tileset, childKey);
+    check(child != nullptr,
+          std::string("Tileset: unconditionally-refined selector child is linked ") + label);
+    if (!child) return;
+
+    child->loadState = TileLoadState::Done;
+    child->contentKind = TileContentKind::Empty;
+    child->refine = TileRefine::Replace;
+    child->unconditionallyRefine = true;
+    child->geometricError = 0.0;
+    child->boundingVolume = TileBoundingVolume::fromSphere(center, 1000000.0);
+
+    TilesetTestAccess::ensureTileChildren(tileset, *child);
+    TilesetTile* grandchild =
+        TilesetTestAccess::findTile(tileset, grandchildKey);
+    check(grandchild != nullptr,
+          std::string("Tileset: unconditionally-refined selector grandchild is linked ") + label);
+    if (!grandchild) return;
+
+    grandchild->loadState = TileLoadState::Unloaded;
+    grandchild->contentKind = TileContentKind::Unknown;
+    grandchild->geometricError = 0.0;
+    grandchild->boundingVolume =
+        TileBoundingVolume::fromSphere(center, 1000000.0);
+
+    Camera camera;
+    camera.lookAt(center + center.normalized() * 1000000.0,
+                  center,
+                  Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 145;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const auto& visibleTiles = tileset.tilePlan().visibleTiles;
+    const auto visibleEnd = visibleTiles.end();
+    const bool rootVisible =
+        std::find(visibleTiles.begin(), visibleEnd, rootKey) != visibleEnd;
+    const bool childVisible =
+        std::find(visibleTiles.begin(), visibleEnd, childKey) != visibleEnd;
+    const bool grandchildVisible =
+        std::find(visibleTiles.begin(), visibleEnd, grandchildKey) != visibleEnd;
+
+    check(rootVisible,
+          std::string("Tileset: unconditionally-refined selector falls back to ancestor ") + label);
+    check(!childVisible,
+          std::string("Tileset: unconditionally-refined child is not rendered ") + label);
+    check(!grandchildVisible,
+          std::string("Tileset: unavailable grandchild is not rendered ") + label);
+    check(TilesetTestAccess::loadQueueContainsAny(tileset, grandchildKey),
+          std::string("Tileset: unconditionally-refined grandchild is queued ") + label);
+}
+
+void testTilesetUnconditionallyRefinedChildIsNotSelected() {
+    runTilesetUnconditionallyRefinedChildSelectionTest(
+        TilesetOptions{},
+        "default");
+
+    TilesetOptions forbidHolesOptions;
+    forbidHolesOptions.forbidHoles = true;
+    runTilesetUnconditionallyRefinedChildSelectionTest(
+        forbidHolesOptions,
+        "forbidHoles");
+}
+
+void testTilesetExternalWrapperRefinesToChildSelection() {
+    // Local equivalent of cesium-native external tileset traversal: external
+    // content creates an unconditionally-refined wrapper, so selection must
+    // continue into the attached child root instead of rendering the wrapper.
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey externalKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey renderKey{"Geographic-TMS", 2, 0, 0};
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, {externalKey}},
+            {externalKey, {renderKey}}});
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: external-wrapper selector root is created");
+    if (!root) return;
+
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    root->loadState = TileLoadState::Done;
+    root->contentKind = TileContentKind::Empty;
+    root->refine = TileRefine::Replace;
+    root->geometricError = 40000.0;
+    root->boundingVolume = TileBoundingVolume::fromSphere(center, 1000000.0);
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    TilesetTile* external = TilesetTestAccess::findTile(tileset, externalKey);
+    check(external != nullptr,
+          "Tileset: external-wrapper selector external tile is linked");
+    if (!external) return;
+
+    external->loadState = TileLoadState::Done;
+    external->contentKind = TileContentKind::External;
+    external->refine = TileRefine::Replace;
+    external->unconditionallyRefine = true;
+    external->geometricError = 0.0;
+    external->boundingVolume =
+        TileBoundingVolume::fromSphere(center, 1000000.0);
+
+    TilesetTestAccess::ensureTileChildren(tileset, *external);
+    TilesetTile* render = TilesetTestAccess::findTile(tileset, renderKey);
+    check(render != nullptr,
+          "Tileset: external-wrapper selector render child is linked");
+    if (!render) return;
+
+    render->loadState = TileLoadState::Done;
+    render->contentKind = TileContentKind::Empty;
+    render->geometricError = 0.0;
+    render->boundingVolume = TileBoundingVolume::fromSphere(center, 1000000.0);
+
+    Camera camera;
+    camera.lookAt(center + center.normalized() * 1000000.0,
+                  center,
+                  Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 146;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const auto& visibleTiles = tileset.tilePlan().visibleTiles;
+    const auto visibleEnd = visibleTiles.end();
+    const bool externalVisible =
+        std::find(visibleTiles.begin(), visibleEnd, externalKey) != visibleEnd;
+    const bool renderVisible =
+        std::find(visibleTiles.begin(), visibleEnd, renderKey) != visibleEnd;
+
+    check(!externalVisible,
+          "Tileset: external-wrapper selector does not render external wrapper");
+    check(renderVisible,
+          "Tileset: external-wrapper selector renders attached child root");
+    check(external->selectionState == TileSelectionState::Refined,
+          "Tileset: external-wrapper selector records wrapper as refined");
+}
+
+void testTilesetReplaceFailedChildSwitchesFromGrandchildToEmptyHole() {
+    // Aligns cesium-native "Parent meets sse but not renderable": a failed
+    // child that refined last frame keeps its loaded descendant while it does
+    // not meet SSE, then renders as an empty hole once it meets SSE again.
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::vector<TileKey> childKeys = {
+        {"Geographic-TMS", 1, 0, 0},
+        {"Geographic-TMS", 1, 1, 0},
+        {"Geographic-TMS", 1, 0, 1},
+        {"Geographic-TMS", 1, 1, 1}};
+    const TileKey failedChildKey = childKeys.front();
+    const TileKey grandchildKey{"Geographic-TMS", 2, 0, 0};
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, childKeys},
+            {failedChildKey, {grandchildKey}}});
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: replace-failed-child-continuation root tile is created");
+    if (!root) return;
+
+    root->loadState = TileLoadState::Done;
+    root->contentKind = TileContentKind::Empty;
+    root->refine = TileRefine::Replace;
+    root->geometricError = 800000000.0;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(root->children.size() == 4,
+          "Tileset: replace-failed-child-continuation root has four children");
+    if (root->children.size() < 4) return;
+
+    TilesetTile* failedChild =
+        TilesetTestAccess::findTile(tileset, failedChildKey);
+    check(failedChild != nullptr,
+          "Tileset: replace-failed-child-continuation failed child is linked");
+    if (!failedChild) return;
+    failedChild->loadState = TileLoadState::Failed;
+    failedChild->contentKind = TileContentKind::Empty;
+    failedChild->geometricError = 200000.0;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *failedChild);
+    check(failedChild->children.size() == 1,
+          "Tileset: replace-failed-child-continuation failed child has descendants");
+    if (failedChild->children.empty()) return;
+    TilesetTile* grandchild =
+        TilesetTestAccess::findTile(tileset, grandchildKey);
+    check(grandchild != nullptr,
+          "Tileset: replace-failed-child-continuation grandchild is linked");
+    if (!grandchild) return;
+    grandchild->loadState = TileLoadState::Done;
+    grandchild->contentKind = TileContentKind::Empty;
+    grandchild->geometricError = 1.0;
+
+    for (size_t i = 1; i < childKeys.size(); ++i) {
+        TilesetTile* sibling =
+            TilesetTestAccess::findTile(tileset, childKeys[i]);
+        if (!sibling) continue;
+        sibling->loadState = TileLoadState::Done;
+        sibling->contentKind = TileContentKind::Empty;
+        sibling->geometricError = 1.0;
+    }
+
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(failedChild->bounds);
+    Camera nearCamera;
+    nearCamera.lookAt(center + center.normalized() * 1000000.0,
+                      center,
+                      Vec3::unitZ());
+
+    FrameState nearFrame;
+    nearFrame.frameId = 138;
+    nearFrame.camera = &nearCamera;
+    nearFrame.viewportWidthPixels = 800;
+    nearFrame.viewportHeightPixels = 800;
+    nearFrame.selectorViews.push_back(makeSelectorView(nearCamera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        nearCamera.position(),
+        nearCamera.direction());
+    TilesetTestAccess::selectTiles(tileset, nearFrame);
+
+    const auto nearVisibleEnd = tileset.tilePlan().visibleTiles.end();
+    const bool nearFailedChildVisible =
+        std::find(
+            tileset.tilePlan().visibleTiles.begin(),
+            nearVisibleEnd,
+            failedChildKey) != nearVisibleEnd;
+    const bool nearGrandchildVisible =
+        std::find(
+            tileset.tilePlan().visibleTiles.begin(),
+            nearVisibleEnd,
+            grandchildKey) != nearVisibleEnd;
+    check(!nearFailedChildVisible &&
+              nearGrandchildVisible &&
+              failedChild->selectionState == TileSelectionState::Refined,
+          "Tileset: failed child that misses SSE renders its loaded grandchild");
+
+    Camera farCamera;
+    farCamera.lookAt(center + center.normalized() * 30000000.0,
+                     center,
+                     Vec3::unitZ());
+
+    FrameState farFrame;
+    farFrame.frameId = 139;
+    farFrame.camera = &farCamera;
+    farFrame.viewportWidthPixels = 800;
+    farFrame.viewportHeightPixels = 800;
+    farFrame.selectorViews.push_back(makeSelectorView(farCamera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        farCamera.position(),
+        farCamera.direction());
+    TilesetTestAccess::selectTiles(tileset, farFrame);
+
+    const auto farVisibleEnd = tileset.tilePlan().visibleTiles.end();
+    const bool farFailedChildVisible =
+        std::find(
+            tileset.tilePlan().visibleTiles.begin(),
+            farVisibleEnd,
+            failedChildKey) != farVisibleEnd;
+    const bool farGrandchildVisible =
+        std::find(
+            tileset.tilePlan().visibleTiles.begin(),
+            farVisibleEnd,
+            grandchildKey) != farVisibleEnd;
+    size_t visibleSiblingCount = 0;
+    for (size_t i = 1; i < childKeys.size(); ++i) {
+        if (std::find(
+                tileset.tilePlan().visibleTiles.begin(),
+                farVisibleEnd,
+                childKeys[i]) != farVisibleEnd) {
+            ++visibleSiblingCount;
+        }
+    }
+
+    check(failedChild->previousSelectionState == TileSelectionState::Refined,
+          "Tileset: failed child carries real previous-frame refined state");
+    check(farFailedChildVisible &&
+              !farGrandchildVisible &&
+              failedChild->selectionState == TileSelectionState::Rendered,
+          "Tileset: failed child that now meets SSE renders as an empty hole");
+    check(visibleSiblingCount == childKeys.size() - 1,
+          "Tileset: failed child continuation keeps ready siblings visible");
+}
+
 void testTilesetAdditiveRefinementCullsWithParentBounds() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -8507,6 +9479,92 @@ void testTilesetAdditiveRefinedTileCountsAsPreviouslyRendered() {
               tileset,
               *root),
           "Tileset: ADD refined tile counts as previously rendered like cesium-native");
+}
+
+void testTilesetLoadingDescendantLimitRestoresChildLoadQueue() {
+    // Aligns cesium-native TilesetSelection::kickDescendantsAndRenderTile:
+    // when too many descendants are not yet renderable, child load requests
+    // are restored to the pre-child checkpoint and the renderable ancestor is
+    // queued/rendered instead.
+    TilesetOptions options;
+    options.loadingDescendantLimit = 1;
+    options.forbidHoles = true;
+
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, options);
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: descendant-limit root tile is created");
+    if (!root) return;
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+    root->geometricError = 100000000.0;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(root->children.size() == 4,
+          "Tileset: descendant-limit root has four children");
+    std::vector<TileKey> childKeys;
+    for (TilesetTile* child : root->children) {
+        if (!child) continue;
+        childKeys.push_back(child->key);
+        child->loadState = TileLoadState::Unloaded;
+        child->contentKind = TileContentKind::Unknown;
+        child->meshReady = false;
+        child->geometricError = 1.0;
+    }
+
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    Camera camera;
+    camera.lookAt(center + center.normalized() * 1000000.0,
+                  center,
+                  Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 134;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    check(root->selectionState == TileSelectionState::Rendered,
+          "Tileset: descendant-limit renders the ancestor after kicking descendants");
+    const auto visibleEnd = tileset.tilePlan().visibleTiles.end();
+    check(std::find(
+              tileset.tilePlan().visibleTiles.begin(),
+              visibleEnd,
+              rootKey) != visibleEnd,
+          "Tileset: descendant-limit keeps the kicked ancestor visible");
+    bool anyChildVisible = false;
+    bool anyChildQueued = false;
+    for (const TileKey& childKey : childKeys) {
+        anyChildVisible |= std::find(
+                               tileset.tilePlan().visibleTiles.begin(),
+                               visibleEnd,
+                               childKey) != visibleEnd;
+        anyChildQueued |= TilesetTestAccess::loadQueueContainsAny(
+            tileset,
+            childKey);
+    }
+    check(!anyChildVisible,
+          "Tileset: descendant-limit removes descendant render entries");
+    check(tileset.tilePlan().selectionKickedCount == 4,
+          "Tileset: descendant-limit marks visited descendants as kicked");
+    check(TilesetTestAccess::loadQueueContainsNormal(tileset, rootKey),
+          "Tileset: descendant-limit queues the kicked ancestor normally");
+    check(!anyChildQueued,
+          "Tileset: descendant-limit avoids flooding load queue with descendants");
 }
 
 void testTilesetUnconditionallyRefineIgnoresSatisfiedSse() {
@@ -8704,6 +9762,91 @@ void testTilesetRecordsAncestorMeetsSseForDescendants() {
           "Tileset: descendants record ancestor-meets-SSE continuation like cesium-native");
 }
 
+void testTilesetPreviouslyRefinedUnrenderableParentKeepsDescendants() {
+    // Aligns cesium-native mustContinueRefiningToDeeperTiles: a tile that
+    // satisfied SSE but was refined last frame must keep its descendants
+    // visible while its own render content is still not renderable.
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: previous-refined unrenderable root tile is created");
+    if (!root) return;
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    root->loadState = TileLoadState::ContentLoaded;
+    root->contentKind = TileContentKind::Render;
+    root->meshReady = false;
+    root->mesh.reset();
+    root->geometricError = 1.0;
+    root->selectionState = TileSelectionState::Refined;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    std::vector<TileKey> childKeys;
+    for (TilesetTile* child : root->children) {
+        if (!child) continue;
+        childKeys.push_back(child->key);
+        child->upsampledFromParent = false;
+        TilesetTestAccess::putTerrainCache(
+            tileset,
+            child->key,
+            makeFlatHeightmap(0.0f));
+        TilesetTestAccess::ensureTileMesh(tileset, *child);
+        child->geometricError = 0.0;
+    }
+
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    Camera camera;
+    camera.lookAt(center + center.normalized() * 80000000.0,
+                  center,
+                  Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 135;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const auto& visibleTiles = tileset.tilePlan().visibleTiles;
+    const auto visibleEnd = visibleTiles.end();
+    const bool rootVisible =
+        std::find(visibleTiles.begin(), visibleEnd, rootKey) != visibleEnd;
+    size_t visibleChildCount = 0;
+    bool everyVisibleChildRecordsAncestorMeetsSse = true;
+    for (const TileSelectionRecord& record : tileset.tilePlan().selectionRecords) {
+        if (std::find(childKeys.begin(), childKeys.end(), record.key) ==
+            childKeys.end()) {
+            continue;
+        }
+        if (record.state == TileSelectionState::Rendered) {
+            ++visibleChildCount;
+            everyVisibleChildRecordsAncestorMeetsSse &=
+                record.ancestorMeetsSse;
+        }
+    }
+
+    check(!rootVisible && root->selectionState == TileSelectionState::Refined,
+          "Tileset: previous-refined unrenderable parent keeps refining after meeting SSE");
+    check(visibleChildCount == childKeys.size() && visibleChildCount > 0,
+          "Tileset: previous-refined unrenderable parent preserves renderable descendants");
+    check(everyVisibleChildRecordsAncestorMeetsSse,
+          "Tileset: preserved descendants record ancestor-meets-SSE continuation");
+    check(TilesetTestAccess::loadQueueContainsUrgent(tileset, rootKey),
+          "Tileset: previous-refined unrenderable parent is queued urgently");
+}
+
 void testTilesetUsesLargestSseAcrossSelectorViews() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     auto schemeForCenter = TileScheme::createGeographicTMS();
@@ -8722,7 +9865,12 @@ void testTilesetUsesLargestSseAcrossSelectorViews() {
     auto runSelection = [&](std::vector<FrameState::SelectorView> views) {
         auto provider = std::make_unique<SparseTerrainProvider>();
         auto scheme = TileScheme::createGeographicTMS();
-        Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+        Tileset tileset(
+            std::move(provider),
+            std::move(scheme),
+            {},
+            nullptr,
+            TilesetOptions{});
         TilesetTestAccess::ensureTile(tileset, rootKey);
 
         FrameState frameState;
@@ -8749,6 +9897,162 @@ void testTilesetUsesLargestSseAcrossSelectorViews() {
           "Tileset: far selector view alone keeps root when it meets SSE");
     check(multiViewZoom > farOnlyZoom,
           "Tileset: multiple selector views refine using largest SSE like cesium-native");
+}
+
+void testTilesetCullRequiresAllSelectorViewsToMissTile() {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::vector<TileKey> childKeys = {
+        {"Geographic-TMS", 1, 0, 0},
+        {"Geographic-TMS", 1, 1, 0},
+        {"Geographic-TMS", 1, 0, 1}};
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, childKeys}});
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: multi-frustum culling root tile is created");
+    if (!root) return;
+
+    root->loadState = TileLoadState::Done;
+    root->contentKind = TileContentKind::Empty;
+    root->refine = TileRefine::Replace;
+    root->geometricError = 100000000.0;
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(root->children.size() == childKeys.size(),
+          "Tileset: multi-frustum culling children are linked");
+    if (root->children.size() != childKeys.size()) return;
+
+    const Vec3 up = Vec3(1.0, 0.0, 0.0);
+    const Vec3 east = Vec3(0.0, 1.0, 0.0);
+    const Vec3 north = Vec3(0.0, 0.0, 1.0);
+    const Vec3 base =
+        Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic::fromRadians(0.0, 0.0, 0.0));
+    const Vec3 targetA = base;
+    const Vec3 targetB = base + east * 100000.0;
+    const Vec3 targetC = base - east * 100000.0;
+
+    const std::array<Vec3, 3> centers = {targetA, targetB, targetC};
+    for (size_t i = 0; i < childKeys.size(); ++i) {
+        TilesetTile* child =
+            TilesetTestAccess::findTile(tileset, childKeys[i]);
+        check(child != nullptr,
+              "Tileset: multi-frustum culling child is materialized");
+        if (!child) return;
+        child->loadState = TileLoadState::Done;
+        child->contentKind = TileContentKind::Empty;
+        child->geometricError = 0.0;
+        child->boundingVolume = TileBoundingVolume::fromSphere(
+            centers[i],
+            1000.0);
+    }
+
+    Camera cameraA;
+    cameraA.lookAt(targetA + up * 100000.0, targetA, north);
+    cameraA.setPerspective(glm::radians(10.0), 1.0, 10000000.0);
+    Camera cameraB;
+    cameraB.lookAt(targetB + up * 100000.0, targetB, north);
+    cameraB.setPerspective(glm::radians(10.0), 1.0, 10000000.0);
+
+    FrameState frameState;
+    frameState.frameId = 141;
+    frameState.camera = &cameraA;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews = {
+        makeSelectorView(cameraA, 800, 800),
+        makeSelectorView(cameraB, 800, 800)};
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        cameraA.position(),
+        cameraA.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const auto visibleEnd = tileset.tilePlan().visibleTiles.end();
+    const bool childAVisible =
+        std::find(
+            tileset.tilePlan().visibleTiles.begin(),
+            visibleEnd,
+            childKeys[0]) != visibleEnd;
+    const bool childBVisible =
+        std::find(
+            tileset.tilePlan().visibleTiles.begin(),
+            visibleEnd,
+            childKeys[1]) != visibleEnd;
+    const bool childCVisible =
+        std::find(
+            tileset.tilePlan().visibleTiles.begin(),
+            visibleEnd,
+            childKeys[2]) != visibleEnd;
+
+    check(childAVisible && childBVisible,
+          "Tileset: tile visible to any selector view is not frustum-culled");
+    check(!childCVisible,
+          "Tileset: tile missed by all selector views is frustum-culled");
+    check(tileset.tilePlan().selectionOccludedCount == 0 &&
+              tileset.tilePlan().notRenderingNodeCount >= 1,
+          "Tileset: multi-frustum culling records only agreed misses as not rendered");
+}
+
+void testTilesetSseUsesProjectionMatrix() {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    auto schemeForCenter = TileScheme::createGeographicTMS();
+    const Rectangle rootBounds = schemeForCenter->tileToRectangle(rootKey);
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(rootBounds);
+
+    Camera camera;
+    camera.lookAt(center + center.normalized() * 80000000.0,
+                  center,
+                  Vec3::unitZ());
+
+    auto runSelection = [&](FrameState::SelectorView view) {
+        auto provider = std::make_unique<SparseTerrainProvider>();
+        auto scheme = TileScheme::createGeographicTMS();
+        Tileset tileset(
+            std::move(provider),
+            std::move(scheme),
+            {},
+            nullptr,
+            TilesetOptions{});
+        TilesetTestAccess::ensureTile(tileset, rootKey);
+
+        FrameState frameState;
+        frameState.frameId = 92;
+        frameState.camera = &camera;
+        frameState.viewportWidthPixels = 800;
+        frameState.viewportHeightPixels = 800;
+        frameState.selectorViews = {view};
+        TilesetTestAccess::setLastCamera(
+            tileset,
+            camera.position(),
+            camera.direction());
+        TilesetTestAccess::selectTiles(tileset, frameState);
+        return tileset.tilePlan().maxVisibleZoom;
+    };
+
+    FrameState::SelectorView nativeProjection =
+        makeSelectorView(camera, 800, 800);
+    FrameState::SelectorView strongerProjection = nativeProjection;
+    strongerProjection.projectionMatrix(1, 1) *= 4.0;
+
+    const int nativeZoom = runSelection(nativeProjection);
+    const int strongerProjectionZoom = runSelection(strongerProjection);
+
+    check(nativeZoom == 0,
+          "Tileset: native projection matrix keeps root when it meets SSE");
+    check(strongerProjectionZoom > nativeZoom,
+          "Tileset: SSE follows projection-matrix vertical scale like cesium-native");
 }
 
 void testTilesetFogUsesEachSelectorViewDensity() {
@@ -9064,7 +10368,7 @@ void testTilesetLodTransitionsUseNativeDeltaState() {
 
     TilesetTestAccess::beginTilePlan(tileset);
     root->previousSelectionState = TileSelectionState::NotVisited;
-    TilesetTestAccess::renderSelectedTile(tileset, *root);
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
     TilesetTestAccess::updateLodTransitions(tileset, 0.25);
     check(std::abs(root->lodTransitionFadePercentage - 0.25f) < 1e-6f,
           "Tileset: selected tile fades in by delta / transition length");
@@ -9099,6 +10403,59 @@ void testTilesetLodTransitionsUseNativeDeltaState() {
           "Tileset: completed fading-out tile is removed like cesium-native");
 }
 
+void testTilesetAdditiveRefinedTileFadesOutAfterLeavingSelection() {
+    TilesetOptions options;
+    options.enableLodTransitionPeriod = true;
+    options.lodTransitionLength = 1.0f;
+
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, options);
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    TilesetTile* child = TilesetTestAccess::ensureTile(tileset, childKey);
+    check(root != nullptr && child != nullptr,
+          "Tileset: ADD refined fade-out parent and child are created");
+    if (!root || !child) return;
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        childKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *child);
+
+    child->refine = TileRefine::Add;
+    child->previousSelectionState = TileSelectionState::Refined;
+    child->selectionState = TileSelectionState::NotVisited;
+
+    TilesetTestAccess::beginTilePlan(tileset);
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
+    TilesetTestAccess::updateLodTransitions(tileset, 0.25);
+
+    const TilePlan& plan = TilesetTestAccess::tilePlan(tileset);
+    bool childFadingOut = false;
+    float childOpacity = 0.0f;
+    for (const TileTransition& transition : plan.tilesFadingOut) {
+        if (transition.key == childKey) {
+            childFadingOut = true;
+            childOpacity = transition.opacity;
+            break;
+        }
+    }
+
+    check(childFadingOut,
+          "Tileset: ADD refined previous tile enters tilesFadingOut like cesium-native");
+    check(std::abs(childOpacity - 0.75f) < 1e-6f,
+          "Tileset: ADD refined fade-out uses native opacity progression");
+}
+
 void testTilesetLodTransitionsIgnoreEmptyContent() {
     TilesetOptions options;
     options.enableLodTransitionPeriod = true;
@@ -9125,7 +10482,7 @@ void testTilesetLodTransitionsIgnoreEmptyContent() {
 
     TilesetTestAccess::beginTilePlan(tileset);
     root->previousSelectionState = TileSelectionState::NotVisited;
-    TilesetTestAccess::renderSelectedTile(tileset, *root);
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
     TilesetTestAccess::updateLodTransitions(tileset, 0.25);
     check(TilesetTestAccess::tilePlan(tileset).tileTransitions.empty() &&
               TilesetTestAccess::tilePlan(tileset).fadingNodeCount == 0 &&
@@ -9576,11 +10933,16 @@ void testTilesetCreatesUpsampledChildrenForUnavailableSiblings() {
 
 void testTilesetAncestorFallbackIsClippedToMissingChild() {
     InitializedRendererHarness harness;
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
         std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
-        {},
+        {&baseActivated},
         &harness.device,
         TilesetOptions{});
 
@@ -9602,8 +10964,37 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
     check(child->gpuVertexBuffer == nullptr,
           "Tileset: clipped fallback child starts without drawable GPU geometry");
 
-    TilesetTestAccess::renderSelectedTile(tileset, *child);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    RasterMappedToTilesetTile* rootMapped =
+        root->rasterOverlays.empty() ? nullptr : root->rasterOverlays[0].get();
+    RasterOverlayTile* rootRaster =
+        rootMapped ? rootMapped->getLoadingTile() : nullptr;
+    check(rootRaster != nullptr,
+          "Tileset: clipped fallback ancestor maps a real base imagery tile");
+    if (!rootMapped || !rootRaster) return;
+    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
+    rootRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    const SurfaceRasterBinding rootBinding =
+        chooseSurfaceRasterBinding(rootMapped);
+    check(rootBinding.kind == SurfaceRasterBindingKind::RealTile &&
+              rootBinding.tile == rootRaster,
+          "Tileset: clipped fallback ancestor has a legal real base imagery binding");
+
     TilesetTestAccess::setInteractionActiveForFrame(tileset, true);
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *child);
+
+    const TilePlan& plan = tileset.tilePlan();
+    check(plan.visibleTiles.size() == 1 &&
+              plan.visibleTiles.front() == childKey,
+          "Tileset: clipped fallback keeps the selected child in the selector result");
+    check(plan.renderEntries.size() == 1 &&
+              plan.renderEntries.front().selectedKey == childKey &&
+              plan.renderEntries.front().renderKey == rootKey &&
+              plan.renderEntries.front().usesAncestorFallback &&
+              plan.renderEntries.front().surfaceClipEnabled,
+          "Tileset: clipped fallback is resolved explicitly in TilePlan render entries");
 
     RenderCommandList commands;
     tileset.buildRenderCommands(harness.renderer, commands);
@@ -9614,7 +11005,9 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
 
     const RenderCommand& command = commands.front();
     check(command.kind == RenderCommandKind::SurfaceTile &&
-              command.surfaceGeometryZoom == 0,
+              command.surfaceGeometryZoom == 0 &&
+              !command.textures.empty() &&
+              command.textures.front() == rootRaster->getTexture(),
           "Tileset: clipped fallback uses the drawable ancestor geometry");
     check(command.surfaceClipEnabled > 0.5f,
           "Tileset: clipped fallback enables surface UV clipping");
@@ -9623,6 +11016,190 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
               std::abs(command.surfaceClipUv[2] - 0.5f) < 1e-6f &&
               std::abs(command.surfaceClipUv[3] - 0.5f) < 1e-6f,
           "Tileset: clipped fallback only fills the selected child quadrant");
+}
+
+void testPresentationTraceRecordsDeterministicCameraState() {
+    DummyRenderDevice device;
+    device.allowTextureCreation = true;
+
+    Scene scene;
+    check(scene.setRenderDevice(&device),
+          "Presentation trace: scene renderer initializes");
+    scene.setViewport(1024, 768, 2.0f);
+
+    constexpr double kLngDeg = 116.3913;
+    constexpr double kLatDeg = 39.9075;
+    constexpr double kRangeMeters = 750000.0;
+    const double pitch = Transforms::toRadians(-65.0);
+    const double heading = Transforms::toRadians(35.0);
+    scene.camera() = makeCameraFromCenterPitchHeading(
+        kLngDeg,
+        kLatDeg,
+        kRangeMeters,
+        pitch,
+        heading);
+
+    scene.update(1.0 / 60.0);
+    scene.render();
+
+    const PresentationTrace& trace = scene.presentationTrace();
+    check(trace.camera.frameId == scene.frameState().frameId &&
+              trace.camera.viewportWidthPixels == 1024 &&
+              trace.camera.viewportHeightPixels == 768 &&
+              std::abs(trace.camera.devicePixelRatio - 2.0f) < 1e-6f,
+          "Presentation trace: camera frame and viewport are deterministic");
+    check(std::abs(trace.camera.targetLongitudeDegrees - kLngDeg) < 1e-8 &&
+              std::abs(trace.camera.targetLatitudeDegrees - kLatDeg) < 1e-8,
+          "Presentation trace: center longitude and latitude are preserved");
+    check(std::abs(trace.camera.pitchRadians - pitch) < 1e-10 &&
+              std::abs(trace.camera.headingRadians - heading) < 1e-10,
+          "Presentation trace: pitch and heading are reconstructed from ECEF camera vectors");
+    check(trace.selectorViews.size() == 1 &&
+              trace.selectorViews.front().viewportHeightPixels == 768,
+          "Presentation trace: selector view records the camera viewport input");
+    check(!trace.commands.empty(),
+          "Presentation trace: submitted command summary is captured");
+}
+
+void testPresentationTraceLinksTilePlanToSurfaceCommand() {
+    InitializedRendererHarness harness;
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {&baseActivated},
+        &harness.device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    TilesetTile* child = TilesetTestAccess::ensureTile(tileset, childKey);
+    check(root != nullptr && child != nullptr,
+          "Presentation trace: tile plan setup creates selected child and fallback ancestor");
+    if (!root || !child) return;
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    RasterMappedToTilesetTile* rootMapped =
+        root->rasterOverlays.empty() ? nullptr : root->rasterOverlays[0].get();
+    RasterOverlayTile* rootRaster =
+        rootMapped ? rootMapped->getLoadingTile() : nullptr;
+    check(rootRaster != nullptr,
+          "Presentation trace: fallback ancestor maps a real base imagery tile");
+    if (!rootMapped || !rootRaster) return;
+    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
+    rootRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+
+    TilesetTestAccess::setInteractionActiveForFrame(tileset, true);
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *child);
+
+    const TilePlan& plan = tileset.tilePlan();
+    RenderCommandList commands;
+    tileset.buildRenderCommands(harness.renderer, commands);
+
+    check(plan.visibleTiles.size() == 1 &&
+              plan.visibleTiles.front() == childKey &&
+              plan.renderEntries.size() == 1 &&
+              plan.renderEntries.front().selectedKey == childKey &&
+              plan.renderEntries.front().renderKey == rootKey,
+          "Presentation trace: selected tile and render tile are explicit before rendering");
+    check(commands.size() == 1 &&
+              commands.front().kind == RenderCommandKind::SurfaceTile &&
+              commands.front().surfaceGeometryZoom == rootKey.z &&
+              commands.front().surfaceClipEnabled > 0.5f &&
+              !commands.front().textures.empty() &&
+              commands.front().textures.front() == rootRaster->getTexture(),
+          "Presentation trace: draw command consumes the resolved render entry without reselecting LOD");
+    if (commands.empty()) return;
+    check(plan.renderEntries.front().surfaceClipUv == commands.front().surfaceClipUv,
+          "Presentation trace: render-entry clip UV is preserved in the surface command");
+}
+
+void testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh() {
+    InitializedRendererHarness harness;
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {&baseActivated},
+        &harness.device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Surface command: setup creates root tile");
+    if (!root) return;
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+    check(root->mesh != nullptr && root->mesh->indices.size() >= 12,
+          "Surface command: terrain mesh is available for skirt range setup");
+    if (!root->mesh || root->mesh->indices.size() < 12) return;
+
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    RasterMappedToTilesetTile* rootMapped =
+        root->rasterOverlays.empty() ? nullptr : root->rasterOverlays[0].get();
+    RasterOverlayTile* rootRaster =
+        rootMapped ? rootMapped->getLoadingTile() : nullptr;
+    check(rootRaster != nullptr,
+          "Surface command: terrain mesh test maps a real base imagery tile");
+    if (!rootMapped || !rootRaster) return;
+    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
+    rootRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    check(chooseSurfaceRasterBinding(rootMapped).kind ==
+              SurfaceRasterBindingKind::RealTile,
+          "Surface command: no-skirt draw uses a legal real base imagery binding");
+
+    root->mesh->skirtMeta.noSkirtIndicesBegin = 0;
+    root->mesh->skirtMeta.noSkirtIndicesCount =
+        static_cast<uint32_t>(root->mesh->indices.size() - 6);
+    root->mesh->skirtMeta.noSkirtVerticesBegin = 0;
+    root->mesh->skirtMeta.noSkirtVerticesCount =
+        static_cast<uint32_t>(root->mesh->vertices.size());
+
+    TilesetTestAccess::setInteractionActiveForFrame(tileset, true);
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
+
+    RenderCommandList commands;
+    tileset.buildRenderCommands(harness.renderer, commands);
+    check(commands.size() == 1 &&
+              commands.front().kind == RenderCommandKind::SurfaceTile,
+          "Surface command: terrain tile produces one surface draw command");
+    if (commands.empty()) return;
+
+    const RenderCommand& command = commands.front();
+    check(command.indexOffset == 0 &&
+              command.indexCount ==
+                  static_cast<int>(root->mesh->skirtMeta.noSkirtIndicesCount),
+          "Surface command: main terrain draw uses no-skirt index range");
+    check(command.surfaceMeshIndexCount ==
+              static_cast<int>(root->mesh->indices.size()) &&
+              command.surfaceNoSkirtIndexCount == command.indexCount &&
+              command.surfaceSkirtIndexCount == 6,
+          "Surface command: trace fields expose skipped skirt index count");
 }
 
 void testTilesetUpsampledChildQueuesParentUntilSourceReady() {
@@ -10102,7 +11679,8 @@ int main() {
     testTilesetEnsuresOverlayProviderBeforeMapping();
     testTilesetPrefetchesRasterFromBoundingRegionBeforeRenderContent();
     testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach();
-    testTilesetSurfaceDrawableDrawsWithPlaceholderBaseImagery();
+    testTilesetBlockingBaseImageryDoesNotDrawPlaceholderSurface();
+    testTilesetFailedChildBaseImageryUsesAncestorCommandTexture();
     testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw();
     testTilesetSurfaceOverlaysCompositeIntoSingleCommand();
     testTilesetRasterMoreDetailCreatesUpsampledChildren();
@@ -10206,19 +11784,31 @@ int main() {
     testTilesetCulledTileDetailsIgnorePreloadOnlyTiles();
     testTilesetLoadDiagnosticsExposeNativeLifecycleStates();
     testTilesetAdditiveRefinementRendersParentAndChildren();
+    testTilesetAdditiveRefinementRendersFailedChildHoleAndSiblings();
+    testTilesetReplaceRefinementRendersChildrenWhenReady();
+    testTilesetReplaceRefinementFallsBackToParentWhileChildrenLoad();
+    testTilesetReplaceRefinementRendersFailedChildrenAsHoles();
+    testTilesetUnconditionallyRefinedChildIsNotSelected();
+    testTilesetExternalWrapperRefinesToChildSelection();
+    testTilesetReplaceFailedChildSwitchesFromGrandchildToEmptyHole();
     testTilesetAdditiveRefinementCullsWithParentBounds();
     testTilesetAdditiveRefinedTileCountsAsPreviouslyRendered();
+    testTilesetLoadingDescendantLimitRestoresChildLoadQueue();
     testTilesetUnconditionallyRefineIgnoresSatisfiedSse();
     testTilesetUnconditionalChildDisablesChildrenBoundsCulling();
     testTilesetFogDensityTableIsConfigurable();
     testTilesetRecordsAncestorMeetsSseForDescendants();
+    testTilesetPreviouslyRefinedUnrenderableParentKeepsDescendants();
     testTilesetUsesLargestSseAcrossSelectorViews();
+    testTilesetCullRequiresAllSelectorViewsToMissTile();
+    testTilesetSseUsesProjectionMatrix();
     testTilesetFogUsesEachSelectorViewDensity();
     testSceneSelectorViewOverrideFeedsMultipleViews();
     testSceneOcclusionCallbackFeedsPrimaryAndAdditionalTilesets();
     testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain();
     testSceneSortsTransparentGltfByCameraDepth();
     testTilesetLodTransitionsUseNativeDeltaState();
+    testTilesetAdditiveRefinedTileFadesOutAfterLeavingSelection();
     testTilesetLodTransitionsIgnoreEmptyContent();
     testTilesetOcclusionStopsRefinementBeforeChildLoads();
     testTilesetOcclusionUnavailableDelaysNewRefinement();
@@ -10233,6 +11823,9 @@ int main() {
     testTilesetSampleHeightFallsBackToLoadedAncestorTerrain();
     testTilesetCreatesUpsampledChildrenForUnavailableSiblings();
     testTilesetAncestorFallbackIsClippedToMissingChild();
+    testPresentationTraceRecordsDeterministicCameraState();
+    testPresentationTraceLinksTilePlanToSurfaceCommand();
+    testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh();
     testTilesetUpsampledChildQueuesParentUntilSourceReady();
     testTilesetUpsampledChildFinalizesContentLoadedParent();
     testTilesetClearChildrenErasesFlatMapDescendants();

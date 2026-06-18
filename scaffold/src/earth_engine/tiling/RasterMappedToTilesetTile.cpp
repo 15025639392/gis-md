@@ -45,7 +45,10 @@ RasterMappedToTilesetTile::MoreDetail toMappedMoreDetail(
 bool hasSameOverlayOwner(const RasterOverlayTile& candidate,
                          const RasterOverlayTileProvider& provider) {
     const auto* owner = provider.getOwner();
-    return owner != nullptr && candidate.getTileProvider().getOwner() == owner;
+    if (owner != nullptr) {
+        return candidate.getTileProvider().getOwner() == owner;
+    }
+    return &candidate.getTileProvider() == &provider;
 }
 
 std::shared_ptr<RasterOverlayTile> findTileOverlay(
@@ -57,10 +60,10 @@ std::shared_ptr<RasterOverlayTile> findTileOverlay(
         std::shared_ptr<RasterOverlayTile> readyTile =
             mapped->getReadyTileHandle();
 #ifdef __ANDROID__
-        // DIAGNOSTIC ONLY: parent mappings can retain raw pointers to provider
-        // tiles that have already been trimmed.
+        // Android lifetime guard: parent mappings can retain raw pointers to
+        // provider tiles that have already been trimmed.
         if (readyTile &&
-            !RasterOverlayTileProvider::isLiveTileForDiagnostics(readyTile.get())) {
+            !RasterOverlayTileProvider::isLiveTileForLifetimeGuard(readyTile.get())) {
             continue;
         }
 #endif
@@ -72,7 +75,7 @@ std::shared_ptr<RasterOverlayTile> findTileOverlay(
             mapped->getLoadingTileHandle();
 #ifdef __ANDROID__
         if (loadingTile &&
-            !RasterOverlayTileProvider::isLiveTileForDiagnostics(loadingTile.get())) {
+            !RasterOverlayTileProvider::isLiveTileForLifetimeGuard(loadingTile.get())) {
             loadingTile = nullptr;
         }
 #endif
@@ -135,14 +138,14 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
     overlaySlot_ = static_cast<int32_t>(overlayIndex);
 
 #ifdef __ANDROID__
-    // DIAGNOSTIC ONLY: provider trimming currently owns raster tiles with
-    // unique_ptr while mappings retain raw pointers. Detect stale pointers
-    // before Step 1 dereferences them.
+    // Android lifetime guard: provider trimming currently owns raster tiles
+    // with unique_ptr while mappings retain raw pointers. Detect stale
+    // pointers before Step 1 dereferences them.
     static int staleTileLogCount = 0;
     auto clearStaleTile = [&](std::shared_ptr<RasterOverlayTile>& tile,
                               const char* role) {
         if (!tile ||
-            RasterOverlayTileProvider::isLiveTileForDiagnostics(tile.get())) {
+            RasterOverlayTileProvider::isLiveTileForLifetimeGuard(tile.get())) {
             return;
         }
         if (staleTileLogCount < 20) {
@@ -163,7 +166,10 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
         tile.reset();
         if (role[0] == 'r') {
             readyTexture_ = nullptr;
+            readyTileSource_ = ReadyTileSource::None;
             state_ = State::Unattached;
+        } else {
+            loadingTileSource_ = ReadyTileSource::None;
         }
     };
     clearStaleTile(_pReadyTile, "ready");
@@ -210,6 +216,7 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
             findTileOverlay(*pGeomTile, _pLoadingTile->getTileProvider());
         if (overlayTile) {
             _pLoadingTile = overlayTile;
+            loadingTileSource_ = ReadyTileSource::Ancestor;
             if (_pLoadingTile->getState() != RasterOverlayTile::LoadState::Placeholder) {
                 tileProvider.markUsed(*_pLoadingTile);
             }
@@ -240,6 +247,7 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
         _pLoadingTile->getState() == RasterOverlayTile::LoadState::Placeholder &&
         tileProvider.isReady()) {
         _pLoadingTile = nullptr;
+        loadingTileSource_ = ReadyTileSource::None;
         if (_pReadyTile == nullptr) {
             state_ = State::Unattached;
         }
@@ -252,6 +260,7 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
             // so use the overlay placeholder and do not invent a projection.
             textureCoordinateID_ = -1;
             _pLoadingTile = tileProvider.getPlaceholderTile();
+            loadingTileSource_ = ReadyTileSource::None;
         } else if (hasRenderContentDetails && geometryRectangle) {
             // cesium-native mapOverlayToTile:
             // RasterOverlayTileProvider::getTile(rectangle, screenPixels) receives
@@ -261,6 +270,7 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                 *geometryRectangle,
                 targetScreenPixelsX,
                 targetScreenPixelsY);
+            loadingTileSource_ = ReadyTileSource::Real;
         } else if (hasRenderContentDetails) {
             // Render content is loaded, but it has no texture coordinates for
             // this overlay projection. Match cesium-native by recording the
@@ -274,6 +284,7 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                     missingProjections,
                     projection);
             _pLoadingTile = tileProvider.getPlaceholderTile();
+            loadingTileSource_ = ReadyTileSource::None;
         } else {
             textureCoordinateID_ =
                 addProjectionToList(missingProjections, projection);
@@ -282,8 +293,10 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                     *geometryRectangle,
                     targetScreenPixelsX,
                     targetScreenPixelsY);
+                loadingTileSource_ = ReadyTileSource::Real;
             } else {
                 _pLoadingTile = tileProvider.getPlaceholderTile();
+                loadingTileSource_ = ReadyTileSource::None;
             }
         }
     }
@@ -301,10 +314,10 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
 
         if (loadState == RasterOverlayTile::LoadState::Loaded ||
             loadState == RasterOverlayTile::LoadState::Done) {
-            const bool canRetargetAttachedRaster =
+            const bool canPromoteReadyRaster =
                 pPrepRenderer != nullptr || state_ == State::Unattached ||
                 _pReadyTile == nullptr;
-            if (canRetargetAttachedRaster) {
+            if (canPromoteReadyRaster) {
                 // Promote loading -> ready. Without renderer resources, this
                 // may make the raster cover-ready for selection, but it must
                 // stay Unattached until buildTileDrawCommand can attach it.
@@ -313,6 +326,8 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                 }
                 _pReadyTile = _pLoadingTile;
                 _pLoadingTile = nullptr;
+                readyTileSource_ = loadingTileSource_;
+                loadingTileSource_ = ReadyTileSource::None;
                 readyTexture_ = _pReadyTile->getTexture();
 
                 // Compute UV transform from the tile's bounds
@@ -345,14 +360,15 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
         if (candidate &&
             candidate->getState() >= RasterOverlayTile::LoadState::Loaded &&
             _pReadyTile != candidate) {
-            const bool canRetargetAttachedRaster =
+            const bool canPromoteReadyRaster =
                 pPrepRenderer != nullptr || state_ == State::Unattached ||
                 _pReadyTile == nullptr;
-            if (canRetargetAttachedRaster) {
+            if (canPromoteReadyRaster) {
                 if (_pReadyTile != nullptr && state_ != State::Unattached) {
                     detachFromTile(pPrepRenderer);
                 }
                 _pReadyTile = candidate;
+                readyTileSource_ = ReadyTileSource::Ancestor;
                 tileProvider.markUsed(*_pReadyTile);
                 readyTexture_ = _pReadyTile->getTexture();
                 // cesium-native: recompute UV for CURRENT child bounds.
@@ -373,6 +389,8 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
             // center-point imagery tile here.
             _pReadyTile = _pLoadingTile;
             _pLoadingTile = nullptr;
+            readyTileSource_ = ReadyTileSource::None;
+            loadingTileSource_ = ReadyTileSource::None;
             state_ = State::Attached;
             readyTexture_ = nullptr;
         }
@@ -443,6 +461,8 @@ void RasterMappedToTilesetTile::releaseTileReferences(
     _pLoadingTile = nullptr;
     _pReadyTile = nullptr;
     readyTexture_ = nullptr;
+    loadingTileSource_ = ReadyTileSource::None;
+    readyTileSource_ = ReadyTileSource::None;
     offsetU_ = 0.0f;
     offsetV_ = 0.0f;
     scaleU_ = 1.0f;

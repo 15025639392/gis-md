@@ -175,13 +175,14 @@ Composite grouping key: `schemeId + zoom + viewportWidth + viewportHeight`. Used
 **Key constant:** `kMaxWebMercatorLat = 1.4844222297453324` (limit ≈ 85.0511°).  
 **Polar group layout:** `yGroup = floor(y / 2^z)`. Group `0` = Mercator, `1` = NorthPolar, `2` = SouthPolar.
 
-### TilePlan.h (105 lines)
+### TilePlan.h
 
-**Frame-derived candidate set** — not layer-specific. Key structs:
+**Frame-derived selection/render result** — not layer-specific. Key structs:
 
 - `TileTransition` — `key, opacity, fadingNodeCount`
+- `TileRenderEntry` — `selectedKey, renderKey, opacity, selectedThisFrame, usesAncestorFallback, allowSynchronousMeshPrep, surfaceClipUv`; explicit render result consumed by renderer without reselecting LOD
 - `TileSelectionState` — `NotVisited → Rendered → Refined → Kicked`
-- `TilePlan` — `frameId, zoom, minVisibleZoom, maxVisibleZoom, equalZoomApplied, visibleTiles[], tileTransitions[], selectionRecords[]` + counts for rendering/walkthrough/not-rendering nodes
+- `TilePlan` — `frameId, zoom, minVisibleZoom, maxVisibleZoom, equalZoomApplied, visibleTiles[], tilesFadingOut[], tileTransitions[], renderEntries[], selectionRecords[]` + counts for rendering/walkthrough/not-rendering nodes
 - `LayerTilePlan` — Extends TilePlan with per-layer: `desiredTiles[], requestTiles[], renderTiles[], fallbackTiles[], kickedTiles[]`
 - `TilePlanBuilder` — static `compute()` + `zoomLevelFromHeight()` + `parentKey()`
 
@@ -373,6 +374,27 @@ Two implementations: `WebMercatorProfile` (EPSG:3857, ±20037508.34m) and `WGS84
 | `configureCameraSurfacePicker()` | .cpp:710-760 | Injects terrain-aware surface picker + terrain height clamp into CameraController |
 
 **Additional methods:** `updateInteractionFocus()`, `pickInteractionFocus()`, `onInputEvent()`, `onHover()`, `onSelect()`, `clearSelection()`, `addLayer()`, `removeLayer()`, `moveLayer()`, `addVectorLayer()`, `removeVectorLayer()`, `setTerrainLayer()`, `setTerrainEnabled()`, `setViewport()`, `setTime()`, `advanceTime()`, `sunDirection()`, `setDebugOverlayEnabled()`, `debugOverlayEnabled()`.
+
+### PresentationTrace contract
+
+`Scene::presentationTrace()` / `Engine::presentationTrace()` expose a
+structured one-frame presentation contract:
+
+```
+camera state
+  -> selectorViews
+  -> TilePlan.visibleTiles / TilePlan.renderEntries
+  -> RenderCommand summary
+```
+
+Use this when visual output disagrees with expected visible tiles. The trace
+distinguishes selector output, render-entry fallback/clipping, and actual draw
+commands without reintroducing Android log spam. Android MinimalGlobe shows a
+bounded summary in the debug panel through `nativeGetDiagnosticsString()`.
+
+Native coverage lives in `scaffold/tests/unit/tiling/test_sse_pipeline.cpp`:
+`testPresentationTraceRecordsDeterministicCameraState()` and
+`testPresentationTraceLinksTilePlanToSurfaceCommand()`.
 
 **FrameState.h** (80 lines):
 - `lightDir` — sun direction (ECEF unit vector)
@@ -779,7 +801,7 @@ TileQuadTree::compute()
   → Equal-zoom pass (optional)
   → Neighbor balance pass
   ↓
-TilePlan (visibleTiles[], zoom, transitions)
+TilePlan (visibleTiles[], tilesFadingOut[], renderEntries[], zoom, transitions)
   ↓ per-group (BasemapLayerStack)
 LayerTilePlan (desiredTiles[], requestTiles[], renderTiles[], fallbackTiles[])
   ↓

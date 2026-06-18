@@ -1,6 +1,7 @@
 #include "ActivatedRasterOverlay.h"
 #include "RasterOverlay.h"
 #include "../providers/RasterOverlayTileProvider.h"
+#include "../renderer/RenderDeviceRasterTextureUploader.h"
 
 namespace earth_engine {
 
@@ -13,10 +14,15 @@ ActivatedRasterOverlay::~ActivatedRasterOverlay() = default;
 RasterOverlayTileProvider* ActivatedRasterOverlay::ensureTileProvider(
     RenderDevice* device) {
     if (!tileProvider_) {
+        std::unique_ptr<RasterTextureUploader> textureUploader;
+        if (device) {
+            textureUploader =
+                std::make_unique<RenderDeviceRasterTextureUploader>(device);
+        }
         tileProvider_ = std::make_unique<RasterOverlayTileProvider>(
             overlay_.getProvider(),
             overlay_.getTileScheme(),
-            device);
+            std::move(textureUploader));
         tileProvider_->setOwner(&overlay_);
         tileProvider_->maximumSimultaneousTileLoads =
             maximumSimultaneousTileLoads_;

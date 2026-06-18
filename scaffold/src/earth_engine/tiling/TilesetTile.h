@@ -203,16 +203,11 @@ struct TilesetTile {
 
     /// cesium-native: create 4 child tiles.
     ///
-    /// DIFF from cesium-native: children are created lazily in
-    /// Tileset::buildRenderCommands (when they enter the view frustum),
-    /// not eagerly when the parent is loaded. This is a memory optimization
-    /// for mobile platforms — only visible tiles are allocated.
-    /// This method exists for API alignment; the actual child creation
-    /// logic is in buildRenderCommands (parent↔child linking + bounds init).
+    /// DIFF from cesium-native: this method remains a no-op for API
+    /// alignment. Children are materialized by the stateful selector through
+    /// Tileset::ensureTileChildren when traversal decides refinement is needed.
     void createChildren(const TileScheme& scheme) {
         (void)scheme;
-        // Children are materialized in Tileset::buildRenderCommands
-        // when they become visible. See the parent-chain creation logic there.
     }
 
     /// Find the deepest ancestor with a ready mesh (for upsampling)

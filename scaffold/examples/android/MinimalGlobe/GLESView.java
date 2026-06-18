@@ -25,22 +25,6 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
     private int pinchPointerId0 = -1;
     private int pinchPointerId1 = -1;
 
-    // DIAGNOSTIC ONLY: Android input/JNI timing for MinimalGlobe stutter diagnosis.
-    private static final String DIAG_TAG = "EarthPerfInput";
-    private long diagWindowStartNs = System.nanoTime();
-    private int diagMoveEvents;
-    private int diagSingleMoveEvents;
-    private int diagPinchMoveEvents;
-    private int diagIgnoredMoveEvents;
-    private int diagHistoricalSamples;
-    private int diagNativeDragCalls;
-    private int diagNativePinchCalls;
-    private long diagNativeDragNs;
-    private long diagNativePinchNs;
-    private long diagMaxNativeDragNs;
-    private long diagMaxNativePinchNs;
-    private int diagLastPointerCount;
-
     public GLESView(Context context) {
         super(context);
         getHolder().addCallback(this);
@@ -108,9 +92,6 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         int action = event.getActionMasked();
-        if (action == MotionEvent.ACTION_MOVE) {
-            diagRecordMoveEvent(event);
-        }
 
         if (action == MotionEvent.ACTION_POINTER_UP) {
             if (pinching) {
@@ -159,7 +140,6 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
                 return true;
             }
             if (action == MotionEvent.ACTION_MOVE && lastPinchDistance > 1.0f) {
-                long diagNativeStartNs = System.nanoTime();
                 nativePinchRotateTilt(
                         distance / lastPinchDistance,
                         normalizeAngle(angle - lastPinchAngle),
@@ -173,12 +153,10 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
                         event.getY(index1),
                         getWidth(),
                         getHeight());
-                diagRecordNativePinch(System.nanoTime() - diagNativeStartNs);
                 lastPinchAngle = angle;
                 lastPinchDistance = distance;
                 lastPinchCenterX = centerX;
                 lastPinchCenterY = centerY;
-                diagMaybeLog("pinchMove");
                 return true;
             }
         }
@@ -197,15 +175,10 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
                 if (!pinching && !suppressSingleDragUntilUp && event.getPointerCount() == 1) {
                     float x = event.getX();
                     float y = event.getY();
-                    long diagNativeStartNs = System.nanoTime();
                     nativeDrag(lastX, lastY, x, y, getWidth(), getHeight());
-                    diagRecordNativeDrag(System.nanoTime() - diagNativeStartNs);
                     lastX = x;
                     lastY = y;
-                } else {
-                    diagIgnoredMoveEvents++;
                 }
-                diagMaybeLog("move");
                 return true;
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
@@ -258,78 +231,6 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Cho
             angle += (float) (Math.PI * 2.0);
         }
         return angle;
-    }
-
-    private void diagRecordMoveEvent(MotionEvent event) {
-        diagMoveEvents++;
-        diagHistoricalSamples += event.getHistorySize();
-        diagLastPointerCount = event.getPointerCount();
-        if (event.getPointerCount() >= 2) {
-            diagPinchMoveEvents++;
-        } else if (event.getPointerCount() == 1) {
-            diagSingleMoveEvents++;
-        }
-    }
-
-    private void diagRecordNativeDrag(long elapsedNs) {
-        diagNativeDragCalls++;
-        diagNativeDragNs += elapsedNs;
-        if (elapsedNs > diagMaxNativeDragNs) {
-            diagMaxNativeDragNs = elapsedNs;
-        }
-    }
-
-    private void diagRecordNativePinch(long elapsedNs) {
-        diagNativePinchCalls++;
-        diagNativePinchNs += elapsedNs;
-        if (elapsedNs > diagMaxNativePinchNs) {
-            diagMaxNativePinchNs = elapsedNs;
-        }
-    }
-
-    private void diagMaybeLog(String phase) {
-        long nowNs = System.nanoTime();
-        long windowNs = nowNs - diagWindowStartNs;
-        if (windowNs < 1_000_000_000L) {
-            return;
-        }
-
-        double windowMs = windowNs / 1_000_000.0;
-        double dragAvgMs = diagNativeDragCalls > 0
-                ? (diagNativeDragNs / 1_000_000.0) / diagNativeDragCalls
-                : 0.0;
-        double pinchAvgMs = diagNativePinchCalls > 0
-                ? (diagNativePinchNs / 1_000_000.0) / diagNativePinchCalls
-                : 0.0;
-        android.util.Log.i(DIAG_TAG,
-                "DIAG javaInput phase=" + phase
-                        + " windowMs=" + String.format("%.0f", windowMs)
-                        + " move=" + diagMoveEvents
-                        + " singleMove=" + diagSingleMoveEvents
-                        + " pinchMove=" + diagPinchMoveEvents
-                        + " ignoredMove=" + diagIgnoredMoveEvents
-                        + " historySamples=" + diagHistoricalSamples
-                        + " nativeDragCalls=" + diagNativeDragCalls
-                        + " nativeDragAvgMs=" + String.format("%.3f", dragAvgMs)
-                        + " nativeDragMaxMs=" + String.format("%.3f", diagMaxNativeDragNs / 1_000_000.0)
-                        + " nativePinchCalls=" + diagNativePinchCalls
-                        + " nativePinchAvgMs=" + String.format("%.3f", pinchAvgMs)
-                        + " nativePinchMaxMs=" + String.format("%.3f", diagMaxNativePinchNs / 1_000_000.0)
-                        + " lastPointers=" + diagLastPointerCount);
-
-        diagWindowStartNs = nowNs;
-        diagMoveEvents = 0;
-        diagSingleMoveEvents = 0;
-        diagPinchMoveEvents = 0;
-        diagIgnoredMoveEvents = 0;
-        diagHistoricalSamples = 0;
-        diagNativeDragCalls = 0;
-        diagNativePinchCalls = 0;
-        diagNativeDragNs = 0;
-        diagNativePinchNs = 0;
-        diagMaxNativeDragNs = 0;
-        diagMaxNativePinchNs = 0;
-        diagLastPointerCount = 0;
     }
 
     private static native void nativeSurfaceCreated(Surface surface);

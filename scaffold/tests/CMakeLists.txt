@@ -34,6 +34,30 @@ add_executable(test_vec3
 target_link_libraries(test_vec3 PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_vec3 COMMAND test_vec3)
 
+add_executable(test_plane
+    unit/core/test_plane.cpp
+)
+target_link_libraries(test_plane PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_plane COMMAND test_plane)
+
+add_executable(test_bounding_sphere
+    unit/core/test_bounding_sphere.cpp
+)
+target_link_libraries(test_bounding_sphere PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_bounding_sphere COMMAND test_bounding_sphere)
+
+add_executable(test_oriented_bounding_box
+    unit/core/test_oriented_bounding_box.cpp
+)
+target_link_libraries(test_oriented_bounding_box PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_oriented_bounding_box COMMAND test_oriented_bounding_box)
+
+add_executable(test_rectangle
+    unit/core/test_rectangle.cpp
+)
+target_link_libraries(test_rectangle PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_rectangle COMMAND test_rectangle)
+
 add_executable(test_ellipsoid
     unit/geodesy/test_ellipsoid.cpp
 )

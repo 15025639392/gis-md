@@ -8,6 +8,7 @@
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Transforms.h"
 #include "../tiling/TileSurface.h"
+#include "../tiling/SurfaceRasterBinding.h"
 #include "../terrain/QuantizedMeshParser.h"
 #include "../providers/QuantizedMeshTerrainProvider.h"
 #include "../providers/RasterOverlayTileProvider.h"
@@ -90,95 +91,9 @@ constexpr int kSmoothedMainThreadUploadLimit = 1;
 constexpr int kActiveInteractionRenderPrepBudget = 0;
 constexpr int kRecoveryRenderPrepBudget = 1;
 
-#ifdef __ANDROID__
-bool shouldLogTileTrace(uint64_t frameId) {
-    return frameId <= 10 || frameId % 60 == 0;
-}
-
-struct RasterTraceCounts {
-    int total = 0;
-    int ready = 0;
-    int readyTex = 0;
-    int loading = 0;
-    int placeholder = 0;
-    int failed = 0;
-    int missing = 0;
-};
-
-RasterTraceCounts rasterTraceCounts(const TilesetTile& tile) {
-    RasterTraceCounts counts;
-    counts.total = static_cast<int>(tile.rasterOverlays.size());
-    for (const auto& mapped : tile.rasterOverlays) {
-        if (!mapped) {
-            ++counts.missing;
-            continue;
-        }
-        const RasterOverlayTile* ready = mapped->getReadyTile();
-        if (ready) {
-            ++counts.ready;
-            if (ready->getTexture()) {
-                ++counts.readyTex;
-            }
-            if (ready->getState() == RasterOverlayTile::LoadState::Failed) {
-                ++counts.failed;
-            }
-        }
-        const RasterOverlayTile* loading = mapped->getLoadingTile();
-        if (loading) {
-            ++counts.loading;
-            if (loading->getState() ==
-                RasterOverlayTile::LoadState::Placeholder) {
-                ++counts.placeholder;
-            } else if (
-                loading->getState() == RasterOverlayTile::LoadState::Failed) {
-                ++counts.failed;
-            }
-        }
-    }
-    return counts;
-}
-
-bool isTraceFallbackSubtreeKey(const TileKey& key) {
-    constexpr int kTraceZ = 8;
-    constexpr int kTraceX = 407;
-    constexpr int kTraceY = 170;
-    if (key.z < kTraceZ) {
-        return false;
-    }
-    const int shift = key.z - kTraceZ;
-    return (key.x >> shift) == kTraceX && (key.y >> shift) == kTraceY;
-}
-
-int rasterSourceZoom(const RasterOverlayTile* tile) {
-    if (!tile) return -1;
-    return tile->isRectangleTile() ? tile->getSourceZoom() : tile->getTileID().z;
-}
-#endif
-
 int rasterTextureSourceZoom(const RasterOverlayTile* tile) {
     if (!tile) return -1;
     return tile->isRectangleTile() ? tile->getSourceZoom() : tile->getTileID().z;
-}
-
-[[maybe_unused]] const char* surfaceDrawableSourceName(
-    SurfaceDrawableSource source) {
-    switch (source) {
-        case SurfaceDrawableSource::None:
-            return "none";
-        case SurfaceDrawableSource::OwnTerrain:
-            return "ownTerrain";
-        case SurfaceDrawableSource::AncestorUpsample:
-            return "ancestorUpsample";
-        case SurfaceDrawableSource::EllipsoidFallback:
-            return "ellipsoidFallback";
-        case SurfaceDrawableSource::GltfContent:
-            return "gltfContent";
-    }
-    return "unknown";
-}
-
-bool overlayCanUsePlaceholder(RasterOverlayFallbackPolicy policy) {
-    return policy == RasterOverlayFallbackPolicy::AncestorOrPlaceholder;
 }
 
 std::optional<std::array<float, 4>> clipUvForDescendantBounds(
@@ -223,41 +138,24 @@ std::optional<std::array<float, 4>> clipUvForDescendantBounds(
         static_cast<float>(vMax - vMin)};
 }
 
-bool overlayAttachmentAllowedByPolicy(
+bool overlayBindingAllowedByPolicy(
     const ActivatedRasterOverlay* activeOverlay,
     const RasterMappedToTilesetTile* mapped,
-    const RasterAttachment* attachment) {
+    const SurfaceRasterBinding& binding) {
     if (!activeOverlay || !activeOverlay->visible() ||
-        !attachment || !attachment->texture) {
+        !mapped || binding.kind == SurfaceRasterBindingKind::None ||
+        !binding.tile || !binding.tile->getTexture()) {
         return false;
+    }
+    if (activeOverlay->getOverlay().role() ==
+            RasterOverlayRole::BaseImagery) {
+        return true;
     }
     if (activeOverlay->getOverlay().fallbackPolicy() ==
         RasterOverlayFallbackPolicy::SkipUntilReady) {
-        return !mapped || mapped->getLoadingTile() == nullptr;
+        return mapped->getLoadingTile() == nullptr;
     }
     return true;
-}
-
-bool baseOverlayCanUseSurfacePlaceholder(
-    const ActivatedRasterOverlay* activeOverlay,
-    const Renderer& renderer) {
-    return activeOverlay && activeOverlay->visible() &&
-           activeOverlay->getOverlay().role() ==
-               RasterOverlayRole::BaseImagery &&
-           overlayCanUsePlaceholder(
-               activeOverlay->getOverlay().fallbackPolicy()) &&
-           renderer.surfaceFallbackTexture() != nullptr;
-}
-
-bool overlayDrawableForDiagnostics(
-    const ActivatedRasterOverlay* activeOverlay,
-    const RasterMappedToTilesetTile* mapped,
-    const Renderer& renderer,
-    const RasterAttachment* attachment) {
-    if (overlayAttachmentAllowedByPolicy(activeOverlay, mapped, attachment)) {
-        return true;
-    }
-    return baseOverlayCanUseSurfacePlaceholder(activeOverlay, renderer);
 }
 
 double terrainHeightPadding(double minimumHeight, double maximumHeight) {
@@ -1108,6 +1006,19 @@ bool viewerRequestVolumeAllowsTile(
     return false;
 }
 
+bool matricesNearlyEqual(const Mat4& lhs,
+                         const Mat4& rhs,
+                         double epsilon) {
+    for (int row = 0; row < 4; ++row) {
+        for (int col = 0; col < 4; ++col) {
+            if (std::abs(lhs(row, col) - rhs(row, col)) > epsilon) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool explicitBoundingVolumeIntersectsFrustum(
     const TileBoundingVolume& volume,
     const Frustum& frustum) {
@@ -1315,9 +1226,9 @@ int64_t Tileset::estimateTileBytes(const TilesetTile& tile) {
             continue;
         }
 #ifdef __ANDROID__
-        // DIAGNOSTIC ONLY: this estimator runs after raster provider trimming.
+        // Android lifetime guard: this estimator runs after raster provider trimming.
         // Avoid crashing on retained raw pointers while logging the stale state.
-        if (!RasterOverlayTileProvider::isLiveTextureForDiagnostics(texture)) {
+        if (!RasterOverlayTileProvider::isLiveTextureForLifetimeGuard(texture)) {
             static int staleTextureLogCount = 0;
             if (staleTextureLogCount < 20) {
                 __android_log_print(
@@ -1969,7 +1880,10 @@ bool Tileset::selectorViewsEquivalent(
         if ((a.direction - b.direction).lengthSquared() > 1e-12) {
             return false;
         }
-        if (std::abs(a.verticalFovRadians - b.verticalFovRadians) > 1e-12) {
+        if (!matricesNearlyEqual(
+                a.projectionMatrix,
+                b.projectionMatrix,
+                1e-12)) {
             return false;
         }
         if (a.viewportHeightPixels != b.viewportHeightPixels) {
@@ -2018,19 +1932,11 @@ std::string Tileset::terrainCacheKey(const TileKey& key) const {
 }
 
 float Tileset::sampleHeight(double lngRad, double latRad) const {
-#ifdef __ANDROID__
-    // DIAGNOSTIC ONLY: input picking calls this during drag/pinch; log slow scans.
-    const double diagStartMs = perf::nowMs();
-    size_t diagScannedTiles = 0;
-#endif
     const DecodedHeightmap* bestHeightmap = nullptr;
     Rectangle bestBounds;
     int bestZoom = -1;
 
     for (const auto& [ck, tile] : tiles_) {
-#ifdef __ANDROID__
-        ++diagScannedTiles;
-#endif
         if (!tile || tile->key.z < bestZoom ||
             !tile->bounds.contains(lngRad, latRad)) {
             continue;
@@ -2047,33 +1953,8 @@ float Tileset::sampleHeight(double lngRad, double latRad) const {
     }
 
     if (!bestHeightmap) {
-#ifdef __ANDROID__
-        const double diagMs = perf::nowMs() - diagStartMs;
-        if (diagMs >= 0.5) {
-            __android_log_print(
-                ANDROID_LOG_INFO,
-                "EarthPerfInput",
-                "DIAG sampleHeight ms=%.3f scanned=%zu tiles=%zu bestZoom=-1 hit=0",
-                diagMs,
-                diagScannedTiles,
-                tiles_.size());
-        }
-#endif
         return 0.0f;
     }
-#ifdef __ANDROID__
-    const double diagMs = perf::nowMs() - diagStartMs;
-    if (diagMs >= 0.5) {
-        __android_log_print(
-            ANDROID_LOG_INFO,
-            "EarthPerfInput",
-            "DIAG sampleHeight ms=%.3f scanned=%zu tiles=%zu bestZoom=%d hit=1",
-            diagMs,
-            diagScannedTiles,
-            tiles_.size(),
-            bestZoom);
-    }
-#endif
     return sampleHeightFromDecodedTile(
         *bestHeightmap, bestBounds, lngRad, latRad);
 }
@@ -2259,9 +2140,9 @@ void Tileset::prepareRasterOverlaysForSelection(TilesetTile& tile) {
     }
 
     // The selector uses isTileRenderable() before buildTileDrawCommand() gets a
-    // chance to attach raster textures. Advance loaded/ancestor raster mappings
-    // here with no renderer attachment so child coverage decisions are based on
-    // current raster state, not on last frame's build phase.
+    // chance to send resource-prep notifications. Advance loaded/ancestor
+    // raster mappings here so child coverage decisions are based on current
+    // raster state, not on last frame's build phase.
     if (!rasterOverlays_.empty() &&
         tile.rasterOverlays.size() >= rasterOverlays_.size()) {
         bool allRequiredOverlaysReady = true;
@@ -2590,10 +2471,10 @@ void Tileset::queueTileLoad(const TileKey& key,
     loadQueue_.push_back(TileLoadRequest{key, group, priority});
 }
 
-void Tileset::renderSelectedTile(TilesetTile& tile,
-                                 double tileSse,
-                                 bool queueForLoad,
-                                 double tilePriority) {
+void Tileset::addTileToCurrentPlan(TilesetTile& tile,
+                                   double tileSse,
+                                   bool queueForLoad,
+                                   double tilePriority) {
     tile.selectionState = TileSelectionState::Rendered;
     tile.screenSpaceError = tileSse;
     if (!options_.enableLodTransitionPeriod) {
@@ -2981,10 +2862,15 @@ double Tileset::computeTileSse(const TilesetTile& tile,
         const auto& view = selectorFrame.views[i];
         const double viewportHeight =
             std::max(1.0, static_cast<double>(view.viewportHeightPixels));
-        const double projectionScale =
-            1.0 / std::tan(view.verticalFovRadians * 0.5);
-        const double sse = tile.geometricError * projectionScale *
-                           viewportHeight / (2.0 * distance);
+        const glm::dmat4& projection = view.projectionMatrix.raw();
+        glm::dvec4 centerNdc =
+            projection * glm::dvec4(0.0, 0.0, -distance, 1.0);
+        centerNdc /= centerNdc.w;
+        glm::dvec4 errorOffsetNdc =
+            projection * glm::dvec4(0.0, tile.geometricError, -distance, 1.0);
+        errorOffsetNdc /= errorOffsetNdc.w;
+        const double sse =
+            std::abs((errorOffsetNdc - centerNdc).y) * viewportHeight * 0.5;
         largestSse = std::max(largestSse, sse);
     }
     return largestSse;
@@ -3158,67 +3044,8 @@ Tileset::TraversalDetails Tileset::visitTile(
     tile.renderable = renderable;
 
     const bool tileCanRefine = canRefine(tile);
-#ifdef __ANDROID__
-    const bool traceFallbackSubtree =
-        shouldLogTileTrace(generation_) && isTraceFallbackSubtreeKey(tile.key);
-    if (traceFallbackSubtree) {
-        const RasterTraceCounts rasterCounts = rasterTraceCounts(tile);
-        __android_log_print(
-            ANDROID_LOG_INFO,
-            "TilesetDiag",
-            "decision enter gen=%llu key=%d/%d/%d depth=%u sse=%.2f meets=%d ancestorMeets=%d canRefine=%d renderable=%d load=%d content=%d mesh=%d gpu=%d up=%d children=%zu prevSel=%d rasterTotal=%d rasterReady=%d rasterTex=%d rasterLoading=%d rasterPlaceholder=%d rasterFailed=%d rasterMissing=%d",
-            static_cast<unsigned long long>(generation_),
-            tile.key.z,
-            tile.key.x,
-            tile.key.y,
-            depth,
-            tileSse,
-            meetsSse ? 1 : 0,
-            ancestorMeetsSse ? 1 : 0,
-            tileCanRefine ? 1 : 0,
-            renderable ? 1 : 0,
-            static_cast<int>(tile.loadState),
-            static_cast<int>(tile.contentKind),
-            tile.meshReady ? 1 : 0,
-            tile.gpuVertexBuffer ? 1 : 0,
-            tile.upsampledFromParent ? 1 : 0,
-            tile.children.size(),
-            static_cast<int>(tile.previousSelectionState),
-            rasterCounts.total,
-            rasterCounts.ready,
-            rasterCounts.readyTex,
-            rasterCounts.loading,
-            rasterCounts.placeholder,
-            rasterCounts.failed,
-            rasterCounts.missing);
-    }
-#endif
     if (!tileCanRefine) {
-#ifdef __ANDROID__
-        if (traceFallbackSubtree) {
-            const RasterTraceCounts rasterCounts = rasterTraceCounts(tile);
-            __android_log_print(
-                ANDROID_LOG_INFO,
-                "TilesetDiag",
-                "decision terminal gen=%llu key=%d/%d/%d reason=canRefineFalse sse=%.2f renderable=%d up=%d children=%zu rasterTotal=%d rasterReady=%d rasterTex=%d rasterLoading=%d rasterPlaceholder=%d rasterFailed=%d rasterMissing=%d",
-                static_cast<unsigned long long>(generation_),
-                tile.key.z,
-                tile.key.x,
-                tile.key.y,
-                tileSse,
-                renderable ? 1 : 0,
-                tile.upsampledFromParent ? 1 : 0,
-                tile.children.size(),
-                rasterCounts.total,
-                rasterCounts.ready,
-                rasterCounts.readyTex,
-                rasterCounts.loading,
-                rasterCounts.placeholder,
-                rasterCounts.failed,
-                rasterCounts.missing);
-        }
-#endif
-        renderSelectedTile(tile, tileSse, true, tilePriority);
+        addTileToCurrentPlan(tile, tileSse, true, tilePriority);
         return createTraversalDetailsForSingleTile(tile);
     }
 
@@ -3274,24 +3101,7 @@ Tileset::TraversalDetails Tileset::visitTile(
     }
 
     if (!refine) {
-#ifdef __ANDROID__
-        if (traceFallbackSubtree) {
-            __android_log_print(
-                ANDROID_LOG_INFO,
-                "TilesetDiag",
-                "decision render gen=%llu key=%d/%d/%d reason=meetsOrAncestor sse=%.2f meets=%d ancestorMeets=%d queued=%d renderable=%d",
-                static_cast<unsigned long long>(generation_),
-                tile.key.z,
-                tile.key.x,
-                tile.key.y,
-                tileSse,
-                meetsSse ? 1 : 0,
-                ancestorMeetsSse ? 1 : 0,
-                queuedForLoad ? 1 : 0,
-                renderable ? 1 : 0);
-        }
-#endif
-        renderSelectedTile(
+        addTileToCurrentPlan(
             tile,
             tileSse,
             !ancestorMeetsSse,
@@ -3302,7 +3112,7 @@ Tileset::TraversalDetails Tileset::visitTile(
     ensureTileChildren(tile);
 
     if (tile.refine == TileRefine::Add) {
-        renderSelectedTile(tile, tileSse, !queuedForLoad, tilePriority);
+        addTileToCurrentPlan(tile, tileSse, !queuedForLoad, tilePriority);
         queuedForLoad = true;
     }
 
@@ -3324,45 +3134,6 @@ Tileset::TraversalDetails Tileset::visitTile(
         traversalDetails.notYetRenderableCount +=
             childDetails.notYetRenderableCount;
     }
-#ifdef __ANDROID__
-    if (traceFallbackSubtree) {
-        for (const TilesetTile* child : tile.children) {
-            if (!child) {
-                continue;
-            }
-            const RasterTraceCounts rasterCounts = rasterTraceCounts(*child);
-            __android_log_print(
-                ANDROID_LOG_INFO,
-                "TilesetDiag",
-                "decision child gen=%llu parent=%d/%d/%d child=%d/%d/%d sel=%d prev=%d sse=%.2f renderable=%d load=%d content=%d mesh=%d gpu=%d up=%d children=%zu ancestorMeets=%d rasterTotal=%d rasterReady=%d rasterTex=%d rasterLoading=%d rasterPlaceholder=%d rasterFailed=%d rasterMissing=%d",
-                static_cast<unsigned long long>(generation_),
-                tile.key.z,
-                tile.key.x,
-                tile.key.y,
-                child->key.z,
-                child->key.x,
-                child->key.y,
-                static_cast<int>(child->selectionState),
-                static_cast<int>(child->previousSelectionState),
-                child->screenSpaceError,
-                isTileRenderable(*child) ? 1 : 0,
-                static_cast<int>(child->loadState),
-                static_cast<int>(child->contentKind),
-                child->meshReady ? 1 : 0,
-                child->gpuVertexBuffer ? 1 : 0,
-                child->upsampledFromParent ? 1 : 0,
-                child->children.size(),
-                child->ancestorMeetsSse ? 1 : 0,
-                rasterCounts.total,
-                rasterCounts.ready,
-                rasterCounts.readyTex,
-                rasterCounts.loading,
-                rasterCounts.placeholder,
-                rasterCounts.failed,
-                rasterCounts.missing);
-        }
-    }
-#endif
 
     const bool kickDueToNonReadyDescendant =
         !traversalDetails.allAreRenderable &&
@@ -3374,36 +3145,16 @@ Tileset::TraversalDetails Tileset::visitTile(
             TileSelectionState::Rendered &&
         hasLodTransitionRenderContent(tile) &&
         tile.lodTransitionFadePercentage < 1.0f;
+    const bool kickDueToUnconditionallyRefinedMissingDescendant =
+        unconditionallyRefine && !traversalDetails.allAreRenderable;
     const bool willKick =
-        (kickDueToNonReadyDescendant || kickDueToTileFadingIn) &&
-        (traversalDetails.notYetRenderableCount >
+        (kickDueToNonReadyDescendant ||
+         kickDueToTileFadingIn ||
+         kickDueToUnconditionallyRefinedMissingDescendant) &&
+        (kickDueToUnconditionallyRefinedMissingDescendant ||
+         traversalDetails.notYetRenderableCount >
              options_.loadingDescendantLimit ||
          renderable);
-#ifdef __ANDROID__
-    if (traceFallbackSubtree) {
-        __android_log_print(
-            ANDROID_LOG_INFO,
-            "TilesetDiag",
-            "decision summary gen=%llu key=%d/%d/%d allRenderable=%d anyRenderedLast=%d notReady=%d kickNonReady=%d kickFade=%d willKick=%d loadingLimit=%u renderable=%d queued=%d firstDesc=%zu loadBefore=%zu visibleNow=%zu loadNow=%zu",
-            static_cast<unsigned long long>(generation_),
-            tile.key.z,
-            tile.key.x,
-            tile.key.y,
-            traversalDetails.allAreRenderable ? 1 : 0,
-            traversalDetails.anyWereRenderedLastFrame ? 1 : 0,
-            traversalDetails.notYetRenderableCount,
-            kickDueToNonReadyDescendant ? 1 : 0,
-            kickDueToTileFadingIn ? 1 : 0,
-            willKick ? 1 : 0,
-            options_.loadingDescendantLimit,
-            renderable ? 1 : 0,
-            queuedForLoad ? 1 : 0,
-            firstRenderedDescendant,
-            loadQueueBeforeChildren,
-            tilePlan_.visibleTiles.size(),
-            loadQueue_.size());
-    }
-#endif
 
     if (willKick) {
         kickVisitedDescendants(tile);
@@ -3429,25 +3180,9 @@ Tileset::TraversalDetails Tileset::visitTile(
             }
         }
 
-        if (tile.refine != TileRefine::Add) {
-            renderSelectedTile(tile, tileSse, false, tilePriority);
+        if (tile.refine != TileRefine::Add && renderable) {
+            addTileToCurrentPlan(tile, tileSse, false, tilePriority);
         }
-#ifdef __ANDROID__
-        if (traceFallbackSubtree) {
-            __android_log_print(
-                ANDROID_LOG_INFO,
-                "TilesetDiag",
-                "decision kicked gen=%llu key=%d/%d/%d selectedParent=1 wasRenderedLast=%d visibleAfter=%zu loadAfter=%zu queued=%d",
-                static_cast<unsigned long long>(generation_),
-                tile.key.z,
-                tile.key.x,
-                tile.key.y,
-                wasReallyRenderedLastFrame ? 1 : 0,
-                tilePlan_.visibleTiles.size(),
-                loadQueue_.size(),
-                queuedForLoad ? 1 : 0);
-        }
-#endif
         if (!queuedForLoad) {
             queueTileLoad(
                 tile.key,
@@ -3462,20 +3197,6 @@ Tileset::TraversalDetails Tileset::visitTile(
 
     tile.selectionState = TileSelectionState::Refined;
     tile.screenSpaceError = tileSse;
-#ifdef __ANDROID__
-    if (traceFallbackSubtree) {
-        __android_log_print(
-            ANDROID_LOG_INFO,
-            "TilesetDiag",
-            "decision refined gen=%llu key=%d/%d/%d visible=%zu load=%zu",
-            static_cast<unsigned long long>(generation_),
-            tile.key.z,
-            tile.key.x,
-            tile.key.y,
-            tilePlan_.visibleTiles.size(),
-            loadQueue_.size());
-    }
-#endif
     // cesium-native preloadAncestors default: keep ancestors warm for
     // zoom-out and newly exposed areas without competing with urgent/normal
     // tiles needed for the current LOD.
@@ -3488,82 +3209,134 @@ Tileset::TraversalDetails Tileset::visitTile(
     return traversalDetails;
 }
 
-void Tileset::selectTiles(const FrameState& frameState) {
-    const double selectorStartMs = perf::nowMs();
-    tilePlan_ = TilePlan{};
-    tilePlan_.frameId = frameState.frameId;
-    currentFrameTimeSeconds_ = frameState.timeSeconds;
-    loadQueue_.clear();
-    selectedTilesVisited_ = 0;
-    selectedTilesCulled_ = 0;
-    selectedTilesKicked_ = 0;
-    selectedFogCulled_ = 0;
-    selectedNotYetRenderable_ = 0;
-    selectedCulledTilesVisited_ = 0;
-    selectedTilesOccluded_ = 0;
-    selectedTilesWaitingForOcclusionResults_ = 0;
+void Tileset::refreshTilePlanRenderEntries() {
+    tilePlan_.renderEntries.clear();
+    tilePlan_.renderEntryAncestorFallbackCount = 0;
+    tilePlan_.renderEntrySynchronousPrepCount = 0;
+    tilePlan_.renderEntryDeferredPrepCount = 0;
 
-    const size_t tileCountAtSelectorStart = tiles_.size();
-    const double resetStartMs = perf::nowMs();
-    resetTileSelectionState();
-    const double resetMs = perf::nowMs() - resetStartMs;
+    std::unordered_set<std::string> renderedGeometryKeys;
+    std::unordered_set<std::string> renderedFullGeometryKeys;
+    std::unordered_set<std::string> renderedClippedGeometryKeys;
 
-    const double viewsStartMs = perf::nowMs();
-    SelectorFrame selectorFrame;
-    selectorFrame.views = buildSelectorViews(frameState);
-    selectorFrame.fogDensities.reserve(selectorFrame.views.size());
-    for (const auto& view : selectorFrame.views) {
-        const double viewHeight = std::max(
-            0.0,
-            Ellipsoid::WGS84().cartesianToCartographic(view.position).height());
-        selectorFrame.fogDensities.push_back(
-            computeFogDensity(options_.fogDensityTable, viewHeight));
-    }
-    const double viewsMs = perf::nowMs() - viewsStartMs;
-    if (selectorFrame.views.empty()) {
-#ifdef __ANDROID__
-        if (shouldLogTileTrace(frameState.frameId)) {
-            __android_log_print(
-                ANDROID_LOG_INFO,
-                "TilesetDiag",
-                "selector frame=%llu total=%.2f reset=%.2f views=%.2f traverse=0.00 dedupe=0.00 transition=0.00 summary=0.00 tiles=%zu roots=0 visible=0 load=0 records=0 visited=0 notReady=0",
-                static_cast<unsigned long long>(frameState.frameId),
-                perf::nowMs() - selectorStartMs,
-                resetMs,
-                viewsMs,
-                tileCountAtSelectorStart);
+    int renderPrepBudgetRemaining = interactionActiveForFrame_
+        ? kActiveInteractionRenderPrepBudget
+        : kRecoveryRenderPrepBudget;
+
+    auto findNearestDrawableAncestor = [this](
+        TilesetTile& tile) -> TilesetTile* {
+        for (TilesetTile* ancestor = tile.parent;
+             ancestor;
+             ancestor = ancestor->parent) {
+            if (hasSurfaceDrawable(*ancestor)) {
+                return ancestor;
+            }
         }
-#endif
-        return;
-    }
+        return nullptr;
+    };
 
-    const double traversalStartMs = perf::nowMs();
-    std::vector<TileKey> roots =
-        contentProvider_ ? contentProvider_->rootTiles() : std::vector<TileKey>{};
-    if (!roots.empty()) {
-        // cesium-native TilesetJsonLoader supplies explicit roots from the
-        // loaded tileset.json rather than deriving roots from a quadtree scheme.
-    } else if (tileScheme_->id() == "Geographic-TMS") {
-        roots.push_back(TileKey{tileScheme_->id(), 0, 0, 0});
-        roots.push_back(TileKey{tileScheme_->id(), 0, 1, 0});
-    } else if (tileScheme_->id() == "OpenGlobus-Earth") {
-        roots.push_back(TileKey{tileScheme_->id(), 0, 0, 0});
-        roots.push_back(TileKey{tileScheme_->id(), 0, 0, 1});
-        roots.push_back(TileKey{tileScheme_->id(), 0, 0, 2});
-    } else {
-        roots.push_back(TileKey{tileScheme_->id(), 0, 0, 0});
-    }
+    auto appendRenderEntry = [&](const TileKey& key,
+                                 float opacity,
+                                 bool selectedThisFrame) {
+        TilesetTile* selectedTile = ensureTile(key);
+        if (!selectedTile) return;
 
-    for (const TileKey& key : roots) {
-        TilesetTile* root = ensureTile(key);
-        if (root) {
-            visitTileIfNeeded(*root,
-                              selectorFrame,
-                              0,
-                              false);
+        TilesetTile* commandTile = selectedTile;
+        std::optional<std::array<float, 4>> surfaceClipUv;
+        bool usesAncestorFallback = false;
+
+        if (selectedThisFrame &&
+            !selectedTile->gltfModel &&
+            !hasSurfaceDrawable(*selectedTile)) {
+            TilesetTile* drawableAncestor =
+                findNearestDrawableAncestor(*selectedTile);
+            if (drawableAncestor &&
+                (resourceSmoothingActiveForFrame_ ||
+                 renderPrepBudgetRemaining <= 0)) {
+                commandTile = drawableAncestor;
+                surfaceClipUv = clipUvForDescendantBounds(
+                    commandTile->bounds,
+                    selectedTile->bounds);
+                if (!surfaceClipUv) {
+                    return;
+                }
+                usesAncestorFallback = true;
+            }
         }
+
+        const std::string selectedCk = terrainCacheKey(selectedTile->key);
+        const std::string commandCk = terrainCacheKey(commandTile->key);
+        std::string renderDedupKey = commandCk;
+        if (surfaceClipUv) {
+            if (renderedFullGeometryKeys.count(commandCk) > 0) {
+                return;
+            }
+            renderDedupKey += "|clip:";
+            renderDedupKey += selectedCk;
+        } else if (renderedClippedGeometryKeys.count(commandCk) > 0) {
+            return;
+        }
+        if (!renderedGeometryKeys.insert(renderDedupKey).second) {
+            return;
+        }
+        if (surfaceClipUv) {
+            renderedClippedGeometryKeys.insert(commandCk);
+        } else {
+            renderedFullGeometryKeys.insert(commandCk);
+        }
+
+        bool allowSynchronousMeshPrep = true;
+        if (!commandTile->gltfModel && !hasSurfaceDrawable(*commandTile)) {
+            if (renderPrepBudgetRemaining > 0) {
+                --renderPrepBudgetRemaining;
+                ++tilePlan_.renderEntrySynchronousPrepCount;
+            } else if (usesAncestorFallback) {
+                allowSynchronousMeshPrep = false;
+                ++tilePlan_.renderEntryDeferredPrepCount;
+            } else {
+                // Root/no-ancestor case: allow one direct prep to avoid a blank
+                // frame. This path is rare and still bounded by traversal size.
+                ++tilePlan_.renderEntrySynchronousPrepCount;
+            }
+        }
+
+        TileRenderEntry entry;
+        entry.selectedKey = selectedTile->key;
+        entry.renderKey = commandTile->key;
+        entry.opacity = commandTile == selectedTile ? opacity : 1.0f;
+        entry.selectedThisFrame = selectedThisFrame;
+        entry.usesAncestorFallback = usesAncestorFallback;
+        entry.allowSynchronousMeshPrep = allowSynchronousMeshPrep;
+        if (surfaceClipUv) {
+            entry.surfaceClipEnabled = true;
+            entry.surfaceClipUv = *surfaceClipUv;
+        }
+        if (usesAncestorFallback) {
+            ++tilePlan_.renderEntryAncestorFallbackCount;
+        }
+        tilePlan_.renderEntries.push_back(std::move(entry));
+    };
+
+    for (const TileKey& key : tilePlan_.visibleTiles) {
+        TilesetTile* tile = ensureTile(key);
+        const float transitionOpacity =
+            options_.enableLodTransitionPeriod && tile
+                ? tile->lodTransitionFadePercentage
+                : 1.0f;
+        appendRenderEntry(key, transitionOpacity, true);
     }
-    const double traversalMs = perf::nowMs() - traversalStartMs;
+
+    for (const TileTransition& transition : tilePlan_.tilesFadingOut) {
+        if (transition.opacity <= 0.001f) {
+            continue;
+        }
+        appendRenderEntry(transition.key, transition.opacity, false);
+    }
+}
+
+Tileset::TilePlanFinalizeTimings
+Tileset::finalizeSelectedTilePlan(const FrameState& frameState) {
+    TilePlanFinalizeTimings timings;
 
     const double dedupeStartMs = perf::nowMs();
     std::unordered_set<TileKey> seen;
@@ -3575,13 +3348,14 @@ void Tileset::selectTiles(const FrameState& frameState) {
         }
     }
     tilePlan_.visibleTiles = std::move(deduped);
-    const double dedupeMs = perf::nowMs() - dedupeStartMs;
+    timings.dedupeMs = perf::nowMs() - dedupeStartMs;
 
     const double transitionStartMs = perf::nowMs();
     updateLodTransitions(frameState.deltaSeconds);
-    const double transitionMs = perf::nowMs() - transitionStartMs;
+    timings.transitionMs = perf::nowMs() - transitionStartMs;
 
     const double summaryStartMs = perf::nowMs();
+    refreshTilePlanRenderEntries();
     if (!tilePlan_.visibleTiles.empty()) {
         tilePlan_.minVisibleZoom = tilePlan_.visibleTiles.front().z;
         tilePlan_.maxVisibleZoom = tilePlan_.visibleTiles.front().z;
@@ -3638,31 +3412,86 @@ void Tileset::selectTiles(const FrameState& frameState) {
         selectedTilesWaitingForOcclusionResults_;
     tilePlan_.culledTilesVisitedCount = selectedCulledTilesVisited_;
     tilePlan_.mercatorTileCount = static_cast<int>(tilePlan_.visibleTiles.size());
-    const double summaryMs = perf::nowMs() - summaryStartMs;
+    timings.summaryMs = perf::nowMs() - summaryStartMs;
+    return timings;
+}
 
-#ifdef __ANDROID__
-    if (shouldLogTileTrace(frameState.frameId)) {
-        __android_log_print(
-            ANDROID_LOG_INFO,
-            "TilesetDiag",
-            "selector frame=%llu total=%.2f reset=%.2f views=%.2f traverse=%.2f dedupe=%.2f transition=%.2f summary=%.2f tiles=%zu roots=%zu visible=%zu load=%zu records=%zu visited=%d notReady=%d",
-            static_cast<unsigned long long>(frameState.frameId),
-            perf::nowMs() - selectorStartMs,
-            resetMs,
-            viewsMs,
-            traversalMs,
-            dedupeMs,
-            transitionMs,
-            summaryMs,
-            tileCountAtSelectorStart,
-            roots.size(),
-            tilePlan_.visibleTiles.size(),
-            loadQueue_.size(),
-            tilePlan_.selectionRecords.size(),
-            selectedTilesVisited_,
-            selectedNotYetRenderable_);
+void Tileset::selectTiles(const FrameState& frameState) {
+    const double selectorStartMs = perf::nowMs();
+    tilePlan_ = TilePlan{};
+    tilePlan_.frameId = frameState.frameId;
+    currentFrameTimeSeconds_ = frameState.timeSeconds;
+    loadQueue_.clear();
+    selectedTilesVisited_ = 0;
+    selectedTilesCulled_ = 0;
+    selectedTilesKicked_ = 0;
+    selectedFogCulled_ = 0;
+    selectedNotYetRenderable_ = 0;
+    selectedCulledTilesVisited_ = 0;
+    selectedTilesOccluded_ = 0;
+    selectedTilesWaitingForOcclusionResults_ = 0;
+
+    const size_t tileCountAtSelectorStart = tiles_.size();
+    const double resetStartMs = perf::nowMs();
+    resetTileSelectionState();
+    const double resetMs = perf::nowMs() - resetStartMs;
+
+    const double viewsStartMs = perf::nowMs();
+    SelectorFrame selectorFrame;
+    selectorFrame.views = buildSelectorViews(frameState);
+    selectorFrame.fogDensities.reserve(selectorFrame.views.size());
+    for (const auto& view : selectorFrame.views) {
+        const double viewHeight = std::max(
+            0.0,
+            Ellipsoid::WGS84().cartesianToCartographic(view.position).height());
+        selectorFrame.fogDensities.push_back(
+            computeFogDensity(options_.fogDensityTable, viewHeight));
     }
+    const double viewsMs = perf::nowMs() - viewsStartMs;
+    if (selectorFrame.views.empty()) {
+        return;
+    }
+
+    const double traversalStartMs = perf::nowMs();
+    std::vector<TileKey> roots =
+        contentProvider_ ? contentProvider_->rootTiles() : std::vector<TileKey>{};
+    if (!roots.empty()) {
+        // cesium-native TilesetJsonLoader supplies explicit roots from the
+        // loaded tileset.json rather than deriving roots from a quadtree scheme.
+    } else if (tileScheme_->id() == "Geographic-TMS") {
+        roots.push_back(TileKey{tileScheme_->id(), 0, 0, 0});
+        roots.push_back(TileKey{tileScheme_->id(), 0, 1, 0});
+    } else if (tileScheme_->id() == "OpenGlobus-Earth") {
+        roots.push_back(TileKey{tileScheme_->id(), 0, 0, 0});
+        roots.push_back(TileKey{tileScheme_->id(), 0, 0, 1});
+        roots.push_back(TileKey{tileScheme_->id(), 0, 0, 2});
+    } else {
+        roots.push_back(TileKey{tileScheme_->id(), 0, 0, 0});
+    }
+
+    for (const TileKey& key : roots) {
+        TilesetTile* root = ensureTile(key);
+        if (root) {
+            visitTileIfNeeded(*root,
+                              selectorFrame,
+                              0,
+                              false);
+        }
+    }
+    const double traversalMs = perf::nowMs() - traversalStartMs;
+
+    const TilePlanFinalizeTimings finalizeTimings =
+        finalizeSelectedTilePlan(frameState);
+
+#ifndef __ANDROID__
+    (void)selectorStartMs;
+    (void)tileCountAtSelectorStart;
+    (void)resetMs;
+    (void)viewsMs;
+    (void)traversalMs;
+    (void)finalizeTimings;
 #endif
+
 }
 
 void Tileset::update(const FrameState& frameState) {
@@ -3741,6 +3570,7 @@ void Tileset::update(const FrameState& frameState) {
         selectedCulledTilesVisited_ = 0;
         selectedTilesOccluded_ = 0;
         selectedTilesWaitingForOcclusionResults_ = 0;
+        refreshTilePlanRenderEntries();
     } else {
         selectTiles(frameState);
         hasReusableSelection_ = true;
@@ -3815,31 +3645,6 @@ Tileset::RequestOutcome Tileset::requestMissingTiles(
     const size_t maxInflight = options_.maximumSimultaneousTileLoads;
     RequestOutcome outcome;
 
-    struct RequestTrace {
-        size_t considered = 0;
-        size_t issued = 0;
-        size_t issuedUpsample = 0;
-        size_t issuedContent = 0;
-        size_t issuedTerrain = 0;
-        size_t breakMaxRequests = 0;
-        size_t breakDestroying = 0;
-        size_t breakInflight = 0;
-        size_t skipUpsampleSource = 0;
-        size_t skipExistingContent = 0;
-        size_t skipTerrainCached = 0;
-        size_t skipUnsupported = 0;
-        size_t skipStateNotLoadable = 0;
-        size_t skipStateContentLoading = 0;
-        size_t skipStateContentLoaded = 0;
-        size_t skipStateDone = 0;
-        size_t skipStateUnloading = 0;
-        size_t skipStateFailed = 0;
-        size_t skipPendingRequest = 0;
-        size_t skipPendingUpload = 0;
-        size_t skipPendingContentUpload = 0;
-        size_t skipEmpty = 0;
-    } trace;
-
     std::vector<TileLoadRequest> sorted = loadRequests;
     // cesium-native: higher priority group first; lower numeric priority wins
     // within a group.
@@ -3855,18 +3660,14 @@ Tileset::RequestOutcome Tileset::requestMissingTiles(
     for (const auto& tp : sorted) {
         const TileKey& key = tp.key;
         if (issued >= maxRequests) {
-            ++trace.breakMaxRequests;
             break;
         }
-        ++trace.considered;
         {
             std::lock_guard<std::mutex> lock(pendingMutex_);
             if (destroying_) {
-                ++trace.breakDestroying;
                 break;
             }
             if (pendingRequests_.size() >= maxInflight) {
-                ++trace.breakInflight;
                 outcome.blockedByInflight = true;
                 break;
             }
@@ -3886,24 +3687,20 @@ Tileset::RequestOutcome Tileset::requestMissingTiles(
 
         if (isUpsampledTile) {
             if (!prepareUpsampleSourceTile(*tileState, tp.priority)) {
-                ++trace.skipUpsampleSource;
                 continue;
             }
         } else {
             if (hasTileContent) {
                 if (tileState && tileState->contentKind == TileContentKind::Render &&
                     tileState->gltfModel) {
-                    ++trace.skipExistingContent;
                     continue;
                 }
             } else {
                 if (terrainCache_.count(ck)) {
-                    ++trace.skipTerrainCached;
                     continue;
                 }
                 if (!terrainProvider_ ||
                     !terrainProvider_->supportsTile(requestKey)) {
-                    ++trace.skipUnsupported;
                     continue;
                 }
             }
@@ -3913,27 +3710,6 @@ Tileset::RequestOutcome Tileset::requestMissingTiles(
             const TileLoadState state = tileState->loadState;
             if (state != TileLoadState::Unloaded &&
                 state != TileLoadState::FailedTemporarily) {
-                ++trace.skipStateNotLoadable;
-                switch (state) {
-                    case TileLoadState::ContentLoading:
-                        ++trace.skipStateContentLoading;
-                        break;
-                    case TileLoadState::ContentLoaded:
-                        ++trace.skipStateContentLoaded;
-                        break;
-                    case TileLoadState::Done:
-                        ++trace.skipStateDone;
-                        break;
-                    case TileLoadState::Unloading:
-                        ++trace.skipStateUnloading;
-                        break;
-                    case TileLoadState::Failed:
-                        ++trace.skipStateFailed;
-                        break;
-                    case TileLoadState::Unloaded:
-                    case TileLoadState::FailedTemporarily:
-                        break;
-                }
                 continue;
             }
         }
@@ -3942,15 +3718,12 @@ Tileset::RequestOutcome Tileset::requestMissingTiles(
             {
                 std::lock_guard<std::mutex> lock(pendingMutex_);
                 if (destroying_) {
-                    ++trace.breakDestroying;
                     break;
                 }
                 if (pendingRequests_.count(ck)) {
-                    ++trace.skipPendingRequest;
                     continue;
                 }
                 if (pendingUploadKeys_.count(ck)) {
-                    ++trace.skipPendingUpload;
                     continue;
                 }
                 pendingUploadKeys_.insert(ck);
@@ -3966,8 +3739,6 @@ Tileset::RequestOutcome Tileset::requestMissingTiles(
             tileState->contentKind = TileContentKind::Unknown;
             ++issued;
             ++outcome.issued;
-            ++trace.issued;
-            ++trace.issuedUpsample;
             continue;
         }
 
@@ -3976,19 +3747,15 @@ Tileset::RequestOutcome Tileset::requestMissingTiles(
             {
                 std::lock_guard<std::mutex> lock(pendingMutex_);
                 if (destroying_) {
-                    ++trace.breakDestroying;
                     break;
                 }
                 if (pendingRequests_.count(ck)) {
-                    ++trace.skipPendingRequest;
                     continue;
                 }
                 if (pendingContentUploadKeys_.count(ck)) {
-                    ++trace.skipPendingContentUpload;
                     continue;
                 }
                 if (emptyTiles_.count(ck)) {
-                    ++trace.skipEmpty;
                     continue;
                 }
                 pendingRequests_.insert(ck);
@@ -4001,8 +3768,6 @@ Tileset::RequestOutcome Tileset::requestMissingTiles(
             }
             ++issued;
             ++outcome.issued;
-            ++trace.issued;
-            ++trace.issuedContent;
 
             auto* provider = contentProvider_.get();
             provider->requestTileContent(requestKey, token,
@@ -4049,23 +3814,18 @@ Tileset::RequestOutcome Tileset::requestMissingTiles(
         {
             std::lock_guard<std::mutex> lock(pendingMutex_);
             if (destroying_) {
-                ++trace.breakDestroying;
                 break;
             }
             if (pendingRequests_.count(ck)) {
-                ++trace.skipPendingRequest;
                 continue;
             }
             if (pendingUploadKeys_.count(ck)) {
-                ++trace.skipPendingUpload;
                 continue;
             }
             if (pendingContentUploadKeys_.count(ck)) {
-                ++trace.skipPendingContentUpload;
                 continue;
             }
             if (emptyTiles_.count(ck)) {
-                ++trace.skipEmpty;
                 continue;
             }
             pendingRequests_.insert(ck);
@@ -4077,8 +3837,6 @@ Tileset::RequestOutcome Tileset::requestMissingTiles(
         }
         ++issued;
         ++outcome.issued;
-        ++trace.issued;
-        ++trace.issuedTerrain;
 
         auto* provider = terrainProvider_.get();
         if (!provider) {
@@ -4121,38 +3879,6 @@ Tileset::RequestOutcome Tileset::requestMissingTiles(
             });
     }
 
-#ifdef __ANDROID__
-    if (shouldLogTileTrace(generation_)) {
-        __android_log_print(
-            ANDROID_LOG_INFO,
-            "TilesetDiag",
-            "request gen=%llu in=%zu considered=%zu issued=%zu up=%zu content=%zu terrain=%zu break=max:%zu destroy:%zu inflight:%zu skip=upsrc:%zu existing:%zu cache:%zu unsupported:%zu state:%zu(load:%zu contentLoaded:%zu done:%zu unloading:%zu failed:%zu) pending:%zu upload:%zu contentUpload:%zu empty:%zu",
-            static_cast<unsigned long long>(generation_),
-            loadRequests.size(),
-            trace.considered,
-            trace.issued,
-            trace.issuedUpsample,
-            trace.issuedContent,
-            trace.issuedTerrain,
-            trace.breakMaxRequests,
-            trace.breakDestroying,
-            trace.breakInflight,
-            trace.skipUpsampleSource,
-            trace.skipExistingContent,
-            trace.skipTerrainCached,
-            trace.skipUnsupported,
-            trace.skipStateNotLoadable,
-            trace.skipStateContentLoading,
-            trace.skipStateContentLoaded,
-            trace.skipStateDone,
-            trace.skipStateUnloading,
-            trace.skipStateFailed,
-            trace.skipPendingRequest,
-            trace.skipPendingUpload,
-            trace.skipPendingContentUpload,
-            trace.skipEmpty);
-    }
-#endif
     return outcome;
 }
 
@@ -4595,12 +4321,6 @@ void Tileset::ingestQuantizedMeshAvailability(
 }
 
 void Tileset::ensureTileMesh(TilesetTile& tile) {
-    const bool traceMesh =
-#ifdef __ANDROID__
-        shouldLogTileTrace(generation_) && isTraceFallbackSubtreeKey(tile.key);
-#else
-        false;
-#endif
     auto it = terrainCache_.find(terrainCacheKey(tile.key));
     const bool hasOwnTerrain = it != terrainCache_.end() && it->second;
     DecodedHeightmap* ownHeightmap = hasOwnTerrain ? it->second.get() : nullptr;
@@ -4657,28 +4377,6 @@ void Tileset::ensureTileMesh(TilesetTile& tile) {
     if (!tile.mesh && hasOwnTerrain && !ownHeightmap->rawData.empty()) {
         tile.mesh = QuantizedMeshParser::parseToSurfaceTileMesh(
             ownHeightmap->rawData.data(), ownHeightmap->rawData.size(), tile.bounds);
-#ifdef __ANDROID__
-        if (traceMesh) {
-            __android_log_print(
-                ANDROID_LOG_INFO,
-                "TilesetDiag",
-                "mesh raw gen=%llu key=%d/%d/%d hasOwn=%d rawBytes=%zu mesh=%d verts=%zu idx=%zu skirtV=%u skirtI=%u localOrigin=%d heightRange=%d horizon=%d",
-                static_cast<unsigned long long>(generation_),
-                tile.key.z,
-                tile.key.x,
-                tile.key.y,
-                hasOwnTerrain ? 1 : 0,
-                ownHeightmap->rawData.size(),
-                tile.mesh ? 1 : 0,
-                tile.mesh ? tile.mesh->vertices.size() : 0,
-                tile.mesh ? tile.mesh->indices.size() : 0,
-                tile.mesh ? tile.mesh->skirtMeta.noSkirtVerticesCount : 0,
-                tile.mesh ? tile.mesh->skirtMeta.noSkirtIndicesCount : 0,
-                tile.mesh && tile.mesh->hasLocalOriginEcef ? 1 : 0,
-                tile.mesh && tile.mesh->hasHeightRange ? 1 : 0,
-                tile.mesh && tile.mesh->hasHorizonOcclusionPoint ? 1 : 0);
-        }
-#endif
         if (tile.mesh) {
             meshSource = SurfaceDrawableSource::OwnTerrain;
         }
@@ -4692,24 +4390,6 @@ void Tileset::ensureTileMesh(TilesetTile& tile) {
         meshSource = ownHeightmap
             ? SurfaceDrawableSource::OwnTerrain
             : SurfaceDrawableSource::EllipsoidFallback;
-#ifdef __ANDROID__
-        if (traceMesh) {
-            __android_log_print(
-                ANDROID_LOG_INFO,
-                "TilesetDiag",
-                "mesh ellipsoid gen=%llu key=%d/%d/%d hasOwn=%d mesh=%d verts=%zu idx=%zu skirtV=%u skirtI=%u",
-                static_cast<unsigned long long>(generation_),
-                tile.key.z,
-                tile.key.x,
-                tile.key.y,
-                hasOwnTerrain ? 1 : 0,
-                tile.mesh ? 1 : 0,
-                tile.mesh ? tile.mesh->vertices.size() : 0,
-                tile.mesh ? tile.mesh->indices.size() : 0,
-                tile.mesh ? tile.mesh->skirtMeta.noSkirtVerticesCount : 0,
-                tile.mesh ? tile.mesh->skirtMeta.noSkirtIndicesCount : 0);
-        }
-#endif
         if (ownHeightmap && ownHeightmap->valid()) {
             const auto& ellipsoid = Ellipsoid::WGS84();
             for (auto& v : tile.mesh->vertices) {
@@ -4797,25 +4477,6 @@ void Tileset::ensureTileMesh(TilesetTile& tile) {
         }
     }
 
-#ifdef __ANDROID__
-    if (traceMesh) {
-        __android_log_print(
-            ANDROID_LOG_INFO,
-            "TilesetDiag",
-            "mesh ready gen=%llu key=%d/%d/%d hasMesh=%d verts=%zu idx=%zu skirtV=%u skirtI=%u gpuV=%d gpuI=%d",
-            static_cast<unsigned long long>(generation_),
-            tile.key.z,
-            tile.key.x,
-            tile.key.y,
-            tile.mesh ? 1 : 0,
-            tile.mesh ? tile.mesh->vertices.size() : 0,
-            tile.mesh ? tile.mesh->indices.size() : 0,
-            tile.mesh ? tile.mesh->skirtMeta.noSkirtVerticesCount : 0,
-            tile.mesh ? tile.mesh->skirtMeta.noSkirtIndicesCount : 0,
-            tile.gpuVertexBuffer ? 1 : 0,
-            tile.gpuIndexBuffer ? 1 : 0);
-    }
-#endif
     tile.meshReady = true;
     tile.surfaceSource = meshSource == SurfaceDrawableSource::None
         ? SurfaceDrawableSource::EllipsoidFallback
@@ -5840,9 +5501,9 @@ void Tileset::buildTileDrawCommand(
         createRasterOverlayUpsampledChildren(tile);
     }
 
-    Texture* baseTexture = renderer.surfaceFallbackTexture();
-    const RasterAttachment* baseAttachment = nullptr;
-    bool baseLayerDrawable = false;
+    Texture* baseTexture = nullptr;
+    SurfaceRasterBinding baseBinding;
+    std::optional<size_t> baseOverlayIndex;
 
     for (size_t i : overlayOrder) {
         if (i >= tile.rasterOverlays.size()) {
@@ -5856,21 +5517,12 @@ void Tileset::buildTileDrawCommand(
 
         const RasterMappedToTilesetTile* mapped =
             tile.rasterOverlays[i].get();
-        const RasterAttachment* attachment =
-            renderer.getAttachedRaster(tile.key, static_cast<int32_t>(i));
-        if (overlayAttachmentAllowedByPolicy(
-                activeOverlay,
-                mapped,
-                attachment)) {
-            baseTexture = attachment->texture;
-            baseAttachment = attachment;
-            baseLayerDrawable = true;
-            break;
-        }
-
-        if (baseOverlayCanUseSurfacePlaceholder(activeOverlay, renderer)) {
-            baseTexture = renderer.surfaceFallbackTexture();
-            baseAttachment = nullptr;
+        const SurfaceRasterBinding binding =
+            chooseSurfaceRasterBinding(mapped);
+        if (overlayBindingAllowedByPolicy(activeOverlay, mapped, binding)) {
+            baseTexture = binding.tile->getTexture();
+            baseBinding = binding;
+            baseOverlayIndex = i;
             break;
         }
     }
@@ -5879,27 +5531,51 @@ void Tileset::buildTileDrawCommand(
         return;
     }
 
+    const int meshIndexCount = static_cast<int>(tile.mesh->indices.size());
+    int surfaceIndexOffset = 0;
+    int surfaceIndexCount = meshIndexCount;
+    const SkirtMetadata& skirt = tile.mesh->skirtMeta;
+    if (skirt.noSkirtIndicesCount > 0 &&
+        skirt.noSkirtIndicesBegin < tile.mesh->indices.size() &&
+        skirt.noSkirtIndicesBegin + skirt.noSkirtIndicesCount <=
+            tile.mesh->indices.size()) {
+        surfaceIndexOffset =
+            static_cast<int>(skirt.noSkirtIndicesBegin * sizeof(uint32_t));
+        surfaceIndexCount = static_cast<int>(skirt.noSkirtIndicesCount);
+    }
+
     RenderCommand surfaceCommand = renderer.makeSurfaceTileCommand(
         baseTexture,
         tile.gpuVertexBuffer.get(),
         tile.gpuIndexBuffer.get(),
-        static_cast<int>(tile.mesh->indices.size()));
+        surfaceIndexCount);
+    surfaceCommand.indexOffset = surfaceIndexOffset;
     surfaceCommand.frameId = frameNumber_;
     surfaceCommand.generation = generation_;
-    surfaceCommand.surfaceTileUv = baseAttachment
+    surfaceCommand.surfaceMeshIndexCount = meshIndexCount;
+    surfaceCommand.surfaceNoSkirtIndexCount = surfaceIndexCount;
+    surfaceCommand.surfaceSkirtIndexCount =
+        std::max(0, meshIndexCount - surfaceIndexCount);
+    if (baseBinding.tile) {
+        surfaceCommand.surfaceBaseRasterState =
+            static_cast<int>(baseBinding.tile->getState());
+        surfaceCommand.surfaceBaseIsRectangleTile =
+            baseBinding.tile->isRectangleTile() ? 1 : 0;
+    }
+    surfaceCommand.surfaceTileUv = baseBinding.tile
         ? std::array<float, 4>{
-              baseAttachment->offsetU,
-              baseAttachment->offsetV,
-              baseAttachment->scaleU,
-              baseAttachment->scaleV}
+              baseBinding.offsetU,
+              baseBinding.offsetV,
+              baseBinding.scaleU,
+              baseBinding.scaleV}
         : std::array<float, 4>{0.0f, 0.0f, 1.0f, 1.0f};
     if (surfaceClipUv) {
         surfaceCommand.surfaceClipUv = *surfaceClipUv;
         surfaceCommand.surfaceClipEnabled = 1.0f;
     }
     surfaceCommand.surfaceGeometryZoom = tile.key.z;
-    surfaceCommand.surfaceTextureZoom = baseAttachment && baseAttachment->tile
-        ? rasterTextureSourceZoom(baseAttachment->tile.get())
+    surfaceCommand.surfaceTextureZoom = baseBinding.tile
+        ? rasterTextureSourceZoom(baseBinding.tile)
         : -1;
     surfaceCommand.surfaceTileOrigin = {
         static_cast<float>(tile.localOrigin.x()),
@@ -5921,31 +5597,26 @@ void Tileset::buildTileDrawCommand(
         if (!activeOverlay || !activeOverlay->visible()) {
             continue;
         }
-        if (activeOverlay->getOverlay().role() == RasterOverlayRole::BaseImagery &&
-            baseLayerDrawable) {
-            const RasterAttachment* attachment =
-                renderer.getAttachedRaster(tile.key, static_cast<int32_t>(i));
-            if (attachment == baseAttachment) {
-                continue;
-            }
+        if (baseOverlayIndex && *baseOverlayIndex == i) {
+            continue;
         }
         const RasterMappedToTilesetTile* mapped =
             tile.rasterOverlays[i].get();
-        const RasterAttachment* attachment =
-            renderer.getAttachedRaster(tile.key, static_cast<int32_t>(i));
-        if (!overlayAttachmentAllowedByPolicy(
+        const SurfaceRasterBinding binding =
+            chooseSurfaceRasterBinding(mapped);
+        if (!overlayBindingAllowedByPolicy(
                 activeOverlay,
                 mapped,
-                attachment)) {
+                binding)) {
             continue;
         }
-        Texture* tex = attachment->texture;
+        Texture* tex = binding.tile->getTexture();
         if (!tex) continue;
 
-        float uvOffU = attachment ? attachment->offsetU : 0.0f;
-        float uvOffV = attachment ? attachment->offsetV : 0.0f;
-        float uvScaleU = attachment ? attachment->scaleU : 1.0f;
-        float uvScaleV = attachment ? attachment->scaleV : 1.0f;
+        float uvOffU = binding.offsetU;
+        float uvOffV = binding.offsetV;
+        float uvScaleU = binding.scaleU;
+        float uvScaleV = binding.scaleV;
 
         if (overlayTextureCount >= kMaxSurfaceImageryOverlays) {
             continue;
@@ -5987,17 +5658,7 @@ void Tileset::buildRenderCommands(Renderer& renderer,
     int ensuredTiles = 0;
     int meshReadyTiles = 0;
     int drawAttempts = 0;
-    int selectedWithCommand = 0;
-    int selectedNoCommand = 0;
-    int noCommandNoMeshReady = 0;
-    int noCommandNoGpuBuffer = 0;
-    int noCommandNoRasterTexture = 0;
-    int noCommandOther = 0;
 
-    std::unordered_set<std::string> renderedGeometryKeys;
-    std::unordered_set<std::string> renderedFullGeometryKeys;
-    std::unordered_set<std::string> renderedClippedGeometryKeys;
-    std::unordered_map<std::string, bool> selectedDrawCommandByKey;
     double selectedBuildMs = 0.0;
     double fadeBuildMs = 0.0;
     double detachInactiveMs = 0.0;
@@ -6005,76 +5666,26 @@ void Tileset::buildRenderCommands(Renderer& renderer,
     double eligibilityMs = 0.0;
     double cacheBytesMs = 0.0;
     double unloadMs = 0.0;
-    double androidDiagnosticsMs = 0.0;
-    int renderPrepBudgetRemaining = interactionActiveForFrame_
-        ? kActiveInteractionRenderPrepBudget
-        : kRecoveryRenderPrepBudget;
-    int synchronousRenderPrepCount = 0;
-    int deferredRenderPrepCount = 0;
-    int ancestorFallbackDrawCount = 0;
+    const int synchronousRenderPrepCount =
+        tilePlan_.renderEntrySynchronousPrepCount;
+    const int deferredRenderPrepCount =
+        tilePlan_.renderEntryDeferredPrepCount;
+    const int ancestorFallbackDrawCount =
+        tilePlan_.renderEntryAncestorFallbackCount;
 
-    auto findNearestDrawableAncestor = [this](
-        TilesetTile& tile) -> TilesetTile* {
-        for (TilesetTile* ancestor = tile.parent;
-             ancestor;
-             ancestor = ancestor->parent) {
-            if (hasSurfaceDrawable(*ancestor)) {
-                return ancestor;
-            }
-        }
-        return nullptr;
-    };
-
-    auto renderTile = [&](const TileKey& key,
-                          float transitionOpacity,
-                          bool selectedPass) {
-        TilesetTile* tile = ensureTile(key);
-        if (!tile) return;
+    auto renderEntry = [&](const TileRenderEntry& entry) {
+        TilesetTile* selectedTile = ensureTile(entry.selectedKey);
+        if (!selectedTile) return;
         ++ensuredTiles;
 
-        tile->lastUsedFrame = frameNumber_;
-        const std::string selectedCk = terrainCacheKey(key);
+        selectedTile->lastUsedFrame = frameNumber_;
+        const std::string selectedCk = terrainCacheKey(entry.selectedKey);
         markIneligibleForUnloading(selectedCk);
 
-        TilesetTile* commandTile = tile;
-        TilesetTile* drawableAncestor = nullptr;
-        std::optional<std::array<float, 4>> surfaceClipUv;
-        if (selectedPass && !tile->gltfModel && !hasSurfaceDrawable(*tile)) {
-            drawableAncestor = findNearestDrawableAncestor(*tile);
-            if (drawableAncestor &&
-                (resourceSmoothingActiveForFrame_ ||
-                 renderPrepBudgetRemaining <= 0)) {
-                commandTile = drawableAncestor;
-                surfaceClipUv = clipUvForDescendantBounds(
-                    commandTile->bounds,
-                    tile->bounds);
-                if (!surfaceClipUv) {
-                    return;
-                }
-                ++ancestorFallbackDrawCount;
-            }
-        }
+        TilesetTile* commandTile = ensureTile(entry.renderKey);
+        if (!commandTile) return;
 
         const std::string commandCk = terrainCacheKey(commandTile->key);
-        std::string renderDedupKey = commandCk;
-        if (surfaceClipUv) {
-            if (renderedFullGeometryKeys.count(commandCk) > 0) {
-                return;
-            }
-            renderDedupKey += "|clip:";
-            renderDedupKey += selectedCk;
-        } else if (renderedClippedGeometryKeys.count(commandCk) > 0) {
-            return;
-        }
-        if (!renderedGeometryKeys.insert(renderDedupKey).second) {
-            return;
-        }
-        if (surfaceClipUv) {
-            renderedClippedGeometryKeys.insert(commandCk);
-        } else {
-            renderedFullGeometryKeys.insert(commandCk);
-        }
-
         commandTile->lastUsedFrame = frameNumber_;
         // cesium-native: add reference while tile content is in the render list.
         commandTile->addReference();
@@ -6083,95 +5694,35 @@ void Tileset::buildRenderCommands(Renderer& renderer,
         markIneligibleForUnloading(commandCk);
 
         const size_t before = commands.size();
-        bool allowSynchronousMeshPrep = true;
-        if (!commandTile->gltfModel && !hasSurfaceDrawable(*commandTile)) {
-            if (renderPrepBudgetRemaining > 0) {
-                --renderPrepBudgetRemaining;
-                ++synchronousRenderPrepCount;
-            } else if (drawableAncestor) {
-                allowSynchronousMeshPrep = false;
-            } else {
-                // Root/no-ancestor case: allow one direct prep to avoid a blank
-                // frame. This path is rare and still bounded by traversal size.
-                ++synchronousRenderPrepCount;
-            }
-        }
-        if (allowSynchronousMeshPrep) {
-            const float commandOpacity =
-                commandTile == tile ? transitionOpacity : 1.0f;
+        if (entry.allowSynchronousMeshPrep) {
+            const std::optional<std::array<float, 4>> surfaceClipUv =
+                entry.surfaceClipEnabled
+                    ? std::optional<std::array<float, 4>>(entry.surfaceClipUv)
+                    : std::nullopt;
             buildTileDrawCommand(
                 renderer,
                 *commandTile,
                 commands,
-                commandOpacity,
-                allowSynchronousMeshPrep,
+                entry.opacity,
+                entry.allowSynchronousMeshPrep,
                 surfaceClipUv);
-        } else {
-            ++deferredRenderPrepCount;
         }
         if (commandTile->meshReady && commandTile->gpuVertexBuffer) {
             ++meshReadyTiles;
         }
         if (commands.size() > before) {
             ++drawAttempts;
-            if (selectedPass) {
-                ++selectedWithCommand;
-                selectedDrawCommandByKey[selectedCk] = true;
-            }
-        } else if (selectedPass) {
-            selectedDrawCommandByKey[selectedCk] = false;
-            ++selectedNoCommand;
-            if (!hasSurfaceDrawable(*commandTile)) {
-                ++noCommandNoMeshReady;
-            } else if (!commandTile->gpuVertexBuffer) {
-                ++noCommandNoGpuBuffer;
-            } else {
-                bool hasVisibleRasterOverlay = false;
-                bool hasRasterTexture = false;
-                for (size_t i = 0;
-                     i < rasterOverlays_.size() &&
-                     i < commandTile->rasterOverlays.size();
-                     ++i) {
-                    auto* activeOverlay = rasterOverlays_[i];
-                    if (!activeOverlay || !activeOverlay->visible()) {
-                        continue;
-                    }
-                    hasVisibleRasterOverlay = true;
-                    const RasterAttachment* attachment =
-                        renderer.getAttachedRaster(
-                            commandTile->key,
-                            static_cast<int32_t>(i));
-                    const RasterMappedToTilesetTile* mapped =
-                        commandTile->rasterOverlays[i].get();
-                    if (overlayDrawableForDiagnostics(
-                            activeOverlay,
-                            mapped,
-                            renderer,
-                            attachment)) {
-                        hasRasterTexture = true;
-                        break;
-                    }
-                }
-                if (hasVisibleRasterOverlay && !hasRasterTexture) {
-                    ++noCommandNoRasterTexture;
-                } else {
-                    ++noCommandOther;
-                }
-            }
         }
     };
 
-    // Build the tiles selected by the cesium-native-style selector.
-    // Selection already handled SSE, culling, renderability fallback, and
-    // descendant load continuation; rendering must not reselect or collapse.
+    // Build the entries resolved by the cesium-native-style selector contract.
+    // Rendering consumes TilePlan::renderEntries; it does not choose fallback
+    // ancestors, collapse LOD, or deduplicate traversal results here.
     const double selectedBuildStartMs = perf::nowMs();
-    for (const TileKey& key : tilePlan_.visibleTiles) {
-        TilesetTile* tile = ensureTile(key);
-        const float transitionOpacity =
-            options_.enableLodTransitionPeriod && tile
-                ? tile->lodTransitionFadePercentage
-                : 1.0f;
-        renderTile(key, transitionOpacity, true);
+    for (const TileRenderEntry& entry : tilePlan_.renderEntries) {
+        if (entry.selectedThisFrame) {
+            renderEntry(entry);
+        }
     }
     selectedBuildMs = perf::nowMs() - selectedBuildStartMs;
 
@@ -6179,16 +5730,15 @@ void Tileset::buildRenderCommands(Renderer& renderer,
     // are not selected this frame, but their render content remains referenced
     // until the LOD transition reaches 100%.
     const double fadeBuildStartMs = perf::nowMs();
-    for (const TileTransition& transition : tilePlan_.tilesFadingOut) {
-        if (transition.opacity <= 0.001f) {
-            continue;
+    for (const TileRenderEntry& entry : tilePlan_.renderEntries) {
+        if (!entry.selectedThisFrame) {
+            renderEntry(entry);
         }
-        renderTile(transition.key, transition.opacity, false);
     }
     fadeBuildMs = perf::nowMs() - fadeBuildStartMs;
 
-    // Drop renderer attachments and raw provider pointers for geometry tiles
-    // that did not contribute to this frame before provider tile trimming.
+    // Drop raster mapping references for geometry tiles that did not contribute
+    // to this frame before provider tile trimming.
     const double detachInactiveStartMs = perf::nowMs();
     detachInactiveRasterOverlays(&renderer);
     detachInactiveMs = perf::nowMs() - detachInactiveStartMs;
@@ -6243,168 +5793,11 @@ void Tileset::buildRenderCommands(Renderer& renderer,
     }
     unloadMs = perf::nowMs() - unloadStartMs;
 
-#ifdef __ANDROID__
-    const double androidDiagnosticsStartMs = perf::nowMs();
-    if (frameNumber_ <= 10 || frameNumber_ % 60 == 0) {
-        int overlayCached = 0;
-        for (auto* overlay : rasterOverlays_) {
-            if (overlay) {
-                overlayCached += overlay->getCachedTileCount();
-            }
-        }
-        __android_log_print(ANDROID_LOG_INFO, "Tileset",
-            "frame=%llu plan=%zu fog=%d ensured=%d meshReady=%d drawTiles=%d cmds=%zu terrainCache=%zu pending=%zu empty=%zu overlays=%d bytes=%lld height=%.1f fogD=%.8f",
-            static_cast<unsigned long long>(frameNumber_),
-            tilePlan_.visibleTiles.size(),
-            fogCulled,
-            ensuredTiles,
-            meshReadyTiles,
-            drawAttempts,
-            commands.size() - commandsBeforeTileset,
-            terrainCache_.size(),
-            pendingRequests_.size(),
-            emptyTiles_.size(),
-            overlayCached,
-            static_cast<long long>(totalBytesUsed_),
-            cameraHeight,
-            fogDensity);
-        __android_log_print(ANDROID_LOG_INFO, "TilesetDiag",
-            "render frame=%llu selected=%zu withCmd=%d noCmd=%d noMesh=%d noGpu=%d noRaster=%d other=%d fade=%zu commands=%zu",
-            static_cast<unsigned long long>(frameNumber_),
-            tilePlan_.visibleTiles.size(),
-            selectedWithCommand,
-            selectedNoCommand,
-            noCommandNoMeshReady,
-            noCommandNoGpuBuffer,
-            noCommandNoRasterTexture,
-            noCommandOther,
-            tilePlan_.tilesFadingOut.size(),
-            commands.size() - commandsBeforeTileset);
-
-        for (const TileKey& key : tilePlan_.visibleTiles) {
-            const TilesetTile* tile = ensureTile(key);
-            if (!tile) {
-                continue;
-            }
-
-            int overlayDrawableCount = 0;
-            int blockedRequiredLayerCount = 0;
-            bool baseLayerDrawable = false;
-            for (size_t i = 0;
-                 i < rasterOverlays_.size() && i < tile->rasterOverlays.size();
-                 ++i) {
-                const ActivatedRasterOverlay* activeOverlay = rasterOverlays_[i];
-                if (!activeOverlay || !activeOverlay->visible()) {
-                    continue;
-                }
-                const RasterMappedToTilesetTile* mapped =
-                    tile->rasterOverlays[i].get();
-                const RasterAttachment* attachment =
-                    renderer.getAttachedRaster(
-                        tile->key,
-                        static_cast<int32_t>(i));
-                const bool drawable = overlayDrawableForDiagnostics(
-                    activeOverlay,
-                    mapped,
-                    renderer,
-                    attachment);
-                if (drawable) {
-                    ++overlayDrawableCount;
-                    if (activeOverlay->getOverlay().role() ==
-                        RasterOverlayRole::BaseImagery) {
-                        baseLayerDrawable = true;
-                    }
-                }
-                if (activeOverlay->getOverlay().blocksCompleteRenderable() &&
-                    (!mapped || !mapped->getReadyTile())) {
-                    ++blockedRequiredLayerCount;
-                }
-            }
-            const std::string visibleCk = terrainCacheKey(tile->key);
-            const auto drawIt = selectedDrawCommandByKey.find(visibleCk);
-            const bool drawCommand =
-                drawIt != selectedDrawCommandByKey.end() && drawIt->second;
-
-            __android_log_print(
-                ANDROID_LOG_INFO,
-                "TilesetDiag",
-                "visible frame=%llu key=%d/%d/%d sse=%.2f load=%d sel=%d surfaceDrawable=%d surfaceSource=%s completeRenderable=%d mesh=%d gpu=%d up=%d children=%zu rasters=%zu baseLayerDrawable=%d overlayDrawableCount=%d blockedRequiredLayerCount=%d drawCommand=%d",
-                static_cast<unsigned long long>(frameNumber_),
-                tile->key.z,
-                tile->key.x,
-                tile->key.y,
-                tile->screenSpaceError,
-                static_cast<int>(tile->loadState),
-                static_cast<int>(tile->selectionState),
-                hasSurfaceDrawable(*tile) ? 1 : 0,
-                surfaceDrawableSourceName(tile->surfaceSource),
-                isTileCompleteRenderable(*tile) ? 1 : 0,
-                tile->meshReady ? 1 : 0,
-                tile->gpuVertexBuffer ? 1 : 0,
-                tile->upsampledFromParent ? 1 : 0,
-                tile->children.size(),
-                tile->rasterOverlays.size(),
-                baseLayerDrawable ? 1 : 0,
-                overlayDrawableCount,
-                blockedRequiredLayerCount,
-                drawCommand ? 1 : 0);
-
-            for (size_t i = 0; i < tile->rasterOverlays.size(); ++i) {
-                const auto& mapped = tile->rasterOverlays[i];
-                if (!mapped) {
-                    __android_log_print(
-                        ANDROID_LOG_INFO,
-                        "TilesetDiag",
-                        "raster frame=%llu geom=%d/%d/%d slot=%zu mapped=0",
-                        static_cast<unsigned long long>(frameNumber_),
-                        tile->key.z,
-                        tile->key.x,
-                        tile->key.y,
-                        i);
-                    continue;
-                }
-
-                const RasterOverlayTile* ready = mapped->getReadyTile();
-                const RasterOverlayTile* loading = mapped->getLoadingTile();
-                __android_log_print(
-                    ANDROID_LOG_INFO,
-                    "TilesetDiag",
-                    "raster frame=%llu geom=%d/%d/%d slot=%zu mapped=%d readyState=%d readyKey=%d/%d/%d readySrcZ=%d readyRect=%d readyTex=%d loadingState=%d loadingKey=%d/%d/%d loadingSrcZ=%d loadingRect=%d more=%d uv=%.4f,%.4f,%.4f,%.4f",
-                    static_cast<unsigned long long>(frameNumber_),
-                    tile->key.z,
-                    tile->key.x,
-                    tile->key.y,
-                    i,
-                    static_cast<int>(mapped->getState()),
-                    ready ? static_cast<int>(ready->getState()) : 99,
-                    ready ? ready->getTileID().z : -1,
-                    ready ? ready->getTileID().x : -1,
-                    ready ? ready->getTileID().y : -1,
-                    rasterSourceZoom(ready),
-                    ready && ready->isRectangleTile() ? 1 : 0,
-                    ready && ready->getTexture() ? 1 : 0,
-                    loading ? static_cast<int>(loading->getState()) : 99,
-                    loading ? loading->getTileID().z : -1,
-                    loading ? loading->getTileID().x : -1,
-                    loading ? loading->getTileID().y : -1,
-                    rasterSourceZoom(loading),
-                    loading && loading->isRectangleTile() ? 1 : 0,
-                    mapped->isMoreDetailAvailable() ? 1 : 0,
-                    mapped->getTranslationU(),
-                    mapped->getTranslationV(),
-                    mapped->getScaleU(),
-                    mapped->getScaleV());
-            }
-        }
-    }
-    androidDiagnosticsMs = perf::nowMs() - androidDiagnosticsStartMs;
-#endif
-
     char buildBreakdown[384];
     std::snprintf(
         buildBreakdown,
         sizeof(buildBreakdown),
-        "selected=%.2f fade=%.2f detach=%.2f trim=%.2f eligible=%.2f bytes=%.2f unload=%.2f diag=%.2f selectedTiles=%zu fadeTiles=%zu ensured=%d cmds=%zu interaction=%d smoothing=%d prepSync=%d prepDeferred=%d fallback=%d",
+        "selected=%.2f fade=%.2f detach=%.2f trim=%.2f eligible=%.2f bytes=%.2f unload=%.2f selectedTiles=%zu fadeTiles=%zu ensured=%d cmds=%zu interaction=%d smoothing=%d prepSync=%d prepDeferred=%d fallback=%d",
         selectedBuildMs,
         fadeBuildMs,
         detachInactiveMs,
@@ -6412,7 +5805,6 @@ void Tileset::buildRenderCommands(Renderer& renderer,
         eligibilityMs,
         cacheBytesMs,
         unloadMs,
-        androidDiagnosticsMs,
         tilePlan_.visibleTiles.size(),
         tilePlan_.tilesFadingOut.size(),
         ensuredTiles,
@@ -6436,12 +5828,6 @@ void Tileset::buildRenderCommands(Renderer& renderer,
     (void)ensuredTiles;
     (void)meshReadyTiles;
     (void)drawAttempts;
-    (void)selectedWithCommand;
-    (void)selectedNoCommand;
-    (void)noCommandNoMeshReady;
-    (void)noCommandNoGpuBuffer;
-    (void)noCommandNoRasterTexture;
-    (void)noCommandOther;
 #endif
 }
 

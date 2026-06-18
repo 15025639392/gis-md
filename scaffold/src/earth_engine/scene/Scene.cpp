@@ -2,6 +2,7 @@
 #include "Camera.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/Cartographic.h"
+#include "../core/geodesy/Transforms.h"
 #include "../debug/PerfTimer.h"
 
 #include <glm/glm.hpp>
@@ -14,100 +15,10 @@
 #include <limits>
 #include <utility>
 #include <unordered_set>
-
-#ifdef __ANDROID__
-#include <android/log.h>
-#endif
+#include <cmath>
 
 namespace earth_engine {
 namespace {
-
-#ifdef __ANDROID__
-const char* inputEventTypeName(InputEvent::Type type) {
-    switch (type) {
-        case InputEvent::Type::PointerDown: return "PointerDown";
-        case InputEvent::Type::PointerMove: return "PointerMove";
-        case InputEvent::Type::PointerUp: return "PointerUp";
-        case InputEvent::Type::PinchStart: return "PinchStart";
-        case InputEvent::Type::PinchMove: return "PinchMove";
-        case InputEvent::Type::PinchEnd: return "PinchEnd";
-        case InputEvent::Type::Cancel: return "Cancel";
-        case InputEvent::Type::Key: return "Key";
-    }
-    return "Unknown";
-}
-
-struct NativeInputDiag {
-    double windowStartMs = 0.0;
-    int events = 0;
-    int pointerMoves = 0;
-    int pinchMoves = 0;
-    double focusMs = 0.0;
-    double processMs = 0.0;
-    double totalMs = 0.0;
-    double maxFocusMs = 0.0;
-    double maxProcessMs = 0.0;
-    double maxTotalMs = 0.0;
-};
-
-NativeInputDiag gNativeInputDiag;
-
-void recordNativeInputDiag(const InputEvent& event,
-                           double focusMs,
-                           double processMs,
-                           double totalMs) {
-    const double nowMs = perf::nowMs();
-    if (gNativeInputDiag.windowStartMs <= 0.0) {
-        gNativeInputDiag.windowStartMs = nowMs;
-    }
-
-    ++gNativeInputDiag.events;
-    if (event.type == InputEvent::Type::PointerMove) {
-        ++gNativeInputDiag.pointerMoves;
-    } else if (event.type == InputEvent::Type::PinchMove) {
-        ++gNativeInputDiag.pinchMoves;
-    }
-    gNativeInputDiag.focusMs += focusMs;
-    gNativeInputDiag.processMs += processMs;
-    gNativeInputDiag.totalMs += totalMs;
-    gNativeInputDiag.maxFocusMs = std::max(gNativeInputDiag.maxFocusMs, focusMs);
-    gNativeInputDiag.maxProcessMs = std::max(gNativeInputDiag.maxProcessMs, processMs);
-    gNativeInputDiag.maxTotalMs = std::max(gNativeInputDiag.maxTotalMs, totalMs);
-
-    if (totalMs >= 2.0) {
-        __android_log_print(
-            ANDROID_LOG_INFO,
-            "EarthPerfInput",
-            "DIAG nativeInput slow type=%s total=%.3f focus=%.3f process=%.3f pointers=%d",
-            inputEventTypeName(event.type),
-            totalMs,
-            focusMs,
-            processMs,
-            event.pointerCount);
-    }
-
-    const double windowMs = nowMs - gNativeInputDiag.windowStartMs;
-    if (windowMs >= 1000.0 && gNativeInputDiag.events > 0) {
-        const double inv = 1.0 / static_cast<double>(gNativeInputDiag.events);
-        __android_log_print(
-            ANDROID_LOG_INFO,
-            "EarthPerfInput",
-            "DIAG nativeInputSummary windowMs=%.0f events=%d pointerMove=%d pinchMove=%d focusAvg=%.3f focusMax=%.3f processAvg=%.3f processMax=%.3f totalAvg=%.3f totalMax=%.3f",
-            windowMs,
-            gNativeInputDiag.events,
-            gNativeInputDiag.pointerMoves,
-            gNativeInputDiag.pinchMoves,
-            gNativeInputDiag.focusMs * inv,
-            gNativeInputDiag.maxFocusMs,
-            gNativeInputDiag.processMs * inv,
-            gNativeInputDiag.maxProcessMs,
-            gNativeInputDiag.totalMs * inv,
-            gNativeInputDiag.maxTotalMs);
-        gNativeInputDiag = NativeInputDiag{};
-        gNativeInputDiag.windowStartMs = nowMs;
-    }
-}
-#endif
 
 void updateSurfaceCommandDiagnostics(const RenderCommandList& commands,
                                      uint64_t expectedFrameId,
@@ -141,6 +52,26 @@ void updateSurfaceCommandDiagnostics(const RenderCommandList& commands,
         diag.minSurfaceGeneration = minGeneration;
         diag.maxSurfaceGeneration = maxGeneration;
     }
+}
+
+std::array<double, 3> toArray(const Vec3& v) {
+    return {v.x(), v.y(), v.z()};
+}
+
+std::array<double, 16> toArray(const Mat4& m) {
+    std::array<double, 16> values{};
+    const double* raw = glm::value_ptr(m.raw());
+    std::copy(raw, raw + values.size(), values.begin());
+    return values;
+}
+
+double wrapPositiveRadians(double radians) {
+    constexpr double kTwoPi = glm::two_pi<double>();
+    double wrapped = std::fmod(radians, kTwoPi);
+    if (wrapped < 0.0) {
+        wrapped += kTwoPi;
+    }
+    return wrapped;
 }
 
 } // namespace
@@ -341,10 +272,14 @@ void Scene::populateSelectorViews() {
     FrameState::SelectorView selectorView;
     selectorView.position = frameState_.camera->position();
     selectorView.direction = frameState_.camera->direction();
-    selectorView.frustum = frameState_.camera->frustum(
-        static_cast<double>(frameState_.viewportWidthPixels),
-        static_cast<double>(frameState_.viewportHeightPixels));
-    selectorView.verticalFovRadians = frameState_.camera->verticalFovRadians();
+    const double viewportWidth =
+        static_cast<double>(frameState_.viewportWidthPixels);
+    const double viewportHeight =
+        static_cast<double>(frameState_.viewportHeightPixels);
+    selectorView.projectionMatrix =
+        frameState_.camera->projectionMatrix(viewportWidth, viewportHeight);
+    selectorView.frustum = Frustum::fromViewProjection(
+        selectorView.projectionMatrix * frameState_.camera->viewMatrix());
     selectorView.viewportHeightPixels = frameState_.viewportHeightPixels;
     frameState_.selectorViews.push_back(selectorView);
 }
@@ -358,8 +293,7 @@ void Scene::render() {
     size_t expectedCommands = 4 + vectorLayers_.size() * 4;
     auto addExpectedTilesetCommands = [&](const Tileset* tileset) {
         if (!tileset) return;
-        expectedCommands += tileset->tilePlan().visibleTiles.size();
-        expectedCommands += tileset->tilePlan().tilesFadingOut.size();
+        expectedCommands += tileset->tilePlan().renderEntries.size();
     };
     addExpectedTilesetCommands(tileset_.get());
     for (const auto& tileset : additionalTilesets_) {
@@ -820,6 +754,7 @@ void Scene::render() {
     // 6. 提交
     frameState_.diagnostics.renderCommandBuildMs =
         perf::nowMs() - renderStartMs;
+    updatePresentationTrace();
 
     const double submitStartMs = perf::nowMs();
     renderer_->submit(commands);
@@ -868,6 +803,120 @@ void Scene::render() {
                     "Scene.render.total",
                     perf::nowMs() - renderStartMs,
                     detail);
+}
+
+void Scene::updatePresentationTrace() {
+    PresentationTrace trace;
+
+    trace.camera.frameId = frameState_.frameId;
+    trace.camera.viewportWidthPixels = frameState_.viewportWidthPixels;
+    trace.camera.viewportHeightPixels = frameState_.viewportHeightPixels;
+    trace.camera.devicePixelRatio = frameState_.devicePixelRatio;
+
+    if (frameState_.camera) {
+        const Camera& cam = *frameState_.camera;
+        const Vec3 target = cam.target();
+        Cartographic targetCartographic =
+            std::isnan(target.x())
+                ? Ellipsoid::WGS84().cartesianToCartographic(cam.position())
+                : Ellipsoid::WGS84().cartesianToCartographic(target);
+        const Vec3 localUp =
+            Ellipsoid::WGS84().geodeticSurfaceNormal(targetCartographic);
+        const Mat4 enuToEcef =
+            Transforms::eastNorthUpToFixedFrame(
+                Ellipsoid::WGS84().cartographicToCartesian(targetCartographic));
+        const glm::dmat4 ecefToEnu = glm::inverse(enuToEcef.raw());
+        const glm::dvec4 localDirection4 =
+            ecefToEnu * glm::dvec4(cam.direction().raw(), 0.0);
+        const glm::dvec3 localDirection =
+            glm::normalize(glm::dvec3(localDirection4));
+
+        trace.camera.verticalFovRadians = cam.verticalFovRadians();
+        trace.camera.targetLongitudeDegrees =
+            targetCartographic.longitudeDegrees();
+        trace.camera.targetLatitudeDegrees =
+            targetCartographic.latitudeDegrees();
+        trace.camera.targetHeightMeters = targetCartographic.height();
+        trace.camera.cameraHeightMeters = cam.getHeight();
+        trace.camera.pitchRadians =
+            std::asin(std::clamp(localDirection.z, -1.0, 1.0));
+        trace.camera.headingRadians =
+            wrapPositiveRadians(std::atan2(localDirection.x, localDirection.y));
+        trace.camera.position = toArray(cam.position());
+        trace.camera.direction = toArray(cam.direction());
+        trace.camera.up = toArray(cam.up());
+        trace.camera.right = toArray(cam.right());
+        (void)localUp;
+    }
+
+    trace.selectorViews.reserve(frameState_.selectorViews.size());
+    for (const FrameState::SelectorView& view : frameState_.selectorViews) {
+        PresentationSelectorViewTrace viewTrace;
+        viewTrace.position = toArray(view.position);
+        viewTrace.direction = toArray(view.direction);
+        viewTrace.viewportHeightPixels = view.viewportHeightPixels;
+        viewTrace.projectionMatrix = toArray(view.projectionMatrix);
+        trace.selectorViews.push_back(viewTrace);
+    }
+
+    auto appendTileset = [&](const Tileset* tileset) {
+        if (!tileset) return;
+        const TilePlan& plan = tileset->tilePlan();
+        PresentationTilesetTrace tilesetTrace;
+        tilesetTrace.visibleTiles = plan.visibleTiles;
+        tilesetTrace.minVisibleZoom = plan.minVisibleZoom;
+        tilesetTrace.maxVisibleZoom = plan.maxVisibleZoom;
+        tilesetTrace.lodSizePixels = plan.lodSizePixels;
+        tilesetTrace.renderEntries.reserve(plan.renderEntries.size());
+        for (const TileRenderEntry& entry : plan.renderEntries) {
+            PresentationRenderEntryTrace entryTrace;
+            entryTrace.selectedKey = entry.selectedKey;
+            entryTrace.renderKey = entry.renderKey;
+            entryTrace.opacity = entry.opacity;
+            entryTrace.selectedThisFrame = entry.selectedThisFrame;
+            entryTrace.usesAncestorFallback = entry.usesAncestorFallback;
+            entryTrace.allowSynchronousMeshPrep =
+                entry.allowSynchronousMeshPrep;
+            entryTrace.surfaceClipEnabled = entry.surfaceClipEnabled;
+            entryTrace.surfaceClipUv = entry.surfaceClipUv;
+            tilesetTrace.renderEntries.push_back(entryTrace);
+        }
+        trace.tilesets.push_back(std::move(tilesetTrace));
+    };
+
+    appendTileset(tileset_.get());
+    for (const auto& tileset : additionalTilesets_) {
+        appendTileset(tileset.get());
+    }
+
+    trace.commands.reserve(renderCommands_.size());
+    for (const RenderCommand& command : renderCommands_) {
+        PresentationCommandTrace commandTrace;
+        commandTrace.kind = command.kind;
+        commandTrace.owner = command.owner;
+        commandTrace.surfaceGeometryZoom = command.surfaceGeometryZoom;
+        commandTrace.surfaceTextureZoom = command.surfaceTextureZoom;
+        commandTrace.indexOffset = command.indexOffset;
+        commandTrace.indexCount = command.indexCount;
+        commandTrace.surfaceMeshIndexCount = command.surfaceMeshIndexCount;
+        commandTrace.surfaceNoSkirtIndexCount =
+            command.surfaceNoSkirtIndexCount;
+        commandTrace.surfaceSkirtIndexCount = command.surfaceSkirtIndexCount;
+        commandTrace.surfaceBaseRasterState = command.surfaceBaseRasterState;
+        commandTrace.surfaceBaseIsRectangleTile =
+            command.surfaceBaseIsRectangleTile;
+        commandTrace.surfaceOverlayTextureCount =
+            command.surfaceOverlayTextureCount;
+        commandTrace.surfaceClipEnabled = command.surfaceClipEnabled;
+        commandTrace.surfaceClipUv = command.surfaceClipUv;
+        commandTrace.surfaceTransitionOpacity =
+            command.surfaceTransitionOpacity;
+        commandTrace.frameId = command.frameId;
+        commandTrace.generation = command.generation;
+        trace.commands.push_back(std::move(commandTrace));
+    }
+
+    presentationTrace_ = std::move(trace);
 }
 
 void Scene::setTileset(std::unique_ptr<Tileset> tileset) {
@@ -1149,23 +1198,10 @@ void Scene::updateInteractionFocus(const InputEvent& event) {
 }
 
 void Scene::onInputEvent(const InputEvent& event) {
-#ifdef __ANDROID__
-    const double inputStartMs = perf::nowMs();
-    const double focusStartMs = inputStartMs;
-    updateInteractionFocus(event);
-    const double focusMs = perf::nowMs() - focusStartMs;
-    const double processStartMs = perf::nowMs();
-    if (inputManager_) {
-        inputManager_->process(event);
-    }
-    const double processMs = perf::nowMs() - processStartMs;
-    recordNativeInputDiag(event, focusMs, processMs, perf::nowMs() - inputStartMs);
-#else
     updateInteractionFocus(event);
     if (inputManager_) {
         inputManager_->process(event);
     }
-#endif
 }
 
 // ---- 环境系统 ----

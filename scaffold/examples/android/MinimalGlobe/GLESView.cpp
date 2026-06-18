@@ -7,6 +7,8 @@
 #include <chrono>
 #include <algorithm>
 #include <memory>
+#include <sstream>
+#include <string>
 #include <vector>
 
 #include "earth_engine/Engine.h"
@@ -31,6 +33,7 @@
 #include "earth_engine/interaction/PickingService.h"
 #include "earth_engine/environment/TimeController.h"
 #include "earth_engine/scene/FrameState.h"
+#include "earth_engine/scene/Scene.h"
 
 #define LOG_TAG "MinimalGlobe"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -73,6 +76,126 @@ static bool gTouchMoved = false;
 static bool gDebugPinchActive = false;
 
 static double androidUptimeSeconds();
+
+static std::string tileKeyLabel(const TileKey& key) {
+    std::ostringstream out;
+    out << key.schemeId << "/" << key.z << "/" << key.x << "/" << key.y;
+    return out.str();
+}
+
+static const char* renderCommandKindLabel(RenderCommandKind kind) {
+    switch (kind) {
+        case RenderCommandKind::SkyBackground: return "sky";
+        case RenderCommandKind::AtmosphereBackground: return "atmo";
+        case RenderCommandKind::GlobeSurface: return "globe";
+        case RenderCommandKind::SurfaceTile: return "surface";
+        case RenderCommandKind::GltfPrimitive: return "gltf";
+        case RenderCommandKind::GltfPrimitiveInstanced: return "gltf-i";
+        case RenderCommandKind::VectorOverlay: return "vector";
+        case RenderCommandKind::Unknown:
+        default: return "unknown";
+    }
+}
+
+static std::string buildPresentationTraceSummary(const PresentationTrace& trace) {
+    std::ostringstream out;
+    out.setf(std::ios::fixed);
+    out.precision(3);
+
+    out << "\n\nPresentation trace\n";
+    out << "Camera: center="
+        << trace.camera.targetLongitudeDegrees << ","
+        << trace.camera.targetLatitudeDegrees
+        << " h=" << static_cast<int>(trace.camera.targetHeightMeters)
+        << " camH=" << static_cast<int>(trace.camera.cameraHeightMeters)
+        << " pitch=" << trace.camera.pitchRadians
+        << " heading=" << trace.camera.headingRadians
+        << " vp=" << trace.camera.viewportWidthPixels
+        << "x" << trace.camera.viewportHeightPixels << "\n";
+    out << "Selector views: " << trace.selectorViews.size();
+    if (!trace.selectorViews.empty()) {
+        out << " firstVpH=" << trace.selectorViews.front().viewportHeightPixels;
+    }
+    out << "\n";
+
+    size_t surfaceCount = 0;
+    out << "Commands:";
+    for (const PresentationCommandTrace& command : trace.commands) {
+        if (command.kind != RenderCommandKind::SurfaceTile &&
+            command.kind != RenderCommandKind::GltfPrimitive &&
+            command.kind != RenderCommandKind::GltfPrimitiveInstanced) {
+            continue;
+        }
+        if (surfaceCount >= 4) {
+            out << " ...";
+            break;
+        }
+        out << " " << renderCommandKindLabel(command.kind)
+            << "(gz=" << command.surfaceGeometryZoom
+            << ",tz=" << command.surfaceTextureZoom
+            << ",idx=" << command.indexCount
+            << "/" << command.surfaceMeshIndexCount
+            << ",base=real"
+            << ",rs=" << command.surfaceBaseRasterState;
+        if (command.surfaceBaseIsRectangleTile) {
+            out << ",rect";
+        }
+        if (command.surfaceSkirtIndexCount > 0) {
+            out << ",skirt-" << command.surfaceSkirtIndexCount;
+        }
+        if (command.surfaceClipEnabled > 0.5f) {
+            out << ",clip";
+        }
+        out << ")";
+        ++surfaceCount;
+    }
+    if (surfaceCount == 0) {
+        out << " none";
+    }
+    out << "\n";
+
+    const PresentationTilesetTrace* terrainTrace =
+        trace.tilesets.empty() ? nullptr : &trace.tilesets.front();
+    if (terrainTrace) {
+        out << "Tileset: visible=" << terrainTrace->visibleTiles.size()
+            << " renderEntries=" << terrainTrace->renderEntries.size()
+            << " zoom=" << terrainTrace->minVisibleZoom
+            << "-" << terrainTrace->maxVisibleZoom
+            << " lod=" << static_cast<int>(terrainTrace->lodSizePixels)
+            << "\n";
+        const size_t visibleCount =
+            std::min<size_t>(terrainTrace->visibleTiles.size(), 4);
+        out << "Visible:";
+        for (size_t i = 0; i < visibleCount; ++i) {
+            out << " " << tileKeyLabel(terrainTrace->visibleTiles[i]);
+        }
+        if (terrainTrace->visibleTiles.size() > visibleCount) {
+            out << " ...";
+        }
+        out << "\n";
+
+        const size_t entryCount =
+            std::min<size_t>(terrainTrace->renderEntries.size(), 4);
+        out << "Render:";
+        for (size_t i = 0; i < entryCount; ++i) {
+            const auto& entry = terrainTrace->renderEntries[i];
+            out << " " << tileKeyLabel(entry.selectedKey)
+                << "->" << tileKeyLabel(entry.renderKey);
+            if (entry.usesAncestorFallback) {
+                out << "[fallback]";
+            }
+            if (entry.surfaceClipEnabled) {
+                out << "[clip]";
+            }
+        }
+        if (terrainTrace->renderEntries.size() > entryCount) {
+            out << " ...";
+        }
+        out << "\n";
+    }
+
+    return out.str();
+}
 
 static void cancelInputIfNeeded() {
     if (!gEngine) return;
@@ -209,13 +332,11 @@ static std::vector<ActivatedRasterOverlay*> createDemoRasterOverlays() {
         auto xyz = std::make_unique<XYZImageryProvider>(
             kGaodeSatelliteTemplate, "Gaode/Amap satellite");
         xyz->setZoomRange(0, 18);
-        xyz->setOpenGlobusGroupedY(true);
-        xyz->setOpenGlobusPolarGroupsEnabled(false);
         xyz->setPlatformBridge(gPlatformBridge.get());
         addActivatedRasterOverlay(
             rasterOverlays,
             std::move(xyz),
-            TileScheme::createOpenGlobusEarth(),
+            TileScheme::createXYZWebMercator(),
             makeDemoRasterOverlayOptions(
                 1.0f,
                 RasterOverlayRole::BaseImagery,
@@ -228,13 +349,11 @@ static std::vector<ActivatedRasterOverlay*> createDemoRasterOverlays() {
             auto road = std::make_unique<XYZImageryProvider>(
                 kGaodeRoadNetTemplate, "Gaode/Amap road network");
             road->setZoomRange(0, 18);
-            road->setOpenGlobusGroupedY(true);
-            road->setOpenGlobusPolarGroupsEnabled(false);
             road->setPlatformBridge(gPlatformBridge.get());
             addActivatedRasterOverlay(
                 rasterOverlays,
                 std::move(road),
-                TileScheme::createOpenGlobusEarth(),
+                TileScheme::createXYZWebMercator(),
                 makeDemoRasterOverlayOptions(
                     0.92f,
                     RasterOverlayRole::AnnotationOverlay,
@@ -462,75 +581,8 @@ static void renderFrame() {
     gEngine->getClearColor(cr, cg, cb, ca);
     glClearColor(cr, cg, cb, ca);
 
-    Vec3 sunDir = gEngine->sunDirection();
-
     eglSwapBuffers(gDisplay, gSurface);
-
-    gFrameCount++;
-    if (gFrameCount <= 1 || gFrameCount % 300 == 0) {
-        const auto& diag = gEngine->diagnostics();
-        LOGI("Frame %d | tiles vis=%d cached=%d renderSurface=%d mesh=%d "
-             "(terr=%d ellip=%d ready=%d terrParent=%d terrTrans=%d) "
-             "attach=%d exact=%d parent=%d stale=%d missingGen=%d | "
-             "missing=%d unsupported=%d kicked=%d retained=%d "
-             "visZ=%d-%d targetZ=%d-%d texZ=%d-%d lod=%.0f "
-             "eq=%d qRender=%d qWalk=%d qFrustum=%d qFade=%d qBal=%d qHz=%d qEq2=%d "
-             "grp=%d/%d/%d loadQ=%d/%d/%d pend=%d/%d/%d "
-             "state=%d/%d/%d/%d/%d/%d/%d content=%d/%d/%d/%d unloadQ=%d gen=%llu | "
-             "sun=(%.2f,%.2f,%.2f) | FPS=%.1f draw=%d",
-             gFrameCount, diag.visibleTiles, diag.cachedTextures,
-             diag.renderSurfaceTiles, diag.surfaceMeshCount,
-             diag.terrainSurfaceMeshes, diag.ellipsoidSurfaceMeshes,
-             diag.terrainReadySurfaceMeshes,
-             diag.terrainParentFallbackMeshes,
-             diag.terrainTransitionSurfaceMeshes,
-             diag.imageryAttachments, diag.imageryExactAttachments,
-             diag.imageryParentFallbackAttachments,
-             diag.staleSurfaceCommands, diag.missingGenerationSurfaceCommands,
-             diag.imageryMissingTiles,
-             diag.imageryUnsupportedTiles,
-             diag.imageryKickedTiles,
-             diag.imageryAncestorRetainedTiles,
-             diag.minVisibleZoom,
-             diag.maxVisibleZoom,
-             diag.imageryMinTargetZoom,
-             diag.imageryMaxTargetZoom,
-             diag.imageryMinTextureZoom,
-             diag.imageryMaxTextureZoom,
-             diag.lodSizePixels,
-             diag.quadtreeEqualZoomLayers,
-             diag.quadtreeRenderingNodes,
-             diag.quadtreeWalkthroughNodes,
-             diag.quadtreeInFrustumNodes,
-             diag.quadtreeFadingNodes,
-             diag.quadtreeNeighborBalancedTiles,
-             diag.quadtreeHorizonTangentPreservedNodes,
-             diag.quadtreeEqualZoomSecondPassNodes,
-             diag.mercatorTileCount,
-             diag.northPolarTileCount,
-             diag.southPolarTileCount,
-             diag.loadQueuePreloadRequests,
-             diag.loadQueueNormalRequests,
-             diag.loadQueueUrgentRequests,
-             diag.pendingTerrainRequests,
-             diag.pendingTerrainUploads,
-             diag.pendingTerrainTerminalResults,
-             diag.terrainLoadUnloadingTiles,
-             diag.terrainLoadFailedTemporarilyTiles,
-             diag.terrainLoadUnloadedTiles,
-             diag.terrainLoadContentLoadingTiles,
-             diag.terrainLoadContentLoadedTiles,
-             diag.terrainLoadDoneTiles,
-             diag.terrainLoadFailedTiles,
-             diag.terrainContentUnknownTiles,
-             diag.terrainContentEmptyTiles,
-             diag.terrainContentExternalTiles,
-             diag.terrainContentRenderTiles,
-             diag.terrainUnloadQueueTiles,
-             static_cast<unsigned long long>(diag.maxSurfaceGeneration),
-             sunDir.x(), sunDir.y(), sunDir.z(),
-             diag.fps, diag.drawCalls);
-    }
+    ++gFrameCount;
 }
 
 // ============================================================
@@ -832,7 +884,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
         Ellipsoid::WGS84().cartesianToCartographic(gEngine->camera().position()).height();
     const double cameraDist = gEngine->camera().position().distanceTo(Vec3::zero());
 
-    char buf[1600];
+    char buf[2200];
     snprintf(buf, sizeof(buf),
         "FPS: %.1f  |  Frame: %.1f ms\n"
         "CPU: %.1f ms  |  begin %.1f upd %.1f build %.1f submit %.1f end %.1f\n"
@@ -912,7 +964,9 @@ Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
         diag.missingRasterOverlayProjections,
         diag.surfaceMeshBytes / 1024, diag.terrainCachedTiles,
         static_cast<unsigned long long>(diag.terrainGeneration));
-    return env->NewStringUTF(buf);
+    std::string text(buf);
+    text += buildPresentationTraceSummary(gEngine->presentationTrace());
+    return env->NewStringUTF(text.c_str());
 }
 
 JNIEXPORT void JNICALL

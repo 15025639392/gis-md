@@ -66,6 +66,19 @@ void main() {
 // ============================================================
 // Unified SurfaceTile Shader — cesium-native glTF vertex layout
 // POSITION(vec3) + NORMAL(vec3) + TEXCOORD_0(vec2) = 32 bytes
+//
+// Render-chain steps after core binding:
+// 11. Renderer backend translates RenderCommand into texture slots, sampler
+//     uniforms, fixed uniforms (u_tileUV / overlay UVs), buffers, and draw calls.
+// 12. This shader consumes those uniforms and samples u_tileTexture /
+//     u_overlayTextureN.
+// 13. GPU depth/cull/blend tests resolve fragments into framebuffer pixels.
+// 14. Android/Metal surface presentation swaps that framebuffer to the screen.
+//
+// Core unit tests can prove which texture and UV window should be drawn; they
+// cannot prove texture-slot binding, uniform upload, shader sampling, depth
+// rejection, or final device pixels. Use backend spy tests or offscreen
+// framebuffer readback with small color fixtures for those failures.
 // ============================================================
 
 static const char* kSurfaceTileVertexGLSL = R"glsl(
@@ -1780,7 +1793,6 @@ struct Renderer::Impl {
     // Surface tile (unified, cesium-native glTF layout)
     std::unique_ptr<ShaderProgram> surfaceTileShader;
     std::unique_ptr<Buffer> tileIndexBuffer;  // shared 64×64 grid IBO
-    std::unique_ptr<Texture> surfaceFallbackTexture;
     int tileIndexCount = 0;
 
     // glTF TileRenderContent
@@ -1789,10 +1801,6 @@ struct Renderer::Impl {
 
     // Color (vector)
     std::unique_ptr<ShaderProgram> colorShader;
-
-    // cesium-native: retained raster attachments (IPrepareRendererResources)
-    // Keyed by geometry tile cache key (schemeId/z/x/y).
-    std::unordered_map<std::string, RasterAttachment> rasterAttachments;
 
     bool initialized = false;
 };
@@ -1889,20 +1897,6 @@ bool Renderer::initialize(const GlobeMesh& mesh) {
     if (!impl_->tileIndexBuffer) return false;
     impl_->tileIndexCount = static_cast<int>(tileIndices.size());
 
-    const uint8_t fallbackPixel[4] = {118, 132, 136, 255};
-    TextureDesc fallbackDesc;
-    fallbackDesc.width = 1;
-    fallbackDesc.height = 1;
-    fallbackDesc.format = TextureDesc::Format::RGBA8;
-    fallbackDesc.data = fallbackPixel;
-    fallbackDesc.dataSize = sizeof(fallbackPixel);
-    fallbackDesc.mipmap = false;
-    fallbackDesc.minFilter = TextureDesc::Filter::Linear;
-    fallbackDesc.magFilter = TextureDesc::Filter::Linear;
-    fallbackDesc.wrapS = TextureDesc::Wrap::Clamp;
-    fallbackDesc.wrapT = TextureDesc::Wrap::Clamp;
-    impl_->surfaceFallbackTexture = dev->createTexture(fallbackDesc);
-
     // ---- Color shader (vector layers) ----
     ShaderDesc colorSd;
     colorSd.vertexSource = isMetal ? kColorVertexMSL : kColorVertexGLSL;
@@ -1925,7 +1919,6 @@ void Renderer::dispose() {
     impl_->globeIndexBuffer.reset();
     impl_->surfaceTileShader.reset();
     impl_->tileIndexBuffer.reset();
-    impl_->surfaceFallbackTexture.reset();
     impl_->gltfShader.reset();
     impl_->gltfInstancedShader.reset();
     impl_->colorShader.reset();
@@ -1944,9 +1937,6 @@ int Renderer::globeIndexCount() const { return impl_->globeIndexCount; }
 ShaderProgram* Renderer::colorShader() const { return impl_->colorShader.get(); }
 Buffer* Renderer::tileIndexBuffer() const { return impl_->tileIndexBuffer.get(); }
 int Renderer::tileIndexCount() const { return impl_->tileIndexCount; }
-Texture* Renderer::surfaceFallbackTexture() const {
-    return impl_->surfaceFallbackTexture.get();
-}
 ShaderProgram* Renderer::gltfShader() const { return impl_->gltfShader.get(); }
 
 ShaderProgram* Renderer::gltfInstancedShader() const {
@@ -2165,47 +2155,23 @@ std::array<float, 16> Renderer::earthModelMatrix() {
     return result;
 }
 
-// ── cesium-native IPrepareRendererResources retained attachment ──
-
-std::string Renderer::attachmentKey(const TileKey& key) {
-    return key.schemeId + "/" + std::to_string(key.z) + "/" +
-           std::to_string(key.x) + "/" + std::to_string(key.y);
-}
-
-static std::string attachmentKeyWithOverlay(const TileKey& key, int32_t overlayIndex) {
-    return key.schemeId + "/" + std::to_string(key.z) + "/" +
-           std::to_string(key.x) + "/" + std::to_string(key.y) +
-           "/o" + std::to_string(overlayIndex);
-}
+// ── cesium-native IPrepareRendererResources notification hooks ──
 
 void Renderer::attachRasterInMainThread(
-    const TileKey& geometryKey,
-    int32_t overlayIndex,
-    std::shared_ptr<const RasterOverlayTile> rasterTile,
-    Texture* texture,
-    float translationU, float translationV,
-    float scaleU, float scaleV) {
-    std::string key = attachmentKeyWithOverlay(geometryKey, overlayIndex);
-    impl_->rasterAttachments[key] = RasterAttachment{
-        std::move(rasterTile), texture, translationU, translationV, scaleU, scaleV
-    };
+    const TileKey&,
+    int32_t,
+    std::shared_ptr<const RasterOverlayTile>,
+    Texture*,
+    float, float,
+    float, float) {
+    // Surface raster ownership lives in RasterMappedToTilesetTile and
+    // SurfaceRasterBinding. Renderer must not retain or query imagery state.
 }
 
 void Renderer::detachRasterInMainThread(
-    const TileKey& geometryKey,
-    int32_t overlayIndex) noexcept {
-    std::string key = attachmentKeyWithOverlay(geometryKey, overlayIndex);
-    impl_->rasterAttachments.erase(key);
-}
-
-const RasterAttachment* Renderer::getAttachedRaster(
-    const TileKey& geometryKey, int32_t overlayIndex) const {
-    std::string key = attachmentKeyWithOverlay(geometryKey, overlayIndex);
-    auto it = impl_->rasterAttachments.find(key);
-    if (it != impl_->rasterAttachments.end()) {
-        return &it->second;
-    }
-    return nullptr;
+    const TileKey&,
+    int32_t) noexcept {
+    // Notification hook only; renderer does not store raster binding state.
 }
 
 } // namespace earth_engine

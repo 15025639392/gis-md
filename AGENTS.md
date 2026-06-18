@@ -9,7 +9,9 @@
 - 优化应该消除浪费，而不是降低用户看到的东西：性能优化优先减少重复计算、无效请求、过度遍历、阻塞等待、冗余上传、内存抖动和不可见工作；不得把降低可见细节、缩短可见距离、减少必要反馈或牺牲交互稳定性当作默认优化手段，除非目标体验明确允许并说明取舍。
 - 遇到性能问题且不确定瓶颈范围时，优先分段埋点快速定位：按输入处理、相机更新、瓦片遍历、请求调度、数据解析、纹理上传、地形处理、渲染提交、GPU/平台调用等阶段记录耗时/计数，再基于证据优化。
 - 每次修复问题后，在最终回复中输出本次采用的策略：目标体验/行为、关键取舍、参考依据、验证方式，以及性能影响判断；如果是手势问题，还要输出本项目交互契约。
-- 涉及地图、坐标、瓦片、地形、相机、拾取、渲染、LOD、Provider、裁剪、投影、椭球、Quantized Mesh、SSE、包围体或 3D globe 算法时，先查阅 `/Users/ldy/Desktop/work/cesium-native/AI_INDEX.md` 按算法定位源文件，再阅读对应源码，最后修改本项目。
+- 涉及地图、坐标、瓦片、地形、相机、拾取、渲染、LOD、Provider、裁剪、投影、椭球、Quantized Mesh、SSE、包围体或 3D globe 算法时，先查阅 `/Users/ldy/Desktop/work/cesium-native/AI_INDEX.md` 按算法定位源文件，再阅读对应源码和该模块的 `test/Test*.cpp`，最后修改本项目。
+- 对齐 cesium-native 算法时，必须把其测试作为行为规格的一部分：从对应 `test/Test*.cpp` 提取输入、期望输出、边界条件、状态变量语义和数值容差；新增或调整本项目测试时，优先转写这些 case，再实现或修正代码。
+- 运行本项目 native 单元测试时，默认使用 `cd /Users/ldy/Desktop/work/gis-md/scaffold && ./test_native.sh <test_target>`；该脚本会加载 `env.sh` 并固定 CMake/Ninja 环境，避免重复查找本机工具路径。运行全部 native 测试使用 `./test_native.sh`，按 CTest 过滤使用 `./test_native.sh --ctest -R <pattern>`。
 - 如果 cesium-native 未覆盖交互、表现层、WebGL 渲染组织、UI 控件或 OpenGlobus 特有 globe 行为，再查阅 `/Users/ldy/Desktop/work/openglobus/AI_INDEX.md` 并阅读对应源码。
 - 手势系统暂时没有合适的外部参考目标，不强制对齐 cesium-native 或 OpenGlobus；涉及触摸、拖拽、缩放、旋转、惯性、anchor、near-ground 手势约束时，先在本项目内明确交互设计、状态变量语义、输入单位、边界条件和可验证测试，再实现。
 - 不再强制读取 `docs/gis/*` 作为开发前置条件。

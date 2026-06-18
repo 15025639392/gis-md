@@ -84,6 +84,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/renderer/RenderCommand.cpp
     earth_engine/renderer/Renderer.h
     earth_engine/renderer/Renderer.cpp
+    earth_engine/renderer/RenderDeviceRasterTextureUploader.h
+    earth_engine/renderer/RenderDeviceRasterTextureUploader.cpp
     earth_engine/renderer/IPrepareRendererResources.h
     earth_engine/renderer/TileTextureCache.h
     earth_engine/renderer/TileTextureCache.cpp
@@ -123,6 +125,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileScheme.h
     earth_engine/tiling/TileScheme.cpp
     earth_engine/tiling/SurfaceTile.h
+    earth_engine/tiling/SurfaceRasterBinding.h
+    earth_engine/tiling/SurfaceRasterBinding.cpp
     earth_engine/tiling/TileSurface.h
     earth_engine/tiling/TileSurface.cpp
     earth_engine/tiling/TilePlan.h
@@ -151,6 +155,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/providers/QuantizedMeshTerrainProvider.cpp
     earth_engine/providers/RasterOverlayTile.h
     earth_engine/providers/RasterOverlayTile.cpp
+    earth_engine/providers/RasterTextureUploader.h
     earth_engine/providers/RasterOverlayTileProvider.h
     earth_engine/providers/RasterOverlayTileProvider.cpp
 )

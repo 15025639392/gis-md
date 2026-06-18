@@ -1,6 +1,7 @@
 #include "RasterOverlayTileProvider.h"
 #include "ImageryProvider.h"
 #include "../tiling/TileScheme.h"
+#include "RasterTextureUploader.h"
 #include "../renderer/RenderDevice.h"
 #include "../threading/CancellationToken.h"
 #include "../debug/PerfTimer.h"
@@ -37,10 +38,10 @@ uint64_t gRasterUploadBudgetFrame = 0;
 size_t gRasterUploadsThisFrame = 0;
 
 #ifdef __ANDROID__
-std::mutex gRasterTextureDiagnosticsMutex;
-std::unordered_set<const Texture*> gLiveRasterTexturesForDiagnostics;
-std::mutex gRasterTileDiagnosticsMutex;
-std::unordered_set<const RasterOverlayTile*> gLiveRasterTilesForDiagnostics;
+std::mutex gRasterTextureLifetimeGuardMutex;
+std::unordered_set<const Texture*> gLiveRasterTexturesForLifetimeGuard;
+std::mutex gRasterTileLifetimeGuardMutex;
+std::unordered_set<const RasterOverlayTile*> gLiveRasterTilesForLifetimeGuard;
 #endif
 
 bool acquireRasterUploadBudget(uint64_t frameNumber) {
@@ -74,9 +75,13 @@ bool uploadAllowedDuringInteraction(
     return pixels <= kInteractionRasterUploadMaxPixels;
 }
 
-int maximumCombinedTextureSize(const RenderDevice* device) {
-    if (!device) return kMaximumCombinedTextureSizeFallback;
-    return std::max(1, std::min(device->maxTextureSize(),
+int maximumCombinedTextureSize(const RasterTextureUploader* uploader) {
+    if (!uploader) return kMaximumCombinedTextureSizeFallback;
+    const int backendMaxTextureSize = uploader->maxTextureSize();
+    if (backendMaxTextureSize <= 0) {
+        return kMaximumCombinedTextureSizeFallback;
+    }
+    return std::max(1, std::min(backendMaxTextureSize,
                                 kMaximumCombinedTextureSizeFallback));
 }
 
@@ -114,6 +119,37 @@ double webMercatorY(double latRad) {
     return std::log(std::tan(lat * 0.5 + kPi * 0.25));
 }
 
+double projectedSouth(const TileScheme& scheme, const Rectangle& bounds) {
+    return isWebMercatorScheme(scheme)
+        ? webMercatorY(bounds.south())
+        : bounds.south();
+}
+
+double projectedNorth(const TileScheme& scheme, const Rectangle& bounds) {
+    return isWebMercatorScheme(scheme)
+        ? webMercatorY(bounds.north())
+        : bounds.north();
+}
+
+double projectedHeight(const TileScheme& scheme, const Rectangle& bounds) {
+    return std::max(
+        1e-12,
+        std::abs(projectedNorth(scheme, bounds) -
+                 projectedSouth(scheme, bounds)));
+}
+
+double projectedVForLatitudeInternal(const TileScheme& scheme,
+                                     const Rectangle& bounds,
+                                     double lat) {
+    const double north = projectedNorth(scheme, bounds);
+    const double south = projectedSouth(scheme, bounds);
+    const double h = std::max(1e-12, std::abs(north - south));
+    const double projected = isWebMercatorScheme(scheme)
+        ? webMercatorY(lat)
+        : lat;
+    return std::clamp((north - projected) / h, 0.0, 1.0);
+}
+
 struct SchemeDimensions {
     double rectangleWidth = 0.0;
     double rectangleHeight = 0.0;
@@ -127,9 +163,7 @@ SchemeDimensions schemeDimensionsForRectangle(const TileScheme& scheme,
     dimensions.rectangleWidth = std::max(1e-12, std::abs(bounds.width()));
 
     if (isWebMercatorScheme(scheme)) {
-        const double south = webMercatorY(bounds.south());
-        const double north = webMercatorY(bounds.north());
-        dimensions.rectangleHeight = std::max(1e-12, std::abs(north - south));
+        dimensions.rectangleHeight = projectedHeight(scheme, bounds);
         dimensions.rootTileWidth = kTwoPi;
         dimensions.rootTileHeight = kTwoPi;
         if (scheme.id() == "OpenGlobus-Earth") {
@@ -189,7 +223,7 @@ int computeLevelFromTargetScreenPixels(const TileScheme& scheme,
 
 int chooseRectangleSourceZoom(const TileScheme& scheme,
                         const ImageryProvider& provider,
-                        const RenderDevice* device,
+                        const RasterTextureUploader* uploader,
                         const Rectangle& bounds,
                         double targetScreenPixelsX,
                         double targetScreenPixelsY,
@@ -209,7 +243,7 @@ int chooseRectangleSourceZoom(const TileScheme& scheme,
         targetScreenPixelsX,
         targetScreenPixelsY,
         maximumScreenSpaceError);
-    const int maxTextureSize = maximumCombinedTextureSize(device);
+    const int maxTextureSize = maximumCombinedTextureSize(uploader);
 
     TileRange range = computeRange(scheme, bounds, zoom);
     while (zoom > minZoom) {
@@ -332,6 +366,7 @@ std::unique_ptr<DecodedImage> combineRectangleImages(
         sourceByKey[sources[i].key] = i;
     }
 
+    int filledPixels = 0;
     for (int y = 0; y < height; ++y) {
         const double v = (static_cast<double>(y) + 0.5) /
                          static_cast<double>(height);
@@ -350,8 +385,10 @@ std::unique_ptr<DecodedImage> combineRectangleImages(
             const DecodedImage& src = *source->image;
             const double su = clampUnit(
                 (lng - source->bounds.west()) / source->bounds.width());
-            const double sv = clampUnit(
-                (source->bounds.north() - lat) / source->bounds.height());
+            const double sv = projectedVForLatitudeInternal(
+                scheme,
+                source->bounds,
+                lat);
             const int sx = std::clamp(
                 static_cast<int>(su * static_cast<double>(src.width)),
                 0,
@@ -374,7 +411,12 @@ std::unique_ptr<DecodedImage> combineRectangleImages(
             output->pixels[dstIndex + 2] = src.pixels[srcIndex + 2];
             output->pixels[dstIndex + 3] =
                 src.channels >= 4 ? src.pixels[srcIndex + 3] : 255;
+            ++filledPixels;
         }
+    }
+
+    if (filledPixels != width * height) {
+        return nullptr;
     }
 
     return output;
@@ -382,56 +424,86 @@ std::unique_ptr<DecodedImage> combineRectangleImages(
 
 } // namespace
 
+std::unique_ptr<DecodedImage>
+RasterOverlayTileProvider::composeRectangleImages(
+    const TileScheme& scheme,
+    const Rectangle& targetBounds,
+    int sourceZoom,
+    std::vector<RectangleSourceImage>&& publicSources,
+    int maximumTextureSize) {
+    std::vector<LoadedSourceImage> sources;
+    sources.reserve(publicSources.size());
+    for (auto& source : publicSources) {
+        sources.push_back(LoadedSourceImage{
+            source.key,
+            source.bounds,
+            std::move(source.image)});
+    }
+    return combineRectangleImages(
+        scheme,
+        targetBounds,
+        sourceZoom,
+        std::move(sources),
+        maximumTextureSize);
+}
+
+double RasterOverlayTileProvider::projectedVForLatitude(
+    const TileScheme& scheme,
+    const Rectangle& bounds,
+    double lat) {
+    return projectedVForLatitudeInternal(scheme, bounds, lat);
+}
+
 RasterOverlayTileProvider::RasterOverlayTileProvider(ImageryProvider& provider,
                                                      const TileScheme& scheme,
-                                                     RenderDevice* device)
+                                                     std::unique_ptr<RasterTextureUploader> textureUploader)
     : provider_(provider)
     , scheme_(scheme)
-    , device_(device) {}
+    , textureUploader_(std::move(textureUploader)) {}
 
 RasterOverlayTileProvider::~RasterOverlayTileProvider() = default;
 
 #ifdef __ANDROID__
-void RasterOverlayTileProvider::registerLiveTextureForDiagnostics(
+void RasterOverlayTileProvider::registerLiveTextureForLifetimeGuard(
     const Texture* texture) {
     if (!texture) return;
-    std::lock_guard<std::mutex> lock(gRasterTextureDiagnosticsMutex);
-    gLiveRasterTexturesForDiagnostics.insert(texture);
+    std::lock_guard<std::mutex> lock(gRasterTextureLifetimeGuardMutex);
+    gLiveRasterTexturesForLifetimeGuard.insert(texture);
 }
 
-void RasterOverlayTileProvider::unregisterLiveTextureForDiagnostics(
+void RasterOverlayTileProvider::unregisterLiveTextureForLifetimeGuard(
     const Texture* texture) {
     if (!texture) return;
-    std::lock_guard<std::mutex> lock(gRasterTextureDiagnosticsMutex);
-    gLiveRasterTexturesForDiagnostics.erase(texture);
+    std::lock_guard<std::mutex> lock(gRasterTextureLifetimeGuardMutex);
+    gLiveRasterTexturesForLifetimeGuard.erase(texture);
 }
 
-bool RasterOverlayTileProvider::isLiveTextureForDiagnostics(
+bool RasterOverlayTileProvider::isLiveTextureForLifetimeGuard(
     const Texture* texture) {
     if (!texture) return false;
-    std::lock_guard<std::mutex> lock(gRasterTextureDiagnosticsMutex);
-    return gLiveRasterTexturesForDiagnostics.count(texture) > 0;
+    std::lock_guard<std::mutex> lock(gRasterTextureLifetimeGuardMutex);
+    return gLiveRasterTexturesForLifetimeGuard.count(texture) > 0;
 }
 
-void RasterOverlayTileProvider::registerLiveTileForDiagnostics(
+void RasterOverlayTileProvider::registerLiveTileForLifetimeGuard(
     const RasterOverlayTile* tile) {
     if (!tile) return;
-    std::lock_guard<std::mutex> lock(gRasterTileDiagnosticsMutex);
-    gLiveRasterTilesForDiagnostics.insert(tile);
+    std::lock_guard<std::mutex> lock(gRasterTileLifetimeGuardMutex);
+    gLiveRasterTilesForLifetimeGuard.insert(tile);
 }
 
-void RasterOverlayTileProvider::unregisterLiveTileForDiagnostics(
+void RasterOverlayTileProvider::unregisterLiveTileForLifetimeGuard(
     const RasterOverlayTile* tile) {
     if (!tile) return;
-    std::lock_guard<std::mutex> lock(gRasterTileDiagnosticsMutex);
-    gLiveRasterTilesForDiagnostics.erase(tile);
+    std::lock_guard<std::mutex> lock(gRasterTileLifetimeGuardMutex);
+    gLiveRasterTilesForLifetimeGuard.erase(tile);
 }
 
-bool RasterOverlayTileProvider::isLiveTileForDiagnostics(
+bool RasterOverlayTileProvider::isLiveTileForLifetimeGuard(
     const RasterOverlayTile* tile) {
     if (!tile) return false;
-    std::lock_guard<std::mutex> lock(gRasterTileDiagnosticsMutex);
-    return gLiveRasterTilesForDiagnostics.count(tile) > 0;
+    std::lock_guard<std::mutex> lock(gRasterTileLifetimeGuardMutex);
+    return gLiveRasterTilesForLifetimeGuard.count(tile) > 0;
 }
 #endif
 
@@ -485,7 +557,7 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
     const int sourceZoom = chooseRectangleSourceZoom(
         scheme_,
         provider_,
-        device_,
+        textureUploader_.get(),
         geometryBounds,
         targetScreenPixelsX,
         targetScreenPixelsY,
@@ -657,7 +729,7 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile) {
     const int sourceZoom = chooseRectangleSourceZoom(
         scheme_,
         provider_,
-        device_,
+        textureUploader_.get(),
         tile.getRectangle(),
         tile.getTargetScreenPixelsX(),
         tile.getTargetScreenPixelsY(),
@@ -696,7 +768,7 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile) {
 
     auto* self = this;
     const Rectangle targetBounds = tile.getRectangle();
-    const int maxTextureSize = maximumCombinedTextureSize(device_);
+    const int maxTextureSize = maximumCombinedTextureSize(textureUploader_.get());
 
     auto finishOneSource =
         [self, shared, ck, targetBounds, sourceZoom, maxTextureSize](
@@ -835,13 +907,17 @@ int RasterOverlayTileProvider::processPendingUploads(bool interactionActive) {
             continue;
         }
 
-        // Create GPU texture (main-thread safe). Rectangle images are
+        // Resource-prep upload (main-thread safe). Rectangle images are
         // already combined at the selector's target screen-pixel density; on
         // mobile, generating mipmaps for every rectangle image is expensive
         // main-thread work without improving the current selected tile.
         const bool generateMipmaps = !tile.isRectangleTile();
         const double uploadStartMs = perf::nowMs();
-        auto tex = uploadTexture(*upload.image, generateMipmaps);
+        RasterTextureUploadOptions uploadOptions;
+        uploadOptions.generateMipmaps = generateMipmaps;
+        auto tex = textureUploader_
+            ? textureUploader_->uploadRasterTexture(*upload.image, uploadOptions)
+            : nullptr;
         const double uploadMs = perf::nowMs() - uploadStartMs;
 #ifndef __ANDROID__
         (void)uploadMs;
@@ -888,28 +964,6 @@ int RasterOverlayTileProvider::processPendingUploads(bool interactionActive) {
 bool RasterOverlayTileProvider::hasPendingWork() const {
     std::lock_guard<std::mutex> lock(pendingMutex_);
     return !pendingUploads_.empty() || !inFlightRequests_.empty();
-}
-
-std::unique_ptr<Texture> RasterOverlayTileProvider::uploadTexture(
-    const DecodedImage& image,
-    bool generateMipmaps) {
-    if (!device_ || image.pixels.empty()) return nullptr;
-
-    TextureDesc desc;
-    desc.width = image.width;
-    desc.height = image.height;
-    desc.format = (image.channels == 4) ? TextureDesc::Format::RGBA8
-                                        : TextureDesc::Format::RGB8;
-    desc.data = image.pixels.data();
-    desc.dataSize = image.pixels.size();
-    desc.mipmap = generateMipmaps;
-    desc.minFilter = TextureDesc::Filter::Linear;
-    desc.magFilter = TextureDesc::Filter::Linear;
-    desc.maxAnisotropy = 4.0f;
-    desc.wrapS = TextureDesc::Wrap::Clamp;
-    desc.wrapT = TextureDesc::Wrap::Clamp;
-
-    return device_->createTexture(desc);
 }
 
 void RasterOverlayTileProvider::markUsed(const std::string& cacheKey) {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../core/math/Mat4.h"
 #include "../core/math/Vec3.h"
 #include "Frustum.h"
 
@@ -130,7 +131,7 @@ struct FrameState {
         Vec3 position = Vec3::zero();
         Vec3 direction = Vec3::zero();
         Frustum frustum;
-        double verticalFovRadians = 0.0;
+        Mat4 projectionMatrix;
         int viewportHeightPixels = 0;
     };
     std::vector<SelectorView> selectorViews;

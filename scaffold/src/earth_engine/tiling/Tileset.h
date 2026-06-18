@@ -233,6 +233,12 @@ private:
         bool blockedByInflight = false;
     };
 
+    struct TilePlanFinalizeTimings {
+        double dedupeMs = 0.0;
+        double transitionMs = 0.0;
+        double summaryMs = 0.0;
+    };
+
     void selectTiles(const FrameState& frameState);
     TraversalDetails visitTileIfNeeded(TilesetTile& tile,
                                        const SelectorFrame& selectorFrame,
@@ -247,11 +253,11 @@ private:
                                double tileSse);
     TraversalDetails createTraversalDetailsForSingleTile(const TilesetTile& tile) const;
     TraversalDetails createTraversalDetailsForCulledTile(const TilesetTile& tile) const;
-    void renderSelectedTile(TilesetTile& tile,
-                            double tileSse,
-                            bool queueForLoad,
-                            double tilePriority =
-                                std::numeric_limits<double>::max());
+    void addTileToCurrentPlan(TilesetTile& tile,
+                              double tileSse,
+                              bool queueForLoad,
+                              double tilePriority =
+                                  std::numeric_limits<double>::max());
     void queueTileLoad(
         const TileKey& key,
         TileLoadPriorityGroup group,
@@ -320,6 +326,9 @@ private:
                               bool allowSynchronousMeshPrep = true,
                               const std::optional<std::array<float, 4>>&
                                   surfaceClipUv = std::nullopt);
+    TilePlanFinalizeTimings finalizeSelectedTilePlan(
+        const FrameState& frameState);
+    void refreshTilePlanRenderEntries();
     void updateLodTransitions(double deltaSeconds);
     bool wasRenderedInPreviousSelection(const TilesetTile& tile) const;
 

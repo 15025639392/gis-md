@@ -18,11 +18,83 @@
 #include <memory>
 #include <vector>
 #include <string>
+#include <array>
 
 namespace earth_engine {
 
 class Camera;
 class RenderDevice;
+
+struct PresentationCameraTrace {
+    uint64_t frameId = 0;
+    int viewportWidthPixels = 0;
+    int viewportHeightPixels = 0;
+    float devicePixelRatio = 1.0f;
+    double verticalFovRadians = 0.0;
+    double targetLongitudeDegrees = 0.0;
+    double targetLatitudeDegrees = 0.0;
+    double targetHeightMeters = 0.0;
+    double cameraHeightMeters = 0.0;
+    double pitchRadians = 0.0;
+    double headingRadians = 0.0;
+    std::array<double, 3> position{0.0, 0.0, 0.0};
+    std::array<double, 3> direction{0.0, 0.0, 0.0};
+    std::array<double, 3> up{0.0, 0.0, 0.0};
+    std::array<double, 3> right{0.0, 0.0, 0.0};
+};
+
+struct PresentationSelectorViewTrace {
+    std::array<double, 3> position{0.0, 0.0, 0.0};
+    std::array<double, 3> direction{0.0, 0.0, 0.0};
+    int viewportHeightPixels = 0;
+    std::array<double, 16> projectionMatrix{};
+};
+
+struct PresentationRenderEntryTrace {
+    TileKey selectedKey;
+    TileKey renderKey;
+    float opacity = 1.0f;
+    bool selectedThisFrame = true;
+    bool usesAncestorFallback = false;
+    bool allowSynchronousMeshPrep = true;
+    bool surfaceClipEnabled = false;
+    std::array<float, 4> surfaceClipUv{0.0f, 0.0f, 1.0f, 1.0f};
+};
+
+struct PresentationTilesetTrace {
+    std::vector<TileKey> visibleTiles;
+    std::vector<PresentationRenderEntryTrace> renderEntries;
+    int minVisibleZoom = 0;
+    int maxVisibleZoom = 0;
+    double lodSizePixels = 0.0;
+};
+
+struct PresentationCommandTrace {
+    RenderCommandKind kind = RenderCommandKind::Unknown;
+    std::string owner;
+    int surfaceGeometryZoom = -1;
+    int surfaceTextureZoom = -1;
+    int indexOffset = 0;
+    int indexCount = 0;
+    int surfaceMeshIndexCount = 0;
+    int surfaceNoSkirtIndexCount = 0;
+    int surfaceSkirtIndexCount = 0;
+    int surfaceBaseRasterState = 0;
+    int surfaceBaseIsRectangleTile = 0;
+    int surfaceOverlayTextureCount = 0;
+    float surfaceClipEnabled = 0.0f;
+    std::array<float, 4> surfaceClipUv{0.0f, 0.0f, 1.0f, 1.0f};
+    float surfaceTransitionOpacity = 1.0f;
+    uint64_t frameId = 0;
+    uint64_t generation = 0;
+};
+
+struct PresentationTrace {
+    PresentationCameraTrace camera;
+    std::vector<PresentationSelectorViewTrace> selectorViews;
+    std::vector<PresentationTilesetTrace> tilesets;
+    std::vector<PresentationCommandTrace> commands;
+};
 
 /// 3D 场景管理器。
 class Scene {
@@ -53,6 +125,9 @@ public:
     /// 运行时诊断（FPS、draw calls、visible tiles 等）
     const Diagnostics& diagnostics() const { return frameState_.diagnostics; }
     Diagnostics& mutableDiagnostics() { return frameState_.diagnostics; }
+    const PresentationTrace& presentationTrace() const {
+        return presentationTrace_;
+    }
 
     // ---- 矢量图层管理 ----
     void addVectorLayer(std::unique_ptr<VectorLayer> layer);
@@ -90,6 +165,7 @@ private:
     bool pickInteractionFocus(float screenX, float screenY, Vec3& outPoint) const;
     void updateInteractionFocus(const InputEvent& event);
     void populateSelectorViews();
+    void updatePresentationTrace();
 
     std::unique_ptr<Camera> camera_;
     std::unique_ptr<CameraController> cameraController_;
@@ -97,6 +173,7 @@ private:
     GlobeMesh globeMesh_;
     FrameState frameState_;
     RenderCommandList renderCommands_;
+    PresentationTrace presentationTrace_;
     RenderDevice* renderDevice_ = nullptr;
     uint64_t frameId_ = 0;
     double elapsedTime_ = 0.0;

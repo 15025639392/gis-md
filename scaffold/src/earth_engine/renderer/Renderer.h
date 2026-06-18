@@ -5,8 +5,6 @@
 #include "IPrepareRendererResources.h"
 #include <memory>
 #include <array>
-#include <string>
-#include <unordered_map>
 
 namespace earth_engine {
 
@@ -15,21 +13,10 @@ struct FrameState;
 class RasterOverlayTile;
 struct TileKey;
 
-/// Stores a retained mapping from geometry tile → raster texture + UV transform.
-/// Set by RasterMappedToTilesetTile during attach, read by Tileset during
-/// render command construction.
-struct RasterAttachment {
-    std::shared_ptr<const RasterOverlayTile> tile;
-    Texture* texture = nullptr;
-    float offsetU = 0.0f;
-    float offsetV = 0.0f;
-    float scaleU = 1.0f;
-    float scaleV = 1.0f;
-};
-
 /// 平台无关渲染器。
 /// 管理共享 GPU 资源（shader、几何 buffer），供 Scene 和各 Layer 使用。
-/// 实现 IPrepareRendererResources 以支持 retained raster attachment。
+/// 实现 IPrepareRendererResources 仅作为资源生命周期通知入口。
+/// Surface raster 可绘制性由核心层 RenderCommand / SurfaceRasterBinding 决定。
 class Renderer : public IPrepareRendererResources {
 public:
     /// @param device 平台渲染设备（生命周期由调用者管理，必须长于 Renderer）
@@ -65,7 +52,6 @@ public:
     /// Tile 共享索引 buffer（64×64 grid，所有 surface tile 共用）
     Buffer* tileIndexBuffer() const;
     int tileIndexCount() const;
-    Texture* surfaceFallbackTexture() const;
 
     /// glTF primitive shader.
     ShaderProgram* gltfShader() const;
@@ -119,14 +105,7 @@ public:
         const TileKey& geometryKey,
         int32_t overlayIndex) noexcept override;
 
-    /// Query the retained raster attachment for a geometry tile + overlay slot.
-    /// Returns nullptr if no attachment exists.
-    const RasterAttachment* getAttachedRaster(const TileKey& geometryKey,
-                                               int32_t overlayIndex) const;
-
 private:
-    static std::string attachmentKey(const TileKey& key);
-
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

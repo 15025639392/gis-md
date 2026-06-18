@@ -1,17 +1,33 @@
 #pragma once
 
 #include "TileKey.h"
+#include <array>
 #include <string>
 #include <vector>
 
 namespace earth_engine {
 
-/// TilePlan is the shared, frame-derived candidate set for one tile scheme.
-/// It does not decide provider requests or final rendering for a layer.
+/// TilePlan is the frame-derived selection result for one tile scheme. The
+/// selector owns visible/fading tile decisions and resolves the render entries
+/// that the renderer consumes without reselecting LOD.
 struct TileTransition {
     TileKey key;
     float opacity = 1.0f;
     int fadingNodeCount = 0;
+};
+
+/// A resolved entry in the frame render result. `selectedKey` is the tile
+/// chosen by traversal; `renderKey` is the tile whose render content should be
+/// submitted. They differ only for explicit, clipped ancestor fallback.
+struct TileRenderEntry {
+    TileKey selectedKey;
+    TileKey renderKey;
+    float opacity = 1.0f;
+    bool selectedThisFrame = true;
+    bool usesAncestorFallback = false;
+    bool allowSynchronousMeshPrep = true;
+    bool surfaceClipEnabled = false;
+    std::array<float, 4> surfaceClipUv{0.0f, 0.0f, 1.0f, 1.0f};
 };
 
 enum class TileSelectionState {
@@ -74,6 +90,7 @@ struct TilePlan {
     std::vector<TileKey> visibleTiles;
     std::vector<TileTransition> tilesFadingOut;
     std::vector<TileTransition> tileTransitions;
+    std::vector<TileRenderEntry> renderEntries;
     std::vector<TileSelectionRecord> selectionRecords;
     int renderingNodeCount = 0;
     int walkthroughNodeCount = 0;
@@ -95,6 +112,9 @@ struct TilePlan {
     int mercatorTileCount = 0;
     int northPolarTileCount = 0;
     int southPolarTileCount = 0;
+    int renderEntryAncestorFallbackCount = 0;
+    int renderEntrySynchronousPrepCount = 0;
+    int renderEntryDeferredPrepCount = 0;
 };
 
 class TilePlanBuilder {

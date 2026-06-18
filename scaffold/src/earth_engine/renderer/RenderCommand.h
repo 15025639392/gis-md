@@ -70,6 +70,12 @@ struct RenderCommand {
     // 平台后端根据 shader uniform layout 解释
     std::unordered_map<std::string, std::vector<float>> uniforms;
 
+    // Render-chain step 10: SurfaceTile command organization lives here.
+    // These fields describe draw order inputs, depth/cull/blend state, base
+    // texture, overlay count, and UV windows before any GLES/Metal API call.
+    // Unit tests at this layer prove command intent, not final framebuffer
+    // pixels.
+    //
     // Hot path for SurfaceTile commands. Keeping these uniforms in fixed
     // storage avoids per-tile unordered_map/string/vector allocation.
     bool hasSurfaceTileUniforms = false;
@@ -91,6 +97,11 @@ struct RenderCommand {
     float surfaceHasWaterMask = 0.0f;
     int surfaceGeometryZoom = -1;
     int surfaceTextureZoom = -1;
+    int surfaceMeshIndexCount = 0;
+    int surfaceNoSkirtIndexCount = 0;
+    int surfaceSkirtIndexCount = 0;
+    int surfaceBaseRasterState = 0;
+    int surfaceBaseIsRectangleTile = 0;
 };
 
 /// 渲染命令列表（每帧一帧）

@@ -1,27 +1,13 @@
 #pragma once
 
-#include "TileKey.h"
 #include "../core/math/Rectangle.h"
 #include "../core/math/Vec3.h"
-#include "../renderer/RenderDevice.h"
 
 #include <array>
 #include <cstdint>
-#include <string>
 #include <vector>
 
 namespace earth_engine {
-
-enum class SurfaceProfile {
-    Ellipsoid,
-    Terrain
-};
-
-enum class ImageryFallbackSource {
-    Exact,
-    Parent,
-    Placeholder
-};
 
 enum class SurfaceTileMeshWinding {
     Outward
@@ -156,33 +142,6 @@ struct SurfaceNormalMap {
                height > 0 &&
                rgba.size() == static_cast<size_t>(width * height * 4);
     }
-};
-
-struct ImageryAttachment {
-    std::string layerId;
-    std::string providerId;
-    TileKey textureKey;
-    Texture* texture = nullptr;
-    float uvOffsetU = 0.0f;
-    float uvOffsetV = 0.0f;
-    float uvScaleU = 1.0f;
-    float uvScaleV = 1.0f;
-    float opacity = 1.0f;
-    ImageryFallbackSource fallbackSource = ImageryFallbackSource::Exact;
-};
-
-struct SurfaceTileKey {
-    TileKey tileKey;
-    SurfaceProfile profile = SurfaceProfile::Ellipsoid;
-    std::string terrainVersion;
-};
-
-struct SurfaceTile {
-    SurfaceTileKey key;
-    Rectangle bounds;
-    SurfaceTileMesh mesh;
-    std::vector<ImageryAttachment> imageryAttachments;
-    uint64_t generation = 0;
 };
 
 } // namespace earth_engine

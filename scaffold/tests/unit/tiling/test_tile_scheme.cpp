@@ -59,6 +59,20 @@ TEST_F(TileSchemeTest, PositionToTileKnownWebMercatorTile) {
     EXPECT_EQ(3104, key.y);
 }
 
+TEST_F(TileSchemeTest, PositionToTileClampsCesiumNativeWorldEdges) {
+    // Equivalent to cesium-native quadtree edge behavior: coordinates on the
+    // positive edge clamp to the final tile, never overflow the level.
+    auto northEast = scheme_->positionToTile(M_PI, M_PI / 2.0, 3);
+    EXPECT_EQ(3, northEast.z);
+    EXPECT_EQ(7, northEast.x);
+    EXPECT_EQ(0, northEast.y);
+
+    auto southWest = scheme_->positionToTile(-M_PI, -M_PI / 2.0, 3);
+    EXPECT_EQ(3, southWest.z);
+    EXPECT_EQ(0, southWest.x);
+    EXPECT_EQ(7, southWest.y);
+}
+
 TEST_F(TileSchemeTest, PositionToTileRoundtrip) {
     double lngRad = 116.397 * M_PI / 180.0;
     double latRad = 39.908 * M_PI / 180.0;

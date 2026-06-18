@@ -150,6 +150,20 @@ TEST(GeographicTMSSchemeTest, CesiumGeodeticLevelZeroIsTwoByOne) {
     EXPECT_NEAR(90.0, westRoot.northDegrees(), 1e-9);
 }
 
+TEST(GeographicTMSSchemeTest, CesiumGeodeticPositionToTileClampsWorldEdges) {
+    auto scheme = TileScheme::createGeographicTMS();
+
+    auto northEast = scheme->positionToTile(M_PI, M_PI / 2.0, 3);
+    EXPECT_EQ(3, northEast.z);
+    EXPECT_EQ(15, northEast.x);
+    EXPECT_EQ(7, northEast.y);
+
+    auto southWest = scheme->positionToTile(-M_PI, -M_PI / 2.0, 3);
+    EXPECT_EQ(3, southWest.z);
+    EXPECT_EQ(0, southWest.x);
+    EXPECT_EQ(0, southWest.y);
+}
+
 TEST(GeographicTMSSchemeTest, CesiumSampleTileContainsServiceArea) {
     auto scheme = TileScheme::createGeographicTMS();
     auto key = scheme->positionToTile(

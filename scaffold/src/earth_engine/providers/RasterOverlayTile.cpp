@@ -1,5 +1,6 @@
 #include "RasterOverlayTile.h"
 #include "RasterOverlayTileProvider.h"
+#include "../renderer/RenderDevice.h"
 
 #include <utility>
 
@@ -15,9 +16,8 @@ RasterOverlayTile::RasterOverlayTile(RasterOverlayTileProvider& provider,
     , bounds_(bounds)
     , state_(LoadState::Unloaded) {
 #ifdef __ANDROID__
-    // DIAGNOSTIC ONLY: lets Android stale-pointer probes validate retained
-    // raw RasterOverlayTile pointers.
-    RasterOverlayTileProvider::registerLiveTileForDiagnostics(this);
+    // Android lifetime guard for retained raw RasterOverlayTile pointers.
+    RasterOverlayTileProvider::registerLiveTileForLifetimeGuard(this);
 #endif
 }
 
@@ -25,30 +25,30 @@ RasterOverlayTile::RasterOverlayTile(RasterOverlayTileProvider& provider)
     : provider_(provider)
     , state_(LoadState::Placeholder) {
 #ifdef __ANDROID__
-    // DIAGNOSTIC ONLY.
-    RasterOverlayTileProvider::registerLiveTileForDiagnostics(this);
+    // Android lifetime guard for retained placeholder tile pointers.
+    RasterOverlayTileProvider::registerLiveTileForLifetimeGuard(this);
 #endif
 }
 
 RasterOverlayTile::~RasterOverlayTile() {
 #ifdef __ANDROID__
-    // DIAGNOSTIC ONLY: keep Android stale-pointer probes in sync with the
+    // Android lifetime guard: keep retained raw pointers in sync with the
     // provider-owned texture lifetime.
-    RasterOverlayTileProvider::unregisterLiveTextureForDiagnostics(texture_.get());
-    RasterOverlayTileProvider::unregisterLiveTileForDiagnostics(this);
+    RasterOverlayTileProvider::unregisterLiveTextureForLifetimeGuard(texture_.get());
+    RasterOverlayTileProvider::unregisterLiveTileForLifetimeGuard(this);
 #endif
 }
 
 void RasterOverlayTile::setTexture(std::unique_ptr<Texture> tex) {
 #ifdef __ANDROID__
-    // DIAGNOSTIC ONLY: texture raw pointers are retained by renderer/mapping
-    // paths, so register only currently owned textures.
-    RasterOverlayTileProvider::unregisterLiveTextureForDiagnostics(texture_.get());
+    // Android lifetime guard: texture raw pointers are retained by
+    // renderer/mapping paths, so register only currently owned textures.
+    RasterOverlayTileProvider::unregisterLiveTextureForLifetimeGuard(texture_.get());
 #endif
     rendererResources_ = static_cast<void*>(tex.get());  // opaque handle
     texture_ = std::move(tex);
 #ifdef __ANDROID__
-    RasterOverlayTileProvider::registerLiveTextureForDiagnostics(texture_.get());
+    RasterOverlayTileProvider::registerLiveTextureForLifetimeGuard(texture_.get());
 #endif
     if (texture_) {
         state_ = LoadState::Loaded;

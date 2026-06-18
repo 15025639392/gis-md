@@ -3,7 +3,6 @@
 #include "TileKey.h"
 #include "SurfaceTile.h"
 #include "../core/math/Rectangle.h"
-#include "../renderer/RenderDevice.h"
 
 #include <cstdint>
 #include <memory>
@@ -14,6 +13,7 @@ namespace earth_engine {
 class RasterOverlayTile;
 class RasterOverlayTileProvider;
 class IPrepareRendererResources;
+class Texture;
 struct TileBoundingVolume;
 struct TilesetTile;
 
@@ -51,6 +51,12 @@ public:
         Unknown = 2
     };
 
+    enum class ReadyTileSource {
+        None = 0,
+        Real = 1,
+        Ancestor = 2
+    };
+
     RasterMappedToTilesetTile();
     ~RasterMappedToTilesetTile();
 
@@ -61,7 +67,7 @@ public:
     /// @param geometryKey   The geometry tile's quadtree key.
     /// @param overlayDetails The render content's raster overlay details.
     /// @param tileProvider   The imagery tile provider (for tile creation/lookup).
-    /// @param device         GPU device (for attach/detach notifications).
+    /// @param pPrepRenderer Resource lifecycle notification sink.
     /// @param parentTile     Parent geometry tile (for step 2 failure fallback).
     /// @param overlayIndex   Our index in parent's rasterOverlays vector.
     /// @return MoreDetailAvailable status.
@@ -83,9 +89,8 @@ public:
     /// cesium-native: detach this raster from the geometry tile.
     void detachFromTile(IPrepareRendererResources* pPrepRenderer);
 
-    /// Drop raw provider tile pointers after the geometry tile stops rendering.
-    /// This prevents retained renderer/provider state from pointing at evicted
-    /// RasterOverlayTile instances.
+    /// Drop provider tile handles after the geometry tile stops rendering.
+    /// This lets the provider evict stale raster tiles safely.
     void releaseTileReferences(IPrepareRendererResources* pPrepRenderer);
 
     /// cesium-native: throttled load via the Provider.
@@ -110,6 +115,7 @@ public:
     const std::shared_ptr<RasterOverlayTile>& getReadyTileHandle() const {
         return _pReadyTile;
     }
+    ReadyTileSource getReadyTileSource() const { return readyTileSource_; }
 
     /// Aligned with getTextureCoordinateID().
     /// Returns the raster-overlay texture coordinate index for this projection.
@@ -146,6 +152,9 @@ private:
     /// Cached pointer to the ready texture (from _pReadyTile->getTexture()).
     Texture* readyTexture_ = nullptr;
 
+    ReadyTileSource loadingTileSource_ = ReadyTileSource::None;
+    ReadyTileSource readyTileSource_ = ReadyTileSource::None;
+
     /// UV transform: rasterUV = geometryUV * scale + offset.
     float offsetU_ = 0.0f, offsetV_ = 0.0f;
     float scaleU_ = 1.0f, scaleV_ = 1.0f;
@@ -156,8 +165,7 @@ private:
     bool originalFailed_ = false;
 
     /// The geometry tile key this raster is mapped to.
-    /// Used for attachRaster/detachRaster key consistency —
-    /// the attachment map is keyed by geometry key, not raster key.
+    /// Used for attachRaster/detachRaster notification key consistency.
     TileKey geometryKey_;
 
     /// Raster-overlay texture coordinate index for this projection.
@@ -165,7 +173,7 @@ private:
     int32_t textureCoordinateID_ = -1;
 
     /// Our layer slot in the owning tile's rasterOverlays vector.
-    /// This is renderer attachment identity, not a texture-coordinate ID.
+    /// This is resource notification identity, not a texture-coordinate ID.
     int32_t overlaySlot_ = 0;
 };
 

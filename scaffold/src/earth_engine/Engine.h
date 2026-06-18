@@ -14,6 +14,7 @@ class Camera;
 class RenderDevice;
 class Scene;
 class VectorLayer;
+struct PresentationTrace;
 struct InputEvent;
 struct PickResult;
 
@@ -119,6 +120,8 @@ public:
 
     /// 运行时诊断（FPS、draw calls、visible tiles 等）
     const Diagnostics& diagnostics() const;
+    /// 一帧表现层契约 trace：camera -> selector -> TilePlan -> RenderCommand。
+    const PresentationTrace& presentationTrace() const;
 
     // ---- 访问器 ----
 

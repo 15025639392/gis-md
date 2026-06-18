@@ -2,7 +2,6 @@
 
 #include "../tiling/TileKey.h"
 #include "../core/math/Rectangle.h"
-#include "../renderer/RenderDevice.h"
 
 #include <cstdint>
 #include <memory>
@@ -11,6 +10,7 @@
 namespace earth_engine {
 
 class RasterOverlayTileProvider;
+class Texture;
 
 /// cesium-native RasterOverlayTile equivalent.
 /// Represents a single imagery tile in a quadtree with its own
