@@ -22,7 +22,7 @@ public:
                                 std::string attribution = "");
     ~XYZImageryProvider() override;
 
-    /// 注入平台 HTTP 桥接（Android 上使用 JNI HTTP 替代 libcurl）
+    /// 注入平台桥接（Android 网络由 native curl scheduler 统一调度）。
     void setPlatformBridge(PlatformBridge* bridge);
 
     std::string id() const override;
@@ -47,14 +47,17 @@ public:
 
     void requestTile(const TileKey& key,
                      CancellationToken token,
-                     TileCallback callback) override;
+                     TileCallback callback,
+                     HttpRequestPriority priority =
+                         HttpRequestPriority::Normal) override;
 
     std::unique_ptr<DecodedImage> decodeTile(
         const uint8_t* data, size_t len) override;
 
 private:
     std::vector<uint8_t> httpGet(const std::string& url,
-                                  const std::atomic<bool>* cancelled);
+                                 const CancellationToken& token,
+                                 HttpRequestPriority priority);
 
     std::string urlTemplate_;
     std::string attribution_;

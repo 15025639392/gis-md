@@ -24,7 +24,9 @@ public:
 
     void requestTile(const TileKey& key,
                      CancellationToken token,
-                     TileCallback callback) override;
+                     TileCallback callback,
+                     HttpRequestPriority priority =
+                         HttpRequestPriority::Normal) override;
 
     std::unique_ptr<DecodedImage> decodeTile(
         const uint8_t* data, size_t len) override;

@@ -4,18 +4,10 @@
 #endif
 #include "../core/async/AsyncSystem.h"
 #include "../core/cache/HttpCache.h"
+#include "../platform/bridge/CurlMultiRequestScheduler.h"
 #include "../platform/bridge/PlatformBridge.h"
 #include "../terrain/QuantizedMeshParser.h"
 #include <nlohmann/json.hpp>
-
-#ifndef EARTH_ENGINE_HAS_LIBCURL
-#if !defined(ANDROID) && __has_include(<curl/curl.h>)
-#include <curl/curl.h>
-#define EARTH_ENGINE_HAS_LIBCURL 1
-#else
-#define EARTH_ENGINE_HAS_LIBCURL 0
-#endif
-#endif
 
 #include <sstream>
 #include <algorithm>
@@ -34,26 +26,6 @@
 #include <limits>
 
 namespace earth_engine {
-
-// ============================================================
-// libcurl helpers
-// ============================================================
-
-namespace {
-#if EARTH_ENGINE_HAS_LIBCURL
-static std::once_flag gCurlOnce;
-static void ensureCurl() {
-    std::call_once(gCurlOnce, []{ curl_global_init(CURL_GLOBAL_DEFAULT); });
-}
-static size_t curlWrite(void* p, size_t s, size_t n, void* u) {
-    auto* b = static_cast<std::vector<uint8_t>*>(u);
-    size_t t = s * n;
-    b->insert(b->end(), static_cast<const uint8_t*>(p),
-              static_cast<const uint8_t*>(p) + t);
-    return t;
-}
-#endif
-} // namespace
 
 QuantizedMeshTerrainProvider::QuantizedMeshTerrainProvider(
     std::string urlTemplate, std::string attribution)
@@ -878,7 +850,8 @@ std::string QuantizedMeshTerrainProvider::buildUrl(const TileKey& key) const {
 
 void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
                                                 CancellationToken token,
-                                                HeightmapCallback callback) {
+                                                HeightmapCallback callback,
+                                                HttpRequestPriority priority) {
     std::string url = buildUrl(key);
     std::vector<LayerAvailabilityRequest> availabilityRequests =
         collectUnderlyingLayerAvailabilityRequests(key);
@@ -886,12 +859,16 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
         [this, url, key,
          availabilityRequests = std::move(availabilityRequests),
          token = std::move(token),
+         priority,
          callback = std::move(callback)]() mutable {
             if (token.isCancelled()) {
                 callback(key, TerrainTileLoadResult::cancelled());
                 return;
             }
-            auto body = httpGet(url);
+            auto body = httpGet(
+                url,
+                priority,
+                [&token]() { return token.isCancelled(); });
 #ifdef __ANDROID__
             __android_log_print(ANDROID_LOG_INFO, "QMTerrain",
                 "requestTile: z=%d x=%d y=%d body=%zu canceled=%d",
@@ -917,7 +894,10 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
                     update.layerIndex = static_cast<int>(request.layerIndex);
                     update.subtreeKey = request.subtreeKey;
 
-                    auto metadataBody = httpGet(request.url);
+                    auto metadataBody = httpGet(
+                        request.url,
+                        priority,
+                        [&token]() { return token.isCancelled(); });
                     if (!metadataBody.empty()) {
                         update.metadataAvailability =
                             QuantizedMeshParser::parseMetadataAvailability(
@@ -1112,7 +1092,10 @@ std::unique_ptr<DecodedHeightmap> QuantizedMeshTerrainProvider::decodeTile(
     return hm;
 }
 
-std::vector<uint8_t> QuantizedMeshTerrainProvider::httpGet(const std::string& url) {
+std::vector<uint8_t> QuantizedMeshTerrainProvider::httpGet(
+    const std::string& url,
+    HttpRequestPriority priority,
+    std::function<bool()> shouldCancel) {
 #ifdef __ANDROID__
     __android_log_print(ANDROID_LOG_INFO, "QMTerrain", "httpGet ENTER: %s", url.c_str());
 #endif
@@ -1137,50 +1120,54 @@ std::vector<uint8_t> QuantizedMeshTerrainProvider::httpGet(const std::string& ur
     }
 
     if (platformBridge_) {
-        std::vector<uint8_t> result;
-        std::mutex mtx;
-        std::condition_variable cv;
+        struct WaitState {
+            std::vector<uint8_t> result;
+            std::mutex mutex;
+            std::condition_variable cv;
+            bool done = false;
+        };
+        auto state = std::make_shared<WaitState>();
+        auto request = platformBridge_->get(url, [state](int code, std::vector<uint8_t> body) {
+            {
+                std::lock_guard<std::mutex> lk(state->mutex);
+                if (code == 200) state->result = std::move(body);
+                state->done = true;
+            }
+            state->cv.notify_one();
+        }, {priority});
         bool done = false;
-        platformBridge_->get(url, [&](int code, std::vector<uint8_t> body) {
-            if (code == 200) result = std::move(body);
-            { std::lock_guard<std::mutex> lk(mtx); done = true; }
-            cv.notify_one();
-        });
-        { std::unique_lock<std::mutex> lk(mtx);
-          cv.wait_for(lk, std::chrono::seconds(20), [&]{ return done; }); }
-        if (!result.empty()) HttpCache::shared().put(url, result);
+        {
+            const auto deadline = std::chrono::steady_clock::now() +
+                std::chrono::seconds(20);
+            std::unique_lock<std::mutex> lk(state->mutex);
+            while (!state->done && !(shouldCancel && shouldCancel())) {
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= deadline) break;
+                state->cv.wait_until(
+                    lk,
+                    std::min(deadline, now + std::chrono::milliseconds(20)));
+            }
+            done = state->done;
+        }
+        if ((!done || (shouldCancel && shouldCancel())) && request) {
+            request->cancel();
+        }
+        if (done && !state->result.empty()) HttpCache::shared().put(url, state->result);
 #ifdef __ANDROID__
         __android_log_print(ANDROID_LOG_INFO, "QMTerrain",
-            "httpGet bridge: %zu bytes", result.size());
+            "httpGet bridge: %zu bytes", state->result.size());
 #endif
-        return result;
+        return done ? std::move(state->result) : std::vector<uint8_t>{};
     }
 
-#if EARTH_ENGINE_HAS_LIBCURL
-    ensureCurl();
-    CURL* curl = curl_easy_init();
-    if (!curl) return {};
-    std::vector<uint8_t> body;
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "earth-md/0.1");
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
-    CURLcode res = curl_easy_perform(curl);
-    long httpCode = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-    curl_easy_cleanup(curl);
     std::vector<uint8_t> result =
-        (res == CURLE_OK && httpCode == 200) ? std::move(body) : std::vector<uint8_t>{};
+        CurlMultiRequestScheduler::shared().getBlocking(
+            url,
+            {priority},
+            std::chrono::seconds(20),
+            std::move(shouldCancel));
     if (!result.empty()) HttpCache::shared().put(url, result);
     return result;
-#else
-    (void)url;
-    return {};
-#endif
 }
 
 } // namespace earth_engine

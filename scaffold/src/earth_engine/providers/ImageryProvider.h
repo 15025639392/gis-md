@@ -64,7 +64,9 @@ public:
 
     virtual void requestTile(const TileKey& key,
                              CancellationToken token,
-                             TileCallback callback) = 0;
+                             TileCallback callback,
+                             HttpRequestPriority priority =
+                                 HttpRequestPriority::Normal) = 0;
 
     /// 同步解码瓦片数据（用于测试/调试 Provider）
     virtual std::unique_ptr<DecodedImage> decodeTile(

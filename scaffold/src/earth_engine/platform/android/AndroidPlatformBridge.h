@@ -7,9 +7,8 @@ namespace earth_engine {
 /// 在 JNI_OnLoad 中调用，初始化 JavaVM 全局引用
 void AndroidPlatformBridge_InitJvm(void* jvm);
 
-/// Android JNI HTTP 桥接。
-/// 通过 JNI 调用 Java HttpURLConnection 执行 HTTP GET。
-/// 避免依赖 libcurl 交叉编译。
+/// Android 平台桥接。
+/// 网络请求走 native libcurl multi scheduler；JNI 仅用于 Android 平台能力。
 class AndroidPlatformBridge : public PlatformBridge {
 public:
     /// @param jvm JavaVM 指针（从 JNI_OnLoad 获取）
@@ -24,7 +23,8 @@ public:
     // ---- 网络 ----
     std::unique_ptr<HttpRequest> get(
         const std::string& url,
-        std::function<void(int statusCode, std::vector<uint8_t> body)> callback) override;
+        std::function<void(int statusCode, std::vector<uint8_t> body)> callback,
+        HttpRequestOptions options = {}) override;
 
     // ---- 文件系统 ----
     std::string cacheDirectory() const override;

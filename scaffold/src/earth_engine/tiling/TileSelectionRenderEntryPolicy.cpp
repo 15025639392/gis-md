@@ -1,0 +1,13 @@
+#include "TileSelectionRenderEntryPolicy.h"
+
+namespace earth_engine {
+
+TileSelectionRenderEntryPlan TileSelectionRenderEntryPolicy::plan(
+    const TileSelectionRenderEntryInput& input) {
+    TileSelectionRenderEntryPlan plan;
+    plan.resetLodTransitionFade = !input.enableLodTransitionPeriod;
+    plan.queueNormalLoad = input.queueForLoad;
+    return plan;
+}
+
+} // namespace earth_engine

@@ -1,0 +1,180 @@
+#include "SurfaceTileDrawCommandBuilder.h"
+
+#include "RasterMappedToTilesetTile.h"
+#include "SurfaceRasterBinding.h"
+#include "SurfaceTile.h"
+#include "TilesetTile.h"
+#include "../layers/ActivatedRasterOverlay.h"
+#include "../layers/RasterOverlay.h"
+#include "../providers/RasterOverlayTile.h"
+#include "../renderer/Renderer.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <utility>
+
+namespace earth_engine {
+namespace {
+
+int rasterTextureSourceZoom(const RasterOverlayTile* tile) {
+    if (!tile) return -1;
+    return tile->isRectangleTile() ? tile->getSourceZoom() : tile->getTileID().z;
+}
+
+bool overlayBindingAllowedByPolicy(
+    const ActivatedRasterOverlay* activeOverlay,
+    const RasterMappedToTilesetTile* mapped,
+    const SurfaceRasterBinding& binding) {
+    if (!activeOverlay || !activeOverlay->visible() ||
+        !mapped || binding.kind == SurfaceRasterBindingKind::None ||
+        !binding.tile || !binding.tile->getTexture()) {
+        return false;
+    }
+    if (activeOverlay->getOverlay().role() ==
+            RasterOverlayRole::BaseImagery) {
+        return true;
+    }
+    if (activeOverlay->getOverlay().fallbackPolicy() ==
+        RasterOverlayFallbackPolicy::SkipUntilReady) {
+        return mapped->getLoadingTile() == nullptr;
+    }
+    return true;
+}
+
+} // namespace
+
+void SurfaceTileDrawCommandBuilder::build(
+    Renderer& renderer,
+    TilesetTile& tile,
+    const std::vector<ActivatedRasterOverlay*>& overlays,
+    RenderCommandList& commands,
+    const SurfaceTileDrawCommandBuildContext& context) {
+    Texture* baseTexture = nullptr;
+    SurfaceRasterBinding baseBinding;
+    std::optional<size_t> baseOverlayIndex;
+
+    for (size_t i = 0; i < overlays.size() && i < tile.rasterOverlays.size(); ++i) {
+        auto* activeOverlay = overlays[i];
+        if (!activeOverlay || !activeOverlay->visible() ||
+            activeOverlay->getOverlay().role() != RasterOverlayRole::BaseImagery) {
+            continue;
+        }
+
+        const RasterMappedToTilesetTile* mapped =
+            tile.rasterOverlays[i].get();
+        const SurfaceRasterBinding binding =
+            chooseSurfaceRasterBinding(mapped);
+        if (overlayBindingAllowedByPolicy(activeOverlay, mapped, binding)) {
+            baseTexture = binding.tile->getTexture();
+            baseBinding = binding;
+            baseOverlayIndex = i;
+            break;
+        }
+    }
+
+    if (!baseTexture || !tile.mesh) {
+        return;
+    }
+
+    const int meshIndexCount = static_cast<int>(tile.mesh->indices.size());
+    int surfaceIndexOffset = 0;
+    int surfaceIndexCount = meshIndexCount;
+    const SkirtMetadata& skirt = tile.mesh->skirtMeta;
+    if (skirt.noSkirtIndicesCount > 0 &&
+        skirt.noSkirtIndicesBegin < tile.mesh->indices.size() &&
+        skirt.noSkirtIndicesBegin + skirt.noSkirtIndicesCount <=
+            tile.mesh->indices.size()) {
+        surfaceIndexOffset =
+            static_cast<int>(skirt.noSkirtIndicesBegin * sizeof(uint32_t));
+        surfaceIndexCount = static_cast<int>(skirt.noSkirtIndicesCount);
+    }
+
+    RenderCommand surfaceCommand = renderer.makeSurfaceTileCommand(
+        baseTexture,
+        tile.gpuVertexBuffer.get(),
+        tile.gpuIndexBuffer.get(),
+        surfaceIndexCount);
+    surfaceCommand.indexOffset = surfaceIndexOffset;
+    surfaceCommand.frameId = context.frameNumber;
+    surfaceCommand.generation = context.generation;
+    surfaceCommand.surfaceMeshIndexCount = meshIndexCount;
+    surfaceCommand.surfaceNoSkirtIndexCount = surfaceIndexCount;
+    surfaceCommand.surfaceSkirtIndexCount =
+        std::max(0, meshIndexCount - surfaceIndexCount);
+    if (baseBinding.tile) {
+        surfaceCommand.surfaceBaseRasterState =
+            static_cast<int>(baseBinding.tile->getState());
+        surfaceCommand.surfaceBaseIsRectangleTile =
+            baseBinding.tile->isRectangleTile() ? 1 : 0;
+    }
+    surfaceCommand.surfaceTileUv = baseBinding.tile
+        ? std::array<float, 4>{
+              baseBinding.offsetU,
+              baseBinding.offsetV,
+              baseBinding.scaleU,
+              baseBinding.scaleV}
+        : std::array<float, 4>{0.0f, 0.0f, 1.0f, 1.0f};
+    if (context.surfaceClipUv) {
+        surfaceCommand.surfaceClipUv = *context.surfaceClipUv;
+        surfaceCommand.surfaceClipEnabled = 1.0f;
+    }
+    surfaceCommand.surfaceGeometryZoom = tile.key.z;
+    surfaceCommand.surfaceTextureZoom = baseBinding.tile
+        ? rasterTextureSourceZoom(baseBinding.tile)
+        : -1;
+    surfaceCommand.surfaceTileOrigin = {
+        static_cast<float>(tile.localOrigin.x()),
+        static_cast<float>(tile.localOrigin.y()),
+        static_cast<float>(tile.localOrigin.z())};
+    surfaceCommand.surfaceTileOpacity = 1.0f;
+    surfaceCommand.surfaceTransitionOpacity = context.transitionOpacity;
+    if (context.transitionOpacity < 0.999f) {
+        surfaceCommand.blend = true;
+        surfaceCommand.blendSrc = RenderCommand::BlendFactor::SrcAlpha;
+        surfaceCommand.blendDst =
+            RenderCommand::BlendFactorDst::OneMinusSrcAlpha;
+    }
+    surfaceCommand.surfaceGeneration = static_cast<float>(context.generation);
+
+    int overlayTextureCount = 0;
+    for (size_t i = 0; i < overlays.size() && i < tile.rasterOverlays.size(); ++i) {
+        auto* activeOverlay = overlays[i];
+        if (!activeOverlay || !activeOverlay->visible()) {
+            continue;
+        }
+        if (baseOverlayIndex && *baseOverlayIndex == i) {
+            continue;
+        }
+        const RasterMappedToTilesetTile* mapped =
+            tile.rasterOverlays[i].get();
+        const SurfaceRasterBinding binding =
+            chooseSurfaceRasterBinding(mapped);
+        if (!overlayBindingAllowedByPolicy(
+                activeOverlay,
+                mapped,
+                binding)) {
+            continue;
+        }
+        Texture* tex = binding.tile->getTexture();
+        if (!tex) continue;
+
+        if (overlayTextureCount >= kMaxSurfaceImageryOverlays) {
+            continue;
+        }
+
+        surfaceCommand.textures.push_back(tex);
+        surfaceCommand.surfaceOverlayTileUvs[overlayTextureCount] = {
+            binding.offsetU,
+            binding.offsetV,
+            binding.scaleU,
+            binding.scaleV};
+        surfaceCommand.surfaceOverlayOpacities[overlayTextureCount] =
+            activeOverlay->opacity();
+        ++overlayTextureCount;
+    }
+
+    surfaceCommand.surfaceOverlayTextureCount = overlayTextureCount;
+    commands.push_back(std::move(surfaceCommand));
+}
+
+} // namespace earth_engine

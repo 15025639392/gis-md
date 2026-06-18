@@ -108,7 +108,9 @@ public:
 
     virtual void requestTileContent(const TileKey& key,
                                     CancellationToken token,
-                                    ContentCallback callback) = 0;
+                                    ContentCallback callback,
+                                    HttpRequestPriority priority =
+                                        HttpRequestPriority::Normal) = 0;
 
     virtual TileContentLoadResult decodeContent(
         const uint8_t* data,
@@ -131,7 +133,9 @@ public:
     bool supportsTile(const TileKey& key) const override;
     void requestTileContent(const TileKey& key,
                             CancellationToken token,
-                            ContentCallback callback) override;
+                            ContentCallback callback,
+                            HttpRequestPriority priority =
+                                HttpRequestPriority::Normal) override;
     TileContentLoadResult decodeContent(const uint8_t* data,
                                         size_t size) override;
 
@@ -148,7 +152,10 @@ public:
                                         double uniformScale = 1.0);
 
 private:
-    std::vector<uint8_t> httpGet(const std::string& url) const;
+    std::vector<uint8_t> httpGet(
+        const std::string& url,
+        HttpRequestPriority priority = HttpRequestPriority::Normal,
+        std::function<bool()> shouldCancel = {}) const;
 
     TileKey contentKey_;
     std::string url_;
@@ -176,7 +183,9 @@ public:
     std::vector<TileKey> childTiles(const TileKey& key) const override;
     void requestTileContent(const TileKey& key,
                             CancellationToken token,
-                            ContentCallback callback) override;
+                            ContentCallback callback,
+                            HttpRequestPriority priority =
+                                HttpRequestPriority::Normal) override;
     TileContentLoadResult decodeContent(const uint8_t* data,
                                         size_t size) override;
 
@@ -212,7 +221,10 @@ private:
                                                   const Mat4& transform,
                                                   const Mat4& gltfUpAxisTransform,
                                                   const std::string& contentUrl);
-    std::vector<uint8_t> httpGet(const std::string& url) const;
+    std::vector<uint8_t> httpGet(
+        const std::string& url,
+        HttpRequestPriority priority = HttpRequestPriority::Normal,
+        std::function<bool()> shouldCancel = {}) const;
 
     std::string tilesetJsonUrl_;
     std::string name_;

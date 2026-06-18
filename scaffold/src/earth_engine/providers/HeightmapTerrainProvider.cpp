@@ -1,16 +1,8 @@
 #include "HeightmapTerrainProvider.h"
 #include "../core/async/AsyncSystem.h"
 #include "../core/cache/HttpCache.h"
+#include "../platform/bridge/CurlMultiRequestScheduler.h"
 #include "../platform/bridge/PlatformBridge.h"
-
-#ifndef EARTH_ENGINE_HAS_LIBCURL
-#if !defined(ANDROID) && __has_include(<curl/curl.h>)
-#include <curl/curl.h>
-#define EARTH_ENGINE_HAS_LIBCURL 1
-#else
-#define EARTH_ENGINE_HAS_LIBCURL 0
-#endif
-#endif
 
 #if __has_include(<stb_image.h>)
 #include <stb_image.h>
@@ -19,36 +11,18 @@
 #define EARTH_ENGINE_HAS_STB_IMAGE 0
 #endif
 
+#include <algorithm>
+#include <chrono>
+#include <condition_variable>
+#include <cmath>
+#include <cstring>
+#include <fstream>
+#include <memory>
+#include <mutex>
 #include <sstream>
 #include <thread>
-#include <mutex>
-#include <condition_variable>
-#include <chrono>
-#include <cstring>
-#include <cmath>
-#include <fstream>
 
 namespace earth_engine {
-
-// ============================================================
-// libcurl 辅助
-// ============================================================
-
-namespace {
-#if EARTH_ENGINE_HAS_LIBCURL
-static std::once_flag gCurlOnce;
-static void ensureCurl() {
-    std::call_once(gCurlOnce, []{ curl_global_init(CURL_GLOBAL_DEFAULT); });
-}
-static size_t curlWrite(void* p, size_t s, size_t n, void* u) {
-    auto* b = static_cast<std::vector<uint8_t>*>(u);
-    size_t t = s * n;
-    b->insert(b->end(), static_cast<const uint8_t*>(p),
-              static_cast<const uint8_t*>(p) + t);
-    return t;
-}
-#endif
-} // namespace
 
 // ============================================================
 // HeightmapTerrainProvider
@@ -97,17 +71,19 @@ std::string HeightmapTerrainProvider::buildUrl(const TileKey& key) const {
 
 void HeightmapTerrainProvider::requestTile(const TileKey& key,
                                             CancellationToken token,
-                                            HeightmapCallback callback) {
+                                            HeightmapCallback callback,
+                                            HttpRequestPriority priority) {
     std::string url = buildUrl(key);
     // cesium-native alignment: use thread pool instead of raw std::thread::detach().
     AsyncSystem::pool().enqueue(
         [this, url, key, token = std::move(token),
+         priority,
          callback = std::move(callback)]() mutable {
             if (token.isCancelled()) {
                 callback(key, TerrainTileLoadResult::cancelled());
                 return;
             }
-            auto body = httpGet(url);
+            auto body = httpGet(url, token, priority);
             if (token.isCancelled()) {
                 callback(key, TerrainTileLoadResult::cancelled());
                 return;
@@ -121,7 +97,10 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
         });
 }
 
-std::vector<uint8_t> HeightmapTerrainProvider::httpGet(const std::string& url) {
+std::vector<uint8_t> HeightmapTerrainProvider::httpGet(
+    const std::string& url,
+    const CancellationToken& token,
+    HttpRequestPriority priority) {
     // Shared LRU cache: avoid re-downloading recently fetched tiles.
     auto cached = HttpCache::shared().get(url);
     if (!cached.empty()) return cached;
@@ -139,52 +118,52 @@ std::vector<uint8_t> HeightmapTerrainProvider::httpGet(const std::string& url) {
 
     // PlatformBridge 优先
     if (platformBridge_) {
-        std::vector<uint8_t> result;
-        std::mutex mtx;
-        std::condition_variable cv;
+        struct WaitState {
+            std::vector<uint8_t> result;
+            std::mutex mutex;
+            std::condition_variable cv;
+            bool done = false;
+        };
+        auto state = std::make_shared<WaitState>();
+
+        auto request = platformBridge_->get(url, [state](int code, std::vector<uint8_t> body) {
+            {
+                std::lock_guard<std::mutex> lk(state->mutex);
+                if (code == 200) state->result = std::move(body);
+                state->done = true;
+            }
+            state->cv.notify_one();
+        }, {priority});
+
         bool done = false;
-
-        platformBridge_->get(url, [&](int code, std::vector<uint8_t> body) {
-            if (code == 200) result = std::move(body);
-            { std::lock_guard<std::mutex> lk(mtx); done = true; }
-            cv.notify_one();
-        });
-
-        { std::unique_lock<std::mutex> lk(mtx);
-          cv.wait_for(lk, std::chrono::seconds(20), [&]{ return done; }); }
-        if (!result.empty()) HttpCache::shared().put(url, result);
-        return result;
+        {
+            const auto deadline = std::chrono::steady_clock::now() +
+                std::chrono::seconds(20);
+            std::unique_lock<std::mutex> lk(state->mutex);
+            while (!state->done && !token.isCancelled()) {
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= deadline) break;
+                state->cv.wait_until(
+                    lk,
+                    std::min(deadline, now + std::chrono::milliseconds(20)));
+            }
+            done = state->done;
+        }
+        if ((!done || token.isCancelled()) && request) {
+            request->cancel();
+        }
+        if (done && !state->result.empty()) HttpCache::shared().put(url, state->result);
+        return done ? std::move(state->result) : std::vector<uint8_t>{};
     }
 
-    // libcurl 回退
-#if EARTH_ENGINE_HAS_LIBCURL
-    ensureCurl();
-    CURL* curl = curl_easy_init();
-    if (!curl) return {};
-
-    std::vector<uint8_t> body;
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "earth-md/0.1");
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
-
-    CURLcode res = curl_easy_perform(curl);
-    long httpCode = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-    curl_easy_cleanup(curl);
-
     std::vector<uint8_t> result =
-        (res == CURLE_OK && httpCode == 200) ? std::move(body) : std::vector<uint8_t>{};
+        CurlMultiRequestScheduler::shared().getBlocking(
+            url,
+            {priority},
+            std::chrono::seconds(20),
+            [&token]() { return token.isCancelled(); });
     if (!result.empty()) HttpCache::shared().put(url, result);
     return result;
-#else
-    (void)url;
-    return {};
-#endif
 }
 
 std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(

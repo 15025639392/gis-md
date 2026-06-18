@@ -1,18 +1,12 @@
 #include "XYZImageryProvider.h"
+#include "../core/async/AsyncSystem.h"
+#include "../platform/bridge/CurlMultiRequestScheduler.h"
 #include "../platform/bridge/PlatformBridge.h"
 
 #ifdef __ANDROID__
 #include <android/log.h>
 #endif
 
-#ifndef EARTH_ENGINE_HAS_LIBCURL
-#if !defined(ANDROID) && __has_include(<curl/curl.h>)
-#include <curl/curl.h>
-#define EARTH_ENGINE_HAS_LIBCURL 1
-#else
-#define EARTH_ENGINE_HAS_LIBCURL 0
-#endif
-#endif
 #if __has_include(<stb_image.h>)
 #include <stb_image.h>
 #define EARTH_ENGINE_HAS_STB_IMAGE 1
@@ -20,34 +14,15 @@
 #define EARTH_ENGINE_HAS_STB_IMAGE 0
 #endif
 
-#include <cstring>
-#include <sstream>
-#include <thread>
-#include <mutex>
-#include <condition_variable>
+#include <algorithm>
 #include <chrono>
+#include <condition_variable>
+#include <cstring>
+#include <memory>
+#include <mutex>
+#include <sstream>
 
 namespace earth_engine {
-
-// ============================================================
-// libcurl 辅助（仅当无 PlatformBridge 时使用）
-// ============================================================
-
-namespace {
-#if EARTH_ENGINE_HAS_LIBCURL
-static std::once_flag gCurlOnce;
-static void ensureCurl() {
-    std::call_once(gCurlOnce, []{ curl_global_init(CURL_GLOBAL_DEFAULT); });
-}
-static size_t curlWrite(void* p, size_t s, size_t n, void* u) {
-    auto* b = static_cast<std::vector<uint8_t>*>(u);
-    size_t t = s * n;
-    b->insert(b->end(), static_cast<const uint8_t*>(p),
-              static_cast<const uint8_t*>(p) + t);
-    return t;
-}
-#endif
-} // namespace
 
 // ============================================================
 // XYZImageryProvider
@@ -153,71 +128,69 @@ std::string XYZImageryProvider::buildUrl(const TileKey& key) const {
 
 void XYZImageryProvider::requestTile(const TileKey& key,
                                       CancellationToken token,
-                                      TileCallback callback) {
+                                      TileCallback callback,
+                                      HttpRequestPriority priority) {
     std::string url = buildUrl(key);
-    std::thread([this, url, key, token = std::move(token),
-                 callback = std::move(callback)]() {
+    AsyncSystem::run([this, url, key, token = std::move(token),
+                      priority,
+                      callback = std::move(callback)]() {
         if (token.isCancelled()) { callback(key, nullptr); return; }
-        auto body = httpGet(url, nullptr);
+        auto body = httpGet(url, token, priority);
         if (token.isCancelled() || body.empty()) { callback(key, nullptr); return; }
         auto image = decodeTile(body.data(), body.size());
         callback(key, std::move(image));
-    }).detach();
+    });
 }
 
 std::vector<uint8_t> XYZImageryProvider::httpGet(
-    const std::string& url, const std::atomic<bool>* /*cancelled*/) {
+    const std::string& url,
+    const CancellationToken& token,
+    HttpRequestPriority priority) {
 
-    // 优先使用 PlatformBridge（Android JNI HTTP / Curl async）
+    // 优先使用 PlatformBridge；Android 侧仍落到 native curl scheduler。
     if (platformBridge_) {
-        std::vector<uint8_t> result;
-        std::mutex mtx;
-        std::condition_variable cv;
-        bool done = false;
+        struct WaitState {
+            std::vector<uint8_t> result;
+            std::mutex mutex;
+            std::condition_variable cv;
+            bool done = false;
+        };
+        auto state = std::make_shared<WaitState>();
 
-        auto httpRequest = platformBridge_->get(url, [&](int code, std::vector<uint8_t> body) {
-            if (code == 200) result = std::move(body);
+        auto httpRequest = platformBridge_->get(url, [state](int code, std::vector<uint8_t> body) {
             {
-                std::lock_guard<std::mutex> lk(mtx);
-                done = true;
+                std::lock_guard<std::mutex> lk(state->mutex);
+                if (code == 200) state->result = std::move(body);
+                state->done = true;
             }
-            cv.notify_one();
-        });
+            state->cv.notify_one();
+        }, {priority});
 
-        // 等待回调完成（最多 20 秒）
+        bool done = false;
         {
-            std::unique_lock<std::mutex> lk(mtx);
-            cv.wait_for(lk, std::chrono::seconds(20), [&]{ return done; });
+            const auto deadline = std::chrono::steady_clock::now() +
+                std::chrono::seconds(20);
+            std::unique_lock<std::mutex> lk(state->mutex);
+            while (!state->done && !token.isCancelled()) {
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= deadline) break;
+                state->cv.wait_until(
+                    lk,
+                    std::min(deadline, now + std::chrono::milliseconds(20)));
+            }
+            done = state->done;
         }
-        return result;
+        if ((!done || token.isCancelled()) && httpRequest) {
+            httpRequest->cancel();
+        }
+        return done ? std::move(state->result) : std::vector<uint8_t>{};
     }
 
-    // 回退：libcurl
-#if EARTH_ENGINE_HAS_LIBCURL
-    ensureCurl();
-    CURL* curl = curl_easy_init();
-    if (!curl) return {};
-
-    std::vector<uint8_t> body;
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "earth-md/0.1");
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
-
-    CURLcode res = curl_easy_perform(curl);
-    long httpCode = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-    curl_easy_cleanup(curl);
-
-    return (res == CURLE_OK && httpCode == 200) ? body : std::vector<uint8_t>{};
-#else
-    (void)url;
-    return {};
-#endif
+    return CurlMultiRequestScheduler::shared().getBlocking(
+        url,
+        {priority},
+        std::chrono::seconds(20),
+        [&token]() { return token.isCancelled(); });
 }
 
 std::unique_ptr<DecodedImage> XYZImageryProvider::decodeTile(

@@ -181,6 +181,12 @@ add_executable(test_raster_overlay_lifecycle
 target_link_libraries(test_raster_overlay_lifecycle PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_raster_overlay_lifecycle COMMAND test_raster_overlay_lifecycle)
 
+add_executable(test_curl_multi_request_scheduler
+    unit/platform/test_curl_multi_request_scheduler.cpp
+)
+target_link_libraries(test_curl_multi_request_scheduler PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_curl_multi_request_scheduler COMMAND test_curl_multi_request_scheduler)
+
 # ============================================================
 # environment tests
 # ============================================================

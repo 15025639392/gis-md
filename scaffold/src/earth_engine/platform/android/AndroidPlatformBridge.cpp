@@ -1,11 +1,12 @@
 #include "AndroidPlatformBridge.h"
 
-#include <thread>
-#include <mutex>
-#include <condition_variable>
-#include <unordered_map>
+#include "../bridge/CurlPlatformBridge.h"
+
 #include <algorithm>
 #include <cstddef>
+#include <functional>
+#include <memory>
+#include <vector>
 #include <android/bitmap.h>
 #include <android/log.h>
 #include <jni.h>
@@ -17,31 +18,16 @@
 namespace earth_engine {
 
 // ============================================================
-// JNI HTTP 实现
+// JNI 平台辅助
 // ============================================================
 
-// 全局 JavaVM + 缓存的 JNI 引用
 static JavaVM* gJvm = nullptr;
-static jclass gJniHttpHelperClass = nullptr;
-static jmethodID gHttpGetMethod = nullptr;
 
 void AndroidPlatformBridge_InitJvm(void* vm) {
     gJvm = static_cast<JavaVM*>(vm);
-    // 在主线程缓存 JniHttpHelper class 引用
-    if (gJvm) {
-        JNIEnv* env = nullptr;
-        if (gJvm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_OK) {
-            jclass cls = env->FindClass("com/earthengine/minimalglobe/JniHttpHelper");
-            if (cls) {
-                gJniHttpHelperClass = static_cast<jclass>(env->NewGlobalRef(cls));
-                gHttpGetMethod = env->GetStaticMethodID(
-                    gJniHttpHelperClass, "httpGet", "(Ljava/lang/String;)[B");
-            }
-        }
-    }
 }
 
-// --- JNI HTTP 辅助：在 C++ 线程中 attach/detach ---
+// --- JNI 线程 attach/detach 辅助 ---
 
 static JNIEnv* getJniEnv() {
     if (!gJvm) return nullptr;
@@ -67,67 +53,18 @@ static bool clearPendingJniException(JNIEnv* env, const char* context) {
     return true;
 }
 
-/// 使用 JNI 调用 Java JniHttpHelper.httpGet() 执行 HTTP GET
-static std::vector<uint8_t> androidHttpGet(const std::string& url) {
-    JNIEnv* env = getJniEnv();
-    if (!env) {
-        LOGE("JNIEnv unavailable for HTTP request");
-        detachJni();
-        return {};
-    }
-    LOGI("androidHttpGet: env=%p gJniHttpHelperClass=%p gHttpGetMethod=%p url=%s",
-         (void*)env, (void*)gJniHttpHelperClass, (void*)gHttpGetMethod, url.c_str());
-
-    if (!gJniHttpHelperClass || !gHttpGetMethod) {
-        LOGE("JniHttpHelper not initialized (call InitJvm first)");
-        detachJni();
-        return {};
-    }
-
-    jstring urlStr = env->NewStringUTF(url.c_str());
-    jbyteArray resultArray = static_cast<jbyteArray>(
-        env->CallStaticObjectMethod(gJniHttpHelperClass, gHttpGetMethod, urlStr));
-    env->DeleteLocalRef(urlStr);
-
-    std::vector<uint8_t> result;
-    if (resultArray) {
-        jsize len = env->GetArrayLength(resultArray);
-        jbyte* data = env->GetByteArrayElements(resultArray, nullptr);
-        result.assign(reinterpret_cast<uint8_t*>(data),
-                      reinterpret_cast<uint8_t*>(data) + len);
-        env->ReleaseByteArrayElements(resultArray, data, JNI_ABORT);
-        env->DeleteLocalRef(resultArray);
-    }
-
-    detachJni();
-    return result;
-}
-
-// ============================================================
-// AndroidHttpRequest
-// ============================================================
-
-class AndroidHttpRequest : public HttpRequest {
-public:
-    AndroidHttpRequest() = default;
-    ~AndroidHttpRequest() override { cancel(); }
-    void cancel() override { cancelled_ = true; }
-    bool cancelled() const { return cancelled_; }
-private:
-    std::atomic<bool> cancelled_{false};
-};
-
 // ============================================================
 // AndroidPlatformBridge
 // ============================================================
 
 struct AndroidPlatformBridge::Impl {
-    void* jvm;
+    explicit Impl(void* jvmPtr) : jvm(jvmPtr) {}
+    void* jvm = nullptr;
+    CurlPlatformBridge networkBridge;
 };
 
 AndroidPlatformBridge::AndroidPlatformBridge(void* jvm)
-    : impl_(std::make_unique<Impl>()) {
-    impl_->jvm = jvm;
+    : impl_(std::make_unique<Impl>(jvm)) {
     if (!gJvm) {
         gJvm = static_cast<JavaVM*>(jvm);
     }
@@ -136,22 +73,20 @@ AndroidPlatformBridge::AndroidPlatformBridge(void* jvm)
 AndroidPlatformBridge::~AndroidPlatformBridge() = default;
 
 void AndroidPlatformBridge::onMemoryPressure() {}
-void AndroidPlatformBridge::onEnterBackground() {}
+void AndroidPlatformBridge::onEnterBackground() {
+    impl_->networkBridge.onEnterBackground();
+}
 void AndroidPlatformBridge::onEnterForeground() {}
 
 std::unique_ptr<HttpRequest> AndroidPlatformBridge::get(
     const std::string& url,
-    std::function<void(int, std::vector<uint8_t>)> callback) {
+    std::function<void(int, std::vector<uint8_t>)> callback,
+    HttpRequestOptions options) {
 
-    // Always run Java networking off the Android main thread. Some callers
-    // synchronously wait for this callback during startup metadata probes.
-    std::thread([url, callback = std::move(callback)]() mutable {
-        auto body = androidHttpGet(url);
-        int code = body.empty() ? -1 : 200;
-        callback(code, std::move(body));
-    }).detach();
-
-    return std::make_unique<AndroidHttpRequest>();
+    return impl_->networkBridge.get(
+        url,
+        std::move(callback),
+        options);
 }
 
 std::string AndroidPlatformBridge::cacheDirectory() const {

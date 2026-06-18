@@ -1,0 +1,101 @@
+#pragma once
+
+#include "TileEmptyContentRegistry.h"
+#include "TileLoadLifecycle.h"
+#include "TileLoadScheduler.h"
+#include "TilesetTile.h"
+#include "../core/resources/FrameResourceBudget.h"
+#include "../content/GltfContentProvider.h"
+#include "../providers/TerrainProvider.h"
+#include "../terrain/TerrainTile.h"
+
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+namespace earth_engine {
+
+struct TileMissingRequestSchedulerInput {
+    TileLoadLifecycle& loadLifecycle;
+    FrameResourceBudget& budget;
+    TerrainProvider* terrainProvider = nullptr;
+    TilesetContentProvider* contentProvider = nullptr;
+    const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles;
+    const std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
+        terrainCache;
+    const TileEmptyContentRegistry& emptyContentRegistry;
+};
+
+class TileMissingRequestScheduler {
+public:
+    template <typename TerrainCacheKeyFn,
+              typename PrepareUpsampleSourceTileFn,
+              typename EnsureTileFn>
+    static TileLoadRequestOutcome request(
+        const std::vector<TileLoadRequest>& loadRequests,
+        TileMissingRequestSchedulerInput input,
+        TerrainCacheKeyFn&& terrainCacheKey,
+        PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
+        EnsureTileFn&& ensureTile) {
+        return TileLoadScheduler::requestMissingTiles(
+            loadRequests,
+            TileLoadSchedulerInput{
+                input.loadLifecycle,
+                input.budget,
+                input.terrainProvider,
+                input.contentProvider},
+            terrainCacheKey,
+            [&](const TileKey& key,
+                const std::string& cacheKey,
+                TilesetTile*& tileState) {
+                return makeSnapshot(input, key, cacheKey, tileState);
+            },
+            [&](const std::string& cacheKey) {
+                return input.emptyContentRegistry.contains(cacheKey);
+            },
+            prepareUpsampleSourceTile,
+            [&](const TileKey& key) {
+                if (TilesetTile* tile = ensureTile(key)) {
+                    tile->loadState = TileLoadState::ContentLoading;
+                    tile->contentKind = TileContentKind::Unknown;
+                }
+            });
+    }
+
+private:
+    static TileLoadRequestSnapshot makeSnapshot(
+        const TileMissingRequestSchedulerInput& input,
+        const TileKey& key,
+        const std::string& cacheKey,
+        TilesetTile*& outTileState) {
+        auto tileStateIt = input.tiles.find(cacheKey);
+        outTileState = tileStateIt != input.tiles.end()
+            ? tileStateIt->second.get()
+            : nullptr;
+
+        TileLoadRequestSnapshot snapshot;
+        snapshot.hasTile = outTileState != nullptr;
+        snapshot.upsampledFromParent =
+            outTileState != nullptr && outTileState->upsampledFromParent;
+        snapshot.contentProviderSupportsTile =
+            !snapshot.upsampledFromParent &&
+            input.contentProvider &&
+            input.contentProvider->supportsTile(key);
+        snapshot.terrainProviderSupportsTile =
+            input.terrainProvider &&
+            input.terrainProvider->supportsTile(key);
+        snapshot.terrainAlreadyCached =
+            input.terrainCache.count(cacheKey) > 0;
+        snapshot.hasRenderContent =
+            outTileState &&
+            outTileState->contentKind == TileContentKind::Render &&
+            outTileState->gltfModel;
+        if (outTileState) {
+            snapshot.loadState = outTileState->loadState;
+        }
+        return snapshot;
+    }
+};
+
+} // namespace earth_engine

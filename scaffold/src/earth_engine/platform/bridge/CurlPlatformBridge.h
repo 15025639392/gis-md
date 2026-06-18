@@ -19,7 +19,8 @@ public:
     // ---- 网络 ----
     std::unique_ptr<HttpRequest> get(
         const std::string& url,
-        std::function<void(int statusCode, std::vector<uint8_t> body)> callback) override;
+        std::function<void(int statusCode, std::vector<uint8_t> body)> callback,
+        HttpRequestOptions options = {}) override;
 
     // ---- 文件系统 ----
     std::string cacheDirectory() const override;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TileKey.h"
+#include "TileLoadState.h"
 #include "TilePlan.h"
 #include "TileRefine.h"
 #include "TileBoundingVolume.h"
@@ -21,23 +22,6 @@
 namespace earth_engine {
 
 class RasterMappedToTilesetTile;
-
-enum class TileLoadState {
-    Unloading = -2,
-    FailedTemporarily = -1,
-    Unloaded = 0,
-    ContentLoading = 1,
-    ContentLoaded = 2,
-    Done = 3,
-    Failed = 4
-};
-
-enum class TileContentKind {
-    Unknown,
-    Empty,
-    External,
-    Render
-};
 
 enum class SurfaceDrawableSource {
     None,

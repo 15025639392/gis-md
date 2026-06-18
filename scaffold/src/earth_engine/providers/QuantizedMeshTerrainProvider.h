@@ -3,6 +3,7 @@
 #include "TerrainProvider.h"
 #include <nlohmann/json.hpp>
 #include <array>
+#include <functional>
 #include <string>
 #include <unordered_set>
 
@@ -62,7 +63,9 @@ public:
 
     void requestTile(const TileKey& key,
                      CancellationToken token,
-                     HeightmapCallback callback) override;
+                     HeightmapCallback callback,
+                     HttpRequestPriority priority =
+                         HttpRequestPriority::Normal) override;
 
     std::unique_ptr<DecodedHeightmap> decodeTile(
         const uint8_t* data, size_t len) override;
@@ -116,7 +119,10 @@ private:
     std::string buildUrlForLayer(const LayerConfig& layer,
                                  const TileKey& key) const;
     void syncLegacyFieldsFromPrimaryLayer();
-    std::vector<uint8_t> httpGet(const std::string& url);
+    std::vector<uint8_t> httpGet(
+        const std::string& url,
+        HttpRequestPriority priority = HttpRequestPriority::Normal,
+        std::function<bool()> shouldCancel = {});
     std::vector<LayerConfig> layers_;
     std::string urlTemplate_;
     std::string attribution_;

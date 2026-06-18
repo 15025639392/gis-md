@@ -526,7 +526,7 @@ static bool createEngine() {
 
         setDemoCamera();
 
-        // 创建 Android JNI HTTP 桥接
+        // 创建 Android 平台桥接；网络由 native curl scheduler 调度。
         gPlatformBridge = std::make_unique<AndroidPlatformBridge>(gJvm);
 
         // cesium-native aligned: create unified Tileset

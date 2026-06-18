@@ -19,6 +19,24 @@ android {
 
         externalNativeBuild {
             cmake {
+                def vcpkgRoot = System.getenv("VCPKG_ROOT")
+                if (vcpkgRoot != null && !vcpkgRoot.isBlank()) {
+                    def ndkHome = System.getenv("ANDROID_NDK_HOME")
+                    if (ndkHome != null && !ndkHome.isBlank()) {
+                        arguments "-DCMAKE_TOOLCHAIN_FILE=${vcpkgRoot}/scripts/buildsystems/vcpkg.cmake",
+                                  "-DEARTH_ENGINE_VCPKG_ROOT=${vcpkgRoot}",
+                                  "-DVCPKG_TARGET_TRIPLET=arm64-android",
+                                  "-DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=${ndkHome}/build/cmake/android.toolchain.cmake",
+                                  "-DCURL_DIR=${vcpkgRoot}/packages/curl_arm64-android/share/curl",
+                                  "-DOpenSSL_DIR=${vcpkgRoot}/packages/openssl_arm64-android/share/openssl",
+                                  "-DOPENSSL_ROOT_DIR=${vcpkgRoot}/packages/openssl_arm64-android",
+                                  "-DOPENSSL_INCLUDE_DIR=${vcpkgRoot}/packages/openssl_arm64-android/include",
+                                  "-DOPENSSL_SSL_LIBRARY=${vcpkgRoot}/packages/openssl_arm64-android/lib/libssl.a",
+                                  "-DOPENSSL_CRYPTO_LIBRARY=${vcpkgRoot}/packages/openssl_arm64-android/lib/libcrypto.a",
+                                  "-DZLIB_INCLUDE_DIR=${vcpkgRoot}/packages/zlib_arm64-android/include",
+                                  "-DZLIB_LIBRARY=${vcpkgRoot}/packages/zlib_arm64-android/lib/libz.a"
+                    }
+                }
                 def glmIncludeDir = System.getenv("GLM_INCLUDE_DIR")
                 if (glmIncludeDir != null && !glmIncludeDir.isBlank()) {
                     arguments "-DGLM_INCLUDE_DIR=${glmIncludeDir}"

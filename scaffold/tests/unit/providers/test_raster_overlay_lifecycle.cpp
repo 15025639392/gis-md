@@ -62,7 +62,8 @@ public:
     std::string buildUrl(const TileKey&) const override { return {}; }
     void requestTile(const TileKey& key,
                      CancellationToken,
-                     TileCallback callback) override {
+                     TileCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
         callback(key, nullptr);
     }
     std::unique_ptr<DecodedImage> decodeTile(
@@ -82,7 +83,8 @@ public:
     std::string buildUrl(const TileKey&) const override { return {}; }
     void requestTile(const TileKey& key,
                      CancellationToken,
-                     TileCallback callback) override {
+                     TileCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
         ++requestCount;
         callback(key, makeImage(2, 2, 64));
     }

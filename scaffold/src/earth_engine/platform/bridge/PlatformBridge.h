@@ -32,6 +32,16 @@ enum class LogLevel { Debug, Info, Warning, Error };
 
 enum class NetworkStatus { Online, Metered, Offline };
 
+enum class HttpRequestPriority {
+    Low = 0,
+    Normal = 1,
+    High = 2
+};
+
+struct HttpRequestOptions {
+    HttpRequestPriority priority = HttpRequestPriority::Normal;
+};
+
 /// 平台桥接抽象接口。
 /// 引擎核心通过此接口获取平台能力（网络、文件、图片解码、日志、设备信息），
 /// 不直接依赖 iOS SDK 或 Android SDK。
@@ -51,7 +61,8 @@ public:
     /// @return 取消句柄（析构时取消请求）
     virtual std::unique_ptr<class HttpRequest> get(
         const std::string& url,
-        std::function<void(int statusCode, std::vector<uint8_t> body)> callback) = 0;
+        std::function<void(int statusCode, std::vector<uint8_t> body)> callback,
+        HttpRequestOptions options = {}) = 0;
 
     // ---- 文件系统 ----
     virtual std::string cacheDirectory() const = 0;

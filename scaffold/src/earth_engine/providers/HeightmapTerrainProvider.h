@@ -57,13 +57,17 @@ public:
 
     void requestTile(const TileKey& key,
                      CancellationToken token,
-                     HeightmapCallback callback) override;
+                     HeightmapCallback callback,
+                     HttpRequestPriority priority =
+                         HttpRequestPriority::Normal) override;
 
     std::unique_ptr<DecodedHeightmap> decodeTile(
         const uint8_t* data, size_t len) override;
 
 private:
-    std::vector<uint8_t> httpGet(const std::string& url);
+    std::vector<uint8_t> httpGet(const std::string& url,
+                                 const CancellationToken& token,
+                                 HttpRequestPriority priority);
 
     std::string urlTemplate_;
     std::string attribution_;

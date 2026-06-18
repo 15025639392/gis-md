@@ -14,9 +14,64 @@
 #include "earth_engine/scene/FrameState.h"
 #include "earth_engine/scene/Scene.h"
 #include "earth_engine/terrain/QuantizedMeshParser.h"
+#include "earth_engine/tiling/GltfRenderGeometryBuilder.h"
+#include "earth_engine/tiling/TileBoundsMetrics.h"
+#include "earth_engine/tiling/TileCacheKey.h"
+#include "earth_engine/tiling/TileCacheMetrics.h"
+#include "earth_engine/tiling/TileChildMaterializer.h"
+#include "earth_engine/tiling/TileContentUploadCommitter.h"
+#include "earth_engine/tiling/TileContentUploadPolicy.h"
+#include "earth_engine/tiling/TileEmptyContentRegistry.h"
+#include "earth_engine/tiling/TileFrameState.h"
+#include "earth_engine/tiling/TileIndexState.h"
+#include "earth_engine/tiling/TileLoadDiagnostics.h"
+#include "earth_engine/tiling/TileLoadLifecycle.h"
+#include "earth_engine/tiling/TileLoadPriorityPolicy.h"
+#include "earth_engine/tiling/TileLoadQueue.h"
+#include "earth_engine/tiling/TileLoadRequestDispatcher.h"
+#include "earth_engine/tiling/TileLoadRequestPlanner.h"
+#include "earth_engine/tiling/TileLoadScheduler.h"
+#include "earth_engine/tiling/TileLodTransitionController.h"
+#include "earth_engine/tiling/TilePendingLoadQueue.h"
+#include "earth_engine/tiling/TilePendingLoadProcessor.h"
+#include "earth_engine/tiling/TilePendingUploadCompletion.h"
+#include "earth_engine/tiling/TilePendingRequestState.h"
 #include "earth_engine/tiling/TilePlan.h"
+#include "earth_engine/tiling/TilePriorityMetrics.h"
+#include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
+#include "earth_engine/tiling/TileRenderablePolicy.h"
+#include "earth_engine/tiling/TileRenderPlanFinalizer.h"
+#include "earth_engine/tiling/TileSelectionChildTraversal.h"
+#include "earth_engine/tiling/TileSelectionCullingPolicy.h"
+#include "earth_engine/tiling/TileSelectionFrameBuilder.h"
+#include "earth_engine/tiling/TileSelectionHistory.h"
+#include "earth_engine/tiling/TileSelectionInputMetrics.h"
+#include "earth_engine/tiling/TileSelectionKickPolicy.h"
+#include "earth_engine/tiling/TileSelectionMetrics.h"
+#include "earth_engine/tiling/TileSelectionPostTraversalPolicy.h"
+#include "earth_engine/tiling/TileSelectionPreTraversalPolicy.h"
+#include "earth_engine/tiling/TileSelectionRefineFlowPolicy.h"
+#include "earth_engine/tiling/TileSelectionRefinementPolicy.h"
+#include "earth_engine/tiling/TileSelectionRenderEntryPolicy.h"
+#include "earth_engine/tiling/TileSelectionResetPolicy.h"
+#include "earth_engine/tiling/TileSelectionRootPolicy.h"
+#include "earth_engine/tiling/TileSelectionSummaryPolicy.h"
+#include "earth_engine/tiling/TileSelectionTraversalCounterPolicy.h"
+#include "earth_engine/tiling/TileSelectionRasterOverlayPreparer.h"
+#include "earth_engine/tiling/TileSelectionVisitPreparation.h"
+#include "earth_engine/tiling/TileSelectionVisibilitySampler.h"
 #include "earth_engine/tiling/TileScheme.h"
+#include "earth_engine/tiling/TileTerminalLoadCommitter.h"
+#include "earth_engine/tiling/TileTerminalLoadPolicy.h"
+#include "earth_engine/tiling/TileTerrainHeightRangePolicy.h"
+#include "earth_engine/tiling/TileTerrainUploadCommitter.h"
+#include "earth_engine/tiling/TileTerrainUploadPolicy.h"
+#include "earth_engine/tiling/TileTraversalDetails.h"
+#include "earth_engine/tiling/TileViewerRequestVolumePolicy.h"
+#include "earth_engine/tiling/TileSubtreeTraversal.h"
 #include "earth_engine/tiling/TileSurface.h"
+#include "earth_engine/tiling/TileUnloadPolicy.h"
+#include "earth_engine/tiling/TileUnloadQueue.h"
 #include "earth_engine/tiling/Tileset.h"
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
 
@@ -52,7 +107,8 @@ struct TilesetTestAccess {
     }
 
     static std::string terrainCacheKey(Tileset& tileset, const TileKey& key) {
-        return tileset.terrainCacheKey(key);
+        (void)tileset;
+        return TileCacheKey::forTile(key);
     }
 
     static void putTerrainCache(
@@ -72,7 +128,9 @@ struct TilesetTestAccess {
     }
 
     static bool isTileRenderable(Tileset& tileset, const TilesetTile& tile) {
-        return tileset.isTileRenderable(tile);
+        return TileSelectionRasterOverlayPreparer::isRenderable(
+            tile,
+            tileset.rasterOverlays_);
     }
 
     static void addTileToCurrentPlan(Tileset& tileset, TilesetTile& tile) {
@@ -107,9 +165,9 @@ struct TilesetTestAccess {
 
     static void requestMissingTile(Tileset& tileset, const TileKey& key) {
         tileset.requestMissingTiles({
-            Tileset::TileLoadRequest{
+            TileLoadRequest{
                 key,
-                Tileset::TileLoadPriorityGroup::Normal}});
+                TileLoadPriorityGroup::Normal}});
     }
 
     static void requestMissingTilesWithPriorities(
@@ -119,13 +177,13 @@ struct TilesetTestAccess {
         const TileKey& secondKey,
         double secondPriority) {
         tileset.requestMissingTiles({
-            Tileset::TileLoadRequest{
+            TileLoadRequest{
                 firstKey,
-                Tileset::TileLoadPriorityGroup::Normal,
+                TileLoadPriorityGroup::Normal,
                 firstPriority},
-            Tileset::TileLoadRequest{
+            TileLoadRequest{
                 secondKey,
-                Tileset::TileLoadPriorityGroup::Normal,
+                TileLoadPriorityGroup::Normal,
                 secondPriority}});
     }
 
@@ -135,29 +193,29 @@ struct TilesetTestAccess {
         const TileKey& firstKey,
         const TileKey& secondKey) {
         tileset.requestMissingTiles({
-            Tileset::TileLoadRequest{
+            TileLoadRequest{
                 firstKey,
-                Tileset::TileLoadPriorityGroup::Normal,
+                TileLoadPriorityGroup::Normal,
                 100.0},
-            Tileset::TileLoadRequest{
+            TileLoadRequest{
                 secondKey,
-                Tileset::TileLoadPriorityGroup::Normal,
+                TileLoadPriorityGroup::Normal,
                 1.0}},
             &budget);
     }
 
     static void requestMissingPreload(Tileset& tileset, const TileKey& key) {
         tileset.requestMissingTiles({
-            Tileset::TileLoadRequest{
+            TileLoadRequest{
                 key,
-                Tileset::TileLoadPriorityGroup::Preload}});
+                TileLoadPriorityGroup::Preload}});
     }
 
     static void requestMissingUrgent(Tileset& tileset, const TileKey& key) {
         tileset.requestMissingTiles({
-            Tileset::TileLoadRequest{
+            TileLoadRequest{
                 key,
-                Tileset::TileLoadPriorityGroup::Urgent}});
+                TileLoadPriorityGroup::Urgent}});
     }
 
     static void processPendingUploads(Tileset& tileset) {
@@ -171,7 +229,16 @@ struct TilesetTestAccess {
     }
 
     static void prefetchRasterOverlays(Tileset& tileset, TilesetTile& tile) {
-        tileset.prefetchRasterOverlays(tile);
+        const std::vector<size_t> overlayOrder =
+            TileSelectionRasterOverlayPreparer::processingOrder(
+                tileset.rasterOverlays_);
+        TileRasterOverlayPrefetcher::prefetch(
+            tile,
+            tileset.rasterOverlays_,
+            overlayOrder,
+            tileset.device_,
+            tileset.options_.maximumScreenSpaceError,
+            tileset.frameResourceBudget_);
     }
 
     static bool loadQueueEmpty(const Tileset& tileset) {
@@ -184,7 +251,7 @@ struct TilesetTestAccess {
 
     static bool loadQueueContainsOnly(const Tileset& tileset,
                                       const TileKey& key,
-                                      Tileset::TileLoadPriorityGroup group) {
+                                      TileLoadPriorityGroup group) {
         return tileset.loadQueue_.size() == 1 &&
                tileset.loadQueue_.front().key == key &&
                tileset.loadQueue_.front().group == group;
@@ -195,14 +262,14 @@ struct TilesetTestAccess {
         return loadQueueContainsOnly(
             tileset,
             key,
-            Tileset::TileLoadPriorityGroup::Normal);
+            TileLoadPriorityGroup::Normal);
     }
 
     static bool loadQueueContainsNormal(const Tileset& tileset,
                                         const TileKey& key) {
-        for (const Tileset::TileLoadRequest& request : tileset.loadQueue_) {
+        for (const TileLoadRequest& request : tileset.loadQueue_) {
             if (request.key == key &&
-                request.group == Tileset::TileLoadPriorityGroup::Normal) {
+                request.group == TileLoadPriorityGroup::Normal) {
                 return true;
             }
         }
@@ -211,9 +278,9 @@ struct TilesetTestAccess {
 
     static bool loadQueueContainsUrgent(const Tileset& tileset,
                                         const TileKey& key) {
-        for (const Tileset::TileLoadRequest& request : tileset.loadQueue_) {
+        for (const TileLoadRequest& request : tileset.loadQueue_) {
             if (request.key == key &&
-                request.group == Tileset::TileLoadPriorityGroup::Urgent) {
+                request.group == TileLoadPriorityGroup::Urgent) {
                 return true;
             }
         }
@@ -222,7 +289,7 @@ struct TilesetTestAccess {
 
     static bool loadQueueContainsAny(const Tileset& tileset,
                                      const TileKey& key) {
-        for (const Tileset::TileLoadRequest& request : tileset.loadQueue_) {
+        for (const TileLoadRequest& request : tileset.loadQueue_) {
             if (request.key == key) {
                 return true;
             }
@@ -231,15 +298,15 @@ struct TilesetTestAccess {
     }
 
     static void queuePreload(Tileset& tileset, const TileKey& key) {
-        tileset.queueTileLoad(key, Tileset::TileLoadPriorityGroup::Preload);
+        tileset.queueTileLoad(key, TileLoadPriorityGroup::Preload);
     }
 
     static void queueNormal(Tileset& tileset, const TileKey& key) {
-        tileset.queueTileLoad(key, Tileset::TileLoadPriorityGroup::Normal);
+        tileset.queueTileLoad(key, TileLoadPriorityGroup::Normal);
     }
 
     static void queueUrgent(Tileset& tileset, const TileKey& key) {
-        tileset.queueTileLoad(key, Tileset::TileLoadPriorityGroup::Urgent);
+        tileset.queueTileLoad(key, TileLoadPriorityGroup::Urgent);
     }
 
     static int64_t maximumCachedBytes() {
@@ -247,7 +314,7 @@ struct TilesetTestAccess {
     }
 
     static int64_t estimateTileBytes(const TilesetTile& tile) {
-        return Tileset::estimateTileBytes(tile);
+        return TileCacheMetrics::estimateTileBytes(tile);
     }
 
     static void updateTotalBytesUsed(Tileset& tileset) {
@@ -303,28 +370,28 @@ struct TilesetTestAccess {
     }
 
     static Vec3 tileBoundsCenter(const Rectangle& bounds) {
-        return Tileset::tileBoundsCenter(bounds);
+        return TileBoundsMetrics::tileBoundsCenter(bounds);
     }
 
     static double tileBoundsRadius(const TilesetTile& tile,
                                    const Vec3& center) {
-        return Tileset::tileBoundsRadius(tile, center);
+        return TileBoundsMetrics::tileBoundsRadius(tile, center);
     }
 
     static std::optional<OrientedBoundingBox> tileBoundingRegionObb(
         const TilesetTile& tile) {
-        return Tileset::tileBoundingRegionObb(tile);
+        return TileBoundsMetrics::tileBoundingRegionObb(tile);
     }
 
     static bool tileIntersectsFrustum(const TilesetTile& tile,
                                       const Frustum& frustum) {
-        return Tileset::tileIntersectsFrustum(tile, frustum);
+        return TileBoundsMetrics::tileIntersectsFrustum(tile, frustum);
     }
 
     static double approximateDistanceToTileBounds(
         const TilesetTile& tile,
         const Vec3& cameraPosition) {
-        return Tileset::approximateDistanceToTileBounds(
+        return TileBoundsMetrics::approximateDistanceToTileBounds(
             tile,
             cameraPosition);
     }
@@ -2656,6 +2723,29 @@ void testTilesetBoundsUseQuantizedMeshHeightRange() {
           "Tileset: BoundingRegion center-position distance falls back to OBB like cesium-native");
 }
 
+void testTileBoundsMetricsUsesCentralDefaultTerrainHeightRange() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey key{"Geographic-TMS", 5, 20, 12};
+    const Rectangle bounds = scheme->tileToRectangle(key);
+
+    TilesetTile defaultTile(key, bounds);
+    const Vec3 center = TileBoundsMetrics::tileBoundsCenter(bounds);
+    const double defaultRadius =
+        TileBoundsMetrics::tileBoundsRadius(defaultTile, center);
+
+    TilesetTile explicitDefaultTile(key, bounds);
+    explicitDefaultTile.hasTerrainHeightRange = true;
+    explicitDefaultTile.terrainMinimumHeight =
+        TileBoundsMetrics::kDefaultTerrainMinimumHeight;
+    explicitDefaultTile.terrainMaximumHeight =
+        TileBoundsMetrics::kDefaultTerrainMaximumHeight;
+    const double explicitDefaultRadius =
+        TileBoundsMetrics::tileBoundsRadius(explicitDefaultTile, center);
+
+    check(std::abs(defaultRadius - explicitDefaultRadius) < 1e-6,
+          "TileBoundsMetrics: missing terrain height range uses the central default range");
+}
+
 void testTilesetBoundingRegionObbUsesQuantizedMeshHeightRange() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey key{"Geographic-TMS", 6, 40, 24};
@@ -3143,7 +3233,8 @@ public:
 
     void requestTile(const TileKey& key,
                      CancellationToken,
-                     HeightmapCallback callback) override {
+                     HeightmapCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
         ++requestCount;
         callback(key, TerrainTileLoadResult::retryLater());
     }
@@ -3179,7 +3270,8 @@ public:
 
     void requestTile(const TileKey& key,
                      CancellationToken,
-                     HeightmapCallback callback) override {
+                     HeightmapCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
         ++requestCount;
         callback(key, TerrainTileLoadResult::retryLater());
     }
@@ -3218,7 +3310,8 @@ public:
 
     void requestTile(const TileKey& key,
                      CancellationToken,
-                     HeightmapCallback callback) override {
+                     HeightmapCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
         requestedKeys_->push_back(key);
         callback(key, TerrainTileLoadResult::retryLater());
     }
@@ -3249,7 +3342,8 @@ public:
 
     void requestTile(const TileKey& key,
                      CancellationToken,
-                     HeightmapCallback callback) override {
+                     HeightmapCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
         ++requestCount;
         switch (status_) {
             case TerrainTileLoadStatus::Success:
@@ -3307,7 +3401,8 @@ public:
 
     void requestTile(const TileKey& key,
                      CancellationToken,
-                     HeightmapCallback callback) override {
+                     HeightmapCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
         pendingRequests.push_back(PendingRequest{key, std::move(callback)});
     }
 
@@ -3362,7 +3457,8 @@ public:
 
     void requestTileContent(const TileKey& key,
                             CancellationToken,
-                            ContentCallback callback) override {
+                            ContentCallback callback,
+                            HttpRequestPriority = HttpRequestPriority::Normal) override {
         pendingRequests.push_back(PendingRequest{key, std::move(callback)});
     }
 
@@ -3436,7 +3532,8 @@ public:
 
     void requestTileContent(const TileKey& key,
                             CancellationToken,
-                            ContentCallback callback) override {
+                            ContentCallback callback,
+                            HttpRequestPriority = HttpRequestPriority::Normal) override {
         callback(key, TileContentLoadResult::retryLater());
     }
 
@@ -8381,6 +8478,4106 @@ void testTilesetLoadQueueKeepsTraversalPriority() {
     }
 }
 
+void testTilePriorityMetricsMatchesCesiumNativeFormula() {
+    const Vec3 cameraPosition(0.0, 0.0, 0.0);
+    const Vec3 cameraDirection(1.0, 0.0, 0.0);
+    constexpr double distance = 100.0;
+
+    check(std::abs(TilePriorityMetrics::computeTilePriority(
+                       Vec3(10.0, 0.0, 0.0),
+                       cameraPosition,
+                       cameraDirection,
+                       distance)) < 1e-12,
+          "TilePriorityMetrics: tile in view direction has highest priority");
+    check(std::abs(TilePriorityMetrics::computeTilePriority(
+                       Vec3(0.0, 10.0, 0.0),
+                       cameraPosition,
+                       cameraDirection,
+                       distance) - distance) < 1e-12,
+          "TilePriorityMetrics: tile perpendicular to view keeps distance priority");
+    check(std::abs(TilePriorityMetrics::computeTilePriority(
+                       Vec3(-10.0, 0.0, 0.0),
+                       cameraPosition,
+                       cameraDirection,
+                       distance) - distance * 2.0) < 1e-12,
+          "TilePriorityMetrics: tile behind camera has lowest directional priority");
+    check(TilePriorityMetrics::computeTilePriority(
+              cameraPosition,
+              cameraPosition,
+              cameraDirection,
+              distance) == distance,
+          "TilePriorityMetrics: degenerate camera-at-tile case falls back to distance");
+    check(std::abs(TilePriorityMetrics::computeTilePriority(
+                       Vec3(10.0, 0.0, 0.0),
+                       cameraPosition,
+                       Vec3(2.0, 0.0, 0.0),
+                       distance)) < 1e-12,
+          "TilePriorityMetrics: view dot is clamped like cesium-native");
+}
+
+void testTileSelectionInputMetricsComputesCenterPriorityAndSse() {
+    TilesetTile tile(
+        TileKey{"test", 0, 0, 0},
+        Rectangle{-1.0, -0.5, 1.0, 0.5});
+
+    const Vec3 boundsCenter = TileBoundsMetrics::tileBoundsCenter(tile.bounds);
+    check(TileSelectionInputMetrics::tileCenter(tile) == boundsCenter,
+          "TileSelectionInputMetrics: tile center falls back to bounds center");
+
+    tile.boundingVolume =
+        TileBoundingVolume::fromSphere(Vec3(10.0, 20.0, 30.0), 5.0);
+    check(TileSelectionInputMetrics::tileCenter(tile) ==
+              Vec3(10.0, 20.0, 30.0),
+          "TileSelectionInputMetrics: tile center prefers bounding volume center");
+
+    const double priority = TileSelectionInputMetrics::priorityForView(
+        Vec3(10.0, 0.0, 0.0),
+        Vec3::zero(),
+        Vec3(1.0, 0.0, 0.0),
+        100.0);
+    check(std::abs(priority) < 1e-12,
+          "TileSelectionInputMetrics: priority delegates directional metric");
+
+    const Mat4 projection = Camera{}.projectionMatrix(800.0, 800.0);
+    const double nativeSse =
+        TileSelectionInputMetrics::screenSpaceErrorForView(
+            10.0,
+            projection,
+            800,
+            1000.0);
+    Mat4 strongerProjection = projection;
+    strongerProjection(1, 1) *= 4.0;
+    const double strongerSse =
+        TileSelectionInputMetrics::screenSpaceErrorForView(
+            10.0,
+            strongerProjection,
+            800,
+            1000.0);
+    check(nativeSse > 0.0 && strongerSse > nativeSse * 3.9,
+          "TileSelectionInputMetrics: SSE follows projection vertical scale");
+    check(TileSelectionInputMetrics::screenSpaceErrorForView(
+              0.0,
+              projection,
+              800,
+              1000.0) == 0.0,
+          "TileSelectionInputMetrics: zero geometric error has zero SSE");
+
+    tile.geometricError = 10.0;
+    std::vector<FrameState::SelectorView> views(2);
+    views[0].position = Vec3(10.0, 0.0, 0.0);
+    views[0].direction = Vec3(1.0, 0.0, 0.0);
+    views[0].projectionMatrix = projection;
+    views[0].viewportHeightPixels = 800;
+    views[1].position = Vec3(20.0, 0.0, 0.0);
+    views[1].direction = Vec3(-1.0, 0.0, 0.0);
+    views[1].projectionMatrix = strongerProjection;
+    views[1].viewportHeightPixels = 800;
+
+    const TileSelectionInputSummary summary =
+        TileSelectionInputMetrics::summarizeForViews(tile, views);
+    check(summary.distances.size() == 2 &&
+              summary.distances[0] <= summary.distances[1],
+          "TileSelectionInputMetrics: summary computes per-view distances");
+    const double expectedPriority = std::min(
+        TileSelectionInputMetrics::priorityForView(
+            TileSelectionInputMetrics::tileCenter(tile),
+            views[0].position,
+            views[0].direction,
+            summary.distances[0]),
+        TileSelectionInputMetrics::priorityForView(
+            TileSelectionInputMetrics::tileCenter(tile),
+            views[1].position,
+            views[1].direction,
+            summary.distances[1]));
+    check(std::abs(summary.priority - expectedPriority) < 1e-12,
+          "TileSelectionInputMetrics: summary uses best per-view priority");
+    check(summary.screenSpaceError >=
+              TileSelectionInputMetrics::screenSpaceErrorForView(
+                  tile.geometricError,
+                  views[0].projectionMatrix,
+                  views[0].viewportHeightPixels,
+                  summary.distances[0]) &&
+              summary.screenSpaceError >=
+              TileSelectionInputMetrics::screenSpaceErrorForView(
+                  tile.geometricError,
+                  views[1].projectionMatrix,
+                  views[1].viewportHeightPixels,
+                  summary.distances[1]),
+          "TileSelectionInputMetrics: summary uses maximum per-view SSE");
+}
+
+void testTileLoadPriorityPolicyMatchesNativeOrdering() {
+    check(TileLoadPriorityPolicy::hasHigherPriority(
+              TileLoadPriorityGroup::Urgent,
+              100.0,
+              TileLoadPriorityGroup::Normal,
+              1.0),
+          "TileLoadPriorityPolicy: urgent group wins over lower numeric normal priority");
+    check(TileLoadPriorityPolicy::hasHigherPriority(
+              TileLoadPriorityGroup::Normal,
+              1.0,
+              TileLoadPriorityGroup::Normal,
+              100.0),
+          "TileLoadPriorityPolicy: lower numeric priority wins within a group");
+    check(!TileLoadPriorityPolicy::hasHigherPriority(
+              TileLoadPriorityGroup::Preload,
+              1.0,
+              TileLoadPriorityGroup::Urgent,
+              100.0),
+          "TileLoadPriorityPolicy: preload never outranks urgent by numeric priority");
+
+    struct TestRequest {
+        TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;
+        double priority = 0.0;
+        int id = 0;
+    };
+    std::vector<TestRequest> requests{
+        {TileLoadPriorityGroup::Normal, 1.0, 1},
+        {TileLoadPriorityGroup::Urgent, 100.0, 2},
+        {TileLoadPriorityGroup::Urgent, 10.0, 3},
+        {TileLoadPriorityGroup::Preload, 0.0, 4},
+    };
+    TileLoadPriorityPolicy::sortByPriority(requests);
+    check(requests.size() == 4 &&
+              requests[0].id == 3 &&
+              requests[1].id == 2 &&
+              requests[2].id == 1 &&
+              requests[3].id == 4,
+          "TileLoadPriorityPolicy: sort uses group first then numeric priority");
+    check(TileLoadPriorityPolicy::toFramePriority(
+              TileLoadPriorityGroup::Preload) ==
+              FrameResourcePriority::Preload &&
+          TileLoadPriorityPolicy::toFramePriority(
+              TileLoadPriorityGroup::Normal) ==
+              FrameResourcePriority::Normal &&
+          TileLoadPriorityPolicy::toFramePriority(
+              TileLoadPriorityGroup::Urgent) ==
+              FrameResourcePriority::Urgent,
+          "TileLoadPriorityPolicy: frame resource priority mapping is explicit");
+}
+
+void testTileLoadQueueDeduplicatesAndUpgradesPriority() {
+    TileLoadQueue queue;
+    const TileKey key{"test", 1, 2, 3};
+
+    queue.queue(key, TileLoadPriorityGroup::Preload, 1.0);
+    queue.queue(key, TileLoadPriorityGroup::Normal, 100.0);
+    queue.queue(key, TileLoadPriorityGroup::Normal, 10.0);
+    queue.queue(key, TileLoadPriorityGroup::Preload, 0.0);
+    queue.queue(key, TileLoadPriorityGroup::Urgent, 1000.0);
+
+    check(queue.size() == 1,
+          "TileLoadQueue: duplicate tile keeps a single request");
+    check(queue.front().key == key,
+          "TileLoadQueue: duplicate request preserves tile key");
+    check(queue.front().group == TileLoadPriorityGroup::Urgent,
+          "TileLoadQueue: higher priority group upgrades queued request");
+    check(queue.front().priority == 1000.0,
+          "TileLoadQueue: upgraded request keeps selected priority value");
+}
+
+void testTileUnloadQueueMaintainsLruOrderAndDeduplicatesKeys() {
+    TileUnloadQueue queue;
+
+    queue.pushBackIfAbsent("a");
+    queue.pushBackIfAbsent("b");
+    queue.pushBackIfAbsent("a");
+    check(queue.size() == 2 && queue.front() == "a",
+          "TileUnloadQueue: duplicate keys are not requeued");
+
+    queue.moveFrontToBack();
+    check(queue.front() == "b",
+          "TileUnloadQueue: front key rotates to the back");
+    queue.erase("missing");
+    queue.erase("b");
+    check(queue.size() == 1 && queue.front() == "a",
+          "TileUnloadQueue: erase removes only present keys");
+    queue.popFront();
+    check(queue.empty() && !queue.contains("a"),
+          "TileUnloadQueue: popFront clears map membership");
+}
+
+void testTileIndexStateQueuesOnlyUnloadableTiles() {
+    TileUnloadQueue unloadQueue;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+
+    auto renderTile = std::make_unique<TilesetTile>(
+        TileKey{"test", 0, 0, 0},
+        Rectangle{});
+    renderTile->contentKind = TileContentKind::Render;
+    renderTile->loadState = TileLoadState::Done;
+    tiles["render"] = std::move(renderTile);
+
+    auto loadingTile = std::make_unique<TilesetTile>(
+        TileKey{"test", 0, 0, 1},
+        Rectangle{});
+    loadingTile->contentKind = TileContentKind::Render;
+    loadingTile->loadState = TileLoadState::ContentLoading;
+    tiles["loading"] = std::move(loadingTile);
+    tiles["null"] = nullptr;
+
+    TileIndexState::markEligibleForUnloading(
+        unloadQueue,
+        tiles,
+        "render");
+    TileIndexState::markEligibleForUnloading(
+        unloadQueue,
+        tiles,
+        "loading");
+    TileIndexState::markEligibleForUnloading(
+        unloadQueue,
+        tiles,
+        "null");
+    TileIndexState::markEligibleForUnloading(
+        unloadQueue,
+        tiles,
+        "missing");
+
+    check(unloadQueue.size() == 1 && unloadQueue.contains("render"),
+          "TileIndexState: only unloadable tile content enters unload queue");
+
+    TileIndexState::markIneligibleForUnloading(unloadQueue, "render");
+    check(unloadQueue.empty(),
+          "TileIndexState: ineligible tile is removed from unload queue");
+}
+
+void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
+    const TileKey erasedKey{"test", 1, 2, 3};
+    const TileKey keptKey{"test", 1, 2, 4};
+    const auto cacheKeyForTile = [](const TileKey& key) {
+        return key.schemeId + ":" +
+               std::to_string(key.z) + ":" +
+               std::to_string(key.x) + ":" +
+               std::to_string(key.y);
+    };
+    const std::string erasedCacheKey = cacheKeyForTile(erasedKey);
+    const std::string keptCacheKey = cacheKeyForTile(keptKey);
+
+    TileUnloadQueue unloadQueue;
+    unloadQueue.pushBackIfAbsent(erasedCacheKey);
+    unloadQueue.pushBackIfAbsent(keptCacheKey);
+
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    terrainCache[erasedCacheKey] = std::make_unique<DecodedHeightmap>();
+    terrainCache[keptCacheKey] = std::make_unique<DecodedHeightmap>();
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(erasedCacheKey);
+    emptyContentRegistry.insert(keptCacheKey);
+
+    TileLoadQueue loadQueue;
+    loadQueue.queue(erasedKey, TileLoadPriorityGroup::Normal, 10.0);
+    loadQueue.queue(keptKey, TileLoadPriorityGroup::Normal, 1.0);
+
+    TileLoadLifecycle lifecycle;
+    lifecycle.requestState().beginTerrainRequest(
+        erasedCacheKey,
+        CancellationToken{});
+    lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+        erasedKey,
+        erasedCacheKey,
+        TileLoadPriorityGroup::Normal,
+        10.0,
+        nullptr});
+    lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+        keptKey,
+        keptCacheKey,
+        TileLoadPriorityGroup::Normal,
+        1.0,
+        nullptr});
+
+    TileIndexState::eraseCacheKeyState(
+        erasedCacheKey,
+        unloadQueue,
+        terrainCache,
+        emptyContentRegistry,
+        loadQueue,
+        lifecycle,
+        cacheKeyForTile);
+
+    check(!unloadQueue.contains(erasedCacheKey) &&
+              unloadQueue.contains(keptCacheKey) &&
+              terrainCache.find(erasedCacheKey) == terrainCache.end() &&
+              terrainCache.find(keptCacheKey) != terrainCache.end() &&
+              !emptyContentRegistry.contains(erasedCacheKey) &&
+              emptyContentRegistry.contains(keptCacheKey),
+          "TileIndexState: erase removes matching cache and unload state only");
+    check(loadQueue.size() == 1 &&
+              loadQueue.front().key == keptKey &&
+              !lifecycle.containsWorkForCacheKey(erasedCacheKey) &&
+              lifecycle.containsWorkForCacheKey(keptCacheKey),
+          "TileIndexState: erase removes matching load queue and lifecycle work only");
+}
+
+void testTileCacheMetricsCountsHeightmapAndTilePayloads() {
+    DecodedHeightmap heightmap;
+    heightmap.rawData.resize(7);
+    heightmap.heights.resize(3);
+    heightmap.noDataValues.resize(2);
+    heightmap.metadataAvailability.resize(4);
+
+    const int64_t expectedHeightmapBytes =
+        7 +
+        static_cast<int64_t>(3 * sizeof(float)) +
+        static_cast<int64_t>(2 * sizeof(float)) +
+        static_cast<int64_t>(4 * sizeof(std::array<int, 5>));
+    check(TileCacheMetrics::estimateHeightmapBytes(heightmap) ==
+              expectedHeightmapBytes,
+          "TileCacheMetrics: heightmap estimate counts decoded payloads");
+
+    TilesetTile tile;
+    tile.key = TileKey{"test", 0, 0, 0};
+    tile.mesh = std::make_unique<SurfaceTileMesh>();
+    tile.mesh->vertices.resize(2);
+    tile.mesh->indices.resize(5);
+    tile.mesh->waterMask.data.resize(6);
+    tile.mesh->metadataAvailability.resize(1);
+    auto retainedHeightmap = std::make_unique<DecodedHeightmap>();
+    retainedHeightmap->rawData.resize(7);
+    retainedHeightmap->heights.resize(3);
+    retainedHeightmap->noDataValues.resize(2);
+    retainedHeightmap->metadataAvailability.resize(4);
+    tile.heightmap = std::move(retainedHeightmap);
+
+    const int64_t expectedTileBytes =
+        static_cast<int64_t>(2 * sizeof(SurfaceVertex)) +
+        static_cast<int64_t>(5 * sizeof(uint32_t)) +
+        6 +
+        static_cast<int64_t>(sizeof(std::array<int, 5>)) +
+        expectedHeightmapBytes;
+    check(TileCacheMetrics::estimateTileBytes(tile) == expectedTileBytes,
+          "TileCacheMetrics: tile estimate counts mesh and retained heightmap");
+}
+
+void testTileCacheMetricsTotalsTileAndTerrainCachePayloads() {
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto tile = std::make_unique<TilesetTile>(
+        TileKey{"test", 0, 0, 0},
+        Rectangle{});
+    tile->mesh = std::make_unique<SurfaceTileMesh>();
+    tile->mesh->vertices.resize(1);
+    const int64_t expectedTileBytes =
+        static_cast<int64_t>(sizeof(SurfaceVertex));
+    tiles["tile"] = std::move(tile);
+    tiles["null-tile"] = nullptr;
+
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    auto heightmap = std::make_unique<DecodedHeightmap>();
+    heightmap->rawData.resize(9);
+    const int64_t expectedHeightmapBytes = 9;
+    terrainCache["terrain"] = std::move(heightmap);
+    terrainCache["null-terrain"] = nullptr;
+
+    check(TileCacheMetrics::estimateTotalBytes(tiles, terrainCache) ==
+              expectedTileBytes + expectedHeightmapBytes,
+          "TileCacheMetrics: total estimate sums tile and terrain cache payloads");
+}
+
+void testTileRenderablePolicyClassifiesRenderableContent() {
+    TileRenderableSnapshot snapshot;
+    snapshot.loadState = TileLoadState::Failed;
+    snapshot.contentKind = TileContentKind::Unknown;
+    check(TileRenderablePolicy::isCompleteRenderable(snapshot),
+          "TileRenderablePolicy: failed tile is renderable as empty fallback");
+
+    snapshot.loadState = TileLoadState::ContentLoading;
+    snapshot.contentKind = TileContentKind::Render;
+    snapshot.meshReady = true;
+    check(!TileRenderablePolicy::isCompleteRenderable(snapshot),
+          "TileRenderablePolicy: non-done tile is not complete renderable");
+
+    snapshot.loadState = TileLoadState::Done;
+    snapshot.requiredRasterOverlaysReady = false;
+    check(!TileRenderablePolicy::isCompleteRenderable(snapshot),
+          "TileRenderablePolicy: required raster overlays block completeness");
+
+    snapshot.requiredRasterOverlaysReady = true;
+    snapshot.unconditionallyRefine = true;
+    snapshot.hasChildren = true;
+    check(!TileRenderablePolicy::isCompleteRenderable(snapshot),
+          "TileRenderablePolicy: unconditional refine parent with children is not renderable");
+
+    snapshot.unconditionallyRefine = false;
+    snapshot.hasChildren = false;
+    snapshot.meshReady = false;
+    check(!TileRenderablePolicy::isCompleteRenderable(snapshot),
+          "TileRenderablePolicy: render content requires mesh readiness");
+
+    snapshot.meshReady = true;
+    check(TileRenderablePolicy::isCompleteRenderable(snapshot),
+          "TileRenderablePolicy: ready render content is renderable");
+
+    snapshot.contentKind = TileContentKind::External;
+    snapshot.meshReady = false;
+    check(TileRenderablePolicy::isCompleteRenderable(snapshot),
+          "TileRenderablePolicy: external done content is renderable");
+
+    check(TileRenderablePolicy::hasSurfaceDrawable(
+              TileContentKind::Render,
+              TileLoadState::Done,
+              true,
+              true),
+          "TileRenderablePolicy: render drawable requires mesh and GPU buffer");
+    check(!TileRenderablePolicy::hasSurfaceDrawable(
+              TileContentKind::Render,
+              TileLoadState::Done,
+              true,
+              false),
+          "TileRenderablePolicy: render drawable requires GPU buffer");
+    check(TileRenderablePolicy::hasSurfaceDrawable(
+              TileContentKind::Empty,
+              TileLoadState::Failed,
+              false,
+              false),
+          "TileRenderablePolicy: empty failed content is drawable");
+}
+
+void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {
+    TileSelectionRefineFlowResult refineFlow;
+    refineFlow.ancestorMeetsSse = false;
+    TileSelectionPreTraversalPlan plan =
+        TileSelectionPreTraversalPolicy::plan(
+            TileSelectionPreTraversalInput{
+                false,
+                TileRefine::Replace,
+                refineFlow});
+    check(plan.finishAsSingleTile &&
+              plan.finishReason ==
+                  TileSelectionPreTraversalFinishReason::CannotRefine,
+          "TileSelectionPreTraversalPolicy: non-refinable tile finishes as a single tile");
+    check(plan.singleTileShouldQueueLoad,
+          "TileSelectionPreTraversalPolicy: non-refinable tile keeps normal load eligibility");
+    check(!plan.visitChildren,
+          "TileSelectionPreTraversalPolicy: non-refinable tile does not visit children");
+
+    refineFlow = TileSelectionRefineFlowResult{};
+    refineFlow.refine = false;
+    refineFlow.ancestorMeetsSse = true;
+    plan = TileSelectionPreTraversalPolicy::plan(
+        TileSelectionPreTraversalInput{
+            true,
+            TileRefine::Replace,
+            refineFlow});
+    check(plan.finishAsSingleTile &&
+              plan.finishReason ==
+                  TileSelectionPreTraversalFinishReason::DoesNotRefine,
+          "TileSelectionPreTraversalPolicy: satisfied refined decision renders current tile");
+    check(!plan.singleTileShouldQueueLoad,
+          "TileSelectionPreTraversalPolicy: ancestor-meets-SSE continuation suppresses duplicate normal load");
+
+    refineFlow = TileSelectionRefineFlowResult{};
+    refineFlow.refine = true;
+    refineFlow.queueUrgentLoad = true;
+    refineFlow.queuedForLoad = true;
+    refineFlow.ancestorMeetsSse = true;
+    plan = TileSelectionPreTraversalPolicy::plan(
+        TileSelectionPreTraversalInput{
+            true,
+            TileRefine::Replace,
+            refineFlow});
+    check(plan.visitChildren && !plan.finishAsSingleTile,
+          "TileSelectionPreTraversalPolicy: refine decision visits children");
+    check(plan.queueUrgentLoad && plan.queuedForLoadAfterPreTraversal,
+          "TileSelectionPreTraversalPolicy: urgent load state is preserved for descendants");
+    check(plan.ancestorMeetsSseAfterPreTraversal,
+          "TileSelectionPreTraversalPolicy: ancestor-meets-SSE state is preserved");
+
+    refineFlow = TileSelectionRefineFlowResult{};
+    refineFlow.refine = true;
+    refineFlow.queuedForLoad = false;
+    plan = TileSelectionPreTraversalPolicy::plan(
+        TileSelectionPreTraversalInput{
+            true,
+            TileRefine::Add,
+            refineFlow});
+    check(plan.visitChildren && plan.addAdditiveParentToPlan,
+          "TileSelectionPreTraversalPolicy: ADD refinement renders parent before children");
+    check(plan.additiveParentShouldQueueLoad &&
+              plan.queuedForLoadAfterPreTraversal,
+          "TileSelectionPreTraversalPolicy: ADD parent render marks load as queued");
+
+    refineFlow.queuedForLoad = true;
+    plan = TileSelectionPreTraversalPolicy::plan(
+        TileSelectionPreTraversalInput{
+            true,
+            TileRefine::Add,
+            refineFlow});
+    check(!plan.additiveParentShouldQueueLoad &&
+              plan.queuedForLoadAfterPreTraversal,
+          "TileSelectionPreTraversalPolicy: ADD parent avoids duplicate load when already queued");
+}
+
+void testTileSelectionRenderEntryPolicyPlansRenderedTileWrites() {
+    TileSelectionRenderEntryPlan plan =
+        TileSelectionRenderEntryPolicy::plan(
+            TileSelectionRenderEntryInput{
+                true,
+                false});
+    check(plan.writeSelectionState &&
+              plan.selectionState == TileSelectionState::Rendered &&
+              plan.writeScreenSpaceError &&
+              plan.appendVisibleTile,
+          "TileSelectionRenderEntryPolicy: rendered entry writes state, SSE and visible tile");
+    check(!plan.resetLodTransitionFade &&
+              !plan.queueNormalLoad,
+          "TileSelectionRenderEntryPolicy: enabled LOD transition preserves fade and skips load");
+
+    plan = TileSelectionRenderEntryPolicy::plan(
+        TileSelectionRenderEntryInput{
+            false,
+            true});
+    check(plan.resetLodTransitionFade &&
+              std::abs(plan.lodTransitionFadeValue - 1.0f) < 1e-6f,
+          "TileSelectionRenderEntryPolicy: disabled LOD transition resets fade");
+    check(plan.queueNormalLoad,
+          "TileSelectionRenderEntryPolicy: queue-for-load plans normal load");
+}
+
+void testTileSelectionRootPolicyChoosesTraversalRoots() {
+    const std::vector<TileKey> explicitRoots{
+        TileKey{"content", 2, 4, 6},
+        TileKey{"content", 3, 5, 7},
+    };
+    std::vector<TileKey> roots =
+        TileSelectionRootPolicy::chooseRoots(
+            "Geographic-TMS",
+            explicitRoots);
+    check(roots == explicitRoots,
+          "TileSelectionRootPolicy: explicit content roots take priority");
+
+    roots = TileSelectionRootPolicy::chooseRoots("Geographic-TMS", {});
+    check(roots.size() == 2 &&
+              roots[0] == TileKey{"Geographic-TMS", 0, 0, 0} &&
+              roots[1] == TileKey{"Geographic-TMS", 0, 1, 0},
+          "TileSelectionRootPolicy: Geographic-TMS uses two level-zero roots");
+
+    roots = TileSelectionRootPolicy::chooseRoots("OpenGlobus-Earth", {});
+    check(roots.size() == 3 &&
+              roots[0] == TileKey{"OpenGlobus-Earth", 0, 0, 0} &&
+              roots[1] == TileKey{"OpenGlobus-Earth", 0, 0, 1} &&
+              roots[2] == TileKey{"OpenGlobus-Earth", 0, 0, 2},
+          "TileSelectionRootPolicy: OpenGlobus scheme uses three roots");
+
+    roots = TileSelectionRootPolicy::chooseRoots("custom", {});
+    check(roots.size() == 1 &&
+              roots[0] == TileKey{"custom", 0, 0, 0},
+          "TileSelectionRootPolicy: unknown schemes use one default root");
+}
+
+void testTileSelectionFrameBuilderCopiesViewsAndComputesFog() {
+    FrameState emptyFrame;
+    SelectorFrame selectorFrame =
+        TileSelectionFrameBuilder::build(
+            emptyFrame,
+            {{100.0, 0.001}});
+    check(selectorFrame.views.empty() &&
+              selectorFrame.fogDensities.empty(),
+          "TileSelectionFrameBuilder: empty selector views stay empty");
+
+    FrameState frameState;
+    FrameState::SelectorView lowView;
+    lowView.position = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic::fromRadians(0.0, 0.0, 50.0));
+    lowView.viewportHeightPixels = 720;
+    FrameState::SelectorView highView;
+    highView.position = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic::fromRadians(0.0, 0.0, 300.0));
+    highView.viewportHeightPixels = 1080;
+    frameState.selectorViews = {lowView, highView};
+
+    selectorFrame = TileSelectionFrameBuilder::build(
+        frameState,
+        {
+            {100.0, 0.001},
+            {300.0, 0.005},
+        });
+    check(selectorFrame.views.size() == 2 &&
+              selectorFrame.views[0].viewportHeightPixels == 720 &&
+              selectorFrame.views[1].viewportHeightPixels == 1080,
+          "TileSelectionFrameBuilder: selector views are preserved");
+    check(selectorFrame.fogDensities.size() == 2 &&
+              std::abs(selectorFrame.fogDensities[0] - 0.001) < 1e-12 &&
+              std::abs(selectorFrame.fogDensities[1] - 0.005) < 1e-12,
+          "TileSelectionFrameBuilder: fog density follows each view height");
+}
+
+void testTileSelectionResetPolicyPlansPerFrameState() {
+    TileSelectionResetPlan plan =
+        TileSelectionResetPolicy::plan(
+            TileSelectionResetInput{
+                TileSelectionState::RenderedAndKicked,
+                true,
+                false});
+    check(plan.previousSelectionState ==
+              TileSelectionState::RenderedAndKicked,
+          "TileSelectionResetPolicy: current selection becomes previous selection");
+    check(plan.selectionState == TileSelectionState::NotVisited &&
+              plan.screenSpaceError == 0.0 &&
+              !plan.inFrustum &&
+              !plan.cameraInside &&
+              !plan.ancestorMeetsSse,
+          "TileSelectionResetPolicy: per-frame selection fields reset");
+    check(plan.surfaceDrawable &&
+              !plan.completeRenderable &&
+              !plan.renderable,
+          "TileSelectionResetPolicy: renderable follows complete renderability");
+
+    plan = TileSelectionResetPolicy::plan(
+        TileSelectionResetInput{
+            TileSelectionState::Refined,
+            false,
+            true});
+    check(plan.previousSelectionState == TileSelectionState::Refined &&
+              !plan.surfaceDrawable &&
+              plan.completeRenderable &&
+              plan.renderable,
+          "TileSelectionResetPolicy: complete renderability is preserved independently from drawable state");
+}
+
+void testTileSelectionSummaryPolicyPlansRecordAndCounts() {
+    TileSelectionSummaryTilePlan plan =
+        TileSelectionSummaryPolicy::planTile(
+            TileSelectionSummaryTileInput{
+                TileKey{"test", 3, 4, 5},
+                TileSelectionState::RenderedAndKicked,
+                TileSelectionState::Refined,
+                12.5,
+                true,
+                true,
+                true,
+                false});
+
+    check(plan.visited,
+          "TileSelectionSummaryPolicy: visited tile produces a summary plan");
+    check(plan.record.key == TileKey{"test", 3, 4, 5} &&
+              plan.record.state == TileSelectionState::RenderedAndKicked &&
+              plan.record.previousState == TileSelectionState::Refined &&
+              plan.record.screenSpaceError == 12.5 &&
+              plan.record.cameraInside &&
+              plan.record.inFrustum &&
+              plan.record.ancestorMeetsSse,
+          "TileSelectionSummaryPolicy: record preserves tile selection snapshot");
+    check(plan.selectionKickedCount == 1 &&
+              plan.selectionAncestorMeetsSseCount == 1 &&
+              plan.cameraInsideNodeCount == 1 &&
+              plan.inFrustumNodeCount == 1 &&
+              plan.notYetRenderableCount == 1,
+          "TileSelectionSummaryPolicy: diagnostic counters follow tile snapshot");
+    check(plan.selectionRenderedCount == 0 &&
+              plan.selectionRefinedCount == 0,
+          "TileSelectionSummaryPolicy: kicked states are counted separately from original selection states");
+
+    plan = TileSelectionSummaryPolicy::planTile(
+        TileSelectionSummaryTileInput{
+            TileKey{"test", 0, 0, 0},
+            TileSelectionState::NotVisited,
+            TileSelectionState::Rendered,
+            1.0,
+            true,
+            true,
+            true,
+            false});
+    check(!plan.visited &&
+              plan.selectionKickedCount == 0 &&
+              plan.notYetRenderableCount == 0,
+          "TileSelectionSummaryPolicy: not visited tiles do not affect summary counts");
+}
+
+void testTileSelectionSummaryPolicyPlansFrameCounts() {
+    const TileSelectionSummaryFramePlan plan =
+        TileSelectionSummaryPolicy::planFrame(
+            TileSelectionSummaryFrameInput{
+                7,
+                3,
+                2,
+                5,
+                11,
+                13,
+                17});
+
+    check(plan.renderingNodeCount == 7 &&
+              plan.walkthroughNodeCount == 3 &&
+              plan.notRenderingNodeCount == 7,
+          "TileSelectionSummaryPolicy: frame plan derives rendering and walkthrough counts");
+    check(plan.selectionOccludedCount == 11 &&
+              plan.selectionWaitingForOcclusionResultsCount == 13 &&
+              plan.culledTilesVisitedCount == 17 &&
+              plan.mercatorTileCount == 7,
+          "TileSelectionSummaryPolicy: frame plan preserves traversal diagnostic counters");
+}
+
+void testTileFrameStateCollectsInactiveTilesOncePerFrame() {
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+
+    auto current = std::make_unique<TilesetTile>(
+        TileKey{"test", 0, 0, 0},
+        Rectangle{});
+    current->lastUsedFrame = 7;
+    tiles["current"] = std::move(current);
+
+    auto inactive = std::make_unique<TilesetTile>(
+        TileKey{"test", 0, 0, 1},
+        Rectangle{});
+    inactive->lastUsedFrame = 6;
+    TilesetTile* inactiveRaw = inactive.get();
+    tiles["inactive"] = std::move(inactive);
+    tiles["null"] = nullptr;
+
+    const std::vector<TileFrameInactiveEntry> inactiveTiles =
+        TileFrameState::collectInactiveTiles(tiles, 7);
+
+    check(inactiveTiles.size() == 1 &&
+              inactiveTiles[0].cacheKey == "inactive" &&
+              inactiveTiles[0].tile == inactiveRaw,
+          "TileFrameState: inactive scan skips current-frame and null tiles");
+}
+
+void testTileLoadDiagnosticsCollectorCountsQueuesLifecycleAndTiles() {
+    TileLoadQueue loadQueue;
+    loadQueue.queue(
+        TileKey{"test", 0, 0, 0},
+        TileLoadPriorityGroup::Preload,
+        3.0);
+    loadQueue.queue(
+        TileKey{"test", 0, 0, 1},
+        TileLoadPriorityGroup::Normal,
+        2.0);
+    loadQueue.queue(
+        TileKey{"test", 0, 1, 0},
+        TileLoadPriorityGroup::Urgent,
+        1.0);
+
+    TileLoadLifecycle lifecycle;
+    CancellationToken terrainToken;
+    CancellationToken contentToken;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().beginTerrainRequest(
+            "terrain-request",
+            terrainToken);
+        lifecycle.requestState().beginContentRequest(
+            "content-request",
+            contentToken);
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            TileKey{"test", 1, 0, 0},
+            "terrain-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            nullptr});
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            TileKey{"test", 1, 1, 0},
+            "content-upload",
+            TileLoadPriorityGroup::Urgent,
+            0.0,
+            TileContentLoadResult::empty()});
+    }
+
+    TileUnloadQueue unloadQueue;
+    unloadQueue.pushBackIfAbsent("unload-a");
+    unloadQueue.pushBackIfAbsent("unload-b");
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto unloaded = std::make_unique<TilesetTile>(
+        TileKey{"test", 0, 0, 0},
+        Rectangle{});
+    unloaded->loadState = TileLoadState::Unloaded;
+    unloaded->contentKind = TileContentKind::Unknown;
+    tiles["unloaded"] = std::move(unloaded);
+
+    auto done = std::make_unique<TilesetTile>(
+        TileKey{"test", 0, 0, 1},
+        Rectangle{});
+    done->loadState = TileLoadState::Done;
+    done->contentKind = TileContentKind::Render;
+    done->missingRasterOverlayProjections.push_back(
+        RasterOverlayProjection::Geographic);
+    tiles["done"] = std::move(done);
+    tiles["null"] = nullptr;
+
+    const TilesetLoadDiagnostics diag =
+        TileLoadDiagnosticsCollector::collect(
+            loadQueue,
+            lifecycle,
+            unloadQueue,
+            tiles);
+
+    check(diag.loadQueuePreloadRequests == 1 &&
+              diag.loadQueueNormalRequests == 1 &&
+              diag.loadQueueUrgentRequests == 1 &&
+              diag.loadQueueTotal() == 3,
+          "TileLoadDiagnostics: counts load queue priority groups");
+    check(diag.pendingTerrainRequests == 1 &&
+              diag.pendingTerrainUploads == 1 &&
+              diag.pendingContentRequests == 1 &&
+              diag.pendingContentUploads == 1 &&
+              diag.pendingTerrainTotal() == 2 &&
+              diag.pendingContentTotal() == 2,
+          "TileLoadDiagnostics: counts lifecycle request and upload work");
+    check(diag.unloadQueueTiles == 2 &&
+              diag.loadUnloadedTiles == 1 &&
+              diag.loadDoneTiles == 1 &&
+              diag.contentUnknownTiles == 1 &&
+              diag.contentRenderTiles == 1 &&
+              diag.missingRasterOverlayProjections == 1,
+          "TileLoadDiagnostics: counts unload queue, tile states, content kinds, and missing projections");
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().completeTerrainRequest("terrain-request");
+        lifecycle.requestState().completeContentRequest("content-request");
+    }
+}
+
+void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
+    TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
+    parent.geometricError = 8.0;
+    TilesetTile tile(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
+    tile.geometricError = 8.0;
+
+    TileTerminalLoadAction action =
+        TileTerminalLoadPolicy::applyTerrainTerminalResult(
+            tile,
+            TerrainTileLoadStatus::Empty);
+    check(action.markEmptyCacheKey &&
+              action.resourcesDirty &&
+              !action.ensureChildren &&
+              tile.contentKind == TileContentKind::Empty &&
+              tile.loadState == TileLoadState::Done &&
+              tile.unconditionallyRefine,
+          "TileTerminalLoadPolicy: empty terrain marks empty content and native unconditional refinement");
+
+    action = TileTerminalLoadPolicy::applyTerrainTerminalResult(
+        tile,
+        TerrainTileLoadStatus::RetryLater);
+    check(!action.markEmptyCacheKey &&
+              action.resourcesDirty &&
+              tile.contentKind == TileContentKind::Unknown &&
+              tile.loadState == TileLoadState::FailedTemporarily,
+          "TileTerminalLoadPolicy: retry terrain maps to temporary failure");
+
+    action = TileTerminalLoadPolicy::applyTerrainTerminalResult(
+        tile,
+        TerrainTileLoadStatus::Success);
+    check(!action.markEmptyCacheKey &&
+              action.resourcesDirty &&
+              tile.contentKind == TileContentKind::Unknown &&
+              tile.loadState == TileLoadState::Failed,
+          "TileTerminalLoadPolicy: terminal success without upload maps to permanent failure");
+}
+
+void testTileTerminalLoadPolicyMapsContentTerminalStates() {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+
+    TileTerminalLoadAction action =
+        TileTerminalLoadPolicy::applyContentTerminalResult(
+            tile,
+            TileContentLoadStatus::Empty);
+    check(action.markEmptyCacheKey &&
+              action.resourcesDirty &&
+              !action.ensureChildren &&
+              tile.contentKind == TileContentKind::Empty &&
+              tile.loadState == TileLoadState::Done,
+          "TileTerminalLoadPolicy: empty content marks done empty tile");
+
+    action = TileTerminalLoadPolicy::applyContentTerminalResult(
+        tile,
+        TileContentLoadStatus::External);
+    check(!action.markEmptyCacheKey &&
+              action.ensureChildren &&
+              action.resourcesDirty &&
+              tile.contentKind == TileContentKind::External &&
+              tile.unconditionallyRefine &&
+              tile.loadState == TileLoadState::Done,
+          "TileTerminalLoadPolicy: external content requests child materialization");
+
+    action = TileTerminalLoadPolicy::applyContentTerminalResult(
+        tile,
+        TileContentLoadStatus::Cancelled);
+    check(!action.markEmptyCacheKey &&
+              !action.ensureChildren &&
+              action.resourcesDirty &&
+              tile.contentKind == TileContentKind::Unknown &&
+              tile.loadState == TileLoadState::FailedTemporarily,
+          "TileTerminalLoadPolicy: cancelled content maps to temporary failure");
+
+    action = TileTerminalLoadPolicy::applyContentTerminalResult(
+        tile,
+        TileContentLoadStatus::Render);
+    check(!action.markEmptyCacheKey &&
+              !action.ensureChildren &&
+              action.resourcesDirty &&
+              tile.contentKind == TileContentKind::Unknown &&
+              tile.loadState == TileLoadState::Failed,
+          "TileTerminalLoadPolicy: terminal render without upload maps to permanent failure");
+}
+
+void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
+    TileEmptyContentRegistry emptyContentRegistry;
+    TilesetTile terrainTile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    terrainTile.geometricError = 1.0;
+
+    TileTerminalLoadAction action =
+        TileTerminalLoadCommitter::commitTerrainTerminalResult(
+            terrainTile,
+            "terrain-empty",
+            TerrainTileLoadStatus::Empty,
+            emptyContentRegistry);
+    check(action.markEmptyCacheKey &&
+              action.resourcesDirty &&
+              emptyContentRegistry.contains("terrain-empty") &&
+              terrainTile.contentKind == TileContentKind::Empty &&
+              terrainTile.loadState == TileLoadState::Done,
+          "TileTerminalLoadCommitter: empty terrain commits tile state and empty registry marker");
+
+    TilesetTile contentTile(TileKey{"test", 0, 1, 0}, Rectangle{});
+    action = TileTerminalLoadCommitter::commitContentTerminalResult(
+        contentTile,
+        "content-empty",
+        TileContentLoadStatus::Empty,
+        emptyContentRegistry);
+    check(action.markEmptyCacheKey &&
+              action.resourcesDirty &&
+              !action.ensureChildren &&
+              emptyContentRegistry.contains("content-empty") &&
+              contentTile.contentKind == TileContentKind::Empty &&
+              contentTile.loadState == TileLoadState::Done,
+          "TileTerminalLoadCommitter: empty content commits tile state and empty registry marker");
+
+    TilesetTile externalTile(TileKey{"test", 0, 2, 0}, Rectangle{});
+    action = TileTerminalLoadCommitter::commitContentTerminalResult(
+        externalTile,
+        "content-external",
+        TileContentLoadStatus::External,
+        emptyContentRegistry);
+    check(!action.markEmptyCacheKey &&
+              action.ensureChildren &&
+              action.resourcesDirty &&
+              !emptyContentRegistry.contains("content-external") &&
+              externalTile.contentKind == TileContentKind::External &&
+              externalTile.unconditionallyRefine &&
+              externalTile.loadState == TileLoadState::Done,
+          "TileTerminalLoadCommitter: external content returns child-materialization action without empty marker");
+}
+
+void testTileContentUploadPolicyPreparesGltfRenderContent() {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.heightmap = std::make_unique<DecodedHeightmap>();
+    tile.mesh = std::make_unique<SurfaceTileMesh>();
+    tile.gpuVertexBuffer = std::make_unique<DummyBuffer>(4);
+    tile.gpuIndexBuffer = std::make_unique<DummyBuffer>(4);
+    tile.gltfTextureResources.push_back(std::make_unique<DummyTexture>(1, 1));
+    tile.gltfPrimitiveResources.push_back(GltfPrimitiveRenderResources{});
+    tile.meshReady = true;
+    tile.surfaceDrawable = true;
+    tile.surfaceSource = SurfaceDrawableSource::OwnTerrain;
+    tile.contentKind = TileContentKind::Empty;
+    tile.loadState = TileLoadState::Done;
+
+    auto model = std::make_unique<GltfModel>();
+    GltfModel* rawModel = model.get();
+    TileContentLoadResult result = TileContentLoadResult::render(
+        std::move(model));
+    result.contentTransform = Mat4::translation(Vec3(1.0, 2.0, 3.0));
+
+    TileContentUploadPolicy::prepareGltfRenderContent(
+        tile,
+        std::move(result));
+
+    check(!tile.heightmap &&
+              !tile.mesh &&
+              !tile.gpuVertexBuffer &&
+              !tile.gpuIndexBuffer &&
+              tile.gltfTextureResources.empty() &&
+              tile.gltfPrimitiveResources.empty() &&
+              tile.gltfModel.get() == rawModel &&
+              tile.gltfContentTransform ==
+                  Mat4::translation(Vec3(1.0, 2.0, 3.0)) &&
+              !tile.meshReady &&
+              !tile.surfaceDrawable &&
+              tile.surfaceSource == SurfaceDrawableSource::GltfContent &&
+              tile.contentKind == TileContentKind::Render &&
+              tile.loadState == TileLoadState::ContentLoaded,
+          "TileContentUploadPolicy: glTF upload replaces terrain and old render resources");
+}
+
+void testTileContentUploadPolicyMarksGltfRenderResourceFailure() {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.gltfModel = std::make_unique<GltfModel>();
+    tile.gltfTextureResources.push_back(std::make_unique<DummyTexture>(1, 1));
+    tile.gltfPrimitiveResources.push_back(GltfPrimitiveRenderResources{});
+    tile.contentKind = TileContentKind::Render;
+    tile.loadState = TileLoadState::ContentLoaded;
+
+    TileContentUploadPolicy::markGltfRenderResourcesFailed(tile);
+
+    check(!tile.gltfModel &&
+              tile.gltfTextureResources.empty() &&
+              tile.gltfPrimitiveResources.empty() &&
+              tile.contentKind == TileContentKind::Unknown &&
+              tile.loadState == TileLoadState::FailedTemporarily,
+          "TileContentUploadPolicy: failed glTF resource preparation rolls back render content state");
+}
+
+void testTileContentUploadCommitterAppliesRenderResourceOutcome() {
+    TilesetTile readyTile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    auto readyModel = std::make_unique<GltfModel>();
+    GltfModel* rawReadyModel = readyModel.get();
+    TileContentLoadResult readyResult = TileContentLoadResult::render(
+        std::move(readyModel));
+
+    TileContentUploadCommitter::prepareRenderContent(
+        readyTile,
+        std::move(readyResult));
+    readyTile.meshReady = true;
+    TileContentUploadCommitAction action =
+        TileContentUploadCommitter::finishRenderResourcePreparation(
+            readyTile,
+            readyTile.meshReady);
+    check(action.resourcesDirty &&
+              readyTile.gltfModel.get() == rawReadyModel &&
+              readyTile.contentKind == TileContentKind::Render &&
+              readyTile.loadState == TileLoadState::ContentLoaded,
+          "TileContentUploadCommitter: successful resource preparation keeps render content state and requests dirty resources");
+
+    TilesetTile failedTile(TileKey{"test", 0, 1, 0}, Rectangle{});
+    auto failedModel = std::make_unique<GltfModel>();
+    TileContentLoadResult failedResult = TileContentLoadResult::render(
+        std::move(failedModel));
+    TileContentUploadCommitter::prepareRenderContent(
+        failedTile,
+        std::move(failedResult));
+    action = TileContentUploadCommitter::finishRenderResourcePreparation(
+        failedTile,
+        false);
+    check(action.resourcesDirty &&
+              !failedTile.gltfModel &&
+              failedTile.contentKind == TileContentKind::Unknown &&
+              failedTile.loadState == TileLoadState::FailedTemporarily,
+          "TileContentUploadCommitter: failed resource preparation rolls back render content and requests dirty resources");
+}
+
+void testTileTerrainUploadPolicyMarksTerrainRenderContentStates() {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.contentKind = TileContentKind::Unknown;
+    tile.loadState = TileLoadState::Unloaded;
+
+    TileTerrainUploadPolicy::markTerrainRenderContentLoaded(tile);
+    check(tile.contentKind == TileContentKind::Render &&
+              tile.loadState == TileLoadState::ContentLoaded,
+          "TileTerrainUploadPolicy: terrain upload enters render content loaded state");
+
+    TileTerrainUploadPolicy::markTerrainRenderContentFailedTemporarily(tile);
+    check(tile.contentKind == TileContentKind::Unknown &&
+              tile.loadState == TileLoadState::FailedTemporarily,
+          "TileTerrainUploadPolicy: failed terrain mesh preparation rolls back to temporary failure");
+}
+
+void testTileTerrainUploadCommitterAppliesMeshResourceOutcome() {
+    TilesetTile readyTile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    readyTile.contentKind = TileContentKind::Unknown;
+    readyTile.loadState = TileLoadState::Unloaded;
+
+    TileTerrainUploadCommitter::prepareTerrainRenderContent(readyTile);
+    TileTerrainUploadCommitAction action =
+        TileTerrainUploadCommitter::finishMeshResourcePreparation(
+            readyTile,
+            true);
+    check(action.resourcesDirty &&
+              readyTile.contentKind == TileContentKind::Render &&
+              readyTile.loadState == TileLoadState::ContentLoaded,
+          "TileTerrainUploadCommitter: ready mesh keeps terrain render content state and requests dirty resources");
+
+    TilesetTile failedTile(TileKey{"test", 0, 1, 0}, Rectangle{});
+    failedTile.contentKind = TileContentKind::Unknown;
+    failedTile.loadState = TileLoadState::Unloaded;
+
+    TileTerrainUploadCommitter::prepareTerrainRenderContent(failedTile);
+    action = TileTerrainUploadCommitter::finishMeshResourcePreparation(
+        failedTile,
+        false);
+    check(action.resourcesDirty &&
+              failedTile.contentKind == TileContentKind::Unknown &&
+              failedTile.loadState == TileLoadState::FailedTemporarily,
+          "TileTerrainUploadCommitter: failed mesh preparation rolls back terrain render content and requests dirty resources");
+}
+
+void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 1, 0};
+    TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
+    TilesetTile child(childKey, Rectangle{1.0, 1.0, 2.0, 2.0}, &parent);
+
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {"test:0:0:0", &parent},
+        {"test:1:1:0", &child}};
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(childKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            true,
+            false,
+            0,
+            1},
+            [&tiles](const TileKey& key) -> TilesetTile* {
+                const std::string cacheKey = key.schemeId + ":" +
+                    std::to_string(key.z) + ":" +
+                    std::to_string(key.x) + ":" +
+                    std::to_string(key.y);
+                auto it = tiles.find(cacheKey);
+                return it == tiles.end() ? nullptr : it->second;
+            },
+            [&parent](const TilesetTile& tile) {
+                return tile.key == parent.key;
+            },
+            [](const TileKey& key) {
+                return key.schemeId + ":" +
+                    std::to_string(key.z) + ":" +
+                    std::to_string(key.x) + ":" +
+                    std::to_string(key.y);
+            });
+
+    check(plan.renderEntries.size() == 1 &&
+              plan.renderEntries.front().selectedKey == childKey &&
+              plan.renderEntries.front().renderKey == parentKey &&
+              plan.renderEntries.front().usesAncestorFallback &&
+              plan.renderEntries.front().surfaceClipEnabled &&
+              plan.renderEntryAncestorFallbackCount == 1 &&
+              plan.renderEntrySynchronousPrepCount == 0 &&
+              plan.renderEntryDeferredPrepCount == 0,
+          "TileRenderPlanFinalizer: interaction fallback renders clipped drawable ancestor without sync prep");
+    check(std::abs(plan.renderEntries.front().surfaceClipUv[0] - 0.5f) <
+                  1e-6f &&
+              std::abs(plan.renderEntries.front().surfaceClipUv[1]) < 1e-6f &&
+              std::abs(plan.renderEntries.front().surfaceClipUv[2] - 0.5f) <
+                  1e-6f &&
+              std::abs(plan.renderEntries.front().surfaceClipUv[3] - 0.5f) <
+                  1e-6f,
+          "TileRenderPlanFinalizer: ancestor fallback clip UVs cover the selected child quadrant");
+}
+
+void testTileRenderPlanFinalizerCountsRootPrepOnce() {
+    const TileKey rootKey{"test", 0, 0, 0};
+    TilesetTile root(rootKey, Rectangle{});
+    TilePlan plan;
+    plan.visibleTiles.push_back(rootKey);
+
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            true,
+            false,
+            0,
+            1},
+            [&root](const TileKey& key) -> TilesetTile* {
+                return key == root.key ? &root : nullptr;
+            },
+            [](const TilesetTile&) {
+                return false;
+            },
+            [](const TileKey& key) {
+                return key.schemeId + ":" +
+                    std::to_string(key.z) + ":" +
+                    std::to_string(key.x) + ":" +
+                    std::to_string(key.y);
+            });
+
+    check(plan.renderEntries.size() == 1 &&
+              plan.renderEntries.front().renderKey == rootKey &&
+              plan.renderEntries.front().allowSynchronousMeshPrep &&
+              plan.renderEntrySynchronousPrepCount == 1 &&
+              plan.renderEntryDeferredPrepCount == 0,
+          "TileRenderPlanFinalizer: root/no-ancestor direct prep is counted once to avoid blank frames");
+}
+
+void testTileLodTransitionControllerFadesOutPreviousRenderContent() {
+    const TileKey rootKey{"test", 0, 0, 0};
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    tiles.emplace(
+        "test:0:0:0",
+        std::make_unique<TilesetTile>(rootKey, Rectangle{}));
+    TilesetTile& root = *tiles["test:0:0:0"];
+    root.previousSelectionState = TileSelectionState::Rendered;
+    root.contentKind = TileContentKind::Render;
+    root.loadState = TileLoadState::Done;
+    root.lodTransitionFadePercentage = 0.25f;
+    TilePlan plan;
+    std::unordered_set<std::string> fadingKeys;
+    TileLodTransitionController::updateTransitions(
+        plan,
+        fadingKeys,
+        0.25,
+        TileLodTransitionOptions{
+            &tiles,
+            true,
+            1.0},
+        [](const TileKey& key) {
+            return key.schemeId + ":" +
+                std::to_string(key.z) + ":" +
+                std::to_string(key.x) + ":" +
+                std::to_string(key.y);
+        },
+        [](const TilesetTile& tile) {
+            return tile.contentKind == TileContentKind::Render;
+        });
+
+    check(fadingKeys.count("test:0:0:0") == 1 &&
+              plan.tilesFadingOut.size() == 1 &&
+              std::abs(tiles["test:0:0:0"]->lodTransitionFadePercentage -
+                       0.25f) < 1e-6f &&
+              std::abs(plan.tilesFadingOut.front().opacity - 0.75f) < 1e-6f &&
+              plan.fadingNodeCount == 1,
+          "TileLodTransitionController: previous render content fades out after leaving selection");
+}
+
+void testTileLodTransitionControllerRestartsReturnedFadeOutTile() {
+    const TileKey rootKey{"test", 0, 0, 0};
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    tiles.emplace(
+        "test:0:0:0",
+        std::make_unique<TilesetTile>(rootKey, Rectangle{}));
+    TilesetTile& root = *tiles["test:0:0:0"];
+    root.previousSelectionState = TileSelectionState::Rendered;
+    root.contentKind = TileContentKind::Render;
+    root.loadState = TileLoadState::Done;
+    root.lodTransitionFadePercentage = 0.75f;
+    TilePlan plan;
+    plan.visibleTiles.push_back(rootKey);
+    std::unordered_set<std::string> fadingKeys{"test:0:0:0"};
+    TileLodTransitionController::updateTransitions(
+        plan,
+        fadingKeys,
+        0.25,
+        TileLodTransitionOptions{
+            &tiles,
+            true,
+            1.0},
+        [](const TileKey& key) {
+            return key.schemeId + ":" +
+                std::to_string(key.z) + ":" +
+                std::to_string(key.x) + ":" +
+                std::to_string(key.y);
+        },
+        [](const TilesetTile& tile) {
+            return tile.contentKind == TileContentKind::Render;
+        });
+
+    check(fadingKeys.empty() &&
+              plan.tilesFadingOut.empty() &&
+              plan.tileTransitions.size() == 1 &&
+              std::abs(tiles["test:0:0:0"]->lodTransitionFadePercentage -
+                       0.25f) < 1e-6f &&
+              plan.fadingNodeCount == 1,
+          "TileLodTransitionController: tile returning from fade-out restarts fade-in from zero");
+}
+
+void testTileChildMaterializerLinksContentChildrenWithoutDuplicates() {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey firstKey{"test", 1, 0, 0};
+    const TileKey secondKey{"test", 1, 1, 0};
+    TilesetTile parent(parentKey, Rectangle{});
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    tiles.emplace(
+        "test:1:0:0",
+        std::make_unique<TilesetTile>(firstKey, Rectangle{}));
+    tiles.emplace(
+        "test:1:1:0",
+        std::make_unique<TilesetTile>(secondKey, Rectangle{}));
+
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = key.schemeId + ":" +
+            std::to_string(key.z) + ":" +
+            std::to_string(key.x) + ":" +
+            std::to_string(key.y);
+        auto it = tiles.find(cacheKey);
+        return it == tiles.end() ? nullptr : it->second.get();
+    };
+    const std::vector<TileKey> childKeys{firstKey, secondKey, firstKey};
+
+    const bool changed =
+        TileChildMaterializer::linkContentChildren(parent, childKeys, ensure);
+    const bool changedAgain =
+        TileChildMaterializer::linkContentChildren(parent, childKeys, ensure);
+
+    check(changed && !changedAgain &&
+              parent.children.size() == 2 &&
+              parent.children[0] == tiles["test:1:0:0"].get() &&
+              parent.children[1] == tiles["test:1:1:0"].get() &&
+              parent.children[0]->parent == &parent &&
+              parent.children[1]->parent == &parent,
+          "TileChildMaterializer: content children are linked once and parented");
+}
+
+void testTileChildMaterializerCreatesAvailableAndUpsampledTerrainChildren() {
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile parent(parentKey, Rectangle{});
+    parent.geometricError = 100.0;
+    parent.hasTerrainHeightRange = true;
+    parent.terrainMinimumHeight = -10.0;
+    parent.terrainMaximumHeight = 90.0;
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto cacheKeyFor = [](const TileKey& key) {
+        return key.schemeId + ":" +
+            std::to_string(key.z) + ":" +
+            std::to_string(key.x) + ":" +
+            std::to_string(key.y);
+    };
+    auto ensure = [&tiles, &cacheKeyFor](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+    auto availability = [](const TileKey& key) {
+        return key.x == 0 && key.y == 0
+            ? TileAvailabilityState::Available
+            : TileAvailabilityState::NotAvailable;
+    };
+
+    const bool changed = TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        2,
+        availability,
+        ensure);
+
+    check(changed && parent.children.size() == 4,
+          "TileChildMaterializer: any available terrain child materializes the full quad");
+    if (parent.children.size() != 4) return;
+
+    TilesetTile* sw = parent.children[0];
+    TilesetTile* se = parent.children[1];
+    TilesetTile* nw = parent.children[2];
+    TilesetTile* ne = parent.children[3];
+    check(sw && !sw->upsampledFromParent &&
+              se && se->upsampledFromParent &&
+              nw && nw->upsampledFromParent &&
+              ne && ne->upsampledFromParent,
+          "TileChildMaterializer: unavailable terrain siblings become upsampled children");
+    check(sw->geometricError == 50.0 &&
+              se->geometricError == 50.0 &&
+              sw->hasTerrainHeightRange &&
+              se->hasTerrainHeightRange &&
+              sw->terrainMinimumHeight == -10.0 &&
+              se->terrainMaximumHeight == 90.0,
+          "TileChildMaterializer: terrain children inherit geometric error and height range");
+}
+
+void testTileChildMaterializerCreatesRasterUpsampledChildren() {
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile parent(parentKey, Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
+    parent.geometricError = 100.0;
+    parent.hasTerrainHeightRange = true;
+    parent.terrainMinimumHeight = -5.0;
+    parent.terrainMaximumHeight = 25.0;
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto cacheKeyFor = [](const TileKey& key) {
+        return key.schemeId + ":" +
+            std::to_string(key.z) + ":" +
+            std::to_string(key.x) + ":" +
+            std::to_string(key.y);
+    };
+    auto ensure = [&tiles, &cacheKeyFor](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    const bool changed =
+        TileChildMaterializer::materializeRasterUpsampledChildren(
+            parent,
+            Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0),
+            200.0,
+            ensure);
+    const bool changedAgain =
+        TileChildMaterializer::materializeRasterUpsampledChildren(
+            parent,
+            Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0),
+            200.0,
+            ensure);
+
+    check(changed && !changedAgain && parent.children.size() == 4,
+          "TileChildMaterializer: raster upsampled children are created once");
+    if (parent.children.size() != 4) return;
+    check(parent.refine == TileRefine::Replace &&
+              parent.children[0]->bounds ==
+                  Rectangle::fromDegrees(-20.0, -10.0, -10.0, 0.0) &&
+              parent.children[3]->bounds ==
+                  Rectangle::fromDegrees(-10.0, 0.0, 0.0, 10.0),
+          "TileChildMaterializer: raster upsampled children split the subdivision rectangle");
+    bool childrenConfigured = true;
+    for (TilesetTile* child : parent.children) {
+        childrenConfigured &= child &&
+            child->parent == &parent &&
+            child->upsampledFromParent &&
+            child->geometricError == 50.0 &&
+            child->boundingVolume &&
+            child->boundingVolume->kind == TileBoundingVolumeKind::Region &&
+            child->hasTerrainHeightRange &&
+            child->terrainMinimumHeight == -5.0 &&
+            child->terrainMaximumHeight == 25.0;
+    }
+    check(childrenConfigured,
+          "TileChildMaterializer: raster upsampled children carry renderable fallback metadata");
+}
+
+void testTileChildMaterializerRefinementPolicyHonorsContentRules() {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    auto noCacheKey = [](const TileKey&) { return std::string{}; };
+    auto noTerrainCached = [](const std::string&) { return false; };
+    auto noAvailability = [](const TileKey&) {
+        return TileAvailabilityState::NotAvailable;
+    };
+
+    check(TileChildMaterializer::canRefine(
+              tile,
+              TileRefinementAvailabilityOptions{
+                  false,
+                  true,
+                  false,
+                  false,
+                  false,
+                  4},
+              noCacheKey,
+              noTerrainCached,
+              noAvailability),
+          "TileChildMaterializer: explicit content children make tile refinable");
+
+    check(!TileChildMaterializer::canRefine(
+              tile,
+              TileRefinementAvailabilityOptions{
+                  false,
+                  false,
+                  true,
+                  false,
+                  true,
+                  4},
+              [](const TileKey&) { return std::string{"child"}; },
+              [](const std::string&) { return true; },
+              [](const TileKey&) {
+                  return TileAvailabilityState::Available;
+              }),
+          "TileChildMaterializer: supported content tile does not fall through to terrain refinement");
+}
+
+void testTileChildMaterializerRefinementPolicyUsesTerrainSignals() {
+    TilesetTile tile(TileKey{"Geographic-TMS", 0, 0, 0}, Rectangle{});
+
+    check(TileChildMaterializer::canRefine(
+              tile,
+              TileRefinementAvailabilityOptions{
+                  false,
+                  false,
+                  false,
+                  false,
+                  false,
+                  4},
+              [](const TileKey& key) {
+                  return key.schemeId + ":" +
+                      std::to_string(key.z) + ":" +
+                      std::to_string(key.x) + ":" +
+                      std::to_string(key.y);
+              },
+              [](const std::string& cacheKey) {
+                  return cacheKey == "Geographic-TMS:1:0:0";
+              },
+              [](const TileKey&) {
+                  return TileAvailabilityState::NotAvailable;
+              }),
+          "TileChildMaterializer: cached terrain child makes tile refinable without provider");
+
+    check(TileChildMaterializer::canRefine(
+              tile,
+              TileRefinementAvailabilityOptions{
+                  false,
+                  false,
+                  false,
+                  false,
+                  true,
+                  4},
+              [](const TileKey& key) {
+                  return key.schemeId + ":" +
+                      std::to_string(key.z) + ":" +
+                      std::to_string(key.x) + ":" +
+                      std::to_string(key.y);
+              },
+              [](const std::string&) { return false; },
+              [](const TileKey& key) {
+                  return key.x == 1 && key.y == 0
+                      ? TileAvailabilityState::Available
+                      : TileAvailabilityState::NotAvailable;
+              }),
+          "TileChildMaterializer: available terrain child makes tile refinable");
+}
+
+void testTileChildMaterializerRefinementPolicyBlocksBoundaryAndUpsampledTiles() {
+    TilesetTile tile(TileKey{"Geographic-TMS", 0, 0, 0}, Rectangle{});
+    check(!TileChildMaterializer::canRefine(
+              tile,
+              TileRefinementAvailabilityOptions{
+                  false,
+                  false,
+                  false,
+                  true,
+                  true,
+                  4},
+              [](const TileKey&) { return std::string{"child"}; },
+              [](const std::string&) { return true; },
+              [](const TileKey&) {
+                  return TileAvailabilityState::Available;
+              }),
+          "TileChildMaterializer: availability boundary waits for content before refinement");
+
+    tile.upsampledFromParent = true;
+    check(!TileChildMaterializer::canRefine(
+              tile,
+              TileRefinementAvailabilityOptions{
+                  true,
+                  true,
+                  false,
+                  false,
+                  true,
+                  4},
+              [](const TileKey&) { return std::string{"child"}; },
+              [](const std::string&) { return true; },
+              [](const TileKey&) {
+                  return TileAvailabilityState::Available;
+              }),
+          "TileChildMaterializer: upsampled terrain child never refines");
+}
+
+void testTileEmptyContentRegistryOwnsEmptyCacheKeys() {
+    TileEmptyContentRegistry registry;
+
+    registry.insert("a");
+    registry.insert("b");
+    registry.insert("a");
+    check(registry.contains("a") &&
+              registry.contains("b") &&
+              registry.size() == 2,
+          "TileEmptyContentRegistry: owns deduplicated empty content cache keys");
+
+    registry.erase("a");
+    check(!registry.contains("a") &&
+              registry.contains("b") &&
+              registry.size() == 1,
+          "TileEmptyContentRegistry: erases one empty content cache key");
+
+    registry.clear();
+    check(!registry.contains("b") && registry.size() == 0,
+          "TileEmptyContentRegistry: clears all empty content cache keys");
+}
+
+void testTileIndexStateErasesEmptyContentRegistryKey() {
+    TileUnloadQueue unloadQueue;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    TileEmptyContentRegistry emptyContentRegistry;
+    TileLoadQueue loadQueue;
+    TileLoadLifecycle lifecycle;
+    const std::string cacheKey = "test:0:0:0";
+
+    unloadQueue.pushBackIfAbsent(cacheKey);
+    terrainCache[cacheKey] = std::make_unique<DecodedHeightmap>();
+    emptyContentRegistry.insert(cacheKey);
+    loadQueue.queue(
+        TileKey{"test", 0, 0, 0},
+        TileLoadPriorityGroup::Normal,
+        0.0);
+
+    TileIndexState::eraseCacheKeyState(
+        cacheKey,
+        unloadQueue,
+        terrainCache,
+        emptyContentRegistry,
+        loadQueue,
+        lifecycle,
+        [](const TileKey& key) {
+            return key.schemeId + ":" +
+                   std::to_string(key.z) + ":" +
+                   std::to_string(key.x) + ":" +
+                   std::to_string(key.y);
+        });
+
+    check(!unloadQueue.contains(cacheKey) &&
+              terrainCache.count(cacheKey) == 0 &&
+              !emptyContentRegistry.contains(cacheKey) &&
+              loadQueue.empty(),
+          "TileIndexState: cache-key cleanup removes empty content registry state with other indexes");
+}
+
+void testTileTerrainHeightRangePolicySetsAndInheritsRanges() {
+    TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
+    TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
+
+    TileTerrainHeightRangePolicy::setTerrainHeightRange(parent, -12.5, 345.0);
+    check(parent.hasTerrainHeightRange &&
+              std::abs(parent.terrainMinimumHeight + 12.5) < 1e-9 &&
+              std::abs(parent.terrainMaximumHeight - 345.0) < 1e-9,
+          "TileTerrainHeightRangePolicy: explicit range is stored on the tile");
+
+    TileTerrainHeightRangePolicy::inheritTerrainHeightRange(child, parent);
+    check(child.hasTerrainHeightRange &&
+              std::abs(child.terrainMinimumHeight + 12.5) < 1e-9 &&
+              std::abs(child.terrainMaximumHeight - 345.0) < 1e-9,
+          "TileTerrainHeightRangePolicy: child inherits parent terrain height range");
+
+    TilesetTile missingParent(TileKey{"test", 0, 1, 0}, Rectangle{});
+    TilesetTile fallbackChild(TileKey{"test", 1, 2, 0}, Rectangle{}, &missingParent);
+    TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
+        fallbackChild,
+        missingParent);
+    check(fallbackChild.hasTerrainHeightRange &&
+              fallbackChild.terrainMinimumHeight ==
+                  TileBoundsMetrics::kDefaultTerrainMinimumHeight &&
+              fallbackChild.terrainMaximumHeight ==
+                  TileBoundsMetrics::kDefaultTerrainMaximumHeight,
+          "TileTerrainHeightRangePolicy: missing parent range falls back to the central default range");
+}
+
+void testTileTerrainHeightRangePolicyAppliesMeshOrHeightmapRanges() {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    SurfaceTileMesh mesh;
+    mesh.hasHeightRange = true;
+    mesh.minimumHeight = -250.0;
+    mesh.maximumHeight = 900.0;
+
+    DecodedHeightmap heightmap;
+    heightmap.tileSize = 2;
+    heightmap.heights = {1.0f, 2.0f, 3.0f, 4.0f};
+    heightmap.minHeight = -10.0f;
+    heightmap.maxHeight = 25.0f;
+
+    TileTerrainHeightRangePolicy::applyMeshOrHeightmapRange(
+        tile,
+        &mesh,
+        &heightmap);
+    check(tile.hasTerrainHeightRange &&
+              std::abs(tile.terrainMinimumHeight + 250.0) < 1e-9 &&
+              std::abs(tile.terrainMaximumHeight - 900.0) < 1e-9,
+          "TileTerrainHeightRangePolicy: quantized mesh range wins over heightmap range");
+
+    mesh.hasHeightRange = false;
+    TileTerrainHeightRangePolicy::applyMeshOrHeightmapRange(
+        tile,
+        &mesh,
+        &heightmap);
+    check(tile.hasTerrainHeightRange &&
+              std::abs(tile.terrainMinimumHeight + 10.0) < 1e-9 &&
+              std::abs(tile.terrainMaximumHeight - 25.0) < 1e-9,
+          "TileTerrainHeightRangePolicy: valid heightmap range is used when mesh lacks a range");
+
+    heightmap.heights.clear();
+    TileTerrainHeightRangePolicy::applyMeshOrHeightmapRange(
+        tile,
+        &mesh,
+        &heightmap);
+    check(tile.hasTerrainHeightRange &&
+              tile.terrainMinimumHeight ==
+                  TileBoundsMetrics::kDefaultTerrainMinimumHeight &&
+              tile.terrainMaximumHeight ==
+                  TileBoundsMetrics::kDefaultTerrainMaximumHeight,
+          "TileTerrainHeightRangePolicy: missing mesh and invalid heightmap fall back to the central default range");
+}
+
+void testTileTerrainHeightRangePolicyInheritsOnlyUnreadyChildren() {
+    TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
+    TilesetTile loadingChild(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
+    TilesetTile readyChild(TileKey{"test", 1, 1, 0}, Rectangle{}, &parent);
+    parent.children = {&loadingChild, &readyChild};
+    readyChild.meshReady = true;
+    TileTerrainHeightRangePolicy::setTerrainHeightRange(readyChild, 1.0, 2.0);
+
+    TileTerrainHeightRangePolicy::setTerrainHeightRange(parent, -100.0, 200.0);
+    TileTerrainHeightRangePolicy::inheritHeightRangeForUnreadyChildren(parent);
+
+    check(loadingChild.hasTerrainHeightRange &&
+              std::abs(loadingChild.terrainMinimumHeight + 100.0) < 1e-9 &&
+              std::abs(loadingChild.terrainMaximumHeight - 200.0) < 1e-9 &&
+              readyChild.terrainMinimumHeight == 1.0 &&
+              readyChild.terrainMaximumHeight == 2.0,
+          "TileTerrainHeightRangePolicy: only children without ready meshes inherit parent height range");
+}
+
+GltfPrimitive makeBuilderTestPrimitive() {
+    GltfPrimitive primitive;
+    SurfaceVertex first;
+    first.positionEcef = Vec3(1.0, 2.0, 3.0);
+    first.normalEcef = Vec3(0.0, 1.0, 0.0);
+    first.uv = {0.25f, 0.75f};
+    SurfaceVertex second;
+    second.positionEcef = Vec3(3.0, 4.0, 5.0);
+    second.normalEcef = Vec3(0.0, 0.0, 1.0);
+    second.uv = {0.5f, 0.125f};
+    primitive.vertices = {first, second};
+    primitive.indices = {0, 1};
+    return primitive;
+}
+
+void testGltfRenderGeometryBuilderPacksVertexPayload() {
+    GltfPrimitive primitive = makeBuilderTestPrimitive();
+    primitive.vertexTexCoords[1] = {
+        std::array<float, 2>{0.1f, 0.2f},
+        std::array<float, 2>{0.3f, 0.4f}};
+    primitive.vertexTexCoords[7] = {
+        std::array<float, 2>{0.7f, 0.8f},
+        std::array<float, 2>{0.9f, 1.0f}};
+    primitive.vertexColors = {
+        std::array<float, 4>{0.2f, 0.3f, 0.4f, 0.5f},
+        std::array<float, 4>{0.6f, 0.7f, 0.8f, 0.9f}};
+    const double diagonal = std::sqrt(0.5);
+    primitive.vertexTangents = {
+        std::array<float, 4>{
+            static_cast<float>(diagonal),
+            static_cast<float>(diagonal),
+            0.0f,
+            1.0f},
+        std::array<float, 4>{1.0f, 0.0f, 0.0f, -1.0f}};
+
+    const Mat4 transform = Mat4::scale(Vec3(2.0, 1.0, 1.0));
+    const Vec3 localOrigin(2.0, 1.0, 1.0);
+    const std::vector<GltfGpuVertex> vertices =
+        GltfRenderGeometryBuilder::buildVertices(
+            primitive,
+            transform,
+            localOrigin,
+            false);
+
+    check(sizeof(GltfGpuVertex) == 120 && vertices.size() == 2,
+          "GltfRenderGeometryBuilder: vertex ABI remains the renderer layout");
+    check(std::abs(vertices[0].pos[0] - 0.0f) < 1e-6f &&
+              std::abs(vertices[0].pos[1] - 1.0f) < 1e-6f &&
+              std::abs(vertices[0].pos[2] - 2.0f) < 1e-6f,
+          "GltfRenderGeometryBuilder: non-instanced positions are transformed relative to local origin");
+    check(std::abs(vertices[0].texcoord01[0] - 0.25f) < 1e-6f &&
+              std::abs(vertices[0].texcoord01[1] - 0.75f) < 1e-6f &&
+              std::abs(vertices[0].texcoord01[2] - 0.1f) < 1e-6f &&
+              std::abs(vertices[0].texcoord01[3] - 0.2f) < 1e-6f &&
+              std::abs(vertices[0].texcoord67[2] - 0.7f) < 1e-6f &&
+              std::abs(vertices[0].texcoord67[3] - 0.8f) < 1e-6f,
+          "GltfRenderGeometryBuilder: TEXCOORD_0 fallback and higher texcoord sets are packed");
+    check(std::abs(vertices[0].color[0] - 0.2f) < 1e-6f &&
+              std::abs(vertices[0].color[3] - 0.5f) < 1e-6f,
+          "GltfRenderGeometryBuilder: COLOR_0 is packed into vertex payload");
+    check(std::abs(vertices[0].tangent[0] - 0.8944272f) < 1e-5f &&
+              std::abs(vertices[0].tangent[1] - 0.4472136f) < 1e-5f &&
+              std::abs(vertices[0].tangent[3] - 1.0f) < 1e-6f,
+          "GltfRenderGeometryBuilder: tangent uses model linear transform under non-uniform scale");
+}
+
+void testGltfRenderGeometryBuilderComputesOriginsAndInstances() {
+    GltfPrimitive primitive = makeBuilderTestPrimitive();
+    GltfInstance firstInstance;
+    firstInstance.transform = Mat4::translation(Vec3(10.0, 0.0, 0.0));
+    GltfInstance secondInstance;
+    secondInstance.transform =
+        Mat4::translation(Vec3(20.0, 0.0, 0.0)) *
+        Mat4::scale(Vec3(2.0, 3.0, 4.0));
+    primitive.instances = {firstInstance, secondInstance};
+
+    GltfModel model;
+    model.primitives.push_back(primitive);
+    const Vec3 origin =
+        GltfRenderGeometryBuilder::localOrigin(model, Mat4::identity());
+    check(std::abs(origin.x() - 18.0) < 1e-9 &&
+              std::abs(origin.y() - 6.0) < 1e-9 &&
+              std::abs(origin.z() - 10.0) < 1e-9,
+          "GltfRenderGeometryBuilder: instanced local origin is weighted by primitive vertex count");
+
+    const std::vector<GltfGpuVertex> localVertices =
+        GltfRenderGeometryBuilder::buildVertices(
+            primitive,
+            Mat4::identity(),
+            origin);
+    check(std::abs(localVertices[0].pos[0] - 1.0f) < 1e-6f &&
+              std::abs(localVertices[0].pos[1] - 2.0f) < 1e-6f &&
+              std::abs(localVertices[0].pos[2] - 3.0f) < 1e-6f,
+          "GltfRenderGeometryBuilder: instanced primitive vertices stay model-local");
+
+    const std::vector<GltfGpuInstance> instances =
+        GltfRenderGeometryBuilder::buildInstances(
+            primitive,
+            Mat4::identity(),
+            origin);
+    check(instances.size() == 2 &&
+              std::abs(instances[0].model[12] + 8.0f) < 1e-6f &&
+              std::abs(instances[0].model[13] + 6.0f) < 1e-6f &&
+              std::abs(instances[0].model[14] + 10.0f) < 1e-6f &&
+              std::abs(instances[1].model[0] - 2.0f) < 1e-6f &&
+              std::abs(instances[1].model[5] - 3.0f) < 1e-6f &&
+              std::abs(instances[1].model[10] - 4.0f) < 1e-6f &&
+              std::abs(instances[1].normal[0] - 0.5f) < 1e-6f &&
+              std::abs(instances[1].normal[4] - (1.0f / 3.0f)) < 1e-6f &&
+              std::abs(instances[1].normal[8] - 0.25f) < 1e-6f,
+          "GltfRenderGeometryBuilder: instance payload packs RTC model matrix and inverse-transpose normal matrix");
+}
+
+void testGltfRenderGeometryBuilderClassifiesSplitResources() {
+    GltfPrimitive primitive = makeBuilderTestPrimitive();
+    GltfInstance firstInstance;
+    firstInstance.transform = Mat4::translation(Vec3(0.0, 0.0, 5.0));
+    GltfInstance secondInstance;
+    secondInstance.transform = Mat4::translation(Vec3(0.0, 0.0, 25.0));
+    primitive.instances = {firstInstance, secondInstance};
+
+    check(!GltfRenderGeometryBuilder::primitiveUsesSplitBlendInstances(
+              primitive) &&
+              GltfRenderGeometryBuilder::primitiveRenderResourceCount(
+                  primitive) == 1u,
+          "GltfRenderGeometryBuilder: opaque instances remain one render resource");
+
+    primitive.alphaMode = GltfAlphaMode::Blend;
+    check(GltfRenderGeometryBuilder::primitiveUsesSplitBlendInstances(
+              primitive) &&
+              GltfRenderGeometryBuilder::primitiveRenderResourceCount(
+                  primitive) == 2u,
+          "GltfRenderGeometryBuilder: BLEND instances split into per-instance resources");
+
+    const Vec3 sortCenter =
+        GltfRenderGeometryBuilder::primitiveSortCenterEcef(
+            primitive,
+            Mat4::identity());
+    check(std::abs(sortCenter.x() - 2.0) < 1e-9 &&
+              std::abs(sortCenter.y() - 3.0) < 1e-9 &&
+              std::abs(sortCenter.z() - 19.0) < 1e-9,
+          "GltfRenderGeometryBuilder: instanced sort center averages transformed primitive centroids");
+
+    primitive.vertices.clear();
+    check(GltfRenderGeometryBuilder::primitiveRenderResourceCount(
+              primitive) == 0u,
+          "GltfRenderGeometryBuilder: empty primitives produce no render resources");
+}
+
+void testTileUnloadPolicyClassifiesQueueEligibility() {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+
+    tile.contentKind = TileContentKind::Unknown;
+    tile.loadState = TileLoadState::Done;
+    check(!TileUnloadPolicy::isEligibleForContentUnloadQueue(tile),
+          "TileUnloadPolicy: unknown content is not queued for unloading");
+
+    tile.contentKind = TileContentKind::Render;
+    tile.loadState = TileLoadState::ContentLoading;
+    check(!TileUnloadPolicy::isEligibleForContentUnloadQueue(tile),
+          "TileUnloadPolicy: loading content is not queued for unloading");
+
+    tile.loadState = TileLoadState::Unloading;
+    check(!TileUnloadPolicy::isEligibleForContentUnloadQueue(tile),
+          "TileUnloadPolicy: already-unloading content is not newly queued");
+
+    tile.loadState = TileLoadState::Done;
+    check(TileUnloadPolicy::isEligibleForContentUnloadQueue(tile),
+          "TileUnloadPolicy: loaded render content is queue eligible");
+
+    tile.contentKind = TileContentKind::Empty;
+    check(TileUnloadPolicy::isEligibleForContentUnloadQueue(tile),
+          "TileUnloadPolicy: loaded empty content is queue eligible");
+}
+
+void testTileUnloadPolicyDefersReferencedSubtreesAndExternalWork() {
+    TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
+    TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
+    TilesetTile grandchild(TileKey{"test", 2, 0, 0}, Rectangle{}, &child);
+    parent.children.push_back(&child);
+    child.children.push_back(&grandchild);
+
+    check(!TileUnloadPolicy::hasReferencedDescendant(parent),
+          "TileUnloadPolicy: subtree starts without referenced descendants");
+    grandchild.addReference();
+    check(TileUnloadPolicy::hasReferencedDescendant(parent),
+          "TileUnloadPolicy: reference scan reaches nested descendants");
+    check(TileUnloadPolicy::shouldDeferForReferences(parent, false),
+          "TileUnloadPolicy: referenced descendant defers unload");
+    grandchild.clearReferences();
+
+    parent.contentKind = TileContentKind::External;
+    check(TileUnloadPolicy::shouldDeferForReferences(parent, true),
+          "TileUnloadPolicy: external subtree active work defers unload");
+    parent.contentKind = TileContentKind::Render;
+    check(!TileUnloadPolicy::shouldDeferForReferences(parent, true),
+          "TileUnloadPolicy: non-external active-work flag does not defer unload");
+}
+
+void testTileUnloadPolicyProtectsUpsampledLoadingSources() {
+    TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
+    TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
+    parent.children.push_back(&child);
+
+    child.upsampledFromParent = true;
+    child.loadState = TileLoadState::ContentLoading;
+    check(TileUnloadPolicy::hasContentLoadingUpsampledDescendant(parent),
+          "TileUnloadPolicy: detects loading upsampled descendant");
+
+    parent.surfaceDrawable = true;
+    parent.completeRenderable = true;
+    parent.renderable = true;
+    parent.surfaceSource = SurfaceDrawableSource::OwnTerrain;
+    parent.gltfPrimitiveResources.push_back(GltfPrimitiveRenderResources{});
+    TileUnloadPolicy::releaseMainThreadRenderResourcesForProtectedUnload(parent);
+
+    check(!parent.surfaceDrawable &&
+              !parent.completeRenderable &&
+              !parent.renderable &&
+              parent.surfaceSource == SurfaceDrawableSource::None &&
+              parent.gltfPrimitiveResources.empty(),
+          "TileUnloadPolicy: protected unload releases main-thread render resources");
+}
+
+void testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded() {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.contentKind = TileContentKind::Render;
+    tile.loadState = TileLoadState::Done;
+    tile.mesh = std::make_unique<SurfaceTileMesh>();
+    tile.gltfModel = std::make_unique<GltfModel>();
+    tile.gltfContentTransform = Mat4::translation(Vec3(1.0, 2.0, 3.0));
+    tile.gltfPrimitiveResources.push_back(GltfPrimitiveRenderResources{});
+    tile.meshReady = true;
+    tile.surfaceDrawable = true;
+    tile.surfaceSource = SurfaceDrawableSource::OwnTerrain;
+    tile.completeRenderable = true;
+    tile.renderable = true;
+
+    TileUnloadPolicy::releaseRenderContentResources(tile);
+    check(!tile.mesh &&
+              !tile.gltfModel &&
+              tile.gltfPrimitiveResources.empty() &&
+              !tile.meshReady &&
+              !tile.surfaceDrawable &&
+              tile.surfaceSource == SurfaceDrawableSource::None &&
+              tile.gltfContentTransform == Mat4::identity(),
+          "TileUnloadPolicy: render content resource release clears tile-owned resources");
+
+    TileUnloadPolicy::markContentUnloaded(tile);
+    check(tile.contentKind == TileContentKind::Unknown &&
+              tile.loadState == TileLoadState::Unloaded &&
+              !tile.completeRenderable &&
+              !tile.renderable,
+          "TileUnloadPolicy: unloaded marker clears renderable state");
+}
+
+void testTileUnloadPolicyReleasesRasterOverlayReferencesWithExplicitClear() {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.rasterOverlays.push_back(std::make_unique<RasterMappedToTilesetTile>());
+    tile.rasterOverlays.push_back(nullptr);
+
+    TileUnloadPolicy::releaseRasterOverlayReferences(tile, nullptr);
+    check(tile.rasterOverlays.size() == 2,
+          "TileUnloadPolicy: release-only keeps raster overlay mapping slots");
+
+    TileUnloadPolicy::releaseAndClearRasterOverlayReferences(tile, nullptr);
+    check(tile.rasterOverlays.empty(),
+          "TileUnloadPolicy: release-and-clear removes raster overlay mappings");
+}
+
+void testTileUnloadPolicyFindsQueuedTilesByLoadState() {
+    TileUnloadQueue queue;
+    queue.pushBackIfAbsent("missing");
+    queue.pushBackIfAbsent("null");
+    queue.pushBackIfAbsent("loaded");
+    queue.pushBackIfAbsent("unloading");
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    tiles["null"] = nullptr;
+    auto loaded = std::make_unique<TilesetTile>(
+        TileKey{"test", 0, 0, 0},
+        Rectangle{});
+    loaded->loadState = TileLoadState::Done;
+    tiles["loaded"] = std::move(loaded);
+    auto unloading = std::make_unique<TilesetTile>(
+        TileKey{"test", 0, 0, 1},
+        Rectangle{});
+    unloading->loadState = TileLoadState::Unloading;
+    tiles["unloading"] = std::move(unloading);
+
+    check(TileUnloadPolicy::hasQueuedTileInState(
+              queue,
+              tiles,
+              TileLoadState::Unloading),
+          "TileUnloadPolicy: queued state scan finds matching tile");
+    check(!TileUnloadPolicy::hasQueuedTileInState(
+              queue,
+              tiles,
+              TileLoadState::Failed),
+          "TileUnloadPolicy: queued state scan ignores missing, null, and nonmatching tiles");
+}
+
+void testTileSubtreeTraversalCollectsRootAndDescendants() {
+    TilesetTile root(TileKey{"test", 0, 0, 0}, Rectangle{});
+    TilesetTile first(TileKey{"test", 1, 0, 0}, Rectangle{}, &root);
+    TilesetTile second(TileKey{"test", 1, 1, 0}, Rectangle{}, &root);
+    TilesetTile grandchild(TileKey{"test", 2, 3, 1}, Rectangle{}, &first);
+    root.children.push_back(&first);
+    root.children.push_back(nullptr);
+    root.children.push_back(&second);
+    first.children.push_back(&grandchild);
+
+    const std::vector<const TilesetTile*> tiles =
+        TileSubtreeTraversal::collectTiles(root);
+    check(tiles.size() == 4 &&
+              tiles[0] == &root &&
+              tiles[1] == &second &&
+              tiles[2] == &first &&
+              tiles[3] == &grandchild,
+          "TileSubtreeTraversal: collects root and non-null descendants");
+
+    const std::vector<std::string> keys =
+        TileSubtreeTraversal::collectCacheKeys(
+            root,
+            [](const TileKey& key) {
+                return key.schemeId + ":" +
+                       std::to_string(key.z) + ":" +
+                       std::to_string(key.x) + ":" +
+                       std::to_string(key.y);
+            });
+    check(keys.size() == 4 &&
+              keys[0] == "test:0:0:0" &&
+              keys[1] == "test:1:1:0" &&
+              keys[2] == "test:1:0:0" &&
+              keys[3] == "test:2:3:1",
+          "TileSubtreeTraversal: maps collected tiles to cache keys");
+}
+
+void testTileSubtreeTraversalBuildsDescendantRemovalPlan() {
+    TilesetTile root(TileKey{"test", 0, 0, 0}, Rectangle{});
+    TilesetTile first(TileKey{"test", 1, 0, 0}, Rectangle{}, &root);
+    TilesetTile second(TileKey{"test", 1, 1, 0}, Rectangle{}, &root);
+    TilesetTile grandchild(TileKey{"test", 2, 3, 1}, Rectangle{}, &first);
+    root.children.push_back(&first);
+    root.children.push_back(nullptr);
+    root.children.push_back(&second);
+    first.children.push_back(&grandchild);
+
+    const std::vector<TileSubtreeRemovalEntry> removalPlan =
+        TileSubtreeTraversal::collectDescendantsForRemoval(
+            root,
+            [](const TileKey& key) {
+                return key.schemeId + ":" +
+                       std::to_string(key.z) + ":" +
+                       std::to_string(key.x) + ":" +
+                       std::to_string(key.y);
+            });
+
+    check(removalPlan.size() == 3 &&
+              removalPlan[0].tile == &second &&
+              removalPlan[0].cacheKey == "test:1:1:0" &&
+              removalPlan[1].tile == &first &&
+              removalPlan[1].cacheKey == "test:1:0:0" &&
+              removalPlan[2].tile == &grandchild &&
+              removalPlan[2].cacheKey == "test:2:3:1",
+          "TileSubtreeTraversal: removal plan covers descendants and cache keys");
+    check(removalPlan[0].tile != &root &&
+              removalPlan[1].tile != &root &&
+              removalPlan[2].tile != &root,
+          "TileSubtreeTraversal: removal plan excludes the root tile");
+    check(removalPlan.rbegin()->tile == &grandchild,
+          "TileSubtreeTraversal: reverse removal starts with deepest planned descendant");
+}
+
+void testTileTraversalDetailsPolicySummarizesSingleAndCulledTiles() {
+    check(TileTraversalDetailsPolicy::wasRenderedLastFrameForTraversalDetails(
+              TileSelectionState::RenderedAndKicked,
+              TileRefine::Replace,
+              false),
+          "TileTraversalDetails: kicked rendered tile counts as rendered last frame");
+    check(TileTraversalDetailsPolicy::wasRenderedLastFrameForTraversalDetails(
+              TileSelectionState::Refined,
+              TileRefine::Add,
+              false),
+          "TileTraversalDetails: ADD refined tile counts as rendered last frame");
+    check(TileTraversalDetailsPolicy::wasRenderedLastFrameForTraversalDetails(
+              TileSelectionState::Refined,
+              TileRefine::Replace,
+              true),
+          "TileTraversalDetails: REPLACE refined tile inherits rendered descendant");
+    check(!TileTraversalDetailsPolicy::wasRenderedLastFrameForTraversalDetails(
+              TileSelectionState::Refined,
+              TileRefine::Replace,
+              false),
+          "TileTraversalDetails: REPLACE refined tile without rendered descendants was not rendered");
+
+    const TileTraversalDetails rendered =
+        TileTraversalDetailsPolicy::forSingleTile(true, true);
+    check(rendered.allAreRenderable &&
+              rendered.anyWereRenderedLastFrame &&
+              rendered.notYetRenderableCount == 0,
+          "TileTraversalDetails: renderable single tile carries previous render");
+
+    const TileTraversalDetails missing =
+        TileTraversalDetailsPolicy::forSingleTile(false, true);
+    check(!missing.allAreRenderable &&
+              !missing.anyWereRenderedLastFrame &&
+              missing.notYetRenderableCount == 1,
+          "TileTraversalDetails: missing single tile blocks renderability");
+
+    const TileTraversalDetails ignoredCulled =
+        TileTraversalDetailsPolicy::forCulledTile(
+            false,
+            TileRefine::Replace,
+            false,
+            true);
+    check(ignoredCulled.allAreRenderable &&
+              !ignoredCulled.anyWereRenderedLastFrame &&
+              ignoredCulled.notYetRenderableCount == 0,
+          "TileTraversalDetails: non-forbidHoles culled tile is ignored");
+
+    const TileTraversalDetails forbidHolesCulled =
+        TileTraversalDetailsPolicy::forCulledTile(
+            true,
+            TileRefine::Replace,
+            false,
+            true);
+    check(!forbidHolesCulled.allAreRenderable &&
+              !forbidHolesCulled.anyWereRenderedLastFrame &&
+              forbidHolesCulled.notYetRenderableCount == 1,
+          "TileTraversalDetails: forbidHoles culled replacement tile constrains traversal");
+}
+
+void testTileTraversalDetailsPolicyAggregatesChildren() {
+    TileTraversalDetails aggregate;
+    TileTraversalDetailsPolicy::mergeChild(
+        aggregate,
+        TileTraversalDetailsPolicy::forSingleTile(true, true));
+    TileTraversalDetailsPolicy::mergeChild(
+        aggregate,
+        TileTraversalDetailsPolicy::forSingleTile(false, false));
+
+    check(!aggregate.allAreRenderable &&
+              aggregate.anyWereRenderedLastFrame &&
+              aggregate.notYetRenderableCount == 1,
+          "TileTraversalDetails: child aggregate combines renderability and history");
+}
+
+void testTileSelectionHistoryReadsPreviousSelectionTree() {
+    TilesetTile root(
+        TileKey{"test", 0, 0, 0},
+        Rectangle{-1.0, -1.0, 1.0, 1.0});
+    TilesetTile renderedChild(
+        TileKey{"test", 1, 0, 0},
+        Rectangle{-1.0, -1.0, 0.0, 0.0},
+        &root);
+    TilesetTile refinedChild(
+        TileKey{"test", 1, 1, 0},
+        Rectangle{0.0, -1.0, 1.0, 0.0},
+        &root);
+    TilesetTile grandchild(
+        TileKey{"test", 2, 2, 0},
+        Rectangle{0.0, -1.0, 0.5, -0.5},
+        &refinedChild);
+
+    root.children.push_back(nullptr);
+    root.children.push_back(&renderedChild);
+    root.children.push_back(&refinedChild);
+    refinedChild.children.push_back(&grandchild);
+
+    renderedChild.previousSelectionState = TileSelectionState::Rendered;
+    refinedChild.previousSelectionState = TileSelectionState::RefinedAndKicked;
+    grandchild.previousSelectionState = TileSelectionState::NotVisited;
+
+    check(TileSelectionHistory::wasRenderedLastFrame(renderedChild),
+          "TileSelectionHistory: rendered tile is detected");
+    check(!TileSelectionHistory::wasRenderedLastFrame(refinedChild),
+          "TileSelectionHistory: refined tile is not directly rendered");
+    check(TileSelectionHistory::childWasRefinedLastFrame(root),
+          "TileSelectionHistory: kicked refined child is detected");
+    check(TileSelectionHistory::anyDescendantWasRenderedLastFrame(root),
+          "TileSelectionHistory: rendered child is detected as descendant");
+
+    renderedChild.previousSelectionState = TileSelectionState::NotVisited;
+    grandchild.previousSelectionState = TileSelectionState::Rendered;
+    check(TileSelectionHistory::anyDescendantWasRenderedLastFrame(root),
+          "TileSelectionHistory: deep rendered descendant is detected");
+
+    grandchild.previousSelectionState = TileSelectionState::NotVisited;
+    check(!TileSelectionHistory::anyDescendantWasRenderedLastFrame(root),
+          "TileSelectionHistory: missing rendered descendants returns false");
+}
+
+void testTileSelectionChildTraversalVisitsNonNullChildrenAndAggregates() {
+    TilesetTile parent(
+        TileKey{"test", 0, 0, 0},
+        Rectangle{-1.0, -1.0, 1.0, 1.0});
+    TilesetTile childA(
+        TileKey{"test", 1, 0, 0},
+        Rectangle{-1.0, -1.0, 0.0, 0.0},
+        &parent);
+    TilesetTile childB(
+        TileKey{"test", 1, 1, 0},
+        Rectangle{0.0, -1.0, 1.0, 0.0},
+        &parent);
+    parent.children.push_back(&childA);
+    parent.children.push_back(nullptr);
+    parent.children.push_back(&childB);
+
+    std::vector<TileKey> visited;
+    const TileTraversalDetails details =
+        TileSelectionChildTraversal::visitChildren(
+            parent.children,
+            [&visited](TilesetTile& child) {
+                visited.push_back(child.key);
+                return child.key.x == 0
+                    ? TileTraversalDetailsPolicy::forSingleTile(true, true)
+                    : TileTraversalDetailsPolicy::forSingleTile(false, false);
+            });
+
+    check(visited.size() == 2 &&
+              visited[0] == childA.key &&
+              visited[1] == childB.key,
+          "TileSelectionChildTraversal: visits non-null children in order");
+    check(!details.allAreRenderable &&
+              details.anyWereRenderedLastFrame &&
+              details.notYetRenderableCount == 1,
+          "TileSelectionChildTraversal: aggregates child traversal details");
+}
+
+void testTileSelectionKickPolicyKicksDescendantsForNativeReasons() {
+    TileTraversalDetails missingDescendants;
+    missingDescendants.allAreRenderable = false;
+    missingDescendants.anyWereRenderedLastFrame = false;
+    missingDescendants.notYetRenderableCount = 2;
+    check(TileSelectionKickPolicy::shouldKickDescendants(
+              missingDescendants,
+              true,
+              false,
+              20,
+              false,
+              false,
+              TileSelectionState::NotVisited,
+              false,
+              1.0f),
+          "TileSelectionKickPolicy: renderable ancestor kicks missing descendants");
+    check(!TileSelectionKickPolicy::shouldKickDescendants(
+              missingDescendants,
+              false,
+              false,
+              20,
+              false,
+              false,
+              TileSelectionState::NotVisited,
+              false,
+              1.0f),
+          "TileSelectionKickPolicy: non-renderable ancestor waits below descendant limit");
+
+    TileTraversalDetails fadingDescendants;
+    fadingDescendants.allAreRenderable = true;
+    fadingDescendants.anyWereRenderedLastFrame = true;
+    fadingDescendants.notYetRenderableCount = 0;
+    check(TileSelectionKickPolicy::shouldKickDescendants(
+              fadingDescendants,
+              true,
+              false,
+              20,
+              true,
+              true,
+              TileSelectionState::Rendered,
+              true,
+              0.5f),
+          "TileSelectionKickPolicy: fading-in tile can kick descendants");
+    check(!TileSelectionKickPolicy::shouldKickDescendants(
+              fadingDescendants,
+              true,
+              false,
+              20,
+              true,
+              true,
+              TileSelectionState::Rendered,
+              true,
+              1.0f),
+          "TileSelectionKickPolicy: fully faded-in tile keeps descendants");
+
+    TileTraversalDetails unconditionalMissing;
+    unconditionalMissing.allAreRenderable = false;
+    unconditionalMissing.anyWereRenderedLastFrame = true;
+    unconditionalMissing.notYetRenderableCount = 1;
+    check(TileSelectionKickPolicy::shouldKickDescendants(
+              unconditionalMissing,
+              false,
+              true,
+              20,
+              false,
+              false,
+              TileSelectionState::NotVisited,
+              false,
+              1.0f),
+          "TileSelectionKickPolicy: unconditional refine kicks missing descendant regardless of ancestor renderability");
+}
+
+void testTileSelectionKickPolicyRestoresChildQueueForParentLoad() {
+    TileTraversalDetails tooManyMissing;
+    tooManyMissing.allAreRenderable = false;
+    tooManyMissing.anyWereRenderedLastFrame = false;
+    tooManyMissing.notYetRenderableCount = 3;
+
+    check(TileSelectionKickPolicy::shouldRestoreChildLoadQueueAndLoadParent(
+              tooManyMissing,
+              false,
+              2,
+              false,
+              false),
+          "TileSelectionKickPolicy: too many missing descendants reload parent");
+    check(!TileSelectionKickPolicy::shouldRestoreChildLoadQueueAndLoadParent(
+              tooManyMissing,
+              true,
+              2,
+              false,
+              false),
+          "TileSelectionKickPolicy: previously rendered parent keeps child queue");
+    check(!TileSelectionKickPolicy::shouldRestoreChildLoadQueueAndLoadParent(
+              tooManyMissing,
+              false,
+              3,
+              false,
+              false),
+          "TileSelectionKickPolicy: descendant count must exceed limit");
+    check(!TileSelectionKickPolicy::shouldRestoreChildLoadQueueAndLoadParent(
+              tooManyMissing,
+              false,
+              2,
+              true,
+              false),
+          "TileSelectionKickPolicy: external content keeps child queue");
+    check(!TileSelectionKickPolicy::shouldRestoreChildLoadQueueAndLoadParent(
+              tooManyMissing,
+              false,
+              2,
+              false,
+              true),
+          "TileSelectionKickPolicy: unconditional refine keeps child queue");
+}
+
+void testTileSelectionKickPolicyPlansPostKickActions() {
+    TileTraversalDetails manyMissing;
+    manyMissing.allAreRenderable = false;
+    manyMissing.anyWereRenderedLastFrame = false;
+    manyMissing.notYetRenderableCount = 3;
+
+    const TileSelectionKickPlan restorePlan =
+        TileSelectionKickPolicy::planAfterKick(
+            manyMissing,
+            false,
+            2,
+            false,
+            false,
+            TileRefine::Replace,
+            true,
+            false);
+    check(restorePlan.restoreChildLoadQueueAndLoadParent &&
+              restorePlan.addRenderableReplacementToPlan &&
+              !restorePlan.preloadParent,
+          "TileSelectionKickPolicy: restoring child queue loads parent without preload duplicate");
+
+    const TileSelectionKickPlan addPlan =
+        TileSelectionKickPolicy::planAfterKick(
+            manyMissing,
+            false,
+            2,
+            false,
+            false,
+            TileRefine::Add,
+            true,
+            false);
+    check(addPlan.restoreChildLoadQueueAndLoadParent &&
+              !addPlan.addRenderableReplacementToPlan,
+          "TileSelectionKickPolicy: ADD parent is not re-added as replacement");
+
+    TileTraversalDetails fewMissing;
+    fewMissing.allAreRenderable = false;
+    fewMissing.anyWereRenderedLastFrame = false;
+    fewMissing.notYetRenderableCount = 1;
+    const TileSelectionKickPlan preloadPlan =
+        TileSelectionKickPolicy::planAfterKick(
+            fewMissing,
+            false,
+            2,
+            false,
+            false,
+            TileRefine::Replace,
+            false,
+            false);
+    check(!preloadPlan.restoreChildLoadQueueAndLoadParent &&
+              !preloadPlan.addRenderableReplacementToPlan &&
+              preloadPlan.preloadParent,
+          "TileSelectionKickPolicy: kicked parent preloads when no other load was queued");
+
+    const TileSelectionKickPlan alreadyQueuedPlan =
+        TileSelectionKickPolicy::planAfterKick(
+            fewMissing,
+            false,
+            2,
+            false,
+            false,
+            TileRefine::Replace,
+            false,
+            true);
+    check(!alreadyQueuedPlan.preloadParent,
+          "TileSelectionKickPolicy: already queued parent skips preload");
+}
+
+void testTileSelectionPostTraversalPolicyPlansKickOutcome() {
+    TileTraversalDetails manyMissing;
+    manyMissing.allAreRenderable = false;
+    manyMissing.anyWereRenderedLastFrame = false;
+    manyMissing.notYetRenderableCount = 3;
+
+    const TileSelectionPostTraversalResult result =
+        TileSelectionPostTraversalPolicy::evaluate(
+            TileSelectionPostTraversalInput{
+                manyMissing,
+                true,
+                false,
+                TileSelectionState::NotVisited,
+                false,
+                1.0f,
+                false,
+                false,
+                TileRefine::Replace,
+                false},
+            TileSelectionPostTraversalOptions{
+                2,
+                false,
+                false,
+                true});
+
+    check(result.shouldKick &&
+              !result.wasReallyRenderedLastFrame &&
+              result.kickPlan.restoreChildLoadQueueAndLoadParent &&
+              result.kickPlan.addRenderableReplacementToPlan &&
+              !result.kickPlan.preloadParent &&
+              !result.preloadRefinedAncestor,
+          "TileSelectionPostTraversalPolicy: kicked replacement restores queue and plans parent");
+}
+
+void testTileSelectionPostTraversalPolicyPlansRefinedAncestorPreload() {
+    const TileTraversalDetails ready =
+        TileTraversalDetailsPolicy::forSingleTile(true, false);
+
+    TileSelectionPostTraversalResult result =
+        TileSelectionPostTraversalPolicy::evaluate(
+            TileSelectionPostTraversalInput{
+                ready,
+                true,
+                false,
+                TileSelectionState::NotVisited,
+                false,
+                1.0f,
+                false,
+                false,
+                TileRefine::Replace,
+                false},
+            TileSelectionPostTraversalOptions{
+                2,
+                false,
+                false,
+                true});
+    check(!result.shouldKick &&
+              result.preloadRefinedAncestor,
+          "TileSelectionPostTraversalPolicy: refined ancestor preloads when enabled");
+
+    result = TileSelectionPostTraversalPolicy::evaluate(
+        TileSelectionPostTraversalInput{
+            ready,
+            true,
+            false,
+            TileSelectionState::NotVisited,
+            false,
+            1.0f,
+            false,
+            false,
+            TileRefine::Replace,
+            true},
+        TileSelectionPostTraversalOptions{
+            2,
+            false,
+            false,
+            true});
+    check(!result.shouldKick &&
+              !result.preloadRefinedAncestor,
+          "TileSelectionPostTraversalPolicy: queued refined ancestor skips preload");
+}
+
+void testTileSelectionPostTraversalPolicyPlansFadingKickWithoutParentReload() {
+    const TileTraversalDetails ready =
+        TileTraversalDetailsPolicy::forSingleTile(true, true);
+
+    const TileSelectionPostTraversalResult result =
+        TileSelectionPostTraversalPolicy::evaluate(
+            TileSelectionPostTraversalInput{
+                ready,
+                true,
+                false,
+                TileSelectionState::Rendered,
+                true,
+                0.5f,
+                true,
+                false,
+                TileRefine::Add,
+                true},
+            TileSelectionPostTraversalOptions{
+                20,
+                true,
+                true,
+                true});
+    check(result.shouldKick &&
+              result.wasReallyRenderedLastFrame &&
+              !result.kickPlan.restoreChildLoadQueueAndLoadParent &&
+              !result.kickPlan.addRenderableReplacementToPlan &&
+              !result.kickPlan.preloadParent,
+          "TileSelectionPostTraversalPolicy: fading ADD tile kicks without duplicate parent load");
+}
+
+void testTileSelectionPostTraversalPolicyBuildsCommitPlan() {
+    TileSelectionPostTraversalResult result;
+    result.shouldKick = true;
+    result.wasReallyRenderedLastFrame = true;
+    result.kickPlan.restoreChildLoadQueueAndLoadParent = true;
+    result.kickPlan.addRenderableReplacementToPlan = true;
+    result.kickPlan.preloadParent = true;
+
+    TileSelectionPostTraversalCommitPlan plan =
+        TileSelectionPostTraversalPolicy::commitPlan(result, false);
+    check(plan.kickVisitedDescendants && plan.trimRenderedDescendants,
+          "TileSelectionPostTraversalPolicy: commit plan kicks and trims descendants");
+    check(plan.restoreChildLoadQueue && plan.queueParentNormal,
+          "TileSelectionPostTraversalPolicy: commit plan restores child queue and queues parent");
+    check(plan.addRenderableReplacementToPlan && plan.queueParentPreload,
+          "TileSelectionPostTraversalPolicy: commit plan preserves replacement and preload actions");
+    check(plan.returnSingleTileDetails && plan.wasReallyRenderedLastFrame,
+          "TileSelectionPostTraversalPolicy: commit plan returns kicked single-tile details");
+    check(!plan.markTileRefined,
+          "TileSelectionPostTraversalPolicy: kicked commit plan does not mark refined");
+
+    plan = TileSelectionPostTraversalPolicy::commitPlan(result, true);
+    check(plan.restoreChildLoadQueue && !plan.queueParentNormal,
+          "TileSelectionPostTraversalPolicy: already queued parent avoids duplicate normal load");
+
+    result = TileSelectionPostTraversalResult{};
+    result.preloadRefinedAncestor = true;
+    plan = TileSelectionPostTraversalPolicy::commitPlan(result, false);
+    check(plan.markTileRefined && plan.queueParentPreload,
+          "TileSelectionPostTraversalPolicy: non-kick commit marks refined and preloads ancestor");
+    check(!plan.returnSingleTileDetails && !plan.kickVisitedDescendants,
+          "TileSelectionPostTraversalPolicy: non-kick commit keeps traversal details");
+
+    result.preloadRefinedAncestor = false;
+    plan = TileSelectionPostTraversalPolicy::commitPlan(result, false);
+    check(plan.markTileRefined && !plan.queueParentPreload,
+          "TileSelectionPostTraversalPolicy: non-kick commit skips preload when policy declines");
+}
+
+void testTileViewerRequestVolumePolicyChecksOptionalVolume() {
+    const std::optional<TileBoundingVolume> noVolume;
+    check(!TileViewerRequestVolumePolicy::hasRequestVolume(noVolume),
+          "TileViewerRequestVolumePolicy: missing volume imposes no gate");
+
+    const TileBoundingVolume sphere =
+        TileBoundingVolume::fromSphere(Vec3(10.0, 0.0, 0.0), 5.0);
+    const std::optional<TileBoundingVolume> volume = sphere;
+    check(TileViewerRequestVolumePolicy::hasRequestVolume(volume),
+          "TileViewerRequestVolumePolicy: present volume is detected");
+    check(TileViewerRequestVolumePolicy::containsPosition(
+              sphere,
+              Vec3(12.0, 0.0, 0.0)),
+          "TileViewerRequestVolumePolicy: camera inside request volume is allowed");
+    check(!TileViewerRequestVolumePolicy::containsPosition(
+              sphere,
+              Vec3(20.1, 0.0, 0.0)),
+          "TileViewerRequestVolumePolicy: camera outside request volume is rejected");
+
+    std::vector<FrameState::SelectorView> views(2);
+    views[0].position = Vec3(20.1, 0.0, 0.0);
+    views[1].position = Vec3(12.0, 0.0, 0.0);
+    check(TileViewerRequestVolumePolicy::allowsAnyView(noVolume, views),
+          "TileViewerRequestVolumePolicy: missing volume allows all views");
+    check(TileViewerRequestVolumePolicy::allowsAnyView(volume, views),
+          "TileViewerRequestVolumePolicy: any contained selector view allows tile");
+    views[1].position = Vec3(30.0, 0.0, 0.0);
+    check(!TileViewerRequestVolumePolicy::allowsAnyView(volume, views),
+          "TileViewerRequestVolumePolicy: outside selector views reject tile");
+}
+
+void testTileSelectionCullingPolicyChoosesChildrenBoundsLikeNative() {
+    check(TileSelectionCullingPolicy::shouldUseChildrenBounds(
+              TileRefine::Replace,
+              true,
+              false),
+          "TileSelectionCullingPolicy: replace tile with children uses child bounds");
+    check(!TileSelectionCullingPolicy::shouldUseChildrenBounds(
+              TileRefine::Add,
+              true,
+              false),
+          "TileSelectionCullingPolicy: add tile keeps own bounds");
+    check(!TileSelectionCullingPolicy::shouldUseChildrenBounds(
+              TileRefine::Replace,
+              false,
+              false),
+          "TileSelectionCullingPolicy: child bounds require children");
+    check(!TileSelectionCullingPolicy::shouldUseChildrenBounds(
+              TileRefine::Replace,
+              true,
+              true),
+          "TileSelectionCullingPolicy: unconditional child disables child bounds");
+}
+
+void testTileSelectionCullingPolicyEvaluatesFrustumAndFogGates() {
+    const TileSelectionCullResult outsideNoCull =
+        TileSelectionCullingPolicy::evaluateFrustum(false, false);
+    check(outsideNoCull.culled &&
+              outsideNoCull.shouldVisit &&
+              outsideNoCull.reason == TileSelectionCullReason::Frustum,
+          "TileSelectionCullingPolicy: disabled frustum culling still marks culled visit");
+
+    const TileSelectionCullResult outsideCull =
+        TileSelectionCullingPolicy::evaluateFrustum(false, true);
+    check(outsideCull.culled &&
+              !outsideCull.shouldVisit &&
+              outsideCull.reason == TileSelectionCullReason::Frustum,
+          "TileSelectionCullingPolicy: enabled frustum culling stops visit");
+
+    const TileSelectionCullResult fogNoCull =
+        TileSelectionCullingPolicy::evaluateFog(
+            TileSelectionCullResult{},
+            false,
+            false);
+    check(fogNoCull.culled &&
+              fogNoCull.shouldVisit &&
+              fogNoCull.reason == TileSelectionCullReason::Fog,
+          "TileSelectionCullingPolicy: disabled fog culling still marks culled visit");
+
+    const TileSelectionCullResult fogCull =
+        TileSelectionCullingPolicy::evaluateFog(
+            TileSelectionCullResult{},
+            false,
+            true);
+    check(fogCull.culled &&
+              !fogCull.shouldVisit &&
+              fogCull.reason == TileSelectionCullReason::Fog,
+          "TileSelectionCullingPolicy: enabled fog culling stops visit");
+
+    const TileSelectionCullResult frustumStoppedFog =
+        TileSelectionCullingPolicy::evaluateFog(outsideCull, false, true);
+    check(frustumStoppedFog.reason == TileSelectionCullReason::Frustum,
+          "TileSelectionCullingPolicy: fog does not replace prior frustum stop");
+}
+
+void testTileSelectionCullingPolicyChecksAnyViewFogVisibility() {
+    check(TileSelectionCullingPolicy::anyViewVisibleInFog(
+              {1.0, 1.0e200},
+              {1.0, 1.0}),
+          "TileSelectionCullingPolicy: any fog-visible view permits visit");
+    check(!TileSelectionCullingPolicy::anyViewVisibleInFog(
+              {1.0e200},
+              {1.0}),
+          "TileSelectionCullingPolicy: all fog-hidden views reject visit");
+    check(!TileSelectionCullingPolicy::anyViewVisibleInFog(
+              {10.0},
+              {}),
+          "TileSelectionCullingPolicy: missing fog density has no visible view");
+}
+
+void testTileSelectionCullingPolicyPlansCulledTileLoads() {
+    TileSelectionCullLoadPlan plan =
+        TileSelectionCullingPolicy::planCulledTileLoad(false, false);
+    check(!plan.queueLoad,
+          "TileSelectionCullingPolicy: culled tile is not loaded by default");
+
+    plan = TileSelectionCullingPolicy::planCulledTileLoad(true, false);
+    check(plan.queueLoad && plan.group == TileLoadPriorityGroup::Preload,
+          "TileSelectionCullingPolicy: preload siblings queues culled tile as preload");
+
+    plan = TileSelectionCullingPolicy::planCulledTileLoad(false, true);
+    check(plan.queueLoad && plan.group == TileLoadPriorityGroup::Normal,
+          "TileSelectionCullingPolicy: forbid holes queues culled tile normally");
+
+    plan = TileSelectionCullingPolicy::planCulledTileLoad(true, true);
+    check(plan.queueLoad && plan.group == TileLoadPriorityGroup::Normal,
+          "TileSelectionCullingPolicy: forbid holes takes priority over sibling preload");
+}
+
+void testTileSelectionCullingPolicyEvaluatesScreenSpaceError() {
+    check(TileSelectionCullingPolicy::meetsScreenSpaceError(
+              false,
+              15.0,
+              16.0,
+              true,
+              8.0),
+          "TileSelectionCullingPolicy: visible tile meets maximum SSE");
+    check(!TileSelectionCullingPolicy::meetsScreenSpaceError(
+              false,
+              16.0,
+              16.0,
+              true,
+              8.0),
+          "TileSelectionCullingPolicy: visible tile uses strict SSE threshold");
+    check(TileSelectionCullingPolicy::meetsScreenSpaceError(
+              true,
+              1000.0,
+              16.0,
+              false,
+              8.0),
+          "TileSelectionCullingPolicy: unenforced culled SSE always meets");
+    check(TileSelectionCullingPolicy::meetsScreenSpaceError(
+              true,
+              7.0,
+              16.0,
+              true,
+              8.0),
+          "TileSelectionCullingPolicy: culled tile uses culled SSE threshold");
+    check(!TileSelectionCullingPolicy::meetsScreenSpaceError(
+              true,
+              8.0,
+              16.0,
+              true,
+              8.0),
+          "TileSelectionCullingPolicy: culled tile uses strict culled SSE threshold");
+}
+
+void testTileSelectionVisitPreparationCombinesSelectionInputs() {
+    TilesetTile tile(
+        TileKey{"test", 0, 0, 0},
+        Rectangle{-0.25, -0.25, 0.25, 0.25});
+    tile.geometricError = 10.0;
+
+    FrameState::SelectorView view;
+    view.position = TileBoundsMetrics::tileBoundsCenter(tile.bounds);
+    view.direction = Vec3(1.0, 0.0, 0.0);
+    view.projectionMatrix = Camera{}.projectionMatrix(800.0, 800.0);
+    view.viewportHeightPixels = 800;
+    const std::vector<FrameState::SelectorView> views{view};
+    const TileSelectionVisibilityContext hiddenContext{
+        false,
+        0.0,
+        0.0};
+
+    TileSelectionVisitPreparationResult result =
+        TileSelectionVisitPreparation::prepare(
+            tile,
+            {},
+            {0.0},
+            hiddenContext,
+            TileSelectionVisitPreparationOptions{
+                true,
+                true,
+                true,
+                false,
+                true,
+                16.0,
+                64.0});
+    check(result.cullResult.culled &&
+              !result.cullResult.shouldVisit &&
+              result.cullResult.reason == TileSelectionCullReason::Frustum,
+          "TileSelectionVisitPreparation: hidden tile stops at frustum gate");
+    check(result.culledLoadPlan.queueLoad &&
+              result.culledLoadPlan.group == TileLoadPriorityGroup::Preload,
+          "TileSelectionVisitPreparation: preload siblings returns preload plan");
+
+    result = TileSelectionVisitPreparation::prepare(
+        tile,
+        std::vector<FrameState::SelectorView>{FrameState::SelectorView{
+            Vec3(1.0e200, 0.0, 0.0),
+            Vec3(1.0, 0.0, 0.0),
+            view.frustum,
+            view.projectionMatrix,
+            view.viewportHeightPixels}},
+        {1.0},
+        TileSelectionVisibilityContext{true, 0.0, 0.0},
+        TileSelectionVisitPreparationOptions{
+            true,
+            true,
+            false,
+            true,
+            true,
+            16.0,
+            64.0});
+    check(result.cullResult.culled &&
+              !result.cullResult.shouldVisit &&
+              result.cullResult.reason == TileSelectionCullReason::Fog,
+          "TileSelectionVisitPreparation: dense fog can stop a visible tile");
+    check(result.culledLoadPlan.queueLoad &&
+              result.culledLoadPlan.group == TileLoadPriorityGroup::Normal,
+          "TileSelectionVisitPreparation: forbid holes returns normal load plan");
+
+    tile.viewerRequestVolume =
+        TileBoundingVolume::fromSphere(Vec3(1000.0, 0.0, 0.0), 10.0);
+    result = TileSelectionVisitPreparation::prepare(
+        tile,
+        views,
+        {0.0},
+        TileSelectionVisibilityContext{true, 0.0, 0.0},
+        TileSelectionVisitPreparationOptions{
+            false,
+            false,
+            false,
+            false,
+            true,
+            16.0,
+            64.0});
+    check(!result.viewerRequestVolumeAllowed,
+          "TileSelectionVisitPreparation: outside viewer request volume is rejected");
+
+    tile.viewerRequestVolume.reset();
+    tile.geometricError = 1.0e20;
+    result = TileSelectionVisitPreparation::prepare(
+        tile,
+        std::vector<FrameState::SelectorView>{FrameState::SelectorView{
+            Vec3(1.0e6, 0.0, 0.0),
+            Vec3(1.0, 0.0, 0.0),
+            view.frustum,
+            view.projectionMatrix,
+            view.viewportHeightPixels}},
+        {1.0},
+        TileSelectionVisibilityContext{true, 0.0, 0.0},
+        TileSelectionVisitPreparationOptions{
+            false,
+            false,
+            false,
+            false,
+            true,
+            16.0,
+            0.001});
+    check(result.cullResult.culled &&
+              result.cullResult.shouldVisit &&
+              result.inputSummary.screenSpaceError > 0.001 &&
+              !result.meetsScreenSpaceError,
+          "TileSelectionVisitPreparation: culled tile uses culled SSE threshold");
+}
+
+void testTileSelectionVisitPreparationPlansEarlyExitActions() {
+    TileSelectionVisitPreparationResult preparation;
+    preparation.cullResult.culled = true;
+    preparation.cullResult.shouldVisit = false;
+    preparation.cullResult.reason = TileSelectionCullReason::Frustum;
+    preparation.culledLoadPlan.queueLoad = true;
+    preparation.culledLoadPlan.group = TileLoadPriorityGroup::Normal;
+
+    TileSelectionVisitEarlyExitPlan plan =
+        TileSelectionVisitPreparation::earlyExitPlan(preparation);
+    check(plan.shouldExit &&
+              plan.reason == TileSelectionVisitEarlyExitReason::Culled &&
+              plan.counter ==
+                  TileSelectionVisitEarlyExitCounter::FrustumCulled &&
+              plan.markTileCulled &&
+              !plan.resetScreenSpaceError &&
+              plan.queueCulledLoad &&
+              plan.loadGroup == TileLoadPriorityGroup::Normal,
+          "TileSelectionVisitPreparation: frustum stop plans culled load");
+
+    preparation.cullResult.reason = TileSelectionCullReason::Fog;
+    preparation.culledLoadPlan.queueLoad = false;
+    plan = TileSelectionVisitPreparation::earlyExitPlan(preparation);
+    check(plan.shouldExit &&
+              plan.counter == TileSelectionVisitEarlyExitCounter::FogCulled &&
+              !plan.queueCulledLoad,
+          "TileSelectionVisitPreparation: fog stop counts fog without load plan");
+
+    preparation = TileSelectionVisitPreparationResult{};
+    preparation.viewerRequestVolumeAllowed = false;
+    plan = TileSelectionVisitPreparation::earlyExitPlan(preparation);
+    check(plan.shouldExit &&
+              plan.reason ==
+                  TileSelectionVisitEarlyExitReason::ViewerRequestVolume &&
+              plan.markTileCulled &&
+              plan.resetScreenSpaceError &&
+              plan.counter == TileSelectionVisitEarlyExitCounter::None,
+          "TileSelectionVisitPreparation: viewer request volume rejection resets SSE");
+
+    preparation = TileSelectionVisitPreparationResult{};
+    plan = TileSelectionVisitPreparation::earlyExitPlan(preparation);
+    check(!plan.shouldExit &&
+              plan.reason == TileSelectionVisitEarlyExitReason::None,
+          "TileSelectionVisitPreparation: visitable tile has no early exit");
+}
+
+void testTileSelectionVisitPreparationBuildsOutcomePlan() {
+    TileSelectionVisitPreparationResult preparation;
+    preparation.cullResult.culled = true;
+    preparation.cullResult.shouldVisit = false;
+    preparation.cullResult.reason = TileSelectionCullReason::Frustum;
+    preparation.culledLoadPlan.queueLoad = true;
+    preparation.culledLoadPlan.group = TileLoadPriorityGroup::Normal;
+
+    TileSelectionVisitOutcomePlan outcome =
+        TileSelectionVisitPreparation::outcomePlan(preparation);
+    check(outcome.shouldExit &&
+              outcome.exitReason == TileSelectionVisitEarlyExitReason::Culled &&
+              outcome.counter ==
+                  TileSelectionVisitEarlyExitCounter::FrustumCulled,
+          "TileSelectionVisitPreparation: outcome exits and counts frustum cull");
+    check(outcome.markTileCulled &&
+              !outcome.resetScreenSpaceError &&
+              outcome.queueLoad &&
+              outcome.loadGroup == TileLoadPriorityGroup::Normal &&
+              outcome.returnCulledTraversalDetails,
+          "TileSelectionVisitPreparation: outcome plans culled load and details");
+    check(!outcome.countCulledVisited,
+          "TileSelectionVisitPreparation: early exit does not count visitable culled tile");
+
+    preparation.cullResult.reason = TileSelectionCullReason::Fog;
+    preparation.culledLoadPlan.queueLoad = false;
+    outcome = TileSelectionVisitPreparation::outcomePlan(preparation);
+    check(outcome.shouldExit &&
+              outcome.counter == TileSelectionVisitEarlyExitCounter::FogCulled &&
+              !outcome.queueLoad &&
+              outcome.returnCulledTraversalDetails,
+          "TileSelectionVisitPreparation: outcome exits and counts fog cull");
+
+    preparation = TileSelectionVisitPreparationResult{};
+    preparation.viewerRequestVolumeAllowed = false;
+    outcome = TileSelectionVisitPreparation::outcomePlan(preparation);
+    check(outcome.shouldExit &&
+              outcome.exitReason ==
+                  TileSelectionVisitEarlyExitReason::ViewerRequestVolume &&
+              outcome.markTileCulled &&
+              outcome.resetScreenSpaceError &&
+              !outcome.queueLoad &&
+              !outcome.returnCulledTraversalDetails,
+          "TileSelectionVisitPreparation: outcome handles viewer request volume rejection");
+
+    preparation = TileSelectionVisitPreparationResult{};
+    preparation.cullResult.culled = true;
+    preparation.cullResult.shouldVisit = true;
+    outcome = TileSelectionVisitPreparation::outcomePlan(preparation);
+    check(!outcome.shouldExit &&
+              outcome.countCulledVisited &&
+              !outcome.markTileCulled,
+          "TileSelectionVisitPreparation: outcome counts culled tiles that still visit");
+
+    preparation.cullResult.culled = false;
+    outcome = TileSelectionVisitPreparation::outcomePlan(preparation);
+    check(!outcome.shouldExit &&
+              !outcome.countCulledVisited,
+          "TileSelectionVisitPreparation: visible outcome continues without counters");
+}
+
+void testTileSelectionTraversalCounterPolicyPlansTraversalCounters() {
+    TileSelectionTraversalCounterPlan counters =
+        TileSelectionTraversalCounterPolicy::planVisitStart();
+    check(counters.visited == 1 &&
+              counters.frustumCulled == 0 &&
+              counters.fogCulled == 0 &&
+              counters.culledVisited == 0,
+          "TileSelectionTraversalCounterPolicy: visit start increments only visited");
+
+    TileSelectionVisitOutcomePlan outcome;
+    outcome.shouldExit = true;
+    outcome.counter = TileSelectionVisitEarlyExitCounter::FrustumCulled;
+    counters = TileSelectionTraversalCounterPolicy::planOutcome(outcome);
+    check(counters.frustumCulled == 1 &&
+              counters.fogCulled == 0 &&
+              counters.culledVisited == 0,
+          "TileSelectionTraversalCounterPolicy: frustum early exit increments frustum culled");
+
+    outcome.counter = TileSelectionVisitEarlyExitCounter::FogCulled;
+    counters = TileSelectionTraversalCounterPolicy::planOutcome(outcome);
+    check(counters.frustumCulled == 0 &&
+              counters.fogCulled == 1 &&
+              counters.culledVisited == 0,
+          "TileSelectionTraversalCounterPolicy: fog early exit increments fog culled");
+
+    outcome = TileSelectionVisitOutcomePlan{};
+    outcome.countCulledVisited = true;
+    counters = TileSelectionTraversalCounterPolicy::planOutcome(outcome);
+    check(counters.frustumCulled == 0 &&
+              counters.fogCulled == 0 &&
+              counters.culledVisited == 1,
+          "TileSelectionTraversalCounterPolicy: visitable culled tile increments culled visited");
+
+    outcome = TileSelectionVisitOutcomePlan{};
+    counters = TileSelectionTraversalCounterPolicy::planOutcome(outcome);
+    check(counters.frustumCulled == 0 &&
+              counters.fogCulled == 0 &&
+              counters.culledVisited == 0,
+          "TileSelectionTraversalCounterPolicy: visible tile adds no outcome counters");
+
+    TileSelectionRefineFlowResult refineFlow;
+    refineFlow.counter = TileSelectionRefineFlowCounter::Occluded;
+    counters = TileSelectionTraversalCounterPolicy::planRefineFlow(refineFlow);
+    check(counters.occluded == 1 &&
+              counters.waitingForOcclusion == 0,
+          "TileSelectionTraversalCounterPolicy: occluded refine flow increments occluded");
+
+    refineFlow.counter = TileSelectionRefineFlowCounter::WaitingForOcclusion;
+    counters = TileSelectionTraversalCounterPolicy::planRefineFlow(refineFlow);
+    check(counters.occluded == 0 &&
+              counters.waitingForOcclusion == 1,
+          "TileSelectionTraversalCounterPolicy: unavailable occlusion increments waiting");
+
+    refineFlow.counter = TileSelectionRefineFlowCounter::None;
+    counters = TileSelectionTraversalCounterPolicy::planRefineFlow(refineFlow);
+    check(counters.occluded == 0 &&
+              counters.waitingForOcclusion == 0,
+          "TileSelectionTraversalCounterPolicy: refine flow without occlusion counter adds none");
+
+    TileSelectionPostTraversalCommitPlan commitPlan;
+    commitPlan.trimRenderedDescendants = true;
+    counters =
+        TileSelectionTraversalCounterPolicy::planPostTraversalCommit(
+            commitPlan);
+    check(counters.kicked == 1,
+          "TileSelectionTraversalCounterPolicy: trim commit increments kicked counter");
+
+    commitPlan.trimRenderedDescendants = false;
+    counters =
+        TileSelectionTraversalCounterPolicy::planPostTraversalCommit(
+            commitPlan);
+    check(counters.kicked == 0,
+          "TileSelectionTraversalCounterPolicy: non-trim commit does not increment kicked counter");
+}
+
+void testTileSelectionRefinementPolicyInitialDecision() {
+    TileSelectionRefineDecision decision =
+        TileSelectionRefinementPolicy::initialRefineDecision(
+            false,
+            false,
+            false);
+    check(decision.refine && !decision.meetsSse,
+          "TileSelectionRefinementPolicy: unmet SSE starts refinement");
+
+    decision = TileSelectionRefinementPolicy::initialRefineDecision(
+        true,
+        true,
+        false);
+    check(decision.refine && decision.meetsSse,
+          "TileSelectionRefinementPolicy: unconditional refine overrides SSE");
+
+    decision = TileSelectionRefinementPolicy::initialRefineDecision(
+        false,
+        false,
+        true);
+    check(!decision.refine && !decision.meetsSse,
+          "TileSelectionRefinementPolicy: ancestor meeting SSE stops SSE refine");
+}
+
+void testTileSelectionRefinementPolicyOcclusionGate() {
+    check(TileSelectionRefinementPolicy::shouldCheckOcclusion(
+              true,
+              true,
+              false,
+              TileSelectionState::Rendered,
+              false),
+          "TileSelectionRefinementPolicy: refining tile checks occlusion");
+    check(!TileSelectionRefinementPolicy::shouldCheckOcclusion(
+              true,
+              true,
+              true,
+              TileSelectionState::Rendered,
+              false),
+          "TileSelectionRefinementPolicy: unconditional refine skips occlusion");
+    check(!TileSelectionRefinementPolicy::shouldCheckOcclusion(
+              true,
+              true,
+              false,
+              TileSelectionState::Refined,
+              true),
+          "TileSelectionRefinementPolicy: previously refined child skips occlusion");
+    check(!TileSelectionRefinementPolicy::shouldCheckOcclusion(
+              false,
+              true,
+              false,
+              TileSelectionState::Rendered,
+              false),
+          "TileSelectionRefinementPolicy: disabled occlusion does not check");
+}
+
+void testTileSelectionRefinementPolicyOcclusionAction() {
+    check(TileSelectionRefinementPolicy::occlusionAction(
+              TileOcclusionState::Occluded,
+              false,
+              TileSelectionState::Refined) ==
+              TileSelectionOcclusionAction::StopForOccluded,
+          "TileSelectionRefinementPolicy: occluded tile stops refinement");
+    check(TileSelectionRefinementPolicy::occlusionAction(
+              TileOcclusionState::OcclusionUnavailable,
+              true,
+              TileSelectionState::Rendered) ==
+              TileSelectionOcclusionAction::StopForUnavailable,
+          "TileSelectionRefinementPolicy: unavailable occlusion delays new refinement");
+    check(TileSelectionRefinementPolicy::occlusionAction(
+              TileOcclusionState::OcclusionUnavailable,
+              true,
+              TileSelectionState::Refined) ==
+              TileSelectionOcclusionAction::None,
+          "TileSelectionRefinementPolicy: unavailable occlusion keeps previous refinement");
+    check(TileSelectionRefinementPolicy::occlusionAction(
+              TileOcclusionState::NotOccluded,
+              true,
+              TileSelectionState::Rendered) ==
+              TileSelectionOcclusionAction::None,
+          "TileSelectionRefinementPolicy: visible tile keeps refinement");
+
+    const TileSelectionRefineDecision stopped =
+        TileSelectionRefinementPolicy::applyOcclusionAction(
+            TileSelectionRefineDecision{true, false},
+            TileSelectionOcclusionAction::StopForOccluded);
+    check(!stopped.refine && stopped.meetsSse,
+          "TileSelectionRefinementPolicy: stop action marks tile as meeting SSE");
+}
+
+void testTileSelectionRefinementPolicyContinueDeeper() {
+    TileSelectionContinueDeeperDecision decision =
+        TileSelectionRefinementPolicy::continueDeeperDecision(
+            false,
+            TileSelectionState::Refined,
+            false,
+            false);
+    check(decision.shouldContinue && decision.ancestorMeetsSse &&
+              decision.queueUrgent,
+          "TileSelectionRefinementPolicy: missing previously refined tile continues deeper urgently");
+
+    decision = TileSelectionRefinementPolicy::continueDeeperDecision(
+        false,
+        TileSelectionState::Refined,
+        false,
+        true);
+    check(decision.shouldContinue && decision.ancestorMeetsSse &&
+              !decision.queueUrgent,
+          "TileSelectionRefinementPolicy: existing ancestor SSE avoids urgent duplicate");
+
+    decision = TileSelectionRefinementPolicy::continueDeeperDecision(
+        false,
+        TileSelectionState::Rendered,
+        false,
+        false);
+    check(!decision.shouldContinue,
+          "TileSelectionRefinementPolicy: only previous refinement continues deeper");
+
+    decision = TileSelectionRefinementPolicy::continueDeeperDecision(
+        false,
+        TileSelectionState::Refined,
+        true,
+        false);
+    check(!decision.shouldContinue,
+          "TileSelectionRefinementPolicy: renderable tile does not continue deeper");
+}
+
+void testTileSelectionRefinementPolicyPreloadRefinedAncestor() {
+    check(TileSelectionRefinementPolicy::shouldPreloadRefinedAncestor(
+              true,
+              false),
+          "TileSelectionRefinementPolicy: refined ancestor preloads when not already queued");
+    check(!TileSelectionRefinementPolicy::shouldPreloadRefinedAncestor(
+              false,
+              false),
+          "TileSelectionRefinementPolicy: disabled ancestor preload does not queue");
+    check(!TileSelectionRefinementPolicy::shouldPreloadRefinedAncestor(
+              true,
+              true),
+          "TileSelectionRefinementPolicy: already queued refined ancestor is not duplicated");
+}
+
+void testTileSelectionRefineFlowPolicyAppliesOcclusionAndCounters() {
+    const TileSelectionRefineFlowOptions options{true, true};
+    TileSelectionRefineFlowInput input;
+    input.meetsScreenSpaceError = false;
+    input.renderable = true;
+    input.previousSelectionState = TileSelectionState::Rendered;
+
+    TileSelectionRefineFlowResult result =
+        TileSelectionRefineFlowPolicy::evaluate(input, options);
+    check(result.shouldCheckOcclusion &&
+              result.refine &&
+              !result.meetsScreenSpaceError,
+          "TileSelectionRefineFlowPolicy: refining tile requests occlusion");
+
+    input.occlusion = TileOcclusionState::Occluded;
+    result = TileSelectionRefineFlowPolicy::evaluate(input, options);
+    check(!result.refine &&
+              result.meetsScreenSpaceError &&
+              result.counter == TileSelectionRefineFlowCounter::Occluded,
+          "TileSelectionRefineFlowPolicy: occluded tile stops refinement and counts occlusion");
+
+    input.occlusion = TileOcclusionState::OcclusionUnavailable;
+    result = TileSelectionRefineFlowPolicy::evaluate(input, options);
+    check(!result.refine &&
+              result.meetsScreenSpaceError &&
+              result.counter ==
+                  TileSelectionRefineFlowCounter::WaitingForOcclusion,
+          "TileSelectionRefineFlowPolicy: unavailable occlusion can delay refinement");
+}
+
+void testTileSelectionRefineFlowPolicySkipsOcclusionForNativeCases() {
+    TileSelectionRefineFlowInput input;
+    input.unconditionallyRefine = true;
+    input.meetsScreenSpaceError = true;
+    input.renderable = true;
+    TileSelectionRefineFlowResult result =
+        TileSelectionRefineFlowPolicy::evaluate(
+            input,
+            TileSelectionRefineFlowOptions{true, true});
+    check(result.refine &&
+              result.meetsScreenSpaceError &&
+              !result.shouldCheckOcclusion,
+          "TileSelectionRefineFlowPolicy: unconditional refine skips occlusion");
+
+    input = TileSelectionRefineFlowInput{};
+    input.meetsScreenSpaceError = false;
+    input.renderable = true;
+    input.previousSelectionState = TileSelectionState::Refined;
+    input.childWasRefinedLastFrame = true;
+    result = TileSelectionRefineFlowPolicy::evaluate(
+        input,
+        TileSelectionRefineFlowOptions{true, true});
+    check(result.refine && !result.shouldCheckOcclusion,
+          "TileSelectionRefineFlowPolicy: previously refined child skips occlusion");
+
+    input.childWasRefinedLastFrame = false;
+    result = TileSelectionRefineFlowPolicy::evaluate(
+        input,
+        TileSelectionRefineFlowOptions{false, true});
+    check(result.refine && !result.shouldCheckOcclusion,
+          "TileSelectionRefineFlowPolicy: disabled occlusion skips checks");
+}
+
+void testTileSelectionRefineFlowPolicyContinuesDeeperForPreviousRefinement() {
+    TileSelectionRefineFlowInput input;
+    input.meetsScreenSpaceError = true;
+    input.ancestorMeetsSse = false;
+    input.renderable = false;
+    input.previousSelectionState = TileSelectionState::Refined;
+
+    TileSelectionRefineFlowResult result =
+        TileSelectionRefineFlowPolicy::evaluate(
+            input,
+            TileSelectionRefineFlowOptions{true, true});
+    check(result.refine &&
+              result.ancestorMeetsSse &&
+              result.queueUrgentLoad &&
+              result.queuedForLoad,
+          "TileSelectionRefineFlowPolicy: previous unrenderable refinement continues deeper urgently");
+
+    input.ancestorMeetsSse = true;
+    result = TileSelectionRefineFlowPolicy::evaluate(
+        input,
+        TileSelectionRefineFlowOptions{true, true});
+    check(result.refine &&
+              result.ancestorMeetsSse &&
+              !result.queueUrgentLoad &&
+              !result.queuedForLoad,
+          "TileSelectionRefineFlowPolicy: ancestor meeting SSE avoids duplicate urgent load");
+}
+
+void testTileSelectionVisibilitySamplerUsesCameraAndChildBounds() {
+    TilesetTile parent(
+        TileKey{"test", 0, 0, 0},
+        Rectangle{-1.0, -1.0, 1.0, 1.0});
+    TilesetTile outsideChild(
+        TileKey{"test", 1, 0, 0},
+        Rectangle{2.0, 2.0, 3.0, 3.0},
+        &parent);
+    TilesetTile cameraChild(
+        TileKey{"test", 1, 1, 0},
+        Rectangle{-0.25, -0.25, 0.25, 0.25},
+        &parent);
+    parent.children.push_back(&outsideChild);
+    parent.children.push_back(&cameraChild);
+
+    const std::vector<FrameState::SelectorView> noViews;
+    const TileSelectionVisibilityContext cameraContext{
+        true,
+        0.0,
+        0.0};
+    const TileSelectionVisibilitySample parentSample =
+        TileSelectionVisibilitySampler::sampleTileBounds(
+            parent,
+            noViews,
+            cameraContext);
+    check(parentSample.visibleFromCamera && !parentSample.inFrustum,
+          "TileSelectionVisibilitySampler: render-under-camera makes tile visible without frustum");
+
+    const TileSelectionVisibilitySample childSample =
+        TileSelectionVisibilitySampler::sampleChildBounds(
+            parent.children,
+            noViews,
+            cameraContext);
+    check(childSample.visibleFromCamera && !childSample.inFrustum,
+          "TileSelectionVisibilitySampler: child bounds use first visible child");
+
+    const TileSelectionVisibilityContext disabledCameraContext{
+        false,
+        0.0,
+        0.0};
+    const TileSelectionVisibilitySample disabledSample =
+        TileSelectionVisibilitySampler::sampleTileBounds(
+            parent,
+            noViews,
+            disabledCameraContext);
+    check(!disabledSample.visibleFromCamera && !disabledSample.inFrustum,
+          "TileSelectionVisibilitySampler: disabled render-under-camera requires frustum");
+}
+
+void testTileSelectionVisibilitySamplerChoosesSelectionBoundsLikeNative() {
+    const std::vector<FrameState::SelectorView> noViews;
+    const TileSelectionVisibilityContext cameraContext{
+        true,
+        0.0,
+        0.0};
+
+    TilesetTile replaceParent(
+        TileKey{"test", 0, 0, 0},
+        Rectangle{2.0, 2.0, 3.0, 3.0});
+    TilesetTile replaceVisibleChild(
+        TileKey{"test", 1, 0, 0},
+        Rectangle{-0.25, -0.25, 0.25, 0.25},
+        &replaceParent);
+    replaceParent.refine = TileRefine::Replace;
+    replaceParent.children.push_back(&replaceVisibleChild);
+
+    TileSelectionVisibilitySample sample =
+        TileSelectionVisibilitySampler::sampleForTileSelection(
+            replaceParent,
+            noViews,
+            cameraContext);
+    check(sample.visibleFromCamera,
+          "TileSelectionVisibilitySampler: replace-refined parent samples child bounds");
+
+    TilesetTile addParent(
+        TileKey{"test", 0, 0, 1},
+        Rectangle{-0.25, -0.25, 0.25, 0.25});
+    TilesetTile addOutsideChild(
+        TileKey{"test", 1, 1, 0},
+        Rectangle{2.0, 2.0, 3.0, 3.0},
+        &addParent);
+    addParent.refine = TileRefine::Add;
+    addParent.children.push_back(&addOutsideChild);
+
+    sample = TileSelectionVisibilitySampler::sampleForTileSelection(
+        addParent,
+        noViews,
+        cameraContext);
+    check(sample.visibleFromCamera,
+          "TileSelectionVisibilitySampler: add-refined parent samples own bounds");
+
+    TilesetTile unconditionalParent(
+        TileKey{"test", 0, 1, 0},
+        Rectangle{-0.25, -0.25, 0.25, 0.25});
+    TilesetTile unconditionalOutsideChild(
+        TileKey{"test", 1, 0, 1},
+        Rectangle{2.0, 2.0, 3.0, 3.0},
+        &unconditionalParent);
+    unconditionalOutsideChild.unconditionallyRefine = true;
+    unconditionalParent.refine = TileRefine::Replace;
+    unconditionalParent.children.push_back(&unconditionalOutsideChild);
+
+    sample = TileSelectionVisibilitySampler::sampleForTileSelection(
+        unconditionalParent,
+        noViews,
+        cameraContext);
+    check(sample.visibleFromCamera,
+          "TileSelectionVisibilitySampler: unconditional child keeps parent bounds");
+}
+
+void testTilePendingLoadQueueUsesSharedPriorityOrder() {
+    TilePendingLoadQueue queue;
+    const TileKey terrainKey{"test", 1, 0, 0};
+    const TileKey contentKey{"test", 1, 1, 0};
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    queue.addTerrainUpload(PendingTerrainUpload{
+        terrainKey,
+        "terrain",
+        TileLoadPriorityGroup::Normal,
+        1.0,
+        nullptr});
+    queue.addContentUpload(PendingContentUpload{
+        contentKey,
+        "content",
+        TileLoadPriorityGroup::Urgent,
+        100.0,
+        TileContentLoadResult::failed()});
+
+    std::optional<PendingLoadFinalize> first =
+        queue.takeHighestPriorityUpload(false, budget);
+    check(first && first->kind == PendingLoadFinalizeKind::Content,
+          "TilePendingLoadQueue: content and terrain uploads share priority order");
+    check(queue.contentUploadCount() == 0 && queue.terrainUploadCount() == 1,
+          "TilePendingLoadQueue: taking content upload removes only that upload");
+}
+
+void testTilePendingLoadQueueFiltersNonUrgentDuringInteraction() {
+    TilePendingLoadQueue queue;
+    const TileKey normalKey{"test", 1, 0, 0};
+    const TileKey urgentKey{"test", 1, 1, 0};
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(2, config);
+
+    queue.addTerrainUpload(PendingTerrainUpload{
+        normalKey,
+        "normal",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        nullptr});
+    queue.addTerrainUpload(PendingTerrainUpload{
+        urgentKey,
+        "urgent",
+        TileLoadPriorityGroup::Urgent,
+        100.0,
+        nullptr});
+
+    std::optional<PendingLoadFinalize> first =
+        queue.takeHighestPriorityUpload(true, budget);
+    check(first && first->kind == PendingLoadFinalizeKind::Terrain,
+          "TilePendingLoadQueue: interaction still allows urgent terrain upload");
+    check(first && first->terrainUpload &&
+              first->terrainUpload->cacheKey == "urgent",
+          "TilePendingLoadQueue: interaction skips non-urgent uploads");
+    std::optional<PendingLoadFinalize> second =
+        queue.takeHighestPriorityUpload(true, budget);
+    check(!second,
+          "TilePendingLoadQueue: interaction leaves non-urgent upload pending");
+    check(queue.terrainUploadCount() == 1,
+          "TilePendingLoadQueue: skipped non-urgent upload remains queued");
+}
+
+void testTilePendingLoadQueueTakesTerminalResultsByPriority() {
+    TilePendingLoadQueue queue;
+    const TileKey lowKey{"test", 1, 0, 0};
+    const TileKey highKey{"test", 1, 1, 0};
+
+    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+        lowKey,
+        "low",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TerrainTileLoadStatus::Failed});
+    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+        highKey,
+        "high",
+        TileLoadPriorityGroup::Urgent,
+        100.0,
+        TerrainTileLoadStatus::RetryLater});
+
+    std::optional<PendingTerrainTerminalResult> first =
+        queue.takeHighestPriorityTerrainTerminalResult();
+    check(first && first->cacheKey == "high",
+          "TilePendingLoadQueue: terminal results use priority order");
+    check(queue.terrainTerminalResultCount() == 1,
+          "TilePendingLoadQueue: terminal take removes selected result");
+}
+
+void testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads() {
+    TileLoadLifecycle lifecycle;
+    const TileKey terrainKey{"test", 1, 0, 0};
+    const TileKey contentKey{"test", 1, 1, 0};
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    std::vector<std::string> events;
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainTerminalResult(
+            PendingTerrainTerminalResult{
+                terrainKey,
+                "terrain-terminal",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TerrainTileLoadStatus::RetryLater});
+        lifecycle.pendingLoads().addContentTerminalResult(
+            PendingContentTerminalResult{
+                contentKey,
+                "content-terminal",
+                TileLoadPriorityGroup::Urgent,
+                0.0,
+                TileContentLoadStatus::Empty});
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            terrainKey,
+            "terrain-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            nullptr});
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            contentKey,
+            "content-upload",
+            TileLoadPriorityGroup::Urgent,
+            0.0,
+            TileContentLoadResult::failed()});
+    }
+
+    const bool changed =
+        TilePendingLoadProcessor::processPendingLoads(
+            TilePendingLoadProcessorInput{
+                lifecycle,
+                budget,
+                false},
+            [&events](const PendingTerrainTerminalResult&) {
+                events.push_back("terrain-terminal");
+            },
+            [&events](const PendingContentTerminalResult&) {
+                events.push_back("content-terminal");
+            },
+            [&events](PendingTerrainUpload&) {
+                events.push_back("terrain-upload");
+            },
+            [&events](PendingContentUpload&) {
+                events.push_back("content-upload");
+            });
+
+    check(changed,
+          "TilePendingLoadProcessor: reports changed after draining work");
+    check(events.size() == 3 &&
+              events[0] == "terrain-terminal" &&
+              events[1] == "content-terminal" &&
+              events[2] == "content-upload",
+          "TilePendingLoadProcessor: drains terminal results before one budgeted upload");
+    const TileLoadLifecycleCounts counts = lifecycle.counts();
+    check(counts.terrainUploads == 1 && counts.contentUploads == 0,
+          "TilePendingLoadProcessor: exhausted finalize budget leaves lower-priority upload pending");
+}
+
+void testTilePendingUploadCompletionErasesUploadKeys() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            TileKey{"test", 1, 0, 0},
+            "terrain",
+            TileLoadPriorityGroup::Normal,
+            1.0,
+            nullptr});
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            TileKey{"test", 1, 1, 0},
+            "content",
+            TileLoadPriorityGroup::Normal,
+            2.0,
+            TileContentLoadResult::empty()});
+        std::optional<PendingLoadFinalize> first =
+            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+        std::optional<PendingLoadFinalize> second =
+            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+        check(first && second,
+              "TilePendingUploadCompletion: test dequeues pending upload payloads before completion cleanup");
+    }
+
+    TilePendingUploadCompletion::eraseTerrainUpload(lifecycle, "terrain");
+    check(!lifecycle.containsWorkForCacheKey("terrain") &&
+              lifecycle.containsWorkForCacheKey("content"),
+          "TilePendingUploadCompletion: erases terrain upload key without clearing content upload work");
+
+    TilePendingUploadCompletion::eraseContentUpload(lifecycle, "content");
+    check(!lifecycle.hasPendingWork(),
+          "TilePendingUploadCompletion: erases content upload key and leaves lifecycle idle");
+}
+
+void testTilePendingRequestStateCountsAndCompletesRequests() {
+    TilePendingRequestState state;
+    CancellationToken terrainToken;
+    CancellationToken contentToken;
+
+    check(state.beginTerrainRequest("terrain", terrainToken),
+          "TilePendingRequestState: begins terrain request");
+    check(state.beginContentRequest("content", contentToken),
+          "TilePendingRequestState: begins content request");
+    check(!state.beginTerrainRequest("terrain", CancellationToken{}),
+          "TilePendingRequestState: rejects duplicate request key");
+
+    const PendingRequestCounts counts = state.counts();
+    check(counts.totalRequests == 2,
+          "TilePendingRequestState: counts total inflight requests");
+    check(counts.terrainRequests == 1,
+          "TilePendingRequestState: counts terrain requests");
+    check(counts.contentRequests == 1,
+          "TilePendingRequestState: counts content requests");
+
+    state.completeContentRequest("content");
+    check(!state.contains("content") && state.contains("terrain"),
+          "TilePendingRequestState: completing content request clears only that key");
+    state.completeTerrainRequest("terrain");
+    check(state.empty(),
+          "TilePendingRequestState: completes all requests");
+}
+
+void testTilePendingRequestStateCancelsAndRejectsDuringDestroy() {
+    TilePendingRequestState state;
+    CancellationToken token;
+    check(state.beginTerrainRequest("terrain", token),
+          "TilePendingRequestState: starts request before destroy");
+
+    state.markDestroyingAndCancelRequests();
+    check(state.destroying(),
+          "TilePendingRequestState: exposes destroying state");
+    check(token.isCancelled(),
+          "TilePendingRequestState: destroy cancels pending token");
+    check(!state.beginContentRequest("content", CancellationToken{}),
+          "TilePendingRequestState: destroying state rejects new requests");
+
+    state.completeTerrainRequest("terrain");
+    check(state.empty(),
+          "TilePendingRequestState: callbacks can drain requests after destroy");
+    state.clearAfterCallbacksComplete();
+}
+
+void testTileLoadLifecycleCountsAndFindsPendingWork() {
+    TileLoadLifecycle lifecycle;
+    CancellationToken token;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        check(lifecycle.requestState().beginTerrainRequest(
+                  "terrain-request",
+                  token),
+              "TileLoadLifecycle: begins request through owned state");
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            TileKey{"test", 0, 0, 0},
+            "content-upload",
+            TileLoadPriorityGroup::Urgent,
+            0.0,
+            TileContentLoadResult::failed()});
+    }
+
+    const TileLoadLifecycleCounts counts = lifecycle.counts();
+    check(counts.requests.terrainRequests == 1 &&
+              counts.contentUploads == 1,
+          "TileLoadLifecycle: counts request and pending load state under one lock");
+    check(lifecycle.containsWorkForAnyCacheKey(
+              {"missing", "content-upload"}),
+          "TileLoadLifecycle: finds pending work across cache key batch");
+    check(lifecycle.hasPendingWork(),
+          "TileLoadLifecycle: reports pending work");
+
+    lifecycle.cancelAndEraseCacheKey("content-upload");
+    check(!lifecycle.containsWorkForCacheKey("content-upload"),
+          "TileLoadLifecycle: erases pending load state for cache key");
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().completeTerrainRequest("terrain-request");
+    }
+    check(!lifecycle.hasPendingWork(),
+          "TileLoadLifecycle: reports idle after requests and loads drain");
+}
+
+void testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks() {
+    TileLoadLifecycle lifecycle;
+    CancellationToken token;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        check(lifecycle.requestState().beginTerrainRequest(
+                  "terrain",
+                  token),
+              "TileLoadLifecycle: starts request before destroy");
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            TileKey{"test", 0, 0, 0},
+            "terrain-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            nullptr});
+    }
+
+    std::atomic<bool> destroyReturned{false};
+    std::thread destroyThread([&]() {
+        lifecycle.markDestroyingCancelAndWait();
+        destroyReturned.store(true);
+    });
+
+    for (int i = 0; i < 200 && !token.isCancelled(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    check(token.isCancelled(),
+          "TileLoadLifecycle: destroy cancels pending request token");
+    check(!destroyReturned.load(),
+          "TileLoadLifecycle: destroy waits for pending callback completion");
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().completeTerrainRequest("terrain");
+    }
+    lifecycle.condition().notify_all();
+    destroyThread.join();
+
+    check(destroyReturned.load() && !lifecycle.hasPendingWork(),
+          "TileLoadLifecycle: destroy clears loads and drains requests");
+}
+
+void testTileLoadRequestDispatcherBlocksWhenBudgetIsExhausted() {
+    class SyncTerrainProvider final : public TerrainProvider {
+    public:
+        std::string id() const override { return "dispatcher-budget"; }
+        std::string schemeId() const override { return "test"; }
+        int minZoom() const override { return 0; }
+        int maxZoom() const override { return 1; }
+        int tileSize() const override { return 2; }
+        std::string buildUrl(const TileKey&) const override {
+            return "memory://dispatcher-budget";
+        }
+        void requestTile(const TileKey&,
+                         CancellationToken,
+                         HeightmapCallback,
+                         HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+        }
+        std::unique_ptr<DecodedHeightmap> decodeTile(
+            const uint8_t*,
+            size_t) override {
+            return nullptr;
+        }
+        int requestCount = 0;
+    };
+
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 0;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    SyncTerrainProvider provider;
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+
+    const TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            provider,
+            key,
+            "blocked",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    check(result == TileLoadDispatchResult::Blocked,
+          "TileLoadRequestDispatcher: exhausted budget blocks terrain request");
+    check(!issued && provider.requestCount == 0 && requestState.empty(),
+          "TileLoadRequestDispatcher: blocked request has no side effects");
+}
+
+void testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback() {
+    class SyncContentProvider final : public TilesetContentProvider {
+    public:
+        explicit SyncContentProvider(bool& issuedBeforeCallback)
+            : issuedBeforeCallback_(issuedBeforeCallback) {}
+
+        std::string id() const override { return "dispatcher-content"; }
+        bool supportsTile(const TileKey&) const override { return true; }
+        void requestTileContent(const TileKey& key,
+                                CancellationToken,
+                                ContentCallback callback,
+                                HttpRequestPriority = HttpRequestPriority::Normal) override {
+            callbackSawIssued = issuedBeforeCallback_;
+            callback(key, TileContentLoadResult::empty());
+        }
+        TileContentLoadResult decodeContent(
+            const uint8_t*,
+            size_t) override {
+            return TileContentLoadResult::failed();
+        }
+
+        bool& issuedBeforeCallback_;
+        bool callbackSawIssued = false;
+    };
+
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    bool issued = false;
+    SyncContentProvider provider(issued);
+    const TileKey key{"test", 0, 0, 0};
+
+    const TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::requestContent(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            provider,
+            key,
+            "content",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    check(result == TileLoadDispatchResult::Issued,
+          "TileLoadRequestDispatcher: content request is issued");
+    check(provider.callbackSawIssued,
+          "TileLoadRequestDispatcher: onIssued runs before synchronous content callback");
+    check(requestState.empty() &&
+              pendingLoads.contentTerminalResultCount() == 1,
+          "TileLoadRequestDispatcher: synchronous content callback queues terminal result");
+}
+
+void testTileLoadRequestDispatcherPassesNetworkPriority() {
+    class RecordingTerrainProvider final : public TerrainProvider {
+    public:
+        std::string id() const override { return "dispatcher-priority-terrain"; }
+        std::string schemeId() const override { return "test"; }
+        int minZoom() const override { return 0; }
+        int maxZoom() const override { return 1; }
+        int tileSize() const override { return 2; }
+        std::string buildUrl(const TileKey&) const override {
+            return "memory://dispatcher-priority-terrain";
+        }
+        void requestTile(const TileKey& key,
+                         CancellationToken,
+                         HeightmapCallback callback,
+                         HttpRequestPriority priority =
+                             HttpRequestPriority::Normal) override {
+            observedPriority = priority;
+            callback(key, TerrainTileLoadResult::retryLater());
+        }
+        std::unique_ptr<DecodedHeightmap> decodeTile(
+            const uint8_t*,
+            size_t) override {
+            return nullptr;
+        }
+        HttpRequestPriority observedPriority = HttpRequestPriority::Normal;
+    };
+
+    class RecordingContentProvider final : public TilesetContentProvider {
+    public:
+        std::string id() const override { return "dispatcher-priority-content"; }
+        bool supportsTile(const TileKey&) const override { return true; }
+        void requestTileContent(const TileKey& key,
+                                CancellationToken,
+                                ContentCallback callback,
+                                HttpRequestPriority priority =
+                                    HttpRequestPriority::Normal) override {
+            observedPriority = priority;
+            callback(key, TileContentLoadResult::empty());
+        }
+        TileContentLoadResult decodeContent(
+            const uint8_t*,
+            size_t) override {
+            return TileContentLoadResult::failed();
+        }
+        HttpRequestPriority observedPriority = HttpRequestPriority::Normal;
+    };
+
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+
+    RecordingTerrainProvider terrainProvider;
+    TileLoadRequestDispatcher::requestTerrain(
+        mutex,
+        condition,
+        requestState,
+        pendingLoads,
+        budget,
+        terrainProvider,
+        key,
+        "priority-terrain",
+        TileLoadPriorityGroup::Urgent,
+        0.0,
+        []() {});
+    check(terrainProvider.observedPriority == HttpRequestPriority::High,
+          "TileLoadRequestDispatcher: urgent terrain request maps to high HTTP priority");
+
+    RecordingContentProvider contentProvider;
+    TileLoadRequestDispatcher::requestContent(
+        mutex,
+        condition,
+        requestState,
+        pendingLoads,
+        budget,
+        contentProvider,
+        key,
+        "priority-content",
+        TileLoadPriorityGroup::Preload,
+        0.0,
+        []() {});
+    check(contentProvider.observedPriority == HttpRequestPriority::Low,
+          "TileLoadRequestDispatcher: preload content request maps to low HTTP priority");
+}
+
+void testTileLoadRequestPlannerClassifiesRequestKinds() {
+    TileLoadRequestSnapshot snapshot;
+    snapshot.terrainProviderSupportsTile = true;
+    check(TileLoadRequestPlanner::classify(snapshot) ==
+              TileLoadRequestKind::Terrain,
+          "TileLoadRequestPlanner: requestable terrain tile loads terrain");
+
+    snapshot.contentProviderSupportsTile = true;
+    check(TileLoadRequestPlanner::classify(snapshot) ==
+              TileLoadRequestKind::Content,
+          "TileLoadRequestPlanner: content provider support takes content path");
+
+    snapshot.hasTile = true;
+    snapshot.hasRenderContent = true;
+    check(TileLoadRequestPlanner::classify(snapshot) ==
+              TileLoadRequestKind::Skip,
+          "TileLoadRequestPlanner: existing render content is skipped");
+
+    snapshot = TileLoadRequestSnapshot{};
+    snapshot.hasTile = true;
+    snapshot.upsampledFromParent = true;
+    snapshot.loadState = TileLoadState::FailedTemporarily;
+    check(TileLoadRequestPlanner::classify(snapshot) ==
+              TileLoadRequestKind::UpsampledTerrain,
+          "TileLoadRequestPlanner: upsampled tile uses local terrain upload path");
+
+    snapshot = TileLoadRequestSnapshot{};
+    snapshot.terrainProviderSupportsTile = true;
+    snapshot.terrainAlreadyCached = true;
+    check(TileLoadRequestPlanner::classify(snapshot) ==
+              TileLoadRequestKind::Skip,
+          "TileLoadRequestPlanner: cached terrain tile is skipped");
+
+    snapshot = TileLoadRequestSnapshot{};
+    snapshot.hasTile = true;
+    snapshot.loadState = TileLoadState::ContentLoading;
+    snapshot.terrainProviderSupportsTile = true;
+    check(TileLoadRequestPlanner::classify(snapshot) ==
+              TileLoadRequestKind::Skip,
+          "TileLoadRequestPlanner: already loading tile is skipped");
+}
+
+std::string testCacheKeyForTile(const TileKey& key) {
+    return key.schemeId + ":" +
+           std::to_string(key.z) + ":" +
+           std::to_string(key.x) + ":" +
+           std::to_string(key.y);
+}
+
+void testTileLoadSchedulerBlocksBeforePlanningWhenInflightIsFull() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    CancellationToken token;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        check(lifecycle.requestState().beginTerrainRequest("busy", token),
+              "TileLoadScheduler: test starts one inflight request");
+    }
+    bool planned = false;
+
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                TileKey{"test", 0, 0, 0},
+                TileLoadPriorityGroup::Normal,
+                0.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            testCacheKeyForTile,
+            [&planned](const TileKey&,
+                       const std::string&,
+                       TilesetTile*& tileState) {
+                planned = true;
+                tileState = nullptr;
+                return TileLoadRequestSnapshot{};
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [](const TileKey&) {});
+
+    check(outcome.issued == 0 && outcome.blockedByInflight,
+          "TileLoadScheduler: full inflight budget blocks request loop");
+    check(!planned,
+          "TileLoadScheduler: inflight block happens before request planning");
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().completeTerrainRequest("busy");
+    }
+}
+
+void testTileLoadSchedulerSortsAndQueuesUpsampledTerrain() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey normalKey{"test", 1, 0, 0};
+    const TileKey urgentKey{"test", 1, 1, 0};
+    TilesetTile normalTile(normalKey, Rectangle{});
+    TilesetTile urgentTile(urgentKey, Rectangle{});
+    normalTile.upsampledFromParent = true;
+    urgentTile.upsampledFromParent = true;
+    std::vector<int> prepareOrder;
+    std::vector<int> markedOrder;
+
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {
+                TileLoadRequest{
+                    normalKey,
+                    TileLoadPriorityGroup::Normal,
+                    0.0},
+                TileLoadRequest{
+                    urgentKey,
+                    TileLoadPriorityGroup::Urgent,
+                    100.0},
+            },
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            testCacheKeyForTile,
+            [&urgentKey,
+             &normalTile,
+             &urgentTile](const TileKey& key,
+                          const std::string&,
+                          TilesetTile*& tileState) {
+                tileState = key == urgentKey ? &urgentTile : &normalTile;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.hasTile = true;
+                snapshot.upsampledFromParent = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [&prepareOrder](TilesetTile& tile, double) {
+                prepareOrder.push_back(tile.key.x);
+                return true;
+            },
+            [&markedOrder](const TileKey& key) {
+                markedOrder.push_back(key.x);
+            });
+
+    check(outcome.issued == 2 && !outcome.blockedByInflight,
+          "TileLoadScheduler: upsampled requests are issued");
+    check(prepareOrder.size() == 2 &&
+              prepareOrder[0] == urgentKey.x &&
+              prepareOrder[1] == normalKey.x,
+          "TileLoadScheduler: scheduler applies shared priority ordering");
+    check(markedOrder == prepareOrder,
+          "TileLoadScheduler: issued upsampled requests mark loading in order");
+    check(lifecycle.counts().terrainUploads == 2,
+          "TileLoadScheduler: upsampled requests enter pending upload queue");
+}
+
 void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 2;
@@ -9878,6 +14075,30 @@ void testTilesetFogDensityTableIsConfigurable() {
     check(densePlan.visibleTiles.empty() &&
               densePlan.notRenderingNodeCount > 0,
           "Tileset: custom dense fog density table culls selected roots");
+}
+
+void testTileSelectionMetricsFogMatchesCesiumNativeRules() {
+    const std::vector<FogDensityAtHeight> fogTable{
+        {100.0, 0.001},
+        {200.0, 0.003},
+        {400.0, 0.007},
+    };
+
+    check(std::abs(TileSelectionMetrics::computeFogDensity(fogTable, 50.0) -
+                   0.001) < 1e-12,
+          "TileSelectionMetrics: fog density clamps below first height");
+    check(std::abs(TileSelectionMetrics::computeFogDensity(fogTable, 300.0) -
+                   0.005) < 1e-12,
+          "TileSelectionMetrics: fog density interpolates between table entries");
+    check(std::abs(TileSelectionMetrics::computeFogDensity(fogTable, 800.0) -
+                   0.007) < 1e-12,
+          "TileSelectionMetrics: fog density clamps above last height");
+    check(TileSelectionMetrics::computeFogDensity({}, 300.0) == 0.0,
+          "TileSelectionMetrics: empty fog table disables fog");
+    check(TileSelectionMetrics::isVisibleInFog(1000.0, 0.0),
+          "TileSelectionMetrics: non-positive fog density is visible");
+    check(!TileSelectionMetrics::isVisibleInFog(1.0e200, 1.0),
+          "TileSelectionMetrics: overflowing dense fog culls tile");
 }
 
 void testTilesetRecordsAncestorMeetsSseForDescendants() {
@@ -11916,6 +16137,7 @@ int main() {
     testTilesetUsesQuantizedMeshRtcOrigin();
     testTilesetUsesQuantizedMeshHeightRange();
     testTilesetBoundsUseQuantizedMeshHeightRange();
+    testTileBoundsMetricsUsesCentralDefaultTerrainHeightRange();
     testTilesetBoundingRegionObbUsesQuantizedMeshHeightRange();
     testTilesetBoundingRegionObbHandlesLargeRectanglesLikeCesiumNative();
     testQuantizedMeshLayerJsonVersionAndExtensionQuery();
@@ -11937,6 +16159,105 @@ int main() {
     testTilesetMainThreadLoadingTimeLimitZeroDrainsPendingUploads();
     testTilesetMainThreadPendingUploadsUseNativePriority();
     testTilesetLoadQueueKeepsTraversalPriority();
+    testTilePriorityMetricsMatchesCesiumNativeFormula();
+    testTileSelectionInputMetricsComputesCenterPriorityAndSse();
+    testTileLoadPriorityPolicyMatchesNativeOrdering();
+    testTileLoadQueueDeduplicatesAndUpgradesPriority();
+    testTileUnloadQueueMaintainsLruOrderAndDeduplicatesKeys();
+    testTileIndexStateQueuesOnlyUnloadableTiles();
+    testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches();
+    testTileCacheMetricsCountsHeightmapAndTilePayloads();
+    testTileCacheMetricsTotalsTileAndTerrainCachePayloads();
+    testTileRenderablePolicyClassifiesRenderableContent();
+    testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit();
+    testTileSelectionRenderEntryPolicyPlansRenderedTileWrites();
+    testTileSelectionRootPolicyChoosesTraversalRoots();
+    testTileSelectionFrameBuilderCopiesViewsAndComputesFog();
+    testTileSelectionResetPolicyPlansPerFrameState();
+    testTileSelectionSummaryPolicyPlansRecordAndCounts();
+    testTileSelectionSummaryPolicyPlansFrameCounts();
+    testTileFrameStateCollectsInactiveTilesOncePerFrame();
+    testTileLoadDiagnosticsCollectorCountsQueuesLifecycleAndTiles();
+    testTileTerminalLoadPolicyMapsTerrainTerminalStates();
+    testTileTerminalLoadPolicyMapsContentTerminalStates();
+    testTileTerminalLoadCommitterWritesEmptyRegistryActions();
+    testTileContentUploadPolicyPreparesGltfRenderContent();
+    testTileContentUploadPolicyMarksGltfRenderResourceFailure();
+    testTileContentUploadCommitterAppliesRenderResourceOutcome();
+    testTileTerrainUploadPolicyMarksTerrainRenderContentStates();
+    testTileTerrainUploadCommitterAppliesMeshResourceOutcome();
+    testTileRenderPlanFinalizerResolvesAncestorFallbackEntries();
+    testTileRenderPlanFinalizerCountsRootPrepOnce();
+    testTileLodTransitionControllerFadesOutPreviousRenderContent();
+    testTileLodTransitionControllerRestartsReturnedFadeOutTile();
+    testTileChildMaterializerLinksContentChildrenWithoutDuplicates();
+    testTileChildMaterializerCreatesAvailableAndUpsampledTerrainChildren();
+    testTileChildMaterializerCreatesRasterUpsampledChildren();
+    testTileChildMaterializerRefinementPolicyHonorsContentRules();
+    testTileChildMaterializerRefinementPolicyUsesTerrainSignals();
+    testTileChildMaterializerRefinementPolicyBlocksBoundaryAndUpsampledTiles();
+    testTileEmptyContentRegistryOwnsEmptyCacheKeys();
+    testTileIndexStateErasesEmptyContentRegistryKey();
+    testTileTerrainHeightRangePolicySetsAndInheritsRanges();
+    testTileTerrainHeightRangePolicyAppliesMeshOrHeightmapRanges();
+    testTileTerrainHeightRangePolicyInheritsOnlyUnreadyChildren();
+    testGltfRenderGeometryBuilderPacksVertexPayload();
+    testGltfRenderGeometryBuilderComputesOriginsAndInstances();
+    testGltfRenderGeometryBuilderClassifiesSplitResources();
+    testTileUnloadPolicyClassifiesQueueEligibility();
+    testTileUnloadPolicyDefersReferencedSubtreesAndExternalWork();
+    testTileUnloadPolicyProtectsUpsampledLoadingSources();
+    testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded();
+    testTileUnloadPolicyReleasesRasterOverlayReferencesWithExplicitClear();
+    testTileUnloadPolicyFindsQueuedTilesByLoadState();
+    testTileSubtreeTraversalCollectsRootAndDescendants();
+    testTileSubtreeTraversalBuildsDescendantRemovalPlan();
+    testTileTraversalDetailsPolicySummarizesSingleAndCulledTiles();
+    testTileTraversalDetailsPolicyAggregatesChildren();
+    testTileSelectionHistoryReadsPreviousSelectionTree();
+    testTileSelectionChildTraversalVisitsNonNullChildrenAndAggregates();
+    testTileSelectionKickPolicyKicksDescendantsForNativeReasons();
+    testTileSelectionKickPolicyRestoresChildQueueForParentLoad();
+    testTileSelectionKickPolicyPlansPostKickActions();
+    testTileSelectionPostTraversalPolicyPlansKickOutcome();
+    testTileSelectionPostTraversalPolicyPlansRefinedAncestorPreload();
+    testTileSelectionPostTraversalPolicyPlansFadingKickWithoutParentReload();
+    testTileSelectionPostTraversalPolicyBuildsCommitPlan();
+    testTileViewerRequestVolumePolicyChecksOptionalVolume();
+    testTileSelectionCullingPolicyChoosesChildrenBoundsLikeNative();
+    testTileSelectionCullingPolicyEvaluatesFrustumAndFogGates();
+    testTileSelectionCullingPolicyChecksAnyViewFogVisibility();
+    testTileSelectionCullingPolicyPlansCulledTileLoads();
+    testTileSelectionCullingPolicyEvaluatesScreenSpaceError();
+    testTileSelectionVisitPreparationCombinesSelectionInputs();
+    testTileSelectionVisitPreparationPlansEarlyExitActions();
+    testTileSelectionVisitPreparationBuildsOutcomePlan();
+    testTileSelectionTraversalCounterPolicyPlansTraversalCounters();
+    testTileSelectionRefinementPolicyInitialDecision();
+    testTileSelectionRefinementPolicyOcclusionGate();
+    testTileSelectionRefinementPolicyOcclusionAction();
+    testTileSelectionRefinementPolicyContinueDeeper();
+    testTileSelectionRefinementPolicyPreloadRefinedAncestor();
+    testTileSelectionRefineFlowPolicyAppliesOcclusionAndCounters();
+    testTileSelectionRefineFlowPolicySkipsOcclusionForNativeCases();
+    testTileSelectionRefineFlowPolicyContinuesDeeperForPreviousRefinement();
+    testTileSelectionVisibilitySamplerUsesCameraAndChildBounds();
+    testTileSelectionVisibilitySamplerChoosesSelectionBoundsLikeNative();
+    testTilePendingLoadQueueUsesSharedPriorityOrder();
+    testTilePendingLoadQueueFiltersNonUrgentDuringInteraction();
+    testTilePendingLoadQueueTakesTerminalResultsByPriority();
+    testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads();
+    testTilePendingUploadCompletionErasesUploadKeys();
+    testTilePendingRequestStateCountsAndCompletesRequests();
+    testTilePendingRequestStateCancelsAndRejectsDuringDestroy();
+    testTileLoadLifecycleCountsAndFindsPendingWork();
+    testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks();
+    testTileLoadRequestDispatcherBlocksWhenBudgetIsExhausted();
+    testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback();
+    testTileLoadRequestDispatcherPassesNetworkPriority();
+    testTileLoadRequestPlannerClassifiesRequestKinds();
+    testTileLoadSchedulerBlocksBeforePlanningWhenInflightIsFull();
+    testTileLoadSchedulerSortsAndQueuesUpsampledTerrain();
     testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds();
     testTilesetFrameResourceBudgetLimitsWorkerRequests();
     testTilesetFrameResourceBudgetSeparatesRasterFanoutFromTerrainRequests();
@@ -11959,6 +16280,7 @@ int main() {
     testTilesetLoadingDescendantLimitRestoresChildLoadQueue();
     testTilesetUnconditionallyRefineIgnoresSatisfiedSse();
     testTilesetUnconditionalChildDisablesChildrenBoundsCulling();
+    testTileSelectionMetricsFogMatchesCesiumNativeRules();
     testTilesetFogDensityTableIsConfigurable();
     testTilesetRecordsAncestorMeetsSseForDescendants();
     testTilesetPreviouslyRefinedUnrenderableParentKeepsDescendants();

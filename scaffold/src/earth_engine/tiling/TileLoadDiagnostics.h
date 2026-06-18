@@ -1,0 +1,53 @@
+#pragma once
+
+#include <memory>
+#include <string>
+#include <unordered_map>
+
+namespace earth_engine {
+
+class TileLoadLifecycle;
+class TileLoadQueue;
+class TileUnloadQueue;
+struct TilesetTile;
+
+struct TilesetLoadDiagnostics {
+    int loadQueuePreloadRequests = 0;
+    int loadQueueNormalRequests = 0;
+    int loadQueueUrgentRequests = 0;
+    int pendingTerrainRequests = 0;
+    int pendingTerrainUploads = 0;
+    int pendingTerrainTerminalResults = 0;
+    int pendingContentRequests = 0;
+    int pendingContentUploads = 0;
+    int pendingContentTerminalResults = 0;
+    int unloadQueueTiles = 0;
+    int loadUnloadingTiles = 0;
+    int loadFailedTemporarilyTiles = 0;
+    int loadUnloadedTiles = 0;
+    int loadContentLoadingTiles = 0;
+    int loadContentLoadedTiles = 0;
+    int loadDoneTiles = 0;
+    int loadFailedTiles = 0;
+    int contentUnknownTiles = 0;
+    int contentEmptyTiles = 0;
+    int contentExternalTiles = 0;
+    int contentRenderTiles = 0;
+    int missingRasterOverlayProjections = 0;
+
+    int loadQueueTotal() const;
+    int pendingTerrainTotal() const;
+    int pendingContentTotal() const;
+};
+
+struct TileLoadDiagnosticsCollector {
+    static TilesetLoadDiagnostics collect(
+        const TileLoadQueue& loadQueue,
+        const TileLoadLifecycle& loadLifecycle,
+        const TileUnloadQueue& unloadQueue,
+        const std::unordered_map<
+            std::string,
+            std::unique_ptr<TilesetTile>>& tiles);
+};
+
+} // namespace earth_engine

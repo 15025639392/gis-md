@@ -108,6 +108,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/scene/Frustum.h
     earth_engine/scene/Frustum.cpp
     earth_engine/scene/FrameState.h
+    earth_engine/scene/SceneRenderPipeline.h
+    earth_engine/scene/SceneRenderPipeline.cpp
     earth_engine/scene/Scene.h
     earth_engine/scene/Scene.cpp
 )
@@ -126,8 +128,28 @@ target_sources(earth_engine_core PRIVATE
 target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/CrsProfile.h
     earth_engine/tiling/CrsProfile.cpp
+    earth_engine/tiling/DecodedHeightmapSampler.h
+    earth_engine/tiling/DecodedHeightmapSampler.cpp
+    earth_engine/tiling/GltfDrawCommandBuilder.h
+    earth_engine/tiling/GltfDrawCommandBuilder.cpp
+    earth_engine/tiling/GltfRenderGeometryBuilder.h
+    earth_engine/tiling/GltfRenderGeometryBuilder.cpp
+    earth_engine/tiling/GltfRenderResourcePreparer.h
+    earth_engine/tiling/GltfRenderResourcePreparer.cpp
+    earth_engine/tiling/LoadedTerrainHeightSampler.h
+    earth_engine/tiling/LoadedTerrainHeightSampler.cpp
+    earth_engine/tiling/RasterOverlayScreenSpaceMetrics.h
+    earth_engine/tiling/RasterOverlayScreenSpaceMetrics.cpp
+    earth_engine/tiling/SurfaceRasterOverlayStateUpdater.h
+    earth_engine/tiling/SurfaceRasterOverlayStateUpdater.cpp
+    earth_engine/tiling/SurfaceTileDrawCommandBuilder.h
+    earth_engine/tiling/SurfaceTileDrawCommandBuilder.cpp
+    earth_engine/tiling/SurfaceMeshResourcePreparer.h
+    earth_engine/tiling/SurfaceMeshResourcePreparer.cpp
+    earth_engine/tiling/TileSurfaceMeshEnsurer.h
     earth_engine/tiling/TileKey.h
     earth_engine/tiling/TileKey.cpp
+    earth_engine/tiling/TileLoadState.h
     earth_engine/tiling/TileRefine.h
     earth_engine/tiling/TileBoundingVolume.h
     earth_engine/tiling/TileScheme.h
@@ -139,6 +161,152 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileSurface.cpp
     earth_engine/tiling/TilePlan.h
     earth_engine/tiling/TilePlan.cpp
+    earth_engine/tiling/TileChildFrameMaterializer.h
+    earth_engine/tiling/TileChildMaterializer.h
+    earth_engine/tiling/TileContentUnloadCoordinator.h
+    earth_engine/tiling/TileRasterUpsampledChildMaterializer.h
+    earth_engine/tiling/TileLodTransitionController.h
+    earth_engine/tiling/TileRenderPlanFinalizer.h
+    earth_engine/tiling/TileContentUploadPolicy.h
+    earth_engine/tiling/TileContentUploadPolicy.cpp
+    earth_engine/tiling/TileContentUploadCommitter.h
+    earth_engine/tiling/TileContentUploadCommitter.cpp
+    earth_engine/tiling/TileEmptyContentRegistry.h
+    earth_engine/tiling/TileEmptyContentRegistry.cpp
+    earth_engine/tiling/TileCacheKey.h
+    earth_engine/tiling/TileCreationPolicy.h
+    earth_engine/tiling/TileCacheMetrics.h
+    earth_engine/tiling/TileCacheMetrics.cpp
+    earth_engine/tiling/TileCacheUnloadCoordinator.h
+    earth_engine/tiling/TileFrameDebugLogFormatter.h
+    earth_engine/tiling/TileFrameInteractionTracker.h
+    earth_engine/tiling/TileFrameResourceBudgetPlanner.h
+    earth_engine/tiling/TileBoundsMetrics.h
+    earth_engine/tiling/TileBoundsMetrics.cpp
+    earth_engine/tiling/TileFrameState.h
+    earth_engine/tiling/TileFrameState.cpp
+    earth_engine/tiling/TileFrameBudgetFallback.h
+    earth_engine/tiling/TileLoadDiagnostics.h
+    earth_engine/tiling/TileLoadDiagnostics.cpp
+    earth_engine/tiling/TileLoadPriorityPolicy.h
+    earth_engine/tiling/TileLoadPriorityPolicy.cpp
+    earth_engine/tiling/TileIndexState.h
+    earth_engine/tiling/TileIndexState.cpp
+    earth_engine/tiling/TileLoadLifecycle.h
+    earth_engine/tiling/TileLoadLifecycle.cpp
+    earth_engine/tiling/TileLoadRequestPlanner.h
+    earth_engine/tiling/TileLoadRequestPlanner.cpp
+    earth_engine/tiling/TileLoadRequestDispatcher.h
+    earth_engine/tiling/TileLoadRequestDispatcher.cpp
+    earth_engine/tiling/TileMissingRequestScheduler.h
+    earth_engine/tiling/TileLoadScheduler.h
+    earth_engine/tiling/TileLoadQueue.h
+    earth_engine/tiling/TileLoadQueue.cpp
+    earth_engine/tiling/TilePendingLoadQueue.h
+    earth_engine/tiling/TilePendingLoadQueue.cpp
+    earth_engine/tiling/TilePendingLoadCommitCoordinator.h
+    earth_engine/tiling/TilePendingLoadProcessor.h
+    earth_engine/tiling/TilePendingUploadFrameProcessor.h
+    earth_engine/tiling/TilePendingUploadCompletion.h
+    earth_engine/tiling/TilePendingUploadCompletion.cpp
+    earth_engine/tiling/TileRasterOverlayFrameProcessor.h
+    earth_engine/tiling/TileRasterOverlaySignature.h
+    earth_engine/tiling/TileRasterOverlayPrefetcher.h
+    earth_engine/tiling/TileRasterOverlayPrefetcher.cpp
+    earth_engine/tiling/TileRasterOverlayReadinessPolicy.h
+    earth_engine/tiling/TileRasterOverlayReadinessPolicy.cpp
+    earth_engine/tiling/TilePendingRequestState.h
+    earth_engine/tiling/TilePendingRequestState.cpp
+    earth_engine/tiling/TileRenderEntryCommandBuilder.h
+    earth_engine/tiling/TileRenderCommandPreparer.h
+    earth_engine/tiling/TileRenderFrameBuilder.h
+    earth_engine/tiling/TileRenderFrameInputBuilder.h
+    earth_engine/tiling/TileRenderFrameMaintenance.h
+    earth_engine/tiling/TileRenderReferenceReleaser.h
+    earth_engine/tiling/TileLoadTypes.h
+    earth_engine/tiling/TileOcclusionState.h
+    earth_engine/tiling/TileOcclusionResolver.h
+    earth_engine/tiling/TileMeshFrameEnsurer.h
+    earth_engine/tiling/TileRenderablePolicy.h
+    earth_engine/tiling/TileRenderablePolicy.cpp
+    earth_engine/tiling/TilePriorityMetrics.h
+    earth_engine/tiling/TilePriorityMetrics.cpp
+    earth_engine/tiling/TileQuantizedMeshAvailabilityIngestor.h
+    earth_engine/tiling/TileQuantizedMeshAvailabilityIngestor.cpp
+    earth_engine/tiling/TileRefinementAvailabilityResolver.h
+    earth_engine/tiling/TileSelectionChildTraversal.h
+    earth_engine/tiling/TileSelectionCounters.h
+    earth_engine/tiling/TileSelectionRasterOverlayPreparer.h
+    earth_engine/tiling/TileSelectionCullingPolicy.h
+    earth_engine/tiling/TileSelectionCullingPolicy.cpp
+    earth_engine/tiling/TileSelectionFrameBuilder.h
+    earth_engine/tiling/TileSelectionFrameBuilder.cpp
+    earth_engine/tiling/TileSelectionFrameFinalizer.h
+    earth_engine/tiling/TileSelectionFrameRunner.h
+    earth_engine/tiling/TileSelectionHistory.h
+    earth_engine/tiling/TileSelectionHistory.cpp
+    earth_engine/tiling/TileSelectionInputMetrics.h
+    earth_engine/tiling/TileSelectionInputMetrics.cpp
+    earth_engine/tiling/TileSelectionKickPolicy.h
+    earth_engine/tiling/TileSelectionKickPolicy.cpp
+    earth_engine/tiling/TileSelectionMetrics.h
+    earth_engine/tiling/TileSelectionMetrics.cpp
+    earth_engine/tiling/TileSelectionPostTraversalCommitter.h
+    earth_engine/tiling/TileSelectionPostTraversalPolicy.h
+    earth_engine/tiling/TileSelectionPostTraversalPolicy.cpp
+    earth_engine/tiling/TileSelectionPreTraversalPolicy.h
+    earth_engine/tiling/TileSelectionPreTraversalPolicy.cpp
+    earth_engine/tiling/TileSelectionRefineFlowPolicy.h
+    earth_engine/tiling/TileSelectionRefineFlowPolicy.cpp
+    earth_engine/tiling/TileSelectionRefinementPolicy.h
+    earth_engine/tiling/TileSelectionRefinementPolicy.cpp
+    earth_engine/tiling/TileSelectionRenderEntryPolicy.h
+    earth_engine/tiling/TileSelectionRenderEntryPolicy.cpp
+    earth_engine/tiling/TileSelectionResetPolicy.h
+    earth_engine/tiling/TileSelectionResetPolicy.cpp
+    earth_engine/tiling/TileSelectionRootPolicy.h
+    earth_engine/tiling/TileSelectionRootPolicy.cpp
+    earth_engine/tiling/TileSelectionReusePolicy.h
+    earth_engine/tiling/TileSelectionReusePolicy.cpp
+    earth_engine/tiling/TileSelectionReuseState.h
+    earth_engine/tiling/TileSelectionSummaryBuilder.h
+    earth_engine/tiling/TileSelectionSummaryPolicy.h
+    earth_engine/tiling/TileSelectionSummaryPolicy.cpp
+    earth_engine/tiling/TileSelectionTraversalCounterPolicy.h
+    earth_engine/tiling/TileSelectionTraversalCounterPolicy.cpp
+    earth_engine/tiling/TileSelectionVisitPreparation.h
+    earth_engine/tiling/TileSelectionVisitPreparation.cpp
+    earth_engine/tiling/TileSelectionVisibilitySampler.h
+    earth_engine/tiling/TileSelectionVisibilitySampler.cpp
+    earth_engine/tiling/TileSoftwareOcclusionPolicy.h
+    earth_engine/tiling/TileSoftwareOcclusionPolicy.cpp
+    earth_engine/tiling/TileSubtreeRemovalCoordinator.h
+    earth_engine/tiling/TileSubtreeWorkTracker.h
+    earth_engine/tiling/TileTerminalLoadPolicy.h
+    earth_engine/tiling/TileTerminalLoadPolicy.cpp
+    earth_engine/tiling/TileTerminalLoadCommitter.h
+    earth_engine/tiling/TileTerminalLoadCommitter.cpp
+    earth_engine/tiling/TileTerrainHeightRangePolicy.h
+    earth_engine/tiling/TileTerrainHeightRangePolicy.cpp
+    earth_engine/tiling/TileVisibleRangeFinalizer.h
+    earth_engine/tiling/TileVisibleRangeFinalizer.cpp
+    earth_engine/tiling/TileTerrainUploadPolicy.h
+    earth_engine/tiling/TileTerrainUploadPolicy.cpp
+    earth_engine/tiling/TileTerrainUploadCommitter.h
+    earth_engine/tiling/TileTerrainUploadCommitter.cpp
+    earth_engine/tiling/TileTraversalDetails.h
+    earth_engine/tiling/TileTraversalDetails.cpp
+    earth_engine/tiling/TileUpsampleSourcePreparer.h
+    earth_engine/tiling/TileUpdateFrameContextBuilder.h
+    earth_engine/tiling/TileUpdateSelectionWorkRunner.h
+    earth_engine/tiling/TileUpdateUploadRunner.h
+    earth_engine/tiling/TileViewerRequestVolumePolicy.h
+    earth_engine/tiling/TileViewerRequestVolumePolicy.cpp
+    earth_engine/tiling/TileSubtreeTraversal.h
+    earth_engine/tiling/TileUnloadPolicy.h
+    earth_engine/tiling/TileUnloadPolicy.cpp
+    earth_engine/tiling/TileUnloadQueue.h
+    earth_engine/tiling/TileUnloadQueue.cpp
     earth_engine/tiling/TilesetTile.h
     earth_engine/tiling/RasterMappedToTilesetTile.h
     earth_engine/tiling/RasterMappedToTilesetTile.cpp
@@ -192,15 +360,12 @@ target_sources(earth_engine_core PRIVATE
 # ============================================================
 target_sources(earth_engine_core PRIVATE
     earth_engine/platform/bridge/PlatformBridge.h
+    earth_engine/platform/bridge/CurlPlatformBridge.h
+    earth_engine/platform/bridge/CurlPlatformBridge.cpp
+    earth_engine/platform/bridge/CurlMultiRequestScheduler.h
+    earth_engine/platform/bridge/CurlMultiRequestScheduler.cpp
     earth_engine/platform/stb_image_impl.cpp
 )
-
-if(NOT ANDROID)
-    target_sources(earth_engine_core PRIVATE
-        earth_engine/platform/bridge/CurlPlatformBridge.h
-        earth_engine/platform/bridge/CurlPlatformBridge.cpp
-    )
-endif()
 
 # ============================================================
 # platform backends (条件编译)
@@ -230,8 +395,6 @@ if(ANDROID)
         target_link_libraries(earth_engine_core PRIVATE ${JNIGRAPHICS_LIBRARY})
     endif()
 elseif(APPLE)
-    # iOS / macOS — HTTP 通过 PlatformBridge (NSURLSession)，禁用 libcurl
-    target_compile_definitions(earth_engine_core PRIVATE EARTH_ENGINE_HAS_LIBCURL=0)
     target_sources(earth_engine_core PRIVATE
         earth_engine/platform/ios/RenderDeviceMetal.h
         earth_engine/platform/ios/RenderDeviceMetal.mm
@@ -319,6 +482,30 @@ target_sources(earth_engine_core PRIVATE
 # ============================================================
 # 依赖库
 # ============================================================
+set(_EARTH_ENGINE_VCPKG_TRIPLET "${VCPKG_TARGET_TRIPLET}")
+if(NOT _EARTH_ENGINE_VCPKG_TRIPLET)
+    set(_EARTH_ENGINE_VCPKG_TRIPLET "$ENV{VCPKG_DEFAULT_TRIPLET}")
+endif()
+if(ANDROID AND NOT _EARTH_ENGINE_VCPKG_TRIPLET)
+    set(_EARTH_ENGINE_VCPKG_TRIPLET "arm64-android")
+endif()
+if(APPLE AND NOT _EARTH_ENGINE_VCPKG_TRIPLET)
+    set(_EARTH_ENGINE_VCPKG_TRIPLET "arm64-osx")
+endif()
+set(_EARTH_ENGINE_VCPKG_ROOT "${EARTH_ENGINE_VCPKG_ROOT}")
+if(NOT _EARTH_ENGINE_VCPKG_ROOT)
+    set(_EARTH_ENGINE_VCPKG_ROOT "$ENV{VCPKG_ROOT}")
+endif()
+if(_EARTH_ENGINE_VCPKG_ROOT AND _EARTH_ENGINE_VCPKG_TRIPLET)
+    foreach(_EARTH_ENGINE_VCPKG_PACKAGE glm nlohmann-json stb curl openssl zlib)
+        set(_EARTH_ENGINE_VCPKG_PACKAGE_ROOT
+            "${_EARTH_ENGINE_VCPKG_ROOT}/packages/${_EARTH_ENGINE_VCPKG_PACKAGE}_${_EARTH_ENGINE_VCPKG_TRIPLET}")
+        if(EXISTS "${_EARTH_ENGINE_VCPKG_PACKAGE_ROOT}")
+            list(APPEND CMAKE_PREFIX_PATH "${_EARTH_ENGINE_VCPKG_PACKAGE_ROOT}")
+        endif()
+    endforeach()
+endif()
+
 find_package(glm CONFIG QUIET)
 if(glm_FOUND)
     target_link_libraries(earth_engine_core PUBLIC glm::glm)
@@ -362,10 +549,20 @@ else()
     target_include_directories(earth_engine_core PUBLIC ${NLOHMANN_JSON_INCLUDE_DIR})
 endif()
 
-find_package(CURL CONFIG QUIET)
-if(CURL_FOUND)
-    target_link_libraries(earth_engine_core PUBLIC CURL::libcurl)
+if(ANDROID)
+    find_package(CURL CONFIG REQUIRED)
+else()
+    find_package(CURL CONFIG QUIET)
+    if(NOT CURL_FOUND)
+        find_package(CURL REQUIRED)
+    endif()
 endif()
+target_link_libraries(earth_engine_core PUBLIC CURL::libcurl)
+
+unset(_EARTH_ENGINE_VCPKG_PACKAGE)
+unset(_EARTH_ENGINE_VCPKG_PACKAGE_ROOT)
+unset(_EARTH_ENGINE_VCPKG_ROOT)
+unset(_EARTH_ENGINE_VCPKG_TRIPLET)
 
 # stb_image 是 header-only；当前核心库尚未直接使用，缺失时不阻断。
 find_package(stb CONFIG QUIET)

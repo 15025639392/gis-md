@@ -5,20 +5,12 @@
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/Transforms.h"
+#include "../platform/bridge/CurlMultiRequestScheduler.h"
 
 #include <nlohmann/json.hpp>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
-
-#ifndef EARTH_ENGINE_HAS_LIBCURL
-#if !defined(ANDROID) && __has_include(<curl/curl.h>)
-#include <curl/curl.h>
-#define EARTH_ENGINE_HAS_LIBCURL 1
-#else
-#define EARTH_ENGINE_HAS_LIBCURL 0
-#endif
-#endif
 
 #include <algorithm>
 #include <array>
@@ -302,25 +294,6 @@ B3dmExtractResult extractB3dmGlb(const uint8_t* data, size_t size) {
     result.valid = result.glbSize > 0;
     return result;
 }
-
-#if EARTH_ENGINE_HAS_LIBCURL
-std::once_flag gCurlOnce;
-
-void ensureCurl() {
-    std::call_once(gCurlOnce, [] {
-        curl_global_init(CURL_GLOBAL_DEFAULT);
-    });
-}
-
-size_t curlWrite(void* p, size_t s, size_t n, void* u) {
-    auto* body = static_cast<std::vector<uint8_t>*>(u);
-    const size_t total = s * n;
-    body->insert(body->end(),
-                 static_cast<const uint8_t*>(p),
-                 static_cast<const uint8_t*>(p) + total);
-    return total;
-}
-#endif
 
 std::string contentCacheKey(const TileKey& key) {
     return key.schemeId + "/" + std::to_string(key.z) + "/" +
@@ -2936,7 +2909,8 @@ bool SingleGltfContentProvider::supportsTile(const TileKey& key) const {
 void SingleGltfContentProvider::requestTileContent(
     const TileKey& key,
     CancellationToken token,
-    ContentCallback callback) {
+    ContentCallback callback,
+    HttpRequestPriority priority) {
     if (!supportsTile(key)) {
         callback(key, TileContentLoadResult::empty());
         return;
@@ -2946,6 +2920,7 @@ void SingleGltfContentProvider::requestTileContent(
         [this,
          key,
          token = std::move(token),
+         priority,
          callback = std::move(callback)]() mutable {
             if (token.isCancelled()) {
                 callback(key, TileContentLoadResult::cancelled());
@@ -2954,7 +2929,10 @@ void SingleGltfContentProvider::requestTileContent(
 
             std::vector<uint8_t> body = bytes_;
             if (body.empty() && !url_.empty()) {
-                body = httpGet(url_);
+                body = httpGet(
+                    url_,
+                    priority,
+                    [&token]() { return token.isCancelled(); });
             }
 
             if (token.isCancelled()) {
@@ -3007,7 +2985,9 @@ void SingleGltfContentProvider::setEastNorthUpPlacementDegrees(
 }
 
 std::vector<uint8_t> SingleGltfContentProvider::httpGet(
-    const std::string& url) const {
+    const std::string& url,
+    HttpRequestPriority priority,
+    std::function<bool()> shouldCancel) const {
     auto cached = HttpCache::shared().get(url);
     if (!cached.empty()) return cached;
 
@@ -3023,59 +3003,54 @@ std::vector<uint8_t> SingleGltfContentProvider::httpGet(
     }
 
     if (platformBridge_) {
-        std::vector<uint8_t> result;
-        std::mutex mutex;
-        std::condition_variable cv;
-        bool done = false;
+        struct WaitState {
+            std::vector<uint8_t> result;
+            std::mutex mutex;
+            std::condition_variable cv;
+            bool done = false;
+        };
+        auto state = std::make_shared<WaitState>();
 
-        platformBridge_->get(url, [&](int code, std::vector<uint8_t> body) {
-            if (code == 200) result = std::move(body);
+        auto request = platformBridge_->get(url, [state](int code, std::vector<uint8_t> body) {
             {
-                std::lock_guard<std::mutex> lock(mutex);
-                done = true;
+                std::lock_guard<std::mutex> lock(state->mutex);
+                if (code == 200) state->result = std::move(body);
+                state->done = true;
             }
-            cv.notify_one();
-        });
+            state->cv.notify_one();
+        }, {priority});
 
+        bool done = false;
         {
-            std::unique_lock<std::mutex> lock(mutex);
-            cv.wait_for(lock, std::chrono::seconds(20), [&] {
-                return done;
-            });
+            const auto deadline = std::chrono::steady_clock::now() +
+                std::chrono::seconds(20);
+            std::unique_lock<std::mutex> lock(state->mutex);
+            while (!state->done && !(shouldCancel && shouldCancel())) {
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= deadline) break;
+                state->cv.wait_until(
+                    lock,
+                    std::min(deadline, now + std::chrono::milliseconds(20)));
+            }
+            done = state->done;
         }
-        if (!result.empty()) HttpCache::shared().put(url, result);
-        return result;
+        if ((!done || (shouldCancel && shouldCancel())) && request) {
+            request->cancel();
+        }
+        if (done && !state->result.empty()) {
+            HttpCache::shared().put(url, state->result);
+        }
+        return done ? std::move(state->result) : std::vector<uint8_t>{};
     }
 
-#if EARTH_ENGINE_HAS_LIBCURL
-    ensureCurl();
-    CURL* curl = curl_easy_init();
-    if (!curl) return {};
-
-    std::vector<uint8_t> body;
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "earth-md/0.1");
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
-
-    const CURLcode res = curl_easy_perform(curl);
-    long httpCode = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-    curl_easy_cleanup(curl);
-
     std::vector<uint8_t> result =
-        (res == CURLE_OK && httpCode == 200) ? std::move(body)
-                                             : std::vector<uint8_t>{};
+        CurlMultiRequestScheduler::shared().getBlocking(
+            url,
+            {priority},
+            std::chrono::seconds(20),
+            std::move(shouldCancel));
     if (!result.empty()) HttpCache::shared().put(url, result);
     return result;
-#else
-    (void)url;
-    return {};
-#endif
 }
 
 TilesetJsonContentProvider::TilesetJsonContentProvider(
@@ -3142,7 +3117,8 @@ std::vector<TileKey> TilesetJsonContentProvider::childTiles(
 void TilesetJsonContentProvider::requestTileContent(
     const TileKey& key,
     CancellationToken token,
-    ContentCallback callback) {
+    ContentCallback callback,
+    HttpRequestPriority priority) {
     TileRecord record;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -3172,13 +3148,17 @@ void TilesetJsonContentProvider::requestTileContent(
          key,
          record = std::move(record),
          token = std::move(token),
+         priority,
          callback = std::move(callback)]() mutable {
             if (token.isCancelled()) {
                 callback(key, TileContentLoadResult::cancelled());
                 return;
             }
 
-            const std::vector<uint8_t> body = httpGet(record.resolvedContentUrl);
+            const std::vector<uint8_t> body = httpGet(
+                record.resolvedContentUrl,
+                priority,
+                [&token]() { return token.isCancelled(); });
             if (token.isCancelled()) {
                 callback(key, TileContentLoadResult::cancelled());
                 return;
@@ -3491,7 +3471,9 @@ bool TilesetJsonContentProvider::parseTilesetJson(
 }
 
 std::vector<uint8_t> TilesetJsonContentProvider::httpGet(
-    const std::string& url) const {
+    const std::string& url,
+    HttpRequestPriority priority,
+    std::function<bool()> shouldCancel) const {
     auto cached = HttpCache::shared().get(url);
     if (!cached.empty()) return cached;
 
@@ -3507,59 +3489,54 @@ std::vector<uint8_t> TilesetJsonContentProvider::httpGet(
     }
 
     if (platformBridge_) {
-        std::vector<uint8_t> result;
-        std::mutex mutex;
-        std::condition_variable cv;
-        bool done = false;
+        struct WaitState {
+            std::vector<uint8_t> result;
+            std::mutex mutex;
+            std::condition_variable cv;
+            bool done = false;
+        };
+        auto state = std::make_shared<WaitState>();
 
-        platformBridge_->get(url, [&](int code, std::vector<uint8_t> body) {
-            if (code == 200) result = std::move(body);
+        auto request = platformBridge_->get(url, [state](int code, std::vector<uint8_t> body) {
             {
-                std::lock_guard<std::mutex> lock(mutex);
-                done = true;
+                std::lock_guard<std::mutex> lock(state->mutex);
+                if (code == 200) state->result = std::move(body);
+                state->done = true;
             }
-            cv.notify_one();
-        });
+            state->cv.notify_one();
+        }, {priority});
 
+        bool done = false;
         {
-            std::unique_lock<std::mutex> lock(mutex);
-            cv.wait_for(lock, std::chrono::seconds(20), [&] {
-                return done;
-            });
+            const auto deadline = std::chrono::steady_clock::now() +
+                std::chrono::seconds(20);
+            std::unique_lock<std::mutex> lock(state->mutex);
+            while (!state->done && !(shouldCancel && shouldCancel())) {
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= deadline) break;
+                state->cv.wait_until(
+                    lock,
+                    std::min(deadline, now + std::chrono::milliseconds(20)));
+            }
+            done = state->done;
         }
-        if (!result.empty()) HttpCache::shared().put(url, result);
-        return result;
+        if ((!done || (shouldCancel && shouldCancel())) && request) {
+            request->cancel();
+        }
+        if (done && !state->result.empty()) {
+            HttpCache::shared().put(url, state->result);
+        }
+        return done ? std::move(state->result) : std::vector<uint8_t>{};
     }
 
-#if EARTH_ENGINE_HAS_LIBCURL
-    ensureCurl();
-    CURL* curl = curl_easy_init();
-    if (!curl) return {};
-
-    std::vector<uint8_t> body;
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWrite);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "earth-md/0.1");
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
-
-    const CURLcode res = curl_easy_perform(curl);
-    long httpCode = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-    curl_easy_cleanup(curl);
-
     std::vector<uint8_t> result =
-        (res == CURLE_OK && httpCode == 200) ? std::move(body)
-                                             : std::vector<uint8_t>{};
+        CurlMultiRequestScheduler::shared().getBlocking(
+            url,
+            {priority},
+            std::chrono::seconds(20),
+            std::move(shouldCancel));
     if (!result.empty()) HttpCache::shared().put(url, result);
     return result;
-#else
-    (void)url;
-    return {};
-#endif
 }
 
 } // namespace earth_engine

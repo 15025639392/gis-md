@@ -166,7 +166,9 @@ public:
     /// 异步请求高度图瓦片
     virtual void requestTile(const TileKey& key,
                              CancellationToken token,
-                             HeightmapCallback callback) = 0;
+                             HeightmapCallback callback,
+                             HttpRequestPriority priority =
+                                 HttpRequestPriority::Normal) = 0;
 
     /// 同步解码高度图（用于测试/调试）
     virtual std::unique_ptr<DecodedHeightmap> decodeTile(

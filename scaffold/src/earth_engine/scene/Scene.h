@@ -24,6 +24,7 @@ namespace earth_engine {
 
 class Camera;
 class RenderDevice;
+class SceneRenderPipeline;
 
 struct PresentationCameraTrace {
     uint64_t frameId = 0;
@@ -170,6 +171,7 @@ private:
     std::unique_ptr<Camera> camera_;
     std::unique_ptr<CameraController> cameraController_;
     std::unique_ptr<Renderer> renderer_;
+    std::unique_ptr<SceneRenderPipeline> renderPipeline_;
     GlobeMesh globeMesh_;
     FrameState frameState_;
     RenderCommandList renderCommands_;

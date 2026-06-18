@@ -1916,7 +1916,8 @@ public:
     void onEnterForeground() override {}
     std::unique_ptr<HttpRequest> get(
         const std::string&,
-        std::function<void(int, std::vector<uint8_t>)> callback) override {
+        std::function<void(int, std::vector<uint8_t>)> callback,
+        HttpRequestOptions = {}) override {
         callback(-1, {});
         return std::make_unique<TestHttpRequest>();
     }
