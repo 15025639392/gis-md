@@ -3,6 +3,7 @@
 #include "TileContentAccess.h"
 #include "TileContentCacheManager.h"
 #include "TileContentLifecycleManager.h"
+#include "TileContentResourceInvalidator.h"
 #include "TileMeshPreparationManager.h"
 #include "Tileset.h"
 
@@ -73,9 +74,7 @@ bool TilesetContentLifecycleFacade::processPendingUploads(
 }
 
 void TilesetContentLifecycleFacade::markTileResourcesDirty(Tileset& tileset) {
-    ++tileset.resourceRevision_;
-    tileset.contentCache_.markResourcesDirty();
-    tileset.selectionReuseState_.invalidate();
+    tileset.resourceInvalidator_.markResourcesDirty();
 }
 
 } // namespace earth_engine

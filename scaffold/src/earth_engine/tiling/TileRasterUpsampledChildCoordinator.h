@@ -3,16 +3,14 @@
 namespace earth_engine {
 
 class TileContentAccess;
-class TileContentCacheManager;
-struct TileSelectionReuseState;
+class TileContentResourceInvalidator;
 struct TilesetTile;
 
 class TileRasterUpsampledChildCoordinator {
 public:
     TileRasterUpsampledChildCoordinator(
         TileContentAccess& contentAccess,
-        TileContentCacheManager& contentCache,
-        TileSelectionReuseState& selectionReuseState);
+        TileContentResourceInvalidator& resourceInvalidator);
 
     void createRasterOverlayUpsampledChildren(TilesetTile& tile);
 
@@ -20,8 +18,7 @@ private:
     void markResourcesDirty();
 
     TileContentAccess& contentAccess_;
-    TileContentCacheManager& contentCache_;
-    TileSelectionReuseState& selectionReuseState_;
+    TileContentResourceInvalidator& resourceInvalidator_;
 };
 
 } // namespace earth_engine

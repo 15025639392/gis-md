@@ -10,18 +10,16 @@ namespace earth_engine {
 class ActivatedRasterOverlay;
 class RenderDevice;
 class TerrainProvider;
-class TileContentCacheManager;
 class TileContentLifecycleManager;
+class TileContentResourceInvalidator;
 class TileLoadQueue;
-struct TileSelectionReuseState;
 struct TilesetTile;
 
 class TileMeshPreparationManager {
 public:
     TileMeshPreparationManager(
         TileContentLifecycleManager& contentLifecycle,
-        TileContentCacheManager& contentCache,
-        TileSelectionReuseState& selectionReuseState,
+        TileContentResourceInvalidator& resourceInvalidator,
         TileLoadQueue& loadQueue,
         TerrainProvider* terrainProvider,
         RenderDevice* device,
@@ -39,8 +37,7 @@ private:
                        double priority);
 
     TileContentLifecycleManager& contentLifecycle_;
-    TileContentCacheManager& contentCache_;
-    TileSelectionReuseState& selectionReuseState_;
+    TileContentResourceInvalidator& resourceInvalidator_;
     TileLoadQueue& loadQueue_;
     TerrainProvider* terrainProvider_ = nullptr;
     RenderDevice* device_ = nullptr;

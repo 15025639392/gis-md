@@ -1,13 +1,12 @@
 #include "TileMeshPreparationManager.h"
 
 #include "TileCacheKey.h"
-#include "TileContentCacheManager.h"
 #include "TileContentLifecycleManager.h"
+#include "TileContentResourceInvalidator.h"
 #include "TileLoadQueue.h"
 #include "TileMeshFrameEnsurer.h"
 #include "RasterMappedToTilesetTile.h"
 #include "TileSelectionRasterOverlayPreparer.h"
-#include "TileSelectionReuseState.h"
 #include "TileUpsampleSourcePreparer.h"
 #include "TilesetTile.h"
 #include "../providers/QuantizedMeshTerrainProvider.h"
@@ -16,15 +15,13 @@ namespace earth_engine {
 
 TileMeshPreparationManager::TileMeshPreparationManager(
     TileContentLifecycleManager& contentLifecycle,
-    TileContentCacheManager& contentCache,
-    TileSelectionReuseState& selectionReuseState,
+    TileContentResourceInvalidator& resourceInvalidator,
     TileLoadQueue& loadQueue,
     TerrainProvider* terrainProvider,
     RenderDevice* device,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays)
     : contentLifecycle_(contentLifecycle),
-      contentCache_(contentCache),
-      selectionReuseState_(selectionReuseState),
+      resourceInvalidator_(resourceInvalidator),
       loadQueue_(loadQueue),
       terrainProvider_(terrainProvider),
       device_(device),
@@ -81,8 +78,7 @@ bool TileMeshPreparationManager::prepareUpsampleSourceTile(
 }
 
 void TileMeshPreparationManager::markResourcesDirty() {
-    contentCache_.markResourcesDirty();
-    selectionReuseState_.invalidate();
+    resourceInvalidator_.markResourcesDirty();
 }
 
 void TileMeshPreparationManager::queueTileLoad(

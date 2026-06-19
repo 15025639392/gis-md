@@ -7,6 +7,7 @@
 #include "TileContentCacheManager.h"
 #include "TileCacheOwnershipManager.h"
 #include "TileContentLifecycleManager.h"
+#include "TileContentResourceInvalidator.h"
 #include "TileLoadDiagnostics.h"
 #include "TileLoadQueue.h"
 #include "TileLoadTypes.h"
@@ -152,12 +153,13 @@ private:
     TileContentLifecycleManager contentLifecycle_;
     TileContentAccess contentAccess_;
     TileContentCacheManager contentCache_;
+    uint64_t resourceRevision_ = 1;
+    TileSelectionReuseState selectionReuseState_;
+    TileContentResourceInvalidator resourceInvalidator_;
     TileCacheOwnershipManager cacheOwnership_;
     TileRasterUpsampledChildCoordinator rasterUpsampledChildren_;
     std::unordered_set<std::string> tilesFadingOut_;
     uint64_t generation_ = 0;
-    uint64_t resourceRevision_ = 1;
-    TileSelectionReuseState selectionReuseState_;
     bool interactionActiveForFrame_ = false;
     bool resourceSmoothingActiveForFrame_ = false;
     FrameResourceBudget frameResourceBudget_;

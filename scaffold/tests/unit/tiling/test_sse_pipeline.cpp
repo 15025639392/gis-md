@@ -435,6 +435,27 @@ struct TilesetTestAccess {
         tileset.interactionActiveForFrame_ = active;
     }
 
+    static uint64_t resourceRevision(const Tileset& tileset) {
+        return tileset.resourceRevision_;
+    }
+
+    static bool cacheBytesDirty(const Tileset& tileset) {
+        return tileset.contentCache_.cacheBytesDirty();
+    }
+
+    static bool selectionReuseReusable(const Tileset& tileset) {
+        return tileset.selectionReuseState_.reusable;
+    }
+
+    static void primeCleanReusableResources(Tileset& tileset) {
+        tileset.contentCache_.cacheBytesDirty() = false;
+        tileset.selectionReuseState_.reusable = true;
+    }
+
+    static void markTileResourcesDirty(Tileset& tileset) {
+        TilesetContentLifecycleFacade::markTileResourcesDirty(tileset);
+    }
+
     static const Vec3& localOrigin(const TilesetTile& tile) {
         return tile.content.renderContent.renderLocalOrigin();
     }
@@ -3487,6 +3508,25 @@ void testTilesetUsesQuantizedMeshRtcOrigin() {
         TilesetTestAccess::localOrigin(*root) - boundingSphereCenter;
     check(originDelta.length() < 1e-12,
           "Tileset: quantized-mesh BoundingSphereCenter wins over centroid RTC origin");
+}
+
+void testTileResourceDirtyInvalidatesRevisionCacheAndReuse() {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/{z}/{x}/{y}.terrain");
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+
+    TilesetTestAccess::primeCleanReusableResources(tileset);
+    const uint64_t beforeRevision = TilesetTestAccess::resourceRevision(tileset);
+
+    TilesetTestAccess::markTileResourcesDirty(tileset);
+
+    check(TilesetTestAccess::resourceRevision(tileset) == beforeRevision + 1,
+          "Tileset: resource dirty bumps resource revision");
+    check(TilesetTestAccess::cacheBytesDirty(tileset),
+          "Tileset: resource dirty marks cache bytes dirty");
+    check(!TilesetTestAccess::selectionReuseReusable(tileset),
+          "Tileset: resource dirty invalidates selection reuse");
 }
 
 void testTilesetUsesQuantizedMeshHeightRange() {
@@ -18994,6 +19034,7 @@ int main() {
     testTileLoadSchedulerBlocksBeforePlanningWhenInflightIsFull();
     testTileLoadSchedulerSortsAndQueuesUpsampledTerrain();
     testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds();
+    testTileResourceDirtyInvalidatesRevisionCacheAndReuse();
     testTilesetFrameResourceBudgetLimitsWorkerRequests();
     testTileFrameResourceBudgetPlannerAlignsRasterBudgetWithTransportLane();
     testTilesetFrameResourceBudgetUsesProviderTransportLane();

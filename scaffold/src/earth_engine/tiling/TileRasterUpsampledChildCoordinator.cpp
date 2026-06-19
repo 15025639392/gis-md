@@ -1,12 +1,11 @@
 #include "TileRasterUpsampledChildCoordinator.h"
 
 #include "TileContentAccess.h"
-#include "TileContentCacheManager.h"
+#include "TileContentResourceInvalidator.h"
 #include "RasterMappedToTilesetTile.h"
 #include "../providers/RasterOverlayTile.h"
 #include "../providers/RasterOverlayTileProvider.h"
 #include "TileRasterUpsampledChildMaterializer.h"
-#include "TileSelectionReuseState.h"
 #include "TilesetTile.h"
 #include "../core/geodesy/Ellipsoid.h"
 
@@ -28,11 +27,9 @@ double cesiumTerrainGeometricError(const Rectangle& bounds) {
 
 TileRasterUpsampledChildCoordinator::TileRasterUpsampledChildCoordinator(
     TileContentAccess& contentAccess,
-    TileContentCacheManager& contentCache,
-    TileSelectionReuseState& selectionReuseState)
+    TileContentResourceInvalidator& resourceInvalidator)
     : contentAccess_(contentAccess),
-      contentCache_(contentCache),
-      selectionReuseState_(selectionReuseState) {}
+      resourceInvalidator_(resourceInvalidator) {}
 
 void TileRasterUpsampledChildCoordinator::createRasterOverlayUpsampledChildren(
     TilesetTile& tile) {
@@ -49,8 +46,7 @@ void TileRasterUpsampledChildCoordinator::createRasterOverlayUpsampledChildren(
 }
 
 void TileRasterUpsampledChildCoordinator::markResourcesDirty() {
-    contentCache_.markResourcesDirty();
-    selectionReuseState_.invalidate();
+    resourceInvalidator_.markResourcesDirty();
 }
 
 } // namespace earth_engine
