@@ -131,6 +131,23 @@ TEST(CullingVolumeTest, FieldOfViewAndClipMatrixConstructorsMatchCesiumNative) {
     expectCullingVolumeNear(fromFov, fromClip, 1e-10);
 }
 
+TEST(CullingVolumeTest, IdentityClipMatrixExtractsCesiumNativePlaneSigns) {
+    const CullingVolume volume = CullingVolume::fromClipMatrix(Mat4::identity());
+
+    EXPECT_TRUE(planeNear(volume.leftPlane,
+                          Plane(Vec3(1.0, 0.0, 0.0), 1.0),
+                          0.0));
+    EXPECT_TRUE(planeNear(volume.rightPlane,
+                          Plane(Vec3(-1.0, 0.0, 0.0), 1.0),
+                          0.0));
+    EXPECT_TRUE(planeNear(volume.topPlane,
+                          Plane(Vec3(0.0, 1.0, 0.0), 1.0),
+                          0.0));
+    EXPECT_TRUE(planeNear(volume.bottomPlane,
+                          Plane(Vec3(0.0, -1.0, 0.0), 1.0),
+                          0.0));
+}
+
 TEST(CullingVolumeTest, PerspectiveOffCenterMatchesCesiumNativeClipMatrix) {
     const Vec3 position(1234.0, -5678.0, 91011.0);
     const Vec3 direction(0.25, -0.4, 1.0);
