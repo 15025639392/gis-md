@@ -153,11 +153,10 @@ void Scene::render() {
 }
 
 void Scene::updatePresentationTrace() {
-    telemetry_->updatePresentationTrace(ScenePresentationTraceInput{
-        frameRuntime_.frameState(),
-        tilesets_->primary(),
-        tilesets_->contentTilesets(),
-        frameRuntime_.renderCommands()});
+    telemetry_->updatePresentationTrace(
+        frameRuntime_.makePresentationTraceInput(
+            tilesets_->primary(),
+            tilesets_->contentTilesets()));
 }
 
 void Scene::setTileset(std::unique_ptr<Tileset> tileset) {
@@ -224,14 +223,11 @@ void Scene::configureCameraSurfacePicker() {
 }
 
 SceneInteractionContext Scene::interactionContext() const {
-    return SceneInteractionContext{
+    return frameRuntime_.makeInteractionContext(
         camera_.get(),
         cameraController_.get(),
-        static_cast<double>(frameRuntime_.frameState().viewportWidthPixels),
-        static_cast<double>(frameRuntime_.frameState().viewportHeightPixels),
         tilesets_->primary(),
-        &layers_->vectorLayers(),
-        frameRuntime_.elapsedTime()};
+        &layers_->vectorLayers());
 }
 
 void Scene::onInputEvent(const InputEvent& event) {

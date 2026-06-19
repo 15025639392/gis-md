@@ -4,9 +4,17 @@
 #include "../renderer/RenderCommand.h"
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace earth_engine {
+
+class Camera;
+class CameraController;
+class Tileset;
+class VectorLayer;
+struct SceneInteractionContext;
+struct ScenePresentationTraceInput;
 
 class SceneFrameRuntime {
 public:
@@ -26,6 +34,15 @@ public:
     void setSelectorViewOverride(
         std::vector<FrameState::SelectorView> selectorViews);
     void clearSelectorViewOverride();
+
+    SceneInteractionContext makeInteractionContext(
+        Camera* camera,
+        CameraController* cameraController,
+        const Tileset* terrainTileset,
+        const std::vector<std::unique_ptr<VectorLayer>>* vectorLayers) const;
+    ScenePresentationTraceInput makePresentationTraceInput(
+        const Tileset* terrainTileset,
+        const std::vector<std::unique_ptr<Tileset>>& additionalTilesets) const;
 
     bool hasSelectorViewOverride() const {
         return hasSelectorViewOverride_;
