@@ -13368,7 +13368,8 @@ void testTileSelectionKickPolicyPlansPostKickActions() {
             false,
             TileRefine::Replace,
             true,
-            false);
+            false,
+            true);
     check(restorePlan.restoreChildLoadQueueAndLoadParent &&
               restorePlan.addRenderableReplacementToPlan &&
               !restorePlan.preloadParent,
@@ -13383,7 +13384,8 @@ void testTileSelectionKickPolicyPlansPostKickActions() {
             false,
             TileRefine::Add,
             true,
-            false);
+            false,
+            true);
     check(addPlan.restoreChildLoadQueueAndLoadParent &&
               !addPlan.addRenderableReplacementToPlan,
           "TileSelectionKickPolicy: ADD parent is not re-added as replacement");
@@ -13401,11 +13403,26 @@ void testTileSelectionKickPolicyPlansPostKickActions() {
             false,
             TileRefine::Replace,
             false,
-            false);
+            false,
+            true);
     check(!preloadPlan.restoreChildLoadQueueAndLoadParent &&
               !preloadPlan.addRenderableReplacementToPlan &&
               preloadPlan.preloadParent,
           "TileSelectionKickPolicy: kicked parent preloads when no other load was queued");
+
+    const TileSelectionKickPlan noPreloadPlan =
+        TileSelectionKickPolicy::planAfterKick(
+            fewMissing,
+            false,
+            2,
+            false,
+            false,
+            TileRefine::Replace,
+            false,
+            false,
+            false);
+    check(!noPreloadPlan.preloadParent,
+          "TileSelectionKickPolicy: kicked parent skips preload when ancestor preloading is disabled");
 
     const TileSelectionKickPlan alreadyQueuedPlan =
         TileSelectionKickPolicy::planAfterKick(
@@ -13416,6 +13433,7 @@ void testTileSelectionKickPolicyPlansPostKickActions() {
             false,
             TileRefine::Replace,
             false,
+            true,
             true);
     check(!alreadyQueuedPlan.preloadParent,
           "TileSelectionKickPolicy: already queued parent skips preload");
@@ -13453,6 +13471,33 @@ void testTileSelectionPostTraversalPolicyPlansKickOutcome() {
               !result.kickPlan.preloadParent &&
               !result.preloadRefinedAncestor,
           "TileSelectionPostTraversalPolicy: kicked replacement restores queue and plans parent");
+
+    TileTraversalDetails fewMissing;
+    fewMissing.allAreRenderable = false;
+    fewMissing.anyWereRenderedLastFrame = false;
+    fewMissing.notYetRenderableCount = 1;
+
+    const TileSelectionPostTraversalResult noPreloadResult =
+        TileSelectionPostTraversalPolicy::evaluate(
+            TileSelectionPostTraversalInput{
+                fewMissing,
+                true,
+                false,
+                TileSelectionState::NotVisited,
+                false,
+                1.0f,
+                false,
+                false,
+                TileRefine::Replace,
+                false},
+            TileSelectionPostTraversalOptions{
+                2,
+                false,
+                false,
+                false});
+    check(noPreloadResult.shouldKick &&
+              !noPreloadResult.kickPlan.preloadParent,
+          "TileSelectionPostTraversalPolicy: kicked parent obeys disabled ancestor preload option");
 }
 
 void testTileSelectionPostTraversalPolicyPlansRefinedAncestorPreload() {

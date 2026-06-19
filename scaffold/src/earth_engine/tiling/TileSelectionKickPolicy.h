@@ -41,7 +41,8 @@ struct TileSelectionKickPolicy {
         bool unconditionallyRefine,
         TileRefine refineMode,
         bool renderable,
-        bool queuedForLoad);
+        bool queuedForLoad,
+        bool preloadAncestors);
 };
 
 } // namespace earth_engine

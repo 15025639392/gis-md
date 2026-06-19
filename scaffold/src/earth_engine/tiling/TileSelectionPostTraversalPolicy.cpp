@@ -30,7 +30,8 @@ TileSelectionPostTraversalResult TileSelectionPostTraversalPolicy::evaluate(
             input.unconditionallyRefine,
             input.refineMode,
             input.renderable,
-            input.queuedForLoad);
+            input.queuedForLoad,
+            options.preloadAncestors);
         return result;
     }
 

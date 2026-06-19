@@ -49,7 +49,8 @@ TileSelectionKickPlan TileSelectionKickPolicy::planAfterKick(
     bool unconditionallyRefine,
     TileRefine refineMode,
     bool renderable,
-    bool queuedForLoad) {
+    bool queuedForLoad,
+    bool preloadAncestors) {
     TileSelectionKickPlan plan;
     plan.restoreChildLoadQueueAndLoadParent =
         shouldRestoreChildLoadQueueAndLoadParent(
@@ -63,7 +64,7 @@ TileSelectionKickPlan TileSelectionKickPolicy::planAfterKick(
         queuedForLoad || plan.restoreChildLoadQueueAndLoadParent;
     plan.addRenderableReplacementToPlan =
         refineMode != TileRefine::Add && renderable;
-    plan.preloadParent = !willQueueParent;
+    plan.preloadParent = preloadAncestors && !willQueueParent;
     return plan;
 }
 
