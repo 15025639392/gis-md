@@ -37,6 +37,21 @@ Mat4 cesiumPerspectiveMatrix(double fovX,
     return Mat4(projection);
 }
 
+Mat4 cesiumPerspectiveOffCenterMatrix(double left,
+                                      double right,
+                                      double bottom,
+                                      double top,
+                                      double nearPlane) {
+    glm::dmat4 projection(0.0);
+    projection[0][0] = 2.0 * nearPlane / (right - left);
+    projection[1][1] = 2.0 * nearPlane / (bottom - top);
+    projection[2][0] = (right + left) / (right - left);
+    projection[2][1] = (bottom + top) / (bottom - top);
+    projection[2][3] = -1.0;
+    projection[3][2] = nearPlane;
+    return Mat4(projection);
+}
+
 Mat4 cesiumViewMatrix(const Vec3& position, const Vec3& direction, const Vec3& up) {
     const Vec3 forward = direction * -1.0;
     const Vec3 side = up.cross(forward).normalized();
@@ -100,4 +115,38 @@ TEST(CullingVolumeTest, FieldOfViewAndClipMatrixConstructorsMatchCesiumNative) {
     const CullingVolume fromClip = CullingVolume::fromClipMatrix(clipMatrix);
 
     expectCullingVolumeNear(fromFov, fromClip, 1e-10);
+}
+
+TEST(CullingVolumeTest, PerspectiveOffCenterMatchesCesiumNativeClipMatrix) {
+    const Vec3 position(1234.0, -5678.0, 91011.0);
+    const Vec3 direction(0.25, -0.4, 1.0);
+    const Vec3 up(0.0, 1.0, 0.0);
+    const double left = -1.5;
+    const double right = 2.0;
+    const double bottom = -0.75;
+    const double top = 1.25;
+    const double nearPlane = 3.0;
+
+    const CullingVolume fromOffCenter =
+        CullingVolume::fromPerspectiveOffCenter(
+            position,
+            direction.normalized(),
+            up,
+            left,
+            right,
+            bottom,
+            top,
+            nearPlane);
+
+    const Mat4 clipMatrix =
+        cesiumPerspectiveOffCenterMatrix(
+            left,
+            right,
+            bottom,
+            top,
+            nearPlane) *
+        cesiumViewMatrix(position, direction.normalized(), up);
+    const CullingVolume fromClip = CullingVolume::fromClipMatrix(clipMatrix);
+
+    expectCullingVolumeNear(fromOffCenter, fromClip, 1e-10);
 }
