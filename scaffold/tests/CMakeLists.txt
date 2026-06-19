@@ -130,6 +130,12 @@ add_executable(test_tile_key
 target_link_libraries(test_tile_key PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_key COMMAND test_tile_key)
 
+add_executable(test_tile_id
+    unit/tiling/test_tile_id.cpp
+)
+target_link_libraries(test_tile_id PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_id COMMAND test_tile_id)
+
 add_executable(test_quadtree_tiling_scheme
     unit/tiling/test_quadtree_tiling_scheme.cpp
 )
