@@ -14,10 +14,6 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846264338327950288;
 
-Rectangle maximumGlobeRectangle() {
-    return Rectangle(-kPi, -kPi * 0.5, kPi, kPi * 0.5);
-}
-
 void expandRectangleToCartographic(const Cartographic& cartographic,
                                    double& west,
                                    double& south,
@@ -58,7 +54,7 @@ std::optional<Rectangle> TileBoundingVolume::estimateGlobeRectangle(
             return region;
         case TileBoundingVolumeKind::Sphere: {
             if (sphere.contains(Vec3::zero())) {
-                return maximumGlobeRectangle();
+                return Rectangle::MAXIMUM;
             }
 
             const Mat4 enuToEcef =
@@ -90,7 +86,7 @@ std::optional<Rectangle> TileBoundingVolume::estimateGlobeRectangle(
         }
         case TileBoundingVolumeKind::Box: {
             if (box.contains(Vec3::zero())) {
-                return maximumGlobeRectangle();
+                return Rectangle::MAXIMUM;
             }
 
             const Vec3& center = box.getCenter();

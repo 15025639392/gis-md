@@ -23,6 +23,9 @@ namespace {
     }
 }
 
+const Rectangle Rectangle::EMPTY{kPi, kPi * 0.5, -kPi, -kPi * 0.5};
+const Rectangle Rectangle::MAXIMUM{-kPi, -kPi * 0.5, kPi, kPi * 0.5};
+
 Rectangle Rectangle::fromDegrees(double westDeg, double southDeg,
                                   double eastDeg, double northDeg) {
     return Rectangle(westDeg * kDegToRad, southDeg * kDegToRad,
@@ -207,6 +210,13 @@ bool Rectangle::operator==(const Rectangle& rhs) const {
 }
 
 bool Rectangle::operator!=(const Rectangle& rhs) const { return !(*this == rhs); }
+
+bool Rectangle::equalsEpsilon(const Rectangle& rhs, double epsilon) const {
+    return std::abs(west_ - rhs.west_) <= epsilon &&
+           std::abs(south_ - rhs.south_) <= epsilon &&
+           std::abs(east_ - rhs.east_) <= epsilon &&
+           std::abs(north_ - rhs.north_) <= epsilon;
+}
 
 std::ostream& operator<<(std::ostream& os, const Rectangle& r) {
     return os << "Rectangle(w:" << r.westDegrees() << "°, s:" << r.southDegrees()

@@ -11,6 +11,9 @@ namespace earth_engine {
 /// 跨反经线时 west > east。
 class Rectangle {
 public:
+    static const Rectangle EMPTY;
+    static const Rectangle MAXIMUM;
+
     Rectangle() : west_(0), south_(0), east_(0), north_(0) {}
     Rectangle(double west, double south, double east, double north)
         : west_(west), south_(south), east_(east), north_(north) {}
@@ -49,6 +52,7 @@ public:
 
     bool operator==(const Rectangle& rhs) const;
     bool operator!=(const Rectangle& rhs) const;
+    bool equalsEpsilon(const Rectangle& rhs, double epsilon) const;
 
 private:
     double west_, south_, east_, north_;

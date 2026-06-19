@@ -23,6 +23,39 @@ TEST(RectangleTest, ContainsMatchesCesiumNativeSimpleCase) {
     EXPECT_FALSE(simple.contains(0.0, 0.2));
 }
 
+TEST(RectangleTest, EmptyAndMaximumConstantsMatchCesiumNative) {
+    // Ported from cesium-native CesiumGeospatial/test/TestGlobeRectangle.cpp:
+    // GlobeRectangle::EMPTY and GlobeRectangle::MAXIMUM constants.
+    EXPECT_TRUE(Rectangle::EMPTY.isEmpty());
+    EXPECT_NEAR(M_PI, Rectangle::EMPTY.west(), 0.0);
+    EXPECT_NEAR(M_PI * 0.5, Rectangle::EMPTY.south(), 0.0);
+    EXPECT_NEAR(-M_PI, Rectangle::EMPTY.east(), 0.0);
+    EXPECT_NEAR(-M_PI * 0.5, Rectangle::EMPTY.north(), 0.0);
+
+    EXPECT_FALSE(Rectangle::MAXIMUM.isEmpty());
+    EXPECT_NEAR(-M_PI, Rectangle::MAXIMUM.west(), 0.0);
+    EXPECT_NEAR(-M_PI * 0.5, Rectangle::MAXIMUM.south(), 0.0);
+    EXPECT_NEAR(M_PI, Rectangle::MAXIMUM.east(), 0.0);
+    EXPECT_NEAR(M_PI * 0.5, Rectangle::MAXIMUM.north(), 0.0);
+}
+
+TEST(RectangleTest, EqualsEpsilonMatchesCesiumNative) {
+    // Ported from cesium-native CesiumGeospatial/test/TestGlobeRectangle.cpp.
+    const Rectangle simple(0.1, 0.2, 0.3, 0.4);
+
+    EXPECT_TRUE(simple.equalsEpsilon(simple, 1e-6));
+    EXPECT_TRUE(simple.equalsEpsilon(Rectangle(0.1, 0.2, 0.3, 0.4), 1e-6));
+    EXPECT_TRUE(simple.equalsEpsilon(Rectangle(0.10001, 0.2, 0.3, 0.4), 1e-3));
+    EXPECT_TRUE(simple.equalsEpsilon(Rectangle(0.1, 0.2002, 0.3, 0.4), 1e-3));
+    EXPECT_TRUE(simple.equalsEpsilon(Rectangle(0.1, 0.2, 0.30003, 0.4), 1e-3));
+    EXPECT_TRUE(simple.equalsEpsilon(Rectangle(0.1, 0.2, 0.3, 0.4004), 1e-3));
+
+    EXPECT_FALSE(simple.equalsEpsilon(Rectangle(0.11, 0.2, 0.3, 0.4), 1e-3));
+    EXPECT_FALSE(simple.equalsEpsilon(Rectangle(0.1, 0.202, 0.3, 0.4), 1e-3));
+    EXPECT_FALSE(simple.equalsEpsilon(Rectangle(0.1, 0.2, 0.301, 0.4), 1e-3));
+    EXPECT_FALSE(simple.equalsEpsilon(Rectangle(0.1, 0.2, 0.3, 0.5), 1e-3));
+}
+
 TEST(RectangleTest, ContainsMatchesCesiumNativeRadianWrappingCase) {
     // Ported from cesium-native CesiumGeospatial/test/TestGlobeRectangle.cpp.
     Rectangle wrapping(3.0, 0.2, -3.1, 0.4);
