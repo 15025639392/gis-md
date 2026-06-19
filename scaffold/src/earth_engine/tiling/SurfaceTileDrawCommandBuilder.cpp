@@ -98,7 +98,13 @@ void SurfaceTileDrawCommandBuilder::build(
     }
 
     const SurfaceTileMesh* mesh = tile.content.renderContent.surfaceMesh();
-    if (!baseTexture || !mesh) {
+    if (!mesh) {
+        return;
+    }
+    if (!baseTexture) {
+        baseTexture = renderer.surfacePlaceholderTexture();
+    }
+    if (!baseTexture) {
         return;
     }
 

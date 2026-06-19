@@ -4910,7 +4910,7 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
           "Tileset: build command emits a surface command from the core ready raster");
 }
 
-void testTilesetBlockingBaseImageryDoesNotDrawPlaceholderSurface() {
+void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
     auto baseOverlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -4960,8 +4960,13 @@ void testTilesetBlockingBaseImageryDoesNotDrawPlaceholderSurface() {
         commands,
         1.0f);
 
-    check(commands.empty(),
-          "Tileset: blocking base imagery does not draw a fallback placeholder surface");
+    check(!commands.empty() &&
+              commands.front().kind == RenderCommandKind::SurfaceTile &&
+              commands.front().textures.size() == 1 &&
+              commands.front().textures.front() ==
+                  rendererHarness.renderer.surfacePlaceholderTexture() &&
+              commands.front().surfaceTextureZoom == -1,
+          "Tileset: blocking base imagery draws surface geometry with the shared placeholder texture");
     check(!TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: missing blocking base imagery keeps strict complete renderable false");
 }
@@ -11311,9 +11316,6 @@ void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
             },
             [](const TilesetTile& tile) {
                 return tile.hasSurfaceDrawable();
-            },
-            [](const TilesetTile&) {
-                return true;
             });
 
     check(plan.renderEntries.size() == 1 &&
@@ -11366,9 +11368,6 @@ void testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery() {
         },
         [](const TileKey& key) {
             return TileCacheKey::forTile(key);
-        },
-        [](const TilesetTile& tile) {
-            return tile.hasSurfaceDrawable();
         },
         [](const TilesetTile& tile) {
             return tile.hasSurfaceDrawable();
@@ -11426,9 +11425,6 @@ void testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback() {
         },
         [&root](const TilesetTile& tile) {
             return tile.key == root.key;
-        },
-        [&root](const TilesetTile& tile) {
-            return tile.key == root.key;
         });
 
     check(plan.renderEntries.size() == 1 &&
@@ -11442,7 +11438,7 @@ void testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback() {
           "TileRenderPlanFinalizer: ancestor fallback skips nearer geometry that is not actually renderable");
 }
 
-void testTileRenderPlanFinalizerSkipsSurfaceEntryWithoutCommandBinding() {
+void testTileRenderPlanFinalizerKeepsSurfaceEntryWithoutCommandBinding() {
     const TileKey rootKey{"test", 0, 0, 0};
     TilesetTile root(rootKey, Rectangle{});
     root.markRenderContentDone();
@@ -11467,16 +11463,17 @@ void testTileRenderPlanFinalizerSkipsSurfaceEntryWithoutCommandBinding() {
         },
         [](const TilesetTile& tile) {
             return tile.hasSurfaceDrawable();
-        },
-        [](const TilesetTile&) {
-            return false;
         });
 
-    check(plan.renderEntries.empty() &&
+    check(plan.renderEntries.size() == 1 &&
+              plan.renderEntries.front().selectedKey == rootKey &&
+              plan.renderEntries.front().renderKey == rootKey &&
+              plan.renderEntries.front().reason ==
+                  TileRenderEntryReason::Direct &&
               plan.renderEntryAncestorFallbackCount == 0 &&
               plan.renderEntrySynchronousPrepCount == 0 &&
               plan.renderEntryDeferredPrepCount == 0,
-          "TileRenderPlanFinalizer: surface entries are skipped when they cannot bind a drawable command");
+          "TileRenderPlanFinalizer: surface entries stay planned when imagery command binding is not ready");
 }
 
 void testTileRenderPlanFinalizerPrefersFullGeometryOverEarlierClip() {
@@ -11509,9 +11506,6 @@ void testTileRenderPlanFinalizerPrefersFullGeometryOverEarlierClip() {
         },
         [](const TileKey& key) {
             return TileCacheKey::forTile(key);
-        },
-        [](const TilesetTile& tile) {
-            return tile.hasSurfaceDrawable();
         },
         [](const TilesetTile& tile) {
             return tile.hasSurfaceDrawable();
@@ -11552,9 +11546,6 @@ void testTileRenderPlanFinalizerCountsRootPrepOnce() {
             },
             [](const TilesetTile& tile) {
                 return tile.hasSurfaceDrawable();
-            },
-            [](const TilesetTile&) {
-                return true;
             });
 
     check(plan.renderEntries.size() == 1 &&
@@ -11592,9 +11583,6 @@ void testTileRenderPlanFinalizerDefersFallbackPrepDuringInteraction() {
         },
         [](const TileKey& key) {
             return TileCacheKey::forTile(key);
-        },
-        [&parent](const TilesetTile& tile) {
-            return tile.key == parent.key;
         },
         [&parent](const TilesetTile& tile) {
             return tile.key == parent.key;
@@ -11639,9 +11627,6 @@ void testTileRenderPlanFinalizerReadsSelectionFrameFade() {
             },
             [](const TilesetTile& tile) {
                 return tile.hasSurfaceDrawable();
-            },
-            [](const TilesetTile&) {
-                return true;
             });
 
     check(plan.renderEntries.size() == 1 &&
@@ -11853,9 +11838,6 @@ void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
         },
         [](const TilesetTile& tile) {
             return tile.hasSurfaceDrawable();
-        },
-        [](const TilesetTile&) {
-            return true;
         });
 
     check(plan.renderEntries.size() == 1 &&
@@ -18213,6 +18195,7 @@ void testSceneOcclusionCallbackFeedsPrimaryAndAdditionalTilesets() {
 
 void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
     DummyRenderDevice device;
+    device.allowTextureCreation = true;
     Scene scene;
     check(scene.setRenderDevice(&device),
           "Scene: dummy render device initializes full renderer path");
@@ -18299,14 +18282,14 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
     check(scene.diagnostics().contentTilesets == 1 &&
               scene.diagnostics().contentVisibleTiles > 0,
           "Scene: diagnostics expose additional content tileset visibility");
-    check(scene.diagnostics().terrainRenderEntriesPlanned == 0 &&
-              scene.diagnostics().terrainRenderEntriesSelectedPlanned == 0 &&
+    check(scene.diagnostics().terrainRenderEntriesPlanned > 0 &&
+              scene.diagnostics().terrainRenderEntriesSelectedPlanned > 0 &&
               scene.diagnostics().terrainRenderEntriesFadingPlanned == 0 &&
               scene.diagnostics().terrainRenderEntriesAncestorFallback == 0 &&
-              scene.diagnostics().terrainRenderEntriesSynchronousPrep == 0 &&
+              scene.diagnostics().terrainRenderEntriesSynchronousPrep >= 0 &&
               scene.diagnostics().terrainRenderEntriesDeferredPrep == 0 &&
-              scene.diagnostics().terrainRenderEntriesDrawn == 0 &&
-              scene.diagnostics().terrainRenderEntriesSelectedDrawn == 0 &&
+              scene.diagnostics().terrainRenderEntriesDrawn > 0 &&
+              scene.diagnostics().terrainRenderEntriesSelectedDrawn > 0 &&
               scene.diagnostics().terrainRenderEntriesFadingDrawn == 0 &&
               scene.diagnostics().terrainRenderEntriesMissed == 0 &&
               scene.diagnostics().terrainRenderEntriesSelectedMissed == 0 &&
@@ -18314,10 +18297,10 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
               scene.diagnostics().terrainRenderEntriesDeferred == 0 &&
               scene.diagnostics().terrainRenderEntriesSelectedDeferred == 0 &&
               scene.diagnostics().terrainRenderEntriesFadingDeferred == 0 &&
-              scene.diagnostics().terrainSurfaceCommandsSubmitted == 0 &&
-              scene.diagnostics().globeFallbackCommands == 1 &&
+              scene.diagnostics().terrainSurfaceCommandsSubmitted > 0 &&
+              scene.diagnostics().globeFallbackCommands == 0 &&
               scene.diagnostics().globeFallbackMaskedTerrainEntries == 0,
-          "Scene: no-base-imagery terrain does not create masked terrain render entries");
+          "Scene: no-base-imagery terrain still submits placeholder surface render entries");
     check(std::abs(scene.tileset()->sampleHeight(0.0, 0.0) - 123.0f) <
               1e-6f,
           "Scene: terrain sampling is still owned by primary tileset after render");
@@ -18474,11 +18457,11 @@ void testSceneDiagnosticsExposeTerrainSynchronousPrepReason() {
           "Scene: diagnostics expose nonzero terrain synchronous-prep reason");
 }
 
-void testSceneDiagnosticsExposeTerrainDeferredPrepReason() {
+void testSceneDiagnosticsRejectImageryOnlyAncestorFallback() {
     DummyRenderDevice device;
     Scene scene;
     check(scene.setRenderDevice(&device),
-          "Scene: deferred-prep diagnostics initialize renderer");
+          "Scene: imagery-only fallback diagnostics initialize renderer");
     scene.setViewport(800, 600, 1.0f);
 
     const auto& ellipsoid = Ellipsoid::WGS84();
@@ -18506,7 +18489,7 @@ void testSceneDiagnosticsExposeTerrainDeferredPrepReason() {
     TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
     TilesetTile* child = TilesetTestAccess::ensureTile(*terrainRaw, childKey);
     check(root != nullptr && child != nullptr,
-          "Scene: deferred-prep diagnostics create fallback tiles");
+          "Scene: imagery-only fallback diagnostics create fallback tiles");
     if (!root || !child) return;
 
     TilesetTestAccess::putTerrainCache(
@@ -18521,14 +18504,14 @@ void testSceneDiagnosticsExposeTerrainDeferredPrepReason() {
     RasterOverlayTile* rootRaster =
         rootMapped ? rootMapped->getLoadingTile() : nullptr;
     check(rootRaster != nullptr,
-          "Scene: deferred-prep diagnostics fallback ancestor has base imagery");
+          "Scene: imagery-only fallback diagnostics ancestor has base imagery");
     if (!rootRaster) return;
     rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
     rootRaster->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
     check(!root->hasSurfaceDrawable(),
-          "Scene: deferred-prep diagnostics starts before fallback mesh is ready");
+          "Scene: imagery-only fallback diagnostics starts before ancestor mesh is ready");
 
     scene.setTileset(std::move(terrainTileset));
     scene.update(1.0 / 60.0);
@@ -18539,19 +18522,19 @@ void testSceneDiagnosticsExposeTerrainDeferredPrepReason() {
 
     check(scene.diagnostics().terrainRenderEntriesPlanned == 1 &&
               scene.diagnostics().terrainRenderEntriesSelectedPlanned == 1 &&
-              scene.diagnostics().terrainRenderEntriesAncestorFallback == 1 &&
-              scene.diagnostics().terrainRenderEntriesSynchronousPrep == 0 &&
-              scene.diagnostics().terrainRenderEntriesDeferredPrep == 1 &&
-              scene.diagnostics().terrainRenderEntriesDrawn == 0 &&
-              scene.diagnostics().terrainRenderEntriesSelectedDrawn == 0 &&
+              scene.diagnostics().terrainRenderEntriesAncestorFallback == 0 &&
+              scene.diagnostics().terrainRenderEntriesSynchronousPrep == 1 &&
+              scene.diagnostics().terrainRenderEntriesDeferredPrep == 0 &&
+              scene.diagnostics().terrainRenderEntriesDrawn == 1 &&
+              scene.diagnostics().terrainRenderEntriesSelectedDrawn == 1 &&
               scene.diagnostics().terrainRenderEntriesMissed == 0 &&
-              scene.diagnostics().terrainRenderEntriesDeferred == 1 &&
-              scene.diagnostics().terrainRenderEntriesSelectedDeferred == 1 &&
+              scene.diagnostics().terrainRenderEntriesDeferred == 0 &&
+              scene.diagnostics().terrainRenderEntriesSelectedDeferred == 0 &&
               scene.diagnostics().terrainRenderEntriesFadingDeferred == 0 &&
-              scene.diagnostics().terrainSurfaceCommandsSubmitted == 0 &&
-              scene.diagnostics().globeFallbackCommands == 1 &&
-              scene.diagnostics().globeFallbackMaskedTerrainEntries == 1,
-          "Scene: diagnostics expose interaction terrain deferred-prep fallback masked by globe fallback");
+              scene.diagnostics().terrainSurfaceCommandsSubmitted == 1 &&
+              scene.diagnostics().globeFallbackCommands == 0 &&
+              scene.diagnostics().globeFallbackMaskedTerrainEntries == 0,
+          "Scene: imagery-only ancestor is not treated as terrain fallback and selected surface still draws");
 }
 
 void testSceneSortsTransparentGltfByCameraDepth() {
@@ -19307,7 +19290,7 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
           "Tileset: clipped fallback only fills the selected child quadrant");
 }
 
-void testTileRenderPlanFrameRefresherRequiresDrawableBaseRaster() {
+void testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -19325,7 +19308,7 @@ void testTileRenderPlanFrameRefresherRequiresDrawableBaseRaster() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
-          "TileRenderPlanFrameRefresher: drawable-raster gate creates root tile");
+          "TileRenderPlanFrameRefresher: placeholder-base strategy creates root tile");
     if (!root) return;
 
     TilesetTestAccess::putTerrainCache(
@@ -19338,8 +19321,11 @@ void testTileRenderPlanFrameRefresherRequiresDrawableBaseRaster() {
 
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
     check(tileset.tilePlan().visibleTiles.size() == 1 &&
-              tileset.tilePlan().renderEntries.empty(),
-          "TileRenderPlanFrameRefresher: surface geometry without drawable base raster is not planned");
+              tileset.tilePlan().renderEntries.size() == 1 &&
+              tileset.tilePlan().renderEntries.front().selectedKey ==
+                  rootKey &&
+              tileset.tilePlan().renderEntries.front().renderKey == rootKey,
+          "TileRenderPlanFrameRefresher: surface geometry is planned before base raster is drawable");
 
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* rootMapped =
@@ -19349,7 +19335,7 @@ void testTileRenderPlanFrameRefresherRequiresDrawableBaseRaster() {
     RasterOverlayTile* rootRaster =
         rootMapped ? rootMapped->getLoadingTile() : nullptr;
     check(rootRaster != nullptr,
-          "TileRenderPlanFrameRefresher: drawable-raster gate maps base imagery");
+          "TileRenderPlanFrameRefresher: placeholder-base strategy maps base imagery");
     if (!rootRaster) return;
     rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
     rootRaster->setMoreDetailAvailable(
@@ -20423,7 +20409,7 @@ int main() {
     testTilesetPrefetchesRasterFromBoundingRegionBeforeRenderContent();
     testTileRasterOverlayFrameProcessorPrefetchesByPriority();
     testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach();
-    testTilesetBlockingBaseImageryDoesNotDrawPlaceholderSurface();
+    testTilesetBlockingBaseImageryDrawsPlaceholderSurface();
     testTilesetFailedChildBaseImageryUsesAncestorCommandTexture();
     testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw();
     testTilesetSurfaceOverlaysCompositeIntoSingleCommand();
@@ -20555,7 +20541,7 @@ int main() {
     testTileRenderPlanFinalizerResolvesAncestorFallbackEntries();
     testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery();
     testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback();
-    testTileRenderPlanFinalizerSkipsSurfaceEntryWithoutCommandBinding();
+    testTileRenderPlanFinalizerKeepsSurfaceEntryWithoutCommandBinding();
     testTileRenderPlanFinalizerPrefersFullGeometryOverEarlierClip();
     testTileRenderPlanFinalizerCountsRootPrepOnce();
     testTileRenderPlanFinalizerDefersFallbackPrepDuringInteraction();
@@ -20695,7 +20681,7 @@ int main() {
     testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain();
     testSceneDiagnosticsExposeTerrainRenderEntryReasons();
     testSceneDiagnosticsExposeTerrainSynchronousPrepReason();
-    testSceneDiagnosticsExposeTerrainDeferredPrepReason();
+    testSceneDiagnosticsRejectImageryOnlyAncestorFallback();
     testSceneSortsTransparentGltfByCameraDepth();
     testTilesetLodTransitionsUseNativeDeltaState();
     testTilesetAdditiveRefinedTileFadesOutAfterLeavingSelection();
@@ -20713,7 +20699,7 @@ int main() {
     testTilesetSampleHeightFallsBackToLoadedAncestorTerrain();
     testTilesetCreatesUpsampledChildrenForUnavailableSiblings();
     testTilesetAncestorFallbackIsClippedToMissingChild();
-    testTileRenderPlanFrameRefresherRequiresDrawableBaseRaster();
+    testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster();
     testPresentationTraceRecordsDeterministicCameraState();
     testPresentationTraceLinksTilePlanToSurfaceCommand();
     testPresentationTraceCopiesRenderEntryPassFailures();

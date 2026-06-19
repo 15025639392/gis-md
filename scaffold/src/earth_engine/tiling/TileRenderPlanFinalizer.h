@@ -23,15 +23,13 @@ struct TileRenderPlanFinalizeOptions {
 struct TileRenderPlanFinalizer {
     template <typename EnsureTileFn,
               typename CacheKeyFn,
-              typename IsFallbackRenderableFn,
-              typename CanEmitRenderCommandFn>
+              typename IsFallbackRenderableFn>
     static void refreshRenderEntries(
         TilePlan& plan,
         const TileRenderPlanFinalizeOptions& options,
         EnsureTileFn&& ensureTile,
         CacheKeyFn&& cacheKey,
-        IsFallbackRenderableFn&& isFallbackRenderable,
-        CanEmitRenderCommandFn&& canEmitRenderCommand) {
+        IsFallbackRenderableFn&& isFallbackRenderable) {
         plan.renderEntries.clear();
         plan.renderEntryAncestorFallbackCount = 0;
         plan.renderEntrySynchronousPrepCount = 0;
@@ -72,11 +70,6 @@ struct TileRenderPlanFinalizer {
                     }
                     usesAncestorFallback = true;
                 }
-            }
-
-            if (!commandTile->content.renderContent.hasGltfContent() &&
-                !canEmitRenderCommand(*commandTile)) {
-                return;
             }
 
             const std::string selectedCk = cacheKey(selectedTile->key);

@@ -53,6 +53,9 @@ public:
     Buffer* tileIndexBuffer() const;
     int tileIndexCount() const;
 
+    /// Neutral 1x1 texture used only while required base imagery is not ready.
+    Texture* surfacePlaceholderTexture() const;
+
     /// glTF primitive shader.
     ShaderProgram* gltfShader() const;
 

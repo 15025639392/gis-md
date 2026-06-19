@@ -1793,6 +1793,7 @@ struct Renderer::Impl {
     // Surface tile (unified, cesium-native glTF layout)
     std::unique_ptr<ShaderProgram> surfaceTileShader;
     std::unique_ptr<Buffer> tileIndexBuffer;  // shared 64×64 grid IBO
+    std::unique_ptr<Texture> surfacePlaceholderTexture;
     int tileIndexCount = 0;
 
     // glTF TileRenderContent
@@ -1862,6 +1863,17 @@ bool Renderer::initialize(const GlobeMesh& mesh) {
             return false;
         }
     }
+    const uint8_t placeholderPixel[4] = {174, 184, 170, 255};
+    TextureDesc placeholderDesc;
+    placeholderDesc.width = 1;
+    placeholderDesc.height = 1;
+    placeholderDesc.format = TextureDesc::Format::RGBA8;
+    placeholderDesc.data = placeholderPixel;
+    placeholderDesc.dataSize = sizeof(placeholderPixel);
+    placeholderDesc.mipmap = false;
+    placeholderDesc.minFilter = TextureDesc::Filter::Nearest;
+    placeholderDesc.magFilter = TextureDesc::Filter::Nearest;
+    impl_->surfacePlaceholderTexture = dev->createTexture(placeholderDesc);
 
     // ---- glTF primitive shader ----
     ShaderDesc gltfSd;
@@ -1919,6 +1931,7 @@ void Renderer::dispose() {
     impl_->globeIndexBuffer.reset();
     impl_->surfaceTileShader.reset();
     impl_->tileIndexBuffer.reset();
+    impl_->surfacePlaceholderTexture.reset();
     impl_->gltfShader.reset();
     impl_->gltfInstancedShader.reset();
     impl_->colorShader.reset();
@@ -1937,6 +1950,9 @@ int Renderer::globeIndexCount() const { return impl_->globeIndexCount; }
 ShaderProgram* Renderer::colorShader() const { return impl_->colorShader.get(); }
 Buffer* Renderer::tileIndexBuffer() const { return impl_->tileIndexBuffer.get(); }
 int Renderer::tileIndexCount() const { return impl_->tileIndexCount; }
+Texture* Renderer::surfacePlaceholderTexture() const {
+    return impl_->surfacePlaceholderTexture.get();
+}
 ShaderProgram* Renderer::gltfShader() const { return impl_->gltfShader.get(); }
 
 ShaderProgram* Renderer::gltfInstancedShader() const {
