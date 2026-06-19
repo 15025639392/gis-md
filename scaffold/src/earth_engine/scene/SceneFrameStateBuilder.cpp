@@ -1,6 +1,7 @@
 #include "SceneFrameStateBuilder.h"
 
 #include "Camera.h"
+#include "SceneSelectorViewBuilder.h"
 
 #include "../core/geodesy/Ellipsoid.h"
 #include "../debug/PerfTimer.h"
@@ -12,37 +13,6 @@ namespace earth_engine {
 namespace {
 
 constexpr double kInteractionFocusTtlSeconds = 2.5;
-
-void populateSelectorViews(
-    FrameState& frameState,
-    bool hasSelectorViewOverride,
-    const std::vector<SelectorView>* selectorViewOverride) {
-    frameState.selectorViews.clear();
-    if (hasSelectorViewOverride) {
-        if (selectorViewOverride) {
-            frameState.selectorViews = *selectorViewOverride;
-        }
-        return;
-    }
-
-    if (!frameState.camera) {
-        return;
-    }
-
-    SelectorView selectorView;
-    selectorView.position = frameState.camera->position();
-    selectorView.direction = frameState.camera->direction();
-    const double viewportWidth =
-        static_cast<double>(frameState.viewportWidthPixels);
-    const double viewportHeight =
-        static_cast<double>(frameState.viewportHeightPixels);
-    selectorView.projectionMatrix =
-        frameState.camera->projectionMatrix(viewportWidth, viewportHeight);
-    selectorView.frustum = Frustum::fromViewProjection(
-        selectorView.projectionMatrix * frameState.camera->viewMatrix());
-    selectorView.viewportHeightPixels = frameState.viewportHeightPixels;
-    frameState.selectorViews.push_back(selectorView);
-}
 
 void updateInteractionFocus(
     FrameState& frameState,
@@ -92,10 +62,14 @@ SceneFrameStateBuildResult SceneFrameStateBuilder::build(
     frameState.deltaSeconds = input.deltaSeconds;
     frameState.camera = input.camera;
 
-    populateSelectorViews(
+    SceneSelectorViewBuilder::populate(
         frameState,
-        input.hasSelectorViewOverride,
-        input.selectorViewOverride);
+        SceneSelectorViewBuildInput{
+            input.camera,
+            frameState.viewportWidthPixels,
+            frameState.viewportHeightPixels,
+            input.hasSelectorViewOverride,
+            input.selectorViewOverride});
     updateInteractionFocus(
         frameState,
         input.hasInteractionFocus,

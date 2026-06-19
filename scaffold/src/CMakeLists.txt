@@ -113,6 +113,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/scene/Frustum.cpp
     earth_engine/scene/SelectorView.h
     earth_engine/scene/FrameState.h
+    earth_engine/scene/SceneSelectorViewBuilder.h
+    earth_engine/scene/SceneSelectorViewBuilder.cpp
     earth_engine/scene/PresentationTrace.h
     earth_engine/scene/SceneEnvironmentCoordinator.h
     earth_engine/scene/SceneEnvironmentCoordinator.cpp
