@@ -18353,6 +18353,79 @@ void testSceneDiagnosticsExposeTerrainRenderEntryReasons() {
           "Scene: diagnostics expose nonzero terrain render-entry fallback reasons");
 }
 
+void testSceneDiagnosticsExposeTerrainSynchronousPrepReason() {
+    DummyRenderDevice device;
+    Scene scene;
+    check(scene.setRenderDevice(&device),
+          "Scene: synchronous-prep diagnostics initialize renderer");
+    scene.setViewport(800, 600, 1.0f);
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
+    scene.camera().lookAt(
+        target + Vec3(1000000.0, 0.0, 0.0),
+        target,
+        Vec3::unitZ());
+
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    auto terrainTileset = std::make_unique<Tileset>(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{&baseActivated},
+        &device,
+        TilesetOptions{});
+    Tileset* terrainRaw = terrainTileset.get();
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
+    check(root != nullptr,
+          "Scene: synchronous-prep diagnostics create root tile");
+    if (!root) return;
+
+    TilesetTestAccess::putTerrainCache(
+        *terrainRaw,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
+    RasterMappedToTilesetTile* rootMapped =
+        root->rasterOverlayState.mappings().empty()
+            ? nullptr
+            : root->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* rootRaster =
+        rootMapped ? rootMapped->getLoadingTile() : nullptr;
+    check(rootRaster != nullptr,
+          "Scene: synchronous-prep diagnostics root has base imagery");
+    if (!rootRaster) return;
+    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
+    rootRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
+    check(!root->hasSurfaceDrawable(),
+          "Scene: synchronous-prep diagnostics starts before root mesh is ready");
+
+    scene.setTileset(std::move(terrainTileset));
+    scene.update(1.0 / 60.0);
+    TilesetTestAccess::beginTilePlan(*terrainRaw);
+    TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *root);
+    scene.render();
+
+    check(scene.diagnostics().terrainRenderEntriesPlanned == 1 &&
+              scene.diagnostics().terrainRenderEntriesSelectedPlanned == 1 &&
+              scene.diagnostics().terrainRenderEntriesAncestorFallback == 0 &&
+              scene.diagnostics().terrainRenderEntriesSynchronousPrep == 1 &&
+              scene.diagnostics().terrainRenderEntriesDeferredPrep == 0 &&
+              scene.diagnostics().terrainRenderEntriesDrawn == 1 &&
+              scene.diagnostics().terrainRenderEntriesSelectedDrawn == 1 &&
+              scene.diagnostics().terrainRenderEntriesMissed == 0 &&
+              scene.diagnostics().terrainSurfaceCommandsSubmitted == 1 &&
+              scene.diagnostics().globeFallbackMaskedTerrainEntries == 0,
+          "Scene: diagnostics expose nonzero terrain synchronous-prep reason");
+}
+
 void testSceneSortsTransparentGltfByCameraDepth() {
     DummyRenderDevice device;
     Scene scene;
@@ -20492,6 +20565,7 @@ int main() {
     testSceneOcclusionCallbackFeedsPrimaryAndAdditionalTilesets();
     testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain();
     testSceneDiagnosticsExposeTerrainRenderEntryReasons();
+    testSceneDiagnosticsExposeTerrainSynchronousPrepReason();
     testSceneSortsTransparentGltfByCameraDepth();
     testTilesetLodTransitionsUseNativeDeltaState();
     testTilesetAdditiveRefinedTileFadesOutAfterLeavingSelection();
