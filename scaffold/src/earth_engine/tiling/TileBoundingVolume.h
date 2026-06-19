@@ -77,17 +77,7 @@ struct TileBoundingVolume {
         return *this;
     }
 
-    std::optional<OrientedBoundingBox> toOrientedBoundingBox() const {
-        switch (kind) {
-            case TileBoundingVolumeKind::Sphere:
-                return OrientedBoundingBox::fromSphere(sphere);
-            case TileBoundingVolumeKind::Box:
-                return box;
-            case TileBoundingVolumeKind::Region:
-                return std::nullopt;
-        }
-        return std::nullopt;
-    }
+    std::optional<OrientedBoundingBox> toOrientedBoundingBox() const;
 };
 
 } // namespace earth_engine

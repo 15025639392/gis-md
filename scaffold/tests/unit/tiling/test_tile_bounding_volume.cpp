@@ -121,11 +121,23 @@ TEST(TileBoundingVolumeTest, BoxConvertsToContainedOrientedBox) {
     EXPECT_EQ(volume.box.getHalfAxis(2), box->getHalfAxis(2));
 }
 
-TEST(TileBoundingVolumeTest, RegionHasNoLocalOrientedBoxConversion) {
+TEST(TileBoundingVolumeTest, RegionConvertsToBoundingRegionObbLikeCesiumNative) {
     const TileBoundingVolume volume =
         TileBoundingVolume::fromRegion(Rectangle::fromDegrees(-1.0, -2.0, 3.0, 4.0),
                                        10.0,
                                        20.0);
+    const std::optional<OrientedBoundingBox> expected =
+        TileBoundsMetrics::boundingRegionObb(
+            volume.region,
+            volume.minimumHeight,
+            volume.maximumHeight);
+    const std::optional<OrientedBoundingBox> actual =
+        volume.toOrientedBoundingBox();
 
-    EXPECT_FALSE(volume.toOrientedBoundingBox().has_value());
+    ASSERT_TRUE(expected.has_value());
+    ASSERT_TRUE(actual.has_value());
+    EXPECT_EQ(expected->getCenter(), actual->getCenter());
+    EXPECT_EQ(expected->getHalfAxis(0), actual->getHalfAxis(0));
+    EXPECT_EQ(expected->getHalfAxis(1), actual->getHalfAxis(1));
+    EXPECT_EQ(expected->getHalfAxis(2), actual->getHalfAxis(2));
 }
