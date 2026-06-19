@@ -132,6 +132,20 @@ TEST(TileAvailabilityAccessorTest, OverflowingBufferViewRangeIsInvalidLikeCesium
     EXPECT_EQ(nullptr, accessor.getBufferAccessor());
 }
 
+TEST(TileAvailabilityAccessorTest, EmptyBufferViewRangeIsReadableLikeCesiumNative) {
+    TileAvailabilitySubtree subtree{
+        TileSubtreeBufferView{0, 0, 0},
+        ConstantTileAvailability{true},
+        ConstantTileAvailability{false},
+        {std::vector<std::byte>{}}};
+
+    TileAvailabilityAccessor accessor(subtree.tileAvailability, subtree);
+
+    EXPECT_FALSE(accessor.isConstant());
+    EXPECT_TRUE(accessor.isBufferView());
+    EXPECT_EQ(0U, accessor.size());
+}
+
 TEST(TileAvailabilityNodeTest, LoadedSubtreeChildCountUsesSubtreeAvailability) {
     TileAvailabilityNode constantNode;
     constantNode.setLoadedSubtree(

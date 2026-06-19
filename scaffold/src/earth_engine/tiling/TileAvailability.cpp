@@ -143,7 +143,11 @@ TileAvailabilityAccessor::TileAvailabilityAccessor(
         return;
     }
 
-    bufferData_ = buffer.data() + bufferView_->byteOffset;
+    if (bufferView_->byteLength != 0 || bufferView_->byteOffset != 0 ||
+        !buffer.empty()) {
+        bufferData_ = buffer.data() + bufferView_->byteOffset;
+    }
+    bufferViewValid_ = true;
 }
 
 void TileAvailabilityNode::setLoadedSubtree(

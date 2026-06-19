@@ -60,7 +60,7 @@ public:
 
     bool isConstant() const { return constant_ != nullptr; }
     bool isBufferView() const {
-        return bufferView_ != nullptr && bufferData_ != nullptr;
+        return bufferView_ != nullptr && bufferViewValid_;
     }
     bool getConstant() const { return constant_->constant; }
     const std::byte* getBufferAccessor() const { return bufferData_; }
@@ -75,6 +75,7 @@ private:
     const ConstantTileAvailability* constant_ = nullptr;
     const TileSubtreeBufferView* bufferView_ = nullptr;
     const std::byte* bufferData_ = nullptr;
+    bool bufferViewValid_ = false;
 };
 
 class TileQuadtreeAvailability {
