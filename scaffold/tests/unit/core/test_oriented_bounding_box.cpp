@@ -67,6 +67,54 @@ TEST(OrientedBoundingBoxTest, DistanceSquaredToPositionClampsToBox) {
                 1e-14);
 }
 
+TEST(OrientedBoundingBoxTest, DistanceSquaredToPositionHandlesDegenerateAxesLikeCesiumNative) {
+    // Ported from cesium-native
+    // CesiumGeometry/test/TestOrientedBoundingBox.cpp degenerate-axes cases.
+    const Vec3 cameraPosition = Vec3::zero();
+
+    struct Case {
+        OrientedBoundingBox box;
+        double expected;
+    };
+
+    const Case cases[] = {
+        {
+            OrientedBoundingBox(Vec3(1.0, 0.0, 0.0),
+                                Vec3::zero(),
+                                Vec3::zero(),
+                                Vec3::zero()),
+            1.0
+        },
+        {
+            OrientedBoundingBox(Vec3(1.0, 0.0, 0.0),
+                                Vec3(1.0, 0.0, 0.0),
+                                Vec3::zero(),
+                                Vec3::zero()),
+            0.0
+        },
+        {
+            OrientedBoundingBox(Vec3(1.0, 0.0, 0.0),
+                                Vec3(1.0, 0.0, 0.0),
+                                Vec3(0.0, 1.0, 0.0),
+                                Vec3::zero()),
+            0.0
+        },
+        {
+            OrientedBoundingBox(Vec3(1.0, 0.0, 0.0),
+                                Vec3::zero(),
+                                Vec3(0.0, 1.0, 0.0),
+                                Vec3(0.0, 0.0, 1.0)),
+            1.0
+        }
+    };
+
+    for (const Case& testCase : cases) {
+        EXPECT_DOUBLE_EQ(
+            testCase.expected,
+            testCase.box.computeDistanceSquaredToPosition(cameraPosition));
+    }
+}
+
 TEST(OrientedBoundingBoxTest, ContainsMatchesCesiumNativeLocalUnitCube) {
     OrientedBoundingBox box(Vec3(1.0, 2.0, 3.0),
                             Vec3(2.0, 0.0, 0.0),
