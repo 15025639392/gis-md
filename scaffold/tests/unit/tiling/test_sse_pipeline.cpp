@@ -19092,6 +19092,99 @@ void testPresentationTraceLinksTilePlanToSurfaceCommand() {
           "Presentation trace: command stable key preserves clipped child patch identity");
 }
 
+void testPresentationTraceExposesFadingRenderEntry() {
+    InitializedRendererHarness harness;
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    TilesetOptions options;
+    options.enableLodTransitionPeriod = true;
+    options.lodTransitionLength = 1.0f;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {&baseActivated},
+        &harness.device,
+        options);
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Presentation trace: fading render entry setup creates root tile");
+    if (!root) return;
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    RasterMappedToTilesetTile* rootMapped =
+        root->rasterOverlayState.mappings().empty()
+            ? nullptr
+            : root->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* rootRaster =
+        rootMapped ? rootMapped->getLoadingTile() : nullptr;
+    check(rootRaster != nullptr,
+          "Presentation trace: fading render entry maps base imagery");
+    if (!rootRaster) return;
+    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
+    rootRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+
+    TilesetTestAccess::beginTilePlan(tileset);
+    root->selectionFrameState.selectionState =
+        TileSelectionState::NotVisited;
+    root->selectionFrameState.previousSelectionState =
+        TileSelectionState::Rendered;
+    TilesetTestAccess::updateLodTransitions(tileset, 0.25);
+
+    const TilePlan& plan = tileset.tilePlan();
+    check(plan.visibleTiles.empty() &&
+              plan.tilesFadingOut.size() == 1 &&
+              plan.renderEntries.size() == 1 &&
+              !plan.renderEntries.front().selectedThisFrame &&
+              plan.renderEntries.front().reason ==
+                  TileRenderEntryReason::FadingOut,
+          "Presentation trace: fading render entry is planned before rendering");
+
+    RenderCommandList commands;
+    tileset.buildRenderCommands(harness.renderer, commands);
+    check(commands.size() == 1 &&
+              commands.front().kind == RenderCommandKind::SurfaceTile &&
+              std::abs(commands.front().surfaceTransitionOpacity - 0.75f) <
+                  1e-6f,
+          "Presentation trace: fading render entry emits a translucent surface command");
+    if (commands.empty()) return;
+
+    FrameState frameState;
+    frameState.frameId = 7;
+    frameState.camera = nullptr;
+    PresentationTrace trace =
+        ScenePresentationTraceBuilder::build(
+            ScenePresentationTraceInput{
+                frameState,
+                &tileset,
+                emptyContentTilesets(),
+                commands});
+    check(trace.tilesets.size() == 1 &&
+              trace.tilesets.front().visibleTiles.empty() &&
+              trace.tilesets.front().renderEntries.size() == 1 &&
+              !trace.tilesets.front().renderEntries.front().selectedThisFrame &&
+              trace.tilesets.front().renderEntries.front().reason ==
+                  TileRenderEntryReason::FadingOut &&
+              std::abs(trace.tilesets.front().renderEntries.front().opacity -
+                       0.75f) < 1e-6f &&
+              trace.tilesets.front().renderEntryPlannedCommandCount == 1 &&
+              trace.tilesets.front().renderEntryCommandDrawCount == 1 &&
+              trace.tilesets.front().renderEntryCommandMissedDrawCount == 0,
+          "Presentation trace: fading render entry remains visible in the draw funnel");
+}
+
 void testClippedFallbackCommandsHaveSelectedChildStableKeys() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -20042,6 +20135,7 @@ int main() {
     testTileRenderPlanFrameRefresherRequiresDrawableBaseRaster();
     testPresentationTraceRecordsDeterministicCameraState();
     testPresentationTraceLinksTilePlanToSurfaceCommand();
+    testPresentationTraceExposesFadingRenderEntry();
     testClippedFallbackCommandsHaveSelectedChildStableKeys();
     testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh();
     testTilesetUpsampledChildQueuesParentUntilSourceReady();
