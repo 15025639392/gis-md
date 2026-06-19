@@ -5,6 +5,7 @@
 #include "earth_engine/core/math/MathUtils.h"
 #include "earth_engine/core/math/OrientedBoundingBox.h"
 #include "earth_engine/tiling/ImplicitTileIdUtilities.h"
+#include "earth_engine/tiling/TileBoundingVolume.h"
 
 #include <vector>
 
@@ -148,6 +149,106 @@ TEST(ImplicitTileIdUtilitiesTest, ComputeObbOctreeBoundingVolumeMatchesCesiumNat
             OctreeTileID{1, 0, 0, 1});
     EXPECT_EQ(Vec3(-4.0, -3.0, 8.0), l1x0y0z1.getCenter());
     EXPECT_EQ(Vec3(10.0, 10.0, 10.0), l1x0y0z1.getLengths());
+}
+
+TEST(ImplicitTileIdUtilitiesTest,
+     ComputeRegionQuadtreeBoundingVolumeMatchesCesiumNative) {
+    const TileBoundingVolume root =
+        TileBoundingVolume::fromRegion(Rectangle(1.0, 2.0, 3.0, 4.0),
+                                       10.0,
+                                       20.0);
+
+    const TileBoundingVolume l1x0y0 =
+        ImplicitTileIdUtilities::computeRegionBoundingVolume(
+            root,
+            TileKey{"Geographic-TMS", 1, 0, 0});
+    EXPECT_EQ(TileBoundingVolumeKind::Region, l1x0y0.kind);
+    EXPECT_DOUBLE_EQ(1.0, l1x0y0.region.west());
+    EXPECT_DOUBLE_EQ(2.0, l1x0y0.region.south());
+    EXPECT_DOUBLE_EQ(2.0, l1x0y0.region.east());
+    EXPECT_DOUBLE_EQ(3.0, l1x0y0.region.north());
+    EXPECT_DOUBLE_EQ(10.0, l1x0y0.minimumHeight);
+    EXPECT_DOUBLE_EQ(20.0, l1x0y0.maximumHeight);
+
+    const TileBoundingVolume l1x1y0 =
+        ImplicitTileIdUtilities::computeRegionBoundingVolume(
+            root,
+            TileKey{"Geographic-TMS", 1, 1, 0});
+    EXPECT_EQ(TileBoundingVolumeKind::Region, l1x1y0.kind);
+    EXPECT_DOUBLE_EQ(2.0, l1x1y0.region.west());
+    EXPECT_DOUBLE_EQ(2.0, l1x1y0.region.south());
+    EXPECT_DOUBLE_EQ(3.0, l1x1y0.region.east());
+    EXPECT_DOUBLE_EQ(3.0, l1x1y0.region.north());
+    EXPECT_DOUBLE_EQ(10.0, l1x1y0.minimumHeight);
+    EXPECT_DOUBLE_EQ(20.0, l1x1y0.maximumHeight);
+
+    const TileBoundingVolume l1x0y1 =
+        ImplicitTileIdUtilities::computeRegionBoundingVolume(
+            root,
+            TileKey{"Geographic-TMS", 1, 0, 1});
+    EXPECT_EQ(TileBoundingVolumeKind::Region, l1x0y1.kind);
+    EXPECT_DOUBLE_EQ(1.0, l1x0y1.region.west());
+    EXPECT_DOUBLE_EQ(3.0, l1x0y1.region.south());
+    EXPECT_DOUBLE_EQ(2.0, l1x0y1.region.east());
+    EXPECT_DOUBLE_EQ(4.0, l1x0y1.region.north());
+    EXPECT_DOUBLE_EQ(10.0, l1x0y1.minimumHeight);
+    EXPECT_DOUBLE_EQ(20.0, l1x0y1.maximumHeight);
+}
+
+TEST(ImplicitTileIdUtilitiesTest,
+     ComputeRegionOctreeBoundingVolumeMatchesCesiumNative) {
+    const TileBoundingVolume root =
+        TileBoundingVolume::fromRegion(Rectangle(1.0, 2.0, 3.0, 4.0),
+                                       10.0,
+                                       20.0);
+
+    const TileBoundingVolume l1x0y0z0 =
+        ImplicitTileIdUtilities::computeRegionBoundingVolume(
+            root,
+            OctreeTileID{1, 0, 0, 0});
+    EXPECT_EQ(TileBoundingVolumeKind::Region, l1x0y0z0.kind);
+    EXPECT_DOUBLE_EQ(1.0, l1x0y0z0.region.west());
+    EXPECT_DOUBLE_EQ(2.0, l1x0y0z0.region.south());
+    EXPECT_DOUBLE_EQ(2.0, l1x0y0z0.region.east());
+    EXPECT_DOUBLE_EQ(3.0, l1x0y0z0.region.north());
+    EXPECT_DOUBLE_EQ(10.0, l1x0y0z0.minimumHeight);
+    EXPECT_DOUBLE_EQ(15.0, l1x0y0z0.maximumHeight);
+
+    const TileBoundingVolume l1x1y0z0 =
+        ImplicitTileIdUtilities::computeRegionBoundingVolume(
+            root,
+            OctreeTileID{1, 1, 0, 0});
+    EXPECT_EQ(TileBoundingVolumeKind::Region, l1x1y0z0.kind);
+    EXPECT_DOUBLE_EQ(2.0, l1x1y0z0.region.west());
+    EXPECT_DOUBLE_EQ(2.0, l1x1y0z0.region.south());
+    EXPECT_DOUBLE_EQ(3.0, l1x1y0z0.region.east());
+    EXPECT_DOUBLE_EQ(3.0, l1x1y0z0.region.north());
+    EXPECT_DOUBLE_EQ(10.0, l1x1y0z0.minimumHeight);
+    EXPECT_DOUBLE_EQ(15.0, l1x1y0z0.maximumHeight);
+
+    const TileBoundingVolume l1x0y1z0 =
+        ImplicitTileIdUtilities::computeRegionBoundingVolume(
+            root,
+            OctreeTileID{1, 0, 1, 0});
+    EXPECT_EQ(TileBoundingVolumeKind::Region, l1x0y1z0.kind);
+    EXPECT_DOUBLE_EQ(1.0, l1x0y1z0.region.west());
+    EXPECT_DOUBLE_EQ(3.0, l1x0y1z0.region.south());
+    EXPECT_DOUBLE_EQ(2.0, l1x0y1z0.region.east());
+    EXPECT_DOUBLE_EQ(4.0, l1x0y1z0.region.north());
+    EXPECT_DOUBLE_EQ(10.0, l1x0y1z0.minimumHeight);
+    EXPECT_DOUBLE_EQ(15.0, l1x0y1z0.maximumHeight);
+
+    const TileBoundingVolume l1x0y0z1 =
+        ImplicitTileIdUtilities::computeRegionBoundingVolume(
+            root,
+            OctreeTileID{1, 0, 0, 1});
+    EXPECT_EQ(TileBoundingVolumeKind::Region, l1x0y0z1.kind);
+    EXPECT_DOUBLE_EQ(1.0, l1x0y0z1.region.west());
+    EXPECT_DOUBLE_EQ(2.0, l1x0y0z1.region.south());
+    EXPECT_DOUBLE_EQ(2.0, l1x0y0z1.region.east());
+    EXPECT_DOUBLE_EQ(3.0, l1x0y0z1.region.north());
+    EXPECT_DOUBLE_EQ(15.0, l1x0y0z1.minimumHeight);
+    EXPECT_DOUBLE_EQ(20.0, l1x0y0z1.maximumHeight);
 }
 
 TEST(ImplicitTileIdUtilitiesTest,

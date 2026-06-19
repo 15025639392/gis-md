@@ -158,6 +158,26 @@ uint64_t spread3(uint64_t value) {
     return value;
 }
 
+Rectangle subdivideRectangle(const Rectangle& rootRectangle,
+                             const TileKey& tileID,
+                             double denominator) {
+    const double latitudeSize =
+        (rootRectangle.north() - rootRectangle.south()) / denominator;
+    const double longitudeSize =
+        (rootRectangle.east() - rootRectangle.west()) / denominator;
+
+    const double childWest =
+        rootRectangle.west() + longitudeSize * static_cast<double>(tileID.x);
+    const double childEast =
+        rootRectangle.west() + longitudeSize * static_cast<double>(tileID.x + 1);
+    const double childSouth =
+        rootRectangle.south() + latitudeSize * static_cast<double>(tileID.y);
+    const double childNorth =
+        rootRectangle.south() + latitudeSize * static_cast<double>(tileID.y + 1);
+
+    return Rectangle(childWest, childSouth, childEast, childNorth);
+}
+
 } // namespace
 
 std::vector<TileKey> ImplicitTileIdUtilities::children(
@@ -374,6 +394,43 @@ BoundingCylinderRegion ImplicitTileIdUtilities::computeBoundingVolume(
         heightDim,
         quadtreeRegion.getRadialBounds(),
         quadtreeRegion.getAngularBounds());
+}
+
+TileBoundingVolume ImplicitTileIdUtilities::computeRegionBoundingVolume(
+    const TileBoundingVolume& rootBoundingVolume,
+    const TileKey& tileID) {
+    const double denominator =
+        levelDenominator(static_cast<uint32_t>(tileID.z));
+
+    return TileBoundingVolume::fromRegion(
+        subdivideRectangle(rootBoundingVolume.region, tileID, denominator),
+        rootBoundingVolume.minimumHeight,
+        rootBoundingVolume.maximumHeight);
+}
+
+TileBoundingVolume ImplicitTileIdUtilities::computeRegionBoundingVolume(
+    const TileBoundingVolume& rootBoundingVolume,
+    const OctreeTileID& tileID) {
+    const double denominator =
+        levelDenominator(static_cast<uint32_t>(tileID.level));
+    const double heightSize =
+        (rootBoundingVolume.maximumHeight - rootBoundingVolume.minimumHeight) /
+        denominator;
+
+    const double childMinimumHeight =
+        rootBoundingVolume.minimumHeight +
+        heightSize * static_cast<double>(tileID.z);
+    const double childMaximumHeight =
+        rootBoundingVolume.minimumHeight +
+        heightSize * static_cast<double>(tileID.z + 1);
+
+    return TileBoundingVolume::fromRegion(
+        subdivideRectangle(
+            rootBoundingVolume.region,
+            TileKey{"", tileID.level, tileID.x, tileID.y},
+            denominator),
+        childMinimumHeight,
+        childMaximumHeight);
 }
 
 std::optional<TileKey> ImplicitTileIdUtilities::parentId(

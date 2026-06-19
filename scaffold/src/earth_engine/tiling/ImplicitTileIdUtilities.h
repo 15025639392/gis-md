@@ -3,6 +3,7 @@
 #include "earth_engine/core/math/BoundingCylinderRegion.h"
 #include "earth_engine/core/math/OrientedBoundingBox.h"
 #include "OctreeTilingScheme.h"
+#include "TileBoundingVolume.h"
 #include "TileKey.h"
 
 #include <cstdint>
@@ -37,6 +38,12 @@ public:
         const TileKey& tileID);
     static BoundingCylinderRegion computeBoundingVolume(
         const BoundingCylinderRegion& rootBoundingVolume,
+        const OctreeTileID& tileID);
+    static TileBoundingVolume computeRegionBoundingVolume(
+        const TileBoundingVolume& rootBoundingVolume,
+        const TileKey& tileID);
+    static TileBoundingVolume computeRegionBoundingVolume(
+        const TileBoundingVolume& rootBoundingVolume,
         const OctreeTileID& tileID);
 
     static std::optional<TileKey> parentId(const TileKey& tileID);
