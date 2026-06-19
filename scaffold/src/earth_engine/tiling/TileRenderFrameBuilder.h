@@ -94,9 +94,15 @@ public:
 
         auto mergeRenderStats =
             [&](const TileRenderEntryCommandStats& stats) {
+                renderStats.plannedEntries += stats.plannedEntries;
                 renderStats.ensuredTiles += stats.ensuredTiles;
                 renderStats.meshReadyTiles += stats.meshReadyTiles;
                 renderStats.drawAttempts += stats.drawAttempts;
+                renderStats.missingSelectedTiles +=
+                    stats.missingSelectedTiles;
+                renderStats.missingRenderTiles += stats.missingRenderTiles;
+                renderStats.deferredEntries += stats.deferredEntries;
+                renderStats.missedDrawEntries += stats.missedDrawEntries;
             };
         auto renderEntriesFor = [&](bool selectedThisFrame) {
             mergeRenderStats(TileRenderEntryCommandBuilder::build(

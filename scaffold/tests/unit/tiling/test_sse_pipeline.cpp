@@ -59,6 +59,7 @@
 #include "earth_engine/tiling/TileRenderablePolicy.h"
 #include "earth_engine/tiling/TileRenderPlanFrameRefresher.h"
 #include "earth_engine/tiling/TileRenderPlanFinalizer.h"
+#include "earth_engine/tiling/TileRenderEntryCommandBuilder.h"
 #include "earth_engine/tiling/TileSelectionChildTraversal.h"
 #include "earth_engine/tiling/TileSelectionCullingPolicy.h"
 #include "earth_engine/tiling/TileSelectionFrameBuilder.h"
@@ -11393,6 +11394,84 @@ void testTileRenderPlanFinalizerReadsSelectionFrameFade() {
           "TileRenderPlanFinalizer: visible tile opacity reads selection frame fade");
 }
 
+void testTileRenderEntryCommandBuilderCountsSkippedEntries() {
+    const TileKey drawnKey{"test", 0, 0, 0};
+    const TileKey noDrawKey{"test", 0, 1, 0};
+    const TileKey deferredKey{"test", 0, 2, 0};
+    const TileKey missingRenderSelectedKey{"test", 0, 3, 0};
+    const TileKey missingRenderKey{"test", 1, 3, 0};
+    const TileKey missingSelectedKey{"test", 0, 4, 0};
+
+    TilesetTile drawn(drawnKey, Rectangle{});
+    TilesetTile noDraw(noDrawKey, Rectangle{});
+    TilesetTile deferred(deferredKey, Rectangle{});
+    TilesetTile missingRenderSelected(
+        missingRenderSelectedKey,
+        Rectangle{});
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {TileCacheKey::forTile(drawnKey), &drawn},
+        {TileCacheKey::forTile(noDrawKey), &noDraw},
+        {TileCacheKey::forTile(deferredKey), &deferred},
+        {TileCacheKey::forTile(missingRenderSelectedKey),
+         &missingRenderSelected}};
+
+    TilePlan plan;
+    auto addEntry = [&](const TileKey& selectedKey,
+                        const TileKey& renderKey,
+                        bool allowSynchronousMeshPrep = true) {
+        TileRenderEntry entry;
+        entry.selectedKey = selectedKey;
+        entry.renderKey = renderKey;
+        entry.allowSynchronousMeshPrep = allowSynchronousMeshPrep;
+        plan.renderEntries.push_back(entry);
+    };
+    addEntry(drawnKey, drawnKey);
+    addEntry(noDrawKey, noDrawKey);
+    addEntry(deferredKey, deferredKey, false);
+    addEntry(missingRenderSelectedKey, missingRenderKey);
+    addEntry(missingSelectedKey, missingSelectedKey);
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    const TileRenderEntryCommandStats stats =
+        TileRenderEntryCommandBuilder::build(
+            plan,
+            true,
+            7,
+            renderer,
+            commands,
+            [&tiles](const TileKey& key) -> TilesetTile* {
+                auto it = tiles.find(TileCacheKey::forTile(key));
+                return it == tiles.end() ? nullptr : it->second;
+            },
+            [](const TileKey& key) {
+                return TileCacheKey::forTile(key);
+            },
+            [](const std::string&) {},
+            [&drawnKey](Renderer&,
+                        TilesetTile& tile,
+                        RenderCommandList& outCommands,
+                        float,
+                        bool,
+                        const std::optional<std::array<float, 4>>&) {
+                if (tile.key == drawnKey) {
+                    RenderCommand command;
+                    command.kind = RenderCommandKind::SurfaceTile;
+                    outCommands.push_back(std::move(command));
+                }
+            });
+
+    check(commands.size() == 1 &&
+              stats.plannedEntries == 5 &&
+              stats.ensuredTiles == 4 &&
+              stats.drawAttempts == 1 &&
+              stats.missingSelectedTiles == 1 &&
+              stats.missingRenderTiles == 1 &&
+              stats.deferredEntries == 1 &&
+              stats.missedDrawEntries == 1,
+          "TileRenderEntryCommandBuilder: skipped render entries are counted by reason");
+}
+
 void testTileLodTransitionControllerFadesOutPreviousRenderContent() {
     const TileKey rootKey{"test", 0, 0, 0};
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
@@ -19413,6 +19492,7 @@ int main() {
     testTileRenderPlanFinalizerResolvesAncestorFallbackEntries();
     testTileRenderPlanFinalizerCountsRootPrepOnce();
     testTileRenderPlanFinalizerReadsSelectionFrameFade();
+    testTileRenderEntryCommandBuilderCountsSkippedEntries();
     testTileLodTransitionControllerFadesOutPreviousRenderContent();
     testTileLodTransitionControllerRestartsReturnedFadeOutTile();
     testTileChildMaterializerLinksContentChildrenWithoutDuplicates();
