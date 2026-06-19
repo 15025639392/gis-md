@@ -1,8 +1,11 @@
 #pragma once
 
 #include "../core/math/BoundingSphere.h"
+#include "../core/math/Mat4.h"
 #include "../core/math/OrientedBoundingBox.h"
 #include "../core/math/Rectangle.h"
+
+#include <optional>
 
 namespace earth_engine {
 
@@ -54,6 +57,36 @@ struct TileBoundingVolume {
         volume.kind = TileBoundingVolumeKind::Box;
         volume.box = OrientedBoundingBox(center, axis0, axis1, axis2);
         return volume;
+    }
+
+    TileBoundingVolume transform(const Mat4& matrix) const {
+        switch (kind) {
+            case TileBoundingVolumeKind::Region:
+                return *this;
+            case TileBoundingVolumeKind::Sphere: {
+                TileBoundingVolume transformed = *this;
+                transformed.sphere = sphere.transform(matrix);
+                return transformed;
+            }
+            case TileBoundingVolumeKind::Box: {
+                TileBoundingVolume transformed = *this;
+                transformed.box = box.transform(matrix);
+                return transformed;
+            }
+        }
+        return *this;
+    }
+
+    std::optional<OrientedBoundingBox> toOrientedBoundingBox() const {
+        switch (kind) {
+            case TileBoundingVolumeKind::Sphere:
+                return OrientedBoundingBox::fromSphere(sphere);
+            case TileBoundingVolumeKind::Box:
+                return box;
+            case TileBoundingVolumeKind::Region:
+                return std::nullopt;
+        }
+        return std::nullopt;
     }
 };
 
