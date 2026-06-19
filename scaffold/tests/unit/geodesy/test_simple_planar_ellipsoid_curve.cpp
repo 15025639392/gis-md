@@ -17,6 +17,10 @@ const Vec3 kTokyoEcef(
     -3960158.65587452,
     3352568.87555906,
     3697235.23506459);
+const Vec3 kPhiladelphiaAntipodeEcef(
+    -1253369.920224856,
+    4732412.7444064,
+    -4075146.2160252854);
 
 const Cartographic kPhiladelphiaLlh(
     -1.3119164210487293,
@@ -128,6 +132,24 @@ TEST(SimplePlanarEllipsoidCurveTest, HandlesNegativeHeightPathWithoutFlippingEar
         kNewYorkCityEcef.distanceTo(midpoint);
 
     EXPECT_NEAR(expectedDistance, actualDistance, 1e-3);
+}
+
+TEST(SimplePlanarEllipsoidCurveTest, NearAntipodePathStaysAboveEarth) {
+    const std::optional<SimplePlanarEllipsoidCurve> curve =
+        SimplePlanarEllipsoidCurve::fromEarthCenteredEarthFixedCoordinates(
+            Ellipsoid::WGS84(),
+            kPhiladelphiaEcef,
+            kPhiladelphiaAntipodeEcef);
+
+    ASSERT_TRUE(curve.has_value());
+    for (const double percentage : {0.25, 0.5, 0.75}) {
+        const std::optional<Cartographic> cartographic =
+            Ellipsoid::WGS84().tryCartesianToCartographic(
+                curve->getPosition(percentage));
+
+        ASSERT_TRUE(cartographic.has_value());
+        EXPECT_GT(cartographic->height(), 0.0);
+    }
 }
 
 TEST(SimplePlanarEllipsoidCurveTest, ReversePathHasSameMidpoint) {
