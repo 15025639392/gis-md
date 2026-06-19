@@ -49,6 +49,13 @@ TEST_F(TileSchemeTest, PositionToTileZ0) {
     EXPECT_EQ(0, key.y);
 }
 
+TEST_F(TileSchemeTest, TileCountsMatchCesiumNativeRootShiftSemantics) {
+    EXPECT_EQ(1, scheme_->tileCountX(0));
+    EXPECT_EQ(1, scheme_->tileCountY(0));
+    EXPECT_EQ(8, scheme_->tileCountX(3));
+    EXPECT_EQ(8, scheme_->tileCountY(3));
+}
+
 TEST_F(TileSchemeTest, PositionToTileKnownWebMercatorTile) {
     // XYZ Web Mercator, EPSG:3857 tile matrix. Beijing is in 13/6744/3104.
     auto key = scheme_->positionToTile(
@@ -119,6 +126,33 @@ TEST_F(TileSchemeTest, LevelResolution) {
 
     // z=2 分辨率 = π/2 rad (90°)
     EXPECT_NEAR(M_PI / 2.0, scheme_->levelResolution(2), 1e-6);
+}
+
+TEST(TileSchemeCountTest, WebMercatorTmsUsesOneByOneRoot) {
+    auto scheme = TileScheme::createTMS();
+
+    EXPECT_EQ(1, scheme->tileCountX(0));
+    EXPECT_EQ(1, scheme->tileCountY(0));
+    EXPECT_EQ(16, scheme->tileCountX(4));
+    EXPECT_EQ(16, scheme->tileCountY(4));
+}
+
+TEST(TileSchemeCountTest, GeographicTmsUsesTwoByOneRoot) {
+    auto scheme = TileScheme::createGeographicTMS();
+
+    EXPECT_EQ(2, scheme->tileCountX(0));
+    EXPECT_EQ(1, scheme->tileCountY(0));
+    EXPECT_EQ(16, scheme->tileCountX(3));
+    EXPECT_EQ(8, scheme->tileCountY(3));
+}
+
+TEST(TileSchemeCountTest, OpenGlobusGroupedSchemeReportsPhysicalYRange) {
+    auto scheme = TileScheme::createOpenGlobusEarth();
+
+    EXPECT_EQ(1, scheme->tileCountX(0));
+    EXPECT_EQ(3, scheme->tileCountY(0));
+    EXPECT_EQ(4, scheme->tileCountX(2));
+    EXPECT_EQ(12, scheme->tileCountY(2));
 }
 
 TEST(OpenGlobusEarthTileSchemeTest, SplitsMercatorAndPolarGroups) {

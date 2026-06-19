@@ -53,6 +53,10 @@ OpenGlobusTileGroup groupForY(int y, int tilesAtZoom) {
     return OpenGlobusTileGroup::Mercator;
 }
 
+int quadtreeTileCount(int rootTiles, int zoom) {
+    return rootTiles << zoom;
+}
+
 class XYZWebMercatorScheme : public TileScheme {
 public:
     std::string id() const override { return "XYZ-WebMercator"; }
@@ -62,10 +66,12 @@ public:
     int minZoom() const override { return 0; }
     int maxZoom() const override { return 22; }
     std::string yDirection() const override { return "down"; }
+    int tileCountX(int zoom) const override { return quadtreeTileCount(1, zoom); }
+    int tileCountY(int zoom) const override { return quadtreeTileCount(1, zoom); }
 
     Rectangle tileToRectangle(const TileKey& key) const override {
         int z = key.z, x = key.x, y = key.y;
-        int tilesAtZoom = 1 << z;
+        int tilesAtZoom = tileCountX(z);
 
         double xMin = static_cast<double>(x) / tilesAtZoom;
         double xMax = static_cast<double>(x + 1) / tilesAtZoom;
@@ -80,7 +86,7 @@ public:
     }
 
     TileKey positionToTile(double lngRad, double latRad, int zoom) const override {
-        int tilesAtZoom = 1 << zoom;
+        int tilesAtZoom = tileCountX(zoom);
 
         double mx = longitudeToMercatorFraction(lngRad);
         double my = latitudeToMercatorFraction(latRad);
@@ -103,7 +109,7 @@ public:
 
     double levelResolution(int zoom) const override {
         // Web Mercator: 整个球面宽度（2π）除以该 zoom 的 tile 数
-        return glm::two_pi<double>() / static_cast<double>(1 << zoom);
+        return glm::two_pi<double>() / static_cast<double>(tileCountX(zoom));
     }
 };
 
@@ -133,10 +139,12 @@ public:
     int minZoom() const override { return 0; }
     int maxZoom() const override { return 22; }
     std::string yDirection() const override { return "up"; }
+    int tileCountX(int zoom) const override { return quadtreeTileCount(1, zoom); }
+    int tileCountY(int zoom) const override { return quadtreeTileCount(1, zoom); }
 
     Rectangle tileToRectangle(const TileKey& key) const override {
         int z = key.z, x = key.x, y = key.y;
-        int tilesAtZoom = 1 << z;
+        int tilesAtZoom = tileCountX(z);
 
         double xMin = static_cast<double>(x) / tilesAtZoom;
         double xMax = static_cast<double>(x + 1) / tilesAtZoom;
@@ -152,7 +160,7 @@ public:
     }
 
     TileKey positionToTile(double lngRad, double latRad, int zoom) const override {
-        int tilesAtZoom = 1 << zoom;
+        int tilesAtZoom = tileCountX(zoom);
 
         double mx = longitudeToMercatorFraction(lngRad);
         double my = latitudeToMercatorFraction(latRad);  // 0=北, 1=南
@@ -178,7 +186,7 @@ public:
     }
 
     double levelResolution(int zoom) const override {
-        return glm::two_pi<double>() / static_cast<double>(1 << zoom);
+        return glm::two_pi<double>() / static_cast<double>(tileCountX(zoom));
     }
 };
 
@@ -199,10 +207,12 @@ public:
     int minZoom() const override { return 0; }
     int maxZoom() const override { return 22; }
     std::string yDirection() const override { return "down-grouped"; }
+    int tileCountX(int zoom) const override { return quadtreeTileCount(1, zoom); }
+    int tileCountY(int zoom) const override { return 3 * quadtreeTileCount(1, zoom); }
 
     Rectangle tileToRectangle(const TileKey& key) const override {
         const int z = key.z;
-        const int tilesAtZoom = 1 << z;
+        const int tilesAtZoom = tileCountX(z);
         const int x = std::clamp(key.x, 0, tilesAtZoom - 1);
         const OpenGlobusTileGroup group = groupForY(key.y, tilesAtZoom);
         const int localY = std::clamp(
@@ -241,7 +251,7 @@ public:
     }
 
     TileKey positionToTile(double lngRad, double latRad, int zoom) const override {
-        const int tilesAtZoom = 1 << zoom;
+        const int tilesAtZoom = tileCountX(zoom);
         const double lngNorm = std::clamp(
             (lngRad + glm::pi<double>()) / glm::two_pi<double>(),
             0.0,
@@ -289,7 +299,7 @@ public:
     }
 
     double levelResolution(int zoom) const override {
-        return glm::two_pi<double>() / static_cast<double>(1 << zoom);
+        return glm::two_pi<double>() / static_cast<double>(tileCountX(zoom));
     }
 };
 
@@ -310,11 +320,13 @@ public:
     int minZoom() const override { return 0; }
     int maxZoom() const override { return 22; }
     std::string yDirection() const override { return "up"; }  // y=0 = south
+    int tileCountX(int zoom) const override { return quadtreeTileCount(2, zoom); }
+    int tileCountY(int zoom) const override { return quadtreeTileCount(1, zoom); }
 
     Rectangle tileToRectangle(const TileKey& key) const override {
         int z = key.z, x = key.x, y = key.y;
-        double xTilesAtZ = static_cast<double>(1 << (z + 1));
-        double yTilesAtZ = static_cast<double>(1 << z);
+        double xTilesAtZ = static_cast<double>(tileCountX(z));
+        double yTilesAtZ = static_cast<double>(tileCountY(z));
         double west  = static_cast<double>(x)     / xTilesAtZ * 360.0 - 180.0;
         double east  = static_cast<double>(x + 1) / xTilesAtZ * 360.0 - 180.0;
         // y=0 at south pole, y increases northward (EPSG:4326 standard)
@@ -328,8 +340,8 @@ public:
     TileKey positionToTile(double lngRad, double latRad, int zoom) const override {
         double lngDeg = glm::degrees(lngRad);
         double latDeg = glm::degrees(latRad);
-        int xTilesAtZoom = 1 << (zoom + 1);
-        int yTilesAtZoom = 1 << zoom;
+        int xTilesAtZoom = tileCountX(zoom);
+        int yTilesAtZoom = tileCountY(zoom);
         int x = static_cast<int>((lngDeg + 180.0) / 360.0 * xTilesAtZoom);
         // y=0 at south pole: y = (lat + 90) / 180 * 2^z
         int y = static_cast<int>((latDeg + 90.0) / 180.0 * yTilesAtZoom);
@@ -347,7 +359,7 @@ public:
     }
 
     double levelResolution(int zoom) const override {
-        return glm::radians(180.0) / static_cast<double>(1 << zoom);
+        return glm::radians(180.0) / static_cast<double>(tileCountY(zoom));
     }
 };
 

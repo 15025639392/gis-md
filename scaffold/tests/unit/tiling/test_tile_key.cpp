@@ -8,19 +8,12 @@ using namespace earth_engine;
 
 namespace {
 
-int tilesAtLevel(const TileScheme& scheme, int z, bool xAxis) {
-    if (scheme.id() == "Geographic-TMS" && xAxis) {
-        return 1 << (z + 1);
-    }
-    return 1 << z;
-}
-
 int invertedX(const TileScheme& scheme, const TileKey& key) {
-    return key.invertedX(tilesAtLevel(scheme, key.z, true));
+    return key.invertedX(scheme.tileCountX(key.z));
 }
 
 int invertedY(const TileScheme& scheme, const TileKey& key) {
-    return key.invertedY(tilesAtLevel(scheme, key.z, false));
+    return key.invertedY(scheme.tileCountY(key.z));
 }
 
 } // namespace

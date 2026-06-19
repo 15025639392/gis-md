@@ -31,6 +31,10 @@ public:
     /// y 轴方向："down"（XYZ，北→南递增）或 "up"（TMS，南→北递增）
     virtual std::string yDirection() const = 0;
 
+    /// 给定 zoom 的 x/y 方向瓦片数量。
+    virtual int tileCountX(int zoom) const = 0;
+    virtual int tileCountY(int zoom) const = 0;
+
     /// tile key → 地理矩形（radian）
     virtual Rectangle tileToRectangle(const TileKey& key) const = 0;
 
