@@ -82,6 +82,16 @@ TEST(EllipsoidTest, TriAxialGeodeticSurfaceNormalUsesAllRadii) {
     EXPECT_NEAR(expected.z(), normal.z(), 1e-12);
 }
 
+TEST(EllipsoidTest, GeodeticSurfaceNormalAtCenterMatchesCesiumNativeNonFinite) {
+    // Cesium-native normalizes position * oneOverRadiiSquared directly; the
+    // ellipsoid center is not a valid geodetic surface-normal input.
+    const Vec3 normal = Ellipsoid::WGS84().geodeticSurfaceNormal(Vec3::zero());
+
+    EXPECT_FALSE(std::isfinite(normal.x()));
+    EXPECT_FALSE(std::isfinite(normal.y()));
+    EXPECT_FALSE(std::isfinite(normal.z()));
+}
+
 TEST(EllipsoidTest, TriAxialRayIntersectionIntervalUsesAllRadii) {
     const Ellipsoid e(2.0, 3.0, 4.0);
 

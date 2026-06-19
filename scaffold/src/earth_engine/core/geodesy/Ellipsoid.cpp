@@ -90,7 +90,6 @@ Vec3 Ellipsoid::geodeticSurfaceNormal(const Vec3& ecef) const {
     const double ny = ecef.y() * oneOverRadiiSquared_.y();
     const double nz = ecef.z() * oneOverRadiiSquared_.z();
     const double len = std::sqrt(nx * nx + ny * ny + nz * nz);
-    if (len < 1e-24) return Vec3::unitZ();
     return Vec3(nx / len, ny / len, nz / len);
 }
 
