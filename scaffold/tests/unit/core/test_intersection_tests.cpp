@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/core/math/AxisAlignedBox.h"
+#include "earth_engine/core/math/BoundingSphere.h"
 #include "earth_engine/core/math/IntersectionTests.h"
 #include "earth_engine/core/math/OrientedBoundingBox.h"
 #include "earth_engine/core/math/Plane.h"
@@ -360,4 +361,122 @@ TEST(IntersectionTestsTest, RayObbMatchesCesiumNativeCases) {
         ASSERT_TRUE(intersection.has_value());
         expectVec3Near(testCase.expected, *intersection, 1e-6);
     }
+}
+
+TEST(IntersectionTestsTest, RaySphereParametricMatchesCesiumNativeCases) {
+    // Ported from cesium-native CesiumGeometry/test/TestIntersectionTests.cpp.
+    struct Case {
+        Ray ray;
+        BoundingSphere sphere;
+        double expectedT;
+    };
+
+    const Case cases[] = {
+        {Ray(Vec3(2.0, 0.0, 0.0), Vec3(-1.0, 0.0, 0.0)),
+         BoundingSphere(Vec3::zero(), 1.0),
+         1.0},
+        {Ray(Vec3(0.0, 2.0, 0.0), Vec3(0.0, -1.0, 0.0)),
+         BoundingSphere(Vec3::zero(), 1.0),
+         1.0},
+        {Ray(Vec3(0.0, 0.0, 2.0), Vec3(0.0, 0.0, -1.0)),
+         BoundingSphere(Vec3::zero(), 1.0),
+         1.0},
+        {Ray(Vec3(1.0, 1.0, 0.0), Vec3(-1.0, 0.0, 0.0)),
+         BoundingSphere(Vec3::zero(), 1.0),
+         1.0},
+        {Ray(Vec3(-2.0, 0.0, 0.0), Vec3(1.0, 0.0, 0.0)),
+         BoundingSphere(Vec3::zero(), 1.0),
+         1.0},
+        {Ray(Vec3(0.0, -2.0, 0.0), Vec3(0.0, 1.0, 0.0)),
+         BoundingSphere(Vec3::zero(), 1.0),
+         1.0},
+        {Ray(Vec3(0.0, 0.0, -2.0), Vec3(0.0, 0.0, 1.0)),
+         BoundingSphere(Vec3::zero(), 1.0),
+         1.0},
+        {Ray(Vec3(-1.0, -1.0, 0.0), Vec3(1.0, 0.0, 0.0)),
+         BoundingSphere(Vec3::zero(), 1.0),
+         1.0},
+        {Ray(Vec3(-2.0, 0.0, 0.0), Vec3(-1.0, 0.0, 0.0)),
+         BoundingSphere(Vec3::zero(), 1.0),
+         -1.0},
+        {Ray(Vec3(0.0, -2.0, 0.0), Vec3(0.0, -1.0, 0.0)),
+         BoundingSphere(Vec3::zero(), 1.0),
+         -1.0},
+        {Ray(Vec3(0.0, 0.0, -2.0), Vec3(0.0, 0.0, -1.0)),
+         BoundingSphere(Vec3::zero(), 1.0),
+         -1.0},
+        {Ray(Vec3(200.0, 0.0, 0.0), Vec3(-1.0, 0.0, 0.0)),
+         BoundingSphere(Vec3::zero(), 5000.0),
+         5200.0},
+        {Ray(Vec3(200.0, 0.0, 0.0), Vec3(1.0, 0.0, 0.0)),
+         BoundingSphere(Vec3::zero(), 5000.0),
+         4800.0},
+        {Ray(Vec3(1.0, 0.0, 0.0), Vec3(0.0, 0.0, 1.0)),
+         BoundingSphere(Vec3::zero(), 1.0),
+         -1.0},
+        {Ray(Vec3(2.0, 0.0, 0.0), Vec3(0.0, 0.0, 1.0)),
+         BoundingSphere(Vec3::zero(), 1.0),
+         -1.0},
+        {Ray(Vec3(2.0, 0.0, 0.0), Vec3(0.0, 0.0, -1.0)),
+         BoundingSphere(Vec3::zero(), 1.0),
+         -1.0},
+        {Ray(Vec3(2.0, 0.0, 0.0), Vec3(0.0, 1.0, 0.0)),
+         BoundingSphere(Vec3::zero(), 1.0),
+         -1.0},
+        {Ray(Vec3(2.0, 0.0, 0.0), Vec3(0.0, -1.0, 0.0)),
+         BoundingSphere(Vec3::zero(), 1.0),
+         -1.0},
+        {Ray(Vec3(202.0, 0.0, 0.0), Vec3(-1.0, 0.0, 0.0)),
+         BoundingSphere(Vec3(200.0, 0.0, 0.0), 1.0),
+         1.0},
+        {Ray(Vec3(200.0, 2.0, 0.0), Vec3(0.0, -1.0, 0.0)),
+         BoundingSphere(Vec3(200.0, 0.0, 0.0), 1.0),
+         1.0},
+        {Ray(Vec3(200.0, 0.0, 2.0), Vec3(0.0, 0.0, -1.0)),
+         BoundingSphere(Vec3(200.0, 0.0, 0.0), 1.0),
+         1.0},
+        {Ray(Vec3(201.0, 1.0, 0.0), Vec3(-1.0, 0.0, 0.0)),
+         BoundingSphere(Vec3(200.0, 0.0, 0.0), 1.0),
+         1.0},
+        {Ray(Vec3(198.0, 0.0, 0.0), Vec3(1.0, 0.0, 0.0)),
+         BoundingSphere(Vec3(200.0, 0.0, 0.0), 1.0),
+         1.0},
+        {Ray(Vec3(200.0, -2.0, 0.0), Vec3(0.0, 1.0, 0.0)),
+         BoundingSphere(Vec3(200.0, 0.0, 0.0), 1.0),
+         1.0},
+        {Ray(Vec3(200.0, 0.0, -2.0), Vec3(0.0, 0.0, 1.0)),
+         BoundingSphere(Vec3(200.0, 0.0, 0.0), 1.0),
+         1.0},
+        {Ray(Vec3(199.0, -1.0, 0.0), Vec3(1.0, 0.0, 0.0)),
+         BoundingSphere(Vec3(200.0, 0.0, 0.0), 1.0),
+         1.0},
+        {Ray(Vec3(198.0, 0.0, 0.0), Vec3(-1.0, 0.0, 0.0)),
+         BoundingSphere(Vec3(200.0, 0.0, 0.0), 1.0),
+         -1.0},
+        {Ray(Vec3(200.0, -2.0, 0.0), Vec3(0.0, -1.0, 0.0)),
+         BoundingSphere(Vec3(200.0, 0.0, 0.0), 1.0),
+         -1.0},
+        {Ray(Vec3(200.0, 0.0, -2.0), Vec3(0.0, 0.0, -1.0)),
+         BoundingSphere(Vec3(200.0, 0.0, 0.0), 1.0),
+         -1.0}
+    };
+
+    for (const Case& testCase : cases) {
+        std::optional<double> t =
+            IntersectionTests::raySphereParametric(testCase.ray, testCase.sphere);
+        if (!t) {
+            t = -1.0;
+        }
+        EXPECT_NEAR(testCase.expectedT, *t, 1e-6);
+    }
+}
+
+TEST(IntersectionTestsTest, RaySphereFiltersNegativeParametricHits) {
+    const Ray ray(Vec3(-2.0, 0.0, 0.0), Vec3(-1.0, 0.0, 0.0));
+    const BoundingSphere sphere(Vec3::zero(), 1.0);
+
+    const auto t = IntersectionTests::raySphereParametric(ray, sphere);
+    ASSERT_TRUE(t.has_value());
+    EXPECT_LT(*t, 0.0);
+    EXPECT_FALSE(IntersectionTests::raySphere(ray, sphere).has_value());
 }

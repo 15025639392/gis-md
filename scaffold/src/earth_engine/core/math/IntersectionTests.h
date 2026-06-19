@@ -10,6 +10,7 @@
 namespace earth_engine {
 
 class AxisAlignedBox;
+class BoundingSphere;
 class OrientedBoundingBox;
 
 /// Geometry intersection helpers aligned with cesium-native IntersectionTests.
@@ -36,6 +37,9 @@ public:
     static std::optional<Vec3> rayOBB(const Ray& ray, const OrientedBoundingBox& obb);
     static std::optional<double> rayOBBParametric(const Ray& ray,
                                                   const OrientedBoundingBox& obb);
+    static std::optional<Vec3> raySphere(const Ray& ray, const BoundingSphere& sphere);
+    static std::optional<double> raySphereParametric(const Ray& ray,
+                                                     const BoundingSphere& sphere);
 };
 
 } // namespace earth_engine

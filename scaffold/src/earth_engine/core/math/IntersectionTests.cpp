@@ -1,6 +1,7 @@
 #include "IntersectionTests.h"
 
 #include "AxisAlignedBox.h"
+#include "BoundingSphere.h"
 #include "OrientedBoundingBox.h"
 
 #include <algorithm>
@@ -21,6 +22,37 @@ double component(const Vec3& v, int index) noexcept {
     default:
         return v.z();
     }
+}
+
+bool solveQuadratic(double a,
+                    double b,
+                    double c,
+                    double& root0,
+                    double& root1) {
+    const double det = b * b - 4.0 * a * c;
+    if (det < 0.0) {
+        return false;
+    }
+    if (det > 0.0) {
+        const double denom = 1.0 / (2.0 * a);
+        const double disc = std::sqrt(det);
+        root0 = (-b + disc) * denom;
+        root1 = (-b - disc) * denom;
+
+        if (root1 < root0) {
+            std::swap(root1, root0);
+        }
+        return true;
+    }
+
+    const double root = -b / (2.0 * a);
+    if (root == 0.0) {
+        return false;
+    }
+
+    root0 = root;
+    root1 = root;
+    return true;
 }
 } // namespace
 
@@ -247,6 +279,31 @@ std::optional<double> IntersectionTests::rayOBBParametric(
                               halfLengths.y(),
                               halfLengths.z());
     return rayAABBParametric(Ray(rayOrigin, rayDirection), aabb);
+}
+
+std::optional<Vec3> IntersectionTests::raySphere(const Ray& ray,
+                                                 const BoundingSphere& sphere) {
+    const std::optional<double> t = raySphereParametric(ray, sphere);
+    if (t && *t >= 0.0) {
+        return ray.pointAt(*t);
+    }
+    return std::nullopt;
+}
+
+std::optional<double> IntersectionTests::raySphereParametric(
+    const Ray& ray,
+    const BoundingSphere& sphere) {
+    const Vec3 diff = ray.origin() - sphere.getCenter();
+    const double radiusSquared = sphere.getRadius() * sphere.getRadius();
+    const double b = 2.0 * ray.direction().dot(diff);
+    const double c = diff.dot(diff) - radiusSquared;
+
+    double t0 = 0.0;
+    double t1 = 0.0;
+    if (solveQuadratic(1.0, b, c, t0, t1)) {
+        return t0 < 0.0 ? t1 : t0;
+    }
+    return std::nullopt;
 }
 
 } // namespace earth_engine
