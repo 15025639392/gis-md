@@ -18254,6 +18254,17 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
               scene.diagnostics().contentVisibleTiles > 0,
           "Scene: diagnostics expose additional content tileset visibility");
     check(scene.diagnostics().terrainRenderEntriesPlanned == 0 &&
+              scene.diagnostics().terrainRenderEntriesSelectedPlanned == 0 &&
+              scene.diagnostics().terrainRenderEntriesFadingPlanned == 0 &&
+              scene.diagnostics().terrainRenderEntriesDrawn == 0 &&
+              scene.diagnostics().terrainRenderEntriesSelectedDrawn == 0 &&
+              scene.diagnostics().terrainRenderEntriesFadingDrawn == 0 &&
+              scene.diagnostics().terrainRenderEntriesMissed == 0 &&
+              scene.diagnostics().terrainRenderEntriesSelectedMissed == 0 &&
+              scene.diagnostics().terrainRenderEntriesFadingMissed == 0 &&
+              scene.diagnostics().terrainRenderEntriesDeferred == 0 &&
+              scene.diagnostics().terrainRenderEntriesSelectedDeferred == 0 &&
+              scene.diagnostics().terrainRenderEntriesFadingDeferred == 0 &&
               scene.diagnostics().terrainSurfaceCommandsSubmitted == 0 &&
               scene.diagnostics().globeFallbackCommands == 1 &&
               scene.diagnostics().globeFallbackMaskedTerrainEntries == 0,

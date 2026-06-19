@@ -53,6 +53,50 @@ int terrainRenderEntryCount(const Tileset* tileset) {
     return static_cast<int>(tileset->tilePlan().renderEntries.size());
 }
 
+void applyTerrainRenderEntryDiagnostics(
+    const Tileset* tileset,
+    Diagnostics& diagnostics) {
+    diagnostics.terrainRenderEntriesPlanned = terrainRenderEntryCount(tileset);
+    diagnostics.terrainRenderEntriesSelectedPlanned = 0;
+    diagnostics.terrainRenderEntriesFadingPlanned = 0;
+    diagnostics.terrainRenderEntriesDrawn = 0;
+    diagnostics.terrainRenderEntriesSelectedDrawn = 0;
+    diagnostics.terrainRenderEntriesFadingDrawn = 0;
+    diagnostics.terrainRenderEntriesMissed = 0;
+    diagnostics.terrainRenderEntriesSelectedMissed = 0;
+    diagnostics.terrainRenderEntriesFadingMissed = 0;
+    diagnostics.terrainRenderEntriesDeferred = 0;
+    diagnostics.terrainRenderEntriesSelectedDeferred = 0;
+    diagnostics.terrainRenderEntriesFadingDeferred = 0;
+    if (!tileset) {
+        return;
+    }
+
+    const TilePlan& plan = tileset->tilePlan();
+    diagnostics.terrainRenderEntriesSelectedPlanned =
+        plan.renderEntrySelectedPlannedCommandCount;
+    diagnostics.terrainRenderEntriesFadingPlanned =
+        plan.renderEntryFadingPlannedCommandCount;
+    diagnostics.terrainRenderEntriesDrawn =
+        plan.renderEntryCommandDrawCount;
+    diagnostics.terrainRenderEntriesSelectedDrawn =
+        plan.renderEntrySelectedCommandDrawCount;
+    diagnostics.terrainRenderEntriesFadingDrawn =
+        plan.renderEntryFadingCommandDrawCount;
+    diagnostics.terrainRenderEntriesMissed =
+        plan.renderEntryCommandMissedDrawCount;
+    diagnostics.terrainRenderEntriesSelectedMissed =
+        plan.renderEntrySelectedCommandMissedDrawCount;
+    diagnostics.terrainRenderEntriesFadingMissed =
+        plan.renderEntryFadingCommandMissedDrawCount;
+    diagnostics.terrainRenderEntriesDeferred =
+        plan.renderEntryCommandDeferredCount;
+    diagnostics.terrainRenderEntriesSelectedDeferred =
+        plan.renderEntrySelectedCommandDeferredCount;
+    diagnostics.terrainRenderEntriesFadingDeferred =
+        plan.renderEntryFadingCommandDeferredCount;
+}
+
 } // namespace
 
 SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
@@ -359,8 +403,9 @@ void SceneRenderPipeline::aggregateDiagnostics(
         context.terrainTileset,
         context.additionalTilesets,
         context.diagnostics);
-    context.diagnostics.terrainRenderEntriesPlanned =
-        terrainRenderEntryCount(context.terrainTileset);
+    applyTerrainRenderEntryDiagnostics(
+        context.terrainTileset,
+        context.diagnostics);
     context.diagnostics.terrainSurfaceCommandsSubmitted =
         countTerrainSurfaceCommands(context.commands);
     context.diagnostics.globeFallbackCommands =

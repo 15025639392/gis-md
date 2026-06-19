@@ -82,6 +82,17 @@ struct Diagnostics {
     int renderSurfaceTiles = 0;
     int renderGltfPrimitives = 0;
     int terrainRenderEntriesPlanned = 0;
+    int terrainRenderEntriesSelectedPlanned = 0;
+    int terrainRenderEntriesFadingPlanned = 0;
+    int terrainRenderEntriesDrawn = 0;
+    int terrainRenderEntriesSelectedDrawn = 0;
+    int terrainRenderEntriesFadingDrawn = 0;
+    int terrainRenderEntriesMissed = 0;
+    int terrainRenderEntriesSelectedMissed = 0;
+    int terrainRenderEntriesFadingMissed = 0;
+    int terrainRenderEntriesDeferred = 0;
+    int terrainRenderEntriesSelectedDeferred = 0;
+    int terrainRenderEntriesFadingDeferred = 0;
     int terrainSurfaceCommandsSubmitted = 0;
     int globeFallbackCommands = 0;
     int globeFallbackMaskedTerrainEntries = 0;
