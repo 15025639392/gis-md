@@ -14228,7 +14228,7 @@ void testTileFrameDebugLogFormatterReportsReuseMode() {
     input.reuseRejectReason =
         TileSelectionReuseRejectReason::SelectorMovedStaleDisabled;
 
-    const std::array<char, 384> detail =
+    const std::array<char, 512> detail =
         TileFrameDebugLogFormatter::updateDetail(input);
     const std::string text(detail.data());
 
@@ -14236,6 +14236,29 @@ void testTileFrameDebugLogFormatterReportsReuseMode() {
               text.find("reuseMode=2") != std::string::npos &&
               text.find("reuseReject=4") != std::string::npos,
           "TileFrameDebugLogFormatter: update detail reports selection reuse mode and reject reason");
+}
+
+void testTileFrameDebugLogFormatterReportsRenderEntryPassCounts() {
+    TileRenderDebugLogInput input;
+    input.renderStats.plannedEntries = 5;
+    input.renderStats.drawAttempts = 3;
+    input.commandCount = 3;
+    input.selectedRenderStats.plannedEntries = 2;
+    input.selectedRenderStats.drawAttempts = 1;
+    input.fadingRenderStats.plannedEntries = 3;
+    input.fadingRenderStats.drawAttempts = 2;
+
+    const std::array<char, 512> detail =
+        TileFrameDebugLogFormatter::renderBuildDetail(input);
+    const std::string text(detail.data());
+
+    check(text.find("entries=5") != std::string::npos &&
+              text.find("selectedEntries=2") != std::string::npos &&
+              text.find("fadeEntries=3") != std::string::npos &&
+              text.find("cmds=3") != std::string::npos &&
+              text.find("selectedCmds=1") != std::string::npos &&
+              text.find("fadeCmds=2") != std::string::npos,
+          "TileFrameDebugLogFormatter: render detail reports render entry pass counts");
 }
 
 void testTileUpdateSelectionWorkRunnerPumpsResourcesDuringReuse() {
@@ -20093,6 +20116,7 @@ int main() {
     testTileSelectionVisibilitySamplerChoosesSelectionBoundsLikeNative();
     testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing();
     testTileFrameDebugLogFormatterReportsReuseMode();
+    testTileFrameDebugLogFormatterReportsRenderEntryPassCounts();
     testTileUpdateSelectionWorkRunnerPumpsResourcesDuringReuse();
     testTilePendingLoadQueueUsesSharedPriorityOrder();
     testTilePendingLoadQueueFiltersNonUrgentDuringInteraction();

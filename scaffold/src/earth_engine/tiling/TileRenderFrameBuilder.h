@@ -180,7 +180,7 @@ public:
                 updateTotalBytes,
                 unloadCachedBytes);
 
-        const std::array<char, 384> buildBreakdown =
+        const std::array<char, 512> buildBreakdown =
             TileFrameDebugLogFormatter::renderBuildDetail(
                 TileRenderDebugLogInput{
                     selectedBuildMs,
@@ -189,6 +189,8 @@ public:
                     input.tilePlan.visibleTiles.size(),
                     input.tilePlan.tilesFadingOut.size(),
                     renderStats,
+                    selectedStats,
+                    fadingStats,
                     commands.size() - commandsBeforeTileset,
                     input.interactionActive,
                     input.resourceSmoothingActive,

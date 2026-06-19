@@ -14,6 +14,8 @@ struct TileRenderDebugLogInput {
     size_t selectedTileCount = 0;
     size_t fadingTileCount = 0;
     TileRenderEntryCommandStats renderStats;
+    TileRenderEntryCommandStats selectedRenderStats;
+    TileRenderEntryCommandStats fadingRenderStats;
     size_t commandCount = 0;
     bool interactionActive = false;
     bool resourceSmoothingActive = false;

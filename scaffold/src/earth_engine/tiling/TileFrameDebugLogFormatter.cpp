@@ -4,9 +4,9 @@
 
 namespace earth_engine {
 
-std::array<char, 384> TileFrameDebugLogFormatter::updateDetail(
+std::array<char, 512> TileFrameDebugLogFormatter::updateDetail(
     const TileUpdateDebugLogInput& input) {
-    std::array<char, 384> detail{};
+    std::array<char, 512> detail{};
     std::snprintf(
         detail.data(),
         detail.size(),
@@ -37,13 +37,13 @@ std::array<char, 384> TileFrameDebugLogFormatter::updateDetail(
     return detail;
 }
 
-std::array<char, 384> TileFrameDebugLogFormatter::renderBuildDetail(
+std::array<char, 512> TileFrameDebugLogFormatter::renderBuildDetail(
     const TileRenderDebugLogInput& input) {
-    std::array<char, 384> detail{};
+    std::array<char, 512> detail{};
     std::snprintf(
         detail.data(),
         detail.size(),
-        "selected=%.2f fade=%.2f detach=%.2f trim=%.2f eligible=%.2f bytes=%.2f unload=%.2f selectedTiles=%zu fadeTiles=%zu entries=%d ensured=%d cmds=%zu missed=%d missingSelected=%d missingRender=%d deferred=%d interaction=%d smoothing=%d prepSync=%d prepDeferred=%d fallback=%d",
+        "selected=%.2f fade=%.2f detach=%.2f trim=%.2f eligible=%.2f bytes=%.2f unload=%.2f selectedTiles=%zu fadeTiles=%zu entries=%d selectedEntries=%d fadeEntries=%d ensured=%d cmds=%zu selectedCmds=%d fadeCmds=%d missed=%d missingSelected=%d missingRender=%d deferred=%d interaction=%d smoothing=%d prepSync=%d prepDeferred=%d fallback=%d",
         input.selectedBuildMs,
         input.fadeBuildMs,
         input.maintenanceTimings.detachInactiveMs,
@@ -54,8 +54,12 @@ std::array<char, 384> TileFrameDebugLogFormatter::renderBuildDetail(
         input.selectedTileCount,
         input.fadingTileCount,
         input.renderStats.plannedEntries,
+        input.selectedRenderStats.plannedEntries,
+        input.fadingRenderStats.plannedEntries,
         input.renderStats.ensuredTiles,
         input.commandCount,
+        input.selectedRenderStats.drawAttempts,
+        input.fadingRenderStats.drawAttempts,
         input.renderStats.missedDrawEntries,
         input.renderStats.missingSelectedTiles,
         input.renderStats.missingRenderTiles,
