@@ -11,9 +11,9 @@ constexpr const char* kQuantizedMeshTerrainTemplate =
 constexpr const char* kQuantizedMeshTerrainLayerJson =
     "http://192.168.1.8:8090/layer.json";
 constexpr const char* kGaodeSatelliteTemplate =
-    "https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
+    "http://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
 constexpr const char* kGaodeRoadNetTemplate =
-    "https://webst0{s}.is.autonavi.com/appmaptile?style=8&x={x}&y={y}&z={z}";
+    "http://webst0{s}.is.autonavi.com/appmaptile?style=8&x={x}&y={y}&z={z}";
 constexpr const char* kRobotExpressiveGlbUrl =
     "https://maptalks.org/maptalks.three/demo/data/RobotExpressive.glb";
 

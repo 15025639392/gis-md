@@ -281,9 +281,6 @@ private:
         curl_easy_setopt(easy, CURLOPT_PRIVATE, request.get());
         curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
         curl_easy_setopt(easy, CURLOPT_ERRORBUFFER, request->errorBuffer.data());
-#ifdef __ANDROID__
-        curl_easy_setopt(easy, CURLOPT_CAPATH, "/system/etc/security/cacerts");
-#endif
 
         if (curl_multi_add_handle(multi, easy) != CURLM_OK) {
             curl_easy_cleanup(easy);
