@@ -6,6 +6,7 @@
 #include "Vec3.h"
 
 #include <optional>
+#include <glm/ext/vector_double2.hpp>
 
 namespace earth_engine {
 
@@ -40,6 +41,19 @@ public:
     static std::optional<Vec3> raySphere(const Ray& ray, const BoundingSphere& sphere);
     static std::optional<double> raySphereParametric(const Ray& ray,
                                                      const BoundingSphere& sphere);
+    static bool pointInTriangle(const glm::dvec2& point,
+                                const glm::dvec2& triangleVertA,
+                                const glm::dvec2& triangleVertB,
+                                const glm::dvec2& triangleVertC) noexcept;
+    static bool pointInTriangle(const Vec3& point,
+                                const Vec3& triangleVertA,
+                                const Vec3& triangleVertB,
+                                const Vec3& triangleVertC) noexcept;
+    static bool pointInTriangle(const Vec3& point,
+                                const Vec3& triangleVertA,
+                                const Vec3& triangleVertB,
+                                const Vec3& triangleVertC,
+                                Vec3& barycentricCoordinates) noexcept;
 };
 
 } // namespace earth_engine

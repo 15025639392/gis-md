@@ -8,6 +8,7 @@
 #include <cmath>
 #include <limits>
 #include <glm/ext/matrix_double3x3.hpp>
+#include <glm/geometric.hpp>
 #include <glm/matrix.hpp>
 
 namespace earth_engine {
@@ -304,6 +305,87 @@ std::optional<double> IntersectionTests::raySphereParametric(
         return t0 < 0.0 ? t1 : t0;
     }
     return std::nullopt;
+}
+
+bool IntersectionTests::pointInTriangle(const glm::dvec2& point,
+                                        const glm::dvec2& triangleVertA,
+                                        const glm::dvec2& triangleVertB,
+                                        const glm::dvec2& triangleVertC) noexcept {
+    const glm::dvec2 ab = triangleVertB - triangleVertA;
+    const glm::dvec2 bc = triangleVertC - triangleVertB;
+    const glm::dvec2 ca = triangleVertA - triangleVertC;
+
+    const glm::dvec2 abPerp(-ab.y, ab.x);
+    const glm::dvec2 bcPerp(-bc.y, bc.x);
+    const glm::dvec2 caPerp(-ca.y, ca.x);
+
+    const glm::dvec2 av = point - triangleVertA;
+    const glm::dvec2 cv = point - triangleVertC;
+
+    const double vProjAbPerp = glm::dot(av, abPerp);
+    const double vProjBcPerp = glm::dot(cv, bcPerp);
+    const double vProjCaPerp = glm::dot(cv, caPerp);
+
+    return (vProjAbPerp >= 0.0 && vProjCaPerp >= 0.0 &&
+            vProjBcPerp >= 0.0) ||
+           (vProjAbPerp <= 0.0 && vProjCaPerp <= 0.0 &&
+            vProjBcPerp <= 0.0);
+}
+
+bool IntersectionTests::pointInTriangle(const Vec3& point,
+                                        const Vec3& triangleVertA,
+                                        const Vec3& triangleVertB,
+                                        const Vec3& triangleVertC) noexcept {
+    Vec3 unused;
+    return pointInTriangle(point,
+                           triangleVertA,
+                           triangleVertB,
+                           triangleVertC,
+                           unused);
+}
+
+bool IntersectionTests::pointInTriangle(const Vec3& point,
+                                        const Vec3& triangleVertA,
+                                        const Vec3& triangleVertB,
+                                        const Vec3& triangleVertC,
+                                        Vec3& barycentricCoordinates) noexcept {
+    constexpr double epsilon8 = 1e-8;
+    const Vec3 ab = triangleVertB - triangleVertA;
+    const Vec3 bc = triangleVertC - triangleVertB;
+
+    const Vec3 triangleNormal = ab.cross(bc);
+    const double lengthSquared = triangleNormal.lengthSquared();
+    if (lengthSquared < epsilon8) {
+        return false;
+    }
+
+    const double triangleAreaInv = 1.0 / std::sqrt(lengthSquared);
+
+    const Vec3 ap = point - triangleVertA;
+    const double triangleABPRatio =
+        ab.cross(ap).length() * triangleAreaInv;
+    if (triangleABPRatio > 1.0) {
+        return false;
+    }
+
+    const Vec3 bp = point - triangleVertB;
+    const double triangleBCPRatio =
+        bc.cross(bp).length() * triangleAreaInv;
+    if (triangleBCPRatio > 1.0) {
+        return false;
+    }
+
+    const double triangleCAPRatio =
+        1.0 - triangleABPRatio - triangleBCPRatio;
+    if (triangleCAPRatio < 0.0) {
+        return false;
+    }
+
+    barycentricCoordinates.x() = triangleBCPRatio;
+    barycentricCoordinates.y() = triangleCAPRatio;
+    barycentricCoordinates.z() = triangleABPRatio;
+
+    return true;
 }
 
 } // namespace earth_engine

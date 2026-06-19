@@ -8,9 +8,11 @@
 #include "earth_engine/core/math/Ray.h"
 #include "earth_engine/core/math/Vec3.h"
 
+#include <array>
 #include <cmath>
 #include <glm/ext/matrix_double3x3.hpp>
 #include <glm/ext/matrix_transform.hpp>
+#include <glm/ext/vector_double2.hpp>
 #include <optional>
 
 using namespace earth_engine;
@@ -479,4 +481,149 @@ TEST(IntersectionTestsTest, RaySphereFiltersNegativeParametricHits) {
     ASSERT_TRUE(t.has_value());
     EXPECT_LT(*t, 0.0);
     EXPECT_FALSE(IntersectionTests::raySphere(ray, sphere).has_value());
+}
+
+TEST(IntersectionTestsTest, PointInTriangle2dMatchesCesiumNativeCases) {
+    // Ported from cesium-native CesiumGeometry/test/TestIntersectionTests.cpp.
+    struct Case {
+        glm::dvec2 point;
+        glm::dvec2 a;
+        glm::dvec2 b;
+        glm::dvec2 c;
+        bool expected;
+    };
+
+    const std::array<glm::dvec2, 3> rightTriangle{
+        glm::dvec2(-1.0, 0.0),
+        glm::dvec2(0.0, 1.0),
+        glm::dvec2(1.0, 0.0)};
+    const std::array<glm::dvec2, 3> obtuseTriangle{
+        glm::dvec2(2.0, 0.0),
+        glm::dvec2(4.0, 1.0),
+        glm::dvec2(6.0, 0.0)};
+
+    const Case cases[] = {
+        {rightTriangle[2], rightTriangle[0], rightTriangle[1], rightTriangle[2], true},
+        {glm::dvec2(0.0, 0.0), rightTriangle[0], rightTriangle[1], rightTriangle[2], true},
+        {glm::dvec2(0.2, 0.5), rightTriangle[0], rightTriangle[1], rightTriangle[2], true},
+        {glm::dvec2(4.0, 0.3), obtuseTriangle[0], obtuseTriangle[1], obtuseTriangle[2], true},
+        {glm::dvec2(-2.0, 0.5), rightTriangle[0], rightTriangle[1], rightTriangle[2], false},
+        {glm::dvec2(3.0, -0.5), obtuseTriangle[0], obtuseTriangle[1], obtuseTriangle[2], false},
+        {rightTriangle[0], rightTriangle[0], rightTriangle[0], rightTriangle[2], true}
+    };
+
+    for (const Case& testCase : cases) {
+        EXPECT_EQ(testCase.expected,
+                  IntersectionTests::pointInTriangle(testCase.point,
+                                                     testCase.a,
+                                                     testCase.b,
+                                                     testCase.c));
+        EXPECT_EQ(testCase.expected,
+                  IntersectionTests::pointInTriangle(testCase.point,
+                                                     testCase.c,
+                                                     testCase.b,
+                                                     testCase.a));
+    }
+}
+
+TEST(IntersectionTestsTest, PointInTriangle3dMatchesCesiumNativeCases) {
+    // Ported from cesium-native CesiumGeometry/test/TestIntersectionTests.cpp.
+    struct Case {
+        Vec3 point;
+        Vec3 a;
+        Vec3 b;
+        Vec3 c;
+        bool expected;
+    };
+
+    const std::array<Vec3, 3> rightTriangle{
+        Vec3(-1.0, 0.0, 0.0),
+        Vec3(0.0, 1.0, 0.0),
+        Vec3(1.0, 0.0, 0.0)};
+    const std::array<Vec3, 3> equilateralTriangle{
+        Vec3(1.0, 0.0, 0.0),
+        Vec3(0.0, 1.0, 0.0),
+        Vec3(0.0, 0.0, 1.0)};
+
+    const Case cases[] = {
+        {rightTriangle[2], rightTriangle[0], rightTriangle[1], rightTriangle[2], true},
+        {Vec3(0.0, 0.0, 0.0), rightTriangle[0], rightTriangle[1], rightTriangle[2], true},
+        {Vec3(0.2, 0.5, 0.0), rightTriangle[0], rightTriangle[1], rightTriangle[2], true},
+        {Vec3(0.25, 0.25, 0.5), equilateralTriangle[0], equilateralTriangle[1], equilateralTriangle[2], true},
+        {Vec3(-2.0, 0.5, 0.0), rightTriangle[0], rightTriangle[1], rightTriangle[2], false},
+        {Vec3(0.2, 0.5, 1.0), rightTriangle[0], rightTriangle[1], rightTriangle[2], false},
+        {Vec3(-1.0, 1.5, 0.5), equilateralTriangle[0], equilateralTriangle[1], equilateralTriangle[2], false},
+        {Vec3(0.0, 0.0, 0.0), equilateralTriangle[0], equilateralTriangle[1], equilateralTriangle[2], false},
+        {rightTriangle[0], rightTriangle[0], rightTriangle[0], rightTriangle[2], false}
+    };
+
+    for (const Case& testCase : cases) {
+        EXPECT_EQ(testCase.expected,
+                  IntersectionTests::pointInTriangle(testCase.point,
+                                                     testCase.a,
+                                                     testCase.b,
+                                                     testCase.c));
+        EXPECT_EQ(testCase.expected,
+                  IntersectionTests::pointInTriangle(testCase.point,
+                                                     testCase.c,
+                                                     testCase.b,
+                                                     testCase.a));
+    }
+}
+
+TEST(IntersectionTestsTest, PointInTriangle3dBarycentricMatchesCesiumNativeCases) {
+    // Ported from cesium-native CesiumGeometry/test/TestIntersectionTests.cpp.
+    struct Case {
+        Vec3 point;
+        Vec3 a;
+        Vec3 b;
+        Vec3 c;
+        bool expected;
+        Vec3 expectedCoordinates;
+    };
+
+    const std::array<Vec3, 3> rightTriangle{
+        Vec3(-1.0, 0.0, 0.0),
+        Vec3(0.0, 1.0, 0.0),
+        Vec3(1.0, 0.0, 0.0)};
+    const std::array<Vec3, 3> equilateralTriangle{
+        Vec3(1.0, 0.0, 0.0),
+        Vec3(0.0, 1.0, 0.0),
+        Vec3(0.0, 0.0, 1.0)};
+
+    const Case cases[] = {
+        {rightTriangle[2], rightTriangle[0], rightTriangle[1], rightTriangle[2], true, Vec3(0.0, 0.0, 1.0)},
+        {Vec3(0.0, 0.0, 0.0), rightTriangle[0], rightTriangle[1], rightTriangle[2], true, Vec3(0.5, 0.0, 0.5)},
+        {Vec3(0.0, 0.5, 0.0), rightTriangle[0], rightTriangle[1], rightTriangle[2], true, Vec3(0.25, 0.5, 0.25)},
+        {Vec3(0.25, 0.25, 0.5), equilateralTriangle[0], equilateralTriangle[1], equilateralTriangle[2], true, Vec3(0.25, 0.25, 0.5)},
+        {Vec3(-2.0, 0.5, 0.0), rightTriangle[0], rightTriangle[1], rightTriangle[2], false, Vec3::zero()},
+        {Vec3(0.2, 0.5, 1.0), rightTriangle[0], rightTriangle[1], rightTriangle[2], false, Vec3::zero()},
+        {Vec3(-1.0, 1.5, 0.5), equilateralTriangle[0], equilateralTriangle[1], equilateralTriangle[2], false, Vec3::zero()},
+        {Vec3(0.0, 0.0, 0.0), equilateralTriangle[0], equilateralTriangle[1], equilateralTriangle[2], false, Vec3::zero()},
+        {rightTriangle[0], rightTriangle[0], rightTriangle[0], rightTriangle[2], false, Vec3::zero()}
+    };
+
+    for (const Case& testCase : cases) {
+        Vec3 barycentricCoordinates;
+        const bool result = IntersectionTests::pointInTriangle(testCase.point,
+                                                               testCase.a,
+                                                               testCase.b,
+                                                               testCase.c,
+                                                               barycentricCoordinates);
+        ASSERT_EQ(testCase.expected, result);
+        expectVec3Near(testCase.expectedCoordinates, barycentricCoordinates, 1e-12);
+
+        const bool reverseResult =
+            IntersectionTests::pointInTriangle(testCase.point,
+                                               testCase.c,
+                                               testCase.b,
+                                               testCase.a,
+                                               barycentricCoordinates);
+        ASSERT_EQ(testCase.expected, reverseResult);
+        expectVec3Near(Vec3(testCase.expectedCoordinates.z(),
+                            testCase.expectedCoordinates.y(),
+                            testCase.expectedCoordinates.x()),
+                       barycentricCoordinates,
+                       1e-12);
+    }
 }
