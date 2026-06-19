@@ -352,6 +352,108 @@ TEST(ImplicitTileIdUtilitiesTest,
               l1x0y0z1.getTranslation());
 }
 
+TEST(ImplicitTileIdUtilitiesTest,
+     ComputeDiscontinuousCylinderQuadtreeBoundingVolumeMatchesCesiumNative) {
+    const BoundingCylinderRegion root(
+        Vec3(-1.0, 1.0, 2.0),
+        glm::dquat(1.0, 0.0, 0.0, 0.0),
+        2.0,
+        glm::dvec2(0.0, 1.0),
+        glm::dvec2(MathUtils::PiOverFour, -MathUtils::PiOverFour));
+
+    const BoundingCylinderRegion l1x0y0 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            TileKey{"Geographic-TMS", 1, 0, 0});
+    EXPECT_EQ(root.getHeight(), l1x0y0.getHeight());
+    EXPECT_EQ(glm::dvec2(0.0, 0.5), l1x0y0.getRadialBounds());
+    expectDVec2Near(l1x0y0.getAngularBounds(),
+                    glm::dvec2(MathUtils::PiOverFour, MathUtils::OnePi));
+    EXPECT_EQ(root.getRotation(), l1x0y0.getRotation());
+    EXPECT_EQ(root.getTranslation(), l1x0y0.getTranslation());
+
+    const BoundingCylinderRegion l1x1y0 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            TileKey{"Geographic-TMS", 1, 1, 0});
+    EXPECT_EQ(root.getHeight(), l1x1y0.getHeight());
+    EXPECT_EQ(glm::dvec2(0.5, 1.0), l1x1y0.getRadialBounds());
+    expectDVec2Near(l1x1y0.getAngularBounds(),
+                    glm::dvec2(MathUtils::PiOverFour, MathUtils::OnePi));
+    EXPECT_EQ(root.getRotation(), l1x1y0.getRotation());
+    EXPECT_EQ(root.getTranslation(), l1x1y0.getTranslation());
+
+    const BoundingCylinderRegion l1x0y1 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            TileKey{"Geographic-TMS", 1, 0, 1});
+    EXPECT_EQ(root.getHeight(), l1x0y1.getHeight());
+    EXPECT_EQ(glm::dvec2(0.0, 0.5), l1x0y1.getRadialBounds());
+    expectDVec2Near(l1x0y1.getAngularBounds(),
+                    glm::dvec2(-MathUtils::OnePi, -MathUtils::PiOverFour));
+    EXPECT_EQ(root.getRotation(), l1x0y1.getRotation());
+    EXPECT_EQ(root.getTranslation(), l1x0y1.getTranslation());
+}
+
+TEST(ImplicitTileIdUtilitiesTest,
+     ComputeDiscontinuousCylinderOctreeBoundingVolumeMatchesCesiumNative) {
+    const BoundingCylinderRegion root(
+        Vec3(-1.0, 1.0, 2.0),
+        glm::dquat(1.0, 0.0, 0.0, 0.0),
+        2.0,
+        glm::dvec2(0.0, 1.0),
+        glm::dvec2(MathUtils::PiOverFour, -MathUtils::PiOverFour));
+    const double expectedHeight = 0.5 * root.getHeight();
+
+    const BoundingCylinderRegion l1x0y0z0 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            OctreeTileID{1, 0, 0, 0});
+    EXPECT_EQ(expectedHeight, l1x0y0z0.getHeight());
+    EXPECT_EQ(glm::dvec2(0.0, 0.5), l1x0y0z0.getRadialBounds());
+    expectDVec2Near(l1x0y0z0.getAngularBounds(),
+                    glm::dvec2(MathUtils::PiOverFour, MathUtils::OnePi));
+    EXPECT_EQ(root.getRotation(), l1x0y0z0.getRotation());
+    EXPECT_EQ(root.getTranslation() + Vec3(0.0, 0.0, -0.5 * expectedHeight),
+              l1x0y0z0.getTranslation());
+
+    const BoundingCylinderRegion l1x1y0z0 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            OctreeTileID{1, 1, 0, 0});
+    EXPECT_EQ(expectedHeight, l1x1y0z0.getHeight());
+    EXPECT_EQ(glm::dvec2(0.5, 1.0), l1x1y0z0.getRadialBounds());
+    expectDVec2Near(l1x1y0z0.getAngularBounds(),
+                    glm::dvec2(MathUtils::PiOverFour, MathUtils::OnePi));
+    EXPECT_EQ(root.getRotation(), l1x1y0z0.getRotation());
+    EXPECT_EQ(root.getTranslation() + Vec3(0.0, 0.0, -0.5 * expectedHeight),
+              l1x1y0z0.getTranslation());
+
+    const BoundingCylinderRegion l1x0y1z0 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            OctreeTileID{1, 0, 1, 0});
+    EXPECT_EQ(expectedHeight, l1x0y1z0.getHeight());
+    EXPECT_EQ(glm::dvec2(0.0, 0.5), l1x0y1z0.getRadialBounds());
+    expectDVec2Near(l1x0y1z0.getAngularBounds(),
+                    glm::dvec2(-MathUtils::OnePi, -MathUtils::PiOverFour));
+    EXPECT_EQ(root.getRotation(), l1x0y1z0.getRotation());
+    EXPECT_EQ(root.getTranslation() + Vec3(0.0, 0.0, -0.5 * expectedHeight),
+              l1x0y1z0.getTranslation());
+
+    const BoundingCylinderRegion l1x0y0z1 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            OctreeTileID{1, 0, 0, 1});
+    EXPECT_EQ(expectedHeight, l1x0y0z1.getHeight());
+    EXPECT_EQ(glm::dvec2(0.0, 0.5), l1x0y0z1.getRadialBounds());
+    expectDVec2Near(l1x0y0z1.getAngularBounds(),
+                    glm::dvec2(MathUtils::PiOverFour, MathUtils::OnePi));
+    EXPECT_EQ(root.getRotation(), l1x0y0z1.getRotation());
+    EXPECT_EQ(root.getTranslation() + Vec3(0.0, 0.0, 0.5 * expectedHeight),
+              l1x0y0z1.getTranslation());
+}
+
 TEST(ImplicitTileIdUtilitiesTest, ParentIdMatchesCesiumNativeOptionalSemantics) {
     const std::optional<TileKey> quadtreeParent =
         ImplicitTileIdUtilities::parentId(TileKey{"Geographic-TMS", 2, 1, 2});
