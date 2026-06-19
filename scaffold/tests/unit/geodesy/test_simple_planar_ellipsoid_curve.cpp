@@ -56,6 +56,21 @@ TEST(SimplePlanarEllipsoidCurveTest, EndpointsMatchInputEcefCoordinates) {
     expectVec3Near(kTokyoEcef, curve->getPosition(1.0), 1e-6);
 }
 
+TEST(SimplePlanarEllipsoidCurveTest, MidpointIsCoplanarWithEndpointsAndEarthCenter) {
+    const std::optional<SimplePlanarEllipsoidCurve> curve =
+        SimplePlanarEllipsoidCurve::fromEarthCenteredEarthFixedCoordinates(
+            Ellipsoid::WGS84(),
+            kPhiladelphiaEcef,
+            kTokyoEcef);
+
+    ASSERT_TRUE(curve.has_value());
+    const Vec3 midpoint = curve->getPosition(0.5);
+    const Vec3 planeNormal =
+        (kPhiladelphiaEcef - midpoint).cross(kTokyoEcef - midpoint).normalized();
+
+    EXPECT_NEAR(0.0, midpoint.dot(planeNormal), 1e-5);
+}
+
 TEST(SimplePlanarEllipsoidCurveTest, RejectsCenterEcefCoordinates) {
     const std::optional<SimplePlanarEllipsoidCurve> curve =
         SimplePlanarEllipsoidCurve::fromEarthCenteredEarthFixedCoordinates(
