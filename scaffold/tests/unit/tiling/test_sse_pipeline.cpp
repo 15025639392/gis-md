@@ -11630,6 +11630,76 @@ void testTileRenderEntryCommandBuilderCountsSkippedEntries() {
           "TileRenderEntryCommandBuilder: skipped render entries are counted by reason");
 }
 
+void testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive() {
+    const TileKey selectedKey{"test", 1, 0, 0};
+    const TileKey renderKey{"test", 0, 0, 0};
+    TilesetTile selected(selectedKey, Rectangle{});
+    TilesetTile render(renderKey, Rectangle{});
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {TileCacheKey::forTile(selectedKey), &selected},
+        {TileCacheKey::forTile(renderKey), &render}};
+
+    TilePlan plan;
+    TileRenderEntry entry;
+    entry.selectedKey = selectedKey;
+    entry.renderKey = renderKey;
+    entry.usesAncestorFallback = true;
+    entry.surfaceClipEnabled = true;
+    entry.surfaceClipUv = {0.0f, 0.5f, 0.5f, 0.5f};
+    plan.renderEntries.push_back(entry);
+
+    std::vector<std::string> ineligibleKeys;
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    const TileRenderEntryCommandStats stats =
+        TileRenderEntryCommandBuilder::build(
+            plan,
+            true,
+            11,
+            renderer,
+            commands,
+            [&tiles](const TileKey& key) -> TilesetTile* {
+                auto it = tiles.find(TileCacheKey::forTile(key));
+                return it == tiles.end() ? nullptr : it->second;
+            },
+            [](const TileKey& key) {
+                return TileCacheKey::forTile(key);
+            },
+            [&ineligibleKeys](const std::string& key) {
+                ineligibleKeys.push_back(key);
+            },
+            [&renderKey](Renderer&,
+                         TilesetTile& tile,
+                         RenderCommandList& outCommands,
+                         float,
+                         bool,
+                         const std::optional<std::array<float, 4>>& clipUv) {
+                if (tile.key == renderKey && clipUv) {
+                    RenderCommand command;
+                    command.kind = RenderCommandKind::SurfaceTile;
+                    command.surfaceClipEnabled = 1.0f;
+                    command.surfaceClipUv = *clipUv;
+                    outCommands.push_back(std::move(command));
+                }
+            });
+
+    check(commands.size() == 1 &&
+              stats.plannedEntries == 1 &&
+              stats.drawAttempts == 1 &&
+              selected.lastUsedFrame() == 11 &&
+              render.lastUsedFrame() == 11 &&
+              selected.referenceCount() == 0 &&
+              render.referenceCount() == 1,
+          "TileRenderEntryCommandBuilder: selected and render tiles stay active for ancestor fallback");
+    check(ineligibleKeys.size() == 2 &&
+              ineligibleKeys[0] == TileCacheKey::forTile(selectedKey) &&
+              ineligibleKeys[1] == TileCacheKey::forTile(renderKey) &&
+              commands.front().stableKey.find(
+                  "clip:" + TileCacheKey::forTile(selectedKey)) !=
+                  std::string::npos,
+          "TileRenderEntryCommandBuilder: fallback command preserves selected patch identity");
+}
+
 void testTileLodTransitionControllerFadesOutPreviousRenderContent() {
     const TileKey rootKey{"test", 0, 0, 0};
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
@@ -19725,6 +19795,7 @@ int main() {
     testTileRenderPlanFinalizerCountsRootPrepOnce();
     testTileRenderPlanFinalizerReadsSelectionFrameFade();
     testTileRenderEntryCommandBuilderCountsSkippedEntries();
+    testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive();
     testTileLodTransitionControllerFadesOutPreviousRenderContent();
     testTileLodTransitionControllerRestartsReturnedFadeOutTile();
     testTileChildMaterializerLinksContentChildrenWithoutDuplicates();
