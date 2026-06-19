@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <cmath>
+#include "earth_engine/core/math/AxisAlignedBox.h"
 #include "earth_engine/core/math/OrientedBoundingBox.h"
 #include "earth_engine/core/math/Mat4.h"
 #include "earth_engine/core/math/Plane.h"
@@ -117,6 +118,42 @@ TEST(OrientedBoundingBoxTest, TransformMatchesCesiumNative) {
     EXPECT_DOUBLE_EQ(0.0, transformed.getHalfAxis(2).x());
     EXPECT_DOUBLE_EQ(0.0, transformed.getHalfAxis(2).y());
     EXPECT_DOUBLE_EQ(16.0, transformed.getHalfAxis(2).z());
+}
+
+TEST(OrientedBoundingBoxTest, ToAxisAlignedMatchesCesiumNativeAxisAlignedBox) {
+    OrientedBoundingBox box(Vec3(1.0, 2.0, 3.0),
+                            Vec3(10.0, 0.0, 0.0),
+                            Vec3(0.0, 20.0, 0.0),
+                            Vec3(0.0, 0.0, 30.0));
+
+    AxisAlignedBox aabb = box.toAxisAligned();
+
+    EXPECT_DOUBLE_EQ(-9.0, aabb.minimumX());
+    EXPECT_DOUBLE_EQ(11.0, aabb.maximumX());
+    EXPECT_DOUBLE_EQ(-18.0, aabb.minimumY());
+    EXPECT_DOUBLE_EQ(22.0, aabb.maximumY());
+    EXPECT_DOUBLE_EQ(-27.0, aabb.minimumZ());
+    EXPECT_DOUBLE_EQ(33.0, aabb.maximumZ());
+}
+
+TEST(OrientedBoundingBoxTest, ToAxisAlignedMatchesCesiumNativeRotatedBox) {
+    const double fortyFiveDegrees = std::acos(-1.0) / 4.0;
+    const Mat4 rotation = Mat4::rotationY(fortyFiveDegrees);
+    OrientedBoundingBox box(Vec3(1.0, 2.0, 3.0),
+                            rotation.transformVector(Vec3(1.0, 0.0, 0.0)),
+                            rotation.transformVector(Vec3(0.0, 1.0, 0.0)),
+                            rotation.transformVector(Vec3(0.0, 0.0, 1.0)));
+
+    AxisAlignedBox aabb = box.toAxisAligned();
+
+    const double sqrt2 = std::sqrt(2.0);
+    EXPECT_NEAR(1.0 - sqrt2, aabb.minimumX(), 1e-14);
+    EXPECT_NEAR(1.0 + sqrt2, aabb.maximumX(), 1e-14);
+    EXPECT_NEAR(2.0, aabb.lengthY(), 1e-14);
+    EXPECT_NEAR(2.0 - 1.0, aabb.minimumY(), 1e-14);
+    EXPECT_NEAR(2.0 + 1.0, aabb.maximumY(), 1e-14);
+    EXPECT_NEAR(3.0 - sqrt2, aabb.minimumZ(), 1e-14);
+    EXPECT_NEAR(3.0 + sqrt2, aabb.maximumZ(), 1e-14);
 }
 
 TEST(OrientedBoundingBoxTest, FromSphereBuildsCircumscribedBox) {

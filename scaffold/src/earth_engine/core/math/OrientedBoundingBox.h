@@ -1,9 +1,10 @@
 #pragma once
 
+#include "AxisAlignedBox.h"
 #include "BoundingSphere.h"
-#include "Vec3.h"
 #include "Mat4.h"
 #include "Plane.h"
+#include "Vec3.h"
 
 #include <cmath>
 #include <glm/mat3x3.hpp>
@@ -169,6 +170,23 @@ public:
             Vec3(linear * halfAxes_[0].raw()),
             Vec3(linear * halfAxes_[1].raw()),
             Vec3(linear * halfAxes_[2].raw()));
+    }
+
+    /// Convert to the smallest axis-aligned box enclosing this OBB.
+    AxisAlignedBox toAxisAligned() const noexcept {
+        const Vec3 extent(
+            std::abs(halfAxes_[0].x()) + std::abs(halfAxes_[1].x()) + std::abs(halfAxes_[2].x()),
+            std::abs(halfAxes_[0].y()) + std::abs(halfAxes_[1].y()) + std::abs(halfAxes_[2].y()),
+            std::abs(halfAxes_[0].z()) + std::abs(halfAxes_[1].z()) + std::abs(halfAxes_[2].z()));
+        const Vec3 minimum = center_ - extent;
+        const Vec3 maximum = center_ + extent;
+        return AxisAlignedBox(
+            minimum.x(),
+            minimum.y(),
+            minimum.z(),
+            maximum.x(),
+            maximum.y(),
+            maximum.z());
     }
 
     /// Convert to a bounding sphere (for existing sphere-based culling paths).
