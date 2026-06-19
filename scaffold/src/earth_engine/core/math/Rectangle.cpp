@@ -1,26 +1,14 @@
 #include "Rectangle.h"
+#include "MathUtils.h"
 #include <glm/glm.hpp>
-#include <glm/gtc/constants.hpp>
 #include <algorithm>
 #include <cmath>
 
 namespace earth_engine {
 
 namespace {
-    constexpr double kRadToDeg = 180.0 / glm::pi<double>();
-    constexpr double kDegToRad = glm::pi<double>() / 180.0;
-    constexpr double kPi = glm::pi<double>();
-    constexpr double kTwoPi = glm::two_pi<double>();
-
-    double negativePiToPi(double longitude) {
-        const double shifted = std::fmod(longitude + kPi, kTwoPi);
-        const double wrapped = shifted < 0.0 ? shifted + kTwoPi : shifted;
-        return wrapped - kPi;
-    }
-
-    double convertLongitudeRange(double longitude) {
-        return negativePiToPi(longitude);
-    }
+    constexpr double kPi = MathUtils::OnePi;
+    constexpr double kTwoPi = MathUtils::TwoPi;
 }
 
 const Rectangle Rectangle::EMPTY{kPi, kPi * 0.5, -kPi, -kPi * 0.5};
@@ -28,18 +16,20 @@ const Rectangle Rectangle::MAXIMUM{-kPi, -kPi * 0.5, kPi, kPi * 0.5};
 
 Rectangle Rectangle::fromDegrees(double westDeg, double southDeg,
                                   double eastDeg, double northDeg) {
-    return Rectangle(westDeg * kDegToRad, southDeg * kDegToRad,
-                     eastDeg * kDegToRad, northDeg * kDegToRad);
+    return Rectangle(MathUtils::degreesToRadians(westDeg),
+                     MathUtils::degreesToRadians(southDeg),
+                     MathUtils::degreesToRadians(eastDeg),
+                     MathUtils::degreesToRadians(northDeg));
 }
 
-double Rectangle::westDegrees() const { return west_ * kRadToDeg; }
-double Rectangle::southDegrees() const { return south_ * kRadToDeg; }
-double Rectangle::eastDegrees() const { return east_ * kRadToDeg; }
-double Rectangle::northDegrees() const { return north_ * kRadToDeg; }
+double Rectangle::westDegrees() const { return MathUtils::radiansToDegrees(west_); }
+double Rectangle::southDegrees() const { return MathUtils::radiansToDegrees(south_); }
+double Rectangle::eastDegrees() const { return MathUtils::radiansToDegrees(east_); }
+double Rectangle::northDegrees() const { return MathUtils::radiansToDegrees(north_); }
 
 double Rectangle::width() const {
     if (crossesAntimeridian()) {
-        return (glm::two_pi<double>() - west_) + east_;
+        return (kTwoPi - west_) + east_;
     }
     return east_ - west_;
 }
@@ -136,8 +126,10 @@ std::optional<Rectangle> Rectangle::computeIntersection(const Rectangle& other) 
         rectangleWest += kTwoPi;
     }
 
-    const double west = negativePiToPi(std::max(rectangleWest, otherRectangleWest));
-    const double east = negativePiToPi(std::min(rectangleEast, otherRectangleEast));
+    const double west = MathUtils::negativePiToPi(
+        std::max(rectangleWest, otherRectangleWest));
+    const double east = MathUtils::negativePiToPi(
+        std::min(rectangleEast, otherRectangleEast));
 
     if ((west_ < east_ || other.west_ < other.east_) && east <= west) {
         return std::nullopt;
@@ -175,10 +167,10 @@ Rectangle Rectangle::computeUnion(const Rectangle& other) const {
     double east = std::max(rectangleEast, otherRectangleEast);
 
     if (west != kPi) {
-        west = convertLongitudeRange(west);
+        west = MathUtils::convertLongitudeRange(west);
     }
     if (east != kPi) {
-        east = convertLongitudeRange(east);
+        east = MathUtils::convertLongitudeRange(east);
     }
 
     return Rectangle(west, std::min(south_, other.south_),
