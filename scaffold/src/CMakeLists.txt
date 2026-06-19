@@ -380,6 +380,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileSelectionTraversalCounterPolicy.h
     earth_engine/tiling/TileSelectionTraversalCounterPolicy.cpp
     earth_engine/tiling/TileSelectionTraversalContext.h
+    earth_engine/tiling/TileSelectionTraversalContextBuilder.h
+    earth_engine/tiling/TileSelectionTraversalContextBuilder.cpp
     earth_engine/tiling/TileSelectionTraversalDetailsBuilder.h
     earth_engine/tiling/TileSelectionTraversalDetailsBuilder.cpp
     earth_engine/tiling/TileSelectionTraversalExecutor.h

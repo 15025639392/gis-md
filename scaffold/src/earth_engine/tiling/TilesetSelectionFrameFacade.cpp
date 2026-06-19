@@ -3,12 +3,9 @@
 #include "TileContentAccess.h"
 #include "TileLoadQueue.h"
 #include "TileSelectionFrameFinalizationRunner.h"
-#include "TileSelectionPlanAppender.h"
-#include "TileSelectionRasterOverlayPreparer.h"
 #include "TileSelectionFrameRunner.h"
 #include "TileSelectionStateResetter.h"
-#include "TileSelectionTraversalDetailsBuilder.h"
-#include "TileSelectionTraversalContext.h"
+#include "TileSelectionTraversalContextBuilder.h"
 #include "TileSelectionTraversalExecutor.h"
 #include "Tileset.h"
 
@@ -39,79 +36,30 @@ void TilesetSelectionFrameFacade::selectTiles(
             return tileset.contentAccess_.ensureTile(key);
         },
         [&tileset](TilesetTile& root, const SelectorFrame& selectorFrame) {
-            TileSelectionTraversalContext traversalContext{
+            TileSelectionTraversalContextBinding binding{
                 tileset.tilePlan_,
                 tileset.loadQueue_,
-                tileset.selectionCounters_,
                 tileset.options_,
                 tileset.rasterOverlays_,
-                tileset.device_,
-                tileset.frameResourceBudget_,
-                tileset.lastCameraPosition_,
+                tileset.contentAccess_,
                 &tileset,
-                &tileset.contentAccess_,
-                [](void* userData,
-                   const TileKey& key,
-                   TileLoadPriorityGroup group,
-                   double priority) {
-                    Tileset& tileset = *static_cast<Tileset*>(userData);
-                    TileSelectionPlanAppender::queueTileLoad(
-                        tileset.loadQueue_,
-                        key,
-                        group,
-                        priority);
-                },
-                [](void* userData,
-                   TilesetTile& tile,
-                   double screenSpaceError,
-                   bool queueForLoad,
-                   double priority) {
-                    Tileset& tileset = *static_cast<Tileset*>(userData);
-                    TileSelectionPlanAppender::addTileToCurrentPlan(
-                        tileset.tilePlan_,
-                        tileset.loadQueue_,
-                        tileset.options_.enableLodTransitionPeriod,
-                        tile,
-                        screenSpaceError,
-                        queueForLoad,
-                        priority);
-                },
-                [](void* userData, TilesetTile& tile) {
-                    static_cast<TileContentAccess*>(userData)
-                        ->ensureTileChildren(tile);
-                },
-                [](void* userData, const TilesetTile& tile) {
-                    return static_cast<TileContentAccess*>(userData)
-                        ->canRefine(tile);
-                },
                 [](void* userData, const TilesetTile& tile) {
                     return static_cast<Tileset*>(userData)
                         ->checkOcclusion(tile);
-                },
-                [](void* userData, const TilesetTile& tile) {
-                    const Tileset& tileset =
-                        *static_cast<Tileset*>(userData);
-                    return tile.content.contentKind ==
-                               TileContentKind::Render &&
-                           TileSelectionRasterOverlayPreparer::isRenderable(
-                               tile,
-                               tileset.rasterOverlays_);
-                },
-                [](void* userData, const TilesetTile& tile) {
-                    const Tileset& tileset =
-                        *static_cast<Tileset*>(userData);
-                    return TileSelectionTraversalDetailsBuilder::forSingleTile(
-                        tile,
-                        tileset.rasterOverlays_);
-                },
-                [](void* userData, const TilesetTile& tile) {
-                    const Tileset& tileset =
-                        *static_cast<Tileset*>(userData);
-                    return TileSelectionTraversalDetailsBuilder::forCulledTile(
-                        tile,
-                        tileset.rasterOverlays_,
-                        tileset.options_.forbidHoles);
                 }};
+            TileSelectionTraversalContext traversalContext =
+                TileSelectionTraversalContextBuilder::build(
+                    TileSelectionTraversalContextBuildInput{
+                        tileset.tilePlan_,
+                        tileset.loadQueue_,
+                        tileset.selectionCounters_,
+                        tileset.options_,
+                        tileset.rasterOverlays_,
+                        tileset.device_,
+                        tileset.frameResourceBudget_,
+                        tileset.lastCameraPosition_,
+                        tileset.contentAccess_},
+                    binding);
             TileSelectionTraversalExecutor::visitTileIfNeeded(
                 traversalContext,
                 root,
