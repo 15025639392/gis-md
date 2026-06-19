@@ -13,7 +13,6 @@ class Tileset;
 class TilesetSelectionFrameFacade {
 public:
     static void selectTiles(Tileset& tileset, const FrameState& frameState);
-    static void refreshTilePlanRenderEntries(Tileset& tileset);
 
 private:
     friend struct TilesetTestAccess;

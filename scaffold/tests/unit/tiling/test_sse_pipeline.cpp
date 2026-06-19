@@ -55,6 +55,7 @@
 #include "earth_engine/tiling/TilePriorityMetrics.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileRenderablePolicy.h"
+#include "earth_engine/tiling/TileRenderPlanFrameRefresher.h"
 #include "earth_engine/tiling/TileRenderPlanFinalizer.h"
 #include "earth_engine/tiling/TileSelectionChildTraversal.h"
 #include "earth_engine/tiling/TileSelectionCullingPolicy.h"
@@ -166,7 +167,7 @@ struct TilesetTestAccess {
             1.0,
             true,
             std::numeric_limits<double>::max());
-        TilesetSelectionFrameFacade::refreshTilePlanRenderEntries(tileset);
+        refreshTilePlanRenderEntries(tileset);
     }
 
     static bool culledTileReportsMissingRenderableForForbidHoles(
@@ -514,7 +515,17 @@ struct TilesetTestAccess {
             TileLodTransitionFrameOptions{
                 tileset.options_.enableLodTransitionPeriod,
                 tileset.options_.lodTransitionLength});
-        TilesetSelectionFrameFacade::refreshTilePlanRenderEntries(tileset);
+        refreshTilePlanRenderEntries(tileset);
+    }
+
+    static void refreshTilePlanRenderEntries(Tileset& tileset) {
+        TileRenderPlanFrameRefresher::refresh(
+            tileset.tilePlan_,
+            tileset.contentAccess_,
+            TileRenderPlanFrameRefreshOptions{
+                tileset.options_.enableLodTransitionPeriod,
+                tileset.interactionActiveForFrame_,
+                tileset.resourceSmoothingActiveForFrame_});
     }
 
     static size_t fadingOutSetSize(const Tileset& tileset) {

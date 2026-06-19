@@ -4,6 +4,7 @@
 #include "TileContentAccess.h"
 #include "TileContentLifecycleManager.h"
 #include "TileFrameWorkCoordinator.h"
+#include "TileRenderPlanFrameRefresher.h"
 #include "Tileset.h"
 #include "TilesetProviderDiagnosticsCollector.h"
 #include "TilesetSelectionFrameFacade.h"
@@ -67,7 +68,13 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             return tileset.contentLifecycle_.hasPendingWork();
         },
         [&tileset]() {
-            TilesetSelectionFrameFacade::refreshTilePlanRenderEntries(tileset);
+            TileRenderPlanFrameRefresher::refresh(
+                tileset.tilePlan_,
+                tileset.contentAccess_,
+                TileRenderPlanFrameRefreshOptions{
+                    tileset.options_.enableLodTransitionPeriod,
+                    tileset.interactionActiveForFrame_,
+                    tileset.resourceSmoothingActiveForFrame_});
         },
         [&tileset](const FrameState& selectionFrameState) {
             TilesetSelectionFrameFacade::selectTiles(

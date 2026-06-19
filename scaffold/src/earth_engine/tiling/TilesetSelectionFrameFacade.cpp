@@ -3,7 +3,7 @@
 #include "TileContentAccess.h"
 #include "TileLoadQueue.h"
 #include "TileLodTransitionFrameUpdater.h"
-#include "TileRenderPlanFinalizer.h"
+#include "TileRenderPlanFrameRefresher.h"
 #include "TileSelectionPlanAppender.h"
 #include "TileSelectionRasterOverlayPreparer.h"
 #include "TileSelectionFrameRunner.h"
@@ -16,31 +16,6 @@
 #include "../scene/FrameState.h"
 
 namespace earth_engine {
-
-namespace {
-
-constexpr int kActiveInteractionRenderPrepBudget = 0;
-constexpr int kRecoveryRenderPrepBudget = 1;
-
-} // namespace
-
-void TilesetSelectionFrameFacade::refreshTilePlanRenderEntries(
-    Tileset& tileset) {
-    TileRenderPlanFinalizer::refreshRenderEntries(
-        tileset.tilePlan_,
-        TileRenderPlanFinalizeOptions{
-            tileset.options_.enableLodTransitionPeriod,
-            tileset.interactionActiveForFrame_,
-            tileset.resourceSmoothingActiveForFrame_,
-            kActiveInteractionRenderPrepBudget,
-            kRecoveryRenderPrepBudget},
-            [&tileset](const TileKey& key) {
-                return tileset.contentAccess_.ensureTile(key);
-            },
-            [](const TileKey& key) {
-                return TileCacheKey::forTile(key);
-            });
-}
 
 TileSelectionFrameFinalizeTimings
 TilesetSelectionFrameFacade::finalizeSelectedTilePlan(
@@ -63,7 +38,13 @@ TilesetSelectionFrameFacade::finalizeSelectedTilePlan(
                     tileset.options_.lodTransitionLength});
         },
         [&tileset]() {
-            refreshTilePlanRenderEntries(tileset);
+            TileRenderPlanFrameRefresher::refresh(
+                tileset.tilePlan_,
+                tileset.contentAccess_,
+                TileRenderPlanFrameRefreshOptions{
+                    tileset.options_.enableLodTransitionPeriod,
+                    tileset.interactionActiveForFrame_,
+                    tileset.resourceSmoothingActiveForFrame_});
         },
         [&tileset](const TilesetTile& tile) {
             return TileSelectionRasterOverlayPreparer::isRenderable(
