@@ -81,6 +81,10 @@ struct Diagnostics {
     int gpuTextureCount = 0;
     int renderSurfaceTiles = 0;
     int renderGltfPrimitives = 0;
+    int terrainRenderEntriesPlanned = 0;
+    int terrainSurfaceCommandsSubmitted = 0;
+    int globeFallbackCommands = 0;
+    int globeFallbackMaskedTerrainEntries = 0;
     int surfaceMeshCount = 0;
     int imageryAttachments = 0;
     int imageryExactAttachments = 0;

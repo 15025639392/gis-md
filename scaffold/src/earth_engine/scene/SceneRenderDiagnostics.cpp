@@ -147,6 +147,10 @@ void SceneRenderDiagnostics::resetRenderCommandFields(
     diagnostics.gpuTextureCount = 0;
     diagnostics.renderSurfaceTiles = 0;
     diagnostics.renderGltfPrimitives = 0;
+    diagnostics.terrainRenderEntriesPlanned = 0;
+    diagnostics.terrainSurfaceCommandsSubmitted = 0;
+    diagnostics.globeFallbackCommands = 0;
+    diagnostics.globeFallbackMaskedTerrainEntries = 0;
     diagnostics.surfaceMeshCount = 0;
     diagnostics.imageryAttachments = 0;
     diagnostics.imageryExactAttachments = 0;

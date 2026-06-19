@@ -17920,6 +17920,12 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
     check(scene.diagnostics().contentTilesets == 1 &&
               scene.diagnostics().contentVisibleTiles > 0,
           "Scene: diagnostics expose additional content tileset visibility");
+    check(scene.diagnostics().terrainRenderEntriesPlanned > 0 &&
+              scene.diagnostics().terrainSurfaceCommandsSubmitted == 0 &&
+              scene.diagnostics().globeFallbackCommands == 1 &&
+              scene.diagnostics().globeFallbackMaskedTerrainEntries ==
+                  scene.diagnostics().terrainRenderEntriesPlanned,
+          "Scene: diagnostics expose globe fallback masking planned terrain render entries");
     check(std::abs(scene.tileset()->sampleHeight(0.0, 0.0) - 123.0f) <
               1e-6f,
           "Scene: terrain sampling is still owned by primary tileset after render");

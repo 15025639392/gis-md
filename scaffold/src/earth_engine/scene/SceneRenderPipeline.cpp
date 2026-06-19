@@ -21,6 +21,39 @@
 #include <string>
 
 namespace earth_engine {
+namespace {
+
+bool isTerrainSurfaceCommand(const RenderCommand& command) {
+    return command.kind == RenderCommandKind::SurfaceTile &&
+           command.stableKey.rfind("terrain:", 0) == 0;
+}
+
+int countTerrainSurfaceCommands(const RenderCommandList& commands) {
+    return static_cast<int>(
+        std::count_if(
+            commands.begin(),
+            commands.end(),
+            isTerrainSurfaceCommand));
+}
+
+int countGlobeFallbackCommands(const RenderCommandList& commands) {
+    return static_cast<int>(
+        std::count_if(
+            commands.begin(),
+            commands.end(),
+            [](const RenderCommand& command) {
+                return command.kind == RenderCommandKind::GlobeSurface;
+            }));
+}
+
+int terrainRenderEntryCount(const Tileset* tileset) {
+    if (!tileset) {
+        return 0;
+    }
+    return static_cast<int>(tileset->tilePlan().renderEntries.size());
+}
+
+} // namespace
 
 SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
     const double renderStartMs = perf::nowMs();
@@ -326,6 +359,18 @@ void SceneRenderPipeline::aggregateDiagnostics(
         context.terrainTileset,
         context.additionalTilesets,
         context.diagnostics);
+    context.diagnostics.terrainRenderEntriesPlanned =
+        terrainRenderEntryCount(context.terrainTileset);
+    context.diagnostics.terrainSurfaceCommandsSubmitted =
+        countTerrainSurfaceCommands(context.commands);
+    context.diagnostics.globeFallbackCommands =
+        countGlobeFallbackCommands(context.commands);
+    context.diagnostics.globeFallbackMaskedTerrainEntries =
+        context.diagnostics.terrainRenderEntriesPlanned > 0 &&
+                context.diagnostics.terrainSurfaceCommandsSubmitted == 0 &&
+                context.diagnostics.globeFallbackCommands > 0
+            ? context.diagnostics.terrainRenderEntriesPlanned
+            : 0;
     diagnosticsMs = perf::nowMs() - startMs;
 }
 
