@@ -13,9 +13,14 @@ TEST(S2CellIDTest, TokenAndIdSemanticsMatchCesiumNative) {
 
     EXPECT_FALSE(S2CellID::fromToken("XX").isValid());
     EXPECT_FALSE(S2CellID::fromToken("LOL").isValid());
+    EXPECT_FALSE(S2CellID::fromToken("----").isValid());
+    EXPECT_FALSE(S2CellID::fromToken(std::string(17, '9')).isValid());
     EXPECT_FALSE(S2CellID::fromToken("0").isValid());
     EXPECT_FALSE(S2CellID(0ULL).isValid());
     EXPECT_FALSE(S2CellID(~uint64_t{0}).isValid());
+    EXPECT_FALSE(S2CellID(
+                     0b0010101000000000000000000000000000000000000000000000000000000000ULL)
+                     .isValid());
 
     EXPECT_EQ("3", S2CellID(3458764513820540928ULL).toToken());
     EXPECT_EQ("04", S2CellID(288230376151711744ULL).toToken());
