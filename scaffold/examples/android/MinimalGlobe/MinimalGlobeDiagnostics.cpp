@@ -103,6 +103,9 @@ std::string buildPresentationTraceSummary(const PresentationTrace& trace) {
             << "/" << terrainTrace->renderEntryPlannedCommandCount
             << " missed=" << terrainTrace->renderEntryCommandMissedDrawCount
             << " deferred=" << terrainTrace->renderEntryCommandDeferredCount
+            << " fallback=" << terrainTrace->renderEntryAncestorFallbackCount
+            << " prepSync=" << terrainTrace->renderEntrySynchronousPrepCount
+            << " prepDeferred=" << terrainTrace->renderEntryDeferredPrepCount
             << " zoom=" << terrainTrace->minVisibleZoom
             << "-" << terrainTrace->maxVisibleZoom
             << " lod=" << static_cast<int>(terrainTrace->lodSizePixels)
