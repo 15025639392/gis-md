@@ -1,8 +1,8 @@
 #include "SceneRenderPipeline.h"
 #include "Camera.h"
+#include "SceneFrameDiagnosticsAggregator.h"
 #include "SceneRenderCommandUniformUpdater.h"
 #include "SceneRenderDiagnostics.h"
-#include "SceneTilesetDiagnostics.h"
 #include "../debug/PerfTimer.h"
 #include "../environment/AtmosphereBackgroundPass.h"
 #include "../environment/SkyBox.h"
@@ -321,24 +321,11 @@ void SceneRenderPipeline::aggregateDiagnostics(
     Context& context,
     double& diagnosticsMs) const {
     const double startMs = perf::nowMs();
-    auto& diag = context.diagnostics;
-    SceneTilesetDiagnostics::reset(diag);
-    SceneRenderDiagnostics::addRenderCommands(context.commands, diag);
-    diag.contentTilesets = static_cast<int>(context.additionalTilesets.size());
-
-    if (context.terrainTileset) {
-        SceneTilesetDiagnostics::addTileset(
-            diag,
-            *context.terrainTileset,
-            true);
-    }
-    for (const auto& tileset : context.additionalTilesets) {
-        if (tileset) {
-            SceneTilesetDiagnostics::addTileset(diag, *tileset, false);
-        }
-    }
-
-    SceneRenderDiagnostics::finalizeRenderCommandFields(diag);
+    SceneFrameDiagnosticsAggregator::aggregateRenderFrame(
+        context.commands,
+        context.terrainTileset,
+        context.additionalTilesets,
+        context.diagnostics);
     diagnosticsMs = perf::nowMs() - startMs;
 }
 

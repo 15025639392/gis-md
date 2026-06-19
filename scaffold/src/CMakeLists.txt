@@ -120,6 +120,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/scene/SceneEnvironmentCoordinator.cpp
     earth_engine/scene/SceneFrameDiagnostics.h
     earth_engine/scene/SceneFrameDiagnostics.cpp
+    earth_engine/scene/SceneFrameDiagnosticsAggregator.h
+    earth_engine/scene/SceneFrameDiagnosticsAggregator.cpp
     earth_engine/scene/SceneFrameStateBuilder.h
     earth_engine/scene/SceneFrameStateBuilder.cpp
     earth_engine/scene/SceneFrameRuntime.h
