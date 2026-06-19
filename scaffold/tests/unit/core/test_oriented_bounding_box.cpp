@@ -181,3 +181,15 @@ TEST(OrientedBoundingBoxTest, FromSphereBuildsCircumscribedBox) {
     EXPECT_TRUE(box.contains(Vec3(11.0, 2.0, 3.0)));
     EXPECT_FALSE(box.contains(Vec3(11.0 + 1e-12, 2.0, 3.0)));
 }
+
+TEST(OrientedBoundingBoxTest, ToSphereMatchesCesiumNativeCornerRadius) {
+    OrientedBoundingBox box(Vec3(1.0, 2.0, 3.0),
+                            Vec3(2.0, 0.0, 0.0),
+                            Vec3(0.0, 3.0, 0.0),
+                            Vec3(0.0, 0.0, 6.0));
+
+    const BoundingSphere sphere = box.toSphere();
+
+    EXPECT_EQ(Vec3(1.0, 2.0, 3.0), sphere.getCenter());
+    EXPECT_DOUBLE_EQ(7.0, sphere.getRadius());
+}
