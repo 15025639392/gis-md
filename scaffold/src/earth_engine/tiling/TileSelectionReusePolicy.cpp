@@ -131,8 +131,11 @@ TileSelectionReusePolicy::classifyReuseWithReason(
             TileSelectionReuseMode::Stale,
             TileSelectionReuseRejectReason::None};
     }
-    (void)input.currentResourceRevision;
-    (void)input.lastResourceRevision;
+    if (input.currentResourceRevision != input.lastResourceRevision) {
+        return {
+            TileSelectionReuseMode::None,
+            TileSelectionReuseRejectReason::ResourceChanged};
+    }
     if (input.hasFadingTiles) {
         return {
             TileSelectionReuseMode::None,
