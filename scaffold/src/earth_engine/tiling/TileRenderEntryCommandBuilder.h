@@ -77,7 +77,11 @@ public:
             }
             if (commands.size() > before) {
                 size_t stableIndex = 0;
-                const std::string baseStableKey = cacheKey(commandTile->key);
+                std::string baseStableKey = cacheKey(commandTile->key);
+                if (entry.surfaceClipEnabled) {
+                    baseStableKey += "|clip:";
+                    baseStableKey += cacheKey(entry.selectedKey);
+                }
                 for (size_t i = before; i < commands.size(); ++i) {
                     commands[i].stableKey =
                         baseStableKey + "#" + std::to_string(stableIndex++);

@@ -18596,6 +18596,69 @@ void testPresentationTraceLinksTilePlanToSurfaceCommand() {
           "Presentation trace: render-entry clip UV is preserved in the surface command");
 }
 
+void testClippedFallbackCommandsHaveSelectedChildStableKeys() {
+    InitializedRendererHarness harness;
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {&baseActivated},
+        &harness.device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childAKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey childBKey{"Geographic-TMS", 1, 1, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    TilesetTile* childA = TilesetTestAccess::ensureTile(tileset, childAKey);
+    TilesetTile* childB = TilesetTestAccess::ensureTile(tileset, childBKey);
+    check(root && childA && childB,
+          "Tileset: clipped fallback stable-key setup creates root and children");
+    if (!root || !childA || !childB) return;
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    RasterMappedToTilesetTile* rootMapped =
+        root->rasterOverlayState.mappings().empty()
+            ? nullptr
+            : root->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* rootRaster =
+        rootMapped ? rootMapped->getLoadingTile() : nullptr;
+    check(rootRaster != nullptr,
+          "Tileset: clipped fallback stable-key setup maps root imagery");
+    if (!rootRaster) return;
+    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
+    rootRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+
+    TilesetTestAccess::setInteractionActiveForFrame(tileset, true);
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *childA);
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *childB);
+
+    RenderCommandList commands;
+    tileset.buildRenderCommands(harness.renderer, commands);
+
+    check(commands.size() == 2,
+          "Tileset: clipped fallback emits separate commands for separate child patches");
+    if (commands.size() < 2) return;
+    check(commands[0].stableKey != commands[1].stableKey &&
+              commands[0].stableKey.find("clip:Geographic-TMS/1/") !=
+                  std::string::npos &&
+              commands[1].stableKey.find("clip:Geographic-TMS/1/") !=
+                  std::string::npos,
+          "Tileset: clipped fallback stable keys include the selected child patch identity");
+}
+
 void testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -19476,6 +19539,7 @@ int main() {
     testTilesetAncestorFallbackIsClippedToMissingChild();
     testPresentationTraceRecordsDeterministicCameraState();
     testPresentationTraceLinksTilePlanToSurfaceCommand();
+    testClippedFallbackCommandsHaveSelectedChildStableKeys();
     testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh();
     testTilesetUpsampledChildQueuesParentUntilSourceReady();
     testTilesetUpsampledChildFinalizesContentLoadedParent();
