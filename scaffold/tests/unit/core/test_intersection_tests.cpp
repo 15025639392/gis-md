@@ -2,14 +2,46 @@
 
 #include "earth_engine/core/math/AxisAlignedBox.h"
 #include "earth_engine/core/math/IntersectionTests.h"
+#include "earth_engine/core/math/OrientedBoundingBox.h"
 #include "earth_engine/core/math/Plane.h"
 #include "earth_engine/core/math/Ray.h"
 #include "earth_engine/core/math/Vec3.h"
 
 #include <cmath>
+#include <glm/ext/matrix_double3x3.hpp>
+#include <glm/ext/matrix_transform.hpp>
 #include <optional>
 
 using namespace earth_engine;
+
+namespace {
+constexpr double kPi = 3.141592653589793238462643383279502884;
+
+double radians(double degrees) {
+    return degrees * kPi / 180.0;
+}
+
+OrientedBoundingBox makeObb(const Vec3& center, const glm::dmat3& halfAxes) {
+    return OrientedBoundingBox(center,
+                               Vec3(halfAxes[0]),
+                               Vec3(halfAxes[1]),
+                               Vec3(halfAxes[2]));
+}
+
+glm::dmat3 rotation3(double angleRadians, const glm::dvec3& axis) {
+    return glm::dmat3(glm::rotate(glm::dmat4(1.0), angleRadians, axis));
+}
+
+glm::dmat3 scale3(const glm::dvec3& scale) {
+    return glm::dmat3(glm::scale(glm::dmat4(1.0), scale));
+}
+
+void expectVec3Near(const Vec3& expected, const Vec3& actual, double epsilon) {
+    EXPECT_NEAR(expected.x(), actual.x(), epsilon);
+    EXPECT_NEAR(expected.y(), actual.y(), epsilon);
+    EXPECT_NEAR(expected.z(), actual.z(), epsilon);
+}
+} // namespace
 
 TEST(IntersectionTestsTest, RayPlaneMatchesCesiumNativeCases) {
     // Ported from cesium-native CesiumGeometry/test/TestIntersectionTests.cpp.
@@ -224,4 +256,108 @@ TEST(IntersectionTestsTest, RayAabbParametricReturnsEntryOrExitDistance) {
         aabb);
     ASSERT_TRUE(inside.has_value());
     EXPECT_DOUBLE_EQ(1.0, *inside);
+}
+
+TEST(IntersectionTestsTest, RayObbMatchesCesiumNativeCases) {
+    // Ported from cesium-native CesiumGeometry/test/TestIntersectionTests.cpp.
+    struct Case {
+        Ray ray;
+        OrientedBoundingBox obb;
+        Vec3 expected;
+    };
+
+    const double sqrt2 = std::sqrt(2.0);
+    const double sqrt3 = std::sqrt(3.0);
+    const double sqrt8 = std::sqrt(8.0);
+    const glm::dvec3 xAxis(1.0, 0.0, 0.0);
+    const glm::dvec3 yAxis(0.0, 1.0, 0.0);
+
+    const Case cases[] = {
+        {
+            Ray(Vec3(0.0, 0.0, 10.0), Vec3(0.0, 0.0, -1.0)),
+            makeObb(Vec3(0.0, 0.0, 0.0),
+                    rotation3(radians(-45.0), xAxis)),
+            Vec3(0.0, 0.0, sqrt2)
+        },
+        {
+            Ray(Vec3(10.0, 10.0, 20.0), Vec3(0.0, 0.0, -1.0)),
+            makeObb(Vec3(10.0, 10.0, 10.0),
+                    rotation3(radians(-45.0), xAxis)),
+            Vec3(10.0, 10.0, 10.0 + sqrt2)
+        },
+        {
+            Ray(Vec3(10.0, 22.0, 31.0 + sqrt2),
+                Vec3(0.0, -2.0, -1.0).normalized()),
+            makeObb(Vec3(10.0, 20.0, 30.0),
+                    rotation3(radians(-45.0), xAxis)),
+            Vec3(10.0, 20.0, 30.0 + sqrt2)
+        },
+        {
+            Ray(Vec3(10.0, 10.0, 20.0), Vec3(0.0, 0.0, -1.0)),
+            makeObb(Vec3(10.0, 10.0, 10.0),
+                    2.0 * rotation3(radians(-45.0), xAxis)),
+            Vec3(10.0, 10.0, 10.0 + sqrt8)
+        },
+        {
+            Ray(Vec3(10.0, 30.0, 50.0 + sqrt8),
+                Vec3(0.0, -1.0, -2.0).normalized()),
+            makeObb(Vec3(10.0, 20.0, 30.0),
+                    2.0 * rotation3(radians(-45.0), xAxis)),
+            Vec3(10.0, 20.0, 30.0 + sqrt8)
+        },
+        {
+            Ray(Vec3(10.0, 10.0, 20.0), Vec3(0.0, 0.0, -1.0)),
+            makeObb(Vec3(10.0, 10.0, 10.0),
+                    scale3(glm::dvec3(2.0, 2.0, 1.0))),
+            Vec3(10.0, 10.0, 11.0)
+        },
+        {
+            Ray(Vec3(10.0, 20.0, 40.0), Vec3(0.0, 0.0, -1.0)),
+            makeObb(Vec3(10.0, 20.0, 30.0),
+                    scale3(glm::dvec3(2.0, 1.0, 2.0))),
+            Vec3(10.0, 20.0, 32.0)
+        },
+        {
+            Ray(Vec3(10.0, 20.0, 40.0), Vec3(0.0, 0.0, -1.0)),
+            makeObb(Vec3(10.0, 20.0, 30.0),
+                    scale3(glm::dvec3(1.0, 2.0, 1.0)) *
+                        rotation3(radians(45.0), yAxis)),
+            Vec3(10.0, 20.0, 30.0 + sqrt2)
+        },
+        {
+            Ray(Vec3(10.0, 20.0, 40.0), Vec3(0.0, 0.0, -1.0)),
+            makeObb(Vec3(10.0, 20.0, 30.0),
+                    rotation3(radians(45.0), xAxis) *
+                        scale3(glm::dvec3(1.0, 2.0, 1.0))),
+            Vec3(10.0, 20.0, 30.0 + 1.0 / std::cos(radians(45.0)))
+        },
+        {
+            Ray(Vec3(10.0, 20.0, 40.0), Vec3(0.0, 0.0, -1.0)),
+            makeObb(Vec3(10.0, 20.0, 30.0),
+                    scale3(glm::dvec3(1.0, 2.0, 1.0)) *
+                        rotation3(radians(225.0), yAxis)),
+            Vec3(10.0, 20.0, 30.0 + sqrt2)
+        },
+        {
+            Ray(Vec3(10.0, 22.0, 32.0),
+                Vec3(0.0, -2.0, -1.0).normalized()),
+            makeObb(Vec3(10.0, 20.0, 30.0),
+                    rotation3(radians(90.0), xAxis) *
+                        scale3(glm::dvec3(1.0, 1.0, 2.0))),
+            Vec3(10.0, 20.0, 31.0)
+        },
+        {
+            Ray(Vec3(10.0, 20.0, 40.0), Vec3(0.0, 0.0, -1.0)),
+            makeObb(Vec3(10.0, 20.0, 30.0),
+                    rotation3(std::atan2(0.5, sqrt2 * 0.5), xAxis) *
+                        rotation3(radians(45.0), yAxis)),
+            Vec3(10.0, 20.0, 30.0 + sqrt3)
+        }
+    };
+
+    for (const Case& testCase : cases) {
+        const auto intersection = IntersectionTests::rayOBB(testCase.ray, testCase.obb);
+        ASSERT_TRUE(intersection.has_value());
+        expectVec3Near(testCase.expected, *intersection, 1e-6);
+    }
 }

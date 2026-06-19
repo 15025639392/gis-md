@@ -1,10 +1,13 @@
 #include "IntersectionTests.h"
 
 #include "AxisAlignedBox.h"
+#include "OrientedBoundingBox.h"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <glm/ext/matrix_double3x3.hpp>
+#include <glm/matrix.hpp>
 
 namespace earth_engine {
 
@@ -209,6 +212,41 @@ std::optional<double> IntersectionTests::rayAABBParametric(
         return std::nullopt;
     }
     return greatestMin < 0.0 ? smallestMax : greatestMin;
+}
+
+std::optional<Vec3> IntersectionTests::rayOBB(const Ray& ray,
+                                              const OrientedBoundingBox& obb) {
+    const std::optional<double> t = rayOBBParametric(ray, obb);
+    if (t && *t >= 0.0) {
+        return ray.pointAt(*t);
+    }
+    return std::nullopt;
+}
+
+std::optional<double> IntersectionTests::rayOBBParametric(
+    const Ray& ray,
+    const OrientedBoundingBox& obb) {
+    const Vec3 halfLengths = obb.getLengths() * 0.5;
+    const glm::dmat3 halfAxes(obb.getHalfAxis(0).raw(),
+                              obb.getHalfAxis(1).raw(),
+                              obb.getHalfAxis(2).raw());
+    const glm::dmat3 rotationOnly(
+        halfAxes[0] / halfLengths.x(),
+        halfAxes[1] / halfLengths.y(),
+        halfAxes[2] / halfLengths.z());
+    const glm::dmat3 inverseRotation = glm::transpose(rotationOnly);
+
+    const Vec3 relativeOrigin = ray.origin() - obb.getCenter();
+    const Vec3 rayOrigin(inverseRotation * relativeOrigin.raw());
+    const Vec3 rayDirection(inverseRotation * ray.direction().raw());
+
+    const AxisAlignedBox aabb(-halfLengths.x(),
+                              -halfLengths.y(),
+                              -halfLengths.z(),
+                              halfLengths.x(),
+                              halfLengths.y(),
+                              halfLengths.z());
+    return rayAABBParametric(Ray(rayOrigin, rayDirection), aabb);
 }
 
 } // namespace earth_engine
