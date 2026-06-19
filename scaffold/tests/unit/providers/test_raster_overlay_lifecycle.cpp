@@ -5,6 +5,7 @@
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/providers/RasterTextureUploader.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
+#include "earth_engine/renderer/RenderCommand.h"
 #include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
@@ -188,7 +189,7 @@ TEST(RasterOverlayLifecycleTest, FrameBudgetLimitsRasterWorkerRequests) {
               secondTile->getState());
 }
 
-TEST(RasterOverlayLifecycleTest, FrameBudgetAccountsRectangleRequestFanout) {
+TEST(RasterOverlayLifecycleTest, FrameBudgetAccountsRectangleSourceRequests) {
     ImmediateImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
@@ -205,11 +206,17 @@ TEST(RasterOverlayLifecycleTest, FrameBudgetAccountsRectangleRequestFanout) {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    EXPECT_FALSE(provider.loadTileThrottled(*rectangleTile, &budget));
-    EXPECT_EQ(0, imagery.requestCount);
-    EXPECT_EQ(0u, budget.networkRequestsIssued());
-    EXPECT_EQ(RasterOverlayTile::LoadState::Unloaded,
+    EXPECT_TRUE(provider.loadTileThrottled(*rectangleTile, &budget));
+    EXPECT_EQ(1, imagery.requestCount);
+    EXPECT_EQ(1u, budget.networkRequestsIssued());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loading,
               rectangleTile->getState());
+
+    FrameResourceBudget secondBudget;
+    secondBudget.beginFrame(2, config);
+    EXPECT_TRUE(provider.loadTileThrottled(*rectangleTile, &secondBudget));
+    EXPECT_EQ(2, imagery.requestCount);
+    EXPECT_EQ(1u, secondBudget.networkRequestsIssued());
 }
 
 TEST(RasterOverlayLifecycleTest, FrameBudgetSeparatesRasterFanoutFromTerrainBudget) {
@@ -291,6 +298,64 @@ TEST(RasterOverlayLifecycleTest, MappedReadyTileRetainsProviderCacheUntilRelease
     EXPECT_TRUE(weakTile.expired());
 }
 
+TEST(RasterOverlayLifecycleTest, RenderCommandKeepAliveRetainsRasterAfterMappingRelease) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    TileKey key{scheme->id(), 3, 4, 2};
+    RasterOverlayDetails details;
+    details.setGeographicRectangle(scheme->tileToRectangle(key));
+    std::vector<RasterOverlayProjection> missing;
+
+    provider.setFrameNumber(1);
+    RasterMappedToTilesetTile mapped;
+    mapped.update(
+        key,
+        details,
+        256.0,
+        256.0,
+        provider,
+        nullptr,
+        missing);
+    RasterOverlayTile* tile = mapped.getLoadingTile();
+    ASSERT_NE(nullptr, tile);
+    tile->setTexture(std::make_unique<TestTexture>(64, 32));
+
+    std::weak_ptr<RasterOverlayTile> weakTile =
+        mapped.getLoadingTileHandle();
+    mapped.update(
+        key,
+        details,
+        256.0,
+        256.0,
+        provider,
+        nullptr,
+        missing);
+
+    SurfaceRasterBinding binding = chooseSurfaceRasterBinding(&mapped);
+    ASSERT_EQ(SurfaceRasterBindingKind::RealTile, binding.kind);
+    ASSERT_TRUE(binding.tileHandle);
+
+    RenderCommand command;
+    command.textures.push_back(binding.tile->getTexture());
+    command.resourceKeepAlive.push_back(binding.tileHandle);
+    binding.tileHandle.reset();
+
+    mapped.releaseTileReferences(nullptr);
+    provider.setFrameNumber(200);
+    provider.trimUnusedTiles();
+
+    EXPECT_EQ(provider.getCachedTileCount(), 1);
+    EXPECT_FALSE(weakTile.expired());
+    EXPECT_EQ(command.textures[0], tile->getTexture());
+
+    command.resourceKeepAlive.clear();
+    provider.trimUnusedTiles();
+    EXPECT_EQ(provider.getCachedTileCount(), 0);
+    EXPECT_TRUE(weakTile.expired());
+}
+
 TEST(RasterOverlayLifecycleTest, SurfaceRasterBindingAcceptsOnlyRealLoadedTiles) {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
@@ -311,6 +376,7 @@ TEST(RasterOverlayLifecycleTest, SurfaceRasterBindingAcceptsOnlyRealLoadedTiles)
     SurfaceRasterBinding real = chooseSurfaceRasterBinding(&mapped);
     EXPECT_EQ(SurfaceRasterBindingKind::RealTile, real.kind);
     EXPECT_EQ(real.tile, tile);
+    EXPECT_EQ(real.tileHandle.get(), tile);
 
     tile->loadInMainThread();
     EXPECT_EQ(RasterOverlayTile::LoadState::Done, tile->getState());
@@ -363,11 +429,10 @@ TEST(RasterOverlayLifecycleTest, SurfaceRasterBindingClassifiesAncestorWhileChil
     details.setGeographicRectangle(scheme->tileToRectangle(parentKey));
     std::vector<RasterOverlayProjection> missing;
 
-    TilesetTile parentTile;
-    parentTile.key = parentKey;
-    parentTile.rasterOverlays.emplace_back(
-        std::make_unique<RasterMappedToTilesetTile>());
-    parentTile.rasterOverlays[0]->update(
+    TilesetTile parentTile(parentKey, scheme->tileToRectangle(parentKey));
+    RasterMappedToTilesetTile& parentMapping =
+        parentTile.rasterOverlayState.ensureMapping(0);
+    parentMapping.update(
         parentKey,
         details,
         256.0,
@@ -376,10 +441,10 @@ TEST(RasterOverlayLifecycleTest, SurfaceRasterBindingClassifiesAncestorWhileChil
         nullptr,
         missing);
     RasterOverlayTile* parentRaster =
-        parentTile.rasterOverlays[0]->getLoadingTile();
+        parentMapping.getLoadingTile();
     ASSERT_NE(nullptr, parentRaster);
     parentRaster->setTexture(std::make_unique<TestTexture>(4, 4));
-    parentTile.rasterOverlays[0]->update(
+    parentMapping.update(
         parentKey,
         details,
         256.0,
@@ -387,7 +452,7 @@ TEST(RasterOverlayLifecycleTest, SurfaceRasterBindingClassifiesAncestorWhileChil
         provider,
         nullptr,
         missing);
-    ASSERT_EQ(parentTile.rasterOverlays[0]->getReadyTile(), parentRaster);
+    ASSERT_EQ(parentMapping.getReadyTile(), parentRaster);
 
     RasterMappedToTilesetTile childMapped;
     RasterOverlayDetails childDetails;
