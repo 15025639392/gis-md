@@ -11567,6 +11567,52 @@ void testTileRenderPlanFinalizerCountsRootPrepOnce() {
           "TileRenderPlanFinalizer: root/no-ancestor direct prep is counted once to avoid blank frames");
 }
 
+void testTileRenderPlanFinalizerDefersFallbackPrepDuringInteraction() {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
+    TilesetTile child(childKey, Rectangle{0.0, 1.0, 1.0, 2.0}, &parent);
+
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {TileCacheKey::forTile(parentKey), &parent},
+        {TileCacheKey::forTile(childKey), &child}};
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(childKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            true,
+            0,
+            1},
+        [&tiles](const TileKey& key) -> TilesetTile* {
+            auto it = tiles.find(TileCacheKey::forTile(key));
+            return it == tiles.end() ? nullptr : it->second;
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [&parent](const TilesetTile& tile) {
+            return tile.key == parent.key;
+        },
+        [&parent](const TilesetTile& tile) {
+            return tile.key == parent.key;
+        });
+
+    check(plan.renderEntries.size() == 1 &&
+              plan.renderEntries.front().selectedKey == childKey &&
+              plan.renderEntries.front().renderKey == parentKey &&
+              plan.renderEntries.front().reason ==
+                  TileRenderEntryReason::AncestorFallback &&
+              plan.renderEntries.front().usesAncestorFallback &&
+              !plan.renderEntries.front().allowSynchronousMeshPrep &&
+              plan.renderEntryAncestorFallbackCount == 1 &&
+              plan.renderEntrySynchronousPrepCount == 0 &&
+              plan.renderEntryDeferredPrepCount == 1,
+          "TileRenderPlanFinalizer: interaction fallback can defer ancestor mesh prep when base command binding is available");
+}
+
 void testTileRenderPlanFinalizerReadsSelectionFrameFade() {
     const TileKey rootKey{"test", 0, 0, 0};
     TilesetTile root(rootKey, Rectangle{});
@@ -20508,6 +20554,7 @@ int main() {
     testTileRenderPlanFinalizerSkipsSurfaceEntryWithoutCommandBinding();
     testTileRenderPlanFinalizerPrefersFullGeometryOverEarlierClip();
     testTileRenderPlanFinalizerCountsRootPrepOnce();
+    testTileRenderPlanFinalizerDefersFallbackPrepDuringInteraction();
     testTileRenderPlanFinalizerReadsSelectionFrameFade();
     testTileRenderEntryClassifiesFrontierRoles();
     testTileRenderEntryCommandBuilderCountsSkippedEntries();
