@@ -1,5 +1,8 @@
 #pragma once
 
+#include "../layers/ActivatedRasterOverlay.h"
+#include "../layers/RasterOverlay.h"
+#include "RasterMappedToTilesetTile.h"
 #include "TileRasterOverlayPrefetcher.h"
 #include "TileRasterOverlayReadinessPolicy.h"
 #include "TileRenderablePolicy.h"
@@ -10,13 +13,38 @@
 
 namespace earth_engine {
 
-class ActivatedRasterOverlay;
 class FrameResourceBudget;
 class RenderDevice;
 struct TilesetTile;
 
 class TileSelectionRasterOverlayPreparer {
 public:
+    static bool canSkipReadyOverlayPrefetch(
+        const TilesetTile& tile,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+        if (!TileRasterOverlayReadinessPolicy::requiredOverlaysReady(
+                tile,
+                rasterOverlays)) {
+            return false;
+        }
+        for (size_t i = 0;
+             i < rasterOverlays.size() &&
+             i < tile.rasterOverlayState.mappingCount();
+             ++i) {
+            const ActivatedRasterOverlay* activeOverlay = rasterOverlays[i];
+            if (!activeOverlay || !activeOverlay->visible() ||
+                !activeOverlay->getOverlay().blocksCompleteRenderable()) {
+                continue;
+            }
+            const RasterMappedToTilesetTile* mapped =
+                tile.rasterOverlayState.mappingAt(i);
+            if (mapped && mapped->isMoreDetailAvailable()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     static bool isCompleteRenderable(
         const TilesetTile& tile,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
@@ -55,7 +83,7 @@ public:
         // raster mappings, so advance required overlays during traversal.
         if (!rasterOverlays.empty() &&
             tile.rasterOverlayState.mappingCount() >= rasterOverlays.size()) {
-            if (TileRasterOverlayReadinessPolicy::requiredOverlaysReady(
+            if (canSkipReadyOverlayPrefetch(
                     tile,
                     rasterOverlays)) {
                 return;

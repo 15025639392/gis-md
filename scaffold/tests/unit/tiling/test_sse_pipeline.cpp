@@ -4964,6 +4964,72 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
           "Tileset: build command emits a surface command from the core ready raster");
 }
 
+void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+
+    auto terrainProvider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(terrainProvider),
+        std::move(scheme),
+        {&activated},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: ready-raster prefetch skip root tile is created");
+    if (!root) return;
+
+    const Rectangle preciseRectangle =
+        Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
+    root->bounds = preciseRectangle;
+    root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    root->content.renderContent.mutableSurfaceMesh()
+        ->rasterOverlayDetails.setGeographicRectangle(preciseRectangle);
+    root->content.renderContent.setMeshReady(true);
+    root->content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(32),
+        nullptr);
+    root->geometricError = 100.0;
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Render;
+    root->rasterOverlayState.mappings().resize(1);
+
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    RasterMappedToTilesetTile* mapped =
+        root->rasterOverlayState.mappingAt(0);
+    RasterOverlayTile* loadingTile =
+        mapped ? mapped->getLoadingTile() : nullptr;
+    check(loadingTile != nullptr,
+          "Tileset: ready-raster prefetch skip creates loading raster");
+    if (!mapped || !loadingTile) return;
+
+    loadingTile->setTexture(std::make_unique<DummyTexture>(4, 4));
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    check(mapped->getReadyTile() == loadingTile,
+          "Tileset: ready-raster prefetch skip has a ready mapping");
+    check(TileSelectionRasterOverlayPreparer::canSkipReadyOverlayPrefetch(
+              *root,
+              std::vector<ActivatedRasterOverlay*>{&activated}),
+          "Tileset: ready raster with no more detail skips traversal prefetch");
+
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    check(!TileSelectionRasterOverlayPreparer::canSkipReadyOverlayPrefetch(
+              *root,
+              std::vector<ActivatedRasterOverlay*>{&activated}),
+          "Tileset: ready raster with more detail keeps traversal prefetch active");
+}
+
 void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
     auto baseOverlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -20661,6 +20727,7 @@ int main() {
     testTilesetPrefetchesRasterFromBoundingRegionBeforeRenderContent();
     testTileRasterOverlayFrameProcessorPrefetchesByPriority();
     testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach();
+    testRasterSelectionPrefetchSkipHonorsMoreDetail();
     testTilesetBlockingBaseImageryDrawsPlaceholderSurface();
     testTilesetFailedChildBaseImageryUsesAncestorCommandTexture();
     testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw();
