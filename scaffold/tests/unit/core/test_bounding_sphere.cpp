@@ -86,3 +86,17 @@ TEST(BoundingSphereTest, TransformNonUniformScaleUsesMaximumAxis) {
     EXPECT_DOUBLE_EQ(12.0, transformed.getCenter().z());
     EXPECT_DOUBLE_EQ(180.0, transformed.getRadius());
 }
+
+TEST(BoundingSphereTest, TransformNegativeScaleUsesAxisLengthLikeCesiumNative) {
+    // Cesium-native derives the radius scale from the transformed axis lengths,
+    // so mirrored axes still contribute positive scale magnitudes.
+    BoundingSphere sphere(Vec3(1.0, -2.0, 3.0), 10.0);
+    const Mat4 transform = Mat4::scale(Vec3(-2.0, 3.0, -4.0));
+
+    BoundingSphere transformed = sphere.transform(transform);
+
+    EXPECT_DOUBLE_EQ(-2.0, transformed.getCenter().x());
+    EXPECT_DOUBLE_EQ(-6.0, transformed.getCenter().y());
+    EXPECT_DOUBLE_EQ(-12.0, transformed.getCenter().z());
+    EXPECT_DOUBLE_EQ(40.0, transformed.getRadius());
+}
