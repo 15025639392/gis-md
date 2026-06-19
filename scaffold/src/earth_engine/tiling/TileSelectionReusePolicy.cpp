@@ -5,8 +5,6 @@
 namespace earth_engine {
 namespace {
 
-constexpr uint64_t kStrictResourceRefreshFrameAge = 30;
-
 bool matricesNearlyEqual(const Mat4& lhs,
                          const Mat4& rhs,
                          double epsilon) {
@@ -133,14 +131,8 @@ TileSelectionReusePolicy::classifyReuseWithReason(
             TileSelectionReuseMode::Stale,
             TileSelectionReuseRejectReason::None};
     }
-    if (input.currentResourceRevision != input.lastResourceRevision &&
-        input.currentFrameId >= input.lastSelectionFrameId &&
-        input.currentFrameId - input.lastSelectionFrameId >
-            kStrictResourceRefreshFrameAge) {
-        return {
-            TileSelectionReuseMode::None,
-            TileSelectionReuseRejectReason::ResourceChanged};
-    }
+    (void)input.currentResourceRevision;
+    (void)input.lastResourceRevision;
     if (input.hasFadingTiles) {
         return {
             TileSelectionReuseMode::None,
