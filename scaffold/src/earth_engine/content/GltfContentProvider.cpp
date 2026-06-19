@@ -570,39 +570,23 @@ std::string toLowerAscii(std::string value) {
     return value;
 }
 
-Mat4 xUpToZUpTransform() {
-    return Mat4(glm::dmat4(
-        glm::dvec4(0.0, 0.0, 1.0, 0.0),
-        glm::dvec4(0.0, 1.0, 0.0, 0.0),
-        glm::dvec4(-1.0, 0.0, 0.0, 0.0),
-        glm::dvec4(0.0, 0.0, 0.0, 1.0)));
-}
-
-Mat4 yUpToZUpTransform() {
-    return Mat4(glm::dmat4(
-        glm::dvec4(1.0, 0.0, 0.0, 0.0),
-        glm::dvec4(0.0, 0.0, 1.0, 0.0),
-        glm::dvec4(0.0, -1.0, 0.0, 0.0),
-        glm::dvec4(0.0, 0.0, 0.0, 1.0)));
-}
-
 Mat4 parseGltfUpAxisTransform(const nlohmann::json& tilesetJson) {
     auto assetIt = tilesetJson.find("asset");
     if (assetIt == tilesetJson.end() || !assetIt->is_object()) {
-        return yUpToZUpTransform();
+        return Transforms::getUpAxisTransform(UpAxis::Y, UpAxis::Z);
     }
     auto upAxisIt = assetIt->find("gltfUpAxis");
     if (upAxisIt == assetIt->end() || !upAxisIt->is_string()) {
-        return yUpToZUpTransform();
+        return Transforms::getUpAxisTransform(UpAxis::Y, UpAxis::Z);
     }
     const std::string upAxis = toLowerAscii(upAxisIt->get<std::string>());
     if (upAxis == "x") {
-        return xUpToZUpTransform();
+        return Transforms::getUpAxisTransform(UpAxis::X, UpAxis::Z);
     }
     if (upAxis == "z") {
-        return Mat4::identity();
+        return Transforms::getUpAxisTransform(UpAxis::Z, UpAxis::Z);
     }
-    return yUpToZUpTransform();
+    return Transforms::getUpAxisTransform(UpAxis::Y, UpAxis::Z);
 }
 
 bool urlLooksLikeJson(const std::string& url) {

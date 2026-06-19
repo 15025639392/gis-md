@@ -8,10 +8,24 @@ namespace earth_engine {
 
 class Ellipsoid;
 
+enum class UpAxis {
+    X,
+    Y,
+    Z
+};
+
 /// 坐标变换工具集。
 /// 提供 ECEF ↔ ENU、degree ↔ radian 等转换。
 class Transforms {
 public:
+    static const Mat4& X_UP_TO_Y_UP();
+    static const Mat4& X_UP_TO_Z_UP();
+    static const Mat4& Y_UP_TO_X_UP();
+    static const Mat4& Y_UP_TO_Z_UP();
+    static const Mat4& Z_UP_TO_X_UP();
+    static const Mat4& Z_UP_TO_Y_UP();
+    static const Mat4& getUpAxisTransform(UpAxis from, UpAxis to);
+
     /// 计算从局部 East-North-Up 到 ECEF fixed frame 的矩阵。
     /// 语义对齐 cesium-native GlobeTransforms::eastNorthUpToFixedFrame。
     static Mat4 eastNorthUpToFixedFrame(const Vec3& originEcef);

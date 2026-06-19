@@ -25,6 +25,92 @@ namespace {
         }
         return value > 0.0 ? 1.0 : -1.0;
     }
+
+    const Mat4& identityTransform() {
+        static const Mat4 identity = Mat4::identity();
+        return identity;
+    }
+}
+
+const Mat4& Transforms::Y_UP_TO_Z_UP() {
+    static const Mat4 transform(glm::dmat4(
+        glm::dvec4(1.0, 0.0, 0.0, 0.0),
+        glm::dvec4(0.0, 0.0, 1.0, 0.0),
+        glm::dvec4(0.0, -1.0, 0.0, 0.0),
+        glm::dvec4(0.0, 0.0, 0.0, 1.0)));
+    return transform;
+}
+
+const Mat4& Transforms::Z_UP_TO_Y_UP() {
+    static const Mat4 transform(glm::dmat4(
+        glm::dvec4(1.0, 0.0, 0.0, 0.0),
+        glm::dvec4(0.0, 0.0, -1.0, 0.0),
+        glm::dvec4(0.0, 1.0, 0.0, 0.0),
+        glm::dvec4(0.0, 0.0, 0.0, 1.0)));
+    return transform;
+}
+
+const Mat4& Transforms::X_UP_TO_Z_UP() {
+    static const Mat4 transform(glm::dmat4(
+        glm::dvec4(0.0, 0.0, 1.0, 0.0),
+        glm::dvec4(0.0, 1.0, 0.0, 0.0),
+        glm::dvec4(-1.0, 0.0, 0.0, 0.0),
+        glm::dvec4(0.0, 0.0, 0.0, 1.0)));
+    return transform;
+}
+
+const Mat4& Transforms::Z_UP_TO_X_UP() {
+    static const Mat4 transform(glm::dmat4(
+        glm::dvec4(0.0, 0.0, -1.0, 0.0),
+        glm::dvec4(0.0, 1.0, 0.0, 0.0),
+        glm::dvec4(1.0, 0.0, 0.0, 0.0),
+        glm::dvec4(0.0, 0.0, 0.0, 1.0)));
+    return transform;
+}
+
+const Mat4& Transforms::X_UP_TO_Y_UP() {
+    static const Mat4 transform(glm::dmat4(
+        glm::dvec4(0.0, 1.0, 0.0, 0.0),
+        glm::dvec4(-1.0, 0.0, 0.0, 0.0),
+        glm::dvec4(0.0, 0.0, 1.0, 0.0),
+        glm::dvec4(0.0, 0.0, 0.0, 1.0)));
+    return transform;
+}
+
+const Mat4& Transforms::Y_UP_TO_X_UP() {
+    static const Mat4 transform(glm::dmat4(
+        glm::dvec4(0.0, -1.0, 0.0, 0.0),
+        glm::dvec4(1.0, 0.0, 0.0, 0.0),
+        glm::dvec4(0.0, 0.0, 1.0, 0.0),
+        glm::dvec4(0.0, 0.0, 0.0, 1.0)));
+    return transform;
+}
+
+const Mat4& Transforms::getUpAxisTransform(UpAxis from, UpAxis to) {
+    switch (from) {
+        case UpAxis::X:
+            switch (to) {
+                case UpAxis::X: return identityTransform();
+                case UpAxis::Y: return X_UP_TO_Y_UP();
+                case UpAxis::Z: return X_UP_TO_Z_UP();
+            }
+            break;
+        case UpAxis::Y:
+            switch (to) {
+                case UpAxis::X: return Y_UP_TO_X_UP();
+                case UpAxis::Y: return identityTransform();
+                case UpAxis::Z: return Y_UP_TO_Z_UP();
+            }
+            break;
+        case UpAxis::Z:
+            switch (to) {
+                case UpAxis::X: return Z_UP_TO_X_UP();
+                case UpAxis::Y: return Z_UP_TO_Y_UP();
+                case UpAxis::Z: return identityTransform();
+            }
+            break;
+    }
+    return identityTransform();
 }
 
 double Transforms::toRadians(double deg) {

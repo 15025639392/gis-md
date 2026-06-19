@@ -100,6 +100,12 @@ add_executable(test_ellipsoid
 target_link_libraries(test_ellipsoid PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_ellipsoid COMMAND test_ellipsoid)
 
+add_executable(test_transforms
+    unit/geodesy/test_transforms.cpp
+)
+target_link_libraries(test_transforms PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_transforms COMMAND test_transforms)
+
 add_executable(test_tile_scheme
     unit/tiling/test_tile_scheme.cpp
 )
