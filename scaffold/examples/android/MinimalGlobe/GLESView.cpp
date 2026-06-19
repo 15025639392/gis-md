@@ -11,6 +11,7 @@
 #include "earth_engine/Engine.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/scene/Camera.h"
+#include "earth_engine/scene/PresentationTrace.h"
 #include "earth_engine/platform/android/RenderDeviceGLES.h"
 #include "earth_engine/platform/android/AndroidPlatformBridge.h"
 #include "earth_engine/interaction/InputEvent.h"
@@ -430,6 +431,8 @@ Java_com_earthengine_sdk_GLESView_nativeDebugZoom(
     gEngine->onInputEvent(move);
 
     const auto& diag = gEngine->diagnostics();
+    const auto& trace = gEngine->presentationTrace();
+    const auto& cameraTrace = trace.camera;
     const double cameraRadius = gEngine->camera().position().length();
     const double sphericalAltitude = cameraRadius - 6378137.0;
     const double ellipsoidAltitude =
@@ -438,7 +441,9 @@ Java_com_earthengine_sdk_GLESView_nativeDebugZoom(
          "exact=%d parent=%d missing=%d unsupported=%d kicked=%d retained=%d "
          "entry plan=%d/%d/%d draw=%d/%d/%d miss=%d/%d/%d defer=%d/%d/%d fallback=%d prep=%d/%d surface/globe/masked=%d/%d/%d "
          "z=%d-%d targetZ=%d-%d texZ=%d-%d lod=%.0f eq=%d qRender=%d qWalk=%d qBal=%d "
-         "qFrustum=%d qHz=%d qEq2=%d grp=%d/%d/%d ellAlt=%.2f sphAlt=%.2f radius=%.2f FPS=%.1f draw=%d",
+         "qFrustum=%d qHz=%d qEq2=%d grp=%d/%d/%d "
+         "center=%.6f,%.6f targetH=%.2f camH=%.2f pitch=%.6f heading=%.6f vp=%dx%d "
+         "ellAlt=%.2f sphAlt=%.2f radius=%.2f FPS=%.1f draw=%d",
          scale,
          diag.visibleTiles,
          diag.cachedTextures,
@@ -484,6 +489,14 @@ Java_com_earthengine_sdk_GLESView_nativeDebugZoom(
          diag.mercatorTileCount,
          diag.northPolarTileCount,
          diag.southPolarTileCount,
+         cameraTrace.targetLongitudeDegrees,
+         cameraTrace.targetLatitudeDegrees,
+         cameraTrace.targetHeightMeters,
+         cameraTrace.cameraHeightMeters,
+         cameraTrace.pitchRadians,
+         cameraTrace.headingRadians,
+         cameraTrace.viewportWidthPixels,
+         cameraTrace.viewportHeightPixels,
          ellipsoidAltitude,
          sphericalAltitude,
          cameraRadius,
