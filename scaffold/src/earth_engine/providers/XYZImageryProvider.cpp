@@ -33,6 +33,39 @@ struct RequestCompletionGuard {
     }
 };
 
+#ifdef __ANDROID__
+constexpr int kMaxAndroidFailureLogs = 24;
+
+void logAndroidXyzFailure(const char* stage,
+                          const TileKey& key,
+                          int statusCode,
+                          size_t bodySize,
+                          const std::string& url) {
+    static std::atomic<int> logged{0};
+    if (logged.fetch_add(1, std::memory_order_relaxed) >=
+        kMaxAndroidFailureLogs) {
+        return;
+    }
+    __android_log_print(
+        ANDROID_LOG_WARN,
+        "XYZImagery",
+        "%s failed z=%d x=%d y=%d status=%d bytes=%zu url=%s",
+        stage,
+        key.z,
+        key.x,
+        key.y,
+        statusCode,
+        bodySize,
+        url.c_str());
+}
+#else
+void logAndroidXyzFailure(const char*,
+                          const TileKey&,
+                          int,
+                          size_t,
+                          const std::string&) {}
+#endif
+
 } // namespace
 
 // ============================================================
@@ -156,6 +189,7 @@ void XYZImageryProvider::requestTile(const TileKey& key,
             url,
             [this,
              key,
+             url,
              token = std::move(token),
              callback = std::move(callback),
              requestHandle](int statusCode, std::vector<uint8_t> body) mutable {
@@ -169,6 +203,7 @@ void XYZImageryProvider::requestTile(const TileKey& key,
                 AsyncSystem::run(
                     [this,
                      key,
+                     url,
                      tokenPtr,
                      callbackPtr,
                      statusCode,
@@ -177,11 +212,27 @@ void XYZImageryProvider::requestTile(const TileKey& key,
                         if (tokenPtr->isCancelled() ||
                             statusCode != 200 ||
                             bodyPtr->empty()) {
+                            if (!tokenPtr->isCancelled()) {
+                                logAndroidXyzFailure(
+                                    "http",
+                                    key,
+                                    statusCode,
+                                    bodyPtr->size(),
+                                    url);
+                            }
                             (*callbackPtr)(key, nullptr);
                             return;
                         }
                         auto image =
                             decodeTile(bodyPtr->data(), bodyPtr->size());
+                        if (!image) {
+                            logAndroidXyzFailure(
+                                "decode",
+                                key,
+                                statusCode,
+                                bodyPtr->size(),
+                                url);
+                        }
                         (*callbackPtr)(key, std::move(image));
                     });
             },
@@ -200,11 +251,12 @@ void XYZImageryProvider::requestTile(const TileKey& key,
         std::make_shared<std::unique_ptr<HttpRequest>>();
     *requestHandle = CurlMultiRequestScheduler::shared().get(
         url,
-        [this,
-         key,
-         token = std::move(token),
-         callback = std::move(callback),
-         requestHandle](int statusCode, std::vector<uint8_t> body) mutable {
+         [this,
+          key,
+          url,
+          token = std::move(token),
+          callback = std::move(callback),
+          requestHandle](int statusCode, std::vector<uint8_t> body) mutable {
             (void)requestHandle;
             auto tokenPtr =
                 std::make_shared<CancellationToken>(std::move(token));
@@ -215,6 +267,7 @@ void XYZImageryProvider::requestTile(const TileKey& key,
             AsyncSystem::run(
                 [this,
                  key,
+                 url,
                  tokenPtr,
                  callbackPtr,
                  statusCode,
@@ -223,10 +276,26 @@ void XYZImageryProvider::requestTile(const TileKey& key,
                     if (tokenPtr->isCancelled() ||
                         statusCode != 200 ||
                         bodyPtr->empty()) {
+                        if (!tokenPtr->isCancelled()) {
+                            logAndroidXyzFailure(
+                                "http",
+                                key,
+                                statusCode,
+                                bodyPtr->size(),
+                                url);
+                        }
                         (*callbackPtr)(key, nullptr);
                         return;
                     }
                     auto image = decodeTile(bodyPtr->data(), bodyPtr->size());
+                    if (!image) {
+                        logAndroidXyzFailure(
+                            "decode",
+                            key,
+                            statusCode,
+                            bodyPtr->size(),
+                            url);
+                    }
                     (*callbackPtr)(key, std::move(image));
                 });
         },
