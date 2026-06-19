@@ -39,6 +39,28 @@ TEST(RectangleTest, EmptyAndMaximumConstantsMatchCesiumNative) {
     EXPECT_NEAR(M_PI * 0.5, Rectangle::MAXIMUM.north(), 0.0);
 }
 
+TEST(RectangleTest, FromDegreesConvertsAllBoundariesLikeCesiumNative) {
+    // Ported from cesium-native GlobeRectangle::fromDegrees.
+    const Rectangle rectangle = Rectangle::fromDegrees(0.0, 20.0, 10.0, 30.0);
+
+    EXPECT_DOUBLE_EQ(0.0, rectangle.west());
+    EXPECT_DOUBLE_EQ(20.0 * kDegToRad, rectangle.south());
+    EXPECT_DOUBLE_EQ(10.0 * kDegToRad, rectangle.east());
+    EXPECT_DOUBLE_EQ(30.0 * kDegToRad, rectangle.north());
+}
+
+TEST(RectangleTest, ExactEqualityMatchesCesiumNativeFieldComparison) {
+    // Ported from cesium-native GlobeRectangle::equals.
+    const Rectangle simple(0.1, 0.2, 0.3, 0.4);
+
+    EXPECT_EQ(simple, simple);
+    EXPECT_EQ(simple, Rectangle(0.1, 0.2, 0.3, 0.4));
+    EXPECT_NE(simple, Rectangle(0.11, 0.2, 0.3, 0.4));
+    EXPECT_NE(simple, Rectangle(0.1, 0.202, 0.3, 0.4));
+    EXPECT_NE(simple, Rectangle(0.1, 0.2, 0.300004, 0.4));
+    EXPECT_NE(simple, Rectangle(0.1, 0.2, 0.3, 0.5));
+}
+
 TEST(RectangleTest, EqualsEpsilonMatchesCesiumNative) {
     // Ported from cesium-native CesiumGeospatial/test/TestGlobeRectangle.cpp.
     const Rectangle simple(0.1, 0.2, 0.3, 0.4);
