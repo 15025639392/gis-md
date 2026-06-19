@@ -156,6 +156,21 @@ TEST(OrientedBoundingBoxTest, ToAxisAlignedMatchesCesiumNativeRotatedBox) {
     EXPECT_NEAR(3.0 + sqrt2, aabb.maximumZ(), 1e-14);
 }
 
+TEST(OrientedBoundingBoxTest, FromAxisAlignedMatchesCesiumNative) {
+    const AxisAlignedBox aabb(-1.0, -2.0, -3.0, 5.0, 8.0, 11.0);
+
+    const OrientedBoundingBox box = OrientedBoundingBox::fromAxisAligned(aabb);
+
+    EXPECT_EQ(aabb.center(), box.getCenter());
+    EXPECT_EQ(Vec3(3.0, 0.0, 0.0), box.getHalfAxis(0));
+    EXPECT_EQ(Vec3(0.0, 5.0, 0.0), box.getHalfAxis(1));
+    EXPECT_EQ(Vec3(0.0, 0.0, 7.0), box.getHalfAxis(2));
+    EXPECT_EQ(Vec3(6.0, 10.0, 14.0), box.getLengths());
+    EXPECT_TRUE(box.contains(Vec3(-1.0, -2.0, -3.0)));
+    EXPECT_TRUE(box.contains(Vec3(5.0, 8.0, 11.0)));
+    EXPECT_FALSE(box.contains(Vec3(5.0 + 1e-12, 8.0, 11.0)));
+}
+
 TEST(OrientedBoundingBoxTest, FromSphereBuildsCircumscribedBox) {
     BoundingSphere sphere(Vec3(1.0, 2.0, 3.0), 10.0);
 

@@ -204,6 +204,15 @@ public:
             Vec3(0.0, 0.0, sphere.getRadius()));
     }
 
+    static OrientedBoundingBox fromAxisAligned(
+        const AxisAlignedBox& axisAligned) noexcept {
+        return OrientedBoundingBox(
+            axisAligned.center(),
+            Vec3(axisAligned.lengthX() * 0.5, 0.0, 0.0),
+            Vec3(0.0, axisAligned.lengthY() * 0.5, 0.0),
+            Vec3(0.0, 0.0, axisAligned.lengthZ() * 0.5));
+    }
+
 private:
     Vec3 center_;
     Vec3 halfAxes_[3];
