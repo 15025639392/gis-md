@@ -13,6 +13,7 @@ source "$SCRIPT_DIR/env.sh"
 
 PRESET="${GIS_MD_NATIVE_TEST_PRESET:-native-tests}"
 BUILD_DIR="$SCRIPT_DIR/build/$PRESET"
+LOCK_DIR="$SCRIPT_DIR/build/$PRESET.lock"
 
 if ! command -v cmake >/dev/null 2>&1; then
     echo "ERROR: cmake not found after sourcing $SCRIPT_DIR/env.sh" >&2
@@ -25,6 +26,26 @@ if ! command -v ninja >/dev/null 2>&1; then
 fi
 
 cd "$SCRIPT_DIR"
+
+mkdir -p "$SCRIPT_DIR/build"
+while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+    if [ -f "$LOCK_DIR/pid" ]; then
+        lock_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+        if [ -n "$lock_pid" ] && ! kill -0 "$lock_pid" 2>/dev/null; then
+            rm -f "$LOCK_DIR/pid"
+            rmdir "$LOCK_DIR" 2>/dev/null || true
+            continue
+        fi
+    fi
+    echo "Waiting for native test build lock: $LOCK_DIR" >&2
+    sleep 1
+done
+echo "$$" > "$LOCK_DIR/pid"
+cleanup_lock() {
+    rm -f "$LOCK_DIR/pid"
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+trap cleanup_lock EXIT
 
 cmake --preset "$PRESET"
 
