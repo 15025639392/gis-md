@@ -37,6 +37,7 @@
 #include "earth_engine/tiling/TileEmptyContentRegistry.h"
 #include "earth_engine/tiling/TileFrameResourceBudgetPlanner.h"
 #include "earth_engine/tiling/TileFrameState.h"
+#include "earth_engine/tiling/TileFrameWorkCoordinator.h"
 #include "earth_engine/tiling/TileFrameDebugLogFormatter.h"
 #include "earth_engine/tiling/TileIndexState.h"
 #include "earth_engine/tiling/TileLoadDiagnostics.h"
@@ -14412,6 +14413,93 @@ void testTileUpdateSelectionWorkRunnerPumpsResourcesDuringReuse() {
           "TileUpdateSelectionWorkRunner: reuse records resource pump activity");
 }
 
+void testTileFrameWorkCoordinatorReselectsDuringActiveInteraction() {
+    FrameState previousFrame;
+    previousFrame.frameId = 10;
+    previousFrame.viewportWidthPixels = 800;
+    previousFrame.viewportHeightPixels = 600;
+    SelectorView previousView;
+    previousView.position = Vec3(1000.0, 0.0, 0.0);
+    previousView.direction = Vec3(0.0, 1.0, 0.0);
+    previousView.viewportHeightPixels = 600;
+    previousFrame.selectorViews.push_back(previousView);
+
+    std::vector<ActivatedRasterOverlay*> overlays;
+    TileSelectionReuseState reuseState;
+    reuseState.commit(
+        previousFrame,
+        1,
+        TileRasterOverlaySignature::configuration(overlays));
+
+    Camera camera;
+    camera.setView(
+        Vec3(1050.0, 0.0, 0.0),
+        Vec3(0.005, 0.9999875, 0.0),
+        Vec3(0.0, 0.0, 1.0));
+
+    FrameState movingFrame = previousFrame;
+    movingFrame.frameId = 11;
+    movingFrame.timeSeconds = 1.0;
+    movingFrame.camera = &camera;
+    movingFrame.selectorViews[0].position = Vec3(1050.0, 0.0, 0.0);
+    movingFrame.selectorViews[0].direction = Vec3(0.005, 0.9999875, 0.0);
+
+    TilePlan tilePlan;
+    TileLoadQueue loadQueue;
+    TileSelectionCounters counters;
+    FrameResourceBudget budget;
+    Vec3 lastCameraPosition = Vec3(1000.0, 0.0, 0.0);
+    Vec3 lastCameraDirection = Vec3(0.0, 1.0, 0.0);
+    bool cameraMoving = false;
+    bool interactionActive = false;
+    bool resourceSmoothingActive = false;
+    double lastInteractionActiveTimeSeconds = -1.0;
+
+    bool refreshCalled = false;
+    bool selectCalled = false;
+
+    const TileFrameWorkResult result = TileFrameWorkCoordinator::run(
+        TileFrameWorkInput{
+            tilePlan,
+            loadQueue,
+            counters,
+            reuseState,
+            overlays,
+            budget,
+            nullptr,
+            movingFrame,
+            1,
+            20,
+            20,
+            0.0,
+            1.25,
+            16.0},
+        TileFrameWorkState{
+            cameraMoving,
+            interactionActive,
+            resourceSmoothingActive,
+            lastInteractionActiveTimeSeconds,
+            lastCameraPosition,
+            lastCameraDirection},
+        [](bool, bool, FrameResourceBudget*) { return false; },
+        []() {},
+        []() { return true; },
+        [&]() { refreshCalled = true; },
+        [&](const FrameState&) { selectCalled = true; },
+        [](const TileKey&) -> TilesetTile* { return nullptr; },
+        [](const std::vector<TileLoadRequest>&, FrameResourceBudget*) {
+            return TileLoadRequestOutcome{};
+        });
+
+    check(result.interactionActive && result.resourceSmoothingActive,
+          "TileFrameWorkCoordinator: moving camera enters active resource smoothing");
+    check(selectCalled && !refreshCalled &&
+              result.selectionWork.reuseMode == TileSelectionReuseMode::None &&
+              result.selectionWork.reuseRejectReason ==
+                  TileSelectionReuseRejectReason::SelectorMovedStaleDisabled,
+          "TileFrameWorkCoordinator: active interaction reselects instead of stale-reusing the previous view");
+}
+
 void testTilePendingLoadQueueUsesSharedPriorityOrder() {
     TilePendingLoadQueue queue;
     const TileKey terrainKey{"test", 1, 0, 0};
@@ -20611,6 +20699,7 @@ int main() {
     testTileFrameDebugLogFormatterReportsReuseMode();
     testTileFrameDebugLogFormatterReportsRenderEntryPassCounts();
     testTileUpdateSelectionWorkRunnerPumpsResourcesDuringReuse();
+    testTileFrameWorkCoordinatorReselectsDuringActiveInteraction();
     testTilePendingLoadQueueUsesSharedPriorityOrder();
     testTilePendingLoadQueueFiltersNonUrgentDuringInteraction();
     testTilePendingLoadQueueTakesTerminalResultsByPriority();

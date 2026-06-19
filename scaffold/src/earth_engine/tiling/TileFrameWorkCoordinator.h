@@ -115,12 +115,14 @@ public:
                 input.rasterOverlays);
         const uint64_t currentOverlaySignature =
             TileRasterOverlaySignature::configuration(input.rasterOverlays);
+        const bool allowStaleSelection =
+            result.resourceSmoothingActive && !result.interactionActive;
         const TileSelectionReuseClassification reuseClassification =
             input.selectionReuseState.classifyReuseWithReason(
                 input.frameState,
                 currentResourceRevision,
                 currentOverlaySignature,
-                result.resourceSmoothingActive,
+                allowStaleSelection,
                 !input.tilePlan.tilesFadingOut.empty() ||
                     input.tilePlan.fadingNodeCount > 0,
                 hasTilesetPendingWork(),
