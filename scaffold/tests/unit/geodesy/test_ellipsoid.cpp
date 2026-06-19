@@ -20,6 +20,53 @@ TEST(EllipsoidTest, Wgs84Constants) {
     EXPECT_NEAR(1.0 / 298.257223563, e.flattening(), 1e-12);
 }
 
+TEST(EllipsoidTest, TriAxialRadiiStateMatchesCesiumNative) {
+    // cesium-native Ellipsoid stores independent x/y/z radii and derives
+    // squared and reciprocal state from all three components.
+    const Ellipsoid e(2.0, 3.0, 4.0);
+
+    EXPECT_EQ(Vec3(2.0, 3.0, 4.0), e.radii());
+    EXPECT_DOUBLE_EQ(4.0, e.maximumRadius());
+    EXPECT_DOUBLE_EQ(2.0, e.minimumRadius());
+}
+
+TEST(EllipsoidTest, TriAxialCartographicToCartesianUsesAllRadii) {
+    const Ellipsoid e(2.0, 3.0, 4.0);
+
+    Vec3 xEquator = e.cartographicToCartesian(
+        Cartographic::fromRadians(0.0, 0.0, 0.0));
+    EXPECT_NEAR(2.0, xEquator.x(), 1e-12);
+    EXPECT_NEAR(0.0, xEquator.y(), 1e-12);
+    EXPECT_NEAR(0.0, xEquator.z(), 1e-12);
+
+    Vec3 yEquator = e.cartographicToCartesian(
+        Cartographic::fromRadians(M_PI / 2.0, 0.0, 0.0));
+    EXPECT_NEAR(0.0, yEquator.x(), 1e-12);
+    EXPECT_NEAR(3.0, yEquator.y(), 1e-12);
+    EXPECT_NEAR(0.0, yEquator.z(), 1e-12);
+}
+
+TEST(EllipsoidTest, TriAxialGeodeticSurfaceNormalUsesAllRadii) {
+    const Ellipsoid e(2.0, 3.0, 4.0);
+
+    Vec3 normal = e.geodeticSurfaceNormal(Vec3(2.0, 3.0, 0.0));
+    const Vec3 expected = Vec3(0.5, 1.0 / 3.0, 0.0).normalized();
+
+    EXPECT_NEAR(expected.x(), normal.x(), 1e-12);
+    EXPECT_NEAR(expected.y(), normal.y(), 1e-12);
+    EXPECT_NEAR(expected.z(), normal.z(), 1e-12);
+}
+
+TEST(EllipsoidTest, TriAxialRayIntersectionIntervalUsesAllRadii) {
+    const Ellipsoid e(2.0, 3.0, 4.0);
+
+    auto interval = e.rayIntersectionInterval(Vec3(0.0, 6.0, 0.0),
+                                              Vec3(0.0, -1.0, 0.0));
+    ASSERT_TRUE(interval.has_value());
+    EXPECT_NEAR(3.0, interval->entryDistance, 1e-12);
+    EXPECT_NEAR(9.0, interval->exitDistance, 1e-12);
+}
+
 // ============================================================
 // Cartographic → ECEF → Cartographic 往返
 // ============================================================

@@ -22,29 +22,35 @@ namespace {
 // ============================================================
 
 Ellipsoid::Ellipsoid(double semiMajorAxis, double semiMinorAxis)
-    : a_(semiMajorAxis), b_(semiMinorAxis) {
-    f_ = (a_ - b_) / a_;
+    : Ellipsoid(semiMajorAxis, semiMajorAxis, semiMinorAxis) {}
+
+Ellipsoid::Ellipsoid(double radiusX, double radiusY, double radiusZ)
+    : radii_(radiusX, radiusY, radiusZ),
+      radiiSquared_(radiusX * radiusX, radiusY * radiusY, radiusZ * radiusZ),
+      oneOverRadii_(1.0 / radiusX, 1.0 / radiusY, 1.0 / radiusZ),
+      oneOverRadiiSquared_(1.0 / (radiusX * radiusX),
+                           1.0 / (radiusY * radiusY),
+                           1.0 / (radiusZ * radiusZ)) {
+    f_ = (radiusX - radiusZ) / radiusX;
     e2_ = 2.0 * f_ - f_ * f_;
 }
 
+double Ellipsoid::maximumRadius() const {
+    return std::max(radii_.x(), std::max(radii_.y(), radii_.z()));
+}
+
+double Ellipsoid::minimumRadius() const {
+    return std::min(radii_.x(), std::min(radii_.y(), radii_.z()));
+}
+
 Vec3 Ellipsoid::cartographicToCartesian(const Cartographic& cart) const {
-    double lng = cart.longitude();
-    double lat = cart.latitude();
-    double h = cart.height();
-
-    double sinLat = std::sin(lat);
-    double cosLat = std::cos(lat);
-    double sinLng = std::sin(lng);
-    double cosLng = std::cos(lng);
-
-    // Prime vertical radius of curvature
-    double N = a_ / std::sqrt(1.0 - e2_ * sinLat * sinLat);
-
-    double x = (N + h) * cosLat * cosLng;
-    double y = (N + h) * cosLat * sinLng;
-    double z = (N * (1.0 - e2_) + h) * sinLat;
-
-    return Vec3(x, y, z);
+    Vec3 normal = geodeticSurfaceNormal(cart);
+    Vec3 k(radiiSquared_.x() * normal.x(),
+           radiiSquared_.y() * normal.y(),
+           radiiSquared_.z() * normal.z());
+    const double gamma = std::sqrt(normal.dot(k));
+    k = k / gamma;
+    return k + normal * cart.height();
 }
 
 Cartographic Ellipsoid::cartesianToCartographic(const Vec3& ecef) const {
@@ -80,9 +86,9 @@ Vec3 Ellipsoid::geodeticSurfaceNormal(const Cartographic& cart) const {
 }
 
 Vec3 Ellipsoid::geodeticSurfaceNormal(const Vec3& ecef) const {
-    const double nx = ecef.x() / (a_ * a_);
-    const double ny = ecef.y() / (a_ * a_);
-    const double nz = ecef.z() / (b_ * b_);
+    const double nx = ecef.x() * oneOverRadiiSquared_.x();
+    const double ny = ecef.y() * oneOverRadiiSquared_.y();
+    const double nz = ecef.z() * oneOverRadiiSquared_.z();
     const double len = std::sqrt(nx * nx + ny * ny + nz * nz);
     if (len < 1e-24) return Vec3::unitZ();
     return Vec3(nx / len, ny / len, nz / len);
@@ -103,14 +109,16 @@ std::optional<Vec3> Ellipsoid::tryScaleToGeodeticSurface(
     const double py = point.y();
     const double pz = point.z();
 
-    const double invA = 1.0 / a_;
-    const double invB = 1.0 / b_;
-    const double invA2 = 1.0 / (a_ * a_);
-    const double invB2 = 1.0 / (b_ * b_);
+    const double invX = oneOverRadii_.x();
+    const double invY = oneOverRadii_.y();
+    const double invZ = oneOverRadii_.z();
+    const double invX2 = oneOverRadiiSquared_.x();
+    const double invY2 = oneOverRadiiSquared_.y();
+    const double invZ2 = oneOverRadiiSquared_.z();
 
-    const double x2 = px * px * invA * invA;
-    const double y2 = py * py * invA * invA;
-    const double z2 = pz * pz * invB * invB;
+    const double x2 = px * px * invX * invX;
+    const double y2 = py * py * invY * invY;
+    const double z2 = pz * pz * invZ * invZ;
 
     const double squaredNorm = x2 + y2 + z2;
     const double ratio = std::sqrt(1.0 / squaredNorm);
@@ -121,9 +129,9 @@ std::optional<Vec3> Ellipsoid::tryScaleToGeodeticSurface(
                                     : std::nullopt;
     }
 
-    const Vec3 gradient(intersection.x() * invA2 * 2.0,
-                        intersection.y() * invA2 * 2.0,
-                        intersection.z() * invB2 * 2.0);
+    const Vec3 gradient(intersection.x() * invX2 * 2.0,
+                        intersection.y() * invY2 * 2.0,
+                        intersection.z() * invZ2 * 2.0);
     double lambda =
         ((1.0 - ratio) * point.length()) / (0.5 * gradient.length());
     double correction = 0.0;
@@ -135,9 +143,9 @@ std::optional<Vec3> Ellipsoid::tryScaleToGeodeticSurface(
     do {
         lambda -= correction;
 
-        mx = 1.0 / (1.0 + lambda * invA2);
-        my = 1.0 / (1.0 + lambda * invA2);
-        mz = 1.0 / (1.0 + lambda * invB2);
+        mx = 1.0 / (1.0 + lambda * invX2);
+        my = 1.0 / (1.0 + lambda * invY2);
+        mz = 1.0 / (1.0 + lambda * invZ2);
 
         const double mx2 = mx * mx;
         const double my2 = my * my;
@@ -148,9 +156,9 @@ std::optional<Vec3> Ellipsoid::tryScaleToGeodeticSurface(
 
         func = x2 * mx2 + y2 * my2 + z2 * mz2 - 1.0;
         const double denominator =
-            x2 * mx3 * invA2 +
-            y2 * my3 * invA2 +
-            z2 * mz3 * invB2;
+            x2 * mx3 * invX2 +
+            y2 * my3 * invY2 +
+            z2 * mz3 * invZ2;
         const double derivative = -2.0 * denominator;
         correction = func / derivative;
     } while (std::abs(func) > kEpsilon12);
@@ -170,12 +178,16 @@ std::optional<Vec3> Ellipsoid::rayIntersection(const Vec3& origin,
 std::optional<RayEllipsoidIntersectionInterval>
 Ellipsoid::rayIntersectionInterval(const Vec3& origin,
                                    const Vec3& direction) const {
-    if (a_ == 0.0 || b_ == 0.0) {
+    if (radii_.x() == 0.0 || radii_.y() == 0.0 || radii_.z() == 0.0) {
         return std::nullopt;
     }
 
-    const Vec3 q(origin.x() / a_, origin.y() / a_, origin.z() / b_);
-    const Vec3 w(direction.x() / a_, direction.y() / a_, direction.z() / b_);
+    const Vec3 q(origin.x() * oneOverRadii_.x(),
+                 origin.y() * oneOverRadii_.y(),
+                 origin.z() * oneOverRadii_.z());
+    const Vec3 w(direction.x() * oneOverRadii_.x(),
+                 direction.y() * oneOverRadii_.y(),
+                 direction.z() * oneOverRadii_.z());
     const double q2 = q.dot(q);
     const double qw = q.dot(w);
     const double w2 = w.dot(w);
@@ -269,7 +281,9 @@ GeodesicInverseResult Ellipsoid::inverse(const Cartographic& start,
     } while (std::abs(lambda - previous) > kEpsilon12 && ++iterations < 1000);
 
     result.converged = iterations < 1000;
-    const double uSq = cosSqAlpha * (a_ * a_ - b_ * b_) / (b_ * b_);
+    const double a = semiMajorAxis();
+    const double b = semiMinorAxis();
+    const double uSq = cosSqAlpha * (a * a - b * b) / (b * b);
     const double A = 1.0 + (uSq / 16384.0) *
         (4096.0 + uSq * (-768.0 + uSq * (320.0 - 175.0 * uSq)));
     const double B = (uSq / 1024.0) *
@@ -281,7 +295,7 @@ GeodesicInverseResult Ellipsoid::inverse(const Cartographic& start,
                 (-3.0 + 4.0 * sinSigma * sinSigma) *
                 (-3.0 + 4.0 * cos2SigmaM * cos2SigmaM)));
 
-    result.distanceMeters = b_ * A * (sigma - deltaSigma);
+    result.distanceMeters = b * A * (sigma - deltaSigma);
     result.initialAzimuthRadians = normalizeTwoPi(std::atan2(
         cosU2 * std::sin(lambda),
         cosU1 * sinU2 - sinU1 * cosU2 * std::cos(lambda)));
@@ -303,13 +317,15 @@ GeodesicDirectResult Ellipsoid::direct(const Cartographic& start,
     const double sigma1 = std::atan2(tanU1, cosAlpha1);
     const double sinAlpha = cosU1 * sinAlpha1;
     const double cosSqAlpha = 1.0 - sinAlpha * sinAlpha;
-    const double uSq = cosSqAlpha * (a_ * a_ - b_ * b_) / (b_ * b_);
+    const double a = semiMajorAxis();
+    const double b = semiMinorAxis();
+    const double uSq = cosSqAlpha * (a * a - b * b) / (b * b);
     const double A = 1.0 + (uSq / 16384.0) *
         (4096.0 + uSq * (-768.0 + uSq * (320.0 - 175.0 * uSq)));
     const double B = (uSq / 1024.0) *
         (256.0 + uSq * (-128.0 + uSq * (74.0 - 47.0 * uSq)));
 
-    double sigma = distanceMeters / (b_ * A);
+    double sigma = distanceMeters / (b * A);
     double previous = 0.0;
     double cos2SigmaM = 0.0;
     double sinSigma = 0.0;
@@ -326,7 +342,7 @@ GeodesicDirectResult Ellipsoid::direct(const Cartographic& start,
                     (-3.0 + 4.0 * sinSigma * sinSigma) *
                     (-3.0 + 4.0 * cos2SigmaM * cos2SigmaM)));
         previous = sigma;
-        sigma = distanceMeters / (b_ * A) + deltaSigma;
+        sigma = distanceMeters / (b * A) + deltaSigma;
     } while (std::abs(sigma - previous) > kEpsilon12 && ++iterations < 1000);
 
     const double tmp = sinU1 * sinSigma - cosU1 * cosSigma * cosAlpha1;

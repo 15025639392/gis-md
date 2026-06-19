@@ -29,10 +29,14 @@ struct RayEllipsoidIntersectionInterval {
 class Ellipsoid {
 public:
     Ellipsoid(double semiMajorAxis, double semiMinorAxis);
+    Ellipsoid(double radiusX, double radiusY, double radiusZ);
 
-    double semiMajorAxis() const { return a_; }
-    double semiMinorAxis() const { return b_; }
+    double semiMajorAxis() const { return radii_.x(); }
+    double semiMinorAxis() const { return radii_.z(); }
     double flattening() const { return f_; }
+    const Vec3& radii() const { return radii_; }
+    double maximumRadius() const;
+    double minimumRadius() const;
 
     /// 椭球上方的大地纬度高 → ECEF（单位：米）
     Vec3 cartographicToCartesian(const Cartographic& cart) const;
@@ -84,10 +88,12 @@ public:
     static const Ellipsoid& WGS84();
 
 private:
-    double a_;   // semi-major axis (meters)
-    double b_;   // semi-minor axis (meters)
-    double f_;   // flattening
-    double e2_;  // 第一偏心率平方
+    Vec3 radii_;
+    Vec3 radiiSquared_;
+    Vec3 oneOverRadii_;
+    Vec3 oneOverRadiiSquared_;
+    double f_;   // flattening for rotational ellipsoid geodesics
+    double e2_;  // 第一偏心率平方, based on x/z radii
 };
 
 } // namespace earth_engine
