@@ -5,35 +5,21 @@
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
 #include <chrono>
-#include <algorithm>
 #include <memory>
-#include <sstream>
 #include <string>
-#include <vector>
 
 #include "earth_engine/Engine.h"
-#include "earth_engine/content/GltfContentProvider.h"
-#include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/platform/android/RenderDeviceGLES.h"
 #include "earth_engine/platform/android/AndroidPlatformBridge.h"
-#include "earth_engine/providers/DebugImageryProvider.h"
-#include "earth_engine/providers/XYZImageryProvider.h"
-#include "earth_engine/providers/HeightmapTerrainProvider.h"
-#include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
-#include "earth_engine/layers/RasterOverlay.h"
-#include "earth_engine/layers/ActivatedRasterOverlay.h"
-#include "earth_engine/layers/VectorLayer.h"
-#include "earth_engine/tiling/Tileset.h"
-#include "earth_engine/tiling/TileScheme.h"
-#include "earth_engine/data/GeoJsonParser.h"
-#include "earth_engine/style/OverlayStyle.h"
 #include "earth_engine/interaction/InputEvent.h"
 #include "earth_engine/interaction/PickingService.h"
-#include "earth_engine/environment/TimeController.h"
-#include "earth_engine/scene/FrameState.h"
-#include "earth_engine/scene/Scene.h"
+#include "earth_engine/sdk/EarthEngineSdkFacade.h"
+
+#include "MinimalGlobeDiagnostics.h"
+#include "MinimalGlobeDemoConfig.h"
+#include "MinimalGlobeDemoLayers.h"
 
 #define LOG_TAG "MinimalGlobe"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -55,8 +41,7 @@ static int gWidth = 0, gHeight = 0;
 static std::unique_ptr<RenderDeviceGLES> gRenderDevice;
 static std::unique_ptr<Engine> gEngine;
 static std::unique_ptr<AndroidPlatformBridge> gPlatformBridge;
-static std::vector<std::unique_ptr<RasterOverlay>> gRasterOverlays;
-static std::vector<std::unique_ptr<ActivatedRasterOverlay>> gActivatedRasterOverlays;
+static std::unique_ptr<EarthEngineSdkFacade> gSdkFacade;
 static bool gEngineReady = false;
 
 // JNI_OnLoad — 存储 JavaVM 引用
@@ -77,126 +62,6 @@ static bool gDebugPinchActive = false;
 
 static double androidUptimeSeconds();
 
-static std::string tileKeyLabel(const TileKey& key) {
-    std::ostringstream out;
-    out << key.schemeId << "/" << key.z << "/" << key.x << "/" << key.y;
-    return out.str();
-}
-
-static const char* renderCommandKindLabel(RenderCommandKind kind) {
-    switch (kind) {
-        case RenderCommandKind::SkyBackground: return "sky";
-        case RenderCommandKind::AtmosphereBackground: return "atmo";
-        case RenderCommandKind::GlobeSurface: return "globe";
-        case RenderCommandKind::SurfaceTile: return "surface";
-        case RenderCommandKind::GltfPrimitive: return "gltf";
-        case RenderCommandKind::GltfPrimitiveInstanced: return "gltf-i";
-        case RenderCommandKind::VectorOverlay: return "vector";
-        case RenderCommandKind::Unknown:
-        default: return "unknown";
-    }
-}
-
-static std::string buildPresentationTraceSummary(const PresentationTrace& trace) {
-    std::ostringstream out;
-    out.setf(std::ios::fixed);
-    out.precision(3);
-
-    out << "\n\nPresentation trace\n";
-    out << "Camera: center="
-        << trace.camera.targetLongitudeDegrees << ","
-        << trace.camera.targetLatitudeDegrees
-        << " h=" << static_cast<int>(trace.camera.targetHeightMeters)
-        << " camH=" << static_cast<int>(trace.camera.cameraHeightMeters)
-        << " pitch=" << trace.camera.pitchRadians
-        << " heading=" << trace.camera.headingRadians
-        << " vp=" << trace.camera.viewportWidthPixels
-        << "x" << trace.camera.viewportHeightPixels << "\n";
-    out << "Selector views: " << trace.selectorViews.size();
-    if (!trace.selectorViews.empty()) {
-        out << " firstVpH=" << trace.selectorViews.front().viewportHeightPixels;
-    }
-    out << "\n";
-
-    size_t surfaceCount = 0;
-    out << "Commands:";
-    for (const PresentationCommandTrace& command : trace.commands) {
-        if (command.kind != RenderCommandKind::SurfaceTile &&
-            command.kind != RenderCommandKind::GltfPrimitive &&
-            command.kind != RenderCommandKind::GltfPrimitiveInstanced) {
-            continue;
-        }
-        if (surfaceCount >= 4) {
-            out << " ...";
-            break;
-        }
-        out << " " << renderCommandKindLabel(command.kind)
-            << "(gz=" << command.surfaceGeometryZoom
-            << ",tz=" << command.surfaceTextureZoom
-            << ",idx=" << command.indexCount
-            << "/" << command.surfaceMeshIndexCount
-            << ",base=real"
-            << ",rs=" << command.surfaceBaseRasterState;
-        if (command.surfaceBaseIsRectangleTile) {
-            out << ",rect";
-        }
-        if (command.surfaceSkirtIndexCount > 0) {
-            out << ",skirt-" << command.surfaceSkirtIndexCount;
-        }
-        if (command.surfaceClipEnabled > 0.5f) {
-            out << ",clip";
-        }
-        out << ")";
-        ++surfaceCount;
-    }
-    if (surfaceCount == 0) {
-        out << " none";
-    }
-    out << "\n";
-
-    const PresentationTilesetTrace* terrainTrace =
-        trace.tilesets.empty() ? nullptr : &trace.tilesets.front();
-    if (terrainTrace) {
-        out << "Tileset: visible=" << terrainTrace->visibleTiles.size()
-            << " renderEntries=" << terrainTrace->renderEntries.size()
-            << " zoom=" << terrainTrace->minVisibleZoom
-            << "-" << terrainTrace->maxVisibleZoom
-            << " lod=" << static_cast<int>(terrainTrace->lodSizePixels)
-            << "\n";
-        const size_t visibleCount =
-            std::min<size_t>(terrainTrace->visibleTiles.size(), 4);
-        out << "Visible:";
-        for (size_t i = 0; i < visibleCount; ++i) {
-            out << " " << tileKeyLabel(terrainTrace->visibleTiles[i]);
-        }
-        if (terrainTrace->visibleTiles.size() > visibleCount) {
-            out << " ...";
-        }
-        out << "\n";
-
-        const size_t entryCount =
-            std::min<size_t>(terrainTrace->renderEntries.size(), 4);
-        out << "Render:";
-        for (size_t i = 0; i < entryCount; ++i) {
-            const auto& entry = terrainTrace->renderEntries[i];
-            out << " " << tileKeyLabel(entry.selectedKey)
-                << "->" << tileKeyLabel(entry.renderKey);
-            if (entry.usesAncestorFallback) {
-                out << "[fallback]";
-            }
-            if (entry.surfaceClipEnabled) {
-                out << "[clip]";
-            }
-        }
-        if (terrainTrace->renderEntries.size() > entryCount) {
-            out << " ...";
-        }
-        out << "\n";
-    }
-
-    return out.str();
-}
-
 static void cancelInputIfNeeded() {
     if (!gEngine) return;
     InputEvent event;
@@ -210,251 +75,12 @@ static void cancelInputIfNeeded() {
     gDebugPinchActive = false;
 }
 
-static constexpr const char* kFabdemTerrainTemplate =
-    "http://192.168.1.4:8001/{z}/{x}/{y}.png";
-static constexpr const char* kQuantizedMeshTerrainTemplate =
-    "http://192.168.100.141:8090/{z}/{x}/{y}.terrain";
-static constexpr const char* kQuantizedMeshTerrainLayerJson =
-    "http://192.168.100.141:8090/layer.json";
-static constexpr const char* kGaodeSatelliteTemplate =
-    "https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
-static constexpr const char* kGaodeRoadNetTemplate =
-    "https://webst0{s}.is.autonavi.com/appmaptile?style=8&x={x}&y={y}&z={z}";
-static constexpr const char* kRobotExpressiveGlbUrl =
-    "https://maptalks.org/maptalks.three/demo/data/RobotExpressive.glb";
-static constexpr bool kEnableTerrainForDemo = true;
-static constexpr bool kUseGaodeSatelliteForDemo = true;
-static constexpr bool kEnableGaodeRoadNetOverlayForDemo = true;
-static constexpr bool kEnableRobotExpressiveGltfDemo = false;
-/// Use QuantizedMesh terrain (cesium-native format) instead of RGB heightmap.
-static constexpr bool kUseQuantizedMeshTerrain = true;
-
 static void clearDemoEngineObjects() {
+    gSdkFacade.reset();
     gEngine.reset();
-    gActivatedRasterOverlays.clear();
-    gRasterOverlays.clear();
     gRenderDevice.reset();
     gPlatformBridge.reset();
     gEngineReady = false;
-}
-
-static void setDemoCamera() {
-    if (!gEngine) return;
-
-    const auto& ellipsoid = Ellipsoid::WGS84();
-    const double centerLng = 106.508;
-    const double centerLat = 29.617;
-    auto targetEcef = ellipsoid.cartographicToCartesian(
-        Cartographic::fromDegrees(centerLng, centerLat, 0.0));
-    auto camEcef = ellipsoid.cartographicToCartesian(
-        Cartographic::fromDegrees(centerLng, centerLat, 30000.0));
-    Vec3 up = ellipsoid.geodeticSurfaceNormal(targetEcef);
-    gEngine->camera().lookAt(camEcef, targetEcef, up);
-}
-
-static TilesetOptions makeDemoTilesetOptions() {
-    TilesetOptions options;
-    options.mainThreadLoadingTimeLimit = 4.0;
-    options.tileCacheUnloadTimeLimit = 2.0;
-    return options;
-}
-
-static RasterOverlay::Options makeDemoRasterOverlayOptions(
-    float opacity,
-    RasterOverlayRole role,
-    RasterOverlayPriority priority,
-    RasterOverlayFallbackPolicy fallbackPolicy,
-    bool blocksCompleteRenderable) {
-    RasterOverlay::Options options{};
-    options.maximumSimultaneousTileLoads = 20;
-    options.maximumScreenSpaceError = 2.0;
-    options.minimumZoom = 0;
-    options.maximumZoom = 0;
-    options.visible = true;
-    options.opacity = opacity;
-    options.role = role;
-    options.priority = priority;
-    options.fallbackPolicy = fallbackPolicy;
-    options.blocksCompleteRenderable = blocksCompleteRenderable;
-    return options;
-}
-
-static std::unique_ptr<TerrainProvider> createDemoTerrainProvider() {
-    if (!kEnableTerrainForDemo) {
-        return {};
-    }
-
-    if (kUseQuantizedMeshTerrain) {
-        auto qm = std::make_unique<QuantizedMeshTerrainProvider>(
-            kQuantizedMeshTerrainTemplate, "QuantizedMesh Terrain");
-        qm->setZoomRange(0, 12);
-        qm->setTileSize(65);
-        qm->setFlipYForUrl(false);
-        qm->setPlatformBridge(gPlatformBridge.get());
-        if (!qm->configureFromLayerJsonUrl(kQuantizedMeshTerrainLayerJson)) {
-            LOGE("QuantizedMesh layer.json load failed: %s",
-                 kQuantizedMeshTerrainLayerJson);
-        }
-        return qm;
-    }
-
-    auto hm = std::make_unique<HeightmapTerrainProvider>(
-        kFabdemTerrainTemplate, "Mapbox Terrain-RGB");
-    hm->setZoomRange(0, 14);
-    hm->setEncoding(HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
-    hm->setTileSize(514);
-    hm->setPlatformBridge(gPlatformBridge.get());
-    return hm;
-}
-
-static void addActivatedRasterOverlay(
-    std::vector<ActivatedRasterOverlay*>& rasterOverlays,
-    std::unique_ptr<ImageryProvider> provider,
-    std::unique_ptr<TileScheme> scheme,
-    RasterOverlay::Options options) {
-    auto overlay = std::make_unique<RasterOverlay>(
-        std::move(provider),
-        std::move(scheme),
-        options);
-    auto active = std::make_unique<ActivatedRasterOverlay>(*overlay);
-
-    rasterOverlays.push_back(active.get());
-    gRasterOverlays.push_back(std::move(overlay));
-    gActivatedRasterOverlays.push_back(std::move(active));
-}
-
-static std::vector<ActivatedRasterOverlay*> createDemoRasterOverlays() {
-    gActivatedRasterOverlays.clear();
-    gRasterOverlays.clear();
-
-    std::vector<ActivatedRasterOverlay*> rasterOverlays;
-    if (kUseGaodeSatelliteForDemo) {
-        auto xyz = std::make_unique<XYZImageryProvider>(
-            kGaodeSatelliteTemplate, "Gaode/Amap satellite");
-        xyz->setZoomRange(0, 18);
-        xyz->setPlatformBridge(gPlatformBridge.get());
-        addActivatedRasterOverlay(
-            rasterOverlays,
-            std::move(xyz),
-            TileScheme::createXYZWebMercator(),
-            makeDemoRasterOverlayOptions(
-                1.0f,
-                RasterOverlayRole::BaseImagery,
-                RasterOverlayPriority::High,
-                RasterOverlayFallbackPolicy::AncestorOrPlaceholder,
-                true));
-        LOGI("Gaode satellite basemap enabled");
-
-        if (kEnableGaodeRoadNetOverlayForDemo) {
-            auto road = std::make_unique<XYZImageryProvider>(
-                kGaodeRoadNetTemplate, "Gaode/Amap road network");
-            road->setZoomRange(0, 18);
-            road->setPlatformBridge(gPlatformBridge.get());
-            addActivatedRasterOverlay(
-                rasterOverlays,
-                std::move(road),
-                TileScheme::createXYZWebMercator(),
-                makeDemoRasterOverlayOptions(
-                    0.92f,
-                    RasterOverlayRole::AnnotationOverlay,
-                    RasterOverlayPriority::Low,
-                    RasterOverlayFallbackPolicy::SkipUntilReady,
-                    false));
-            LOGI("Gaode road network overlay enabled");
-        }
-    } else {
-        auto dbg = std::make_unique<DebugImageryProvider>();
-        addActivatedRasterOverlay(
-            rasterOverlays,
-            std::move(dbg),
-            TileScheme::createXYZWebMercator(),
-            makeDemoRasterOverlayOptions(
-                1.0f,
-                RasterOverlayRole::BaseImagery,
-                RasterOverlayPriority::High,
-                RasterOverlayFallbackPolicy::AncestorOrPlaceholder,
-                true));
-    }
-    return rasterOverlays;
-}
-
-static void addRobotExpressiveTileset(const TilesetOptions& tilesetOptions) {
-    if (!kEnableRobotExpressiveGltfDemo || !gEngine) {
-        return;
-    }
-
-    const TileKey robotKey{"Geographic-TMS", 0, 1, 0};
-    auto gltfProvider = std::make_unique<SingleGltfContentProvider>(
-        robotKey,
-        std::string(kRobotExpressiveGlbUrl),
-        "RobotExpressive GLB");
-    gltfProvider->setPlatformBridge(gPlatformBridge.get());
-    gltfProvider->setEastNorthUpPlacementDegrees(
-        106.508,
-        29.617,
-        650.0,
-        420.0);
-
-    auto robotTileset = std::make_unique<Tileset>(
-        std::unique_ptr<TerrainProvider>{},
-        TileScheme::createGeographicTMS(),
-        std::vector<ActivatedRasterOverlay*>{},
-        gRenderDevice.get(),
-        tilesetOptions,
-        std::move(gltfProvider));
-    gEngine->addTileset(std::move(robotTileset));
-    LOGI("RobotExpressive glTF tileset added: %s",
-         kRobotExpressiveGlbUrl);
-}
-
-static void addDemoVectorLayer() {
-    static constexpr const char* kDemoGeoJson = R"json(
-{
-  "type": "FeatureCollection",
-  "features": [
-    {
-      "type": "Feature",
-      "id": "beijing-marker",
-      "properties": { "name": "Beijing" },
-      "geometry": { "type": "Point", "coordinates": [116.3913, 39.9075, 0] }
-    },
-    {
-      "type": "Feature",
-      "id": "demo-route",
-      "properties": { "name": "Demo route" },
-      "geometry": {
-        "type": "LineString",
-        "coordinates": [[116.30, 39.86], [116.39, 39.91], [116.48, 39.95]]
-      }
-    }
-  ]
-}
-)json";
-
-    auto features = GeoJsonParser::parse(kDemoGeoJson);
-    if (features.empty()) {
-        LOGE("Demo GeoJSON parse failed");
-        return;
-    }
-
-    auto style = makeDefaultPointStyle();
-    style.layer.geometry = PointStyle{
-        PointStyle::Shape::Circle,
-        12.0f,
-        Color{0.95f, 0.20f, 0.12f, 1.0f},
-        Color::white(),
-        2.0f,
-        true,
-        true
-    };
-
-    auto vectorLayer = std::make_unique<VectorLayer>(
-        "android-demo-vector",
-        std::move(features),
-        style,
-        gRenderDevice.get());
-    gEngine->addVectorLayer(std::move(vectorLayer));
-    LOGI("Demo vector layer added");
 }
 
 static bool initEGL(ANativeWindow* window) {
@@ -524,37 +150,15 @@ static bool createEngine() {
              gEngine->camera().position().y(),
              gEngine->camera().position().z());
 
-        setDemoCamera();
-
         // 创建 Android 平台桥接；网络由 native curl scheduler 调度。
         gPlatformBridge = std::make_unique<AndroidPlatformBridge>(gJvm);
-
-        // cesium-native aligned: create unified Tileset
-        {
-            auto terrainProvider = createDemoTerrainProvider();
-            std::vector<ActivatedRasterOverlay*> rasterOverlays =
-                createDemoRasterOverlays();
-            const TilesetOptions tilesetOptions = makeDemoTilesetOptions();
-            auto tileset = std::make_unique<Tileset>(
-                std::move(terrainProvider),
-                TileScheme::createGeographicTMS(),
-                std::move(rasterOverlays),
-                gRenderDevice.get(),
-                tilesetOptions);
-            gEngine->setTileset(std::move(tileset));
-            LOGI("Unified Tileset created (cesium-native architecture)");
-
-            addRobotExpressiveTileset(tilesetOptions);
-        }
-
-        // Keep the feature path available, but avoid covering the basemap while
-        // validating XYZ Web Mercator tile alignment.
-        // addDemoVectorLayer();
-
-        // 设置模拟时间为固定的白天时间（2026-06-10 14:00 UTC+8 = 06:00 UTC）
-        // 对应 JD 2461188.75，确保看到完整大气散射效果
-        gEngine->setTime(2461188.75);
-        LOGI("Simulation time set to fixed daytime JD 2461188.75 (2026-06-10 14:00 UTC+8)");
+        gSdkFacade =
+            std::make_unique<EarthEngineSdkFacade>(
+                *gEngine,
+                *gRenderDevice,
+                *gPlatformBridge);
+        gSdkFacade->installScene(
+            minimal_globe_demo::makeDefaultDemoSceneConfig());
     } else {
         LOGE("Engine initialization failed");
         clearDemoEngineObjects();
@@ -592,7 +196,7 @@ static void renderFrame() {
 extern "C" {
 
 JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativeSurfaceCreated(
+Java_com_earthengine_sdk_GLESView_nativeSurfaceCreated(
     JNIEnv* env, jobject /* this */, jobject surface) {
 
     gWindow = ANativeWindow_fromSurface(env, surface);
@@ -606,7 +210,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativeSurfaceCreated(
 }
 
 JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativeSurfaceChanged(
+Java_com_earthengine_sdk_GLESView_nativeSurfaceChanged(
     JNIEnv* /* env */, jobject /* this */, jint width, jint height) {
     gWidth = width;
     gHeight = height;
@@ -616,13 +220,13 @@ Java_com_earthengine_minimalglobe_GLESView_nativeSurfaceChanged(
 }
 
 JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativeRenderFrame(
+Java_com_earthengine_sdk_GLESView_nativeRenderFrame(
     JNIEnv* /* env */, jobject /* this */) {
     renderFrame();
 }
 
 JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativeSurfaceDestroyed(
+Java_com_earthengine_sdk_GLESView_nativeSurfaceDestroyed(
     JNIEnv* /* env */, jobject /* this */) {
     cancelInputIfNeeded();
     destroyEGL();
@@ -656,7 +260,7 @@ static void endDebugPinchIfNeeded(float centerX, float centerY) {
 }
 
 JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativeTouchDown(
+Java_com_earthengine_sdk_GLESView_nativeTouchDown(
     JNIEnv* /* env */, jobject /* this */) {
     endDebugPinchIfNeeded(static_cast<float>(gWidth) * 0.5f,
                           static_cast<float>(gHeight) * 0.5f);
@@ -666,7 +270,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativeTouchDown(
 }
 
 JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativeDrag(
+Java_com_earthengine_sdk_GLESView_nativeDrag(
     JNIEnv* /* env */, jobject /* this */,
     jfloat startX, jfloat startY, jfloat endX, jfloat endY,
     jint /*width*/, jint /*height*/) {
@@ -696,7 +300,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativeDrag(
 }
 
 JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativeTouchUp(
+Java_com_earthengine_sdk_GLESView_nativeTouchUp(
     JNIEnv* /* env */, jobject /* this */, jfloat x, jfloat y) {
     gTouching = false;
     if (!gEngine) return;
@@ -730,7 +334,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativeTouchUp(
 }
 
 JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativePinchStart(
+Java_com_earthengine_sdk_GLESView_nativePinchStart(
     JNIEnv* /* env */, jobject /* this */, jfloat centerX, jfloat centerY) {
     endDebugPinchIfNeeded(centerX, centerY);
     gTouching = true;
@@ -750,7 +354,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativePinchStart(
 }
 
 JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativePinchEnd(
+Java_com_earthengine_sdk_GLESView_nativePinchEnd(
     JNIEnv* /* env */, jobject /* this */, jfloat centerX, jfloat centerY) {
     gTouching = false;
     if (!gEngine) return;
@@ -766,7 +370,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativePinchEnd(
 }
 
 JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativePinchRotateTilt(
+Java_com_earthengine_sdk_GLESView_nativePinchRotateTilt(
     JNIEnv* /* env */, jobject /* this */,
     jfloat scale, jfloat rotationRadians,
     jfloat centerX, jfloat centerY, jfloat centerDx, jfloat centerDy,
@@ -793,7 +397,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativePinchRotateTilt(
 }
 
 JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativeDebugZoom(
+Java_com_earthengine_sdk_GLESView_nativeDebugZoom(
     JNIEnv* /* env */, jobject /* this */,
     jfloat scale, jint width, jint height) {
     if (!gEngine) return;
@@ -873,7 +477,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativeDebugZoom(
 // ============================================================
 
 JNIEXPORT jstring JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
+Java_com_earthengine_sdk_GLESView_nativeGetDiagnosticsString(
     JNIEnv* env, jobject /* this */) {
     if (!gEngine) return env->NewStringUTF("Engine not ready");
 
@@ -884,7 +488,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
         Ellipsoid::WGS84().cartesianToCartographic(gEngine->camera().position()).height();
     const double cameraDist = gEngine->camera().position().distanceTo(Vec3::zero());
 
-    char buf[2200];
+    char buf[4096];
     snprintf(buf, sizeof(buf),
         "FPS: %.1f  |  Frame: %.1f ms\n"
         "CPU: %.1f ms  |  begin %.1f upd %.1f build %.1f submit %.1f end %.1f\n"
@@ -901,6 +505,10 @@ Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
         "Camera: ellAlt=%.0fm sphAlt=%.0fm dist=%.0fm\n"
         "LoadQ: %d pre, %d norm, %d urgent  |  Terrain pending: %d req, %d upload, %d terminal\n"
         "Content pending: %d req, %d upload, %d terminal\n"
+        "Budget: net %d/%d, tc %d/%d, raster %d/%d\n"
+        "Main budget: fin %d/%d, term %d/%d, rasUp %d/%d, %.1f/%.1f ms, mode %c/%c\n"
+        "Provider: terr %d/%d wb %d/%d | cont %d/%d wb %d/%d ext %d/%d | rast %d/%d wb %d/%d\n"
+        "Transport limit: terrain %d, content %d, raster %d\n"
         "LoadState: unloading %d, retry %d, unloaded %d, loading %d, loaded %d, done %d, failed %d\n"
         "Content: unknown %d, empty %d, external %d, render %d  |  UnloadQ: %d\n"
         "Raster overlay: missing projections %d\n"
@@ -949,6 +557,39 @@ Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
         diag.pendingContentRequests,
         diag.pendingContentUploads,
         diag.pendingContentTerminalResults,
+        diag.budgetNetworkRequestsIssued,
+        diag.budgetNetworkRequestsLimit,
+        diag.budgetTerrainContentNetworkRequestsIssued,
+        diag.budgetTerrainContentNetworkRequestsLimit,
+        diag.budgetRasterNetworkRequestsIssued,
+        diag.budgetRasterNetworkRequestsLimit,
+        diag.budgetMainThreadFinalizesUsed,
+        diag.budgetMainThreadFinalizesLimit,
+        diag.budgetTerminalStateTransitionsUsed,
+        diag.budgetTerminalStateTransitionsLimit,
+        diag.budgetRasterUploadsUsed,
+        diag.budgetRasterUploadsLimit,
+        diag.budgetMainThreadElapsedMs,
+        diag.budgetMainThreadTimeLimitMs,
+        diag.budgetInteractionActive ? 'I' : '-',
+        diag.budgetSmoothingActive ? 'S' : '-',
+        diag.terrainProviderRequestsStarted,
+        diag.terrainProviderRequestsCompleted,
+        diag.terrainProviderActiveWorkerBlockingRequests,
+        diag.terrainProviderPeakWorkerBlockingRequests,
+        diag.contentProviderRequestsStarted,
+        diag.contentProviderRequestsCompleted,
+        diag.contentProviderActiveWorkerBlockingRequests,
+        diag.contentProviderPeakWorkerBlockingRequests,
+        diag.contentProviderExternalResourceRequestsStarted,
+        diag.contentProviderExternalResourceRequestsCompleted,
+        diag.rasterProviderRequestsStarted,
+        diag.rasterProviderRequestsCompleted,
+        diag.rasterProviderActiveWorkerBlockingRequests,
+        diag.rasterProviderPeakWorkerBlockingRequests,
+        diag.terrainTransportActiveRequestLimit,
+        diag.contentTransportActiveRequestLimit,
+        diag.rasterTransportActiveRequestLimit,
         diag.terrainLoadUnloadingTiles,
         diag.terrainLoadFailedTemporarilyTiles,
         diag.terrainLoadUnloadedTiles,
@@ -965,27 +606,28 @@ Java_com_earthengine_minimalglobe_GLESView_nativeGetDiagnosticsString(
         diag.surfaceMeshBytes / 1024, diag.terrainCachedTiles,
         static_cast<unsigned long long>(diag.terrainGeneration));
     std::string text(buf);
-    text += buildPresentationTraceSummary(gEngine->presentationTrace());
+    text += minimal_globe_demo::buildPresentationTraceSummary(
+        gEngine->presentationTrace());
     return env->NewStringUTF(text.c_str());
 }
 
 JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativeAddDemoVectorLayer(
+Java_com_earthengine_sdk_GLESView_nativeAddDemoVectorLayer(
     JNIEnv* /* env */, jobject /* this */) {
-    if (!gEngine) return;
-    addDemoVectorLayer();
+    if (!gEngine || !gRenderDevice) return;
+    minimal_globe_demo::addDemoVectorLayer(*gEngine, *gRenderDevice);
 }
 
 JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativeResetCamera(
+Java_com_earthengine_sdk_GLESView_nativeResetCamera(
     JNIEnv* /* env */, jobject /* this */) {
-    if (!gEngine) return;
-    setDemoCamera();
+    if (!gSdkFacade) return;
+    gSdkFacade->resetCamera();
     LOGI("Camera reset to Chongqing demo viewpoint");
 }
 
 JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativePause(
+Java_com_earthengine_sdk_GLESView_nativePause(
     JNIEnv* /* env */, jobject /* this */) {
     cancelInputIfNeeded();
     if (gPlatformBridge) {
@@ -994,7 +636,7 @@ Java_com_earthengine_minimalglobe_GLESView_nativePause(
 }
 
 JNIEXPORT void JNICALL
-Java_com_earthengine_minimalglobe_GLESView_nativeResume(
+Java_com_earthengine_sdk_GLESView_nativeResume(
     JNIEnv* /* env */, jobject /* this */) {
     if (gPlatformBridge) {
         gPlatformBridge->onEnterForeground();

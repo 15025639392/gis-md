@@ -8,18 +8,21 @@ project(minimal_globe_android LANGUAGES CXX)
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../src ${CMAKE_CURRENT_BINARY_DIR}/earth_engine_core)
 
-add_library(minimal_globe_jni SHARED
+add_library(earth_engine_android_jni SHARED
     MinimalGlobe/GLESView.cpp
+    MinimalGlobe/MinimalGlobeDemoConfig.cpp
+    MinimalGlobe/MinimalGlobeDemoLayers.cpp
+    MinimalGlobe/MinimalGlobeDiagnostics.cpp
 )
 
-target_link_libraries(minimal_globe_jni PRIVATE earth_engine_core)
+target_link_libraries(earth_engine_android_jni PRIVATE earth_engine_core)
 
-target_include_directories(minimal_globe_jni PRIVATE
+target_include_directories(earth_engine_android_jni PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/MinimalGlobe
 )
 
 # Android 特定链接
-target_link_libraries(minimal_globe_jni PRIVATE
+target_link_libraries(earth_engine_android_jni PRIVATE
     android    # ANativeWindow
     GLESv3     # OpenGL ES 3.0
     EGL        # EGL

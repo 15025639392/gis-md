@@ -14,6 +14,8 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import com.earthengine.sdk.GLESView;
+
 public class MainActivity extends Activity {
 
     private GLESView mGLView;

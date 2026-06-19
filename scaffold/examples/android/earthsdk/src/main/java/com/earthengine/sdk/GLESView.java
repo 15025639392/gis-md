@@ -1,4 +1,4 @@
-package com.earthengine.minimalglobe;
+package com.earthengine.sdk;
 
 import android.content.Context;
 import android.view.Choreographer;
@@ -10,7 +10,7 @@ import android.view.SurfaceView;
 
 public class GLESView extends SurfaceView implements SurfaceHolder.Callback, Choreographer.FrameCallback {
     static {
-        System.loadLibrary("minimal_globe_jni");
+        System.loadLibrary("earth_engine_android_jni");
     }
 
     private boolean rendering;
