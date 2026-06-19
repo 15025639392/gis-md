@@ -114,16 +114,38 @@ TEST(MathUtilsTest, NegativePiToPiMatchesCesiumNative) {
                      MathUtils::negativePiToPi(MathUtils::OnePi));
     EXPECT_DOUBLE_EQ(-MathUtils::OnePi,
                      MathUtils::negativePiToPi(-MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(MathUtils::OnePi - 1.0,
+                     MathUtils::negativePiToPi(MathUtils::OnePi - 1.0));
+    EXPECT_DOUBLE_EQ(-MathUtils::OnePi + 1.0,
+                     MathUtils::negativePiToPi(-MathUtils::OnePi + 1.0));
+    EXPECT_DOUBLE_EQ(MathUtils::OnePi - 0.1,
+                     MathUtils::negativePiToPi(MathUtils::OnePi - 0.1));
+    EXPECT_DOUBLE_EQ(-MathUtils::OnePi + 0.1,
+                     MathUtils::negativePiToPi(-MathUtils::OnePi + 0.1));
     EXPECT_TRUE(MathUtils::equalsEpsilon(
         -MathUtils::OnePi + 0.1,
         MathUtils::negativePiToPi(MathUtils::OnePi + 0.1),
         MathUtils::Epsilon15));
     EXPECT_DOUBLE_EQ(0.0,
                      MathUtils::negativePiToPi(2.0 * MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(0.0,
+                     MathUtils::negativePiToPi(-2.0 * MathUtils::OnePi));
     EXPECT_DOUBLE_EQ(MathUtils::OnePi,
                      MathUtils::negativePiToPi(3.0 * MathUtils::OnePi));
     EXPECT_DOUBLE_EQ(MathUtils::OnePi,
                      MathUtils::negativePiToPi(-3.0 * MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(0.0,
+                     MathUtils::negativePiToPi(4.0 * MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(0.0,
+                     MathUtils::negativePiToPi(-4.0 * MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(MathUtils::OnePi,
+                     MathUtils::negativePiToPi(5.0 * MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(MathUtils::OnePi,
+                     MathUtils::negativePiToPi(-5.0 * MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(0.0,
+                     MathUtils::negativePiToPi(6.0 * MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(0.0,
+                     MathUtils::negativePiToPi(-6.0 * MathUtils::OnePi));
 }
 
 TEST(MathUtilsTest, ZeroToTwoPiMatchesCesiumNative) {
@@ -132,6 +154,14 @@ TEST(MathUtilsTest, ZeroToTwoPiMatchesCesiumNative) {
                      MathUtils::zeroToTwoPi(MathUtils::OnePi));
     EXPECT_DOUBLE_EQ(MathUtils::OnePi,
                      MathUtils::zeroToTwoPi(-MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(MathUtils::OnePi - 1.0,
+                     MathUtils::zeroToTwoPi(MathUtils::OnePi - 1.0));
+    EXPECT_TRUE(MathUtils::equalsEpsilon(
+        MathUtils::OnePi + 1.0,
+        MathUtils::zeroToTwoPi(-MathUtils::OnePi + 1.0),
+        MathUtils::Epsilon15));
+    EXPECT_DOUBLE_EQ(MathUtils::OnePi - 0.1,
+                     MathUtils::zeroToTwoPi(MathUtils::OnePi - 0.1));
     EXPECT_TRUE(MathUtils::equalsEpsilon(
         MathUtils::OnePi + 0.1,
         MathUtils::zeroToTwoPi(-MathUtils::OnePi + 0.1),
@@ -142,16 +172,52 @@ TEST(MathUtilsTest, ZeroToTwoPiMatchesCesiumNative) {
                      MathUtils::zeroToTwoPi(-2.0 * MathUtils::OnePi));
     EXPECT_DOUBLE_EQ(MathUtils::OnePi,
                      MathUtils::zeroToTwoPi(3.0 * MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(MathUtils::OnePi,
+                     MathUtils::zeroToTwoPi(-3.0 * MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(2.0 * MathUtils::OnePi,
+                     MathUtils::zeroToTwoPi(4.0 * MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(2.0 * MathUtils::OnePi,
+                     MathUtils::zeroToTwoPi(-4.0 * MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(MathUtils::OnePi,
+                     MathUtils::zeroToTwoPi(5.0 * MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(MathUtils::OnePi,
+                     MathUtils::zeroToTwoPi(-5.0 * MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(2.0 * MathUtils::OnePi,
+                     MathUtils::zeroToTwoPi(6.0 * MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(2.0 * MathUtils::OnePi,
+                     MathUtils::zeroToTwoPi(-6.0 * MathUtils::OnePi));
 }
 
 TEST(MathUtilsTest, ModMatchesCesiumNativeSignedCases) {
     EXPECT_DOUBLE_EQ(0.0, MathUtils::mod(0.0, 1.0));
+    EXPECT_DOUBLE_EQ(0.1, MathUtils::mod(0.1, 1.0));
     EXPECT_DOUBLE_EQ(0.5, MathUtils::mod(0.5, 1.0));
     EXPECT_DOUBLE_EQ(0.0, MathUtils::mod(1.0, 1.0));
+    EXPECT_TRUE(MathUtils::equalsEpsilon(0.1,
+                                         MathUtils::mod(1.1, 1.0),
+                                         MathUtils::Epsilon15));
+    EXPECT_DOUBLE_EQ(0.0, MathUtils::mod(-0.0, 1.0));
     EXPECT_TRUE(MathUtils::equalsEpsilon(0.9,
                                          MathUtils::mod(-0.1, 1.0),
                                          MathUtils::Epsilon15));
+    EXPECT_DOUBLE_EQ(0.5, MathUtils::mod(-0.5, 1.0));
+    EXPECT_DOUBLE_EQ(0.0, MathUtils::mod(-1.0, 1.0));
+    EXPECT_TRUE(MathUtils::equalsEpsilon(0.9,
+                                         MathUtils::mod(-1.1, 1.0),
+                                         MathUtils::Epsilon15));
+    EXPECT_DOUBLE_EQ(-0.0, MathUtils::mod(0.0, -1.0));
+    EXPECT_TRUE(MathUtils::equalsEpsilon(-0.9,
+                                         MathUtils::mod(0.1, -1.0),
+                                         MathUtils::Epsilon15));
     EXPECT_DOUBLE_EQ(-0.5, MathUtils::mod(0.5, -1.0));
+    EXPECT_DOUBLE_EQ(-0.0, MathUtils::mod(1.0, -1.0));
+    EXPECT_TRUE(MathUtils::equalsEpsilon(-0.9,
+                                         MathUtils::mod(1.1, -1.0),
+                                         MathUtils::Epsilon15));
+    EXPECT_DOUBLE_EQ(-0.0, MathUtils::mod(-0.0, -1.0));
+    EXPECT_DOUBLE_EQ(-0.1, MathUtils::mod(-0.1, -1.0));
+    EXPECT_DOUBLE_EQ(-0.5, MathUtils::mod(-0.5, -1.0));
+    EXPECT_DOUBLE_EQ(-0.0, MathUtils::mod(-1.0, -1.0));
     EXPECT_TRUE(MathUtils::equalsEpsilon(-0.1,
                                          MathUtils::mod(-1.1, -1.0),
                                          MathUtils::Epsilon15));
