@@ -52,6 +52,12 @@ add_executable(test_ray
 target_link_libraries(test_ray PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_ray COMMAND test_ray)
 
+add_executable(test_intersection_tests
+    unit/core/test_intersection_tests.cpp
+)
+target_link_libraries(test_intersection_tests PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_intersection_tests COMMAND test_intersection_tests)
+
 add_executable(test_bounding_sphere
     unit/core/test_bounding_sphere.cpp
 )
