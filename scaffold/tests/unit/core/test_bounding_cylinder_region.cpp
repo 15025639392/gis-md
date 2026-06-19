@@ -3,6 +3,7 @@
 #include "earth_engine/core/math/BoundingCylinderRegion.h"
 #include "earth_engine/core/math/MathUtils.h"
 #include "earth_engine/core/math/OrientedBoundingBox.h"
+#include "earth_engine/core/geodesy/Transforms.h"
 
 #include <glm/gtc/quaternion.hpp>
 #include <glm/vec2.hpp>
@@ -116,4 +117,70 @@ TEST(BoundingCylinderRegionTest, RotatedTranslatedPartialCylinderMatchesCesiumNa
                   Vec3(-1.0, 0.0, 0.0),
                   Vec3(0.0, 0.0, 1.5),
                   MathUtils::Epsilon6);
+}
+
+TEST(BoundingCylinderRegionTest, TransformSolidCylinderMatchesCesiumNative) {
+    glm::dmat4 transform = Transforms::Z_UP_TO_Y_UP().raw();
+    transform[3] = glm::dvec4(1.0, 2.0, 3.0, 1.0);
+
+    const BoundingCylinderRegion region(
+        Vec3::zero(),
+        glm::dquat(1.0, 0.0, 0.0, 0.0),
+        3.0,
+        glm::dvec2(0.0, 2.0));
+
+    const BoundingCylinderRegion transformedRegion = region.transform(transform);
+    EXPECT_EQ(Vec3(1.0, 2.0, 3.0), transformedRegion.getTranslation());
+
+    expectObbNear(transformedRegion.toOrientedBoundingBox(),
+                  Vec3(1.0, 2.0, 3.0),
+                  Vec3(2.0, 0.0, 0.0),
+                  Vec3(0.0, 0.0, -2.0),
+                  Vec3(0.0, 1.5, 0.0),
+                  MathUtils::Epsilon6);
+}
+
+TEST(BoundingCylinderRegionTest, TransformPartialCylinderMatchesCesiumNative) {
+    glm::dmat4 transform = Transforms::Z_UP_TO_Y_UP().raw();
+    transform[3] = glm::dvec4(1.0, 2.0, 3.0, 1.0);
+
+    const BoundingCylinderRegion region(
+        Vec3::zero(),
+        glm::dquat(1.0, 0.0, 0.0, 0.0),
+        3.0,
+        glm::dvec2(1.0, 2.0),
+        glm::dvec2(0.0, MathUtils::PiOverTwo));
+
+    const BoundingCylinderRegion transformedRegion = region.transform(transform);
+    EXPECT_EQ(Vec3(1.0, 2.0, 3.0), transformedRegion.getTranslation());
+
+    expectObbNear(transformedRegion.toOrientedBoundingBox(),
+                  Vec3(2.0, 2.0, 2.0),
+                  Vec3(1.0, 0.0, 0.0),
+                  Vec3(0.0, 0.0, -1.0),
+                  Vec3(0.0, 1.5, 0.0),
+                  MathUtils::Epsilon6);
+}
+
+TEST(BoundingCylinderRegionTest, TransformPreservesScaledCylinderSemantics) {
+    glm::dmat4 transform = Transforms::Z_UP_TO_Y_UP().raw();
+    transform[3] = glm::dvec4(1.0, 2.0, 3.0, 1.0);
+
+    glm::dmat4 scale(1.0);
+    scale[0][0] = 2.0;
+    scale[1][1] = 3.0;
+    scale[2][2] = 4.0;
+
+    const BoundingCylinderRegion region(
+        Vec3::zero(),
+        glm::dquat(1.0, 0.0, 0.0, 0.0),
+        3.0,
+        glm::dvec2(1.0, 2.0),
+        glm::dvec2(0.0, MathUtils::PiOverTwo));
+
+    const BoundingCylinderRegion transformedRegion =
+        region.transform(transform * scale);
+
+    EXPECT_DOUBLE_EQ(12.0, transformedRegion.getHeight());
+    EXPECT_EQ(glm::dvec2(3.0, 6.0), transformedRegion.getRadialBounds());
 }
