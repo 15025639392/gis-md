@@ -51,12 +51,13 @@ Frustum Frustum::fromViewProjection(const Mat4& viewProjection) {
         makePlane(m30 + m10, m31 + m11, m32 + m12, m33 + m13);
     frustum.planes_[static_cast<size_t>(PlaneIndex::Top)] =
         makePlane(m30 - m10, m31 - m11, m32 - m12, m33 - m13);
-    // Reverse-Z depth [0,1]: near clips at z_ndc > 0 (row3), far at z_ndc < 1 (row4-row3).
-    // Standard [-1,1] formula would be: near = row4+row3, far = row4-row3.
+    // Reverse-Z depth [0,1]: far clips at z_clip >= 0 (row3), near at
+    // z_clip <= w_clip (row4 - row3). Standard [-1,1] depth would use
+    // near = row4 + row3 and far = row4 - row3.
     frustum.planes_[static_cast<size_t>(PlaneIndex::Near)] =
-        makePlane(m20, m21, m22, m23);               // z_clip > 0  → row3
+        makePlane(m30 - m20, m31 - m21, m32 - m22, m33 - m23);
     frustum.planes_[static_cast<size_t>(PlaneIndex::Far)] =
-        makePlane(m30 - m20, m31 - m21, m32 - m22, m33 - m23); // z_clip < w_clip → row4-row3
+        makePlane(m20, m21, m22, m23);
 
     return frustum;
 }
