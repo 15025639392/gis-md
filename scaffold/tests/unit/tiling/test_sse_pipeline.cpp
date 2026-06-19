@@ -765,10 +765,10 @@ void checkTextureTransformUniforms(const RenderCommand& cmd,
         name);
 }
 
-FrameState::SelectorView makeSelectorView(const Camera& camera,
+SelectorView makeSelectorView(const Camera& camera,
                                           int viewportWidth,
                                           int viewportHeight) {
-    FrameState::SelectorView view;
+    SelectorView view;
     view.position = camera.position();
     view.direction = camera.direction();
     const double width = static_cast<double>(viewportWidth);
@@ -9671,7 +9671,7 @@ void testTileSelectionInputMetricsComputesCenterPriorityAndSse() {
           "TileSelectionInputMetrics: zero geometric error has zero SSE");
 
     tile.geometricError = 10.0;
-    std::vector<FrameState::SelectorView> views(2);
+    std::vector<SelectorView> views(2);
     views[0].position = Vec3(10.0, 0.0, 0.0);
     views[0].direction = Vec3(1.0, 0.0, 0.0);
     views[0].projectionMatrix = projection;
@@ -10483,11 +10483,11 @@ void testTileSelectionFrameBuilderCopiesViewsAndComputesFog() {
           "TileSelectionFrameBuilder: empty selector views stay empty");
 
     FrameState frameState;
-    FrameState::SelectorView lowView;
+    SelectorView lowView;
     lowView.position = Ellipsoid::WGS84().cartographicToCartesian(
         Cartographic::fromRadians(0.0, 0.0, 50.0));
     lowView.viewportHeightPixels = 720;
-    FrameState::SelectorView highView;
+    SelectorView highView;
     highView.position = Ellipsoid::WGS84().cartographicToCartesian(
         Cartographic::fromRadians(0.0, 0.0, 300.0));
     highView.viewportHeightPixels = 1080;
@@ -12733,7 +12733,7 @@ void testTileViewerRequestVolumePolicyChecksOptionalVolume() {
               Vec3(20.1, 0.0, 0.0)),
           "TileViewerRequestVolumePolicy: camera outside request volume is rejected");
 
-    std::vector<FrameState::SelectorView> views(2);
+    std::vector<SelectorView> views(2);
     views[0].position = Vec3(20.1, 0.0, 0.0);
     views[1].position = Vec3(12.0, 0.0, 0.0);
     check(TileViewerRequestVolumePolicy::allowsAnyView(noVolume, views),
@@ -12887,12 +12887,12 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
         Rectangle{-0.25, -0.25, 0.25, 0.25});
     tile.geometricError = 10.0;
 
-    FrameState::SelectorView view;
+    SelectorView view;
     view.position = TileBoundsMetrics::tileBoundsCenter(tile.bounds);
     view.direction = Vec3(1.0, 0.0, 0.0);
     view.projectionMatrix = Camera{}.projectionMatrix(800.0, 800.0);
     view.viewportHeightPixels = 800;
-    const std::vector<FrameState::SelectorView> views{view};
+    const std::vector<SelectorView> views{view};
     const TileSelectionVisibilityContext hiddenContext{
         false,
         0.0,
@@ -12922,7 +12922,7 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
 
     result = TileSelectionVisitPreparation::prepare(
         tile,
-        std::vector<FrameState::SelectorView>{FrameState::SelectorView{
+        std::vector<SelectorView>{SelectorView{
             Vec3(1.0e200, 0.0, 0.0),
             Vec3(1.0, 0.0, 0.0),
             view.frustum,
@@ -12968,7 +12968,7 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
     tile.geometricError = 1.0e20;
     result = TileSelectionVisitPreparation::prepare(
         tile,
-        std::vector<FrameState::SelectorView>{FrameState::SelectorView{
+        std::vector<SelectorView>{SelectorView{
             Vec3(1.0e6, 0.0, 0.0),
             Vec3(1.0, 0.0, 0.0),
             view.frustum,
@@ -13420,7 +13420,7 @@ void testTileSelectionVisibilitySamplerUsesCameraAndChildBounds() {
     parent.children.push_back(&outsideChild);
     parent.children.push_back(&cameraChild);
 
-    const std::vector<FrameState::SelectorView> noViews;
+    const std::vector<SelectorView> noViews;
     const TileSelectionVisibilityContext cameraContext{
         true,
         0.0,
@@ -13455,7 +13455,7 @@ void testTileSelectionVisibilitySamplerUsesCameraAndChildBounds() {
 }
 
 void testTileSelectionVisibilitySamplerChoosesSelectionBoundsLikeNative() {
-    const std::vector<FrameState::SelectorView> noViews;
+    const std::vector<SelectorView> noViews;
     const TileSelectionVisibilityContext cameraContext{
         true,
         0.0,
@@ -13520,7 +13520,7 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
     previousFrame.frameId = 10;
     previousFrame.viewportWidthPixels = 800;
     previousFrame.viewportHeightPixels = 600;
-    FrameState::SelectorView previousView;
+    SelectorView previousView;
     previousView.position = Vec3(1000.0, 0.0, 0.0);
     previousView.direction = Vec3(0.0, 1.0, 0.0);
     previousView.viewportHeightPixels = 600;
@@ -16969,7 +16969,7 @@ void testTilesetUsesLargestSseAcrossSelectorViews() {
                      center,
                      Vec3::unitZ());
 
-    auto runSelection = [&](std::vector<FrameState::SelectorView> views) {
+    auto runSelection = [&](std::vector<SelectorView> views) {
         auto provider = std::make_unique<SparseTerrainProvider>();
         auto scheme = TileScheme::createGeographicTMS();
         Tileset tileset(
@@ -17123,7 +17123,7 @@ void testTilesetSseUsesProjectionMatrix() {
                   center,
                   Vec3::unitZ());
 
-    auto runSelection = [&](FrameState::SelectorView view) {
+    auto runSelection = [&](SelectorView view) {
         auto provider = std::make_unique<SparseTerrainProvider>();
         auto scheme = TileScheme::createGeographicTMS();
         Tileset tileset(
@@ -17148,9 +17148,9 @@ void testTilesetSseUsesProjectionMatrix() {
         return tileset.tilePlan().maxVisibleZoom;
     };
 
-    FrameState::SelectorView nativeProjection =
+    SelectorView nativeProjection =
         makeSelectorView(camera, 800, 800);
-    FrameState::SelectorView strongerProjection = nativeProjection;
+    SelectorView strongerProjection = nativeProjection;
     strongerProjection.projectionMatrix(1, 1) *= 4.0;
 
     const int nativeZoom = runSelection(nativeProjection);
@@ -17350,7 +17350,7 @@ void testSceneFrameStateBuilderPopulatesPerFrameState() {
               diagnostics.renderCommandBuildMs == 7.0,
           "SceneFrameStateBuilder: frame build does not own diagnostics lifecycle");
 
-    std::vector<FrameState::SelectorView> overrideViews{
+    std::vector<SelectorView> overrideViews{
         makeSelectorView(camera, 320, 240),
         makeSelectorView(camera, 640, 480)};
     SceneFrameStateBuilder::build(SceneFrameStateBuildInput{

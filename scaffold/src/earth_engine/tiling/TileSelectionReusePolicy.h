@@ -36,7 +36,7 @@ struct TileSelectionReuseClassification {
 
 struct TileSelectionReuseInput {
     const FrameState& frameState;
-    const std::vector<FrameState::SelectorView>& lastSelectorViews;
+    const std::vector<SelectorView>& lastSelectorViews;
     uint64_t currentResourceRevision = 0;
     uint64_t lastResourceRevision = 0;
     uint64_t currentOverlaySignature = 0;
@@ -60,8 +60,8 @@ struct TileSelectionReuseInput {
 class TileSelectionReusePolicy {
 public:
     static bool selectorViewsEquivalent(
-        const std::vector<FrameState::SelectorView>& lhs,
-        const std::vector<FrameState::SelectorView>& rhs);
+        const std::vector<SelectorView>& lhs,
+        const std::vector<SelectorView>& rhs);
 
     static TileSelectionReuseMode classifyReuse(
         const TileSelectionReuseInput& input);

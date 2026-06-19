@@ -95,7 +95,7 @@ void Scene::update(double deltaSeconds) {
 }
 
 void Scene::setSelectorViewOverride(
-    std::vector<FrameState::SelectorView> selectorViews) {
+    std::vector<SelectorView> selectorViews) {
     frameRuntime_.setSelectorViewOverride(std::move(selectorViews));
 }
 

@@ -34,7 +34,7 @@ struct TileSelectionInputMetrics {
 
     static TileSelectionInputSummary summarizeForViews(
         const TilesetTile& tile,
-        const std::vector<FrameState::SelectorView>& views);
+        const std::vector<SelectorView>& views);
 };
 
 } // namespace earth_engine

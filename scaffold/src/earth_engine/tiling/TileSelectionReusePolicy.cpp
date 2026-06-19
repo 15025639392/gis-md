@@ -19,8 +19,8 @@ bool matricesNearlyEqual(const Mat4& lhs,
 }
 
 bool selectorViewsStaleCompatible(
-    const std::vector<FrameState::SelectorView>& lhs,
-    const std::vector<FrameState::SelectorView>& rhs,
+    const std::vector<SelectorView>& lhs,
+    const std::vector<SelectorView>& rhs,
     double positionToleranceMeters,
     double directionToleranceSquared) {
     if (lhs.size() != rhs.size()) {
@@ -52,8 +52,8 @@ bool selectorViewsStaleCompatible(
 } // namespace
 
 bool TileSelectionReusePolicy::selectorViewsEquivalent(
-    const std::vector<FrameState::SelectorView>& lhs,
-    const std::vector<FrameState::SelectorView>& rhs) {
+    const std::vector<SelectorView>& lhs,
+    const std::vector<SelectorView>& rhs) {
     if (lhs.size() != rhs.size()) {
         return false;
     }

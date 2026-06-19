@@ -9,7 +9,7 @@
 namespace earth_engine {
 
 struct SelectorFrame {
-    std::vector<FrameState::SelectorView> views;
+    std::vector<SelectorView> views;
     std::vector<double> fogDensities;
 };
 

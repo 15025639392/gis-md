@@ -22,22 +22,22 @@ struct TileSelectionVisibilitySample {
 struct TileSelectionVisibilitySampler {
     static bool boundsVisible(
         const TilesetTile& tile,
-        const std::vector<FrameState::SelectorView>& views,
+        const std::vector<SelectorView>& views,
         const TileSelectionVisibilityContext& context);
 
     static TileSelectionVisibilitySample sampleTileBounds(
         const TilesetTile& tile,
-        const std::vector<FrameState::SelectorView>& views,
+        const std::vector<SelectorView>& views,
         const TileSelectionVisibilityContext& context);
 
     static TileSelectionVisibilitySample sampleChildBounds(
         const std::vector<TilesetTile*>& children,
-        const std::vector<FrameState::SelectorView>& views,
+        const std::vector<SelectorView>& views,
         const TileSelectionVisibilityContext& context);
 
     static TileSelectionVisibilitySample sampleForTileSelection(
         const TilesetTile& tile,
-        const std::vector<FrameState::SelectorView>& views,
+        const std::vector<SelectorView>& views,
         const TileSelectionVisibilityContext& context);
 };
 

@@ -16,7 +16,7 @@ constexpr double kInteractionFocusTtlSeconds = 2.5;
 void populateSelectorViews(
     FrameState& frameState,
     bool hasSelectorViewOverride,
-    const std::vector<FrameState::SelectorView>* selectorViewOverride) {
+    const std::vector<SelectorView>* selectorViewOverride) {
     frameState.selectorViews.clear();
     if (hasSelectorViewOverride) {
         if (selectorViewOverride) {
@@ -29,7 +29,7 @@ void populateSelectorViews(
         return;
     }
 
-    FrameState::SelectorView selectorView;
+    SelectorView selectorView;
     selectorView.position = frameState.camera->position();
     selectorView.direction = frameState.camera->direction();
     const double viewportWidth =

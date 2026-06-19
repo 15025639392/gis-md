@@ -22,7 +22,7 @@ struct TileSelectionReuseState {
     bool reusable = false;
     bool lastRequestIssuedWork = false;
     bool lastRequestBlockedByInflight = false;
-    std::vector<FrameState::SelectorView> selectorViews;
+    std::vector<SelectorView> selectorViews;
 
     void invalidate() {
         reusable = false;

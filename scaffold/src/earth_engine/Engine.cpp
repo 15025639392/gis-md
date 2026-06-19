@@ -167,7 +167,7 @@ void Engine::addTileset(std::unique_ptr<Tileset> tileset) {
 }
 
 void Engine::setSelectorViewOverride(
-    std::vector<FrameState::SelectorView> selectorViews) {
+    std::vector<SelectorView> selectorViews) {
     scene_->setSelectorViewOverride(std::move(selectorViews));
 }
 

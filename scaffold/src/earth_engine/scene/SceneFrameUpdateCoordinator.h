@@ -26,7 +26,7 @@ struct SceneFrameUpdateInput {
     double& elapsedTime;
     double deltaSeconds = 0.0;
     bool hasSelectorViewOverride = false;
-    const std::vector<FrameState::SelectorView>* selectorViewOverride =
+    const std::vector<SelectorView>* selectorViewOverride =
         nullptr;
     bool hasInteractionFocus = false;
     Vec3 interactionFocusDirection = Vec3::zero();

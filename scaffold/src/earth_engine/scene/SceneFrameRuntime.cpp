@@ -17,7 +17,7 @@ void SceneFrameRuntime::setViewport(
 }
 
 void SceneFrameRuntime::setSelectorViewOverride(
-    std::vector<FrameState::SelectorView> selectorViews) {
+    std::vector<SelectorView> selectorViews) {
     hasSelectorViewOverride_ = true;
     selectorViewOverride_ = std::move(selectorViews);
 }

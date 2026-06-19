@@ -72,7 +72,7 @@ struct TileSelectionVisitOutcomePlan {
 struct TileSelectionVisitPreparation {
     static TileSelectionVisitPreparationResult prepare(
         const TilesetTile& tile,
-        const std::vector<FrameState::SelectorView>& views,
+        const std::vector<SelectorView>& views,
         const std::vector<double>& fogDensities,
         const TileSelectionVisibilityContext& visibilityContext,
         const TileSelectionVisitPreparationOptions& options);

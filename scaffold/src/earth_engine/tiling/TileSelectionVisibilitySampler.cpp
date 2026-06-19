@@ -9,7 +9,7 @@ namespace earth_engine {
 
 bool TileSelectionVisibilitySampler::boundsVisible(
     const TilesetTile& tile,
-    const std::vector<FrameState::SelectorView>& views,
+    const std::vector<SelectorView>& views,
     const TileSelectionVisibilityContext& context) {
     if (context.renderTilesUnderCamera &&
         tile.bounds.contains(
@@ -28,7 +28,7 @@ bool TileSelectionVisibilitySampler::boundsVisible(
 
 TileSelectionVisibilitySample TileSelectionVisibilitySampler::sampleTileBounds(
     const TilesetTile& tile,
-    const std::vector<FrameState::SelectorView>& views,
+    const std::vector<SelectorView>& views,
     const TileSelectionVisibilityContext& context) {
     TileSelectionVisibilitySample sample;
     sample.visibleFromCamera = boundsVisible(tile, views, context);
@@ -42,7 +42,7 @@ TileSelectionVisibilitySample TileSelectionVisibilitySampler::sampleTileBounds(
 
 TileSelectionVisibilitySample TileSelectionVisibilitySampler::sampleChildBounds(
     const std::vector<TilesetTile*>& children,
-    const std::vector<FrameState::SelectorView>& views,
+    const std::vector<SelectorView>& views,
     const TileSelectionVisibilityContext& context) {
     TileSelectionVisibilitySample sample;
     for (const TilesetTile* child : children) {
@@ -64,7 +64,7 @@ TileSelectionVisibilitySample TileSelectionVisibilitySampler::sampleChildBounds(
 TileSelectionVisibilitySample
 TileSelectionVisibilitySampler::sampleForTileSelection(
     const TilesetTile& tile,
-    const std::vector<FrameState::SelectorView>& views,
+    const std::vector<SelectorView>& views,
     const TileSelectionVisibilityContext& context) {
     bool hasUnconditionallyRefinedChild = false;
     for (const TilesetTile* child : tile.children) {

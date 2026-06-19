@@ -85,7 +85,7 @@ public:
     /// cesium-native 对齐：设置 selector 的视图/frustum 列表。
     /// 传入空列表表示本帧没有可选择视图；clear 后回到主相机视图。
     void setSelectorViewOverride(
-        std::vector<FrameState::SelectorView> selectorViews);
+        std::vector<SelectorView> selectorViews);
     void clearSelectorViewOverride();
     void setOcclusionCallback(TileOcclusionCallback callback);
     void clearOcclusionCallback();

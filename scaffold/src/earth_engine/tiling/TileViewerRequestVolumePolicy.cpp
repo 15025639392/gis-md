@@ -19,7 +19,7 @@ bool TileViewerRequestVolumePolicy::containsPosition(
 
 bool TileViewerRequestVolumePolicy::allowsAnyView(
     const std::optional<TileBoundingVolume>& viewerRequestVolume,
-    const std::vector<FrameState::SelectorView>& views) {
+    const std::vector<SelectorView>& views) {
     if (!viewerRequestVolume) {
         return true;
     }

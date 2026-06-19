@@ -37,7 +37,7 @@ public:
 
     void setViewport(int widthPixels, int heightPixels, float dpr);
     void setSelectorViewOverride(
-        std::vector<FrameState::SelectorView> selectorViews);
+        std::vector<SelectorView> selectorViews);
     void clearSelectorViewOverride();
 
     SceneFrameUpdateInput makeFrameUpdateInput(
@@ -63,7 +63,7 @@ public:
     bool hasSelectorViewOverride() const {
         return hasSelectorViewOverride_;
     }
-    const std::vector<FrameState::SelectorView>& selectorViewOverride() const {
+    const std::vector<SelectorView>& selectorViewOverride() const {
         return selectorViewOverride_;
     }
 
@@ -73,7 +73,7 @@ private:
     uint64_t frameId_ = 0;
     double elapsedTime_ = 0.0;
     bool hasSelectorViewOverride_ = false;
-    std::vector<FrameState::SelectorView> selectorViewOverride_;
+    std::vector<SelectorView> selectorViewOverride_;
 };
 
 } // namespace earth_engine

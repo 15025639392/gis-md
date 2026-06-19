@@ -83,7 +83,7 @@ void populateCameraTrace(const FrameState& frameState,
 void populateSelectorViewTrace(const FrameState& frameState,
                                PresentationTrace& trace) {
     trace.selectorViews.reserve(frameState.selectorViews.size());
-    for (const FrameState::SelectorView& view : frameState.selectorViews) {
+    for (const SelectorView& view : frameState.selectorViews) {
         PresentationSelectorViewTrace viewTrace;
         viewTrace.position = toArray(view.position);
         viewTrace.direction = toArray(view.direction);

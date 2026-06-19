@@ -52,7 +52,7 @@ public:
     void update(double deltaSeconds);
     void render();
     void setSelectorViewOverride(
-        std::vector<FrameState::SelectorView> selectorViews);
+        std::vector<SelectorView> selectorViews);
     void clearSelectorViewOverride();
     void setOcclusionCallback(TileOcclusionCallback callback);
     void clearOcclusionCallback();
