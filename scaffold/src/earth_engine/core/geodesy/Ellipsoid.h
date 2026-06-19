@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Cartographic.h"
+#include "../math/RayEllipsoidIntersectionInterval.h"
 #include "../math/Vec3.h"
 #include <optional>
 
@@ -17,11 +18,6 @@ struct GeodesicDirectResult {
     Cartographic destination;
     double finalAzimuthRadians = 0.0;
     bool converged = false;
-};
-
-struct RayEllipsoidIntersectionInterval {
-    double entryDistance = 0.0;
-    double exitDistance = 0.0;
 };
 
 /// WGS84 参考椭球体。

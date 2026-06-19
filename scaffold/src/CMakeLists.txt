@@ -15,6 +15,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/core/math/Mat4.cpp
     earth_engine/core/math/Ray.h
     earth_engine/core/math/Ray.cpp
+    earth_engine/core/math/RayEllipsoidIntersectionInterval.h
     earth_engine/core/math/IntersectionTests.h
     earth_engine/core/math/IntersectionTests.cpp
     earth_engine/core/math/Rectangle.h
