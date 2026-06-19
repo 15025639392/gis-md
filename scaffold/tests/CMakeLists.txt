@@ -128,6 +128,12 @@ add_executable(test_renderer_commands
 target_link_libraries(test_renderer_commands PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_renderer_commands COMMAND test_renderer_commands)
 
+add_executable(test_render_command_streaming_set
+    unit/renderer/test_render_command_streaming_set.cpp
+)
+target_link_libraries(test_render_command_streaming_set PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_render_command_streaming_set COMMAND test_render_command_streaming_set)
+
 # ============================================================
 # stage 5 tests
 # ============================================================
