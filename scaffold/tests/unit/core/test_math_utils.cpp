@@ -7,6 +7,20 @@
 
 using namespace earth_engine;
 
+TEST(MathUtilsTest, ConstantsAndAngleConversionsMatchCesiumNative) {
+    EXPECT_DOUBLE_EQ(1e-1, MathUtils::Epsilon1);
+    EXPECT_DOUBLE_EQ(1e-12, MathUtils::Epsilon12);
+    EXPECT_DOUBLE_EQ(1e-21, MathUtils::Epsilon21);
+    EXPECT_DOUBLE_EQ(3.14159265358979323846, MathUtils::OnePi);
+    EXPECT_DOUBLE_EQ(MathUtils::OnePi * 2.0, MathUtils::TwoPi);
+    EXPECT_DOUBLE_EQ(MathUtils::OnePi / 2.0, MathUtils::PiOverTwo);
+    EXPECT_DOUBLE_EQ(MathUtils::OnePi / 4.0, MathUtils::PiOverFour);
+    EXPECT_DOUBLE_EQ(1.61803398874989484, MathUtils::GoldenRatio);
+
+    EXPECT_DOUBLE_EQ(MathUtils::OnePi, MathUtils::degreesToRadians(180.0));
+    EXPECT_DOUBLE_EQ(180.0, MathUtils::radiansToDegrees(MathUtils::OnePi));
+}
+
 TEST(MathUtilsTest, LerpMatchesCesiumNative) {
     EXPECT_DOUBLE_EQ(1.0, MathUtils::lerp(1.0, 2.0, 0.0));
     EXPECT_DOUBLE_EQ(1.5, MathUtils::lerp(1.0, 2.0, 0.5));
