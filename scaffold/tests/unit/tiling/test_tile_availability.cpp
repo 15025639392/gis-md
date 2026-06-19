@@ -275,6 +275,36 @@ TEST(TileQuadtreeAvailabilityTest, RootIsImplicitlyAvailableBeforeSubtreeLoads) 
     EXPECT_EQ(0, availability.computeAvailability(1, 0, 0));
 }
 
+TEST(TileQuadtreeAvailabilityTest, ZeroSubtreeLevelsAreUnavailable) {
+    TileQuadtreeAvailability availability(0, 5);
+    TileQuadtreeAvailability overflowingAvailability(16, 20);
+
+    EXPECT_EQ(0U, availability.subtreeLevels());
+    EXPECT_EQ(0, availability.computeAvailability(0, 0, 0));
+    EXPECT_FALSE(availability.addSubtree(
+        0,
+        0,
+        0,
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            {}}));
+    EXPECT_EQ(nullptr, availability.addNode(0, 0, 0, nullptr));
+    EXPECT_EQ(nullptr, availability.rootNode());
+
+    EXPECT_EQ(0, overflowingAvailability.computeAvailability(0, 0, 0));
+    EXPECT_FALSE(overflowingAvailability.addSubtree(
+        0,
+        0,
+        0,
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            {}}));
+}
+
 TEST(TileQuadtreeAvailabilityTest, TileAndContentAvailabilityMatchCesiumNative) {
     TileQuadtreeAvailability availability(3, 5);
     ASSERT_TRUE(availability.addSubtree(0, 0, 0, makeQuadtreeFixtureRootSubtree()));
@@ -588,6 +618,35 @@ TEST(TileOctreeAvailabilityTest, RootIsImplicitlyAvailableBeforeSubtreeLoads) {
     EXPECT_EQ(static_cast<uint8_t>(TileAvailable | SubtreeAvailable),
               availability.computeAvailability(OctreeTileID{0, 0, 0, 0}));
     EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{1, 0, 0, 0}));
+}
+
+TEST(TileOctreeAvailabilityTest, ZeroSubtreeLevelsAreUnavailable) {
+    TileOctreeAvailability availability(0, 5);
+    TileOctreeAvailability overflowingAvailability(11, 20);
+
+    EXPECT_EQ(0U, availability.subtreeLevels());
+    EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{0, 0, 0, 0}));
+    EXPECT_FALSE(availability.addSubtree(
+        OctreeTileID{0, 0, 0, 0},
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            {}}));
+    EXPECT_EQ(nullptr,
+              availability.addNode(OctreeTileID{0, 0, 0, 0}, nullptr));
+    EXPECT_EQ(nullptr, availability.rootNode());
+
+    EXPECT_EQ(0,
+              overflowingAvailability.computeAvailability(
+                  OctreeTileID{0, 0, 0, 0}));
+    EXPECT_FALSE(overflowingAvailability.addSubtree(
+        OctreeTileID{0, 0, 0, 0},
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            {}}));
 }
 
 TEST(TileOctreeAvailabilityTest, TileAndContentAvailabilityMatchCesiumNative) {

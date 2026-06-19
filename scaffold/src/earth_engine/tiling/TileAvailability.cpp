@@ -69,6 +69,14 @@ bool octreeCoordinatesInLevel(const OctreeTileID& tileID) {
            static_cast<uint32_t>(tileID.z) < tilesInLevel;
 }
 
+bool validQuadtreeSubtreeLevels(uint32_t subtreeLevels) {
+    return subtreeLevels > 0U && subtreeLevels <= 15U;
+}
+
+bool validOctreeSubtreeLevels(uint32_t subtreeLevels) {
+    return subtreeLevels > 0U && subtreeLevels <= 10U;
+}
+
 bool availabilityBitSet(const TileAvailabilityAccessor& accessor,
                         uint32_t availabilityIndex) {
     if (accessor.isConstant()) {
@@ -215,12 +223,18 @@ TileQuadtreeAvailability::TileQuadtreeAvailability(
     uint32_t maximumLevel)
     : subtreeLevels_(subtreeLevels),
       maximumLevel_(maximumLevel),
-      maximumChildrenSubtrees_(1U << (subtreeLevels << 1U)) {}
+      maximumChildrenSubtrees_(
+          validQuadtreeSubtreeLevels(subtreeLevels)
+              ? 1U << (subtreeLevels << 1U)
+              : 0U) {}
 
 uint8_t TileQuadtreeAvailability::computeAvailability(
     uint32_t level,
     uint32_t x,
     uint32_t y) const {
+    if (!validQuadtreeSubtreeLevels(subtreeLevels_)) {
+        return 0;
+    }
     if (!quadtreeCoordinatesInLevel(level, x, y)) {
         return 0;
     }
@@ -290,6 +304,9 @@ uint8_t TileQuadtreeAvailability::computeAvailability(
     uint32_t x,
     uint32_t y,
     const TileAvailabilityNode* node) const {
+    if (!validQuadtreeSubtreeLevels(subtreeLevels_)) {
+        return 0;
+    }
     if (!quadtreeCoordinatesInLevel(level, x, y)) {
         return 0;
     }
@@ -328,6 +345,9 @@ bool TileQuadtreeAvailability::addSubtree(
     uint32_t x,
     uint32_t y,
     TileAvailabilitySubtree&& subtree) {
+    if (!validQuadtreeSubtreeLevels(subtreeLevels_)) {
+        return false;
+    }
     if (!quadtreeCoordinatesInLevel(level, x, y)) {
         return false;
     }
@@ -386,6 +406,9 @@ TileAvailabilityNode* TileQuadtreeAvailability::addNode(
     uint32_t x,
     uint32_t y,
     TileAvailabilityNode* parentNode) {
+    if (!validQuadtreeSubtreeLevels(subtreeLevels_)) {
+        return nullptr;
+    }
     if (!quadtreeCoordinatesInLevel(level, x, y)) {
         return nullptr;
     }
@@ -419,6 +442,7 @@ std::optional<uint32_t> TileQuadtreeAvailability::findChildNodeIndex(
     uint32_t x,
     uint32_t y,
     const TileAvailabilityNode* parentNode) const {
+    if (!validQuadtreeSubtreeLevels(subtreeLevels_)) return std::nullopt;
     if (!parentNode || !parentNode->subtree) return std::nullopt;
     if (!quadtreeCoordinatesInLevel(level, x, y)) return std::nullopt;
     if (level % subtreeLevels_ != 0) return std::nullopt;
@@ -450,10 +474,16 @@ TileOctreeAvailability::TileOctreeAvailability(
     uint32_t maximumLevel)
     : subtreeLevels_(subtreeLevels),
       maximumLevel_(maximumLevel),
-      maximumChildrenSubtrees_(1U << (3U * subtreeLevels)) {}
+      maximumChildrenSubtrees_(
+          validOctreeSubtreeLevels(subtreeLevels)
+              ? 1U << (3U * subtreeLevels)
+              : 0U) {}
 
 uint8_t TileOctreeAvailability::computeAvailability(
     const OctreeTileID& tileID) const {
+    if (!validOctreeSubtreeLevels(subtreeLevels_)) {
+        return 0;
+    }
     if (!octreeCoordinatesInLevel(tileID)) {
         return 0;
     }
@@ -530,6 +560,9 @@ uint8_t TileOctreeAvailability::computeAvailability(
 uint8_t TileOctreeAvailability::computeAvailability(
     const OctreeTileID& tileID,
     const TileAvailabilityNode* node) const {
+    if (!validOctreeSubtreeLevels(subtreeLevels_)) {
+        return 0;
+    }
     if (!octreeCoordinatesInLevel(tileID)) {
         return 0;
     }
@@ -571,6 +604,9 @@ uint8_t TileOctreeAvailability::computeAvailability(
 bool TileOctreeAvailability::addSubtree(
     const OctreeTileID& tileID,
     TileAvailabilitySubtree&& subtree) {
+    if (!validOctreeSubtreeLevels(subtreeLevels_)) {
+        return false;
+    }
     if (!octreeCoordinatesInLevel(tileID)) {
         return false;
     }
@@ -633,6 +669,9 @@ bool TileOctreeAvailability::addSubtree(
 TileAvailabilityNode* TileOctreeAvailability::addNode(
     const OctreeTileID& tileID,
     TileAvailabilityNode* parentNode) {
+    if (!validOctreeSubtreeLevels(subtreeLevels_)) {
+        return nullptr;
+    }
     if (!octreeCoordinatesInLevel(tileID)) {
         return nullptr;
     }
@@ -664,6 +703,7 @@ bool TileOctreeAvailability::addLoadedSubtree(
 std::optional<uint32_t> TileOctreeAvailability::findChildNodeIndex(
     const OctreeTileID& tileID,
     const TileAvailabilityNode* parentNode) const {
+    if (!validOctreeSubtreeLevels(subtreeLevels_)) return std::nullopt;
     if (!parentNode || !parentNode->subtree) return std::nullopt;
     if (!octreeCoordinatesInLevel(tileID)) return std::nullopt;
     if (static_cast<uint32_t>(tileID.level) % subtreeLevels_ != 0) {
