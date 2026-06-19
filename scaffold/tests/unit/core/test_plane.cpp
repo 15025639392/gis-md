@@ -8,7 +8,10 @@ using namespace earth_engine;
 TEST(PlaneTest, ConstructorRequiresNormalizedNormal) {
     // Ported from cesium-native CesiumGeometry/test/TestPlane.cpp.
     EXPECT_NO_THROW(Plane(Vec3::unitX(), 0.0));
+    EXPECT_NO_THROW(Plane(Vec3(1.0 + 1e-6, 0.0, 0.0), 0.0));
     EXPECT_THROW(Plane(Vec3(1.0, 2.0, 3.0), 0.0), std::invalid_argument);
+    EXPECT_THROW(Plane(Vec3(1.0 + 2e-6, 0.0, 0.0), 0.0),
+                 std::invalid_argument);
     EXPECT_THROW(Plane(Vec3::zero(), Vec3(1.0, 2.0, 3.0)),
                  std::invalid_argument);
 }

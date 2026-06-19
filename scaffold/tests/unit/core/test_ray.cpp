@@ -22,7 +22,10 @@ TEST(RayTest, ConstructorRequiresNormalizedDirection) {
     // Ported from cesium-native CesiumGeometry::Ray constructor semantics:
     // direction is an input contract, not silently normalized by Ray.
     EXPECT_NO_THROW(Ray(Vec3(1.0, 2.0, 3.0), Vec3::unitX()));
+    EXPECT_NO_THROW(Ray(Vec3(1.0, 2.0, 3.0), Vec3(1.0 + 1e-6, 0.0, 0.0)));
     EXPECT_THROW(Ray(Vec3(1.0, 2.0, 3.0), Vec3(2.0, 0.0, 0.0)),
+                 std::invalid_argument);
+    EXPECT_THROW(Ray(Vec3(1.0, 2.0, 3.0), Vec3(1.0 + 2e-6, 0.0, 0.0)),
                  std::invalid_argument);
 }
 
