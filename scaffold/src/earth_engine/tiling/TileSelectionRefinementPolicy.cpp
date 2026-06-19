@@ -19,8 +19,7 @@ bool TileSelectionRefinementPolicy::shouldCheckOcclusion(
     TileSelectionState previousSelectionState,
     bool childWasRefinedLastFrame) {
     const bool tileLastRefined =
-        originalSelectionState(previousSelectionState) ==
-        TileSelectionState::Refined;
+        previousSelectionState == TileSelectionState::Refined;
     return enableOcclusionCulling &&
            refine &&
            !unconditionallyRefine &&

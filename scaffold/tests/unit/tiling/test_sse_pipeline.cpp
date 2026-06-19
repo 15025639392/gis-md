@@ -14077,6 +14077,13 @@ void testTileSelectionRefinementPolicyOcclusionGate() {
               TileSelectionState::Refined,
               true),
           "TileSelectionRefinementPolicy: previously refined child skips occlusion");
+    check(TileSelectionRefinementPolicy::shouldCheckOcclusion(
+              true,
+              true,
+              false,
+              TileSelectionState::RefinedAndKicked,
+              true),
+          "TileSelectionRefinementPolicy: kicked refined state checks occlusion like cesium-native");
     check(!TileSelectionRefinementPolicy::shouldCheckOcclusion(
               false,
               true,
