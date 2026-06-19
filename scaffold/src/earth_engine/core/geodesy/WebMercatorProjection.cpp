@@ -26,12 +26,20 @@ Rectangle WebMercatorProjection::project(const Rectangle& rectangle) const {
 }
 
 Cartographic WebMercatorProjection::unproject(
-    const Vec3& projectedCoordinates) const {
+    const glm::dvec2& projectedCoordinates) const {
     return Cartographic(
-        projectedCoordinates.x() * oneOverSemimajorAxis_,
+        projectedCoordinates.x * oneOverSemimajorAxis_,
         mercatorAngleToGeodeticLatitude(
-            projectedCoordinates.y() * oneOverSemimajorAxis_),
-        projectedCoordinates.z());
+            projectedCoordinates.y * oneOverSemimajorAxis_),
+        0.0);
+}
+
+Cartographic WebMercatorProjection::unproject(
+    const Vec3& projectedCoordinates) const {
+    Cartographic result = unproject(
+        glm::dvec2(projectedCoordinates.x(), projectedCoordinates.y()));
+    result.setHeight(projectedCoordinates.z());
+    return result;
 }
 
 Rectangle WebMercatorProjection::unproject(const Rectangle& rectangle) const {

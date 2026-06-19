@@ -5,6 +5,8 @@
 #include "../math/Rectangle.h"
 #include "../math/Vec3.h"
 
+#include <glm/ext/vector_double2.hpp>
+
 namespace earth_engine {
 
 class WebMercatorProjection {
@@ -13,6 +15,7 @@ public:
 
     Vec3 project(const Cartographic& cartographic) const;
     Rectangle project(const Rectangle& rectangle) const;
+    Cartographic unproject(const glm::dvec2& projectedCoordinates) const;
     Cartographic unproject(const Vec3& projectedCoordinates) const;
     Rectangle unproject(const Rectangle& rectangle) const;
 

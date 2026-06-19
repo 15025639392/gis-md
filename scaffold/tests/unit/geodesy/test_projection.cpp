@@ -9,6 +9,7 @@
 #include "earth_engine/core/math/Vec3.h"
 
 #include <cmath>
+#include <glm/ext/vector_double2.hpp>
 
 using namespace earth_engine;
 
@@ -35,6 +36,18 @@ TEST(GeographicProjectionTest, UnprojectPreservesHeight) {
     EXPECT_DOUBLE_EQ(1.0, cartographic.longitude());
     EXPECT_DOUBLE_EQ(-0.25, cartographic.latitude());
     EXPECT_DOUBLE_EQ(987.0, cartographic.height());
+}
+
+TEST(GeographicProjectionTest, Unproject2DSetsHeightToZeroLikeCesiumNative) {
+    const GeographicProjection projection(Ellipsoid::WGS84());
+    const glm::dvec2 projected(Ellipsoid::WGS84().maximumRadius() * 0.75,
+                               Ellipsoid::WGS84().maximumRadius() * -0.25);
+
+    const Cartographic cartographic = projection.unproject(projected);
+
+    EXPECT_DOUBLE_EQ(0.75, cartographic.longitude());
+    EXPECT_DOUBLE_EQ(-0.25, cartographic.latitude());
+    EXPECT_DOUBLE_EQ(0.0, cartographic.height());
 }
 
 TEST(GeographicProjectionTest, ProjectAndUnprojectRectangleMatchesCesiumNative) {
@@ -136,6 +149,20 @@ TEST(WebMercatorProjectionTest, ProjectAndUnprojectPreserveHeight) {
     EXPECT_NEAR(input.longitude(), roundtrip.longitude(), 1e-14);
     EXPECT_NEAR(input.latitude(), roundtrip.latitude(), 1e-14);
     EXPECT_DOUBLE_EQ(input.height(), roundtrip.height());
+}
+
+TEST(WebMercatorProjectionTest, Unproject2DSetsHeightToZeroLikeCesiumNative) {
+    const WebMercatorProjection projection(Ellipsoid::WGS84());
+    const Cartographic input =
+        Cartographic::fromDegrees(116.397, 39.908, 1234.5);
+    const Vec3 projected3D = projection.project(input);
+
+    const Cartographic cartographic =
+        projection.unproject(glm::dvec2(projected3D.x(), projected3D.y()));
+
+    EXPECT_NEAR(input.longitude(), cartographic.longitude(), 1e-14);
+    EXPECT_NEAR(input.latitude(), cartographic.latitude(), 1e-14);
+    EXPECT_DOUBLE_EQ(0.0, cartographic.height());
 }
 
 TEST(WebMercatorProjectionTest, ProjectClampsLatitudeToMaximumLikeCesiumNative) {

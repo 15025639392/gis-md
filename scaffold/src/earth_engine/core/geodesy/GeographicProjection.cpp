@@ -22,10 +22,18 @@ Rectangle GeographicProjection::project(const Rectangle& rectangle) const {
 }
 
 Cartographic GeographicProjection::unproject(
+    const glm::dvec2& projectedCoordinates) const {
+    return Cartographic(projectedCoordinates.x * oneOverSemimajorAxis_,
+                        projectedCoordinates.y * oneOverSemimajorAxis_,
+                        0.0);
+}
+
+Cartographic GeographicProjection::unproject(
     const Vec3& projectedCoordinates) const {
-    return Cartographic(projectedCoordinates.x() * oneOverSemimajorAxis_,
-                        projectedCoordinates.y() * oneOverSemimajorAxis_,
-                        projectedCoordinates.z());
+    Cartographic result = unproject(
+        glm::dvec2(projectedCoordinates.x(), projectedCoordinates.y()));
+    result.setHeight(projectedCoordinates.z());
+    return result;
 }
 
 Rectangle GeographicProjection::unproject(const Rectangle& rectangle) const {
