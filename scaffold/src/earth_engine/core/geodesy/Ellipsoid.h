@@ -82,6 +82,8 @@ public:
 
     /// WGS84 预置实例
     static const Ellipsoid& WGS84();
+    /// Unit sphere preset matching cesium-native Ellipsoid::UNIT_SPHERE.
+    static const Ellipsoid& UNIT_SPHERE();
 
 private:
     Vec3 radii_;

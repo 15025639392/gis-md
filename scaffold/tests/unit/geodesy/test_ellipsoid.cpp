@@ -20,6 +20,20 @@ TEST(EllipsoidTest, Wgs84Constants) {
     EXPECT_NEAR(1.0 / 298.257223563, e.flattening(), 1e-12);
 }
 
+TEST(EllipsoidTest, UnitSphereConstantMatchesCesiumNative) {
+    // cesium-native exposes Ellipsoid::UNIT_SPHERE as radii (1, 1, 1).
+    const auto& e = Ellipsoid::UNIT_SPHERE();
+
+    EXPECT_EQ(Vec3(1.0, 1.0, 1.0), e.radii());
+    EXPECT_DOUBLE_EQ(1.0, e.semiMajorAxis());
+    EXPECT_DOUBLE_EQ(1.0, e.semiMinorAxis());
+    EXPECT_DOUBLE_EQ(1.0, e.maximumRadius());
+    EXPECT_DOUBLE_EQ(1.0, e.minimumRadius());
+    EXPECT_DOUBLE_EQ(0.0, e.flattening());
+    EXPECT_EQ(Vec3(1.0, 0.0, 0.0),
+              e.cartographicToCartesian(Cartographic::fromRadians(0.0, 0.0)));
+}
+
 TEST(EllipsoidTest, TriAxialRadiiStateMatchesCesiumNative) {
     // cesium-native Ellipsoid stores independent x/y/z radii and derives
     // squared and reciprocal state from all three components.

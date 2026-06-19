@@ -373,4 +373,9 @@ const Ellipsoid& Ellipsoid::WGS84() {
     return wgs84;
 }
 
+const Ellipsoid& Ellipsoid::UNIT_SPHERE() {
+    static const Ellipsoid unitSphere(1.0, 1.0, 1.0);
+    return unitSphere;
+}
+
 } // namespace earth_engine
