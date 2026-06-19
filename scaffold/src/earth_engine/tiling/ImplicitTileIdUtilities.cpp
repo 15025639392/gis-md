@@ -433,6 +433,48 @@ TileBoundingVolume ImplicitTileIdUtilities::computeRegionBoundingVolume(
         childMaximumHeight);
 }
 
+S2CellBoundingVolume ImplicitTileIdUtilities::computeBoundingVolume(
+    const S2CellBoundingVolume& rootBoundingVolume,
+    const TileKey& tileID) {
+    const uint8_t face = rootBoundingVolume.getCellID().getFace();
+    return S2CellBoundingVolume(
+        S2CellID::fromQuadtreeTileID(
+            face,
+            static_cast<uint32_t>(tileID.z),
+            static_cast<uint32_t>(tileID.x),
+            static_cast<uint32_t>(tileID.y)),
+        rootBoundingVolume.getMinimumHeight(),
+        rootBoundingVolume.getMaximumHeight());
+}
+
+S2CellBoundingVolume ImplicitTileIdUtilities::computeBoundingVolume(
+    const S2CellBoundingVolume& rootBoundingVolume,
+    const OctreeTileID& tileID) {
+    const double denominator =
+        levelDenominator(static_cast<uint32_t>(tileID.level));
+    const double heightSize =
+        (rootBoundingVolume.getMaximumHeight() -
+         rootBoundingVolume.getMinimumHeight()) /
+        denominator;
+
+    const double childMinimumHeight =
+        rootBoundingVolume.getMinimumHeight() +
+        heightSize * static_cast<double>(tileID.z);
+    const double childMaximumHeight =
+        rootBoundingVolume.getMinimumHeight() +
+        heightSize * static_cast<double>(tileID.z + 1);
+
+    const uint8_t face = rootBoundingVolume.getCellID().getFace();
+    return S2CellBoundingVolume(
+        S2CellID::fromQuadtreeTileID(
+            face,
+            static_cast<uint32_t>(tileID.level),
+            static_cast<uint32_t>(tileID.x),
+            static_cast<uint32_t>(tileID.y)),
+        childMinimumHeight,
+        childMaximumHeight);
+}
+
 std::optional<TileKey> ImplicitTileIdUtilities::parentId(
     const TileKey& tileID) {
     if (tileID.z == 0) {

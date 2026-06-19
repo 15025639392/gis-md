@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/core/geodesy/Transforms.h"
+#include "earth_engine/core/geodesy/S2CellBoundingVolume.h"
+#include "earth_engine/core/geodesy/S2CellID.h"
 #include "earth_engine/core/math/BoundingCylinderRegion.h"
 #include "earth_engine/core/math/MathUtils.h"
 #include "earth_engine/core/math/OrientedBoundingBox.h"
@@ -249,6 +251,92 @@ TEST(ImplicitTileIdUtilitiesTest,
     EXPECT_DOUBLE_EQ(3.0, l1x0y0z1.region.north());
     EXPECT_DOUBLE_EQ(15.0, l1x0y0z1.minimumHeight);
     EXPECT_DOUBLE_EQ(20.0, l1x0y0z1.maximumHeight);
+}
+
+TEST(ImplicitTileIdUtilitiesTest,
+     ComputeS2QuadtreeBoundingVolumeMatchesCesiumNative) {
+    const S2CellBoundingVolume root(
+        S2CellID::fromQuadtreeTileID(1, 0, 0, 0),
+        10.0,
+        20.0);
+
+    const S2CellBoundingVolume l1x0y0 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            TileKey{"S2", 1, 0, 0});
+    EXPECT_EQ(1, l1x0y0.getCellID().getFace());
+    EXPECT_EQ(S2CellID::fromQuadtreeTileID(1, 1, 0, 0).getID(),
+              l1x0y0.getCellID().getID());
+    EXPECT_DOUBLE_EQ(10.0, l1x0y0.getMinimumHeight());
+    EXPECT_DOUBLE_EQ(20.0, l1x0y0.getMaximumHeight());
+
+    const S2CellBoundingVolume l1x1y0 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            TileKey{"S2", 1, 1, 0});
+    EXPECT_EQ(1, l1x1y0.getCellID().getFace());
+    EXPECT_EQ(S2CellID::fromQuadtreeTileID(1, 1, 1, 0).getID(),
+              l1x1y0.getCellID().getID());
+    EXPECT_DOUBLE_EQ(10.0, l1x1y0.getMinimumHeight());
+    EXPECT_DOUBLE_EQ(20.0, l1x1y0.getMaximumHeight());
+
+    const S2CellBoundingVolume l1x0y1 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            TileKey{"S2", 1, 0, 1});
+    EXPECT_EQ(1, l1x0y1.getCellID().getFace());
+    EXPECT_EQ(S2CellID::fromQuadtreeTileID(1, 1, 0, 1).getID(),
+              l1x0y1.getCellID().getID());
+    EXPECT_DOUBLE_EQ(10.0, l1x0y1.getMinimumHeight());
+    EXPECT_DOUBLE_EQ(20.0, l1x0y1.getMaximumHeight());
+}
+
+TEST(ImplicitTileIdUtilitiesTest,
+     ComputeS2OctreeBoundingVolumeMatchesCesiumNative) {
+    const S2CellBoundingVolume root(
+        S2CellID::fromQuadtreeTileID(1, 0, 0, 0),
+        10.0,
+        20.0);
+
+    const S2CellBoundingVolume l1x0y0z0 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            OctreeTileID{1, 0, 0, 0});
+    EXPECT_EQ(1, l1x0y0z0.getCellID().getFace());
+    EXPECT_EQ(S2CellID::fromQuadtreeTileID(1, 1, 0, 0).getID(),
+              l1x0y0z0.getCellID().getID());
+    EXPECT_DOUBLE_EQ(10.0, l1x0y0z0.getMinimumHeight());
+    EXPECT_DOUBLE_EQ(15.0, l1x0y0z0.getMaximumHeight());
+
+    const S2CellBoundingVolume l1x1y0z0 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            OctreeTileID{1, 1, 0, 0});
+    EXPECT_EQ(1, l1x1y0z0.getCellID().getFace());
+    EXPECT_EQ(S2CellID::fromQuadtreeTileID(1, 1, 1, 0).getID(),
+              l1x1y0z0.getCellID().getID());
+    EXPECT_DOUBLE_EQ(10.0, l1x1y0z0.getMinimumHeight());
+    EXPECT_DOUBLE_EQ(15.0, l1x1y0z0.getMaximumHeight());
+
+    const S2CellBoundingVolume l1x0y1z0 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            OctreeTileID{1, 0, 1, 0});
+    EXPECT_EQ(1, l1x0y1z0.getCellID().getFace());
+    EXPECT_EQ(S2CellID::fromQuadtreeTileID(1, 1, 0, 1).getID(),
+              l1x0y1z0.getCellID().getID());
+    EXPECT_DOUBLE_EQ(10.0, l1x0y1z0.getMinimumHeight());
+    EXPECT_DOUBLE_EQ(15.0, l1x0y1z0.getMaximumHeight());
+
+    const S2CellBoundingVolume l1x0y0z1 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            OctreeTileID{1, 0, 0, 1});
+    EXPECT_EQ(1, l1x0y0z1.getCellID().getFace());
+    EXPECT_EQ(S2CellID::fromQuadtreeTileID(1, 1, 0, 0).getID(),
+              l1x0y0z1.getCellID().getID());
+    EXPECT_DOUBLE_EQ(15.0, l1x0y0z1.getMinimumHeight());
+    EXPECT_DOUBLE_EQ(20.0, l1x0y0z1.getMaximumHeight());
 }
 
 TEST(ImplicitTileIdUtilitiesTest,
