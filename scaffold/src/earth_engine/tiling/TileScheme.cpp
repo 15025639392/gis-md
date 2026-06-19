@@ -1,8 +1,7 @@
 #include "TileScheme.h"
 #include "CrsProfile.h"
 #include "../core/geodesy/WebMercatorProjection.h"
-#include <glm/glm.hpp>
-#include <glm/gtc/constants.hpp>
+#include "../core/math/MathUtils.h"
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>
@@ -23,16 +22,16 @@ enum class OpenGlobusTileGroup {
 };
 
 double mercatorFractionToLongitude(double fraction) {
-    return fraction * glm::two_pi<double>() - glm::pi<double>();
+    return fraction * MathUtils::TwoPi - MathUtils::OnePi;
 }
 
 double longitudeToMercatorFraction(double longitude) {
-    return (longitude + glm::pi<double>()) / glm::two_pi<double>();
+    return (longitude + MathUtils::OnePi) / MathUtils::TwoPi;
 }
 
 double mercatorFractionToLatitude(double fraction) {
-    const double mercatorAngle = glm::pi<double>() -
-        glm::two_pi<double>() * fraction;
+    const double mercatorAngle =
+        MathUtils::OnePi - MathUtils::TwoPi * fraction;
     return WebMercatorProjection::mercatorAngleToGeodeticLatitude(
         mercatorAngle);
 }
@@ -40,7 +39,7 @@ double mercatorFractionToLatitude(double fraction) {
 double latitudeToMercatorFraction(double latitude) {
     return (1.0 -
         WebMercatorProjection::geodeticLatitudeToMercatorAngle(latitude) /
-            glm::pi<double>()) * 0.5;
+            MathUtils::OnePi) * 0.5;
 }
 
 int groupBaseY(OpenGlobusTileGroup group, int tilesAtZoom) {
@@ -109,7 +108,7 @@ public:
 
     double levelResolution(int zoom) const override {
         // Web Mercator: 整个球面宽度（2π）除以该 zoom 的 tile 数
-        return glm::two_pi<double>() / static_cast<double>(tileCountX(zoom));
+        return MathUtils::TwoPi / static_cast<double>(tileCountX(zoom));
     }
 };
 
@@ -186,7 +185,7 @@ public:
     }
 
     double levelResolution(int zoom) const override {
-        return glm::two_pi<double>() / static_cast<double>(tileCountX(zoom));
+        return MathUtils::TwoPi / static_cast<double>(tileCountX(zoom));
     }
 };
 
@@ -220,23 +219,23 @@ public:
             0,
             tilesAtZoom - 1);
 
-        const double west = -glm::pi<double>() +
-            glm::two_pi<double>() * static_cast<double>(x) / tilesAtZoom;
-        const double east = -glm::pi<double>() +
-            glm::two_pi<double>() * static_cast<double>(x + 1) / tilesAtZoom;
+        const double west = -MathUtils::OnePi +
+            MathUtils::TwoPi * static_cast<double>(x) / tilesAtZoom;
+        const double east = -MathUtils::OnePi +
+            MathUtils::TwoPi * static_cast<double>(x + 1) / tilesAtZoom;
 
         if (group == OpenGlobusTileGroup::NorthPolar) {
-            const double height = (glm::half_pi<double>() - kMaxWebMercatorLat) /
+            const double height = (MathUtils::PiOverTwo - kMaxWebMercatorLat) /
                 static_cast<double>(tilesAtZoom);
-            const double north = glm::half_pi<double>() - height * localY;
-            const double south = glm::half_pi<double>() - height * (localY + 1);
+            const double north = MathUtils::PiOverTwo - height * localY;
+            const double south = MathUtils::PiOverTwo - height * (localY + 1);
             return Rectangle(west, south, east, north);
         }
         if (group == OpenGlobusTileGroup::SouthPolar) {
-            const double height = (glm::half_pi<double>() - kMaxWebMercatorLat) /
+            const double height = (MathUtils::PiOverTwo - kMaxWebMercatorLat) /
                 static_cast<double>(tilesAtZoom);
-            const double south = -glm::half_pi<double>() + height * localY;
-            const double north = -glm::half_pi<double>() + height * (localY + 1);
+            const double south = -MathUtils::PiOverTwo + height * localY;
+            const double north = -MathUtils::PiOverTwo + height * (localY + 1);
             return Rectangle(west, south, east, north);
         }
 
@@ -253,7 +252,7 @@ public:
     TileKey positionToTile(double lngRad, double latRad, int zoom) const override {
         const int tilesAtZoom = tileCountX(zoom);
         const double lngNorm = std::clamp(
-            (lngRad + glm::pi<double>()) / glm::two_pi<double>(),
+            (lngRad + MathUtils::OnePi) / MathUtils::TwoPi,
             0.0,
             std::nextafter(1.0, 0.0));
         const int x = std::clamp(static_cast<int>(lngNorm * tilesAtZoom),
@@ -265,16 +264,16 @@ public:
         if (latRad > kMaxWebMercatorLat) {
             group = OpenGlobusTileGroup::NorthPolar;
             const double t = std::clamp(
-                (glm::half_pi<double>() - latRad) /
-                    (glm::half_pi<double>() - kMaxWebMercatorLat),
+                (MathUtils::PiOverTwo - latRad) /
+                    (MathUtils::PiOverTwo - kMaxWebMercatorLat),
                 0.0,
                 std::nextafter(1.0, 0.0));
             localY = static_cast<int>(t * tilesAtZoom);
         } else if (latRad < -kMaxWebMercatorLat) {
             group = OpenGlobusTileGroup::SouthPolar;
             const double t = std::clamp(
-                (latRad + glm::half_pi<double>()) /
-                    (glm::half_pi<double>() - kMaxWebMercatorLat),
+                (latRad + MathUtils::PiOverTwo) /
+                    (MathUtils::PiOverTwo - kMaxWebMercatorLat),
                 0.0,
                 std::nextafter(1.0, 0.0));
             localY = static_cast<int>(t * tilesAtZoom);
@@ -299,7 +298,7 @@ public:
     }
 
     double levelResolution(int zoom) const override {
-        return glm::two_pi<double>() / static_cast<double>(tileCountX(zoom));
+        return MathUtils::TwoPi / static_cast<double>(tileCountX(zoom));
     }
 };
 
@@ -333,13 +332,15 @@ public:
         double south = -90.0 + static_cast<double>(y)     / yTilesAtZ * 180.0;
         double north = -90.0 + static_cast<double>(y + 1) / yTilesAtZ * 180.0;
         return Rectangle(
-            glm::radians(west), glm::radians(south),
-            glm::radians(east), glm::radians(north));
+            MathUtils::degreesToRadians(west),
+            MathUtils::degreesToRadians(south),
+            MathUtils::degreesToRadians(east),
+            MathUtils::degreesToRadians(north));
     }
 
     TileKey positionToTile(double lngRad, double latRad, int zoom) const override {
-        double lngDeg = glm::degrees(lngRad);
-        double latDeg = glm::degrees(latRad);
+        double lngDeg = MathUtils::radiansToDegrees(lngRad);
+        double latDeg = MathUtils::radiansToDegrees(latRad);
         int xTilesAtZoom = tileCountX(zoom);
         int yTilesAtZoom = tileCountY(zoom);
         int x = static_cast<int>((lngDeg + 180.0) / 360.0 * xTilesAtZoom);
@@ -359,7 +360,7 @@ public:
     }
 
     double levelResolution(int zoom) const override {
-        return glm::radians(180.0) / static_cast<double>(tileCountY(zoom));
+        return MathUtils::OnePi / static_cast<double>(tileCountY(zoom));
     }
 };
 
