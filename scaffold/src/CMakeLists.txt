@@ -65,6 +65,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/core/geodesy/GeographicProjection.cpp
     earth_engine/core/geodesy/WebMercatorProjection.h
     earth_engine/core/geodesy/WebMercatorProjection.cpp
+    earth_engine/core/geodesy/Projection.h
+    earth_engine/core/geodesy/Projection.cpp
     earth_engine/core/geodesy/Transforms.h
     earth_engine/core/geodesy/Transforms.cpp
 )
