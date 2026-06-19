@@ -29,6 +29,12 @@ TileSelectionVisitPreparationResult TileSelectionVisitPreparation::prepare(
             result.inputSummary.distances,
             fogDensities),
         options.enableFogCulling);
+    if (!result.cullResult.shouldVisit &&
+        tile.unconditionallyRefine &&
+        ((options.forbidHoles && tile.refine == TileRefine::Replace) ||
+         tile.parent == nullptr)) {
+        result.cullResult.shouldVisit = true;
+    }
     result.culledLoadPlan = TileSelectionCullingPolicy::planCulledTileLoad(
         options.preloadSiblings,
         options.forbidHoles);

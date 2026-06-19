@@ -13900,6 +13900,66 @@ void testTileSelectionVisitPreparationCombinesSelectionInputs() {
               result.inputSummary.screenSpaceError > 0.001 &&
               !result.meetsScreenSpaceError,
           "TileSelectionVisitPreparation: culled tile uses culled SSE threshold");
+
+    tile.geometricError = 10.0;
+    tile.unconditionallyRefine = true;
+    result = TileSelectionVisitPreparation::prepare(
+        tile,
+        {},
+        {0.0},
+        hiddenContext,
+        TileSelectionVisitPreparationOptions{
+            true,
+            true,
+            false,
+            false,
+            true,
+            16.0,
+            64.0});
+    check(result.cullResult.culled &&
+              result.cullResult.shouldVisit,
+          "TileSelectionVisitPreparation: culled unconditionally refined root is still visited like cesium-native");
+
+    TilesetTile child(
+        TileKey{"test", 1, 0, 0},
+        Rectangle{-0.25, -0.25, 0.0, 0.0},
+        &tile);
+    child.unconditionallyRefine = true;
+    child.refine = TileRefine::Replace;
+    result = TileSelectionVisitPreparation::prepare(
+        child,
+        {},
+        {0.0},
+        hiddenContext,
+        TileSelectionVisitPreparationOptions{
+            true,
+            true,
+            false,
+            true,
+            true,
+            16.0,
+            64.0});
+    check(result.cullResult.culled &&
+              result.cullResult.shouldVisit,
+          "TileSelectionVisitPreparation: forbid-holes replace child keeps unconditionally refined culled visit");
+
+    child.refine = TileRefine::Add;
+    result = TileSelectionVisitPreparation::prepare(
+        child,
+        {},
+        {0.0},
+        hiddenContext,
+        TileSelectionVisitPreparationOptions{
+            true,
+            true,
+            false,
+            true,
+            true,
+            16.0,
+            64.0});
+    check(result.cullResult.culled &&
+              !result.cullResult.shouldVisit,
+          "TileSelectionVisitPreparation: ADD unconditionally refined culled child still exits");
 }
 
 void testTileSelectionVisitPreparationPlansEarlyExitActions() {
