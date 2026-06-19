@@ -13183,17 +13183,21 @@ void testTileSelectionHistoryReadsPreviousSelectionTree() {
           "TileSelectionHistory: rendered tile is detected");
     renderedChild.selectionFrameState.previousSelectionState =
         TileSelectionState::RenderedAndKicked;
-    check(TileSelectionHistory::wasRenderedLastFrame(renderedChild),
-          "TileSelectionHistory: kicked rendered tile is detected from original state");
+    check(!TileSelectionHistory::wasRenderedLastFrame(renderedChild),
+          "TileSelectionHistory: kicked rendered tile is not treated as rendered like cesium-native getResult");
     check(!TileSelectionHistory::wasRenderedLastFrame(refinedChild),
           "TileSelectionHistory: refined tile is not directly rendered");
-    check(TileSelectionHistory::childWasRefinedLastFrame(root),
-          "TileSelectionHistory: kicked refined child is detected");
-    check(TileSelectionHistory::anyDescendantWasRenderedLastFrame(root),
-          "TileSelectionHistory: kicked rendered child is detected as descendant");
+    check(!TileSelectionHistory::childWasRefinedLastFrame(root),
+          "TileSelectionHistory: kicked refined child is not a refined child result");
+    check(!TileSelectionHistory::anyDescendantWasRenderedLastFrame(root),
+          "TileSelectionHistory: kicked rendered child is not a rendered descendant result");
 
     renderedChild.selectionFrameState.previousSelectionState =
         TileSelectionState::NotVisited;
+    refinedChild.selectionFrameState.previousSelectionState =
+        TileSelectionState::Refined;
+    check(TileSelectionHistory::childWasRefinedLastFrame(root),
+          "TileSelectionHistory: refined child result is detected");
     grandchild.selectionFrameState.previousSelectionState =
         TileSelectionState::Rendered;
     check(TileSelectionHistory::anyDescendantWasRenderedLastFrame(root),
