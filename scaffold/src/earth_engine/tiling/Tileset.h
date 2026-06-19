@@ -44,6 +44,7 @@ struct TilesetTestAccess;
 class TilesetSelectionFrameFacade;
 class TilesetQueryFacade;
 class TilesetUpdateFrameFacade;
+class TilesetUpdateFrameRuntime;
 
 /// cesium-native TilesetOptions subset used by the unified terrain tileset.
 /// Defaults intentionally mirror native where the local renderer has the
@@ -129,6 +130,7 @@ private:
     friend class TilesetQueryFacade;
     friend class TilesetSelectionFrameFacade;
     friend class TilesetUpdateFrameFacade;
+    friend class TilesetUpdateFrameRuntime;
 
     TileContentRuntimeFrame makeContentRuntimeFrame() const;
     TileLoadRequestOutcome requestMissingContent(
