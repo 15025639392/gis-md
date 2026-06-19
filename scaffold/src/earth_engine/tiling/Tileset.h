@@ -136,6 +136,8 @@ private:
     friend class TilesetSelectionFrameFacade;
     friend class TilesetUpdateFrameFacade;
 
+    TileContentRuntimeFrame makeContentRuntimeFrame() const;
+
     std::unique_ptr<TerrainProvider> terrainProvider_;
     std::unique_ptr<TilesetContentProvider> contentProvider_;
     std::unique_ptr<TileScheme> tileScheme_;

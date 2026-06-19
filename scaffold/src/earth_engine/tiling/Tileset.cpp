@@ -19,6 +19,8 @@ namespace earth_engine {
 
 namespace {
 
+constexpr int kSmoothedMainThreadUploadLimit = 1;
+
 FrameResourceBudgetConfig makeFrameResourceBudgetConfig(
     const TilesetOptions& options,
     bool interactionActive,
@@ -125,6 +127,19 @@ void Tileset::clearOcclusionCallback() {
 
 TilesetLoadDiagnostics Tileset::loadDiagnostics() const {
     return TilesetQueryFacade::loadDiagnostics(*this);
+}
+
+TileContentRuntimeFrame Tileset::makeContentRuntimeFrame() const {
+    return TileContentRuntimeFrame{
+        terrainProvider_.get(),
+        contentProvider_.get(),
+        device_,
+        tileRegistry_.tiles(),
+        frameNumber_,
+        options_.maximumSimultaneousTileLoads,
+        options_.mainThreadLoadingTimeLimit,
+        currentFrameTimeSeconds_,
+        static_cast<uint32_t>(kSmoothedMainThreadUploadLimit)};
 }
 
 float Tileset::sampleHeight(double lngRad, double latRad) const {
