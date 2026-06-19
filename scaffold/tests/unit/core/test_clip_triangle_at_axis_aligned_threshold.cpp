@@ -173,3 +173,23 @@ TEST(ClipTriangleAtAxisAlignedThresholdTest, AppendsToExistingResult) {
     const std::vector<TriangleClipVertex> expected{99, 0, 1, 2};
     EXPECT_EQ(expected, actual);
 }
+
+TEST(ClipTriangleAtAxisAlignedThresholdTest, KeepsThresholdVertexAndSkipsCoincidentInterpolation) {
+    std::vector<TriangleClipVertex> actual;
+
+    clipTriangleAtAxisAlignedThreshold(0.5,
+                                       true,
+                                       0,
+                                       1,
+                                       2,
+                                       0.5,
+                                       0.4,
+                                       0.6,
+                                       actual);
+
+    const std::vector<TriangleClipVertex> expected{
+        2,
+        0,
+        InterpolatedVertex{1, 2, 0.5}};
+    EXPECT_EQ(expected, actual);
+}
