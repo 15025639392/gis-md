@@ -2,10 +2,32 @@
 
 #include "earth_engine/core/math/Mat4.h"
 #include "earth_engine/core/math/Rectangle.h"
+#include "earth_engine/core/geodesy/Cartographic.h"
+#include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/Transforms.h"
 #include "earth_engine/tiling/TileBoundingVolume.h"
 #include "earth_engine/tiling/TileBoundsMetrics.h"
 
+#include <algorithm>
+#include <array>
+#include <cmath>
+
 using namespace earth_engine;
+
+namespace {
+
+constexpr double kPi = 3.14159265358979323846264338327950288;
+
+void expectRectangleNear(const Rectangle& expected,
+                         const Rectangle& actual,
+                         double epsilon) {
+    EXPECT_NEAR(expected.west(), actual.west(), epsilon);
+    EXPECT_NEAR(expected.south(), actual.south(), epsilon);
+    EXPECT_NEAR(expected.east(), actual.east(), epsilon);
+    EXPECT_NEAR(expected.north(), actual.north(), epsilon);
+}
+
+} // namespace
 
 TEST(TileBoundingVolumeTest, TransformLeavesRegionUnchangedLikeCesiumNative) {
     const Rectangle region = Rectangle::fromDegrees(-1.0, -2.0, 3.0, 4.0);
@@ -140,4 +162,103 @@ TEST(TileBoundingVolumeTest, RegionConvertsToBoundingRegionObbLikeCesiumNative) 
     EXPECT_EQ(expected->getHalfAxis(0), actual->getHalfAxis(0));
     EXPECT_EQ(expected->getHalfAxis(1), actual->getHalfAxis(1));
     EXPECT_EQ(expected->getHalfAxis(2), actual->getHalfAxis(2));
+}
+
+TEST(TileBoundingVolumeTest, EstimateGlobeRectangleReturnsRegionRectangle) {
+    const Rectangle rectangle = Rectangle::fromDegrees(-10.0, -5.0, 20.0, 15.0);
+    const TileBoundingVolume region =
+        TileBoundingVolume::fromRegion(rectangle, 100.0, 2000.0);
+
+    const std::optional<Rectangle> estimated =
+        region.estimateGlobeRectangle();
+
+    ASSERT_TRUE(estimated.has_value());
+    expectRectangleNear(rectangle, *estimated, 0.0);
+}
+
+TEST(TileBoundingVolumeTest, EstimateGlobeRectangleReturnsMaximumWhenContainingOrigin) {
+    const Rectangle maximum(-kPi, -kPi * 0.5, kPi, kPi * 0.5);
+    const TileBoundingVolume sphere =
+        TileBoundingVolume::fromSphere(Vec3::zero(), 1.0);
+    const TileBoundingVolume box =
+        TileBoundingVolume::fromBox(Vec3::zero(),
+                                    Vec3(1.0, 0.0, 0.0),
+                                    Vec3(0.0, 1.0, 0.0),
+                                    Vec3(0.0, 0.0, 1.0));
+
+    ASSERT_TRUE(sphere.estimateGlobeRectangle().has_value());
+    ASSERT_TRUE(box.estimateGlobeRectangle().has_value());
+    expectRectangleNear(maximum, *sphere.estimateGlobeRectangle(), 0.0);
+    expectRectangleNear(maximum, *box.estimateGlobeRectangle(), 0.0);
+}
+
+TEST(TileBoundingVolumeTest, EstimateGlobeRectangleForSphereLikeCesiumNative) {
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 center = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(0.0, 0.0, 1000.0));
+    const TileBoundingVolume sphere =
+        TileBoundingVolume::fromSphere(center, 500.0);
+
+    const std::optional<Rectangle> estimated =
+        sphere.estimateGlobeRectangle(ellipsoid);
+
+    const Mat4 enuToEcef =
+        Transforms::eastNorthUpToFixedFrame(center, ellipsoid);
+    const Cartographic east = ellipsoid.cartesianToCartographic(
+        enuToEcef * Vec3(500.0, 0.0, 0.0));
+    const Cartographic west = ellipsoid.cartesianToCartographic(
+        enuToEcef * Vec3(-500.0, 0.0, 0.0));
+    const Cartographic north = ellipsoid.cartesianToCartographic(
+        enuToEcef * Vec3(0.0, 500.0, 0.0));
+    const Cartographic south = ellipsoid.cartesianToCartographic(
+        enuToEcef * Vec3(0.0, -500.0, 0.0));
+    const Rectangle expected(
+        west.longitude(),
+        south.latitude(),
+        east.longitude(),
+        north.latitude());
+
+    ASSERT_TRUE(estimated.has_value());
+    expectRectangleNear(expected, *estimated, 1e-14);
+}
+
+TEST(TileBoundingVolumeTest, EstimateGlobeRectangleForBoxLikeCesiumNative) {
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 center = ellipsoid.cartographicToCartesian(
+        Cartographic::fromDegrees(5.0, 3.0, 1000.0));
+    const Mat4 enuToEcef =
+        Transforms::eastNorthUpToFixedFrame(center, ellipsoid);
+    const Vec3 axis0 = enuToEcef * Vec3(250.0, 0.0, 0.0) - center;
+    const Vec3 axis1 = enuToEcef * Vec3(0.0, 400.0, 0.0) - center;
+    const Vec3 axis2 = enuToEcef * Vec3(0.0, 0.0, 150.0) - center;
+    const TileBoundingVolume box =
+        TileBoundingVolume::fromBox(center, axis0, axis1, axis2);
+
+    const std::array<Vec3, 8> corners = {
+        center + axis0 + axis1 + axis2,
+        center + axis0 + axis1 - axis2,
+        center + axis0 - axis1 + axis2,
+        center + axis0 - axis1 - axis2,
+        center - axis0 + axis1 + axis2,
+        center - axis0 + axis1 - axis2,
+        center - axis0 - axis1 + axis2,
+        center - axis0 - axis1 - axis2};
+    double west = kPi;
+    double south = kPi * 0.5;
+    double east = -kPi;
+    double north = -kPi * 0.5;
+    for (const Vec3& corner : corners) {
+        const Cartographic cartographic =
+            ellipsoid.cartesianToCartographic(corner);
+        west = std::min(west, cartographic.longitude());
+        south = std::min(south, cartographic.latitude());
+        east = std::max(east, cartographic.longitude());
+        north = std::max(north, cartographic.latitude());
+    }
+
+    const std::optional<Rectangle> estimated =
+        box.estimateGlobeRectangle(ellipsoid);
+
+    ASSERT_TRUE(estimated.has_value());
+    expectRectangleNear(Rectangle(west, south, east, north), *estimated, 1e-14);
 }

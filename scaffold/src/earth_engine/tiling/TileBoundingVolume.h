@@ -9,6 +9,8 @@
 
 namespace earth_engine {
 
+class Ellipsoid;
+
 enum class TileBoundingVolumeKind {
     Region,
     Sphere,
@@ -78,6 +80,9 @@ struct TileBoundingVolume {
     }
 
     std::optional<OrientedBoundingBox> toOrientedBoundingBox() const;
+    std::optional<Rectangle> estimateGlobeRectangle() const;
+    std::optional<Rectangle> estimateGlobeRectangle(
+        const Ellipsoid& ellipsoid) const;
 };
 
 } // namespace earth_engine
