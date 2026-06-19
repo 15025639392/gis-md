@@ -59,8 +59,7 @@ Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
           rasterOverlays_.size()),
       resourceInvalidator_(
           resourceRevision_,
-          contentCache_,
-          selectionReuseState_),
+          contentCache_),
       cacheOwnership_(
           contentCache_,
           contentLifecycle_,

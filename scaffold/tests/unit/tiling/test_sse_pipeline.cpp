@@ -3549,7 +3549,7 @@ void testTilesetUsesQuantizedMeshRtcOrigin() {
           "Tileset: quantized-mesh BoundingSphereCenter wins over centroid RTC origin");
 }
 
-void testTileResourceDirtyInvalidatesRevisionCacheAndReuse() {
+void testTileResourceDirtyInvalidatesRevisionAndCacheOnly() {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/{z}/{x}/{y}.terrain");
     auto scheme = TileScheme::createGeographicTMS();
@@ -3564,8 +3564,8 @@ void testTileResourceDirtyInvalidatesRevisionCacheAndReuse() {
           "Tileset: resource dirty bumps resource revision");
     check(TilesetTestAccess::cacheBytesDirty(tileset),
           "Tileset: resource dirty marks cache bytes dirty");
-    check(!TilesetTestAccess::selectionReuseReusable(tileset),
-          "Tileset: resource dirty invalidates selection reuse");
+    check(TilesetTestAccess::selectionReuseReusable(tileset),
+          "Tileset: resource dirty preserves selection reuse for static loading");
 }
 
 void testTilesetUsesQuantizedMeshHeightRange() {
@@ -13609,6 +13609,21 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
               TileSelectionReuseMode::Strict,
           "TileSelectionReusePolicy: equivalent selector views reuse while pending work drains");
 
+    TileSelectionReuseInput strictResourceChangedInput =
+        strictPendingInput;
+    strictResourceChangedInput.currentResourceRevision = 8;
+    check(TileSelectionReusePolicy::classifyReuse(strictResourceChangedInput) ==
+              TileSelectionReuseMode::Strict,
+          "TileSelectionReusePolicy: equivalent selector views reuse across content resource refresh");
+
+    TileSelectionReuseInput overlayChangedInput =
+        strictPendingInput;
+    overlayChangedInput.currentOverlaySignature = 10;
+    check(TileSelectionReusePolicy::classifyReuseWithReason(overlayChangedInput)
+              .rejectReason ==
+              TileSelectionReuseRejectReason::ResourceChanged,
+          "TileSelectionReusePolicy: overlay configuration changes still reject reuse");
+
     TileSelectionReuseInput strictEquivalentInput =
         makeInput(stillFrame, false);
     strictEquivalentInput.hasPendingTilesetWork = false;
@@ -19235,7 +19250,7 @@ int main() {
     testTileLoadSchedulerBlocksBeforePlanningWhenInflightIsFull();
     testTileLoadSchedulerSortsAndQueuesUpsampledTerrain();
     testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds();
-    testTileResourceDirtyInvalidatesRevisionCacheAndReuse();
+    testTileResourceDirtyInvalidatesRevisionAndCacheOnly();
     testTilesetFrameResourceBudgetLimitsWorkerRequests();
     testTileFrameResourceBudgetPlannerAlignsRasterBudgetWithTransportLane();
     testTilesetFrameResourceBudgetUsesProviderTransportLane();

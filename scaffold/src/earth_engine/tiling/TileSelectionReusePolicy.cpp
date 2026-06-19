@@ -98,8 +98,7 @@ TileSelectionReusePolicy::classifyReuseWithReason(
             TileSelectionReuseMode::None,
             TileSelectionReuseRejectReason::ViewportChanged};
     }
-    if (input.currentResourceRevision != input.lastResourceRevision ||
-        input.currentOverlaySignature != input.lastOverlaySignature) {
+    if (input.currentOverlaySignature != input.lastOverlaySignature) {
         return {
             TileSelectionReuseMode::None,
             TileSelectionReuseRejectReason::ResourceChanged};
@@ -132,6 +131,8 @@ TileSelectionReusePolicy::classifyReuseWithReason(
             TileSelectionReuseMode::Stale,
             TileSelectionReuseRejectReason::None};
     }
+    (void)input.currentResourceRevision;
+    (void)input.lastResourceRevision;
     if (input.hasFadingTiles) {
         return {
             TileSelectionReuseMode::None,
