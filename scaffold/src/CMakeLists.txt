@@ -218,6 +218,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileSurfaceMeshEnsurer.h
     earth_engine/tiling/TileKey.h
     earth_engine/tiling/TileKey.cpp
+    earth_engine/tiling/OctreeTilingScheme.h
+    earth_engine/tiling/OctreeTilingScheme.cpp
     earth_engine/tiling/QuadtreeTilingScheme.h
     earth_engine/tiling/QuadtreeTilingScheme.cpp
     earth_engine/tiling/TileLoadState.h
