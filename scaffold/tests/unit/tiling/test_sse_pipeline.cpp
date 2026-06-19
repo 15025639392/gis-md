@@ -18426,6 +18426,84 @@ void testSceneDiagnosticsExposeTerrainSynchronousPrepReason() {
           "Scene: diagnostics expose nonzero terrain synchronous-prep reason");
 }
 
+void testSceneDiagnosticsExposeTerrainDeferredPrepReason() {
+    DummyRenderDevice device;
+    Scene scene;
+    check(scene.setRenderDevice(&device),
+          "Scene: deferred-prep diagnostics initialize renderer");
+    scene.setViewport(800, 600, 1.0f);
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
+    scene.camera().lookAt(
+        target + Vec3(1000000.0, 0.0, 0.0),
+        target,
+        Vec3::unitZ());
+
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    auto terrainTileset = std::make_unique<Tileset>(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{&baseActivated},
+        &device,
+        TilesetOptions{});
+    Tileset* terrainRaw = terrainTileset.get();
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
+    TilesetTile* child = TilesetTestAccess::ensureTile(*terrainRaw, childKey);
+    check(root != nullptr && child != nullptr,
+          "Scene: deferred-prep diagnostics create fallback tiles");
+    if (!root || !child) return;
+
+    TilesetTestAccess::putTerrainCache(
+        *terrainRaw,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
+    RasterMappedToTilesetTile* rootMapped =
+        root->rasterOverlayState.mappings().empty()
+            ? nullptr
+            : root->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* rootRaster =
+        rootMapped ? rootMapped->getLoadingTile() : nullptr;
+    check(rootRaster != nullptr,
+          "Scene: deferred-prep diagnostics fallback ancestor has base imagery");
+    if (!rootRaster) return;
+    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
+    rootRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
+    check(!root->hasSurfaceDrawable(),
+          "Scene: deferred-prep diagnostics starts before fallback mesh is ready");
+
+    scene.setTileset(std::move(terrainTileset));
+    scene.update(1.0 / 60.0);
+    TilesetTestAccess::setInteractionActiveForFrame(*terrainRaw, true);
+    TilesetTestAccess::beginTilePlan(*terrainRaw);
+    TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *child);
+    scene.render();
+
+    check(scene.diagnostics().terrainRenderEntriesPlanned == 1 &&
+              scene.diagnostics().terrainRenderEntriesSelectedPlanned == 1 &&
+              scene.diagnostics().terrainRenderEntriesAncestorFallback == 1 &&
+              scene.diagnostics().terrainRenderEntriesSynchronousPrep == 0 &&
+              scene.diagnostics().terrainRenderEntriesDeferredPrep == 1 &&
+              scene.diagnostics().terrainRenderEntriesDrawn == 0 &&
+              scene.diagnostics().terrainRenderEntriesSelectedDrawn == 0 &&
+              scene.diagnostics().terrainRenderEntriesMissed == 0 &&
+              scene.diagnostics().terrainRenderEntriesDeferred == 1 &&
+              scene.diagnostics().terrainRenderEntriesSelectedDeferred == 1 &&
+              scene.diagnostics().terrainRenderEntriesFadingDeferred == 0 &&
+              scene.diagnostics().terrainSurfaceCommandsSubmitted == 0,
+          "Scene: diagnostics expose interaction terrain deferred-prep fallback");
+}
+
 void testSceneSortsTransparentGltfByCameraDepth() {
     DummyRenderDevice device;
     Scene scene;
@@ -20566,6 +20644,7 @@ int main() {
     testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain();
     testSceneDiagnosticsExposeTerrainRenderEntryReasons();
     testSceneDiagnosticsExposeTerrainSynchronousPrepReason();
+    testSceneDiagnosticsExposeTerrainDeferredPrepReason();
     testSceneSortsTransparentGltfByCameraDepth();
     testTilesetLodTransitionsUseNativeDeltaState();
     testTilesetAdditiveRefinedTileFadesOutAfterLeavingSelection();

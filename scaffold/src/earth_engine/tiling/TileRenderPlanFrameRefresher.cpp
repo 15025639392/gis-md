@@ -3,7 +3,6 @@
 #include "TileCacheKey.h"
 #include "TileContentAccess.h"
 #include "TileRenderPlanFinalizer.h"
-#include "TileSelectionRasterOverlayPreparer.h"
 #include "SurfaceTileDrawCommandBuilder.h"
 
 namespace earth_engine {
@@ -34,7 +33,7 @@ void TileRenderPlanFrameRefresher::refresh(
             return TileCacheKey::forTile(key);
         },
         [&rasterOverlays](const TilesetTile& tile) {
-            return TileSelectionRasterOverlayPreparer::isRenderable(
+            return SurfaceTileDrawCommandBuilder::hasDrawableBaseRaster(
                 tile,
                 rasterOverlays);
         },

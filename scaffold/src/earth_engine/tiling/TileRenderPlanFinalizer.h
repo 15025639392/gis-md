@@ -216,8 +216,7 @@ private:
         for (TilesetTile* ancestor = tile.parent;
              ancestor;
              ancestor = ancestor->parent) {
-            if (ancestor->hasSurfaceDrawable() &&
-                isFallbackRenderable(*ancestor)) {
+            if (isFallbackRenderable(*ancestor)) {
                 return ancestor;
             }
         }
