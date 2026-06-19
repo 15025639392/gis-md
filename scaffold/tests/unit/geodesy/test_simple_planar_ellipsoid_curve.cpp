@@ -27,6 +27,15 @@ const Cartographic kTokyoLlh(
     0.6222806863437318,
     283.242432000711);
 
+const Vec3 kNewYorkCityEcef(
+    1329752.6826922249,
+    -4657851.870887691,
+    4140135.1399898543);
+const Vec3 kTimesSquareEcef(
+    1334771.9227395034,
+    -4650343.070699833,
+    4142168.965635141);
+
 void expectVec3Near(const Vec3& expected, const Vec3& actual, double epsilon) {
     EXPECT_NEAR(expected.x(), actual.x(), epsilon);
     EXPECT_NEAR(expected.y(), actual.y(), epsilon);
@@ -86,6 +95,24 @@ TEST(SimplePlanarEllipsoidCurveTest, InterpolatesHeightAndAdditionalHeight) {
 
     ASSERT_TRUE(cartographic.has_value());
     EXPECT_NEAR(72.5, cartographic->height(), 1e-4);
+}
+
+TEST(SimplePlanarEllipsoidCurveTest, HandlesNegativeHeightPathWithoutFlippingEarthSide) {
+    const std::optional<SimplePlanarEllipsoidCurve> curve =
+        SimplePlanarEllipsoidCurve::fromEarthCenteredEarthFixedCoordinates(
+            Ellipsoid::WGS84(),
+            kTimesSquareEcef,
+            kNewYorkCityEcef);
+
+    ASSERT_TRUE(curve.has_value());
+    const Vec3 midpoint = curve->getPosition(0.5);
+    const double expectedDistance =
+        kTimesSquareEcef.distanceTo(kNewYorkCityEcef);
+    const double actualDistance =
+        kTimesSquareEcef.distanceTo(midpoint) +
+        kNewYorkCityEcef.distanceTo(midpoint);
+
+    EXPECT_NEAR(expectedDistance, actualDistance, 1e-3);
 }
 
 TEST(SimplePlanarEllipsoidCurveTest, LlhConstructorMatchesEquivalentEcefCurve) {
