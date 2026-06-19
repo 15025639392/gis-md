@@ -41,7 +41,6 @@ class RenderDevice;
 struct SelectorFrame;
 class ActivatedRasterOverlay;
 struct TilesetTestAccess;
-class TilesetRenderFrameFacade;
 class TilesetSelectionFrameFacade;
 class TilesetQueryFacade;
 class TilesetUpdateFrameFacade;
@@ -128,7 +127,6 @@ public:
 private:
     friend struct TilesetTestAccess;
     friend class TilesetQueryFacade;
-    friend class TilesetRenderFrameFacade;
     friend class TilesetSelectionFrameFacade;
     friend class TilesetUpdateFrameFacade;
 

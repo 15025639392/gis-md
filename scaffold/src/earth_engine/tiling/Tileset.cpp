@@ -5,10 +5,11 @@
 #include "../renderer/RenderDevice.h"
 #include "../tiling/TileFrameResourceBudgetPlanner.h"
 #include "../tiling/TileOcclusionResolver.h"
+#include "../tiling/TileRenderFrameContext.h"
 #include "../tiling/TileRenderReferenceReleaser.h"
 #include "../tiling/TileSoftwareOcclusionPolicy.h"
 #include "../tiling/TilesetQueryFacade.h"
-#include "../tiling/TilesetRenderFrameFacade.h"
+#include "../tiling/TilesetRenderFrameExecutor.h"
 #include "../tiling/TilesetUpdateFrameFacade.h"
 #include "../layers/ActivatedRasterOverlay.h"
 
@@ -193,7 +194,33 @@ void Tileset::update(const FrameState& frameState) {
 
 void Tileset::buildRenderCommands(Renderer& renderer,
                                   RenderCommandList& commands) {
-    TilesetRenderFrameFacade::buildRenderCommands(*this, renderer, commands);
+    ++frameNumber_;
+    renderCommands_.beginFrame(
+        frameNumber_,
+        generation_,
+        currentFrameTimeSeconds_,
+        options_.maximumScreenSpaceError);
+    TilesetRenderFrameExecutor::buildRenderCommands(
+        TileRenderFrameContext{
+            TileRenderFrameCoordinatorInput{
+                tilePlan_,
+                tileRegistry_.tiles(),
+                contentCache_.unloadQueue(),
+                rasterOverlays_,
+                contentCache_.cacheBytesDirty(),
+                frameNumber_,
+                lastCameraPosition_,
+                options_.fogDensityTable,
+                selectionCounters_.fogCulled,
+                resourceSmoothingActiveForFrame_,
+                interactionActiveForFrame_,
+                contentCache_.totalBytesUsed(),
+                options_.maximumCachedBytes},
+            contentAccess_,
+            renderCommands_,
+            cacheOwnership_},
+        renderer,
+        commands);
 }
 
 void Tileset::releaseRenderReferences() {
