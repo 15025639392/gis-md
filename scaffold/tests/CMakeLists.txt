@@ -64,6 +64,12 @@ add_executable(test_oriented_bounding_box
 target_link_libraries(test_oriented_bounding_box PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_oriented_bounding_box COMMAND test_oriented_bounding_box)
 
+add_executable(test_axis_aligned_box
+    unit/core/test_axis_aligned_box.cpp
+)
+target_link_libraries(test_axis_aligned_box PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_axis_aligned_box COMMAND test_axis_aligned_box)
+
 add_executable(test_rectangle
     unit/core/test_rectangle.cpp
 )
