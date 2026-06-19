@@ -18395,6 +18395,7 @@ void testSceneDiagnosticsExposeTerrainRenderEntryReasons() {
               scene.diagnostics().terrainRenderEntriesSelectedDrawn == 1 &&
               scene.diagnostics().terrainRenderEntriesFadingDrawn == 0 &&
               scene.diagnostics().terrainSurfaceCommandsSubmitted == 1 &&
+              scene.diagnostics().globeFallbackCommands == 0 &&
               scene.diagnostics().globeFallbackMaskedTerrainEntries == 0,
           "Scene: diagnostics expose nonzero terrain render-entry fallback reasons");
 }
@@ -18468,6 +18469,7 @@ void testSceneDiagnosticsExposeTerrainSynchronousPrepReason() {
               scene.diagnostics().terrainRenderEntriesSelectedDrawn == 1 &&
               scene.diagnostics().terrainRenderEntriesMissed == 0 &&
               scene.diagnostics().terrainSurfaceCommandsSubmitted == 1 &&
+              scene.diagnostics().globeFallbackCommands == 0 &&
               scene.diagnostics().globeFallbackMaskedTerrainEntries == 0,
           "Scene: diagnostics expose nonzero terrain synchronous-prep reason");
 }
