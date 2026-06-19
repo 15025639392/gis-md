@@ -96,6 +96,7 @@
 #include "earth_engine/tiling/TileSurfaceRenderContentCoordinator.h"
 #include "earth_engine/tiling/TileUnloadPolicy.h"
 #include "earth_engine/tiling/TileUnloadQueue.h"
+#include "earth_engine/tiling/TileUpdateSelectionWorkRunner.h"
 #include "earth_engine/tiling/Tileset.h"
 #include "earth_engine/tiling/TilesetSelectionFrameFacade.h"
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
@@ -13797,6 +13798,64 @@ void testTileFrameDebugLogFormatterReportsReuseMode() {
           "TileFrameDebugLogFormatter: update detail reports selection reuse mode and reject reason");
 }
 
+void testTileUpdateSelectionWorkRunnerPumpsResourcesDuringReuse() {
+    TilePlan tilePlan;
+    TileLoadQueue loadQueue;
+    const TileKey queuedKey{"test", 3, 4, 5};
+    loadQueue.queue(queuedKey, TileLoadPriorityGroup::Normal, 1.0);
+    TileSelectionCounters counters;
+    TileSelectionReuseState reuseState;
+    std::vector<ActivatedRasterOverlay*> overlays;
+    FrameResourceBudgetConfig config;
+    FrameResourceBudget budget;
+    budget.beginFrame(42, config);
+    FrameState frameState;
+    frameState.frameId = 42;
+
+    bool refreshCalled = false;
+    bool selectCalled = false;
+    bool requestCalled = false;
+    size_t requestCount = 0;
+
+    TileUpdateSelectionWorkResult result =
+        TileUpdateSelectionWorkRunner::run(
+            TileUpdateSelectionWorkInput{
+                tilePlan,
+                loadQueue,
+                counters,
+                reuseState,
+                overlays,
+                budget,
+                nullptr,
+                frameState,
+                1,
+                1,
+                TileSelectionReuseMode::Strict,
+                TileSelectionReuseRejectReason::None,
+                true,
+                16.0},
+            [&]() { refreshCalled = true; },
+            [&](const FrameState&) { selectCalled = true; },
+            [&](const TileKey&) -> TilesetTile* { return nullptr; },
+            [&](const std::vector<TileLoadRequest>& requests,
+                FrameResourceBudget*) {
+                requestCalled = true;
+                requestCount = requests.size();
+                TileLoadRequestOutcome outcome;
+                outcome.issued = 1;
+                return outcome;
+            });
+
+    check(result.reusedSelection && refreshCalled && !selectCalled,
+          "TileUpdateSelectionWorkRunner: reuse refreshes render entries without reselecting");
+    check(loadQueue.size() == 1 && loadQueue.front().key == queuedKey,
+          "TileUpdateSelectionWorkRunner: reuse preserves queued resource work");
+    check(requestCalled && requestCount == 1,
+          "TileUpdateSelectionWorkRunner: reuse continues requesting queued resources");
+    check(reuseState.lastRequestIssuedWork,
+          "TileUpdateSelectionWorkRunner: reuse records resource pump activity");
+}
+
 void testTilePendingLoadQueueUsesSharedPriorityOrder() {
     TilePendingLoadQueue queue;
     const TileKey terrainKey{"test", 1, 0, 0};
@@ -19325,6 +19384,7 @@ int main() {
     testTileSelectionVisibilitySamplerChoosesSelectionBoundsLikeNative();
     testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing();
     testTileFrameDebugLogFormatterReportsReuseMode();
+    testTileUpdateSelectionWorkRunnerPumpsResourcesDuringReuse();
     testTilePendingLoadQueueUsesSharedPriorityOrder();
     testTilePendingLoadQueueFiltersNonUrgentDuringInteraction();
     testTilePendingLoadQueueTakesTerminalResultsByPriority();

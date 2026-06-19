@@ -69,7 +69,6 @@ public:
         const double computeStartMs = perf::nowMs();
         if (input.reusedSelection) {
             input.tilePlan.frameId = input.frameState.frameId;
-            input.loadQueue.clear();
             input.selectionCounters.reset();
             refreshTilePlanRenderEntries();
         } else {
@@ -82,29 +81,25 @@ public:
         result.computeMs = perf::nowMs() - computeStartMs;
 
         const double prefetchStartMs = perf::nowMs();
-        if (!input.reusedSelection) {
-            const std::vector<size_t> overlayOrder =
-                TileSelectionRasterOverlayPreparer::processingOrder(
-                    input.rasterOverlays);
-            TileRasterOverlayFrameProcessor::prefetchSelection(
-                input.tilePlan,
-                input.loadQueue.requests(),
-                input.rasterOverlays,
-                overlayOrder,
-                input.device,
-                input.maximumScreenSpaceError,
-                input.frameResourceBudget,
-                ensureTile);
-        }
+        const std::vector<size_t> overlayOrder =
+            TileSelectionRasterOverlayPreparer::processingOrder(
+                input.rasterOverlays);
+        TileRasterOverlayFrameProcessor::prefetchSelection(
+            input.tilePlan,
+            input.loadQueue.requests(),
+            input.rasterOverlays,
+            overlayOrder,
+            input.device,
+            input.maximumScreenSpaceError,
+            input.frameResourceBudget,
+            ensureTile);
         result.prefetchMs = perf::nowMs() - prefetchStartMs;
 
         const double requestStartMs = perf::nowMs();
         TileLoadRequestOutcome requestOutcome;
-        if (!input.reusedSelection) {
-            requestOutcome = requestMissingTiles(
-                input.loadQueue.requests(),
-                &input.frameResourceBudget);
-        }
+        requestOutcome = requestMissingTiles(
+            input.loadQueue.requests(),
+            &input.frameResourceBudget);
         input.selectionReuseState.recordRequestOutcome(
             requestOutcome.issued > 0,
             requestOutcome.blockedByInflight);
