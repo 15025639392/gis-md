@@ -436,6 +436,7 @@ Java_com_earthengine_sdk_GLESView_nativeDebugZoom(
         Ellipsoid::WGS84().cartesianToCartographic(gEngine->camera().position()).height();
     LOGI("Debug zoom scale=%.2f | tiles vis=%d cached=%d renderSurface=%d "
          "exact=%d parent=%d missing=%d unsupported=%d kicked=%d retained=%d "
+         "entry plan=%d/%d/%d draw=%d/%d/%d miss=%d/%d/%d defer=%d/%d/%d fallback=%d prep=%d/%d masked=%d "
          "z=%d-%d targetZ=%d-%d texZ=%d-%d lod=%.0f eq=%d qRender=%d qWalk=%d qBal=%d "
          "qFrustum=%d qHz=%d qEq2=%d grp=%d/%d/%d ellAlt=%.2f sphAlt=%.2f radius=%.2f FPS=%.1f draw=%d",
          scale,
@@ -448,6 +449,22 @@ Java_com_earthengine_sdk_GLESView_nativeDebugZoom(
          diag.imageryUnsupportedTiles,
          diag.imageryKickedTiles,
          diag.imageryAncestorRetainedTiles,
+         diag.terrainRenderEntriesPlanned,
+         diag.terrainRenderEntriesSelectedPlanned,
+         diag.terrainRenderEntriesFadingPlanned,
+         diag.terrainRenderEntriesDrawn,
+         diag.terrainRenderEntriesSelectedDrawn,
+         diag.terrainRenderEntriesFadingDrawn,
+         diag.terrainRenderEntriesMissed,
+         diag.terrainRenderEntriesSelectedMissed,
+         diag.terrainRenderEntriesFadingMissed,
+         diag.terrainRenderEntriesDeferred,
+         diag.terrainRenderEntriesSelectedDeferred,
+         diag.terrainRenderEntriesFadingDeferred,
+         diag.terrainRenderEntriesAncestorFallback,
+         diag.terrainRenderEntriesSynchronousPrep,
+         diag.terrainRenderEntriesDeferredPrep,
+         diag.globeFallbackMaskedTerrainEntries,
          diag.minVisibleZoom,
          diag.maxVisibleZoom,
          diag.imageryMinTargetZoom,
