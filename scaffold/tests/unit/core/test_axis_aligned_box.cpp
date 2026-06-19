@@ -56,6 +56,10 @@ TEST(AxisAlignedBoxTest, FromPositionsMatchesCesiumNativeCases) {
     EXPECT_DOUBLE_EQ(1.0, multiple.maximumX());
     EXPECT_DOUBLE_EQ(4.3, multiple.maximumY());
     EXPECT_DOUBLE_EQ(11.0, multiple.maximumZ());
+    EXPECT_DOUBLE_EQ(3.0, multiple.lengthX());
+    EXPECT_DOUBLE_EQ(3.9, multiple.lengthY());
+    EXPECT_DOUBLE_EQ(21.0, multiple.lengthZ());
+    EXPECT_EQ(Vec3(-0.5, 2.35, 0.5), multiple.center());
 }
 
 TEST(AxisAlignedBoxTest, ContainsIncludesBoundaryLikeCesiumNative) {
