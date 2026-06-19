@@ -18,7 +18,6 @@ public:
 private:
     friend struct TilesetTestAccess;
 
-    static void resetTileSelectionState(Tileset& tileset);
     static bool hasLodTransitionRenderContent(const Tileset& tileset,
                                               const TilesetTile& tile);
     static void updateLodTransitions(Tileset& tileset,

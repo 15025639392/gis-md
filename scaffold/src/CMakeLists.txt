@@ -363,6 +363,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileSelectionResetPolicy.cpp
     earth_engine/tiling/TileSelectionRootPolicy.h
     earth_engine/tiling/TileSelectionRootPolicy.cpp
+    earth_engine/tiling/TileSelectionStateResetter.h
+    earth_engine/tiling/TileSelectionStateResetter.cpp
     earth_engine/tiling/TileSelectionReusePolicy.h
     earth_engine/tiling/TileSelectionReusePolicy.cpp
     earth_engine/tiling/TileSelectionReuseState.h

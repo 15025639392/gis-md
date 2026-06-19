@@ -8,7 +8,7 @@
 #include "TileSelectionPlanAppender.h"
 #include "TileSelectionRasterOverlayPreparer.h"
 #include "TileSelectionFrameRunner.h"
-#include "TileSelectionResetPolicy.h"
+#include "TileSelectionStateResetter.h"
 #include "TileSelectionTraversalDetailsBuilder.h"
 #include "TileSelectionTraversalContext.h"
 #include "TileSelectionTraversalExecutor.h"
@@ -24,32 +24,6 @@ constexpr int kActiveInteractionRenderPrepBudget = 0;
 constexpr int kRecoveryRenderPrepBudget = 1;
 
 } // namespace
-
-void TilesetSelectionFrameFacade::resetTileSelectionState(
-    Tileset& tileset) {
-    for (auto& [ck, tile] : tileset.tileRegistry_.tiles()) {
-        if (!tile) continue;
-        TileSelectionFrameState& selection = tile->selectionFrameState;
-        const TileSelectionResetPlan resetPlan =
-            TileSelectionResetPolicy::plan(
-                TileSelectionResetInput{
-                    selection.selectionState,
-                    tile->hasSurfaceDrawable(),
-                    TileSelectionRasterOverlayPreparer::isCompleteRenderable(
-                        *tile,
-                        tileset.rasterOverlays_)});
-        selection.previousSelectionState = resetPlan.previousSelectionState;
-        selection.selectionState = resetPlan.selectionState;
-        selection.screenSpaceError = resetPlan.screenSpaceError;
-        selection.inFrustum = resetPlan.inFrustum;
-        selection.cameraInside = resetPlan.cameraInside;
-        selection.ancestorMeetsSse = resetPlan.ancestorMeetsSse;
-        tile->updateFrameRenderability(
-            resetPlan.surfaceDrawable,
-            resetPlan.completeRenderable);
-        (void)ck;
-    }
-}
 
 bool TilesetSelectionFrameFacade::hasLodTransitionRenderContent(
     const Tileset& tileset,
@@ -134,7 +108,9 @@ void TilesetSelectionFrameFacade::selectTiles(
             tileset.contentProvider_ ? tileset.contentProvider_->rootTiles()
                                      : std::vector<TileKey>{}},
         [&tileset]() {
-            resetTileSelectionState(tileset);
+            TileSelectionStateResetter::reset(
+                tileset.tileRegistry_,
+                tileset.rasterOverlays_);
         },
         [&tileset](const TileKey& key) {
             return tileset.contentAccess_.ensureTile(key);
