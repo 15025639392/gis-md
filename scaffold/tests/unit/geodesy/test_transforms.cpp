@@ -41,6 +41,13 @@ void expectMatrixNear(const Mat4& actual,
     }
 }
 
+bool pointInClipVolume(const glm::dvec4& point) {
+    const double w = point.w;
+    return -w <= point.x && point.x <= w &&
+           -w <= point.y && point.y <= w &&
+           0.0 <= point.z && point.z <= w;
+}
+
 } // namespace
 
 TEST(TransformsTest, UpAxisTransformsMatchCesiumNativeConstants) {
@@ -225,6 +232,31 @@ TEST(TransformsTest, OrthographicMatrixMatchesCesiumNativeReverseZ) {
         std::numeric_limits<double>::infinity());
     EXPECT_DOUBLE_EQ(0.0, infinite(2, 2));
     EXPECT_DOUBLE_EQ(1.0, infinite(2, 3));
+}
+
+TEST(TransformsTest, OrthographicProjectionContainsPerspectiveFrustumPoint) {
+    const double horizontalFov = MathUtils::degreesToRadians(60.0);
+    const double verticalFov = MathUtils::degreesToRadians(45.0);
+    const double zNear = 1.0;
+    const double zFar = 20000.0;
+    const double hDim = std::tan(horizontalFov * 0.5) * zNear;
+    const double vDim = std::tan(verticalFov * 0.5) * zNear;
+
+    const Mat4 orthographic = Transforms::createOrthographicMatrix(
+        -hDim / zNear * zFar,
+        hDim / zNear * zFar,
+        -vDim / zNear * zFar,
+        vDim / zNear * zFar,
+        zNear,
+        zFar);
+
+    const glm::dvec4 point(
+        std::sin(MathUtils::degreesToRadians(20.0)) * 10000.0,
+        std::sin(MathUtils::degreesToRadians(10.0)) * 10000.0,
+        -10000.0,
+        1.0);
+
+    EXPECT_TRUE(pointInClipVolume(orthographic.raw() * point));
 }
 
 TEST(TransformsTest, ViewMatrixMatchesCesiumNativePoseInverse) {
