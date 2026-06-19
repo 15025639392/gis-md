@@ -21,9 +21,14 @@ enum class FrameResourcePriority {
 };
 
 struct FrameResourceBudgetConfig {
+    // Default per-lane network limit. It is used by terrain/content and raster
+    // lanes only when their lane-specific limits are zero; it is not a global
+    // sum cap across all network lanes.
     uint32_t maxNetworkRequestsPerFrame = 20;
     uint32_t maxTerrainContentNetworkRequestsPerFrame = 0;
     uint32_t maxRasterNetworkRequestsPerFrame = 0;
+    // Default per-lane inflight limit with the same fallback semantics as
+    // maxNetworkRequestsPerFrame.
     uint32_t maxNetworkInflight = 20;
     uint32_t maxTerrainContentNetworkInflight = 0;
     uint32_t maxRasterNetworkInflight = 0;

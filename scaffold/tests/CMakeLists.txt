@@ -58,6 +58,12 @@ add_executable(test_rectangle
 target_link_libraries(test_rectangle PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_rectangle COMMAND test_rectangle)
 
+add_executable(test_frame_resource_budget
+    unit/core/test_frame_resource_budget.cpp
+)
+target_link_libraries(test_frame_resource_budget PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_frame_resource_budget COMMAND test_frame_resource_budget)
+
 add_executable(test_ellipsoid
     unit/geodesy/test_ellipsoid.cpp
 )
