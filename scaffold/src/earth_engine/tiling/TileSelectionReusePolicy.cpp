@@ -137,26 +137,12 @@ TileSelectionReusePolicy::classifyReuseWithReason(
             TileSelectionReuseMode::None,
             TileSelectionReuseRejectReason::FadingTiles};
     }
-    if (input.hasPendingTilesetWork) {
-        return {
-            TileSelectionReuseMode::None,
-            TileSelectionReuseRejectReason::PendingTilesetWork};
-    }
-    if (input.hasPendingRasterOverlayWork) {
-        return {
-            TileSelectionReuseMode::None,
-            TileSelectionReuseRejectReason::PendingRasterOverlayWork};
-    }
-    if (input.lastRequestIssuedWork) {
-        return {
-            TileSelectionReuseMode::None,
-            TileSelectionReuseRejectReason::LastRequestIssuedWork};
-    }
-    if (input.lastRequestBlockedByInflight) {
-        return {
-            TileSelectionReuseMode::None,
-            TileSelectionReuseRejectReason::LastRequestBlockedByInflight};
-    }
+    // Equivalent views can keep drawing the committed selection while pending
+    // network/upload work drains. Completed terrain/content resources still
+    // invalidate reuse through the resource revision; raster uploads are
+    // attached during render preparation. Treating every pending item as a
+    // strict-reuse blocker makes static Android loading repeatedly traverse and
+    // prefetch the same large tile set.
     return {
         TileSelectionReuseMode::Strict,
         TileSelectionReuseRejectReason::None};

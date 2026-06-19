@@ -155,8 +155,8 @@ public:
     bool hasPendingWork() const;
 
     /// Monotonic state revision. Increments when raster tile load state or GPU
-    /// texture readiness changes, so tileset selection can be invalidated
-    /// without walking every mapped tile.
+    /// texture readiness changes, so diagnostics and cache users can observe
+    /// provider-side progress without walking every mapped tile.
     uint64_t revision() const { return revision_.load(std::memory_order_relaxed); }
 
     // ── Texture cache ──

@@ -13603,6 +13603,12 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
 
     FrameState stillFrame = previousFrame;
     stillFrame.frameId = previousFrame.frameId + 1;
+    TileSelectionReuseInput strictPendingInput =
+        makeInput(stillFrame, false);
+    check(TileSelectionReusePolicy::classifyReuse(strictPendingInput) ==
+              TileSelectionReuseMode::Strict,
+          "TileSelectionReusePolicy: equivalent selector views reuse while pending work drains");
+
     TileSelectionReuseInput strictEquivalentInput =
         makeInput(stillFrame, false);
     strictEquivalentInput.hasPendingTilesetWork = false;

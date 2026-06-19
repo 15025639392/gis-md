@@ -25,10 +25,8 @@ public:
     static uint64_t selectionResourceRevision(
         uint64_t baseResourceRevision,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
-        uint64_t combined = baseResourceRevision;
-        combined ^= revision(rasterOverlays) + 0x9e3779b97f4a7c15ull +
-                    (combined << 6) + (combined >> 2);
-        return combined;
+        (void)rasterOverlays;
+        return baseResourceRevision;
     }
 
     static uint64_t configuration(
