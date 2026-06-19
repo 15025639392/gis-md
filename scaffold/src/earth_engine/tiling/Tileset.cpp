@@ -74,6 +74,11 @@ Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
           terrainProvider_.get(),
           device_,
           rasterOverlays_),
+      contentRuntime_(
+          contentLifecycle_,
+          contentAccess_,
+          meshPreparation_,
+          resourceInvalidator_),
       renderCommands_(
           meshPreparation_,
           cacheOwnership_,

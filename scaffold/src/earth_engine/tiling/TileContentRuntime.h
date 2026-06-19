@@ -1,0 +1,62 @@
+#pragma once
+
+#include "TileLoadTypes.h"
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+namespace earth_engine {
+
+class FrameResourceBudget;
+class RenderDevice;
+class TerrainProvider;
+class TileContentAccess;
+class TileContentLifecycleManager;
+class TileContentResourceInvalidator;
+class TileMeshPreparationManager;
+class TilesetContentProvider;
+struct TilesetTile;
+
+struct TileContentRuntimeFrame {
+    TerrainProvider* terrainProvider = nullptr;
+    TilesetContentProvider* contentProvider = nullptr;
+    RenderDevice* device = nullptr;
+    const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>&
+        tiles;
+    uint64_t frameNumber = 0;
+    uint32_t maximumSimultaneousTileLoads = 0;
+    double mainThreadLoadingTimeLimit = 0.0;
+    double currentFrameTimeSeconds = 0.0;
+    uint32_t smoothedMainThreadUploadLimit = 0;
+};
+
+class TileContentRuntime {
+public:
+    TileContentRuntime(
+        TileContentLifecycleManager& lifecycle,
+        TileContentAccess& contentAccess,
+        TileMeshPreparationManager& meshPreparation,
+        TileContentResourceInvalidator& resourceInvalidator);
+
+    TileLoadRequestOutcome requestMissingTiles(
+        const std::vector<TileLoadRequest>& loadRequests,
+        const TileContentRuntimeFrame& frame,
+        FrameResourceBudget* budget);
+    bool processPendingUploads(
+        const TileContentRuntimeFrame& frame,
+        bool interactionActive,
+        bool resourceSmoothingActive,
+        FrameResourceBudget* budget);
+    void markResourcesDirty();
+
+private:
+    TileContentLifecycleManager& lifecycle_;
+    TileContentAccess& contentAccess_;
+    TileMeshPreparationManager& meshPreparation_;
+    TileContentResourceInvalidator& resourceInvalidator_;
+};
+
+} // namespace earth_engine

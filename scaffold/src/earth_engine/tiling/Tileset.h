@@ -8,6 +8,7 @@
 #include "TileCacheOwnershipManager.h"
 #include "TileContentLifecycleManager.h"
 #include "TileContentResourceInvalidator.h"
+#include "TileContentRuntime.h"
 #include "TileLoadDiagnostics.h"
 #include "TileLoadQueue.h"
 #include "TileLoadTypes.h"
@@ -172,6 +173,7 @@ private:
     TileLoadQueue loadQueue_;
     TileSelectionCounters selectionCounters_;
     TileMeshPreparationManager meshPreparation_;
+    TileContentRuntime contentRuntime_;
     TileRenderCommandManager renderCommands_;
 };
 
