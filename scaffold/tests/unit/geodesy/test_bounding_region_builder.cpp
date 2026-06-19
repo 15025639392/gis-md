@@ -87,17 +87,51 @@ TEST(BoundingRegionBuilderTest, PolePositionsExpandLatitudeAndHeightOnly) {
 }
 
 TEST(BoundingRegionBuilderTest, ExpandsRectanglesWithAntimeridianSemantics) {
-    BoundingRegionBuilder builder;
-    EXPECT_TRUE(builder.expandToIncludeRectangle(
-        Rectangle::fromDegrees(170.0, -10.0, 175.0, 20.0)));
-    EXPECT_TRUE(builder.expandToIncludeRectangle(
-        Rectangle::fromDegrees(176.0, -10.0, -175.0, 20.0)));
+    struct Case {
+        Rectangle first;
+        Rectangle second;
+        Rectangle expected;
+    };
 
-    expectRectangleNear(
-        builder.toRectangle(),
-        Rectangle::fromDegrees(170.0, -10.0, -175.0, 20.0));
+    const Case cases[] = {
+        {
+            Rectangle::fromDegrees(170.0, -10.0, 175.0, 20.0),
+            Rectangle::fromDegrees(176.0, -10.0, -175.0, 20.0),
+            Rectangle::fromDegrees(170.0, -10.0, -175.0, 20.0),
+        },
+        {
+            Rectangle::fromDegrees(-175.0, -10.0, -170.0, 20.0),
+            Rectangle::fromDegrees(175.0, -10.0, -176.0, 20.0),
+            Rectangle::fromDegrees(175.0, -10.0, -170.0, 20.0),
+        },
+        {
+            Rectangle::fromDegrees(175.0, -10.0, -170.0, 20.0),
+            Rectangle::fromDegrees(165.0, -20.0, 170.0, 30.0),
+            Rectangle::fromDegrees(165.0, -20.0, -170.0, 30.0),
+        },
+        {
+            Rectangle::fromDegrees(175.0, -10.0, -170.0, 20.0),
+            Rectangle::fromDegrees(-165.0, -20.0, -160.0, 30.0),
+            Rectangle::fromDegrees(175.0, -20.0, -160.0, 30.0),
+        },
+        {
+            Rectangle::fromDegrees(175.0, -10.0, -170.0, 20.0),
+            Rectangle::fromDegrees(170.0, -20.0, -160.0, 30.0),
+            Rectangle::fromDegrees(170.0, -20.0, -160.0, 30.0),
+        },
+    };
 
-    EXPECT_FALSE(builder.expandToIncludeRectangle(
+    for (const Case& testCase : cases) {
+        BoundingRegionBuilder builder;
+        EXPECT_TRUE(builder.expandToIncludeRectangle(testCase.first));
+        EXPECT_TRUE(builder.expandToIncludeRectangle(testCase.second));
+        expectRectangleNear(builder.toRectangle(), testCase.expected);
+    }
+
+    BoundingRegionBuilder includedBuilder;
+    EXPECT_TRUE(includedBuilder.expandToIncludeRectangle(
+        Rectangle::fromDegrees(170.0, -10.0, -175.0, 20.0)));
+    EXPECT_FALSE(includedBuilder.expandToIncludeRectangle(
         Rectangle::fromDegrees(171.0, -9.0, -176.0, 19.0)));
 }
 
@@ -122,5 +156,37 @@ TEST(BoundingRegionBuilderTest, ExpandsBoundingRegionRectangleAndHeights) {
     result = builder.toRegion();
     expectRectangleNear(result.rectangle, Rectangle(0.05, 0.15, 0.35, 0.45));
     EXPECT_DOUBLE_EQ(-1.5, result.minimumHeight);
+    EXPECT_DOUBLE_EQ(2.5, result.maximumHeight);
+}
+
+TEST(BoundingRegionBuilderTest, ExpandsMinimumAndMaximumHeightIndependently) {
+    BoundingRegionBuilder minBuilder;
+    EXPECT_TRUE(minBuilder.expandToIncludeRegion(
+        {Rectangle(0.1, 0.2, 0.3, 0.4), -1.0, 2.0}));
+    EXPECT_FALSE(minBuilder.expandToIncludeRegion(
+        {Rectangle(0.1, 0.2, 0.3, 0.4), -0.5, 2.0}));
+    auto result = minBuilder.toRegion();
+    EXPECT_DOUBLE_EQ(-1.0, result.minimumHeight);
+    EXPECT_DOUBLE_EQ(2.0, result.maximumHeight);
+
+    EXPECT_TRUE(minBuilder.expandToIncludeRegion(
+        {Rectangle(0.1, 0.2, 0.3, 0.4), -1.5, 2.0}));
+    result = minBuilder.toRegion();
+    EXPECT_DOUBLE_EQ(-1.5, result.minimumHeight);
+    EXPECT_DOUBLE_EQ(2.0, result.maximumHeight);
+
+    BoundingRegionBuilder maxBuilder;
+    EXPECT_TRUE(maxBuilder.expandToIncludeRegion(
+        {Rectangle(0.1, 0.2, 0.3, 0.4), -1.0, 2.0}));
+    EXPECT_FALSE(maxBuilder.expandToIncludeRegion(
+        {Rectangle(0.1, 0.2, 0.3, 0.4), -1.0, 1.5}));
+    result = maxBuilder.toRegion();
+    EXPECT_DOUBLE_EQ(-1.0, result.minimumHeight);
+    EXPECT_DOUBLE_EQ(2.0, result.maximumHeight);
+
+    EXPECT_TRUE(maxBuilder.expandToIncludeRegion(
+        {Rectangle(0.1, 0.2, 0.3, 0.4), -1.0, 2.5}));
+    result = maxBuilder.toRegion();
+    EXPECT_DOUBLE_EQ(-1.0, result.minimumHeight);
     EXPECT_DOUBLE_EQ(2.5, result.maximumHeight);
 }
