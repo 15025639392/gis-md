@@ -227,6 +227,14 @@ TEST(RectangleTest, SplitAtAntimeridianMatchesCesiumNativeOrdering) {
     ASSERT_TRUE(split.second.has_value());
     EXPECT_NEAR(crossing2.west(), split.second->west(), 1e-14);
     EXPECT_NEAR(M_PI, split.second->east(), 1e-14);
+
+    Rectangle crossing3 = Rectangle::fromDegrees(-10.0, -20.0, -160.0, 40.0);
+    split = crossing3.splitAtAntimeridian();
+    EXPECT_NEAR(crossing3.west(), split.first.west(), 1e-14);
+    EXPECT_NEAR(M_PI, split.first.east(), 1e-14);
+    ASSERT_TRUE(split.second.has_value());
+    EXPECT_NEAR(-M_PI, split.second->west(), 1e-14);
+    EXPECT_NEAR(crossing3.east(), split.second->east(), 1e-14);
 }
 
 TEST(RectangleTest, ComputeIntersectionMatchesCesiumNativeGlobeRectangleBranches) {
