@@ -12,8 +12,7 @@ namespace earth_engine {
 class ActivatedRasterOverlay;
 class RenderDevice;
 class Renderer;
-class TileContentCacheManager;
-class TileContentLifecycleManager;
+class TileCacheOwnershipManager;
 class TileMeshPreparationManager;
 class TileRasterUpsampledChildCoordinator;
 struct TileSelectionReuseState;
@@ -23,8 +22,7 @@ class TileRenderCommandManager {
 public:
     TileRenderCommandManager(
         TileMeshPreparationManager& meshPreparation,
-        TileContentCacheManager& contentCache,
-        TileContentLifecycleManager& contentLifecycle,
+        TileCacheOwnershipManager& cacheOwnership,
         TileRasterUpsampledChildCoordinator& rasterUpsampledChildren,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         RenderDevice* device,
@@ -46,8 +44,7 @@ public:
 
 private:
     TileMeshPreparationManager& meshPreparation_;
-    TileContentCacheManager& contentCache_;
-    TileContentLifecycleManager& contentLifecycle_;
+    TileCacheOwnershipManager& cacheOwnership_;
     TileRasterUpsampledChildCoordinator& rasterUpsampledChildren_;
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays_;
     RenderDevice* device_ = nullptr;

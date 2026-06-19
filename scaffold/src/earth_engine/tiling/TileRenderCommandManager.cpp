@@ -1,7 +1,6 @@
 #include "TileRenderCommandManager.h"
 
-#include "TileContentCacheManager.h"
-#include "TileContentLifecycleManager.h"
+#include "TileCacheOwnershipManager.h"
 #include "TileMeshPreparationManager.h"
 #include "RasterMappedToTilesetTile.h"
 #include "TileRasterUpsampledChildCoordinator.h"
@@ -15,15 +14,13 @@ namespace earth_engine {
 
 TileRenderCommandManager::TileRenderCommandManager(
     TileMeshPreparationManager& meshPreparation,
-    TileContentCacheManager& contentCache,
-    TileContentLifecycleManager& contentLifecycle,
+    TileCacheOwnershipManager& cacheOwnership,
     TileRasterUpsampledChildCoordinator& rasterUpsampledChildren,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
     RenderDevice* device,
     FrameResourceBudget& frameResourceBudget)
     : meshPreparation_(meshPreparation),
-      contentCache_(contentCache),
-      contentLifecycle_(contentLifecycle),
+      cacheOwnership_(cacheOwnership),
       rasterUpsampledChildren_(rasterUpsampledChildren),
       rasterOverlays_(rasterOverlays),
       device_(device),
@@ -66,10 +63,7 @@ void TileRenderCommandManager::buildTileDrawCommand(
             meshPreparation_.ensureTileMesh(meshTile);
         },
         [this, &renderer](TilesetTile& unloadTile) {
-            contentCache_.unloadTileContent(
-                unloadTile,
-                contentLifecycle_,
-                &renderer);
+            cacheOwnership_.unloadTileContent(unloadTile, &renderer);
         },
         [this](TilesetTile& upsampleTile) {
             rasterUpsampledChildren_.createRasterOverlayUpsampledChildren(
