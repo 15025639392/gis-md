@@ -953,6 +953,24 @@ private:
     std::vector<uint8_t> bytes_;
 };
 
+class DiagnosticImageryProvider final : public DebugImageryProvider {
+public:
+    DiagnosticImageryProvider(std::string providerId,
+                              ProviderRequestDiagnostics diagnostics)
+        : providerId_(std::move(providerId)),
+          diagnostics_(diagnostics) {}
+
+    std::string id() const override { return providerId_; }
+
+    ProviderRequestDiagnostics requestDiagnostics() const override {
+        return diagnostics_;
+    }
+
+private:
+    std::string providerId_;
+    ProviderRequestDiagnostics diagnostics_;
+};
+
 class DummyShaderProgram final : public ShaderProgram {};
 
 class DummyTexture final : public Texture {
@@ -14833,6 +14851,65 @@ void testTilesetLoadDiagnosticsExposeRasterProviderRequestDiagnostics() {
           "TilesetLoadDiagnostics: raster overlay activity drains after provider completion");
 }
 
+void testTilesetLoadDiagnosticsAggregatesRasterProviderRequestPeaks() {
+    ProviderRequestDiagnostics firstDiag;
+    firstDiag.requestsStarted = 2;
+    firstDiag.requestsCompleted = 1;
+    firstDiag.activeWorkerBlockingRequests = 1;
+    firstDiag.peakWorkerBlockingRequests = 3;
+    firstDiag.externalResourceRequestsStarted = 4;
+    firstDiag.externalResourceRequestsCompleted = 2;
+    firstDiag.activeExternalResourceBlockingRequests = 1;
+    firstDiag.peakExternalResourceBlockingRequests = 5;
+    firstDiag.maximumTransportActiveRequests = 8;
+
+    ProviderRequestDiagnostics secondDiag;
+    secondDiag.requestsStarted = 5;
+    secondDiag.requestsCompleted = 4;
+    secondDiag.activeWorkerBlockingRequests = 2;
+    secondDiag.peakWorkerBlockingRequests = 2;
+    secondDiag.externalResourceRequestsStarted = 3;
+    secondDiag.externalResourceRequestsCompleted = 3;
+    secondDiag.activeExternalResourceBlockingRequests = 2;
+    secondDiag.peakExternalResourceBlockingRequests = 4;
+    secondDiag.maximumTransportActiveRequests = 11;
+
+    auto firstOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DiagnosticImageryProvider>("diag-raster-a", firstDiag),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    auto secondOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DiagnosticImageryProvider>("diag-raster-b", secondDiag),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay firstActivated(*firstOverlay);
+    ActivatedRasterOverlay secondActivated(*secondOverlay);
+
+    auto terrainProvider =
+        std::make_unique<ManualCompletionTerrainProvider>();
+    auto terrainScheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(terrainProvider),
+        std::move(terrainScheme),
+        {&firstActivated, &secondActivated},
+        nullptr,
+        TilesetOptions{});
+
+    const ProviderRequestDiagnostics requests =
+        tileset.loadDiagnostics().rasterProviderRequests;
+    check(requests.requestsStarted == 7 &&
+              requests.requestsCompleted == 5 &&
+              requests.activeWorkerBlockingRequests == 3 &&
+              requests.peakWorkerBlockingRequests == 3 &&
+              requests.maximumTransportActiveRequests == 11,
+          "TilesetLoadDiagnostics: raster provider request peaks aggregate by max");
+    check(requests.externalResourceRequestsStarted == 7 &&
+              requests.externalResourceRequestsCompleted == 5 &&
+              requests.activeExternalResourceBlockingRequests == 3 &&
+              requests.peakExternalResourceBlockingRequests == 5,
+          "TilesetLoadDiagnostics: raster provider external request peaks aggregate by max");
+}
+
 void testTilesetLoadDiagnosticsExposeContentProviderRequestDiagnostics() {
     BlockingPlatformBridge bridge;
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -19087,6 +19164,7 @@ int main() {
     testTilesetFrameResourceBudgetUsesProviderTransportLane();
     testTilesetLoadDiagnosticsExposeTerrainProviderRequestDiagnostics();
     testTilesetLoadDiagnosticsExposeRasterProviderRequestDiagnostics();
+    testTilesetLoadDiagnosticsAggregatesRasterProviderRequestPeaks();
     testTilesetLoadDiagnosticsExposeContentProviderRequestDiagnostics();
     testSceneTilesetDiagnosticsExposeContentExternalResourceDiagnostics();
     testSceneTilesetDiagnosticsExposeRasterRequestLanes();
