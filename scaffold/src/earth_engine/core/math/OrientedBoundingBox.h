@@ -6,6 +6,10 @@
 #include "Plane.h"
 
 #include <cmath>
+#include <glm/mat3x3.hpp>
+#include <glm/mat4x4.hpp>
+#include <glm/geometric.hpp>
+#include <glm/matrix.hpp>
 
 namespace earth_engine {
 
@@ -31,6 +35,11 @@ public:
 
     const Vec3& getCenter() const noexcept { return center_; }
     const Vec3& getHalfAxis(int i) const noexcept { return halfAxes_[i]; }
+    Vec3 getLengths() const noexcept {
+        return Vec3(halfAxes_[0].length() * 2.0,
+                    halfAxes_[1].length() * 2.0,
+                    halfAxes_[2].length() * 2.0);
+    }
 
     /// Returns: -1 = Outside, 1 = Inside, 0 = Intersecting.
     /// Same semantics as cesium-native CullingResult.
@@ -139,10 +148,42 @@ public:
         return dSq;
     }
 
+    bool contains(const Vec3& position) const noexcept {
+        const glm::dmat3 halfAxes(
+            halfAxes_[0].raw(),
+            halfAxes_[1].raw(),
+            halfAxes_[2].raw());
+        const glm::dvec3 local =
+            glm::inverse(halfAxes) * (position - center_).raw();
+        constexpr double kClosedBoxEpsilon = 1e-14;
+        return std::abs(local.x) <= 1.0 + kClosedBoxEpsilon &&
+               std::abs(local.y) <= 1.0 + kClosedBoxEpsilon &&
+               std::abs(local.z) <= 1.0 + kClosedBoxEpsilon;
+    }
+
+    OrientedBoundingBox transform(const Mat4& transformation) const noexcept {
+        const glm::dmat4& m = transformation.raw();
+        const glm::dmat3 linear(m);
+        return OrientedBoundingBox(
+            transformation * center_,
+            Vec3(linear * halfAxes_[0].raw()),
+            Vec3(linear * halfAxes_[1].raw()),
+            Vec3(linear * halfAxes_[2].raw()));
+    }
+
     /// Convert to a bounding sphere (for existing sphere-based culling paths).
     BoundingSphere toSphere() const noexcept {
         double radius = (halfAxes_[0] + halfAxes_[1] + halfAxes_[2]).length();
         return BoundingSphere(center_, radius);
+    }
+
+    static OrientedBoundingBox fromSphere(
+        const BoundingSphere& sphere) noexcept {
+        return OrientedBoundingBox(
+            sphere.getCenter(),
+            Vec3(sphere.getRadius(), 0.0, 0.0),
+            Vec3(0.0, sphere.getRadius(), 0.0),
+            Vec3(0.0, 0.0, sphere.getRadius()));
     }
 
 private:
