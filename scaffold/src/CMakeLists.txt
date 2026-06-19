@@ -24,6 +24,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/core/math/Rectangle.cpp
     earth_engine/core/math/Plane.h
     earth_engine/core/math/Plane.cpp
+    earth_engine/core/math/CullingVolume.h
+    earth_engine/core/math/CullingVolume.cpp
     earth_engine/core/math/AxisAlignedBox.h
     earth_engine/core/math/AxisAlignedBox.cpp
     earth_engine/core/math/BoundingSphere.h

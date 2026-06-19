@@ -64,6 +64,12 @@ add_executable(test_clip_triangle_at_axis_aligned_threshold
 target_link_libraries(test_clip_triangle_at_axis_aligned_threshold PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_clip_triangle_at_axis_aligned_threshold COMMAND test_clip_triangle_at_axis_aligned_threshold)
 
+add_executable(test_culling_volume
+    unit/core/test_culling_volume.cpp
+)
+target_link_libraries(test_culling_volume PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_culling_volume COMMAND test_culling_volume)
+
 add_executable(test_bounding_sphere
     unit/core/test_bounding_sphere.cpp
 )
