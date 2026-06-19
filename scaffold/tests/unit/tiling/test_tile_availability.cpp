@@ -465,6 +465,24 @@ TEST(TileQuadtreeAvailabilityTest, AddNodeAndAddLoadedSubtreeMatchCesiumNative) 
     EXPECT_TRUE((loadedState & SubtreeLoaded) != 0);
 }
 
+TEST(TileQuadtreeAvailabilityTest, AddSubtreeRejectsExistingEmptyNodeLikeCesiumNative) {
+    TileQuadtreeAvailability availability(3, 5);
+    ASSERT_TRUE(availability.addSubtree(0, 0, 0, makeQuadtreeFixtureRootSubtree()));
+    TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+    ASSERT_NE(nullptr, availability.addNode(3, 0, 1, root));
+
+    EXPECT_FALSE(availability.addSubtree(
+        3,
+        0,
+        1,
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{false},
+            {}}));
+}
+
 TEST(TileQuadtreeAvailabilityTest, AddNodeRejectsNonBoundaryOrUnavailableChildLikeCesiumNative) {
     TileQuadtreeAvailability availability(3, 5);
     ASSERT_TRUE(availability.addSubtree(0, 0, 0, makeQuadtreeFixtureRootSubtree()));
@@ -666,6 +684,25 @@ TEST(TileOctreeAvailabilityTest, AddNodeAndAddLoadedSubtreeMatchCesiumNative) {
     EXPECT_TRUE((loadedState & TileAvailable) != 0);
     EXPECT_TRUE((loadedState & SubtreeAvailable) != 0);
     EXPECT_TRUE((loadedState & SubtreeLoaded) != 0);
+}
+
+TEST(TileOctreeAvailabilityTest, AddSubtreeRejectsExistingEmptyNodeLikeCesiumNative) {
+    TileOctreeAvailability availability(3, 5);
+    ASSERT_TRUE(availability.addSubtree(
+        OctreeTileID{0, 0, 0, 0},
+        makeOctreeFixtureRootSubtree()));
+    TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+    const OctreeTileID id{3, 0, 1, 0};
+    ASSERT_NE(nullptr, availability.addNode(id, root));
+
+    EXPECT_FALSE(availability.addSubtree(
+        id,
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{false},
+            {}}));
 }
 
 TEST(TileOctreeAvailabilityTest, AddNodeRejectsNonBoundaryOrUnavailableChildLikeCesiumNative) {
