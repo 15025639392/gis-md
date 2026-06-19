@@ -11557,7 +11557,8 @@ void testTileRenderEntryClassifiesFrontierRoles() {
     direct.reason = TileRenderEntryReason::Direct;
     check(!direct.isAncestorFallback() &&
               !direct.isFadingOut() &&
-              !direct.hasSurfaceClip(),
+              !direct.hasSurfaceClip() &&
+              direct.renderPass() == TileRenderEntryPass::Selected,
           "TileRenderEntry: direct entry has no fallback or fading role");
 
     TileRenderEntry fallback;
@@ -11566,7 +11567,8 @@ void testTileRenderEntryClassifiesFrontierRoles() {
     fallback.surfaceClipEnabled = true;
     check(fallback.isAncestorFallback() &&
               !fallback.isFadingOut() &&
-              fallback.hasSurfaceClip(),
+              fallback.hasSurfaceClip() &&
+              fallback.renderPass() == TileRenderEntryPass::Selected,
           "TileRenderEntry: fallback entry exposes clipped ancestor role");
 
     TileRenderEntry fading;
@@ -11574,7 +11576,8 @@ void testTileRenderEntryClassifiesFrontierRoles() {
     fading.selectedThisFrame = false;
     check(!fading.isAncestorFallback() &&
               fading.isFadingOut() &&
-              !fading.hasSurfaceClip(),
+              !fading.hasSurfaceClip() &&
+              fading.renderPass() == TileRenderEntryPass::Fading,
           "TileRenderEntry: fading entry exposes fade-out role");
 }
 
@@ -11620,7 +11623,7 @@ void testTileRenderEntryCommandBuilderCountsSkippedEntries() {
     const TileRenderEntryCommandStats stats =
         TileRenderEntryCommandBuilder::build(
             plan,
-            true,
+            TileRenderEntryPass::Selected,
             7,
             renderer,
             commands,
@@ -11680,7 +11683,7 @@ void testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive() {
     const TileRenderEntryCommandStats stats =
         TileRenderEntryCommandBuilder::build(
             plan,
-            true,
+            TileRenderEntryPass::Selected,
             11,
             renderer,
             commands,
@@ -11789,7 +11792,7 @@ void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
     TileRenderEntryCommandStats selectedStats =
         TileRenderEntryCommandBuilder::build(
             plan,
-            true,
+            TileRenderEntryPass::Selected,
             12,
             renderer,
             commands,
@@ -11803,7 +11806,7 @@ void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
     TileRenderEntryCommandStats fadeStats =
         TileRenderEntryCommandBuilder::build(
             plan,
-            false,
+            TileRenderEntryPass::Fading,
             12,
             renderer,
             commands,

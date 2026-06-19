@@ -23,6 +23,11 @@ enum class TileRenderEntryReason {
     FadingOut
 };
 
+enum class TileRenderEntryPass {
+    Selected,
+    Fading
+};
+
 constexpr const char* tileRenderEntryReasonLabel(
     TileRenderEntryReason reason) {
     switch (reason) {
@@ -63,6 +68,11 @@ struct TileRenderEntry {
     }
 
     bool hasSurfaceClip() const { return surfaceClipEnabled; }
+
+    TileRenderEntryPass renderPass() const {
+        return selectedThisFrame ? TileRenderEntryPass::Selected
+                                 : TileRenderEntryPass::Fading;
+    }
 };
 
 enum class TileSelectionState {

@@ -110,10 +110,10 @@ public:
                 renderStats.deferredEntries += stats.deferredEntries;
                 renderStats.missedDrawEntries += stats.missedDrawEntries;
             };
-        auto renderEntriesFor = [&](bool selectedThisFrame) {
+        auto renderEntriesFor = [&](TileRenderEntryPass pass) {
             mergeRenderStats(TileRenderEntryCommandBuilder::build(
                 input.tilePlan,
-                selectedThisFrame,
+                pass,
                 input.frameNumber,
                 renderer,
                 commands,
@@ -124,11 +124,11 @@ public:
         };
 
         const double selectedBuildStartMs = perf::nowMs();
-        renderEntriesFor(true);
+        renderEntriesFor(TileRenderEntryPass::Selected);
         selectedBuildMs = perf::nowMs() - selectedBuildStartMs;
 
         const double fadeBuildStartMs = perf::nowMs();
-        renderEntriesFor(false);
+        renderEntriesFor(TileRenderEntryPass::Fading);
         fadeBuildMs = perf::nowMs() - fadeBuildStartMs;
 
         input.tilePlan.renderEntryPlannedCommandCount =

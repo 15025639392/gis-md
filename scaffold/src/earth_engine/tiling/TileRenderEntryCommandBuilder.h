@@ -34,7 +34,7 @@ public:
               typename BuildTileDrawCommandFn>
     static TileRenderEntryCommandStats build(
         const TilePlan& plan,
-        bool selectedThisFrame,
+        TileRenderEntryPass pass,
         uint64_t frameNumber,
         Renderer& renderer,
         RenderCommandList& commands,
@@ -44,7 +44,7 @@ public:
         BuildTileDrawCommandFn&& buildTileDrawCommand) {
         TileRenderEntryCommandStats stats;
         for (const TileRenderEntry& entry : plan.renderEntries) {
-            if (entry.selectedThisFrame != selectedThisFrame) {
+            if (entry.renderPass() != pass) {
                 continue;
             }
             ++stats.plannedEntries;
