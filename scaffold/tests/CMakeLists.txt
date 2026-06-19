@@ -166,6 +166,12 @@ add_executable(test_octree_tiling_scheme
 target_link_libraries(test_octree_tiling_scheme PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_octree_tiling_scheme COMMAND test_octree_tiling_scheme)
 
+add_executable(test_implicit_tile_id_utilities
+    unit/tiling/test_implicit_tile_id_utilities.cpp
+)
+target_link_libraries(test_implicit_tile_id_utilities PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_implicit_tile_id_utilities COMMAND test_implicit_tile_id_utilities)
+
 add_executable(test_tile_availability
     unit/tiling/test_tile_availability.cpp
 )

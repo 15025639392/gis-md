@@ -225,6 +225,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileKey.cpp
     earth_engine/tiling/TileID.h
     earth_engine/tiling/TileID.cpp
+    earth_engine/tiling/ImplicitTileIdUtilities.h
+    earth_engine/tiling/ImplicitTileIdUtilities.cpp
     earth_engine/tiling/OctreeTilingScheme.h
     earth_engine/tiling/OctreeTilingScheme.cpp
     earth_engine/tiling/QuadtreeTilingScheme.h
