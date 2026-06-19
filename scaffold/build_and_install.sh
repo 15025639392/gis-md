@@ -10,7 +10,7 @@ source "$SCRIPT_DIR/env.sh"
 cd "$SCRIPT_DIR/examples/android"
 
 echo "=== Cleaning CMake cache ==="
-rm -rf app/.cxx earthsdk/.cxx
+rm -rf app/.cxx earthsdk/.cxx app/build earthsdk/build
 
 echo "=== Building APK ==="
 ./gradlew assembleDebug --no-daemon --console=plain
