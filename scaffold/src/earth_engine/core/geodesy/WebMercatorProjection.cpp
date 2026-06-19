@@ -19,6 +19,12 @@ Vec3 WebMercatorProjection::project(const Cartographic& cartographic) const {
         cartographic.height());
 }
 
+Rectangle WebMercatorProjection::project(const Rectangle& rectangle) const {
+    const Vec3 sw = project(Cartographic(rectangle.west(), rectangle.south(), 0.0));
+    const Vec3 ne = project(Cartographic(rectangle.east(), rectangle.north(), 0.0));
+    return Rectangle(sw.x(), sw.y(), ne.x(), ne.y());
+}
+
 Cartographic WebMercatorProjection::unproject(
     const Vec3& projectedCoordinates) const {
     return Cartographic(
@@ -28,8 +34,20 @@ Cartographic WebMercatorProjection::unproject(
         projectedCoordinates.z());
 }
 
+Rectangle WebMercatorProjection::unproject(const Rectangle& rectangle) const {
+    const Cartographic sw = unproject(Vec3(rectangle.west(), rectangle.south(), 0.0));
+    const Cartographic ne = unproject(Vec3(rectangle.east(), rectangle.north(), 0.0));
+    return Rectangle(sw.longitude(), sw.latitude(), ne.longitude(), ne.latitude());
+}
+
 double WebMercatorProjection::maximumLatitude() {
     return mercatorAngleToGeodeticLatitude(glm::pi<double>());
+}
+
+Rectangle WebMercatorProjection::computeMaximumProjectedRectangle(
+    const Ellipsoid& ellipsoid) {
+    const double value = ellipsoid.maximumRadius() * glm::pi<double>();
+    return Rectangle(-value, -value, value, value);
 }
 
 double WebMercatorProjection::mercatorAngleToGeodeticLatitude(

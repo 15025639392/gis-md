@@ -40,36 +40,36 @@ Cartographic unprojectPosition(const Projection& projection, const Vec3& positio
 
 Rectangle projectRectangleSimple(const Projection& projection,
                                  const Rectangle& rectangle) {
-    const Vec3 lowerLeft =
-        projectPosition(projection, Cartographic(rectangle.west(), rectangle.south(), 0.0));
-    const Vec3 lowerRight =
-        projectPosition(projection, Cartographic(rectangle.east(), rectangle.south(), 0.0));
-    const Vec3 upperLeft =
-        projectPosition(projection, Cartographic(rectangle.west(), rectangle.north(), 0.0));
-    const Vec3 upperRight =
-        projectPosition(projection, Cartographic(rectangle.east(), rectangle.north(), 0.0));
+    struct Operation {
+        const Rectangle& rectangle;
 
-    return Rectangle(std::min(lowerLeft.x(), upperLeft.x()),
-                     std::min(lowerLeft.y(), lowerRight.y()),
-                     std::max(lowerRight.x(), upperRight.x()),
-                     std::max(upperLeft.y(), upperRight.y()));
+        Rectangle operator()(const GeographicProjection& geographic) const {
+            return geographic.project(rectangle);
+        }
+
+        Rectangle operator()(const WebMercatorProjection& webMercator) const {
+            return webMercator.project(rectangle);
+        }
+    };
+
+    return std::visit(Operation{rectangle}, projection);
 }
 
 Rectangle unprojectRectangleSimple(const Projection& projection,
                                    const Rectangle& rectangle) {
-    const Cartographic lowerLeft =
-        unprojectPosition(projection, Vec3(rectangle.west(), rectangle.south(), 0.0));
-    const Cartographic lowerRight =
-        unprojectPosition(projection, Vec3(rectangle.east(), rectangle.south(), 0.0));
-    const Cartographic upperLeft =
-        unprojectPosition(projection, Vec3(rectangle.west(), rectangle.north(), 0.0));
-    const Cartographic upperRight =
-        unprojectPosition(projection, Vec3(rectangle.east(), rectangle.north(), 0.0));
+    struct Operation {
+        const Rectangle& rectangle;
 
-    return Rectangle(std::min(lowerLeft.longitude(), upperLeft.longitude()),
-                     std::min(lowerLeft.latitude(), lowerRight.latitude()),
-                     std::max(lowerRight.longitude(), upperRight.longitude()),
-                     std::max(upperLeft.latitude(), upperRight.latitude()));
+        Rectangle operator()(const GeographicProjection& geographic) const {
+            return geographic.unproject(rectangle);
+        }
+
+        Rectangle operator()(const WebMercatorProjection& webMercator) const {
+            return webMercator.unproject(rectangle);
+        }
+    };
+
+    return std::visit(Operation{rectangle}, projection);
 }
 
 glm::dvec2 computeProjectedRectangleSize(const Projection& projection,
