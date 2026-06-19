@@ -1,7 +1,6 @@
 #include "SceneFrameRuntime.h"
 
 #include "SceneInteractionCoordinator.h"
-#include "ScenePresentationTraceBuilder.h"
 
 #include <utility>
 
@@ -69,16 +68,6 @@ SceneInteractionContext SceneFrameRuntime::makeInteractionContext(
         terrainTileset,
         vectorLayers,
         elapsedTime_};
-}
-
-ScenePresentationTraceInput SceneFrameRuntime::makePresentationTraceInput(
-    const Tileset* terrainTileset,
-    const std::vector<std::unique_ptr<Tileset>>& additionalTilesets) const {
-    return ScenePresentationTraceInput{
-        frameState_,
-        terrainTileset,
-        additionalTilesets,
-        renderCommands_};
 }
 
 } // namespace earth_engine

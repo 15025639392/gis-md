@@ -3,10 +3,15 @@
 #include "Diagnostics.h"
 #include "EngineTimingScope.h"
 #include "PresentationTrace.h"
+#include "../renderer/RenderCommand.h"
+
+#include <memory>
+#include <vector>
 
 namespace earth_engine {
 
-struct ScenePresentationTraceInput;
+struct FrameState;
+class Tileset;
 
 class SceneTelemetryCoordinator {
 public:
@@ -20,7 +25,11 @@ public:
     void recordEngineTiming(EngineTimingScope scope, double elapsedMs);
     void finishEngineFrame(double elapsedMs);
     void replaceRenderDiagnostics(const Diagnostics& diagnostics);
-    void updatePresentationTrace(const ScenePresentationTraceInput& input);
+    void updatePresentationTrace(
+        const FrameState& frameState,
+        const Tileset* terrainTileset,
+        const std::vector<std::unique_ptr<Tileset>>& additionalTilesets,
+        const RenderCommandList& renderCommands);
 
 private:
     Diagnostics diagnostics_;

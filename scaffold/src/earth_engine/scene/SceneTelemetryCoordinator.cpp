@@ -23,8 +23,16 @@ void SceneTelemetryCoordinator::replaceRenderDiagnostics(
 }
 
 void SceneTelemetryCoordinator::updatePresentationTrace(
-    const ScenePresentationTraceInput& input) {
-    presentationTrace_ = ScenePresentationTraceBuilder::build(input);
+    const FrameState& frameState,
+    const Tileset* terrainTileset,
+    const std::vector<std::unique_ptr<Tileset>>& additionalTilesets,
+    const RenderCommandList& renderCommands) {
+    presentationTrace_ = ScenePresentationTraceBuilder::build(
+        ScenePresentationTraceInput{
+            frameState,
+            terrainTileset,
+            additionalTilesets,
+            renderCommands});
 }
 
 } // namespace earth_engine

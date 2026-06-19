@@ -4,7 +4,6 @@
 #include "SceneInteractionCoordinator.h"
 #include "SceneLayerCoordinator.h"
 #include "SceneFrameUpdateCoordinator.h"
-#include "ScenePresentationTraceBuilder.h"
 #include "SceneRenderPipeline.h"
 #include "SceneTelemetryCoordinator.h"
 #include "SceneTilesetCoordinator.h"
@@ -150,9 +149,10 @@ void Scene::render() {
 
 void Scene::updatePresentationTrace() {
     telemetry_->updatePresentationTrace(
-        frameRuntime_.makePresentationTraceInput(
-            tilesets_->primary(),
-            tilesets_->contentTilesets()));
+        frameRuntime_.frameState(),
+        tilesets_->primary(),
+        tilesets_->contentTilesets(),
+        frameRuntime_.renderCommands());
 }
 
 void Scene::setTileset(std::unique_ptr<Tileset> tileset) {

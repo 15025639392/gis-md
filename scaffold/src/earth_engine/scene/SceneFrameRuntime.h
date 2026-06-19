@@ -19,7 +19,6 @@ class Tileset;
 class TimeController;
 class VectorLayer;
 struct SceneInteractionContext;
-struct ScenePresentationTraceInput;
 
 class SceneFrameRuntime {
 public:
@@ -56,10 +55,6 @@ public:
         CameraController* cameraController,
         const Tileset* terrainTileset,
         const std::vector<std::unique_ptr<VectorLayer>>* vectorLayers) const;
-    ScenePresentationTraceInput makePresentationTraceInput(
-        const Tileset* terrainTileset,
-        const std::vector<std::unique_ptr<Tileset>>& additionalTilesets) const;
-
     bool hasSelectorViewOverride() const {
         return hasSelectorViewOverride_;
     }
