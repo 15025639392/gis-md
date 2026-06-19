@@ -99,6 +99,10 @@ std::string buildPresentationTraceSummary(const PresentationTrace& trace) {
     if (terrainTrace) {
         out << "Tileset: visible=" << terrainTrace->visibleTiles.size()
             << " renderEntries=" << terrainTrace->renderEntries.size()
+            << " commands=" << terrainTrace->renderEntryCommandDrawCount
+            << "/" << terrainTrace->renderEntryPlannedCommandCount
+            << " missed=" << terrainTrace->renderEntryCommandMissedDrawCount
+            << " deferred=" << terrainTrace->renderEntryCommandDeferredCount
             << " zoom=" << terrainTrace->minVisibleZoom
             << "-" << terrainTrace->maxVisibleZoom
             << " lod=" << static_cast<int>(terrainTrace->lodSizePixels)

@@ -54,6 +54,12 @@ struct PresentationTilesetTrace {
     int minVisibleZoom = 0;
     int maxVisibleZoom = 0;
     double lodSizePixels = 0.0;
+    int renderEntryPlannedCommandCount = 0;
+    int renderEntryCommandDrawCount = 0;
+    int renderEntryCommandMissedDrawCount = 0;
+    int renderEntryCommandMissingSelectedCount = 0;
+    int renderEntryCommandMissingRenderCount = 0;
+    int renderEntryCommandDeferredCount = 0;
 };
 
 struct PresentationCommandTrace {

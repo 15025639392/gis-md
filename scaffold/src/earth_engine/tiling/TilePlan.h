@@ -138,6 +138,12 @@ struct TilePlan {
     int renderEntryAncestorFallbackCount = 0;
     int renderEntrySynchronousPrepCount = 0;
     int renderEntryDeferredPrepCount = 0;
+    int renderEntryPlannedCommandCount = 0;
+    int renderEntryCommandDrawCount = 0;
+    int renderEntryCommandMissedDrawCount = 0;
+    int renderEntryCommandMissingSelectedCount = 0;
+    int renderEntryCommandMissingRenderCount = 0;
+    int renderEntryCommandDeferredCount = 0;
 };
 
 class TilePlanBuilder {

@@ -66,6 +66,12 @@ public:
         UnloadCachedBytesFn&& unloadCachedBytes) {
         const double buildCommandsStartMs = perf::nowMs();
         const size_t commandsBeforeTileset = commands.size();
+        input.tilePlan.renderEntryPlannedCommandCount = 0;
+        input.tilePlan.renderEntryCommandDrawCount = 0;
+        input.tilePlan.renderEntryCommandMissedDrawCount = 0;
+        input.tilePlan.renderEntryCommandMissingSelectedCount = 0;
+        input.tilePlan.renderEntryCommandMissingRenderCount = 0;
+        input.tilePlan.renderEntryCommandDeferredCount = 0;
 
         // Raster providers stamp getTile() calls with the current frame.
         for (auto* overlay : input.rasterOverlays) {
@@ -124,6 +130,19 @@ public:
         const double fadeBuildStartMs = perf::nowMs();
         renderEntriesFor(false);
         fadeBuildMs = perf::nowMs() - fadeBuildStartMs;
+
+        input.tilePlan.renderEntryPlannedCommandCount =
+            renderStats.plannedEntries;
+        input.tilePlan.renderEntryCommandDrawCount =
+            renderStats.drawAttempts;
+        input.tilePlan.renderEntryCommandMissedDrawCount =
+            renderStats.missedDrawEntries;
+        input.tilePlan.renderEntryCommandMissingSelectedCount =
+            renderStats.missingSelectedTiles;
+        input.tilePlan.renderEntryCommandMissingRenderCount =
+            renderStats.missingRenderTiles;
+        input.tilePlan.renderEntryCommandDeferredCount =
+            renderStats.deferredEntries;
 
         const bool hasQueuedUnloadingTile =
             TileUnloadPolicy::hasQueuedTileInState(
