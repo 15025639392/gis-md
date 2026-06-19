@@ -11845,7 +11845,7 @@ TEST(GltfParserTest, ContentProviderResolvesExternalBufferRelativeToGltfUrl) {
     EXPECT_EQ(1, diag.externalResourceRequestsStarted);
     EXPECT_EQ(1, diag.externalResourceRequestsCompleted);
     EXPECT_EQ(0, diag.activeExternalResourceBlockingRequests);
-    EXPECT_EQ(1, diag.peakExternalResourceBlockingRequests);
+    EXPECT_EQ(0, diag.peakExternalResourceBlockingRequests);
 
     std::filesystem::remove_all(root);
 }

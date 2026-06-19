@@ -14904,7 +14904,7 @@ void testSceneTilesetDiagnosticsExposeContentExternalResourceDiagnostics() {
     check(requests.externalResourceRequestsStarted == 1 &&
               requests.externalResourceRequestsCompleted == 1 &&
               requests.activeExternalResourceBlockingRequests == 0 &&
-              requests.peakExternalResourceBlockingRequests == 1,
+              requests.peakExternalResourceBlockingRequests == 0,
           "TilesetLoadDiagnostics: records glTF external buffer request diagnostics");
 
     Diagnostics diagnostics;
@@ -14913,7 +14913,7 @@ void testSceneTilesetDiagnosticsExposeContentExternalResourceDiagnostics() {
     check(diagnostics.contentProviderExternalResourceRequestsStarted == 1 &&
               diagnostics.contentProviderExternalResourceRequestsCompleted == 1 &&
               diagnostics.contentProviderActiveExternalResourceBlockingRequests == 0 &&
-              diagnostics.contentProviderPeakExternalResourceBlockingRequests == 1,
+              diagnostics.contentProviderPeakExternalResourceBlockingRequests == 0,
           "SceneTilesetDiagnostics: exposes content external resource diagnostics");
 }
 

@@ -75,21 +75,15 @@ struct ContentWorkerBlockingRequestGuard {
     std::atomic<int>& activeRequests;
 };
 
-struct ContentExternalResourceRequestGuard {
-    ContentExternalResourceRequestGuard(std::atomic<int>& startedRequests,
-                                        std::atomic<int>& completedRequests,
-                                        std::atomic<int>& activeRequests,
-                                        std::atomic<int>& peakRequests)
-        : completedRequests(completedRequests),
-          blocking(activeRequests, peakRequests) {
-        startedRequests.fetch_add(1, std::memory_order_relaxed);
-    }
-    ~ContentExternalResourceRequestGuard() {
+struct ContentExternalResourceCompletionGuard {
+    explicit ContentExternalResourceCompletionGuard(
+        std::atomic<int>& completedRequests)
+        : completedRequests(completedRequests) {}
+    ~ContentExternalResourceCompletionGuard() {
         completedRequests.fetch_add(1, std::memory_order_relaxed);
     }
 
     std::atomic<int>& completedRequests;
-    ContentWorkerBlockingRequestGuard blocking;
 };
 
 uint32_t readU32LE(const uint8_t* p) {
@@ -2068,6 +2062,27 @@ std::vector<uint8_t> readCachedOrFileUrl(const std::string& url) {
     return {};
 }
 
+std::vector<uint8_t> fetchExternalContentResource(
+    const std::string& resolvedUrl,
+    std::atomic<int>& startedRequests,
+    std::atomic<int>& completedRequests,
+    std::atomic<int>& activeBlockingRequests,
+    std::atomic<int>& peakBlockingRequests,
+    const std::function<std::vector<uint8_t>()>& fetchBlocking) {
+    startedRequests.fetch_add(1, std::memory_order_relaxed);
+    ContentExternalResourceCompletionGuard completion{completedRequests};
+
+    std::vector<uint8_t> immediateBody = readCachedOrFileUrl(resolvedUrl);
+    if (!immediateBody.empty()) {
+        return immediateBody;
+    }
+
+    ContentWorkerBlockingRequestGuard blocking(
+        activeBlockingRequests,
+        peakBlockingRequests);
+    return fetchBlocking ? fetchBlocking() : std::vector<uint8_t>{};
+}
+
 void requestBodyAsync(
     PlatformBridge* bridge,
     const TileKey& key,
@@ -3154,12 +3169,17 @@ TileContentLoadResult SingleGltfContentProvider::decodeContent(
     GltfParser::ExternalResourceResolver resolver;
     if (!url_.empty()) {
         resolver = [this](const std::string& uri) {
-            ContentExternalResourceRequestGuard blocking(
+            const std::string resolvedUrl =
+                resolveContentUrl(url_, uri, false);
+            return fetchExternalContentResource(
+                resolvedUrl,
                 externalResourceRequestsStarted_,
                 externalResourceRequestsCompleted_,
                 activeExternalResourceBlockingRequests_,
-                peakExternalResourceBlockingRequests_);
-            return httpGet(resolveContentUrl(url_, uri, false));
+                peakExternalResourceBlockingRequests_,
+                [this, resolvedUrl]() {
+                    return httpGet(resolvedUrl);
+                });
         };
     }
     return decodeGltfLikeContent(
@@ -3516,12 +3536,17 @@ TileContentLoadResult TilesetJsonContentProvider::decodeRenderableContent(
     GltfParser::ExternalResourceResolver resolver;
     if (!contentUrl.empty()) {
         resolver = [this, contentUrl](const std::string& uri) {
-            ContentExternalResourceRequestGuard blocking(
+            const std::string resolvedUrl =
+                resolveContentUrl(contentUrl, uri, false);
+            return fetchExternalContentResource(
+                resolvedUrl,
                 externalResourceRequestsStarted_,
                 externalResourceRequestsCompleted_,
                 activeExternalResourceBlockingRequests_,
-                peakExternalResourceBlockingRequests_);
-            return httpGet(resolveContentUrl(contentUrl, uri, false));
+                peakExternalResourceBlockingRequests_,
+                [this, resolvedUrl]() {
+                    return httpGet(resolvedUrl);
+                });
         };
     }
     return decodeGltfLikeContent(
