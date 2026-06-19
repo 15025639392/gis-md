@@ -116,6 +116,24 @@ public:
     static double lerp(double p, double q, double time) noexcept {
         return p * (1.0 - time) + q * time;
     }
+
+    static double roundUp(double value, double tolerance) noexcept {
+        const double up = std::ceil(value);
+        const double down = std::floor(value);
+        if (value - down < tolerance) {
+            return down;
+        }
+        return up;
+    }
+
+    static double roundDown(double value, double tolerance) noexcept {
+        const double up = std::ceil(value);
+        const double down = std::floor(value);
+        if (up - value < tolerance) {
+            return up;
+        }
+        return down;
+    }
 };
 
 } // namespace earth_engine

@@ -21,6 +21,26 @@ TEST(MathUtilsTest, EqualsEpsilonMatchesCesiumNative) {
                                           MathUtils::Epsilon9));
 }
 
+TEST(MathUtilsTest, RoundUpAndRoundDownMatchCesiumNative) {
+    EXPECT_DOUBLE_EQ(1.0, MathUtils::roundUp(1.0, 0.01));
+    EXPECT_DOUBLE_EQ(1.0, MathUtils::roundDown(1.0, 0.01));
+
+    EXPECT_DOUBLE_EQ(2.0, MathUtils::roundUp(1.01, 0.01));
+    EXPECT_DOUBLE_EQ(1.0, MathUtils::roundDown(1.99, 0.01));
+
+    EXPECT_DOUBLE_EQ(1.0, MathUtils::roundUp(1.005, 0.01));
+    EXPECT_DOUBLE_EQ(2.0, MathUtils::roundDown(1.995, 0.01));
+
+    EXPECT_DOUBLE_EQ(-1.0, MathUtils::roundUp(-1.0, 0.01));
+    EXPECT_DOUBLE_EQ(-1.0, MathUtils::roundDown(-1.0, 0.01));
+
+    EXPECT_DOUBLE_EQ(-1.0, MathUtils::roundUp(-1.99, 0.01));
+    EXPECT_DOUBLE_EQ(-2.0, MathUtils::roundDown(-1.01, 0.01));
+
+    EXPECT_DOUBLE_EQ(-2.0, MathUtils::roundUp(-1.995, 0.01));
+    EXPECT_DOUBLE_EQ(-1.0, MathUtils::roundDown(-1.005, 0.01));
+}
+
 TEST(MathUtilsTest, ConvertLongitudeRangeMatchesCesiumNative) {
     EXPECT_DOUBLE_EQ(MathUtils::degreesToRadians(-90.0),
                      MathUtils::convertLongitudeRange(
