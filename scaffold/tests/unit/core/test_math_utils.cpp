@@ -2,6 +2,9 @@
 
 #include "earth_engine/core/math/MathUtils.h"
 
+#include <cmath>
+#include <limits>
+
 using namespace earth_engine;
 
 TEST(MathUtilsTest, LerpMatchesCesiumNative) {
@@ -19,6 +22,22 @@ TEST(MathUtilsTest, EqualsEpsilonMatchesCesiumNative) {
     EXPECT_FALSE(MathUtils::equalsEpsilon(3699175.1634344,
                                           3699175.2,
                                           MathUtils::Epsilon9));
+}
+
+TEST(MathUtilsTest, RelativeEpsilonAndSignMatchCesiumNativeSourceSemantics) {
+    EXPECT_DOUBLE_EQ(0.2,
+                     MathUtils::relativeEpsilonToAbsolute(10.0, -20.0, 0.01));
+    EXPECT_DOUBLE_EQ(0.0,
+                     MathUtils::relativeEpsilonToAbsolute(0.0, 0.0, 0.01));
+
+    EXPECT_DOUBLE_EQ(1.0, MathUtils::sign(42.0));
+    EXPECT_DOUBLE_EQ(-1.0, MathUtils::sign(-42.0));
+    EXPECT_DOUBLE_EQ(0.0, MathUtils::sign(0.0));
+    EXPECT_TRUE(std::isnan(MathUtils::sign(std::numeric_limits<double>::quiet_NaN())));
+
+    EXPECT_DOUBLE_EQ(1.0, MathUtils::signNotZero(42.0));
+    EXPECT_DOUBLE_EQ(-1.0, MathUtils::signNotZero(-42.0));
+    EXPECT_DOUBLE_EQ(1.0, MathUtils::signNotZero(0.0));
 }
 
 TEST(MathUtilsTest, RoundUpAndRoundDownMatchCesiumNative) {
