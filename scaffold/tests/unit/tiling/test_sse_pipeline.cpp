@@ -71,6 +71,7 @@
 #include "earth_engine/tiling/TileSelectionRootPolicy.h"
 #include "earth_engine/tiling/TileSelectionSummaryPolicy.h"
 #include "earth_engine/tiling/TileSelectionTraversalCounterPolicy.h"
+#include "earth_engine/tiling/TileSelectionTraversalDetailsBuilder.h"
 #include "earth_engine/tiling/TileSelectionRasterOverlayPreparer.h"
 #include "earth_engine/tiling/TileSelectionReusePolicy.h"
 #include "earth_engine/tiling/TileSelectionVisitPreparation.h"
@@ -168,9 +169,10 @@ struct TilesetTestAccess {
         Tileset& tileset,
         const TilesetTile& tile) {
         auto details =
-            TilesetSelectionFrameFacade::createTraversalDetailsForCulledTile(
-                tileset,
-                tile);
+            TileSelectionTraversalDetailsBuilder::forCulledTile(
+                tile,
+                tileset.rasterOverlays_,
+                tileset.options_.forbidHoles);
         return !details.allAreRenderable &&
                !details.anyWereRenderedLastFrame &&
                details.notYetRenderableCount == 1;
@@ -180,9 +182,10 @@ struct TilesetTestAccess {
         Tileset& tileset,
         const TilesetTile& tile) {
         auto details =
-            TilesetSelectionFrameFacade::createTraversalDetailsForCulledTile(
-                tileset,
-                tile);
+            TileSelectionTraversalDetailsBuilder::forCulledTile(
+                tile,
+                tileset.rasterOverlays_,
+                tileset.options_.forbidHoles);
         return details.allAreRenderable &&
                !details.anyWereRenderedLastFrame &&
                details.notYetRenderableCount == 0;
@@ -191,9 +194,9 @@ struct TilesetTestAccess {
     static bool singleTileDetailsAnyWereRenderedLastFrame(
         Tileset& tileset,
         const TilesetTile& tile) {
-        return TilesetSelectionFrameFacade::createTraversalDetailsForSingleTile(
-            tileset,
-            tile)
+        return TileSelectionTraversalDetailsBuilder::forSingleTile(
+            tile,
+            tileset.rasterOverlays_)
             .anyWereRenderedLastFrame;
     }
 

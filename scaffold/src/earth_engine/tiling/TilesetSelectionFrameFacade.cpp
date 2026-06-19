@@ -7,12 +7,11 @@
 #include "TileRenderPlanFinalizer.h"
 #include "TileSelectionRasterOverlayPreparer.h"
 #include "TileSelectionFrameRunner.h"
-#include "TileSelectionHistory.h"
 #include "TileSelectionRenderEntryPolicy.h"
 #include "TileSelectionResetPolicy.h"
+#include "TileSelectionTraversalDetailsBuilder.h"
 #include "TileSelectionTraversalContext.h"
 #include "TileSelectionTraversalExecutor.h"
-#include "TileTraversalDetails.h"
 #include "Tileset.h"
 
 #include "../scene/FrameState.h"
@@ -50,43 +49,6 @@ void TilesetSelectionFrameFacade::resetTileSelectionState(
             resetPlan.completeRenderable);
         (void)ck;
     }
-}
-
-TileTraversalDetails
-TilesetSelectionFrameFacade::createTraversalDetailsForSingleTile(
-    const Tileset& tileset,
-    const TilesetTile& tile) {
-    const bool renderable = TileSelectionRasterOverlayPreparer::isRenderable(
-        tile,
-        tileset.rasterOverlays_);
-
-    return TileTraversalDetailsPolicy::forSingleTile(
-        renderable,
-        TileTraversalDetailsPolicy::wasRenderedLastFrameForTraversalDetails(
-            tile.selectionFrameState.previousSelectionState,
-            tile.refine,
-            TileSelectionHistory::anyDescendantWasRenderedLastFrame(tile)));
-}
-
-TileTraversalDetails
-TilesetSelectionFrameFacade::createTraversalDetailsForCulledTile(
-    const Tileset& tileset,
-    const TilesetTile& tile) {
-    if (!tileset.options_.forbidHoles || tile.refine != TileRefine::Replace) {
-        return TileTraversalDetails{};
-    }
-
-    const bool renderable = TileSelectionRasterOverlayPreparer::isRenderable(
-        tile,
-        tileset.rasterOverlays_);
-    return TileTraversalDetailsPolicy::forCulledTile(
-        tileset.options_.forbidHoles,
-        tile.refine,
-        renderable,
-        TileTraversalDetailsPolicy::wasRenderedLastFrameForTraversalDetails(
-            tile.selectionFrameState.previousSelectionState,
-            tile.refine,
-            TileSelectionHistory::anyDescendantWasRenderedLastFrame(tile)));
 }
 
 void TilesetSelectionFrameFacade::queueTileLoad(
@@ -270,14 +232,19 @@ void TilesetSelectionFrameFacade::selectTiles(
                         tile);
                 },
                 [](void* userData, const TilesetTile& tile) {
-                    return createTraversalDetailsForSingleTile(
-                        *static_cast<Tileset*>(userData),
-                        tile);
+                    const Tileset& tileset =
+                        *static_cast<Tileset*>(userData);
+                    return TileSelectionTraversalDetailsBuilder::forSingleTile(
+                        tile,
+                        tileset.rasterOverlays_);
                 },
                 [](void* userData, const TilesetTile& tile) {
-                    return createTraversalDetailsForCulledTile(
-                        *static_cast<Tileset*>(userData),
-                        tile);
+                    const Tileset& tileset =
+                        *static_cast<Tileset*>(userData);
+                    return TileSelectionTraversalDetailsBuilder::forCulledTile(
+                        tile,
+                        tileset.rasterOverlays_,
+                        tileset.options_.forbidHoles);
                 }};
             TileSelectionTraversalExecutor::visitTileIfNeeded(
                 traversalContext,

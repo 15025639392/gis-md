@@ -6,7 +6,6 @@
 namespace earth_engine {
 
 struct FrameState;
-struct TileTraversalDetails;
 struct TilesetTile;
 struct TilesetTestAccess;
 class Tileset;
@@ -21,12 +20,6 @@ private:
     friend struct TilesetTestAccess;
 
     static void resetTileSelectionState(Tileset& tileset);
-    static TileTraversalDetails createTraversalDetailsForSingleTile(
-        const Tileset& tileset,
-        const TilesetTile& tile);
-    static TileTraversalDetails createTraversalDetailsForCulledTile(
-        const Tileset& tileset,
-        const TilesetTile& tile);
     static void queueTileLoad(Tileset& tileset,
                               const TileKey& key,
                               TileLoadPriorityGroup group,
