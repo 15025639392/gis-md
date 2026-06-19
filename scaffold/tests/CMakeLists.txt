@@ -82,6 +82,12 @@ add_executable(test_cartographic
 target_link_libraries(test_cartographic PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_cartographic COMMAND test_cartographic)
 
+add_executable(test_projection
+    unit/geodesy/test_projection.cpp
+)
+target_link_libraries(test_projection PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_projection COMMAND test_projection)
+
 add_executable(test_ellipsoid
     unit/geodesy/test_ellipsoid.cpp
 )

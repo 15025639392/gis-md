@@ -1,5 +1,6 @@
 #include "TileScheme.h"
 #include "CrsProfile.h"
+#include "../core/geodesy/WebMercatorProjection.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include <cmath>
@@ -13,13 +14,34 @@ namespace earth_engine {
 // ============================================================
 
 namespace {
-constexpr double kMaxWebMercatorLat = 1.4844222297453324;
+const double kMaxWebMercatorLat = WebMercatorProjection::maximumLatitude();
 
 enum class OpenGlobusTileGroup {
     Mercator = 0,
     NorthPolar = 1,
     SouthPolar = 2
 };
+
+double mercatorFractionToLongitude(double fraction) {
+    return fraction * glm::two_pi<double>() - glm::pi<double>();
+}
+
+double longitudeToMercatorFraction(double longitude) {
+    return (longitude + glm::pi<double>()) / glm::two_pi<double>();
+}
+
+double mercatorFractionToLatitude(double fraction) {
+    const double mercatorAngle = glm::pi<double>() -
+        glm::two_pi<double>() * fraction;
+    return WebMercatorProjection::mercatorAngleToGeodeticLatitude(
+        mercatorAngle);
+}
+
+double latitudeToMercatorFraction(double latitude) {
+    return (1.0 -
+        WebMercatorProjection::geodeticLatitudeToMercatorAngle(latitude) /
+            glm::pi<double>()) * 0.5;
+}
 
 int groupBaseY(OpenGlobusTileGroup group, int tilesAtZoom) {
     return static_cast<int>(group) * tilesAtZoom;
@@ -50,33 +72,18 @@ public:
         double yMin = static_cast<double>(y) / tilesAtZoom;
         double yMax = static_cast<double>(y + 1) / tilesAtZoom;
 
-        auto mercatorToLng = [](double mx) -> double {
-            return mx * glm::two_pi<double>() - glm::pi<double>();
-        };
-        auto mercatorToLat = [](double my) -> double {
-            double latRad = glm::pi<double>() - glm::two_pi<double>() * my;
-            return std::atan(std::sinh(latRad));
-        };
-
         // XYZ y 轴：北（y=0）→ 南（yMax=1）
-        return Rectangle(mercatorToLng(xMin), mercatorToLat(yMax),
-                         mercatorToLng(xMax), mercatorToLat(yMin));
+        return Rectangle(mercatorFractionToLongitude(xMin),
+                         mercatorFractionToLatitude(yMax),
+                         mercatorFractionToLongitude(xMax),
+                         mercatorFractionToLatitude(yMin));
     }
 
     TileKey positionToTile(double lngRad, double latRad, int zoom) const override {
         int tilesAtZoom = 1 << zoom;
 
-        auto lngToMercator = [](double lng) -> double {
-            return (lng + glm::pi<double>()) / glm::two_pi<double>();
-        };
-        auto latToMercator = [](double lat) -> double {
-            double clampedLat = std::clamp(lat, -kMaxWebMercatorLat, kMaxWebMercatorLat);
-            return (1.0 - std::log(std::tan(clampedLat * 0.5 + glm::pi<double>() / 4.0)) /
-                          glm::pi<double>()) * 0.5;
-        };
-
-        double mx = lngToMercator(lngRad);
-        double my = latToMercator(latRad);
+        double mx = longitudeToMercatorFraction(lngRad);
+        double my = latitudeToMercatorFraction(latRad);
 
         int x = std::clamp(static_cast<int>(mx * tilesAtZoom), 0, tilesAtZoom - 1);
         int y = std::clamp(static_cast<int>(my * tilesAtZoom), 0, tilesAtZoom - 1);
@@ -138,32 +145,17 @@ public:
         double myNorth = static_cast<double>(tilesAtZoom - y - 1) / tilesAtZoom;
         double mySouth = static_cast<double>(tilesAtZoom - y) / tilesAtZoom;
 
-        auto mercatorToLng = [](double mx) -> double {
-            return mx * glm::two_pi<double>() - glm::pi<double>();
-        };
-        auto mercatorToLat = [](double my) -> double {
-            double latRad = glm::pi<double>() - glm::two_pi<double>() * my;
-            return std::atan(std::sinh(latRad));
-        };
-
-        return Rectangle(mercatorToLng(xMin), mercatorToLat(mySouth),
-                         mercatorToLng(xMax), mercatorToLat(myNorth));
+        return Rectangle(mercatorFractionToLongitude(xMin),
+                         mercatorFractionToLatitude(mySouth),
+                         mercatorFractionToLongitude(xMax),
+                         mercatorFractionToLatitude(myNorth));
     }
 
     TileKey positionToTile(double lngRad, double latRad, int zoom) const override {
         int tilesAtZoom = 1 << zoom;
 
-        auto lngToMercator = [](double lng) -> double {
-            return (lng + glm::pi<double>()) / glm::two_pi<double>();
-        };
-        auto latToMercator = [](double lat) -> double {
-            double clampedLat = std::clamp(lat, -kMaxWebMercatorLat, kMaxWebMercatorLat);
-            return (1.0 - std::log(std::tan(clampedLat * 0.5 + glm::pi<double>() / 4.0)) /
-                          glm::pi<double>()) * 0.5;
-        };
-
-        double mx = lngToMercator(lngRad);
-        double my = latToMercator(latRad);  // 0=北, 1=南
+        double mx = longitudeToMercatorFraction(lngRad);
+        double my = latitudeToMercatorFraction(latRad);  // 0=北, 1=南
 
         // TMS: y=0 在南侧 → my_tms = 1 - my
         double myTms = 1.0 - my;
@@ -242,15 +234,10 @@ public:
         const double xMax = static_cast<double>(x + 1) / tilesAtZoom;
         const double yMin = static_cast<double>(localY) / tilesAtZoom;
         const double yMax = static_cast<double>(localY + 1) / tilesAtZoom;
-        auto mercatorToLng = [](double mx) -> double {
-            return mx * glm::two_pi<double>() - glm::pi<double>();
-        };
-        auto mercatorToLat = [](double my) -> double {
-            double latRad = glm::pi<double>() - glm::two_pi<double>() * my;
-            return std::atan(std::sinh(latRad));
-        };
-        return Rectangle(mercatorToLng(xMin), mercatorToLat(yMax),
-                         mercatorToLng(xMax), mercatorToLat(yMin));
+        return Rectangle(mercatorFractionToLongitude(xMin),
+                         mercatorFractionToLatitude(yMax),
+                         mercatorFractionToLongitude(xMax),
+                         mercatorFractionToLatitude(yMin));
     }
 
     TileKey positionToTile(double lngRad, double latRad, int zoom) const override {
@@ -282,9 +269,7 @@ public:
                 std::nextafter(1.0, 0.0));
             localY = static_cast<int>(t * tilesAtZoom);
         } else {
-            const double clampedLat = std::clamp(latRad, -kMaxWebMercatorLat, kMaxWebMercatorLat);
-            const double my = (1.0 - std::log(std::tan(clampedLat * 0.5 +
-                glm::pi<double>() / 4.0)) / glm::pi<double>()) * 0.5;
+            const double my = latitudeToMercatorFraction(latRad);
             localY = static_cast<int>(std::clamp(my, 0.0, std::nextafter(1.0, 0.0)) *
                                       tilesAtZoom);
         }

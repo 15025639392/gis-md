@@ -54,6 +54,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/core/geodesy/Cartographic.cpp
     earth_engine/core/geodesy/Ellipsoid.h
     earth_engine/core/geodesy/Ellipsoid.cpp
+    earth_engine/core/geodesy/WebMercatorProjection.h
+    earth_engine/core/geodesy/WebMercatorProjection.cpp
     earth_engine/core/geodesy/Transforms.h
     earth_engine/core/geodesy/Transforms.cpp
 )
