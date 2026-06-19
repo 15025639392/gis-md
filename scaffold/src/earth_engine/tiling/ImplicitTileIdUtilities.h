@@ -1,5 +1,6 @@
 #pragma once
 
+#include "earth_engine/core/math/OrientedBoundingBox.h"
 #include "OctreeTilingScheme.h"
 #include "TileKey.h"
 
@@ -23,6 +24,13 @@ public:
     static std::string resolveUrl(const std::string& baseUrl,
                                   const std::string& urlTemplate,
                                   const OctreeTileID& tileID);
+
+    static OrientedBoundingBox computeBoundingVolume(
+        const OrientedBoundingBox& rootBoundingVolume,
+        const TileKey& tileID);
+    static OrientedBoundingBox computeBoundingVolume(
+        const OrientedBoundingBox& rootBoundingVolume,
+        const OctreeTileID& tileID);
 
     static std::optional<TileKey> parentId(const TileKey& tileID);
     static std::optional<OctreeTileID> parentId(const OctreeTileID& tileID);

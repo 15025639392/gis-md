@@ -230,6 +230,64 @@ std::string ImplicitTileIdUtilities::resolveUrl(
     return earth_engine::resolveUrl(baseUrl, url);
 }
 
+OrientedBoundingBox ImplicitTileIdUtilities::computeBoundingVolume(
+    const OrientedBoundingBox& rootBoundingVolume,
+    const TileKey& tileID) {
+    const Vec3& center = rootBoundingVolume.getCenter();
+    const Vec3& xAxis = rootBoundingVolume.getHalfAxis(0);
+    const Vec3& yAxis = rootBoundingVolume.getHalfAxis(1);
+    const Vec3& zAxis = rootBoundingVolume.getHalfAxis(2);
+
+    const double denominator = levelDenominator(static_cast<uint32_t>(tileID.z));
+    const Vec3 minimum = center - xAxis - yAxis - zAxis;
+    const Vec3 xDim = xAxis * (2.0 / denominator);
+    const Vec3 yDim = yAxis * (2.0 / denominator);
+
+    const Vec3 childMin =
+        minimum + xDim * static_cast<double>(tileID.x) +
+        yDim * static_cast<double>(tileID.y);
+    const Vec3 childMax =
+        minimum + xDim * static_cast<double>(tileID.x + 1) +
+        yDim * static_cast<double>(tileID.y + 1) + zAxis * 2.0;
+
+    return OrientedBoundingBox(
+        (childMin + childMax) * 0.5,
+        xDim * 0.5,
+        yDim * 0.5,
+        zAxis);
+}
+
+OrientedBoundingBox ImplicitTileIdUtilities::computeBoundingVolume(
+    const OrientedBoundingBox& rootBoundingVolume,
+    const OctreeTileID& tileID) {
+    const Vec3& center = rootBoundingVolume.getCenter();
+    const Vec3& xAxis = rootBoundingVolume.getHalfAxis(0);
+    const Vec3& yAxis = rootBoundingVolume.getHalfAxis(1);
+    const Vec3& zAxis = rootBoundingVolume.getHalfAxis(2);
+
+    const double denominator =
+        levelDenominator(static_cast<uint32_t>(tileID.level));
+    const Vec3 minimum = center - xAxis - yAxis - zAxis;
+    const Vec3 xDim = xAxis * (2.0 / denominator);
+    const Vec3 yDim = yAxis * (2.0 / denominator);
+    const Vec3 zDim = zAxis * (2.0 / denominator);
+
+    const Vec3 childMin =
+        minimum + xDim * static_cast<double>(tileID.x) +
+        yDim * static_cast<double>(tileID.y) +
+        zDim * static_cast<double>(tileID.z);
+    const Vec3 childMax =
+        minimum + xDim * static_cast<double>(tileID.x + 1) +
+        yDim * static_cast<double>(tileID.y + 1) +
+        zDim * static_cast<double>(tileID.z + 1);
+
+    return OrientedBoundingBox(
+        (childMin + childMax) * 0.5,
+        xDim * 0.5,
+        yDim * 0.5,
+        zDim * 0.5);
+}
+
 std::optional<TileKey> ImplicitTileIdUtilities::parentId(
     const TileKey& tileID) {
     if (tileID.z == 0) {

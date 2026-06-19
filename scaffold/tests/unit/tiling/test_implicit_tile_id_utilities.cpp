@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/core/math/OrientedBoundingBox.h"
 #include "earth_engine/tiling/ImplicitTileIdUtilities.h"
 
 #include <vector>
@@ -70,6 +71,69 @@ TEST(ImplicitTileIdUtilitiesTest, ResolveUrlPreservesTemplateEdgeCases) {
                   "https://example.com/base/tileset.json?token=base#section",
                   "",
                   TileKey{"Geographic-TMS", 11, 2, 3}));
+}
+
+TEST(ImplicitTileIdUtilitiesTest, ComputeObbQuadtreeBoundingVolumeMatchesCesiumNative) {
+    const OrientedBoundingBox root(Vec3(1.0, 2.0, 3.0),
+                                  Vec3(10.0, 0.0, 0.0),
+                                  Vec3(0.0, 10.0, 0.0),
+                                  Vec3(0.0, 0.0, 10.0));
+
+    const OrientedBoundingBox l1x0y0 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            TileKey{"Geographic-TMS", 1, 0, 0});
+    EXPECT_EQ(Vec3(-4.0, -3.0, 3.0), l1x0y0.getCenter());
+    EXPECT_EQ(Vec3(10.0, 10.0, 20.0), l1x0y0.getLengths());
+
+    const OrientedBoundingBox l1x1y0 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            TileKey{"Geographic-TMS", 1, 1, 0});
+    EXPECT_EQ(Vec3(6.0, -3.0, 3.0), l1x1y0.getCenter());
+    EXPECT_EQ(Vec3(10.0, 10.0, 20.0), l1x1y0.getLengths());
+
+    const OrientedBoundingBox l1x0y1 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            TileKey{"Geographic-TMS", 1, 0, 1});
+    EXPECT_EQ(Vec3(-4.0, 7.0, 3.0), l1x0y1.getCenter());
+    EXPECT_EQ(Vec3(10.0, 10.0, 20.0), l1x0y1.getLengths());
+}
+
+TEST(ImplicitTileIdUtilitiesTest, ComputeObbOctreeBoundingVolumeMatchesCesiumNative) {
+    const OrientedBoundingBox root(Vec3(1.0, 2.0, 3.0),
+                                  Vec3(10.0, 0.0, 0.0),
+                                  Vec3(0.0, 10.0, 0.0),
+                                  Vec3(0.0, 0.0, 10.0));
+
+    const OrientedBoundingBox l1x0y0z0 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            OctreeTileID{1, 0, 0, 0});
+    EXPECT_EQ(Vec3(-4.0, -3.0, -2.0), l1x0y0z0.getCenter());
+    EXPECT_EQ(Vec3(10.0, 10.0, 10.0), l1x0y0z0.getLengths());
+
+    const OrientedBoundingBox l1x1y0z0 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            OctreeTileID{1, 1, 0, 0});
+    EXPECT_EQ(Vec3(6.0, -3.0, -2.0), l1x1y0z0.getCenter());
+    EXPECT_EQ(Vec3(10.0, 10.0, 10.0), l1x1y0z0.getLengths());
+
+    const OrientedBoundingBox l1x0y1z0 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            OctreeTileID{1, 0, 1, 0});
+    EXPECT_EQ(Vec3(-4.0, 7.0, -2.0), l1x0y1z0.getCenter());
+    EXPECT_EQ(Vec3(10.0, 10.0, 10.0), l1x0y1z0.getLengths());
+
+    const OrientedBoundingBox l1x0y0z1 =
+        ImplicitTileIdUtilities::computeBoundingVolume(
+            root,
+            OctreeTileID{1, 0, 0, 1});
+    EXPECT_EQ(Vec3(-4.0, -3.0, 8.0), l1x0y0z1.getCenter());
+    EXPECT_EQ(Vec3(10.0, 10.0, 10.0), l1x0y0z1.getLengths());
 }
 
 TEST(ImplicitTileIdUtilitiesTest, ParentIdMatchesCesiumNativeOptionalSemantics) {
