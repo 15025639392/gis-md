@@ -44,7 +44,9 @@ struct TileChildMaterializer {
         int maxZoom,
         AvailabilityFn&& availabilityState,
         EnsureTileFn&& ensureTile) {
-        if (parent.key.z >= maxZoom || parent.content.upsampledFromParent) {
+        if (parent.key.z >= maxZoom ||
+            (parent.content.upsampledFromParent &&
+             !parent.content.rasterUpsampledForMoreDetail)) {
             return false;
         }
 
@@ -106,6 +108,10 @@ struct TileChildMaterializer {
             if (child->content.upsampledFromParent != upsampled) {
                 child->content.renderContent.clearSurfaceMeshResources();
                 child->content.upsampledFromParent = upsampled;
+                changed = true;
+            }
+            if (child->content.rasterUpsampledForMoreDetail) {
+                child->content.rasterUpsampledForMoreDetail = false;
                 changed = true;
             }
             changed |= linkChild(parent, *child);
@@ -183,6 +189,7 @@ struct TileChildMaterializer {
             child->geometricError = parent.geometricError * 0.5;
             child->refine = TileRefine::Replace;
             child->content.upsampledFromParent = true;
+            child->content.rasterUpsampledForMoreDetail = true;
             child->unconditionallyRefine = false;
             TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                 *child,
@@ -202,7 +209,10 @@ struct TileChildMaterializer {
         CacheKeyFn&& cacheKey,
         IsTerrainCachedFn&& isTerrainCached,
         AvailabilityStateFn&& availabilityState) {
-        if (tile.content.upsampledFromParent) return false;
+        if (tile.content.upsampledFromParent &&
+            !tile.content.rasterUpsampledForMoreDetail) {
+            return false;
+        }
 
         if (options.hasExistingChildren) {
             return true;

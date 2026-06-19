@@ -5313,6 +5313,7 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
     bool allUpsampled = root->children.size() == 4;
     for (TilesetTile* child : root->children) {
         allUpsampled &= child && child->content.upsampledFromParent &&
+            child->content.rasterUpsampledForMoreDetail &&
             child->parent == root &&
             std::abs(child->geometricError - 50.0) < 1e-9 &&
             child->boundingVolume &&
@@ -12137,6 +12138,7 @@ void testTileChildMaterializerCreatesRasterUpsampledChildren() {
         childrenConfigured &= child &&
             child->parent == &parent &&
             child->content.upsampledFromParent &&
+            child->content.rasterUpsampledForMoreDetail &&
             child->geometricError == 50.0 &&
             child->boundingVolume &&
             child->boundingVolume->kind == TileBoundingVolumeKind::Region &&
@@ -12146,6 +12148,74 @@ void testTileChildMaterializerCreatesRasterUpsampledChildren() {
     }
     check(childrenConfigured,
           "TileChildMaterializer: raster upsampled children carry renderable fallback metadata");
+}
+
+void testTileChildMaterializerContinuesRasterUpsampledSubdivision() {
+    const TileKey parentKey{"Geographic-TMS", 10, 512, 512};
+    TilesetTile parent(
+        parentKey,
+        Rectangle::fromDegrees(106.0, 29.0, 107.0, 30.0));
+    parent.geometricError = 64.0;
+    parent.content.upsampledFromParent = true;
+    parent.content.rasterUpsampledForMoreDetail = true;
+    parent.content.renderContent.setTerrainHeightRange(100.0, 500.0);
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto cacheKeyFor = [](const TileKey& key) {
+        return key.schemeId + ":" +
+            std::to_string(key.z) + ":" +
+            std::to_string(key.x) + ":" +
+            std::to_string(key.y);
+    };
+    auto ensure = [&tiles, &cacheKeyFor](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    const bool changed =
+        TileChildMaterializer::materializeRasterUpsampledChildren(
+            parent,
+            parent.bounds,
+            64.0,
+            ensure);
+
+    check(changed && parent.children.size() == 4,
+          "TileChildMaterializer: raster-driven upsampled tiles can keep subdividing for imagery detail");
+    bool grandchildrenConfigured = parent.children.size() == 4;
+    for (TilesetTile* child : parent.children) {
+        grandchildrenConfigured &= child &&
+            child->parent == &parent &&
+            child->content.upsampledFromParent &&
+            child->content.rasterUpsampledForMoreDetail &&
+            child->geometricError == 32.0 &&
+            child->content.renderContent.hasTerrainHeightRange() &&
+            child->content.renderContent.terrainMinimumHeight() == 100.0 &&
+            child->content.renderContent.terrainMaximumHeight() == 500.0;
+    }
+    check(grandchildrenConfigured,
+          "TileChildMaterializer: raster subdivision children still derive terrain from the parent");
+
+    check(TileChildMaterializer::canRefine(
+              parent,
+              TileRefinementAvailabilityOptions{
+                  true,
+                  false,
+                  false,
+                  false,
+                  true,
+                  18},
+              [](const TileKey&) { return std::string{"child"}; },
+              [](const std::string&) { return false; },
+              [](const TileKey&) {
+                  return TileAvailabilityState::NotAvailable;
+              }),
+          "TileChildMaterializer: raster-upsampled tile remains refinable once imagery subdivision children exist");
 }
 
 void testTileChildMaterializerRefinementPolicyHonorsContentRules() {
@@ -20643,6 +20713,7 @@ int main() {
     testTileChildMaterializerLinksContentChildrenWithoutDuplicates();
     testTileChildMaterializerCreatesAvailableAndUpsampledTerrainChildren();
     testTileChildMaterializerCreatesRasterUpsampledChildren();
+    testTileChildMaterializerContinuesRasterUpsampledSubdivision();
     testTileChildMaterializerRefinementPolicyHonorsContentRules();
     testTileChildMaterializerRefinementPolicyUsesTerrainSignals();
     testTileChildMaterializerRefinementPolicyBlocksBoundaryAndUpsampledTiles();

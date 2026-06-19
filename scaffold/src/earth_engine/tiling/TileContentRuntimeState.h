@@ -17,6 +17,11 @@ struct TileContentRuntimeState {
     /// cesium-native UpsampledQuadtreeNode equivalent. The tile is not
     /// requestable; its render content is derived from an ancestor tile.
     bool upsampledFromParent = false;
+
+    /// This upsampled tile exists to subdivide the surface for higher-detail
+    /// raster imagery. It still derives terrain from its parent, but may keep
+    /// refining while raster overlays report more detail.
+    bool rasterUpsampledForMoreDetail = false;
 };
 
 } // namespace earth_engine
