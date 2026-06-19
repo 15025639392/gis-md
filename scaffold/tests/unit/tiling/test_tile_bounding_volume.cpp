@@ -74,6 +74,24 @@ TEST(TileBoundingVolumeTest, CenterUsesContainedVolumeKind) {
               TileBoundsMetrics::boundingVolumeCenter(box));
 }
 
+TEST(TileBoundingVolumeTest, RegionCenterUsesBoundingRegionObbLikeCesiumNative) {
+    const TileBoundingVolume region =
+        TileBoundingVolume::fromRegion(
+            Rectangle::fromDegrees(-10.0, -5.0, 20.0, 15.0),
+            100.0,
+            2000.0);
+
+    const std::optional<OrientedBoundingBox> regionObb =
+        TileBoundsMetrics::boundingRegionObb(
+            region.region,
+            region.minimumHeight,
+            region.maximumHeight);
+    ASSERT_TRUE(regionObb.has_value());
+
+    EXPECT_EQ(regionObb->getCenter(),
+              TileBoundsMetrics::boundingVolumeCenter(region));
+}
+
 TEST(TileBoundingVolumeTest, SphereConvertsToCircumscribedOrientedBox) {
     const TileBoundingVolume sphere =
         TileBoundingVolume::fromSphere(Vec3(1.0, 2.0, 3.0), 10.0);

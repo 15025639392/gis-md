@@ -25,6 +25,10 @@ public:
     static Vec3 tileBoundsCenter(const Rectangle& bounds);
     static double tileBoundsRadius(const TilesetTile& tile,
                                    const Vec3& center);
+    static std::optional<OrientedBoundingBox> boundingRegionObb(
+        const Rectangle& bounds,
+        double minimumHeight,
+        double maximumHeight);
     static std::optional<OrientedBoundingBox> tileBoundingRegionObb(
         const TilesetTile& tile);
     static bool tileIntersectsFrustum(const TilesetTile& tile,

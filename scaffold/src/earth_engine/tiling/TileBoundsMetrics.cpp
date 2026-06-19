@@ -513,11 +513,18 @@ double TileBoundsMetrics::tileBoundsRadius(const TilesetTile& tile,
         terrainHeightPadding(tile));
 }
 
+std::optional<OrientedBoundingBox> TileBoundsMetrics::boundingRegionObb(
+    const Rectangle& bounds,
+    double minimumHeight,
+    double maximumHeight) {
+    return computeBoundingRegionObb(bounds, minimumHeight, maximumHeight);
+}
+
 std::optional<OrientedBoundingBox> TileBoundsMetrics::tileBoundingRegionObb(
     const TilesetTile& tile) {
     if (tile.boundingVolume) {
         if (tile.boundingVolume->kind == TileBoundingVolumeKind::Region) {
-            return computeBoundingRegionObb(
+            return boundingRegionObb(
                 tile.boundingVolume->region,
                 tile.boundingVolume->minimumHeight,
                 tile.boundingVolume->maximumHeight);
@@ -526,7 +533,7 @@ std::optional<OrientedBoundingBox> TileBoundsMetrics::tileBoundingRegionObb(
             return tile.boundingVolume->box;
         }
     }
-    return computeBoundingRegionObb(
+    return boundingRegionObb(
         tile.bounds,
         terrainMinimumHeight(tile),
         terrainMaximumHeight(tile));
@@ -565,6 +572,13 @@ Vec3 TileBoundsMetrics::boundingVolumeCenter(
     const TileBoundingVolume& volume) {
     switch (volume.kind) {
         case TileBoundingVolumeKind::Region:
+            if (const std::optional<OrientedBoundingBox> obb =
+                    boundingRegionObb(
+                        volume.region,
+                        volume.minimumHeight,
+                        volume.maximumHeight)) {
+                return obb->getCenter();
+            }
             return tileBoundsCenterFromRectangle(volume.region);
         case TileBoundingVolumeKind::Sphere:
             return volume.sphere.getCenter();
