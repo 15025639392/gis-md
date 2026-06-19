@@ -252,6 +252,13 @@ TEST(EllipsoidTest, TryScaleToGeodeticSurfaceMatchesCesiumNativeCenterBehavior) 
     EXPECT_NEAR(e.semiMajorAxis(), nearCenter->x(), 1e-6);
     EXPECT_NEAR(0.0, nearCenter->y(), 1e-12);
     EXPECT_NEAR(0.0, nearCenter->z(), 1e-12);
+
+    const Ellipsoid triaxial(2.0, 3.0, 4.0);
+    auto nearCenterY = triaxial.tryScaleToGeodeticSurface(Vec3(0.0, 0.1, 0.0));
+    ASSERT_TRUE(nearCenterY.has_value());
+    EXPECT_NEAR(0.0, nearCenterY->x(), 1e-12);
+    EXPECT_NEAR(3.0, nearCenterY->y(), 1e-12);
+    EXPECT_NEAR(0.0, nearCenterY->z(), 1e-12);
 }
 
 TEST(EllipsoidTest, TryScaleToGeocentricSurfaceMatchesCesiumNative) {
