@@ -32,10 +32,15 @@ public:
         halfAxes_[0] = axis0;
         halfAxes_[1] = axis1;
         halfAxes_[2] = axis2;
+        inverseHalfAxes_ = glm::inverse(glm::dmat3(
+            halfAxes_[0].raw(),
+            halfAxes_[1].raw(),
+            halfAxes_[2].raw()));
     }
 
     const Vec3& getCenter() const noexcept { return center_; }
     const Vec3& getHalfAxis(int i) const noexcept { return halfAxes_[i]; }
+    const glm::dmat3& getInverseHalfAxes() const noexcept { return inverseHalfAxes_; }
     Vec3 getLengths() const noexcept {
         return Vec3(halfAxes_[0].length() * 2.0,
                     halfAxes_[1].length() * 2.0,
@@ -150,12 +155,8 @@ public:
     }
 
     bool contains(const Vec3& position) const noexcept {
-        const glm::dmat3 halfAxes(
-            halfAxes_[0].raw(),
-            halfAxes_[1].raw(),
-            halfAxes_[2].raw());
         const glm::dvec3 local =
-            glm::inverse(halfAxes) * (position - center_).raw();
+            inverseHalfAxes_ * (position - center_).raw();
         constexpr double kClosedBoxEpsilon = 1e-14;
         return std::abs(local.x) <= 1.0 + kClosedBoxEpsilon &&
                std::abs(local.y) <= 1.0 + kClosedBoxEpsilon &&
@@ -216,6 +217,7 @@ public:
 private:
     Vec3 center_;
     Vec3 halfAxes_[3];
+    glm::dmat3 inverseHalfAxes_;
 };
 
 } // namespace earth_engine

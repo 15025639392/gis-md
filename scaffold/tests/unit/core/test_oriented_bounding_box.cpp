@@ -126,6 +126,20 @@ TEST(OrientedBoundingBoxTest, ContainsMatchesCesiumNativeLocalUnitCube) {
     EXPECT_FALSE(box.contains(Vec3(3.0 + 1e-12, 5.0, 7.0)));
 }
 
+TEST(OrientedBoundingBoxTest, InverseHalfAxesMatchesCesiumNative) {
+    OrientedBoundingBox box(Vec3(1.0, 2.0, 3.0),
+                            Vec3(2.0, 0.0, 0.0),
+                            Vec3(0.0, 4.0, 0.0),
+                            Vec3(0.0, 0.0, 8.0));
+
+    const glm::dmat3& inverseHalfAxes = box.getInverseHalfAxes();
+
+    EXPECT_DOUBLE_EQ(0.5, inverseHalfAxes[0][0]);
+    EXPECT_DOUBLE_EQ(0.25, inverseHalfAxes[1][1]);
+    EXPECT_DOUBLE_EQ(0.125, inverseHalfAxes[2][2]);
+    EXPECT_DOUBLE_EQ(1.0, (inverseHalfAxes * Vec3(2.0, 0.0, 0.0).raw()).x);
+}
+
 TEST(OrientedBoundingBoxTest, ContainsMatchesCesiumNativeRotatedBox) {
     const Vec3 center(10.0, 20.0, 30.0);
     const Mat4 rotation = Mat4::rotationY(std::acos(-1.0) / 4.0);
