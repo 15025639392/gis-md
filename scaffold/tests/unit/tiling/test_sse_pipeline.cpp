@@ -11307,6 +11307,9 @@ void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
             },
             [](const TilesetTile& tile) {
                 return tile.hasSurfaceDrawable();
+            },
+            [](const TilesetTile&) {
+                return true;
             });
 
     check(plan.renderEntries.size() == 1 &&
@@ -11359,6 +11362,9 @@ void testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery() {
         },
         [](const TileKey& key) {
             return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return tile.hasSurfaceDrawable();
         },
         [](const TilesetTile& tile) {
             return tile.hasSurfaceDrawable();
@@ -11416,6 +11422,9 @@ void testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback() {
         },
         [&root](const TilesetTile& tile) {
             return tile.key == root.key;
+        },
+        [&root](const TilesetTile& tile) {
+            return tile.key == root.key;
         });
 
     check(plan.renderEntries.size() == 1 &&
@@ -11427,6 +11436,43 @@ void testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback() {
               plan.renderEntries.front().surfaceClipEnabled &&
               plan.renderEntryAncestorFallbackCount == 1,
           "TileRenderPlanFinalizer: ancestor fallback skips nearer geometry that is not actually renderable");
+}
+
+void testTileRenderPlanFinalizerSkipsSurfaceEntryWithoutCommandBinding() {
+    const TileKey rootKey{"test", 0, 0, 0};
+    TilesetTile root(rootKey, Rectangle{});
+    root.markRenderContentDone();
+    root.content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(4),
+        nullptr);
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(rootKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            false,
+            0,
+            1},
+        [&root](const TileKey& key) -> TilesetTile* {
+            return key == root.key ? &root : nullptr;
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return tile.hasSurfaceDrawable();
+        },
+        [](const TilesetTile&) {
+            return false;
+        });
+
+    check(plan.renderEntries.empty() &&
+              plan.renderEntryAncestorFallbackCount == 0 &&
+              plan.renderEntrySynchronousPrepCount == 0 &&
+              plan.renderEntryDeferredPrepCount == 0,
+          "TileRenderPlanFinalizer: surface entries are skipped when they cannot bind a drawable command");
 }
 
 void testTileRenderPlanFinalizerCountsRootPrepOnce() {
@@ -11453,6 +11499,9 @@ void testTileRenderPlanFinalizerCountsRootPrepOnce() {
             },
             [](const TilesetTile& tile) {
                 return tile.hasSurfaceDrawable();
+            },
+            [](const TilesetTile&) {
+                return true;
             });
 
     check(plan.renderEntries.size() == 1 &&
@@ -11491,6 +11540,9 @@ void testTileRenderPlanFinalizerReadsSelectionFrameFade() {
             },
             [](const TilesetTile& tile) {
                 return tile.hasSurfaceDrawable();
+            },
+            [](const TilesetTile&) {
+                return true;
             });
 
     check(plan.renderEntries.size() == 1 &&
@@ -17920,12 +17972,11 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
     check(scene.diagnostics().contentTilesets == 1 &&
               scene.diagnostics().contentVisibleTiles > 0,
           "Scene: diagnostics expose additional content tileset visibility");
-    check(scene.diagnostics().terrainRenderEntriesPlanned > 0 &&
+    check(scene.diagnostics().terrainRenderEntriesPlanned == 0 &&
               scene.diagnostics().terrainSurfaceCommandsSubmitted == 0 &&
               scene.diagnostics().globeFallbackCommands == 1 &&
-              scene.diagnostics().globeFallbackMaskedTerrainEntries ==
-                  scene.diagnostics().terrainRenderEntriesPlanned,
-          "Scene: diagnostics expose globe fallback masking planned terrain render entries");
+              scene.diagnostics().globeFallbackMaskedTerrainEntries == 0,
+          "Scene: no-base-imagery terrain does not create masked terrain render entries");
     check(std::abs(scene.tileset()->sampleHeight(0.0, 0.0) - 123.0f) <
               1e-6f,
           "Scene: terrain sampling is still owned by primary tileset after render");
@@ -19612,6 +19663,7 @@ int main() {
     testTileRenderPlanFinalizerResolvesAncestorFallbackEntries();
     testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery();
     testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback();
+    testTileRenderPlanFinalizerSkipsSurfaceEntryWithoutCommandBinding();
     testTileRenderPlanFinalizerCountsRootPrepOnce();
     testTileRenderPlanFinalizerReadsSelectionFrameFade();
     testTileRenderEntryCommandBuilderCountsSkippedEntries();

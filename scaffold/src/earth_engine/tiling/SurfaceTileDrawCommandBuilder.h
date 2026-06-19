@@ -21,6 +21,10 @@ struct SurfaceTileDrawCommandBuildContext {
 };
 
 struct SurfaceTileDrawCommandBuilder {
+    static bool hasDrawableBaseRaster(
+        const TilesetTile& tile,
+        const std::vector<ActivatedRasterOverlay*>& overlays);
+
     static void build(Renderer& renderer,
                       TilesetTile& tile,
                       const std::vector<ActivatedRasterOverlay*>& overlays,

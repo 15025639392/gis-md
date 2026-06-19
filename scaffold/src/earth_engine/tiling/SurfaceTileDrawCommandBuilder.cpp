@@ -43,6 +43,29 @@ bool overlayBindingAllowedByPolicy(
 
 } // namespace
 
+bool SurfaceTileDrawCommandBuilder::hasDrawableBaseRaster(
+    const TilesetTile& tile,
+    const std::vector<ActivatedRasterOverlay*>& overlays) {
+    for (size_t i = 0;
+         i < overlays.size() && i < tile.rasterOverlayState.mappingCount();
+         ++i) {
+        auto* activeOverlay = overlays[i];
+        if (!activeOverlay || !activeOverlay->visible() ||
+            activeOverlay->getOverlay().role() != RasterOverlayRole::BaseImagery) {
+            continue;
+        }
+
+        const RasterMappedToTilesetTile* mapped =
+            tile.rasterOverlayState.mappingAt(i);
+        const SurfaceRasterBinding binding =
+            chooseSurfaceRasterBinding(mapped);
+        if (overlayBindingAllowedByPolicy(activeOverlay, mapped, binding)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void SurfaceTileDrawCommandBuilder::build(
     Renderer& renderer,
     TilesetTile& tile,

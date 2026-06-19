@@ -4,6 +4,7 @@
 #include "TileContentAccess.h"
 #include "TileRenderPlanFinalizer.h"
 #include "TileSelectionRasterOverlayPreparer.h"
+#include "SurfaceTileDrawCommandBuilder.h"
 
 namespace earth_engine {
 
@@ -34,6 +35,11 @@ void TileRenderPlanFrameRefresher::refresh(
         },
         [&rasterOverlays](const TilesetTile& tile) {
             return TileSelectionRasterOverlayPreparer::isRenderable(
+                tile,
+                rasterOverlays);
+        },
+        [&rasterOverlays](const TilesetTile& tile) {
+            return SurfaceTileDrawCommandBuilder::hasDrawableBaseRaster(
                 tile,
                 rasterOverlays);
         });
