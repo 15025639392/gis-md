@@ -41,6 +41,31 @@ TEST(MathUtilsTest, RoundUpAndRoundDownMatchCesiumNative) {
     EXPECT_DOUBLE_EQ(-1.0, MathUtils::roundDown(-1.005, 0.01));
 }
 
+TEST(MathUtilsTest, ClampAndSNormMatchCesiumNativeSourceSemantics) {
+    EXPECT_DOUBLE_EQ(0.0, MathUtils::clamp(-1.0, 0.0, 1.0));
+    EXPECT_DOUBLE_EQ(0.5, MathUtils::clamp(0.5, 0.0, 1.0));
+    EXPECT_DOUBLE_EQ(1.0, MathUtils::clamp(2.0, 0.0, 1.0));
+
+    EXPECT_DOUBLE_EQ(0.0, MathUtils::toSNorm(-1.0));
+    EXPECT_DOUBLE_EQ(128.0, MathUtils::toSNorm(0.0));
+    EXPECT_DOUBLE_EQ(255.0, MathUtils::toSNorm(1.0));
+    EXPECT_DOUBLE_EQ(255.0, MathUtils::toSNorm(2.0));
+    EXPECT_DOUBLE_EQ(0.0, MathUtils::toSNorm(-2.0));
+
+    EXPECT_DOUBLE_EQ(0.0, MathUtils::toSNorm(-1.0, 1023.0));
+    EXPECT_DOUBLE_EQ(512.0, MathUtils::toSNorm(0.0, 1023.0));
+    EXPECT_DOUBLE_EQ(1023.0, MathUtils::toSNorm(1.0, 1023.0));
+
+    EXPECT_DOUBLE_EQ(-1.0, MathUtils::fromSNorm(0.0));
+    EXPECT_DOUBLE_EQ(1.0, MathUtils::fromSNorm(255.0));
+    EXPECT_NEAR(0.0039215686274509665, MathUtils::fromSNorm(128.0), 1e-16);
+    EXPECT_DOUBLE_EQ(-1.0, MathUtils::fromSNorm(-1.0));
+    EXPECT_DOUBLE_EQ(1.0, MathUtils::fromSNorm(300.0));
+    EXPECT_NEAR(0.0009775171065493637,
+                MathUtils::fromSNorm(512.0, 1023.0),
+                1e-16);
+}
+
 TEST(MathUtilsTest, ConvertLongitudeRangeMatchesCesiumNative) {
     EXPECT_DOUBLE_EQ(MathUtils::degreesToRadians(-90.0),
                      MathUtils::convertLongitudeRange(

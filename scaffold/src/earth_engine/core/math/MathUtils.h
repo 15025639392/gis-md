@@ -117,6 +117,24 @@ public:
         return p * (1.0 - time) + q * time;
     }
 
+    static constexpr double clamp(double value,
+                                  double min,
+                                  double max) noexcept {
+        return std::clamp(value, min, max);
+    }
+
+    static double toSNorm(double value,
+                          double rangeMaximum = 255.0) noexcept {
+        return std::round((clamp(value, -1.0, 1.0) * 0.5 + 0.5) *
+                          rangeMaximum);
+    }
+
+    static constexpr double fromSNorm(
+        double value,
+        double rangeMaximum = 255.0) noexcept {
+        return (clamp(value, 0.0, rangeMaximum) / rangeMaximum) * 2.0 - 1.0;
+    }
+
     static double roundUp(double value, double tolerance) noexcept {
         const double up = std::ceil(value);
         const double down = std::floor(value);
