@@ -27,7 +27,6 @@ public:
               typename IngestAvailabilityFn,
               typename FindUpsampleSourceFn,
               typename EnsureAncestorMeshFn,
-              typename HasSurfaceDrawableFn,
               typename IsCompleteRenderableFn,
               typename MarkResourcesDirtyFn>
     static void ensure(
@@ -36,7 +35,6 @@ public:
         IngestAvailabilityFn&& ingestAvailability,
         FindUpsampleSourceFn&& findUpsampleSource,
         EnsureAncestorMeshFn&& ensureAncestorMesh,
-        HasSurfaceDrawableFn&& hasSurfaceDrawable,
         IsCompleteRenderableFn&& isCompleteRenderable,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         auto it = input.terrainCache.find(terrainCacheKey(input.tile.key));
@@ -55,7 +53,6 @@ public:
                 ingestAvailability,
                 findUpsampleSource,
                 ensureAncestorMesh,
-                hasSurfaceDrawable,
                 isCompleteRenderable);
         if (result.resourcesDirty) {
             markResourcesDirty();

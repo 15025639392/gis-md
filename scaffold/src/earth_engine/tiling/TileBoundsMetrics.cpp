@@ -20,14 +20,14 @@ double terrainHeightPadding(double minimumHeight, double maximumHeight) {
 }
 
 double terrainHeightPadding(const TilesetTile& tile) {
-    if (!tile.hasTerrainHeightRange) {
+    if (!tile.content.renderContent.hasTerrainHeightRange()) {
         return terrainHeightPadding(
             TileBoundsMetrics::kDefaultTerrainMinimumHeight,
             TileBoundsMetrics::kDefaultTerrainMaximumHeight);
     }
     return terrainHeightPadding(
-        tile.terrainMinimumHeight,
-        tile.terrainMaximumHeight);
+        tile.content.renderContent.terrainMinimumHeight(),
+        tile.content.renderContent.terrainMaximumHeight());
 }
 
 bool normalizedOrInvalid(Vec3& value) {
@@ -475,14 +475,14 @@ double computeBoundingRegionDistanceSquared(
 } // namespace
 
 double TileBoundsMetrics::terrainMinimumHeight(const TilesetTile& tile) {
-    return tile.hasTerrainHeightRange
-        ? tile.terrainMinimumHeight
+    return tile.content.renderContent.hasTerrainHeightRange()
+        ? tile.content.renderContent.terrainMinimumHeight()
         : kDefaultTerrainMinimumHeight;
 }
 
 double TileBoundsMetrics::terrainMaximumHeight(const TilesetTile& tile) {
-    return tile.hasTerrainHeightRange
-        ? tile.terrainMaximumHeight
+    return tile.content.renderContent.hasTerrainHeightRange()
+        ? tile.content.renderContent.terrainMaximumHeight()
         : kDefaultTerrainMaximumHeight;
 }
 

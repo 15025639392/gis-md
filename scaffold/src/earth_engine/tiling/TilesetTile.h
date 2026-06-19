@@ -3,97 +3,27 @@
 #include "TileKey.h"
 #include "TileLoadState.h"
 #include "TilePlan.h"
+#include "TileContentStateTransition.h"
+#include "TileContentRuntimeState.h"
+#include "TileRasterOverlayState.h"
 #include "TileRefine.h"
+#include "TileRenderablePolicy.h"
+#include "TileRenderReferenceState.h"
+#include "TileRenderContentState.h"
+#include "TileSelectionFrameState.h"
 #include "TileBoundingVolume.h"
-#include "../content/GltfModel.h"
-#include "../core/math/Mat4.h"
 #include "../core/math/Rectangle.h"
-#include "../tiling/SurfaceTile.h"
 #include "../providers/TerrainProvider.h"
-#include "../renderer/RenderDevice.h"
 #include "TileScheme.h"
 
 #include <memory>
 #include <vector>
 #include <cstdint>
 #include <optional>
-#include <array>
 
 namespace earth_engine {
 
 class RasterMappedToTilesetTile;
-
-enum class SurfaceDrawableSource {
-    None,
-    OwnTerrain,
-    AncestorUpsample,
-    EllipsoidFallback,
-    GltfContent
-};
-
-/// Renderer-side resources for one glTF mesh primitive.
-/// This mirrors cesium-native TileRenderContent::getRenderResources without
-/// mixing platform buffers into the parsed glTF model data.
-struct GltfPrimitiveRenderResources {
-    std::unique_ptr<Buffer> vertexBuffer;
-    std::unique_ptr<Buffer> indexBuffer;
-    std::unique_ptr<Buffer> instanceBuffer;
-    struct TextureBinding {
-        Texture* texture = nullptr;
-        int texCoord = 0;
-        std::array<float, 4> offsetScale = {0.0f, 0.0f, 1.0f, 1.0f};
-        std::array<float, 2> rotationSinCos = {0.0f, 1.0f};
-    };
-    TextureBinding baseColorTexture;
-    TextureBinding metallicRoughnessTexture;
-    TextureBinding anisotropyTexture;
-    TextureBinding specularTexture;
-    TextureBinding specularColorTexture;
-    TextureBinding specularGlossinessTexture;
-    TextureBinding transmissionTexture;
-    TextureBinding clearcoatTexture;
-    TextureBinding clearcoatRoughnessTexture;
-    TextureBinding clearcoatNormalTexture;
-    TextureBinding sheenColorTexture;
-    TextureBinding sheenRoughnessTexture;
-    TextureBinding normalTexture;
-    TextureBinding occlusionTexture;
-    TextureBinding emissiveTexture;
-    int vertexCount = 0;
-    int indexCount = 0;
-    int instanceCount = 0;
-    GltfPrimitiveMode primitiveMode = GltfPrimitiveMode::Triangles;
-    Vec3 sortCenterEcef = Vec3::zero();
-    uint64_t animationRevision = 0;
-    std::array<float, 4> baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f};
-    float metallicFactor = 1.0f;
-    float roughnessFactor = 1.0f;
-    float dielectricSpecularF0 = 0.04f;
-    float specularFactor = 1.0f;
-    std::array<float, 3> specularColorFactor = {1.0f, 1.0f, 1.0f};
-    bool specularGlossinessWorkflow = false;
-    std::array<float, 3> specularGlossinessSpecularFactor = {
-        1.0f,
-        1.0f,
-        1.0f};
-    float specularGlossinessGlossinessFactor = 1.0f;
-    float transmissionFactor = 0.0f;
-    float anisotropyStrength = 0.0f;
-    float anisotropyRotation = 0.0f;
-    float clearcoatFactor = 0.0f;
-    float clearcoatRoughnessFactor = 0.0f;
-    float clearcoatNormalTextureScale = 1.0f;
-    std::array<float, 3> sheenColorFactor = {0.0f, 0.0f, 0.0f};
-    float sheenRoughnessFactor = 0.0f;
-    float normalTextureScale = 1.0f;
-    float occlusionTextureStrength = 1.0f;
-    std::array<float, 3> emissiveFactor = {0.0f, 0.0f, 0.0f};
-    GltfAlphaMode alphaMode = GltfAlphaMode::Opaque;
-    float alphaCutoff = 0.5f;
-    bool doubleSided = false;
-    bool unlit = false;
-    bool dynamicVertices = false;
-};
 
 /// cesium-native Tile equivalent.
 /// Each tile in the unified quadtree holds geometry (QM mesh) and
@@ -124,66 +54,162 @@ struct TilesetTile {
     TilesetTile* getParent() { return parent; }
     const TilesetTile* getParent() const { return parent; }
 
-    // ---- Content (geometry) ----
-    /// QM raw binary data (lazily decoded to SurfaceTileMesh)
-    std::unique_ptr<DecodedHeightmap> heightmap;
-    /// Parsed QM mesh (null until decoded)
-    std::unique_ptr<SurfaceTileMesh> mesh;
-    /// cesium-native TileRenderContent analogue for glTF/3D Tiles content.
-    std::unique_ptr<GltfModel> gltfModel;
-    Mat4 gltfContentTransform = Mat4::identity();
-    std::vector<std::unique_ptr<Texture>> gltfTextureResources;
-    std::vector<GltfPrimitiveRenderResources> gltfPrimitiveResources;
-    /// GPU vertex buffer for this tile's geometry
-    std::unique_ptr<Buffer> gpuVertexBuffer;
-    /// GPU index buffer (per-tile, from QM triangulation)
-    std::unique_ptr<Buffer> gpuIndexBuffer;
-    /// Tile-local origin (for RTC: positions are ECEF - origin)
-    Vec3 localOrigin = Vec3::zero();
-    TileLoadState loadState = TileLoadState::Unloaded;
-    TileContentKind contentKind = TileContentKind::Unknown;
-    /// cesium-native updated BoundingRegion height range after terrain load.
-    bool hasTerrainHeightRange = false;
-    double terrainMinimumHeight = 0.0;
-    double terrainMaximumHeight = 0.0;
-    /// Whether the mesh is ready for rendering
-    bool meshReady = false;
-    bool surfaceDrawable = false;
-    SurfaceDrawableSource surfaceSource = SurfaceDrawableSource::None;
-    /// cesium-native UpsampledQuadtreeNode equivalent. The tile is not
-    /// requestable; its render content is derived from an ancestor tile.
-    bool upsampledFromParent = false;
-    /// Last frame this tile was used (for LRU eviction)
-    uint64_t lastUsedFrame = 0;
+    // ---- Content (terrain mesh / GPU buffers / glTF render resources) ----
+    TileContentRuntimeState content;
+
+    void markContentLoading() {
+        TileContentStateTransition::markLoading(
+            content.loadState,
+            content.contentKind);
+    }
+
+    void markRenderContentLoaded() {
+        TileContentStateTransition::markRenderLoaded(
+            content.loadState,
+            content.contentKind);
+    }
+
+    void markRenderContentDone() {
+        TileContentStateTransition::markRenderDone(
+            content.renderContent,
+            content.loadState,
+            content.contentKind);
+    }
+
+    template <typename IsCompleteRenderableFn>
+    void commitSurfaceRenderContent(SurfaceDrawableSource source,
+                                    bool markDone,
+                                    IsCompleteRenderableFn&&
+                                        isCompleteRenderable) {
+        content.renderContent.setMeshReady(true);
+        content.renderContent.setSurfaceSource(source);
+        content.contentKind = TileContentKind::Render;
+        if (markDone) {
+            content.loadState = TileLoadState::Done;
+        }
+        updateFrameRenderability(
+            hasSurfaceDrawable(),
+            isCompleteRenderable(*this));
+    }
+
+    void refreshSurfaceDrawable(bool drawable) {
+        content.renderContent.setSurfaceDrawable(drawable);
+    }
+
+    void updateFrameRenderability(bool drawable, bool complete) {
+        content.renderContent.setSurfaceDrawable(drawable);
+        selectionFrameState.updateFrameRenderability(complete);
+    }
+
+    void clearFrameRenderability() {
+        selectionFrameState.clearFrameRenderability();
+    }
+
+    void updateTraversalRenderability(bool traversalRenderable) {
+        selectionFrameState.updateTraversalRenderability(traversalRenderable);
+    }
+
+    TileRenderableSnapshot renderableSnapshot(
+        bool requiredRasterOverlaysReady) const {
+        return TileRenderableSnapshot{
+            content.loadState,
+            content.contentKind,
+            unconditionallyRefine,
+            !children.empty(),
+            requiredRasterOverlaysReady,
+            content.renderContent.isMeshReady()};
+    }
+
+    bool canPrepareRasterOverlays() const {
+        return content.loadState == TileLoadState::Done &&
+               content.contentKind == TileContentKind::Render &&
+               content.renderContent.hasTerrainMesh() &&
+               content.renderContent.isMeshReady();
+    }
+
+    bool hasSurfaceDrawable() const {
+        return TileRenderablePolicy::hasSurfaceDrawable(
+            content.contentKind,
+            content.loadState,
+            content.renderContent.isMeshReady(),
+            content.renderContent.surfaceVertexBuffer() != nullptr);
+    }
+
+    void markRenderContentFailedTemporarily() {
+        TileContentStateTransition::markRenderFailedTemporarily(
+            content.renderContent,
+            content.loadState,
+            content.contentKind);
+    }
+
+    void markContentFailedTemporarily() {
+        TileContentStateTransition::markFailedTemporarily(
+            content.loadState,
+            content.contentKind);
+    }
+
+    void markContentFailedPermanently() {
+        TileContentStateTransition::markFailedPermanently(
+            content.loadState,
+            content.contentKind);
+    }
+
+    void markEmptyContentLoaded() {
+        TileContentStateTransition::markEmptyLoaded(
+            content.loadState,
+            content.contentKind);
+    }
+
+    void markEmptyContentDone() {
+        TileContentStateTransition::markEmptyDone(
+            content.loadState,
+            content.contentKind);
+    }
+
+    void markExternalContentDone() {
+        TileContentStateTransition::markExternalDone(
+            content.loadState,
+            content.contentKind,
+            unconditionallyRefine);
+    }
+
+    void markContentUnloading() {
+        TileContentStateTransition::markUnloading(content.loadState);
+    }
+
+    void markContentUnloaded() {
+        TileContentStateTransition::markUnloaded(
+            content.loadState,
+            content.contentKind,
+            selectionFrameState);
+    }
 
     // ── cesium-native reference counting (Tile::getReferenceCount) ──
     /// Incremented when tile content is referenced by the renderer.
     /// Tiles with referenceCount > 0 are ineligible for unloading.
-    int32_t referenceCount() const { return _referenceCount; }
-    void addReference() { ++_referenceCount; }
-    void removeReference() { --_referenceCount; if (_referenceCount < 0) _referenceCount = 0; }
-    void clearReferences() { _referenceCount = 0; }
-    int32_t _referenceCount = 0;
+    int32_t referenceCount() const { return renderReferences.count(); }
+    uint64_t lastUsedFrame() const { return renderReferences.lastUsedFrame(); }
+    void markUsedForRenderFrame(uint64_t frameNumber) {
+        renderReferences.markUsedForFrame(frameNumber);
+    }
+    void addReference() { renderReferences.add(); }
+    void removeReference() { renderReferences.remove(); }
+    void clearReferences() { renderReferences.clear(); }
+    TileRenderReferenceState renderReferences;
 
     // ---- Raster overlays ----
-    std::vector<std::unique_ptr<RasterMappedToTilesetTile>> rasterOverlays;
-    std::vector<RasterOverlayProjection> missingRasterOverlayProjections;
+    TileRasterOverlayState rasterOverlayState;
 
-    // ---- LOD state ----
-    bool completeRenderable = false;
-    bool renderable = false;  // compatibility alias for completeRenderable
-    bool subdivisionDesired = false;
-    TileSelectionState previousSelectionState = TileSelectionState::NotVisited;
-    TileSelectionState selectionState = TileSelectionState::NotVisited;
-    double screenSpaceError = 0.0;
-    bool inFrustum = false;
-    bool cameraInside = false;
-    bool ancestorMeetsSse = false;
-    float lodTransitionFadePercentage = 1.0f;
+    // ---- Selection / LOD frame state ----
+    TileSelectionFrameState selectionFrameState;
 
     TilesetTile() = default;
     TilesetTile(TileKey k, Rectangle b, TilesetTile* p = nullptr)
         : key(std::move(k)), bounds(b), parent(p) {}
+    TilesetTile(const TilesetTile&) = delete;
+    TilesetTile& operator=(const TilesetTile&) = delete;
+    TilesetTile(TilesetTile&&) = delete;
+    TilesetTile& operator=(TilesetTile&&) = delete;
 
     /// cesium-native: create 4 child tiles.
     ///
@@ -198,7 +224,8 @@ struct TilesetTile {
     TilesetTile* findUpsampleAncestor() {
         TilesetTile* p = parent;
         while (p) {
-            if (p->meshReady && p->gpuVertexBuffer) return p;
+            if (p->content.renderContent.isMeshReady() &&
+                p->content.renderContent.surfaceVertexBuffer()) return p;
             p = p->parent;
         }
         return nullptr;
@@ -206,7 +233,8 @@ struct TilesetTile {
     const TilesetTile* findUpsampleAncestor() const {
         const TilesetTile* p = parent;
         while (p) {
-            if (p->meshReady && p->gpuVertexBuffer) return p;
+            if (p->content.renderContent.isMeshReady() &&
+                p->content.renderContent.surfaceVertexBuffer()) return p;
             p = p->parent;
         }
         return nullptr;

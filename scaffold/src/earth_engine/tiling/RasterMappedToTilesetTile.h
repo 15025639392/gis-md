@@ -21,9 +21,10 @@ struct TilesetTile;
 /// cesium-native RasterMappedTo3DTile equivalent.
 /// Links a geometry tile to an imagery tile with state management.
 ///
-/// Holds RasterOverlayTile* pointers directly (aligned with cesium-native
-/// _pLoadingTile / _pReadyTile). The 7-step state machine reads
-/// RasterOverlayTile::getState() for real LoadState.
+/// Holds RasterOverlayTile shared handles for the desired loading tile and the
+/// currently renderable ready tile. Raw pointers returned by accessors are
+/// non-owning views; the mapping keeps tile/texture lifetime stable through
+/// the shared handles.
 ///
 /// State machine:
 ///   Unattached → (loading starts) → TemporarilyAttached (parent fallback)
@@ -91,7 +92,7 @@ public:
     void detachFromTile(IPrepareRendererResources* pPrepRenderer);
 
     /// Drop provider tile handles after the geometry tile stops rendering.
-    /// This lets the provider evict stale raster tiles safely.
+    /// This lets the provider evict unreferenced raster tiles safely.
     void releaseTileReferences(IPrepareRendererResources* pPrepRenderer);
 
     /// cesium-native: throttled load via the Provider.
@@ -141,6 +142,8 @@ public:
     float scaleV() const { return scaleV_; }
 
 private:
+    void clearTileOwnershipState();
+
     State state_ = State::Unattached;
 
     /// The tile we WANT at the desired zoom. May be Loading/Failed.

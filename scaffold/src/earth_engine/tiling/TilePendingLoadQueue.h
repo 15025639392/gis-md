@@ -22,6 +22,22 @@ struct PendingLoadFinalize {
     std::optional<PendingContentUpload> contentUpload;
 };
 
+struct PendingLoadFinalizeContext {
+    bool interactionActive = false;
+    FrameResourceBudget& budget;
+};
+
+enum class PendingTerminalResultKind {
+    Terrain,
+    Content
+};
+
+struct PendingTerminalResult {
+    PendingTerminalResultKind kind = PendingTerminalResultKind::Terrain;
+    std::optional<PendingTerrainTerminalResult> terrainResult;
+    std::optional<PendingContentTerminalResult> contentResult;
+};
+
 class TilePendingLoadQueue {
 public:
     bool containsCacheKey(const std::string& cacheKey) const;
@@ -48,6 +64,10 @@ public:
     takeHighestPriorityTerrainTerminalResult();
     std::optional<PendingContentTerminalResult>
     takeHighestPriorityContentTerminalResult();
+    std::optional<PendingTerminalResult> takeHighestPriorityTerminalResult(
+        FrameResourceBudget& budget);
+    std::optional<PendingLoadFinalize> takeHighestPriorityUpload(
+        PendingLoadFinalizeContext context);
     std::optional<PendingLoadFinalize> takeHighestPriorityUpload(
         bool interactionActive,
         FrameResourceBudget& budget);

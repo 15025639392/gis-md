@@ -24,17 +24,15 @@ SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
     FrameResourceBudget& frameResourceBudget) {
     SurfaceRasterOverlayUpdateAction action;
 
-    if (tile.rasterOverlays.size() < rasterOverlays.size()) {
-        tile.rasterOverlays.resize(rasterOverlays.size());
-    }
-    tile.missingRasterOverlayProjections.clear();
+    tile.rasterOverlayState.ensureMappingSlots(rasterOverlays.size());
+    tile.rasterOverlayState.clearMissingProjections();
     const RasterOverlayDetails& overlayDetails =
-        tile.mesh ? tile.mesh->rasterOverlayDetails : RasterOverlayDetails{};
+        tile.content.renderContent.rasterOverlayDetails();
 
     std::optional<size_t> firstMoreDetailAvailable;
     std::optional<size_t> firstUnknownAvailability;
     for (size_t i : overlayProcessingOrder) {
-        if (i >= tile.rasterOverlays.size()) {
+        if (i >= tile.rasterOverlayState.mappingCount()) {
             continue;
         }
         auto* activeOverlay = rasterOverlays[i];
@@ -44,10 +42,8 @@ SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
         RasterOverlayTileProvider* activeProvider =
             activeOverlay->ensureTileProvider(device);
         if (!activeProvider) continue;
-        auto& overlay = tile.rasterOverlays[i];
-        if (!overlay) {
-            overlay = std::make_unique<RasterMappedToTilesetTile>();
-        }
+        RasterMappedToTilesetTile& overlay =
+            tile.rasterOverlayState.ensureMapping(i);
         const RasterOverlayProjection projection =
             activeProvider->getProjection();
         const Rectangle* geometryRectangle =
@@ -67,19 +63,19 @@ SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
                 tile.geometricError,
                 maximumScreenSpaceError);
         const RasterMappedToTilesetTile::MoreDetail moreDetail =
-            overlay->update(
+            overlay.update(
                 tile.key,
                 overlayDetails,
                 rasterScreenPixels.x,
                 rasterScreenPixels.y,
                 *activeProvider,
                 &renderer,
-                tile.missingRasterOverlayProjections,
+                tile.rasterOverlayState.missingProjections(),
                 tile.parent,
                 i,
                 tile.boundingVolume ? &*tile.boundingVolume : nullptr,
-                tile.mesh != nullptr);
-        if (!tile.missingRasterOverlayProjections.empty()) {
+                tile.content.renderContent.hasSurfaceMesh());
+        if (tile.rasterOverlayState.hasMissingProjections()) {
             action.unloadTileContent = true;
             return action;
         }
@@ -91,7 +87,7 @@ SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
             !firstUnknownAvailability) {
             firstUnknownAvailability = i;
         }
-        overlay->loadThrottled(*activeProvider, &frameResourceBudget);
+        overlay.loadThrottled(*activeProvider, &frameResourceBudget);
     }
 
     action.createRasterOverlayUpsampledChildren =

@@ -111,23 +111,26 @@ GltfPrimitiveRenderResources::TextureBinding makeGltfTextureBinding(
 void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
                                          RenderDevice* device,
                                          double currentFrameTimeSeconds) {
-    if (!tile.gltfModel) return;
-    const bool animated = tile.gltfModel->hasRuntimeAnimation();
+    GltfModel* model = tile.content.renderContent.gltfContent();
+    if (!model) return;
+    const bool animated = model->hasRuntimeAnimation();
     const bool animationChanged =
-        animated && tile.gltfModel->updateAnimation(currentFrameTimeSeconds);
+        animated && model->updateAnimation(currentFrameTimeSeconds);
     size_t expectedResourceCount = 0;
-    for (const GltfPrimitive& primitive : tile.gltfModel->primitives) {
+    for (const GltfPrimitive& primitive : model->primitives) {
         expectedResourceCount +=
             GltfRenderGeometryBuilder::primitiveRenderResourceCount(primitive);
     }
     const bool splitBlendInstances =
-        GltfRenderGeometryBuilder::modelUsesSplitBlendInstances(
-            *tile.gltfModel);
+        GltfRenderGeometryBuilder::modelUsesSplitBlendInstances(*model);
     if (expectedResourceCount > 0 &&
-        tile.gltfPrimitiveResources.size() == expectedResourceCount) {
+        tile.content.renderContent.gltfPrimitiveResourceCount() ==
+            expectedResourceCount) {
+        const auto& primitiveResources =
+            tile.content.renderContent.gltfPrimitiveResourcesForDraw();
         const bool allReady = std::all_of(
-            tile.gltfPrimitiveResources.begin(),
-            tile.gltfPrimitiveResources.end(),
+            primitiveResources.begin(),
+            primitiveResources.end(),
             [](const GltfPrimitiveRenderResources& resources) {
                 return resources.vertexBuffer != nullptr &&
                        resources.indexBuffer != nullptr &&
@@ -137,35 +140,37 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
             });
         if (allReady) {
             if (animated && animationChanged && splitBlendInstances) {
-                tile.gltfPrimitiveResources.clear();
+                tile.content.renderContent.clearGltfPrimitiveResources();
             } else if (animated && animationChanged && device) {
-                tile.localOrigin = GltfRenderGeometryBuilder::localOrigin(
-                    *tile.gltfModel,
-                    tile.gltfContentTransform);
+                tile.content.renderContent.setGltfLocalOrigin(
+                    GltfRenderGeometryBuilder::localOrigin(
+                        *model,
+                        tile.content.renderContent.gltfTransform()));
                 bool updated = true;
                 size_t resourceIndex = 0;
                 for (const GltfPrimitive& primitive :
-                     tile.gltfModel->primitives) {
+                     model->primitives) {
                     if (primitive.vertices.empty() ||
                         primitive.indices.empty()) {
                         continue;
                     }
-                    if (resourceIndex >= tile.gltfPrimitiveResources.size()) {
+                    GltfPrimitiveRenderResources* resources =
+                        tile.content.renderContent.gltfPrimitiveResourceForBuildAt(
+                            resourceIndex++);
+                    if (!resources) {
                         updated = false;
                         break;
                     }
-                    GltfPrimitiveRenderResources& resources =
-                        tile.gltfPrimitiveResources[resourceIndex++];
                     std::vector<GltfGpuVertex> verts =
                         GltfRenderGeometryBuilder::buildVertices(
                             primitive,
-                            tile.gltfContentTransform,
-                            tile.localOrigin);
-                    const bool ok = resources.vertexBuffer &&
-                        resources.vertexBuffer->size() ==
+                            tile.content.renderContent.gltfTransform(),
+                            tile.content.renderContent.renderLocalOrigin());
+                    const bool ok = resources->vertexBuffer &&
+                        resources->vertexBuffer->size() ==
                             verts.size() * sizeof(GltfGpuVertex) &&
                         device->updateBuffer(
-                            resources.vertexBuffer.get(),
+                            resources->vertexBuffer.get(),
                             0,
                             verts.data(),
                             verts.size() * sizeof(GltfGpuVertex));
@@ -173,46 +178,42 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
                         updated = false;
                         break;
                     }
-                    resources.sortCenterEcef =
+                    resources->sortCenterEcef =
                         GltfRenderGeometryBuilder::primitiveSortCenterEcef(
                             primitive,
-                            tile.gltfContentTransform);
-                    resources.animationRevision =
-                        tile.gltfModel->currentAnimationRevision();
+                            tile.content.renderContent.gltfTransform());
+                    resources->animationRevision =
+                        model->currentAnimationRevision();
                 }
                 if (!updated) {
-                    tile.gltfPrimitiveResources.clear();
+                    tile.content.renderContent.clearGltfPrimitiveResources();
                 } else {
-                    tile.meshReady = true;
-                    tile.loadState = TileLoadState::Done;
-                    tile.contentKind = TileContentKind::Render;
+                    tile.markRenderContentDone();
                     return;
                 }
             } else {
-                tile.meshReady = true;
-                tile.loadState = TileLoadState::Done;
-                tile.contentKind = TileContentKind::Render;
+                tile.markRenderContentDone();
                 return;
             }
         }
     }
     if (!device) return;
-    tile.localOrigin = GltfRenderGeometryBuilder::localOrigin(
-        *tile.gltfModel,
-        tile.gltfContentTransform);
+    tile.content.renderContent.setGltfLocalOrigin(
+        GltfRenderGeometryBuilder::localOrigin(
+            *model,
+            tile.content.renderContent.gltfTransform()));
 
-    tile.gltfTextureResources.clear();
-    tile.gltfTextureResources.reserve(tile.gltfModel->textures.size());
-    for (const GltfTexture& texture : tile.gltfModel->textures) {
-        tile.gltfTextureResources.push_back(
+    tile.content.renderContent.beginGltfGpuResourceBuild(
+        model->textures.size(),
+        expectedResourceCount);
+    for (const GltfTexture& texture : model->textures) {
+        tile.content.renderContent.addGltfTextureResource(
             createGltfGpuTexture(device, texture));
     }
 
-    tile.gltfPrimitiveResources.clear();
-    tile.gltfPrimitiveResources.reserve(expectedResourceCount);
     bool resourceFailure = false;
 
-    for (const GltfPrimitive& primitive : tile.gltfModel->primitives) {
+    for (const GltfPrimitive& primitive : model->primitives) {
         if (primitive.vertices.empty() || primitive.indices.empty()) {
             continue;
         }
@@ -282,7 +283,7 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
                 resources.unlit = primitive.unlit;
                 resources.dynamicVertices = animated;
                 resources.animationRevision =
-                    tile.gltfModel->currentAnimationRevision();
+                    model->currentAnimationRevision();
                 std::optional<GltfTextureBinding> baseColorBinding =
                     primitive.baseColorTexture;
                 if (!baseColorBinding && primitive.baseColorTextureIndex) {
@@ -292,49 +293,49 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
                 }
                 resources.baseColorTexture = makeGltfTextureBinding(
                     baseColorBinding,
-                    tile.gltfTextureResources);
+                    tile.content.renderContent.gltfTextureResourcesForBinding());
                 resources.metallicRoughnessTexture = makeGltfTextureBinding(
                     primitive.metallicRoughnessTexture,
-                    tile.gltfTextureResources);
+                    tile.content.renderContent.gltfTextureResourcesForBinding());
                 resources.anisotropyTexture = makeGltfTextureBinding(
                     primitive.anisotropyTexture,
-                    tile.gltfTextureResources);
+                    tile.content.renderContent.gltfTextureResourcesForBinding());
                 resources.specularTexture = makeGltfTextureBinding(
                     primitive.specularTexture,
-                    tile.gltfTextureResources);
+                    tile.content.renderContent.gltfTextureResourcesForBinding());
                 resources.specularColorTexture = makeGltfTextureBinding(
                     primitive.specularColorTexture,
-                    tile.gltfTextureResources);
+                    tile.content.renderContent.gltfTextureResourcesForBinding());
                 resources.specularGlossinessTexture = makeGltfTextureBinding(
                     primitive.specularGlossinessTexture,
-                    tile.gltfTextureResources);
+                    tile.content.renderContent.gltfTextureResourcesForBinding());
                 resources.transmissionTexture = makeGltfTextureBinding(
                     primitive.transmissionTexture,
-                    tile.gltfTextureResources);
+                    tile.content.renderContent.gltfTextureResourcesForBinding());
                 resources.clearcoatTexture = makeGltfTextureBinding(
                     primitive.clearcoatTexture,
-                    tile.gltfTextureResources);
+                    tile.content.renderContent.gltfTextureResourcesForBinding());
                 resources.clearcoatRoughnessTexture = makeGltfTextureBinding(
                     primitive.clearcoatRoughnessTexture,
-                    tile.gltfTextureResources);
+                    tile.content.renderContent.gltfTextureResourcesForBinding());
                 resources.clearcoatNormalTexture = makeGltfTextureBinding(
                     primitive.clearcoatNormalTexture,
-                    tile.gltfTextureResources);
+                    tile.content.renderContent.gltfTextureResourcesForBinding());
                 resources.sheenColorTexture = makeGltfTextureBinding(
                     primitive.sheenColorTexture,
-                    tile.gltfTextureResources);
+                    tile.content.renderContent.gltfTextureResourcesForBinding());
                 resources.sheenRoughnessTexture = makeGltfTextureBinding(
                     primitive.sheenRoughnessTexture,
-                    tile.gltfTextureResources);
+                    tile.content.renderContent.gltfTextureResourcesForBinding());
                 resources.normalTexture = makeGltfTextureBinding(
                     primitive.normalTexture,
-                    tile.gltfTextureResources);
+                    tile.content.renderContent.gltfTextureResourcesForBinding());
                 resources.occlusionTexture = makeGltfTextureBinding(
                     primitive.occlusionTexture,
-                    tile.gltfTextureResources);
+                    tile.content.renderContent.gltfTextureResourcesForBinding());
                 resources.emissiveTexture = makeGltfTextureBinding(
                     primitive.emissiveTexture,
-                    tile.gltfTextureResources);
+                    tile.content.renderContent.gltfTextureResourcesForBinding());
                 auto bindingHasTexCoordSet =
                     [&](const std::optional<GltfTextureBinding>& binding) {
                         return !binding ||
@@ -415,7 +416,8 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
                     return false;
                 }
 
-                tile.gltfPrimitiveResources.push_back(std::move(resources));
+                tile.content.renderContent.addGltfPrimitiveResource(
+                    std::move(resources));
                 return true;
             };
 
@@ -425,13 +427,13 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
                 GltfRenderGeometryBuilder::primitiveCentroid(primitive);
             for (const GltfInstance& instance : primitive.instances) {
                 const Mat4 instanceTransform(
-                    tile.gltfContentTransform.raw() *
+                    tile.content.renderContent.gltfTransform().raw() *
                     instance.transform.raw());
                 std::vector<GltfGpuVertex> verts =
                     GltfRenderGeometryBuilder::buildVertices(
                         primitive,
                         instanceTransform,
-                        tile.localOrigin,
+                        tile.content.renderContent.renderLocalOrigin(),
                         false);
                 const Vec3 sortCenter =
                     GltfRenderGeometryBuilder::transformPoint(
@@ -454,15 +456,15 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
         std::vector<GltfGpuVertex> verts =
             GltfRenderGeometryBuilder::buildVertices(
                 primitive,
-                tile.gltfContentTransform,
-                tile.localOrigin);
+                tile.content.renderContent.gltfTransform(),
+                tile.content.renderContent.renderLocalOrigin());
 
         std::vector<GltfGpuInstance> instances;
         if (instanced) {
             instances = GltfRenderGeometryBuilder::buildInstances(
                 primitive,
-                tile.gltfContentTransform,
-                tile.localOrigin);
+                tile.content.renderContent.gltfTransform(),
+                tile.content.renderContent.renderLocalOrigin());
         }
 
         const std::vector<GltfGpuInstance>* instanceData =
@@ -471,7 +473,7 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
                 std::move(verts),
                 GltfRenderGeometryBuilder::primitiveSortCenterEcef(
                     primitive,
-                    tile.gltfContentTransform),
+                    tile.content.renderContent.gltfTransform()),
                 instanceData)) {
             resourceFailure = true;
             break;
@@ -479,18 +481,14 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
     }
 
     if (resourceFailure) {
-        tile.gltfPrimitiveResources.clear();
-        tile.gltfTextureResources.clear();
+        tile.content.renderContent.clearGltfGpuResources();
     }
 
-    tile.meshReady =
-        !resourceFailure && !tile.gltfPrimitiveResources.empty();
-    tile.loadState = tile.meshReady
-        ? TileLoadState::Done
-        : TileLoadState::FailedTemporarily;
-    tile.contentKind = tile.meshReady
-        ? TileContentKind::Render
-        : TileContentKind::Unknown;
+    if (!resourceFailure && tile.content.renderContent.hasGltfPrimitiveResources()) {
+        tile.markRenderContentDone();
+    } else {
+        tile.markRenderContentFailedTemporarily();
+    }
 }
 
 

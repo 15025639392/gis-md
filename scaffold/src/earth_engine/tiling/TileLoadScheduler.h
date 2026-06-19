@@ -135,6 +135,22 @@ public:
                 continue;
             }
 
+            {
+                const int estimatedFanout =
+                    input.terrainProvider->estimatedRequestFanout(requestKey);
+                std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
+                if (!input.budget.hasNetworkInflightCapacity(
+                        FrameResourceLane::TerrainRequest,
+                        static_cast<uint32_t>(
+                            input.lifecycle
+                                .requestState()
+                                .totalRequestCount()),
+                        estimatedFanout)) {
+                    outcome.blockedByInflight = true;
+                    break;
+                }
+            }
+
             const TileLoadDispatchResult dispatchResult =
                 TileLoadRequestDispatcher::requestTerrain(
                     input.lifecycle.mutex(),

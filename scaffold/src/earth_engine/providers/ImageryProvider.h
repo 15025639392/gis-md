@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ProviderRequestDiagnostics.h"
 #include "../tiling/TileKey.h"
 #include "../platform/bridge/PlatformBridge.h"
 #include "../threading/CancellationToken.h"
@@ -67,6 +68,10 @@ public:
                              TileCallback callback,
                              HttpRequestPriority priority =
                                  HttpRequestPriority::Normal) = 0;
+
+    virtual ProviderRequestDiagnostics requestDiagnostics() const {
+        return {};
+    }
 
     /// 同步解码瓦片数据（用于测试/调试 Provider）
     virtual std::unique_ptr<DecodedImage> decodeTile(

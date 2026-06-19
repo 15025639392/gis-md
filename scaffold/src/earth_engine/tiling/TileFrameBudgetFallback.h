@@ -12,11 +12,11 @@ struct TileFrameBudgetFallback {
         uint32_t maximumSimultaneousTileLoads,
         double mainThreadLoadingTimeLimit) {
         return TileFrameResourceBudgetPlanner::plan(
-            TileFrameResourceBudgetPlanInput{
+            TileFrameResourceBudgetPlanInput::withDefaultTransport(
                 maximumSimultaneousTileLoads,
                 mainThreadLoadingTimeLimit,
                 false,
-                false});
+                false));
     }
 
     static FrameResourceBudgetConfig uploadConfig(

@@ -125,6 +125,7 @@ public:
         double priority,
         OnIssuedFn&& onIssued) {
         CancellationToken token;
+        const int estimatedFanout = provider.estimatedRequestFanout(key);
         {
             std::lock_guard<std::mutex> lock(mutex);
             if (requestState.destroying()) {
@@ -137,7 +138,8 @@ public:
             }
             if (!budget.tryIssue(
                     FrameResourceLane::TerrainRequest,
-                    TileLoadPriorityPolicy::toFramePriority(group))) {
+                    TileLoadPriorityPolicy::toFramePriority(group),
+                    estimatedFanout)) {
                 return TileLoadDispatchResult::Blocked;
             }
             if (!requestState.beginTerrainRequest(cacheKey, token)) {

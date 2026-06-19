@@ -1,9 +1,9 @@
 #include "Engine.h"
 #include "scene/Scene.h"
+#include "tiling/Tileset.h"
 #include "scene/Camera.h"
 #include "renderer/RenderDevice.h"
 #include "layers/VectorLayer.h"
-#include "tiling/Tileset.h"
 #include "interaction/InputEvent.h"
 #include "interaction/PickingService.h"
 #include "debug/PerfTimer.h"
@@ -67,26 +67,34 @@ void Engine::render(double deltaSeconds) {
     {
         const double startMs = perf::nowMs();
         device_->beginFrame();
-        scene_->mutableDiagnostics().engineBeginFrameMs = perf::nowMs() - startMs;
+        scene_->recordEngineTiming(
+            Scene::EngineTimingScope::BeginFrame,
+            perf::nowMs() - startMs);
     }
     {
         const double startMs = perf::nowMs();
         scene_->update(deltaSeconds);
-        scene_->mutableDiagnostics().sceneUpdateMs = perf::nowMs() - startMs;
+        scene_->recordEngineTiming(
+            Scene::EngineTimingScope::SceneUpdate,
+            perf::nowMs() - startMs);
     }
     {
         const double startMs = perf::nowMs();
         scene_->render();
-        scene_->mutableDiagnostics().sceneRenderMs = perf::nowMs() - startMs;
+        scene_->recordEngineTiming(
+            Scene::EngineTimingScope::SceneRender,
+            perf::nowMs() - startMs);
     }
     {
         const double startMs = perf::nowMs();
         device_->endFrame();
-        scene_->mutableDiagnostics().engineEndFrameMs = perf::nowMs() - startMs;
+        scene_->recordEngineTiming(
+            Scene::EngineTimingScope::EndFrame,
+            perf::nowMs() - startMs);
     }
 
-    auto& diag = scene_->mutableDiagnostics();
-    diag.engineFrameCpuMs = perf::nowMs() - frameStartMs;
+    scene_->finishEngineFrame(perf::nowMs() - frameStartMs);
+    const Diagnostics& diag = scene_->diagnostics();
     char detail[256];
     std::snprintf(detail, sizeof(detail),
         "begin=%.2f update=%.2f render=%.2f submit=%.2f end=%.2f draw=%d tiles=%d",
@@ -167,7 +175,7 @@ void Engine::clearSelectorViewOverride() {
     scene_->clearSelectorViewOverride();
 }
 
-void Engine::setOcclusionCallback(Tileset::OcclusionCallback callback) {
+void Engine::setOcclusionCallback(TileOcclusionCallback callback) {
     scene_->setOcclusionCallback(std::move(callback));
 }
 

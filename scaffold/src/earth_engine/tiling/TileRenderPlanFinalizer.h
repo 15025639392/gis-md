@@ -22,14 +22,11 @@ struct TileRenderPlanFinalizeOptions {
 };
 
 struct TileRenderPlanFinalizer {
-    template <typename EnsureTileFn,
-              typename HasSurfaceDrawableFn,
-              typename CacheKeyFn>
+    template <typename EnsureTileFn, typename CacheKeyFn>
     static void refreshRenderEntries(
         TilePlan& plan,
         const TileRenderPlanFinalizeOptions& options,
         EnsureTileFn&& ensureTile,
-        HasSurfaceDrawableFn&& hasSurfaceDrawable,
         CacheKeyFn&& cacheKey) {
         plan.renderEntries.clear();
         plan.renderEntryAncestorFallbackCount = 0;
@@ -55,12 +52,10 @@ struct TileRenderPlanFinalizer {
             bool usesAncestorFallback = false;
 
             if (selectedThisFrame &&
-                !selectedTile->gltfModel &&
-                !hasSurfaceDrawable(*selectedTile)) {
+                !selectedTile->content.renderContent.hasGltfContent() &&
+                !selectedTile->hasSurfaceDrawable()) {
                 TilesetTile* drawableAncestor =
-                    findNearestDrawableAncestor(
-                        *selectedTile,
-                        hasSurfaceDrawable);
+                    findNearestDrawableAncestor(*selectedTile);
                 if (drawableAncestor &&
                     (options.resourceSmoothingActive ||
                      renderPrepBudgetRemaining <= 0)) {
@@ -97,8 +92,8 @@ struct TileRenderPlanFinalizer {
             }
 
             bool allowSynchronousMeshPrep = true;
-            if (!commandTile->gltfModel &&
-                !hasSurfaceDrawable(*commandTile)) {
+            if (!commandTile->content.renderContent.hasGltfContent() &&
+                !commandTile->hasSurfaceDrawable()) {
                 if (renderPrepBudgetRemaining > 0) {
                     --renderPrepBudgetRemaining;
                     ++plan.renderEntrySynchronousPrepCount;
@@ -134,7 +129,7 @@ struct TileRenderPlanFinalizer {
             TilesetTile* tile = ensureTile(key);
             const float transitionOpacity =
                 options.enableLodTransitionPeriod && tile
-                    ? tile->lodTransitionFadePercentage
+                    ? tile->selectionFrameState.lodTransitionFadePercentage
                     : 1.0f;
             appendRenderEntry(key, transitionOpacity, true);
         }
@@ -192,14 +187,12 @@ private:
             static_cast<float>(vMax - vMin)};
     }
 
-    template <typename HasSurfaceDrawableFn>
     static TilesetTile* findNearestDrawableAncestor(
-        TilesetTile& tile,
-        HasSurfaceDrawableFn&& hasSurfaceDrawable) {
+        TilesetTile& tile) {
         for (TilesetTile* ancestor = tile.parent;
              ancestor;
              ancestor = ancestor->parent) {
-            if (hasSurfaceDrawable(*ancestor)) {
+            if (ancestor->hasSurfaceDrawable()) {
                 return ancestor;
             }
         }

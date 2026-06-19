@@ -3,6 +3,8 @@
 #include "RasterMappedToTilesetTile.h"
 #include "../providers/RasterOverlayTile.h"
 
+#include <memory>
+
 namespace earth_engine {
 
 enum class SurfaceRasterBindingKind {
@@ -14,6 +16,7 @@ enum class SurfaceRasterBindingKind {
 struct SurfaceRasterBinding {
     SurfaceRasterBindingKind kind = SurfaceRasterBindingKind::None;
     const RasterOverlayTile* tile = nullptr;
+    std::shared_ptr<RasterOverlayTile> tileHandle;
     float offsetU = 0.0f;
     float offsetV = 0.0f;
     float scaleU = 1.0f;

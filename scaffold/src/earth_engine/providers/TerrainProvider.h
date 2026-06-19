@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ProviderRequestDiagnostics.h"
 #include "../tiling/TileKey.h"
 #include "../tiling/SurfaceTile.h"
 #include "../platform/bridge/PlatformBridge.h"
@@ -160,6 +161,11 @@ public:
     /// 构建瓦片请求 URL
     virtual std::string buildUrl(const TileKey& key) const = 0;
 
+    /// Estimated transport requests issued by requestTile for this logical
+    /// terrain tile. Providers that fan out metadata/subtree fetches should
+    /// include those requests so frame budgets reflect real network pressure.
+    virtual int estimatedRequestFanout(const TileKey&) const { return 1; }
+
     using HeightmapCallback = std::function<void(
         const TileKey&, TerrainTileLoadResult)>;
 
@@ -169,6 +175,10 @@ public:
                              HeightmapCallback callback,
                              HttpRequestPriority priority =
                                  HttpRequestPriority::Normal) = 0;
+
+    virtual ProviderRequestDiagnostics requestDiagnostics() const {
+        return {};
+    }
 
     /// 同步解码高度图（用于测试/调试）
     virtual std::unique_ptr<DecodedHeightmap> decodeTile(

@@ -146,8 +146,9 @@ TileOcclusionState TileSoftwareOcclusionPolicy::check(
         return TileOcclusionState::NotOccluded;
     }
 
-    if (tile.mesh && tile.mesh->hasHorizonOcclusionPoint) {
-        return scaledPointOccludedByHorizon(tile.mesh->horizonOcclusionPoint,
+    if (const Vec3* horizonOcclusionPoint =
+            tile.content.renderContent.horizonOcclusionPoint()) {
+        return scaledPointOccludedByHorizon(*horizonOcclusionPoint,
                                             cameraScaled,
                                             vhMagnitudeSquared)
             ? TileOcclusionState::Occluded

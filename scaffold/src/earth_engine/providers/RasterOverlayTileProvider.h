@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ProviderRequestDiagnostics.h"
 #include "RasterOverlayTile.h"
 #include "RasterTextureUploader.h"
 #include "../platform/bridge/PlatformBridge.h"
@@ -104,6 +105,7 @@ public:
 
     /// Direct access to the imagery provider.
     ImageryProvider& getImageryProvider() { return provider_; }
+    ProviderRequestDiagnostics requestDiagnostics() const;
 
     /// Returns the tile scheme.
     const TileScheme& getTileScheme() const { return scheme_; }
@@ -131,6 +133,10 @@ public:
 
     /// Current number of tiles in Loading state.
     int getThrottledTilesCurrentlyLoading() const;
+    int getActiveRasterSourceRequests() const {
+        return static_cast<int>(activeRasterSourceRequests_);
+    }
+    int getPendingUploadCount() const;
 
     double getMaximumScreenSpaceError() const {
         return maximumScreenSpaceError_;
@@ -180,17 +186,9 @@ public:
     // Texture ownership: RasterOverlayTile owns its GPU texture
     // via unique_ptr<Texture>. No external callback needed.
 
-#ifdef __ANDROID__
-    // Android lifetime guard for retained raster tile/texture raw pointers.
-    static void registerLiveTextureForLifetimeGuard(const Texture* texture);
-    static void unregisterLiveTextureForLifetimeGuard(const Texture* texture);
-    static bool isLiveTextureForLifetimeGuard(const Texture* texture);
-    static void registerLiveTileForLifetimeGuard(const RasterOverlayTile* tile);
-    static void unregisterLiveTileForLifetimeGuard(const RasterOverlayTile* tile);
-    static bool isLiveTileForLifetimeGuard(const RasterOverlayTile* tile);
-#endif
-
 private:
+    struct RectangleSourceRequest;
+
     /// Internal: load a rectangle raster tile by combining the provider's
     /// quadtree imagery tiles that overlap its rectangle.
     bool loadRectangleTile(RasterOverlayTile& tile,
@@ -221,6 +219,9 @@ private:
 
     /// Tiles currently in-flight (requested but not yet responded).
     std::unordered_set<std::string> inFlightRequests_;
+    std::unordered_map<std::string, std::shared_ptr<RectangleSourceRequest>>
+        activeRectangleRequests_;
+    uint32_t activeRasterSourceRequests_ = 0;
 
     /// Failed tiles (key → first fail timestamp, for retry logic).
     struct FailedRecord { double firstFailTime = 0.0; int retries = 0; };

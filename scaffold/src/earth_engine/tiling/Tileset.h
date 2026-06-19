@@ -1,24 +1,24 @@
 #pragma once
 
 #include "TilesetTile.h"
-#include "RasterMappedToTilesetTile.h"
 #include "TileScheme.h"
 #include "TilePlan.h"
-#include "TileFrameState.h"
-#include "TileEmptyContentRegistry.h"
+#include "TileContentAccess.h"
+#include "TileContentCacheManager.h"
+#include "TileCacheOwnershipManager.h"
+#include "TileContentLifecycleManager.h"
 #include "TileLoadDiagnostics.h"
-#include "TileLoadLifecycle.h"
-#include "TileLoadPriorityPolicy.h"
 #include "TileLoadQueue.h"
 #include "TileLoadTypes.h"
+#include "TileOcclusionCallback.h"
+#include "TileMeshPreparationManager.h"
 #include "TileOcclusionState.h"
-#include "TileIndexState.h"
+#include "TileRasterUpsampledChildCoordinator.h"
+#include "TileRenderCommandManager.h"
 #include "TileSelectionCounters.h"
 #include "TileSelectionMetrics.h"
 #include "TileSelectionReuseState.h"
-#include "TileTraversalDetails.h"
-#include "TileSubtreeTraversal.h"
-#include "TileUnloadQueue.h"
+#include "TilesetTileRegistry.h"
 #include "../core/resources/FrameResourceBudget.h"
 #include "../core/math/Vec3.h"
 #include "../content/GltfContentProvider.h"
@@ -27,24 +27,24 @@
 #include "../scene/FrameState.h"
 
 #include <memory>
-#include <array>
-#include <optional>
+#include <cstdint>
 #include <vector>
 #include <string>
-#include <unordered_map>
 #include <unordered_set>
-#include <functional>
-#include <limits>
 
 namespace earth_engine {
 
 class Renderer;
 class RenderDevice;
-class IPrepareRendererResources;
 struct SelectorFrame;
 class ActivatedRasterOverlay;
 struct TilesetTestAccess;
-enum class TileCacheUnloadContentResult;
+class TilesetRenderFrameFacade;
+class TilesetSelectionFrameFacade;
+class TilesetContentLifecycleFacade;
+class TilesetOcclusionFacade;
+class TilesetQueryFacade;
+class TilesetUpdateFrameFacade;
 
 /// cesium-native TilesetOptions subset used by the unified terrain tileset.
 /// Defaults intentionally mirror native where the local renderer has the
@@ -88,8 +88,7 @@ struct TilesetOptions {
 /// Manages a unified quadtree of terrain and raster overlay tiles.
 class Tileset {
 public:
-    using OcclusionCallback =
-        std::function<TileOcclusionState(const TilesetTile&)>;
+    using OcclusionCallback = TileOcclusionCallback;
 
     Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
             std::unique_ptr<TileScheme> tileScheme,
@@ -104,9 +103,9 @@ public:
 
     const TilePlan& tilePlan() const { return tilePlan_; }
     const TileScheme& tileScheme() const { return *tileScheme_; }
-    int cachedTerrainTiles() const { return static_cast<int>(terrainCache_.size()); }
+    int cachedTerrainTiles() const;
     int pendingRequests() const;
-    int64_t totalBytesUsed() const { return totalBytesUsed_; }
+    int64_t totalBytesUsed() const;
     TilesetLoadDiagnostics loadDiagnostics() const;
 
     /// Sample the best loaded terrain height at longitude/latitude.
@@ -128,93 +127,12 @@ public:
 
 private:
     friend struct TilesetTestAccess;
-
-    struct TilePlanFinalizeTimings {
-        double dedupeMs = 0.0;
-        double transitionMs = 0.0;
-        double summaryMs = 0.0;
-    };
-
-    void selectTiles(const FrameState& frameState);
-    TileTraversalDetails visitTileIfNeeded(TilesetTile& tile,
-                                           const SelectorFrame& selectorFrame,
-                                           uint32_t depth,
-                                           bool ancestorMeetsSse);
-    TileTraversalDetails visitTile(TilesetTile& tile,
-                                   const SelectorFrame& selectorFrame,
-                                   uint32_t depth,
-                                   bool meetsSse,
-                                   bool ancestorMeetsSse,
-                                   double tilePriority,
-                                   double tileSse);
-    TileTraversalDetails createTraversalDetailsForSingleTile(
-        const TilesetTile& tile) const;
-    TileTraversalDetails createTraversalDetailsForCulledTile(
-        const TilesetTile& tile) const;
-    void addTileToCurrentPlan(TilesetTile& tile,
-                              double tileSse,
-                              bool queueForLoad,
-                              double tilePriority =
-                                  std::numeric_limits<double>::max());
-    void queueTileLoad(
-        const TileKey& key,
-        TileLoadPriorityGroup group,
-        double priority = std::numeric_limits<double>::max());
-    void ensureTileChildren(TilesetTile& tile);
-    void createRasterOverlayUpsampledChildren(TilesetTile& tile);
-    void resetTileSelectionState();
-    bool hasSurfaceDrawable(const TilesetTile& tile) const;
-    bool hasLoadedTerrainContent(const TilesetTile& tile) const;
-    bool isAvailabilityBoundaryTile(const TilesetTile& tile) const;
-    bool canRefine(const TilesetTile& tile) const;
-    bool prepareUpsampleSourceTile(
-        TilesetTile& tile,
-        double priority = std::numeric_limits<double>::max());
-    bool hasLodTransitionRenderContent(const TilesetTile& tile) const;
-    TileOcclusionState checkSingleTileOcclusion(
-        const TilesetTile& tile) const;
-    TileOcclusionState checkOcclusion(const TilesetTile& tile) const;
-
-    TileLoadRequestOutcome requestMissingTiles(
-        const std::vector<TileLoadRequest>& loadRequests,
-        FrameResourceBudget* budget = nullptr);
-    bool processPendingUploads(bool interactionActive,
-                               bool resourceSmoothingActive,
-                               FrameResourceBudget* budget = nullptr);
-    bool hasTilesetPendingWork() const;
-    void markTileResourcesDirty();
-    TilesetTile* ensureTile(const TileKey& key);
-    void ensureTileMesh(TilesetTile& tile);
-    TileCacheUnloadContentResult unloadTileContent(
-        TilesetTile& tile,
-        IPrepareRendererResources* pPrepRenderer);
-    void buildTileDrawCommand(Renderer& renderer, TilesetTile& tile,
-                              RenderCommandList& commands,
-                              float transitionOpacity,
-                              bool allowSynchronousMeshPrep = true,
-                              const std::optional<std::array<float, 4>>&
-                                  surfaceClipUv = std::nullopt);
-    TilePlanFinalizeTimings finalizeSelectedTilePlan(
-        const FrameState& frameState);
-    void refreshTilePlanRenderEntries();
-    void updateLodTransitions(double deltaSeconds);
-
-    // ── cesium-native cache alignment ──
-    /// cesium-native: byte-budget-based unload (replaces fixed tile count).
-    /// Unloads tiles until totalBytesUsed <= maximumCachedBytes.
-    void unloadCachedBytes(int64_t maximumCachedBytes,
-                           IPrepareRendererResources* pPrepRenderer);
-    /// cesium-native: recompute totalBytesUsed_ from current tile state.
-    /// Called before unload to ensure overlay attach/detach is accounted for.
-    void updateTotalBytesUsed();
-    /// Track unload eligibility: tiles not used this frame are eligible.
-    void markEligibleForUnloading(const std::string& key);
-    void markIneligibleForUnloading(const std::string& key);
-    bool subtreeHasActiveContentWork(const TilesetTile& tile);
-    void eraseTileIndexState(const std::string& key);
-    /// cesium-native: recursively clear children when parent is unloaded.
-    void clearChildrenRecursively(TilesetTile* tile,
-                                  IPrepareRendererResources* pPrepRenderer);
+    friend class TilesetContentLifecycleFacade;
+    friend class TilesetOcclusionFacade;
+    friend class TilesetQueryFacade;
+    friend class TilesetRenderFrameFacade;
+    friend class TilesetSelectionFrameFacade;
+    friend class TilesetUpdateFrameFacade;
 
     std::unique_ptr<TerrainProvider> terrainProvider_;
     std::unique_ptr<TilesetContentProvider> contentProvider_;
@@ -228,21 +146,18 @@ private:
     // cesium-native: byte budget instead of fixed tile count.
     // cesium-native TilesetOptions::maximumCachedBytes default.
     static constexpr int64_t kMaximumCachedBytes = 512LL * 1024 * 1024;
-    int64_t totalBytesUsed_ = 0;
     uint64_t frameNumber_ = 0;
 
-    // cesium-native: unload queue - LRU-ordered eligible tile keys.
-    TileUnloadQueue unloadQueue_;
-
-    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles_;
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache_;
-    TileEmptyContentRegistry emptyContentRegistry_;
+    TilesetTileRegistry tileRegistry_;
+    TileContentLifecycleManager contentLifecycle_;
+    TileContentAccess contentAccess_;
+    TileContentCacheManager contentCache_;
+    TileCacheOwnershipManager cacheOwnership_;
+    TileRasterUpsampledChildCoordinator rasterUpsampledChildren_;
     std::unordered_set<std::string> tilesFadingOut_;
-    TileLoadLifecycle loadLifecycle_;
     uint64_t generation_ = 0;
     uint64_t resourceRevision_ = 1;
     TileSelectionReuseState selectionReuseState_;
-    bool cacheBytesDirty_ = true;
     bool interactionActiveForFrame_ = false;
     bool resourceSmoothingActiveForFrame_ = false;
     FrameResourceBudget frameResourceBudget_;
@@ -254,6 +169,8 @@ private:
     bool cameraMoving_ = false;
     TileLoadQueue loadQueue_;
     TileSelectionCounters selectionCounters_;
+    TileMeshPreparationManager meshPreparation_;
+    TileRenderCommandManager renderCommands_;
 };
 
 } // namespace earth_engine

@@ -10,10 +10,15 @@
 namespace earth_engine {
 
 struct TileSelectionReuseState {
+    static constexpr uint64_t kDefaultMaxStaleFrameAge = 3;
+    static constexpr double kDefaultStalePositionToleranceMeters = 100.0;
+    static constexpr double kDefaultStaleDirectionToleranceSquared = 1e-4;
+
     uint64_t resourceRevision = 0;
     uint64_t overlaySignature = 0;
     int viewportWidth = 0;
     int viewportHeight = 0;
+    uint64_t selectionFrameId = 0;
     bool reusable = false;
     bool lastRequestIssuedWork = false;
     bool lastRequestBlockedByInflight = false;
@@ -31,6 +36,7 @@ struct TileSelectionReuseState {
         overlaySignature = currentOverlaySignature;
         viewportWidth = frameState.viewportWidthPixels;
         viewportHeight = frameState.viewportHeightPixels;
+        selectionFrameId = frameState.frameId;
         selectorViews = frameState.selectorViews;
     }
 
@@ -39,13 +45,15 @@ struct TileSelectionReuseState {
         lastRequestBlockedByInflight = blockedByInflight;
     }
 
-    bool canReuse(const FrameState& frameState,
-                  uint64_t currentResourceRevision,
-                  uint64_t currentOverlaySignature,
-                  bool hasFadingTiles,
-                  bool hasPendingTilesetWork,
-                  bool hasPendingRasterOverlayWork) const {
-        return TileSelectionReusePolicy::canReuseSelection(
+    TileSelectionReuseMode classifyReuse(
+        const FrameState& frameState,
+        uint64_t currentResourceRevision,
+        uint64_t currentOverlaySignature,
+        bool allowStaleSelection,
+        bool hasFadingTiles,
+        bool hasPendingTilesetWork,
+        bool hasPendingRasterOverlayWork) const {
+        return TileSelectionReusePolicy::classifyReuse(
             TileSelectionReuseInput{
                 frameState,
                 selectorViews,
@@ -55,12 +63,67 @@ struct TileSelectionReuseState {
                 overlaySignature,
                 viewportWidth,
                 viewportHeight,
+                frameState.frameId,
+                selectionFrameId,
+                kDefaultMaxStaleFrameAge,
+                kDefaultStalePositionToleranceMeters,
+                kDefaultStaleDirectionToleranceSquared,
                 reusable,
+                allowStaleSelection,
                 hasFadingTiles,
                 hasPendingTilesetWork,
                 hasPendingRasterOverlayWork,
                 lastRequestIssuedWork,
                 lastRequestBlockedByInflight});
+    }
+
+    TileSelectionReuseClassification classifyReuseWithReason(
+        const FrameState& frameState,
+        uint64_t currentResourceRevision,
+        uint64_t currentOverlaySignature,
+        bool allowStaleSelection,
+        bool hasFadingTiles,
+        bool hasPendingTilesetWork,
+        bool hasPendingRasterOverlayWork) const {
+        return TileSelectionReusePolicy::classifyReuseWithReason(
+            TileSelectionReuseInput{
+                frameState,
+                selectorViews,
+                currentResourceRevision,
+                resourceRevision,
+                currentOverlaySignature,
+                overlaySignature,
+                viewportWidth,
+                viewportHeight,
+                frameState.frameId,
+                selectionFrameId,
+                kDefaultMaxStaleFrameAge,
+                kDefaultStalePositionToleranceMeters,
+                kDefaultStaleDirectionToleranceSquared,
+                reusable,
+                allowStaleSelection,
+                hasFadingTiles,
+                hasPendingTilesetWork,
+                hasPendingRasterOverlayWork,
+                lastRequestIssuedWork,
+                lastRequestBlockedByInflight});
+    }
+
+    bool canReuse(const FrameState& frameState,
+                  uint64_t currentResourceRevision,
+                  uint64_t currentOverlaySignature,
+                  bool allowStaleSelection,
+                  bool hasFadingTiles,
+                  bool hasPendingTilesetWork,
+                  bool hasPendingRasterOverlayWork) const {
+        return classifyReuse(
+                   frameState,
+                   currentResourceRevision,
+                   currentOverlaySignature,
+                   allowStaleSelection,
+                   hasFadingTiles,
+                   hasPendingTilesetWork,
+                   hasPendingRasterOverlayWork) != TileSelectionReuseMode::None;
     }
 };
 

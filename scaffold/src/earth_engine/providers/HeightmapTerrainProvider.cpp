@@ -12,17 +12,24 @@
 #endif
 
 #include <algorithm>
-#include <chrono>
-#include <condition_variable>
 #include <cmath>
 #include <cstring>
 #include <fstream>
 #include <memory>
-#include <mutex>
 #include <sstream>
-#include <thread>
 
 namespace earth_engine {
+
+namespace {
+
+struct RequestCompletionGuard {
+    std::atomic<int>& completed;
+    ~RequestCompletionGuard() {
+        completed.fetch_add(1, std::memory_order_relaxed);
+    }
+};
+
+} // namespace
 
 // ============================================================
 // HeightmapTerrainProvider
@@ -74,27 +81,163 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
                                             HeightmapCallback callback,
                                             HttpRequestPriority priority) {
     std::string url = buildUrl(key);
-    // cesium-native alignment: use thread pool instead of raw std::thread::detach().
-    AsyncSystem::pool().enqueue(
-        [this, url, key, token = std::move(token),
-         priority,
-         callback = std::move(callback)]() mutable {
+    requestsStarted_.fetch_add(1, std::memory_order_relaxed);
+    if (platformBridge_) {
+        if (token.isCancelled()) {
+            requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
+            callback(key, TerrainTileLoadResult::cancelled());
+            return;
+        }
+
+        auto cached = HttpCache::shared().get(url);
+        if (!cached.empty()) {
+            RequestCompletionGuard completion{requestsCompleted_};
             if (token.isCancelled()) {
                 callback(key, TerrainTileLoadResult::cancelled());
                 return;
             }
-            auto body = httpGet(url, token, priority);
-            if (token.isCancelled()) {
-                callback(key, TerrainTileLoadResult::cancelled());
-                return;
-            }
-            if (body.empty()) {
-                callback(key, TerrainTileLoadResult::retryLater());
-                return;
-            }
-            auto hm = decodeTile(body.data(), body.size());
+            auto hm = decodeTile(cached.data(), cached.size());
             callback(key, TerrainTileLoadResult::success(std::move(hm)));
-        });
+            return;
+        }
+
+        auto requestHandle =
+            std::make_shared<std::unique_ptr<HttpRequest>>();
+        *requestHandle = platformBridge_->get(
+            url,
+            [this,
+             url,
+             key,
+             token = std::move(token),
+             callback = std::move(callback),
+             requestHandle](int statusCode, std::vector<uint8_t> body) mutable {
+                RequestCompletionGuard completion{requestsCompleted_};
+                (void)requestHandle;
+                if (token.isCancelled()) {
+                    callback(key, TerrainTileLoadResult::cancelled());
+                    return;
+                }
+                if (statusCode != 200 || body.empty()) {
+                    callback(key, TerrainTileLoadResult::retryLater());
+                    return;
+                }
+                HttpCache::shared().put(url, body);
+                auto hm = decodeTile(body.data(), body.size());
+                callback(key, TerrainTileLoadResult::success(std::move(hm)));
+            },
+            {priority});
+        return;
+    }
+
+    auto cached = HttpCache::shared().get(url);
+    if (!cached.empty()) {
+        AsyncSystem::pool().enqueue(
+            [this,
+             body = std::move(cached),
+             key,
+             token = std::move(token),
+             callback = std::move(callback)]() mutable {
+                RequestCompletionGuard completion{requestsCompleted_};
+                if (token.isCancelled()) {
+                    callback(key, TerrainTileLoadResult::cancelled());
+                    return;
+                }
+                auto hm = decodeTile(body.data(), body.size());
+                callback(key, TerrainTileLoadResult::success(std::move(hm)));
+            });
+        return;
+    }
+
+    constexpr const char* kFilePrefix = "file://";
+    if (url.rfind(kFilePrefix, 0) == 0) {
+        AsyncSystem::pool().enqueue(
+            [this,
+             url,
+             key,
+             token = std::move(token),
+             priority,
+             callback = std::move(callback)]() mutable {
+                RequestCompletionGuard completion{requestsCompleted_};
+                if (token.isCancelled()) {
+                    callback(key, TerrainTileLoadResult::cancelled());
+                    return;
+                }
+                std::vector<uint8_t> body = httpGet(url, token, priority);
+                if (token.isCancelled()) {
+                    callback(key, TerrainTileLoadResult::cancelled());
+                    return;
+                }
+                if (body.empty()) {
+                    callback(key, TerrainTileLoadResult::retryLater());
+                    return;
+                }
+                auto hm = decodeTile(body.data(), body.size());
+                callback(key, TerrainTileLoadResult::success(std::move(hm)));
+            });
+        return;
+    }
+
+    auto requestHandle =
+        std::make_shared<std::unique_ptr<HttpRequest>>();
+    *requestHandle = CurlMultiRequestScheduler::shared().get(
+        url,
+        [this,
+         url,
+         key,
+         token = std::move(token),
+         callback = std::move(callback),
+         requestHandle](int statusCode, std::vector<uint8_t> body) mutable {
+            (void)requestHandle;
+            auto tokenPtr =
+                std::make_shared<CancellationToken>(std::move(token));
+            auto callbackPtr =
+                std::make_shared<HeightmapCallback>(std::move(callback));
+            auto bodyPtr =
+                std::make_shared<std::vector<uint8_t>>(std::move(body));
+            AsyncSystem::pool().enqueue(
+                [this,
+                 url,
+                 key,
+                 tokenPtr,
+                 callbackPtr,
+                 statusCode,
+                 bodyPtr]() mutable {
+                    RequestCompletionGuard completion{requestsCompleted_};
+                    if (tokenPtr->isCancelled()) {
+                        (*callbackPtr)(
+                            key,
+                            TerrainTileLoadResult::cancelled());
+                        return;
+                    }
+                    if (statusCode != 200 || bodyPtr->empty()) {
+                        (*callbackPtr)(
+                            key,
+                            TerrainTileLoadResult::retryLater());
+                        return;
+                    }
+                    HttpCache::shared().put(url, *bodyPtr);
+                    auto hm = decodeTile(bodyPtr->data(), bodyPtr->size());
+                    (*callbackPtr)(
+                        key,
+                        TerrainTileLoadResult::success(std::move(hm)));
+                });
+        },
+        {priority});
+}
+
+ProviderRequestDiagnostics HeightmapTerrainProvider::requestDiagnostics() const {
+    ProviderRequestDiagnostics diag;
+    diag.requestsStarted = requestsStarted_.load(std::memory_order_relaxed);
+    diag.requestsCompleted =
+        requestsCompleted_.load(std::memory_order_relaxed);
+    diag.activeWorkerBlockingRequests =
+        activeWorkerBlockingRequests_.load(std::memory_order_relaxed);
+    diag.peakWorkerBlockingRequests =
+        peakWorkerBlockingRequests_.load(std::memory_order_relaxed);
+    diag.maximumTransportActiveRequests = platformBridge_
+        ? platformBridge_->maximumActiveRequests()
+        : CurlMultiRequestScheduler::shared().maximumActiveRequests();
+    return diag;
 }
 
 std::vector<uint8_t> HeightmapTerrainProvider::httpGet(
@@ -116,54 +259,9 @@ std::vector<uint8_t> HeightmapTerrainProvider::httpGet(
         return data;
     }
 
-    // PlatformBridge 优先
-    if (platformBridge_) {
-        struct WaitState {
-            std::vector<uint8_t> result;
-            std::mutex mutex;
-            std::condition_variable cv;
-            bool done = false;
-        };
-        auto state = std::make_shared<WaitState>();
-
-        auto request = platformBridge_->get(url, [state](int code, std::vector<uint8_t> body) {
-            {
-                std::lock_guard<std::mutex> lk(state->mutex);
-                if (code == 200) state->result = std::move(body);
-                state->done = true;
-            }
-            state->cv.notify_one();
-        }, {priority});
-
-        bool done = false;
-        {
-            const auto deadline = std::chrono::steady_clock::now() +
-                std::chrono::seconds(20);
-            std::unique_lock<std::mutex> lk(state->mutex);
-            while (!state->done && !token.isCancelled()) {
-                const auto now = std::chrono::steady_clock::now();
-                if (now >= deadline) break;
-                state->cv.wait_until(
-                    lk,
-                    std::min(deadline, now + std::chrono::milliseconds(20)));
-            }
-            done = state->done;
-        }
-        if ((!done || token.isCancelled()) && request) {
-            request->cancel();
-        }
-        if (done && !state->result.empty()) HttpCache::shared().put(url, state->result);
-        return done ? std::move(state->result) : std::vector<uint8_t>{};
-    }
-
-    std::vector<uint8_t> result =
-        CurlMultiRequestScheduler::shared().getBlocking(
-            url,
-            {priority},
-            std::chrono::seconds(20),
-            [&token]() { return token.isCancelled(); });
-    if (!result.empty()) HttpCache::shared().put(url, result);
-    return result;
+    (void)token;
+    (void)priority;
+    return {};
 }
 
 std::unique_ptr<DecodedHeightmap> HeightmapTerrainProvider::decodeTile(

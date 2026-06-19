@@ -98,7 +98,7 @@ public:
                 ensureTileMesh(*tile);
             }
             const bool resourcesReady =
-                resourceSmoothingActive || tile->meshReady;
+                resourceSmoothingActive || tile->content.renderContent.isMeshReady();
             const TileTerrainUploadCommitAction action =
                 TileTerrainUploadCommitter::finishMeshResourcePreparation(
                     *tile,
@@ -141,7 +141,7 @@ public:
         const TileContentUploadCommitAction action =
             TileContentUploadCommitter::finishRenderResourcePreparation(
                 *tile,
-                tile->meshReady);
+                tile->content.renderContent.isMeshReady());
         if (action.resourcesDirty) {
             markResourcesDirty();
         }

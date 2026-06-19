@@ -5,27 +5,28 @@ namespace earth_engine {
 TileSelectionSummaryTilePlan TileSelectionSummaryPolicy::planTile(
     const TileSelectionSummaryTileInput& input) {
     TileSelectionSummaryTilePlan plan;
-    if (input.selectionState == TileSelectionState::NotVisited) {
+    const TileSelectionFrameState& selection = input.selection;
+    if (selection.selectionState == TileSelectionState::NotVisited) {
         return plan;
     }
 
     plan.visited = true;
     plan.record = TileSelectionRecord{
         input.key,
-        input.selectionState,
-        input.previousSelectionState,
-        input.screenSpaceError,
-        input.cameraInside,
-        input.inFrustum,
-        input.ancestorMeetsSse};
+        selection.selectionState,
+        selection.previousSelectionState,
+        selection.screenSpaceError,
+        selection.cameraInside,
+        selection.inFrustum,
+        selection.ancestorMeetsSse};
 
-    if (input.ancestorMeetsSse) {
+    if (selection.ancestorMeetsSse) {
         plan.selectionAncestorMeetsSseCount = 1;
     }
-    if (selectionWasKicked(input.selectionState)) {
+    if (selectionWasKicked(selection.selectionState)) {
         plan.selectionKickedCount = 1;
     }
-    switch (input.selectionState) {
+    switch (selection.selectionState) {
         case TileSelectionState::Rendered:
             plan.selectionRenderedCount = 1;
             break;
@@ -38,10 +39,10 @@ TileSelectionSummaryTilePlan TileSelectionSummaryPolicy::planTile(
         case TileSelectionState::NotVisited:
             break;
     }
-    if (input.cameraInside) {
+    if (selection.cameraInside) {
         plan.cameraInsideNodeCount = 1;
     }
-    if (input.inFrustum) {
+    if (selection.inFrustum) {
         plan.inFrustumNodeCount = 1;
     }
     if (!input.renderable) {

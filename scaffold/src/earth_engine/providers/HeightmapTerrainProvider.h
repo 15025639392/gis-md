@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TerrainProvider.h"
+#include <atomic>
 #include <string>
 
 namespace earth_engine {
@@ -61,6 +62,8 @@ public:
                      HttpRequestPriority priority =
                          HttpRequestPriority::Normal) override;
 
+    ProviderRequestDiagnostics requestDiagnostics() const override;
+
     std::unique_ptr<DecodedHeightmap> decodeTile(
         const uint8_t* data, size_t len) override;
 
@@ -79,6 +82,10 @@ private:
     float heightFactor_ = 1.0f;
     std::vector<float> noDataValues_;
     PlatformBridge* platformBridge_ = nullptr;
+    std::atomic<int> requestsStarted_{0};
+    std::atomic<int> requestsCompleted_{0};
+    std::atomic<int> activeWorkerBlockingRequests_{0};
+    std::atomic<int> peakWorkerBlockingRequests_{0};
 };
 
 } // namespace earth_engine

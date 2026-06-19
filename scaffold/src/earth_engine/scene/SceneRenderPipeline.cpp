@@ -1,5 +1,8 @@
 #include "SceneRenderPipeline.h"
 #include "Camera.h"
+#include "SceneRenderCommandUniformUpdater.h"
+#include "SceneRenderDiagnostics.h"
+#include "SceneTilesetDiagnostics.h"
 #include "../debug/PerfTimer.h"
 #include "../environment/AtmosphereBackgroundPass.h"
 #include "../environment/SkyBox.h"
@@ -9,57 +12,17 @@
 #include "../tiling/Tileset.h"
 
 #include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <cstring>
-#include <limits>
 #include <stdexcept>
-#include <unordered_set>
+#include <string>
 
 namespace earth_engine {
-namespace {
 
-void updateSurfaceCommandDiagnostics(const RenderCommandList& commands,
-                                     uint64_t expectedFrameId,
-                                     Diagnostics& diag) {
-    diag.staleSurfaceCommands = 0;
-    diag.missingGenerationSurfaceCommands = 0;
-    diag.minSurfaceGeneration = 0;
-    diag.maxSurfaceGeneration = 0;
-
-    uint64_t minGeneration = std::numeric_limits<uint64_t>::max();
-    uint64_t maxGeneration = 0;
-    bool sawGeneration = false;
-
-    for (const RenderCommand& cmd : commands) {
-        if (cmd.kind != RenderCommandKind::SurfaceTile) continue;
-
-        if (expectedFrameId != 0 && cmd.frameId != expectedFrameId) {
-            ++diag.staleSurfaceCommands;
-        }
-        if (cmd.generation == 0) {
-            ++diag.missingGenerationSurfaceCommands;
-            continue;
-        }
-
-        minGeneration = std::min(minGeneration, cmd.generation);
-        maxGeneration = std::max(maxGeneration, cmd.generation);
-        sawGeneration = true;
-    }
-
-    if (sawGeneration) {
-        diag.minSurfaceGeneration = minGeneration;
-        diag.maxSurfaceGeneration = maxGeneration;
-    }
-}
-
-} // namespace
-
-void SceneRenderPipeline::render(Context context) {
+SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
     const double renderStartMs = perf::nowMs();
     context.commands.clear();
     reserveCommands(context);
@@ -75,15 +38,21 @@ void SceneRenderPipeline::render(Context context) {
     double validateMs = 0.0;
     double diagnosticsMs = 0.0;
 
+    RenderCommandList stableLayerCommands =
+        buildStableLayerCommands(context, layerCommandsMs);
+
     buildSkyCommands(context, skyMs);
     buildAtmosphereCommands(context, atmosphereMs);
     buildLayerCommands(
-        context, layerCommandsMs, fallbackGlobeMs, vectorCommandsMs);
+        context,
+        stableLayerCommands,
+        fallbackGlobeMs,
+        vectorCommandsMs);
     applyMvpUniforms(context, mvpUniformsMs);
     sortAndValidate(context, sortMs, surfaceDiagnosticsMs, validateMs);
     aggregateDiagnostics(context, diagnosticsMs);
 
-    context.frameState.diagnostics.renderCommandBuildMs =
+    context.diagnostics.renderCommandBuildMs =
         perf::nowMs() - renderStartMs;
 
     if (context.beforeSubmit) {
@@ -92,7 +61,7 @@ void SceneRenderPipeline::render(Context context) {
 
     const double submitStartMs = perf::nowMs();
     context.renderer.submit(context.commands);
-    context.frameState.diagnostics.renderSubmitMs =
+    context.diagnostics.renderSubmitMs =
         perf::nowMs() - submitStartMs;
 
     releaseRenderReferences(context);
@@ -113,21 +82,22 @@ void SceneRenderPipeline::render(Context context) {
         context.commands.size());
     perf::logTiming(context.frameState.frameId,
                     "Scene.render.buildBreakdown",
-                    context.frameState.diagnostics.renderCommandBuildMs,
+                    context.diagnostics.renderCommandBuildMs,
                     buildDetail);
 
     char detail[192];
     std::snprintf(detail, sizeof(detail),
         "build=%.2f submit=%.2f draw=%d surface=%d mesh=%d",
-        context.frameState.diagnostics.renderCommandBuildMs,
-        context.frameState.diagnostics.renderSubmitMs,
-        context.frameState.diagnostics.drawCalls,
-        context.frameState.diagnostics.renderSurfaceTiles,
-        context.frameState.diagnostics.surfaceMeshCount);
+        context.diagnostics.renderCommandBuildMs,
+        context.diagnostics.renderSubmitMs,
+        context.diagnostics.drawCalls,
+        context.diagnostics.renderSurfaceTiles,
+        context.diagnostics.surfaceMeshCount);
     perf::logTiming(context.frameState.frameId,
                     "Scene.render.total",
                     perf::nowMs() - renderStartMs,
                     detail);
+    return Result{context.diagnostics};
 }
 
 void SceneRenderPipeline::reserveCommands(Context& context) const {
@@ -214,22 +184,54 @@ void SceneRenderPipeline::buildAtmosphereCommands(
     atmosphereMs = perf::nowMs() - startMs;
 }
 
-void SceneRenderPipeline::buildLayerCommands(
+RenderCommandList SceneRenderPipeline::buildStableLayerCommands(
     Context& context,
-    double& layerCommandsMs,
-    double& fallbackGlobeMs,
-    double& vectorCommandsMs) const {
+    double& layerCommandsMs) {
     const double layerStartMs = perf::nowMs();
+    tileCommandCandidates_.clear();
+    reserveCommands(context);
+    auto appendTilesetCommands = [&](Tileset& tileset,
+                                     const std::string& stablePrefix) {
+        const size_t before = tileCommandCandidates_.size();
+        tileset.buildRenderCommands(context.renderer, tileCommandCandidates_);
+        for (size_t i = before; i < tileCommandCandidates_.size(); ++i) {
+            RenderCommand& command = tileCommandCandidates_[i];
+            if (!command.stableKey.empty()) {
+                command.stableKey = stablePrefix + command.stableKey;
+            }
+        }
+    };
     if (context.terrainTileset) {
-        context.terrainTileset->buildRenderCommands(
-            context.renderer, context.commands);
+        appendTilesetCommands(*context.terrainTileset, "terrain:");
     }
+    size_t tilesetIndex = 0;
     for (auto& tileset : context.additionalTilesets) {
         if (tileset) {
-            tileset->buildRenderCommands(context.renderer, context.commands);
+            appendTilesetCommands(
+                *tileset,
+                "content:" + std::to_string(tilesetIndex) + ":");
         }
+        ++tilesetIndex;
     }
+    RenderCommandList activeTileCommands;
+    activeTileCommands.reserve(tileCommandCandidates_.size());
+    tileCommandSet_.update(
+        tileCommandCandidates_,
+        context.frameState.frameId,
+        activeTileCommands);
     layerCommandsMs = perf::nowMs() - layerStartMs;
+    return activeTileCommands;
+}
+
+void SceneRenderPipeline::buildLayerCommands(
+    Context& context,
+    const RenderCommandList& stableLayerCommands,
+    double& fallbackGlobeMs,
+    double& vectorCommandsMs) const {
+    context.commands.insert(
+        context.commands.end(),
+        stableLayerCommands.begin(),
+        stableLayerCommands.end());
 
     const double fallbackStartMs = perf::nowMs();
     const bool hasSurfaceTile =
@@ -259,81 +261,8 @@ void SceneRenderPipeline::applyMvpUniforms(
     Context& context,
     double& mvpUniformsMs) const {
     const double startMs = perf::nowMs();
-    if (context.frameState.camera) {
-        const Camera& cam = *context.frameState.camera;
-        const float vpW =
-            static_cast<float>(context.frameState.viewportWidthPixels);
-        const float vpH =
-            static_cast<float>(context.frameState.viewportHeightPixels);
-
-        const Mat4& viewRaw = cam.viewMatrix();
-        const Mat4& projRaw = cam.projectionMatrix(
-            static_cast<double>(vpW), static_cast<double>(vpH));
-        glm::dmat4 viewD(viewRaw.raw());
-        glm::dmat4 projD(projRaw.raw());
-        glm::dmat4 viewProj = projD * viewD;
-
-        for (auto& cmd : context.commands) {
-            if (cmd.owner == "globe") continue;
-            if (cmd.kind == RenderCommandKind::SurfaceTile &&
-                cmd.hasSurfaceTileUniforms) {
-                glm::dvec3 origin(cmd.surfaceTileOrigin[0],
-                                  cmd.surfaceTileOrigin[1],
-                                  cmd.surfaceTileOrigin[2]);
-                glm::dmat4 model = glm::translate(glm::dmat4(1.0), origin);
-                glm::dmat4 mvp = projD * viewD * model;
-                glm::mat4 mvpFloat = glm::mat4(mvp);
-                std::memcpy(cmd.surfaceModelViewProjection.data(),
-                            glm::value_ptr(mvpFloat),
-                            16 * sizeof(float));
-                cmd.surfaceLightDir = {context.frameState.lightDir.x,
-                                       context.frameState.lightDir.y,
-                                       context.frameState.lightDir.z};
-                continue;
-            }
-            if (cmd.kind == RenderCommandKind::GltfPrimitive ||
-                cmd.kind == RenderCommandKind::GltfPrimitiveInstanced) {
-                glm::dmat4 model(1.0);
-                auto originIt = cmd.uniforms.find("u_modelOrigin");
-                if (originIt != cmd.uniforms.end() &&
-                    originIt->second.size() >= 3) {
-                    glm::dvec3 origin(originIt->second[0],
-                                      originIt->second[1],
-                                      originIt->second[2]);
-                    model = glm::translate(glm::dmat4(1.0), origin);
-                }
-                glm::dmat4 mvp = viewProj * model;
-                glm::mat4 mvpFloat = glm::mat4(mvp);
-                auto& mvpU = cmd.uniforms["u_modelViewProjection"];
-                mvpU.resize(16);
-                std::memcpy(
-                    mvpU.data(), glm::value_ptr(mvpFloat), 16 * sizeof(float));
-                cmd.uniforms["u_lightDir"] = {context.frameState.lightDir.x,
-                                              context.frameState.lightDir.y,
-                                              context.frameState.lightDir.z};
-                if (cmd.hasWorldSortCenter) {
-                    const Vec3 center(cmd.worldSortCenter[0],
-                                      cmd.worldSortCenter[1],
-                                      cmd.worldSortCenter[2]);
-                    cmd.translucentSortDepth =
-                        (center - cam.position()).dot(cam.direction());
-                    cmd.hasTranslucentSortDepth = true;
-                }
-                continue;
-            }
-            auto& mvpU = cmd.uniforms["u_modelViewProjection"];
-            if (mvpU.empty()) {
-                mvpU.resize(16);
-                std::memcpy(
-                    mvpU.data(), glm::value_ptr(viewProj), 16 * sizeof(float));
-            }
-            if (cmd.owner == "surface_tile") {
-                cmd.uniforms["u_lightDir"] = {context.frameState.lightDir.x,
-                                              context.frameState.lightDir.y,
-                                              context.frameState.lightDir.z};
-            }
-        }
-    }
+    SceneRenderCommandUniformUpdater::apply(context.frameState,
+                                            context.commands);
     mvpUniformsMs = perf::nowMs() - startMs;
 }
 
@@ -372,10 +301,10 @@ void SceneRenderPipeline::sortAndValidate(
     sortMs = perf::nowMs() - sortStartMs;
 
     const double surfaceStartMs = perf::nowMs();
-    updateSurfaceCommandDiagnostics(
+    SceneRenderDiagnostics::updateSurfaceCommandGeneration(
         context.commands,
         context.frameState.frameId,
-        context.frameState.diagnostics);
+        context.diagnostics);
     surfaceDiagnosticsMs = perf::nowMs() - surfaceStartMs;
 
     const double validateStartMs = perf::nowMs();
@@ -392,220 +321,24 @@ void SceneRenderPipeline::aggregateDiagnostics(
     Context& context,
     double& diagnosticsMs) const {
     const double startMs = perf::nowMs();
-    auto& diag = context.frameState.diagnostics;
-    diag.drawCalls = static_cast<int>(context.commands.size());
-    diag.visibleTiles = 0;
+    auto& diag = context.diagnostics;
+    SceneTilesetDiagnostics::reset(diag);
+    SceneRenderDiagnostics::addRenderCommands(context.commands, diag);
     diag.contentTilesets = static_cast<int>(context.additionalTilesets.size());
-    diag.contentVisibleTiles = 0;
-    diag.cachedTextures = 0;
-    diag.queuedRequests = 0;
-    diag.loadingRequests = 0;
-    diag.loadQueuePreloadRequests = 0;
-    diag.loadQueueNormalRequests = 0;
-    diag.loadQueueUrgentRequests = 0;
-    diag.pendingTerrainRequests = 0;
-    diag.pendingTerrainUploads = 0;
-    diag.pendingTerrainTerminalResults = 0;
-    diag.pendingContentRequests = 0;
-    diag.pendingContentUploads = 0;
-    diag.pendingContentTerminalResults = 0;
-    diag.gpuTextureCount = 0;
-    diag.renderSurfaceTiles = 0;
-    diag.renderGltfPrimitives = 0;
-    diag.surfaceMeshCount = 0;
-    diag.imageryAttachments = 0;
-    diag.imageryExactAttachments = 0;
-    diag.imageryParentFallbackAttachments = 0;
-    diag.imageryMissingTiles = 0;
-    diag.imageryUnsupportedTiles = 0;
-    diag.imageryTransitionTiles = 0;
-    diag.imageryKickedTiles = 0;
-    diag.imageryAncestorRetainedTiles = 0;
-    diag.imageryMinTargetZoom = 0;
-    diag.imageryMaxTargetZoom = 0;
-    diag.imageryMinTextureZoom = 0;
-    diag.imageryMaxTextureZoom = 0;
-    diag.lodSizePixels = 0.0;
-    diag.minVisibleZoom = 0;
-    diag.maxVisibleZoom = 0;
-    diag.quadtreeEqualZoomLayers = 0;
-    diag.quadtreeFadingNodes = 0;
-    diag.quadtreeNeighborLinks = 0;
-    diag.quadtreeNeighborBalancedTiles = 0;
-    diag.quadtreeRenderingNodes = 0;
-    diag.quadtreeWalkthroughNodes = 0;
-    diag.quadtreeNotRenderingNodes = 0;
-    diag.quadtreeSelectionRenderedNodes = 0;
-    diag.quadtreeSelectionRefinedNodes = 0;
-    diag.quadtreeSelectionKickedNodes = 0;
-    diag.quadtreeSelectionOccludedNodes = 0;
-    diag.quadtreeSelectionWaitingForOcclusionResultsNodes = 0;
-    diag.quadtreeCulledTilesVisited = 0;
-    diag.quadtreeSelectionAncestorMeetsSseNodes = 0;
-    diag.quadtreeCameraInsideNodes = 0;
-    diag.quadtreeInFrustumNodes = 0;
-    diag.quadtreeHorizonTangentPreservedNodes = 0;
-    diag.quadtreeEqualZoomSecondPassNodes = 0;
-    diag.mercatorTileCount = 0;
-    diag.northPolarTileCount = 0;
-    diag.southPolarTileCount = 0;
-    diag.surfaceMeshBytes = 0;
-    diag.terrainCachedTiles = 0;
-    diag.terrainLoadUnloadingTiles = 0;
-    diag.terrainLoadFailedTemporarilyTiles = 0;
-    diag.terrainLoadUnloadedTiles = 0;
-    diag.terrainLoadContentLoadingTiles = 0;
-    diag.terrainLoadContentLoadedTiles = 0;
-    diag.terrainLoadDoneTiles = 0;
-    diag.terrainLoadFailedTiles = 0;
-    diag.terrainContentUnknownTiles = 0;
-    diag.terrainContentEmptyTiles = 0;
-    diag.terrainContentExternalTiles = 0;
-    diag.terrainContentRenderTiles = 0;
-    diag.terrainUnloadQueueTiles = 0;
-    diag.missingRasterOverlayProjections = 0;
-    diag.terrainGeneration = 0;
-    diag.terrainSurfaceMeshes = 0;
-    diag.terrainParentFallbackMeshes = 0;
-    diag.terrainReadySurfaceMeshes = 0;
-    diag.terrainTransitionSurfaceMeshes = 0;
-    diag.ellipsoidSurfaceMeshes = 0;
-
-    std::unordered_set<const Texture*> surfaceTextures;
-    bool sawSurfaceGeometryZoom = false;
-    bool sawSurfaceTextureZoom = false;
-    for (const RenderCommand& cmd : context.commands) {
-        if (cmd.kind == RenderCommandKind::SurfaceTile) {
-            ++diag.renderSurfaceTiles;
-            ++diag.surfaceMeshCount;
-            ++diag.terrainSurfaceMeshes;
-            ++diag.terrainReadySurfaceMeshes;
-            if (!cmd.textures.empty()) {
-                ++diag.imageryExactAttachments;
-                for (const Texture* texture : cmd.textures) {
-                    if (texture) {
-                        surfaceTextures.insert(texture);
-                    }
-                }
-                if (cmd.surfaceGeometryZoom >= 0) {
-                    if (!sawSurfaceGeometryZoom) {
-                        diag.imageryMinTargetZoom = cmd.surfaceGeometryZoom;
-                        diag.imageryMaxTargetZoom = cmd.surfaceGeometryZoom;
-                        sawSurfaceGeometryZoom = true;
-                    } else {
-                        diag.imageryMinTargetZoom =
-                            std::min(diag.imageryMinTargetZoom,
-                                     cmd.surfaceGeometryZoom);
-                        diag.imageryMaxTargetZoom =
-                            std::max(diag.imageryMaxTargetZoom,
-                                     cmd.surfaceGeometryZoom);
-                    }
-                }
-                if (cmd.surfaceTextureZoom >= 0) {
-                    if (!sawSurfaceTextureZoom) {
-                        diag.imageryMinTextureZoom = cmd.surfaceTextureZoom;
-                        diag.imageryMaxTextureZoom = cmd.surfaceTextureZoom;
-                        sawSurfaceTextureZoom = true;
-                    } else {
-                        diag.imageryMinTextureZoom =
-                            std::min(diag.imageryMinTextureZoom,
-                                     cmd.surfaceTextureZoom);
-                        diag.imageryMaxTextureZoom =
-                            std::max(diag.imageryMaxTextureZoom,
-                                     cmd.surfaceTextureZoom);
-                    }
-                }
-            } else {
-                ++diag.imageryMissingTiles;
-            }
-        } else if (cmd.kind == RenderCommandKind::GltfPrimitive ||
-                   cmd.kind == RenderCommandKind::GltfPrimitiveInstanced) {
-            ++diag.renderGltfPrimitives;
-        }
-    }
-
-    auto addTilesetDiagnostics = [&](Tileset& tileset, bool terrain) {
-        const TilePlan& plan = tileset.tilePlan();
-        const TilesetLoadDiagnostics loadDiag = tileset.loadDiagnostics();
-        if (terrain) {
-            diag.visibleTiles = static_cast<int>(plan.visibleTiles.size());
-            diag.terrainCachedTiles = tileset.cachedTerrainTiles();
-            diag.pendingTerrainRequests = loadDiag.pendingTerrainRequests;
-            diag.pendingTerrainUploads = loadDiag.pendingTerrainUploads;
-            diag.pendingTerrainTerminalResults =
-                loadDiag.pendingTerrainTerminalResults;
-            diag.minVisibleZoom = plan.minVisibleZoom;
-            diag.maxVisibleZoom = plan.maxVisibleZoom;
-            diag.lodSizePixels = plan.lodSizePixels;
-            diag.quadtreeRenderingNodes = plan.renderingNodeCount;
-            diag.quadtreeWalkthroughNodes = plan.walkthroughNodeCount;
-            diag.quadtreeNotRenderingNodes = plan.notRenderingNodeCount;
-            diag.quadtreeSelectionRenderedNodes = plan.selectionRenderedCount;
-            diag.quadtreeSelectionRefinedNodes = plan.selectionRefinedCount;
-            diag.quadtreeSelectionKickedNodes = plan.selectionKickedCount;
-            diag.quadtreeSelectionOccludedNodes = plan.selectionOccludedCount;
-            diag.quadtreeSelectionWaitingForOcclusionResultsNodes =
-                plan.selectionWaitingForOcclusionResultsCount;
-            diag.quadtreeCulledTilesVisited = plan.culledTilesVisitedCount;
-            diag.quadtreeSelectionAncestorMeetsSseNodes =
-                plan.selectionAncestorMeetsSseCount;
-            diag.quadtreeFadingNodes = plan.fadingNodeCount;
-            diag.quadtreeCameraInsideNodes = plan.cameraInsideNodeCount;
-            diag.quadtreeInFrustumNodes = plan.inFrustumNodeCount;
-            diag.mercatorTileCount = plan.mercatorTileCount;
-            diag.northPolarTileCount = plan.northPolarTileCount;
-            diag.southPolarTileCount = plan.southPolarTileCount;
-        } else {
-            diag.contentVisibleTiles +=
-                static_cast<int>(plan.visibleTiles.size());
-        }
-
-        diag.queuedRequests += loadDiag.loadQueueTotal();
-        diag.loadingRequests +=
-            loadDiag.pendingTerrainTotal() + loadDiag.pendingContentTotal();
-        diag.loadQueuePreloadRequests += loadDiag.loadQueuePreloadRequests;
-        diag.loadQueueNormalRequests += loadDiag.loadQueueNormalRequests;
-        diag.loadQueueUrgentRequests += loadDiag.loadQueueUrgentRequests;
-        diag.pendingContentRequests += loadDiag.pendingContentRequests;
-        diag.pendingContentUploads += loadDiag.pendingContentUploads;
-        diag.pendingContentTerminalResults +=
-            loadDiag.pendingContentTerminalResults;
-        diag.surfaceMeshBytes += static_cast<int>(tileset.totalBytesUsed());
-        diag.terrainContentUnknownTiles += loadDiag.contentUnknownTiles;
-        diag.terrainContentEmptyTiles += loadDiag.contentEmptyTiles;
-        diag.terrainContentExternalTiles += loadDiag.contentExternalTiles;
-        diag.terrainContentRenderTiles += loadDiag.contentRenderTiles;
-        if (terrain) {
-            diag.terrainLoadUnloadingTiles = loadDiag.loadUnloadingTiles;
-            diag.terrainLoadFailedTemporarilyTiles =
-                loadDiag.loadFailedTemporarilyTiles;
-            diag.terrainLoadUnloadedTiles = loadDiag.loadUnloadedTiles;
-            diag.terrainLoadContentLoadingTiles =
-                loadDiag.loadContentLoadingTiles;
-            diag.terrainLoadContentLoadedTiles = loadDiag.loadContentLoadedTiles;
-            diag.terrainLoadDoneTiles = loadDiag.loadDoneTiles;
-            diag.terrainLoadFailedTiles = loadDiag.loadFailedTiles;
-            diag.terrainUnloadQueueTiles = loadDiag.unloadQueueTiles;
-            diag.missingRasterOverlayProjections =
-                loadDiag.missingRasterOverlayProjections;
-        }
-    };
 
     if (context.terrainTileset) {
-        addTilesetDiagnostics(*context.terrainTileset, true);
+        SceneTilesetDiagnostics::addTileset(
+            diag,
+            *context.terrainTileset,
+            true);
     }
     for (const auto& tileset : context.additionalTilesets) {
         if (tileset) {
-            addTilesetDiagnostics(*tileset, false);
+            SceneTilesetDiagnostics::addTileset(diag, *tileset, false);
         }
     }
 
-    diag.gpuTextureCount = static_cast<int>(surfaceTextures.size());
-    if (diag.gpuTextureCount == 0) {
-        diag.gpuTextureCount = diag.cachedTextures;
-    }
-    diag.imageryAttachments =
-        diag.imageryExactAttachments + diag.imageryParentFallbackAttachments;
+    SceneRenderDiagnostics::finalizeRenderCommandFields(diag);
     diagnosticsMs = perf::nowMs() - startMs;
 }
 

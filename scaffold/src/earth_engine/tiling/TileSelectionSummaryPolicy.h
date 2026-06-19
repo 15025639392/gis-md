@@ -1,18 +1,14 @@
 #pragma once
 
 #include "TilePlan.h"
+#include "TileSelectionFrameState.h"
 #include <cstddef>
 
 namespace earth_engine {
 
 struct TileSelectionSummaryTileInput {
     TileKey key;
-    TileSelectionState selectionState = TileSelectionState::NotVisited;
-    TileSelectionState previousSelectionState = TileSelectionState::NotVisited;
-    double screenSpaceError = 0.0;
-    bool cameraInside = false;
-    bool inFrustum = false;
-    bool ancestorMeetsSse = false;
+    TileSelectionFrameState selection;
     bool renderable = false;
 };
 

@@ -18,6 +18,37 @@ bool matricesNearlyEqual(const Mat4& lhs,
     return true;
 }
 
+bool selectorViewsStaleCompatible(
+    const std::vector<FrameState::SelectorView>& lhs,
+    const std::vector<FrameState::SelectorView>& rhs,
+    double positionToleranceMeters,
+    double directionToleranceSquared) {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < lhs.size(); ++i) {
+        const auto& a = lhs[i];
+        const auto& b = rhs[i];
+        if (a.position.distanceTo(b.position) > positionToleranceMeters) {
+            return false;
+        }
+        if ((a.direction - b.direction).lengthSquared() >
+            directionToleranceSquared) {
+            return false;
+        }
+        if (!matricesNearlyEqual(
+                a.projectionMatrix,
+                b.projectionMatrix,
+                1e-12)) {
+            return false;
+        }
+        if (a.viewportHeightPixels != b.viewportHeightPixels) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 bool TileSelectionReusePolicy::selectorViewsEquivalent(
@@ -48,34 +79,92 @@ bool TileSelectionReusePolicy::selectorViewsEquivalent(
     return true;
 }
 
-bool TileSelectionReusePolicy::canReuseSelection(
+TileSelectionReuseMode TileSelectionReusePolicy::classifyReuse(
+    const TileSelectionReuseInput& input) {
+    return classifyReuseWithReason(input).mode;
+}
+
+TileSelectionReuseClassification
+TileSelectionReusePolicy::classifyReuseWithReason(
     const TileSelectionReuseInput& input) {
     if (!input.hasReusableSelection) {
-        return false;
+        return {
+            TileSelectionReuseMode::None,
+            TileSelectionReuseRejectReason::NoReusableSelection};
     }
     if (input.frameState.viewportWidthPixels != input.lastViewportWidth ||
         input.frameState.viewportHeightPixels != input.lastViewportHeight) {
-        return false;
+        return {
+            TileSelectionReuseMode::None,
+            TileSelectionReuseRejectReason::ViewportChanged};
     }
     if (input.currentResourceRevision != input.lastResourceRevision ||
         input.currentOverlaySignature != input.lastOverlaySignature) {
-        return false;
+        return {
+            TileSelectionReuseMode::None,
+            TileSelectionReuseRejectReason::ResourceChanged};
     }
     if (!selectorViewsEquivalent(
             input.frameState.selectorViews,
             input.lastSelectorViews)) {
-        return false;
+        if (!input.allowStaleSelection) {
+            return {
+                TileSelectionReuseMode::None,
+                TileSelectionReuseRejectReason::SelectorMovedStaleDisabled};
+        }
+        if (input.currentFrameId < input.lastSelectionFrameId ||
+            input.currentFrameId - input.lastSelectionFrameId >
+                input.maxStaleFrameAge) {
+            return {
+                TileSelectionReuseMode::None,
+                TileSelectionReuseRejectReason::StaleAgeExceeded};
+        }
+        if (!selectorViewsStaleCompatible(
+                input.frameState.selectorViews,
+                input.lastSelectorViews,
+                input.stalePositionToleranceMeters,
+                input.staleDirectionToleranceSquared)) {
+            return {
+                TileSelectionReuseMode::None,
+                TileSelectionReuseRejectReason::StaleViewTooDifferent};
+        }
+        return {
+            TileSelectionReuseMode::Stale,
+            TileSelectionReuseRejectReason::None};
     }
     if (input.hasFadingTiles) {
-        return false;
+        return {
+            TileSelectionReuseMode::None,
+            TileSelectionReuseRejectReason::FadingTiles};
     }
-    if (input.hasPendingTilesetWork || input.hasPendingRasterOverlayWork) {
-        return false;
+    if (input.hasPendingTilesetWork) {
+        return {
+            TileSelectionReuseMode::None,
+            TileSelectionReuseRejectReason::PendingTilesetWork};
     }
-    if (input.lastRequestIssuedWork || input.lastRequestBlockedByInflight) {
-        return false;
+    if (input.hasPendingRasterOverlayWork) {
+        return {
+            TileSelectionReuseMode::None,
+            TileSelectionReuseRejectReason::PendingRasterOverlayWork};
     }
-    return true;
+    if (input.lastRequestIssuedWork) {
+        return {
+            TileSelectionReuseMode::None,
+            TileSelectionReuseRejectReason::LastRequestIssuedWork};
+    }
+    if (input.lastRequestBlockedByInflight) {
+        return {
+            TileSelectionReuseMode::None,
+            TileSelectionReuseRejectReason::LastRequestBlockedByInflight};
+    }
+    return {
+        TileSelectionReuseMode::Strict,
+        TileSelectionReuseRejectReason::None};
+}
+
+bool TileSelectionReusePolicy::canReuseSelection(
+    const TileSelectionReuseInput& input) {
+    return classifyReuse(input) != TileSelectionReuseMode::None;
 }
 
 } // namespace earth_engine

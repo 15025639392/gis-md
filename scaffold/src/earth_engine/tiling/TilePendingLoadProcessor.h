@@ -5,6 +5,7 @@
 
 #include "../debug/PerfTimer.h"
 
+#include <functional>
 #include <mutex>
 #include <optional>
 
@@ -14,6 +15,7 @@ struct TilePendingLoadProcessorInput {
     TileLoadLifecycle& lifecycle;
     FrameResourceBudget& budget;
     bool interactionActive = false;
+    std::function<std::optional<double>(FrameResourceLane)> elapsedOverrideMs;
 };
 
 class TilePendingLoadProcessor {
@@ -31,37 +33,34 @@ public:
         bool changed = false;
 
         while (true) {
-            std::optional<PendingTerrainTerminalResult> terminalResult;
+            std::optional<PendingTerminalResult> terminalResult;
             {
                 std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
                 terminalResult =
                     input.lifecycle
                         .pendingLoads()
-                        .takeHighestPriorityTerrainTerminalResult();
+                        .takeHighestPriorityTerminalResult(input.budget);
             }
             if (!terminalResult) {
                 break;
             }
 
-            processTerrainTerminalResult(*terminalResult);
-            changed = true;
-        }
-
-        while (true) {
-            std::optional<PendingContentTerminalResult> terminalResult;
-            {
-                std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
-                terminalResult =
-                    input.lifecycle
-                        .pendingLoads()
-                        .takeHighestPriorityContentTerminalResult();
+            const double terminalStartMs = perf::nowMs();
+            if (terminalResult->kind == PendingTerminalResultKind::Content) {
+                processContentTerminalResult(
+                    *terminalResult->contentResult);
+            } else {
+                processTerrainTerminalResult(
+                    *terminalResult->terrainResult);
             }
-            if (!terminalResult) {
-                break;
-            }
-
-            processContentTerminalResult(*terminalResult);
             changed = true;
+            const std::optional<double> overrideElapsed =
+                input.elapsedOverrideMs
+                    ? input.elapsedOverrideMs(FrameResourceLane::TerminalState)
+                    : std::nullopt;
+            input.budget.recordElapsed(
+                FrameResourceLane::TerminalState,
+                overrideElapsed.value_or(perf::nowMs() - terminalStartMs));
         }
 
         while (true) {
@@ -71,8 +70,9 @@ public:
                 std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
                 finalize =
                     input.lifecycle.pendingLoads().takeHighestPriorityUpload(
-                        input.interactionActive,
-                        input.budget);
+                        PendingLoadFinalizeContext{
+                            input.interactionActive,
+                            input.budget});
             }
             if (!finalize) {
                 break;
@@ -85,11 +85,17 @@ public:
                 processTerrainUpload(*finalize->terrainUpload);
             }
             changed = true;
-            input.budget.recordElapsed(
+            const FrameResourceLane finalizeLane =
                 finalize->kind == PendingLoadFinalizeKind::Content
                     ? FrameResourceLane::ContentFinalize
-                    : FrameResourceLane::TerrainFinalize,
-                perf::nowMs() - finalizeStartMs);
+                    : FrameResourceLane::TerrainFinalize;
+            const std::optional<double> overrideElapsed =
+                input.elapsedOverrideMs
+                    ? input.elapsedOverrideMs(finalizeLane)
+                    : std::nullopt;
+            input.budget.recordElapsed(
+                finalizeLane,
+                overrideElapsed.value_or(perf::nowMs() - finalizeStartMs));
         }
 
         return changed;

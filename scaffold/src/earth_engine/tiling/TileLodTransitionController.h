@@ -44,7 +44,8 @@ struct TileLodTransitionController {
             for (const TileKey& key : plan.visibleTiles) {
                 if (TilesetTile* tile =
                         findTileByCacheKey(options, cacheKey(key))) {
-                    tile->lodTransitionFadePercentage = 1.0f;
+                    tile->selectionFrameState.lodTransitionFadePercentage =
+                        1.0f;
                 }
             }
             return;
@@ -65,7 +66,8 @@ struct TileLodTransitionController {
                     continue;
                 }
                 if (fadingKeys.insert(ck).second) {
-                    tile->lodTransitionFadePercentage = 0.0f;
+                    tile->selectionFrameState.lodTransitionFadePercentage =
+                        0.0f;
                 }
             }
         }
@@ -74,7 +76,8 @@ struct TileLodTransitionController {
         for (auto it = fadingKeys.begin(); it != fadingKeys.end();) {
             if (currentRenderKeys.find(*it) != currentRenderKeys.end()) {
                 if (TilesetTile* tile = findTileByCacheKey(options, *it)) {
-                    tile->lodTransitionFadePercentage = 0.0f;
+                    tile->selectionFrameState.lodTransitionFadePercentage =
+                        0.0f;
                 }
                 returnedFromFadeOut.insert(*it);
                 it = fadingKeys.erase(it);
@@ -87,17 +90,18 @@ struct TileLodTransitionController {
                 continue;
             }
 
-            if (tile->lodTransitionFadePercentage >= 1.0f) {
-                tile->lodTransitionFadePercentage = 0.0f;
+            TileSelectionFrameState& selection = tile->selectionFrameState;
+            if (selection.lodTransitionFadePercentage >= 1.0f) {
+                selection.lodTransitionFadePercentage = 0.0f;
                 it = fadingKeys.erase(it);
                 continue;
             }
 
-            tile->lodTransitionFadePercentage = std::min(
-                tile->lodTransitionFadePercentage + transitionDelta,
+            selection.lodTransitionFadePercentage = std::min(
+                selection.lodTransitionFadePercentage + transitionDelta,
                 1.0f);
             const float renderOpacity =
-                1.0f - tile->lodTransitionFadePercentage;
+                1.0f - selection.lodTransitionFadePercentage;
             plan.tilesFadingOut.push_back(TileTransition{
                 tile->key,
                 renderOpacity,
@@ -122,17 +126,18 @@ struct TileLodTransitionController {
                 returnedFromFadeOut.find(ck) != returnedFromFadeOut.end() ||
                 fadingKeys.erase(ck) > 0;
             if (wasFadingOut || !wasRenderedInPreviousSelection(*tile)) {
-                tile->lodTransitionFadePercentage = 0.0f;
+                tile->selectionFrameState.lodTransitionFadePercentage = 0.0f;
             }
 
-            tile->lodTransitionFadePercentage = std::min(
-                tile->lodTransitionFadePercentage + transitionDelta,
+            TileSelectionFrameState& selection = tile->selectionFrameState;
+            selection.lodTransitionFadePercentage = std::min(
+                selection.lodTransitionFadePercentage + transitionDelta,
                 1.0f);
             plan.tileTransitions.push_back(TileTransition{
                 tile->key,
-                tile->lodTransitionFadePercentage,
+                selection.lodTransitionFadePercentage,
                 1});
-            if (tile->lodTransitionFadePercentage < 0.999f) {
+            if (selection.lodTransitionFadePercentage < 0.999f) {
                 ++plan.fadingNodeCount;
             }
         }
@@ -152,8 +157,10 @@ private:
     }
 
     static bool wasRenderedInPreviousSelection(const TilesetTile& tile) {
-        return tile.previousSelectionState == TileSelectionState::Rendered ||
-               (tile.previousSelectionState == TileSelectionState::Refined &&
+        const TileSelectionState previous =
+            tile.selectionFrameState.previousSelectionState;
+        return previous == TileSelectionState::Rendered ||
+               (previous == TileSelectionState::Refined &&
                 tile.refine == TileRefine::Add);
     }
 };

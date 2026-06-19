@@ -86,8 +86,9 @@ struct TileSelectionPostTraversalCommitter {
         }
 
         if (plan.markTileRefined) {
-            tile.selectionState = TileSelectionState::Refined;
-            tile.screenSpaceError = context.tileSse;
+            tile.selectionFrameState.selectionState =
+                TileSelectionState::Refined;
+            tile.selectionFrameState.screenSpaceError = context.tileSse;
         }
         if (plan.queueParentPreload) {
             queueTileLoad(

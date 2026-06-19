@@ -26,13 +26,7 @@ public:
                 rasterOverlays);
 
         return TileRenderablePolicy::isCompleteRenderable(
-            TileRenderableSnapshot{
-                tile.loadState,
-                tile.contentKind,
-                tile.unconditionallyRefine,
-                !tile.children.empty(),
-                requiredRasterOverlaysReady,
-                tile.meshReady});
+            tile.renderableSnapshot(requiredRasterOverlaysReady));
     }
 
     static bool isRenderable(
@@ -53,17 +47,14 @@ public:
         RenderDevice* device,
         double maximumScreenSpaceError,
         FrameResourceBudget& frameResourceBudget) {
-        if (tile.loadState != TileLoadState::Done ||
-            tile.contentKind != TileContentKind::Render ||
-            !tile.meshReady ||
-            !tile.mesh) {
+        if (!tile.canPrepareRasterOverlays()) {
             return;
         }
 
         // Selection asks renderability before command building can update
         // raster mappings, so advance required overlays during traversal.
         if (!rasterOverlays.empty() &&
-            tile.rasterOverlays.size() >= rasterOverlays.size()) {
+            tile.rasterOverlayState.mappingCount() >= rasterOverlays.size()) {
             if (TileRasterOverlayReadinessPolicy::requiredOverlaysReady(
                     tile,
                     rasterOverlays)) {

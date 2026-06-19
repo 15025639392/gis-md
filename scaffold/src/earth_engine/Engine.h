@@ -1,8 +1,9 @@
 #pragma once
 
 #include "core/math/Vec3.h"
+#include "scene/Diagnostics.h"
 #include "scene/FrameState.h"
-#include "tiling/Tileset.h"
+#include "tiling/TileOcclusionCallback.h"
 #include <memory>
 #include <cstdint>
 #include <vector>
@@ -13,6 +14,7 @@ namespace earth_engine {
 class Camera;
 class RenderDevice;
 class Scene;
+class Tileset;
 class VectorLayer;
 struct PresentationTrace;
 struct InputEvent;
@@ -85,7 +87,7 @@ public:
     void setSelectorViewOverride(
         std::vector<FrameState::SelectorView> selectorViews);
     void clearSelectorViewOverride();
-    void setOcclusionCallback(Tileset::OcclusionCallback callback);
+    void setOcclusionCallback(TileOcclusionCallback callback);
     void clearOcclusionCallback();
 
     /// 是否有地形数据

@@ -90,6 +90,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/renderer/RenderDevice.h
     earth_engine/renderer/RenderCommand.h
     earth_engine/renderer/RenderCommand.cpp
+    earth_engine/renderer/RenderCommandStreamingSet.h
+    earth_engine/renderer/RenderCommandStreamingSet.cpp
     earth_engine/renderer/Renderer.h
     earth_engine/renderer/Renderer.cpp
     earth_engine/renderer/RenderDeviceRasterTextureUploader.h
@@ -105,11 +107,42 @@ target_sources(earth_engine_core PRIVATE
 target_sources(earth_engine_core PRIVATE
     earth_engine/scene/Camera.h
     earth_engine/scene/Camera.cpp
+    earth_engine/scene/Diagnostics.h
+    earth_engine/scene/EngineTimingScope.h
     earth_engine/scene/Frustum.h
     earth_engine/scene/Frustum.cpp
     earth_engine/scene/FrameState.h
+    earth_engine/scene/PresentationTrace.h
+    earth_engine/scene/SceneEnvironmentCoordinator.h
+    earth_engine/scene/SceneEnvironmentCoordinator.cpp
+    earth_engine/scene/SceneFrameDiagnostics.h
+    earth_engine/scene/SceneFrameDiagnostics.cpp
+    earth_engine/scene/SceneFrameStateBuilder.h
+    earth_engine/scene/SceneFrameStateBuilder.cpp
+    earth_engine/scene/SceneFrameUpdateCoordinator.h
+    earth_engine/scene/SceneFrameUpdateCoordinator.cpp
+    earth_engine/scene/SceneInputCoordinator.h
+    earth_engine/scene/SceneInputCoordinator.cpp
+    earth_engine/scene/SceneInteractionCoordinator.h
+    earth_engine/scene/SceneInteractionCoordinator.cpp
+    earth_engine/scene/SceneLayerCoordinator.h
+    earth_engine/scene/SceneLayerCoordinator.cpp
+    earth_engine/scene/ScenePickingCoordinator.h
+    earth_engine/scene/ScenePickingCoordinator.cpp
+    earth_engine/scene/ScenePresentationTraceBuilder.h
+    earth_engine/scene/ScenePresentationTraceBuilder.cpp
+    earth_engine/scene/SceneTilesetCoordinator.h
+    earth_engine/scene/SceneTilesetCoordinator.cpp
+    earth_engine/scene/SceneRenderCommandUniformUpdater.h
+    earth_engine/scene/SceneRenderCommandUniformUpdater.cpp
     earth_engine/scene/SceneRenderPipeline.h
     earth_engine/scene/SceneRenderPipeline.cpp
+    earth_engine/scene/SceneRenderDiagnostics.h
+    earth_engine/scene/SceneRenderDiagnostics.cpp
+    earth_engine/scene/SceneTelemetryCoordinator.h
+    earth_engine/scene/SceneTelemetryCoordinator.cpp
+    earth_engine/scene/SceneTilesetDiagnostics.h
+    earth_engine/scene/SceneTilesetDiagnostics.cpp
     earth_engine/scene/Scene.h
     earth_engine/scene/Scene.cpp
 )
@@ -146,6 +179,9 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/SurfaceTileDrawCommandBuilder.cpp
     earth_engine/tiling/SurfaceMeshResourcePreparer.h
     earth_engine/tiling/SurfaceMeshResourcePreparer.cpp
+    earth_engine/tiling/TileSurfaceRenderContentCoordinator.h
+    earth_engine/tiling/TileSurfaceMeshResolutionPolicy.h
+    earth_engine/tiling/TileSurfaceMeshSourceResolver.h
     earth_engine/tiling/TileSurfaceMeshEnsurer.h
     earth_engine/tiling/TileKey.h
     earth_engine/tiling/TileKey.cpp
@@ -169,8 +205,20 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileRenderPlanFinalizer.h
     earth_engine/tiling/TileContentUploadPolicy.h
     earth_engine/tiling/TileContentUploadPolicy.cpp
+    earth_engine/tiling/TileContentStateTransition.h
     earth_engine/tiling/TileContentUploadCommitter.h
     earth_engine/tiling/TileContentUploadCommitter.cpp
+    earth_engine/tiling/TileContentCacheManager.h
+    earth_engine/tiling/TileContentCacheManager.cpp
+    earth_engine/tiling/TilesetContentLifecycleFacade.h
+    earth_engine/tiling/TilesetContentLifecycleFacade.cpp
+    earth_engine/tiling/TileCacheOwnershipManager.h
+    earth_engine/tiling/TileCacheOwnershipManager.cpp
+    earth_engine/tiling/TileContentAccess.h
+    earth_engine/tiling/TileContentAccess.cpp
+    earth_engine/tiling/TileContentLifecycleManager.h
+    earth_engine/tiling/TileContentLifecycleManager.cpp
+    earth_engine/tiling/TilesetContentLifecycleCoordinator.h
     earth_engine/tiling/TileEmptyContentRegistry.h
     earth_engine/tiling/TileEmptyContentRegistry.cpp
     earth_engine/tiling/TileCacheKey.h
@@ -181,6 +229,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileFrameDebugLogFormatter.h
     earth_engine/tiling/TileFrameInteractionTracker.h
     earth_engine/tiling/TileFrameResourceBudgetPlanner.h
+    earth_engine/tiling/TileFrameWorkCoordinator.h
     earth_engine/tiling/TileBoundsMetrics.h
     earth_engine/tiling/TileBoundsMetrics.cpp
     earth_engine/tiling/TileFrameState.h
@@ -211,22 +260,46 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TilePendingUploadCompletion.cpp
     earth_engine/tiling/TileRasterOverlayFrameProcessor.h
     earth_engine/tiling/TileRasterOverlaySignature.h
+    earth_engine/tiling/TileRasterUpsampledChildCoordinator.h
+    earth_engine/tiling/TileRasterUpsampledChildCoordinator.cpp
     earth_engine/tiling/TileRasterOverlayPrefetcher.h
     earth_engine/tiling/TileRasterOverlayPrefetcher.cpp
+    earth_engine/tiling/TileRasterOverlayState.h
+    earth_engine/tiling/TileRasterOverlayState.cpp
     earth_engine/tiling/TileRasterOverlayReadinessPolicy.h
     earth_engine/tiling/TileRasterOverlayReadinessPolicy.cpp
     earth_engine/tiling/TilePendingRequestState.h
     earth_engine/tiling/TilePendingRequestState.cpp
     earth_engine/tiling/TileRenderEntryCommandBuilder.h
     earth_engine/tiling/TileRenderCommandPreparer.h
+    earth_engine/tiling/TileRenderCommandManager.h
+    earth_engine/tiling/TileRenderCommandManager.cpp
     earth_engine/tiling/TileRenderFrameBuilder.h
+    earth_engine/tiling/TileRenderFrameCoordinator.h
+    earth_engine/tiling/TileRenderFrameContext.h
+    earth_engine/tiling/TileRenderFrameContext.cpp
     earth_engine/tiling/TileRenderFrameInputBuilder.h
     earth_engine/tiling/TileRenderFrameMaintenance.h
+    earth_engine/tiling/TilesetQueryFacade.h
+    earth_engine/tiling/TilesetQueryFacade.cpp
+    earth_engine/tiling/TilesetRenderFrameFacade.h
+    earth_engine/tiling/TilesetRenderFrameFacade.cpp
+    earth_engine/tiling/TilesetUpdateFrameFacade.h
+    earth_engine/tiling/TilesetUpdateFrameFacade.cpp
+    earth_engine/tiling/TilesetRenderFrameExecutor.h
+    earth_engine/tiling/TilesetRenderFrameExecutor.cpp
+    earth_engine/tiling/TileRenderContentState.h
+    earth_engine/tiling/TileRenderReferenceState.h
     earth_engine/tiling/TileRenderReferenceReleaser.h
     earth_engine/tiling/TileLoadTypes.h
     earth_engine/tiling/TileOcclusionState.h
+    earth_engine/tiling/TileOcclusionCallback.h
     earth_engine/tiling/TileOcclusionResolver.h
+    earth_engine/tiling/TilesetOcclusionFacade.h
+    earth_engine/tiling/TilesetOcclusionFacade.cpp
     earth_engine/tiling/TileMeshFrameEnsurer.h
+    earth_engine/tiling/TileMeshPreparationManager.h
+    earth_engine/tiling/TileMeshPreparationManager.cpp
     earth_engine/tiling/TileRenderablePolicy.h
     earth_engine/tiling/TileRenderablePolicy.cpp
     earth_engine/tiling/TilePriorityMetrics.h
@@ -242,6 +315,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileSelectionFrameBuilder.h
     earth_engine/tiling/TileSelectionFrameBuilder.cpp
     earth_engine/tiling/TileSelectionFrameFinalizer.h
+    earth_engine/tiling/TileSelectionFrameState.h
     earth_engine/tiling/TileSelectionFrameRunner.h
     earth_engine/tiling/TileSelectionHistory.h
     earth_engine/tiling/TileSelectionHistory.cpp
@@ -274,6 +348,11 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileSelectionSummaryPolicy.cpp
     earth_engine/tiling/TileSelectionTraversalCounterPolicy.h
     earth_engine/tiling/TileSelectionTraversalCounterPolicy.cpp
+    earth_engine/tiling/TileSelectionTraversalContext.h
+    earth_engine/tiling/TileSelectionTraversalExecutor.h
+    earth_engine/tiling/TileSelectionTraversalExecutor.cpp
+    earth_engine/tiling/TilesetSelectionFrameFacade.h
+    earth_engine/tiling/TilesetSelectionFrameFacade.cpp
     earth_engine/tiling/TileSelectionVisitPreparation.h
     earth_engine/tiling/TileSelectionVisitPreparation.cpp
     earth_engine/tiling/TileSelectionVisibilitySampler.h
@@ -308,6 +387,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileUnloadQueue.h
     earth_engine/tiling/TileUnloadQueue.cpp
     earth_engine/tiling/TilesetTile.h
+    earth_engine/tiling/TilesetTileRegistry.h
+    earth_engine/tiling/TilesetTileRegistry.cpp
     earth_engine/tiling/RasterMappedToTilesetTile.h
     earth_engine/tiling/RasterMappedToTilesetTile.cpp
     earth_engine/tiling/Tileset.h
@@ -329,6 +410,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/providers/HeightmapTerrainProvider.cpp
     earth_engine/providers/QuantizedMeshTerrainProvider.h
     earth_engine/providers/QuantizedMeshTerrainProvider.cpp
+    earth_engine/providers/QuantizedMeshLayerJsonFetcher.h
+    earth_engine/providers/QuantizedMeshLayerJsonFetcher.cpp
     earth_engine/providers/RasterOverlayTile.h
     earth_engine/providers/RasterOverlayTile.cpp
     earth_engine/providers/RasterTextureUploader.h

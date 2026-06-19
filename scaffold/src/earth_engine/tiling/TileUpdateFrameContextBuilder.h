@@ -11,9 +11,26 @@
 namespace earth_engine {
 
 struct TileUpdateFrameContextOptions {
-    uint32_t maximumSimultaneousTileLoads = 20;
+    uint32_t maximumSimultaneousTileLoads =
+        TileFrameResourceBudgetPlanInput::kDefaultMaximumSimultaneousTileLoads;
+    uint32_t maximumTransportActiveRequests =
+        TileFrameResourceBudgetPlanInput::kDefaultMaximumTransportActiveRequests;
     double mainThreadLoadingTimeLimit = 0.0;
     double postInteractionResourceSmoothingSeconds = 0.0;
+
+    static TileUpdateFrameContextOptions fromTilesetFrame(
+        uint32_t maximumSimultaneousTileLoads,
+        uint32_t maximumTransportActiveRequests,
+        double mainThreadLoadingTimeLimit,
+        double postInteractionResourceSmoothingSeconds) {
+        TileUpdateFrameContextOptions options;
+        options.maximumSimultaneousTileLoads = maximumSimultaneousTileLoads;
+        options.maximumTransportActiveRequests = maximumTransportActiveRequests;
+        options.mainThreadLoadingTimeLimit = mainThreadLoadingTimeLimit;
+        options.postInteractionResourceSmoothingSeconds =
+            postInteractionResourceSmoothingSeconds;
+        return options;
+    }
 };
 
 struct TileUpdateFrameContext {
@@ -34,11 +51,12 @@ struct TileUpdateFrameContextBuilder {
             previousInteractionActiveTimeSeconds,
             options.postInteractionResourceSmoothingSeconds);
         context.resourceBudgetConfig = TileFrameResourceBudgetPlanner::plan(
-            TileFrameResourceBudgetPlanInput{
+            TileFrameResourceBudgetPlanInput::withTransportLimit(
                 options.maximumSimultaneousTileLoads,
+                options.maximumTransportActiveRequests,
                 options.mainThreadLoadingTimeLimit,
                 context.interaction.interactionActive,
-                context.interaction.resourceSmoothingActive});
+                context.interaction.resourceSmoothingActive));
         return context;
     }
 };

@@ -33,7 +33,7 @@ public:
         if (input.tile.key.z >= input.maxZoom) {
             return;
         }
-        if (input.tile.upsampledFromParent) {
+        if (input.tile.content.upsampledFromParent) {
             return;
         }
         if (!input.hasTerrainProvider) {

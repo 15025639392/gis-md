@@ -8,13 +8,11 @@ namespace earth_engine {
 namespace {
 
 void markUnknownTemporaryFailure(TilesetTile& tile) {
-    tile.contentKind = TileContentKind::Unknown;
-    tile.loadState = TileLoadState::FailedTemporarily;
+    tile.markContentFailedTemporarily();
 }
 
 void markUnknownPermanentFailure(TilesetTile& tile) {
-    tile.contentKind = TileContentKind::Unknown;
-    tile.loadState = TileLoadState::Failed;
+    tile.markContentFailedPermanently();
 }
 
 } // namespace
@@ -28,8 +26,7 @@ TileTerminalLoadPolicy::applyTerrainTerminalResult(
     switch (status) {
         case TerrainTileLoadStatus::Empty: {
             action.markEmptyCacheKey = true;
-            tile.contentKind = TileContentKind::Empty;
-            tile.loadState = TileLoadState::ContentLoaded;
+            tile.markEmptyContentLoaded();
 
             const TilesetTile* ancestor = tile.parent;
             while (ancestor && ancestor->unconditionallyRefine) {
@@ -41,7 +38,7 @@ TileTerminalLoadPolicy::applyTerrainTerminalResult(
             if (tile.geometricError >= parentError) {
                 tile.unconditionallyRefine = true;
             }
-            tile.loadState = TileLoadState::Done;
+            tile.markEmptyContentDone();
             action.resourcesDirty = true;
             break;
         }
@@ -69,14 +66,11 @@ TileTerminalLoadPolicy::applyContentTerminalResult(
     switch (status) {
         case TileContentLoadStatus::Empty:
             action.markEmptyCacheKey = true;
-            tile.contentKind = TileContentKind::Empty;
-            tile.loadState = TileLoadState::Done;
+            tile.markEmptyContentDone();
             action.resourcesDirty = true;
             break;
         case TileContentLoadStatus::External:
-            tile.contentKind = TileContentKind::External;
-            tile.unconditionallyRefine = true;
-            tile.loadState = TileLoadState::Done;
+            tile.markExternalContentDone();
             action.ensureChildren = true;
             action.resourcesDirty = true;
             break;

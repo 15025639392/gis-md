@@ -44,7 +44,7 @@ struct TileChildMaterializer {
         int maxZoom,
         AvailabilityFn&& availabilityState,
         EnsureTileFn&& ensureTile) {
-        if (parent.key.z >= maxZoom || parent.upsampledFromParent) {
+        if (parent.key.z >= maxZoom || parent.content.upsampledFromParent) {
             return false;
         }
 
@@ -95,7 +95,7 @@ struct TileChildMaterializer {
             TilesetTile* child = ensureTile(childInfo.key);
             if (!child) continue;
             child->geometricError = parent.geometricError * 0.5;
-            if (!child->meshReady) {
+            if (!child->content.renderContent.isMeshReady()) {
                 TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                     *child,
                     parent);
@@ -103,14 +103,9 @@ struct TileChildMaterializer {
 
             const bool upsampled =
                 childInfo.state != TileAvailabilityState::Available;
-            if (child->upsampledFromParent != upsampled) {
-                child->meshReady = false;
-                child->surfaceDrawable = false;
-                child->surfaceSource = SurfaceDrawableSource::None;
-                child->mesh.reset();
-                child->gpuVertexBuffer.reset();
-                child->gpuIndexBuffer.reset();
-                child->upsampledFromParent = upsampled;
+            if (child->content.upsampledFromParent != upsampled) {
+                child->content.renderContent.clearSurfaceMeshResources();
+                child->content.upsampledFromParent = upsampled;
                 changed = true;
             }
             changed |= linkChild(parent, *child);
@@ -187,7 +182,7 @@ struct TileChildMaterializer {
             child->contentBoundingVolume = child->boundingVolume;
             child->geometricError = parent.geometricError * 0.5;
             child->refine = TileRefine::Replace;
-            child->upsampledFromParent = true;
+            child->content.upsampledFromParent = true;
             child->unconditionallyRefine = false;
             TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                 *child,
@@ -207,7 +202,7 @@ struct TileChildMaterializer {
         CacheKeyFn&& cacheKey,
         IsTerrainCachedFn&& isTerrainCached,
         AvailabilityStateFn&& availabilityState) {
-        if (tile.upsampledFromParent) return false;
+        if (tile.content.upsampledFromParent) return false;
 
         if (options.hasExistingChildren) {
             return true;

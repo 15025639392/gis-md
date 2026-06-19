@@ -3,9 +3,12 @@
 #include "TerrainProvider.h"
 #include <nlohmann/json.hpp>
 #include <array>
+#include <atomic>
 #include <functional>
+#include <memory>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 namespace earth_engine {
 
@@ -46,6 +49,7 @@ public:
     bool supportsTile(const TileKey& key) const override;
     TileAvailabilityState availabilityState(const TileKey& key) const override;
     std::string buildUrl(const TileKey& key) const override;
+    int estimatedRequestFanout(const TileKey& key) const override;
 
     /// cesium-native: dynamically add availability from QM metadata
     void addAvailabilityRects(int level, const std::vector<std::array<int, 4>>& rects);
@@ -66,6 +70,8 @@ public:
                      HeightmapCallback callback,
                      HttpRequestPriority priority =
                          HttpRequestPriority::Normal) override;
+
+    ProviderRequestDiagnostics requestDiagnostics() const override;
 
     std::unique_ptr<DecodedHeightmap> decodeTile(
         const uint8_t* data, size_t len) override;
@@ -119,6 +125,34 @@ private:
     std::string buildUrlForLayer(const LayerConfig& layer,
                                  const TileKey& key) const;
     void syncLegacyFieldsFromPrimaryLayer();
+    void handleAsyncTileBody(
+        const TileKey& key,
+        std::vector<LayerAvailabilityRequest> availabilityRequests,
+        CancellationToken token,
+        HeightmapCallback callback,
+        HttpRequestPriority priority,
+        int statusCode,
+        std::vector<uint8_t> body,
+        bool usePlatformBridge);
+    void requestAsyncMetadataAndFinalize(
+        TileKey key,
+        std::shared_ptr<std::vector<LayerAvailabilityRequest>>
+            availabilityRequests,
+        std::shared_ptr<CancellationToken> token,
+        std::shared_ptr<HeightmapCallback> callback,
+        std::shared_ptr<std::vector<uint8_t>> body,
+        int statusCode,
+        HttpRequestPriority priority,
+        bool usePlatformBridge);
+    void finalizeAsyncTileRequest(
+        TileKey key,
+        std::shared_ptr<std::vector<LayerAvailabilityRequest>>
+            availabilityRequests,
+        std::shared_ptr<CancellationToken> token,
+        std::shared_ptr<HeightmapCallback> callback,
+        std::shared_ptr<std::vector<uint8_t>> body,
+        int statusCode,
+        std::vector<std::vector<uint8_t>> metadataBodies);
     std::vector<uint8_t> httpGet(
         const std::string& url,
         HttpRequestPriority priority = HttpRequestPriority::Normal,
@@ -138,6 +172,10 @@ private:
     int tileSize_ = 65;   // default 64×64 grid
     bool flipYForUrl_ = false;
     PlatformBridge* platformBridge_ = nullptr;
+    std::atomic<int> requestsStarted_{0};
+    std::atomic<int> requestsCompleted_{0};
+    std::atomic<int> activeWorkerBlockingRequests_{0};
+    std::atomic<int> peakWorkerBlockingRequests_{0};
 };
 
 } // namespace earth_engine

@@ -42,12 +42,12 @@ void GltfDrawCommandBuilder::build(
     TilesetTile& tile,
     RenderCommandList& commands,
     const GltfDrawCommandBuildContext& context) {
-    if (!tile.meshReady || tile.gltfPrimitiveResources.empty()) {
+    if (!tile.content.renderContent.hasGltfResources()) {
         return;
     }
 
-    for (GltfPrimitiveRenderResources& primitive :
-         tile.gltfPrimitiveResources) {
+    for (const GltfPrimitiveRenderResources& primitive :
+         tile.content.renderContent.gltfPrimitiveResourcesForDraw()) {
         if (!primitive.vertexBuffer || !primitive.indexBuffer ||
             primitive.indexCount <= 0) {
             continue;
@@ -69,10 +69,11 @@ void GltfDrawCommandBuilder::build(
         cmd.frameId = context.frameNumber;
         cmd.generation = context.generation;
         cmd.primitive = renderPrimitiveType(primitive.primitiveMode);
+        const Vec3& localOrigin = tile.content.renderContent.renderLocalOrigin();
         cmd.uniforms["u_modelOrigin"] = {
-            static_cast<float>(tile.localOrigin.x()),
-            static_cast<float>(tile.localOrigin.y()),
-            static_cast<float>(tile.localOrigin.z())};
+            static_cast<float>(localOrigin.x()),
+            static_cast<float>(localOrigin.y()),
+            static_cast<float>(localOrigin.z())};
         cmd.hasWorldSortCenter = true;
         cmd.worldSortCenter = {
             primitive.sortCenterEcef.x(),

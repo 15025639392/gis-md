@@ -10,9 +10,7 @@ void TileTerrainHeightRangePolicy::setTerrainHeightRange(
     TilesetTile& tile,
     double minimumHeight,
     double maximumHeight) {
-    tile.hasTerrainHeightRange = true;
-    tile.terrainMinimumHeight = minimumHeight;
-    tile.terrainMaximumHeight = maximumHeight;
+    tile.content.renderContent.setTerrainHeightRange(minimumHeight, maximumHeight);
 }
 
 void TileTerrainHeightRangePolicy::setDefaultTerrainHeightRange(
@@ -26,11 +24,11 @@ void TileTerrainHeightRangePolicy::setDefaultTerrainHeightRange(
 void TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
     TilesetTile& child,
     const TilesetTile& parent) {
-    if (parent.hasTerrainHeightRange) {
+    if (parent.content.renderContent.hasTerrainHeightRange()) {
         setTerrainHeightRange(
             child,
-            parent.terrainMinimumHeight,
-            parent.terrainMaximumHeight);
+            parent.content.renderContent.terrainMinimumHeight(),
+            parent.content.renderContent.terrainMaximumHeight());
     } else {
         setDefaultTerrainHeightRange(child);
     }
@@ -52,7 +50,7 @@ void TileTerrainHeightRangePolicy::applyMeshOrHeightmapRange(
 void TileTerrainHeightRangePolicy::inheritHeightRangeForUnreadyChildren(
     TilesetTile& parent) {
     for (TilesetTile* child : parent.children) {
-        if (child && !child->meshReady) {
+        if (child && !child->content.renderContent.isMeshReady()) {
             inheritTerrainHeightRange(*child, parent);
         }
     }

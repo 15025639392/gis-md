@@ -28,7 +28,28 @@ struct FrameResourceBudgetConfig {
     uint32_t maxTerrainContentNetworkInflight = 0;
     uint32_t maxRasterNetworkInflight = 0;
     uint32_t maxMainThreadFinalizesPerFrame = 1;
+    uint32_t maxTerminalStateTransitionsPerFrame = 64;
     uint32_t maxRasterUploadsPerFrame = 1;
+    double mainThreadTimeMs = 0.0;
+    bool interactionActive = false;
+    bool smoothingActive = false;
+};
+
+struct FrameResourceBudgetSnapshot {
+    uint64_t frameNumber = 0;
+    uint32_t networkRequestsIssued = 0;
+    uint32_t terrainContentNetworkRequestsIssued = 0;
+    uint32_t rasterNetworkRequestsIssued = 0;
+    uint32_t mainThreadFinalizesUsed = 0;
+    uint32_t terminalStateTransitionsUsed = 0;
+    uint32_t rasterUploadsUsed = 0;
+    uint32_t maxNetworkRequestsPerFrame = 0;
+    uint32_t maxTerrainContentNetworkRequestsPerFrame = 0;
+    uint32_t maxRasterNetworkRequestsPerFrame = 0;
+    uint32_t maxMainThreadFinalizesPerFrame = 0;
+    uint32_t maxTerminalStateTransitionsPerFrame = 0;
+    uint32_t maxRasterUploadsPerFrame = 0;
+    double mainThreadElapsedMs = 0.0;
     double mainThreadTimeMs = 0.0;
     bool interactionActive = false;
     bool smoothingActive = false;
@@ -71,6 +92,7 @@ public:
     }
     uint32_t rasterUploadsUsed() const { return rasterUploadsUsed_; }
     double mainThreadElapsedMs() const { return mainThreadElapsedMs_; }
+    FrameResourceBudgetSnapshot snapshot() const;
 
 private:
     static uint32_t positiveUnits(int estimatedUnits);
@@ -83,6 +105,7 @@ private:
     uint32_t terrainContentNetworkRequestsIssued_ = 0;
     uint32_t rasterNetworkRequestsIssued_ = 0;
     uint32_t mainThreadFinalizesUsed_ = 0;
+    uint32_t terminalStateTransitionsUsed_ = 0;
     uint32_t rasterUploadsUsed_ = 0;
     double mainThreadElapsedMs_ = 0.0;
 };

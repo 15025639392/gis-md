@@ -79,7 +79,7 @@ public:
                 TileCacheMetrics::estimateTileBytes(tile);
 
             const bool externalSubtreeHasActiveWork =
-                tile.contentKind == TileContentKind::External &&
+                tile.content.contentKind == TileContentKind::External &&
                 subtreeHasActiveContentWork(tile);
             if (TileUnloadPolicy::shouldDeferForReferences(
                     tile,

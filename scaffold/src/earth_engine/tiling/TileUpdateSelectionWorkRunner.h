@@ -31,6 +31,9 @@ struct TileUpdateSelectionWorkInput {
     const FrameState& frameState;
     uint64_t currentResourceRevision = 0;
     uint64_t currentOverlaySignature = 0;
+    TileSelectionReuseMode reuseMode = TileSelectionReuseMode::None;
+    TileSelectionReuseRejectReason reuseRejectReason =
+        TileSelectionReuseRejectReason::None;
     bool reusedSelection = false;
     double maximumScreenSpaceError = 16.0;
 };
@@ -39,6 +42,9 @@ struct TileUpdateSelectionWorkResult {
     double computeMs = 0.0;
     double prefetchMs = 0.0;
     double requestMs = 0.0;
+    TileSelectionReuseMode reuseMode = TileSelectionReuseMode::None;
+    TileSelectionReuseRejectReason reuseRejectReason =
+        TileSelectionReuseRejectReason::None;
     bool reusedSelection = false;
 };
 
@@ -55,7 +61,11 @@ public:
         EnsureTileFn&& ensureTile,
         RequestMissingTilesFn&& requestMissingTiles) {
         TileUpdateSelectionWorkResult result;
-        result.reusedSelection = input.reusedSelection;
+        result.reuseMode = input.reuseMode;
+        result.reuseRejectReason = input.reuseRejectReason;
+        result.reusedSelection =
+            input.reuseMode != TileSelectionReuseMode::None ||
+            input.reusedSelection;
 
         const double computeStartMs = perf::nowMs();
         if (input.reusedSelection) {

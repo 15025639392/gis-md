@@ -1,5 +1,8 @@
 #pragma once
 
+#include "../core/resources/FrameResourceBudget.h"
+#include "../providers/ProviderRequestDiagnostics.h"
+
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -21,6 +24,9 @@ struct TilesetLoadDiagnostics {
     int pendingContentRequests = 0;
     int pendingContentUploads = 0;
     int pendingContentTerminalResults = 0;
+    int rasterOverlayTilesLoading = 0;
+    int rasterSourceRequestsInFlight = 0;
+    int rasterPendingUploads = 0;
     int unloadQueueTiles = 0;
     int loadUnloadingTiles = 0;
     int loadFailedTemporarilyTiles = 0;
@@ -34,6 +40,10 @@ struct TilesetLoadDiagnostics {
     int contentExternalTiles = 0;
     int contentRenderTiles = 0;
     int missingRasterOverlayProjections = 0;
+    ProviderRequestDiagnostics terrainProviderRequests;
+    ProviderRequestDiagnostics contentProviderRequests;
+    ProviderRequestDiagnostics rasterProviderRequests;
+    FrameResourceBudgetSnapshot resourceBudget;
 
     int loadQueueTotal() const;
     int pendingTerrainTotal() const;
@@ -44,6 +54,7 @@ struct TileLoadDiagnosticsCollector {
     static TilesetLoadDiagnostics collect(
         const TileLoadQueue& loadQueue,
         const TileLoadLifecycle& loadLifecycle,
+        const FrameResourceBudget& resourceBudget,
         const TileUnloadQueue& unloadQueue,
         const std::unordered_map<
             std::string,

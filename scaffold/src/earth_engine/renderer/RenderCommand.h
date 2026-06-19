@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include "RenderDevice.h"  // for Texture/Buffer/ShaderProgram/Framebuffer forward decls
 
@@ -30,6 +31,9 @@ struct RenderCommand {
     RenderCommandKind kind = RenderCommandKind::Unknown;
     std::string owner;     // layer id（调试用）
     std::string pass;      // "depth" | "color" | "picking" | "shadow" | "postprocess"
+    // Stable identity for long-lived renderables. Transient commands leave this
+    // empty and are rebuilt directly into the frame list.
+    std::string stableKey;
     uint64_t frameId = 0;
     uint64_t generation = 0;
 
@@ -39,6 +43,10 @@ struct RenderCommand {
     Buffer* indexBuffer = nullptr;
     Buffer* instanceBuffer = nullptr;
     std::vector<Texture*> textures;
+    // Optional short-lived resource owners for raw pointers above. Commands can
+    // keep raster/content resources alive through submit without taking over
+    // renderer ownership.
+    std::vector<std::shared_ptr<const void>> resourceKeepAlive;
 
     // 绘制参数
     int vertexCount = 0;       // glDrawArrays 的顶点数（indexBuffer 为 null 时使用）

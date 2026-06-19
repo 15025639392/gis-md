@@ -41,12 +41,7 @@ public:
                 TileSelectionSummaryPolicy::planTile(
                     TileSelectionSummaryTileInput{
                         tile->key,
-                        tile->selectionState,
-                        tile->previousSelectionState,
-                        tile->screenSpaceError,
-                        tile->cameraInside,
-                        tile->inFrustum,
-                        tile->ancestorMeetsSse,
+                        tile->selectionFrameState,
                         isTileRenderable(*tile)});
             if (!summaryTilePlan.visited) continue;
 

@@ -8,33 +8,85 @@
 namespace earth_engine {
 
 struct TileFrameResourceBudgetPlanInput {
-    uint32_t maximumSimultaneousTileLoads = 20;
+    static constexpr uint32_t kDefaultMaximumSimultaneousTileLoads = 20;
+    static constexpr uint32_t kDefaultMaximumTransportActiveRequests = 20;
+
+    uint32_t maximumSimultaneousTileLoads =
+        kDefaultMaximumSimultaneousTileLoads;
+    uint32_t maximumTransportActiveRequests =
+        kDefaultMaximumTransportActiveRequests;
     double mainThreadLoadingTimeLimit = 0.0;
     bool interactionActive = false;
     bool resourceSmoothingActive = false;
+
+    static TileFrameResourceBudgetPlanInput withDefaultTransport(
+        uint32_t maximumSimultaneousTileLoads,
+        double mainThreadLoadingTimeLimit,
+        bool interactionActive,
+        bool resourceSmoothingActive) {
+        TileFrameResourceBudgetPlanInput input;
+        input.maximumSimultaneousTileLoads = maximumSimultaneousTileLoads;
+        input.mainThreadLoadingTimeLimit = mainThreadLoadingTimeLimit;
+        input.interactionActive = interactionActive;
+        input.resourceSmoothingActive = resourceSmoothingActive;
+        return input;
+    }
+
+    static TileFrameResourceBudgetPlanInput withTransportLimit(
+        uint32_t maximumSimultaneousTileLoads,
+        uint32_t maximumTransportActiveRequests,
+        double mainThreadLoadingTimeLimit,
+        bool interactionActive,
+        bool resourceSmoothingActive) {
+        TileFrameResourceBudgetPlanInput input =
+            withDefaultTransport(
+                maximumSimultaneousTileLoads,
+                mainThreadLoadingTimeLimit,
+                interactionActive,
+                resourceSmoothingActive);
+        input.maximumTransportActiveRequests = maximumTransportActiveRequests;
+        return input;
+    }
 };
 
 class TileFrameResourceBudgetPlanner {
 public:
+    static uint32_t rasterNetworkRequestLimit(
+        uint32_t maximumSimultaneousTileLoads,
+        uint32_t maximumTransportActiveRequests) {
+        constexpr uint32_t kMinimumRectangleFanoutBudget = 32u;
+        const uint32_t rectangleFanoutBudget = std::max(
+            kMinimumRectangleFanoutBudget,
+            maximumSimultaneousTileLoads);
+        if (maximumTransportActiveRequests == 0) {
+            return rectangleFanoutBudget;
+        }
+        return std::min(rectangleFanoutBudget, maximumTransportActiveRequests);
+    }
+
     static FrameResourceBudgetConfig plan(
         const TileFrameResourceBudgetPlanInput& input) {
         FrameResourceBudgetConfig config;
+        const uint32_t rasterNetworkLimit =
+            rasterNetworkRequestLimit(
+                input.maximumSimultaneousTileLoads,
+                input.maximumTransportActiveRequests);
         config.maxNetworkRequestsPerFrame =
             input.maximumSimultaneousTileLoads;
         config.maxTerrainContentNetworkRequestsPerFrame =
             input.maximumSimultaneousTileLoads;
-        config.maxRasterNetworkRequestsPerFrame =
-            std::max<uint32_t>(
-                64u,
-                input.maximumSimultaneousTileLoads * 4u);
+        config.maxRasterNetworkRequestsPerFrame = rasterNetworkLimit;
         config.maxNetworkInflight = input.maximumSimultaneousTileLoads;
         config.maxTerrainContentNetworkInflight =
             input.maximumSimultaneousTileLoads;
-        config.maxRasterNetworkInflight =
-            config.maxRasterNetworkRequestsPerFrame;
+        config.maxRasterNetworkInflight = rasterNetworkLimit;
         config.maxMainThreadFinalizesPerFrame =
             input.resourceSmoothingActive ? 1u
                                           : input.maximumSimultaneousTileLoads;
+        config.maxTerminalStateTransitionsPerFrame =
+            input.resourceSmoothingActive
+                ? std::max<uint32_t>(1u, input.maximumSimultaneousTileLoads / 2u)
+                : std::max<uint32_t>(1u, input.maximumSimultaneousTileLoads);
         config.maxRasterUploadsPerFrame =
             input.resourceSmoothingActive
                 ? std::min<uint32_t>(

@@ -89,7 +89,8 @@ public:
             TilePendingLoadProcessorInput{
                 input.loadLifecycle,
                 input.budget,
-                input.interactionActive},
+                input.interactionActive,
+                {}},
             processTerrainTerminalResult,
             processContentTerminalResult,
             processTerrainUpload,

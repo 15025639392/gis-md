@@ -1,0 +1,95 @@
+#include "TileMeshPreparationManager.h"
+
+#include "TileCacheKey.h"
+#include "TileContentCacheManager.h"
+#include "TileContentLifecycleManager.h"
+#include "TileLoadQueue.h"
+#include "TileMeshFrameEnsurer.h"
+#include "RasterMappedToTilesetTile.h"
+#include "TileSelectionRasterOverlayPreparer.h"
+#include "TileSelectionReuseState.h"
+#include "TileUpsampleSourcePreparer.h"
+#include "TilesetTile.h"
+#include "../providers/QuantizedMeshTerrainProvider.h"
+
+namespace earth_engine {
+
+TileMeshPreparationManager::TileMeshPreparationManager(
+    TileContentLifecycleManager& contentLifecycle,
+    TileContentCacheManager& contentCache,
+    TileSelectionReuseState& selectionReuseState,
+    TileLoadQueue& loadQueue,
+    TerrainProvider* terrainProvider,
+    RenderDevice* device,
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays)
+    : contentLifecycle_(contentLifecycle),
+      contentCache_(contentCache),
+      selectionReuseState_(selectionReuseState),
+      loadQueue_(loadQueue),
+      terrainProvider_(terrainProvider),
+      device_(device),
+      rasterOverlays_(rasterOverlays) {}
+
+void TileMeshPreparationManager::ensureTileMesh(TilesetTile& tile) {
+    TileMeshFrameEnsurer::ensure(
+        TileMeshFrameEnsureInput{
+            tile,
+            contentLifecycle_.terrainCache(),
+            device_,
+            terrainProvider_ != nullptr},
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [this](const TileKey& key, DecodedHeightmap& heightmap) {
+            TileQuantizedMeshAvailabilityIngestor::ingest(
+                terrainProvider_,
+                key,
+                heightmap);
+        },
+        [](const TilesetTile& sourceTile, bool allowUnloadingSource) {
+            return TileUpsampleSourcePreparer::findSourceTile(
+                sourceTile,
+                allowUnloadingSource);
+        },
+        [this](TilesetTile& ancestor) {
+            ensureTileMesh(ancestor);
+        },
+        [this](const TilesetTile& renderableTile) {
+            return TileSelectionRasterOverlayPreparer::isCompleteRenderable(
+                renderableTile,
+                rasterOverlays_);
+        },
+        [this]() {
+            markResourcesDirty();
+        });
+}
+
+bool TileMeshPreparationManager::prepareUpsampleSourceTile(
+    TilesetTile& tile,
+    double priority) {
+    return TileUpsampleSourcePreparer::prepareSourceTile(
+        tile,
+        priority,
+        [this](TilesetTile& ancestor) {
+            ensureTileMesh(ancestor);
+        },
+        [this](const TileKey& key,
+               TileLoadPriorityGroup group,
+               double queuePriority) {
+            queueTileLoad(key, group, queuePriority);
+        });
+}
+
+void TileMeshPreparationManager::markResourcesDirty() {
+    contentCache_.markResourcesDirty();
+    selectionReuseState_.invalidate();
+}
+
+void TileMeshPreparationManager::queueTileLoad(
+    const TileKey& key,
+    TileLoadPriorityGroup group,
+    double priority) {
+    loadQueue_.queue(key, group, priority);
+}
+
+} // namespace earth_engine

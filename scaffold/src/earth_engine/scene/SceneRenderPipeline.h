@@ -1,7 +1,9 @@
 #pragma once
 
+#include "Diagnostics.h"
 #include "FrameState.h"
 #include "../renderer/RenderCommand.h"
+#include "../renderer/RenderCommandStreamingSet.h"
 
 #include <functional>
 #include <memory>
@@ -23,8 +25,13 @@ class VectorLayer;
 /// diagnostics, and submits the frame.
 class SceneRenderPipeline {
 public:
+    struct Result {
+        Diagnostics diagnostics;
+    };
+
     struct Context {
         FrameState& frameState;
+        Diagnostics diagnostics;
         Renderer& renderer;
         RenderCommandList& commands;
         SkyBox* skyBox = nullptr;
@@ -36,14 +43,16 @@ public:
         std::function<void()> beforeSubmit;
     };
 
-    void render(Context context);
+    Result render(Context context);
 
 private:
     void reserveCommands(Context& context) const;
+    RenderCommandList buildStableLayerCommands(Context& context,
+                                               double& layerCommandsMs);
     void buildSkyCommands(Context& context, double& skyMs) const;
     void buildAtmosphereCommands(Context& context, double& atmosphereMs) const;
     void buildLayerCommands(Context& context,
-                            double& layerCommandsMs,
+                            const RenderCommandList& stableLayerCommands,
                             double& fallbackGlobeMs,
                             double& vectorCommandsMs) const;
     void applyMvpUniforms(Context& context, double& mvpUniformsMs) const;
@@ -53,6 +62,9 @@ private:
                          double& validateMs) const;
     void aggregateDiagnostics(Context& context, double& diagnosticsMs) const;
     void releaseRenderReferences(Context& context) const;
+
+    RenderCommandStreamingSet tileCommandSet_;
+    RenderCommandList tileCommandCandidates_;
 };
 
 } // namespace earth_engine

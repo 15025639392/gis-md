@@ -24,6 +24,7 @@ SurfaceRasterBinding chooseSurfaceRasterBinding(
 
     SurfaceRasterBinding binding;
     binding.tile = readyTile;
+    binding.tileHandle = mapped->getReadyTileHandle();
     binding.offsetU = mapped->getTranslationU();
     binding.offsetV = mapped->getTranslationV();
     binding.scaleU = mapped->getScaleU();

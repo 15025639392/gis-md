@@ -53,7 +53,9 @@ void SurfaceTileDrawCommandBuilder::build(
     SurfaceRasterBinding baseBinding;
     std::optional<size_t> baseOverlayIndex;
 
-    for (size_t i = 0; i < overlays.size() && i < tile.rasterOverlays.size(); ++i) {
+    for (size_t i = 0;
+         i < overlays.size() && i < tile.rasterOverlayState.mappingCount();
+         ++i) {
         auto* activeOverlay = overlays[i];
         if (!activeOverlay || !activeOverlay->visible() ||
             activeOverlay->getOverlay().role() != RasterOverlayRole::BaseImagery) {
@@ -61,7 +63,7 @@ void SurfaceTileDrawCommandBuilder::build(
         }
 
         const RasterMappedToTilesetTile* mapped =
-            tile.rasterOverlays[i].get();
+            tile.rasterOverlayState.mappingAt(i);
         const SurfaceRasterBinding binding =
             chooseSurfaceRasterBinding(mapped);
         if (overlayBindingAllowedByPolicy(activeOverlay, mapped, binding)) {
@@ -72,18 +74,19 @@ void SurfaceTileDrawCommandBuilder::build(
         }
     }
 
-    if (!baseTexture || !tile.mesh) {
+    const SurfaceTileMesh* mesh = tile.content.renderContent.surfaceMesh();
+    if (!baseTexture || !mesh) {
         return;
     }
 
-    const int meshIndexCount = static_cast<int>(tile.mesh->indices.size());
+    const int meshIndexCount = static_cast<int>(mesh->indices.size());
     int surfaceIndexOffset = 0;
     int surfaceIndexCount = meshIndexCount;
-    const SkirtMetadata& skirt = tile.mesh->skirtMeta;
+    const SkirtMetadata& skirt = mesh->skirtMeta;
     if (skirt.noSkirtIndicesCount > 0 &&
-        skirt.noSkirtIndicesBegin < tile.mesh->indices.size() &&
+        skirt.noSkirtIndicesBegin < mesh->indices.size() &&
         skirt.noSkirtIndicesBegin + skirt.noSkirtIndicesCount <=
-            tile.mesh->indices.size()) {
+            mesh->indices.size()) {
         surfaceIndexOffset =
             static_cast<int>(skirt.noSkirtIndicesBegin * sizeof(uint32_t));
         surfaceIndexCount = static_cast<int>(skirt.noSkirtIndicesCount);
@@ -91,8 +94,8 @@ void SurfaceTileDrawCommandBuilder::build(
 
     RenderCommand surfaceCommand = renderer.makeSurfaceTileCommand(
         baseTexture,
-        tile.gpuVertexBuffer.get(),
-        tile.gpuIndexBuffer.get(),
+        tile.content.renderContent.surfaceVertexBuffer(),
+        tile.content.renderContent.surfaceIndexBuffer(),
         surfaceIndexCount);
     surfaceCommand.indexOffset = surfaceIndexOffset;
     surfaceCommand.frameId = context.frameNumber;
@@ -102,6 +105,10 @@ void SurfaceTileDrawCommandBuilder::build(
     surfaceCommand.surfaceSkirtIndexCount =
         std::max(0, meshIndexCount - surfaceIndexCount);
     if (baseBinding.tile) {
+        if (baseBinding.tileHandle) {
+            surfaceCommand.resourceKeepAlive.push_back(
+                baseBinding.tileHandle);
+        }
         surfaceCommand.surfaceBaseRasterState =
             static_cast<int>(baseBinding.tile->getState());
         surfaceCommand.surfaceBaseIsRectangleTile =
@@ -122,10 +129,11 @@ void SurfaceTileDrawCommandBuilder::build(
     surfaceCommand.surfaceTextureZoom = baseBinding.tile
         ? rasterTextureSourceZoom(baseBinding.tile)
         : -1;
+    const Vec3& localOrigin = tile.content.renderContent.renderLocalOrigin();
     surfaceCommand.surfaceTileOrigin = {
-        static_cast<float>(tile.localOrigin.x()),
-        static_cast<float>(tile.localOrigin.y()),
-        static_cast<float>(tile.localOrigin.z())};
+        static_cast<float>(localOrigin.x()),
+        static_cast<float>(localOrigin.y()),
+        static_cast<float>(localOrigin.z())};
     surfaceCommand.surfaceTileOpacity = 1.0f;
     surfaceCommand.surfaceTransitionOpacity = context.transitionOpacity;
     if (context.transitionOpacity < 0.999f) {
@@ -137,7 +145,9 @@ void SurfaceTileDrawCommandBuilder::build(
     surfaceCommand.surfaceGeneration = static_cast<float>(context.generation);
 
     int overlayTextureCount = 0;
-    for (size_t i = 0; i < overlays.size() && i < tile.rasterOverlays.size(); ++i) {
+    for (size_t i = 0;
+         i < overlays.size() && i < tile.rasterOverlayState.mappingCount();
+         ++i) {
         auto* activeOverlay = overlays[i];
         if (!activeOverlay || !activeOverlay->visible()) {
             continue;
@@ -146,7 +156,7 @@ void SurfaceTileDrawCommandBuilder::build(
             continue;
         }
         const RasterMappedToTilesetTile* mapped =
-            tile.rasterOverlays[i].get();
+            tile.rasterOverlayState.mappingAt(i);
         const SurfaceRasterBinding binding =
             chooseSurfaceRasterBinding(mapped);
         if (!overlayBindingAllowedByPolicy(
@@ -163,6 +173,9 @@ void SurfaceTileDrawCommandBuilder::build(
         }
 
         surfaceCommand.textures.push_back(tex);
+        if (binding.tileHandle) {
+            surfaceCommand.resourceKeepAlive.push_back(binding.tileHandle);
+        }
         surfaceCommand.surfaceOverlayTileUvs[overlayTextureCount] = {
             binding.offsetU,
             binding.offsetV,

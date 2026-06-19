@@ -29,10 +29,12 @@ int TilesetLoadDiagnostics::pendingContentTotal() const {
 TilesetLoadDiagnostics TileLoadDiagnosticsCollector::collect(
     const TileLoadQueue& loadQueue,
     const TileLoadLifecycle& loadLifecycle,
+    const FrameResourceBudget& resourceBudget,
     const TileUnloadQueue& unloadQueue,
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>&
         tiles) {
     TilesetLoadDiagnostics diag;
+    diag.resourceBudget = resourceBudget.snapshot();
 
     for (const TileLoadRequest& request : loadQueue) {
         switch (request.group) {
@@ -68,7 +70,7 @@ TilesetLoadDiagnostics TileLoadDiagnosticsCollector::collect(
     for (const auto& [cacheKey, tile] : tiles) {
         if (!tile) continue;
 
-        switch (tile->loadState) {
+        switch (tile->content.loadState) {
             case TileLoadState::Unloading:
                 ++diag.loadUnloadingTiles;
                 break;
@@ -92,7 +94,7 @@ TilesetLoadDiagnostics TileLoadDiagnosticsCollector::collect(
                 break;
         }
 
-        switch (tile->contentKind) {
+        switch (tile->content.contentKind) {
             case TileContentKind::Unknown:
                 ++diag.contentUnknownTiles;
                 break;
@@ -108,7 +110,7 @@ TilesetLoadDiagnostics TileLoadDiagnosticsCollector::collect(
         }
 
         diag.missingRasterOverlayProjections +=
-            static_cast<int>(tile->missingRasterOverlayProjections.size());
+            tile->rasterOverlayState.missingProjectionCount();
         (void)cacheKey;
     }
 

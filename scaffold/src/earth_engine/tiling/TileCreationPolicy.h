@@ -39,7 +39,7 @@ struct TileCreationPolicy {
             tile.viewerRequestVolume = metadata->viewerRequestVolume;
             tile.contentBoundingVolume = metadata->contentBoundingVolume;
         }
-        tile.rasterOverlays.resize(rasterOverlayCount);
+        tile.rasterOverlayState.ensureMappingSlots(rasterOverlayCount);
         initializeTerrainHeightRange(tile, metadata, parent);
     }
 

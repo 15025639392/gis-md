@@ -19,9 +19,7 @@ bool TileRasterOverlayReadinessPolicy::requiredOverlaysReady(
             !activeOverlay->getOverlay().blocksCompleteRenderable()) {
             continue;
         }
-        if (i >= tile.rasterOverlays.size() ||
-            !tile.rasterOverlays[i] ||
-            tile.rasterOverlays[i]->getReadyTile() == nullptr) {
+        if (!tile.rasterOverlayState.hasReadyMapping(i)) {
             return false;
         }
     }

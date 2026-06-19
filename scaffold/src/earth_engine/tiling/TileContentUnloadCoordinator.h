@@ -24,11 +24,11 @@ public:
             terrainCache,
         TileEmptyContentRegistry& emptyContentRegistry,
         IPrepareRendererResources* pPrepRenderer) {
-        if (tile.loadState == TileLoadState::Unloaded) {
+        if (tile.content.loadState == TileLoadState::Unloaded) {
             return TileCacheUnloadContentResult::Remove;
         }
 
-        if (tile.loadState == TileLoadState::ContentLoading) {
+        if (tile.content.loadState == TileLoadState::ContentLoading) {
             return TileCacheUnloadContentResult::Keep;
         }
 
@@ -38,21 +38,21 @@ public:
 
         TileCacheUnloadContentResult result =
             TileCacheUnloadContentResult::Remove;
-        switch (tile.contentKind) {
+        switch (tile.content.contentKind) {
             case TileContentKind::External:
                 result = TileCacheUnloadContentResult::RemoveAndClearChildren;
                 break;
             case TileContentKind::Render:
-                if (tile.loadState != TileLoadState::Unloading &&
+                if (tile.content.loadState != TileLoadState::Unloading &&
                     TileUnloadPolicy::hasContentLoadingUpsampledDescendant(
                         tile)) {
                     TileUnloadPolicy::
                         releaseMainThreadRenderResourcesForProtectedUnload(
                             tile);
-                    tile.loadState = TileLoadState::Unloading;
+                    tile.markContentUnloading();
                     return TileCacheUnloadContentResult::Keep;
                 }
-                if (tile.loadState == TileLoadState::Unloading &&
+                if (tile.content.loadState == TileLoadState::Unloading &&
                     TileUnloadPolicy::hasContentLoadingUpsampledDescendant(
                         tile)) {
                     return TileCacheUnloadContentResult::Keep;

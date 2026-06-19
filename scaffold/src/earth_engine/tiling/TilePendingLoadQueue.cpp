@@ -185,13 +185,68 @@ TilePendingLoadQueue::takeHighestPriorityContentTerminalResult() {
     return result;
 }
 
+std::optional<PendingTerminalResult>
+TilePendingLoadQueue::takeHighestPriorityTerminalResult(
+    FrameResourceBudget& budget) {
+    auto bestTerrainIt = terrainTerminalResults_.end();
+    if (!terrainTerminalResults_.empty()) {
+        bestTerrainIt = TileLoadPriorityPolicy::selectHighestPriority(
+            terrainTerminalResults_.begin(),
+            terrainTerminalResults_.end());
+    }
+
+    auto bestContentIt = contentTerminalResults_.end();
+    if (!contentTerminalResults_.empty()) {
+        bestContentIt = TileLoadPriorityPolicy::selectHighestPriority(
+            contentTerminalResults_.begin(),
+            contentTerminalResults_.end());
+    }
+
+    const bool useContent =
+        bestContentIt != contentTerminalResults_.end() &&
+        (bestTerrainIt == terrainTerminalResults_.end() ||
+         TileLoadPriorityPolicy::hasHigherPriority(
+             bestContentIt->group,
+             bestContentIt->priority,
+             bestTerrainIt->group,
+             bestTerrainIt->priority));
+
+    if (useContent) {
+        if (!budget.tryFinalize(
+                FrameResourceLane::TerminalState,
+                TileLoadPriorityPolicy::toFramePriority(
+                    bestContentIt->group))) {
+            return std::nullopt;
+        }
+        PendingTerminalResult result;
+        result.kind = PendingTerminalResultKind::Content;
+        result.contentResult.emplace(std::move(*bestContentIt));
+        contentTerminalResults_.erase(bestContentIt);
+        return result;
+    }
+
+    if (bestTerrainIt == terrainTerminalResults_.end()) {
+        return std::nullopt;
+    }
+    if (!budget.tryFinalize(
+            FrameResourceLane::TerminalState,
+            TileLoadPriorityPolicy::toFramePriority(bestTerrainIt->group))) {
+        return std::nullopt;
+    }
+    PendingTerminalResult result;
+    result.kind = PendingTerminalResultKind::Terrain;
+    result.terrainResult.emplace(std::move(*bestTerrainIt));
+    terrainTerminalResults_.erase(bestTerrainIt);
+    return result;
+}
+
 std::optional<PendingLoadFinalize>
 TilePendingLoadQueue::takeHighestPriorityUpload(
-    bool interactionActive,
-    FrameResourceBudget& budget) {
+    PendingLoadFinalizeContext context) {
     auto bestTerrainIt = terrainUploads_.end();
     for (auto it = terrainUploads_.begin(); it != terrainUploads_.end(); ++it) {
-        if (interactionActive && it->group != TileLoadPriorityGroup::Urgent) {
+        if (context.interactionActive &&
+            it->group != TileLoadPriorityGroup::Urgent) {
             continue;
         }
         if (bestTerrainIt == terrainUploads_.end() ||
@@ -206,7 +261,8 @@ TilePendingLoadQueue::takeHighestPriorityUpload(
 
     auto bestContentIt = contentUploads_.end();
     for (auto it = contentUploads_.begin(); it != contentUploads_.end(); ++it) {
-        if (interactionActive && it->group != TileLoadPriorityGroup::Urgent) {
+        if (context.interactionActive &&
+            it->group != TileLoadPriorityGroup::Urgent) {
             continue;
         }
         if (bestContentIt == contentUploads_.end() ||
@@ -228,7 +284,7 @@ TilePendingLoadQueue::takeHighestPriorityUpload(
              bestTerrainIt->group,
              bestTerrainIt->priority));
     if (useContent) {
-        if (!budget.tryFinalize(
+        if (!context.budget.tryFinalize(
                 FrameResourceLane::ContentFinalize,
                 TileLoadPriorityPolicy::toFramePriority(
                     bestContentIt->group))) {
@@ -244,7 +300,7 @@ TilePendingLoadQueue::takeHighestPriorityUpload(
     if (bestTerrainIt == terrainUploads_.end()) {
         return std::nullopt;
     }
-    if (!budget.tryFinalize(
+    if (!context.budget.tryFinalize(
             FrameResourceLane::TerrainFinalize,
             TileLoadPriorityPolicy::toFramePriority(bestTerrainIt->group))) {
         return std::nullopt;
@@ -254,6 +310,14 @@ TilePendingLoadQueue::takeHighestPriorityUpload(
     finalize.terrainUpload.emplace(std::move(*bestTerrainIt));
     terrainUploads_.erase(bestTerrainIt);
     return finalize;
+}
+
+std::optional<PendingLoadFinalize>
+TilePendingLoadQueue::takeHighestPriorityUpload(
+    bool interactionActive,
+    FrameResourceBudget& budget) {
+    return takeHighestPriorityUpload(
+        PendingLoadFinalizeContext{interactionActive, budget});
 }
 
 } // namespace earth_engine

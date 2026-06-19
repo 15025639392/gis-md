@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TilesetContentLifecycleCoordinator.h"
 #include "TileRasterOverlayFrameProcessor.h"
 #include "../core/resources/FrameResourceBudget.h"
 #include "../layers/ActivatedRasterOverlay.h"
@@ -53,6 +54,35 @@ public:
         result.rasterUploadsProcessed = rasterUploadResult.processedUploads;
 
         return result;
+    }
+
+    template <typename EnsureTileFn,
+              typename EnsureTileChildrenFn,
+              typename EnsureTileMeshFn,
+              typename MarkResourcesDirtyFn>
+    static TileUpdateUploadRunResult runContentLifecycle(
+        TileUpdateUploadRunInput input,
+        TilesetContentLifecycleContext contentContext,
+        EnsureTileFn&& ensureTile,
+        EnsureTileChildrenFn&& ensureTileChildren,
+        EnsureTileMeshFn&& ensureTileMesh,
+        MarkResourcesDirtyFn&& markResourcesDirty) {
+        return run(
+            input,
+            [&](bool uploadInteractionActive,
+                bool uploadResourceSmoothingActive,
+                FrameResourceBudget* budget) {
+                return TilesetContentLifecycleCoordinator::processPendingUploads(
+                    contentContext,
+                    uploadInteractionActive,
+                    uploadResourceSmoothingActive,
+                    budget,
+                    ensureTile,
+                    ensureTileChildren,
+                    ensureTileMesh,
+                    markResourcesDirty);
+            },
+            markResourcesDirty);
     }
 };
 

@@ -13,6 +13,7 @@ void FrameResourceBudget::beginFrame(
     terrainContentNetworkRequestsIssued_ = 0;
     rasterNetworkRequestsIssued_ = 0;
     mainThreadFinalizesUsed_ = 0;
+    terminalStateTransitionsUsed_ = 0;
     rasterUploadsUsed_ = 0;
     mainThreadElapsedMs_ = 0.0;
 }
@@ -96,7 +97,8 @@ bool FrameResourceBudget::canFinalize(FrameResourceLane lane,
             return mainThreadFinalizesUsed_ + units <=
                    config_.maxMainThreadFinalizesPerFrame;
         case FrameResourceLane::TerminalState:
-            return true;
+            return terminalStateTransitionsUsed_ + units <=
+                   config_.maxTerminalStateTransitionsPerFrame;
         case FrameResourceLane::TerrainRequest:
         case FrameResourceLane::ContentRequest:
         case FrameResourceLane::RasterRequest:
@@ -122,6 +124,8 @@ bool FrameResourceBudget::tryFinalize(FrameResourceLane lane,
             mainThreadFinalizesUsed_ += units;
             break;
         case FrameResourceLane::TerminalState:
+            terminalStateTransitionsUsed_ += units;
+            break;
         case FrameResourceLane::TerrainRequest:
         case FrameResourceLane::ContentRequest:
         case FrameResourceLane::RasterRequest:
@@ -137,6 +141,34 @@ void FrameResourceBudget::recordElapsed(FrameResourceLane, double elapsedMs) {
 bool FrameResourceBudget::mainThreadTimeExpired() const {
     return config_.mainThreadTimeMs > 0.0 &&
            mainThreadElapsedMs_ >= config_.mainThreadTimeMs;
+}
+
+FrameResourceBudgetSnapshot FrameResourceBudget::snapshot() const {
+    FrameResourceBudgetSnapshot snapshot;
+    snapshot.frameNumber = frameNumber_;
+    snapshot.networkRequestsIssued = networkRequestsIssued_;
+    snapshot.terrainContentNetworkRequestsIssued =
+        terrainContentNetworkRequestsIssued_;
+    snapshot.rasterNetworkRequestsIssued = rasterNetworkRequestsIssued_;
+    snapshot.mainThreadFinalizesUsed = mainThreadFinalizesUsed_;
+    snapshot.terminalStateTransitionsUsed = terminalStateTransitionsUsed_;
+    snapshot.rasterUploadsUsed = rasterUploadsUsed_;
+    snapshot.maxNetworkRequestsPerFrame =
+        config_.maxNetworkRequestsPerFrame;
+    snapshot.maxTerrainContentNetworkRequestsPerFrame =
+        networkRequestLimit(FrameResourceLane::TerrainRequest);
+    snapshot.maxRasterNetworkRequestsPerFrame =
+        networkRequestLimit(FrameResourceLane::RasterRequest);
+    snapshot.maxMainThreadFinalizesPerFrame =
+        config_.maxMainThreadFinalizesPerFrame;
+    snapshot.maxTerminalStateTransitionsPerFrame =
+        config_.maxTerminalStateTransitionsPerFrame;
+    snapshot.maxRasterUploadsPerFrame = config_.maxRasterUploadsPerFrame;
+    snapshot.mainThreadElapsedMs = mainThreadElapsedMs_;
+    snapshot.mainThreadTimeMs = config_.mainThreadTimeMs;
+    snapshot.interactionActive = config_.interactionActive;
+    snapshot.smoothingActive = config_.smoothingActive;
+    return snapshot;
 }
 
 uint32_t FrameResourceBudget::positiveUnits(int estimatedUnits) {

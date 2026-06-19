@@ -3,6 +3,7 @@
 #include "TileRenderEntryCommandBuilder.h"
 #include "TileRenderFrameMaintenance.h"
 #include "TileSelectionCounters.h"
+#include "TileSelectionReusePolicy.h"
 
 #include <array>
 #include <cstddef>
@@ -22,6 +23,9 @@ struct TileUpdateDebugLogInput {
     size_t terrainCacheSize = 0;
     size_t pendingRequestCount = 0;
     TileSelectionCounters selectionCounters;
+    TileSelectionReuseMode reuseMode = TileSelectionReuseMode::None;
+    TileSelectionReuseRejectReason reuseRejectReason =
+        TileSelectionReuseRejectReason::None;
     bool reusedSelection = false;
     int rasterUploadsProcessed = 0;
     bool interactionActive = false;
@@ -51,7 +55,7 @@ public:
         std::snprintf(
             detail.data(),
             detail.size(),
-            "render=%zu load=%zu selector=%.2f prefetch=%.2f request=%.2f terrainUpload=%.2f rasterUpload=%.2f cache=%zu pending=%zu visited=%d culled=%d culledVisited=%d fog=%d occluded=%d occWait=%d kicked=%d notReady=%d reused=%d rasterUploads=%d interaction=%d smoothing=%d",
+            "render=%zu load=%zu selector=%.2f prefetch=%.2f request=%.2f terrainUpload=%.2f rasterUpload=%.2f cache=%zu pending=%zu visited=%d culled=%d culledVisited=%d fog=%d occluded=%d occWait=%d kicked=%d notReady=%d reused=%d reuseMode=%d reuseReject=%d rasterUploads=%d interaction=%d smoothing=%d",
             input.renderTileCount,
             input.loadRequestCount,
             input.selectorMs,
@@ -70,6 +74,8 @@ public:
             input.selectionCounters.kicked,
             input.selectionCounters.notYetRenderable,
             input.reusedSelection ? 1 : 0,
+            static_cast<int>(input.reuseMode),
+            static_cast<int>(input.reuseRejectReason),
             input.rasterUploadsProcessed,
             input.interactionActive ? 1 : 0,
             input.resourceSmoothingActive ? 1 : 0);

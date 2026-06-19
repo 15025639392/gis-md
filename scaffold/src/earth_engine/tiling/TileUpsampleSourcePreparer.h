@@ -15,13 +15,13 @@ public:
         const TilesetTile* ancestor = tile.parent;
         while (ancestor) {
             const bool sourceStateReady =
-                ancestor->loadState == TileLoadState::Done ||
+                ancestor->content.loadState == TileLoadState::Done ||
                 (allowUnloadingSource &&
-                 ancestor->loadState == TileLoadState::Unloading);
+                 ancestor->content.loadState == TileLoadState::Unloading);
             if (sourceStateReady &&
-                ancestor->contentKind == TileContentKind::Render &&
-                ancestor->meshReady &&
-                ancestor->mesh) {
+                ancestor->content.contentKind == TileContentKind::Render &&
+                ancestor->content.renderContent.isMeshReady() &&
+                ancestor->content.renderContent.hasTerrainMesh()) {
                 return ancestor;
             }
             ancestor = ancestor->parent;
@@ -42,17 +42,17 @@ public:
         for (TilesetTile* ancestor = tile.parent;
              ancestor;
              ancestor = ancestor->parent) {
-            if ((ancestor->loadState == TileLoadState::ContentLoaded ||
-                 ancestor->loadState == TileLoadState::Done) &&
-                ancestor->contentKind == TileContentKind::Render) {
+            if ((ancestor->content.loadState == TileLoadState::ContentLoaded ||
+                 ancestor->content.loadState == TileLoadState::Done) &&
+                ancestor->content.contentKind == TileContentKind::Render) {
                 ensureTileMesh(*ancestor);
                 if (findSourceTile(tile)) {
                     return true;
                 }
             }
 
-            if (ancestor->loadState == TileLoadState::Unloaded ||
-                ancestor->loadState == TileLoadState::FailedTemporarily) {
+            if (ancestor->content.loadState == TileLoadState::Unloaded ||
+                ancestor->content.loadState == TileLoadState::FailedTemporarily) {
                 queueTileLoad(
                     ancestor->key,
                     TileLoadPriorityGroup::Urgent,
@@ -60,8 +60,8 @@ public:
                 return false;
             }
 
-            if (ancestor->loadState == TileLoadState::ContentLoading ||
-                ancestor->loadState == TileLoadState::Unloading) {
+            if (ancestor->content.loadState == TileLoadState::ContentLoading ||
+                ancestor->content.loadState == TileLoadState::Unloading) {
                 return false;
             }
         }

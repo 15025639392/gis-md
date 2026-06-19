@@ -3,18 +3,14 @@
 #include "../providers/RasterOverlayTileProvider.h"
 #include "../renderer/IPrepareRendererResources.h"
 #include "../tiling/TileSurface.h"
-#include "TileBoundingVolume.h"
 #include "TilesetTile.h"
+#include "TileBoundingVolume.h"
 #include "TileKey.h"
 
 #include <algorithm>
 #include <cmath>
 #include <memory>
 #include <optional>
-
-#ifdef __ANDROID__
-#include <android/log.h>
-#endif
 
 namespace earth_engine {
 namespace {
@@ -54,37 +50,26 @@ bool hasSameOverlayOwner(const RasterOverlayTile& candidate,
 std::shared_ptr<RasterOverlayTile> findTileOverlay(
     const TilesetTile& tile,
     const RasterOverlayTileProvider& provider) {
-    for (const auto& mapped : tile.rasterOverlays) {
-        if (!mapped) continue;
+    std::shared_ptr<RasterOverlayTile> result;
+    tile.rasterOverlayState.forEachMapping([&](const auto* mapped) {
+        if (result) return;
+        if (!mapped) return;
 
         std::shared_ptr<RasterOverlayTile> readyTile =
             mapped->getReadyTileHandle();
-#ifdef __ANDROID__
-        // Android lifetime guard: parent mappings can retain raw pointers to
-        // provider tiles that have already been trimmed.
-        if (readyTile &&
-            !RasterOverlayTileProvider::isLiveTileForLifetimeGuard(readyTile.get())) {
-            continue;
-        }
-#endif
         if (!readyTile || !hasSameOverlayOwner(*readyTile, provider)) {
-            continue;
+            return;
         }
 
         std::shared_ptr<RasterOverlayTile> loadingTile =
             mapped->getLoadingTileHandle();
-#ifdef __ANDROID__
-        if (loadingTile &&
-            !RasterOverlayTileProvider::isLiveTileForLifetimeGuard(loadingTile.get())) {
-            loadingTile = nullptr;
-        }
-#endif
         if (loadingTile) {
-            return loadingTile;
+            result = loadingTile;
+            return;
         }
-        return readyTile;
-    }
-    return nullptr;
+        result = readyTile;
+    });
+    return result;
 }
 
 const Rectangle* findRectangleForProjection(
@@ -136,45 +121,6 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
     // cesium-native: store geometry key + overlay slot for attach/detach.
     geometryKey_ = geometryKey;
     overlaySlot_ = static_cast<int32_t>(overlayIndex);
-
-#ifdef __ANDROID__
-    // Android lifetime guard: provider trimming currently owns raster tiles
-    // with unique_ptr while mappings retain raw pointers. Detect stale
-    // pointers before Step 1 dereferences them.
-    static int staleTileLogCount = 0;
-    auto clearStaleTile = [&](std::shared_ptr<RasterOverlayTile>& tile,
-                              const char* role) {
-        if (!tile ||
-            RasterOverlayTileProvider::isLiveTileForLifetimeGuard(tile.get())) {
-            return;
-        }
-        if (staleTileLogCount < 20) {
-            __android_log_print(
-                ANDROID_LOG_WARN,
-                "EarthPerfCrash",
-                "stale raster tile in RasterMappedToTilesetTile::update role=%s geom=%s/%d/%d/%d state=%d tile=%p texture=%p",
-                role,
-                geometryKey.schemeId.c_str(),
-                geometryKey.z,
-                geometryKey.x,
-                geometryKey.y,
-                static_cast<int>(state_),
-                static_cast<void*>(tile.get()),
-                static_cast<void*>(readyTexture_));
-            ++staleTileLogCount;
-        }
-        tile.reset();
-        if (role[0] == 'r') {
-            readyTexture_ = nullptr;
-            readyTileSource_ = ReadyTileSource::None;
-            state_ = State::Unattached;
-        } else {
-            loadingTileSource_ = ReadyTileSource::None;
-        }
-    };
-    clearStaleTile(_pReadyTile, "ready");
-    clearStaleTile(_pLoadingTile, "loading");
-#endif
 
     // ── Step 1: Already-Attached fast path ──
     // cesium-native: if getState() == Attached, report MoreDetailAvailable
@@ -458,6 +404,10 @@ void RasterMappedToTilesetTile::detachFromTile(IPrepareRendererResources* pPrepR
 void RasterMappedToTilesetTile::releaseTileReferences(
     IPrepareRendererResources* pPrepRenderer) {
     detachFromTile(pPrepRenderer);
+    clearTileOwnershipState();
+}
+
+void RasterMappedToTilesetTile::clearTileOwnershipState() {
     _pLoadingTile = nullptr;
     _pReadyTile = nullptr;
     readyTexture_ = nullptr;

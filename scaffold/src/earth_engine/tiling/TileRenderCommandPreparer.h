@@ -34,7 +34,6 @@ class TileRenderCommandPreparer {
 public:
     template <
         typename EnsureTileMeshFn,
-        typename HasSurfaceDrawableFn,
         typename UnloadTileContentFn,
         typename CreateRasterOverlayUpsampledChildrenFn>
     static void build(
@@ -46,11 +45,10 @@ public:
         FrameResourceBudget& frameResourceBudget,
         const TileRenderCommandPrepareContext& context,
         EnsureTileMeshFn&& ensureTileMesh,
-        HasSurfaceDrawableFn&& hasSurfaceDrawable,
         UnloadTileContentFn&& unloadTileContent,
         CreateRasterOverlayUpsampledChildrenFn&&
             createRasterOverlayUpsampledChildren) {
-        if (tile.gltfModel) {
+        if (tile.content.renderContent.hasGltfContent()) {
             GltfRenderResourcePreparer::prepare(
                 tile,
                 device,
@@ -66,13 +64,13 @@ public:
             return;
         }
 
-        if (!tile.meshReady) {
+        if (!tile.content.renderContent.isMeshReady()) {
             if (!context.allowSynchronousMeshPrep) {
                 return;
             }
             ensureTileMesh(tile);
         }
-        if (!hasSurfaceDrawable(tile)) {
+        if (!tile.hasSurfaceDrawable()) {
             return;
         }
 
@@ -93,12 +91,11 @@ public:
             return;
         }
 
-        tile.surfaceDrawable = hasSurfaceDrawable(tile);
-        tile.completeRenderable =
+        tile.updateFrameRenderability(
+            tile.hasSurfaceDrawable(),
             TileSelectionRasterOverlayPreparer::isCompleteRenderable(
                 tile,
-                rasterOverlays);
-        tile.renderable = tile.completeRenderable;
+                rasterOverlays));
 
         if (overlayAction.createRasterOverlayUpsampledChildren &&
             tile.children.empty()) {

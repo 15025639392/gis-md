@@ -9,6 +9,7 @@
 #include <array>
 #include <cstddef>
 #include <optional>
+#include <string>
 
 namespace earth_engine {
 
@@ -46,13 +47,13 @@ public:
             if (!selectedTile) continue;
             ++stats.ensuredTiles;
 
-            selectedTile->lastUsedFrame = frameNumber;
+            selectedTile->markUsedForRenderFrame(frameNumber);
             markIneligible(cacheKey(entry.selectedKey));
 
             TilesetTile* commandTile = ensureTile(entry.renderKey);
             if (!commandTile) continue;
 
-            commandTile->lastUsedFrame = frameNumber;
+            commandTile->markUsedForRenderFrame(frameNumber);
             commandTile->addReference();
             markIneligible(cacheKey(commandTile->key));
 
@@ -71,10 +72,16 @@ public:
                     entry.allowSynchronousMeshPrep,
                     surfaceClipUv);
             }
-            if (commandTile->meshReady && commandTile->gpuVertexBuffer) {
+            if (commandTile->content.renderContent.hasGpuSurfaceGeometry()) {
                 ++stats.meshReadyTiles;
             }
             if (commands.size() > before) {
+                size_t stableIndex = 0;
+                const std::string baseStableKey = cacheKey(commandTile->key);
+                for (size_t i = before; i < commands.size(); ++i) {
+                    commands[i].stableKey =
+                        baseStableKey + "#" + std::to_string(stableIndex++);
+                }
                 ++stats.drawAttempts;
             }
         }

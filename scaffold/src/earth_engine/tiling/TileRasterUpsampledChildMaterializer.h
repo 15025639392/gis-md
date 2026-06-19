@@ -15,27 +15,26 @@ public:
         TilesetTile& tile,
         double defaultGeometricError,
         EnsureTileFn&& ensureTile) {
-        if (!tile.mesh || tile.children.size() >= 4) {
+        if (!tile.content.renderContent.hasSurfaceMesh() || tile.children.size() >= 4) {
             return false;
         }
 
         const RasterOverlayDetails& details =
-            tile.mesh->rasterOverlayDetails;
+            tile.content.renderContent.rasterOverlayDetails();
         const Rectangle* subdivisionRectangle = nullptr;
-        for (const auto& mapped : tile.rasterOverlays) {
-            if (!mapped || !mapped->isMoreDetailAvailable()) {
-                continue;
+        tile.rasterOverlayState.forEachMapping([&](const auto* mapped) {
+            if (subdivisionRectangle ||
+                !mapped ||
+                !mapped->isMoreDetailAvailable()) {
+                return;
             }
             const RasterOverlayTile* readyTile = mapped->getReadyTile();
             if (!readyTile) {
-                continue;
+                return;
             }
             subdivisionRectangle = details.findRectangleForOverlayProjection(
                 readyTile->getTileProvider().getProjection());
-            if (subdivisionRectangle) {
-                break;
-            }
-        }
+        });
 
         if (!subdivisionRectangle) {
             return false;

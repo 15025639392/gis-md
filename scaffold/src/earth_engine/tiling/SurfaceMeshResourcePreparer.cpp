@@ -12,39 +12,41 @@ namespace earth_engine {
 
 void SurfaceMeshResourcePreparer::prepare(TilesetTile& tile,
                                           RenderDevice* device) {
-    if (!tile.mesh) {
+    SurfaceTileMesh* mesh = tile.content.renderContent.mutableSurfaceMesh();
+    if (!mesh) {
         return;
     }
 
-    if (tile.mesh->hasLocalOriginEcef) {
-        tile.localOrigin = tile.mesh->localOriginEcef;
+    if (mesh->hasLocalOriginEcef) {
+        tile.content.renderContent.setSurfaceLocalOrigin(mesh->localOriginEcef);
     } else {
-        tile.localOrigin = Vec3::zero();
+        tile.content.renderContent.setSurfaceLocalOrigin(Vec3::zero());
     }
-    if (!tile.mesh->hasLocalOriginEcef && !tile.mesh->vertices.empty()) {
-        for (const auto& v : tile.mesh->vertices) {
-            tile.localOrigin += v.positionEcef;
+    if (!mesh->hasLocalOriginEcef && !mesh->vertices.empty()) {
+        Vec3 localOrigin = Vec3::zero();
+        for (const auto& v : mesh->vertices) {
+            localOrigin += v.positionEcef;
         }
-        tile.localOrigin =
-            tile.localOrigin /
-            static_cast<double>(tile.mesh->vertices.size());
+        tile.content.renderContent.setSurfaceLocalOrigin(
+            localOrigin / static_cast<double>(mesh->vertices.size()));
     }
 
-    if (!device || tile.mesh->vertices.empty()) {
+    if (!device || mesh->vertices.empty()) {
         return;
     }
 
     std::vector<SurfaceGpuVertex> generatedGpuVertices;
     const std::vector<SurfaceGpuVertex>* gpuVertices =
-        tile.mesh->gpuVertices.size() == tile.mesh->vertices.size()
-            ? &tile.mesh->gpuVertices
+        mesh->gpuVertices.size() == mesh->vertices.size()
+            ? &mesh->gpuVertices
             : nullptr;
     if (!gpuVertices) {
-        generatedGpuVertices.resize(tile.mesh->vertices.size());
-        for (size_t i = 0; i < tile.mesh->vertices.size(); ++i) {
-            const auto& src = tile.mesh->vertices[i];
+        generatedGpuVertices.resize(mesh->vertices.size());
+        for (size_t i = 0; i < mesh->vertices.size(); ++i) {
+            const auto& src = mesh->vertices[i];
             SurfaceGpuVertex& dst = generatedGpuVertices[i];
-            Vec3 rel = src.positionEcef - tile.localOrigin;
+            Vec3 rel =
+                src.positionEcef - tile.content.renderContent.renderLocalOrigin();
             dst.pos[0] = static_cast<float>(rel.x());
             dst.pos[1] = static_cast<float>(rel.y());
             dst.pos[2] = static_cast<float>(rel.z());
@@ -69,16 +71,20 @@ void SurfaceMeshResourcePreparer::prepare(TilesetTile& tile,
     vbDesc.data = gpuVertices->data();
     vbDesc.usage = BufferDesc::Usage::Static;
     vbDesc.type = BufferDesc::Type::Vertex;
-    tile.gpuVertexBuffer = device->createBuffer(vbDesc);
+    std::unique_ptr<Buffer> vertexBuffer = device->createBuffer(vbDesc);
 
-    if (!tile.mesh->indices.empty()) {
+    std::unique_ptr<Buffer> indexBuffer;
+    if (!mesh->indices.empty()) {
         BufferDesc ibDesc;
-        ibDesc.size = tile.mesh->indices.size() * sizeof(uint32_t);
-        ibDesc.data = tile.mesh->indices.data();
+        ibDesc.size = mesh->indices.size() * sizeof(uint32_t);
+        ibDesc.data = mesh->indices.data();
         ibDesc.usage = BufferDesc::Usage::Static;
         ibDesc.type = BufferDesc::Type::Index;
-        tile.gpuIndexBuffer = device->createBuffer(ibDesc);
+        indexBuffer = device->createBuffer(ibDesc);
     }
+    tile.content.renderContent.setSurfaceGpuBuffers(
+        std::move(vertexBuffer),
+        std::move(indexBuffer));
 }
 
 } // namespace earth_engine

@@ -57,8 +57,7 @@ public:
             prepareUpsampleSourceTile,
             [&](const TileKey& key) {
                 if (TilesetTile* tile = ensureTile(key)) {
-                    tile->loadState = TileLoadState::ContentLoading;
-                    tile->contentKind = TileContentKind::Unknown;
+                    tile->markContentLoading();
                 }
             });
     }
@@ -77,7 +76,8 @@ private:
         TileLoadRequestSnapshot snapshot;
         snapshot.hasTile = outTileState != nullptr;
         snapshot.upsampledFromParent =
-            outTileState != nullptr && outTileState->upsampledFromParent;
+            outTileState != nullptr &&
+            outTileState->content.upsampledFromParent;
         snapshot.contentProviderSupportsTile =
             !snapshot.upsampledFromParent &&
             input.contentProvider &&
@@ -89,10 +89,10 @@ private:
             input.terrainCache.count(cacheKey) > 0;
         snapshot.hasRenderContent =
             outTileState &&
-            outTileState->contentKind == TileContentKind::Render &&
-            outTileState->gltfModel;
+            outTileState->content.contentKind == TileContentKind::Render &&
+            outTileState->content.renderContent.hasGltfContent();
         if (outTileState) {
-            snapshot.loadState = outTileState->loadState;
+            snapshot.loadState = outTileState->content.loadState;
         }
         return snapshot;
     }
