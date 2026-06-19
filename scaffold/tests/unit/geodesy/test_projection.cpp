@@ -2,12 +2,38 @@
 
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/GeographicProjection.h"
 #include "earth_engine/core/geodesy/WebMercatorProjection.h"
 #include "earth_engine/core/math/Vec3.h"
 
 #include <cmath>
 
 using namespace earth_engine;
+
+TEST(GeographicProjectionTest, ProjectUsesCesiumNativeLinearRadiansScale) {
+    const GeographicProjection projection(Ellipsoid::WGS84());
+    const Cartographic input =
+        Cartographic::fromRadians(1.0, 0.5, 1234.5);
+
+    const Vec3 projected = projection.project(input);
+
+    EXPECT_DOUBLE_EQ(Ellipsoid::WGS84().maximumRadius(), projected.x());
+    EXPECT_DOUBLE_EQ(Ellipsoid::WGS84().maximumRadius() * 0.5, projected.y());
+    EXPECT_DOUBLE_EQ(1234.5, projected.z());
+}
+
+TEST(GeographicProjectionTest, UnprojectPreservesHeight) {
+    const GeographicProjection projection(Ellipsoid::WGS84());
+    const Vec3 projected(Ellipsoid::WGS84().maximumRadius(),
+                         Ellipsoid::WGS84().maximumRadius() * -0.25,
+                         987.0);
+
+    const Cartographic cartographic = projection.unproject(projected);
+
+    EXPECT_DOUBLE_EQ(1.0, cartographic.longitude());
+    EXPECT_DOUBLE_EQ(-0.25, cartographic.latitude());
+    EXPECT_DOUBLE_EQ(987.0, cartographic.height());
+}
 
 TEST(WebMercatorProjectionTest, MaximumLatitudeMatchesCesiumNative) {
     EXPECT_NEAR(1.4844222297453324,
