@@ -103,6 +103,12 @@ void appendTilesetTrace(PresentationTrace& trace, const Tileset* tileset) {
     tilesetTrace.minVisibleZoom = plan.minVisibleZoom;
     tilesetTrace.maxVisibleZoom = plan.maxVisibleZoom;
     tilesetTrace.lodSizePixels = plan.lodSizePixels;
+    tilesetTrace.renderEntryAncestorFallbackCount =
+        plan.renderEntryAncestorFallbackCount;
+    tilesetTrace.renderEntrySynchronousPrepCount =
+        plan.renderEntrySynchronousPrepCount;
+    tilesetTrace.renderEntryDeferredPrepCount =
+        plan.renderEntryDeferredPrepCount;
     tilesetTrace.renderEntryPlannedCommandCount =
         plan.renderEntryPlannedCommandCount;
     tilesetTrace.renderEntryCommandDrawCount =

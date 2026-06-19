@@ -19076,13 +19076,16 @@ void testPresentationTraceLinksTilePlanToSurfaceCommand() {
                 emptyContentTilesets(),
                 commands});
     check(trace.tilesets.size() == 1 &&
+              trace.tilesets.front().renderEntryAncestorFallbackCount == 1 &&
+              trace.tilesets.front().renderEntrySynchronousPrepCount == 0 &&
+              trace.tilesets.front().renderEntryDeferredPrepCount == 0 &&
               trace.tilesets.front().renderEntryPlannedCommandCount == 1 &&
               trace.tilesets.front().renderEntryCommandDrawCount == 1 &&
               trace.tilesets.front().renderEntryCommandMissedDrawCount == 0 &&
               trace.tilesets.front().renderEntryCommandMissingSelectedCount == 0 &&
               trace.tilesets.front().renderEntryCommandMissingRenderCount == 0 &&
               trace.tilesets.front().renderEntryCommandDeferredCount == 0,
-          "Presentation trace: render-entry command stats expose the current frame draw funnel");
+          "Presentation trace: render-entry strategy and command stats expose the current frame draw funnel");
     check(!trace.commands.empty() &&
               trace.commands.front().stableKey.find(
                   "clip:Geographic-TMS/1/0/0") != std::string::npos,
