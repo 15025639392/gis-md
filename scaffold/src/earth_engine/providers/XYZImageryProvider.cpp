@@ -24,6 +24,17 @@
 
 namespace earth_engine {
 
+namespace {
+
+struct RequestCompletionGuard {
+    std::atomic<int>& completed;
+    ~RequestCompletionGuard() {
+        completed.fetch_add(1, std::memory_order_relaxed);
+    }
+};
+
+} // namespace
+
 // ============================================================
 // XYZImageryProvider
 // ============================================================
@@ -131,66 +142,110 @@ void XYZImageryProvider::requestTile(const TileKey& key,
                                       TileCallback callback,
                                       HttpRequestPriority priority) {
     std::string url = buildUrl(key);
-    AsyncSystem::run([this, url, key, token = std::move(token),
-                      priority,
-                      callback = std::move(callback)]() {
-        if (token.isCancelled()) { callback(key, nullptr); return; }
-        auto body = httpGet(url, token, priority);
-        if (token.isCancelled() || body.empty()) { callback(key, nullptr); return; }
-        auto image = decodeTile(body.data(), body.size());
-        callback(key, std::move(image));
-    });
-}
-
-std::vector<uint8_t> XYZImageryProvider::httpGet(
-    const std::string& url,
-    const CancellationToken& token,
-    HttpRequestPriority priority) {
-
-    // 优先使用 PlatformBridge；Android 侧仍落到 native curl scheduler。
     if (platformBridge_) {
-        struct WaitState {
-            std::vector<uint8_t> result;
-            std::mutex mutex;
-            std::condition_variable cv;
-            bool done = false;
-        };
-        auto state = std::make_shared<WaitState>();
-
-        auto httpRequest = platformBridge_->get(url, [state](int code, std::vector<uint8_t> body) {
-            {
-                std::lock_guard<std::mutex> lk(state->mutex);
-                if (code == 200) state->result = std::move(body);
-                state->done = true;
-            }
-            state->cv.notify_one();
-        }, {priority});
-
-        bool done = false;
-        {
-            const auto deadline = std::chrono::steady_clock::now() +
-                std::chrono::seconds(20);
-            std::unique_lock<std::mutex> lk(state->mutex);
-            while (!state->done && !token.isCancelled()) {
-                const auto now = std::chrono::steady_clock::now();
-                if (now >= deadline) break;
-                state->cv.wait_until(
-                    lk,
-                    std::min(deadline, now + std::chrono::milliseconds(20)));
-            }
-            done = state->done;
+        requestsStarted_.fetch_add(1, std::memory_order_relaxed);
+        if (token.isCancelled()) {
+            requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
+            callback(key, nullptr);
+            return;
         }
-        if ((!done || token.isCancelled()) && httpRequest) {
-            httpRequest->cancel();
-        }
-        return done ? std::move(state->result) : std::vector<uint8_t>{};
+
+        auto requestHandle =
+            std::make_shared<std::unique_ptr<HttpRequest>>();
+        *requestHandle = platformBridge_->get(
+            url,
+            [this,
+             key,
+             token = std::move(token),
+             callback = std::move(callback),
+             requestHandle](int statusCode, std::vector<uint8_t> body) mutable {
+                (void)requestHandle;
+                auto tokenPtr =
+                    std::make_shared<CancellationToken>(std::move(token));
+                auto callbackPtr =
+                    std::make_shared<TileCallback>(std::move(callback));
+                auto bodyPtr =
+                    std::make_shared<std::vector<uint8_t>>(std::move(body));
+                AsyncSystem::run(
+                    [this,
+                     key,
+                     tokenPtr,
+                     callbackPtr,
+                     statusCode,
+                     bodyPtr]() mutable {
+                        RequestCompletionGuard completion{requestsCompleted_};
+                        if (tokenPtr->isCancelled() ||
+                            statusCode != 200 ||
+                            bodyPtr->empty()) {
+                            (*callbackPtr)(key, nullptr);
+                            return;
+                        }
+                        auto image =
+                            decodeTile(bodyPtr->data(), bodyPtr->size());
+                        (*callbackPtr)(key, std::move(image));
+                    });
+            },
+            {priority});
+        return;
     }
 
-    return CurlMultiRequestScheduler::shared().getBlocking(
+    requestsStarted_.fetch_add(1, std::memory_order_relaxed);
+    if (token.isCancelled()) {
+        requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
+        callback(key, nullptr);
+        return;
+    }
+
+    auto requestHandle =
+        std::make_shared<std::unique_ptr<HttpRequest>>();
+    *requestHandle = CurlMultiRequestScheduler::shared().get(
         url,
-        {priority},
-        std::chrono::seconds(20),
-        [&token]() { return token.isCancelled(); });
+        [this,
+         key,
+         token = std::move(token),
+         callback = std::move(callback),
+         requestHandle](int statusCode, std::vector<uint8_t> body) mutable {
+            (void)requestHandle;
+            auto tokenPtr =
+                std::make_shared<CancellationToken>(std::move(token));
+            auto callbackPtr =
+                std::make_shared<TileCallback>(std::move(callback));
+            auto bodyPtr =
+                std::make_shared<std::vector<uint8_t>>(std::move(body));
+            AsyncSystem::run(
+                [this,
+                 key,
+                 tokenPtr,
+                 callbackPtr,
+                 statusCode,
+                 bodyPtr]() mutable {
+                    RequestCompletionGuard completion{requestsCompleted_};
+                    if (tokenPtr->isCancelled() ||
+                        statusCode != 200 ||
+                        bodyPtr->empty()) {
+                        (*callbackPtr)(key, nullptr);
+                        return;
+                    }
+                    auto image = decodeTile(bodyPtr->data(), bodyPtr->size());
+                    (*callbackPtr)(key, std::move(image));
+                });
+        },
+        {priority});
+}
+
+ProviderRequestDiagnostics XYZImageryProvider::requestDiagnostics() const {
+    ProviderRequestDiagnostics diag;
+    diag.requestsStarted = requestsStarted_.load(std::memory_order_relaxed);
+    diag.requestsCompleted =
+        requestsCompleted_.load(std::memory_order_relaxed);
+    diag.activeWorkerBlockingRequests =
+        activeWorkerBlockingRequests_.load(std::memory_order_relaxed);
+    diag.peakWorkerBlockingRequests =
+        peakWorkerBlockingRequests_.load(std::memory_order_relaxed);
+    diag.maximumTransportActiveRequests = platformBridge_
+        ? platformBridge_->maximumActiveRequests()
+        : CurlMultiRequestScheduler::shared().maximumActiveRequests();
+    return diag;
 }
 
 std::unique_ptr<DecodedImage> XYZImageryProvider::decodeTile(

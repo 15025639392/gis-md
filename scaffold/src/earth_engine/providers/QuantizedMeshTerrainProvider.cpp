@@ -1,4 +1,5 @@
 #include "QuantizedMeshTerrainProvider.h"
+#include "QuantizedMeshLayerJsonFetcher.h"
 #ifdef __ANDROID__
 #include <android/log.h>
 #endif
@@ -26,6 +27,42 @@
 #include <limits>
 
 namespace earth_engine {
+
+namespace {
+
+struct RequestCompletionGuard {
+    std::atomic<int>& completed;
+    ~RequestCompletionGuard() {
+        completed.fetch_add(1, std::memory_order_relaxed);
+    }
+};
+
+constexpr const char* kFileUrlPrefix = "file://";
+
+bool isFileUrl(const std::string& url) {
+    return url.rfind(kFileUrlPrefix, 0) == 0;
+}
+
+std::vector<uint8_t> readFileUrl(const std::string& url) {
+    if (!isFileUrl(url)) {
+        return {};
+    }
+    auto cached = HttpCache::shared().get(url);
+    if (!cached.empty()) {
+        return cached;
+    }
+    std::ifstream in(url.substr(std::strlen(kFileUrlPrefix)), std::ios::binary);
+    if (!in) {
+        return {};
+    }
+    std::vector<uint8_t> data{
+        std::istreambuf_iterator<char>(in),
+        std::istreambuf_iterator<char>()};
+    HttpCache::shared().put(url, data);
+    return data;
+}
+
+} // namespace
 
 QuantizedMeshTerrainProvider::QuantizedMeshTerrainProvider(
     std::string urlTemplate, std::string attribution)
@@ -447,7 +484,8 @@ void setQueryParameter(std::string& url,
 
 bool QuantizedMeshTerrainProvider::configureFromLayerJsonUrl(
     const std::string& layerJsonUrl) {
-    auto bytes = httpGet(layerJsonUrl);
+    QuantizedMeshLayerJsonFetcher fetcher(platformBridge_);
+    auto bytes = fetcher.fetchBlocking(layerJsonUrl);
     if (bytes.empty()) return false;
     std::string body(bytes.begin(), bytes.end());
     return configureFromLayerJson(body, layerJsonUrl);
@@ -561,7 +599,8 @@ bool QuantizedMeshTerrainProvider::appendParentLayers(
     }
 
     std::string resolvedUrl = resolveParentLayerJsonUrl(layerJsonUrl, parentUrl);
-    auto bytes = httpGet(resolvedUrl);
+    QuantizedMeshLayerJsonFetcher fetcher(platformBridge_);
+    auto bytes = fetcher.fetchBlocking(resolvedUrl);
     if (bytes.empty()) {
         return false;
     }
@@ -798,6 +837,12 @@ QuantizedMeshTerrainProvider::collectUnderlyingLayerAvailabilityRequests(
     return requests;
 }
 
+int QuantizedMeshTerrainProvider::estimatedRequestFanout(
+    const TileKey& key) const {
+    return 1 + static_cast<int>(
+        collectUnderlyingLayerAvailabilityRequests(key).size());
+}
+
 std::string QuantizedMeshTerrainProvider::id() const {
     std::ostringstream oss;
     oss << "qmesh-" << std::hash<std::string>{}(urlTemplate_);
@@ -855,65 +900,322 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
     std::string url = buildUrl(key);
     std::vector<LayerAvailabilityRequest> availabilityRequests =
         collectUnderlyingLayerAvailabilityRequests(key);
-    AsyncSystem::pool().enqueue(
-        [this, url, key,
+    if (platformBridge_) {
+        requestsStarted_.fetch_add(1, std::memory_order_relaxed);
+        if (token.isCancelled()) {
+            requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
+            callback(key, TerrainTileLoadResult::cancelled());
+            return;
+        }
+
+        auto requestHandle =
+            std::make_shared<std::unique_ptr<HttpRequest>>();
+        *requestHandle = platformBridge_->get(
+            url,
+            [this,
+             key,
+             availabilityRequests = std::move(availabilityRequests),
+             token = std::move(token),
+             priority,
+             callback = std::move(callback),
+             requestHandle](int statusCode, std::vector<uint8_t> body) mutable {
+                (void)requestHandle;
+                handleAsyncTileBody(
+                    key,
+                    std::move(availabilityRequests),
+                    std::move(token),
+                    std::move(callback),
+                    priority,
+                    statusCode,
+                    std::move(body),
+                    true);
+            },
+            {priority});
+        return;
+    }
+
+    requestsStarted_.fetch_add(1, std::memory_order_relaxed);
+    if (token.isCancelled()) {
+        requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
+        callback(key, TerrainTileLoadResult::cancelled());
+        return;
+    }
+
+    if (isFileUrl(url)) {
+        AsyncSystem::pool().enqueue(
+            [this,
+             url,
+             key,
+             availabilityRequests = std::move(availabilityRequests),
+             token = std::move(token),
+             priority,
+             callback = std::move(callback)]() mutable {
+                if (token.isCancelled()) {
+                    callback(key, TerrainTileLoadResult::cancelled());
+                    return;
+                }
+
+                std::vector<uint8_t> body = readFileUrl(url);
+	#ifdef __ANDROID__
+	                __android_log_print(ANDROID_LOG_INFO, "QMTerrain",
+	                    "requestTile: z=%d x=%d y=%d body=%zu canceled=%d",
+	                    key.z, key.x, key.y, body.size(), token.isCancelled());
+	#endif
+                handleAsyncTileBody(
+                    key,
+                    std::move(availabilityRequests),
+                    std::move(token),
+                    std::move(callback),
+                    priority,
+                    body.empty() ? 0 : 200,
+                    std::move(body),
+                    false);
+            });
+        return;
+    }
+
+    auto requestHandle =
+        std::make_shared<std::unique_ptr<HttpRequest>>();
+    *requestHandle = CurlMultiRequestScheduler::shared().get(
+        url,
+        [this,
+         key,
          availabilityRequests = std::move(availabilityRequests),
          token = std::move(token),
          priority,
-         callback = std::move(callback)]() mutable {
-            if (token.isCancelled()) {
-                callback(key, TerrainTileLoadResult::cancelled());
-                return;
-            }
-            auto body = httpGet(
-                url,
+         callback = std::move(callback),
+         requestHandle](int statusCode, std::vector<uint8_t> body) mutable {
+            (void)requestHandle;
+            handleAsyncTileBody(
+                key,
+                std::move(availabilityRequests),
+                std::move(token),
+                std::move(callback),
                 priority,
-                [&token]() { return token.isCancelled(); });
+                statusCode,
+                std::move(body),
+                false);
+        },
+        {priority});
+}
+
+void QuantizedMeshTerrainProvider::handleAsyncTileBody(
+    const TileKey& key,
+    std::vector<LayerAvailabilityRequest> availabilityRequests,
+    CancellationToken token,
+    HeightmapCallback callback,
+    HttpRequestPriority priority,
+    int statusCode,
+    std::vector<uint8_t> body,
+    bool usePlatformBridge) {
+    auto availabilityRequestsPtr =
+        std::make_shared<std::vector<LayerAvailabilityRequest>>(
+            std::move(availabilityRequests));
+    auto tokenPtr = std::make_shared<CancellationToken>(std::move(token));
+    auto callbackPtr =
+        std::make_shared<HeightmapCallback>(std::move(callback));
+    auto bodyPtr =
+        std::make_shared<std::vector<uint8_t>>(std::move(body));
+
+    if (statusCode != 200 ||
+        bodyPtr->empty() ||
+        tokenPtr->isCancelled() ||
+        availabilityRequestsPtr->empty()) {
+        finalizeAsyncTileRequest(
+            key,
+            availabilityRequestsPtr,
+            tokenPtr,
+            callbackPtr,
+            bodyPtr,
+            statusCode,
+            {});
+        return;
+    }
+
+    requestAsyncMetadataAndFinalize(
+        key,
+        availabilityRequestsPtr,
+        tokenPtr,
+        callbackPtr,
+        bodyPtr,
+        statusCode,
+        priority,
+        usePlatformBridge);
+}
+
+void QuantizedMeshTerrainProvider::requestAsyncMetadataAndFinalize(
+    TileKey key,
+    std::shared_ptr<std::vector<LayerAvailabilityRequest>>
+        availabilityRequests,
+    std::shared_ptr<CancellationToken> token,
+    std::shared_ptr<HeightmapCallback> callback,
+    std::shared_ptr<std::vector<uint8_t>> body,
+    int statusCode,
+    HttpRequestPriority priority,
+    bool usePlatformBridge) {
+    struct MetadataFetchState {
+        std::mutex mutex;
+        std::vector<std::vector<uint8_t>> bodies;
+        std::vector<std::unique_ptr<HttpRequest>> handles;
+        size_t remaining = 0;
+        bool finalized = false;
+    };
+    auto metadataState = std::make_shared<MetadataFetchState>();
+    metadataState->bodies.resize(availabilityRequests->size());
+    metadataState->handles.resize(availabilityRequests->size());
+    metadataState->remaining = availabilityRequests->size();
+
+    for (size_t i = 0; i < availabilityRequests->size(); ++i) {
+        auto metadataCallback =
+            [this,
+             metadataState,
+             key,
+             availabilityRequests,
+             token,
+             callback,
+             body,
+             statusCode,
+             i](int metadataStatusCode,
+                std::vector<uint8_t> metadataBody) mutable {
+                std::vector<std::vector<uint8_t>> metadataBodies;
+                bool shouldFinalize = false;
+                {
+                    std::lock_guard<std::mutex> lock(metadataState->mutex);
+                    if (!metadataState->finalized &&
+                        !token->isCancelled() &&
+                        metadataStatusCode == 200 &&
+                        !metadataBody.empty()) {
+                        metadataState->bodies[i] = std::move(metadataBody);
+                    }
+                    if (metadataState->remaining > 0) {
+                        --metadataState->remaining;
+                    }
+                    if (metadataState->remaining == 0 &&
+                        !metadataState->finalized) {
+                        metadataState->finalized = true;
+                        metadataBodies = std::move(metadataState->bodies);
+                        shouldFinalize = true;
+                    }
+                }
+                if (shouldFinalize) {
+                    finalizeAsyncTileRequest(
+                        key,
+                        availabilityRequests,
+                        token,
+                        callback,
+                        body,
+                        statusCode,
+                        std::move(metadataBodies));
+                }
+            };
+
+        const std::string& metadataUrl = (*availabilityRequests)[i].url;
+        if (!usePlatformBridge && isFileUrl(metadataUrl)) {
+            AsyncSystem::pool().enqueue(
+                [metadataUrl,
+                 metadataCallback = std::move(metadataCallback)]() mutable {
+                    std::vector<uint8_t> metadataBody =
+                        readFileUrl(metadataUrl);
+                    metadataCallback(
+                        metadataBody.empty() ? 0 : 200,
+                        std::move(metadataBody));
+                });
+        } else if (usePlatformBridge) {
+            metadataState->handles[i] = platformBridge_->get(
+                metadataUrl,
+                std::move(metadataCallback),
+                {priority});
+        } else {
+            metadataState->handles[i] =
+                CurlMultiRequestScheduler::shared().get(
+                    metadataUrl,
+                    std::move(metadataCallback),
+                    {priority});
+        }
+    }
+}
+
+void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
+    TileKey key,
+    std::shared_ptr<std::vector<LayerAvailabilityRequest>>
+        availabilityRequests,
+    std::shared_ptr<CancellationToken> token,
+    std::shared_ptr<HeightmapCallback> callback,
+    std::shared_ptr<std::vector<uint8_t>> body,
+    int statusCode,
+    std::vector<std::vector<uint8_t>> metadataBodies) {
+    AsyncSystem::pool().enqueue(
+        [this,
+         key,
+         availabilityRequests,
+         token,
+         callback,
+         body,
+         statusCode,
+         metadataBodies = std::move(metadataBodies)]() mutable {
+            RequestCompletionGuard completion{requestsCompleted_};
+            if (token->isCancelled()) {
+                (*callback)(key, TerrainTileLoadResult::cancelled());
+                return;
+            }
+            if (statusCode != 200 || body->empty()) {
+                (*callback)(key, TerrainTileLoadResult::retryLater());
+                return;
+            }
 #ifdef __ANDROID__
-            __android_log_print(ANDROID_LOG_INFO, "QMTerrain",
+            __android_log_print(
+                ANDROID_LOG_INFO,
+                "QMTerrain",
                 "requestTile: z=%d x=%d y=%d body=%zu canceled=%d",
-                key.z, key.x, key.y, body.size(), token.isCancelled());
+                key.z,
+                key.x,
+                key.y,
+                body->size(),
+                token->isCancelled());
 #endif
-            if (token.isCancelled()) {
-                callback(key, TerrainTileLoadResult::cancelled());
-                return;
-            }
-            if (body.empty()) {
-                callback(key, TerrainTileLoadResult::retryLater());
-                return;
-            }
-            auto hm = decodeTile(body.data(), body.size());
+            auto hm = decodeTile(body->data(), body->size());
             if (hm) {
                 hm->surfaceMesh = QuantizedMeshParser::parseToSurfaceTileMesh(
-                    body.data(),
-                    body.size(),
+                    body->data(),
+                    body->size(),
                     geographicTmsRectangle(key));
-                for (const LayerAvailabilityRequest& request :
-                     availabilityRequests) {
+                for (size_t i = 0; i < availabilityRequests->size(); ++i) {
+                    const LayerAvailabilityRequest& request =
+                        (*availabilityRequests)[i];
                     DecodedHeightmap::QuantizedMeshAvailabilityUpdate update;
                     update.layerIndex = static_cast<int>(request.layerIndex);
                     update.subtreeKey = request.subtreeKey;
 
-                    auto metadataBody = httpGet(
-                        request.url,
-                        priority,
-                        [&token]() { return token.isCancelled(); });
-                    if (!metadataBody.empty()) {
+                    if (i < metadataBodies.size() &&
+                        !metadataBodies[i].empty()) {
                         update.metadataAvailability =
                             QuantizedMeshParser::parseMetadataAvailability(
-                                metadataBody.data(),
-                                metadataBody.size());
+                                metadataBodies[i].data(),
+                                metadataBodies[i].size());
                     }
 
-                    // cesium-native addRectangleAvailabilityToLayer marks the
-                    // subtree loaded even when metadata loading/parsing yields
-                    // no rectangles.
                     hm->quantizedMeshAvailabilityUpdates.push_back(
                         std::move(update));
                 }
             }
-            callback(key, TerrainTileLoadResult::success(std::move(hm)));
+            (*callback)(key, TerrainTileLoadResult::success(std::move(hm)));
         });
+}
+
+ProviderRequestDiagnostics
+QuantizedMeshTerrainProvider::requestDiagnostics() const {
+    ProviderRequestDiagnostics diag;
+    diag.requestsStarted = requestsStarted_.load(std::memory_order_relaxed);
+    diag.requestsCompleted =
+        requestsCompleted_.load(std::memory_order_relaxed);
+    diag.activeWorkerBlockingRequests =
+        activeWorkerBlockingRequests_.load(std::memory_order_relaxed);
+    diag.peakWorkerBlockingRequests =
+        peakWorkerBlockingRequests_.load(std::memory_order_relaxed);
+    diag.maximumTransportActiveRequests = platformBridge_
+        ? platformBridge_->maximumActiveRequests()
+        : CurlMultiRequestScheduler::shared().maximumActiveRequests();
+    return diag;
 }
 
 void QuantizedMeshTerrainProvider::addAvailabilityRects(
@@ -1108,15 +1410,8 @@ std::vector<uint8_t> QuantizedMeshTerrainProvider::httpGet(
 #endif
     if (!cached.empty()) return cached;
 
-    constexpr const char* kFilePrefix = "file://";
-    if (url.rfind(kFilePrefix, 0) == 0) {
-        std::ifstream in(url.substr(std::strlen(kFilePrefix)), std::ios::binary);
-        if (!in) return {};
-        std::vector<uint8_t> data{
-            std::istreambuf_iterator<char>(in),
-            std::istreambuf_iterator<char>()};
-        HttpCache::shared().put(url, data);
-        return data;
+    if (isFileUrl(url)) {
+        return readFileUrl(url);
     }
 
     if (platformBridge_) {
