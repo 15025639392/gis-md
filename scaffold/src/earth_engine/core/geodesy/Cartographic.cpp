@@ -1,22 +1,23 @@
 #include "Cartographic.h"
-
-#include <glm/gtc/constants.hpp>
+#include "../math/MathUtils.h"
 
 namespace earth_engine {
-
-namespace {
-constexpr double kRadToDeg = 180.0 / glm::pi<double>();
-constexpr double kDegToRad = glm::pi<double>() / 180.0;
-}
 
 Cartographic Cartographic::fromDegrees(double lngDeg,
                                        double latDeg,
                                        double heightM) {
-    return Cartographic(lngDeg * kDegToRad, latDeg * kDegToRad, heightM);
+    return Cartographic(MathUtils::degreesToRadians(lngDeg),
+                        MathUtils::degreesToRadians(latDeg),
+                        heightM);
 }
 
-double Cartographic::longitudeDegrees() const { return lng_ * kRadToDeg; }
-double Cartographic::latitudeDegrees() const { return lat_ * kRadToDeg; }
+double Cartographic::longitudeDegrees() const {
+    return MathUtils::radiansToDegrees(lng_);
+}
+
+double Cartographic::latitudeDegrees() const {
+    return MathUtils::radiansToDegrees(lat_);
+}
 
 bool Cartographic::operator==(const Cartographic& rhs) const {
     return lng_ == rhs.lng_ && lat_ == rhs.lat_ && height_ == rhs.height_;

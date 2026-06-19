@@ -37,6 +37,14 @@ TEST(CartographicTest, FromDegreesConvertsAnglesAndPreservesHeight) {
     EXPECT_DOUBLE_EQ(987.0, cartographic.height());
 }
 
+TEST(CartographicTest, DegreeAccessorsInvertFromDegreesConversion) {
+    const Cartographic cartographic =
+        Cartographic::fromDegrees(-72.0, 40.0, 123.0);
+
+    EXPECT_DOUBLE_EQ(-72.0, cartographic.longitudeDegrees());
+    EXPECT_DOUBLE_EQ(40.0, cartographic.latitudeDegrees());
+}
+
 TEST(CartographicTest, EqualityMatchesCesiumNativeExactFieldComparison) {
     const Cartographic a(1.0, 0.5, 100.0);
     const Cartographic same(1.0, 0.5, 100.0);
