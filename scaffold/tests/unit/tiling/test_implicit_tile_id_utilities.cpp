@@ -340,6 +340,123 @@ TEST(ImplicitTileIdUtilitiesTest,
 }
 
 TEST(ImplicitTileIdUtilitiesTest,
+     ComputeTileBoundingVolumeQuadtreeDispatchesByKindLikeCesiumNative) {
+    const TileKey tileID{"Geographic-TMS", 1, 0, 1};
+
+    const TileBoundingVolume box = TileBoundingVolume::fromBox(
+        Vec3(1.0, 2.0, 3.0),
+        Vec3(10.0, 0.0, 0.0),
+        Vec3(0.0, 10.0, 0.0),
+        Vec3(0.0, 0.0, 10.0));
+    const TileBoundingVolume boxChild =
+        ImplicitTileIdUtilities::computeBoundingVolume(box, tileID);
+    EXPECT_EQ(TileBoundingVolumeKind::Box, boxChild.kind);
+    EXPECT_EQ(Vec3(-4.0, 7.0, 3.0), boxChild.box.getCenter());
+    EXPECT_EQ(Vec3(10.0, 10.0, 20.0), boxChild.box.getLengths());
+
+    const TileBoundingVolume region =
+        TileBoundingVolume::fromRegion(Rectangle(1.0, 2.0, 3.0, 4.0),
+                                       10.0,
+                                       20.0);
+    const TileBoundingVolume regionChild =
+        ImplicitTileIdUtilities::computeBoundingVolume(region, tileID);
+    EXPECT_EQ(TileBoundingVolumeKind::Region, regionChild.kind);
+    EXPECT_DOUBLE_EQ(1.0, regionChild.region.west());
+    EXPECT_DOUBLE_EQ(3.0, regionChild.region.south());
+    EXPECT_DOUBLE_EQ(2.0, regionChild.region.east());
+    EXPECT_DOUBLE_EQ(4.0, regionChild.region.north());
+    EXPECT_DOUBLE_EQ(10.0, regionChild.minimumHeight);
+    EXPECT_DOUBLE_EQ(20.0, regionChild.maximumHeight);
+
+    const TileBoundingVolume s2 = TileBoundingVolume::fromS2Cell(
+        S2CellBoundingVolume(
+            S2CellID::fromQuadtreeTileID(1, 0, 0, 0),
+            10.0,
+            20.0));
+    const TileBoundingVolume s2Child =
+        ImplicitTileIdUtilities::computeBoundingVolume(s2, tileID);
+    EXPECT_EQ(TileBoundingVolumeKind::S2Cell, s2Child.kind);
+    EXPECT_EQ(S2CellID::fromQuadtreeTileID(1, 1, 0, 1).getID(),
+              s2Child.s2Cell.getCellID().getID());
+    EXPECT_DOUBLE_EQ(10.0, s2Child.s2Cell.getMinimumHeight());
+    EXPECT_DOUBLE_EQ(20.0, s2Child.s2Cell.getMaximumHeight());
+
+    const TileBoundingVolume cylinder = TileBoundingVolume::fromCylinderRegion(
+        BoundingCylinderRegion(
+            Vec3(1.0, 2.0, 3.0),
+            glm::dquat(Transforms::Z_UP_TO_Y_UP().raw()),
+            2.0,
+            glm::dvec2(0.0, 1.0)));
+    const TileBoundingVolume cylinderChild =
+        ImplicitTileIdUtilities::computeBoundingVolume(cylinder, tileID);
+    EXPECT_EQ(TileBoundingVolumeKind::CylinderRegion, cylinderChild.kind);
+    EXPECT_EQ(cylinder.cylinderRegion.getHeight(),
+              cylinderChild.cylinderRegion.getHeight());
+    EXPECT_EQ(glm::dvec2(0.0, 0.5),
+              cylinderChild.cylinderRegion.getRadialBounds());
+    EXPECT_EQ(glm::dvec2(0.0, MathUtils::OnePi),
+              cylinderChild.cylinderRegion.getAngularBounds());
+}
+
+TEST(ImplicitTileIdUtilitiesTest,
+     ComputeTileBoundingVolumeOctreeDispatchesByKindLikeCesiumNative) {
+    const OctreeTileID tileID{1, 0, 1, 1};
+
+    const TileBoundingVolume box = TileBoundingVolume::fromBox(
+        Vec3(1.0, 2.0, 3.0),
+        Vec3(10.0, 0.0, 0.0),
+        Vec3(0.0, 10.0, 0.0),
+        Vec3(0.0, 0.0, 10.0));
+    const TileBoundingVolume boxChild =
+        ImplicitTileIdUtilities::computeBoundingVolume(box, tileID);
+    EXPECT_EQ(TileBoundingVolumeKind::Box, boxChild.kind);
+    EXPECT_EQ(Vec3(-4.0, 7.0, 8.0), boxChild.box.getCenter());
+    EXPECT_EQ(Vec3(10.0, 10.0, 10.0), boxChild.box.getLengths());
+
+    const TileBoundingVolume region =
+        TileBoundingVolume::fromRegion(Rectangle(1.0, 2.0, 3.0, 4.0),
+                                       10.0,
+                                       20.0);
+    const TileBoundingVolume regionChild =
+        ImplicitTileIdUtilities::computeBoundingVolume(region, tileID);
+    EXPECT_EQ(TileBoundingVolumeKind::Region, regionChild.kind);
+    EXPECT_DOUBLE_EQ(1.0, regionChild.region.west());
+    EXPECT_DOUBLE_EQ(3.0, regionChild.region.south());
+    EXPECT_DOUBLE_EQ(2.0, regionChild.region.east());
+    EXPECT_DOUBLE_EQ(4.0, regionChild.region.north());
+    EXPECT_DOUBLE_EQ(15.0, regionChild.minimumHeight);
+    EXPECT_DOUBLE_EQ(20.0, regionChild.maximumHeight);
+
+    const TileBoundingVolume s2 = TileBoundingVolume::fromS2Cell(
+        S2CellBoundingVolume(
+            S2CellID::fromQuadtreeTileID(1, 0, 0, 0),
+            10.0,
+            20.0));
+    const TileBoundingVolume s2Child =
+        ImplicitTileIdUtilities::computeBoundingVolume(s2, tileID);
+    EXPECT_EQ(TileBoundingVolumeKind::S2Cell, s2Child.kind);
+    EXPECT_EQ(S2CellID::fromQuadtreeTileID(1, 1, 0, 1).getID(),
+              s2Child.s2Cell.getCellID().getID());
+    EXPECT_DOUBLE_EQ(15.0, s2Child.s2Cell.getMinimumHeight());
+    EXPECT_DOUBLE_EQ(20.0, s2Child.s2Cell.getMaximumHeight());
+
+    const TileBoundingVolume cylinder = TileBoundingVolume::fromCylinderRegion(
+        BoundingCylinderRegion(
+            Vec3(1.0, 2.0, 3.0),
+            glm::dquat(Transforms::Z_UP_TO_Y_UP().raw()),
+            2.0,
+            glm::dvec2(0.0, 1.0)));
+    const TileBoundingVolume cylinderChild =
+        ImplicitTileIdUtilities::computeBoundingVolume(cylinder, tileID);
+    EXPECT_EQ(TileBoundingVolumeKind::CylinderRegion, cylinderChild.kind);
+    EXPECT_DOUBLE_EQ(1.0, cylinderChild.cylinderRegion.getHeight());
+    EXPECT_EQ(glm::dvec2(0.0, 0.5),
+              cylinderChild.cylinderRegion.getRadialBounds());
+    EXPECT_EQ(glm::dvec2(0.0, MathUtils::OnePi),
+              cylinderChild.cylinderRegion.getAngularBounds());
+}
+
+TEST(ImplicitTileIdUtilitiesTest,
      ComputeWholeCylinderQuadtreeBoundingVolumeMatchesCesiumNative) {
     const BoundingCylinderRegion root(
         Vec3(1.0, 2.0, 3.0),

@@ -475,6 +475,64 @@ S2CellBoundingVolume ImplicitTileIdUtilities::computeBoundingVolume(
         childMaximumHeight);
 }
 
+TileBoundingVolume ImplicitTileIdUtilities::computeBoundingVolume(
+    const TileBoundingVolume& rootBoundingVolume,
+    const TileKey& tileID) {
+    switch (rootBoundingVolume.kind) {
+        case TileBoundingVolumeKind::Box: {
+            const OrientedBoundingBox box =
+                computeBoundingVolume(rootBoundingVolume.box, tileID);
+            return TileBoundingVolume::fromBox(
+                box.getCenter(),
+                box.getHalfAxis(0),
+                box.getHalfAxis(1),
+                box.getHalfAxis(2));
+        }
+        case TileBoundingVolumeKind::Region:
+            return computeRegionBoundingVolume(rootBoundingVolume, tileID);
+        case TileBoundingVolumeKind::CylinderRegion:
+            return TileBoundingVolume::fromCylinderRegion(
+                computeBoundingVolume(
+                    rootBoundingVolume.cylinderRegion,
+                    tileID));
+        case TileBoundingVolumeKind::S2Cell:
+            return TileBoundingVolume::fromS2Cell(
+                computeBoundingVolume(rootBoundingVolume.s2Cell, tileID));
+        case TileBoundingVolumeKind::Sphere:
+            return rootBoundingVolume;
+    }
+    return rootBoundingVolume;
+}
+
+TileBoundingVolume ImplicitTileIdUtilities::computeBoundingVolume(
+    const TileBoundingVolume& rootBoundingVolume,
+    const OctreeTileID& tileID) {
+    switch (rootBoundingVolume.kind) {
+        case TileBoundingVolumeKind::Box: {
+            const OrientedBoundingBox box =
+                computeBoundingVolume(rootBoundingVolume.box, tileID);
+            return TileBoundingVolume::fromBox(
+                box.getCenter(),
+                box.getHalfAxis(0),
+                box.getHalfAxis(1),
+                box.getHalfAxis(2));
+        }
+        case TileBoundingVolumeKind::Region:
+            return computeRegionBoundingVolume(rootBoundingVolume, tileID);
+        case TileBoundingVolumeKind::CylinderRegion:
+            return TileBoundingVolume::fromCylinderRegion(
+                computeBoundingVolume(
+                    rootBoundingVolume.cylinderRegion,
+                    tileID));
+        case TileBoundingVolumeKind::S2Cell:
+            return TileBoundingVolume::fromS2Cell(
+                computeBoundingVolume(rootBoundingVolume.s2Cell, tileID));
+        case TileBoundingVolumeKind::Sphere:
+            return rootBoundingVolume;
+    }
+    return rootBoundingVolume;
+}
+
 std::optional<TileKey> ImplicitTileIdUtilities::parentId(
     const TileKey& tileID) {
     if (tileID.z == 0) {

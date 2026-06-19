@@ -52,6 +52,12 @@ public:
     static S2CellBoundingVolume computeBoundingVolume(
         const S2CellBoundingVolume& rootBoundingVolume,
         const OctreeTileID& tileID);
+    static TileBoundingVolume computeBoundingVolume(
+        const TileBoundingVolume& rootBoundingVolume,
+        const TileKey& tileID);
+    static TileBoundingVolume computeBoundingVolume(
+        const TileBoundingVolume& rootBoundingVolume,
+        const OctreeTileID& tileID);
 
     static std::optional<TileKey> parentId(const TileKey& tileID);
     static std::optional<OctreeTileID> parentId(const OctreeTileID& tileID);
