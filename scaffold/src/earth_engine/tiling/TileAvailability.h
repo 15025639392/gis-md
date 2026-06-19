@@ -67,7 +67,9 @@ public:
     const std::byte& operator[](size_t i) const {
         return bufferData_[i];
     }
-    size_t size() const { return bufferView_->byteLength; }
+    size_t size() const {
+        return isBufferView() ? bufferView_->byteLength : 0U;
+    }
 
 private:
     const ConstantTileAvailability* constant_ = nullptr;

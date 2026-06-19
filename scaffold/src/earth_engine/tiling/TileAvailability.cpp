@@ -138,7 +138,8 @@ TileAvailabilityAccessor::TileAvailabilityAccessor(
     }
 
     const std::vector<std::byte>& buffer = subtree.buffers[bufferView_->buffer];
-    if (bufferView_->byteOffset + bufferView_->byteLength > buffer.size()) {
+    if (bufferView_->byteOffset > buffer.size() ||
+        bufferView_->byteLength > buffer.size() - bufferView_->byteOffset) {
         return;
     }
 
