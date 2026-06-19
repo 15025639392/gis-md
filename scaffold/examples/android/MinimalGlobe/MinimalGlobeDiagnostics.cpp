@@ -52,7 +52,10 @@ std::string buildRenderEntryDiagnosticsLine(const Diagnostics& diagnostics) {
         << ")  fallback " << diagnostics.terrainRenderEntriesAncestorFallback
         << "  prep " << diagnostics.terrainRenderEntriesSynchronousPrep
         << "/" << diagnostics.terrainRenderEntriesDeferredPrep
-        << "  masked " << diagnostics.globeFallbackMaskedTerrainEntries
+        << "  surface/globe/masked "
+        << diagnostics.terrainSurfaceCommandsSubmitted
+        << "/" << diagnostics.globeFallbackCommands
+        << "/" << diagnostics.globeFallbackMaskedTerrainEntries
         << "\n";
     return out.str();
 }

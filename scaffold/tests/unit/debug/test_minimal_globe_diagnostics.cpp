@@ -26,7 +26,9 @@ TEST(MinimalGlobeDiagnosticsTest, PanelReportsRenderEntryFunnelCounts) {
     diagnostics.terrainRenderEntriesAncestorFallback = 3;
     diagnostics.terrainRenderEntriesSynchronousPrep = 4;
     diagnostics.terrainRenderEntriesDeferredPrep = 5;
-    diagnostics.globeFallbackMaskedTerrainEntries = 6;
+    diagnostics.terrainSurfaceCommandsSubmitted = 6;
+    diagnostics.globeFallbackCommands = 7;
+    diagnostics.globeFallbackMaskedTerrainEntries = 8;
 
     const std::string line =
         minimal_globe_demo::buildRenderEntryDiagnosticsLine(diagnostics);
@@ -37,7 +39,7 @@ TEST(MinimalGlobeDiagnosticsTest, PanelReportsRenderEntryFunnelCounts) {
     EXPECT_NE(std::string::npos, line.find("defer 1 (sel 1, fade 0)"));
     EXPECT_NE(std::string::npos, line.find("fallback 3"));
     EXPECT_NE(std::string::npos, line.find("prep 4/5"));
-    EXPECT_NE(std::string::npos, line.find("masked 6"));
+    EXPECT_NE(std::string::npos, line.find("surface/globe/masked 6/7/8"));
 }
 
 TEST(MinimalGlobeDiagnosticsTest, SummaryReportsRenderEntryReasonCounts) {
