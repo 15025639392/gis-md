@@ -186,6 +186,66 @@ TEST(RectangleTest, SplitAtAntimeridianMatchesCesiumNativeOrdering) {
     EXPECT_NEAR(M_PI, split.second->east(), 1e-14);
 }
 
+TEST(RectangleTest, ComputeIntersectionMatchesCesiumNativeGlobeRectangleBranches) {
+    // Cesium-native GlobeRectangle::computeIntersection accounts for
+    // antimeridian wrapping before applying longitude/latitude overlap.
+    const Rectangle simple = Rectangle::fromDegrees(-10.0, -20.0, 30.0, 40.0);
+    const Rectangle overlapping = Rectangle::fromDegrees(20.0, -10.0, 50.0, 10.0);
+    const std::optional<Rectangle> simpleIntersection =
+        simple.computeIntersection(overlapping);
+    ASSERT_TRUE(simpleIntersection.has_value());
+    EXPECT_TRUE(simpleIntersection->equalsEpsilon(
+        Rectangle::fromDegrees(20.0, -10.0, 30.0, 10.0),
+        1e-14));
+
+    const Rectangle crossing = Rectangle::fromDegrees(170.0, -10.0, -170.0, 10.0);
+    const Rectangle eastern = Rectangle::fromDegrees(175.0, -5.0, 178.0, 5.0);
+    const std::optional<Rectangle> easternIntersection =
+        crossing.computeIntersection(eastern);
+    ASSERT_TRUE(easternIntersection.has_value());
+    EXPECT_TRUE(easternIntersection->equalsEpsilon(
+        Rectangle::fromDegrees(175.0, -5.0, 178.0, 5.0),
+        1e-14));
+
+    const Rectangle western = Rectangle::fromDegrees(-178.0, -5.0, -175.0, 5.0);
+    const std::optional<Rectangle> westernIntersection =
+        crossing.computeIntersection(western);
+    ASSERT_TRUE(westernIntersection.has_value());
+    EXPECT_TRUE(westernIntersection->equalsEpsilon(
+        Rectangle::fromDegrees(-178.0, -5.0, -175.0, 5.0),
+        1e-14));
+
+    EXPECT_FALSE(simple.computeIntersection(
+        Rectangle::fromDegrees(40.0, -10.0, 50.0, 10.0)).has_value());
+    EXPECT_FALSE(simple.computeIntersection(
+        Rectangle::fromDegrees(0.0, 40.0, 10.0, 45.0)).has_value());
+}
+
+TEST(RectangleTest, ComputeUnionMatchesCesiumNativeGlobeRectangleBranches) {
+    // Cesium-native GlobeRectangle::computeUnion preserves antimeridian
+    // wrapping when that is the shorter represented union.
+    const Rectangle simple = Rectangle::fromDegrees(-10.0, -20.0, 30.0, 40.0);
+    EXPECT_TRUE(simple.computeUnion(
+                    Rectangle::fromDegrees(20.0, -10.0, 50.0, 10.0))
+                    .equalsEpsilon(Rectangle::fromDegrees(-10.0, -20.0, 50.0, 40.0),
+                                   1e-14));
+
+    const Rectangle crossing = Rectangle::fromDegrees(170.0, -10.0, -170.0, 10.0);
+    EXPECT_TRUE(crossing.computeUnion(
+                    Rectangle::fromDegrees(175.0, -5.0, 178.0, 5.0))
+                    .equalsEpsilon(crossing, 1e-14));
+
+    EXPECT_TRUE(crossing.computeUnion(
+                    Rectangle::fromDegrees(-178.0, -5.0, -160.0, 5.0))
+                    .equalsEpsilon(Rectangle::fromDegrees(170.0, -10.0, -160.0, 10.0),
+                                   1e-14));
+
+    EXPECT_TRUE(Rectangle::fromDegrees(-170.0, -10.0, 170.0, 10.0)
+                    .computeUnion(Rectangle::fromDegrees(175.0, -5.0, -175.0, 5.0))
+                    .equalsEpsilon(Rectangle::fromDegrees(-170.0, -10.0, -175.0, 10.0),
+                                   1e-14));
+}
+
 TEST(RectangleTest, ComputeSignedDistanceMatchesCesiumNative) {
     // Ported from cesium-native CesiumGeometry/test/TestRectangle.cpp:
     // inside returns negative distance to closest edge; outside returns
