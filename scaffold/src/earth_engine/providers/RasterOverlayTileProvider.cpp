@@ -34,6 +34,31 @@ constexpr double kPi = 3.14159265358979323846264338327950288;
 constexpr double kTwoPi = 2.0 * kPi;
 constexpr double kMaxWebMercatorLat = 1.4844222297453324;
 
+#ifdef __ANDROID__
+void logAndroidRasterPipeline(const char* stage,
+                              const std::string& cacheKey,
+                              int sourceCount,
+                              int sourceZoom) {
+    static std::atomic<int> logged{0};
+    if (logged.fetch_add(1, std::memory_order_relaxed) >= 48) {
+        return;
+    }
+    __android_log_print(
+        ANDROID_LOG_INFO,
+        "RasterOverlayPipe",
+        "%s cache=%s sources=%d sourceZoom=%d",
+        stage,
+        cacheKey.c_str(),
+        sourceCount,
+        sourceZoom);
+}
+#else
+void logAndroidRasterPipeline(const char*,
+                              const std::string&,
+                              int,
+                              int) {}
+#endif
+
 bool uploadAllowedDuringInteraction(
     const std::string& cacheKey,
     const DecodedImage* image) {
@@ -939,6 +964,7 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
         maximumScreenSpaceError_);
 
     if (sourcePlan.empty()) {
+        logAndroidRasterPipeline("empty-plan", ck, 0, sourcePlan.sourceZoom);
         tile.setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
         tile.setState(RasterOverlayTile::LoadState::Failed);
         return false;
@@ -952,6 +978,11 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
 
     tile.setState(RasterOverlayTile::LoadState::Loading);
     inFlightRequests_.insert(ck);
+    logAndroidRasterPipeline(
+        "start",
+        ck,
+        static_cast<int>(sourcePlan.sourceKeys.size()),
+        sourcePlan.sourceZoom);
 
     auto* self = this;
     const Rectangle targetBounds = tile.getRectangle();
@@ -966,12 +997,14 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
             std::lock_guard<std::mutex> providerLock(self->pendingMutex_);
             self->inFlightRequests_.erase(ck);
             self->activeRectangleRequests_.erase(ck);
+            logAndroidRasterPipeline("composed", ck, 0, 0);
             self->pendingUploads_.push_back({ck, std::move(composed)});
         },
         [self, ck]() {
             std::lock_guard<std::mutex> providerLock(self->pendingMutex_);
             self->inFlightRequests_.erase(ck);
             self->activeRectangleRequests_.erase(ck);
+            logAndroidRasterPipeline("compose-failed", ck, 0, 0);
             auto it = self->tiles_.find(ck);
             if (it != self->tiles_.end()) {
                 it->second->setMoreDetailAvailable(
