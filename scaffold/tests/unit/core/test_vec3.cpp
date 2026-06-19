@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include "earth_engine/core/math/Vec3.h"
 
+#include <cmath>
+
 using namespace earth_engine;
 
 TEST(Vec3Test, DefaultConstructor) {
@@ -78,6 +80,16 @@ TEST(Vec3Test, Normalized) {
     EXPECT_NEAR(0.8, n.y(), 1e-12);
     EXPECT_NEAR(0.0, n.z(), 1e-12);
     EXPECT_NEAR(1.0, n.length(), 1e-12);
+}
+
+TEST(Vec3Test, NormalizedZeroVectorPreservesGlmNonFiniteSemantics) {
+    // cesium-native uses glm vectors directly. glm::normalize on a zero vector
+    // is not guarded, so this wrapper must not silently return a finite vector.
+    const Vec3 n = Vec3::zero().normalized();
+
+    EXPECT_FALSE(std::isfinite(n.x()));
+    EXPECT_FALSE(std::isfinite(n.y()));
+    EXPECT_FALSE(std::isfinite(n.z()));
 }
 
 TEST(Vec3Test, Distance) {
