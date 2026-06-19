@@ -10,11 +10,17 @@
 using namespace earth_engine;
 
 TEST(TileAvailabilityUtilitiesTest, CountOnesInByteMatchesCesiumNative) {
-    uint8_t byte = static_cast<uint8_t>(0xFF);
+    for (uint16_t value = 0; value <= 0xFFU; ++value) {
+        uint8_t expected = 0;
+        uint8_t bits = static_cast<uint8_t>(value);
+        while (bits != 0) {
+            expected += static_cast<uint8_t>(bits & 1U);
+            bits >>= 1U;
+        }
 
-    for (uint8_t i = 0; i <= 8; ++i) {
-        EXPECT_EQ(8 - i, TileAvailabilityUtilities::countOnesInByte(
-                             static_cast<uint8_t>(byte >> i)));
+        EXPECT_EQ(expected,
+                  TileAvailabilityUtilities::countOnesInByte(
+                      static_cast<uint8_t>(value)));
     }
 }
 
