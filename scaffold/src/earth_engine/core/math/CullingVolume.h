@@ -29,6 +29,16 @@ struct CullingVolume {
         double top,
         double nearPlane);
 
+    static CullingVolume fromOrthographicOffCenter(
+        const Vec3& position,
+        const Vec3& direction,
+        const Vec3& up,
+        double left,
+        double right,
+        double bottom,
+        double top,
+        double nearPlane);
+
     static CullingVolume fromClipMatrix(const Mat4& clipMatrix);
 };
 

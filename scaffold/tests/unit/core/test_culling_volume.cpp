@@ -52,6 +52,20 @@ Mat4 cesiumPerspectiveOffCenterMatrix(double left,
     return Mat4(projection);
 }
 
+Mat4 cesiumOrthographicMatrix(double left,
+                              double right,
+                              double bottom,
+                              double top) {
+    glm::dmat4 projection(1.0);
+    projection[0][0] = 2.0 / (right - left);
+    projection[1][1] = 2.0 / (bottom - top);
+    projection[2][2] = 0.0;
+    projection[3][0] = -(right + left) / (right - left);
+    projection[3][1] = -(bottom + top) / (bottom - top);
+    projection[3][2] = 1.0;
+    return Mat4(projection);
+}
+
 Mat4 cesiumViewMatrix(const Vec3& position, const Vec3& direction, const Vec3& up) {
     const Vec3 forward = direction * -1.0;
     const Vec3 side = up.cross(forward).normalized();
@@ -149,4 +163,33 @@ TEST(CullingVolumeTest, PerspectiveOffCenterMatchesCesiumNativeClipMatrix) {
     const CullingVolume fromClip = CullingVolume::fromClipMatrix(clipMatrix);
 
     expectCullingVolumeNear(fromOffCenter, fromClip, 1e-10);
+}
+
+TEST(CullingVolumeTest, OrthographicMatchesCesiumNativeClipMatrix) {
+    const Vec3 position(-500.0, 250.0, 1000.0);
+    const Vec3 direction(0.0, 0.0, -1.0);
+    const Vec3 up(0.0, 1.0, 0.0);
+    const double left = -10.0;
+    const double right = 20.0;
+    const double bottom = -5.0;
+    const double top = 15.0;
+    const double nearPlane = 2.0;
+
+    const CullingVolume fromOrthographic =
+        CullingVolume::fromOrthographicOffCenter(
+            position,
+            direction,
+            up,
+            left,
+            right,
+            bottom,
+            top,
+            nearPlane);
+
+    const Mat4 clipMatrix =
+        cesiumOrthographicMatrix(left, right, bottom, top) *
+        cesiumViewMatrix(position, direction, up);
+    const CullingVolume fromClip = CullingVolume::fromClipMatrix(clipMatrix);
+
+    expectCullingVolumeNear(fromOrthographic, fromClip, 1e-10);
 }

@@ -13,6 +13,29 @@ Plane normalizedPlane(double a, double b, double c, double d) {
     return Plane(Vec3(a / length, b / length, c / length), d / length);
 }
 
+glm::dmat4 cesiumViewMatrix(const Vec3& position,
+                            const Vec3& direction,
+                            const Vec3& up) {
+    const Vec3 forward = direction * -1.0;
+    const Vec3 side = up.cross(forward).normalized();
+    const Vec3 poseUp = forward.cross(side).normalized();
+
+    glm::dmat4 view(1.0);
+    view[0][0] = side.x();
+    view[1][0] = side.y();
+    view[2][0] = side.z();
+    view[0][1] = poseUp.x();
+    view[1][1] = poseUp.y();
+    view[2][1] = poseUp.z();
+    view[0][2] = forward.x();
+    view[1][2] = forward.y();
+    view[2][2] = forward.z();
+    view[3][0] = -side.dot(position);
+    view[3][1] = -poseUp.dot(position);
+    view[3][2] = -forward.dot(position);
+    return view;
+}
+
 } // namespace
 
 CullingVolume CullingVolume::fromPerspectiveFieldOfView(
@@ -70,25 +93,31 @@ CullingVolume CullingVolume::fromPerspectiveOffCenter(
     projection[2][3] = -1.0;
     projection[3][2] = nearPlane;
 
-    const Vec3 forward = direction * -1.0;
-    const Vec3 side = up.cross(forward).normalized();
-    const Vec3 poseUp = forward.cross(side).normalized();
+    return fromClipMatrix(
+        Mat4(projection * cesiumViewMatrix(position, direction, up)));
+}
 
-    glm::dmat4 view(1.0);
-    view[0][0] = side.x();
-    view[1][0] = side.y();
-    view[2][0] = side.z();
-    view[0][1] = poseUp.x();
-    view[1][1] = poseUp.y();
-    view[2][1] = poseUp.z();
-    view[0][2] = forward.x();
-    view[1][2] = forward.y();
-    view[2][2] = forward.z();
-    view[3][0] = -side.dot(position);
-    view[3][1] = -poseUp.dot(position);
-    view[3][2] = -forward.dot(position);
+CullingVolume CullingVolume::fromOrthographicOffCenter(
+    const Vec3& position,
+    const Vec3& direction,
+    const Vec3& up,
+    double left,
+    double right,
+    double bottom,
+    double top,
+    double nearPlane) {
+    (void)nearPlane;
 
-    return fromClipMatrix(Mat4(projection * view));
+    glm::dmat4 projection(1.0);
+    projection[0][0] = 2.0 / (right - left);
+    projection[1][1] = 2.0 / (bottom - top);
+    projection[2][2] = 0.0;
+    projection[3][0] = -(right + left) / (right - left);
+    projection[3][1] = -(bottom + top) / (bottom - top);
+    projection[3][2] = 1.0;
+
+    return fromClipMatrix(
+        Mat4(projection * cesiumViewMatrix(position, direction, up)));
 }
 
 CullingVolume CullingVolume::fromClipMatrix(const Mat4& clipMatrix) {
