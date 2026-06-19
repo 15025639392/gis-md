@@ -16,7 +16,6 @@ namespace earth_engine {
 struct TileRenderPlanFinalizeOptions {
     bool enableLodTransitionPeriod = false;
     bool interactionActive = false;
-    bool resourceSmoothingActive = false;
     int activeInteractionRenderPrepBudget = 0;
     int recoveryRenderPrepBudget = 1;
 };
@@ -56,9 +55,7 @@ struct TileRenderPlanFinalizer {
                 !selectedTile->hasSurfaceDrawable()) {
                 TilesetTile* drawableAncestor =
                     findNearestDrawableAncestor(*selectedTile);
-                if (drawableAncestor &&
-                    (options.resourceSmoothingActive ||
-                     renderPrepBudgetRemaining <= 0)) {
+                if (drawableAncestor) {
                     commandTile = drawableAncestor;
                     surfaceClipUv = clipUvForDescendantBounds(
                         commandTile->bounds,

@@ -11288,7 +11288,6 @@ void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
         TileRenderPlanFinalizeOptions{
             false,
             true,
-            false,
             0,
             1},
             [&tiles](const TileKey& key) -> TilesetTile* {
@@ -11327,6 +11326,50 @@ void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
           "TileRenderPlanFinalizer: ancestor fallback clip UVs cover the selected child quadrant");
 }
 
+void testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery() {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
+    TilesetTile child(childKey, Rectangle{0.0, 1.0, 1.0, 2.0}, &parent);
+    parent.markRenderContentDone();
+    parent.content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(4),
+        nullptr);
+
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {TileCacheKey::forTile(parentKey), &parent},
+        {TileCacheKey::forTile(childKey), &child}};
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(childKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            false,
+            0,
+            1},
+        [&tiles](const TileKey& key) -> TilesetTile* {
+            auto it = tiles.find(TileCacheKey::forTile(key));
+            return it == tiles.end() ? nullptr : it->second;
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        });
+
+    check(plan.renderEntries.size() == 1 &&
+              plan.renderEntries.front().selectedKey == childKey &&
+              plan.renderEntries.front().renderKey == parentKey &&
+              plan.renderEntries.front().reason ==
+                  TileRenderEntryReason::AncestorFallback &&
+              plan.renderEntries.front().usesAncestorFallback &&
+              plan.renderEntries.front().surfaceClipEnabled &&
+              plan.renderEntryAncestorFallbackCount == 1 &&
+              plan.renderEntrySynchronousPrepCount == 0 &&
+              plan.renderEntryDeferredPrepCount == 0,
+          "TileRenderPlanFinalizer: recovery frames keep drawable ancestors active until the selected child is ready");
+}
+
 void testTileRenderPlanFinalizerCountsRootPrepOnce() {
     const TileKey rootKey{"test", 0, 0, 0};
     TilesetTile root(rootKey, Rectangle{});
@@ -11338,7 +11381,6 @@ void testTileRenderPlanFinalizerCountsRootPrepOnce() {
         TileRenderPlanFinalizeOptions{
             false,
             true,
-            false,
             0,
             1},
             [&root](const TileKey& key) -> TilesetTile* {
@@ -11373,7 +11415,6 @@ void testTileRenderPlanFinalizerReadsSelectionFrameFade() {
         plan,
         TileRenderPlanFinalizeOptions{
             true,
-            false,
             false,
             0,
             1},
@@ -19498,6 +19539,7 @@ int main() {
     testTileTerrainUploadPolicyMarksTerrainRenderContentStates();
     testTileTerrainUploadCommitterAppliesMeshResourceOutcome();
     testTileRenderPlanFinalizerResolvesAncestorFallbackEntries();
+    testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery();
     testTileRenderPlanFinalizerCountsRootPrepOnce();
     testTileRenderPlanFinalizerReadsSelectionFrameFade();
     testTileRenderEntryCommandBuilderCountsSkippedEntries();

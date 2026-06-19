@@ -22,7 +22,6 @@ void TileRenderPlanFrameRefresher::refresh(
         TileRenderPlanFinalizeOptions{
             options.enableLodTransitionPeriod,
             options.interactionActive,
-            options.resourceSmoothingActive,
             kActiveInteractionRenderPrepBudget,
             kRecoveryRenderPrepBudget},
         [&contentAccess](const TileKey& key) {
