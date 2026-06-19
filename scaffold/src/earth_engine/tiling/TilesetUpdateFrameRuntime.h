@@ -1,8 +1,6 @@
 #pragma once
 
-#include "../scene/Camera.h"
 #include "TileFrameDebugLogFormatter.h"
-#include "TileFrameWorkCoordinator.h"
 
 namespace earth_engine {
 
@@ -10,7 +8,6 @@ struct FrameState;
 class Tileset;
 
 struct TilesetUpdateFrameRuntimeResult {
-    TileFrameWorkResult frameWork;
     TileUpdateDebugLogInput debugLog;
 };
 

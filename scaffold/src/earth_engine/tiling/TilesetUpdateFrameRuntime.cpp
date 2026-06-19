@@ -1,7 +1,9 @@
 #include "TilesetUpdateFrameRuntime.h"
 
+#include "../scene/Camera.h"
 #include "TileContentAccess.h"
 #include "TileContentLifecycleManager.h"
+#include "TileFrameWorkCoordinator.h"
 #include "Tileset.h"
 #include "TilesetProviderDiagnosticsCollector.h"
 #include "TilesetSelectionFrameFacade.h"
@@ -85,7 +87,6 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
     const TileUpdateSelectionWorkResult& selectionWork =
         frameWork.selectionWork;
     return TilesetUpdateFrameRuntimeResult{
-        frameWork,
         TileUpdateDebugLogInput{
             tileset.tilePlan_.visibleTiles.size(),
             tileset.loadQueue_.size(),
