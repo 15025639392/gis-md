@@ -211,6 +211,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileKey.cpp
     earth_engine/tiling/TileLoadState.h
     earth_engine/tiling/TileRefine.h
+    earth_engine/tiling/TileAvailability.h
+    earth_engine/tiling/TileAvailability.cpp
     earth_engine/tiling/TileBoundingVolume.h
     earth_engine/tiling/TileScheme.h
     earth_engine/tiling/TileScheme.cpp

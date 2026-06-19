@@ -1,0 +1,345 @@
+#include <gtest/gtest.h>
+
+#include "earth_engine/tiling/TileAvailability.h"
+
+#include <cstddef>
+#include <utility>
+#include <vector>
+
+using namespace earth_engine;
+
+TEST(TileAvailabilityUtilitiesTest, CountOnesInByteMatchesCesiumNative) {
+    uint8_t byte = static_cast<uint8_t>(0xFF);
+
+    for (uint8_t i = 0; i <= 8; ++i) {
+        EXPECT_EQ(8 - i, TileAvailabilityUtilities::countOnesInByte(
+                             static_cast<uint8_t>(byte >> i)));
+    }
+}
+
+TEST(TileAvailabilityUtilitiesTest, CountOnesInBufferMatchesCesiumNative) {
+    std::vector<std::byte> buffer(64);
+    for (size_t i = 0; i < buffer.size(); ++i) {
+        buffer[i] = static_cast<std::byte>(0xFC);
+    }
+
+    EXPECT_EQ(384U, TileAvailabilityUtilities::countOnesInBuffer(buffer));
+}
+
+TEST(TileAvailabilityAccessorTest, ConstantAvailabilityMatchesCesiumNative) {
+    TileAvailabilitySubtree subtree{
+        ConstantTileAvailability{true},
+        TileSubtreeBufferView{0, 64, 0},
+        ConstantTileAvailability{false},
+        {std::vector<std::byte>(64, static_cast<std::byte>(0xFC))}};
+
+    TileAvailabilityAccessor tileAccessor(
+        subtree.tileAvailability,
+        subtree);
+    TileAvailabilityAccessor subtreeAccessor(
+        subtree.subtreeAvailability,
+        subtree);
+
+    EXPECT_TRUE(tileAccessor.isConstant());
+    EXPECT_TRUE(tileAccessor.getConstant());
+    EXPECT_FALSE(tileAccessor.isBufferView());
+    EXPECT_TRUE(subtreeAccessor.isConstant());
+    EXPECT_FALSE(subtreeAccessor.getConstant());
+    EXPECT_FALSE(subtreeAccessor.isBufferView());
+}
+
+TEST(TileAvailabilityAccessorTest, BufferAvailabilityMatchesCesiumNative) {
+    TileAvailabilitySubtree subtree{
+        ConstantTileAvailability{true},
+        TileSubtreeBufferView{0, 64, 0},
+        ConstantTileAvailability{false},
+        {std::vector<std::byte>(64, static_cast<std::byte>(0xFC))}};
+
+    TileAvailabilityAccessor contentAccessor(
+        subtree.contentAvailability,
+        subtree);
+
+    ASSERT_FALSE(contentAccessor.isConstant());
+    ASSERT_TRUE(contentAccessor.isBufferView());
+    EXPECT_EQ(64U, contentAccessor.size());
+    for (size_t i = 0; i < contentAccessor.size(); ++i) {
+        EXPECT_EQ(static_cast<std::byte>(0xFC), contentAccessor[i]);
+    }
+}
+
+TEST(TileAvailabilityAccessorTest, CombinedBufferAvailabilityMatchesCesiumNative) {
+    std::vector<std::byte> availabilityBuffer(64);
+    for (size_t i = 0; i < availabilityBuffer.size(); ++i) {
+        availabilityBuffer[i] = static_cast<std::byte>(0xFC);
+    }
+
+    TileAvailabilitySubtree subtree{
+        TileSubtreeBufferView{0, 32, 0},
+        TileSubtreeBufferView{32, 32, 0},
+        ConstantTileAvailability{false},
+        {std::move(availabilityBuffer)}};
+
+    TileAvailabilityAccessor tileAccessor(
+        subtree.tileAvailability,
+        subtree);
+    TileAvailabilityAccessor contentAccessor(
+        subtree.contentAvailability,
+        subtree);
+
+    ASSERT_TRUE(tileAccessor.isBufferView());
+    ASSERT_TRUE(contentAccessor.isBufferView());
+    EXPECT_EQ(32U, tileAccessor.size());
+    EXPECT_EQ(32U, contentAccessor.size());
+    for (size_t i = 0; i < 32U; ++i) {
+        EXPECT_EQ(static_cast<std::byte>(0xFC), tileAccessor[i]);
+        EXPECT_EQ(static_cast<std::byte>(0xFC), contentAccessor[i]);
+    }
+}
+
+TEST(TileAvailabilityNodeTest, LoadedSubtreeChildCountUsesSubtreeAvailability) {
+    TileAvailabilityNode constantNode;
+    constantNode.setLoadedSubtree(
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            {}},
+        64);
+    EXPECT_EQ(64U, constantNode.childNodes.size());
+
+    TileAvailabilityNode bufferNode;
+    bufferNode.setLoadedSubtree(
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            TileSubtreeBufferView{0, 8, 0},
+            {std::vector<std::byte>{
+                static_cast<std::byte>(0xFF),
+                static_cast<std::byte>(0xFF),
+                static_cast<std::byte>(0xFF),
+                static_cast<std::byte>(0xFF),
+                static_cast<std::byte>(0xFF),
+                static_cast<std::byte>(0x0F),
+                static_cast<std::byte>(0xFF),
+                static_cast<std::byte>(0xFF)}}},
+        64);
+    EXPECT_EQ(60U, bufferNode.childNodes.size());
+}
+
+namespace {
+
+bool containsTile(const std::vector<std::array<uint32_t, 3>>& ids,
+                  uint32_t level,
+                  uint32_t x,
+                  uint32_t y) {
+    for (const auto& id : ids) {
+        if (id[0] == level && id[1] == x && id[2] == y) {
+            return true;
+        }
+    }
+    return false;
+}
+
+TileAvailabilitySubtree makeQuadtreeFixtureRootSubtree() {
+    std::vector<std::byte> contentAvailabilityBuffer = {
+        static_cast<std::byte>(0xFF),
+        static_cast<std::byte>(0x0F),
+        static_cast<std::byte>(0x3F),
+        static_cast<std::byte>(0x00),
+        static_cast<std::byte>(0x00),
+        static_cast<std::byte>(0x00),
+        static_cast<std::byte>(0x00),
+        static_cast<std::byte>(0x00)};
+
+    std::vector<std::byte> subtreeAvailabilityBuffer = {
+        static_cast<std::byte>(0xFF),
+        static_cast<std::byte>(0xFF),
+        static_cast<std::byte>(0xFF),
+        static_cast<std::byte>(0xFF),
+        static_cast<std::byte>(0xFF),
+        static_cast<std::byte>(0x0F),
+        static_cast<std::byte>(0xFF),
+        static_cast<std::byte>(0xFF)};
+
+    return TileAvailabilitySubtree{
+        ConstantTileAvailability{true},
+        TileSubtreeBufferView{0, 8, 0},
+        TileSubtreeBufferView{0, 8, 1},
+        {std::move(contentAvailabilityBuffer),
+         std::move(subtreeAvailabilityBuffer)}};
+}
+
+} // namespace
+
+TEST(TileQuadtreeAvailabilityTest, RootIsImplicitlyAvailableBeforeSubtreeLoads) {
+    TileQuadtreeAvailability availability(3, 5);
+
+    EXPECT_EQ(static_cast<uint8_t>(TileAvailable | SubtreeAvailable),
+              availability.computeAvailability(0, 0, 0));
+    EXPECT_EQ(0, availability.computeAvailability(1, 0, 0));
+}
+
+TEST(TileQuadtreeAvailabilityTest, TileAndContentAvailabilityMatchCesiumNative) {
+    TileQuadtreeAvailability availability(3, 5);
+    ASSERT_TRUE(availability.addSubtree(0, 0, 0, makeQuadtreeFixtureRootSubtree()));
+    const TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+
+    const std::vector<std::array<uint32_t, 3>> unavailableContentIds = {
+        std::array<uint32_t, 3>{2, 3, 1},
+        std::array<uint32_t, 3>{2, 0, 2},
+        std::array<uint32_t, 3>{2, 1, 2},
+        std::array<uint32_t, 3>{2, 0, 3}};
+
+    for (uint32_t level = 0; level < 3U; ++level) {
+        for (uint32_t y = 0; y < (1U << level); ++y) {
+            for (uint32_t x = 0; x < (1U << level); ++x) {
+                const uint8_t global =
+                    availability.computeAvailability(level, x, y);
+                const uint8_t primed =
+                    availability.computeAvailability(level, x, y, root);
+                EXPECT_EQ(global, primed);
+                EXPECT_TRUE((global & TileAvailable) != 0);
+                EXPECT_EQ(
+                    !containsTile(unavailableContentIds, level, x, y),
+                    (global & ContentAvailable) != 0);
+            }
+        }
+    }
+}
+
+TEST(TileQuadtreeAvailabilityTest, ChildSubtreeAvailabilityMatchesCesiumNative) {
+    TileQuadtreeAvailability availability(3, 5);
+    ASSERT_TRUE(availability.addSubtree(0, 0, 0, makeQuadtreeFixtureRootSubtree()));
+    TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+
+    const std::vector<std::array<uint32_t, 3>> unavailableSubtreeIds = {
+        std::array<uint32_t, 3>{3, 2, 6},
+        std::array<uint32_t, 3>{3, 3, 6},
+        std::array<uint32_t, 3>{3, 2, 7},
+        std::array<uint32_t, 3>{3, 3, 7}};
+
+    for (uint32_t y = 0; y < 8U; ++y) {
+        for (uint32_t x = 0; x < 8U; ++x) {
+            const uint8_t state = availability.computeAvailability(3, x, y);
+            const std::optional<uint32_t> childIndex =
+                availability.findChildNodeIndex(3, x, y, root);
+            const bool subtreeShouldBeAvailable =
+                !containsTile(unavailableSubtreeIds, 3, x, y);
+
+            EXPECT_EQ(subtreeShouldBeAvailable,
+                      (state & SubtreeAvailable) != 0);
+            EXPECT_EQ(subtreeShouldBeAvailable, childIndex.has_value());
+        }
+    }
+}
+
+TEST(TileQuadtreeAvailabilityTest, ChildSubtreeLoadedFlagMatchesCesiumNative) {
+    TileQuadtreeAvailability availability(3, 5);
+    ASSERT_TRUE(availability.addSubtree(0, 0, 0, makeQuadtreeFixtureRootSubtree()));
+    TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+
+    const std::vector<std::array<uint32_t, 3>> loadedSubtreeIds = {
+        std::array<uint32_t, 3>{3, 0, 0},
+        std::array<uint32_t, 3>{3, 0, 1},
+        std::array<uint32_t, 3>{3, 0, 2},
+        std::array<uint32_t, 3>{3, 1, 2}};
+
+    for (const auto& id : loadedSubtreeIds) {
+        ASSERT_TRUE(availability.addSubtree(
+            id[0],
+            id[1],
+            id[2],
+            TileAvailabilitySubtree{
+                ConstantTileAvailability{true},
+                ConstantTileAvailability{true},
+                ConstantTileAvailability{false},
+                {}}));
+    }
+
+    for (uint32_t y = 0; y < 8U; ++y) {
+        for (uint32_t x = 0; x < 8U; ++x) {
+            const uint8_t state = availability.computeAvailability(3, x, y);
+            const TileAvailabilityNode* child =
+                availability.findChildNode(3, x, y, root);
+            const bool subtreeShouldBeLoaded =
+                containsTile(loadedSubtreeIds, 3, x, y);
+
+            EXPECT_EQ(subtreeShouldBeLoaded, (state & SubtreeLoaded) != 0);
+            EXPECT_EQ(subtreeShouldBeLoaded, child != nullptr);
+        }
+    }
+}
+
+TEST(TileQuadtreeAvailabilityTest, AddSubtreeTraversesLoadedDescendantNodes) {
+    TileQuadtreeAvailability availability(3, 8);
+    ASSERT_TRUE(availability.addSubtree(0, 0, 0, makeQuadtreeFixtureRootSubtree()));
+    ASSERT_TRUE(availability.addSubtree(
+        3,
+        0,
+        0,
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            {}}));
+
+    ASSERT_TRUE(availability.addSubtree(
+        6,
+        0,
+        0,
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{false},
+            {}}));
+
+    const uint8_t loadedState = availability.computeAvailability(6, 0, 0);
+    EXPECT_TRUE((loadedState & TileAvailable) != 0);
+    EXPECT_TRUE((loadedState & SubtreeAvailable) != 0);
+    EXPECT_TRUE((loadedState & SubtreeLoaded) != 0);
+
+    EXPECT_FALSE(availability.addSubtree(
+        6,
+        0,
+        0,
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{false},
+            {}}));
+}
+
+TEST(TileQuadtreeAvailabilityTest, AddNodeAndAddLoadedSubtreeMatchCesiumNative) {
+    TileQuadtreeAvailability availability(3, 5);
+    ASSERT_TRUE(availability.addSubtree(0, 0, 0, makeQuadtreeFixtureRootSubtree()));
+    TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+
+    TileAvailabilityNode* node = availability.addNode(3, 0, 1, root);
+    ASSERT_NE(nullptr, node);
+    EXPECT_EQ(static_cast<uint8_t>(TileAvailable | SubtreeAvailable),
+              availability.computeAvailability(3, 0, 1, node));
+
+    EXPECT_TRUE(availability.addLoadedSubtree(
+        node,
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{false},
+            {}}));
+    EXPECT_FALSE(availability.addLoadedSubtree(
+        node,
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{false},
+            {}}));
+
+    const uint8_t loadedState = availability.computeAvailability(3, 0, 1);
+    EXPECT_TRUE((loadedState & TileAvailable) != 0);
+    EXPECT_TRUE((loadedState & SubtreeAvailable) != 0);
+    EXPECT_TRUE((loadedState & SubtreeLoaded) != 0);
+}
