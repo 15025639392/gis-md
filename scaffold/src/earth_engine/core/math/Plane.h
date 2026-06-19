@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Vec3.h"
+#include <stdexcept>
 
 namespace earth_engine {
 
@@ -21,12 +22,10 @@ public:
 
     /// Construct from a normal (must be unit length) and signed distance
     /// from the origin.
-    Plane(const Vec3& normal, double distance) noexcept
-        : normal_(normal), distance_(distance) {}
+    Plane(const Vec3& normal, double distance);
 
     /// Construct from a point on the plane and the plane's normal (unit length).
-    Plane(const Vec3& point, const Vec3& normal) noexcept
-        : normal_(normal), distance_(-normal.dot(point)) {}
+    Plane(const Vec3& point, const Vec3& normal);
 
     const Vec3& getNormal() const noexcept { return normal_; }
     double getDistance() const noexcept { return distance_; }
@@ -36,6 +35,8 @@ public:
     double getPointDistance(const Vec3& point) const noexcept {
         return normal_.dot(point) + distance_;
     }
+
+    Vec3 projectPointOntoPlane(const Vec3& point) const noexcept;
 
 private:
     Vec3 normal_{0, 0, 1};
