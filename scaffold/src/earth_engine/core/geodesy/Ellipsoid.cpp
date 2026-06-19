@@ -166,6 +166,29 @@ std::optional<Vec3> Ellipsoid::tryScaleToGeodeticSurface(
     return Vec3(px * mx, py * my, pz * mz);
 }
 
+Vec3 Ellipsoid::scaleToGeocentricSurface(const Vec3& point) const {
+    auto surface = tryScaleToGeocentricSurface(point);
+    return surface.value_or(Vec3::zero());
+}
+
+std::optional<Vec3> Ellipsoid::tryScaleToGeocentricSurface(
+    const Vec3& point) const {
+    if (std::abs(point.length()) <= kEpsilon12) {
+        return std::nullopt;
+    }
+
+    const double px = point.x();
+    const double py = point.y();
+    const double pz = point.z();
+
+    const double beta = 1.0 / std::sqrt(
+        px * px * oneOverRadiiSquared_.x() +
+        py * py * oneOverRadiiSquared_.y() +
+        pz * pz * oneOverRadiiSquared_.z());
+
+    return Vec3(px * beta, py * beta, pz * beta);
+}
+
 std::optional<Vec3> Ellipsoid::rayIntersection(const Vec3& origin,
                                                const Vec3& direction) const {
     auto interval = rayIntersectionInterval(origin, direction);

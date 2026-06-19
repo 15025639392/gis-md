@@ -60,6 +60,14 @@ public:
     /// 将空间点缩放到椭球表面。语义对齐 cesium-native：椭球中心返回 std::nullopt。
     std::optional<Vec3> tryScaleToGeodeticSurface(const Vec3& point) const;
 
+    /// 将空间点沿地心方向缩放到椭球表面。
+    /// 中心点无法投影；需要区分失败时使用 tryScaleToGeocentricSurface。
+    Vec3 scaleToGeocentricSurface(const Vec3& point) const;
+
+    /// 将空间点沿地心方向缩放到椭球表面。语义对齐 cesium-native：
+    /// 椭球中心返回 std::nullopt。
+    std::optional<Vec3> tryScaleToGeocentricSurface(const Vec3& point) const;
+
     /// 射线与椭球相交。origin 单位 meter，direction 可非单位向量。
     /// miss 返回 std::nullopt，不使用零向量表达 miss。
     std::optional<Vec3> rayIntersection(const Vec3& origin,

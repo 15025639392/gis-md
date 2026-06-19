@@ -215,6 +215,25 @@ TEST(EllipsoidTest, TryScaleToGeodeticSurfaceMatchesCesiumNativeCenterBehavior) 
     EXPECT_NEAR(0.0, nearCenter->z(), 1e-12);
 }
 
+TEST(EllipsoidTest, TryScaleToGeocentricSurfaceMatchesCesiumNative) {
+    const Ellipsoid e(2.0, 3.0, 4.0);
+
+    EXPECT_FALSE(e.tryScaleToGeocentricSurface(Vec3::zero()).has_value());
+
+    auto xAxis = e.tryScaleToGeocentricSurface(Vec3(8.0, 0.0, 0.0));
+    ASSERT_TRUE(xAxis.has_value());
+    EXPECT_NEAR(2.0, xAxis->x(), 1e-12);
+    EXPECT_NEAR(0.0, xAxis->y(), 1e-12);
+    EXPECT_NEAR(0.0, xAxis->z(), 1e-12);
+
+    auto diagonal = e.tryScaleToGeocentricSurface(Vec3(2.0, 3.0, 4.0));
+    ASSERT_TRUE(diagonal.has_value());
+    const double beta = 1.0 / std::sqrt(3.0);
+    EXPECT_NEAR(2.0 * beta, diagonal->x(), 1e-12);
+    EXPECT_NEAR(3.0 * beta, diagonal->y(), 1e-12);
+    EXPECT_NEAR(4.0 * beta, diagonal->z(), 1e-12);
+}
+
 TEST(EllipsoidTest, RayIntersectionHasExplicitMissAndHit) {
     const auto& e = Ellipsoid::WGS84();
     Vec3 origin(0.0, 0.0, 7000000.0);
