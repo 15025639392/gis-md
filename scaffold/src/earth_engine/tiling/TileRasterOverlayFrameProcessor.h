@@ -83,6 +83,12 @@ public:
         std::vector<TileLoadRequest> sortedLoadRequests = loadRequests;
         TileLoadPriorityPolicy::sortByPriority(sortedLoadRequests);
         for (const TileLoadRequest& request : sortedLoadRequests) {
+            if (!frameResourceBudget.canIssue(
+                    FrameResourceLane::RasterRequest,
+                    TileLoadPriorityPolicy::toFramePriority(
+                        request.group))) {
+                break;
+            }
             if (TilesetTile* tile = ensureTile(request.key)) {
                 TileRasterOverlayPrefetcher::prefetch(
                     *tile,

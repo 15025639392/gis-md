@@ -4822,10 +4822,8 @@ void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {
                   RasterOverlayTile::LoadState::Loading &&
               budget.rasterNetworkRequestsIssued() == 2,
           "TileRasterOverlayFrameProcessor: raster prefetch starts the higher-priority tile first");
-    check(!edgeLoading ||
-              edgeLoading->getState() !=
-                  RasterOverlayTile::LoadState::Loading,
-          "TileRasterOverlayFrameProcessor: lower-priority traversal-order tile does not consume the first raster request");
+    check(!edgeMapping && !edgeLoading,
+          "TileRasterOverlayFrameProcessor: exhausted raster budget stops lower-priority traversal-order prefetch");
 }
 
 void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
