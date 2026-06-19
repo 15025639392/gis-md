@@ -9850,6 +9850,43 @@ void testTileSelectionInputMetricsComputesCenterPriorityAndSse() {
           "TileSelectionInputMetrics: summary uses maximum per-view SSE");
 }
 
+void testTileSelectionInputMetricsSseMatchesCesiumNativeGolden() {
+    // cesium-native ViewState::computeScreenSpaceError is equivalent to:
+    // pixelError = geometricError * projection[1][1] * viewportHeight /
+    //              (2 * distance)
+    // for the perspective projection used by tile selection.
+    glm::dmat4 rawProjection(0.0);
+    rawProjection[1][1] = 2.0;
+    rawProjection[2][3] = -1.0;
+    rawProjection[3][2] = 1.0;
+    const Mat4 projection(rawProjection);
+
+    const double sse = TileSelectionInputMetrics::screenSpaceErrorForView(
+        10.0,
+        projection,
+        800,
+        1000.0);
+    check(std::abs(sse - 8.0) < 1e-12,
+          "TileSelectionInputMetrics: SSE matches cesium-native projection golden");
+
+    const double closeSse = TileSelectionInputMetrics::screenSpaceErrorForView(
+        10.0,
+        projection,
+        800,
+        500.0);
+    check(std::abs(closeSse - 16.0) < 1e-12,
+          "TileSelectionInputMetrics: halving distance doubles SSE");
+
+    const double tallViewportSse =
+        TileSelectionInputMetrics::screenSpaceErrorForView(
+            10.0,
+            projection,
+            1200,
+            1000.0);
+    check(std::abs(tallViewportSse - 12.0) < 1e-12,
+          "TileSelectionInputMetrics: SSE scales with viewport height");
+}
+
 void testTileLoadPriorityPolicyMatchesNativeOrdering() {
     check(TileLoadPriorityPolicy::hasHigherPriority(
               TileLoadPriorityGroup::Urgent,
@@ -20672,6 +20709,7 @@ int main() {
     testTilesetLoadQueueKeepsTraversalPriority();
     testTilePriorityMetricsMatchesCesiumNativeFormula();
     testTileSelectionInputMetricsComputesCenterPriorityAndSse();
+    testTileSelectionInputMetricsSseMatchesCesiumNativeGolden();
     testTileLoadPriorityPolicyMatchesNativeOrdering();
     testTileLoadQueueDeduplicatesAndUpgradesPriority();
     testTileUnloadQueueMaintainsLruOrderAndDeduplicatesKeys();
