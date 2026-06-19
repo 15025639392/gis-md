@@ -14,6 +14,10 @@
 #include <thread>
 #include <unordered_map>
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
+
 namespace earth_engine {
 namespace {
 
@@ -43,6 +47,7 @@ struct CurlMultiRequestScheduler::Impl {
         std::function<void(int, std::vector<uint8_t>)> callback;
         HttpRequestPriority priority = HttpRequestPriority::Normal;
         std::vector<uint8_t> body;
+        std::array<char, CURL_ERROR_SIZE> errorBuffer{};
         CURL* easy = nullptr;
         bool active = false;
         std::atomic<bool> cancelled{false};
@@ -275,6 +280,7 @@ private:
         curl_easy_setopt(easy, CURLOPT_MAXREDIRS, 3L);
         curl_easy_setopt(easy, CURLOPT_PRIVATE, request.get());
         curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(easy, CURLOPT_ERRORBUFFER, request->errorBuffer.data());
 
         if (curl_multi_add_handle(multi, easy) != CURLM_OK) {
             curl_easy_cleanup(easy);
@@ -340,17 +346,38 @@ private:
 
             long httpCode = 0;
             curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &httpCode);
+            const CURLcode curlResult = message->data.result;
+
+            if (request->cancelled.load(std::memory_order_acquire)) {
+                curl_easy_cleanup(easy);
+                request->easy = nullptr;
+                request->active = false;
+                continue;
+            }
+
+            const int statusCode = curlResult == CURLE_OK
+                ? static_cast<int>(httpCode)
+                : -1;
+#ifdef __ANDROID__
+            if (statusCode != 200) {
+                const char* detail = request->errorBuffer[0] != '\0'
+                    ? request->errorBuffer.data()
+                    : curl_easy_strerror(curlResult);
+                __android_log_print(
+                    ANDROID_LOG_WARN,
+                    "CurlScheduler",
+                    "request failed curl=%d (%s) http=%ld bytes=%zu url=%s",
+                    static_cast<int>(curlResult),
+                    detail,
+                    httpCode,
+                    request->body.size(),
+                    request->url.c_str());
+            }
+#endif
             curl_easy_cleanup(easy);
             request->easy = nullptr;
             request->active = false;
 
-            if (request->cancelled.load(std::memory_order_acquire)) {
-                continue;
-            }
-
-            const int statusCode = message->data.result == CURLE_OK
-                ? static_cast<int>(httpCode)
-                : -1;
             std::vector<uint8_t> result =
                 statusCode == 200 ? std::move(request->body)
                                   : std::vector<uint8_t>{};
