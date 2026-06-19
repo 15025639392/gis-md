@@ -109,6 +109,8 @@ public:
 
     TileAvailabilityNode* rootNode() { return root_.get(); }
     const TileAvailabilityNode* rootNode() const { return root_.get(); }
+    uint32_t subtreeLevels() const { return subtreeLevels_; }
+    uint32_t maximumLevel() const { return maximumLevel_; }
 
 private:
     uint32_t subtreeLevels_ = 0;
@@ -139,6 +141,8 @@ public:
 
     TileAvailabilityNode* rootNode() { return root_.get(); }
     const TileAvailabilityNode* rootNode() const { return root_.get(); }
+    uint32_t subtreeLevels() const { return subtreeLevels_; }
+    uint32_t maximumLevel() const { return maximumLevel_; }
 
 private:
     uint32_t subtreeLevels_ = 0;

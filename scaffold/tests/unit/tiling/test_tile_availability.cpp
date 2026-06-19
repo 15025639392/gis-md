@@ -233,6 +233,8 @@ TileAvailabilitySubtree makeOctreeFixtureRootSubtree() {
 TEST(TileQuadtreeAvailabilityTest, RootIsImplicitlyAvailableBeforeSubtreeLoads) {
     TileQuadtreeAvailability availability(3, 5);
 
+    EXPECT_EQ(3U, availability.subtreeLevels());
+    EXPECT_EQ(5U, availability.maximumLevel());
     EXPECT_EQ(static_cast<uint8_t>(TileAvailable | SubtreeAvailable),
               availability.computeAvailability(0, 0, 0));
     EXPECT_EQ(0, availability.computeAvailability(1, 0, 0));
@@ -406,6 +408,8 @@ TEST(TileQuadtreeAvailabilityTest, AddNodeAndAddLoadedSubtreeMatchCesiumNative) 
 TEST(TileOctreeAvailabilityTest, RootIsImplicitlyAvailableBeforeSubtreeLoads) {
     TileOctreeAvailability availability(3, 5);
 
+    EXPECT_EQ(3U, availability.subtreeLevels());
+    EXPECT_EQ(5U, availability.maximumLevel());
     EXPECT_EQ(static_cast<uint8_t>(TileAvailable | SubtreeAvailable),
               availability.computeAvailability(OctreeTileID{0, 0, 0, 0}));
     EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{1, 0, 0, 0}));
