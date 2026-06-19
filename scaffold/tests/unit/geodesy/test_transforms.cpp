@@ -1,8 +1,12 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/core/geodesy/Transforms.h"
+#include "earth_engine/core/math/MathUtils.h"
 #include "earth_engine/core/math/Mat4.h"
 #include "earth_engine/core/math/Vec3.h"
+
+#include <cmath>
+#include <limits>
 
 using namespace earth_engine;
 
@@ -15,6 +19,17 @@ void expectVectorNear(const Mat4& transform,
     EXPECT_NEAR(expected.x(), actual.x(), 1e-12);
     EXPECT_NEAR(expected.y(), actual.y(), 1e-12);
     EXPECT_NEAR(expected.z(), actual.z(), 1e-12);
+}
+
+void expectMatrixNear(const Mat4& actual,
+                      const Mat4& expected,
+                      double epsilon) {
+    for (int row = 0; row < 4; ++row) {
+        for (int col = 0; col < 4; ++col) {
+            EXPECT_NEAR(expected(row, col), actual(row, col), epsilon)
+                << "row " << row << " col " << col;
+        }
+    }
 }
 
 } // namespace
@@ -72,4 +87,68 @@ TEST(TransformsTest, GetUpAxisTransformMatchesCesiumNativeCases) {
               Transforms::getUpAxisTransform(UpAxis::Z, UpAxis::X));
     EXPECT_EQ(Transforms::Z_UP_TO_Y_UP(),
               Transforms::getUpAxisTransform(UpAxis::Z, UpAxis::Y));
+}
+
+TEST(TransformsTest, PerspectiveMatricesMatchCesiumNativeReverseZ) {
+    const double horizontalFov = MathUtils::degreesToRadians(60.0);
+    const double verticalFov = MathUtils::degreesToRadians(45.0);
+    const double zNear = 1.0;
+    const double zFar = 20000.0;
+
+    const Mat4 byFov =
+        Transforms::createPerspectiveMatrix(horizontalFov, verticalFov, zNear, zFar);
+
+    glm::dmat4 expectedRaw(0.0);
+    expectedRaw[0][0] = 1.0 / std::tan(horizontalFov * 0.5);
+    expectedRaw[1][1] = -1.0 / std::tan(verticalFov * 0.5);
+    expectedRaw[2][2] = zNear / (zFar - zNear);
+    expectedRaw[2][3] = -1.0;
+    expectedRaw[3][2] = zNear * zFar / (zFar - zNear);
+    expectMatrixNear(byFov, Mat4(expectedRaw), 1e-14);
+
+    const double right = std::tan(horizontalFov * 0.5) * zNear;
+    const double top = std::tan(verticalFov * 0.5) * zNear;
+    const Mat4 byFrustum = Transforms::createPerspectiveMatrix(
+        -right, right, -top, top, zNear, zFar);
+    expectMatrixNear(byFrustum, byFov, 1e-14);
+}
+
+TEST(TransformsTest, InfinitePerspectiveMatrixMatchesCesiumNativeReverseZ) {
+    const Mat4 matrix = Transforms::createPerspectiveMatrix(
+        -0.5,
+        0.5,
+        -0.25,
+        0.25,
+        2.0,
+        std::numeric_limits<double>::infinity());
+
+    EXPECT_DOUBLE_EQ(4.0, matrix(0, 0));
+    EXPECT_DOUBLE_EQ(-8.0, matrix(1, 1));
+    EXPECT_DOUBLE_EQ(0.0, matrix(2, 2));
+    EXPECT_DOUBLE_EQ(-1.0, matrix(3, 2));
+    EXPECT_DOUBLE_EQ(2.0, matrix(2, 3));
+}
+
+TEST(TransformsTest, OrthographicMatrixMatchesCesiumNativeReverseZ) {
+    const Mat4 finite =
+        Transforms::createOrthographicMatrix(-2.0, 4.0, -3.0, 5.0, 1.0, 11.0);
+
+    glm::dmat4 expectedRaw(1.0);
+    expectedRaw[0][0] = 2.0 / 6.0;
+    expectedRaw[1][1] = 2.0 / (-3.0 - 5.0);
+    expectedRaw[2][2] = 1.0 / 10.0;
+    expectedRaw[3][0] = -2.0 / 6.0;
+    expectedRaw[3][1] = 2.0 / 8.0;
+    expectedRaw[3][2] = 11.0 / 10.0;
+    expectMatrixNear(finite, Mat4(expectedRaw), 1e-14);
+
+    const Mat4 infinite = Transforms::createOrthographicMatrix(
+        -2.0,
+        4.0,
+        -3.0,
+        5.0,
+        1.0,
+        std::numeric_limits<double>::infinity());
+    EXPECT_DOUBLE_EQ(0.0, infinite(2, 2));
+    EXPECT_DOUBLE_EQ(1.0, infinite(2, 3));
 }

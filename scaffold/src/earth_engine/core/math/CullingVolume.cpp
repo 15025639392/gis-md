@@ -1,4 +1,5 @@
 #include "CullingVolume.h"
+#include "../geodesy/Transforms.h"
 
 #include <algorithm>
 #include <cmath>
@@ -85,16 +86,15 @@ CullingVolume CullingVolume::fromPerspectiveOffCenter(
     double bottom,
     double top,
     double nearPlane) {
-    glm::dmat4 projection(0.0);
-    projection[0][0] = 2.0 * nearPlane / (right - left);
-    projection[1][1] = 2.0 * nearPlane / (bottom - top);
-    projection[2][0] = (right + left) / (right - left);
-    projection[2][1] = (bottom + top) / (bottom - top);
-    projection[2][3] = -1.0;
-    projection[3][2] = nearPlane;
-
     return fromClipMatrix(
-        Mat4(projection * cesiumViewMatrix(position, direction, up)));
+        Mat4(Transforms::createPerspectiveMatrix(
+                 left,
+                 right,
+                 bottom,
+                 top,
+                 nearPlane,
+                 std::numeric_limits<double>::infinity()).raw() *
+             cesiumViewMatrix(position, direction, up)));
 }
 
 CullingVolume CullingVolume::fromOrthographicOffCenter(
@@ -108,16 +108,15 @@ CullingVolume CullingVolume::fromOrthographicOffCenter(
     double nearPlane) {
     (void)nearPlane;
 
-    glm::dmat4 projection(1.0);
-    projection[0][0] = 2.0 / (right - left);
-    projection[1][1] = 2.0 / (bottom - top);
-    projection[2][2] = 0.0;
-    projection[3][0] = -(right + left) / (right - left);
-    projection[3][1] = -(bottom + top) / (bottom - top);
-    projection[3][2] = 1.0;
-
     return fromClipMatrix(
-        Mat4(projection * cesiumViewMatrix(position, direction, up)));
+        Mat4(Transforms::createOrthographicMatrix(
+                 left,
+                 right,
+                 bottom,
+                 top,
+                 1.0,
+                 std::numeric_limits<double>::infinity()).raw() *
+             cesiumViewMatrix(position, direction, up)));
 }
 
 CullingVolume CullingVolume::fromClipMatrix(const Mat4& clipMatrix) {

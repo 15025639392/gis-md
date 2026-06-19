@@ -26,6 +26,28 @@ public:
     static const Mat4& Z_UP_TO_Y_UP();
     static const Mat4& getUpAxisTransform(UpAxis from, UpAxis to);
 
+    /// Vulkan-style reverse-Z perspective projection, matching
+    /// cesium-native CesiumGeometry::Transforms::createPerspectiveMatrix.
+    static Mat4 createPerspectiveMatrix(double horizontalFovRadians,
+                                        double verticalFovRadians,
+                                        double zNear,
+                                        double zFar);
+    static Mat4 createPerspectiveMatrix(double left,
+                                        double right,
+                                        double bottom,
+                                        double top,
+                                        double zNear,
+                                        double zFar);
+
+    /// Vulkan-style reverse-Z orthographic projection, matching
+    /// cesium-native CesiumGeometry::Transforms::createOrthographicMatrix.
+    static Mat4 createOrthographicMatrix(double left,
+                                         double right,
+                                         double bottom,
+                                         double top,
+                                         double zNear,
+                                         double zFar);
+
     /// 计算从局部 East-North-Up 到 ECEF fixed frame 的矩阵。
     /// 语义对齐 cesium-native GlobeTransforms::eastNorthUpToFixedFrame。
     static Mat4 eastNorthUpToFixedFrame(const Vec3& originEcef);

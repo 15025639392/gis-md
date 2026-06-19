@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include <cmath>
+#include <limits>
 
 namespace earth_engine {
 
@@ -119,6 +120,77 @@ double Transforms::toRadians(double deg) {
 
 double Transforms::toDegrees(double rad) {
     return rad * 180.0 / glm::pi<double>();
+}
+
+Mat4 Transforms::createPerspectiveMatrix(double horizontalFovRadians,
+                                         double verticalFovRadians,
+                                         double zNear,
+                                         double zFar) {
+    return Mat4(glm::dmat4(
+        glm::dvec4(1.0 / std::tan(horizontalFovRadians * 0.5), 0.0, 0.0, 0.0),
+        glm::dvec4(0.0, -1.0 / std::tan(verticalFovRadians * 0.5), 0.0, 0.0),
+        glm::dvec4(
+            0.0,
+            0.0,
+            zFar == std::numeric_limits<double>::infinity()
+                ? 0.0
+                : zNear / (zFar - zNear),
+            -1.0),
+        glm::dvec4(
+            0.0,
+            0.0,
+            zFar == std::numeric_limits<double>::infinity()
+                ? zNear
+                : zNear * zFar / (zFar - zNear),
+            0.0)));
+}
+
+Mat4 Transforms::createPerspectiveMatrix(double left,
+                                         double right,
+                                         double bottom,
+                                         double top,
+                                         double zNear,
+                                         double zFar) {
+    const double m22 = zFar == std::numeric_limits<double>::infinity()
+        ? 0.0
+        : zNear / (zFar - zNear);
+    const double m32 = zFar == std::numeric_limits<double>::infinity()
+        ? zNear
+        : zNear * zFar / (zFar - zNear);
+
+    return Mat4(glm::dmat4(
+        glm::dvec4(2.0 * zNear / (right - left), 0.0, 0.0, 0.0),
+        glm::dvec4(0.0, 2.0 * zNear / (bottom - top), 0.0, 0.0),
+        glm::dvec4(
+            (right + left) / (right - left),
+            (bottom + top) / (bottom - top),
+            m22,
+            -1.0),
+        glm::dvec4(0.0, 0.0, m32, 0.0)));
+}
+
+Mat4 Transforms::createOrthographicMatrix(double left,
+                                          double right,
+                                          double bottom,
+                                          double top,
+                                          double zNear,
+                                          double zFar) {
+    const double m22 = zFar == std::numeric_limits<double>::infinity()
+        ? 0.0
+        : 1.0 / (zFar - zNear);
+    const double m32 = zFar == std::numeric_limits<double>::infinity()
+        ? 1.0
+        : zFar / (zFar - zNear);
+
+    return Mat4(glm::dmat4(
+        glm::dvec4(2.0 / (right - left), 0.0, 0.0, 0.0),
+        glm::dvec4(0.0, 2.0 / (bottom - top), 0.0, 0.0),
+        glm::dvec4(0.0, 0.0, m22, 0.0),
+        glm::dvec4(
+            -(right + left) / (right - left),
+            -(bottom + top) / (bottom - top),
+            m32,
+            1.0)));
 }
 
 Mat4 Transforms::eastNorthUpToFixedFrame(const Vec3& originEcef) {
