@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <cmath>
+#include <vector>
 #include "earth_engine/core/math/AxisAlignedBox.h"
 #include "earth_engine/core/math/OrientedBoundingBox.h"
 #include "earth_engine/core/math/Mat4.h"
@@ -75,6 +77,31 @@ TEST(OrientedBoundingBoxTest, DistanceSquaredToPositionClampsToBox) {
     EXPECT_NEAR(0.75,
                 box.computeDistanceSquaredToPosition(Vec3(1.0, 1.0, 1.0)),
                 1e-14);
+}
+
+TEST(OrientedBoundingBoxTest, DistanceSquaredSortsBackToFrontLikeCesiumNativeExample) {
+    const Vec3 cameraPosition = Vec3::zero();
+    std::vector<OrientedBoundingBox> boxes{
+        OrientedBoundingBox(Vec3(1.0, 0.0, 0.0),
+                            Vec3(0.5, 0.0, 0.0),
+                            Vec3(0.0, 0.5, 0.0),
+                            Vec3(0.0, 0.0, 0.5)),
+        OrientedBoundingBox(Vec3(2.0, 0.0, 0.0),
+                            Vec3(0.5, 0.0, 0.0),
+                            Vec3(0.0, 0.5, 0.0),
+                            Vec3(0.0, 0.0, 0.5))
+    };
+
+    std::sort(boxes.begin(),
+              boxes.end(),
+              [&cameraPosition](const OrientedBoundingBox& a,
+                                const OrientedBoundingBox& b) {
+                  return a.computeDistanceSquaredToPosition(cameraPosition) >
+                         b.computeDistanceSquaredToPosition(cameraPosition);
+              });
+
+    EXPECT_DOUBLE_EQ(2.0, boxes[0].getCenter().x());
+    EXPECT_DOUBLE_EQ(1.0, boxes[1].getCenter().x());
 }
 
 TEST(OrientedBoundingBoxTest, DistanceSquaredToPositionHandlesDegenerateAxesLikeCesiumNative) {
