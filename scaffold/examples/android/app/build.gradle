@@ -5,6 +5,7 @@ plugins {
 android {
     namespace "com.earthengine.minimalglobe"
     compileSdk 36
+    ndkVersion System.getenv("ANDROID_NDK_VERSION") ?: "28.2.13676358"
 
     defaultConfig {
         applicationId "com.earthengine.minimalglobe"
