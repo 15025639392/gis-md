@@ -606,6 +606,8 @@ Java_com_earthengine_sdk_GLESView_nativeGetDiagnosticsString(
         diag.surfaceMeshBytes / 1024, diag.terrainCachedTiles,
         static_cast<unsigned long long>(diag.terrainGeneration));
     std::string text(buf);
+    text += "\n";
+    text += minimal_globe_demo::buildRenderEntryDiagnosticsLine(diag);
     text += minimal_globe_demo::buildPresentationTraceSummary(
         gEngine->presentationTrace());
     return env->NewStringUTF(text.c_str());

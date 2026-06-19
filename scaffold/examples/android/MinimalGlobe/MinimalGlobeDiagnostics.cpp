@@ -1,6 +1,7 @@
 #include "MinimalGlobeDiagnostics.h"
 
 #include "earth_engine/renderer/RenderCommand.h"
+#include "earth_engine/scene/Diagnostics.h"
 #include "earth_engine/scene/PresentationTrace.h"
 #include "earth_engine/scene/Scene.h"
 #include "earth_engine/tiling/TileKey.h"
@@ -33,6 +34,28 @@ const char* renderCommandKindLabel(RenderCommandKind kind) {
 }
 
 } // namespace
+
+std::string buildRenderEntryDiagnosticsLine(const Diagnostics& diagnostics) {
+    std::ostringstream out;
+    out << "Render entries: plan " << diagnostics.terrainRenderEntriesPlanned
+        << " (sel " << diagnostics.terrainRenderEntriesSelectedPlanned
+        << ", fade " << diagnostics.terrainRenderEntriesFadingPlanned
+        << ")  draw " << diagnostics.terrainRenderEntriesDrawn
+        << " (sel " << diagnostics.terrainRenderEntriesSelectedDrawn
+        << ", fade " << diagnostics.terrainRenderEntriesFadingDrawn
+        << ")  miss " << diagnostics.terrainRenderEntriesMissed
+        << " (sel " << diagnostics.terrainRenderEntriesSelectedMissed
+        << ", fade " << diagnostics.terrainRenderEntriesFadingMissed
+        << ")  defer " << diagnostics.terrainRenderEntriesDeferred
+        << " (sel " << diagnostics.terrainRenderEntriesSelectedDeferred
+        << ", fade " << diagnostics.terrainRenderEntriesFadingDeferred
+        << ")  fallback " << diagnostics.terrainRenderEntriesAncestorFallback
+        << "  prep " << diagnostics.terrainRenderEntriesSynchronousPrep
+        << "/" << diagnostics.terrainRenderEntriesDeferredPrep
+        << "  masked " << diagnostics.globeFallbackMaskedTerrainEntries
+        << "\n";
+    return out.str();
+}
 
 std::string buildPresentationTraceSummary(const PresentationTrace& trace) {
     std::ostringstream out;

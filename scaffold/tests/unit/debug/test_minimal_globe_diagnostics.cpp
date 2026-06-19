@@ -1,5 +1,6 @@
 #include "MinimalGlobeDiagnostics.h"
 
+#include "earth_engine/scene/Diagnostics.h"
 #include "earth_engine/scene/PresentationTrace.h"
 
 #include <gtest/gtest.h>
@@ -7,6 +8,37 @@
 #include <string>
 
 using namespace earth_engine;
+
+TEST(MinimalGlobeDiagnosticsTest, PanelReportsRenderEntryFunnelCounts) {
+    Diagnostics diagnostics;
+    diagnostics.terrainRenderEntriesPlanned = 9;
+    diagnostics.terrainRenderEntriesSelectedPlanned = 7;
+    diagnostics.terrainRenderEntriesFadingPlanned = 2;
+    diagnostics.terrainRenderEntriesDrawn = 6;
+    diagnostics.terrainRenderEntriesSelectedDrawn = 5;
+    diagnostics.terrainRenderEntriesFadingDrawn = 1;
+    diagnostics.terrainRenderEntriesMissed = 2;
+    diagnostics.terrainRenderEntriesSelectedMissed = 1;
+    diagnostics.terrainRenderEntriesFadingMissed = 1;
+    diagnostics.terrainRenderEntriesDeferred = 1;
+    diagnostics.terrainRenderEntriesSelectedDeferred = 1;
+    diagnostics.terrainRenderEntriesFadingDeferred = 0;
+    diagnostics.terrainRenderEntriesAncestorFallback = 3;
+    diagnostics.terrainRenderEntriesSynchronousPrep = 4;
+    diagnostics.terrainRenderEntriesDeferredPrep = 5;
+    diagnostics.globeFallbackMaskedTerrainEntries = 6;
+
+    const std::string line =
+        minimal_globe_demo::buildRenderEntryDiagnosticsLine(diagnostics);
+
+    EXPECT_NE(std::string::npos, line.find("plan 9 (sel 7, fade 2)"));
+    EXPECT_NE(std::string::npos, line.find("draw 6 (sel 5, fade 1)"));
+    EXPECT_NE(std::string::npos, line.find("miss 2 (sel 1, fade 1)"));
+    EXPECT_NE(std::string::npos, line.find("defer 1 (sel 1, fade 0)"));
+    EXPECT_NE(std::string::npos, line.find("fallback 3"));
+    EXPECT_NE(std::string::npos, line.find("prep 4/5"));
+    EXPECT_NE(std::string::npos, line.find("masked 6"));
+}
 
 TEST(MinimalGlobeDiagnosticsTest, SummaryReportsRenderEntryReasonCounts) {
     PresentationTrace trace;
