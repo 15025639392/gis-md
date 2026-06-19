@@ -70,6 +70,12 @@ add_executable(test_frame_resource_budget
 target_link_libraries(test_frame_resource_budget PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_frame_resource_budget COMMAND test_frame_resource_budget)
 
+add_executable(test_cartographic
+    unit/geodesy/test_cartographic.cpp
+)
+target_link_libraries(test_cartographic PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_cartographic COMMAND test_cartographic)
+
 add_executable(test_ellipsoid
     unit/geodesy/test_ellipsoid.cpp
 )

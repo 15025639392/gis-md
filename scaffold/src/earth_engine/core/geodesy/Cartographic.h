@@ -10,14 +10,12 @@ namespace earth_engine {
 class Cartographic {
 public:
     Cartographic() : lng_(0), lat_(0), height_(0) {}
+    Cartographic(double lngRad, double latRad, double heightM = 0.0)
+        : lng_(lngRad), lat_(latRad), height_(heightM) {}
 
     /// 从弧度构造
     static Cartographic fromRadians(double lngRad, double latRad, double heightM = 0) {
-        Cartographic c;
-        c.lng_ = lngRad;
-        c.lat_ = latRad;
-        c.height_ = heightM;
-        return c;
+        return Cartographic(lngRad, latRad, heightM);
     }
 
     /// 从度构造

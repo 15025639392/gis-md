@@ -6,13 +6,7 @@
 
 namespace earth_engine {
 
-// ============================================================
-// Cartographic 实现
-// ============================================================
-
 namespace {
-    constexpr double kRadToDeg = 180.0 / glm::pi<double>();
-    constexpr double kDegToRad = glm::pi<double>() / 180.0;
     constexpr double kEpsilon1 = 1e-1;
     constexpr double kEpsilon12 = 1e-12;
 
@@ -21,27 +15,6 @@ namespace {
         if (x < 0.0) x += glm::two_pi<double>();
         return x;
     }
-}
-
-Cartographic Cartographic::fromDegrees(double lngDeg, double latDeg, double heightM) {
-    Cartographic c;
-    c.lng_ = lngDeg * kDegToRad;
-    c.lat_ = latDeg * kDegToRad;
-    c.height_ = heightM;
-    return c;
-}
-
-double Cartographic::longitudeDegrees() const { return lng_ * kRadToDeg; }
-double Cartographic::latitudeDegrees() const { return lat_ * kRadToDeg; }
-
-bool Cartographic::operator==(const Cartographic& rhs) const {
-    return lng_ == rhs.lng_ && lat_ == rhs.lat_ && height_ == rhs.height_;
-}
-bool Cartographic::operator!=(const Cartographic& rhs) const { return !(*this == rhs); }
-
-std::ostream& operator<<(std::ostream& os, const Cartographic& c) {
-    return os << "Cartographic(lng:" << c.longitudeDegrees() << "°, lat:"
-              << c.latitudeDegrees() << "°, h:" << c.height() << "m)";
 }
 
 // ============================================================
