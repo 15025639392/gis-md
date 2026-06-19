@@ -386,6 +386,9 @@ TileAvailabilityNode* TileQuadtreeAvailability::addNode(
     uint32_t x,
     uint32_t y,
     TileAvailabilityNode* parentNode) {
+    if (!quadtreeCoordinatesInLevel(level, x, y)) {
+        return nullptr;
+    }
     if (!parentNode || level == 0) {
         if (root_) return nullptr;
         root_ = std::make_unique<TileAvailabilityNode>();
@@ -630,6 +633,9 @@ bool TileOctreeAvailability::addSubtree(
 TileAvailabilityNode* TileOctreeAvailability::addNode(
     const OctreeTileID& tileID,
     TileAvailabilityNode* parentNode) {
+    if (!octreeCoordinatesInLevel(tileID)) {
+        return nullptr;
+    }
     if (!parentNode || tileID.level == 0) {
         if (root_) return nullptr;
         root_ = std::make_unique<TileAvailabilityNode>();

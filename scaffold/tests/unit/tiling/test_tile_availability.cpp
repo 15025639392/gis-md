@@ -547,6 +547,18 @@ TEST(TileQuadtreeAvailabilityTest, AddNodeRejectsNonBoundaryOrUnavailableChildLi
     EXPECT_EQ(nullptr, availability.addNode(3, 2, 6, root));
 }
 
+TEST(TileQuadtreeAvailabilityTest, AddNodeRejectsOutOfRangeRootCoordinates) {
+    TileQuadtreeAvailability availability(3, 5);
+
+    EXPECT_EQ(nullptr, availability.addNode(0, 1, 0, nullptr));
+    EXPECT_EQ(nullptr, availability.addNode(0, 0, 1, nullptr));
+    EXPECT_EQ(nullptr, availability.rootNode());
+
+    TileAvailabilityNode* root = availability.addNode(0, 0, 0, nullptr);
+    EXPECT_NE(nullptr, root);
+    EXPECT_EQ(root, availability.rootNode());
+}
+
 TEST(TileQuadtreeAvailabilityTest, AddNodeRejectsOutOfRangeChildCoordinates) {
     TileQuadtreeAvailability availability(3, 5);
     ASSERT_TRUE(availability.addSubtree(
@@ -851,6 +863,25 @@ TEST(TileOctreeAvailabilityTest, AddNodeRejectsNonBoundaryOrUnavailableChildLike
 
     EXPECT_EQ(nullptr, availability.addNode(OctreeTileID{2, 0, 0, 0}, root));
     EXPECT_EQ(nullptr, availability.addNode(OctreeTileID{3, 2, 0, 3}, root));
+}
+
+TEST(TileOctreeAvailabilityTest, AddNodeRejectsOutOfRangeRootCoordinates) {
+    TileOctreeAvailability availability(3, 5);
+
+    EXPECT_EQ(nullptr,
+              availability.addNode(OctreeTileID{0, 1, 0, 0}, nullptr));
+    EXPECT_EQ(nullptr,
+              availability.addNode(OctreeTileID{0, 0, 1, 0}, nullptr));
+    EXPECT_EQ(nullptr,
+              availability.addNode(OctreeTileID{0, 0, 0, 1}, nullptr));
+    EXPECT_EQ(nullptr,
+              availability.addNode(OctreeTileID{0, -1, 0, 0}, nullptr));
+    EXPECT_EQ(nullptr, availability.rootNode());
+
+    TileAvailabilityNode* root =
+        availability.addNode(OctreeTileID{0, 0, 0, 0}, nullptr);
+    EXPECT_NE(nullptr, root);
+    EXPECT_EQ(root, availability.rootNode());
 }
 
 TEST(TileOctreeAvailabilityTest, AddNodeRejectsOutOfRangeChildCoordinates) {
