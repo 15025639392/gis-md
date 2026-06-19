@@ -247,6 +247,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TilesetProviderDiagnosticsCollector.cpp
     earth_engine/tiling/TileCacheUnloadCoordinator.h
     earth_engine/tiling/TileUpdateDebugLogInput.h
+    earth_engine/tiling/TileRenderDebugLogInput.h
     earth_engine/tiling/TileFrameDebugLogFormatter.h
     earth_engine/tiling/TileFrameInteractionTracker.h
     earth_engine/tiling/TileFrameResourceBudgetPlanner.h
