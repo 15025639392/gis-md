@@ -34,6 +34,10 @@ std::unique_ptr<HttpRequest> CurlPlatformBridge::get(
         options);
 }
 
+int CurlPlatformBridge::maximumActiveRequests() const {
+    return CurlMultiRequestScheduler::shared().maximumActiveRequests();
+}
+
 std::string CurlPlatformBridge::cacheDirectory() const {
     return "/tmp/earth_engine_cache";
 }

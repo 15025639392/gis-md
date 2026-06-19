@@ -89,6 +89,10 @@ std::unique_ptr<HttpRequest> AndroidPlatformBridge::get(
         options);
 }
 
+int AndroidPlatformBridge::maximumActiveRequests() const {
+    return impl_->networkBridge.maximumActiveRequests();
+}
+
 std::string AndroidPlatformBridge::cacheDirectory() const {
     return "/data/data/com.earthengine.minimalglobe/cache";
 }

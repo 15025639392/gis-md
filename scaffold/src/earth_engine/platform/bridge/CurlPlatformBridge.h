@@ -21,6 +21,7 @@ public:
         const std::string& url,
         std::function<void(int statusCode, std::vector<uint8_t> body)> callback,
         HttpRequestOptions options = {}) override;
+    int maximumActiveRequests() const override;
 
     // ---- 文件系统 ----
     std::string cacheDirectory() const override;

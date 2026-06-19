@@ -224,13 +224,20 @@ TEST(CurlMultiRequestScheduler, StartsHighPriorityBeforeLowWhenSlotOpens) {
 
     std::vector<std::unique_ptr<HttpRequest>> handles;
     std::atomic<int> callbacks{0};
-    for (int i = 0; i < 8; ++i) {
+    const int maximumActiveRequests = scheduler.maximumActiveRequests();
+    EXPECT_EQ(
+        maximumActiveRequests,
+        CurlMultiRequestScheduler::kDefaultMaximumActiveRequests);
+    EXPECT_EQ(maximumActiveRequests, 20);
+    for (int i = 0; i < maximumActiveRequests; ++i) {
         handles.push_back(scheduler.get(
             server.url("/hold/" + std::to_string(i)),
             [&](int, std::vector<uint8_t>) { callbacks.fetch_add(1); },
             {HttpRequestPriority::Normal}));
     }
-    ASSERT_TRUE(server.waitForSeenCount(8, 3s));
+    ASSERT_TRUE(server.waitForSeenCount(
+        static_cast<size_t>(maximumActiveRequests),
+        3s));
 
     handles.push_back(scheduler.get(
         server.url("/low"),
@@ -249,18 +256,83 @@ TEST(CurlMultiRequestScheduler, StartsHighPriorityBeforeLowWhenSlotOpens) {
     scheduler.shutdown();
 }
 
+TEST(CurlMultiRequestScheduler, PreservesFifoWithinSamePriority) {
+    LocalHttpServer server;
+    CurlMultiRequestScheduler scheduler(1);
+
+    std::vector<std::unique_ptr<HttpRequest>> handles;
+    std::atomic<int> callbacks{0};
+    handles.push_back(scheduler.get(
+        server.url("/hold/active"),
+        [&](int, std::vector<uint8_t>) { callbacks.fetch_add(1); },
+        {HttpRequestPriority::Normal}));
+    ASSERT_TRUE(server.waitForPath("/hold/active", 3s));
+
+    handles.push_back(scheduler.get(
+        server.url("/high/first"),
+        [&](int, std::vector<uint8_t>) { callbacks.fetch_add(1); },
+        {HttpRequestPriority::High}));
+    handles.push_back(scheduler.get(
+        server.url("/high/second"),
+        [&](int, std::vector<uint8_t>) { callbacks.fetch_add(1); },
+        {HttpRequestPriority::High}));
+
+    server.releaseOne();
+    ASSERT_TRUE(server.waitForPath("/high/first", 3s));
+    EXPECT_FALSE(server.hasSeen("/high/second"));
+
+    server.releaseAll();
+    scheduler.shutdown();
+}
+
+TEST(CurlMultiRequestScheduler, UsesConfiguredMaximumActiveRequests) {
+    LocalHttpServer server;
+    CurlMultiRequestScheduler scheduler(2);
+
+    EXPECT_EQ(scheduler.maximumActiveRequests(), 2);
+
+    std::vector<std::unique_ptr<HttpRequest>> handles;
+    std::atomic<int> callbacks{0};
+    for (int i = 0; i < 3; ++i) {
+        handles.push_back(scheduler.get(
+            server.url("/hold/" + std::to_string(i)),
+            [&](int, std::vector<uint8_t>) { callbacks.fetch_add(1); },
+            {HttpRequestPriority::Normal}));
+    }
+
+    ASSERT_TRUE(server.waitForSeenCount(2, 3s));
+    EXPECT_FALSE(server.hasSeen("/hold/2"));
+
+    server.releaseOne();
+    ASSERT_TRUE(server.waitForPath("/hold/2", 3s));
+
+    server.releaseAll();
+    scheduler.shutdown();
+}
+
+TEST(CurlMultiRequestScheduler, ClampsConfiguredMaximumActiveRequestsToOne) {
+    CurlMultiRequestScheduler scheduler(0);
+
+    EXPECT_EQ(scheduler.maximumActiveRequests(), 1);
+
+    scheduler.shutdown();
+}
+
 TEST(CurlMultiRequestScheduler, CancelledQueuedRequestNeverStartsOrCallbacks) {
     LocalHttpServer server;
     CurlMultiRequestScheduler scheduler;
 
     std::vector<std::unique_ptr<HttpRequest>> blockers;
-    for (int i = 0; i < 8; ++i) {
+    const int maximumActiveRequests = scheduler.maximumActiveRequests();
+    for (int i = 0; i < maximumActiveRequests; ++i) {
         blockers.push_back(scheduler.get(
             server.url("/hold/" + std::to_string(i)),
             [](int, std::vector<uint8_t>) {},
             {HttpRequestPriority::Normal}));
     }
-    ASSERT_TRUE(server.waitForSeenCount(8, 3s));
+    ASSERT_TRUE(server.waitForSeenCount(
+        static_cast<size_t>(maximumActiveRequests),
+        3s));
 
     std::atomic<int> queuedCallbacks{0};
     auto queued = scheduler.get(

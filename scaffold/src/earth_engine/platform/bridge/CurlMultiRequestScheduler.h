@@ -12,9 +12,12 @@ namespace earth_engine {
 
 class CurlMultiRequestScheduler {
 public:
+    static constexpr int kDefaultMaximumActiveRequests = 20;
+
     static CurlMultiRequestScheduler& shared();
 
-    CurlMultiRequestScheduler();
+    explicit CurlMultiRequestScheduler(
+        int maximumActiveRequests = kDefaultMaximumActiveRequests);
     ~CurlMultiRequestScheduler();
 
     CurlMultiRequestScheduler(const CurlMultiRequestScheduler&) = delete;
@@ -32,6 +35,7 @@ public:
 
     void cancelQueuedRequests();
     void shutdown();
+    int maximumActiveRequests() const;
 
 private:
     struct Impl;

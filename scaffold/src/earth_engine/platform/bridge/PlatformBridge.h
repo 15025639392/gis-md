@@ -63,6 +63,7 @@ public:
         const std::string& url,
         std::function<void(int statusCode, std::vector<uint8_t> body)> callback,
         HttpRequestOptions options = {}) = 0;
+    virtual int maximumActiveRequests() const { return -1; }
 
     // ---- 文件系统 ----
     virtual std::string cacheDirectory() const = 0;

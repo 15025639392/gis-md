@@ -3,6 +3,7 @@
 #include <curl/curl.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -16,8 +17,6 @@
 namespace earth_engine {
 namespace {
 
-constexpr int kMaxActiveRequests = 8;
-
 size_t writeBody(void* contents, size_t size, size_t nmemb, void* userp) {
     auto* body = static_cast<std::vector<uint8_t>*>(userp);
     const size_t total = size * nmemb;
@@ -28,6 +27,11 @@ size_t writeBody(void* contents, size_t size, size_t nmemb, void* userp) {
 
 int priorityValue(HttpRequestPriority priority) {
     return static_cast<int>(priority);
+}
+
+size_t priorityBucket(HttpRequestPriority priority) {
+    const int value = std::clamp(priorityValue(priority), 0, 2);
+    return static_cast<size_t>(value);
 }
 
 } // namespace
@@ -63,7 +67,8 @@ struct CurlMultiRequestScheduler::Impl {
         std::weak_ptr<RequestState> state_;
     };
 
-    Impl() {
+    explicit Impl(int maximumActiveRequestsValue)
+        : maximumActiveRequests(std::max(1, maximumActiveRequestsValue)) {
         curl_global_init(CURL_GLOBAL_DEFAULT);
         multi = curl_multi_init();
         worker = std::thread([this]() { run(); });
@@ -89,7 +94,7 @@ struct CurlMultiRequestScheduler::Impl {
             if (stopping) {
                 state->cancelled.store(true, std::memory_order_release);
             } else {
-                pending.push_back(state);
+                pending[priorityBucket(state->priority)].push_back(state);
             }
         }
 
@@ -105,16 +110,18 @@ struct CurlMultiRequestScheduler::Impl {
     }
 
     void cancelQueuedRequests() {
-        std::deque<std::shared_ptr<RequestState>> cancelled;
+        std::array<std::deque<std::shared_ptr<RequestState>>, 3> cancelled;
         {
             std::lock_guard<std::mutex> lk(mutex);
             cancelled.swap(pending);
         }
 
-        for (auto& request : cancelled) {
-            request->cancelled.store(true, std::memory_order_release);
-            if (request->callback) {
-                request->callback(-1, {});
+        for (auto& bucket : cancelled) {
+            for (auto& request : bucket) {
+                request->cancelled.store(true, std::memory_order_release);
+                if (request->callback) {
+                    request->callback(-1, {});
+                }
             }
         }
         wake();
@@ -126,10 +133,12 @@ struct CurlMultiRequestScheduler::Impl {
             std::lock_guard<std::mutex> lk(mutex);
             if (!stopping) {
                 stopping = true;
-                for (auto& request : pending) {
-                    request->cancelled.store(true, std::memory_order_release);
+                for (auto& bucket : pending) {
+                    for (auto& request : bucket) {
+                        request->cancelled.store(true, std::memory_order_release);
+                    }
+                    bucket.clear();
                 }
-                pending.clear();
                 for (auto& [easy, request] : active) {
                     request->cancelled.store(true, std::memory_order_release);
                 }
@@ -153,13 +162,33 @@ struct CurlMultiRequestScheduler::Impl {
     CURLM* multi = nullptr;
     std::mutex mutex;
     std::condition_variable cv;
-    std::deque<std::shared_ptr<RequestState>> pending;
+    std::array<std::deque<std::shared_ptr<RequestState>>, 3> pending;
     std::unordered_map<CURL*, std::shared_ptr<RequestState>> active;
     std::thread worker;
     std::atomic<uint64_t> nextSequence{1};
     bool stopping = false;
+    int maximumActiveRequests =
+        CurlMultiRequestScheduler::kDefaultMaximumActiveRequests;
 
 private:
+    bool pendingEmptyLocked() const {
+        return pending[0].empty() && pending[1].empty() &&
+               pending[2].empty();
+    }
+
+    std::shared_ptr<RequestState> popNextPendingLocked() {
+        for (size_t i = pending.size(); i > 0; --i) {
+            auto& bucket = pending[i - 1];
+            if (bucket.empty()) {
+                continue;
+            }
+            auto request = bucket.front();
+            bucket.pop_front();
+            return request;
+        }
+        return nullptr;
+    }
+
     void run() {
         while (true) {
             startPendingRequests();
@@ -173,12 +202,12 @@ private:
 
             {
                 std::unique_lock<std::mutex> lk(mutex);
-                if (stopping && pending.empty() && active.empty()) {
+                if (stopping && pendingEmptyLocked() && active.empty()) {
                     break;
                 }
-                if (active.empty() && pending.empty()) {
+                if (active.empty() && pendingEmptyLocked()) {
                     cv.wait(lk, [this]() {
-                        return stopping || !pending.empty();
+                        return stopping || !pendingEmptyLocked();
                     });
                     continue;
                 }
@@ -203,24 +232,17 @@ private:
             std::shared_ptr<RequestState> request;
             {
                 std::lock_guard<std::mutex> lk(mutex);
-                if (stopping || active.size() >= kMaxActiveRequests ||
-                    pending.empty()) {
+                if (stopping || active.size() >=
+                        static_cast<size_t>(maximumActiveRequests) ||
+                    pendingEmptyLocked()) {
                     return;
                 }
 
-                auto best = std::max_element(
-                    pending.begin(),
-                    pending.end(),
-                    [](const auto& a, const auto& b) {
-                        const int pa = priorityValue(a->priority);
-                        const int pb = priorityValue(b->priority);
-                        if (pa != pb) {
-                            return pa < pb;
-                        }
-                        return a->sequence > b->sequence;
-                    });
-                request = *best;
-                pending.erase(best);
+                request = popNextPendingLocked();
+            }
+
+            if (!request) {
+                continue;
             }
 
             if (request->cancelled.load(std::memory_order_acquire)) {
@@ -340,7 +362,9 @@ private:
 
     void cleanupPendingWithoutCallbacks() {
         std::lock_guard<std::mutex> lk(mutex);
-        pending.clear();
+        for (auto& bucket : pending) {
+            bucket.clear();
+        }
     }
 
     void cleanupActiveWithoutCallbacks() {
@@ -366,8 +390,9 @@ CurlMultiRequestScheduler& CurlMultiRequestScheduler::shared() {
     return scheduler;
 }
 
-CurlMultiRequestScheduler::CurlMultiRequestScheduler()
-    : impl_(std::make_unique<Impl>()) {}
+CurlMultiRequestScheduler::CurlMultiRequestScheduler(
+    int maximumActiveRequests)
+    : impl_(std::make_unique<Impl>(maximumActiveRequests)) {}
 
 CurlMultiRequestScheduler::~CurlMultiRequestScheduler() = default;
 
@@ -433,6 +458,10 @@ void CurlMultiRequestScheduler::cancelQueuedRequests() {
 
 void CurlMultiRequestScheduler::shutdown() {
     impl_->shutdown();
+}
+
+int CurlMultiRequestScheduler::maximumActiveRequests() const {
+    return impl_->maximumActiveRequests;
 }
 
 } // namespace earth_engine
