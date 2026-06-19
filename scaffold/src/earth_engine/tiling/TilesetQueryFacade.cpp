@@ -13,18 +13,6 @@
 
 namespace earth_engine {
 
-int TilesetQueryFacade::cachedTerrainTiles(const Tileset& tileset) {
-    return static_cast<int>(tileset.contentLifecycle_.terrainCache().size());
-}
-
-int TilesetQueryFacade::pendingRequests(const Tileset& tileset) {
-    return tileset.contentLifecycle_.pendingRequests();
-}
-
-int64_t TilesetQueryFacade::totalBytesUsed(const Tileset& tileset) {
-    return tileset.contentCache_.totalBytesUsed();
-}
-
 uint32_t TilesetQueryFacade::maximumTransportActiveRequests(
     const Tileset& tileset) {
     ProviderRequestDiagnostics diagnostics;

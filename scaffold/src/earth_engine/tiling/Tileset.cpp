@@ -108,15 +108,15 @@ Tileset::~Tileset() {
 }
 
 int Tileset::pendingRequests() const {
-    return TilesetQueryFacade::pendingRequests(*this);
+    return contentLifecycle_.pendingRequests();
 }
 
 int Tileset::cachedTerrainTiles() const {
-    return TilesetQueryFacade::cachedTerrainTiles(*this);
+    return static_cast<int>(contentLifecycle_.terrainCache().size());
 }
 
 int64_t Tileset::totalBytesUsed() const {
-    return TilesetQueryFacade::totalBytesUsed(*this);
+    return contentCache_.totalBytesUsed();
 }
 
 void Tileset::setOcclusionCallback(OcclusionCallback callback) {
