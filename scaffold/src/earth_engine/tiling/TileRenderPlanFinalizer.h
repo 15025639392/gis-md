@@ -21,12 +21,15 @@ struct TileRenderPlanFinalizeOptions {
 };
 
 struct TileRenderPlanFinalizer {
-    template <typename EnsureTileFn, typename CacheKeyFn>
+    template <typename EnsureTileFn,
+              typename CacheKeyFn,
+              typename IsFallbackRenderableFn>
     static void refreshRenderEntries(
         TilePlan& plan,
         const TileRenderPlanFinalizeOptions& options,
         EnsureTileFn&& ensureTile,
-        CacheKeyFn&& cacheKey) {
+        CacheKeyFn&& cacheKey,
+        IsFallbackRenderableFn&& isFallbackRenderable) {
         plan.renderEntries.clear();
         plan.renderEntryAncestorFallbackCount = 0;
         plan.renderEntrySynchronousPrepCount = 0;
@@ -53,10 +56,12 @@ struct TileRenderPlanFinalizer {
             if (selectedThisFrame &&
                 !selectedTile->content.renderContent.hasGltfContent() &&
                 !selectedTile->hasSurfaceDrawable()) {
-                TilesetTile* drawableAncestor =
-                    findNearestDrawableAncestor(*selectedTile);
-                if (drawableAncestor) {
-                    commandTile = drawableAncestor;
+                TilesetTile* renderableAncestor =
+                    findNearestRenderableAncestor(
+                        *selectedTile,
+                        isFallbackRenderable);
+                if (renderableAncestor) {
+                    commandTile = renderableAncestor;
                     surfaceClipUv = clipUvForDescendantBounds(
                         commandTile->bounds,
                         selectedTile->bounds);
@@ -192,12 +197,15 @@ private:
             static_cast<float>(vMax - vMin)};
     }
 
-    static TilesetTile* findNearestDrawableAncestor(
-        TilesetTile& tile) {
+    template <typename IsFallbackRenderableFn>
+    static TilesetTile* findNearestRenderableAncestor(
+        TilesetTile& tile,
+        IsFallbackRenderableFn&& isFallbackRenderable) {
         for (TilesetTile* ancestor = tile.parent;
              ancestor;
              ancestor = ancestor->parent) {
-            if (ancestor->hasSurfaceDrawable()) {
+            if (ancestor->hasSurfaceDrawable() &&
+                isFallbackRenderable(*ancestor)) {
                 return ancestor;
             }
         }

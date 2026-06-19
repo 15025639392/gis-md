@@ -546,6 +546,7 @@ struct TilesetTestAccess {
         TileRenderPlanFrameRefresher::refresh(
             tileset.tilePlan_,
             tileset.contentAccess_,
+            tileset.rasterOverlays_,
             TileRenderPlanFrameRefreshOptions{
                 tileset.options_.enableLodTransitionPeriod,
                 tileset.interactionActiveForFrame_,
@@ -11303,6 +11304,9 @@ void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
                     std::to_string(key.z) + ":" +
                     std::to_string(key.x) + ":" +
                     std::to_string(key.y);
+            },
+            [](const TilesetTile& tile) {
+                return tile.hasSurfaceDrawable();
             });
 
     check(plan.renderEntries.size() == 1 &&
@@ -11355,6 +11359,9 @@ void testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery() {
         },
         [](const TileKey& key) {
             return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return tile.hasSurfaceDrawable();
         });
 
     check(plan.renderEntries.size() == 1 &&
@@ -11368,6 +11375,58 @@ void testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery() {
               plan.renderEntrySynchronousPrepCount == 0 &&
               plan.renderEntryDeferredPrepCount == 0,
           "TileRenderPlanFinalizer: recovery frames keep drawable ancestors active until the selected child is ready");
+}
+
+void testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback() {
+    const TileKey rootKey{"test", 0, 0, 0};
+    const TileKey parentKey{"test", 1, 0, 0};
+    const TileKey childKey{"test", 2, 0, 0};
+    TilesetTile root(rootKey, Rectangle{0.0, 0.0, 4.0, 4.0});
+    TilesetTile parent(parentKey, Rectangle{0.0, 2.0, 2.0, 4.0}, &root);
+    TilesetTile child(childKey, Rectangle{0.0, 3.0, 1.0, 4.0}, &parent);
+    root.markRenderContentDone();
+    parent.markRenderContentDone();
+    root.content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(4),
+        nullptr);
+    parent.content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(4),
+        nullptr);
+
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {TileCacheKey::forTile(rootKey), &root},
+        {TileCacheKey::forTile(parentKey), &parent},
+        {TileCacheKey::forTile(childKey), &child}};
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(childKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            false,
+            0,
+            1},
+        [&tiles](const TileKey& key) -> TilesetTile* {
+            auto it = tiles.find(TileCacheKey::forTile(key));
+            return it == tiles.end() ? nullptr : it->second;
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [&root](const TilesetTile& tile) {
+            return tile.key == root.key;
+        });
+
+    check(plan.renderEntries.size() == 1 &&
+              plan.renderEntries.front().selectedKey == childKey &&
+              plan.renderEntries.front().renderKey == rootKey &&
+              plan.renderEntries.front().reason ==
+                  TileRenderEntryReason::AncestorFallback &&
+              plan.renderEntries.front().usesAncestorFallback &&
+              plan.renderEntries.front().surfaceClipEnabled &&
+              plan.renderEntryAncestorFallbackCount == 1,
+          "TileRenderPlanFinalizer: ancestor fallback skips nearer geometry that is not actually renderable");
 }
 
 void testTileRenderPlanFinalizerCountsRootPrepOnce() {
@@ -11391,6 +11450,9 @@ void testTileRenderPlanFinalizerCountsRootPrepOnce() {
                     std::to_string(key.z) + ":" +
                     std::to_string(key.x) + ":" +
                     std::to_string(key.y);
+            },
+            [](const TilesetTile& tile) {
+                return tile.hasSurfaceDrawable();
             });
 
     check(plan.renderEntries.size() == 1 &&
@@ -11426,6 +11488,9 @@ void testTileRenderPlanFinalizerReadsSelectionFrameFade() {
                     std::to_string(key.z) + ":" +
                     std::to_string(key.x) + ":" +
                     std::to_string(key.y);
+            },
+            [](const TilesetTile& tile) {
+                return tile.hasSurfaceDrawable();
             });
 
     check(plan.renderEntries.size() == 1 &&
@@ -19540,6 +19605,7 @@ int main() {
     testTileTerrainUploadCommitterAppliesMeshResourceOutcome();
     testTileRenderPlanFinalizerResolvesAncestorFallbackEntries();
     testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery();
+    testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback();
     testTileRenderPlanFinalizerCountsRootPrepOnce();
     testTileRenderPlanFinalizerReadsSelectionFrameFade();
     testTileRenderEntryCommandBuilderCountsSkippedEntries();

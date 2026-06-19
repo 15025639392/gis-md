@@ -3,6 +3,7 @@
 #include "TileCacheKey.h"
 #include "TileContentAccess.h"
 #include "TileRenderPlanFinalizer.h"
+#include "TileSelectionRasterOverlayPreparer.h"
 
 namespace earth_engine {
 
@@ -16,6 +17,7 @@ constexpr int kRecoveryRenderPrepBudget = 1;
 void TileRenderPlanFrameRefresher::refresh(
     TilePlan& tilePlan,
     TileContentAccess& contentAccess,
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
     const TileRenderPlanFrameRefreshOptions& options) {
     TileRenderPlanFinalizer::refreshRenderEntries(
         tilePlan,
@@ -29,6 +31,11 @@ void TileRenderPlanFrameRefresher::refresh(
         },
         [](const TileKey& key) {
             return TileCacheKey::forTile(key);
+        },
+        [&rasterOverlays](const TilesetTile& tile) {
+            return TileSelectionRasterOverlayPreparer::isRenderable(
+                tile,
+                rasterOverlays);
         });
 }
 

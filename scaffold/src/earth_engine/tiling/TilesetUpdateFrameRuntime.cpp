@@ -71,6 +71,7 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             TileRenderPlanFrameRefresher::refresh(
                 tileset.tilePlan_,
                 tileset.contentAccess_,
+                tileset.rasterOverlays_,
                 TileRenderPlanFrameRefreshOptions{
                     tileset.options_.enableLodTransitionPeriod,
                     tileset.interactionActiveForFrame_,

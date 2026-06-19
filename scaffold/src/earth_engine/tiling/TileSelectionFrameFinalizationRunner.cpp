@@ -27,6 +27,7 @@ TileSelectionFrameFinalizationRunner::finalize(
             TileRenderPlanFrameRefresher::refresh(
                 input.tilePlan,
                 input.contentAccess,
+                input.rasterOverlays,
                 input.renderPlanOptions);
         },
         [&input](const TilesetTile& tile) {
