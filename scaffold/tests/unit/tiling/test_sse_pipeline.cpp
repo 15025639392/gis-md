@@ -11302,6 +11302,8 @@ void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
     check(plan.renderEntries.size() == 1 &&
               plan.renderEntries.front().selectedKey == childKey &&
               plan.renderEntries.front().renderKey == parentKey &&
+              plan.renderEntries.front().reason ==
+                  TileRenderEntryReason::AncestorFallback &&
               plan.renderEntries.front().usesAncestorFallback &&
               plan.renderEntries.front().surfaceClipEnabled &&
               plan.renderEntryAncestorFallbackCount == 1 &&
@@ -11344,6 +11346,8 @@ void testTileRenderPlanFinalizerCountsRootPrepOnce() {
 
     check(plan.renderEntries.size() == 1 &&
               plan.renderEntries.front().renderKey == rootKey &&
+              plan.renderEntries.front().reason ==
+                  TileRenderEntryReason::SynchronousPrep &&
               plan.renderEntries.front().allowSynchronousMeshPrep &&
               plan.renderEntrySynchronousPrepCount == 1 &&
               plan.renderEntryDeferredPrepCount == 0,
@@ -11377,6 +11381,8 @@ void testTileRenderPlanFinalizerReadsSelectionFrameFade() {
             });
 
     check(plan.renderEntries.size() == 1 &&
+              plan.renderEntries.front().reason ==
+                  TileRenderEntryReason::SynchronousPrep &&
               std::abs(plan.renderEntries.front().opacity - 0.25f) < 1e-6f,
           "TileRenderPlanFinalizer: visible tile opacity reads selection frame fade");
 }

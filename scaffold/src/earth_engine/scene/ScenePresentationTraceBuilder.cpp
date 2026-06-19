@@ -108,6 +108,7 @@ void appendTilesetTrace(PresentationTrace& trace, const Tileset* tileset) {
         PresentationRenderEntryTrace entryTrace;
         entryTrace.selectedKey = entry.selectedKey;
         entryTrace.renderKey = entry.renderKey;
+        entryTrace.reason = entry.reason;
         entryTrace.opacity = entry.opacity;
         entryTrace.selectedThisFrame = entry.selectedThisFrame;
         entryTrace.usesAncestorFallback = entry.usesAncestorFallback;

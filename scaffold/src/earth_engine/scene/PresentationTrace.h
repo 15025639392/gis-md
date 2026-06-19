@@ -2,6 +2,7 @@
 
 #include "../renderer/RenderCommand.h"
 #include "../tiling/TileKey.h"
+#include "../tiling/TilePlan.h"
 
 #include <array>
 #include <cstdint>
@@ -38,6 +39,7 @@ struct PresentationSelectorViewTrace {
 struct PresentationRenderEntryTrace {
     TileKey selectedKey;
     TileKey renderKey;
+    TileRenderEntryReason reason = TileRenderEntryReason::Direct;
     float opacity = 1.0f;
     bool selectedThisFrame = true;
     bool usesAncestorFallback = false;

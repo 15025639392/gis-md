@@ -111,6 +111,9 @@ struct TileRenderPlanFinalizer {
             TileRenderEntry entry;
             entry.selectedKey = selectedTile->key;
             entry.renderKey = commandTile->key;
+            entry.reason = selectedThisFrame
+                ? TileRenderEntryReason::Direct
+                : TileRenderEntryReason::FadingOut;
             entry.opacity = commandTile == selectedTile ? opacity : 1.0f;
             entry.selectedThisFrame = selectedThisFrame;
             entry.usesAncestorFallback = usesAncestorFallback;
@@ -120,7 +123,12 @@ struct TileRenderPlanFinalizer {
                 entry.surfaceClipUv = *surfaceClipUv;
             }
             if (usesAncestorFallback) {
+                entry.reason = TileRenderEntryReason::AncestorFallback;
                 ++plan.renderEntryAncestorFallbackCount;
+            } else if (!commandTile->content.renderContent.hasGltfContent() &&
+                       !commandTile->hasSurfaceDrawable() &&
+                       allowSynchronousMeshPrep) {
+                entry.reason = TileRenderEntryReason::SynchronousPrep;
             }
             plan.renderEntries.push_back(std::move(entry));
         };

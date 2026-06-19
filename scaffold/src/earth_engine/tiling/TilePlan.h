@@ -16,12 +16,35 @@ struct TileTransition {
     int fadingNodeCount = 0;
 };
 
+enum class TileRenderEntryReason {
+    Direct,
+    AncestorFallback,
+    SynchronousPrep,
+    FadingOut
+};
+
+constexpr const char* tileRenderEntryReasonLabel(
+    TileRenderEntryReason reason) {
+    switch (reason) {
+        case TileRenderEntryReason::Direct:
+            return "direct";
+        case TileRenderEntryReason::AncestorFallback:
+            return "ancestor-fallback";
+        case TileRenderEntryReason::SynchronousPrep:
+            return "sync-prep";
+        case TileRenderEntryReason::FadingOut:
+            return "fading-out";
+    }
+    return "unknown";
+}
+
 /// A resolved entry in the frame render result. `selectedKey` is the tile
 /// chosen by traversal; `renderKey` is the tile whose render content should be
 /// submitted. They differ only for explicit, clipped ancestor fallback.
 struct TileRenderEntry {
     TileKey selectedKey;
     TileKey renderKey;
+    TileRenderEntryReason reason = TileRenderEntryReason::Direct;
     float opacity = 1.0f;
     bool selectedThisFrame = true;
     bool usesAncestorFallback = false;

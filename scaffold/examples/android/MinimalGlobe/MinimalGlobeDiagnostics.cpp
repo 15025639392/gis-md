@@ -4,6 +4,7 @@
 #include "earth_engine/scene/PresentationTrace.h"
 #include "earth_engine/scene/Scene.h"
 #include "earth_engine/tiling/TileKey.h"
+#include "earth_engine/tiling/TilePlan.h"
 
 #include <algorithm>
 #include <sstream>
@@ -116,7 +117,8 @@ std::string buildPresentationTraceSummary(const PresentationTrace& trace) {
         for (size_t i = 0; i < entryCount; ++i) {
             const auto& entry = terrainTrace->renderEntries[i];
             out << " " << tileKeyLabel(entry.selectedKey)
-                << "->" << tileKeyLabel(entry.renderKey);
+                << "->" << tileKeyLabel(entry.renderKey)
+                << "[" << tileRenderEntryReasonLabel(entry.reason) << "]";
             if (entry.usesAncestorFallback) {
                 out << "[fallback]";
             }
