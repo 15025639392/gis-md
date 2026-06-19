@@ -18546,8 +18546,10 @@ void testSceneDiagnosticsExposeTerrainDeferredPrepReason() {
               scene.diagnostics().terrainRenderEntriesDeferred == 1 &&
               scene.diagnostics().terrainRenderEntriesSelectedDeferred == 1 &&
               scene.diagnostics().terrainRenderEntriesFadingDeferred == 0 &&
-              scene.diagnostics().terrainSurfaceCommandsSubmitted == 0,
-          "Scene: diagnostics expose interaction terrain deferred-prep fallback");
+              scene.diagnostics().terrainSurfaceCommandsSubmitted == 0 &&
+              scene.diagnostics().globeFallbackCommands == 1 &&
+              scene.diagnostics().globeFallbackMaskedTerrainEntries == 1,
+          "Scene: diagnostics expose interaction terrain deferred-prep fallback masked by globe fallback");
 }
 
 void testSceneSortsTransparentGltfByCameraDepth() {
