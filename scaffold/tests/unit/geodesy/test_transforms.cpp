@@ -149,6 +149,44 @@ TEST(TransformsTest, PerspectiveMatricesMatchCesiumNativeReverseZ) {
     expectMatrixNear(byFrustum, byFov, 1e-14);
 }
 
+TEST(TransformsTest, SkewedPerspectiveProjectionMatchesCesiumNativeMapping) {
+    const double horizontalFov = MathUtils::degreesToRadians(60.0);
+    const double verticalFov = MathUtils::degreesToRadians(45.0);
+    const double zNear = 1.0;
+    const double zFar = 20000.0;
+    const double hDim = std::tan(horizontalFov * 0.5) * zNear;
+    const double vDim = std::tan(verticalFov * 0.5) * zNear;
+
+    const Mat4 symmetric = Transforms::createPerspectiveMatrix(
+        -hDim,
+        hDim,
+        -vDim,
+        vDim,
+        zNear,
+        zFar);
+    const Mat4 skewed = Transforms::createPerspectiveMatrix(
+        0.0,
+        hDim,
+        0.0,
+        vDim,
+        zNear,
+        zFar);
+
+    const glm::dvec4 point(hDim * 0.25, vDim * 0.25, -10.0, 1.0);
+    glm::dvec4 symmetricProjected = symmetric.raw() * point;
+    glm::dvec4 skewedProjected = skewed.raw() * point;
+    symmetricProjected /= symmetricProjected.w;
+    skewedProjected /= skewedProjected.w;
+
+    EXPECT_NEAR(symmetricProjected.x,
+                skewedProjected.x / 2.0 + 0.5,
+                1e-14);
+    EXPECT_NEAR(symmetricProjected.y,
+                skewedProjected.y / 2.0 - 0.5,
+                1e-14);
+    EXPECT_NEAR(symmetricProjected.z, skewedProjected.z, 1e-14);
+}
+
 TEST(TransformsTest, InfinitePerspectiveMatrixMatchesCesiumNativeReverseZ) {
     const Mat4 matrix = Transforms::createPerspectiveMatrix(
         -0.5,
