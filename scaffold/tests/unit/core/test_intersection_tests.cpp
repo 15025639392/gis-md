@@ -627,3 +627,25 @@ TEST(IntersectionTestsTest, PointInTriangle3dBarycentricMatchesCesiumNativeCases
                        1e-12);
     }
 }
+
+TEST(IntersectionTestsTest, PointInTriangle3dFalseCasesPreserveBarycentricOutput) {
+    // Cesium-native only writes barycentricCoordinates after all inside tests
+    // pass; degenerate triangles and outside points leave the output untouched.
+    const Vec3 sentinel(9.0, 8.0, 7.0);
+    Vec3 barycentricCoordinates = sentinel;
+
+    EXPECT_FALSE(IntersectionTests::pointInTriangle(Vec3(0.0, 0.0, 0.0),
+                                                    Vec3(0.0, 0.0, 0.0),
+                                                    Vec3(0.0, 0.0, 0.0),
+                                                    Vec3(1.0, 0.0, 0.0),
+                                                    barycentricCoordinates));
+    expectVec3Near(sentinel, barycentricCoordinates, 0.0);
+
+    barycentricCoordinates = sentinel;
+    EXPECT_FALSE(IntersectionTests::pointInTriangle(Vec3(-2.0, 0.5, 0.0),
+                                                    Vec3(-1.0, 0.0, 0.0),
+                                                    Vec3(0.0, 1.0, 0.0),
+                                                    Vec3(1.0, 0.0, 0.0),
+                                                    barycentricCoordinates));
+    expectVec3Near(sentinel, barycentricCoordinates, 0.0);
+}
