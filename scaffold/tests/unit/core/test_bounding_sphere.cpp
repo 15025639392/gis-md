@@ -4,7 +4,9 @@
 #include "earth_engine/core/math/Plane.h"
 #include "earth_engine/core/math/Vec3.h"
 
+#include <algorithm>
 #include <cmath>
+#include <vector>
 
 using namespace earth_engine;
 
@@ -48,6 +50,25 @@ TEST(BoundingSphereTest, DistanceSquaredToPositionMatchesCesiumNativeInside) {
     EXPECT_DOUBLE_EQ(0.0,
                      sphere.computeDistanceSquaredToPosition(
                          Vec3(-0.5, 0.5, 0.0)));
+}
+
+TEST(BoundingSphereTest, DistanceSquaredSortsBackToFrontLikeCesiumNativeExample) {
+    const Vec3 cameraPosition = Vec3::zero();
+    std::vector<BoundingSphere> spheres{
+        BoundingSphere(Vec3(1.0, 0.0, 0.0), 1.0),
+        BoundingSphere(Vec3(2.0, 0.0, 0.0), 1.0)
+    };
+
+    std::sort(spheres.begin(),
+              spheres.end(),
+              [&cameraPosition](const BoundingSphere& a,
+                                const BoundingSphere& b) {
+                  return a.computeDistanceSquaredToPosition(cameraPosition) >
+                         b.computeDistanceSquaredToPosition(cameraPosition);
+              });
+
+    EXPECT_DOUBLE_EQ(2.0, spheres[0].getCenter().x());
+    EXPECT_DOUBLE_EQ(1.0, spheres[1].getCenter().x());
 }
 
 TEST(BoundingSphereTest, ContainsMatchesCesiumNativeBoundaryCase) {
