@@ -249,6 +249,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileUpdateDebugLogInput.h
     earth_engine/tiling/TileRenderDebugLogInput.h
     earth_engine/tiling/TileFrameDebugLogFormatter.h
+    earth_engine/tiling/TileFrameDebugLogFormatter.cpp
     earth_engine/tiling/TileFrameInteractionTracker.h
     earth_engine/tiling/TileFrameResourceBudgetPlanner.h
     earth_engine/tiling/TileFrameWorkCoordinator.h
