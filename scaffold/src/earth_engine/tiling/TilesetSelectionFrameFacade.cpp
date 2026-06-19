@@ -1,9 +1,8 @@
 #include "TilesetSelectionFrameFacade.h"
 
 #include "TileContentAccess.h"
-#include "TileCacheKey.h"
 #include "TileLoadQueue.h"
-#include "TileLodTransitionController.h"
+#include "TileLodTransitionFrameUpdater.h"
 #include "TileRenderPlanFinalizer.h"
 #include "TileSelectionPlanAppender.h"
 #include "TileSelectionRasterOverlayPreparer.h"
@@ -24,34 +23,6 @@ constexpr int kActiveInteractionRenderPrepBudget = 0;
 constexpr int kRecoveryRenderPrepBudget = 1;
 
 } // namespace
-
-bool TilesetSelectionFrameFacade::hasLodTransitionRenderContent(
-    const Tileset& tileset,
-    const TilesetTile& tile) {
-    return tile.content.contentKind == TileContentKind::Render &&
-           TileSelectionRasterOverlayPreparer::isRenderable(
-               tile,
-               tileset.rasterOverlays_);
-}
-
-void TilesetSelectionFrameFacade::updateLodTransitions(
-    Tileset& tileset,
-    double deltaSeconds) {
-    TileLodTransitionController::updateTransitions(
-        tileset.tilePlan_,
-        tileset.tilesFadingOut_,
-        deltaSeconds,
-        TileLodTransitionOptions{
-            &tileset.tileRegistry_.tiles(),
-            tileset.options_.enableLodTransitionPeriod,
-            tileset.options_.lodTransitionLength},
-        [](const TileKey& key) {
-            return TileCacheKey::forTile(key);
-        },
-        [&tileset](const TilesetTile& tile) {
-            return hasLodTransitionRenderContent(tileset, tile);
-        });
-}
 
 void TilesetSelectionFrameFacade::refreshTilePlanRenderEntries(
     Tileset& tileset) {
@@ -81,7 +52,15 @@ TilesetSelectionFrameFacade::finalizeSelectedTilePlan(
         tileset.selectionCounters_,
         frameState.deltaSeconds,
         [&tileset](double deltaSeconds) {
-            updateLodTransitions(tileset, deltaSeconds);
+            TileLodTransitionFrameUpdater::update(
+                tileset.tilePlan_,
+                tileset.tileRegistry_,
+                tileset.tilesFadingOut_,
+                tileset.rasterOverlays_,
+                deltaSeconds,
+                TileLodTransitionFrameOptions{
+                    tileset.options_.enableLodTransitionPeriod,
+                    tileset.options_.lodTransitionLength});
         },
         [&tileset]() {
             refreshTilePlanRenderEntries(tileset);
@@ -166,9 +145,13 @@ void TilesetSelectionFrameFacade::selectTiles(
                         ->checkOcclusion(tile);
                 },
                 [](void* userData, const TilesetTile& tile) {
-                    return hasLodTransitionRenderContent(
-                        *static_cast<Tileset*>(userData),
-                        tile);
+                    const Tileset& tileset =
+                        *static_cast<Tileset*>(userData);
+                    return tile.content.contentKind ==
+                               TileContentKind::Render &&
+                           TileSelectionRasterOverlayPreparer::isRenderable(
+                               tile,
+                               tileset.rasterOverlays_);
                 },
                 [](void* userData, const TilesetTile& tile) {
                     const Tileset& tileset =

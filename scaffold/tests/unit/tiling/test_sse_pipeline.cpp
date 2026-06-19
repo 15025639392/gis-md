@@ -46,6 +46,7 @@
 #include "earth_engine/tiling/TileLoadRequestPlanner.h"
 #include "earth_engine/tiling/TileLoadScheduler.h"
 #include "earth_engine/tiling/TileLodTransitionController.h"
+#include "earth_engine/tiling/TileLodTransitionFrameUpdater.h"
 #include "earth_engine/tiling/TilePendingLoadQueue.h"
 #include "earth_engine/tiling/TilePendingLoadProcessor.h"
 #include "earth_engine/tiling/TilePendingUploadCompletion.h"
@@ -504,9 +505,15 @@ struct TilesetTestAccess {
 
     static void updateLodTransitions(Tileset& tileset,
                                      double deltaSeconds) {
-        TilesetSelectionFrameFacade::updateLodTransitions(
-            tileset,
-            deltaSeconds);
+        TileLodTransitionFrameUpdater::update(
+            tileset.tilePlan_,
+            tileset.tileRegistry_,
+            tileset.tilesFadingOut_,
+            tileset.rasterOverlays_,
+            deltaSeconds,
+            TileLodTransitionFrameOptions{
+                tileset.options_.enableLodTransitionPeriod,
+                tileset.options_.lodTransitionLength});
         TilesetSelectionFrameFacade::refreshTilePlanRenderEntries(tileset);
     }
 

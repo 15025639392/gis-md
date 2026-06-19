@@ -220,6 +220,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileContentUnloadCoordinator.h
     earth_engine/tiling/TileRasterUpsampledChildMaterializer.h
     earth_engine/tiling/TileLodTransitionController.h
+    earth_engine/tiling/TileLodTransitionFrameUpdater.h
+    earth_engine/tiling/TileLodTransitionFrameUpdater.cpp
     earth_engine/tiling/TileRenderPlanFinalizer.h
     earth_engine/tiling/TileContentUploadPolicy.h
     earth_engine/tiling/TileContentUploadPolicy.cpp

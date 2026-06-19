@@ -18,10 +18,6 @@ public:
 private:
     friend struct TilesetTestAccess;
 
-    static bool hasLodTransitionRenderContent(const Tileset& tileset,
-                                              const TilesetTile& tile);
-    static void updateLodTransitions(Tileset& tileset,
-                                     double deltaSeconds);
     static TileSelectionFrameFinalizeTimings finalizeSelectedTilePlan(
         Tileset& tileset,
         const FrameState& frameState);
