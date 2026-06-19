@@ -134,6 +134,27 @@ TEST(RectangleTest, AntimeridianNormalizedCoordinatesMatchCesiumNative) {
     EXPECT_NEAR(0.0, eastEdge.second, 1e-14);
 }
 
+TEST(RectangleTest, NormalizedCoordinatesOutsideRectangleMatchCesiumNative) {
+    // Ported from cesium-native CesiumGeospatial/test/TestGlobeRectangle.cpp:
+    // computeNormalizedCoordinates is linear and intentionally does not clamp.
+    Rectangle tile = Rectangle::fromDegrees(0.5, 0.0, 1.0, 0.5);
+
+    auto westOutside = tile.normalizedCoordinates(
+        0.25 * kDegToRad, 0.25 * kDegToRad);
+    EXPECT_NEAR(-0.5, westOutside.first, 1e-14);
+    EXPECT_NEAR(0.5, westOutside.second, 1e-14);
+
+    auto northOutside = tile.normalizedCoordinates(
+        0.5 * kDegToRad, 0.75 * kDegToRad);
+    EXPECT_NEAR(0.0, northOutside.first, 1e-14);
+    EXPECT_NEAR(1.5, northOutside.second, 1e-14);
+
+    auto inside = tile.normalizedCoordinates(
+        0.75 * kDegToRad, 0.25 * kDegToRad);
+    EXPECT_NEAR(0.5, inside.first, 1e-14);
+    EXPECT_NEAR(0.5, inside.second, 1e-14);
+}
+
 TEST(RectangleTest, BigAntimeridianNormalizedCoordinatesMatchCesiumNative) {
     // Ported from cesium-native's bigWrapping case: rectangle width is
     // 191 degrees, and longitude 5E is 186 degrees east of the west edge.
