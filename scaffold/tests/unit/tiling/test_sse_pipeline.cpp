@@ -18800,6 +18800,43 @@ void testTilesetUnloadExternalContentClearsChildren() {
           "Tileset: external-content cache unload removes descendants from flat map");
 }
 
+void testTilesetDirectExternalContentUnloadClearsChildren() {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: direct external-content unload root tile is created");
+    if (!root) return;
+
+    root->content.contentKind = TileContentKind::External;
+    root->content.loadState = TileLoadState::Done;
+    root->unconditionallyRefine = true;
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(!root->children.empty(),
+          "Tileset: direct external-content unload setup creates children");
+    if (root->children.empty() || !root->children.front()) return;
+
+    const TileKey childKey = root->children.front()->key;
+    auto childHeightmap = makeFlatHeightmap(5.0f);
+    childHeightmap->rawData.resize(96, 5);
+    TilesetTestAccess::putTerrainCache(
+        tileset, childKey, std::move(childHeightmap));
+
+    TilesetTestAccess::unloadTileContent(tileset, *root, nullptr);
+
+    TilesetTile* rootAfter = TilesetTestAccess::findTile(tileset, rootKey);
+    check(rootAfter == root &&
+              rootAfter->children.empty() &&
+              rootAfter->content.loadState == TileLoadState::Unloaded &&
+              rootAfter->content.contentKind == TileContentKind::Unknown,
+          "Tileset: direct external-content unload clears wrapper children");
+    check(TilesetTestAccess::findTile(tileset, childKey) == nullptr,
+          "Tileset: direct external-content unload removes descendants from flat map");
+}
+
 } // namespace
 
 int main() {
@@ -19121,6 +19158,7 @@ int main() {
     testTilesetUnloadRenderContentWaitsForUpsampledChildLoading();
     testTilesetUnloadRenderContentPreservesLoadedChildren();
     testTilesetUnloadExternalContentClearsChildren();
+    testTilesetDirectExternalContentUnloadClearsChildren();
 
     std::cout << "\n=== " << gFailures << " failures ===\n";
     return gFailures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

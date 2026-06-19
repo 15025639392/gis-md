@@ -61,10 +61,17 @@ void TileCacheOwnershipManager::clearChildrenRecursively(
 TileCacheUnloadContentResult TileCacheOwnershipManager::unloadTileContent(
     TilesetTile& tile,
     IPrepareRendererResources* pPrepRenderer) {
-    return contentCache_.unloadTileContent(
+    const TileCacheUnloadContentResult result = contentCache_.unloadTileContent(
         tile,
         contentLifecycle_,
         pPrepRenderer);
+    if (result == TileCacheUnloadContentResult::RemoveAndClearChildren) {
+        clearChildrenRecursively(&tile, pPrepRenderer);
+    }
+    if (result != TileCacheUnloadContentResult::Keep) {
+        contentCache_.markResourcesDirty();
+    }
+    return result;
 }
 
 void TileCacheOwnershipManager::unloadCachedBytes(
