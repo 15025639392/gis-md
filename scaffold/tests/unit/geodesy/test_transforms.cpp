@@ -6,6 +6,7 @@
 #include "earth_engine/core/math/Vec3.h"
 
 #include <cmath>
+#include <glm/gtc/quaternion.hpp>
 #include <limits>
 
 using namespace earth_engine;
@@ -19,6 +20,14 @@ void expectVectorNear(const Mat4& transform,
     EXPECT_NEAR(expected.x(), actual.x(), 1e-12);
     EXPECT_NEAR(expected.y(), actual.y(), 1e-12);
     EXPECT_NEAR(expected.z(), actual.z(), 1e-12);
+}
+
+void expectVec3Near(const Vec3& actual,
+                    const Vec3& expected,
+                    double epsilon) {
+    EXPECT_NEAR(expected.x(), actual.x(), epsilon);
+    EXPECT_NEAR(expected.y(), actual.y(), epsilon);
+    EXPECT_NEAR(expected.z(), actual.z(), epsilon);
 }
 
 void expectMatrixNear(const Mat4& actual,
@@ -176,4 +185,59 @@ TEST(TransformsTest, ViewMatrixMatchesCesiumNativePoseInverse) {
     EXPECT_NEAR(-side.dot(position), view(0, 3), 1e-12);
     EXPECT_NEAR(-poseUp.dot(position), view(1, 3), 1e-12);
     EXPECT_NEAR(-forward.dot(position), view(2, 3), 1e-12);
+}
+
+TEST(TransformsTest, TranslationRotationScaleMatrixMatchesCesiumNative) {
+    const Vec3 translation(10.0, 20.0, 30.0);
+    const glm::dquat rotation =
+        glm::angleAxis(MathUtils::PiOverTwo, glm::dvec3(0.0, 0.0, 1.0));
+    const Vec3 scale(2.0, 3.0, 4.0);
+
+    const Mat4 matrix =
+        Transforms::createTranslationRotationScaleMatrix(
+            translation,
+            rotation,
+            scale);
+
+    expectVec3Near(matrix.transformVector(Vec3::unitX()),
+                   Vec3(0.0, 2.0, 0.0),
+                   1e-12);
+    expectVec3Near(matrix.transformVector(Vec3::unitY()),
+                   Vec3(-3.0, 0.0, 0.0),
+                   1e-12);
+    expectVec3Near(matrix.transformVector(Vec3::unitZ()),
+                   Vec3(0.0, 0.0, 4.0),
+                   1e-12);
+    expectVec3Near(matrix.transformPoint(Vec3::zero()), translation, 1e-12);
+}
+
+TEST(TransformsTest, ComputeTranslationRotationScaleMatchesCesiumNative) {
+    const Vec3 translation(-5.0, 7.0, 11.0);
+    const glm::dquat rotation =
+        glm::angleAxis(0.35, glm::normalize(glm::dvec3(1.0, 2.0, 3.0)));
+    const Vec3 scale(-2.0, -3.0, -4.0);
+    const Mat4 matrix =
+        Transforms::createTranslationRotationScaleMatrix(
+            translation,
+            rotation,
+            scale);
+
+    Vec3 actualTranslation;
+    glm::dquat actualRotation;
+    Vec3 actualScale;
+    Transforms::computeTranslationRotationScaleFromMatrix(
+        matrix,
+        &actualTranslation,
+        &actualRotation,
+        &actualScale);
+
+    expectVec3Near(actualTranslation, translation, 1e-12);
+    expectVec3Near(actualScale, scale, 1e-12);
+
+    const Mat4 reconstructed =
+        Transforms::createTranslationRotationScaleMatrix(
+            actualTranslation,
+            actualRotation,
+            actualScale);
+    expectMatrixNear(reconstructed, matrix, 1e-12);
 }

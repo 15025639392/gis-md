@@ -4,6 +4,8 @@
 #include "../math/Vec3.h"
 #include "../math/Mat4.h"
 
+#include <glm/fwd.hpp>
+
 namespace earth_engine {
 
 class Ellipsoid;
@@ -25,6 +27,20 @@ public:
     static const Mat4& Z_UP_TO_X_UP();
     static const Mat4& Z_UP_TO_Y_UP();
     static const Mat4& getUpAxisTransform(UpAxis from, UpAxis to);
+
+    /// Creates translation * rotation * scale, matching
+    /// cesium-native CesiumGeometry::Transforms.
+    static Mat4 createTranslationRotationScaleMatrix(
+        const Vec3& translation,
+        const glm::dquat& rotation,
+        const Vec3& scale);
+
+    /// Decomposes a translation-rotation-scale matrix. Scale may be negative.
+    static void computeTranslationRotationScaleFromMatrix(
+        const Mat4& matrix,
+        Vec3* translation,
+        glm::dquat* rotation,
+        Vec3* scale);
 
     /// Vulkan-style reverse-Z perspective projection, matching
     /// cesium-native CesiumGeometry::Transforms::createPerspectiveMatrix.

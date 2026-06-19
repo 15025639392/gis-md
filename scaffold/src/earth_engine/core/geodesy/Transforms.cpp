@@ -2,6 +2,7 @@
 #include "Ellipsoid.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <cmath>
 #include <limits>
 
@@ -112,6 +113,63 @@ const Mat4& Transforms::getUpAxisTransform(UpAxis from, UpAxis to) {
             break;
     }
     return identityTransform();
+}
+
+Mat4 Transforms::createTranslationRotationScaleMatrix(
+    const Vec3& translation,
+    const glm::dquat& rotation,
+    const Vec3& scale) {
+    const glm::dmat3 rotationScale =
+        glm::mat3_cast(rotation) *
+        glm::dmat3(
+            glm::dvec3(scale.x(), 0.0, 0.0),
+            glm::dvec3(0.0, scale.y(), 0.0),
+            glm::dvec3(0.0, 0.0, scale.z()));
+
+    return Mat4(glm::dmat4(
+        glm::dvec4(rotationScale[0], 0.0),
+        glm::dvec4(rotationScale[1], 0.0),
+        glm::dvec4(rotationScale[2], 0.0),
+        glm::dvec4(translation.raw(), 1.0)));
+}
+
+void Transforms::computeTranslationRotationScaleFromMatrix(
+    const Mat4& matrix,
+    Vec3* translation,
+    glm::dquat* rotation,
+    Vec3* scale) {
+    const glm::dmat4& raw = matrix.raw();
+
+    if (rotation || scale) {
+        const glm::dmat3 rotationAndScale(raw);
+        const double lengthColumn0 = glm::length(rotationAndScale[0]);
+        const double lengthColumn1 = glm::length(rotationAndScale[1]);
+        const double lengthColumn2 = glm::length(rotationAndScale[2]);
+
+        glm::dmat3 rotationMatrix(
+            rotationAndScale[0] / lengthColumn0,
+            rotationAndScale[1] / lengthColumn1,
+            rotationAndScale[2] / lengthColumn2);
+        glm::dvec3 scaleVector(lengthColumn0, lengthColumn1, lengthColumn2);
+
+        const glm::dvec3 cross =
+            glm::cross(rotationAndScale[0], rotationAndScale[1]);
+        if (glm::dot(cross, rotationAndScale[2]) < 0.0) {
+            rotationMatrix *= -1.0;
+            scaleVector *= -1.0;
+        }
+
+        if (rotation) {
+            *rotation = glm::quat_cast(rotationMatrix);
+        }
+        if (scale) {
+            *scale = Vec3(scaleVector);
+        }
+    }
+
+    if (translation) {
+        *translation = Vec3(glm::dvec3(raw[3]));
+    }
 }
 
 double Transforms::toRadians(double deg) {
