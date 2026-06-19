@@ -97,6 +97,24 @@ bool Rectangle::isEmpty() const {
     return south_ > north_;
 }
 
+double Rectangle::computeSignedDistance(double lngRad, double latRad) const {
+    const double westDistance = west_ - lngRad;
+    const double southDistance = south_ - latRad;
+    const double eastDistance = lngRad - east_;
+    const double northDistance = latRad - north_;
+    const double maxLongitudeDistance = std::max(westDistance, eastDistance);
+    const double maxLatitudeDistance = std::max(southDistance, northDistance);
+
+    if (maxLongitudeDistance <= 0.0 && maxLatitudeDistance <= 0.0) {
+        return std::max(maxLongitudeDistance, maxLatitudeDistance);
+    }
+    if (maxLongitudeDistance > 0.0 && maxLatitudeDistance > 0.0) {
+        return std::sqrt(maxLongitudeDistance * maxLongitudeDistance +
+                         maxLatitudeDistance * maxLatitudeDistance);
+    }
+    return std::max(maxLongitudeDistance, maxLatitudeDistance);
+}
+
 std::optional<Rectangle> Rectangle::computeIntersection(const Rectangle& other) const {
     double rectangleEast = east_;
     double rectangleWest = west_;

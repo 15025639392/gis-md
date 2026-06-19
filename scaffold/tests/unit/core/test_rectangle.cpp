@@ -152,3 +152,45 @@ TEST(RectangleTest, SplitAtAntimeridianMatchesCesiumNativeOrdering) {
     EXPECT_NEAR(crossing2.west(), split.second->west(), 1e-14);
     EXPECT_NEAR(M_PI, split.second->east(), 1e-14);
 }
+
+TEST(RectangleTest, ComputeSignedDistanceMatchesCesiumNative) {
+    // Ported from cesium-native CesiumGeometry/test/TestRectangle.cpp:
+    // inside returns negative distance to closest edge; outside returns
+    // axis distance or corner distance.
+    const Rectangle positive(10.0, 20.0, 30.0, 40.0);
+    const Rectangle negative(-30.0, -40.0, -10.0, -20.0);
+    const double cornerDistance = std::sqrt(5.0 * 5.0 + 5.0 * 5.0);
+
+    struct Case {
+        Rectangle rectangle;
+        double x;
+        double y;
+        double expected;
+    };
+    const Case cases[] = {
+        {positive, 20.0, 30.0, -10.0},
+        {negative, -20.0, -30.0, -10.0},
+        {positive, -5.0, 30.0, 15.0},
+        {negative, 5.0, -30.0, 15.0},
+        {positive, 45.0, 30.0, 15.0},
+        {negative, -45.0, -30.0, 15.0},
+        {positive, 20.0, 5.0, 15.0},
+        {negative, -20.0, -5.0, 15.0},
+        {positive, 20.0, 55.0, 15.0},
+        {negative, -20.0, -55.0, 15.0},
+        {positive, 5.0, 15.0, cornerDistance},
+        {negative, -5.0, -15.0, cornerDistance},
+        {positive, 5.0, 45.0, cornerDistance},
+        {negative, -5.0, -45.0, cornerDistance},
+        {positive, 35.0, 15.0, cornerDistance},
+        {negative, -35.0, -15.0, cornerDistance},
+        {positive, 35.0, 45.0, cornerDistance},
+        {negative, -35.0, -45.0, cornerDistance}
+    };
+
+    for (const Case& c : cases) {
+        EXPECT_NEAR(c.expected,
+                    c.rectangle.computeSignedDistance(c.x, c.y),
+                    1e-13);
+    }
+}

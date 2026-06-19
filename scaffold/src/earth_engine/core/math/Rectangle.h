@@ -39,6 +39,7 @@ public:
     bool intersects(const Rectangle& other) const;
     bool isEmpty() const;
 
+    double computeSignedDistance(double lngRad, double latRad) const;
     std::optional<Rectangle> computeIntersection(const Rectangle& other) const;
     Rectangle computeUnion(const Rectangle& other) const;
     std::pair<Rectangle, std::optional<Rectangle>> splitAtAntimeridian() const;
