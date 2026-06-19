@@ -54,6 +54,15 @@ TEST(TransformsTest, UpAxisTransformsMatchCesiumNativeConstants) {
     expectVectorNear(Transforms::getUpAxisTransform(UpAxis::Y, UpAxis::Z),
                      Vec3::unitZ(),
                      -Vec3::unitY());
+    expectVectorNear(Transforms::getUpAxisTransform(UpAxis::Z, UpAxis::Y),
+                     Vec3::unitX(),
+                     Vec3::unitX());
+    expectVectorNear(Transforms::getUpAxisTransform(UpAxis::Z, UpAxis::Y),
+                     Vec3::unitY(),
+                     -Vec3::unitZ());
+    expectVectorNear(Transforms::getUpAxisTransform(UpAxis::Z, UpAxis::Y),
+                     Vec3::unitZ(),
+                     Vec3::unitY());
 
     expectVectorNear(Transforms::getUpAxisTransform(UpAxis::X, UpAxis::Z),
                      Vec3::unitX(),
@@ -64,6 +73,15 @@ TEST(TransformsTest, UpAxisTransformsMatchCesiumNativeConstants) {
     expectVectorNear(Transforms::getUpAxisTransform(UpAxis::X, UpAxis::Z),
                      Vec3::unitZ(),
                      -Vec3::unitX());
+    expectVectorNear(Transforms::getUpAxisTransform(UpAxis::Z, UpAxis::X),
+                     Vec3::unitX(),
+                     -Vec3::unitZ());
+    expectVectorNear(Transforms::getUpAxisTransform(UpAxis::Z, UpAxis::X),
+                     Vec3::unitY(),
+                     Vec3::unitY());
+    expectVectorNear(Transforms::getUpAxisTransform(UpAxis::Z, UpAxis::X),
+                     Vec3::unitZ(),
+                     Vec3::unitX());
 
     expectVectorNear(Transforms::getUpAxisTransform(UpAxis::X, UpAxis::Y),
                      Vec3::unitX(),
@@ -72,6 +90,15 @@ TEST(TransformsTest, UpAxisTransformsMatchCesiumNativeConstants) {
                      Vec3::unitY(),
                      -Vec3::unitX());
     expectVectorNear(Transforms::getUpAxisTransform(UpAxis::X, UpAxis::Y),
+                     Vec3::unitZ(),
+                     Vec3::unitZ());
+    expectVectorNear(Transforms::getUpAxisTransform(UpAxis::Y, UpAxis::X),
+                     Vec3::unitX(),
+                     -Vec3::unitY());
+    expectVectorNear(Transforms::getUpAxisTransform(UpAxis::Y, UpAxis::X),
+                     Vec3::unitY(),
+                     Vec3::unitX());
+    expectVectorNear(Transforms::getUpAxisTransform(UpAxis::Y, UpAxis::X),
                      Vec3::unitZ(),
                      Vec3::unitZ());
 }
