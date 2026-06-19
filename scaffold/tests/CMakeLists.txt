@@ -118,6 +118,12 @@ add_executable(test_cartographic
 target_link_libraries(test_cartographic PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_cartographic COMMAND test_cartographic)
 
+add_executable(test_s2_cell_id
+    unit/geodesy/test_s2_cell_id.cpp
+)
+target_link_libraries(test_s2_cell_id PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_s2_cell_id COMMAND test_s2_cell_id)
+
 add_executable(test_projection
     unit/geodesy/test_projection.cpp
 )
