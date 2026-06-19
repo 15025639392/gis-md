@@ -5,7 +5,7 @@ namespace earth_engine {
 bool TileSelectionKickPolicy::shouldKickDescendants(
     const TileTraversalDetails& traversalDetails,
     bool renderable,
-    bool unconditionallyRefine,
+    bool /*unconditionallyRefine*/,
     uint32_t loadingDescendantLimit,
     bool enableLodTransitionPeriod,
     bool kickDescendantsWhileFadingIn,
@@ -22,14 +22,10 @@ bool TileSelectionKickPolicy::shouldKickDescendants(
             TileSelectionState::Rendered &&
         hasLodTransitionRenderContent &&
         lodTransitionFadePercentage < 1.0f;
-    const bool kickDueToUnconditionallyRefinedMissingDescendant =
-        unconditionallyRefine && !traversalDetails.allAreRenderable;
 
     return (kickDueToNonReadyDescendant ||
-            kickDueToTileFadingIn ||
-            kickDueToUnconditionallyRefinedMissingDescendant) &&
-           (kickDueToUnconditionallyRefinedMissingDescendant ||
-            traversalDetails.notYetRenderableCount > loadingDescendantLimit ||
+            kickDueToTileFadingIn) &&
+           (traversalDetails.notYetRenderableCount > loadingDescendantLimit ||
             renderable);
 }
 

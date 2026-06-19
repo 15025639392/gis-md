@@ -13297,7 +13297,7 @@ void testTileSelectionKickPolicyKicksDescendantsForNativeReasons() {
     unconditionalMissing.allAreRenderable = false;
     unconditionalMissing.anyWereRenderedLastFrame = true;
     unconditionalMissing.notYetRenderableCount = 1;
-    check(TileSelectionKickPolicy::shouldKickDescendants(
+    check(!TileSelectionKickPolicy::shouldKickDescendants(
               unconditionalMissing,
               false,
               true,
@@ -13307,7 +13307,7 @@ void testTileSelectionKickPolicyKicksDescendantsForNativeReasons() {
               TileSelectionState::NotVisited,
               false,
               1.0f),
-          "TileSelectionKickPolicy: unconditional refine kicks missing descendant regardless of ancestor renderability");
+          "TileSelectionKickPolicy: unconditional refine still requires renderable ancestor or descendant limit like cesium-native");
 }
 
 void testTileSelectionKickPolicyRestoresChildQueueForParentLoad() {
