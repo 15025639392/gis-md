@@ -31,6 +31,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/core/math/AxisAlignedBox.cpp
     earth_engine/core/math/BoundingSphere.h
     earth_engine/core/math/OrientedBoundingBox.h
+    earth_engine/core/math/BoundingCylinderRegion.h
+    earth_engine/core/math/BoundingCylinderRegion.cpp
 )
 
 # ============================================================

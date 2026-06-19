@@ -88,6 +88,12 @@ add_executable(test_oriented_bounding_box
 target_link_libraries(test_oriented_bounding_box PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_oriented_bounding_box COMMAND test_oriented_bounding_box)
 
+add_executable(test_bounding_cylinder_region
+    unit/core/test_bounding_cylinder_region.cpp
+)
+target_link_libraries(test_bounding_cylinder_region PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_bounding_cylinder_region COMMAND test_bounding_cylinder_region)
+
 add_executable(test_axis_aligned_box
     unit/core/test_axis_aligned_box.cpp
 )
