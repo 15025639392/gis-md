@@ -304,6 +304,25 @@ TEST(TileQuadtreeAvailabilityTest, TileAndContentAvailabilityMatchCesiumNative) 
     }
 }
 
+TEST(TileQuadtreeAvailabilityTest, OutOfRangeCoordinatesAreUnavailableLikeCesiumNative) {
+    TileQuadtreeAvailability availability(3, 5);
+    ASSERT_TRUE(availability.addSubtree(0, 0, 0, makeQuadtreeFixtureRootSubtree()));
+    const TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+
+    EXPECT_EQ(0, availability.computeAvailability(0, 1, 1));
+    EXPECT_EQ(0, availability.computeAvailability(1, 2, 0));
+    EXPECT_EQ(0, availability.computeAvailability(1, 0, 2));
+    EXPECT_EQ(0, availability.computeAvailability(2, 4, 1));
+    EXPECT_EQ(0, availability.computeAvailability(2, 1, 4));
+
+    EXPECT_EQ(0, availability.computeAvailability(0, 1, 1, root));
+    EXPECT_EQ(0, availability.computeAvailability(1, 2, 0, root));
+    EXPECT_EQ(0, availability.computeAvailability(1, 0, 2, root));
+    EXPECT_EQ(0, availability.computeAvailability(2, 4, 1, root));
+    EXPECT_EQ(0, availability.computeAvailability(2, 1, 4, root));
+}
+
 TEST(TileQuadtreeAvailabilityTest, ChildSubtreeAvailabilityMatchesCesiumNative) {
     TileQuadtreeAvailability availability(3, 5);
     ASSERT_TRUE(availability.addSubtree(0, 0, 0, makeQuadtreeFixtureRootSubtree()));
@@ -544,6 +563,31 @@ TEST(TileOctreeAvailabilityTest, TileAndContentAvailabilityMatchCesiumNative) {
             }
         }
     }
+}
+
+TEST(TileOctreeAvailabilityTest, OutOfRangeCoordinatesAreUnavailableLikeCesiumNative) {
+    TileOctreeAvailability availability(3, 5);
+    ASSERT_TRUE(availability.addSubtree(
+        OctreeTileID{0, 0, 0, 0},
+        makeOctreeFixtureRootSubtree()));
+    const TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+
+    EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{0, 1, 1, 1}));
+    EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{1, 2, 0, 0}));
+    EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{1, 0, 2, 0}));
+    EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{1, 0, 0, 2}));
+    EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{2, 4, 1, 1}));
+    EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{2, 1, 4, 1}));
+    EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{2, 1, 1, 4}));
+
+    EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{0, 1, 1, 1}, root));
+    EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{1, 2, 0, 0}, root));
+    EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{1, 0, 2, 0}, root));
+    EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{1, 0, 0, 2}, root));
+    EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{2, 4, 1, 1}, root));
+    EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{2, 1, 4, 1}, root));
+    EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{2, 1, 1, 4}, root));
 }
 
 TEST(TileOctreeAvailabilityTest, ChildSubtreeAvailabilityMatchesCesiumNative) {

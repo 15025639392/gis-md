@@ -47,6 +47,28 @@ uint32_t lowBitsMask(uint32_t bits) {
     return bits == 0 ? 0U : ~(0xFFFFFFFFU << bits);
 }
 
+bool quadtreeCoordinatesInLevel(uint32_t level, uint32_t x, uint32_t y) {
+    if (level >= 32U) {
+        return false;
+    }
+    const uint32_t tilesInLevel = 1U << level;
+    return x < tilesInLevel && y < tilesInLevel;
+}
+
+bool octreeCoordinatesInLevel(const OctreeTileID& tileID) {
+    if (tileID.level < 0 || tileID.level >= 32) {
+        return false;
+    }
+    if (tileID.x < 0 || tileID.y < 0 || tileID.z < 0) {
+        return false;
+    }
+    const uint32_t tilesInLevel =
+        1U << static_cast<uint32_t>(tileID.level);
+    return static_cast<uint32_t>(tileID.x) < tilesInLevel &&
+           static_cast<uint32_t>(tileID.y) < tilesInLevel &&
+           static_cast<uint32_t>(tileID.z) < tilesInLevel;
+}
+
 bool availabilityBitSet(const TileAvailabilityAccessor& accessor,
                         uint32_t availabilityIndex) {
     if (accessor.isConstant()) {
@@ -199,6 +221,9 @@ uint8_t TileQuadtreeAvailability::computeAvailability(
     uint32_t level,
     uint32_t x,
     uint32_t y) const {
+    if (!quadtreeCoordinatesInLevel(level, x, y)) {
+        return 0;
+    }
     if (!root_ && level == 0) {
         return TileAvailable | SubtreeAvailable;
     }
@@ -265,6 +290,9 @@ uint8_t TileQuadtreeAvailability::computeAvailability(
     uint32_t x,
     uint32_t y,
     const TileAvailabilityNode* node) const {
+    if (!quadtreeCoordinatesInLevel(level, x, y)) {
+        return 0;
+    }
     const bool subtreeLoaded = node && node->subtree.has_value();
     const uint32_t relativeLevel = level % subtreeLevels_;
     if (!subtreeLoaded) {
@@ -419,6 +447,9 @@ TileOctreeAvailability::TileOctreeAvailability(
 
 uint8_t TileOctreeAvailability::computeAvailability(
     const OctreeTileID& tileID) const {
+    if (!octreeCoordinatesInLevel(tileID)) {
+        return 0;
+    }
     if (!root_ && tileID.level == 0) {
         return TileAvailable | SubtreeAvailable;
     }
@@ -492,6 +523,9 @@ uint8_t TileOctreeAvailability::computeAvailability(
 uint8_t TileOctreeAvailability::computeAvailability(
     const OctreeTileID& tileID,
     const TileAvailabilityNode* node) const {
+    if (!octreeCoordinatesInLevel(tileID)) {
+        return 0;
+    }
     const bool subtreeLoaded = node && node->subtree.has_value();
     const uint32_t relativeLevel =
         static_cast<uint32_t>(tileID.level) % subtreeLevels_;
