@@ -7,6 +7,8 @@
 #include <variant>
 #include <vector>
 
+#include "OctreeTilingScheme.h"
+
 namespace earth_engine {
 
 enum TileAvailabilityFlags : uint8_t {
@@ -103,6 +105,36 @@ public:
         uint32_t level,
         uint32_t x,
         uint32_t y,
+        TileAvailabilityNode* parentNode) const;
+
+    TileAvailabilityNode* rootNode() { return root_.get(); }
+    const TileAvailabilityNode* rootNode() const { return root_.get(); }
+
+private:
+    uint32_t subtreeLevels_ = 0;
+    uint32_t maximumLevel_ = 0;
+    uint32_t maximumChildrenSubtrees_ = 0;
+    std::unique_ptr<TileAvailabilityNode> root_;
+};
+
+class TileOctreeAvailability {
+public:
+    TileOctreeAvailability(uint32_t subtreeLevels, uint32_t maximumLevel);
+
+    uint8_t computeAvailability(const OctreeTileID& tileID) const;
+    uint8_t computeAvailability(const OctreeTileID& tileID,
+                                const TileAvailabilityNode* node) const;
+    bool addSubtree(const OctreeTileID& tileID,
+                    TileAvailabilitySubtree&& subtree);
+    TileAvailabilityNode* addNode(const OctreeTileID& tileID,
+                                  TileAvailabilityNode* parentNode);
+    bool addLoadedSubtree(TileAvailabilityNode* node,
+                          TileAvailabilitySubtree&& subtree);
+    std::optional<uint32_t> findChildNodeIndex(
+        const OctreeTileID& tileID,
+        const TileAvailabilityNode* parentNode) const;
+    TileAvailabilityNode* findChildNode(
+        const OctreeTileID& tileID,
         TileAvailabilityNode* parentNode) const;
 
     TileAvailabilityNode* rootNode() { return root_.get(); }
