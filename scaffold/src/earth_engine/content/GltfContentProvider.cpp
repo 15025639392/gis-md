@@ -696,6 +696,14 @@ bool finiteTileBoundingVolume(const TileBoundingVolume& volume) {
                    finiteVec3Value(volume.box.getHalfAxis(0)) &&
                    finiteVec3Value(volume.box.getHalfAxis(1)) &&
                    finiteVec3Value(volume.box.getHalfAxis(2));
+        case TileBoundingVolumeKind::CylinderRegion:
+            return finiteVec3Value(volume.cylinderRegion.getTranslation()) &&
+                   finiteVec3Value(volume.cylinderRegion.getCenter()) &&
+                   std::isfinite(volume.cylinderRegion.getHeight()) &&
+                   std::isfinite(volume.cylinderRegion.getRadialBounds().x) &&
+                   std::isfinite(volume.cylinderRegion.getRadialBounds().y) &&
+                   std::isfinite(volume.cylinderRegion.getAngularBounds().x) &&
+                   std::isfinite(volume.cylinderRegion.getAngularBounds().y);
     }
     return false;
 }
@@ -724,6 +732,9 @@ TileBoundingVolume transformBoundingVolume(
                 transformDirection(transform, volume.box.getHalfAxis(0)),
                 transformDirection(transform, volume.box.getHalfAxis(1)),
                 transformDirection(transform, volume.box.getHalfAxis(2)));
+        case TileBoundingVolumeKind::CylinderRegion:
+            return TileBoundingVolume::fromCylinderRegion(
+                volume.cylinderRegion.transform(transform.raw()));
     }
     return volume;
 }

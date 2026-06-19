@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../core/math/BoundingSphere.h"
+#include "../core/math/BoundingCylinderRegion.h"
 #include "../core/math/Mat4.h"
 #include "../core/math/OrientedBoundingBox.h"
 #include "../core/math/Rectangle.h"
@@ -14,7 +15,8 @@ class Ellipsoid;
 enum class TileBoundingVolumeKind {
     Region,
     Sphere,
-    Box
+    Box,
+    CylinderRegion
 };
 
 /// cesium-native BoundingVolume subset used by explicit 3D Tiles JSON.
@@ -31,6 +33,11 @@ struct TileBoundingVolume {
         Vec3::zero(),
         Vec3::zero(),
         Vec3::zero()};
+    BoundingCylinderRegion cylinderRegion{
+        Vec3::zero(),
+        glm::dquat(1.0, 0.0, 0.0, 0.0),
+        0.0,
+        glm::dvec2(0.0, 0.0)};
 
     static TileBoundingVolume fromRegion(const Rectangle& rectangle,
                                          double minHeight,
@@ -61,6 +68,14 @@ struct TileBoundingVolume {
         return volume;
     }
 
+    static TileBoundingVolume fromCylinderRegion(
+        const BoundingCylinderRegion& cylinderRegion) {
+        TileBoundingVolume volume;
+        volume.kind = TileBoundingVolumeKind::CylinderRegion;
+        volume.cylinderRegion = cylinderRegion;
+        return volume;
+    }
+
     TileBoundingVolume transform(const Mat4& matrix) const {
         switch (kind) {
             case TileBoundingVolumeKind::Region:
@@ -73,6 +88,12 @@ struct TileBoundingVolume {
             case TileBoundingVolumeKind::Box: {
                 TileBoundingVolume transformed = *this;
                 transformed.box = box.transform(matrix);
+                return transformed;
+            }
+            case TileBoundingVolumeKind::CylinderRegion: {
+                TileBoundingVolume transformed = *this;
+                transformed.cylinderRegion =
+                    cylinderRegion.transform(matrix.raw());
                 return transformed;
             }
         }

@@ -505,6 +505,11 @@ double TileBoundsMetrics::tileBoundsRadius(const TilesetTile& tile,
                 return tile.boundingVolume->sphere.getRadius();
             case TileBoundingVolumeKind::Box:
                 return tile.boundingVolume->box.toSphere().getRadius();
+            case TileBoundingVolumeKind::CylinderRegion:
+                return tile.boundingVolume->cylinderRegion
+                    .toOrientedBoundingBox()
+                    .toSphere()
+                    .getRadius();
         }
     }
     return computeTileBoundsRadius(
@@ -531,6 +536,10 @@ std::optional<OrientedBoundingBox> TileBoundsMetrics::tileBoundingRegionObb(
         }
         if (tile.boundingVolume->kind == TileBoundingVolumeKind::Box) {
             return tile.boundingVolume->box;
+        }
+        if (tile.boundingVolume->kind ==
+            TileBoundingVolumeKind::CylinderRegion) {
+            return tile.boundingVolume->cylinderRegion.toOrientedBoundingBox();
         }
     }
     return boundingRegionObb(
@@ -584,6 +593,8 @@ Vec3 TileBoundsMetrics::boundingVolumeCenter(
             return volume.sphere.getCenter();
         case TileBoundingVolumeKind::Box:
             return volume.box.getCenter();
+        case TileBoundingVolumeKind::CylinderRegion:
+            return volume.cylinderRegion.getCenter();
     }
     return Vec3::zero();
 }
@@ -608,6 +619,11 @@ double TileBoundsMetrics::boundingVolumeDistance(
             return std::sqrt(std::max(
                 0.0,
                 volume.box.computeDistanceSquaredToPosition(cameraPosition)));
+        case TileBoundingVolumeKind::CylinderRegion:
+            return std::sqrt(std::max(
+                0.0,
+                volume.cylinderRegion.computeDistanceSquaredToPosition(
+                    cameraPosition)));
     }
     return 0.0;
 }
@@ -627,6 +643,8 @@ bool TileBoundsMetrics::boundingVolumeContainsPosition(
         case TileBoundingVolumeKind::Box:
             return volume.box.computeDistanceSquaredToPosition(position) <=
                    1e-8;
+        case TileBoundingVolumeKind::CylinderRegion:
+            return volume.cylinderRegion.contains(position);
     }
     return false;
 }
@@ -655,6 +673,9 @@ bool TileBoundsMetrics::boundingVolumeIntersectsFrustum(
             return frustum.intersectsSphere(volume.sphere);
         case TileBoundingVolumeKind::Box:
             return frustum.intersectsOBB(volume.box);
+        case TileBoundingVolumeKind::CylinderRegion:
+            return frustum.intersectsOBB(
+                volume.cylinderRegion.toOrientedBoundingBox());
     }
     return false;
 }

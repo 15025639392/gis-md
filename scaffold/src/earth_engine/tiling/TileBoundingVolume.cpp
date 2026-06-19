@@ -34,6 +34,8 @@ TileBoundingVolume::toOrientedBoundingBox() const {
             return OrientedBoundingBox::fromSphere(sphere);
         case TileBoundingVolumeKind::Box:
             return box;
+        case TileBoundingVolumeKind::CylinderRegion:
+            return cylinderRegion.toOrientedBoundingBox();
         case TileBoundingVolumeKind::Region:
             return TileBoundsMetrics::boundingRegionObb(
                 region,
@@ -122,6 +124,16 @@ std::optional<Rectangle> TileBoundingVolume::estimateGlobeRectangle(
             }
 
             return Rectangle(west, south, east, north);
+        }
+        case TileBoundingVolumeKind::CylinderRegion: {
+            const OrientedBoundingBox cylinderBox =
+                cylinderRegion.toOrientedBoundingBox();
+            return TileBoundingVolume::fromBox(
+                       cylinderBox.getCenter(),
+                       cylinderBox.getHalfAxis(0),
+                       cylinderBox.getHalfAxis(1),
+                       cylinderBox.getHalfAxis(2))
+                .estimateGlobeRectangle(ellipsoid);
         }
     }
     return std::nullopt;

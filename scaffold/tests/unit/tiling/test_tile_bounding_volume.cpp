@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/core/math/Mat4.h"
+#include "earth_engine/core/math/BoundingCylinderRegion.h"
 #include "earth_engine/core/math/Rectangle.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <glm/gtc/quaternion.hpp>
 
 using namespace earth_engine;
 
@@ -81,6 +83,29 @@ TEST(TileBoundingVolumeTest, TransformBoxLikeCesiumNative) {
     EXPECT_DOUBLE_EQ(16.0, transformed.box.getHalfAxis(2).z());
 }
 
+TEST(TileBoundingVolumeTest, TransformCylinderRegionLikeCesiumNative) {
+    const TileBoundingVolume volume =
+        TileBoundingVolume::fromCylinderRegion(
+            BoundingCylinderRegion(
+                Vec3::zero(),
+                glm::dquat(1.0, 0.0, 0.0, 0.0),
+                3.0,
+                glm::dvec2(1.0, 2.0),
+                glm::dvec2(0.0, kPi * 0.5)));
+
+    const Mat4 transform =
+        Mat4::translation(Vec3(10.0, 20.0, 30.0)) *
+        Mat4::scale(Vec3(2.0, 3.0, 4.0));
+    const TileBoundingVolume transformed = volume.transform(transform);
+
+    EXPECT_EQ(TileBoundingVolumeKind::CylinderRegion, transformed.kind);
+    EXPECT_EQ(Vec3(10.0, 20.0, 30.0),
+              transformed.cylinderRegion.getTranslation());
+    EXPECT_DOUBLE_EQ(12.0, transformed.cylinderRegion.getHeight());
+    EXPECT_EQ(glm::dvec2(3.0, 6.0),
+              transformed.cylinderRegion.getRadialBounds());
+}
+
 TEST(TileBoundingVolumeTest, CenterUsesContainedVolumeKind) {
     const TileBoundingVolume sphere =
         TileBoundingVolume::fromSphere(Vec3(1.0, 2.0, 3.0), 5.0);
@@ -94,6 +119,17 @@ TEST(TileBoundingVolumeTest, CenterUsesContainedVolumeKind) {
               TileBoundsMetrics::boundingVolumeCenter(sphere));
     EXPECT_EQ(Vec3(4.0, 5.0, 6.0),
               TileBoundsMetrics::boundingVolumeCenter(box));
+
+    const TileBoundingVolume cylinder =
+        TileBoundingVolume::fromCylinderRegion(
+            BoundingCylinderRegion(
+                Vec3::zero(),
+                glm::dquat(1.0, 0.0, 0.0, 0.0),
+                3.0,
+                glm::dvec2(1.0, 2.0),
+                glm::dvec2(0.0, kPi * 0.5)));
+    EXPECT_EQ(cylinder.cylinderRegion.getCenter(),
+              TileBoundsMetrics::boundingVolumeCenter(cylinder));
 }
 
 TEST(TileBoundingVolumeTest, RegionCenterUsesBoundingRegionObbLikeCesiumNative) {
@@ -141,6 +177,48 @@ TEST(TileBoundingVolumeTest, BoxConvertsToContainedOrientedBox) {
     EXPECT_EQ(volume.box.getHalfAxis(0), box->getHalfAxis(0));
     EXPECT_EQ(volume.box.getHalfAxis(1), box->getHalfAxis(1));
     EXPECT_EQ(volume.box.getHalfAxis(2), box->getHalfAxis(2));
+}
+
+TEST(TileBoundingVolumeTest, CylinderRegionConvertsToContainedOrientedBox) {
+    const BoundingCylinderRegion cylinder(
+        Vec3::zero(),
+        glm::dquat(1.0, 0.0, 0.0, 0.0),
+        3.0,
+        glm::dvec2(1.0, 2.0),
+        glm::dvec2(0.0, kPi * 0.5));
+    const TileBoundingVolume volume =
+        TileBoundingVolume::fromCylinderRegion(cylinder);
+
+    const std::optional<OrientedBoundingBox> box =
+        volume.toOrientedBoundingBox();
+
+    ASSERT_TRUE(box.has_value());
+    EXPECT_EQ(cylinder.toOrientedBoundingBox().getCenter(), box->getCenter());
+    EXPECT_EQ(cylinder.toOrientedBoundingBox().getHalfAxis(0),
+              box->getHalfAxis(0));
+    EXPECT_EQ(cylinder.toOrientedBoundingBox().getHalfAxis(1),
+              box->getHalfAxis(1));
+    EXPECT_EQ(cylinder.toOrientedBoundingBox().getHalfAxis(2),
+              box->getHalfAxis(2));
+}
+
+TEST(TileBoundingVolumeTest, CylinderRegionMetricsUseContainedBox) {
+    const BoundingCylinderRegion cylinder(
+        Vec3::zero(),
+        glm::dquat(1.0, 0.0, 0.0, 0.0),
+        4.0,
+        glm::dvec2(1.0, 2.0),
+        glm::dvec2(0.0, kPi * 0.5));
+    const TileBoundingVolume volume =
+        TileBoundingVolume::fromCylinderRegion(cylinder);
+    const Vec3 outside(5.0, 5.0, 0.0);
+
+    EXPECT_TRUE(TileBoundsMetrics::boundingVolumeContainsPosition(
+        volume,
+        cylinder.getCenter()));
+    EXPECT_DOUBLE_EQ(
+        std::sqrt(cylinder.computeDistanceSquaredToPosition(outside)),
+        TileBoundsMetrics::boundingVolumeDistance(volume, outside));
 }
 
 TEST(TileBoundingVolumeTest, RegionConvertsToBoundingRegionObbLikeCesiumNative) {
@@ -261,4 +339,33 @@ TEST(TileBoundingVolumeTest, EstimateGlobeRectangleForBoxLikeCesiumNative) {
 
     ASSERT_TRUE(estimated.has_value());
     expectRectangleNear(Rectangle(west, south, east, north), *estimated, 1e-14);
+}
+
+TEST(TileBoundingVolumeTest, EstimateGlobeRectangleForCylinderUsesContainedBox) {
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 center = ellipsoid.cartographicToCartesian(
+        Cartographic::fromDegrees(10.0, 20.0, 1000.0));
+    const BoundingCylinderRegion cylinder(
+        center,
+        glm::dquat(1.0, 0.0, 0.0, 0.0),
+        200.0,
+        glm::dvec2(50.0, 100.0),
+        glm::dvec2(0.0, kPi * 0.5));
+    const OrientedBoundingBox box = cylinder.toOrientedBoundingBox();
+    const TileBoundingVolume volume =
+        TileBoundingVolume::fromCylinderRegion(cylinder);
+
+    const std::optional<Rectangle> estimated =
+        volume.estimateGlobeRectangle(ellipsoid);
+    const std::optional<Rectangle> expected =
+        TileBoundingVolume::fromBox(
+            box.getCenter(),
+            box.getHalfAxis(0),
+            box.getHalfAxis(1),
+            box.getHalfAxis(2))
+            .estimateGlobeRectangle(ellipsoid);
+
+    ASSERT_TRUE(estimated.has_value());
+    ASSERT_TRUE(expected.has_value());
+    expectRectangleNear(*expected, *estimated, 1e-14);
 }
