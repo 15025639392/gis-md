@@ -32,13 +32,15 @@ TEST_F(PickingServiceTest, CenterPixelHitsEllipsoid) {
 }
 
 TEST_F(PickingServiceTest, CornerPixelMisses) {
-    // 屏幕角落可能不命中（取决于 FOV 和相机距离）
+    // 从足够远的位置看向地球时，视口角落位于地球视盘外。
+    camera_->lookAt(Vec3(0, 0, 20000000), Vec3::zero(), Vec3::unitY());
     auto result = service_->pickEllipsoid(0, 0, *camera_, 800, 600);
 
-    // 可能命中也可能未命中，但至少应返回有效结构
-    // 当前 FOV 60° + 10000km 距离 → 地球覆盖率足够大，角落里应该命中
-    // 如果未命中，也是合法的
-    SUCCEED();
+    EXPECT_EQ(PickResult::HitType::None, result.hitType);
+    EXPECT_FALSE(result.isValid());
+    EXPECT_FLOAT_EQ(0.0f, result.screenX);
+    EXPECT_FLOAT_EQ(0.0f, result.screenY);
+    EXPECT_DOUBLE_EQ(0.0, result.distance);
 }
 
 TEST_F(PickingServiceTest, EllipsoidHitPositionIsOnSurface) {
