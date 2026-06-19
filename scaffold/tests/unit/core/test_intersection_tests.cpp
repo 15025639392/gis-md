@@ -1,10 +1,12 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/core/math/AxisAlignedBox.h"
 #include "earth_engine/core/math/IntersectionTests.h"
 #include "earth_engine/core/math/Plane.h"
 #include "earth_engine/core/math/Ray.h"
 #include "earth_engine/core/math/Vec3.h"
 
+#include <cmath>
 #include <optional>
 
 using namespace earth_engine;
@@ -168,4 +170,58 @@ TEST(IntersectionTestsTest, RayTriangleParametricReturnsDistanceAlongRay) {
 
     ASSERT_TRUE(t.has_value());
     EXPECT_DOUBLE_EQ(2.0, *t);
+}
+
+TEST(IntersectionTestsTest, RayAabbMatchesCesiumNativeCases) {
+    // Ported from cesium-native CesiumGeometry/test/TestIntersectionTests.cpp.
+    struct Case {
+        Ray ray;
+        AxisAlignedBox aabb;
+        std::optional<Vec3> expected;
+    };
+
+    const double invSqrt2 = 1.0 / std::sqrt(2.0);
+    const Case cases[] = {
+        {
+            Ray(Vec3(-1.0, 0.5, 0.5), Vec3(1.0, 0.0, 0.0)),
+            AxisAlignedBox(0.0, 0.0, 0.0, 1.0, 1.0, 1.0),
+            Vec3(0.0, 0.5, 0.5)
+        },
+        {
+            Ray(Vec3(-1.0, 0.0, 1.0), Vec3(invSqrt2, 0.0, -invSqrt2)),
+            AxisAlignedBox(-0.5, -0.5, -0.5, 0.5, 0.5, 0.5),
+            Vec3(-0.5, 0.0, 0.5)
+        },
+        {
+            Ray(Vec3(-1.0, 0.5, 0.5), Vec3(-1.0, 0.0, 0.0)),
+            AxisAlignedBox(0.0, 0.0, 0.0, 1.0, 1.0, 1.0),
+            std::nullopt
+        },
+        {
+            Ray(Vec3(0.0, 0.0, 0.0), Vec3(0.0, -1.0, 0.0)),
+            AxisAlignedBox(-1.0, -1.0, -1.0, 1.0, 1.0, 1.0),
+            Vec3(0.0, -1.0, 0.0)
+        }
+    };
+
+    for (const Case& testCase : cases) {
+        EXPECT_EQ(testCase.expected,
+                  IntersectionTests::rayAABB(testCase.ray, testCase.aabb));
+    }
+}
+
+TEST(IntersectionTestsTest, RayAabbParametricReturnsEntryOrExitDistance) {
+    const AxisAlignedBox aabb(-1.0, -1.0, -1.0, 1.0, 1.0, 1.0);
+
+    const auto outside = IntersectionTests::rayAABBParametric(
+        Ray(Vec3(-3.0, 0.0, 0.0), Vec3(1.0, 0.0, 0.0)),
+        aabb);
+    ASSERT_TRUE(outside.has_value());
+    EXPECT_DOUBLE_EQ(2.0, *outside);
+
+    const auto inside = IntersectionTests::rayAABBParametric(
+        Ray(Vec3(0.0, 0.0, 0.0), Vec3(0.0, 1.0, 0.0)),
+        aabb);
+    ASSERT_TRUE(inside.has_value());
+    EXPECT_DOUBLE_EQ(1.0, *inside);
 }

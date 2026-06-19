@@ -9,6 +9,8 @@
 
 namespace earth_engine {
 
+class AxisAlignedBox;
+
 /// Geometry intersection helpers aligned with cesium-native IntersectionTests.
 class IntersectionTests {
 public:
@@ -27,6 +29,9 @@ public:
                                                        const Vec3& p1,
                                                        const Vec3& p2,
                                                        bool cullBackFaces);
+    static std::optional<Vec3> rayAABB(const Ray& ray, const AxisAlignedBox& aabb);
+    static std::optional<double> rayAABBParametric(const Ray& ray,
+                                                   const AxisAlignedBox& aabb);
 };
 
 } // namespace earth_engine

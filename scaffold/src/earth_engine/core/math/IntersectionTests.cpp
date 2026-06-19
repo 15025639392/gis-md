@@ -1,8 +1,25 @@
 #include "IntersectionTests.h"
 
+#include "AxisAlignedBox.h"
+
+#include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace earth_engine {
+
+namespace {
+double component(const Vec3& v, int index) noexcept {
+    switch (index) {
+    case 0:
+        return v.x();
+    case 1:
+        return v.y();
+    default:
+        return v.z();
+    }
+}
+} // namespace
 
 std::optional<Vec3> IntersectionTests::rayPlane(const Ray& ray, const Plane& plane) noexcept {
     constexpr double epsilon15 = 1e-15;
@@ -148,6 +165,50 @@ std::optional<double> IntersectionTests::rayTriangleParametric(const Ray& ray,
     }
 
     return edge1.dot(q) * invDet;
+}
+
+std::optional<Vec3> IntersectionTests::rayAABB(const Ray& ray,
+                                               const AxisAlignedBox& aabb) {
+    const std::optional<double> t = rayAABBParametric(ray, aabb);
+    if (t && *t >= 0.0) {
+        return ray.pointAt(*t);
+    }
+    return std::nullopt;
+}
+
+std::optional<double> IntersectionTests::rayAABBParametric(
+    const Ray& ray,
+    const AxisAlignedBox& aabb) {
+    constexpr double epsilon6 = 1e-6;
+    const Vec3& dir = ray.direction();
+    const Vec3& origin = ray.origin();
+    const Vec3 minimum(aabb.minimumX(), aabb.minimumY(), aabb.minimumZ());
+    const Vec3 maximum(aabb.maximumX(), aabb.maximumY(), aabb.maximumZ());
+
+    double greatestMin = -std::numeric_limits<double>::max();
+    double smallestMax = std::numeric_limits<double>::max();
+    double tmin = greatestMin;
+    double tmax = smallestMax;
+
+    for (int i = 0; i < 3; ++i) {
+        if (std::abs(component(dir, i)) < epsilon6) {
+            continue;
+        }
+
+        tmin = (component(minimum, i) - component(origin, i)) / component(dir, i);
+        tmax = (component(maximum, i) - component(origin, i)) / component(dir, i);
+
+        if (tmin > tmax) {
+            std::swap(tmin, tmax);
+        }
+        greatestMin = std::max(tmin, greatestMin);
+        smallestMax = std::min(tmax, smallestMax);
+    }
+
+    if (smallestMax < 0.0 || greatestMin > smallestMax) {
+        return std::nullopt;
+    }
+    return greatestMin < 0.0 ? smallestMax : greatestMin;
 }
 
 } // namespace earth_engine
