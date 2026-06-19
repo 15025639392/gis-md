@@ -6,7 +6,8 @@
 namespace earth_engine {
 
 bool TileSelectionHistory::wasRenderedLastFrame(const TilesetTile& tile) {
-    return tile.selectionFrameState.previousSelectionState ==
+    return originalSelectionState(
+               tile.selectionFrameState.previousSelectionState) ==
            TileSelectionState::Rendered;
 }
 
@@ -30,7 +31,8 @@ bool TileSelectionHistory::anyDescendantWasRenderedLastFrame(
         if (!child) {
             continue;
         }
-        if (child->selectionFrameState.previousSelectionState ==
+        if (originalSelectionState(
+                child->selectionFrameState.previousSelectionState) ==
                 TileSelectionState::Rendered ||
             anyDescendantWasRenderedLastFrame(*child)) {
             return true;

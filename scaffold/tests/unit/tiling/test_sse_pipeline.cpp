@@ -13181,12 +13181,16 @@ void testTileSelectionHistoryReadsPreviousSelectionTree() {
 
     check(TileSelectionHistory::wasRenderedLastFrame(renderedChild),
           "TileSelectionHistory: rendered tile is detected");
+    renderedChild.selectionFrameState.previousSelectionState =
+        TileSelectionState::RenderedAndKicked;
+    check(TileSelectionHistory::wasRenderedLastFrame(renderedChild),
+          "TileSelectionHistory: kicked rendered tile is detected from original state");
     check(!TileSelectionHistory::wasRenderedLastFrame(refinedChild),
           "TileSelectionHistory: refined tile is not directly rendered");
     check(TileSelectionHistory::childWasRefinedLastFrame(root),
           "TileSelectionHistory: kicked refined child is detected");
     check(TileSelectionHistory::anyDescendantWasRenderedLastFrame(root),
-          "TileSelectionHistory: rendered child is detected as descendant");
+          "TileSelectionHistory: kicked rendered child is detected as descendant");
 
     renderedChild.selectionFrameState.previousSelectionState =
         TileSelectionState::NotVisited;
