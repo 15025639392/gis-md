@@ -108,6 +108,68 @@ TileRange computeRange(const TileScheme& scheme,
     return range;
 }
 
+TileRange trimCesiumNativeBoundarySlop(const TileScheme& scheme,
+                                       const Rectangle& bounds,
+                                       int zoom,
+                                       TileRange range) {
+    if (range.maxX < range.minX || range.maxY < range.minY) {
+        return range;
+    }
+
+    // cesium-native QuadtreeRasterOverlayTileProvider excludes tiles that only
+    // touch a geometry rectangle along a tile edge, using 1/512 of the geometry
+    // span as the edge tolerance.
+    const double veryCloseX = std::max(1e-12, bounds.width()) / 512.0;
+    const double veryCloseY = std::max(1e-12, bounds.height()) / 512.0;
+
+    const Rectangle westTile = scheme.tileToRectangle(
+        TileKey{scheme.id(), zoom, range.minX, range.minY});
+    if (std::abs(westTile.east() - bounds.west()) < veryCloseX &&
+        range.minX < range.maxX) {
+        ++range.minX;
+    }
+
+    const Rectangle eastTile = scheme.tileToRectangle(
+        TileKey{scheme.id(), zoom, range.maxX, range.maxY});
+    if (std::abs(eastTile.west() - bounds.east()) < veryCloseX &&
+        range.maxX > range.minX) {
+        --range.maxX;
+    }
+
+    const bool yDown = scheme.yDirection().find("down") != std::string::npos;
+    if (yDown) {
+        const Rectangle northTile = scheme.tileToRectangle(
+            TileKey{scheme.id(), zoom, range.minX, range.minY});
+        if (std::abs(northTile.south() - bounds.north()) < veryCloseY &&
+            range.minY < range.maxY) {
+            ++range.minY;
+        }
+
+        const Rectangle southTile = scheme.tileToRectangle(
+            TileKey{scheme.id(), zoom, range.maxX, range.maxY});
+        if (std::abs(southTile.north() - bounds.south()) < veryCloseY &&
+            range.maxY > range.minY) {
+            --range.maxY;
+        }
+    } else {
+        const Rectangle southTile = scheme.tileToRectangle(
+            TileKey{scheme.id(), zoom, range.minX, range.minY});
+        if (std::abs(southTile.north() - bounds.south()) < veryCloseY &&
+            range.minY < range.maxY) {
+            ++range.minY;
+        }
+
+        const Rectangle northTile = scheme.tileToRectangle(
+            TileKey{scheme.id(), zoom, range.maxX, range.maxY});
+        if (std::abs(northTile.south() - bounds.north()) < veryCloseY &&
+            range.maxY > range.minY) {
+            --range.maxY;
+        }
+    }
+
+    return range;
+}
+
 struct RectangleSourcePlan {
     int sourceZoom = 0;
     TileRange range;
@@ -293,7 +355,8 @@ int chooseRectangleSourceZoom(const TileScheme& scheme,
         maximumScreenSpaceError);
     const int maxTextureSize = maximumCombinedTextureSize(uploader);
 
-    TileRange range = computeRange(scheme, bounds, zoom);
+    TileRange range = trimCesiumNativeBoundarySlop(
+        scheme, bounds, zoom, computeRange(scheme, bounds, zoom));
     while (zoom > minZoom) {
         const int widthPixels = range.width() * std::max(1, provider.tileWidth());
         const int heightPixels = range.height() * std::max(1, provider.tileHeight());
@@ -302,7 +365,8 @@ int chooseRectangleSourceZoom(const TileScheme& scheme,
             break;
         }
         --zoom;
-        range = computeRange(scheme, bounds, zoom);
+        range = trimCesiumNativeBoundarySlop(
+            scheme, bounds, zoom, computeRange(scheme, bounds, zoom));
     }
 
     if (outRange) *outRange = range;

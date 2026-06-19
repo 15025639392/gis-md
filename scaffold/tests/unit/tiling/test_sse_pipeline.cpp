@@ -2445,6 +2445,40 @@ void testRasterOverlayRectangleSourceRequestsAreBudgetedAcrossFrames() {
           "RasterOverlayTileProvider: loading rectangle tiles continue issuing source requests on later frames");
 }
 
+void testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches() {
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
+
+    Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
+        TileKey{"XYZ-WebMercator", 3, 2, 3});
+    RasterOverlayTileProvider::TilePtr rectangleTile =
+        provider.getTile(sourceAlignedBounds, 512.0, 512.0);
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    check(rectangleTile &&
+              rectangleTile->getSourceZoom() == 5 &&
+              provider.loadTileThrottled(*rectangleTile, &budget) &&
+              imagery.pendingRequests.size() == 16,
+          "RasterOverlayTileProvider: rectangle source range trims Cesium-native tile-edge touches");
+
+    bool allInsideTrimmedRange = true;
+    for (const auto& request : imagery.pendingRequests) {
+        allInsideTrimmedRange =
+            allInsideTrimmedRange &&
+            request.key.z == 5 &&
+            request.key.x >= 8 && request.key.x <= 11 &&
+            request.key.y >= 12 && request.key.y <= 15;
+    }
+    check(allInsideTrimmedRange,
+          "RasterOverlayTileProvider: trimmed rectangle requests keep only overlapping source tiles");
+}
+
 void testRasterOverlayUploadsStopAfterElapsedBudgetExpires() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -20852,6 +20886,7 @@ int main() {
     testActivatedRasterOverlayEnsuresProvider();
     testRasterOverlayProviderRectangleTile();
     testRasterOverlayRectangleSourceRequestsAreBudgetedAcrossFrames();
+    testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches();
     testRasterOverlayUploadsStopAfterElapsedBudgetExpires();
     testRasterMappedUsesRenderContentDetailsRectangle();
     testRasterMappedMissingProjectionUsesPlaceholder();
