@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
 
@@ -546,8 +547,14 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     }
 
     // --- Parse edge indices ---
-    auto readEdge = [&]() -> std::vector<uint32_t> {
+    auto readEdge = [&]() -> std::optional<std::vector<uint32_t>> {
+        if (offset + sizeof(uint32_t) > len) {
+            return std::nullopt;
+        }
         uint32_t ec = readU32();
+        if (static_cast<size_t>(ec) > (len - offset) / idxByte) {
+            return std::nullopt;
+        }
         std::vector<uint32_t> out(ec);
         for (uint32_t i = 0; i < ec; ++i) {
             uint32_t code;
@@ -557,16 +564,27 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
         }
         return out;
     };
-    auto west  = readEdge(), south = readEdge(), east = readEdge(), north = readEdge();
+    auto westEdge = readEdge();
+    auto southEdge = readEdge();
+    auto eastEdge = readEdge();
+    auto northEdge = readEdge();
 
-    if (offset > len) {
+    if (!westEdge || !southEdge || !eastEdge || !northEdge) {
 #ifdef __ANDROID__
         __android_log_print(ANDROID_LOG_ERROR, "QMParser",
             "parseToSurfaceTileMesh fail: edge read overflow vc=%u tri=%u off=%zu len=%zu west=%zu south=%zu east=%zu north=%zu",
-            vc, triCount, offset, len, west.size(), south.size(), east.size(), north.size());
+            vc, triCount, offset, len,
+            westEdge ? westEdge->size() : 0,
+            southEdge ? southEdge->size() : 0,
+            eastEdge ? eastEdge->size() : 0,
+            northEdge ? northEdge->size() : 0);
 #endif
         return nullptr;
     }
+    const std::vector<uint32_t>& west = *westEdge;
+    const std::vector<uint32_t>& south = *southEdge;
+    const std::vector<uint32_t>& east = *eastEdge;
+    const std::vector<uint32_t>& north = *northEdge;
 
     auto mesh = std::make_unique<SurfaceTileMesh>();
     mesh->rasterOverlayDetails.setGeographicRectangle(bounds);

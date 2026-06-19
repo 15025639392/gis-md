@@ -3469,6 +3469,30 @@ void testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative() {
           "QuantizedMeshParser: metadata uint32 fields default like cesium-native");
 }
 
+void testQuantizedMeshRejectsTruncatedEdgeIndices() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(rootKey);
+    std::vector<uint8_t> bytes = makeQuantizedMeshBytes("", true);
+
+    std::unique_ptr<SurfaceTileMesh> validMesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            bounds);
+    check(validMesh != nullptr,
+          "QuantizedMeshParser: edge-index truncation fixture starts valid");
+
+    bytes.pop_back();
+    std::unique_ptr<SurfaceTileMesh> truncatedMesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            bounds);
+    check(truncatedMesh == nullptr,
+          "QuantizedMeshParser: truncated edge indices reject ill-formed quantized mesh like cesium-native");
+}
+
 void testQuantizedMeshSkirtNormalsCopyEdgeNormals() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -20910,6 +20934,7 @@ int main() {
     testQuantizedMeshLayerJsonMaxzoomDoesNotGateExplicitAvailability();
     testQuantizedMeshLayerJsonAvailabilityUint32Defaults();
     testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative();
+    testQuantizedMeshRejectsTruncatedEdgeIndices();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
     testQuantizedMeshRtcOriginFromBoundingSphereCenter();
     testQuantizedMeshHeaderHeightRangeIsExposed();
