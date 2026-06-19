@@ -1,6 +1,6 @@
 #pragma once
 
-#include "TileFrameDebugLogFormatter.h"
+#include "TileUpdateDebugLogInput.h"
 
 namespace earth_engine {
 
