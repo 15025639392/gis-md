@@ -349,6 +349,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileSelectionPostTraversalCommitter.h
     earth_engine/tiling/TileSelectionPostTraversalPolicy.h
     earth_engine/tiling/TileSelectionPostTraversalPolicy.cpp
+    earth_engine/tiling/TileSelectionPlanAppender.h
+    earth_engine/tiling/TileSelectionPlanAppender.cpp
     earth_engine/tiling/TileSelectionPreTraversalPolicy.h
     earth_engine/tiling/TileSelectionPreTraversalPolicy.cpp
     earth_engine/tiling/TileSelectionRefineFlowPolicy.h

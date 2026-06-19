@@ -62,6 +62,7 @@
 #include "earth_engine/tiling/TileSelectionInputMetrics.h"
 #include "earth_engine/tiling/TileSelectionKickPolicy.h"
 #include "earth_engine/tiling/TileSelectionMetrics.h"
+#include "earth_engine/tiling/TileSelectionPlanAppender.h"
 #include "earth_engine/tiling/TileSelectionPostTraversalPolicy.h"
 #include "earth_engine/tiling/TileSelectionPreTraversalPolicy.h"
 #include "earth_engine/tiling/TileSelectionRefineFlowPolicy.h"
@@ -156,8 +157,10 @@ struct TilesetTestAccess {
     }
 
     static void addTileToCurrentPlan(Tileset& tileset, TilesetTile& tile) {
-        TilesetSelectionFrameFacade::addTileToCurrentPlan(
-            tileset,
+        TileSelectionPlanAppender::addTileToCurrentPlan(
+            tileset.tilePlan_,
+            tileset.loadQueue_,
+            tileset.options_.enableLodTransitionPeriod,
             tile,
             1.0,
             true,
@@ -352,24 +355,24 @@ struct TilesetTestAccess {
     }
 
     static void queuePreload(Tileset& tileset, const TileKey& key) {
-        TilesetSelectionFrameFacade::queueTileLoad(
-            tileset,
+        TileSelectionPlanAppender::queueTileLoad(
+            tileset.loadQueue_,
             key,
             TileLoadPriorityGroup::Preload,
             std::numeric_limits<double>::max());
     }
 
     static void queueNormal(Tileset& tileset, const TileKey& key) {
-        TilesetSelectionFrameFacade::queueTileLoad(
-            tileset,
+        TileSelectionPlanAppender::queueTileLoad(
+            tileset.loadQueue_,
             key,
             TileLoadPriorityGroup::Normal,
             std::numeric_limits<double>::max());
     }
 
     static void queueUrgent(Tileset& tileset, const TileKey& key) {
-        TilesetSelectionFrameFacade::queueTileLoad(
-            tileset,
+        TileSelectionPlanAppender::queueTileLoad(
+            tileset.loadQueue_,
             key,
             TileLoadPriorityGroup::Urgent,
             std::numeric_limits<double>::max());

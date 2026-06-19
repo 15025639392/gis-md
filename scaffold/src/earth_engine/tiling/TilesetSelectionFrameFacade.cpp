@@ -5,9 +5,9 @@
 #include "TileLoadQueue.h"
 #include "TileLodTransitionController.h"
 #include "TileRenderPlanFinalizer.h"
+#include "TileSelectionPlanAppender.h"
 #include "TileSelectionRasterOverlayPreparer.h"
 #include "TileSelectionFrameRunner.h"
-#include "TileSelectionRenderEntryPolicy.h"
 #include "TileSelectionResetPolicy.h"
 #include "TileSelectionTraversalDetailsBuilder.h"
 #include "TileSelectionTraversalContext.h"
@@ -48,47 +48,6 @@ void TilesetSelectionFrameFacade::resetTileSelectionState(
             resetPlan.surfaceDrawable,
             resetPlan.completeRenderable);
         (void)ck;
-    }
-}
-
-void TilesetSelectionFrameFacade::queueTileLoad(
-    Tileset& tileset,
-    const TileKey& key,
-    TileLoadPriorityGroup group,
-    double priority) {
-    tileset.loadQueue_.queue(key, group, priority);
-}
-
-void TilesetSelectionFrameFacade::addTileToCurrentPlan(
-    Tileset& tileset,
-    TilesetTile& tile,
-    double tileSse,
-    bool queueForLoad,
-    double tilePriority) {
-    const TileSelectionRenderEntryPlan renderEntry =
-        TileSelectionRenderEntryPolicy::plan(
-            TileSelectionRenderEntryInput{
-                tileset.options_.enableLodTransitionPeriod,
-                queueForLoad});
-    if (renderEntry.writeSelectionState) {
-        tile.selectionFrameState.selectionState = renderEntry.selectionState;
-    }
-    if (renderEntry.writeScreenSpaceError) {
-        tile.selectionFrameState.screenSpaceError = tileSse;
-    }
-    if (renderEntry.resetLodTransitionFade) {
-        tile.selectionFrameState.lodTransitionFadePercentage =
-            renderEntry.lodTransitionFadeValue;
-    }
-    if (renderEntry.appendVisibleTile) {
-        tileset.tilePlan_.visibleTiles.push_back(tile.key);
-    }
-    if (renderEntry.queueNormalLoad) {
-        queueTileLoad(
-            tileset,
-            tile.key,
-            TileLoadPriorityGroup::Normal,
-            tilePriority);
     }
 }
 
@@ -196,8 +155,9 @@ void TilesetSelectionFrameFacade::selectTiles(
                    const TileKey& key,
                    TileLoadPriorityGroup group,
                    double priority) {
-                    queueTileLoad(
-                        *static_cast<Tileset*>(userData),
+                    Tileset& tileset = *static_cast<Tileset*>(userData);
+                    TileSelectionPlanAppender::queueTileLoad(
+                        tileset.loadQueue_,
                         key,
                         group,
                         priority);
@@ -207,8 +167,11 @@ void TilesetSelectionFrameFacade::selectTiles(
                    double screenSpaceError,
                    bool queueForLoad,
                    double priority) {
-                    addTileToCurrentPlan(
-                        *static_cast<Tileset*>(userData),
+                    Tileset& tileset = *static_cast<Tileset*>(userData);
+                    TileSelectionPlanAppender::addTileToCurrentPlan(
+                        tileset.tilePlan_,
+                        tileset.loadQueue_,
+                        tileset.options_.enableLodTransitionPeriod,
                         tile,
                         screenSpaceError,
                         queueForLoad,

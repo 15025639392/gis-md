@@ -9,7 +9,6 @@ struct FrameState;
 struct TilesetTile;
 struct TilesetTestAccess;
 class Tileset;
-enum class TileLoadPriorityGroup;
 
 class TilesetSelectionFrameFacade {
 public:
@@ -20,15 +19,6 @@ private:
     friend struct TilesetTestAccess;
 
     static void resetTileSelectionState(Tileset& tileset);
-    static void queueTileLoad(Tileset& tileset,
-                              const TileKey& key,
-                              TileLoadPriorityGroup group,
-                              double priority);
-    static void addTileToCurrentPlan(Tileset& tileset,
-                                     TilesetTile& tile,
-                                     double tileSse,
-                                     bool queueForLoad,
-                                     double tilePriority);
     static bool hasLodTransitionRenderContent(const Tileset& tileset,
                                               const TilesetTile& tile);
     static void updateLodTransitions(Tileset& tileset,
