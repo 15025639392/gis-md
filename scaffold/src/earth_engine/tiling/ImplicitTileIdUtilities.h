@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace earth_engine {
@@ -15,6 +16,13 @@ public:
 
     static std::vector<TileKey> children(const TileKey& parent);
     static std::vector<OctreeTileID> children(const OctreeTileID& parent);
+
+    static std::string resolveUrl(const std::string& baseUrl,
+                                  const std::string& urlTemplate,
+                                  const TileKey& tileID);
+    static std::string resolveUrl(const std::string& baseUrl,
+                                  const std::string& urlTemplate,
+                                  const OctreeTileID& tileID);
 
     static std::optional<TileKey> parentId(const TileKey& tileID);
     static std::optional<OctreeTileID> parentId(const OctreeTileID& tileID);

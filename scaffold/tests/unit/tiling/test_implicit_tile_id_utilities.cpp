@@ -38,6 +38,40 @@ TEST(ImplicitTileIdUtilitiesTest, OctreeChildrenMatchCesiumNativeOrder) {
     EXPECT_EQ(expected, children);
 }
 
+TEST(ImplicitTileIdUtilitiesTest, ResolveUrlMatchesCesiumNative) {
+    EXPECT_EQ("https://example.com/tiles/11/2/3",
+              ImplicitTileIdUtilities::resolveUrl(
+                  "https://example.com",
+                  "tiles/{level}/{x}/{y}",
+                  TileKey{"Geographic-TMS", 11, 2, 3}));
+
+    EXPECT_EQ("https://example.com/tiles/11/2/3/4",
+              ImplicitTileIdUtilities::resolveUrl(
+                  "https://example.com",
+                  "tiles/{level}/{x}/{y}/{z}",
+                  OctreeTileID{11, 2, 3, 4}));
+}
+
+TEST(ImplicitTileIdUtilitiesTest, ResolveUrlPreservesTemplateEdgeCases) {
+    EXPECT_EQ("https://example.com/base/tiles/11/unknown/3",
+              ImplicitTileIdUtilities::resolveUrl(
+                  "https://example.com/base/tileset.json",
+                  "tiles/{level}/{unknown}/{y}",
+                  TileKey{"Geographic-TMS", 11, 2, 3}));
+
+    EXPECT_EQ("https://example.com/tiles/{level",
+              ImplicitTileIdUtilities::resolveUrl(
+                  "https://example.com/base/tileset.json",
+                  "../tiles/{level",
+                  TileKey{"Geographic-TMS", 11, 2, 3}));
+
+    EXPECT_EQ("https://example.com/base/tileset.json",
+              ImplicitTileIdUtilities::resolveUrl(
+                  "https://example.com/base/tileset.json?token=base#section",
+                  "",
+                  TileKey{"Geographic-TMS", 11, 2, 3}));
+}
+
 TEST(ImplicitTileIdUtilitiesTest, ParentIdMatchesCesiumNativeOptionalSemantics) {
     const std::optional<TileKey> quadtreeParent =
         ImplicitTileIdUtilities::parentId(TileKey{"Geographic-TMS", 2, 1, 2});
