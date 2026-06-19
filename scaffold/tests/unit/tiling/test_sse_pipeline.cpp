@@ -3558,6 +3558,59 @@ void testQuantizedMeshHeaderHeightRangeIsExposed() {
           "QuantizedMeshParser: header min/max heights match cesium-native bounding region inputs");
 }
 
+void testQuantizedMeshVertexUvAndHeightGolden() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(rootKey);
+    const float minimumHeight = -50.0f;
+    const float maximumHeight = 150.0f;
+    const std::vector<uint8_t> bytes = makeQuantizedMeshBytes(
+        "", false, false, Vec3::zero(), minimumHeight, maximumHeight);
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            bounds);
+
+    check(mesh != nullptr && mesh->vertices.size() == 3 &&
+              mesh->indices.size() == 3,
+          "QuantizedMeshParser: golden triangle mesh parses with exact counts");
+    if (!mesh || mesh->vertices.size() < 3) return;
+
+    // Quantized-mesh vertex buffers are delta/zigzag encoded. The helper above
+    // decodes to (u,v,h) = (0,0,0), (32767,0,0), (0,32767,0).
+    // Format v=0 is the south edge, while render UV v=0 is north, so imagery
+    // V is flipped.
+    check(std::abs(mesh->vertices[0].uv[0] - 0.0f) < 1e-6f &&
+              std::abs(mesh->vertices[0].uv[1] - 1.0f) < 1e-6f &&
+              std::abs(mesh->vertices[1].uv[0] - 1.0f) < 1e-6f &&
+              std::abs(mesh->vertices[1].uv[1] - 1.0f) < 1e-6f &&
+              std::abs(mesh->vertices[2].uv[0] - 0.0f) < 1e-6f &&
+              std::abs(mesh->vertices[2].uv[1] - 0.0f) < 1e-6f,
+          "QuantizedMeshParser: quantized U/V decode and imagery V flip match format golden");
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Cartographic sw =
+        ellipsoid.cartesianToCartographic(mesh->vertices[0].positionEcef);
+    const Cartographic se =
+        ellipsoid.cartesianToCartographic(mesh->vertices[1].positionEcef);
+    const Cartographic nw =
+        ellipsoid.cartesianToCartographic(mesh->vertices[2].positionEcef);
+    check(std::abs(sw.longitude() - bounds.west()) < 1e-8 &&
+              std::abs(sw.latitude() - bounds.south()) < 1e-8 &&
+              std::abs(sw.height() - minimumHeight) < 1e-3,
+          "QuantizedMeshParser: vertex 0 decodes to southwest min-height corner");
+    check(std::abs(se.longitude() - bounds.east()) < 1e-8 &&
+              std::abs(se.latitude() - bounds.south()) < 1e-8 &&
+              std::abs(se.height() - minimumHeight) < 1e-3,
+          "QuantizedMeshParser: vertex 1 decodes to southeast min-height corner");
+    check(std::abs(nw.longitude() - bounds.west()) < 1e-8 &&
+              std::abs(nw.latitude() - bounds.north()) < 1e-8 &&
+              std::abs(nw.height() - minimumHeight) < 1e-3,
+          "QuantizedMeshParser: vertex 2 decodes to northwest min-height corner");
+}
+
 void testTilesetUsesQuantizedMeshRtcOrigin() {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
@@ -20682,6 +20735,7 @@ int main() {
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
     testQuantizedMeshRtcOriginFromBoundingSphereCenter();
     testQuantizedMeshHeaderHeightRangeIsExposed();
+    testQuantizedMeshVertexUvAndHeightGolden();
     testTilesetUsesQuantizedMeshRtcOrigin();
     testTilesetUsesQuantizedMeshHeightRange();
     testTilesetBoundsUseQuantizedMeshHeightRange();
