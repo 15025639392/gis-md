@@ -7,41 +7,11 @@
 #include "Tileset.h"
 #include "TilesetTileRegistry.h"
 #include "../layers/ActivatedRasterOverlay.h"
+#include "../providers/ProviderRequestDiagnosticsAggregator.h"
 #include "../providers/RasterOverlayTileProvider.h"
 #include "TileFrameResourceBudgetPlanner.h"
 
-#include <algorithm>
-
 namespace earth_engine {
-
-namespace {
-
-void addProviderRequestDiagnostics(ProviderRequestDiagnostics& total,
-                                   const ProviderRequestDiagnostics& next) {
-    total.requestsStarted += next.requestsStarted;
-    total.requestsCompleted += next.requestsCompleted;
-    total.activeWorkerBlockingRequests +=
-        next.activeWorkerBlockingRequests;
-    total.peakWorkerBlockingRequests =
-        std::max(total.peakWorkerBlockingRequests,
-                 next.peakWorkerBlockingRequests);
-    total.externalResourceRequestsStarted +=
-        next.externalResourceRequestsStarted;
-    total.externalResourceRequestsCompleted +=
-        next.externalResourceRequestsCompleted;
-    total.activeExternalResourceBlockingRequests +=
-        next.activeExternalResourceBlockingRequests;
-    total.peakExternalResourceBlockingRequests =
-        std::max(total.peakExternalResourceBlockingRequests,
-                 next.peakExternalResourceBlockingRequests);
-    if (next.maximumTransportActiveRequests >= 0) {
-        total.maximumTransportActiveRequests =
-            std::max(total.maximumTransportActiveRequests,
-                     next.maximumTransportActiveRequests);
-    }
-}
-
-} // namespace
 
 int TilesetQueryFacade::cachedTerrainTiles(const Tileset& tileset) {
     return static_cast<int>(tileset.contentLifecycle_.terrainCache().size());
@@ -59,12 +29,12 @@ uint32_t TilesetQueryFacade::maximumTransportActiveRequests(
     const Tileset& tileset) {
     ProviderRequestDiagnostics diagnostics;
     if (tileset.terrainProvider_) {
-        addProviderRequestDiagnostics(
+        ProviderRequestDiagnosticsAggregator::add(
             diagnostics,
             tileset.terrainProvider_->requestDiagnostics());
     }
     if (tileset.contentProvider_) {
-        addProviderRequestDiagnostics(
+        ProviderRequestDiagnosticsAggregator::add(
             diagnostics,
             tileset.contentProvider_->requestDiagnostics());
     }
@@ -72,7 +42,7 @@ uint32_t TilesetQueryFacade::maximumTransportActiveRequests(
         if (!overlay || !overlay->getTileProvider()) {
             continue;
         }
-        addProviderRequestDiagnostics(
+        ProviderRequestDiagnosticsAggregator::add(
             diagnostics,
             overlay->getTileProvider()->requestDiagnostics());
     }
@@ -104,7 +74,7 @@ TilesetLoadDiagnostics TilesetQueryFacade::loadDiagnostics(
         if (!overlay || !overlay->getTileProvider()) {
             continue;
         }
-        addProviderRequestDiagnostics(
+        ProviderRequestDiagnosticsAggregator::add(
             diagnostics.rasterProviderRequests,
             overlay->getTileProvider()->requestDiagnostics());
         diagnostics.rasterOverlayTilesLoading +=
