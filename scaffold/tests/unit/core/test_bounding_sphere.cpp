@@ -21,6 +21,18 @@ TEST(BoundingSphereTest, IntersectPlaneMatchesCesiumNativeCases) {
                   .intersectPlane(Plane(Vec3(1.0, 0.0, 0.0), -1.0)));
 }
 
+TEST(BoundingSphereTest, IntersectPlaneBoundaryComparisonsMatchCesiumNative) {
+    // Cesium-native uses distance < -radius for Outside and distance < radius
+    // for Intersecting, so the negative tangent is Intersecting while the
+    // positive tangent is Inside.
+    const BoundingSphere sphere(Vec3::zero(), 1.0);
+
+    EXPECT_EQ(0,
+              sphere.intersectPlane(Plane(Vec3(1.0, 0.0, 0.0), -1.0)));
+    EXPECT_EQ(1,
+              sphere.intersectPlane(Plane(Vec3(1.0, 0.0, 0.0), 1.0)));
+}
+
 TEST(BoundingSphereTest, DistanceSquaredToPositionMatchesCesiumNativeOutside) {
     BoundingSphere sphere(Vec3::zero(), 1.0);
     Vec3 position(-2.0, 1.0, 0.0);
