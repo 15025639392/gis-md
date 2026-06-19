@@ -297,6 +297,29 @@ TEST(RectangleTest, ComputeUnionMatchesCesiumNativeGlobeRectangleBranches) {
                                    1e-14));
 }
 
+TEST(RectangleTest, ComputeUnionMatchesCesiumNativeGeometryCases) {
+    // CesiumGeometry::Rectangle uses arbitrary 2D coordinates; gis-md
+    // Rectangle stores geodetic radians, so this mirrors the same overlap
+    // cases inside the non-wrapping longitude range.
+    const Rectangle a(0.1, 0.2, 0.3, 0.4);
+    const Rectangle b(0.0, 0.0, 1.0, 1.0);
+    const Rectangle c(0.15, 0.25, 0.35, 0.45);
+    const Rectangle d(0.05, 0.15, 0.25, 0.35);
+    const Rectangle e(1.0, 1.1, 1.2, 1.3);
+
+    EXPECT_EQ(Rectangle(0.0, 0.0, 1.0, 1.0), a.computeUnion(b));
+    EXPECT_EQ(Rectangle(0.0, 0.0, 1.0, 1.0), b.computeUnion(a));
+
+    EXPECT_EQ(Rectangle(0.1, 0.2, 0.35, 0.45), a.computeUnion(c));
+    EXPECT_EQ(Rectangle(0.1, 0.2, 0.35, 0.45), c.computeUnion(a));
+
+    EXPECT_EQ(Rectangle(0.05, 0.15, 0.3, 0.4), a.computeUnion(d));
+    EXPECT_EQ(Rectangle(0.05, 0.15, 0.3, 0.4), d.computeUnion(a));
+
+    EXPECT_EQ(Rectangle(0.1, 0.2, 1.2, 1.3), a.computeUnion(e));
+    EXPECT_EQ(Rectangle(0.1, 0.2, 1.2, 1.3), e.computeUnion(a));
+}
+
 TEST(RectangleTest, ComputeSignedDistanceMatchesCesiumNative) {
     // Ported from cesium-native CesiumGeometry/test/TestRectangle.cpp:
     // inside returns negative distance to closest edge; outside returns
