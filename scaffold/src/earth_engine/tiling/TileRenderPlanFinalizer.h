@@ -89,7 +89,12 @@ struct TileRenderPlanFinalizer {
                 renderDedupKey += "|clip:";
                 renderDedupKey += selectedCk;
             } else if (renderedClippedGeometryKeys.count(commandCk) > 0) {
-                return;
+                eraseClippedEntriesForRenderTile(
+                    plan,
+                    commandCk,
+                    renderedGeometryKeys,
+                    renderedClippedGeometryKeys,
+                    cacheKey);
             }
             if (!renderedGeometryKeys.insert(renderDedupKey).second) {
                 return;
@@ -217,6 +222,36 @@ private:
             }
         }
         return nullptr;
+    }
+
+    template <typename CacheKeyFn>
+    static void eraseClippedEntriesForRenderTile(
+        TilePlan& plan,
+        const std::string& renderCacheKey,
+        std::unordered_set<std::string>& renderedGeometryKeys,
+        std::unordered_set<std::string>& renderedClippedGeometryKeys,
+        CacheKeyFn&& cacheKey) {
+        plan.renderEntries.erase(
+            std::remove_if(
+                plan.renderEntries.begin(),
+                plan.renderEntries.end(),
+                [&](const TileRenderEntry& entry) {
+                    if (!entry.hasSurfaceClip() ||
+                        cacheKey(entry.renderKey) != renderCacheKey) {
+                        return false;
+                    }
+                    std::string clippedDedupKey = renderCacheKey;
+                    clippedDedupKey += "|clip:";
+                    clippedDedupKey += cacheKey(entry.selectedKey);
+                    renderedGeometryKeys.erase(clippedDedupKey);
+                    if (entry.usesAncestorFallback &&
+                        plan.renderEntryAncestorFallbackCount > 0) {
+                        --plan.renderEntryAncestorFallbackCount;
+                    }
+                    return true;
+                }),
+            plan.renderEntries.end());
+        renderedClippedGeometryKeys.erase(renderCacheKey);
     }
 };
 

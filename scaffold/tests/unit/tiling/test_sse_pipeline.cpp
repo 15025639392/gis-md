@@ -11475,6 +11475,55 @@ void testTileRenderPlanFinalizerSkipsSurfaceEntryWithoutCommandBinding() {
           "TileRenderPlanFinalizer: surface entries are skipped when they cannot bind a drawable command");
 }
 
+void testTileRenderPlanFinalizerPrefersFullGeometryOverEarlierClip() {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
+    TilesetTile child(childKey, Rectangle{0.0, 1.0, 1.0, 2.0}, &parent);
+    parent.markRenderContentDone();
+    parent.content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(4),
+        nullptr);
+
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {TileCacheKey::forTile(parentKey), &parent},
+        {TileCacheKey::forTile(childKey), &child}};
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(childKey);
+    plan.visibleTiles.push_back(parentKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            false,
+            0,
+            1},
+        [&tiles](const TileKey& key) -> TilesetTile* {
+            auto it = tiles.find(TileCacheKey::forTile(key));
+            return it == tiles.end() ? nullptr : it->second;
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return tile.hasSurfaceDrawable();
+        },
+        [](const TilesetTile& tile) {
+            return tile.hasSurfaceDrawable();
+        });
+
+    check(plan.renderEntries.size() == 1 &&
+              plan.renderEntries.front().selectedKey == parentKey &&
+              plan.renderEntries.front().renderKey == parentKey &&
+              !plan.renderEntries.front().surfaceClipEnabled &&
+              !plan.renderEntries.front().usesAncestorFallback &&
+              plan.renderEntries.front().reason ==
+                  TileRenderEntryReason::Direct &&
+              plan.renderEntryAncestorFallbackCount == 0,
+          "TileRenderPlanFinalizer: full geometry replaces earlier clipped fallback for the same render tile");
+}
+
 void testTileRenderPlanFinalizerCountsRootPrepOnce() {
     const TileKey rootKey{"test", 0, 0, 0};
     TilesetTile root(rootKey, Rectangle{});
@@ -20146,6 +20195,7 @@ int main() {
     testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery();
     testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback();
     testTileRenderPlanFinalizerSkipsSurfaceEntryWithoutCommandBinding();
+    testTileRenderPlanFinalizerPrefersFullGeometryOverEarlierClip();
     testTileRenderPlanFinalizerCountsRootPrepOnce();
     testTileRenderPlanFinalizerReadsSelectionFrameFade();
     testTileRenderEntryClassifiesFrontierRoles();
