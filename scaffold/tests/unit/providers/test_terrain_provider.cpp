@@ -4,9 +4,52 @@
 #include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/providers/XYZImageryProvider.h"
+#include "earth_engine/platform/bridge/PlatformBridge.h"
 #include "earth_engine/tiling/TileKey.h"
 
 using namespace earth_engine;
+
+namespace {
+
+class MockImagePlatformBridge : public PlatformBridge {
+public:
+    explicit MockImagePlatformBridge(std::vector<uint8_t> pixels)
+        : pixels_(std::move(pixels)) {}
+
+    void onMemoryPressure() override {}
+    void onEnterBackground() override {}
+    void onEnterForeground() override {}
+
+    std::unique_ptr<HttpRequest> get(
+        const std::string&,
+        std::function<void(int, std::vector<uint8_t>)>,
+        HttpRequestOptions = {}) override {
+        return nullptr;
+    }
+
+    std::string cacheDirectory() const override { return {}; }
+    std::string documentsDirectory() const override { return {}; }
+
+    std::unique_ptr<DecodedImage> decodeImage(
+        const uint8_t*,
+        size_t) override {
+        auto image = std::make_unique<DecodedImage>();
+        image->width = 2;
+        image->height = 2;
+        image->channels = 3;
+        image->pixels = pixels_;
+        return image;
+    }
+
+    void log(LogLevel, const std::string&, const std::string&) override {}
+    DeviceInfo deviceInfo() const override { return {}; }
+    std::string getToken(const std::string&) const override { return {}; }
+
+private:
+    std::vector<uint8_t> pixels_;
+};
+
+} // namespace
 
 // ============================================================
 // URL 构建
@@ -87,11 +130,26 @@ TEST(HeightmapTerrainProviderTest, DecodeTerrariumSeaLevel) {
     // Sea level (0m): R=128, G=0, B=0
     // 128*256 + 0 + 0/256 - 32768 = 32768 - 32768 = 0
     HeightmapTerrainProvider provider("https://example.com/{z}/{x}/{y}.png");
+    MockImagePlatformBridge bridge({
+        128, 0, 0,    // 0m
+        128, 1, 0,    // 1m
+        127, 255, 0,  // -1m
+        128, 0, 128   // 0.5m
+    });
+    provider.setPlatformBridge(&bridge);
 
-    // 构造一个 2×2 PNG-like RGBA 像素（实际上 stb_image 解码后会得到 3 通道）
-    // 我们直接测试 decodeTile 行为...
-    // Note: decodeTile 需要实际 PNG 数据或 PlatformBridge，这里测试公式正确性
-    SUCCEED();  // 占位 — 实际解码需要 mock PlatformBridge 或 stb_image
+    const uint8_t encodedBytes[] = {0};
+    auto decoded = provider.decodeTile(encodedBytes, sizeof(encodedBytes));
+
+    ASSERT_NE(nullptr, decoded);
+    ASSERT_EQ(2, decoded->tileSize);
+    ASSERT_EQ(4u, decoded->heights.size());
+    EXPECT_FLOAT_EQ(0.0f, decoded->heights[0]);
+    EXPECT_FLOAT_EQ(1.0f, decoded->heights[1]);
+    EXPECT_FLOAT_EQ(-1.0f, decoded->heights[2]);
+    EXPECT_FLOAT_EQ(0.5f, decoded->heights[3]);
+    EXPECT_FLOAT_EQ(-1.0f, decoded->minHeight);
+    EXPECT_FLOAT_EQ(1.0f, decoded->maxHeight);
 }
 
 // ============================================================
