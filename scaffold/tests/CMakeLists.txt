@@ -118,6 +118,12 @@ add_executable(test_cartographic
 target_link_libraries(test_cartographic PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_cartographic COMMAND test_cartographic)
 
+add_executable(test_bounding_region_builder
+    unit/geodesy/test_bounding_region_builder.cpp
+)
+target_link_libraries(test_bounding_region_builder PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_bounding_region_builder COMMAND test_bounding_region_builder)
+
 add_executable(test_s2_cell_id
     unit/geodesy/test_s2_cell_id.cpp
 )

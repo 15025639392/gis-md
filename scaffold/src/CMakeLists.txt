@@ -64,6 +64,8 @@ target_sources(earth_engine_core PRIVATE
 target_sources(earth_engine_core PRIVATE
     earth_engine/core/geodesy/Cartographic.h
     earth_engine/core/geodesy/Cartographic.cpp
+    earth_engine/core/geodesy/BoundingRegionBuilder.h
+    earth_engine/core/geodesy/BoundingRegionBuilder.cpp
     earth_engine/core/geodesy/Ellipsoid.h
     earth_engine/core/geodesy/Ellipsoid.cpp
     earth_engine/core/geodesy/GeographicProjection.h
