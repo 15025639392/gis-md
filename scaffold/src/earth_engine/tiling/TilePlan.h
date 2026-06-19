@@ -51,6 +51,18 @@ struct TileRenderEntry {
     bool allowSynchronousMeshPrep = true;
     bool surfaceClipEnabled = false;
     std::array<float, 4> surfaceClipUv{0.0f, 0.0f, 1.0f, 1.0f};
+
+    bool isAncestorFallback() const {
+        return reason == TileRenderEntryReason::AncestorFallback &&
+               usesAncestorFallback;
+    }
+
+    bool isFadingOut() const {
+        return reason == TileRenderEntryReason::FadingOut &&
+               !selectedThisFrame;
+    }
+
+    bool hasSurfaceClip() const { return surfaceClipEnabled; }
 };
 
 enum class TileSelectionState {

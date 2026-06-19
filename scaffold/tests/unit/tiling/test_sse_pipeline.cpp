@@ -11552,6 +11552,32 @@ void testTileRenderPlanFinalizerReadsSelectionFrameFade() {
           "TileRenderPlanFinalizer: visible tile opacity reads selection frame fade");
 }
 
+void testTileRenderEntryClassifiesFrontierRoles() {
+    TileRenderEntry direct;
+    direct.reason = TileRenderEntryReason::Direct;
+    check(!direct.isAncestorFallback() &&
+              !direct.isFadingOut() &&
+              !direct.hasSurfaceClip(),
+          "TileRenderEntry: direct entry has no fallback or fading role");
+
+    TileRenderEntry fallback;
+    fallback.reason = TileRenderEntryReason::AncestorFallback;
+    fallback.usesAncestorFallback = true;
+    fallback.surfaceClipEnabled = true;
+    check(fallback.isAncestorFallback() &&
+              !fallback.isFadingOut() &&
+              fallback.hasSurfaceClip(),
+          "TileRenderEntry: fallback entry exposes clipped ancestor role");
+
+    TileRenderEntry fading;
+    fading.reason = TileRenderEntryReason::FadingOut;
+    fading.selectedThisFrame = false;
+    check(!fading.isAncestorFallback() &&
+              fading.isFadingOut() &&
+              !fading.hasSurfaceClip(),
+          "TileRenderEntry: fading entry exposes fade-out role");
+}
+
 void testTileRenderEntryCommandBuilderCountsSkippedEntries() {
     const TileKey drawnKey{"test", 0, 0, 0};
     const TileKey noDrawKey{"test", 0, 1, 0};
@@ -19984,6 +20010,7 @@ int main() {
     testTileRenderPlanFinalizerSkipsSurfaceEntryWithoutCommandBinding();
     testTileRenderPlanFinalizerCountsRootPrepOnce();
     testTileRenderPlanFinalizerReadsSelectionFrameFade();
+    testTileRenderEntryClassifiesFrontierRoles();
     testTileRenderEntryCommandBuilderCountsSkippedEntries();
     testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive();
     testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass();

@@ -72,7 +72,7 @@ public:
             const size_t before = commands.size();
             if (entry.allowSynchronousMeshPrep) {
                 const std::optional<std::array<float, 4>> surfaceClipUv =
-                    entry.surfaceClipEnabled
+                    entry.hasSurfaceClip()
                         ? std::optional<std::array<float, 4>>(
                               entry.surfaceClipUv)
                         : std::nullopt;
@@ -92,7 +92,7 @@ public:
             if (commands.size() > before) {
                 size_t stableIndex = 0;
                 std::string baseStableKey = cacheKey(commandTile->key);
-                if (entry.surfaceClipEnabled) {
+                if (entry.hasSurfaceClip()) {
                     baseStableKey += "|clip:";
                     baseStableKey += cacheKey(entry.selectedKey);
                 }
