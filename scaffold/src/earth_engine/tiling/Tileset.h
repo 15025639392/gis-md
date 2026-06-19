@@ -43,7 +43,6 @@ class ActivatedRasterOverlay;
 struct TilesetTestAccess;
 class TilesetRenderFrameFacade;
 class TilesetSelectionFrameFacade;
-class TilesetOcclusionFacade;
 class TilesetQueryFacade;
 class TilesetUpdateFrameFacade;
 
@@ -128,7 +127,6 @@ public:
 
 private:
     friend struct TilesetTestAccess;
-    friend class TilesetOcclusionFacade;
     friend class TilesetQueryFacade;
     friend class TilesetRenderFrameFacade;
     friend class TilesetSelectionFrameFacade;
@@ -143,6 +141,9 @@ private:
         bool resourceSmoothingActive,
         FrameResourceBudget* budget = nullptr);
     void markContentResourcesDirty();
+    TileOcclusionState checkSingleTileOcclusion(
+        const TilesetTile& tile) const;
+    TileOcclusionState checkOcclusion(const TilesetTile& tile) const;
 
     std::unique_ptr<TerrainProvider> terrainProvider_;
     std::unique_ptr<TilesetContentProvider> contentProvider_;

@@ -33,7 +33,6 @@
 #include "earth_engine/tiling/TileContentUploadCommitter.h"
 #include "earth_engine/tiling/TileContentUploadPolicy.h"
 #include "earth_engine/tiling/TileEmptyContentRegistry.h"
-#include "earth_engine/tiling/TilesetOcclusionFacade.h"
 #include "earth_engine/tiling/TileFrameResourceBudgetPlanner.h"
 #include "earth_engine/tiling/TileFrameState.h"
 #include "earth_engine/tiling/TileFrameDebugLogFormatter.h"
@@ -531,7 +530,7 @@ struct TilesetTestAccess {
     static TileOcclusionState checkOcclusion(
         Tileset& tileset,
         const TilesetTile& tile) {
-        return TilesetOcclusionFacade::checkOcclusion(tileset, tile);
+        return tileset.checkOcclusion(tile);
     }
 };
 } // namespace earth_engine

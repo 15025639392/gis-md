@@ -4,8 +4,9 @@
 #include "../renderer/Renderer.h"
 #include "../renderer/RenderDevice.h"
 #include "../tiling/TileFrameResourceBudgetPlanner.h"
+#include "../tiling/TileOcclusionResolver.h"
 #include "../tiling/TileRenderReferenceReleaser.h"
-#include "../tiling/TilesetOcclusionFacade.h"
+#include "../tiling/TileSoftwareOcclusionPolicy.h"
 #include "../tiling/TilesetQueryFacade.h"
 #include "../tiling/TilesetRenderFrameFacade.h"
 #include "../tiling/TilesetUpdateFrameFacade.h"
@@ -118,11 +119,11 @@ int64_t Tileset::totalBytesUsed() const {
 }
 
 void Tileset::setOcclusionCallback(OcclusionCallback callback) {
-    TilesetOcclusionFacade::setOcclusionCallback(*this, std::move(callback));
+    occlusionCallback_ = std::move(callback);
 }
 
 void Tileset::clearOcclusionCallback() {
-    TilesetOcclusionFacade::clearOcclusionCallback(*this);
+    occlusionCallback_ = nullptr;
 }
 
 TilesetLoadDiagnostics Tileset::loadDiagnostics() const {
@@ -164,6 +165,22 @@ bool Tileset::processPendingContentUploads(
 
 void Tileset::markContentResourcesDirty() {
     contentRuntime_.markResourcesDirty();
+}
+
+TileOcclusionState Tileset::checkSingleTileOcclusion(
+    const TilesetTile& tile) const {
+    if (occlusionCallback_) {
+        return occlusionCallback_(tile);
+    }
+    return TileSoftwareOcclusionPolicy::check(tile, lastCameraPosition_);
+}
+
+TileOcclusionState Tileset::checkOcclusion(const TilesetTile& tile) const {
+    return TileOcclusionResolver::check(
+        tile,
+        [this](const TilesetTile& occlusionTile) {
+            return checkSingleTileOcclusion(occlusionTile);
+        });
 }
 
 float Tileset::sampleHeight(double lngRad, double latRad) const {

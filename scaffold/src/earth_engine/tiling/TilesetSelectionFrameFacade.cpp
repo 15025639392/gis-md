@@ -4,7 +4,6 @@
 #include "TileCacheKey.h"
 #include "TileLoadQueue.h"
 #include "TileLodTransitionController.h"
-#include "TilesetOcclusionFacade.h"
 #include "TileRenderPlanFinalizer.h"
 #include "TileSelectionRasterOverlayPreparer.h"
 #include "TileSelectionFrameRunner.h"
@@ -262,9 +261,8 @@ void TilesetSelectionFrameFacade::selectTiles(
                         ->canRefine(tile);
                 },
                 [](void* userData, const TilesetTile& tile) {
-                    return TilesetOcclusionFacade::checkOcclusion(
-                        *static_cast<Tileset*>(userData),
-                        tile);
+                    return static_cast<Tileset*>(userData)
+                        ->checkOcclusion(tile);
                 },
                 [](void* userData, const TilesetTile& tile) {
                     return hasLodTransitionRenderContent(
