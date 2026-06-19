@@ -794,6 +794,10 @@ bool finiteTileBoundingVolume(const TileBoundingVolume& volume) {
                    std::isfinite(volume.cylinderRegion.getRadialBounds().y) &&
                    std::isfinite(volume.cylinderRegion.getAngularBounds().x) &&
                    std::isfinite(volume.cylinderRegion.getAngularBounds().y);
+        case TileBoundingVolumeKind::S2Cell:
+            return volume.s2Cell.getCellID().isValid() &&
+                   std::isfinite(volume.s2Cell.getMinimumHeight()) &&
+                   std::isfinite(volume.s2Cell.getMaximumHeight());
     }
     return false;
 }
@@ -825,6 +829,8 @@ TileBoundingVolume transformBoundingVolume(
         case TileBoundingVolumeKind::CylinderRegion:
             return TileBoundingVolume::fromCylinderRegion(
                 volume.cylinderRegion.transform(transform.raw()));
+        case TileBoundingVolumeKind::S2Cell:
+            return volume;
     }
     return volume;
 }

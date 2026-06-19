@@ -510,6 +510,8 @@ double TileBoundsMetrics::tileBoundsRadius(const TilesetTile& tile,
                     .toOrientedBoundingBox()
                     .toSphere()
                     .getRadius();
+            case TileBoundingVolumeKind::S2Cell:
+                break;
         }
     }
     return computeTileBoundsRadius(
@@ -595,6 +597,8 @@ Vec3 TileBoundsMetrics::boundingVolumeCenter(
             return volume.box.getCenter();
         case TileBoundingVolumeKind::CylinderRegion:
             return volume.cylinderRegion.getCenter();
+        case TileBoundingVolumeKind::S2Cell:
+            return Vec3::zero();
     }
     return Vec3::zero();
 }
@@ -624,6 +628,8 @@ double TileBoundsMetrics::boundingVolumeDistance(
                 0.0,
                 volume.cylinderRegion.computeDistanceSquaredToPosition(
                     cameraPosition)));
+        case TileBoundingVolumeKind::S2Cell:
+            return 0.0;
     }
     return 0.0;
 }
@@ -645,6 +651,8 @@ bool TileBoundsMetrics::boundingVolumeContainsPosition(
                    1e-8;
         case TileBoundingVolumeKind::CylinderRegion:
             return volume.cylinderRegion.contains(position);
+        case TileBoundingVolumeKind::S2Cell:
+            return false;
     }
     return false;
 }
@@ -676,6 +684,8 @@ bool TileBoundsMetrics::boundingVolumeIntersectsFrustum(
         case TileBoundingVolumeKind::CylinderRegion:
             return frustum.intersectsOBB(
                 volume.cylinderRegion.toOrientedBoundingBox());
+        case TileBoundingVolumeKind::S2Cell:
+            return true;
     }
     return false;
 }

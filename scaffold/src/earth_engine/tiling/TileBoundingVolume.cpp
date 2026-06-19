@@ -41,6 +41,8 @@ TileBoundingVolume::toOrientedBoundingBox() const {
                 region,
                 minimumHeight,
                 maximumHeight);
+        case TileBoundingVolumeKind::S2Cell:
+            return std::nullopt;
     }
     return std::nullopt;
 }
@@ -135,6 +137,8 @@ std::optional<Rectangle> TileBoundingVolume::estimateGlobeRectangle(
                        cylinderBox.getHalfAxis(2))
                 .estimateGlobeRectangle(ellipsoid);
         }
+        case TileBoundingVolumeKind::S2Cell:
+            return std::nullopt;
     }
     return std::nullopt;
 }

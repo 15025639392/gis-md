@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/core/math/Mat4.h"
+#include "earth_engine/core/geodesy/S2CellBoundingVolume.h"
+#include "earth_engine/core/geodesy/S2CellID.h"
 #include "earth_engine/core/math/BoundingCylinderRegion.h"
 #include "earth_engine/core/math/Rectangle.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
@@ -104,6 +106,33 @@ TEST(TileBoundingVolumeTest, TransformCylinderRegionLikeCesiumNative) {
     EXPECT_DOUBLE_EQ(12.0, transformed.cylinderRegion.getHeight());
     EXPECT_EQ(glm::dvec2(3.0, 6.0),
               transformed.cylinderRegion.getRadialBounds());
+}
+
+TEST(TileBoundingVolumeTest, S2CellStoresHeightsAndIgnoresTransform) {
+    const S2CellBoundingVolume s2(
+        S2CellID::fromQuadtreeTileID(1, 1, 0, 1),
+        10.0,
+        20.0);
+    const TileBoundingVolume volume = TileBoundingVolume::fromS2Cell(s2);
+
+    const TileBoundingVolume transformed =
+        volume.transform(Mat4::translation(Vec3(10.0, 20.0, 30.0)));
+
+    EXPECT_EQ(TileBoundingVolumeKind::S2Cell, transformed.kind);
+    EXPECT_EQ(s2.getCellID().getID(), transformed.s2Cell.getCellID().getID());
+    EXPECT_DOUBLE_EQ(10.0, transformed.s2Cell.getMinimumHeight());
+    EXPECT_DOUBLE_EQ(20.0, transformed.s2Cell.getMaximumHeight());
+}
+
+TEST(TileBoundingVolumeTest, S2CellDoesNotPretendToHaveLocalGeometryYet) {
+    const TileBoundingVolume volume = TileBoundingVolume::fromS2Cell(
+        S2CellBoundingVolume(
+            S2CellID::fromQuadtreeTileID(1, 1, 0, 1),
+            10.0,
+            20.0));
+
+    EXPECT_FALSE(volume.toOrientedBoundingBox().has_value());
+    EXPECT_FALSE(volume.estimateGlobeRectangle().has_value());
 }
 
 TEST(TileBoundingVolumeTest, CenterUsesContainedVolumeKind) {

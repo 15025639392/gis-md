@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../core/math/BoundingSphere.h"
+#include "../core/geodesy/S2CellBoundingVolume.h"
 #include "../core/math/BoundingCylinderRegion.h"
 #include "../core/math/Mat4.h"
 #include "../core/math/OrientedBoundingBox.h"
@@ -16,7 +17,8 @@ enum class TileBoundingVolumeKind {
     Region,
     Sphere,
     Box,
-    CylinderRegion
+    CylinderRegion,
+    S2Cell
 };
 
 /// cesium-native BoundingVolume subset used by explicit 3D Tiles JSON.
@@ -38,6 +40,10 @@ struct TileBoundingVolume {
         glm::dquat(1.0, 0.0, 0.0, 0.0),
         0.0,
         glm::dvec2(0.0, 0.0)};
+    S2CellBoundingVolume s2Cell{
+        S2CellID(0),
+        0.0,
+        0.0};
 
     static TileBoundingVolume fromRegion(const Rectangle& rectangle,
                                          double minHeight,
@@ -76,6 +82,14 @@ struct TileBoundingVolume {
         return volume;
     }
 
+    static TileBoundingVolume fromS2Cell(
+        const S2CellBoundingVolume& s2Cell) {
+        TileBoundingVolume volume;
+        volume.kind = TileBoundingVolumeKind::S2Cell;
+        volume.s2Cell = s2Cell;
+        return volume;
+    }
+
     TileBoundingVolume transform(const Mat4& matrix) const {
         switch (kind) {
             case TileBoundingVolumeKind::Region:
@@ -96,6 +110,8 @@ struct TileBoundingVolume {
                     cylinderRegion.transform(matrix.raw());
                 return transformed;
             }
+            case TileBoundingVolumeKind::S2Cell:
+                return *this;
         }
         return *this;
     }
