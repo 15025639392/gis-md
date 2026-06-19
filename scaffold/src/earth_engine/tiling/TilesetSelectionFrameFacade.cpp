@@ -2,8 +2,7 @@
 
 #include "TileContentAccess.h"
 #include "TileLoadQueue.h"
-#include "TileLodTransitionFrameUpdater.h"
-#include "TileRenderPlanFrameRefresher.h"
+#include "TileSelectionFrameFinalizationRunner.h"
 #include "TileSelectionPlanAppender.h"
 #include "TileSelectionRasterOverlayPreparer.h"
 #include "TileSelectionFrameRunner.h"
@@ -16,42 +15,6 @@
 #include "../scene/FrameState.h"
 
 namespace earth_engine {
-
-TileSelectionFrameFinalizeTimings
-TilesetSelectionFrameFacade::finalizeSelectedTilePlan(
-    Tileset& tileset,
-    const FrameState& frameState) {
-    return TileSelectionFrameFinalizer::finalize(
-        tileset.tilePlan_,
-        tileset.tileRegistry_.tiles(),
-        tileset.selectionCounters_,
-        frameState.deltaSeconds,
-        [&tileset](double deltaSeconds) {
-            TileLodTransitionFrameUpdater::update(
-                tileset.tilePlan_,
-                tileset.tileRegistry_,
-                tileset.tilesFadingOut_,
-                tileset.rasterOverlays_,
-                deltaSeconds,
-                TileLodTransitionFrameOptions{
-                    tileset.options_.enableLodTransitionPeriod,
-                    tileset.options_.lodTransitionLength});
-        },
-        [&tileset]() {
-            TileRenderPlanFrameRefresher::refresh(
-                tileset.tilePlan_,
-                tileset.contentAccess_,
-                TileRenderPlanFrameRefreshOptions{
-                    tileset.options_.enableLodTransitionPeriod,
-                    tileset.interactionActiveForFrame_,
-                    tileset.resourceSmoothingActiveForFrame_});
-        },
-        [&tileset](const TilesetTile& tile) {
-            return TileSelectionRasterOverlayPreparer::isRenderable(
-                tile,
-                tileset.rasterOverlays_);
-        });
-}
 
 void TilesetSelectionFrameFacade::selectTiles(
     Tileset& tileset,
@@ -157,7 +120,22 @@ void TilesetSelectionFrameFacade::selectTiles(
                 false);
         },
         [&tileset](const FrameState& finalizeFrameState) {
-            return finalizeSelectedTilePlan(tileset, finalizeFrameState);
+            return TileSelectionFrameFinalizationRunner::finalize(
+                TileSelectionFrameFinalizationInput{
+                    tileset.tilePlan_,
+                    tileset.tileRegistry_,
+                    tileset.selectionCounters_,
+                    tileset.contentAccess_,
+                    tileset.tilesFadingOut_,
+                    tileset.rasterOverlays_,
+                    finalizeFrameState.deltaSeconds,
+                    TileLodTransitionFrameOptions{
+                        tileset.options_.enableLodTransitionPeriod,
+                        tileset.options_.lodTransitionLength},
+                    TileRenderPlanFrameRefreshOptions{
+                        tileset.options_.enableLodTransitionPeriod,
+                        tileset.interactionActiveForFrame_,
+                        tileset.resourceSmoothingActiveForFrame_}});
         });
 }
 

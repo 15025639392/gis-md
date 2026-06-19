@@ -340,6 +340,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileSelectionFrameBuilder.h
     earth_engine/tiling/TileSelectionFrameBuilder.cpp
     earth_engine/tiling/TileSelectionFrameFinalizer.h
+    earth_engine/tiling/TileSelectionFrameFinalizationRunner.h
+    earth_engine/tiling/TileSelectionFrameFinalizationRunner.cpp
     earth_engine/tiling/TileSelectionFrameState.h
     earth_engine/tiling/TileSelectionFrameRunner.h
     earth_engine/tiling/TileSelectionHistory.h
