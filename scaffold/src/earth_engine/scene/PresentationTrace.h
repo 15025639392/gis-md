@@ -58,7 +58,11 @@ struct PresentationTilesetTrace {
     int renderEntrySynchronousPrepCount = 0;
     int renderEntryDeferredPrepCount = 0;
     int renderEntryPlannedCommandCount = 0;
+    int renderEntrySelectedPlannedCommandCount = 0;
+    int renderEntryFadingPlannedCommandCount = 0;
     int renderEntryCommandDrawCount = 0;
+    int renderEntrySelectedCommandDrawCount = 0;
+    int renderEntryFadingCommandDrawCount = 0;
     int renderEntryCommandMissedDrawCount = 0;
     int renderEntryCommandMissingSelectedCount = 0;
     int renderEntryCommandMissingRenderCount = 0;

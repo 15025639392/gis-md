@@ -111,8 +111,16 @@ void appendTilesetTrace(PresentationTrace& trace, const Tileset* tileset) {
         plan.renderEntryDeferredPrepCount;
     tilesetTrace.renderEntryPlannedCommandCount =
         plan.renderEntryPlannedCommandCount;
+    tilesetTrace.renderEntrySelectedPlannedCommandCount =
+        plan.renderEntrySelectedPlannedCommandCount;
+    tilesetTrace.renderEntryFadingPlannedCommandCount =
+        plan.renderEntryFadingPlannedCommandCount;
     tilesetTrace.renderEntryCommandDrawCount =
         plan.renderEntryCommandDrawCount;
+    tilesetTrace.renderEntrySelectedCommandDrawCount =
+        plan.renderEntrySelectedCommandDrawCount;
+    tilesetTrace.renderEntryFadingCommandDrawCount =
+        plan.renderEntryFadingCommandDrawCount;
     tilesetTrace.renderEntryCommandMissedDrawCount =
         plan.renderEntryCommandMissedDrawCount;
     tilesetTrace.renderEntryCommandMissingSelectedCount =

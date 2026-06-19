@@ -67,7 +67,11 @@ public:
         const double buildCommandsStartMs = perf::nowMs();
         const size_t commandsBeforeTileset = commands.size();
         input.tilePlan.renderEntryPlannedCommandCount = 0;
+        input.tilePlan.renderEntrySelectedPlannedCommandCount = 0;
+        input.tilePlan.renderEntryFadingPlannedCommandCount = 0;
         input.tilePlan.renderEntryCommandDrawCount = 0;
+        input.tilePlan.renderEntrySelectedCommandDrawCount = 0;
+        input.tilePlan.renderEntryFadingCommandDrawCount = 0;
         input.tilePlan.renderEntryCommandMissedDrawCount = 0;
         input.tilePlan.renderEntryCommandMissingSelectedCount = 0;
         input.tilePlan.renderEntryCommandMissingRenderCount = 0;
@@ -111,30 +115,43 @@ public:
                 renderStats.missedDrawEntries += stats.missedDrawEntries;
             };
         auto renderEntriesFor = [&](TileRenderEntryPass pass) {
-            mergeRenderStats(TileRenderEntryCommandBuilder::build(
-                input.tilePlan,
-                pass,
-                input.frameNumber,
-                renderer,
-                commands,
-                ensureTile,
-                terrainCacheKey,
-                markIneligible,
-                buildTileDrawCommand));
+            TileRenderEntryCommandStats stats =
+                TileRenderEntryCommandBuilder::build(
+                    input.tilePlan,
+                    pass,
+                    input.frameNumber,
+                    renderer,
+                    commands,
+                    ensureTile,
+                    terrainCacheKey,
+                    markIneligible,
+                    buildTileDrawCommand);
+            mergeRenderStats(stats);
+            return stats;
         };
 
         const double selectedBuildStartMs = perf::nowMs();
-        renderEntriesFor(TileRenderEntryPass::Selected);
+        const TileRenderEntryCommandStats selectedStats =
+            renderEntriesFor(TileRenderEntryPass::Selected);
         selectedBuildMs = perf::nowMs() - selectedBuildStartMs;
 
         const double fadeBuildStartMs = perf::nowMs();
-        renderEntriesFor(TileRenderEntryPass::Fading);
+        const TileRenderEntryCommandStats fadingStats =
+            renderEntriesFor(TileRenderEntryPass::Fading);
         fadeBuildMs = perf::nowMs() - fadeBuildStartMs;
 
         input.tilePlan.renderEntryPlannedCommandCount =
             renderStats.plannedEntries;
+        input.tilePlan.renderEntrySelectedPlannedCommandCount =
+            selectedStats.plannedEntries;
+        input.tilePlan.renderEntryFadingPlannedCommandCount =
+            fadingStats.plannedEntries;
         input.tilePlan.renderEntryCommandDrawCount =
             renderStats.drawAttempts;
+        input.tilePlan.renderEntrySelectedCommandDrawCount =
+            selectedStats.drawAttempts;
+        input.tilePlan.renderEntryFadingCommandDrawCount =
+            fadingStats.drawAttempts;
         input.tilePlan.renderEntryCommandMissedDrawCount =
             renderStats.missedDrawEntries;
         input.tilePlan.renderEntryCommandMissingSelectedCount =

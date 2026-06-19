@@ -19104,16 +19104,23 @@ void testPresentationTraceLinksTilePlanToSurfaceCommand() {
                 &tileset,
                 emptyContentTilesets(),
                 commands});
-    check(trace.tilesets.size() == 1 &&
-              trace.tilesets.front().renderEntryAncestorFallbackCount == 1 &&
-              trace.tilesets.front().renderEntrySynchronousPrepCount == 0 &&
-              trace.tilesets.front().renderEntryDeferredPrepCount == 0 &&
-              trace.tilesets.front().renderEntryPlannedCommandCount == 1 &&
-              trace.tilesets.front().renderEntryCommandDrawCount == 1 &&
-              trace.tilesets.front().renderEntryCommandMissedDrawCount == 0 &&
-              trace.tilesets.front().renderEntryCommandMissingSelectedCount == 0 &&
-              trace.tilesets.front().renderEntryCommandMissingRenderCount == 0 &&
-              trace.tilesets.front().renderEntryCommandDeferredCount == 0,
+    check(trace.tilesets.size() == 1,
+          "Presentation trace: render-entry command stats include one tileset");
+    if (trace.tilesets.empty()) return;
+    const PresentationTilesetTrace& tilesetTrace = trace.tilesets.front();
+    check(tilesetTrace.renderEntryAncestorFallbackCount == 1 &&
+              tilesetTrace.renderEntrySynchronousPrepCount == 0 &&
+              tilesetTrace.renderEntryDeferredPrepCount == 0 &&
+              tilesetTrace.renderEntryPlannedCommandCount == 1 &&
+              tilesetTrace.renderEntrySelectedPlannedCommandCount == 1 &&
+              tilesetTrace.renderEntryFadingPlannedCommandCount == 0 &&
+              tilesetTrace.renderEntryCommandDrawCount == 1 &&
+              tilesetTrace.renderEntrySelectedCommandDrawCount == 1 &&
+              tilesetTrace.renderEntryFadingCommandDrawCount == 0 &&
+              tilesetTrace.renderEntryCommandMissedDrawCount == 0 &&
+              tilesetTrace.renderEntryCommandMissingSelectedCount == 0 &&
+              tilesetTrace.renderEntryCommandMissingRenderCount == 0 &&
+              tilesetTrace.renderEntryCommandDeferredCount == 0,
           "Presentation trace: render-entry strategy and command stats expose the current frame draw funnel");
     check(!trace.commands.empty() &&
               trace.commands.front().stableKey.find(
@@ -19200,17 +19207,27 @@ void testPresentationTraceExposesFadingRenderEntry() {
                 &tileset,
                 emptyContentTilesets(),
                 commands});
-    check(trace.tilesets.size() == 1 &&
-              trace.tilesets.front().visibleTiles.empty() &&
-              trace.tilesets.front().renderEntries.size() == 1 &&
-              !trace.tilesets.front().renderEntries.front().selectedThisFrame &&
-              trace.tilesets.front().renderEntries.front().reason ==
+    check(trace.tilesets.size() == 1,
+          "Presentation trace: fading draw funnel includes one tileset");
+    if (trace.tilesets.empty()) return;
+    const PresentationTilesetTrace& tilesetTrace = trace.tilesets.front();
+    check(tilesetTrace.renderEntries.size() == 1,
+          "Presentation trace: fading draw funnel includes one render entry");
+    if (tilesetTrace.renderEntries.empty()) return;
+    const PresentationRenderEntryTrace& entryTrace =
+        tilesetTrace.renderEntries.front();
+    check(tilesetTrace.visibleTiles.empty() &&
+              !entryTrace.selectedThisFrame &&
+              entryTrace.reason ==
                   TileRenderEntryReason::FadingOut &&
-              std::abs(trace.tilesets.front().renderEntries.front().opacity -
-                       0.75f) < 1e-6f &&
-              trace.tilesets.front().renderEntryPlannedCommandCount == 1 &&
-              trace.tilesets.front().renderEntryCommandDrawCount == 1 &&
-              trace.tilesets.front().renderEntryCommandMissedDrawCount == 0,
+              std::abs(entryTrace.opacity - 0.75f) < 1e-6f &&
+              tilesetTrace.renderEntryPlannedCommandCount == 1 &&
+              tilesetTrace.renderEntrySelectedPlannedCommandCount == 0 &&
+              tilesetTrace.renderEntryFadingPlannedCommandCount == 1 &&
+              tilesetTrace.renderEntryCommandDrawCount == 1 &&
+              tilesetTrace.renderEntrySelectedCommandDrawCount == 0 &&
+              tilesetTrace.renderEntryFadingCommandDrawCount == 1 &&
+              tilesetTrace.renderEntryCommandMissedDrawCount == 0,
           "Presentation trace: fading render entry remains visible in the draw funnel");
 }
 
