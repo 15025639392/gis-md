@@ -31,6 +31,16 @@ TEST(OrientedBoundingBoxTest, IntersectPlaneMatchesCesiumNativeFaceCases) {
     EXPECT_EQ(-1, box.intersectPlane(Plane(Vec3(0.0, -1.0, 0.0), -0.50001)));
 }
 
+TEST(OrientedBoundingBoxTest, IntersectPlaneTangentBoundariesMatchCesiumNative) {
+    // cesium-native classifies distance <= -effectiveRadius as Outside and
+    // distance >= effectiveRadius as Inside.
+    OrientedBoundingBox box = unitBox();
+
+    EXPECT_EQ(1, box.intersectPlane(Plane(Vec3(1.0, 0.0, 0.0), 0.5)));
+    EXPECT_EQ(0, box.intersectPlane(Plane(Vec3(1.0, 0.0, 0.0), 0.0)));
+    EXPECT_EQ(-1, box.intersectPlane(Plane(Vec3(1.0, 0.0, 0.0), -0.5)));
+}
+
 TEST(OrientedBoundingBoxTest, IntersectPlaneMatchesCesiumNativeEdgeCase) {
     OrientedBoundingBox box = unitBox();
     const double edgeDistance = std::sqrt(0.5);
