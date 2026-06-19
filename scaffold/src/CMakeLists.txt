@@ -243,6 +243,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileCreationPolicy.h
     earth_engine/tiling/TileCacheMetrics.h
     earth_engine/tiling/TileCacheMetrics.cpp
+    earth_engine/tiling/TilesetProviderDiagnosticsCollector.h
+    earth_engine/tiling/TilesetProviderDiagnosticsCollector.cpp
     earth_engine/tiling/TileCacheUnloadCoordinator.h
     earth_engine/tiling/TileFrameDebugLogFormatter.h
     earth_engine/tiling/TileFrameInteractionTracker.h

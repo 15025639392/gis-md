@@ -5,41 +5,21 @@
 #include "TileContentLifecycleManager.h"
 #include "TileLoadQueue.h"
 #include "Tileset.h"
+#include "TilesetProviderDiagnosticsCollector.h"
 #include "TilesetTileRegistry.h"
-#include "../layers/ActivatedRasterOverlay.h"
-#include "../providers/ProviderRequestDiagnosticsAggregator.h"
-#include "../providers/RasterOverlayTileProvider.h"
 #include "TileFrameResourceBudgetPlanner.h"
 
 namespace earth_engine {
 
 uint32_t TilesetQueryFacade::maximumTransportActiveRequests(
     const Tileset& tileset) {
-    ProviderRequestDiagnostics diagnostics;
-    if (tileset.terrainProvider_) {
-        ProviderRequestDiagnosticsAggregator::add(
-            diagnostics,
-            tileset.terrainProvider_->requestDiagnostics());
-    }
-    if (tileset.contentProvider_) {
-        ProviderRequestDiagnosticsAggregator::add(
-            diagnostics,
-            tileset.contentProvider_->requestDiagnostics());
-    }
-    for (const ActivatedRasterOverlay* overlay : tileset.rasterOverlays_) {
-        if (!overlay || !overlay->getTileProvider()) {
-            continue;
-        }
-        ProviderRequestDiagnosticsAggregator::add(
-            diagnostics,
-            overlay->getTileProvider()->requestDiagnostics());
-    }
-    if (diagnostics.maximumTransportActiveRequests < 0) {
-        return TileFrameResourceBudgetPlanInput::
-            kDefaultMaximumTransportActiveRequests;
-    }
-    return static_cast<uint32_t>(
-        diagnostics.maximumTransportActiveRequests);
+    return TilesetProviderDiagnosticsCollector::collect(
+        tileset.terrainProvider_.get(),
+        tileset.contentProvider_.get(),
+        tileset.rasterOverlays_)
+        .maximumTransportActiveRequests(
+            TileFrameResourceBudgetPlanInput::
+                kDefaultMaximumTransportActiveRequests);
 }
 
 TilesetLoadDiagnostics TilesetQueryFacade::loadDiagnostics(
@@ -50,28 +30,11 @@ TilesetLoadDiagnostics TilesetQueryFacade::loadDiagnostics(
         tileset.frameResourceBudget_,
         tileset.contentCache_.unloadQueue(),
         tileset.tileRegistry_.tiles());
-    if (tileset.terrainProvider_) {
-        diagnostics.terrainProviderRequests =
-            tileset.terrainProvider_->requestDiagnostics();
-    }
-    if (tileset.contentProvider_) {
-        diagnostics.contentProviderRequests =
-            tileset.contentProvider_->requestDiagnostics();
-    }
-    for (const ActivatedRasterOverlay* overlay : tileset.rasterOverlays_) {
-        if (!overlay || !overlay->getTileProvider()) {
-            continue;
-        }
-        ProviderRequestDiagnosticsAggregator::add(
-            diagnostics.rasterProviderRequests,
-            overlay->getTileProvider()->requestDiagnostics());
-        diagnostics.rasterOverlayTilesLoading +=
-            overlay->getTileProvider()->getThrottledTilesCurrentlyLoading();
-        diagnostics.rasterSourceRequestsInFlight +=
-            overlay->getTileProvider()->getActiveRasterSourceRequests();
-        diagnostics.rasterPendingUploads +=
-            overlay->getTileProvider()->getPendingUploadCount();
-    }
+    TilesetProviderDiagnosticsCollector::collect(
+        tileset.terrainProvider_.get(),
+        tileset.contentProvider_.get(),
+        tileset.rasterOverlays_)
+        .applyTo(diagnostics);
     return diagnostics;
 }
 
