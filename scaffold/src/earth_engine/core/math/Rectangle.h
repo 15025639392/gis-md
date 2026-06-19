@@ -1,6 +1,8 @@
 #pragma once
 
+#include <optional>
 #include <ostream>
+#include <utility>
 
 namespace earth_engine {
 
@@ -28,10 +30,18 @@ public:
 
     double width() const;   // 经度跨度 (rad)
     double height() const;  // 纬度跨度 (rad)
+    std::pair<double, double> center() const;
+    std::pair<double, double> normalizedCoordinates(double lngRad,
+                                                    double latRad) const;
 
     bool contains(double lngRad, double latRad) const;
     bool contains(const Rectangle& other) const;
     bool intersects(const Rectangle& other) const;
+    bool isEmpty() const;
+
+    std::optional<Rectangle> computeIntersection(const Rectangle& other) const;
+    Rectangle computeUnion(const Rectangle& other) const;
+    std::pair<Rectangle, std::optional<Rectangle>> splitAtAntimeridian() const;
 
     /// 跨反经线（west > east）
     bool crossesAntimeridian() const;

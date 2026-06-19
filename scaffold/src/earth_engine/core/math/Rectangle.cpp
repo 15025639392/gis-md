@@ -2,12 +2,25 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include <algorithm>
+#include <cmath>
 
 namespace earth_engine {
 
 namespace {
     constexpr double kRadToDeg = 180.0 / glm::pi<double>();
     constexpr double kDegToRad = glm::pi<double>() / 180.0;
+    constexpr double kPi = glm::pi<double>();
+    constexpr double kTwoPi = glm::two_pi<double>();
+
+    double negativePiToPi(double longitude) {
+        const double shifted = std::fmod(longitude + kPi, kTwoPi);
+        const double wrapped = shifted < 0.0 ? shifted + kTwoPi : shifted;
+        return wrapped - kPi;
+    }
+
+    double convertLongitudeRange(double longitude) {
+        return negativePiToPi(longitude);
+    }
 }
 
 Rectangle Rectangle::fromDegrees(double westDeg, double southDeg,
@@ -30,6 +43,39 @@ double Rectangle::width() const {
 
 double Rectangle::height() const { return north_ - south_; }
 
+std::pair<double, double> Rectangle::center() const {
+    const double latitudeCenter = (south_ + north_) * 0.5;
+
+    if (!crossesAntimeridian()) {
+        return {(west_ + east_) * 0.5, latitudeCenter};
+    }
+
+    const double westToAntimeridian = kPi - west_;
+    const double antimeridianToEast = east_ - -kPi;
+    const double total = westToAntimeridian + antimeridianToEast;
+    if (westToAntimeridian >= antimeridianToEast) {
+        return {std::min(kPi, west_ + total * 0.5), latitudeCenter};
+    }
+    return {std::max(-kPi, east_ - total * 0.5), latitudeCenter};
+}
+
+std::pair<double, double> Rectangle::normalizedCoordinates(double lngRad,
+                                                           double latRad) const {
+    double east = east_;
+    double longitude = lngRad;
+    if (east < west_) {
+        east += kTwoPi;
+        if (longitude < west_) {
+            longitude += kTwoPi;
+        }
+    }
+
+    return {
+        (longitude - west_) / (east - west_),
+        (latRad - south_) / (north_ - south_)
+    };
+}
+
 bool Rectangle::contains(double lngRad, double latRad) const {
     if (latRad < south_ || latRad > north_) return false;
     if (crossesAntimeridian()) {
@@ -44,12 +90,93 @@ bool Rectangle::contains(const Rectangle& other) const {
 }
 
 bool Rectangle::intersects(const Rectangle& other) const {
-    if (south_ > other.north_ || north_ < other.south_) return false;
-    if (crossesAntimeridian() || other.crossesAntimeridian()) {
-        // 保守处理跨反经线：任一跨则认为是相交（精细逻辑在 TileScheme 层）
-        return true;
+    return computeIntersection(other).has_value();
+}
+
+bool Rectangle::isEmpty() const {
+    return south_ > north_;
+}
+
+std::optional<Rectangle> Rectangle::computeIntersection(const Rectangle& other) const {
+    double rectangleEast = east_;
+    double rectangleWest = west_;
+    double otherRectangleEast = other.east_;
+    double otherRectangleWest = other.west_;
+
+    if (rectangleEast < rectangleWest && otherRectangleEast > 0.0) {
+        rectangleEast += kTwoPi;
+    } else if (otherRectangleEast < otherRectangleWest && rectangleEast > 0.0) {
+        otherRectangleEast += kTwoPi;
     }
-    return west_ <= other.east_ && east_ >= other.west_;
+
+    if (rectangleEast < rectangleWest && otherRectangleWest < 0.0) {
+        otherRectangleWest += kTwoPi;
+    } else if (otherRectangleEast < otherRectangleWest && rectangleWest < 0.0) {
+        rectangleWest += kTwoPi;
+    }
+
+    const double west = negativePiToPi(std::max(rectangleWest, otherRectangleWest));
+    const double east = negativePiToPi(std::min(rectangleEast, otherRectangleEast));
+
+    if ((west_ < east_ || other.west_ < other.east_) && east <= west) {
+        return std::nullopt;
+    }
+
+    const double south = std::max(south_, other.south_);
+    const double north = std::min(north_, other.north_);
+
+    if (south >= north) {
+        return std::nullopt;
+    }
+
+    return Rectangle(west, south, east, north);
+}
+
+Rectangle Rectangle::computeUnion(const Rectangle& other) const {
+    double rectangleEast = east_;
+    double rectangleWest = west_;
+    double otherRectangleEast = other.east_;
+    double otherRectangleWest = other.west_;
+
+    if (rectangleEast < rectangleWest && otherRectangleEast > 0.0) {
+        rectangleEast += kTwoPi;
+    } else if (otherRectangleEast < otherRectangleWest && rectangleEast > 0.0) {
+        otherRectangleEast += kTwoPi;
+    }
+
+    if (rectangleEast < rectangleWest && otherRectangleWest < 0.0) {
+        otherRectangleWest += kTwoPi;
+    } else if (otherRectangleEast < otherRectangleWest && rectangleWest < 0.0) {
+        rectangleWest += kTwoPi;
+    }
+
+    double west = std::min(rectangleWest, otherRectangleWest);
+    double east = std::max(rectangleEast, otherRectangleEast);
+
+    if (west != kPi) {
+        west = convertLongitudeRange(west);
+    }
+    if (east != kPi) {
+        east = convertLongitudeRange(east);
+    }
+
+    return Rectangle(west, std::min(south_, other.south_),
+                     east, std::max(north_, other.north_));
+}
+
+std::pair<Rectangle, std::optional<Rectangle>>
+Rectangle::splitAtAntimeridian() const {
+    if (!crossesAntimeridian()) {
+        return {*this, std::nullopt};
+    }
+
+    Rectangle a(west_, south_, kPi, north_);
+    Rectangle b(-kPi, south_, east_, north_);
+
+    if (a.width() > b.width()) {
+        return {a, b};
+    }
+    return {b, a};
 }
 
 bool Rectangle::crossesAntimeridian() const {
