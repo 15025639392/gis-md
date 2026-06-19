@@ -414,6 +414,7 @@ std::optional<uint32_t> TileQuadtreeAvailability::findChildNodeIndex(
     uint32_t y,
     const TileAvailabilityNode* parentNode) const {
     if (!parentNode || !parentNode->subtree) return std::nullopt;
+    if (!quadtreeCoordinatesInLevel(level, x, y)) return std::nullopt;
     if (level % subtreeLevels_ != 0) return std::nullopt;
 
     const TileAvailabilitySubtree& subtree = *parentNode->subtree;
@@ -652,6 +653,7 @@ std::optional<uint32_t> TileOctreeAvailability::findChildNodeIndex(
     const OctreeTileID& tileID,
     const TileAvailabilityNode* parentNode) const {
     if (!parentNode || !parentNode->subtree) return std::nullopt;
+    if (!octreeCoordinatesInLevel(tileID)) return std::nullopt;
     if (static_cast<uint32_t>(tileID.level) % subtreeLevels_ != 0) {
         return std::nullopt;
     }

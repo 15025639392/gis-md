@@ -512,6 +512,27 @@ TEST(TileQuadtreeAvailabilityTest, AddNodeRejectsNonBoundaryOrUnavailableChildLi
     EXPECT_EQ(nullptr, availability.addNode(3, 2, 6, root));
 }
 
+TEST(TileQuadtreeAvailabilityTest, AddNodeRejectsOutOfRangeChildCoordinates) {
+    TileQuadtreeAvailability availability(3, 5);
+    ASSERT_TRUE(availability.addSubtree(
+        0,
+        0,
+        0,
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            {}}));
+    TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+
+    EXPECT_EQ(std::nullopt, availability.findChildNodeIndex(3, 8, 0, root));
+    EXPECT_EQ(std::nullopt, availability.findChildNodeIndex(3, 0, 8, root));
+    EXPECT_EQ(nullptr, availability.addNode(3, 8, 0, root));
+    EXPECT_EQ(nullptr, availability.addNode(3, 0, 8, root));
+    EXPECT_EQ(64U, root->childNodes.size());
+}
+
 TEST(TileOctreeAvailabilityTest, RootIsImplicitlyAvailableBeforeSubtreeLoads) {
     TileOctreeAvailability availability(3, 5);
 
@@ -759,4 +780,28 @@ TEST(TileOctreeAvailabilityTest, AddNodeRejectsNonBoundaryOrUnavailableChildLike
 
     EXPECT_EQ(nullptr, availability.addNode(OctreeTileID{2, 0, 0, 0}, root));
     EXPECT_EQ(nullptr, availability.addNode(OctreeTileID{3, 2, 0, 3}, root));
+}
+
+TEST(TileOctreeAvailabilityTest, AddNodeRejectsOutOfRangeChildCoordinates) {
+    TileOctreeAvailability availability(3, 5);
+    ASSERT_TRUE(availability.addSubtree(
+        OctreeTileID{0, 0, 0, 0},
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            {}}));
+    TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+
+    EXPECT_EQ(std::nullopt,
+              availability.findChildNodeIndex(OctreeTileID{3, 8, 0, 0}, root));
+    EXPECT_EQ(std::nullopt,
+              availability.findChildNodeIndex(OctreeTileID{3, 0, 8, 0}, root));
+    EXPECT_EQ(std::nullopt,
+              availability.findChildNodeIndex(OctreeTileID{3, 0, 0, 8}, root));
+    EXPECT_EQ(nullptr, availability.addNode(OctreeTileID{3, 8, 0, 0}, root));
+    EXPECT_EQ(nullptr, availability.addNode(OctreeTileID{3, 0, 8, 0}, root));
+    EXPECT_EQ(nullptr, availability.addNode(OctreeTileID{3, 0, 0, 8}, root));
+    EXPECT_EQ(512U, root->childNodes.size());
 }
