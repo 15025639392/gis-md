@@ -59,6 +59,9 @@ void applyTerrainRenderEntryDiagnostics(
     diagnostics.terrainRenderEntriesPlanned = terrainRenderEntryCount(tileset);
     diagnostics.terrainRenderEntriesSelectedPlanned = 0;
     diagnostics.terrainRenderEntriesFadingPlanned = 0;
+    diagnostics.terrainRenderEntriesAncestorFallback = 0;
+    diagnostics.terrainRenderEntriesSynchronousPrep = 0;
+    diagnostics.terrainRenderEntriesDeferredPrep = 0;
     diagnostics.terrainRenderEntriesDrawn = 0;
     diagnostics.terrainRenderEntriesSelectedDrawn = 0;
     diagnostics.terrainRenderEntriesFadingDrawn = 0;
@@ -77,6 +80,12 @@ void applyTerrainRenderEntryDiagnostics(
         plan.renderEntrySelectedPlannedCommandCount;
     diagnostics.terrainRenderEntriesFadingPlanned =
         plan.renderEntryFadingPlannedCommandCount;
+    diagnostics.terrainRenderEntriesAncestorFallback =
+        plan.renderEntryAncestorFallbackCount;
+    diagnostics.terrainRenderEntriesSynchronousPrep =
+        plan.renderEntrySynchronousPrepCount;
+    diagnostics.terrainRenderEntriesDeferredPrep =
+        plan.renderEntryDeferredPrepCount;
     diagnostics.terrainRenderEntriesDrawn =
         plan.renderEntryCommandDrawCount;
     diagnostics.terrainRenderEntriesSelectedDrawn =

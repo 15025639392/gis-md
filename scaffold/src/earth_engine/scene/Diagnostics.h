@@ -84,6 +84,9 @@ struct Diagnostics {
     int terrainRenderEntriesPlanned = 0;
     int terrainRenderEntriesSelectedPlanned = 0;
     int terrainRenderEntriesFadingPlanned = 0;
+    int terrainRenderEntriesAncestorFallback = 0;
+    int terrainRenderEntriesSynchronousPrep = 0;
+    int terrainRenderEntriesDeferredPrep = 0;
     int terrainRenderEntriesDrawn = 0;
     int terrainRenderEntriesSelectedDrawn = 0;
     int terrainRenderEntriesFadingDrawn = 0;

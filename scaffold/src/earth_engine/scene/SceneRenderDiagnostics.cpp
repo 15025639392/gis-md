@@ -150,6 +150,9 @@ void SceneRenderDiagnostics::resetRenderCommandFields(
     diagnostics.terrainRenderEntriesPlanned = 0;
     diagnostics.terrainRenderEntriesSelectedPlanned = 0;
     diagnostics.terrainRenderEntriesFadingPlanned = 0;
+    diagnostics.terrainRenderEntriesAncestorFallback = 0;
+    diagnostics.terrainRenderEntriesSynchronousPrep = 0;
+    diagnostics.terrainRenderEntriesDeferredPrep = 0;
     diagnostics.terrainRenderEntriesDrawn = 0;
     diagnostics.terrainRenderEntriesSelectedDrawn = 0;
     diagnostics.terrainRenderEntriesFadingDrawn = 0;

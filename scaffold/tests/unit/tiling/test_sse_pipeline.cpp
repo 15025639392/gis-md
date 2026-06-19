@@ -18256,6 +18256,9 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
     check(scene.diagnostics().terrainRenderEntriesPlanned == 0 &&
               scene.diagnostics().terrainRenderEntriesSelectedPlanned == 0 &&
               scene.diagnostics().terrainRenderEntriesFadingPlanned == 0 &&
+              scene.diagnostics().terrainRenderEntriesAncestorFallback == 0 &&
+              scene.diagnostics().terrainRenderEntriesSynchronousPrep == 0 &&
+              scene.diagnostics().terrainRenderEntriesDeferredPrep == 0 &&
               scene.diagnostics().terrainRenderEntriesDrawn == 0 &&
               scene.diagnostics().terrainRenderEntriesSelectedDrawn == 0 &&
               scene.diagnostics().terrainRenderEntriesFadingDrawn == 0 &&
