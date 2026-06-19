@@ -1,6 +1,7 @@
 #pragma once
 
 #include "FrameState.h"
+#include "SceneFrameUpdateCoordinator.h"
 #include "../renderer/RenderCommand.h"
 
 #include <cstdint>
@@ -11,7 +12,11 @@ namespace earth_engine {
 
 class Camera;
 class CameraController;
+struct Diagnostics;
+class SceneTilesetCoordinator;
+class SkyGradient;
 class Tileset;
+class TimeController;
 class VectorLayer;
 struct SceneInteractionContext;
 struct ScenePresentationTraceInput;
@@ -35,6 +40,17 @@ public:
         std::vector<FrameState::SelectorView> selectorViews);
     void clearSelectorViewOverride();
 
+    SceneFrameUpdateInput makeFrameUpdateInput(
+        Diagnostics& diagnostics,
+        Camera* camera,
+        CameraController* cameraController,
+        SceneTilesetCoordinator& tilesets,
+        double deltaSeconds,
+        bool hasInteractionFocus,
+        Vec3 interactionFocusDirection,
+        double interactionFocusTimeSeconds,
+        TimeController* timeController,
+        SkyGradient* skyGradient);
     SceneInteractionContext makeInteractionContext(
         Camera* camera,
         CameraController* cameraController,

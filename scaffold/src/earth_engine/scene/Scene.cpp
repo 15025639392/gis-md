@@ -80,22 +80,18 @@ void Scene::setViewport(int widthPixels, int heightPixels, float dpr) {
 }
 
 void Scene::update(double deltaSeconds) {
-    SceneFrameUpdateCoordinator::update(SceneFrameUpdateInput{
-        frameRuntime_.frameState(),
-        telemetry_->diagnostics(),
-        camera_.get(),
-        cameraController_.get(),
-        *tilesets_,
-        frameRuntime_.frameId(),
-        frameRuntime_.elapsedTime(),
-        deltaSeconds,
-        frameRuntime_.hasSelectorViewOverride(),
-        &frameRuntime_.selectorViewOverride(),
-        interaction_->hasInteractionFocus(),
-        interaction_->interactionFocusDirection(),
-        interaction_->interactionFocusTimeSeconds(),
-        environment_->timeController(),
-        environment_->skyGradient()});
+    SceneFrameUpdateCoordinator::update(
+        frameRuntime_.makeFrameUpdateInput(
+            telemetry_->diagnostics(),
+            camera_.get(),
+            cameraController_.get(),
+            *tilesets_,
+            deltaSeconds,
+            interaction_->hasInteractionFocus(),
+            interaction_->interactionFocusDirection(),
+            interaction_->interactionFocusTimeSeconds(),
+            environment_->timeController(),
+            environment_->skyGradient()));
 }
 
 void Scene::setSelectorViewOverride(

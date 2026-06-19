@@ -27,6 +27,35 @@ void SceneFrameRuntime::clearSelectorViewOverride() {
     selectorViewOverride_.clear();
 }
 
+SceneFrameUpdateInput SceneFrameRuntime::makeFrameUpdateInput(
+    Diagnostics& diagnostics,
+    Camera* camera,
+    CameraController* cameraController,
+    SceneTilesetCoordinator& tilesets,
+    double deltaSeconds,
+    bool hasInteractionFocus,
+    Vec3 interactionFocusDirection,
+    double interactionFocusTimeSeconds,
+    TimeController* timeController,
+    SkyGradient* skyGradient) {
+    return SceneFrameUpdateInput{
+        frameState_,
+        diagnostics,
+        camera,
+        cameraController,
+        tilesets,
+        frameId_,
+        elapsedTime_,
+        deltaSeconds,
+        hasSelectorViewOverride_,
+        &selectorViewOverride_,
+        hasInteractionFocus,
+        interactionFocusDirection,
+        interactionFocusTimeSeconds,
+        timeController,
+        skyGradient};
+}
+
 SceneInteractionContext SceneFrameRuntime::makeInteractionContext(
     Camera* camera,
     CameraController* cameraController,
