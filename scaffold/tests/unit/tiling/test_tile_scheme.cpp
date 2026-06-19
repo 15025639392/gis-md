@@ -66,6 +66,34 @@ TEST_F(TileSchemeTest, PositionToTileKnownWebMercatorTile) {
     EXPECT_EQ(3104, key.y);
 }
 
+TEST_F(TileSchemeTest, WebMercatorProjectionGoldenTileBounds) {
+    // Formula fixture for EPSG:3857 / WebMercator, matching cesium-native
+    // CesiumGeospatial/test/TestProjection.cpp projection behavior:
+    // lon = xFraction * 2pi - pi
+    // lat = atan(sinh(pi - 2pi * yFraction)).
+    Rectangle r = scheme_->tileToRectangle(
+        TileKey{"XYZ-WebMercator", 2, 2, 1});
+
+    EXPECT_NEAR(0.0, r.west(), 1e-14);
+    EXPECT_NEAR(M_PI / 2.0, r.east(), 1e-14);
+    EXPECT_NEAR(0.0, r.south(), 1e-14);
+    EXPECT_NEAR(std::atan(std::sinh(M_PI / 2.0)), r.north(), 1e-14);
+    EXPECT_NEAR(66.51326044311186, r.northDegrees(), 1e-12);
+}
+
+TEST_F(TileSchemeTest, WebMercatorProjectionClampsPolarInput) {
+    // cesium-native WebMercatorProjection clamps to ±85.05112878 degrees.
+    auto north = scheme_->positionToTile(0.0, M_PI / 2.0, 3);
+    auto south = scheme_->positionToTile(0.0, -M_PI / 2.0, 3);
+
+    EXPECT_EQ(3, north.z);
+    EXPECT_EQ(4, north.x);
+    EXPECT_EQ(0, north.y);
+    EXPECT_EQ(3, south.z);
+    EXPECT_EQ(4, south.x);
+    EXPECT_EQ(7, south.y);
+}
+
 TEST_F(TileSchemeTest, PositionToTileClampsCesiumNativeWorldEdges) {
     // Equivalent to cesium-native quadtree edge behavior: coordinates on the
     // positive edge clamp to the final tile, never overflow the level.
