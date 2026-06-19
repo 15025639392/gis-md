@@ -8,6 +8,7 @@
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/globe/Globe.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
+#include "earth_engine/core/geodesy/S2CellID.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Transforms.h"
 #include "earth_engine/core/math/OrientedBoundingBox.h"
@@ -8291,6 +8292,56 @@ void testTilesetJsonProviderParsesViewerRequestVolume() {
           "TilesetJsonContentProvider: viewerRequestVolume sphere is preserved in metadata");
 }
 
+void testTilesetJsonProviderParsesS2BoundingVolume() {
+    const std::string tilesetJson = R"json({
+      "asset": {"version": "1.1"},
+      "extensionsUsed": ["3DTILES_bounding_volume_S2"],
+      "geometricError": 100,
+      "root": {
+        "boundingVolume": {
+          "extensions": {
+            "3DTILES_bounding_volume_S2": {
+              "token": "89c6c7",
+              "minimumHeight": -25,
+              "maximumHeight": 1000
+            }
+          }
+        },
+        "geometricError": 64,
+        "content": {"uri": "tile.glb"}
+      }
+    })json";
+
+    TilesetJsonContentProvider provider(
+        "file:///s2-bounding-volume/tileset.json",
+        std::vector<uint8_t>(tilesetJson.begin(), tilesetJson.end()),
+        "S2 bounding volume fixture");
+    check(provider.valid(),
+          "TilesetJsonContentProvider: S2 bounding volume fixture parses");
+    const std::vector<TileKey> roots = provider.rootTiles();
+    if (roots.empty()) return;
+    const std::vector<TileKey> rootChildren =
+        provider.childTiles(roots.front());
+    check(rootChildren.size() == 1,
+          "TilesetJsonContentProvider: S2 root stays addressable");
+    if (rootChildren.empty()) return;
+
+    const std::optional<TilesetContentTileMetadata> metadata =
+        provider.tileMetadata(rootChildren.front());
+    check(metadata &&
+              metadata->boundingVolume &&
+              metadata->boundingVolume->kind == TileBoundingVolumeKind::S2Cell &&
+              metadata->boundingVolume->s2Cell.getCellID().getID() ==
+              S2CellID::fromToken("89c6c7").getID() &&
+              std::abs(
+                  metadata->boundingVolume->s2Cell.getMinimumHeight() +
+                  25.0) < 1e-12 &&
+              std::abs(
+                  metadata->boundingVolume->s2Cell.getMaximumHeight() -
+                  1000.0) < 1e-12,
+          "TilesetJsonContentProvider: S2 token and height range are preserved in metadata");
+}
+
 void expectTilesetJsonTileFailsExplicitly(
     std::unique_ptr<TilesetJsonContentProvider> provider,
     const TileKey& key,
@@ -8357,8 +8408,7 @@ void testTilesetJsonTopLevelUnsupportedExtensionsUsedInvalidatesProvider() {
 }
 
 void testTilesetJsonGeneratedUnsupportedExtensionsInvalidateProvider() {
-    const std::array<const char*, 5> unsupportedExtensions = {
-        "3DTILES_bounding_volume_S2",
+    const std::array<const char*, 4> unsupportedExtensions = {
         "3DTILES_ellipsoid",
         "3DTILES_content_conditional",
         "3DTILES_content_voxels",
@@ -9010,7 +9060,7 @@ void testTilesetJsonUnsupportedTileObjectExtensionFailsTile() {
         std::string label;
     };
 
-    const std::array<TileObjectExtensionCase, 3> cases = {{
+    const std::array<TileObjectExtensionCase, 2> cases = {{
         {
             "\"boundingVolume\":{\"region\":[-0.01,-0.01,0.01,0.01,0,100]},"
             "\"geometricError\":64,"
@@ -9023,14 +9073,6 @@ void testTilesetJsonUnsupportedTileObjectExtensionFailsTile() {
             "\"content\":{\"uri\":\"tile.glb\",\"extensions\":{"
             "\"3DTILES_content_voxels\":{\"dimensions\":[1,1,1]}}}",
             "content 3DTILES_content_voxels"},
-        {
-            "\"boundingVolume\":{"
-            "\"region\":[-0.01,-0.01,0.01,0.01,0,100],"
-            "\"extensions\":{\"3DTILES_bounding_volume_S2\":{"
-            "\"token\":\"1\",\"minimumHeight\":0,\"maximumHeight\":100}}},"
-            "\"geometricError\":64,"
-            "\"content\":{\"uri\":\"tile.glb\"}",
-            "boundingVolume 3DTILES_bounding_volume_S2"},
     }};
 
     for (const TileObjectExtensionCase& testCase : cases) {
@@ -20934,6 +20976,7 @@ int main() {
     testTilesetJsonProviderLoadsCmptCompositeContent();
     testTilesetJsonUnsupportedMultipleContentsFailsTile();
     testTilesetJsonProviderParsesViewerRequestVolume();
+    testTilesetJsonProviderParsesS2BoundingVolume();
     testTilesetJsonTopLevelUnknownRequiredExtensionInvalidatesProvider();
     testTilesetJsonTopLevelUnsupportedExtensionsUsedInvalidatesProvider();
     testTilesetJsonGeneratedUnsupportedExtensionsInvalidateProvider();

@@ -768,6 +768,49 @@ std::optional<TileBoundingVolume> parseBoundingCylinderRegionExtension(
             glm::dvec2(*minAngle, *maxAngle)));
 }
 
+std::optional<TileBoundingVolume> parseBoundingS2Extension(
+    const nlohmann::json& json) {
+    auto extensionsIt = json.find("extensions");
+    if (extensionsIt == json.end() || !extensionsIt->is_object()) {
+        return std::nullopt;
+    }
+
+    auto s2It = extensionsIt->find("3DTILES_bounding_volume_S2");
+    if (s2It == extensionsIt->end() || !s2It->is_object()) {
+        return std::nullopt;
+    }
+    const nlohmann::json& s2Json = *s2It;
+
+    auto tokenIt = s2Json.find("token");
+    if (tokenIt == s2Json.end() || !tokenIt->is_string()) {
+        return std::nullopt;
+    }
+    S2CellID cellID = S2CellID::fromToken(tokenIt->get<std::string>());
+    if (!cellID.isValid()) {
+        return std::nullopt;
+    }
+
+    auto finiteFieldOrDefault = [&](const char* name,
+                                    double defaultValue) -> std::optional<double> {
+        auto it = s2Json.find(name);
+        if (it == s2Json.end()) {
+            return defaultValue;
+        }
+        return jsonFiniteDouble(*it);
+    };
+
+    const std::optional<double> minimumHeight =
+        finiteFieldOrDefault("minimumHeight", 0.0);
+    const std::optional<double> maximumHeight =
+        finiteFieldOrDefault("maximumHeight", 0.0);
+    if (!minimumHeight || !maximumHeight) {
+        return std::nullopt;
+    }
+
+    return TileBoundingVolume::fromS2Cell(
+        S2CellBoundingVolume(cellID, *minimumHeight, *maximumHeight));
+}
+
 bool finiteTileBoundingVolume(const TileBoundingVolume& volume) {
     switch (volume.kind) {
         case TileBoundingVolumeKind::Region:
@@ -852,6 +895,10 @@ std::optional<TileBoundingVolume> parseBoundingVolumeJson(
     if (std::optional<TileBoundingVolume> cylinder =
             parseBoundingCylinderRegionExtension(json)) {
         return cylinder;
+    }
+    if (std::optional<TileBoundingVolume> s2 =
+            parseBoundingS2Extension(json)) {
+        return s2;
     }
 
     auto boxIt = json.find("box");
@@ -977,6 +1024,7 @@ bool tilesetJsonExtensionAllowed(const std::string& extensionName,
     return (allowContentGltf &&
             extensionName == "3DTILES_content_gltf") ||
            extensionName == "3DTILES_bounding_volume_cylinder" ||
+           extensionName == "3DTILES_bounding_volume_S2" ||
            (allowPerTileFailure &&
             canFailTilesetJsonExtensionPerTile(extensionName));
 }
