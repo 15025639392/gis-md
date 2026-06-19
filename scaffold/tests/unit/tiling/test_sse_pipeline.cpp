@@ -13616,6 +13616,16 @@ void testTileSelectionReusePolicyAllowsBoundedStaleReuseDuringSmoothing() {
               TileSelectionReuseMode::Strict,
           "TileSelectionReusePolicy: equivalent selector views reuse across content resource refresh");
 
+    TileSelectionReuseInput staleResourceChangedInput =
+        strictResourceChangedInput;
+    staleResourceChangedInput.currentFrameId =
+        staleResourceChangedInput.lastSelectionFrameId + 31;
+    check(TileSelectionReusePolicy::classifyReuseWithReason(
+              staleResourceChangedInput)
+              .rejectReason ==
+              TileSelectionReuseRejectReason::ResourceChanged,
+          "TileSelectionReusePolicy: content resource refresh forces periodic reselection");
+
     TileSelectionReuseInput overlayChangedInput =
         strictPendingInput;
     overlayChangedInput.currentOverlaySignature = 10;
