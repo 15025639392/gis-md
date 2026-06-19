@@ -14050,7 +14050,7 @@ TEST(GltfParserTest, TilesetRejectsMalformedNumericTileMetadata) {
         "\"boundingVolume\":{\"region\":[-0.01,-0.01,0.01,0.01,0,100]},";
     const std::string validRoot =
         validRegion + "\"geometricError\":64";
-    const std::array<MalformedNumericCase, 11> cases = {{
+    const std::array<MalformedNumericCase, 14> cases = {{
         {
             wrapRoot(validRoot, "\"geometricError\":-1,"),
             "negative top-level geometricError"},
@@ -14103,6 +14103,27 @@ TEST(GltfParserTest, TilesetRejectsMalformedNumericTileMetadata) {
                 "\"content\":{\"uri\":\"tile.glb\","
                 "\"boundingVolume\":{\"sphere\":[1,2,3,-1]}}"),
             "negative content boundingVolume sphere radius"},
+        {
+            wrapRoot(
+                "\"boundingVolume\":{\"extensions\":{"
+                "\"3DTILES_bounding_volume_cylinder\":{"
+                "\"translation\":[1,2],\"height\":2}}},"
+                "\"geometricError\":64"),
+            "short cylinder translation"},
+        {
+            wrapRoot(
+                "\"boundingVolume\":{\"extensions\":{"
+                "\"3DTILES_bounding_volume_cylinder\":{"
+                "\"rotation\":[0,0,0],\"height\":2}}},"
+                "\"geometricError\":64"),
+            "short cylinder rotation"},
+        {
+            wrapRoot(
+                "\"boundingVolume\":{\"extensions\":{"
+                "\"3DTILES_bounding_volume_cylinder\":{"
+                "\"height\":\"2\"}}},"
+                "\"geometricError\":64"),
+            "string cylinder height"},
     }};
 
     for (const MalformedNumericCase& testCase : cases) {
@@ -14115,6 +14136,75 @@ TEST(GltfParserTest, TilesetRejectsMalformedNumericTileMetadata) {
         EXPECT_FALSE(provider.valid());
         EXPECT_TRUE(provider.rootTiles().empty());
     }
+}
+
+TEST(GltfParserTest, TilesetParsesBoundingVolumeCylinderExtension) {
+    const std::string tilesetJson = R"json({
+      "asset": {
+        "version": "1.1"
+      },
+      "extensionsUsed": [
+        "3DTILES_bounding_volume_cylinder"
+      ],
+      "extensionsRequired": [
+        "3DTILES_bounding_volume_cylinder"
+      ],
+      "geometricError": 100,
+      "root": {
+        "boundingVolume": {
+          "extensions": {
+            "3DTILES_bounding_volume_cylinder": {
+              "translation": [1, 2, 3],
+              "rotation": [0, 0, 0, 1],
+              "height": 2,
+              "minRadius": 1,
+              "maxRadius": 2,
+              "minAngle": -1.5707963267948966,
+              "maxAngle": 1.5707963267948966
+            }
+          }
+        },
+        "geometricError": 64
+      }
+    })json";
+
+    TilesetJsonContentProvider provider(
+        "file:///earth-md/cylinder-tileset.json",
+        bytesFromString(tilesetJson),
+        "cylinder bounding volume tileset");
+
+    ASSERT_TRUE(provider.valid());
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    const std::vector<TileKey> rootChildren =
+        provider.childTiles(roots.front());
+    ASSERT_EQ(1u, rootChildren.size());
+    const std::optional<TilesetContentTileMetadata> metadata =
+        provider.tileMetadata(rootChildren.front());
+    ASSERT_TRUE(metadata.has_value());
+    ASSERT_TRUE(metadata->boundingVolume.has_value());
+    EXPECT_EQ(
+        TileBoundingVolumeKind::CylinderRegion,
+        metadata->boundingVolume->kind);
+    EXPECT_EQ(
+        Vec3(1.0, 2.0, 3.0),
+        metadata->boundingVolume->cylinderRegion.getTranslation());
+    EXPECT_EQ(
+        glm::dquat(1.0, 0.0, 0.0, 0.0),
+        metadata->boundingVolume->cylinderRegion.getRotation());
+    EXPECT_DOUBLE_EQ(
+        2.0,
+        metadata->boundingVolume->cylinderRegion.getHeight());
+    EXPECT_EQ(
+        glm::dvec2(1.0, 2.0),
+        metadata->boundingVolume->cylinderRegion.getRadialBounds());
+    EXPECT_EQ(
+        glm::dvec2(-1.5707963267948966, 1.5707963267948966),
+        metadata->boundingVolume->cylinderRegion.getAngularBounds());
+
+    const TileContentLoadResult result =
+        requestTileContentBlocking(provider, rootChildren.front());
+    EXPECT_EQ(TileContentLoadStatus::Empty, result.status);
 }
 
 TEST(GltfParserTest, TilesetFailsMalformedExternalTilesetNumericMetadata) {

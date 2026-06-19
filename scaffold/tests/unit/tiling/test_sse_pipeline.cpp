@@ -8299,9 +8299,8 @@ void testTilesetJsonTopLevelUnsupportedExtensionsUsedInvalidatesProvider() {
 }
 
 void testTilesetJsonGeneratedUnsupportedExtensionsInvalidateProvider() {
-    const std::array<const char*, 6> unsupportedExtensions = {
+    const std::array<const char*, 5> unsupportedExtensions = {
         "3DTILES_bounding_volume_S2",
-        "3DTILES_bounding_volume_cylinder",
         "3DTILES_ellipsoid",
         "3DTILES_content_conditional",
         "3DTILES_content_voxels",
@@ -8953,7 +8952,7 @@ void testTilesetJsonUnsupportedTileObjectExtensionFailsTile() {
         std::string label;
     };
 
-    const std::array<TileObjectExtensionCase, 4> cases = {{
+    const std::array<TileObjectExtensionCase, 3> cases = {{
         {
             "\"boundingVolume\":{\"region\":[-0.01,-0.01,0.01,0.01,0,100]},"
             "\"geometricError\":64,"
@@ -8974,14 +8973,6 @@ void testTilesetJsonUnsupportedTileObjectExtensionFailsTile() {
             "\"geometricError\":64,"
             "\"content\":{\"uri\":\"tile.glb\"}",
             "boundingVolume 3DTILES_bounding_volume_S2"},
-        {
-            "\"boundingVolume\":{"
-            "\"region\":[-0.01,-0.01,0.01,0.01,0,100],"
-            "\"extensions\":{\"3DTILES_bounding_volume_cylinder\":{"
-            "\"translation\":[0,0,0],\"radius\":1,\"height\":100}}},"
-            "\"geometricError\":64,"
-            "\"content\":{\"uri\":\"tile.glb\"}",
-            "boundingVolume 3DTILES_bounding_volume_cylinder"},
     }};
 
     for (const TileObjectExtensionCase& testCase : cases) {

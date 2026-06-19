@@ -5,6 +5,7 @@
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/Transforms.h"
+#include "../core/math/MathUtils.h"
 #include "../platform/bridge/CurlMultiRequestScheduler.h"
 
 #include <nlohmann/json.hpp>
@@ -661,6 +662,23 @@ std::optional<double> jsonFiniteDouble(const nlohmann::json& json) {
     return value;
 }
 
+std::optional<std::vector<double>> jsonFiniteDoubleVector(
+    const nlohmann::json& json) {
+    if (!json.is_array()) {
+        return std::nullopt;
+    }
+    std::vector<double> values;
+    values.reserve(json.size());
+    for (const nlohmann::json& item : json) {
+        std::optional<double> value = jsonFiniteDouble(item);
+        if (!value) {
+            return std::nullopt;
+        }
+        values.push_back(*value);
+    }
+    return values;
+}
+
 template <size_t N>
 std::optional<std::array<double, N>> jsonFiniteDoubleArray(
     const nlohmann::json& json) {
@@ -676,6 +694,78 @@ std::optional<std::array<double, N>> jsonFiniteDoubleArray(
         values[i] = *value;
     }
     return values;
+}
+
+std::optional<TileBoundingVolume> parseBoundingCylinderRegionExtension(
+    const nlohmann::json& json) {
+    auto extensionsIt = json.find("extensions");
+    if (extensionsIt == json.end() || !extensionsIt->is_object()) {
+        return std::nullopt;
+    }
+
+    auto cylinderIt =
+        extensionsIt->find("3DTILES_bounding_volume_cylinder");
+    if (cylinderIt == extensionsIt->end() || !cylinderIt->is_object()) {
+        return std::nullopt;
+    }
+    const nlohmann::json& cylinderJson = *cylinderIt;
+
+    glm::dvec3 translation(0.0);
+    auto translationIt = cylinderJson.find("translation");
+    if (translationIt != cylinderJson.end()) {
+        const std::optional<std::vector<double>> values =
+            jsonFiniteDoubleVector(*translationIt);
+        if (!values || values->size() < 3u) {
+            return std::nullopt;
+        }
+        translation = glm::dvec3((*values)[0], (*values)[1], (*values)[2]);
+    }
+
+    glm::dquat rotation(1.0, 0.0, 0.0, 0.0);
+    auto rotationIt = cylinderJson.find("rotation");
+    if (rotationIt != cylinderJson.end()) {
+        const std::optional<std::vector<double>> values =
+            jsonFiniteDoubleVector(*rotationIt);
+        if (!values || values->size() < 4u) {
+            return std::nullopt;
+        }
+        rotation = glm::dquat(
+            (*values)[3],
+            (*values)[0],
+            (*values)[1],
+            (*values)[2]);
+    }
+
+    auto finiteFieldOrDefault = [&](const char* name,
+                                    double defaultValue) -> std::optional<double> {
+        auto it = cylinderJson.find(name);
+        if (it == cylinderJson.end()) {
+            return defaultValue;
+        }
+        return jsonFiniteDouble(*it);
+    };
+
+    const std::optional<double> height =
+        finiteFieldOrDefault("height", 0.0);
+    const std::optional<double> minRadius =
+        finiteFieldOrDefault("minRadius", 0.0);
+    const std::optional<double> maxRadius =
+        finiteFieldOrDefault("maxRadius", 0.0);
+    const std::optional<double> minAngle =
+        finiteFieldOrDefault("minAngle", -MathUtils::OnePi);
+    const std::optional<double> maxAngle =
+        finiteFieldOrDefault("maxAngle", MathUtils::OnePi);
+    if (!height || !minRadius || !maxRadius || !minAngle || !maxAngle) {
+        return std::nullopt;
+    }
+
+    return TileBoundingVolume::fromCylinderRegion(
+        BoundingCylinderRegion(
+            Vec3(translation),
+            rotation,
+            *height,
+            glm::dvec2(*minRadius, *maxRadius),
+            glm::dvec2(*minAngle, *maxAngle)));
 }
 
 bool finiteTileBoundingVolume(const TileBoundingVolume& volume) {
@@ -753,6 +843,11 @@ std::optional<Mat4> parseTransform(const nlohmann::json& json) {
 std::optional<TileBoundingVolume> parseBoundingVolumeJson(
     const nlohmann::json& json) {
     if (!json.is_object()) return std::nullopt;
+    if (std::optional<TileBoundingVolume> cylinder =
+            parseBoundingCylinderRegionExtension(json)) {
+        return cylinder;
+    }
+
     auto boxIt = json.find("box");
     if (boxIt != json.end()) {
         const std::optional<std::array<double, 12>> b =
@@ -875,6 +970,7 @@ bool tilesetJsonExtensionAllowed(const std::string& extensionName,
                                  bool allowContentGltf) {
     return (allowContentGltf &&
             extensionName == "3DTILES_content_gltf") ||
+           extensionName == "3DTILES_bounding_volume_cylinder" ||
            (allowPerTileFailure &&
             canFailTilesetJsonExtensionPerTile(extensionName));
 }
