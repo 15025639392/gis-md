@@ -1,8 +1,7 @@
 #include "WebMercatorProjection.h"
 #include "Ellipsoid.h"
+#include "../math/MathUtils.h"
 
-#include <glm/gtc/constants.hpp>
-#include <algorithm>
 #include <cmath>
 
 namespace earth_engine {
@@ -42,23 +41,23 @@ Rectangle WebMercatorProjection::unproject(const Rectangle& rectangle) const {
 }
 
 double WebMercatorProjection::maximumLatitude() {
-    return mercatorAngleToGeodeticLatitude(glm::pi<double>());
+    return mercatorAngleToGeodeticLatitude(MathUtils::OnePi);
 }
 
 Rectangle WebMercatorProjection::computeMaximumProjectedRectangle(
     const Ellipsoid& ellipsoid) {
-    const double value = ellipsoid.maximumRadius() * glm::pi<double>();
+    const double value = ellipsoid.maximumRadius() * MathUtils::OnePi;
     return Rectangle(-value, -value, value, value);
 }
 
 double WebMercatorProjection::mercatorAngleToGeodeticLatitude(
     double mercatorAngle) {
-    return glm::half_pi<double>() - 2.0 * std::atan(std::exp(-mercatorAngle));
+    return MathUtils::PiOverTwo - 2.0 * std::atan(std::exp(-mercatorAngle));
 }
 
 double WebMercatorProjection::geodeticLatitudeToMercatorAngle(
     double latitude) {
-    latitude = std::clamp(latitude, -maximumLatitude(), maximumLatitude());
+    latitude = MathUtils::clamp(latitude, -maximumLatitude(), maximumLatitude());
     const double sinLatitude = std::sin(latitude);
     return 0.5 * std::log((1.0 + sinLatitude) / (1.0 - sinLatitude));
 }

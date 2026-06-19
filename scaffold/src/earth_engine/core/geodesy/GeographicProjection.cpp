@@ -1,5 +1,6 @@
 #include "GeographicProjection.h"
 #include "Ellipsoid.h"
+#include "../math/MathUtils.h"
 
 namespace earth_engine {
 
@@ -35,9 +36,9 @@ Rectangle GeographicProjection::unproject(const Rectangle& rectangle) const {
 
 Rectangle GeographicProjection::computeMaximumProjectedRectangle(
     const Ellipsoid& ellipsoid) {
-    constexpr double pi = 3.141592653589793238462643383279502884;
-    const double longitudeValue = ellipsoid.maximumRadius() * pi;
-    const double latitudeValue = ellipsoid.maximumRadius() * pi * 0.5;
+    const double longitudeValue = ellipsoid.maximumRadius() * MathUtils::OnePi;
+    const double latitudeValue =
+        ellipsoid.maximumRadius() * MathUtils::PiOverTwo;
     return Rectangle(-longitudeValue, -latitudeValue, longitudeValue, latitudeValue);
 }
 
