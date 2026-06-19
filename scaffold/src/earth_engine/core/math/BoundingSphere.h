@@ -2,6 +2,10 @@
 
 #include "Vec3.h"
 #include "Plane.h"
+#include "Mat4.h"
+
+#include <algorithm>
+#include <glm/geometric.hpp>
 
 namespace earth_engine {
 
@@ -39,6 +43,17 @@ public:
     /// Computes whether the given position is contained within the sphere.
     bool contains(const Vec3& position) const noexcept {
         return (position - center_).lengthSquared() <= radius_ * radius_;
+    }
+
+    /// Transforms this bounding sphere. For non-uniform scale, the radius uses
+    /// the largest transformed axis length, matching cesium-native.
+    BoundingSphere transform(const Mat4& transformation) const noexcept {
+        const glm::dmat4& m = transformation.raw();
+        const double scale = std::max({
+            glm::length(glm::dvec3(m[0])),
+            glm::length(glm::dvec3(m[1])),
+            glm::length(glm::dvec3(m[2]))});
+        return BoundingSphere(transformation * center_, radius_ * scale);
     }
 
 private:
