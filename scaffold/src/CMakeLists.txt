@@ -156,6 +156,15 @@ target_sources(earth_engine_core PRIVATE
 )
 
 # ============================================================
+# sdk
+# ============================================================
+target_sources(earth_engine_core PRIVATE
+    earth_engine/sdk/EarthSceneConfig.h
+    earth_engine/sdk/EarthEngineSdkFacade.h
+    earth_engine/sdk/EarthEngineSdkFacade.cpp
+)
+
+# ============================================================
 # tiling
 # ============================================================
 target_sources(earth_engine_core PRIVATE

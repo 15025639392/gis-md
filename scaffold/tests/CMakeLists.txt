@@ -94,6 +94,12 @@ add_executable(test_camera_controller
 target_link_libraries(test_camera_controller PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_camera_controller COMMAND test_camera_controller)
 
+add_executable(test_earth_scene_config
+    unit/sdk/test_earth_scene_config.cpp
+)
+target_link_libraries(test_earth_scene_config PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_earth_scene_config COMMAND test_earth_scene_config)
+
 add_executable(test_tile_surface
     unit/tiling/test_tile_surface.cpp
 )
