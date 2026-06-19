@@ -40,6 +40,9 @@ void resetResourceBudgetDiagnostics(Diagnostics& diag) {
     diag.budgetTerrainContentNetworkRequestsLimit = 0;
     diag.budgetRasterNetworkRequestsIssued = 0;
     diag.budgetRasterNetworkRequestsLimit = 0;
+    diag.budgetNetworkInflightLimit = 0;
+    diag.budgetTerrainContentNetworkInflightLimit = 0;
+    diag.budgetRasterNetworkInflightLimit = 0;
     diag.budgetMainThreadFinalizesUsed = 0;
     diag.budgetMainThreadFinalizesLimit = 0;
     diag.budgetTerminalStateTransitionsUsed = 0;
@@ -65,6 +68,11 @@ void applyResourceBudgetSnapshot(
         budget.rasterNetworkRequestsIssued;
     diag.budgetRasterNetworkRequestsLimit +=
         budget.rasterNetworkRequestsLimit;
+    diag.budgetNetworkInflightLimit += budget.networkInflightLimit;
+    diag.budgetTerrainContentNetworkInflightLimit +=
+        budget.terrainContentNetworkInflightLimit;
+    diag.budgetRasterNetworkInflightLimit +=
+        budget.rasterNetworkInflightLimit;
     diag.budgetMainThreadFinalizesUsed += budget.mainThreadFinalizesUsed;
     diag.budgetMainThreadFinalizesLimit += budget.mainThreadFinalizesLimit;
     diag.budgetTerminalStateTransitionsUsed +=
@@ -168,6 +176,11 @@ SceneFrameResourceBudgetDiagnosticsSnapshot::fromBudget(
         toDiagnosticInt(budget.rasterNetworkRequestsIssued);
     snapshot.rasterNetworkRequestsLimit =
         toDiagnosticInt(budget.maxRasterNetworkRequestsPerFrame);
+    snapshot.networkInflightLimit = toDiagnosticInt(budget.maxNetworkInflight);
+    snapshot.terrainContentNetworkInflightLimit =
+        toDiagnosticInt(budget.maxTerrainContentNetworkInflight);
+    snapshot.rasterNetworkInflightLimit =
+        toDiagnosticInt(budget.maxRasterNetworkInflight);
     snapshot.mainThreadFinalizesUsed =
         toDiagnosticInt(budget.mainThreadFinalizesUsed);
     snapshot.mainThreadFinalizesLimit =
@@ -196,6 +209,10 @@ void SceneFrameResourceBudgetDiagnosticsSnapshot::add(
         next.terrainContentNetworkRequestsLimit;
     rasterNetworkRequestsIssued += next.rasterNetworkRequestsIssued;
     rasterNetworkRequestsLimit += next.rasterNetworkRequestsLimit;
+    networkInflightLimit += next.networkInflightLimit;
+    terrainContentNetworkInflightLimit +=
+        next.terrainContentNetworkInflightLimit;
+    rasterNetworkInflightLimit += next.rasterNetworkInflightLimit;
     mainThreadFinalizesUsed += next.mainThreadFinalizesUsed;
     mainThreadFinalizesLimit += next.mainThreadFinalizesLimit;
     terminalStateTransitionsUsed += next.terminalStateTransitionsUsed;

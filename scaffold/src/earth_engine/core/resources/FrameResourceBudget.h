@@ -51,6 +51,9 @@ struct FrameResourceBudgetSnapshot {
     uint32_t maxNetworkRequestsPerFrame = 0;
     uint32_t maxTerrainContentNetworkRequestsPerFrame = 0;
     uint32_t maxRasterNetworkRequestsPerFrame = 0;
+    uint32_t maxNetworkInflight = 0;
+    uint32_t maxTerrainContentNetworkInflight = 0;
+    uint32_t maxRasterNetworkInflight = 0;
     uint32_t maxMainThreadFinalizesPerFrame = 0;
     uint32_t maxTerminalStateTransitionsPerFrame = 0;
     uint32_t maxRasterUploadsPerFrame = 0;

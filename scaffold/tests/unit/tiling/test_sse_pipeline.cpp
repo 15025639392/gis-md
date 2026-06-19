@@ -15060,6 +15060,9 @@ void testSceneFrameResourceBudgetDiagnosticsSnapshotAggregatesBudgetLanes() {
     firstConfig.maxNetworkRequestsPerFrame = 20;
     firstConfig.maxTerrainContentNetworkRequestsPerFrame = 20;
     firstConfig.maxRasterNetworkRequestsPerFrame = 32;
+    firstConfig.maxNetworkInflight = 10;
+    firstConfig.maxTerrainContentNetworkInflight = 10;
+    firstConfig.maxRasterNetworkInflight = 16;
     firstConfig.maxMainThreadFinalizesPerFrame = 3;
     firstConfig.maxTerminalStateTransitionsPerFrame = 8;
     firstConfig.maxRasterUploadsPerFrame = 4;
@@ -15088,6 +15091,9 @@ void testSceneFrameResourceBudgetDiagnosticsSnapshotAggregatesBudgetLanes() {
     secondConfig.maxNetworkRequestsPerFrame = 6;
     secondConfig.maxTerrainContentNetworkRequestsPerFrame = 6;
     secondConfig.maxRasterNetworkRequestsPerFrame = 12;
+    secondConfig.maxNetworkInflight = 4;
+    secondConfig.maxTerrainContentNetworkInflight = 4;
+    secondConfig.maxRasterNetworkInflight = 7;
     secondConfig.maxMainThreadFinalizesPerFrame = 2;
     secondConfig.maxTerminalStateTransitionsPerFrame = 3;
     secondConfig.maxRasterUploadsPerFrame = 2;
@@ -15122,6 +15128,10 @@ void testSceneFrameResourceBudgetDiagnosticsSnapshotAggregatesBudgetLanes() {
               snapshot.rasterNetworkRequestsIssued == 7 &&
               snapshot.rasterNetworkRequestsLimit == 44,
           "SceneFrameResourceBudgetDiagnosticsSnapshot: separates terrain/content and raster network budget lanes");
+    check(snapshot.networkInflightLimit == 14 &&
+              snapshot.terrainContentNetworkInflightLimit == 14 &&
+              snapshot.rasterNetworkInflightLimit == 23,
+          "SceneFrameResourceBudgetDiagnosticsSnapshot: separates issue and inflight network budget lanes");
     check(snapshot.mainThreadFinalizesUsed == 1 &&
               snapshot.mainThreadFinalizesLimit == 5 &&
               snapshot.terminalStateTransitionsUsed == 1 &&

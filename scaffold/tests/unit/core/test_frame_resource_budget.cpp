@@ -40,6 +40,9 @@ TEST(FrameResourceBudgetTest, DefaultNetworkLimitAppliesPerLaneNotGlobally) {
     EXPECT_EQ(2u, snapshot.maxNetworkRequestsPerFrame);
     EXPECT_EQ(2u, snapshot.maxTerrainContentNetworkRequestsPerFrame);
     EXPECT_EQ(2u, snapshot.maxRasterNetworkRequestsPerFrame);
+    EXPECT_EQ(2u, snapshot.maxNetworkInflight);
+    EXPECT_EQ(2u, snapshot.maxTerrainContentNetworkInflight);
+    EXPECT_EQ(2u, snapshot.maxRasterNetworkInflight);
 }
 
 TEST(FrameResourceBudgetTest, LaneSpecificLimitsOverrideDefaultNetworkLimit) {
@@ -80,4 +83,12 @@ TEST(FrameResourceBudgetTest, LaneSpecificLimitsOverrideDefaultNetworkLimit) {
         FrameResourceLane::RasterRequest,
         1,
         3));
+
+    const FrameResourceBudgetSnapshot snapshot = budget.snapshot();
+    EXPECT_EQ(2u, snapshot.maxNetworkRequestsPerFrame);
+    EXPECT_EQ(1u, snapshot.maxTerrainContentNetworkRequestsPerFrame);
+    EXPECT_EQ(3u, snapshot.maxRasterNetworkRequestsPerFrame);
+    EXPECT_EQ(2u, snapshot.maxNetworkInflight);
+    EXPECT_EQ(1u, snapshot.maxTerrainContentNetworkInflight);
+    EXPECT_EQ(3u, snapshot.maxRasterNetworkInflight);
 }

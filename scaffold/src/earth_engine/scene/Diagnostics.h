@@ -37,6 +37,9 @@ struct Diagnostics {
     int budgetTerrainContentNetworkRequestsLimit = 0;
     int budgetRasterNetworkRequestsIssued = 0;
     int budgetRasterNetworkRequestsLimit = 0;
+    int budgetNetworkInflightLimit = 0;
+    int budgetTerrainContentNetworkInflightLimit = 0;
+    int budgetRasterNetworkInflightLimit = 0;
     int budgetMainThreadFinalizesUsed = 0;
     int budgetMainThreadFinalizesLimit = 0;
     int budgetTerminalStateTransitionsUsed = 0;

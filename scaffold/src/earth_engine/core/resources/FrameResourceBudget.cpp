@@ -159,6 +159,11 @@ FrameResourceBudgetSnapshot FrameResourceBudget::snapshot() const {
         networkRequestLimit(FrameResourceLane::TerrainRequest);
     snapshot.maxRasterNetworkRequestsPerFrame =
         networkRequestLimit(FrameResourceLane::RasterRequest);
+    snapshot.maxNetworkInflight = config_.maxNetworkInflight;
+    snapshot.maxTerrainContentNetworkInflight =
+        networkInflightLimit(FrameResourceLane::TerrainRequest);
+    snapshot.maxRasterNetworkInflight =
+        networkInflightLimit(FrameResourceLane::RasterRequest);
     snapshot.maxMainThreadFinalizesPerFrame =
         config_.maxMainThreadFinalizesPerFrame;
     snapshot.maxTerminalStateTransitionsPerFrame =
