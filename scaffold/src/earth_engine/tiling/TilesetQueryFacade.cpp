@@ -1,6 +1,5 @@
 #include "TilesetQueryFacade.h"
 
-#include "LoadedTerrainHeightSampler.h"
 #include "TileContentCacheManager.h"
 #include "TileContentLifecycleManager.h"
 #include "TileLoadQueue.h"
@@ -36,16 +35,6 @@ TilesetLoadDiagnostics TilesetQueryFacade::loadDiagnostics(
         tileset.rasterOverlays_)
         .applyTo(diagnostics);
     return diagnostics;
-}
-
-float TilesetQueryFacade::sampleHeight(const Tileset& tileset,
-                                       double lngRad,
-                                       double latRad) {
-    return LoadedTerrainHeightSampler::sampleHeight(
-        tileset.tileRegistry_.tiles(),
-        tileset.contentLifecycle_.terrainCache(),
-        lngRad,
-        latRad);
 }
 
 } // namespace earth_engine

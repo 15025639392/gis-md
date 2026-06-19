@@ -3,6 +3,7 @@
 #include "../scene/Camera.h"
 #include "../renderer/Renderer.h"
 #include "../renderer/RenderDevice.h"
+#include "../tiling/LoadedTerrainHeightSampler.h"
 #include "../tiling/TileFrameResourceBudgetPlanner.h"
 #include "../tiling/TileOcclusionResolver.h"
 #include "../tiling/TileRenderFrameContext.h"
@@ -185,7 +186,11 @@ TileOcclusionState Tileset::checkOcclusion(const TilesetTile& tile) const {
 }
 
 float Tileset::sampleHeight(double lngRad, double latRad) const {
-    return TilesetQueryFacade::sampleHeight(*this, lngRad, latRad);
+    return LoadedTerrainHeightSampler::sampleHeight(
+        tileRegistry_.tiles(),
+        contentLifecycle_.terrainCache(),
+        lngRad,
+        latRad);
 }
 
 void Tileset::update(const FrameState& frameState) {
