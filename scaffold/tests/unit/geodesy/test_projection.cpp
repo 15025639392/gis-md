@@ -138,6 +138,24 @@ TEST(WebMercatorProjectionTest, ProjectAndUnprojectPreserveHeight) {
     EXPECT_DOUBLE_EQ(input.height(), roundtrip.height());
 }
 
+TEST(WebMercatorProjectionTest, ProjectClampsLatitudeToMaximumLikeCesiumNative) {
+    const WebMercatorProjection projection(Ellipsoid::WGS84());
+
+    const Vec3 northProjected =
+        projection.project(Cartographic::fromRadians(0.0, M_PI / 2.0, 7.0));
+    const Vec3 southProjected =
+        projection.project(Cartographic::fromRadians(0.0, -M_PI / 2.0, 8.0));
+
+    EXPECT_NEAR(M_PI * Ellipsoid::WGS84().maximumRadius(),
+                northProjected.y(),
+                1e-7);
+    EXPECT_DOUBLE_EQ(7.0, northProjected.z());
+    EXPECT_NEAR(-M_PI * Ellipsoid::WGS84().maximumRadius(),
+                southProjected.y(),
+                1e-7);
+    EXPECT_DOUBLE_EQ(8.0, southProjected.z());
+}
+
 TEST(WebMercatorProjectionTest, ProjectAndUnprojectRectangleMatchesCesiumNative) {
     const WebMercatorProjection projection(Ellipsoid::WGS84());
     const Rectangle globeRectangle =
