@@ -103,3 +103,69 @@ TEST(IntersectionTestsTest, RayEllipsoidMatchesCesiumNativeCases) {
         }
     }
 }
+
+TEST(IntersectionTestsTest, RayTriangleMatchesCesiumNativeCases) {
+    // Ported from cesium-native CesiumGeometry/test/TestIntersectionTests.cpp.
+    const Vec3 v0(-1.0, 0.0, 0.0);
+    const Vec3 v1(1.0, 0.0, 0.0);
+    const Vec3 v2(0.0, 1.0, 0.0);
+
+    struct Case {
+        Ray ray;
+        bool cullBackFaces;
+        std::optional<Vec3> expected;
+    };
+
+    const Case cases[] = {
+        {Ray(Vec3(0.0, 0.0, 1.0), Vec3(0.0, 0.0, -1.0)),
+         false,
+         Vec3(0.0, 0.0, 0.0)},
+        {Ray(Vec3(0.0, 0.0, -1.0), Vec3(0.0, 0.0, 1.0)),
+         false,
+         Vec3(0.0, 0.0, 0.0)},
+        {Ray(Vec3(0.0, 0.0, -1.0), Vec3(0.0, 0.0, 1.0)),
+         true,
+         std::nullopt},
+        {Ray(Vec3(0.0, -1.0, 1.0), Vec3(0.0, 0.0, -1.0)),
+         false,
+         std::nullopt},
+        {Ray(Vec3(1.0, 1.0, 10.0), Vec3(0.0, 0.0, -1.0)),
+         false,
+         std::nullopt},
+        {Ray(Vec3(2.0, 0.0, 0.0), Vec3(0.0, 1.0, 0.0)),
+         false,
+         std::nullopt},
+        {Ray(Vec3(-1.0, 1.0, 1.0), Vec3(0.0, 0.0, -1.0)),
+         false,
+         std::nullopt},
+        {Ray(Vec3(-1.0, 0.0, 1.0), Vec3(1.0, 0.0, 0.0)),
+         false,
+         std::nullopt},
+        {Ray(Vec3(0.0, 0.0, 1.0), Vec3(0.0, 0.0, 1.0)),
+         false,
+         std::nullopt}
+    };
+
+    for (const Case& testCase : cases) {
+        EXPECT_EQ(testCase.expected,
+                  IntersectionTests::rayTriangle(testCase.ray,
+                                                 v0,
+                                                 v1,
+                                                 v2,
+                                                 testCase.cullBackFaces));
+    }
+}
+
+TEST(IntersectionTestsTest, RayTriangleParametricReturnsDistanceAlongRay) {
+    const Ray ray(Vec3(0.25, 0.25, 2.0), Vec3(0.0, 0.0, -1.0));
+
+    const auto t = IntersectionTests::rayTriangleParametric(
+        ray,
+        Vec3(-1.0, 0.0, 0.0),
+        Vec3(1.0, 0.0, 0.0),
+        Vec3(0.0, 1.0, 0.0),
+        false);
+
+    ASSERT_TRUE(t.has_value());
+    EXPECT_DOUBLE_EQ(2.0, *t);
+}

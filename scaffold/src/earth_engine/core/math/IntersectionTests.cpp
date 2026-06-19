@@ -83,4 +83,71 @@ IntersectionTests::rayEllipsoid(const Ray& ray, const Vec3& radii) noexcept {
     return std::nullopt;
 }
 
+std::optional<Vec3> IntersectionTests::rayTriangle(const Ray& ray,
+                                                   const Vec3& v0,
+                                                   const Vec3& v1,
+                                                   const Vec3& v2,
+                                                   bool cullBackFaces) {
+    const std::optional<double> t =
+        rayTriangleParametric(ray, v0, v1, v2, cullBackFaces);
+    if (t && *t >= 0.0) {
+        return ray.pointAt(*t);
+    }
+    return std::nullopt;
+}
+
+std::optional<double> IntersectionTests::rayTriangleParametric(const Ray& ray,
+                                                               const Vec3& p0,
+                                                               const Vec3& p1,
+                                                               const Vec3& p2,
+                                                               bool cullBackFaces) {
+    constexpr double epsilon8 = 1e-8;
+    const Vec3& origin = ray.origin();
+    const Vec3& direction = ray.direction();
+
+    const Vec3 edge0 = p1 - p0;
+    const Vec3 edge1 = p2 - p0;
+
+    const Vec3 p = direction.cross(edge1);
+    const double det = edge0.dot(p);
+    if (cullBackFaces) {
+        if (det < epsilon8) {
+            return std::nullopt;
+        }
+
+        const Vec3 tvec = origin - p0;
+        const double u = tvec.dot(p);
+        if (u < 0.0 || u > det) {
+            return std::nullopt;
+        }
+
+        const Vec3 q = tvec.cross(edge0);
+        const double v = direction.dot(q);
+        if (v < 0.0 || u + v > det) {
+            return std::nullopt;
+        }
+
+        return edge1.dot(q) / det;
+    }
+
+    if (std::abs(det) < epsilon8) {
+        return std::nullopt;
+    }
+
+    const double invDet = 1.0 / det;
+    const Vec3 tvec = origin - p0;
+    const double u = tvec.dot(p) * invDet;
+    if (u < 0.0 || u > 1.0) {
+        return std::nullopt;
+    }
+
+    const Vec3 q = tvec.cross(edge0);
+    const double v = direction.dot(q) * invDet;
+    if (v < 0.0 || u + v > 1.0) {
+        return std::nullopt;
+    }
+
+    return edge1.dot(q) * invDet;
+}
+
 } // namespace earth_engine
