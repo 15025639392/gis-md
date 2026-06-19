@@ -43,7 +43,6 @@ class ActivatedRasterOverlay;
 struct TilesetTestAccess;
 class TilesetRenderFrameFacade;
 class TilesetSelectionFrameFacade;
-class TilesetContentLifecycleFacade;
 class TilesetOcclusionFacade;
 class TilesetQueryFacade;
 class TilesetUpdateFrameFacade;
@@ -129,7 +128,6 @@ public:
 
 private:
     friend struct TilesetTestAccess;
-    friend class TilesetContentLifecycleFacade;
     friend class TilesetOcclusionFacade;
     friend class TilesetQueryFacade;
     friend class TilesetRenderFrameFacade;
@@ -137,6 +135,14 @@ private:
     friend class TilesetUpdateFrameFacade;
 
     TileContentRuntimeFrame makeContentRuntimeFrame() const;
+    TileLoadRequestOutcome requestMissingContent(
+        const std::vector<TileLoadRequest>& loadRequests,
+        FrameResourceBudget* budget = nullptr);
+    bool processPendingContentUploads(
+        bool interactionActive,
+        bool resourceSmoothingActive,
+        FrameResourceBudget* budget = nullptr);
+    void markContentResourcesDirty();
 
     std::unique_ptr<TerrainProvider> terrainProvider_;
     std::unique_ptr<TilesetContentProvider> contentProvider_;

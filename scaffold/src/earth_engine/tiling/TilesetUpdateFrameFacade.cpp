@@ -7,7 +7,6 @@
 #include "../scene/Camera.h"
 #include "TileFrameWorkCoordinator.h"
 #include "Tileset.h"
-#include "TilesetContentLifecycleFacade.h"
 #include "TilesetQueryFacade.h"
 #include "TilesetSelectionFrameFacade.h"
 
@@ -62,14 +61,13 @@ void TilesetUpdateFrameFacade::update(
             [&tileset](bool uploadInteractionActive,
                        bool uploadResourceSmoothingActive,
                        FrameResourceBudget* budget) {
-                return TilesetContentLifecycleFacade::processPendingUploads(
-                    tileset,
+                return tileset.processPendingContentUploads(
                     uploadInteractionActive,
                     uploadResourceSmoothingActive,
                     budget);
             },
             [&tileset]() {
-                TilesetContentLifecycleFacade::markTileResourcesDirty(tileset);
+                tileset.markContentResourcesDirty();
             },
             [&tileset]() {
                 return tileset.contentLifecycle_.hasPendingWork();
@@ -88,8 +86,7 @@ void TilesetUpdateFrameFacade::update(
             },
             [&tileset](const std::vector<TileLoadRequest>& requests,
                        FrameResourceBudget* budget) {
-                return TilesetContentLifecycleFacade::requestMissingTiles(
-                    tileset,
+                return tileset.requestMissingContent(
                     requests,
                     budget);
             });

@@ -33,7 +33,6 @@
 #include "earth_engine/tiling/TileContentUploadCommitter.h"
 #include "earth_engine/tiling/TileContentUploadPolicy.h"
 #include "earth_engine/tiling/TileEmptyContentRegistry.h"
-#include "earth_engine/tiling/TilesetContentLifecycleFacade.h"
 #include "earth_engine/tiling/TilesetOcclusionFacade.h"
 #include "earth_engine/tiling/TileFrameResourceBudgetPlanner.h"
 #include "earth_engine/tiling/TileFrameState.h"
@@ -199,7 +198,7 @@ struct TilesetTestAccess {
     }
 
     static void requestMissingTile(Tileset& tileset, const TileKey& key) {
-        TilesetContentLifecycleFacade::requestMissingTiles(tileset, {
+        tileset.requestMissingContent({
             TileLoadRequest{
                 key,
                 TileLoadPriorityGroup::Normal}});
@@ -209,7 +208,7 @@ struct TilesetTestAccess {
         Tileset& tileset,
         const TileKey& key,
         FrameResourceBudget& budget) {
-        return TilesetContentLifecycleFacade::requestMissingTiles(tileset, {
+        return tileset.requestMissingContent({
             TileLoadRequest{
                 key,
                 TileLoadPriorityGroup::Normal,
@@ -223,7 +222,7 @@ struct TilesetTestAccess {
         double firstPriority,
         const TileKey& secondKey,
         double secondPriority) {
-        TilesetContentLifecycleFacade::requestMissingTiles(tileset, {
+        tileset.requestMissingContent({
             TileLoadRequest{
                 firstKey,
                 TileLoadPriorityGroup::Normal,
@@ -239,7 +238,7 @@ struct TilesetTestAccess {
         FrameResourceBudget& budget,
         const TileKey& firstKey,
         const TileKey& secondKey) {
-        TilesetContentLifecycleFacade::requestMissingTiles(tileset, {
+        tileset.requestMissingContent({
             TileLoadRequest{
                 firstKey,
                 TileLoadPriorityGroup::Normal,
@@ -252,22 +251,21 @@ struct TilesetTestAccess {
     }
 
     static void requestMissingPreload(Tileset& tileset, const TileKey& key) {
-        TilesetContentLifecycleFacade::requestMissingTiles(tileset, {
+        tileset.requestMissingContent({
             TileLoadRequest{
                 key,
                 TileLoadPriorityGroup::Preload}});
     }
 
     static void requestMissingUrgent(Tileset& tileset, const TileKey& key) {
-        TilesetContentLifecycleFacade::requestMissingTiles(tileset, {
+        tileset.requestMissingContent({
             TileLoadRequest{
                 key,
                 TileLoadPriorityGroup::Urgent}});
     }
 
     static void processPendingUploads(Tileset& tileset) {
-        TilesetContentLifecycleFacade::processPendingUploads(
-            tileset,
+        tileset.processPendingContentUploads(
             false,
             false);
     }
@@ -275,8 +273,7 @@ struct TilesetTestAccess {
     static void processPendingUploadsWithBudget(
         Tileset& tileset,
         FrameResourceBudget& budget) {
-        TilesetContentLifecycleFacade::processPendingUploads(
-            tileset,
+        tileset.processPendingContentUploads(
             false,
             false,
             &budget);
@@ -453,7 +450,7 @@ struct TilesetTestAccess {
     }
 
     static void markTileResourcesDirty(Tileset& tileset) {
-        TilesetContentLifecycleFacade::markTileResourcesDirty(tileset);
+        tileset.markContentResourcesDirty();
     }
 
     static const Vec3& localOrigin(const TilesetTile& tile) {

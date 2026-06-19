@@ -142,6 +142,30 @@ TileContentRuntimeFrame Tileset::makeContentRuntimeFrame() const {
         static_cast<uint32_t>(kSmoothedMainThreadUploadLimit)};
 }
 
+TileLoadRequestOutcome Tileset::requestMissingContent(
+    const std::vector<TileLoadRequest>& loadRequests,
+    FrameResourceBudget* budget) {
+    return contentRuntime_.requestMissingTiles(
+        loadRequests,
+        makeContentRuntimeFrame(),
+        budget);
+}
+
+bool Tileset::processPendingContentUploads(
+    bool interactionActive,
+    bool resourceSmoothingActive,
+    FrameResourceBudget* budget) {
+    return contentRuntime_.processPendingUploads(
+        makeContentRuntimeFrame(),
+        interactionActive,
+        resourceSmoothingActive,
+        budget);
+}
+
+void Tileset::markContentResourcesDirty() {
+    contentRuntime_.markResourcesDirty();
+}
+
 float Tileset::sampleHeight(double lngRad, double latRad) const {
     return TilesetQueryFacade::sampleHeight(*this, lngRad, latRad);
 }

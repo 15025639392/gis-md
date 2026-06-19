@@ -227,8 +227,6 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileContentResourceInvalidator.cpp
     earth_engine/tiling/TileContentRuntime.h
     earth_engine/tiling/TileContentRuntime.cpp
-    earth_engine/tiling/TilesetContentLifecycleFacade.h
-    earth_engine/tiling/TilesetContentLifecycleFacade.cpp
     earth_engine/tiling/TileCacheOwnershipManager.h
     earth_engine/tiling/TileCacheOwnershipManager.cpp
     earth_engine/tiling/TileContentAccess.h
