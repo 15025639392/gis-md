@@ -115,6 +115,25 @@ TEST(SimplePlanarEllipsoidCurveTest, HandlesNegativeHeightPathWithoutFlippingEar
     EXPECT_NEAR(expectedDistance, actualDistance, 1e-3);
 }
 
+TEST(SimplePlanarEllipsoidCurveTest, ReversePathHasSameMidpoint) {
+    const std::optional<SimplePlanarEllipsoidCurve> forwardCurve =
+        SimplePlanarEllipsoidCurve::fromEarthCenteredEarthFixedCoordinates(
+            Ellipsoid::WGS84(),
+            kPhiladelphiaEcef,
+            kTokyoEcef);
+    const std::optional<SimplePlanarEllipsoidCurve> reverseCurve =
+        SimplePlanarEllipsoidCurve::fromEarthCenteredEarthFixedCoordinates(
+            Ellipsoid::WGS84(),
+            kTokyoEcef,
+            kPhiladelphiaEcef);
+
+    ASSERT_TRUE(forwardCurve.has_value());
+    ASSERT_TRUE(reverseCurve.has_value());
+    expectVec3Near(forwardCurve->getPosition(0.5),
+                   reverseCurve->getPosition(0.5),
+                   1e-6);
+}
+
 TEST(SimplePlanarEllipsoidCurveTest, LlhConstructorMatchesEquivalentEcefCurve) {
     const std::optional<SimplePlanarEllipsoidCurve> llhCurve =
         SimplePlanarEllipsoidCurve::fromLongitudeLatitudeHeight(
