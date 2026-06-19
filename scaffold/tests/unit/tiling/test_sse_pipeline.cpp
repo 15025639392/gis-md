@@ -528,6 +528,10 @@ struct TilesetTestAccess {
         return tileset.tilePlan_;
     }
 
+    static TilePlan& mutableTilePlan(Tileset& tileset) {
+        return tileset.tilePlan_;
+    }
+
     static void updateLodTransitions(Tileset& tileset,
                                      double deltaSeconds) {
         TileLodTransitionFrameUpdater::update(
@@ -14277,7 +14281,7 @@ void testTileFrameDebugLogFormatterReportsReuseMode() {
     input.reuseRejectReason =
         TileSelectionReuseRejectReason::SelectorMovedStaleDisabled;
 
-    const std::array<char, 512> detail =
+    const std::array<char, 640> detail =
         TileFrameDebugLogFormatter::updateDetail(input);
     const std::string text(detail.data());
 
@@ -14294,10 +14298,16 @@ void testTileFrameDebugLogFormatterReportsRenderEntryPassCounts() {
     input.commandCount = 3;
     input.selectedRenderStats.plannedEntries = 2;
     input.selectedRenderStats.drawAttempts = 1;
+    input.selectedRenderStats.missedDrawEntries = 4;
+    input.selectedRenderStats.deferredEntries = 6;
     input.fadingRenderStats.plannedEntries = 3;
     input.fadingRenderStats.drawAttempts = 2;
+    input.fadingRenderStats.missedDrawEntries = 5;
+    input.fadingRenderStats.deferredEntries = 7;
+    input.renderStats.missedDrawEntries = 9;
+    input.renderStats.deferredEntries = 13;
 
-    const std::array<char, 512> detail =
+    const std::array<char, 640> detail =
         TileFrameDebugLogFormatter::renderBuildDetail(input);
     const std::string text(detail.data());
 
@@ -14306,7 +14316,13 @@ void testTileFrameDebugLogFormatterReportsRenderEntryPassCounts() {
               text.find("fadeEntries=3") != std::string::npos &&
               text.find("cmds=3") != std::string::npos &&
               text.find("selectedCmds=1") != std::string::npos &&
-              text.find("fadeCmds=2") != std::string::npos,
+              text.find("fadeCmds=2") != std::string::npos &&
+              text.find("missed=9") != std::string::npos &&
+              text.find("selectedMissed=4") != std::string::npos &&
+              text.find("fadeMissed=5") != std::string::npos &&
+              text.find("deferred=13") != std::string::npos &&
+              text.find("selectedDeferred=6") != std::string::npos &&
+              text.find("fadeDeferred=7") != std::string::npos,
           "TileFrameDebugLogFormatter: render detail reports render entry pass counts");
 }
 
@@ -19190,14 +19206,58 @@ void testPresentationTraceLinksTilePlanToSurfaceCommand() {
               tilesetTrace.renderEntrySelectedCommandDrawCount == 1 &&
               tilesetTrace.renderEntryFadingCommandDrawCount == 0 &&
               tilesetTrace.renderEntryCommandMissedDrawCount == 0 &&
+              tilesetTrace.renderEntrySelectedCommandMissedDrawCount == 0 &&
+              tilesetTrace.renderEntryFadingCommandMissedDrawCount == 0 &&
               tilesetTrace.renderEntryCommandMissingSelectedCount == 0 &&
               tilesetTrace.renderEntryCommandMissingRenderCount == 0 &&
-              tilesetTrace.renderEntryCommandDeferredCount == 0,
+              tilesetTrace.renderEntryCommandDeferredCount == 0 &&
+              tilesetTrace.renderEntrySelectedCommandDeferredCount == 0 &&
+              tilesetTrace.renderEntryFadingCommandDeferredCount == 0,
           "Presentation trace: render-entry strategy and command stats expose the current frame draw funnel");
     check(!trace.commands.empty() &&
               trace.commands.front().stableKey.find(
                   "clip:Geographic-TMS/1/0/0") != std::string::npos,
           "Presentation trace: command stable key preserves clipped child patch identity");
+}
+
+void testPresentationTraceCopiesRenderEntryPassFailures() {
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+    TilePlan& plan = TilesetTestAccess::mutableTilePlan(tileset);
+    plan.renderEntryCommandMissedDrawCount = 5;
+    plan.renderEntrySelectedCommandMissedDrawCount = 2;
+    plan.renderEntryFadingCommandMissedDrawCount = 3;
+    plan.renderEntryCommandDeferredCount = 7;
+    plan.renderEntrySelectedCommandDeferredCount = 4;
+    plan.renderEntryFadingCommandDeferredCount = 3;
+
+    FrameState frameState;
+    frameState.frameId = 3;
+    frameState.camera = nullptr;
+    RenderCommandList commands;
+    PresentationTrace trace =
+        ScenePresentationTraceBuilder::build(
+            ScenePresentationTraceInput{
+                frameState,
+                &tileset,
+                emptyContentTilesets(),
+                commands});
+
+    check(trace.tilesets.size() == 1,
+          "Presentation trace: pass failure copy includes one tileset");
+    if (trace.tilesets.empty()) return;
+    const PresentationTilesetTrace& tilesetTrace = trace.tilesets.front();
+    check(tilesetTrace.renderEntryCommandMissedDrawCount == 5 &&
+              tilesetTrace.renderEntrySelectedCommandMissedDrawCount == 2 &&
+              tilesetTrace.renderEntryFadingCommandMissedDrawCount == 3 &&
+              tilesetTrace.renderEntryCommandDeferredCount == 7 &&
+              tilesetTrace.renderEntrySelectedCommandDeferredCount == 4 &&
+              tilesetTrace.renderEntryFadingCommandDeferredCount == 3,
+          "Presentation trace: render-entry missed and deferred counts preserve selected/fading pass attribution");
 }
 
 void testPresentationTraceExposesFadingRenderEntry() {
@@ -19299,7 +19359,12 @@ void testPresentationTraceExposesFadingRenderEntry() {
               tilesetTrace.renderEntryCommandDrawCount == 1 &&
               tilesetTrace.renderEntrySelectedCommandDrawCount == 0 &&
               tilesetTrace.renderEntryFadingCommandDrawCount == 1 &&
-              tilesetTrace.renderEntryCommandMissedDrawCount == 0,
+              tilesetTrace.renderEntryCommandMissedDrawCount == 0 &&
+              tilesetTrace.renderEntrySelectedCommandMissedDrawCount == 0 &&
+              tilesetTrace.renderEntryFadingCommandMissedDrawCount == 0 &&
+              tilesetTrace.renderEntryCommandDeferredCount == 0 &&
+              tilesetTrace.renderEntrySelectedCommandDeferredCount == 0 &&
+              tilesetTrace.renderEntryFadingCommandDeferredCount == 0,
           "Presentation trace: fading render entry remains visible in the draw funnel");
 }
 
@@ -19394,7 +19459,12 @@ void testPresentationTraceExposesAdditiveSelectedRenderEntries() {
               tilesetTrace.renderEntrySelectedCommandDrawCount == 2 &&
               tilesetTrace.renderEntryFadingCommandDrawCount == 0 &&
               tilesetTrace.renderEntryAncestorFallbackCount == 0 &&
-              tilesetTrace.renderEntryCommandMissedDrawCount == 0,
+              tilesetTrace.renderEntryCommandMissedDrawCount == 0 &&
+              tilesetTrace.renderEntrySelectedCommandMissedDrawCount == 0 &&
+              tilesetTrace.renderEntryFadingCommandMissedDrawCount == 0 &&
+              tilesetTrace.renderEntryCommandDeferredCount == 0 &&
+              tilesetTrace.renderEntrySelectedCommandDeferredCount == 0 &&
+              tilesetTrace.renderEntryFadingCommandDeferredCount == 0,
           "Presentation trace: ADD selected render entries remain separate through the draw funnel");
 }
 
@@ -20351,6 +20421,7 @@ int main() {
     testTileRenderPlanFrameRefresherRequiresDrawableBaseRaster();
     testPresentationTraceRecordsDeterministicCameraState();
     testPresentationTraceLinksTilePlanToSurfaceCommand();
+    testPresentationTraceCopiesRenderEntryPassFailures();
     testPresentationTraceExposesFadingRenderEntry();
     testPresentationTraceExposesAdditiveSelectedRenderEntries();
     testClippedFallbackCommandsHaveSelectedChildStableKeys();

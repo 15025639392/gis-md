@@ -73,9 +73,13 @@ public:
         input.tilePlan.renderEntrySelectedCommandDrawCount = 0;
         input.tilePlan.renderEntryFadingCommandDrawCount = 0;
         input.tilePlan.renderEntryCommandMissedDrawCount = 0;
+        input.tilePlan.renderEntrySelectedCommandMissedDrawCount = 0;
+        input.tilePlan.renderEntryFadingCommandMissedDrawCount = 0;
         input.tilePlan.renderEntryCommandMissingSelectedCount = 0;
         input.tilePlan.renderEntryCommandMissingRenderCount = 0;
         input.tilePlan.renderEntryCommandDeferredCount = 0;
+        input.tilePlan.renderEntrySelectedCommandDeferredCount = 0;
+        input.tilePlan.renderEntryFadingCommandDeferredCount = 0;
 
         // Raster providers stamp getTile() calls with the current frame.
         for (auto* overlay : input.rasterOverlays) {
@@ -154,12 +158,20 @@ public:
             fadingStats.drawAttempts;
         input.tilePlan.renderEntryCommandMissedDrawCount =
             renderStats.missedDrawEntries;
+        input.tilePlan.renderEntrySelectedCommandMissedDrawCount =
+            selectedStats.missedDrawEntries;
+        input.tilePlan.renderEntryFadingCommandMissedDrawCount =
+            fadingStats.missedDrawEntries;
         input.tilePlan.renderEntryCommandMissingSelectedCount =
             renderStats.missingSelectedTiles;
         input.tilePlan.renderEntryCommandMissingRenderCount =
             renderStats.missingRenderTiles;
         input.tilePlan.renderEntryCommandDeferredCount =
             renderStats.deferredEntries;
+        input.tilePlan.renderEntrySelectedCommandDeferredCount =
+            selectedStats.deferredEntries;
+        input.tilePlan.renderEntryFadingCommandDeferredCount =
+            fadingStats.deferredEntries;
 
         const bool hasQueuedUnloadingTile =
             TileUnloadPolicy::hasQueuedTileInState(
@@ -180,7 +192,7 @@ public:
                 updateTotalBytes,
                 unloadCachedBytes);
 
-        const std::array<char, 512> buildBreakdown =
+        const std::array<char, 640> buildBreakdown =
             TileFrameDebugLogFormatter::renderBuildDetail(
                 TileRenderDebugLogInput{
                     selectedBuildMs,

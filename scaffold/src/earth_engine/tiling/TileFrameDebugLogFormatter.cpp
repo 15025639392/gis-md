@@ -4,9 +4,9 @@
 
 namespace earth_engine {
 
-std::array<char, 512> TileFrameDebugLogFormatter::updateDetail(
+std::array<char, 640> TileFrameDebugLogFormatter::updateDetail(
     const TileUpdateDebugLogInput& input) {
-    std::array<char, 512> detail{};
+    std::array<char, 640> detail{};
     std::snprintf(
         detail.data(),
         detail.size(),
@@ -37,13 +37,13 @@ std::array<char, 512> TileFrameDebugLogFormatter::updateDetail(
     return detail;
 }
 
-std::array<char, 512> TileFrameDebugLogFormatter::renderBuildDetail(
+std::array<char, 640> TileFrameDebugLogFormatter::renderBuildDetail(
     const TileRenderDebugLogInput& input) {
-    std::array<char, 512> detail{};
+    std::array<char, 640> detail{};
     std::snprintf(
         detail.data(),
         detail.size(),
-        "selected=%.2f fade=%.2f detach=%.2f trim=%.2f eligible=%.2f bytes=%.2f unload=%.2f selectedTiles=%zu fadeTiles=%zu entries=%d selectedEntries=%d fadeEntries=%d ensured=%d cmds=%zu selectedCmds=%d fadeCmds=%d missed=%d missingSelected=%d missingRender=%d deferred=%d interaction=%d smoothing=%d prepSync=%d prepDeferred=%d fallback=%d",
+        "selected=%.2f fade=%.2f detach=%.2f trim=%.2f eligible=%.2f bytes=%.2f unload=%.2f selectedTiles=%zu fadeTiles=%zu entries=%d selectedEntries=%d fadeEntries=%d ensured=%d cmds=%zu selectedCmds=%d fadeCmds=%d missed=%d selectedMissed=%d fadeMissed=%d missingSelected=%d missingRender=%d deferred=%d selectedDeferred=%d fadeDeferred=%d interaction=%d smoothing=%d prepSync=%d prepDeferred=%d fallback=%d",
         input.selectedBuildMs,
         input.fadeBuildMs,
         input.maintenanceTimings.detachInactiveMs,
@@ -61,9 +61,13 @@ std::array<char, 512> TileFrameDebugLogFormatter::renderBuildDetail(
         input.selectedRenderStats.drawAttempts,
         input.fadingRenderStats.drawAttempts,
         input.renderStats.missedDrawEntries,
+        input.selectedRenderStats.missedDrawEntries,
+        input.fadingRenderStats.missedDrawEntries,
         input.renderStats.missingSelectedTiles,
         input.renderStats.missingRenderTiles,
         input.renderStats.deferredEntries,
+        input.selectedRenderStats.deferredEntries,
+        input.fadingRenderStats.deferredEntries,
         input.interactionActive ? 1 : 0,
         input.resourceSmoothingActive ? 1 : 0,
         input.synchronousRenderPrepCount,
