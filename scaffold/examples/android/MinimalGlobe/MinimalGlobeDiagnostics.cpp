@@ -83,6 +83,9 @@ std::string buildPresentationTraceSummary(const PresentationTrace& trace) {
         if (command.surfaceClipEnabled > 0.5f) {
             out << ",clip";
         }
+        if (!command.stableKey.empty()) {
+            out << ",key=" << command.stableKey;
+        }
         out << ")";
         ++surfaceCount;
     }

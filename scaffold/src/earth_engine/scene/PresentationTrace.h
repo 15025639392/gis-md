@@ -59,6 +59,7 @@ struct PresentationTilesetTrace {
 struct PresentationCommandTrace {
     RenderCommandKind kind = RenderCommandKind::Unknown;
     std::string owner;
+    std::string stableKey;
     int surfaceGeometryZoom = -1;
     int surfaceTextureZoom = -1;
     int indexOffset = 0;

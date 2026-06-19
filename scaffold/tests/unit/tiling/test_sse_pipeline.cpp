@@ -20,6 +20,7 @@
 #include "earth_engine/scene/Scene.h"
 #include "earth_engine/scene/SceneFrameDiagnostics.h"
 #include "earth_engine/scene/SceneFrameStateBuilder.h"
+#include "earth_engine/scene/ScenePresentationTraceBuilder.h"
 #include "earth_engine/scene/SceneRenderDiagnostics.h"
 #include "earth_engine/scene/SceneTilesetDiagnostics.h"
 #include "earth_engine/terrain/QuantizedMeshParser.h"
@@ -585,6 +586,11 @@ struct TilesetTestAccess {
 namespace {
 
 int gFailures = 0;
+
+const std::vector<std::unique_ptr<Tileset>>& emptyContentTilesets() {
+    static const std::vector<std::unique_ptr<Tileset>> empty;
+    return empty;
+}
 
 class BlockingHttpRequest final : public HttpRequest {
 public:
@@ -18594,6 +18600,21 @@ void testPresentationTraceLinksTilePlanToSurfaceCommand() {
     if (commands.empty()) return;
     check(plan.renderEntries.front().surfaceClipUv == commands.front().surfaceClipUv,
           "Presentation trace: render-entry clip UV is preserved in the surface command");
+
+    FrameState frameState;
+    frameState.frameId = 1;
+    frameState.camera = nullptr;
+    PresentationTrace trace =
+        ScenePresentationTraceBuilder::build(
+            ScenePresentationTraceInput{
+                frameState,
+                &tileset,
+                emptyContentTilesets(),
+                commands});
+    check(!trace.commands.empty() &&
+              trace.commands.front().stableKey.find(
+                  "clip:Geographic-TMS/1/0/0") != std::string::npos,
+          "Presentation trace: command stable key preserves clipped child patch identity");
 }
 
 void testClippedFallbackCommandsHaveSelectedChildStableKeys() {

@@ -136,6 +136,7 @@ void populateCommandTrace(const RenderCommandList& renderCommands,
         PresentationCommandTrace commandTrace;
         commandTrace.kind = command.kind;
         commandTrace.owner = command.owner;
+        commandTrace.stableKey = command.stableKey;
         commandTrace.surfaceGeometryZoom = command.surfaceGeometryZoom;
         commandTrace.surfaceTextureZoom = command.surfaceTextureZoom;
         commandTrace.indexOffset = command.indexOffset;
