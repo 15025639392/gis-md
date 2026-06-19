@@ -33,12 +33,7 @@ TileKey TilePlanBuilder::parentKey(const TileKey& key) {
             openGlobusGroupBaseY(group, parentTilesAtZoom) + std::max(0, localY / 2)
         };
     }
-    return TileKey{
-        key.schemeId,
-        key.z - 1,
-        std::max(0, key.x / 2),
-        std::max(0, key.y / 2)
-    };
+    return key.parent();
 }
 
 } // namespace earth_engine

@@ -356,7 +356,7 @@ std::string rectangleTileCacheKey(const TileScheme& scheme,
 }
 
 TileKey parentTileKey(const TileKey& key) {
-    return TileKey{key.schemeId, key.z - 1, key.x >> 1, key.y >> 1};
+    return key.parent();
 }
 
 double clampUnit(double v) {

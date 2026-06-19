@@ -100,6 +100,12 @@ add_executable(test_tile_scheme
 target_link_libraries(test_tile_scheme PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_scheme COMMAND test_tile_scheme)
 
+add_executable(test_tile_key
+    unit/tiling/test_tile_key.cpp
+)
+target_link_libraries(test_tile_key PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_key COMMAND test_tile_key)
+
 add_executable(test_camera
     unit/scene/test_camera.cpp
 )

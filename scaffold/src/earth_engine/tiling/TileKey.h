@@ -14,6 +14,10 @@ struct TileKey {
     int x = 0;
     int y = 0;
 
+    TileKey parent() const;
+    int invertedX(int tilesAtLevelX) const;
+    int invertedY(int tilesAtLevelY) const;
+
     bool operator==(const TileKey& rhs) const {
         return schemeId == rhs.schemeId && z == rhs.z && x == rhs.x && y == rhs.y;
     }
