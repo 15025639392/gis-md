@@ -72,9 +72,7 @@ bool Scene::setRenderDevice(RenderDevice* device) {
 }
 
 void Scene::setViewport(int widthPixels, int heightPixels, float dpr) {
-    frameState_.viewportWidthPixels = widthPixels;
-    frameState_.viewportHeightPixels = heightPixels;
-    frameState_.devicePixelRatio = dpr;
+    frameRuntime_.setViewport(widthPixels, heightPixels, dpr);
 
     if (cameraController_) {
         cameraController_->setViewport(widthPixels, heightPixels);
@@ -83,16 +81,16 @@ void Scene::setViewport(int widthPixels, int heightPixels, float dpr) {
 
 void Scene::update(double deltaSeconds) {
     SceneFrameUpdateCoordinator::update(SceneFrameUpdateInput{
-        frameState_,
+        frameRuntime_.frameState(),
         telemetry_->diagnostics(),
         camera_.get(),
         cameraController_.get(),
         *tilesets_,
-        frameId_,
-        elapsedTime_,
+        frameRuntime_.frameId(),
+        frameRuntime_.elapsedTime(),
         deltaSeconds,
-        hasSelectorViewOverride_,
-        &selectorViewOverride_,
+        frameRuntime_.hasSelectorViewOverride(),
+        &frameRuntime_.selectorViewOverride(),
         interaction_->hasInteractionFocus(),
         interaction_->interactionFocusDirection(),
         interaction_->interactionFocusTimeSeconds(),
@@ -102,13 +100,11 @@ void Scene::update(double deltaSeconds) {
 
 void Scene::setSelectorViewOverride(
     std::vector<FrameState::SelectorView> selectorViews) {
-    hasSelectorViewOverride_ = true;
-    selectorViewOverride_ = std::move(selectorViews);
+    frameRuntime_.setSelectorViewOverride(std::move(selectorViews));
 }
 
 void Scene::clearSelectorViewOverride() {
-    hasSelectorViewOverride_ = false;
-    selectorViewOverride_.clear();
+    frameRuntime_.clearSelectorViewOverride();
 }
 
 void Scene::setOcclusionCallback(TileOcclusionCallback callback) {
@@ -142,10 +138,10 @@ void Scene::render() {
 
     SceneRenderPipeline::Result renderResult =
         renderPipeline_->render(SceneRenderPipeline::Context{
-        frameState_,
+        frameRuntime_.frameState(),
         telemetry_->diagnostics(),
         *renderer_,
-        renderCommands_,
+        frameRuntime_.renderCommands(),
         environment_->skyBox(),
         environment_->atmospherePass(),
         environment_->skyGradient(),
@@ -158,10 +154,10 @@ void Scene::render() {
 
 void Scene::updatePresentationTrace() {
     telemetry_->updatePresentationTrace(ScenePresentationTraceInput{
-        frameState_,
+        frameRuntime_.frameState(),
         tilesets_->primary(),
         tilesets_->contentTilesets(),
-        renderCommands_});
+        frameRuntime_.renderCommands()});
 }
 
 void Scene::setTileset(std::unique_ptr<Tileset> tileset) {
@@ -231,11 +227,11 @@ SceneInteractionContext Scene::interactionContext() const {
     return SceneInteractionContext{
         camera_.get(),
         cameraController_.get(),
-        static_cast<double>(frameState_.viewportWidthPixels),
-        static_cast<double>(frameState_.viewportHeightPixels),
+        static_cast<double>(frameRuntime_.frameState().viewportWidthPixels),
+        static_cast<double>(frameRuntime_.frameState().viewportHeightPixels),
         tilesets_->primary(),
         &layers_->vectorLayers(),
-        elapsedTime_};
+        frameRuntime_.elapsedTime()};
 }
 
 void Scene::onInputEvent(const InputEvent& event) {

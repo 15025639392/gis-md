@@ -119,6 +119,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/scene/SceneFrameDiagnostics.cpp
     earth_engine/scene/SceneFrameStateBuilder.h
     earth_engine/scene/SceneFrameStateBuilder.cpp
+    earth_engine/scene/SceneFrameRuntime.h
+    earth_engine/scene/SceneFrameRuntime.cpp
     earth_engine/scene/SceneFrameUpdateCoordinator.h
     earth_engine/scene/SceneFrameUpdateCoordinator.cpp
     earth_engine/scene/SceneInputCoordinator.h

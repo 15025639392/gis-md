@@ -2,7 +2,7 @@
 
 #include "EngineTimingScope.h"
 #include "FrameState.h"
-#include "../renderer/RenderCommand.h"
+#include "SceneFrameRuntime.h"
 #include "../tiling/TileOcclusionCallback.h"
 #include <memory>
 #include <vector>
@@ -57,7 +57,7 @@ public:
     void setOcclusionCallback(TileOcclusionCallback callback);
     void clearOcclusionCallback();
 
-    const FrameState& frameState() const { return frameState_; }
+    const FrameState& frameState() const { return frameRuntime_.frameState(); }
 
     /// 运行时诊断（FPS、draw calls、visible tiles 等）
     const Diagnostics& diagnostics() const;
@@ -104,13 +104,8 @@ private:
     std::unique_ptr<Renderer> renderer_;
     std::unique_ptr<SceneRenderPipeline> renderPipeline_;
     std::unique_ptr<GlobeMesh> globeMesh_;
-    FrameState frameState_;
-    RenderCommandList renderCommands_;
+    SceneFrameRuntime frameRuntime_;
     RenderDevice* renderDevice_ = nullptr;
-    uint64_t frameId_ = 0;
-    double elapsedTime_ = 0.0;
-    bool hasSelectorViewOverride_ = false;
-    std::vector<FrameState::SelectorView> selectorViewOverride_;
 
     // 矢量图层
     std::unique_ptr<SceneLayerCoordinator> layers_;
