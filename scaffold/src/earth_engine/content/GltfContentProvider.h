@@ -3,6 +3,7 @@
 #include "GltfModel.h"
 #include "../core/math/Mat4.h"
 #include "../platform/bridge/PlatformBridge.h"
+#include "../providers/ProviderRequestDiagnostics.h"
 #include "../threading/CancellationToken.h"
 #include "../tiling/TileKey.h"
 #include "../tiling/TileBoundingVolume.h"
@@ -10,6 +11,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -115,6 +117,10 @@ public:
     virtual TileContentLoadResult decodeContent(
         const uint8_t* data,
         size_t size) = 0;
+
+    virtual ProviderRequestDiagnostics requestDiagnostics() const {
+        return {};
+    }
 };
 
 /// A real glTF/GLB/B3DM content provider for a single tile. This is the current
@@ -142,6 +148,7 @@ public:
     const TileKey& contentKey() const { return contentKey_; }
     const std::string& url() const { return url_; }
     void setPlatformBridge(PlatformBridge* bridge) { platformBridge_ = bridge; }
+    ProviderRequestDiagnostics requestDiagnostics() const override;
     const Mat4& contentTransform() const { return contentTransform_; }
     void setContentTransform(const Mat4& transform) {
         contentTransform_ = transform;
@@ -163,6 +170,14 @@ private:
     std::vector<uint8_t> bytes_;
     Mat4 contentTransform_ = Mat4::identity();
     PlatformBridge* platformBridge_ = nullptr;
+    std::atomic<int> requestsStarted_{0};
+    std::atomic<int> requestsCompleted_{0};
+    std::atomic<int> activeWorkerBlockingRequests_{0};
+    std::atomic<int> peakWorkerBlockingRequests_{0};
+    std::atomic<int> externalResourceRequestsStarted_{0};
+    std::atomic<int> externalResourceRequestsCompleted_{0};
+    std::atomic<int> activeExternalResourceBlockingRequests_{0};
+    std::atomic<int> peakExternalResourceBlockingRequests_{0};
 };
 
 /// 3D Tiles tileset.json content provider aligned with cesium-native
@@ -191,6 +206,7 @@ public:
 
     bool valid() const;
     void setPlatformBridge(PlatformBridge* bridge) { platformBridge_ = bridge; }
+    ProviderRequestDiagnostics requestDiagnostics() const override;
 
 private:
     enum class TileRecordContentKind {
@@ -235,6 +251,14 @@ private:
     std::unordered_map<std::string, TileRecord> records_;
     int nextTileOrdinal_ = 0;
     bool valid_ = false;
+    std::atomic<int> requestsStarted_{0};
+    std::atomic<int> requestsCompleted_{0};
+    std::atomic<int> activeWorkerBlockingRequests_{0};
+    std::atomic<int> peakWorkerBlockingRequests_{0};
+    std::atomic<int> externalResourceRequestsStarted_{0};
+    std::atomic<int> externalResourceRequestsCompleted_{0};
+    std::atomic<int> activeExternalResourceBlockingRequests_{0};
+    std::atomic<int> peakExternalResourceBlockingRequests_{0};
 };
 
 } // namespace earth_engine

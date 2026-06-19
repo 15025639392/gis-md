@@ -46,6 +46,52 @@ constexpr uint32_t kCmptMagic = 0x74706d63u;
 constexpr size_t kCmptHeaderLength = 16;
 constexpr size_t kCmptInnerHeaderLength = 12;
 
+struct ContentRequestCompletionGuard {
+    explicit ContentRequestCompletionGuard(std::atomic<int>& completed)
+        : completed(completed) {}
+    ~ContentRequestCompletionGuard() {
+        completed.fetch_add(1, std::memory_order_relaxed);
+    }
+    std::atomic<int>& completed;
+};
+
+struct ContentWorkerBlockingRequestGuard {
+    ContentWorkerBlockingRequestGuard(std::atomic<int>& activeRequests,
+                                      std::atomic<int>& peakRequests)
+        : activeRequests(activeRequests) {
+        const int active =
+            activeRequests.fetch_add(1, std::memory_order_relaxed) + 1;
+        int observedPeak = peakRequests.load(std::memory_order_relaxed);
+        while (active > observedPeak &&
+               !peakRequests.compare_exchange_weak(
+                   observedPeak,
+                   active,
+                   std::memory_order_relaxed)) {
+        }
+    }
+    ~ContentWorkerBlockingRequestGuard() {
+        activeRequests.fetch_sub(1, std::memory_order_relaxed);
+    }
+    std::atomic<int>& activeRequests;
+};
+
+struct ContentExternalResourceRequestGuard {
+    ContentExternalResourceRequestGuard(std::atomic<int>& startedRequests,
+                                        std::atomic<int>& completedRequests,
+                                        std::atomic<int>& activeRequests,
+                                        std::atomic<int>& peakRequests)
+        : completedRequests(completedRequests),
+          blocking(activeRequests, peakRequests) {
+        startedRequests.fetch_add(1, std::memory_order_relaxed);
+    }
+    ~ContentExternalResourceRequestGuard() {
+        completedRequests.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    std::atomic<int>& completedRequests;
+    ContentWorkerBlockingRequestGuard blocking;
+};
+
 uint32_t readU32LE(const uint8_t* p) {
     return uint32_t(p[0]) |
            (uint32_t(p[1]) << 8) |
@@ -2001,6 +2047,109 @@ GltfParser::ImageDecoder makeImageDecoder(PlatformBridge* platformBridge) {
     };
 }
 
+std::vector<uint8_t> readCachedOrFileUrl(const std::string& url) {
+    auto cached = HttpCache::shared().get(url);
+    if (!cached.empty()) {
+        return cached;
+    }
+
+    constexpr const char* kFilePrefix = "file://";
+    if (url.rfind(kFilePrefix, 0) == 0) {
+        std::ifstream in(url.substr(std::strlen(kFilePrefix)), std::ios::binary);
+        if (!in) {
+            return {};
+        }
+        std::vector<uint8_t> data{
+            std::istreambuf_iterator<char>(in),
+            std::istreambuf_iterator<char>()};
+        HttpCache::shared().put(url, data);
+        return data;
+    }
+    return {};
+}
+
+void requestBodyAsync(
+    PlatformBridge* bridge,
+    const TileKey& key,
+    const std::string& url,
+    CancellationToken token,
+    TilesetContentProvider::ContentCallback callback,
+    HttpRequestPriority priority,
+    std::atomic<int>& requestsCompleted,
+    std::function<TileContentLoadResult(const std::vector<uint8_t>&)> decode) {
+    auto tokenPtr = std::make_shared<CancellationToken>(std::move(token));
+    auto callbackPtr =
+        std::make_shared<TilesetContentProvider::ContentCallback>(
+            std::move(callback));
+    auto decodePtr = std::make_shared<
+        std::function<TileContentLoadResult(const std::vector<uint8_t>&)>>(
+            std::move(decode));
+
+    if (tokenPtr->isCancelled()) {
+        ContentRequestCompletionGuard completion{requestsCompleted};
+        (*callbackPtr)(key, TileContentLoadResult::cancelled());
+        return;
+    }
+
+    auto requestHandle = std::make_shared<std::unique_ptr<HttpRequest>>();
+    auto completionCallback =
+        [key,
+         url,
+         tokenPtr,
+         callbackPtr,
+         decodePtr,
+         requestHandle,
+         &requestsCompleted](int statusCode, std::vector<uint8_t> body) mutable {
+            (void)requestHandle;
+            if (tokenPtr->isCancelled()) {
+                ContentRequestCompletionGuard completion{requestsCompleted};
+                (*callbackPtr)(key, TileContentLoadResult::cancelled());
+                return;
+            }
+            if (statusCode != 200 || body.empty()) {
+                ContentRequestCompletionGuard completion{requestsCompleted};
+                (*callbackPtr)(key, TileContentLoadResult::retryLater());
+                return;
+            }
+
+            HttpCache::shared().put(url, body);
+            auto bodyPtr =
+                std::make_shared<std::vector<uint8_t>>(std::move(body));
+            AsyncSystem::pool().enqueue(
+                [key,
+                 tokenPtr,
+                 callbackPtr,
+                 decodePtr,
+                 bodyPtr,
+                 &requestsCompleted]() mutable {
+                    ContentRequestCompletionGuard completion{
+                        requestsCompleted};
+                    if (tokenPtr->isCancelled()) {
+                        (*callbackPtr)(key, TileContentLoadResult::cancelled());
+                        return;
+                    }
+                    (*callbackPtr)(key, (*decodePtr)(*bodyPtr));
+                });
+        };
+
+    if (bridge) {
+        *requestHandle = bridge->get(
+            url,
+            std::move(completionCallback),
+            {priority});
+    } else {
+        *requestHandle = CurlMultiRequestScheduler::shared().get(
+            url,
+            std::move(completionCallback),
+            {priority});
+    }
+
+    if (!*requestHandle) {
+        ContentRequestCompletionGuard completion{requestsCompleted};
+        (*callbackPtr)(key, TileContentLoadResult::retryLater());
+    }
+}
+
 std::string trimRightSpaces(std::string value) {
     while (!value.empty() && value.back() == ' ') {
         value.pop_back();
@@ -2915,37 +3064,88 @@ void SingleGltfContentProvider::requestTileContent(
         callback(key, TileContentLoadResult::empty());
         return;
     }
+    requestsStarted_.fetch_add(1, std::memory_order_relaxed);
 
-    AsyncSystem::pool().enqueue(
-        [this,
-         key,
-         token = std::move(token),
-         priority,
-         callback = std::move(callback)]() mutable {
-            if (token.isCancelled()) {
-                callback(key, TileContentLoadResult::cancelled());
-                return;
-            }
+    std::vector<uint8_t> immediateBody = bytes_;
+    if (immediateBody.empty() && !url_.empty()) {
+        immediateBody = readCachedOrFileUrl(url_);
+    }
+    if (!immediateBody.empty()) {
+        AsyncSystem::pool().enqueue(
+            [this,
+             key,
+             body = std::move(immediateBody),
+             token = std::move(token),
+             callback = std::move(callback)]() mutable {
+                ContentRequestCompletionGuard completion{requestsCompleted_};
+                if (token.isCancelled()) {
+                    callback(key, TileContentLoadResult::cancelled());
+                    return;
+                }
+                callback(key, decodeContent(body.data(), body.size()));
+            });
+        return;
+    }
 
-            std::vector<uint8_t> body = bytes_;
-            if (body.empty() && !url_.empty()) {
-                body = httpGet(
-                    url_,
-                    priority,
-                    [&token]() { return token.isCancelled(); });
-            }
+    if (url_.empty()) {
+        ContentRequestCompletionGuard completion{requestsCompleted_};
+        callback(key, TileContentLoadResult::retryLater());
+        return;
+    }
 
-            if (token.isCancelled()) {
-                callback(key, TileContentLoadResult::cancelled());
-                return;
-            }
-            if (body.empty()) {
-                callback(key, TileContentLoadResult::retryLater());
-                return;
-            }
+    if (platformBridge_) {
+        requestBodyAsync(
+            platformBridge_,
+            key,
+            url_,
+            std::move(token),
+            std::move(callback),
+            priority,
+            requestsCompleted_,
+            [this](const std::vector<uint8_t>& fetchedBody) {
+                return decodeContent(fetchedBody.data(), fetchedBody.size());
+            });
+        return;
+    }
 
-            callback(key, decodeContent(body.data(), body.size()));
+    requestBodyAsync(
+        nullptr,
+        key,
+        url_,
+        std::move(token),
+        std::move(callback),
+        priority,
+        requestsCompleted_,
+        [this](const std::vector<uint8_t>& fetchedBody) {
+            return decodeContent(fetchedBody.data(), fetchedBody.size());
         });
+}
+
+ProviderRequestDiagnostics SingleGltfContentProvider::requestDiagnostics()
+    const {
+    ProviderRequestDiagnostics diag;
+    diag.requestsStarted =
+        requestsStarted_.load(std::memory_order_relaxed);
+    diag.requestsCompleted =
+        requestsCompleted_.load(std::memory_order_relaxed);
+    diag.activeWorkerBlockingRequests =
+        activeWorkerBlockingRequests_.load(std::memory_order_relaxed);
+    diag.peakWorkerBlockingRequests =
+        peakWorkerBlockingRequests_.load(std::memory_order_relaxed);
+    diag.externalResourceRequestsStarted =
+        externalResourceRequestsStarted_.load(std::memory_order_relaxed);
+    diag.externalResourceRequestsCompleted =
+        externalResourceRequestsCompleted_.load(std::memory_order_relaxed);
+    diag.activeExternalResourceBlockingRequests =
+        activeExternalResourceBlockingRequests_.load(
+            std::memory_order_relaxed);
+    diag.peakExternalResourceBlockingRequests =
+        peakExternalResourceBlockingRequests_.load(
+            std::memory_order_relaxed);
+    diag.maximumTransportActiveRequests = platformBridge_
+        ? platformBridge_->maximumActiveRequests()
+        : CurlMultiRequestScheduler::shared().maximumActiveRequests();
+    return diag;
 }
 
 TileContentLoadResult SingleGltfContentProvider::decodeContent(
@@ -2954,6 +3154,11 @@ TileContentLoadResult SingleGltfContentProvider::decodeContent(
     GltfParser::ExternalResourceResolver resolver;
     if (!url_.empty()) {
         resolver = [this](const std::string& uri) {
+            ContentExternalResourceRequestGuard blocking(
+                externalResourceRequestsStarted_,
+                externalResourceRequestsCompleted_,
+                activeExternalResourceBlockingRequests_,
+                peakExternalResourceBlockingRequests_);
             return httpGet(resolveContentUrl(url_, uri, false));
         };
     }
@@ -3088,6 +3293,33 @@ bool TilesetJsonContentProvider::valid() const {
     return valid_;
 }
 
+ProviderRequestDiagnostics TilesetJsonContentProvider::requestDiagnostics()
+    const {
+    ProviderRequestDiagnostics diag;
+    diag.requestsStarted =
+        requestsStarted_.load(std::memory_order_relaxed);
+    diag.requestsCompleted =
+        requestsCompleted_.load(std::memory_order_relaxed);
+    diag.activeWorkerBlockingRequests =
+        activeWorkerBlockingRequests_.load(std::memory_order_relaxed);
+    diag.peakWorkerBlockingRequests =
+        peakWorkerBlockingRequests_.load(std::memory_order_relaxed);
+    diag.externalResourceRequestsStarted =
+        externalResourceRequestsStarted_.load(std::memory_order_relaxed);
+    diag.externalResourceRequestsCompleted =
+        externalResourceRequestsCompleted_.load(std::memory_order_relaxed);
+    diag.activeExternalResourceBlockingRequests =
+        activeExternalResourceBlockingRequests_.load(
+            std::memory_order_relaxed);
+    diag.peakExternalResourceBlockingRequests =
+        peakExternalResourceBlockingRequests_.load(
+            std::memory_order_relaxed);
+    diag.maximumTransportActiveRequests = platformBridge_
+        ? platformBridge_->maximumActiveRequests()
+        : CurlMultiRequestScheduler::shared().maximumActiveRequests();
+    return diag;
+}
+
 bool TilesetJsonContentProvider::supportsTile(const TileKey& key) const {
     std::lock_guard<std::mutex> lock(mutex_);
     return records_.find(contentCacheKey(key)) != records_.end();
@@ -3142,57 +3374,125 @@ void TilesetJsonContentProvider::requestTileContent(
         callback(key, TileContentLoadResult::failed());
         return;
     }
+    requestsStarted_.fetch_add(1, std::memory_order_relaxed);
 
-    AsyncSystem::pool().enqueue(
-        [this,
-         key,
-         record = std::move(record),
-         token = std::move(token),
-         priority,
-         callback = std::move(callback)]() mutable {
-            if (token.isCancelled()) {
-                callback(key, TileContentLoadResult::cancelled());
-                return;
-            }
+    std::vector<uint8_t> immediateBody =
+        readCachedOrFileUrl(record.resolvedContentUrl);
+    if (!immediateBody.empty()) {
+        AsyncSystem::pool().enqueue(
+            [this,
+             key,
+             record = std::move(record),
+             body = std::move(immediateBody),
+             token = std::move(token),
+             callback = std::move(callback)]() mutable {
+                ContentRequestCompletionGuard completion{requestsCompleted_};
+                if (token.isCancelled()) {
+                    callback(key, TileContentLoadResult::cancelled());
+                    return;
+                }
+                if (!urlLooksLikeGltf(record.resolvedContentUrl) &&
+                    (urlLooksLikeJson(record.resolvedContentUrl) ||
+                     bytesLookLikeJson(body.data(), body.size()))) {
+                    const bool parsed = parseTilesetJson(
+                        body.data(),
+                        body.size(),
+                        record.resolvedContentUrl,
+                        record.metadata.transform,
+                        record.metadata.refine,
+                        record.metadata.geometricError,
+                        record.metadata.key,
+                        false);
+                    callback(key,
+                             parsed ? TileContentLoadResult::external()
+                                    : TileContentLoadResult::failed());
+                    return;
+                }
 
-            const std::vector<uint8_t> body = httpGet(
-                record.resolvedContentUrl,
-                priority,
-                [&token]() { return token.isCancelled(); });
-            if (token.isCancelled()) {
-                callback(key, TileContentLoadResult::cancelled());
-                return;
-            }
-            if (body.empty()) {
-                callback(key, TileContentLoadResult::retryLater());
-                return;
-            }
+                callback(key,
+                         decodeRenderableContent(
+                             body.data(),
+                             body.size(),
+                             record.metadata.transform,
+                             record.gltfUpAxisTransform,
+                             record.resolvedContentUrl));
+            });
+        return;
+    }
 
+    if (platformBridge_) {
+        requestBodyAsync(
+            platformBridge_,
+            key,
+            record.resolvedContentUrl,
+            std::move(token),
+            std::move(callback),
+            priority,
+            requestsCompleted_,
+            [this, record = std::move(record)](
+                const std::vector<uint8_t>& fetchedBody) mutable {
+                if (!urlLooksLikeGltf(record.resolvedContentUrl) &&
+                    (urlLooksLikeJson(record.resolvedContentUrl) ||
+                     bytesLookLikeJson(
+                         fetchedBody.data(),
+                         fetchedBody.size()))) {
+                    const bool parsed = parseTilesetJson(
+                        fetchedBody.data(),
+                        fetchedBody.size(),
+                        record.resolvedContentUrl,
+                        record.metadata.transform,
+                        record.metadata.refine,
+                        record.metadata.geometricError,
+                        record.metadata.key,
+                        false);
+                    return parsed ? TileContentLoadResult::external()
+                                  : TileContentLoadResult::failed();
+                }
+
+                return decodeRenderableContent(
+                    fetchedBody.data(),
+                    fetchedBody.size(),
+                    record.metadata.transform,
+                    record.gltfUpAxisTransform,
+                    record.resolvedContentUrl);
+            });
+        return;
+    }
+
+    requestBodyAsync(
+        nullptr,
+        key,
+        record.resolvedContentUrl,
+        std::move(token),
+        std::move(callback),
+        priority,
+        requestsCompleted_,
+        [this, record = std::move(record)](
+            const std::vector<uint8_t>& fetchedBody) mutable {
             if (!urlLooksLikeGltf(record.resolvedContentUrl) &&
                 (urlLooksLikeJson(record.resolvedContentUrl) ||
-                 bytesLookLikeJson(body.data(), body.size()))) {
+                 bytesLookLikeJson(
+                     fetchedBody.data(),
+                     fetchedBody.size()))) {
                 const bool parsed = parseTilesetJson(
-                    body.data(),
-                    body.size(),
+                    fetchedBody.data(),
+                    fetchedBody.size(),
                     record.resolvedContentUrl,
                     record.metadata.transform,
                     record.metadata.refine,
                     record.metadata.geometricError,
                     record.metadata.key,
                     false);
-                callback(key,
-                         parsed ? TileContentLoadResult::external()
-                                : TileContentLoadResult::failed());
-                return;
+                return parsed ? TileContentLoadResult::external()
+                              : TileContentLoadResult::failed();
             }
 
-            callback(key,
-                     decodeRenderableContent(
-                         body.data(),
-                         body.size(),
-                         record.metadata.transform,
-                         record.gltfUpAxisTransform,
-                         record.resolvedContentUrl));
+            return decodeRenderableContent(
+                fetchedBody.data(),
+                fetchedBody.size(),
+                record.metadata.transform,
+                record.gltfUpAxisTransform,
+                record.resolvedContentUrl);
         });
 }
 
@@ -3216,6 +3516,11 @@ TileContentLoadResult TilesetJsonContentProvider::decodeRenderableContent(
     GltfParser::ExternalResourceResolver resolver;
     if (!contentUrl.empty()) {
         resolver = [this, contentUrl](const std::string& uri) {
+            ContentExternalResourceRequestGuard blocking(
+                externalResourceRequestsStarted_,
+                externalResourceRequestsCompleted_,
+                activeExternalResourceBlockingRequests_,
+                peakExternalResourceBlockingRequests_);
             return httpGet(resolveContentUrl(contentUrl, uri, false));
         };
     }

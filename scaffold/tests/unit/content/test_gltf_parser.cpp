@@ -3,6 +3,7 @@
 #include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/content/GltfExtensions.h"
 #include "earth_engine/content/GltfModel.h"
+#include "earth_engine/core/async/AsyncSystem.h"
 
 #include <algorithm>
 #include <chrono>
@@ -1935,6 +1936,66 @@ public:
 private:
     std::function<std::unique_ptr<DecodedImage>(const uint8_t*, size_t)>
         decoder_;
+};
+
+class QueuedContentPlatformBridge final : public PlatformBridge {
+public:
+    void onMemoryPressure() override {}
+    void onEnterBackground() override {}
+    void onEnterForeground() override {}
+
+    std::unique_ptr<HttpRequest> get(
+        const std::string&,
+        std::function<void(int, std::vector<uint8_t>)> callback,
+        HttpRequestOptions = {}) override {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            callback_ = std::move(callback);
+            entered_ = true;
+        }
+        cv_.notify_all();
+        return std::make_unique<TestHttpRequest>();
+    }
+
+    int maximumActiveRequests() const override { return 11; }
+
+    bool waitUntilEntered() {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return cv_.wait_for(
+            lock,
+            std::chrono::seconds(2),
+            [this]() { return entered_; });
+    }
+
+    bool complete(int statusCode, std::vector<uint8_t> body = {}) {
+        std::function<void(int, std::vector<uint8_t>)> callback;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            callback = std::move(callback_);
+        }
+        if (!callback) {
+            return false;
+        }
+        callback(statusCode, std::move(body));
+        return true;
+    }
+
+    std::string cacheDirectory() const override { return "/tmp"; }
+    std::string documentsDirectory() const override { return "/tmp"; }
+    std::unique_ptr<DecodedImage> decodeImage(
+        const uint8_t*,
+        size_t) override {
+        return nullptr;
+    }
+    void log(LogLevel, const std::string&, const std::string&) override {}
+    DeviceInfo deviceInfo() const override { return {}; }
+    std::string getToken(const std::string&) const override { return {}; }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::function<void(int, std::vector<uint8_t>)> callback_;
+    bool entered_ = false;
 };
 
 std::vector<uint8_t> makeB3dm(std::vector<uint8_t> glb,
@@ -11645,6 +11706,121 @@ TEST(GltfParserTest, RejectsKhrTextureTransformOutsideTextureInfo) {
     EXPECT_EQ(nullptr, model);
 }
 
+TEST(GltfParserTest, ContentProviderUsesBridgeMainBodyWithoutWorkerBlockingWait) {
+    QueuedContentPlatformBridge bridge;
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    SingleGltfContentProvider provider(
+        key,
+        "https://example.test/content-provider-async-main-body.glb",
+        "async bridge fixture");
+    provider.setPlatformBridge(&bridge);
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    TileContentLoadResult result;
+    provider.requestTileContent(
+        key,
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult loaded) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                result = std::move(loaded);
+                done = true;
+            }
+            cv.notify_one();
+        });
+
+    ASSERT_TRUE(bridge.waitUntilEntered());
+    ProviderRequestDiagnostics pendingDiag = provider.requestDiagnostics();
+    EXPECT_EQ(1, pendingDiag.requestsStarted);
+    EXPECT_EQ(0, pendingDiag.requestsCompleted);
+    EXPECT_EQ(0, pendingDiag.activeWorkerBlockingRequests);
+    EXPECT_EQ(0, pendingDiag.peakWorkerBlockingRequests);
+    EXPECT_EQ(11, pendingDiag.maximumTransportActiveRequests);
+
+    auto sentinel = AsyncSystem::pool().enqueue([]() { return 7; });
+    EXPECT_EQ(std::future_status::ready,
+              sentinel.wait_for(std::chrono::seconds(2)));
+    EXPECT_EQ(7, sentinel.get());
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        EXPECT_FALSE(done);
+    }
+
+    ASSERT_TRUE(bridge.complete(200, makeTriangleGlb()));
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&]() { return done; }));
+    }
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ProviderRequestDiagnostics doneDiag = provider.requestDiagnostics();
+    EXPECT_EQ(1, doneDiag.requestsCompleted);
+    EXPECT_EQ(0, doneDiag.activeWorkerBlockingRequests);
+    EXPECT_EQ(0, doneDiag.peakWorkerBlockingRequests);
+    EXPECT_EQ(0, doneDiag.externalResourceRequestsStarted);
+    EXPECT_EQ(0, doneDiag.externalResourceRequestsCompleted);
+    EXPECT_EQ(0, doneDiag.activeExternalResourceBlockingRequests);
+    EXPECT_EQ(0, doneDiag.peakExternalResourceBlockingRequests);
+}
+
+TEST(GltfParserTest, ContentProviderLoadsFileMainBodyWithoutWorkerBlockingWait) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth_md_gltf_file_main_body_async_test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    const std::filesystem::path glbPath = root / "triangle.glb";
+    {
+        std::ofstream out(glbPath, std::ios::binary);
+        const std::vector<uint8_t> glb = makeTriangleGlb();
+        out.write(
+            reinterpret_cast<const char*>(glb.data()),
+            static_cast<std::streamsize>(glb.size()));
+    }
+
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    SingleGltfContentProvider provider(
+        key,
+        "file://" + glbPath.generic_string(),
+        "file main body fixture");
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    TileContentLoadResult result;
+    provider.requestTileContent(
+        key,
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult loaded) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                result = std::move(loaded);
+                done = true;
+            }
+            cv.notify_one();
+        });
+
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&]() { return done; }));
+    }
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ProviderRequestDiagnostics diag = provider.requestDiagnostics();
+    EXPECT_EQ(1, diag.requestsStarted);
+    EXPECT_EQ(1, diag.requestsCompleted);
+    EXPECT_EQ(0, diag.activeWorkerBlockingRequests);
+    EXPECT_EQ(0, diag.peakWorkerBlockingRequests);
+    std::filesystem::remove_all(root);
+}
+
 TEST(GltfParserTest, ContentProviderResolvesExternalBufferRelativeToGltfUrl) {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
@@ -11665,6 +11841,11 @@ TEST(GltfParserTest, ContentProviderResolvesExternalBufferRelativeToGltfUrl) {
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     EXPECT_EQ(3u, result.gltfModel->vertexCount());
+    ProviderRequestDiagnostics diag = provider.requestDiagnostics();
+    EXPECT_EQ(1, diag.externalResourceRequestsStarted);
+    EXPECT_EQ(1, diag.externalResourceRequestsCompleted);
+    EXPECT_EQ(0, diag.activeExternalResourceBlockingRequests);
+    EXPECT_EQ(1, diag.peakExternalResourceBlockingRequests);
 
     std::filesystem::remove_all(root);
 }
