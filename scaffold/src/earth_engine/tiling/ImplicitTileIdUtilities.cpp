@@ -1,7 +1,11 @@
 #include "ImplicitTileIdUtilities.h"
 
+#include "earth_engine/core/geodesy/Transforms.h"
+#include "earth_engine/core/math/MathUtils.h"
+
 #include <cmath>
 #include <functional>
+#include <glm/ext/matrix_transform.hpp>
 
 namespace earth_engine {
 
@@ -286,6 +290,90 @@ OrientedBoundingBox ImplicitTileIdUtilities::computeBoundingVolume(
         xDim * 0.5,
         yDim * 0.5,
         zDim * 0.5);
+}
+
+BoundingCylinderRegion ImplicitTileIdUtilities::computeBoundingVolume(
+    const BoundingCylinderRegion& rootBoundingVolume,
+    const TileKey& tileID) {
+    const double denominator =
+        levelDenominator(static_cast<uint32_t>(tileID.z));
+
+    const glm::dvec2& rootRadialBounds =
+        rootBoundingVolume.getRadialBounds();
+    const glm::dvec2& rootAngularBounds =
+        rootBoundingVolume.getAngularBounds();
+
+    const bool angleReversed = rootAngularBounds.x > rootAngularBounds.y;
+
+    const double rootRadiusRange = rootRadialBounds.y - rootRadialBounds.x;
+    double rootAngularRange = std::abs(rootAngularBounds.y - rootAngularBounds.x);
+    if (angleReversed) {
+        rootAngularRange = MathUtils::TwoPi - rootAngularRange;
+    }
+
+    const double radiusDim = rootRadiusRange / denominator;
+    const double angleDim = rootAngularRange / denominator;
+
+    const double minRadius =
+        rootRadialBounds.x + static_cast<double>(tileID.x) * radiusDim;
+    double minAngle =
+        rootAngularBounds.x + static_cast<double>(tileID.y) * angleDim;
+    double maxAngle = minAngle + angleDim;
+
+    if (minAngle >= MathUtils::OnePi) {
+        minAngle = MathUtils::convertLongitudeRange(minAngle);
+    }
+    if (maxAngle > MathUtils::OnePi) {
+        maxAngle = MathUtils::convertLongitudeRange(maxAngle);
+    }
+
+    return BoundingCylinderRegion(
+        rootBoundingVolume.getTranslation(),
+        rootBoundingVolume.getRotation(),
+        rootBoundingVolume.getHeight(),
+        glm::dvec2(minRadius, minRadius + radiusDim),
+        glm::dvec2(minAngle, maxAngle));
+}
+
+BoundingCylinderRegion ImplicitTileIdUtilities::computeBoundingVolume(
+    const BoundingCylinderRegion& rootBoundingVolume,
+    const OctreeTileID& tileID) {
+    const double denominator =
+        levelDenominator(static_cast<uint32_t>(tileID.level));
+
+    const BoundingCylinderRegion quadtreeRegion = computeBoundingVolume(
+        rootBoundingVolume,
+        TileKey{"", tileID.level, tileID.x, tileID.y});
+
+    const double rootHeight = rootBoundingVolume.getHeight();
+    const double heightDim = rootHeight / denominator;
+
+    double heightOffset = -0.5 * rootHeight + 0.5 * heightDim;
+    heightOffset += heightDim * static_cast<double>(tileID.z);
+
+    const Mat4 rootTransform =
+        Transforms::createTranslationRotationScaleMatrix(
+            rootBoundingVolume.getTranslation(),
+            rootBoundingVolume.getRotation(),
+            Vec3(1.0, 1.0, 1.0));
+    const glm::dmat4 heightTranslation =
+        glm::translate(glm::dmat4(1.0), glm::dvec3(0.0, 0.0, heightOffset));
+    const Mat4 transform(rootTransform.raw() * heightTranslation);
+
+    Vec3 translation;
+    glm::dquat rotation(1.0, 0.0, 0.0, 0.0);
+    Transforms::computeTranslationRotationScaleFromMatrix(
+        transform,
+        &translation,
+        &rotation,
+        nullptr);
+
+    return BoundingCylinderRegion(
+        translation,
+        rotation,
+        heightDim,
+        quadtreeRegion.getRadialBounds(),
+        quadtreeRegion.getAngularBounds());
 }
 
 std::optional<TileKey> ImplicitTileIdUtilities::parentId(

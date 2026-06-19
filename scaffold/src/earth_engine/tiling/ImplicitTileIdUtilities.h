@@ -1,5 +1,6 @@
 #pragma once
 
+#include "earth_engine/core/math/BoundingCylinderRegion.h"
 #include "earth_engine/core/math/OrientedBoundingBox.h"
 #include "OctreeTilingScheme.h"
 #include "TileKey.h"
@@ -30,6 +31,12 @@ public:
         const TileKey& tileID);
     static OrientedBoundingBox computeBoundingVolume(
         const OrientedBoundingBox& rootBoundingVolume,
+        const OctreeTileID& tileID);
+    static BoundingCylinderRegion computeBoundingVolume(
+        const BoundingCylinderRegion& rootBoundingVolume,
+        const TileKey& tileID);
+    static BoundingCylinderRegion computeBoundingVolume(
+        const BoundingCylinderRegion& rootBoundingVolume,
         const OctreeTileID& tileID);
 
     static std::optional<TileKey> parentId(const TileKey& tileID);
