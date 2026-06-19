@@ -18735,6 +18735,64 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
           "Tileset: clipped fallback only fills the selected child quadrant");
 }
 
+void testTileRenderPlanFrameRefresherRequiresDrawableBaseRaster() {
+    InitializedRendererHarness harness;
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {&baseActivated},
+        &harness.device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "TileRenderPlanFrameRefresher: drawable-raster gate creates root tile");
+    if (!root) return;
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+    check(root->hasSurfaceDrawable(),
+          "TileRenderPlanFrameRefresher: test root has drawable surface geometry");
+
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
+    check(tileset.tilePlan().visibleTiles.size() == 1 &&
+              tileset.tilePlan().renderEntries.empty(),
+          "TileRenderPlanFrameRefresher: surface geometry without drawable base raster is not planned");
+
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    RasterMappedToTilesetTile* rootMapped =
+        root->rasterOverlayState.mappings().empty()
+            ? nullptr
+            : root->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* rootRaster =
+        rootMapped ? rootMapped->getLoadingTile() : nullptr;
+    check(rootRaster != nullptr,
+          "TileRenderPlanFrameRefresher: drawable-raster gate maps base imagery");
+    if (!rootRaster) return;
+    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
+    rootRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+
+    TilesetTestAccess::beginTilePlan(tileset);
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
+    check(tileset.tilePlan().renderEntries.size() == 1 &&
+              tileset.tilePlan().renderEntries.front().selectedKey ==
+                  rootKey &&
+              tileset.tilePlan().renderEntries.front().renderKey == rootKey,
+          "TileRenderPlanFrameRefresher: drawable base raster restores surface render entry");
+}
+
 void testPresentationTraceRecordsDeterministicCameraState() {
     DummyRenderDevice device;
     device.allowTextureCreation = true;
@@ -19812,6 +19870,7 @@ int main() {
     testTilesetSampleHeightFallsBackToLoadedAncestorTerrain();
     testTilesetCreatesUpsampledChildrenForUnavailableSiblings();
     testTilesetAncestorFallbackIsClippedToMissingChild();
+    testTileRenderPlanFrameRefresherRequiresDrawableBaseRaster();
     testPresentationTraceRecordsDeterministicCameraState();
     testPresentationTraceLinksTilePlanToSurfaceCommand();
     testClippedFallbackCommandsHaveSelectedChildStableKeys();
