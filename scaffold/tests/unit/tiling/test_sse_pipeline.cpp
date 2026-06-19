@@ -19254,6 +19254,101 @@ void testPresentationTraceExposesFadingRenderEntry() {
           "Presentation trace: fading render entry remains visible in the draw funnel");
 }
 
+void testPresentationTraceExposesAdditiveSelectedRenderEntries() {
+    InitializedRendererHarness harness;
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {&baseActivated},
+        &harness.device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    TilesetTile* child = TilesetTestAccess::ensureTile(tileset, childKey);
+    check(root != nullptr && child != nullptr,
+          "Presentation trace: ADD selected entry setup creates parent and child");
+    if (!root || !child) return;
+
+    auto makeDrawableSurfaceTile =
+        [&](TilesetTile& tile, const TileKey& key) -> bool {
+        TilesetTestAccess::putTerrainCache(
+            tileset,
+            key,
+            makeFlatHeightmap(0.0f));
+        TilesetTestAccess::ensureTileMesh(tileset, tile);
+        TilesetTestAccess::prefetchRasterOverlays(tileset, tile);
+        RasterMappedToTilesetTile* mapped =
+            tile.rasterOverlayState.mappings().empty()
+                ? nullptr
+                : tile.rasterOverlayState.mappings()[0].get();
+        RasterOverlayTile* raster =
+            mapped ? mapped->getLoadingTile() : nullptr;
+        if (!raster) {
+            return false;
+        }
+        raster->setTexture(std::make_unique<DummyTexture>(4, 4));
+        raster->setMoreDetailAvailable(
+            RasterOverlayTile::MoreDetailAvailable::No);
+        TilesetTestAccess::prefetchRasterOverlays(tileset, tile);
+        return tile.hasSurfaceDrawable();
+    };
+
+    check(makeDrawableSurfaceTile(*root, rootKey) &&
+              makeDrawableSurfaceTile(*child, childKey),
+          "Presentation trace: ADD selected entries have drawable parent and child surfaces");
+
+    TilesetTestAccess::beginTilePlan(tileset);
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *child);
+
+    const TilePlan& plan = tileset.tilePlan();
+    check(plan.visibleTiles.size() == 2 &&
+              plan.renderEntries.size() == 2 &&
+              plan.renderEntryAncestorFallbackCount == 0,
+          "Presentation trace: ADD parent and child stay as direct selected render entries");
+    if (plan.renderEntries.size() != 2) return;
+
+    RenderCommandList commands;
+    tileset.buildRenderCommands(harness.renderer, commands);
+    check(commands.size() == 2,
+          "Presentation trace: ADD selected entries emit parent and child commands");
+    if (commands.size() != 2) return;
+
+    FrameState frameState;
+    frameState.frameId = 11;
+    frameState.camera = nullptr;
+    PresentationTrace trace =
+        ScenePresentationTraceBuilder::build(
+            ScenePresentationTraceInput{
+                frameState,
+                &tileset,
+                emptyContentTilesets(),
+                commands});
+    check(trace.tilesets.size() == 1,
+          "Presentation trace: ADD selected draw funnel includes one tileset");
+    if (trace.tilesets.empty()) return;
+
+    const PresentationTilesetTrace& tilesetTrace = trace.tilesets.front();
+    check(tilesetTrace.renderEntries.size() == 2 &&
+              tilesetTrace.renderEntryPlannedCommandCount == 2 &&
+              tilesetTrace.renderEntrySelectedPlannedCommandCount == 2 &&
+              tilesetTrace.renderEntryFadingPlannedCommandCount == 0 &&
+              tilesetTrace.renderEntryCommandDrawCount == 2 &&
+              tilesetTrace.renderEntrySelectedCommandDrawCount == 2 &&
+              tilesetTrace.renderEntryFadingCommandDrawCount == 0 &&
+              tilesetTrace.renderEntryAncestorFallbackCount == 0 &&
+              tilesetTrace.renderEntryCommandMissedDrawCount == 0,
+          "Presentation trace: ADD selected render entries remain separate through the draw funnel");
+}
+
 void testClippedFallbackCommandsHaveSelectedChildStableKeys() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -20207,6 +20302,7 @@ int main() {
     testPresentationTraceRecordsDeterministicCameraState();
     testPresentationTraceLinksTilePlanToSurfaceCommand();
     testPresentationTraceExposesFadingRenderEntry();
+    testPresentationTraceExposesAdditiveSelectedRenderEntries();
     testClippedFallbackCommandsHaveSelectedChildStableKeys();
     testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh();
     testTilesetUpsampledChildQueuesParentUntilSourceReady();
