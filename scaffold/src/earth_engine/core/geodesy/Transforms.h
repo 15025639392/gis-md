@@ -48,6 +48,12 @@ public:
                                          double zNear,
                                          double zFar);
 
+    /// View matrix from viewer pose, matching
+    /// cesium-native CesiumGeometry::Transforms::createViewMatrix.
+    static Mat4 createViewMatrix(const Vec3& position,
+                                 const Vec3& direction,
+                                 const Vec3& up);
+
     /// 计算从局部 East-North-Up 到 ECEF fixed frame 的矩阵。
     /// 语义对齐 cesium-native GlobeTransforms::eastNorthUpToFixedFrame。
     static Mat4 eastNorthUpToFixedFrame(const Vec3& originEcef);

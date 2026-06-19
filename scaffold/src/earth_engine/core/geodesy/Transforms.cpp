@@ -193,6 +193,29 @@ Mat4 Transforms::createOrthographicMatrix(double left,
             1.0)));
 }
 
+Mat4 Transforms::createViewMatrix(const Vec3& position,
+                                  const Vec3& direction,
+                                  const Vec3& up) {
+    const Vec3 forward = direction * -1.0;
+    const Vec3 side = up.cross(forward).normalized();
+    const Vec3 poseUp = forward.cross(side).normalized();
+
+    glm::dmat4 view(1.0);
+    view[0][0] = side.x();
+    view[1][0] = side.y();
+    view[2][0] = side.z();
+    view[0][1] = poseUp.x();
+    view[1][1] = poseUp.y();
+    view[2][1] = poseUp.z();
+    view[0][2] = forward.x();
+    view[1][2] = forward.y();
+    view[2][2] = forward.z();
+    view[3][0] = -side.dot(position);
+    view[3][1] = -poseUp.dot(position);
+    view[3][2] = -forward.dot(position);
+    return Mat4(view);
+}
+
 Mat4 Transforms::eastNorthUpToFixedFrame(const Vec3& originEcef) {
     return eastNorthUpToFixedFrame(originEcef, Ellipsoid::WGS84());
 }

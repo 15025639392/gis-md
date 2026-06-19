@@ -152,3 +152,28 @@ TEST(TransformsTest, OrthographicMatrixMatchesCesiumNativeReverseZ) {
     EXPECT_DOUBLE_EQ(0.0, infinite(2, 2));
     EXPECT_DOUBLE_EQ(1.0, infinite(2, 3));
 }
+
+TEST(TransformsTest, ViewMatrixMatchesCesiumNativePoseInverse) {
+    const Vec3 position(10.0, 20.0, 30.0);
+    const Vec3 direction = Vec3(1.0, 2.0, -4.0).normalized();
+    const Vec3 up = Vec3(0.0, 0.0, 1.0);
+
+    const Mat4 view = Transforms::createViewMatrix(position, direction, up);
+
+    const Vec3 forward = -direction;
+    const Vec3 side = up.cross(forward).normalized();
+    const Vec3 poseUp = forward.cross(side).normalized();
+
+    EXPECT_NEAR(side.x(), view(0, 0), 1e-12);
+    EXPECT_NEAR(side.y(), view(0, 1), 1e-12);
+    EXPECT_NEAR(side.z(), view(0, 2), 1e-12);
+    EXPECT_NEAR(poseUp.x(), view(1, 0), 1e-12);
+    EXPECT_NEAR(poseUp.y(), view(1, 1), 1e-12);
+    EXPECT_NEAR(poseUp.z(), view(1, 2), 1e-12);
+    EXPECT_NEAR(forward.x(), view(2, 0), 1e-12);
+    EXPECT_NEAR(forward.y(), view(2, 1), 1e-12);
+    EXPECT_NEAR(forward.z(), view(2, 2), 1e-12);
+    EXPECT_NEAR(-side.dot(position), view(0, 3), 1e-12);
+    EXPECT_NEAR(-poseUp.dot(position), view(1, 3), 1e-12);
+    EXPECT_NEAR(-forward.dot(position), view(2, 3), 1e-12);
+}
