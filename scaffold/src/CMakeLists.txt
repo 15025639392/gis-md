@@ -300,8 +300,6 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileRenderFrameContext.cpp
     earth_engine/tiling/TileRenderFrameInputBuilder.h
     earth_engine/tiling/TileRenderFrameMaintenance.h
-    earth_engine/tiling/TilesetQueryFacade.h
-    earth_engine/tiling/TilesetQueryFacade.cpp
     earth_engine/tiling/TilesetUpdateFrameFacade.h
     earth_engine/tiling/TilesetUpdateFrameFacade.cpp
     earth_engine/tiling/TilesetUpdateFrameRuntime.h

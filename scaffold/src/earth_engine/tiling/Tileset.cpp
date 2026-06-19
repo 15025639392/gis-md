@@ -9,7 +9,7 @@
 #include "../tiling/TileRenderFrameContext.h"
 #include "../tiling/TileRenderReferenceReleaser.h"
 #include "../tiling/TileSoftwareOcclusionPolicy.h"
-#include "../tiling/TilesetQueryFacade.h"
+#include "../tiling/TilesetProviderDiagnosticsCollector.h"
 #include "../tiling/TilesetRenderFrameExecutor.h"
 #include "../tiling/TilesetUpdateFrameFacade.h"
 #include "../layers/ActivatedRasterOverlay.h"
@@ -129,7 +129,18 @@ void Tileset::clearOcclusionCallback() {
 }
 
 TilesetLoadDiagnostics Tileset::loadDiagnostics() const {
-    return TilesetQueryFacade::loadDiagnostics(*this);
+    TilesetLoadDiagnostics diagnostics = TileLoadDiagnosticsCollector::collect(
+        loadQueue_,
+        contentLifecycle_.loadLifecycle(),
+        frameResourceBudget_,
+        contentCache_.unloadQueue(),
+        tileRegistry_.tiles());
+    TilesetProviderDiagnosticsCollector::collect(
+        terrainProvider_.get(),
+        contentProvider_.get(),
+        rasterOverlays_)
+        .applyTo(diagnostics);
+    return diagnostics;
 }
 
 TileContentRuntimeFrame Tileset::makeContentRuntimeFrame() const {

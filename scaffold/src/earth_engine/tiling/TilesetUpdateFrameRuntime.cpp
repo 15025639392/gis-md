@@ -3,7 +3,7 @@
 #include "TileContentAccess.h"
 #include "TileContentLifecycleManager.h"
 #include "Tileset.h"
-#include "TilesetQueryFacade.h"
+#include "TilesetProviderDiagnosticsCollector.h"
 #include "TilesetSelectionFrameFacade.h"
 
 namespace earth_engine {
@@ -33,7 +33,13 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             frameState,
             tileset.resourceRevision_,
             tileset.options_.maximumSimultaneousTileLoads,
-            TilesetQueryFacade::maximumTransportActiveRequests(tileset),
+            TilesetProviderDiagnosticsCollector::collect(
+                tileset.terrainProvider_.get(),
+                tileset.contentProvider_.get(),
+                tileset.rasterOverlays_)
+                .maximumTransportActiveRequests(
+                    TileFrameResourceBudgetPlanInput::
+                        kDefaultMaximumTransportActiveRequests),
             tileset.options_.mainThreadLoadingTimeLimit,
             kPostInteractionResourceSmoothingSeconds,
             tileset.options_.maximumScreenSpaceError},

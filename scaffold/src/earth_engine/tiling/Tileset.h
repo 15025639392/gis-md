@@ -42,7 +42,6 @@ struct SelectorFrame;
 class ActivatedRasterOverlay;
 struct TilesetTestAccess;
 class TilesetSelectionFrameFacade;
-class TilesetQueryFacade;
 class TilesetUpdateFrameFacade;
 class TilesetUpdateFrameRuntime;
 
@@ -127,7 +126,6 @@ public:
 
 private:
     friend struct TilesetTestAccess;
-    friend class TilesetQueryFacade;
     friend class TilesetSelectionFrameFacade;
     friend class TilesetUpdateFrameRuntime;
 
