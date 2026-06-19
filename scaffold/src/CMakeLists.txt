@@ -75,6 +75,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/core/geodesy/S2CellBoundingVolume.h
     earth_engine/core/geodesy/S2CellID.h
     earth_engine/core/geodesy/S2CellID.cpp
+    earth_engine/core/geodesy/SimplePlanarEllipsoidCurve.h
+    earth_engine/core/geodesy/SimplePlanarEllipsoidCurve.cpp
     earth_engine/core/geodesy/Transforms.h
     earth_engine/core/geodesy/Transforms.cpp
 )
