@@ -5,6 +5,7 @@
 #include "earth_engine/core/math/OrientedBoundingBox.h"
 #include "earth_engine/core/geodesy/Transforms.h"
 
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/vec2.hpp>
 
@@ -183,4 +184,52 @@ TEST(BoundingCylinderRegionTest, TransformPreservesScaledCylinderSemantics) {
 
     EXPECT_DOUBLE_EQ(12.0, transformedRegion.getHeight());
     EXPECT_EQ(glm::dvec2(3.0, 6.0), transformedRegion.getRadialBounds());
+}
+
+TEST(BoundingCylinderRegionTest, TransformComposesExistingRotationLikeCesiumNative) {
+    glm::dmat4 transform = Transforms::Z_UP_TO_Y_UP().raw();
+    transform[3] = glm::dvec4(1.0, 2.0, 3.0, 1.0);
+
+    const Vec3 translation(-1.0, 0.0, 1.0);
+    const glm::dquat rotation(Transforms::X_UP_TO_Z_UP().raw());
+    const BoundingCylinderRegion region(
+        translation,
+        rotation,
+        3.0,
+        glm::dvec2(1.0, 2.0),
+        glm::dvec2(0.0, MathUtils::PiOverTwo));
+
+    expectObbNear(region.toOrientedBoundingBox(),
+                  Vec3(-1.0, 1.0, 2.0),
+                  Vec3(0.0, 0.0, 1.0),
+                  Vec3(0.0, 1.0, 0.0),
+                  Vec3(-1.5, 0.0, 0.0),
+                  MathUtils::Epsilon6);
+
+    const BoundingCylinderRegion transformedRegion = region.transform(transform);
+    const glm::dmat4 finalTransform =
+        transform *
+        glm::translate(glm::dmat4(1.0), translation.raw()) *
+        Transforms::X_UP_TO_Z_UP().raw();
+
+    Vec3 expectedTranslation;
+    glm::dquat expectedRotation(1.0, 0.0, 0.0, 0.0);
+    Transforms::computeTranslationRotationScaleFromMatrix(
+        Mat4(finalTransform),
+        &expectedTranslation,
+        &expectedRotation,
+        nullptr);
+
+    EXPECT_EQ(expectedTranslation, transformedRegion.getTranslation());
+    for (glm::length_t i = 0; i < 4; ++i) {
+        EXPECT_NEAR(expectedRotation[i],
+                    transformedRegion.getRotation()[i],
+                    MathUtils::Epsilon6);
+    }
+    expectObbNear(transformedRegion.toOrientedBoundingBox(),
+                  Vec3(0.0, 4.0, 2.0),
+                  Vec3(0.0, 1.0, 0.0),
+                  Vec3(0.0, 0.0, -1.0),
+                  Vec3(-1.5, 0.0, 0.0),
+                  MathUtils::Epsilon6);
 }
