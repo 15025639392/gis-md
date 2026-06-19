@@ -1,6 +1,5 @@
 #pragma once
 
-#include "../camera/CameraController.h"
 #include "../interaction/PickingService.h"
 
 #include <memory>
@@ -30,14 +29,6 @@ public:
                                      float screenX,
                                      float screenY,
                                      Vec3& outPoint);
-    static double sampleTerrainHeight(const Tileset* terrainTileset,
-                                      const Vec3& ecefPosition);
-    static CameraController::TerrainHeightFunc makeTerrainHeightFunc(
-        const Tileset* terrainTileset);
-
-private:
-    static std::function<float(double, double)> makeTerrainSampler(
-        const Tileset* terrainTileset);
 };
 
 } // namespace earth_engine

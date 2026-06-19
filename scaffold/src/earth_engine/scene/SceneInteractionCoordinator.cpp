@@ -1,5 +1,6 @@
 #include "SceneInteractionCoordinator.h"
 
+#include "SceneTerrainQuery.h"
 #include "../camera/CameraController.h"
 
 namespace earth_engine {
@@ -30,7 +31,7 @@ void SceneInteractionCoordinator::configureCameraSurfacePicker(
 
     cameraController.setTerrainHeightFunc(
         [contextProvider](const Vec3& ecefPosition) -> double {
-            return ScenePickingCoordinator::sampleTerrainHeight(
+            return SceneTerrainQuery::sampleHeight(
                 contextProvider().terrainTileset,
                 ecefPosition);
         });

@@ -1,22 +1,10 @@
 #include "ScenePickingCoordinator.h"
 
-#include "../core/geodesy/Cartographic.h"
-#include "../core/geodesy/Ellipsoid.h"
 #include "../layers/VectorLayer.h"
 #include "../scene/Camera.h"
-#include "../tiling/Tileset.h"
+#include "SceneTerrainQuery.h"
 
 namespace earth_engine {
-
-std::function<float(double, double)>
-ScenePickingCoordinator::makeTerrainSampler(const Tileset* terrainTileset) {
-    if (!terrainTileset) {
-        return {};
-    }
-    return [terrainTileset](double lng, double lat) {
-        return terrainTileset->sampleHeight(lng, lat);
-    };
-}
 
 PickResult ScenePickingCoordinator::pick(
     const ScenePickingContext& context,
@@ -32,7 +20,7 @@ PickResult ScenePickingCoordinator::pick(
         *context.camera,
         context.viewportWidthPixels,
         context.viewportHeightPixels,
-        makeTerrainSampler(context.terrainTileset));
+        SceneTerrainQuery::makeLngLatHeightSampler(context.terrainTileset));
 
     std::vector<const VectorLayer*> layerPtrs;
     if (context.vectorLayers) {
@@ -73,35 +61,13 @@ bool ScenePickingCoordinator::pickInteractionFocus(
         *context.camera,
         context.viewportWidthPixels,
         context.viewportHeightPixels,
-        makeTerrainSampler(context.terrainTileset));
+        SceneTerrainQuery::makeLngLatHeightSampler(context.terrainTileset));
     if (!result.isValid()) {
         return false;
     }
 
     outPoint = result.worldPosition;
     return true;
-}
-
-double ScenePickingCoordinator::sampleTerrainHeight(
-    const Tileset* terrainTileset,
-    const Vec3& ecefPosition) {
-    if (!terrainTileset) {
-        return 0.0;
-    }
-    const Cartographic c =
-        Ellipsoid::WGS84().cartesianToCartographic(ecefPosition);
-    return static_cast<double>(
-        terrainTileset->sampleHeight(c.longitude(), c.latitude()));
-}
-
-CameraController::TerrainHeightFunc
-ScenePickingCoordinator::makeTerrainHeightFunc(const Tileset* terrainTileset) {
-    if (!terrainTileset) {
-        return {};
-    }
-    return [terrainTileset](const Vec3& ecefPosition) -> double {
-        return sampleTerrainHeight(terrainTileset, ecefPosition);
-    };
 }
 
 } // namespace earth_engine
