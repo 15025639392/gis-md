@@ -132,4 +132,18 @@ glm::dvec2 computeProjectedRectangleSize(const Projection& projection,
     return glm::dvec2(x, y);
 }
 
+const Ellipsoid& getProjectionEllipsoid(const Projection& projection) {
+    struct Operation {
+        const Ellipsoid& operator()(const GeographicProjection& geographic) const {
+            return geographic.ellipsoid();
+        }
+
+        const Ellipsoid& operator()(const WebMercatorProjection& webMercator) const {
+            return webMercator.ellipsoid();
+        }
+    };
+
+    return std::visit(Operation{}, projection);
+}
+
 } // namespace earth_engine

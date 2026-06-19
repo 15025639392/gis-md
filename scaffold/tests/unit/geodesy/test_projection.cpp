@@ -208,6 +208,15 @@ TEST(WebMercatorProjectionTest, EqualityUsesCesiumNativeEllipsoidSemantics) {
     EXPECT_TRUE(lhs != different);
 }
 
+TEST(ProjectionTest, GetProjectionEllipsoidMatchesCesiumNativeVariantVisitor) {
+    const Projection geographic = GeographicProjection(Ellipsoid::WGS84());
+    const Projection webMercator =
+        WebMercatorProjection(Ellipsoid::UNIT_SPHERE());
+
+    EXPECT_EQ(Ellipsoid::WGS84(), getProjectionEllipsoid(geographic));
+    EXPECT_EQ(Ellipsoid::UNIT_SPHERE(), getProjectionEllipsoid(webMercator));
+}
+
 TEST(ProjectionTest, ComputeProjectedRectangleSizeMatchesCesiumNativeGlobeCases) {
     const GeographicProjection projection(Ellipsoid::WGS84());
     const Ellipsoid& ellipsoid = Ellipsoid::WGS84();

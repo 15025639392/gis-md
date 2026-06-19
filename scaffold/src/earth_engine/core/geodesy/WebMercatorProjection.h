@@ -16,6 +16,7 @@ public:
     Cartographic unproject(const Vec3& projectedCoordinates) const;
     Rectangle unproject(const Rectangle& rectangle) const;
 
+    const Ellipsoid& ellipsoid() const { return ellipsoid_; }
     double semimajorAxis() const { return semimajorAxis_; }
 
     static double maximumLatitude();

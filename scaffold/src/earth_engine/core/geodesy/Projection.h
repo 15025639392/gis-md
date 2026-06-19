@@ -27,4 +27,6 @@ glm::dvec2 computeProjectedRectangleSize(const Projection& projection,
                                          double maxHeight,
                                          const Ellipsoid& ellipsoid);
 
+const Ellipsoid& getProjectionEllipsoid(const Projection& projection);
+
 } // namespace earth_engine
