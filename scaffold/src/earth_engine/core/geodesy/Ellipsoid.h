@@ -34,6 +34,9 @@ public:
     double maximumRadius() const;
     double minimumRadius() const;
 
+    bool operator==(const Ellipsoid& rhs) const { return radii_ == rhs.radii_; }
+    bool operator!=(const Ellipsoid& rhs) const { return !(*this == rhs); }
+
     /// 椭球上方的大地纬度高 → ECEF（单位：米）
     Vec3 cartographicToCartesian(const Cartographic& cart) const;
 

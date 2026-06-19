@@ -8,7 +8,8 @@
 namespace earth_engine {
 
 WebMercatorProjection::WebMercatorProjection(const Ellipsoid& ellipsoid)
-    : semimajorAxis_(ellipsoid.maximumRadius()),
+    : ellipsoid_(ellipsoid),
+      semimajorAxis_(ellipsoid.maximumRadius()),
       oneOverSemimajorAxis_(1.0 / ellipsoid.maximumRadius()) {}
 
 Vec3 WebMercatorProjection::project(const Cartographic& cartographic) const {

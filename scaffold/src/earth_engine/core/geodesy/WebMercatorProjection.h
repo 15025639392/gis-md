@@ -1,12 +1,11 @@
 #pragma once
 
 #include "Cartographic.h"
+#include "Ellipsoid.h"
 #include "../math/Rectangle.h"
 #include "../math/Vec3.h"
 
 namespace earth_engine {
-
-class Ellipsoid;
 
 class WebMercatorProjection {
 public:
@@ -24,7 +23,15 @@ public:
     static double mercatorAngleToGeodeticLatitude(double mercatorAngle);
     static double geodeticLatitudeToMercatorAngle(double latitude);
 
+    bool operator==(const WebMercatorProjection& rhs) const {
+        return ellipsoid_ == rhs.ellipsoid_;
+    }
+    bool operator!=(const WebMercatorProjection& rhs) const {
+        return !(*this == rhs);
+    }
+
 private:
+    Ellipsoid ellipsoid_;
     double semimajorAxis_ = 1.0;
     double oneOverSemimajorAxis_ = 1.0;
 };

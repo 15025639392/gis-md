@@ -44,6 +44,17 @@ TEST(EllipsoidTest, TriAxialRadiiStateMatchesCesiumNative) {
     EXPECT_DOUBLE_EQ(2.0, e.minimumRadius());
 }
 
+TEST(EllipsoidTest, EqualityUsesCesiumNativeRadiiSemantics) {
+    const Ellipsoid lhs(1.0, 2.0, 3.0);
+    const Ellipsoid same(1.0, 2.0, 3.0);
+    const Ellipsoid different(1.0, 2.0, 4.0);
+
+    EXPECT_TRUE(lhs == same);
+    EXPECT_FALSE(lhs != same);
+    EXPECT_FALSE(lhs == different);
+    EXPECT_TRUE(lhs != different);
+}
+
 TEST(EllipsoidTest, TriAxialCartographicToCartesianUsesAllRadii) {
     const Ellipsoid e(2.0, 3.0, 4.0);
 

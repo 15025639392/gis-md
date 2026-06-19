@@ -1,12 +1,11 @@
 #pragma once
 
 #include "Cartographic.h"
+#include "Ellipsoid.h"
 #include "../math/Rectangle.h"
 #include "../math/Vec3.h"
 
 namespace earth_engine {
-
-class Ellipsoid;
 
 class GeographicProjection {
 public:
@@ -21,7 +20,15 @@ public:
 
     static Rectangle computeMaximumProjectedRectangle(const Ellipsoid& ellipsoid);
 
+    bool operator==(const GeographicProjection& rhs) const {
+        return ellipsoid_ == rhs.ellipsoid_;
+    }
+    bool operator!=(const GeographicProjection& rhs) const {
+        return !(*this == rhs);
+    }
+
 private:
+    Ellipsoid ellipsoid_;
     double semimajorAxis_ = 1.0;
     double oneOverSemimajorAxis_ = 1.0;
 };
