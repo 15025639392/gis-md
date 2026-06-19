@@ -129,7 +129,6 @@ private:
     friend struct TilesetTestAccess;
     friend class TilesetQueryFacade;
     friend class TilesetSelectionFrameFacade;
-    friend class TilesetUpdateFrameFacade;
     friend class TilesetUpdateFrameRuntime;
 
     TileContentRuntimeFrame makeContentRuntimeFrame() const;

@@ -14,10 +14,14 @@ constexpr double kPostInteractionResourceSmoothingSeconds = 1.25;
 
 } // namespace
 
-TileFrameWorkResult TilesetUpdateFrameRuntime::run(
+TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
     Tileset& tileset,
     const FrameState& frameState) {
-    return TileFrameWorkCoordinator::run(
+    // cesium-native: increment generation each frame so that
+    // RenderCommand validator (non-zero check) accepts SurfaceTile commands.
+    ++tileset.generation_;
+
+    TileFrameWorkResult frameWork = TileFrameWorkCoordinator::run(
         TileFrameWorkInput{
             tileset.tilePlan_,
             tileset.loadQueue_,
@@ -71,6 +75,30 @@ TileFrameWorkResult TilesetUpdateFrameRuntime::run(
                 requests,
                 budget);
         });
+    const TileUpdateUploadRunResult& uploadWork = frameWork.uploadWork;
+    const TileUpdateSelectionWorkResult& selectionWork =
+        frameWork.selectionWork;
+    return TilesetUpdateFrameRuntimeResult{
+        frameWork,
+        TileUpdateDebugLogInput{
+            tileset.tilePlan_.visibleTiles.size(),
+            tileset.loadQueue_.size(),
+            selectionWork.computeMs,
+            selectionWork.prefetchMs,
+            selectionWork.requestMs,
+            uploadWork.terrainUploadMs,
+            uploadWork.rasterUploadMs,
+            tileset.contentLifecycle_.terrainCache().size(),
+            tileset.contentLifecycle_.loadLifecycle()
+                .requestState()
+                .totalRequestCount(),
+            tileset.selectionCounters_,
+            selectionWork.reuseMode,
+            selectionWork.reuseRejectReason,
+            selectionWork.reusedSelection,
+            uploadWork.rasterUploadsProcessed,
+            frameWork.interactionActive,
+            frameWork.resourceSmoothingActive}};
 }
 
 } // namespace earth_engine
