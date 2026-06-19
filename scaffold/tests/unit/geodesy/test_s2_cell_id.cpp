@@ -96,3 +96,22 @@ TEST(S2CellIDTest, OddFacesSwapQuadtreeAxesLikeCesiumNative) {
                   1)
                   .getID());
 }
+
+TEST(S2CellIDTest, ParentAndChildMatchCesiumNativeS2Hierarchy) {
+    const S2CellID root = S2CellID::fromToken("1");
+    EXPECT_EQ("04", root.getChild(0).toToken());
+    EXPECT_EQ("0c", root.getChild(1).toToken());
+    EXPECT_EQ("14", root.getChild(2).toToken());
+    EXPECT_EQ("1c", root.getChild(3).toToken());
+
+    EXPECT_EQ(root.getID(), root.getChild(0).getParent().getID());
+    EXPECT_EQ(root.getID(), root.getChild(1).getParent().getID());
+    EXPECT_EQ(root.getID(), root.getChild(2).getParent().getID());
+    EXPECT_EQ(root.getID(), root.getChild(3).getParent().getID());
+
+    const S2CellID deep = S2CellID::fromToken("2ef59bd352b93ac3");
+    const S2CellID parent = deep.getParent();
+    EXPECT_EQ("2ef59bd352b93ac4", parent.toToken());
+    EXPECT_EQ(29, parent.getLevel());
+    EXPECT_EQ(deep.getID(), parent.getChild(1).getID());
+}

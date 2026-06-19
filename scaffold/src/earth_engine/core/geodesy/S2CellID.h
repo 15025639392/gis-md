@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -24,6 +25,8 @@ public:
     std::string toToken() const;
     int32_t getLevel() const noexcept;
     uint8_t getFace() const noexcept;
+    S2CellID getParent() const noexcept;
+    S2CellID getChild(size_t index) const noexcept;
 
 private:
     uint64_t id_ = 0;

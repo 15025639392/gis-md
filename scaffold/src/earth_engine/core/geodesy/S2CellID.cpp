@@ -38,6 +38,10 @@ uint64_t encodeHilbert2D(uint32_t level, uint32_t x, uint32_t y) {
     return index;
 }
 
+uint64_t lowestOnBit(uint64_t id) {
+    return id & (~id + 1ULL);
+}
+
 int hexValue(char c) {
     if (c >= '0' && c <= '9') {
         return c - '0';
@@ -104,7 +108,7 @@ bool S2CellID::isValid() const noexcept {
         return false;
     }
 
-    const uint64_t lowestBit = id_ & (~id_ + 1ULL);
+    const uint64_t lowestBit = lowestOnBit(id_);
     return lowestBit != 0 && (lowestBit & 0x1555555555555555ULL) != 0;
 }
 
@@ -128,7 +132,7 @@ std::string S2CellID::toToken() const {
 }
 
 int32_t S2CellID::getLevel() const noexcept {
-    const uint64_t lowestBit = id_ & (~id_ + 1ULL);
+    const uint64_t lowestBit = lowestOnBit(id_);
     if (lowestBit == 0) {
         return -1;
     }
@@ -144,6 +148,19 @@ int32_t S2CellID::getLevel() const noexcept {
 
 uint8_t S2CellID::getFace() const noexcept {
     return static_cast<uint8_t>(id_ >> 61U);
+}
+
+S2CellID S2CellID::getParent() const noexcept {
+    const uint64_t parentLowestBit = lowestOnBit(id_) << 2U;
+    return S2CellID((id_ & (~parentLowestBit + 1ULL)) | parentLowestBit);
+}
+
+S2CellID S2CellID::getChild(size_t index) const noexcept {
+    const uint64_t lowestBit = lowestOnBit(id_);
+    const uint64_t childLowestBit = lowestBit >> 2U;
+    const uint64_t childBegin = id_ - lowestBit + childLowestBit;
+    return S2CellID(childBegin + static_cast<uint64_t>(index) *
+                                    (childLowestBit << 1U));
 }
 
 } // namespace earth_engine
