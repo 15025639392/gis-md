@@ -54,6 +54,7 @@
 #include "earth_engine/tiling/TilePlan.h"
 #include "earth_engine/tiling/TilePriorityMetrics.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
+#include "earth_engine/tiling/TileRasterOverlayFrameProcessor.h"
 #include "earth_engine/tiling/TileRenderablePolicy.h"
 #include "earth_engine/tiling/TileRenderPlanFrameRefresher.h"
 #include "earth_engine/tiling/TileRenderPlanFinalizer.h"
@@ -298,6 +299,26 @@ struct TilesetTestAccess {
             tileset.device_,
             tileset.options_.maximumScreenSpaceError,
             tileset.frameResourceBudget_);
+    }
+
+    static void prefetchRasterOverlaySelection(
+        Tileset& tileset,
+        const std::vector<TileLoadRequest>& requests,
+        FrameResourceBudget& budget) {
+        const std::vector<size_t> overlayOrder =
+            TileSelectionRasterOverlayPreparer::processingOrder(
+                tileset.rasterOverlays_);
+        TileRasterOverlayFrameProcessor::prefetchSelection(
+            tileset.tilePlan_,
+            requests,
+            tileset.rasterOverlays_,
+            overlayOrder,
+            tileset.device_,
+            tileset.options_.maximumScreenSpaceError,
+            budget,
+            [&tileset](const TileKey& key) {
+                return tileset.contentAccess_.ensureTile(key);
+            });
     }
 
     static bool loadQueueEmpty(const Tileset& tileset) {
@@ -4731,6 +4752,79 @@ void testTilesetPrefetchesRasterFromBoundingRegionBeforeRenderContent() {
     check(loadingTile &&
               loadingTile->getState() == RasterOverlayTile::LoadState::Loading,
           "Tileset: prefetch starts throttled rectangle imagery loading");
+}
+
+void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<PendingRectangleImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+
+    auto terrainProvider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(terrainProvider),
+        std::move(scheme),
+        {&activated},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey edgeKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey centerKey{"Geographic-TMS", 1, 1, 0};
+    TilesetTile* edge = TilesetTestAccess::ensureTile(tileset, edgeKey);
+    TilesetTile* center = TilesetTestAccess::ensureTile(tileset, centerKey);
+    check(edge && center,
+          "TileRasterOverlayFrameProcessor: priority test creates both tiles");
+    if (!edge || !center) return;
+
+    edge->bounds = Rectangle::fromDegrees(-180.0, 0.0, 0.0, 85.0);
+    center->bounds = Rectangle::fromDegrees(0.0, 0.0, 180.0, 85.0);
+    edge->boundingVolume =
+        TileBoundingVolume::fromRegion(edge->bounds, 0.0, 10.0);
+    center->boundingVolume =
+        TileBoundingVolume::fromRegion(center->bounds, 0.0, 10.0);
+    edge->geometricError = 100.0;
+    center->geometricError = 100.0;
+    edge->selectionFrameState.priority = 100.0;
+    center->selectionFrameState.priority = 1.0;
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 2;
+    config.maxRasterNetworkInflight = 8;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    TilesetTestAccess::prefetchRasterOverlaySelection(
+        tileset,
+        {
+            TileLoadRequest{edgeKey, TileLoadPriorityGroup::Normal, 100.0},
+            TileLoadRequest{centerKey, TileLoadPriorityGroup::Normal, 1.0},
+        },
+        budget);
+
+    RasterMappedToTilesetTile* edgeMapping =
+        edge->rasterOverlayState.mappingCount() > 0
+            ? edge->rasterOverlayState.mappings()[0].get()
+            : nullptr;
+    RasterMappedToTilesetTile* centerMapping =
+        center->rasterOverlayState.mappingCount() > 0
+            ? center->rasterOverlayState.mappings()[0].get()
+            : nullptr;
+    RasterOverlayTile* edgeLoading =
+        edgeMapping ? edgeMapping->getLoadingTile() : nullptr;
+    RasterOverlayTile* centerLoading =
+        centerMapping ? centerMapping->getLoadingTile() : nullptr;
+
+    check(centerLoading &&
+              centerLoading->getState() ==
+                  RasterOverlayTile::LoadState::Loading &&
+              budget.rasterNetworkRequestsIssued() == 2,
+          "TileRasterOverlayFrameProcessor: raster prefetch starts the higher-priority tile first");
+    check(!edgeLoading ||
+              edgeLoading->getState() !=
+                  RasterOverlayTile::LoadState::Loading,
+          "TileRasterOverlayFrameProcessor: lower-priority traversal-order tile does not consume the first raster request");
 }
 
 void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
@@ -19038,6 +19132,7 @@ int main() {
     testTilesetRasterTargetPixelsUseRenderContentRectangle();
     testTilesetEnsuresOverlayProviderBeforeMapping();
     testTilesetPrefetchesRasterFromBoundingRegionBeforeRenderContent();
+    testTileRasterOverlayFrameProcessorPrefetchesByPriority();
     testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach();
     testTilesetBlockingBaseImageryDoesNotDrawPlaceholderSurface();
     testTilesetFailedChildBaseImageryUsesAncestorCommandTexture();

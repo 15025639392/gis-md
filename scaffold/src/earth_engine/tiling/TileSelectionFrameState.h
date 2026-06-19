@@ -12,6 +12,7 @@ struct TileSelectionFrameState {
         TileSelectionState::NotVisited;
     TileSelectionState selectionState = TileSelectionState::NotVisited;
     double screenSpaceError = 0.0;
+    double priority = 0.0;
     bool inFrustum = false;
     bool cameraInside = false;
     bool ancestorMeetsSse = false;

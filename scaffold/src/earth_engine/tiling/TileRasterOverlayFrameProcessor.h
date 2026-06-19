@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TileLoadTypes.h"
+#include "TileLoadPriorityPolicy.h"
 #include "TilePlan.h"
 #include "TileRasterOverlayPrefetcher.h"
 #include "TilesetTile.h"
@@ -9,6 +10,7 @@
 #include "../layers/ActivatedRasterOverlay.h"
 
 #include <cstddef>
+#include <limits>
 #include <vector>
 
 namespace earth_engine {
@@ -47,10 +49,30 @@ public:
         double maximumScreenSpaceError,
         FrameResourceBudget& frameResourceBudget,
         EnsureTileFn&& ensureTile) {
+        struct PrefetchTile {
+            TileKey key;
+            TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;
+            double priority = std::numeric_limits<double>::max();
+            TilesetTile* tile = nullptr;
+        };
+
+        std::vector<PrefetchTile> visibleTiles;
+        visibleTiles.reserve(tilePlan.visibleTiles.size());
         for (const TileKey& key : tilePlan.visibleTiles) {
-            if (TilesetTile* tile = ensureTile(key)) {
+            TilesetTile* tile = ensureTile(key);
+            if (tile) {
+                visibleTiles.push_back(PrefetchTile{
+                    key,
+                    TileLoadPriorityGroup::Normal,
+                    tile->selectionFrameState.priority,
+                    tile});
+            }
+        }
+        TileLoadPriorityPolicy::sortByPriority(visibleTiles);
+        for (const PrefetchTile& item : visibleTiles) {
+            if (item.tile) {
                 TileRasterOverlayPrefetcher::prefetch(
-                    *tile,
+                    *item.tile,
                     rasterOverlays,
                     overlayProcessingOrder,
                     device,
@@ -58,7 +80,9 @@ public:
                     frameResourceBudget);
             }
         }
-        for (const TileLoadRequest& request : loadRequests) {
+        std::vector<TileLoadRequest> sortedLoadRequests = loadRequests;
+        TileLoadPriorityPolicy::sortByPriority(sortedLoadRequests);
+        for (const TileLoadRequest& request : sortedLoadRequests) {
             if (TilesetTile* tile = ensureTile(request.key)) {
                 TileRasterOverlayPrefetcher::prefetch(
                     *tile,

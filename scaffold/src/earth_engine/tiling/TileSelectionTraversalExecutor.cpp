@@ -69,6 +69,7 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTileIfNeeded(
                 context.options.culledScreenSpaceError});
     selection.inFrustum = preparation.visibilitySample.inFrustum;
     selection.cameraInside = underCamera;
+    selection.priority = preparation.inputSummary.priority;
 
     const TileSelectionVisitOutcomePlan visitOutcome =
         TileSelectionVisitPreparation::outcomePlan(preparation);
