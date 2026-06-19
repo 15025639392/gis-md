@@ -1,7 +1,9 @@
 #pragma once
 
+#include "Mat4.h"
 #include "Vec3.h"
 #include <ostream>
+#include <stdexcept>
 
 namespace earth_engine {
 
@@ -9,14 +11,19 @@ namespace earth_engine {
 class Ray {
 public:
     Ray() : origin_(), direction_(Vec3::unitZ()) {}
-    Ray(const Vec3& origin, const Vec3& direction)
-        : origin_(origin), direction_(direction.normalized()) {}
+    Ray(const Vec3& origin, const Vec3& direction);
 
     const Vec3& origin() const { return origin_; }
     const Vec3& direction() const { return direction_; }
 
     /// 射线上的点：origin + t * direction
     Vec3 pointAt(double t) const;
+
+    /// Transform origin as a point and direction as a vector, matching
+    /// cesium-native CesiumGeometry::Ray::transform semantics.
+    Ray transform(const Mat4& transformation) const;
+
+    Ray operator-() const;
 
 private:
     Vec3 origin_;

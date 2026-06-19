@@ -40,6 +40,12 @@ add_executable(test_plane
 target_link_libraries(test_plane PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_plane COMMAND test_plane)
 
+add_executable(test_ray
+    unit/core/test_ray.cpp
+)
+target_link_libraries(test_ray PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_ray COMMAND test_ray)
+
 add_executable(test_bounding_sphere
     unit/core/test_bounding_sphere.cpp
 )

@@ -131,7 +131,8 @@ Ray Camera::getPickRay(double screenXPixels,
     nearWorld /= nearWorld.w;
     farWorld /= farWorld.w;
 
-    return Ray(Vec3(glm::dvec3(nearWorld)), Vec3(glm::dvec3(farWorld - nearWorld)));
+    return Ray(Vec3(glm::dvec3(nearWorld)),
+               Vec3(glm::normalize(glm::dvec3(farWorld - nearWorld))));
 }
 
 double Camera::getHeight() const {
