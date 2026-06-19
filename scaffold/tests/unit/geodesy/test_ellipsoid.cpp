@@ -71,6 +71,24 @@ TEST(EllipsoidTest, TriAxialCartographicToCartesianUsesAllRadii) {
     EXPECT_NEAR(0.0, yEquator.z(), 1e-12);
 }
 
+TEST(EllipsoidTest, CartesianToCartographicPreservesCesiumNativeNegativeHeight) {
+    // cesium-native computes height as sign(dot(cartesian - surface,
+    // cartesian)) * length(cartesian - surface), so points below the surface
+    // preserve negative height.
+    const Ellipsoid e(2.0, 3.0, 4.0);
+    const Cartographic cartographic =
+        Cartographic::fromRadians(0.4, -0.3, -0.25);
+
+    const Vec3 cartesian = e.cartographicToCartesian(cartographic);
+    const std::optional<Cartographic> roundtrip =
+        e.tryCartesianToCartographic(cartesian);
+
+    ASSERT_TRUE(roundtrip.has_value());
+    EXPECT_NEAR(cartographic.longitude(), roundtrip->longitude(), 1e-12);
+    EXPECT_NEAR(cartographic.latitude(), roundtrip->latitude(), 1e-12);
+    EXPECT_NEAR(cartographic.height(), roundtrip->height(), 1e-12);
+}
+
 TEST(EllipsoidTest, TriAxialGeodeticSurfaceNormalUsesAllRadii) {
     const Ellipsoid e(2.0, 3.0, 4.0);
 
