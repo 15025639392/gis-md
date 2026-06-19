@@ -42,6 +42,13 @@ Rectangle GeographicProjection::unproject(const Rectangle& rectangle) const {
     return Rectangle(sw.longitude(), sw.latitude(), ne.longitude(), ne.latitude());
 }
 
+Rectangle GeographicProjection::maximumGlobeRectangle() {
+    return Rectangle(-MathUtils::OnePi,
+                     -MathUtils::PiOverTwo,
+                     MathUtils::OnePi,
+                     MathUtils::PiOverTwo);
+}
+
 Rectangle GeographicProjection::computeMaximumProjectedRectangle(
     const Ellipsoid& ellipsoid) {
     const double longitudeValue = ellipsoid.maximumRadius() * MathUtils::OnePi;

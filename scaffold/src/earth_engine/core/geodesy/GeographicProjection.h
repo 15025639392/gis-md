@@ -22,6 +22,7 @@ public:
     const Ellipsoid& ellipsoid() const { return ellipsoid_; }
     double semimajorAxis() const { return semimajorAxis_; }
 
+    static Rectangle maximumGlobeRectangle();
     static Rectangle computeMaximumProjectedRectangle(const Ellipsoid& ellipsoid);
 
     bool operator==(const GeographicProjection& rhs) const {

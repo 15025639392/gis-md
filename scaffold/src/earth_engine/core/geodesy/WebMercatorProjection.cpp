@@ -52,6 +52,13 @@ double WebMercatorProjection::maximumLatitude() {
     return mercatorAngleToGeodeticLatitude(MathUtils::OnePi);
 }
 
+Rectangle WebMercatorProjection::maximumGlobeRectangle() {
+    return Rectangle(-MathUtils::OnePi,
+                     -maximumLatitude(),
+                     MathUtils::OnePi,
+                     maximumLatitude());
+}
+
 Rectangle WebMercatorProjection::computeMaximumProjectedRectangle(
     const Ellipsoid& ellipsoid) {
     const double value = ellipsoid.maximumRadius() * MathUtils::OnePi;

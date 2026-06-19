@@ -94,6 +94,15 @@ TEST(GeographicProjectionTest, MaximumProjectedRectangleMatchesCesiumNative) {
                 1e-9);
 }
 
+TEST(GeographicProjectionTest, MaximumGlobeRectangleMatchesCesiumNative) {
+    const Rectangle maximum = GeographicProjection::maximumGlobeRectangle();
+
+    EXPECT_DOUBLE_EQ(-M_PI, maximum.west());
+    EXPECT_DOUBLE_EQ(-M_PI * 0.5, maximum.south());
+    EXPECT_DOUBLE_EQ(M_PI, maximum.east());
+    EXPECT_DOUBLE_EQ(M_PI * 0.5, maximum.north());
+}
+
 TEST(GeographicProjectionTest, EqualityUsesCesiumNativeEllipsoidSemantics) {
     const GeographicProjection lhs(Ellipsoid::WGS84());
     const GeographicProjection same(
@@ -221,6 +230,17 @@ TEST(WebMercatorProjectionTest, MaximumProjectedRectangleMatchesCesiumNative) {
     EXPECT_NEAR(M_PI * Ellipsoid::WGS84().maximumRadius(),
                 maximum.north(),
                 1e-9);
+}
+
+TEST(WebMercatorProjectionTest, MaximumGlobeRectangleMatchesCesiumNative) {
+    const Rectangle maximum = WebMercatorProjection::maximumGlobeRectangle();
+
+    EXPECT_DOUBLE_EQ(-M_PI, maximum.west());
+    EXPECT_DOUBLE_EQ(-WebMercatorProjection::maximumLatitude(),
+                     maximum.south());
+    EXPECT_DOUBLE_EQ(M_PI, maximum.east());
+    EXPECT_DOUBLE_EQ(WebMercatorProjection::maximumLatitude(),
+                     maximum.north());
 }
 
 TEST(WebMercatorProjectionTest, EqualityUsesCesiumNativeEllipsoidSemantics) {

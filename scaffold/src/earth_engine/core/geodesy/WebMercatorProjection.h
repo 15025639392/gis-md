@@ -23,6 +23,7 @@ public:
     double semimajorAxis() const { return semimajorAxis_; }
 
     static double maximumLatitude();
+    static Rectangle maximumGlobeRectangle();
     static Rectangle computeMaximumProjectedRectangle(const Ellipsoid& ellipsoid);
     static double mercatorAngleToGeodeticLatitude(double mercatorAngle);
     static double geodeticLatitudeToMercatorAngle(double latitude);
