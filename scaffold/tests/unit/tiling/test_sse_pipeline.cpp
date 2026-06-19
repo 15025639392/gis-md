@@ -11700,6 +11700,100 @@ void testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive() {
           "TileRenderEntryCommandBuilder: fallback command preserves selected patch identity");
 }
 
+void testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass() {
+    const TileKey fadingKey{"test", 0, 0, 0};
+    TilesetTile fading(fadingKey, Rectangle{});
+    fading.markRenderContentDone();
+    fading.content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(4),
+        nullptr);
+
+    TilePlan plan;
+    plan.tilesFadingOut.push_back(TileTransition{fadingKey, 0.4f, 1});
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            true,
+            false,
+            0,
+            1},
+        [&fading](const TileKey& key) -> TilesetTile* {
+            return key == fading.key ? &fading : nullptr;
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return tile.hasSurfaceDrawable();
+        },
+        [](const TilesetTile&) {
+            return true;
+        });
+
+    check(plan.renderEntries.size() == 1 &&
+              !plan.renderEntries.front().selectedThisFrame &&
+              plan.renderEntries.front().reason ==
+                  TileRenderEntryReason::FadingOut &&
+              std::abs(plan.renderEntries.front().opacity - 0.4f) < 1e-6f,
+          "TileRenderPlanFinalizer: fading tiles become fade-pass render entries");
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    auto ensureTile = [&fading](const TileKey& key) -> TilesetTile* {
+        return key == fading.key ? &fading : nullptr;
+    };
+    auto cacheKey = [](const TileKey& key) {
+        return TileCacheKey::forTile(key);
+    };
+    auto markIneligible = [](const std::string&) {};
+    float submittedOpacity = 0.0f;
+    auto buildCommand = [&submittedOpacity](Renderer&,
+                                            TilesetTile&,
+                                            RenderCommandList& outCommands,
+                                            float opacity,
+                                            bool,
+                                            const std::optional<
+                                                std::array<float, 4>>&) {
+        submittedOpacity = opacity;
+        RenderCommand command;
+        command.kind = RenderCommandKind::SurfaceTile;
+        outCommands.push_back(std::move(command));
+    };
+
+    TileRenderEntryCommandStats selectedStats =
+        TileRenderEntryCommandBuilder::build(
+            plan,
+            true,
+            12,
+            renderer,
+            commands,
+            ensureTile,
+            cacheKey,
+            markIneligible,
+            buildCommand);
+    check(commands.empty() && selectedStats.plannedEntries == 0,
+          "TileRenderEntryCommandBuilder: selected pass skips fading render entries");
+
+    TileRenderEntryCommandStats fadeStats =
+        TileRenderEntryCommandBuilder::build(
+            plan,
+            false,
+            12,
+            renderer,
+            commands,
+            ensureTile,
+            cacheKey,
+            markIneligible,
+            buildCommand);
+    check(commands.size() == 1 &&
+              fadeStats.plannedEntries == 1 &&
+              fadeStats.drawAttempts == 1 &&
+              std::abs(submittedOpacity - 0.4f) < 1e-6f &&
+              fading.lastUsedFrame() == 12 &&
+              fading.referenceCount() == 1,
+          "TileRenderEntryCommandBuilder: fade pass submits fading render entries with opacity");
+}
+
 void testTileLodTransitionControllerFadesOutPreviousRenderContent() {
     const TileKey rootKey{"test", 0, 0, 0};
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
@@ -19796,6 +19890,7 @@ int main() {
     testTileRenderPlanFinalizerReadsSelectionFrameFade();
     testTileRenderEntryCommandBuilderCountsSkippedEntries();
     testTileRenderEntryCommandBuilderKeepsSelectedAndRenderTilesActive();
+    testTileRenderEntryCommandBuilderRendersFadingEntriesInFadePass();
     testTileLodTransitionControllerFadesOutPreviousRenderContent();
     testTileLodTransitionControllerRestartsReturnedFadeOutTile();
     testTileChildMaterializerLinksContentChildrenWithoutDuplicates();
