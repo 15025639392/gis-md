@@ -268,3 +268,39 @@ TEST(TransformsTest, ComputeTranslationRotationScaleMatchesCesiumNative) {
             actualScale);
     expectMatrixNear(reconstructed, matrix, 1e-12);
 }
+
+TEST(TransformsTest, ComputeTranslationRotationScaleAllowsNullOutputs) {
+    const Vec3 translation(3.0, -4.0, 5.0);
+    const glm::dquat rotation =
+        glm::angleAxis(0.2, glm::normalize(glm::dvec3(0.0, 1.0, 1.0)));
+    const Vec3 scale(2.0, 3.0, 4.0);
+    const Mat4 matrix =
+        Transforms::createTranslationRotationScaleMatrix(
+            translation,
+            rotation,
+            scale);
+
+    Vec3 actualTranslation;
+    Transforms::computeTranslationRotationScaleFromMatrix(
+        matrix,
+        &actualTranslation,
+        nullptr,
+        nullptr);
+    expectVec3Near(actualTranslation, translation, 1e-12);
+
+    glm::dquat actualRotation;
+    Transforms::computeTranslationRotationScaleFromMatrix(
+        matrix,
+        nullptr,
+        &actualRotation,
+        nullptr);
+    EXPECT_NEAR(std::abs(glm::dot(rotation, actualRotation)), 1.0, 1e-12);
+
+    Vec3 actualScale;
+    Transforms::computeTranslationRotationScaleFromMatrix(
+        matrix,
+        nullptr,
+        nullptr,
+        &actualScale);
+    expectVec3Near(actualScale, scale, 1e-12);
+}
