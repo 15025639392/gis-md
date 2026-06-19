@@ -24,6 +24,8 @@ public:
 
     Mat4 operator*(const Mat4& rhs) const;
     Vec3 operator*(const Vec3& v) const;  // 齐次乘法（w=1）
+    Vec3 transformPoint(const Vec3& point) const;
+    Vec3 transformVector(const Vec3& vector) const;
 
     Mat4 inverse() const;
     Mat4 transpose() const;

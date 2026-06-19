@@ -13,8 +13,16 @@ double& Mat4::operator()(int row, int col) { return m_[col][row]; }
 Mat4 Mat4::operator*(const Mat4& rhs) const { return Mat4(m_ * rhs.m_); }
 
 Vec3 Mat4::operator*(const Vec3& v) const {
-    glm::dvec4 r = m_ * glm::dvec4(v.raw(), 1.0);
+    return transformPoint(v);
+}
+
+Vec3 Mat4::transformPoint(const Vec3& point) const {
+    glm::dvec4 r = m_ * glm::dvec4(point.raw(), 1.0);
     return Vec3(glm::dvec3(r) / r.w);
+}
+
+Vec3 Mat4::transformVector(const Vec3& vector) const {
+    return Vec3(glm::dvec3(m_ * glm::dvec4(vector.raw(), 0.0)));
 }
 
 Mat4 Mat4::inverse() const { return Mat4(glm::inverse(m_)); }

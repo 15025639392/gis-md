@@ -34,6 +34,12 @@ add_executable(test_vec3
 target_link_libraries(test_vec3 PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_vec3 COMMAND test_vec3)
 
+add_executable(test_mat4
+    unit/core/test_mat4.cpp
+)
+target_link_libraries(test_mat4 PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_mat4 COMMAND test_mat4)
+
 add_executable(test_plane
     unit/core/test_plane.cpp
 )
