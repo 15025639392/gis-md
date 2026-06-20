@@ -29537,6 +29537,49 @@ void testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh() {
           "Surface command: trace fields expose skipped skirt index count");
 }
 
+void testSurfaceTileCommandSkipsExplicitMeshMissingIndexBuffer() {
+    InitializedRendererHarness harness;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        &harness.device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Surface command: missing-index-buffer setup creates root tile");
+    if (!root) return;
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+    SurfaceTileMesh* mesh = root->content.renderContent.mutableSurfaceMesh();
+    check(mesh != nullptr && !mesh->vertices.empty() && !mesh->indices.empty(),
+          "Surface command: missing-index-buffer test has explicit mesh geometry");
+    if (!mesh || mesh->vertices.empty() || mesh->indices.empty()) return;
+
+    BufferDesc vbDesc;
+    vbDesc.size = mesh->vertices.size() * sizeof(SurfaceVertex);
+    vbDesc.data = mesh->vertices.data();
+    vbDesc.type = BufferDesc::Type::Vertex;
+    root->content.renderContent.setSurfaceGpuBuffers(
+        harness.device.createBuffer(vbDesc),
+        nullptr);
+
+    TilesetTestAccess::setInteractionActiveForFrame(tileset, true);
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
+
+    RenderCommandList commands;
+    tileset.buildRenderCommands(harness.renderer, commands);
+    check(commands.empty(),
+          "Surface command: explicit mesh without GPU index buffer does not fall back to renderer default indices");
+}
+
 void testTilesetUpsampledChildQueuesParentUntilSourceReady() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
@@ -30590,6 +30633,7 @@ int main() {
     testPresentationTraceExposesAdditiveSelectedRenderEntries();
     testClippedFallbackCommandsHaveSelectedChildStableKeys();
     testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh();
+    testSurfaceTileCommandSkipsExplicitMeshMissingIndexBuffer();
     testTilesetUpsampledChildQueuesParentUntilSourceReady();
     testTilesetUpsampledChildFinalizesContentLoadedParent();
     testTilesetClearChildrenErasesFlatMapDescendants();

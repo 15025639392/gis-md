@@ -101,6 +101,12 @@ void SurfaceTileDrawCommandBuilder::build(
     if (!mesh) {
         return;
     }
+    const bool explicitMesh = !mesh->vertices.empty();
+    if (explicitMesh &&
+        (mesh->indices.empty() ||
+         !tile.content.renderContent.surfaceIndexBuffer())) {
+        return;
+    }
     if (!baseTexture) {
         baseTexture = renderer.surfacePlaceholderTexture();
     }
