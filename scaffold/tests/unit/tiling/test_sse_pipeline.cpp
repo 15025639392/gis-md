@@ -17405,6 +17405,40 @@ void testTileUpsampleSourcePreparerWaitsForLoadingAncestor() {
           "TileUpsampleSourcePreparer: loading ancestor waits without duplicate queue or mesh work");
 }
 
+void testTileUpsampleSourcePreparerWaitsForUnloadingAncestor() {
+    TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{});
+    TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
+    parent.children.push_back(&child);
+
+    parent.content.loadState = TileLoadState::Unloading;
+    parent.content.contentKind = TileContentKind::Render;
+    parent.content.renderContent.setMeshReady(true);
+    parent.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    child.content.upsampledFromParent = true;
+
+    int ensuredMeshes = 0;
+    std::vector<TileKey> queuedKeys;
+    const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
+        child,
+        5.0,
+        [&ensuredMeshes](TilesetTile&) {
+            ++ensuredMeshes;
+        },
+        [&queuedKeys](const TileKey& key,
+                      TileLoadPriorityGroup,
+                      double) {
+            queuedKeys.push_back(key);
+        });
+
+    check(!prepared &&
+              ensuredMeshes == 0 &&
+              queuedKeys.empty() &&
+              TileUpsampleSourcePreparer::findSourceTile(child) == nullptr &&
+              TileUpsampleSourcePreparer::findSourceTile(child, true) == &parent,
+          "TileUpsampleSourcePreparer: unloading ancestor is usable only for existing protected work and not for new upsample requests");
+}
+
 void testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.contentKind = TileContentKind::Render;
@@ -29331,6 +29365,7 @@ int main() {
     testTileUpsampleSourcePreparerQueuesTemporaryFailedAncestor();
     testTileUpsampleSourcePreparerFinalizesContentLoadedAncestor();
     testTileUpsampleSourcePreparerWaitsForLoadingAncestor();
+    testTileUpsampleSourcePreparerWaitsForUnloadingAncestor();
     testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded();
     testTileUnloadPolicyReleasesRasterOverlayReferencesWithExplicitClear();
     testTileUnloadPolicyFindsQueuedTilesByLoadState();
