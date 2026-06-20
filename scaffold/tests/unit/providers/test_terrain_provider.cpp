@@ -773,6 +773,22 @@ TEST(TileMapServiceUrlTest, FallsBackToSrsForUnknownProfileLikeCesiumNative) {
     EXPECT_TRUE(metadata.boundingBoxCoordinatesInDegrees);
 }
 
+TEST(TileMapServiceUrlTest, UnknownProfileWithoutSrsKeepsProjectedBoundingBoxLikeCesiumNative) {
+    const TileMapServiceMetadata metadata = parseTileMapServiceMetadata(R"xml(
+      <TileMap>
+        <BoundingBox minx="-1000" miny="-2000" maxx="3000" maxy="4000" />
+        <TileSets profile="custom" />
+      </TileMap>
+    )xml");
+
+    EXPECT_EQ("TMS-WebMercator", metadata.schemeId);
+    EXPECT_FALSE(metadata.boundingBoxCoordinatesInDegrees);
+    ASSERT_TRUE(metadata.projectedCoverageRectangle.has_value());
+    EXPECT_TRUE(metadata.projectedCoverageRectangle->equalsEpsilon(
+        Rectangle(-1000.0, -2000.0, 3000.0, 4000.0),
+        0.0));
+}
+
 TEST(TileMapServiceUrlTest, ParsesDegreesBoundingBoxAsProjectedCoverageLikeCesiumNative) {
     const TileMapServiceMetadata metadata = parseTileMapServiceMetadata(R"xml(
       <TileMap>

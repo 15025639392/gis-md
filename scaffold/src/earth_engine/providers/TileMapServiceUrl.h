@@ -25,7 +25,7 @@ struct TileMapServiceMetadata {
     uint32_t minimumLevel = 0;
     uint32_t maximumLevel = 25;
     std::string schemeId = "TMS-WebMercator";
-    bool boundingBoxCoordinatesInDegrees = true;
+    bool boundingBoxCoordinatesInDegrees = false;
     std::optional<Rectangle> projectedCoverageRectangle;
     std::vector<TileMapServiceTileSet> tileSets;
 };
