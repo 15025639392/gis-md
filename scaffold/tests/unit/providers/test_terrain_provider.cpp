@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 #include <cmath>
+#include <string>
+#include "earth_engine/providers/BingMapsImageryProvider.h"
 #include "earth_engine/providers/HeightmapTerrainProvider.h"
 #include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
@@ -839,6 +841,66 @@ TEST(WebMapTileServiceImageryProviderTest, RejectsUnsupportedTiles) {
     EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 0}));
     EXPECT_FALSE(provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 1, 0}));
     EXPECT_EQ("", provider.buildUrl(TileKey{"Geographic-TMS", 0, 0, 0}));
+}
+
+TEST(BingMapsImageryProviderTest, BuildsQuadkeyUrlLikeCesiumNative) {
+    BingMapsImageryOptions options;
+    options.culture = "en-US";
+    options.subdomains = {"t0", "t1", "t2"};
+    options.maximumLevel = 5;
+
+    BingMapsImageryProvider provider(
+        "https://dev.virtualearth.net/",
+        "https://ecn.{subdomain}.tiles.virtualearth.net/tiles/a{quadkey}.jpeg?g=1&mkt={culture}",
+        options,
+        "bing attribution");
+
+    EXPECT_EQ("bing-maps-imagery", provider.type());
+    EXPECT_EQ("XYZ-WebMercator", provider.schemeId());
+    EXPECT_EQ(0, provider.minZoom());
+    EXPECT_EQ(5, provider.maxZoom());
+    EXPECT_EQ(256, provider.tileWidth());
+    EXPECT_EQ(256, provider.tileHeight());
+    EXPECT_EQ("bing attribution", provider.attribution());
+    EXPECT_EQ("011", BingMapsImageryProvider::tileXYToQuadKey(2, 3, 0));
+    EXPECT_EQ(
+        "https://ecn.t2.tiles.virtualearth.net/tiles/a011.jpeg?g=1&mkt=en-US&n=z",
+        provider.buildUrl(TileKey{"XYZ-WebMercator", 2, 3, 3}));
+}
+
+TEST(BingMapsImageryProviderTest, PreservesExistingNAndUnknownPlaceholderLikeCesiumNative) {
+    BingMapsImageryOptions options;
+    options.subdomains = {"a", "b"};
+
+    BingMapsImageryProvider provider(
+        "https://example.com/root/metadata.json",
+        "tiles/{subdomain}/{unknown}/{quadkey}.png?n=old",
+        options);
+
+    EXPECT_EQ(
+        "https://example.com/root/tiles/a/unknown/0.png?n=old",
+        provider.buildUrl(TileKey{"XYZ-WebMercator", 0, 0, 0}));
+}
+
+TEST(BingMapsImageryProviderTest, RejectsUnsupportedTiles) {
+    BingMapsImageryProvider provider(
+        "https://example.com/",
+        "tiles/{quadkey}.png");
+
+    EXPECT_TRUE(provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 0, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 1, 0}));
+    EXPECT_EQ("", provider.buildUrl(TileKey{"Geographic-TMS", 0, 0, 0}));
+}
+
+TEST(BingMapsImageryProviderTest, InvertsYAtCesiumNativeMaximumLevel) {
+    BingMapsImageryProvider provider(
+        "https://example.com/",
+        "tiles/{quadkey}.png");
+
+    EXPECT_EQ(
+        "https://example.com/tiles/0" + std::string(30, '2') + ".png?n=z",
+        provider.buildUrl(TileKey{"XYZ-WebMercator", 30, 0, 0}));
 }
 
 TEST(TileMapServiceUrlTest, AppendsTileMapResourceXmlBeforeQueryLikeCesiumNative) {
