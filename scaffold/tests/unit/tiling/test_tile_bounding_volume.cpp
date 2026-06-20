@@ -313,6 +313,23 @@ TEST(TileBoundingVolumeTest, S2CellDistanceCaseFourMatchesCesiumNative) {
                 1e-7);
 }
 
+TEST(TileBoundingVolumeTest, S2CellIntersectPlaneMatchesCesiumNative) {
+    const S2CellBoundingVolume s2(
+        S2CellID::fromToken("1"),
+        0.0,
+        100000.0);
+
+    EXPECT_EQ(0, s2.intersectPlane(Plane::ORIGIN_ZX));
+
+    const Plane outsidePlane(
+        Plane::ORIGIN_YZ.getNormal(),
+        Plane::ORIGIN_YZ.getDistance() -
+            2.0 * Ellipsoid::WGS84().maximumRadius());
+    EXPECT_EQ(-1, s2.intersectPlane(outsidePlane));
+
+    EXPECT_EQ(1, s2.intersectPlane(Plane::ORIGIN_YZ));
+}
+
 TEST(TileBoundingVolumeTest, RegionCenterUsesBoundingRegionObbLikeCesiumNative) {
     const TileBoundingVolume region =
         TileBoundingVolume::fromRegion(

@@ -289,4 +289,25 @@ double S2CellBoundingVolume::computeDistanceSquaredToPosition(
         .lengthSquared();
 }
 
+int S2CellBoundingVolume::intersectPlane(const Plane& plane) const noexcept {
+    std::size_t plusCount = 0;
+    std::size_t negCount = 0;
+
+    for (const Vec3& vertex : vertices_) {
+        if (plane.getPointDistance(vertex) < 0.0) {
+            ++negCount;
+        } else {
+            ++plusCount;
+        }
+    }
+
+    if (plusCount == vertices_.size()) {
+        return 1;
+    }
+    if (negCount == vertices_.size()) {
+        return -1;
+    }
+    return 0;
+}
+
 } // namespace earth_engine

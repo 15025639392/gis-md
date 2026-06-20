@@ -24,6 +24,7 @@ public:
     }
 
     double computeDistanceSquaredToPosition(const Vec3& position) const noexcept;
+    int intersectPlane(const Plane& plane) const noexcept;
     bool contains(const Vec3& position) const noexcept {
         return computeDistanceSquaredToPosition(position) <= 1e-8;
     }
