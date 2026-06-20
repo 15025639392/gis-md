@@ -114,3 +114,20 @@ TEST(OctreeTilingSchemeTest, TileToBoxUsesCesiumNativeOriginBasedOffsets) {
     EXPECT_DOUBLE_EQ(6.0, box.maximumY());
     EXPECT_DOUBLE_EQ(16.0, box.maximumZ());
 }
+
+TEST(OctreeTilingSchemeTest, TileToBoxAllowsOutOfRangeIdsLikeCesiumNative) {
+    const OctreeTilingScheme scheme(AxisAlignedBox(0.0, 0.0, 0.0,
+                                                  4.0, 4.0, 4.0),
+                                    1,
+                                    1,
+                                    1);
+
+    const AxisAlignedBox box = scheme.tileToBox(OctreeTileID{1, 3, 2, 4});
+
+    EXPECT_DOUBLE_EQ(6.0, box.minimumX());
+    EXPECT_DOUBLE_EQ(4.0, box.minimumY());
+    EXPECT_DOUBLE_EQ(8.0, box.minimumZ());
+    EXPECT_DOUBLE_EQ(8.0, box.maximumX());
+    EXPECT_DOUBLE_EQ(6.0, box.maximumY());
+    EXPECT_DOUBLE_EQ(10.0, box.maximumZ());
+}
