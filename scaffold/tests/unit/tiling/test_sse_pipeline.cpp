@@ -20305,10 +20305,21 @@ void testTileLoadRequestDispatcherRejectsRequestsDuringDestroy() {
             TileLoadPriorityGroup::Normal,
             0.0,
             [&issued]() { issued = true; });
+    const TileLoadDispatchResult upsampleResult =
+        TileLoadRequestDispatcher::queueUpsampledTerrain(
+            lifecycle.mutex(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            key,
+            "destroy-upsample",
+            TileLoadPriorityGroup::Normal,
+            0.0);
 
     check(terrainResult == TileLoadDispatchResult::Destroying &&
-              contentResult == TileLoadDispatchResult::Destroying,
-          "TileLoadRequestDispatcher: destroying lifecycle rejects new requests");
+              contentResult == TileLoadDispatchResult::Destroying &&
+              upsampleResult == TileLoadDispatchResult::Destroying,
+          "TileLoadRequestDispatcher: destroying lifecycle rejects new requests and local uploads");
     check(!issued &&
               terrainProvider.requestCount == 0 &&
               contentProvider.requestCount == 0 &&
