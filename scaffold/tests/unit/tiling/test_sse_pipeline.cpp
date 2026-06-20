@@ -5046,6 +5046,20 @@ void testQuantizedMeshParsesUint32IndicesAndEdges() {
           "QuantizedMeshParser: uint32 edge index is preserved instead of truncated");
 }
 
+void testQuantizedMeshRasterizerParsesUint32IndexPadding() {
+    const std::vector<uint8_t> bytes =
+        makeLargeQuantizedMeshBytesWithUint32EdgeIndex();
+
+    std::unique_ptr<DecodedHeightmap> heightmap =
+        QuantizedMeshParser::parseAndRasterize(bytes.data(), bytes.size(), 1);
+
+    check(heightmap != nullptr,
+          "QuantizedMeshParser: rasterizer accepts uint32 index padding like cesium-native");
+    check(heightmap && heightmap->tileSize == 2 &&
+              heightmap->heights.size() == 4,
+          "QuantizedMeshParser: rasterizer produces a minimal grid after uint32 index parsing");
+}
+
 void testQuantizedMeshRejectsMissingUint32IndexPadding() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -23509,6 +23523,7 @@ int main() {
     testQuantizedMeshRasterizerRejectsEdgeIndicesOutsideVertexRange();
     testQuantizedMeshRejectsEachTruncatedEdge();
     testQuantizedMeshParsesUint32IndicesAndEdges();
+    testQuantizedMeshRasterizerParsesUint32IndexPadding();
     testQuantizedMeshRejectsMissingUint32IndexPadding();
     testQuantizedMeshRasterizerRejectsMissingUint32IndexPadding();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
