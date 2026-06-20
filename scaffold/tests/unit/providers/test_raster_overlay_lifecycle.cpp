@@ -206,6 +206,23 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomFollowsCesiumTargetScreenPix
     EXPECT_EQ(3, maxClampedTile->getSourceZoom());
 }
 
+TEST(RasterOverlayLifecycleTest, DirectTileCreationRejectsUnsupportedProviderTiles) {
+    ConfigurableImageryProvider imagery;
+    imagery.minZoomValue = 2;
+    imagery.maxZoomValue = 4;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    EXPECT_EQ(nullptr, provider.getTile(TileKey{scheme->id(), 1, 0, 0}));
+    EXPECT_EQ(nullptr, provider.getTile(TileKey{scheme->id(), 5, 0, 0}));
+    EXPECT_EQ(nullptr, provider.getTile(TileKey{"Geographic-TMS", 2, 0, 0}));
+    EXPECT_EQ(0, provider.getCachedTileCount());
+
+    auto supported = provider.getTile(TileKey{scheme->id(), 2, 0, 0});
+    ASSERT_NE(nullptr, supported);
+    EXPECT_EQ(1, provider.getCachedTileCount());
+}
+
 TEST(RasterOverlayLifecycleTest, RectangleSourceFailureFallsBackToParentTile) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

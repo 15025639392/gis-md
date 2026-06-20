@@ -792,6 +792,7 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
     }
 
     if (key.z < 0 || key.z > scheme_.maxZoom()) return nullptr;
+    if (!provider_.supportsTile(key)) return nullptr;
 
     std::string ck = tileCacheKey(key);
     auto it = tiles_.find(ck);
