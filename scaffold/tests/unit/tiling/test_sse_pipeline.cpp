@@ -11818,8 +11818,7 @@ void testTilesetJsonMalformedContentUriFailsTile() {
         std::string label;
     };
 
-    const std::array<MalformedContentCase, 5> cases = {{
-        {"7", "non-object content"},
+    const std::array<MalformedContentCase, 4> cases = {{
         {"{\"uri\":7}", "non-string uri"},
         {"{\"url\":7}", "non-string legacy url"},
         {"{\"uri\":\"\"}", "empty uri"},

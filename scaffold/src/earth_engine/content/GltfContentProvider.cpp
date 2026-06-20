@@ -1240,7 +1240,7 @@ bool contentObjectHasUnsupportedMetadataFields(
 bool contentObjectHasMalformedUriFields(
     const nlohmann::json& contentJson) {
     if (!contentJson.is_object()) {
-        return true;
+        return false;
     }
 
     auto uriIt = contentJson.find("uri");

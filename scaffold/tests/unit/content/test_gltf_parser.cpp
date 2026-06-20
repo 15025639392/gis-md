@@ -14527,6 +14527,39 @@ TEST(GltfParserTest, TilesetJsonContentProviderLoadsEmptyContentObject) {
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
+TEST(GltfParserTest, TilesetJsonContentProviderTreatsNonObjectContentAsEmpty) {
+    const std::string tilesetJson = R"json({
+      "asset": {"version": "1.0"},
+      "geometricError": 240,
+      "root": {
+        "boundingVolume": {
+          "region": [-1.3197209591796106, 0.6988424218,
+                     -1.3196390408203893, 0.6989055782, 0, 88]
+        },
+        "geometricError": 70,
+        "refine": "ADD",
+        "content": 7
+      }
+    })json";
+
+    TilesetJsonContentProvider provider(
+        "file:///earth-md/non-object-content-tileset.json",
+        bytesFromString(tilesetJson),
+        "non-object content tileset");
+
+    ASSERT_TRUE(provider.valid());
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    const std::vector<TileKey> rootChildren =
+        provider.childTiles(roots.front());
+    ASSERT_EQ(1u, rootChildren.size());
+
+    const TileContentLoadResult result =
+        requestTileContentBlocking(provider, rootChildren.front());
+    EXPECT_EQ(TileContentLoadStatus::Empty, result.status);
+    EXPECT_EQ(nullptr, result.gltfModel);
+}
+
 TEST(GltfParserTest, TilesetJsonContentProviderFallsBackToLegacyUrlWhenUriEmpty) {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
