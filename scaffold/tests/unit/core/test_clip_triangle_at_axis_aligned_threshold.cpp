@@ -159,7 +159,9 @@ TEST(ClipTriangleAtAxisAlignedThresholdTest, MatchesCesiumNativeCases) {
 }
 
 TEST(ClipTriangleAtAxisAlignedThresholdTest, AppendsToExistingResult) {
-    std::vector<TriangleClipVertex> actual{99};
+    std::vector<TriangleClipVertex> actual{
+        InterpolatedVertex{9, 10, 0.25},
+    };
 
     clipTriangleAtAxisAlignedThreshold(0.1,
                                        true,
@@ -171,7 +173,12 @@ TEST(ClipTriangleAtAxisAlignedThresholdTest, AppendsToExistingResult) {
                                        0.4,
                                        actual);
 
-    const std::vector<TriangleClipVertex> expected{99, 0, 1, 2};
+    const std::vector<TriangleClipVertex> expected{
+        InterpolatedVertex{9, 10, 0.25},
+        0,
+        1,
+        2,
+    };
     EXPECT_EQ(expected, actual);
 }
 
