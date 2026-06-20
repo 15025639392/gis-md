@@ -6794,6 +6794,38 @@ void testTilesetBoundingRegionObbHandlesLargeRectanglesLikeCesiumNative() {
           "Tileset: large BoundingRegion OBB extents match cesium-native root-region strategy");
 }
 
+void testS2CellBoundingVolumeDistanceAndPlaneIntersectionMatchNative() {
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const S2CellBoundingVolume volume(
+        S2CellID::fromToken("1"),
+        0.0,
+        100000.0);
+
+    check(volume.computeDistanceSquaredToPosition(volume.getCenter()) == 0.0,
+          "S2CellBoundingVolume: distance is zero inside bounding volume like cesium-native");
+
+    const Vec3 outsideManyPlanes(-ellipsoid.semiMajorAxis(), 0.0, 0.0);
+    const double expectedDistance =
+        ellipsoid.semiMajorAxis() +
+        volume.getBoundingPlanes()[1].getDistance();
+    check(std::abs(std::sqrt(
+              volume.computeDistanceSquaredToPosition(outsideManyPlanes)) -
+              expectedDistance) < 1e-7,
+          "S2CellBoundingVolume: more-than-three-plane distance matches cesium-native");
+
+    check(volume.intersectPlane(Plane::ORIGIN_ZX) == 0,
+          "S2CellBoundingVolume: origin ZX plane intersects like cesium-native");
+
+    const Plane outsidePlane(
+        Plane::ORIGIN_YZ.getNormal(),
+        Plane::ORIGIN_YZ.getDistance() -
+            2.0 * ellipsoid.semiMajorAxis());
+    check(volume.intersectPlane(outsidePlane) == -1,
+          "S2CellBoundingVolume: far YZ plane is outside like cesium-native");
+    check(volume.intersectPlane(Plane::ORIGIN_YZ) == 1,
+          "S2CellBoundingVolume: origin YZ plane is inside like cesium-native");
+}
+
 void testQuantizedMeshLayerJsonVersionAndExtensionQuery() {
     QuantizedMeshTerrainProvider provider("https://example.invalid/fallback/{z}/{x}/{y}.terrain");
     const std::string layerJson = R"json({
@@ -30743,6 +30775,7 @@ int main() {
     testTileBoundsMetricsUsesCentralDefaultTerrainHeightRange();
     testTilesetBoundingRegionObbUsesQuantizedMeshHeightRange();
     testTilesetBoundingRegionObbHandlesLargeRectanglesLikeCesiumNative();
+    testS2CellBoundingVolumeDistanceAndPlaneIntersectionMatchNative();
     testQuantizedMeshLayerJsonVersionAndExtensionQuery();
     testQuantizedMeshLayerJsonUriResolution();
     testQuantizedMeshFabdemLayerJsonShape();
