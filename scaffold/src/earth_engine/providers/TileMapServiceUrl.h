@@ -4,11 +4,14 @@
 #include "earth_engine/tiling/TileKey.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace earth_engine {
+
+class TileScheme;
 
 struct TileMapServiceTileSet {
     std::string url;
@@ -50,6 +53,9 @@ std::optional<std::string> tileMapServiceTileUrlForKey(
 /// Convert cesium-native projected TMS coverage into the geographic-radian
 /// rectangle used by RasterOverlay options.
 std::optional<Rectangle> tileMapServiceGeographicCoverageRectangle(
+    const TileMapServiceMetadata& metadata);
+
+std::unique_ptr<TileScheme> tileMapServiceTileScheme(
     const TileMapServiceMetadata& metadata);
 
 TileMapServiceMetadata parseTileMapServiceMetadata(const std::string& xml);

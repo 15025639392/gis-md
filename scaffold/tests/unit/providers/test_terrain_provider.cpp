@@ -814,6 +814,33 @@ TEST(TileMapServiceUrlTest, ConvertsProjectedCoverageToGeographicOverlayRectangl
     EXPECT_FALSE(tileMapServiceGeographicCoverageRectangle(metadata).has_value());
 }
 
+TEST(TileMapServiceUrlTest, CreatesTileSchemeFromMetadataProfile) {
+    TileMapServiceMetadata metadata =
+        parseTileMapServiceMetadata(R"xml(
+          <TileMap>
+            <TileSets profile="global-geodetic" />
+          </TileMap>
+        )xml");
+
+    std::unique_ptr<TileScheme> scheme = tileMapServiceTileScheme(metadata);
+    ASSERT_NE(nullptr, scheme);
+    EXPECT_EQ("Geographic-TMS", scheme->id());
+    EXPECT_EQ(2, scheme->tileCountX(0));
+    EXPECT_EQ(1, scheme->tileCountY(0));
+
+    metadata = parseTileMapServiceMetadata(R"xml(
+      <TileMap>
+        <TileSets profile="mercator" />
+      </TileMap>
+    )xml");
+
+    scheme = tileMapServiceTileScheme(metadata);
+    ASSERT_NE(nullptr, scheme);
+    EXPECT_EQ("TMS-WebMercator", scheme->id());
+    EXPECT_EQ(1, scheme->tileCountX(0));
+    EXPECT_EQ(1, scheme->tileCountY(0));
+}
+
 TEST(TileMapServiceImageryProviderTest, ConfiguresProviderFromMetadataLikeCesiumNative) {
     TileMapServiceMetadata metadata;
     metadata.fileExtension = "jpg";

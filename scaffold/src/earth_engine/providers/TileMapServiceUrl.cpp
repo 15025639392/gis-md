@@ -2,6 +2,7 @@
 
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Projection.h"
+#include "earth_engine/tiling/TileScheme.h"
 
 #include <algorithm>
 #include <cctype>
@@ -382,6 +383,14 @@ std::optional<Rectangle> tileMapServiceGeographicCoverageRectangle(
     return unprojectRectangleSimple(
         projectionForSchemeId(metadata.schemeId),
         *metadata.projectedCoverageRectangle);
+}
+
+std::unique_ptr<TileScheme> tileMapServiceTileScheme(
+    const TileMapServiceMetadata& metadata) {
+    if (metadata.schemeId == "Geographic-TMS") {
+        return TileScheme::createGeographicTMS();
+    }
+    return TileScheme::createTMS();
 }
 
 TileMapServiceMetadata parseTileMapServiceMetadata(const std::string& xml) {
