@@ -126,36 +126,56 @@ Cartographic toCartographic(const CartesianUnit& point) {
     return Cartographic(longitude(point), latitude(point), 0.0);
 }
 
-std::pair<double, double> minimalLongitudeInterval(
-    std::array<double, 4> longitudes,
-    size_t count) {
-    if (count == 0) {
-        return {-MathUtils::OnePi, MathUtils::OnePi};
+double uAxisZ(uint8_t face) {
+    switch (face) {
+        case 3:
+        case 4:
+            return -1.0;
+        default:
+            return 0.0;
     }
+}
 
-    for (size_t i = 0; i < count; ++i) {
-        longitudes[i] = MathUtils::negativePiToPi(longitudes[i]);
+double vAxisZ(uint8_t face) {
+    switch (face) {
+        case 0:
+        case 1:
+            return 1.0;
+        default:
+            return 0.0;
     }
-    std::sort(longitudes.begin(), longitudes.begin() + count);
+}
 
-    size_t largestGapIndex = 0;
-    double largestGap = -1.0;
-    for (size_t i = 0; i < count; ++i) {
-        const double current = longitudes[i];
-        const double next = i + 1 < count
-            ? longitudes[i + 1]
-            : longitudes[0] + MathUtils::TwoPi;
-        const double gap = next - current;
-        if (gap > largestGap) {
-            largestGap = gap;
-            largestGapIndex = i;
-        }
+double latitudeAt(const std::array<double, 2>& u,
+                  const std::array<double, 2>& v,
+                  uint8_t face,
+                  int i,
+                  int j) {
+    return latitude(faceUvToXyz(face, u[static_cast<size_t>(i)],
+                                v[static_cast<size_t>(j)]));
+}
+
+double longitudeAt(const std::array<double, 2>& u,
+                   const std::array<double, 2>& v,
+                   uint8_t face,
+                   int i,
+                   int j) {
+    return longitude(faceUvToXyz(face, u[static_cast<size_t>(i)],
+                                 v[static_cast<size_t>(j)]));
+}
+
+std::pair<double, double> intervalFromPointPair(double a, double b) {
+    return {std::min(a, b), std::max(a, b)};
+}
+
+std::pair<double, double> longitudeIntervalFromPointPair(double a, double b) {
+    a = MathUtils::negativePiToPi(a);
+    b = MathUtils::negativePiToPi(b);
+    const double positiveDistance = MathUtils::zeroToTwoPi(b - a);
+    if (positiveDistance <= MathUtils::OnePi) {
+        return {a, b};
     }
-
-    const double west =
-        longitudes[(largestGapIndex + 1) % count];
-    const double east = longitudes[largestGapIndex];
-    return {west, east};
+    return {b, a};
 }
 
 int hexValue(char c) {
@@ -382,29 +402,26 @@ Rectangle S2CellID::computeBoundingRectangle() const {
     const double u1 = stToUv(static_cast<double>(x + 1U) / denominator);
     const double v0 = stToUv(static_cast<double>(y) / denominator);
     const double v1 = stToUv(static_cast<double>(y + 1U) / denominator);
+    const std::array<double, 2> u{u0, u1};
+    const std::array<double, 2> v{v0, v1};
 
-    const std::array<CartesianUnit, 4> vertices = {
-        faceUvToXyz(face, u0, v0),
-        faceUvToXyz(face, u1, v0),
-        faceUvToXyz(face, u1, v1),
-        faceUvToXyz(face, u0, v1)};
+    const double uSum = u0 + u1;
+    const double vSum = v0 + v1;
+    const int i = uAxisZ(face) == 0.0 ? (uSum < 0.0) : (uSum > 0.0);
+    const int j = vAxisZ(face) == 0.0 ? (vSum < 0.0) : (vSum > 0.0);
 
-    std::array<double, 4> longitudes{};
-    size_t longitudeCount = 0;
+    auto [south, north] = intervalFromPointPair(
+        latitudeAt(u, v, face, i, j),
+        latitudeAt(u, v, face, 1 - i, 1 - j));
+    auto [west, east] = longitudeIntervalFromPointPair(
+        longitudeAt(u, v, face, i, 1 - j),
+        longitudeAt(u, v, face, 1 - i, j));
 
-    double south = latitude(vertices[0]);
-    double north = south;
-    for (const CartesianUnit& vertex : vertices) {
-        const double lat = latitude(vertex);
-        south = std::min(south, lat);
-        north = std::max(north, lat);
-        if (MathUtils::PiOverTwo - std::abs(lat) > MathUtils::Epsilon15) {
-            longitudes[longitudeCount++] = longitude(vertex);
-        }
-    }
-
-    const auto [west, east] =
-        minimalLongitudeInterval(longitudes, longitudeCount);
+    constexpr double margin = 2.0 * std::numeric_limits<double>::epsilon();
+    south = std::max(-MathUtils::PiOverTwo, south - margin);
+    north = std::min(MathUtils::PiOverTwo, north + margin);
+    west = MathUtils::negativePiToPi(west - margin);
+    east = MathUtils::negativePiToPi(east + margin);
     return Rectangle(west, south, east, north);
 }
 
