@@ -21905,6 +21905,11 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
               TileLoadRequestKind::Skip,
           "TileLoadRequestPlanner: unloading tile cannot be reloaded until unload finishes");
 
+    snapshot.loadState = TileLoadState::Failed;
+    check(TileLoadRequestPlanner::classify(snapshot) ==
+              TileLoadRequestKind::Skip,
+          "TileLoadRequestPlanner: permanently failed terrain tile is not retried");
+
     snapshot = TileLoadRequestSnapshot{};
     snapshot.hasTile = true;
     snapshot.loadState = TileLoadState::FailedTemporarily;
@@ -21917,6 +21922,11 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Content,
           "TileLoadRequestPlanner: temporarily failed content tile remains retryable");
+
+    snapshot.loadState = TileLoadState::Failed;
+    check(TileLoadRequestPlanner::classify(snapshot) ==
+              TileLoadRequestKind::Skip,
+          "TileLoadRequestPlanner: permanently failed content tile is not retried");
 }
 
 std::string testCacheKeyForTile(const TileKey& key) {
