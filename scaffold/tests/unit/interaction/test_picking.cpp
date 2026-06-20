@@ -75,3 +75,29 @@ TEST_F(PickingServiceTest, PickReturnsCartographic) {
     EXPECT_GE(result.cartographic.latitude(), -M_PI_2);
     EXPECT_LE(result.cartographic.latitude(), M_PI_2);
 }
+
+TEST_F(PickingServiceTest, RayTriangleMatchesNativeBackFaceAndOriginHits) {
+    const Vec3 v0(-1.0, 0.0, 0.0);
+    const Vec3 v1(1.0, 0.0, 0.0);
+    const Vec3 v2(0.0, 1.0, 0.0);
+
+    double t = -1.0;
+    EXPECT_TRUE(PickingService::rayTriangleIntersection(
+        Vec3(0.0, 0.0, -1.0),
+        Vec3(0.0, 0.0, 1.0),
+        v0,
+        v1,
+        v2,
+        t));
+    EXPECT_NEAR(1.0, t, 1e-12);
+
+    t = -1.0;
+    EXPECT_TRUE(PickingService::rayTriangleIntersection(
+        Vec3(0.0, 0.0, 0.0),
+        Vec3(0.0, 0.0, 1.0),
+        v0,
+        v1,
+        v2,
+        t));
+    EXPECT_NEAR(0.0, t, 1e-12);
+}

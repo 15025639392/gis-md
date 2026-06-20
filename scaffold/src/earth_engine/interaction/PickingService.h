@@ -88,20 +88,20 @@ public:
                             double viewportHeightPixels,
                             std::function<float(double,double)> terrainSampler) const;
 
-private:
-    /// 射线-椭球相交（WGS84）
-    /// @return 交点 ECEF 坐标，无交点返回 std::nullopt。
-    static std::optional<Vec3> rayEllipsoidIntersection(
-        const Vec3& rayOrigin,
-        const Vec3& rayDirection);
-
-    /// 射线-三角形相交（Möller–Trumbore）
+    /// 射线-三角形相交（cesium-native IntersectionTests::rayTriangle 语义）
     static bool rayTriangleIntersection(const Vec3& rayOrigin,
                                          const Vec3& rayDirection,
                                          const Vec3& v0,
                                          const Vec3& v1,
                                          const Vec3& v2,
                                          double& t);
+
+private:
+    /// 射线-椭球相交（WGS84）
+    /// @return 交点 ECEF 坐标，无交点返回 std::nullopt。
+    static std::optional<Vec3> rayEllipsoidIntersection(
+        const Vec3& rayOrigin,
+        const Vec3& rayDirection);
 };
 
 } // namespace earth_engine

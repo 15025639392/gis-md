@@ -4,6 +4,7 @@
 #include "../data/GeoJsonParser.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/Cartographic.h"
+#include "../core/math/IntersectionTests.h"
 #include "../core/math/Ray.h"
 
 #include <glm/glm.hpp>
@@ -53,37 +54,18 @@ bool PickingService::rayTriangleIntersection(const Vec3& rayOrigin,
                                                const Vec3& v1,
                                                const Vec3& v2,
                                                double& t) {
-    constexpr double kEpsilon = 1e-8;
-
-    Vec3 edge1(v1.x() - v0.x(), v1.y() - v0.y(), v1.z() - v0.z());
-    Vec3 edge2(v2.x() - v0.x(), v2.y() - v0.y(), v2.z() - v0.z());
-
-    Vec3 h(rayDirection.y() * edge2.z() - rayDirection.z() * edge2.y(),
-           rayDirection.z() * edge2.x() - rayDirection.x() * edge2.z(),
-           rayDirection.x() * edge2.y() - rayDirection.y() * edge2.x());
-
-    double a = edge1.x() * h.x() + edge1.y() * h.y() + edge1.z() * h.z();
-    if (std::abs(a) < kEpsilon) return false; // parallel
-
-    double f = 1.0 / a;
-    Vec3 s(rayOrigin.x() - v0.x(),
-           rayOrigin.y() - v0.y(),
-           rayOrigin.z() - v0.z());
-
-    double u = f * (s.x() * h.x() + s.y() * h.y() + s.z() * h.z());
-    if (u < 0.0 || u > 1.0) return false;
-
-    Vec3 q(s.y() * edge1.z() - s.z() * edge1.y(),
-           s.z() * edge1.x() - s.x() * edge1.z(),
-           s.x() * edge1.y() - s.y() * edge1.x());
-
-    double v = f * (rayDirection.x() * q.x() +
-                    rayDirection.y() * q.y() +
-                    rayDirection.z() * q.z());
-    if (v < 0.0 || u + v > 1.0) return false;
-
-    t = f * (edge2.x() * q.x() + edge2.y() * q.y() + edge2.z() * q.z());
-    return t > kEpsilon;
+    const std::optional<double> hitT =
+        IntersectionTests::rayTriangleParametric(
+            Ray(rayOrigin, rayDirection),
+            v0,
+            v1,
+            v2,
+            false);
+    if (!hitT || *hitT < 0.0) {
+        return false;
+    }
+    t = *hitT;
+    return true;
 }
 
 // ============================================================
