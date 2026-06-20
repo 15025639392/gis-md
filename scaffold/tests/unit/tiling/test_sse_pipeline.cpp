@@ -4760,6 +4760,36 @@ void testQuantizedMeshSkirtCountsMatchCesiumNativeFormula() {
           "QuantizedMeshParser: skirt vertex and index counts match cesium-native formula");
 }
 
+void testQuantizedMeshSkirtIndicesMatchCesiumNativeOrder() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes("", true, false);
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            scheme->tileToRectangle(rootKey));
+
+    check(mesh != nullptr && mesh->indices.size() >= 27,
+          "QuantizedMeshParser: skirt-index order test mesh parses");
+    if (!mesh || mesh->indices.size() < 27) return;
+
+    const std::vector<uint32_t> expectedSkirtIndices = {
+        0, 2, 3, 3, 2, 4,
+        1, 0, 5, 5, 0, 6,
+        2, 1, 7, 7, 1, 8,
+        2, 1, 9, 9, 1, 10
+    };
+    const std::vector<uint32_t> actualSkirtIndices(
+        mesh->indices.begin() + 3,
+        mesh->indices.begin() + 3 + expectedSkirtIndices.size());
+
+    check(actualSkirtIndices == expectedSkirtIndices,
+          "QuantizedMeshParser: skirt indices follow cesium-native sorted-edge triangle order");
+}
+
 void testQuantizedMeshSkirtVerticesExpandOutsideTileEdges() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey interiorKey{"Geographic-TMS", 2, 1, 1};
@@ -22842,6 +22872,7 @@ int main() {
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
     testQuantizedMeshSkirtNormalsCopyEachEdgeSourceNormal();
     testQuantizedMeshSkirtCountsMatchCesiumNativeFormula();
+    testQuantizedMeshSkirtIndicesMatchCesiumNativeOrder();
     testQuantizedMeshSkirtVerticesExpandOutsideTileEdges();
     testQuantizedMeshSkirtHeightMatchesCesiumNativeFormula();
     testQuantizedMeshOctEncodedNormalsExtension();
