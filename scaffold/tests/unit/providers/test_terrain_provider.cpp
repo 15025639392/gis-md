@@ -1084,6 +1084,55 @@ TEST(GoogleMapTilesImageryProviderTest, RejectsUnsupportedTiles) {
     EXPECT_EQ("", provider.buildUrl(TileKey{"XYZ-WebMercator", 2, 0, 0}));
 }
 
+TEST(GoogleMapTilesImageryProviderTest, BuildsCreateSessionRequestLikeCesiumNative) {
+    GoogleMapTilesNewSessionOptions options;
+    options.apiBaseUrl = "https://tile.googleapis.com";
+    options.key = "api key";
+    options.mapType = "terrain";
+    options.language = "zh-CN";
+    options.region = "CN";
+    options.imageFormat = "png";
+    options.scale = "scaleFactor2x";
+    options.highDpi = true;
+    options.layerTypes =
+        std::vector<std::string>{"layerRoadmap", "layerTraffic"};
+    options.overlay = false;
+
+    EXPECT_EQ(
+        "https://tile.googleapis.com/v1/createSession?key=api%20key",
+        googleMapTilesCreateSessionUrl(options));
+
+    const std::string payload = googleMapTilesCreateSessionPayload(options);
+    EXPECT_NE(std::string::npos, payload.find("\"mapType\":\"terrain\""));
+    EXPECT_NE(std::string::npos, payload.find("\"language\":\"zh-CN\""));
+    EXPECT_NE(std::string::npos, payload.find("\"region\":\"CN\""));
+    EXPECT_NE(std::string::npos, payload.find("\"imageFormat\":\"png\""));
+    EXPECT_NE(std::string::npos, payload.find("\"scale\":\"scaleFactor2x\""));
+    EXPECT_NE(std::string::npos, payload.find("\"highDpi\":true"));
+    EXPECT_NE(
+        std::string::npos,
+        payload.find("\"layerTypes\":[\"layerRoadmap\",\"layerTraffic\"]"));
+    EXPECT_NE(std::string::npos, payload.find("\"overlay\":false"));
+}
+
+TEST(GoogleMapTilesImageryProviderTest, CreateSessionOmitsAbsentOptionalsLikeCesiumNative) {
+    GoogleMapTilesNewSessionOptions options;
+
+    EXPECT_EQ(
+        "https://tile.googleapis.com/v1/createSession",
+        googleMapTilesCreateSessionUrl(options));
+
+    const std::string payload = googleMapTilesCreateSessionPayload(options);
+    EXPECT_NE(std::string::npos, payload.find("\"mapType\":\"satellite\""));
+    EXPECT_NE(std::string::npos, payload.find("\"language\":\"en-US\""));
+    EXPECT_NE(std::string::npos, payload.find("\"region\":\"US\""));
+    EXPECT_EQ(std::string::npos, payload.find("imageFormat"));
+    EXPECT_EQ(std::string::npos, payload.find("scale"));
+    EXPECT_EQ(std::string::npos, payload.find("highDpi"));
+    EXPECT_EQ(std::string::npos, payload.find("layerTypes"));
+    EXPECT_EQ(std::string::npos, payload.find("overlay"));
+}
+
 TEST(TileMapServiceUrlTest, AppendsTileMapResourceXmlBeforeQueryLikeCesiumNative) {
     EXPECT_EQ(
         "https://example.com/tms/tilemapresource.xml",

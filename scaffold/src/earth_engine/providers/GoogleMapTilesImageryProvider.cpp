@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -64,6 +65,40 @@ int invertedY(int level, int y) {
 }
 
 } // namespace
+
+std::string googleMapTilesCreateSessionUrl(
+    const GoogleMapTilesNewSessionOptions& options) {
+    const std::string url = ensureTrailingSlash(options.apiBaseUrl) +
+        "v1/createSession";
+    if (options.key.empty()) {
+        return url;
+    }
+    return withQuery(url, {{"key", options.key}});
+}
+
+std::string googleMapTilesCreateSessionPayload(
+    const GoogleMapTilesNewSessionOptions& options) {
+    nlohmann::json payload = {
+        {"mapType", options.mapType},
+        {"language", options.language},
+        {"region", options.region}};
+    if (options.imageFormat) {
+        payload["imageFormat"] = *options.imageFormat;
+    }
+    if (options.scale) {
+        payload["scale"] = *options.scale;
+    }
+    if (options.highDpi) {
+        payload["highDpi"] = *options.highDpi;
+    }
+    if (options.layerTypes) {
+        payload["layerTypes"] = *options.layerTypes;
+    }
+    if (options.overlay) {
+        payload["overlay"] = *options.overlay;
+    }
+    return payload.dump();
+}
 
 GoogleMapTilesImageryProvider::GoogleMapTilesImageryProvider(
     GoogleMapTilesExistingSessionOptions options,

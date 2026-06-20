@@ -2,7 +2,9 @@
 
 #include "XYZImageryProvider.h"
 
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace earth_engine {
 
@@ -14,6 +16,19 @@ struct GoogleMapTilesExistingSessionOptions {
     int tileWidth = 256;
     int tileHeight = 256;
     bool showLogo = true;
+};
+
+struct GoogleMapTilesNewSessionOptions {
+    std::string key;
+    std::string mapType = "satellite";
+    std::string language = "en-US";
+    std::string region = "US";
+    std::optional<std::string> imageFormat;
+    std::optional<std::string> scale;
+    std::optional<bool> highDpi;
+    std::optional<std::vector<std::string>> layerTypes;
+    std::optional<bool> overlay;
+    std::string apiBaseUrl = "https://tile.googleapis.com/";
 };
 
 class GoogleMapTilesImageryProvider : public XYZImageryProvider {
@@ -34,5 +49,11 @@ public:
 private:
     GoogleMapTilesExistingSessionOptions options_;
 };
+
+std::string googleMapTilesCreateSessionUrl(
+    const GoogleMapTilesNewSessionOptions& options);
+
+std::string googleMapTilesCreateSessionPayload(
+    const GoogleMapTilesNewSessionOptions& options);
 
 } // namespace earth_engine
