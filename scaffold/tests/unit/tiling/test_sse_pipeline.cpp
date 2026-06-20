@@ -19325,6 +19325,58 @@ void testTileLoadSchedulerSkipsEmptyCacheKeyBeforeInflightBlock() {
     }
 }
 
+void testTileLoadSchedulerSkipsKnownEmptyContentBeforeInflightBlock() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    CancellationToken token;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        check(lifecycle.requestState().beginTerrainRequest("busy", token),
+              "TileLoadScheduler: test starts one inflight request before known empty content");
+    }
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = testCacheKeyForTile(key);
+    bool planned = false;
+
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            testCacheKeyForTile,
+            [&planned](const TileKey&,
+                       const std::string&,
+                       TilesetTile*& tileState) {
+                planned = true;
+                tileState = nullptr;
+                return TileLoadRequestSnapshot{};
+            },
+            [&cacheKey](const std::string& keyToCheck) {
+                return keyToCheck == cacheKey;
+            },
+            [](TilesetTile&, double) { return false; },
+            [](const TileKey&) {});
+
+    check(outcome.issued == 0 && !outcome.blockedByInflight,
+          "TileLoadScheduler: known empty content skip does not report inflight block");
+    check(!planned && lifecycle.pendingRequestCount() == 1,
+          "TileLoadScheduler: known empty content skip happens before request planning");
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().completeTerrainRequest("busy");
+    }
+}
+
 void testTileLoadSchedulerSortsAndQueuesUpsampledTerrain() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -25079,6 +25131,7 @@ int main() {
     testTileLoadSchedulerBlocksBeforePlanningWhenInflightIsFull();
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeInflightBlock();
     testTileLoadSchedulerSkipsEmptyCacheKeyBeforeInflightBlock();
+    testTileLoadSchedulerSkipsKnownEmptyContentBeforeInflightBlock();
     testTileLoadSchedulerSortsAndQueuesUpsampledTerrain();
     testTileLoadSchedulerSkipsEmptyUpsampledCacheKey();
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation();

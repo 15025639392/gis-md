@@ -62,6 +62,9 @@ public:
             if (input.lifecycle.containsWorkForCacheKey(cacheKey)) {
                 continue;
             }
+            if (isEmptyTile(cacheKey)) {
+                continue;
+            }
 
             {
                 std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
@@ -82,9 +85,6 @@ public:
                 TileLoadRequestPlanner::classify(snapshot);
 
             if (requestKind == TileLoadRequestKind::Skip) {
-                continue;
-            }
-            if (isEmptyTile(cacheKey)) {
                 continue;
             }
 
