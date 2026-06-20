@@ -18975,6 +18975,106 @@ void testTileLoadRequestDispatcherDropsCancelledCallbacks() {
           "TileLoadRequestDispatcher: cancelled callbacks do not enqueue stale pending work");
 }
 
+void testTileLoadRequestDispatcherRejectsRequestsDuringDestroy() {
+    class CountingTerrainProvider final : public TerrainProvider {
+    public:
+        std::string id() const override { return "dispatcher-destroy-terrain"; }
+        std::string schemeId() const override { return "test"; }
+        int minZoom() const override { return 0; }
+        int maxZoom() const override { return 1; }
+        int tileSize() const override { return 2; }
+        std::string buildUrl(const TileKey&) const override {
+            return "memory://dispatcher-destroy-terrain";
+        }
+        void requestTile(const TileKey&,
+                         CancellationToken,
+                         HeightmapCallback,
+                         HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+        }
+        std::unique_ptr<DecodedHeightmap> decodeTile(
+            const uint8_t*,
+            size_t) override {
+            return nullptr;
+        }
+        int requestCount = 0;
+    };
+
+    class CountingContentProvider final : public TilesetContentProvider {
+    public:
+        std::string id() const override { return "dispatcher-destroy-content"; }
+        bool supportsTile(const TileKey&) const override { return true; }
+        void requestTileContent(const TileKey&,
+                                CancellationToken,
+                                ContentCallback,
+                                HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+        }
+        TileContentLoadResult decodeContent(
+            const uint8_t*,
+            size_t) override {
+            return TileContentLoadResult::failed();
+        }
+        int requestCount = 0;
+    };
+
+    TileLoadLifecycle lifecycle;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().markDestroyingAndCancelRequests();
+    }
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+    CountingTerrainProvider terrainProvider;
+    CountingContentProvider contentProvider;
+
+    const TileLoadDispatchResult terrainResult =
+        TileLoadRequestDispatcher::requestTerrain(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            terrainProvider,
+            key,
+            "destroy-terrain",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+    const TileLoadDispatchResult contentResult =
+        TileLoadRequestDispatcher::requestContent(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            contentProvider,
+            key,
+            "destroy-content",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    check(terrainResult == TileLoadDispatchResult::Destroying &&
+              contentResult == TileLoadDispatchResult::Destroying,
+          "TileLoadRequestDispatcher: destroying lifecycle rejects new requests");
+    check(!issued &&
+              terrainProvider.requestCount == 0 &&
+              contentProvider.requestCount == 0 &&
+              !lifecycle.hasPendingWork() &&
+              budget.networkRequestsIssued() == 0,
+          "TileLoadRequestDispatcher: destroying rejection has no request or budget side effects");
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().clearAfterCallbacksComplete();
+    }
+}
+
 void testTileLoadRequestDispatcherSkipsPendingTerminalResultKeys() {
     class SyncTerminalTerrainProvider final : public TerrainProvider {
     public:
@@ -25305,6 +25405,7 @@ int main() {
     testTileLoadRequestDispatcherSkipsEmptyCacheKeys();
     testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback();
     testTileLoadRequestDispatcherDropsCancelledCallbacks();
+    testTileLoadRequestDispatcherRejectsRequestsDuringDestroy();
     testTileLoadRequestDispatcherSkipsPendingTerminalResultKeys();
     testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending();
     testTileLoadRequestDispatcherPassesNetworkPriority();
