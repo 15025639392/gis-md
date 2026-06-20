@@ -467,6 +467,20 @@ int jsonInt32OrDefault(const nlohmann::json& object,
     return static_cast<int>(value);
 }
 
+std::optional<int> jsonInt32(const nlohmann::json& object, const char* name) {
+    auto it = object.find(name);
+    if (it == object.end() || !it->is_number_integer()) {
+        return std::nullopt;
+    }
+
+    const int64_t value = it->get<int64_t>();
+    if (value < static_cast<int64_t>(std::numeric_limits<int>::min()) ||
+        value > static_cast<int64_t>(std::numeric_limits<int>::max())) {
+        return std::nullopt;
+    }
+    return static_cast<int>(value);
+}
+
 std::string createExtensionsQueryParameter(
     const std::vector<std::string>& knownExtensions,
     const std::vector<std::string>& extensions) {
@@ -613,12 +627,9 @@ bool QuantizedMeshTerrainProvider::appendLayerFromJson(
         knownExtensions,
         jsonStringArray(j, "extensions"));
 
-    const bool hasMetadataAvailability =
-        j.contains("metadataAvailability") &&
-        j["metadataAvailability"].is_number_integer();
-    layer.availabilityLevels = hasMetadataAvailability
-        ? j["metadataAvailability"].get<int>()
-        : -1;
+    const std::optional<int> metadataAvailability =
+        jsonInt32(j, "metadataAvailability");
+    layer.availabilityLevels = metadataAvailability.value_or(-1);
     // cesium-native always constructs a QuadtreeRectangleAvailability for
     // layer.json terrain. If `available` is absent or empty, that empty table
     // still makes only level-0 roots available by default.
@@ -637,7 +648,7 @@ bool QuantizedMeshTerrainProvider::appendLayerFromJson(
     // when metadataAvailability is present, layer.json `available` is not
     // loaded into contentAvailability. Deeper availability must come from
     // quantized-mesh metadata subtrees.
-    if (!hasMetadataAvailability &&
+    if (!metadataAvailability &&
         j.contains("available") && j["available"].is_array()) {
         layer.availabilityRanges.resize(j["available"].size());
         for (size_t level = 0; level < j["available"].size(); ++level) {

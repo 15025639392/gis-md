@@ -3393,6 +3393,31 @@ void testQuantizedMeshMetadataAvailabilityStartsAtRoots() {
           "QuantizedMeshTerrainProvider: ignored layer available stays unavailable after loaded parent subtree");
 }
 
+void testQuantizedMeshMetadataAvailabilityRequiresInt32() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "metadataAvailability": 2147483648,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}],
+        [{"startX":0,"startY":0,"endX":0,"endY":0}]
+      ]
+    })json";
+
+    check(provider.configureFromLayerJson(
+              layerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: non-int32 metadataAvailability configures like cesium-native");
+    check(provider.availabilityLevels() == -1,
+          "QuantizedMeshTerrainProvider: non-int32 metadataAvailability is ignored like cesium-native");
+    check(provider.supportsTile(TileKey{"Geographic-TMS", 1, 0, 0}),
+          "QuantizedMeshTerrainProvider: ignored metadataAvailability lets layer availability load");
+}
+
 void testQuantizedMeshLayerJsonEmptyAvailabilityMatchesCesiumNative() {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
@@ -21762,6 +21787,7 @@ int main() {
     testQuantizedMeshAvailabilityLevels();
     testQuantizedMeshAvailabilityInclusiveCenterBoundary();
     testQuantizedMeshMetadataAvailabilityStartsAtRoots();
+    testQuantizedMeshMetadataAvailabilityRequiresInt32();
     testQuantizedMeshLayerJsonEmptyAvailabilityMatchesCesiumNative();
     testQuantizedMeshLayerJsonDefaultFormatMatchesCesiumNative();
     testQuantizedMeshLayerJsonDefaultVersionMatchesCesiumNative();
