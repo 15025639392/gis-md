@@ -51,6 +51,7 @@
 #include "earth_engine/tiling/TileLoadScheduler.h"
 #include "earth_engine/tiling/TileLodTransitionController.h"
 #include "earth_engine/tiling/TileLodTransitionFrameUpdater.h"
+#include "earth_engine/tiling/TileMissingRequestScheduler.h"
 #include "earth_engine/tiling/TilePendingLoadQueue.h"
 #include "earth_engine/tiling/TilePendingLoadProcessor.h"
 #include "earth_engine/tiling/TilePendingLoadCommitCoordinator.h"
@@ -21140,6 +21141,88 @@ void testTileLoadSchedulerStopsAfterDispatchBudgetBlock() {
           "TileLoadScheduler: dispatch budget block stops before later request planning");
 }
 
+void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
+    class RetryContentProvider final : public TilesetContentProvider {
+    public:
+        std::string id() const override { return "missing-retry-content"; }
+        bool supportsTile(const TileKey&) const override { return true; }
+        void requestTileContent(const TileKey& key,
+                                CancellationToken,
+                                ContentCallback callback,
+                                HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+            callback(key, TileContentLoadResult::retryLater());
+        }
+        TileContentLoadResult decodeContent(
+            const uint8_t*,
+            size_t) override {
+            return TileContentLoadResult::failed();
+        }
+        int requestCount = 0;
+    };
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    RetryContentProvider provider;
+    TileEmptyContentRegistry emptyContentRegistry;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = testCacheKeyForTile(key);
+    auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
+    tile->content.loadState = TileLoadState::FailedTemporarily;
+    TilesetTile* tileRaw = tile.get();
+    tiles[cacheKey] = std::move(tile);
+    emptyContentRegistry.insert(cacheKey);
+
+    auto requestOnce = [&]() {
+        return TileMissingRequestScheduler::request(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileMissingRequestSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                &provider,
+                tiles,
+                terrainCache,
+                emptyContentRegistry},
+            testCacheKeyForTile,
+            [](TilesetTile&, double) { return false; },
+            [&tiles](const TileKey& tileKey) -> TilesetTile* {
+                const std::string lookupKey = testCacheKeyForTile(tileKey);
+                auto it = tiles.find(lookupKey);
+                return it == tiles.end() ? nullptr : it->second.get();
+            });
+    };
+
+    TileLoadRequestOutcome outcome = requestOnce();
+    check(outcome.issued == 0 &&
+              provider.requestCount == 0 &&
+              tileRaw->content.loadState == TileLoadState::FailedTemporarily,
+          "TileMissingRequestScheduler: stale empty marker blocks retry before terminal correction");
+
+    TileTerminalLoadCommitter::commitContentTerminalResult(
+        *tileRaw,
+        cacheKey,
+        TileContentLoadStatus::RetryLater,
+        emptyContentRegistry);
+    outcome = requestOnce();
+    check(outcome.issued == 1 &&
+              provider.requestCount == 1 &&
+              lifecycle.counts().contentTerminalResults == 1 &&
+              tileRaw->content.loadState == TileLoadState::ContentLoading,
+          "TileMissingRequestScheduler: cleared empty marker allows retry request");
+}
+
 void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 2;
@@ -26749,6 +26832,7 @@ int main() {
     testTileLoadSchedulerStopsDuringDestroyBeforePlanning();
     testTileLoadSchedulerSkipsDispatcherDuplicateAfterPlanning();
     testTileLoadSchedulerStopsAfterDispatchBudgetBlock();
+    testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared();
     testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds();
     testTileResourceDirtyInvalidatesRevisionAndCacheOnly();
     testTilesetFrameResourceBudgetLimitsWorkerRequests();
