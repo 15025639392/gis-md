@@ -268,6 +268,19 @@ std::unique_ptr<DecodedHeightmap> QuantizedMeshParser::parseAndRasterize(
             if (code == 0) ++highest;
         }
     }
+    if (std::any_of(indices.begin(), indices.end(), [&](uint32_t idx) {
+            return idx >= vertexCount;
+        })) {
+#ifdef __ANDROID__
+        __android_log_print(
+            ANDROID_LOG_ERROR,
+            "QMParser",
+            "fail: decoded raster index outside vertex range vc=%u tri=%u",
+            vertexCount,
+            triangleCount);
+#endif
+        return nullptr;
+    }
 
     // --- Rasterize triangles into a regular grid ---
     const double heightRange = hdr.maximumHeight - hdr.minimumHeight;

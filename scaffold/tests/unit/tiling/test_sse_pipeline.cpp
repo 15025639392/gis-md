@@ -4458,6 +4458,25 @@ void testQuantizedMeshRejectsDecodedIndicesOutsideVertexRange() {
     }
 }
 
+void testQuantizedMeshRasterizerRejectsDecodedIndicesOutsideVertexRange() {
+    std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes("", false, true);
+    constexpr size_t thirdTriangleIndexOffset =
+        92 + 3 * 3 * sizeof(uint16_t) + sizeof(uint32_t) +
+        2 * sizeof(uint16_t);
+    const uint16_t invalidHighWaterMarkCode = 0xffffu;
+    std::memcpy(
+        bytes.data() + thirdTriangleIndexOffset,
+        &invalidHighWaterMarkCode,
+        sizeof(invalidHighWaterMarkCode));
+
+    std::unique_ptr<DecodedHeightmap> heightmap =
+        QuantizedMeshParser::parseAndRasterize(bytes.data(), bytes.size(), 64);
+
+    check(heightmap == nullptr,
+          "QuantizedMeshParser: rasterizer rejects decoded triangle indices outside vertex range like cesium-native");
+}
+
 void testQuantizedMeshRejectsEachTruncatedEdge() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -22551,6 +22570,7 @@ int main() {
     testQuantizedMeshRejectsIllFormedCoreBuffers();
     testQuantizedMeshRasterizerRejectsHeaderWithoutVertexCount();
     testQuantizedMeshRejectsDecodedIndicesOutsideVertexRange();
+    testQuantizedMeshRasterizerRejectsDecodedIndicesOutsideVertexRange();
     testQuantizedMeshRejectsEachTruncatedEdge();
     testQuantizedMeshParsesUint32IndicesAndEdges();
     testQuantizedMeshRejectsMissingUint32IndexPadding();
