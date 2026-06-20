@@ -14628,6 +14628,38 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
               tile.content.loadState == TileLoadState::Done,
           "TileTerminalLoadPolicy: empty content marks done empty tile");
 
+    TilesetTile contentParent(TileKey{"test", 0, 0, 0}, Rectangle{});
+    contentParent.geometricError = 16.0;
+    TilesetTile lowerErrorEmptyContent(
+        TileKey{"test", 1, 0, 0},
+        Rectangle{},
+        &contentParent);
+    lowerErrorEmptyContent.geometricError = 8.0;
+    action = TileTerminalLoadPolicy::applyContentTerminalResult(
+        lowerErrorEmptyContent,
+        TileContentLoadStatus::Empty);
+    check(action.markEmptyCacheKey &&
+              !lowerErrorEmptyContent.unconditionallyRefine &&
+              lowerErrorEmptyContent.content.contentKind ==
+                  TileContentKind::Empty &&
+              lowerErrorEmptyContent.content.loadState == TileLoadState::Done,
+          "TileTerminalLoadPolicy: lower-error empty content remains renderable empty content");
+
+    TilesetTile equalErrorEmptyContent(
+        TileKey{"test", 1, 1, 0},
+        Rectangle{},
+        &contentParent);
+    equalErrorEmptyContent.geometricError = 16.0;
+    action = TileTerminalLoadPolicy::applyContentTerminalResult(
+        equalErrorEmptyContent,
+        TileContentLoadStatus::Empty);
+    check(action.markEmptyCacheKey &&
+              equalErrorEmptyContent.unconditionallyRefine &&
+              equalErrorEmptyContent.content.contentKind ==
+                  TileContentKind::Empty &&
+              equalErrorEmptyContent.content.loadState == TileLoadState::Done,
+          "TileTerminalLoadPolicy: native empty content with parent-level error becomes unconditional");
+
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         tile,
         TileContentLoadStatus::External);

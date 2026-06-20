@@ -15,6 +15,20 @@ void markUnknownPermanentFailure(TilesetTile& tile) {
     tile.markContentFailedPermanently();
 }
 
+void applyNativeEmptyContentRefinement(TilesetTile& tile) {
+    const TilesetTile* ancestor = tile.parent;
+    while (ancestor && ancestor->unconditionallyRefine) {
+        ancestor = ancestor->parent;
+    }
+    const double tileError = tile.nonZeroGeometricError();
+    const double parentError = ancestor
+        ? ancestor->nonZeroGeometricError()
+        : tileError * 2.0;
+    if (tileError >= parentError) {
+        tile.unconditionallyRefine = true;
+    }
+}
+
 } // namespace
 
 TileTerminalLoadAction
@@ -27,18 +41,7 @@ TileTerminalLoadPolicy::applyTerrainTerminalResult(
         case TerrainTileLoadStatus::Empty: {
             action.markEmptyCacheKey = true;
             tile.markEmptyContentLoaded();
-
-            const TilesetTile* ancestor = tile.parent;
-            while (ancestor && ancestor->unconditionallyRefine) {
-                ancestor = ancestor->parent;
-            }
-            const double tileError = tile.nonZeroGeometricError();
-            const double parentError = ancestor
-                ? ancestor->nonZeroGeometricError()
-                : tileError * 2.0;
-            if (tileError >= parentError) {
-                tile.unconditionallyRefine = true;
-            }
+            applyNativeEmptyContentRefinement(tile);
             tile.markEmptyContentDone();
             action.resourcesDirty = true;
             break;
@@ -67,6 +70,7 @@ TileTerminalLoadPolicy::applyContentTerminalResult(
     switch (status) {
         case TileContentLoadStatus::Empty:
             action.markEmptyCacheKey = true;
+            applyNativeEmptyContentRefinement(tile);
             tile.markEmptyContentDone();
             action.resourcesDirty = true;
             break;
