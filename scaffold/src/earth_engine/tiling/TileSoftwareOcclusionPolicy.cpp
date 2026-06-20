@@ -131,30 +131,24 @@ Rectangle occlusionRectangleForTile(const TilesetTile& tile) {
 }
 
 double occlusionSampleHeightForTile(const TilesetTile& tile) {
-    double sampleHeight =
-        std::max(0.0, TileBoundsMetrics::terrainMaximumHeight(tile));
     if (!tile.boundingVolume) {
-        return sampleHeight;
+        return std::max(0.0, TileBoundsMetrics::terrainMaximumHeight(tile));
     }
 
     switch (tile.boundingVolume->kind) {
         case TileBoundingVolumeKind::Region:
-            sampleHeight =
-                std::max(sampleHeight, tile.boundingVolume->maximumHeight);
-            break;
+            return std::max(0.0, tile.boundingVolume->maximumHeight);
         case TileBoundingVolumeKind::S2Cell:
-            sampleHeight =
-                std::max(
-                    sampleHeight,
-                    tile.boundingVolume->s2Cell.getMaximumHeight());
-            break;
+            return std::max(
+                0.0,
+                tile.boundingVolume->s2Cell.getMaximumHeight());
         case TileBoundingVolumeKind::Sphere:
         case TileBoundingVolumeKind::Box:
         case TileBoundingVolumeKind::CylinderRegion:
             break;
     }
 
-    return sampleHeight;
+    return std::max(0.0, TileBoundsMetrics::terrainMaximumHeight(tile));
 }
 
 } // namespace
