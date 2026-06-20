@@ -15754,6 +15754,38 @@ void testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker() {
           "TilePendingLoadCommitCoordinator: retry content terminal clears stale empty marker through pending path");
 }
 
+void testTilePendingLoadCommitCoordinatorClearsContentCancelledEmptyMarker() {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "test:0:0:0";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
+    PendingContentTerminalResult result{
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileContentLoadStatus::Cancelled};
+    bool childrenEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitContentTerminalResult(
+        result,
+        emptyContentRegistry,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    check(!emptyContentRegistry.contains(cacheKey) &&
+              childrenEnsured &&
+              resourcesDirty &&
+              tile.content.contentKind == TileContentKind::Unknown &&
+              tile.content.loadState == TileLoadState::FailedTemporarily,
+          "TilePendingLoadCommitCoordinator: cancelled content terminal clears stale empty marker through pending path");
+}
+
 void testTilePendingLoadCommitCoordinatorClearsTerrainRetryEmptyMarker() {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:0:0:0";
@@ -29001,6 +29033,7 @@ int main() {
     testTileTerrainUploadCommitterAppliesMeshResourceOutcome();
     testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys();
     testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker();
+    testTilePendingLoadCommitCoordinatorClearsContentCancelledEmptyMarker();
     testTilePendingLoadCommitCoordinatorClearsTerrainRetryEmptyMarker();
     testTileRenderPlanFinalizerResolvesAncestorFallbackEntries();
     testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery();
