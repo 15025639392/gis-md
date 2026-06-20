@@ -3669,6 +3669,26 @@ void testQuantizedMeshLayerJsonFailedConfigurePreservesPreviousState() {
           "QuantizedMeshTerrainProvider: failed layer configure preserves previous state");
 }
 
+void testQuantizedMeshLayerJsonNonStringParentUrlIgnored() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["terrain/{z}/{x}/{y}.terrain"],
+      "parentUrl": 1234,
+      "maxzoom": 4
+    })json";
+
+    check(provider.configureFromLayerJson(
+              layerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: non-string parentUrl layer configures like cesium-native");
+    check(provider.buildUrl(TileKey{"Geographic-TMS", 0, 0, 0}) ==
+              "https://example.invalid/terrain/0/0/0.terrain",
+          "QuantizedMeshTerrainProvider: non-string parentUrl is ignored like cesium-native");
+}
+
 void testQuantizedMeshRejectsOutOfRangeGeographicTiles() {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
@@ -21839,6 +21859,7 @@ int main() {
     testQuantizedMeshLayerJsonNonStringProjectionDefaults();
     testQuantizedMeshLayerJsonRejectsUnknownProjection();
     testQuantizedMeshLayerJsonFailedConfigurePreservesPreviousState();
+    testQuantizedMeshLayerJsonNonStringParentUrlIgnored();
     testQuantizedMeshRejectsOutOfRangeGeographicTiles();
     testQuantizedMeshLayerJsonMinzoomDoesNotGateAvailability();
     testQuantizedMeshLayerJsonMaxzoomDoesNotGateExplicitAvailability();

@@ -695,7 +695,7 @@ bool QuantizedMeshTerrainProvider::appendLayerFromJson(
 bool QuantizedMeshTerrainProvider::appendParentLayers(
     const nlohmann::json& j,
     const std::string& layerJsonUrl) {
-    std::string parentUrl = j.value("parentUrl", std::string());
+    std::string parentUrl = jsonStringOrDefault(j, "parentUrl", "");
     if (parentUrl.empty()) {
         return true;
     }
