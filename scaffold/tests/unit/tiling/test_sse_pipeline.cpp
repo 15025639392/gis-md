@@ -15921,6 +15921,40 @@ void testTileContentUnloadCoordinatorKeepsProtectedUpsampleSource() {
           "TileContentUnloadCoordinator: protected upsample source remains kept while child is loading");
 }
 
+void testTileContentUnloadCoordinatorRemovesCompletedProtectedSource() {
+    TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
+    TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
+    parent.children.push_back(&child);
+
+    parent.content.contentKind = TileContentKind::Render;
+    parent.content.loadState = TileLoadState::Unloading;
+    parent.content.renderContent.setMeshReady(true);
+    parent.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    child.content.upsampledFromParent = true;
+    child.content.loadState = TileLoadState::Done;
+    const std::string cacheKey = "test:0:0:0";
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    terrainCache[cacheKey] = std::make_unique<DecodedHeightmap>();
+    TileEmptyContentRegistry emptyContentRegistry;
+
+    const TileCacheUnloadContentResult result =
+        TileContentUnloadCoordinator::unloadContent(
+            parent,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            nullptr);
+
+    check(result == TileCacheUnloadContentResult::Remove &&
+              parent.content.contentKind == TileContentKind::Unknown &&
+              parent.content.loadState == TileLoadState::Unloaded &&
+              !parent.content.renderContent.hasSurfaceMesh() &&
+              !parent.content.renderContent.isMeshReady() &&
+              terrainCache.find(cacheKey) == terrainCache.end(),
+          "TileContentUnloadCoordinator: completed protected source unload clears content and terrain cache");
+}
+
 void testTileIndexStateErasesEmptyContentRegistryKey() {
     TileUnloadQueue unloadQueue;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
@@ -25849,6 +25883,7 @@ int main() {
     testTileContentUnloadCoordinatorRemovesExternalContent();
     testTileContentUnloadCoordinatorRemovesRenderContentCache();
     testTileContentUnloadCoordinatorKeepsProtectedUpsampleSource();
+    testTileContentUnloadCoordinatorRemovesCompletedProtectedSource();
     testTileIndexStateErasesEmptyContentRegistryKey();
     testTileTerrainHeightRangePolicySetsAndInheritsRanges();
     testTileTerrainHeightRangePolicyAppliesMeshOrHeightmapRanges();
