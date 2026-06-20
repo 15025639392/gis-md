@@ -47,8 +47,11 @@ TEST(OctreeTilingSchemeTest, PositionToTileReturnsEmptyOutsideBox) {
                                     1);
 
     EXPECT_FALSE(scheme.positionToTile(Vec3(-1.1, 0.0, 0.0), 0).has_value());
+    EXPECT_FALSE(scheme.positionToTile(Vec3(1.1, 0.0, 0.0), 0).has_value());
+    EXPECT_FALSE(scheme.positionToTile(Vec3(0.0, -1.1, 0.0), 0).has_value());
     EXPECT_FALSE(scheme.positionToTile(Vec3(0.0, 1.1, 0.0), 0).has_value());
     EXPECT_FALSE(scheme.positionToTile(Vec3(0.0, 0.0, -1.1), 0).has_value());
+    EXPECT_FALSE(scheme.positionToTile(Vec3(0.0, 0.0, 1.1), 0).has_value());
 }
 
 TEST(OctreeTilingSchemeTest, PositionToTileClampsPositiveEdgesToFinalTile) {
