@@ -975,6 +975,15 @@ std::vector<uint8_t> makeQuantizedMeshBytesWithHeaderPadding(
     return bytes;
 }
 
+std::vector<uint8_t> makeQuantizedMeshBytesWithWaterMask(
+    std::vector<uint8_t> waterMask) {
+    std::vector<uint8_t> bytes = makeQuantizedMeshBytes();
+    appendPod<uint8_t>(bytes, 2);
+    appendPod<uint32_t>(bytes, static_cast<uint32_t>(waterMask.size()));
+    bytes.insert(bytes.end(), waterMask.begin(), waterMask.end());
+    return bytes;
+}
+
 std::vector<uint8_t> makeLargeQuantizedMeshBytesWithUint32EdgeIndex() {
     constexpr uint32_t vertexCount = 65537;
     constexpr uint32_t highEdgeIndex = vertexCount - 1;
@@ -3820,6 +3829,57 @@ void testQuantizedMeshVertexUvAndHeightGolden() {
               std::abs(nw.latitude() - bounds.north()) < 1e-8 &&
               std::abs(nw.height() - minimumHeight) < 1e-3,
           "QuantizedMeshParser: vertex 2 decodes to northwest min-height corner");
+}
+
+void testQuantizedMeshWaterMaskExtensions() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(rootKey);
+
+    const std::vector<uint8_t> allWaterBytes =
+        makeQuantizedMeshBytesWithWaterMask({255});
+    std::unique_ptr<SurfaceTileMesh> allWater =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            allWaterBytes.data(),
+            allWaterBytes.size(),
+            bounds);
+    check(allWater && allWater->waterMask.allWater &&
+              !allWater->waterMask.allLand &&
+              allWater->waterMask.data.empty(),
+          "QuantizedMeshParser: one-byte water mask marks tile all water like cesium-native");
+
+    const std::vector<uint8_t> allLandBytes =
+        makeQuantizedMeshBytesWithWaterMask({0});
+    std::unique_ptr<SurfaceTileMesh> allLand =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            allLandBytes.data(),
+            allLandBytes.size(),
+            bounds);
+    check(allLand && allLand->waterMask.allLand &&
+              !allLand->waterMask.allWater &&
+              allLand->waterMask.data.empty(),
+          "QuantizedMeshParser: zero one-byte water mask marks tile all land like cesium-native");
+
+    std::vector<uint8_t> mask(256 * 256, 0);
+    mask[0] = 7;
+    mask[12345] = 255;
+    const std::vector<uint8_t> maskBytes =
+        makeQuantizedMeshBytesWithWaterMask(mask);
+    std::unique_ptr<SurfaceTileMesh> mixed =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            maskBytes.data(),
+            maskBytes.size(),
+            bounds);
+    check(mixed && !mixed->waterMask.allLand &&
+              !mixed->waterMask.allWater &&
+              mixed->waterMask.data.size() == 256 * 256 * 4,
+          "QuantizedMeshParser: 256x256 water mask becomes renderer RGBA8 data");
+    check(mixed && mixed->waterMask.data[3] == 7 &&
+              mixed->waterMask.data[12345 * 4 + 3] == 255 &&
+              mixed->waterMask.data[12345 * 4] == 255 &&
+              mixed->waterMask.data[12345 * 4 + 1] == 255 &&
+              mixed->waterMask.data[12345 * 4 + 2] == 255,
+          "QuantizedMeshParser: water mask alpha values preserve cesium-native 0-land 255-water semantics");
 }
 
 void testTilesetUsesQuantizedMeshRtcOrigin() {
@@ -21203,6 +21263,7 @@ int main() {
     testQuantizedMeshRtcOriginFromBoundingSphereCenter();
     testQuantizedMeshHeaderHeightRangeIsExposed();
     testQuantizedMeshVertexUvAndHeightGolden();
+    testQuantizedMeshWaterMaskExtensions();
     testTilesetUsesQuantizedMeshRtcOrigin();
     testTilesetUsesQuantizedMeshHeightRange();
     testTilesetBoundsUseQuantizedMeshHeightRange();
