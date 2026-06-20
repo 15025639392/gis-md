@@ -3,11 +3,17 @@
 namespace earth_engine {
 
 bool TileEmptyContentRegistry::contains(const std::string& cacheKey) const {
+    if (cacheKey.empty()) {
+        return false;
+    }
     std::lock_guard<std::mutex> lock(mutex_);
     return cacheKeys_.count(cacheKey) > 0;
 }
 
 void TileEmptyContentRegistry::insert(const std::string& cacheKey) {
+    if (cacheKey.empty()) {
+        return;
+    }
     std::lock_guard<std::mutex> lock(mutex_);
     cacheKeys_.insert(cacheKey);
 }

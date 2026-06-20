@@ -15658,10 +15658,12 @@ void testTileEmptyContentRegistryOwnsEmptyCacheKeys() {
     registry.insert("a");
     registry.insert("b");
     registry.insert("a");
+    registry.insert("");
     check(registry.contains("a") &&
               registry.contains("b") &&
+              !registry.contains("") &&
               registry.size() == 2,
-          "TileEmptyContentRegistry: owns deduplicated empty content cache keys");
+          "TileEmptyContentRegistry: owns deduplicated non-empty cache keys");
 
     registry.erase("a");
     check(!registry.contains("a") &&
