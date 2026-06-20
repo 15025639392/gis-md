@@ -151,6 +151,11 @@ struct TilesetTestAccess {
             std::move(heightmap);
     }
 
+    static bool hasTerrainCache(Tileset& tileset, const TileKey& key) {
+        return tileset.contentLifecycle_.terrainCache().count(
+                   terrainCacheKey(tileset, key)) > 0;
+    }
+
     static void ensureTileChildren(Tileset& tileset, TilesetTile& tile) {
         tileset.contentAccess_.ensureTileChildren(tile);
     }
@@ -24368,6 +24373,8 @@ void testTilesetClearChildrenIgnoresStaleTerrainCallback() {
 
     check(TilesetTestAccess::findTile(tileset, childKey) == nullptr,
           "Tileset: stale terrain callback does not recreate cleared child");
+    check(!TilesetTestAccess::hasTerrainCache(tileset, childKey),
+          "Tileset: stale terrain callback does not cache cleared child terrain");
     const TilesetLoadDiagnostics terrainDiag = tileset.loadDiagnostics();
     check(terrainDiag.pendingTerrainTotal() == 0 &&
               terrainDiag.pendingContentTotal() == 0,
