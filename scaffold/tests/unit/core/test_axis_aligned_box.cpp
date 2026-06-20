@@ -31,6 +31,9 @@ TEST(AxisAlignedBoxTest, FromPositionsMatchesCesiumNativeCases) {
     EXPECT_DOUBLE_EQ(0.0, empty.maximumX());
     EXPECT_DOUBLE_EQ(0.0, empty.maximumY());
     EXPECT_DOUBLE_EQ(0.0, empty.maximumZ());
+    EXPECT_DOUBLE_EQ(0.0, empty.lengthX());
+    EXPECT_DOUBLE_EQ(0.0, empty.lengthY());
+    EXPECT_DOUBLE_EQ(0.0, empty.lengthZ());
     EXPECT_EQ(Vec3::zero(), empty.center());
 
     const Vec3 position(1.0, 2.0, 3.0);
