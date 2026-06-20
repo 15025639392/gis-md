@@ -90,6 +90,7 @@
 #include "earth_engine/tiling/TileSelectionVisitPreparation.h"
 #include "earth_engine/tiling/TileSelectionVisibilitySampler.h"
 #include "earth_engine/tiling/TileScheme.h"
+#include "earth_engine/tiling/TileSoftwareOcclusionPolicy.h"
 #include "earth_engine/tiling/TileTerminalLoadCommitter.h"
 #include "earth_engine/tiling/TileTerminalLoadPolicy.h"
 #include "earth_engine/tiling/TileTerrainHeightRangePolicy.h"
@@ -28597,6 +28598,24 @@ void testTilesetDefaultSoftwareOcclusionCanCullFarSideTile() {
           "Tileset: default software ellipsoid occlusion culls far-side tile");
 }
 
+void testTilesetSoftwareOcclusionKeepsNonBoxVolumeUnderCameraVisible() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey key{"Geographic-TMS", 2, 4, 2};
+    TilesetTile tile;
+    tile.key = key;
+    tile.bounds = scheme->tileToRectangle(key);
+    tile.boundingVolume = TileBoundingVolume::fromS2Cell(
+        S2CellBoundingVolume(S2CellID::fromToken("1"), 0.0, 100000.0));
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 cameraPosition = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(0.0, 0.0, 1000000.0));
+
+    check(TileSoftwareOcclusionPolicy::check(tile, cameraPosition) ==
+              TileOcclusionState::NotOccluded,
+          "Tileset: software occlusion keeps non-box tile under camera visible");
+}
+
 void testTilesetChildrenInheritParentTerrainHeightRange() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -30684,6 +30703,7 @@ int main() {
     testTilesetOcclusionUnavailableChildDelaysNewRefinement();
     testTilesetOcclusionUnconditionalChildSkipsAggregation();
     testTilesetDefaultSoftwareOcclusionCanCullFarSideTile();
+    testTilesetSoftwareOcclusionKeepsNonBoxVolumeUnderCameraVisible();
     testTilesetChildrenInheritParentTerrainHeightRange();
     testTilesetSampleHeightUsesBestLoadedTerrainTile();
     testTilesetSampleHeightFallsBackToLoadedAncestorTerrain();

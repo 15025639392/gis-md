@@ -127,11 +127,8 @@ TileOcclusionState TileSoftwareOcclusionPolicy::check(
     const Cartographic cameraCart =
         ellipsoid.cartesianToCartographic(cameraPosition);
     const bool cameraInsideTileRegion =
-        !tile.boundingVolume ||
-        tile.boundingVolume->kind == TileBoundingVolumeKind::Region
-            ? tile.bounds.contains(cameraCart.longitude(),
-                                   cameraCart.latitude())
-            : false;
+        tile.bounds.contains(cameraCart.longitude(),
+                             cameraCart.latitude());
     if (cameraCart.height() <= 0.0 ||
         cameraInsideTileRegion) {
         return TileOcclusionState::NotOccluded;
@@ -155,19 +152,21 @@ TileOcclusionState TileSoftwareOcclusionPolicy::check(
             : TileOcclusionState::NotOccluded;
     }
 
-    if (tile.boundingVolume &&
-        tile.boundingVolume->kind != TileBoundingVolumeKind::Region) {
-        const bool fullyOccluded =
-            tile.boundingVolume->kind == TileBoundingVolumeKind::Sphere
-                ? sphereFullyOccluded(*tile.boundingVolume,
-                                      cameraPosition,
-                                      ellipsoid)
-                : boxFullyOccluded(*tile.boundingVolume,
-                                   cameraPosition,
-                                   ellipsoid);
-        return fullyOccluded
-            ? TileOcclusionState::Occluded
-            : TileOcclusionState::NotOccluded;
+    if (tile.boundingVolume) {
+        if (tile.boundingVolume->kind == TileBoundingVolumeKind::Sphere) {
+            return sphereFullyOccluded(*tile.boundingVolume,
+                                       cameraPosition,
+                                       ellipsoid)
+                ? TileOcclusionState::Occluded
+                : TileOcclusionState::NotOccluded;
+        }
+        if (tile.boundingVolume->kind == TileBoundingVolumeKind::Box) {
+            return boxFullyOccluded(*tile.boundingVolume,
+                                    cameraPosition,
+                                    ellipsoid)
+                ? TileOcclusionState::Occluded
+                : TileOcclusionState::NotOccluded;
+        }
     }
 
     const double sampleHeight =
