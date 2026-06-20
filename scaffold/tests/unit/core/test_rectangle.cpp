@@ -207,6 +207,25 @@ TEST(RectangleTest, AntimeridianNormalizedCoordinatesMatchCesiumNative) {
     EXPECT_NEAR(0.0, eastEdge.second, 1e-14);
 }
 
+TEST(RectangleTest, SimpleNormalizedCoordinatesMatchCesiumNative) {
+    // Ported from cesium-native GlobeRectangle::computeNormalizedCoordinates:
+    // simple non-wrapping rectangles map southwest to (0,0), northeast to
+    // (1,1), and vary linearly inside the rectangle.
+    const Rectangle simple(0.0, 0.0, 1.0, 1.0);
+
+    auto inside = simple.normalizedCoordinates(0.1, 0.1);
+    EXPECT_DOUBLE_EQ(0.1, inside.first);
+    EXPECT_DOUBLE_EQ(0.1, inside.second);
+
+    auto southwest = simple.normalizedCoordinates(0.0, 0.0);
+    EXPECT_DOUBLE_EQ(0.0, southwest.first);
+    EXPECT_DOUBLE_EQ(0.0, southwest.second);
+
+    auto northeast = simple.normalizedCoordinates(1.0, 1.0);
+    EXPECT_DOUBLE_EQ(1.0, northeast.first);
+    EXPECT_DOUBLE_EQ(1.0, northeast.second);
+}
+
 TEST(RectangleTest, NormalizedCoordinatesOutsideRectangleMatchCesiumNative) {
     // Ported from cesium-native CesiumGeospatial/test/TestGlobeRectangle.cpp:
     // computeNormalizedCoordinates is linear and intentionally does not clamp.
