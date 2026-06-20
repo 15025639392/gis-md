@@ -233,3 +233,23 @@ TEST(BoundingCylinderRegionTest, TransformComposesExistingRotationLikeCesiumNati
                   Vec3(-1.5, 0.0, 0.0),
                   MathUtils::Epsilon6);
 }
+
+TEST(BoundingCylinderRegionTest, QueryMethodsDelegateToOrientedBoundingBoxLikeCesiumNative) {
+    const BoundingCylinderRegion region(
+        Vec3::zero(),
+        glm::dquat(1.0, 0.0, 0.0, 0.0),
+        4.0,
+        glm::dvec2(0.0, 2.0),
+        glm::dvec2(0.0, MathUtils::PiOverTwo));
+    const OrientedBoundingBox box = region.toOrientedBoundingBox();
+
+    EXPECT_EQ(box.intersectPlane(Plane(Vec3::unitX(), -2.0)),
+              region.intersectPlane(Plane(Vec3::unitX(), -2.0)));
+    EXPECT_DOUBLE_EQ(
+        box.computeDistanceSquaredToPosition(Vec3(5.0, 0.0, 0.0)),
+        region.computeDistanceSquaredToPosition(Vec3(5.0, 0.0, 0.0)));
+    EXPECT_EQ(box.contains(Vec3(1.0, 1.0, 0.0)),
+              region.contains(Vec3(1.0, 1.0, 0.0)));
+    EXPECT_EQ(box.contains(Vec3(-1.0, -1.0, 0.0)),
+              region.contains(Vec3(-1.0, -1.0, 0.0)));
+}
