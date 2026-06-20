@@ -275,6 +275,17 @@ TEST(TileQuadtreeAvailabilityTest, RootIsImplicitlyAvailableBeforeSubtreeLoads) 
     EXPECT_EQ(0, availability.computeAvailability(1, 0, 0));
 }
 
+TEST(TileQuadtreeAvailabilityTest, UnloadedNodeOnlyMakesSubtreeRootAvailable) {
+    TileQuadtreeAvailability availability(3, 5);
+
+    EXPECT_EQ(static_cast<uint8_t>(TileAvailable | SubtreeAvailable),
+              availability.computeAvailability(0, 0, 0, nullptr));
+    EXPECT_EQ(0, availability.computeAvailability(1, 0, 0, nullptr));
+    EXPECT_EQ(0, availability.computeAvailability(2, 0, 0, nullptr));
+    EXPECT_EQ(static_cast<uint8_t>(TileAvailable | SubtreeAvailable),
+              availability.computeAvailability(3, 0, 0, nullptr));
+}
+
 TEST(TileQuadtreeAvailabilityTest, ZeroSubtreeLevelsAreUnavailable) {
     TileQuadtreeAvailability availability(0, 5);
     TileQuadtreeAvailability overflowingAvailability(16, 20);
@@ -618,6 +629,27 @@ TEST(TileOctreeAvailabilityTest, RootIsImplicitlyAvailableBeforeSubtreeLoads) {
     EXPECT_EQ(static_cast<uint8_t>(TileAvailable | SubtreeAvailable),
               availability.computeAvailability(OctreeTileID{0, 0, 0, 0}));
     EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{1, 0, 0, 0}));
+}
+
+TEST(TileOctreeAvailabilityTest, UnloadedNodeOnlyMakesSubtreeRootAvailable) {
+    TileOctreeAvailability availability(3, 5);
+
+    EXPECT_EQ(static_cast<uint8_t>(TileAvailable | SubtreeAvailable),
+              availability.computeAvailability(
+                  OctreeTileID{0, 0, 0, 0},
+                  nullptr));
+    EXPECT_EQ(0,
+              availability.computeAvailability(
+                  OctreeTileID{1, 0, 0, 0},
+                  nullptr));
+    EXPECT_EQ(0,
+              availability.computeAvailability(
+                  OctreeTileID{2, 0, 0, 0},
+                  nullptr));
+    EXPECT_EQ(static_cast<uint8_t>(TileAvailable | SubtreeAvailable),
+              availability.computeAvailability(
+                  OctreeTileID{3, 0, 0, 0},
+                  nullptr));
 }
 
 TEST(TileOctreeAvailabilityTest, ZeroSubtreeLevelsAreUnavailable) {
