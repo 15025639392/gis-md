@@ -524,24 +524,27 @@ void setQueryParameter(std::string& url,
                        const std::string& value) {
     if (value.empty()) return;
     const std::string assignment = name + "=" + value;
-    const size_t queryStart = url.find('?');
-    if (queryStart == std::string::npos) {
-        url += "?" + assignment;
+    ParsedUrl parsed = parseUrl(url);
+    if (!parsed.hasQuery) {
+        parsed.hasQuery = true;
+        parsed.query = assignment;
+        url = composeUrl(parsed);
         return;
     }
 
-    size_t pos = queryStart + 1;
+    size_t pos = 0;
     bool found = false;
-    while (pos <= url.size()) {
-        const size_t valueStart = url.find('=', pos);
-        const size_t paramEnd = url.find('&', pos);
+    while (pos <= parsed.query.size()) {
+        const size_t valueStart = parsed.query.find('=', pos);
+        const size_t paramEnd = parsed.query.find('&', pos);
         const size_t keyEnd =
             valueStart == std::string::npos ||
                     (paramEnd != std::string::npos && valueStart > paramEnd)
                 ? paramEnd
                 : valueStart;
-        if (keyEnd == std::string::npos) break;
-        if (url.compare(pos, keyEnd - pos, name) == 0) {
+        const size_t compareEnd =
+            keyEnd == std::string::npos ? parsed.query.size() : keyEnd;
+        if (parsed.query.compare(pos, compareEnd - pos, name) == 0) {
             found = true;
             break;
         }
@@ -551,13 +554,16 @@ void setQueryParameter(std::string& url,
         pos = paramEnd + 1;
     }
     if (!found) {
-        url += "&" + assignment;
+        if (!parsed.query.empty()) parsed.query += "&";
+        parsed.query += assignment;
+        url = composeUrl(parsed);
         return;
     }
 
-    size_t valueEnd = url.find('&', pos);
-    if (valueEnd == std::string::npos) valueEnd = url.size();
-    url.replace(pos, valueEnd - pos, assignment);
+    size_t valueEnd = parsed.query.find('&', pos);
+    if (valueEnd == std::string::npos) valueEnd = parsed.query.size();
+    parsed.query.replace(pos, valueEnd - pos, assignment);
+    url = composeUrl(parsed);
 }
 
 } // namespace

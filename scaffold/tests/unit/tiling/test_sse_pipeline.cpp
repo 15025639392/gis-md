@@ -6552,6 +6552,26 @@ void testQuantizedMeshLayerJsonUriResolution() {
     check(queryAndExtensionProvider.buildUrl(TileKey{"Geographic-TMS", 0, 0, 0}) ==
               "https://example.invalid/0.0.0/1.0.0.terrain?param=some_parameter_here&extensions=metadata",
           "QuantizedMeshTerrainProvider: base query and extensions merge like cesium-native");
+
+    QuantizedMeshTerrainProvider fragmentProvider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string fragmentLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["tiles/{z}/{x}/{y}.terrain#tile-fragment"],
+      "extensions": ["metadata"],
+      "minzoom": 0,
+      "maxzoom": 4
+    })json";
+
+    check(fragmentProvider.configureFromLayerJson(
+              fragmentLayerJson,
+              "https://example.invalid/terrain/layer.json?token=base"),
+          "QuantizedMeshTerrainProvider: fragment URI layer configures");
+    check(fragmentProvider.buildUrl(TileKey{"Geographic-TMS", 2, 3, 1}) ==
+              "https://example.invalid/terrain/tiles/2/3/1.terrain?token=base&extensions=metadata#tile-fragment",
+          "QuantizedMeshTerrainProvider: extension query stays before fragment like cesium-native UriQuery");
 }
 
 void testQuantizedMeshFabdemLayerJsonShape() {
