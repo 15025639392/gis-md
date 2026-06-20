@@ -108,6 +108,28 @@ TEST(TileChildMaterializerTest, AnyAvailableTerrainChildCreatesFullQuadLikeCesiu
     EXPECT_DOUBLE_EQ(90.0, se->content.renderContent.terrainMaximumHeight());
 }
 
+TEST(TileChildMaterializerTest, NoAvailableTerrainChildrenCreatesNoneLikeCesiumNative) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle{});
+
+    int ensureCalls = 0;
+    const bool changed = TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        2,
+        [](const TileKey&) {
+            return TileAvailabilityState::NotAvailable;
+        },
+        [&ensureCalls](const TileKey&) -> TilesetTile* {
+            ++ensureCalls;
+            return nullptr;
+        });
+
+    EXPECT_FALSE(changed);
+    EXPECT_EQ(0, ensureCalls);
+    EXPECT_TRUE(parent.children.empty());
+}
+
 TEST(TileChildMaterializerTest, RasterUpsampledChildrenSplitSubdivisionAndRemainStable) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 0, 0, 0},
