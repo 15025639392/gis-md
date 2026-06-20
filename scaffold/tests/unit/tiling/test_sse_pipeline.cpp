@@ -11,6 +11,7 @@
 #include "earth_engine/core/geodesy/S2CellID.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Transforms.h"
+#include "earth_engine/core/geodesy/WebMercatorProjection.h"
 #include "earth_engine/core/math/OrientedBoundingBox.h"
 #include "earth_engine/core/math/Plane.h"
 #include "earth_engine/renderer/IPrepareRendererResources.h"
@@ -4102,6 +4103,15 @@ void testQuantizedMeshLayerJsonWebMercatorProjectionMatchesCesiumNative() {
           "QuantizedMeshTerrainProvider: WebMercator root level is 1x1 like cesium-native");
     check(!provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 0}),
           "QuantizedMeshTerrainProvider: WebMercator layer rejects Geographic-TMS keys");
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    const Rectangle rootBounds =
+        scheme->tileToRectangle(TileKey{"XYZ-WebMercator", 0, 0, 0});
+    check(std::abs(rootBounds.south() +
+                   WebMercatorProjection::maximumLatitude()) < 1e-12 &&
+              std::abs(rootBounds.north() -
+                       WebMercatorProjection::maximumLatitude()) < 1e-12,
+          "QuantizedMeshTerrainProvider: WebMercator root bounds use cesium-native maximum globe rectangle");
 }
 
 void testQuantizedMeshLayerJsonNonStringProjectionDefaults() {
