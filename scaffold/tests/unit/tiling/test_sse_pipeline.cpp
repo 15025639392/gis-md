@@ -20072,6 +20072,35 @@ void testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending() {
           "TileLoadRequestDispatcher: skipped upsampled terrain leaves existing pending work intact");
 }
 
+void testTileLoadRequestDispatcherBlocksUpsampledTerrainWhenBudgetExhausted() {
+    std::mutex mutex;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 0;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+
+    const TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::queueUpsampledTerrain(
+            mutex,
+            requestState,
+            pendingLoads,
+            budget,
+            key,
+            "upsample-blocked",
+            TileLoadPriorityGroup::Urgent,
+            100.0);
+
+    check(result == TileLoadDispatchResult::Blocked,
+          "TileLoadRequestDispatcher: exhausted budget blocks upsampled terrain enqueue");
+    check(requestState.empty() &&
+              !pendingLoads.hasWork() &&
+              budget.networkRequestsIssued() == 0,
+          "TileLoadRequestDispatcher: blocked upsampled terrain has no pending state side effects");
+}
+
 void testTileLoadRequestDispatcherPassesNetworkPriority() {
     class RecordingTerrainProvider final : public TerrainProvider {
     public:
@@ -26580,6 +26609,7 @@ int main() {
     testTileLoadRequestDispatcherRejectsRequestsDuringDestroy();
     testTileLoadRequestDispatcherSkipsPendingTerminalResultKeys();
     testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending();
+    testTileLoadRequestDispatcherBlocksUpsampledTerrainWhenBudgetExhausted();
     testTileLoadRequestDispatcherPassesNetworkPriority();
     testTileLoadRequestPlannerClassifiesRequestKinds();
     testTileLoadSchedulerBlocksContentRequestWhenInflightIsFull();
