@@ -15162,6 +15162,34 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
               externalTile.unconditionallyRefine &&
               externalTile.content.loadState == TileLoadState::Done,
           "TileTerminalLoadCommitter: external content returns child-materialization action without empty marker");
+
+    TilesetTile retryTile(TileKey{"test", 0, 3, 0}, Rectangle{});
+    action = TileTerminalLoadCommitter::commitContentTerminalResult(
+        retryTile,
+        "content-retry",
+        TileContentLoadStatus::RetryLater,
+        emptyContentRegistry);
+    check(!action.markEmptyCacheKey &&
+              action.ensureChildren &&
+              action.resourcesDirty &&
+              !emptyContentRegistry.contains("content-retry") &&
+              retryTile.content.contentKind == TileContentKind::Unknown &&
+              retryTile.content.loadState == TileLoadState::FailedTemporarily,
+          "TileTerminalLoadCommitter: retry content stays retryable without empty registry marker");
+
+    TilesetTile failedTerrainTile(TileKey{"test", 0, 4, 0}, Rectangle{});
+    action = TileTerminalLoadCommitter::commitTerrainTerminalResult(
+        failedTerrainTile,
+        "terrain-failed",
+        TerrainTileLoadStatus::Failed,
+        emptyContentRegistry);
+    check(!action.markEmptyCacheKey &&
+              !action.ensureChildren &&
+              action.resourcesDirty &&
+              !emptyContentRegistry.contains("terrain-failed") &&
+              failedTerrainTile.content.contentKind == TileContentKind::Unknown &&
+              failedTerrainTile.content.loadState == TileLoadState::Failed,
+          "TileTerminalLoadCommitter: failed terrain avoids empty registry marker");
 }
 
 void testTileContentUploadPolicyPreparesGltfRenderContent() {
