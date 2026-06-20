@@ -4592,6 +4592,25 @@ void testQuantizedMeshLayerJsonAvailabilitySkipsNonArrayLevels() {
           "QuantizedMeshTerrainProvider: non-object ranges are skipped without discarding valid ranges");
     check(!rangeProvider.supportsTile(TileKey{"Geographic-TMS", 1, 1, 0}),
           "QuantizedMeshTerrainProvider: skipped non-object range does not create extra availability");
+
+    QuantizedMeshTerrainProvider uint32EdgeProvider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string uint32EdgeLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}],
+        [{"startX":0,"startY":0,"endX":4294967295,"endY":0}]
+      ]
+    })json";
+    check(uint32EdgeProvider.configureFromLayerJson(
+              uint32EdgeLayerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: uint32-edge availability layer configures");
+    check(uint32EdgeProvider.supportsTile(TileKey{"Geographic-TMS", 1, 1, 0}),
+          "QuantizedMeshTerrainProvider: uint32 availability edge does not overflow before rectangle projection");
 }
 
 void testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative() {

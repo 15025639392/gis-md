@@ -837,9 +837,9 @@ uint32_t QuantizedMeshTerrainProvider::maximumAvailableLevelAtTileCenter(
             // A coarser tile center can lie exactly on a deeper range edge;
             // floor(center * tileCount) would incorrectly pick only one side.
             const double minX = static_cast<double>(range[0]) / xTiles;
-            const double maxX = static_cast<double>(range[2] + 1) / xTiles;
+            const double maxX = (static_cast<double>(range[2]) + 1.0) / xTiles;
             const double minY = static_cast<double>(range[1]) / yTiles;
-            const double maxY = static_cast<double>(range[3] + 1) / yTiles;
+            const double maxY = (static_cast<double>(range[3]) + 1.0) / yTiles;
             if (centerX >= minX && centerX <= maxX &&
                 centerY >= minY && centerY <= maxY) {
                 maxLevel = std::max(maxLevel, static_cast<uint32_t>(level));
