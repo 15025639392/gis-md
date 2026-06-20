@@ -28694,6 +28694,31 @@ void testTileOcclusionResolverMissingChildProxyKeepsParentVisible() {
           "TileOcclusionResolver: missing child proxy keeps parent visible like cesium-native");
 }
 
+void testTileOcclusionResolverTerminalParentStateSkipsChildren() {
+    auto checkTerminalState = [](TileOcclusionState state) {
+        TilesetTile root;
+        root.key = TileKey{"Geographic-TMS", 0, 0, 0};
+        TilesetTile child;
+        child.key = TileKey{"Geographic-TMS", 1, 0, 0};
+        root.children.push_back(&child);
+
+        int checkedTiles = 0;
+        const TileOcclusionState result = TileOcclusionResolver::check(
+            root,
+            [state, &checkedTiles](const TilesetTile&) {
+                ++checkedTiles;
+                return state;
+            });
+
+        return result == state && checkedTiles == 1;
+    };
+
+    check(checkTerminalState(TileOcclusionState::Occluded),
+          "TileOcclusionResolver: parent occluded state skips child proxies like cesium-native");
+    check(checkTerminalState(TileOcclusionState::OcclusionUnavailable),
+          "TileOcclusionResolver: parent unavailable state skips child proxies like cesium-native");
+}
+
 void testTilesetOcclusionUnavailableChildDelaysNewRefinement() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -31149,6 +31174,7 @@ int main() {
     testTilesetOcclusionAggregatesOccludedChildren();
     testTilesetOcclusionVisibleChildKeepsParentRefining();
     testTileOcclusionResolverMissingChildProxyKeepsParentVisible();
+    testTileOcclusionResolverTerminalParentStateSkipsChildren();
     testTilesetOcclusionUnavailableChildDelaysNewRefinement();
     testTilesetOcclusionUnconditionalChildSkipsAggregation();
     testTilesetCameraInsideDiagnosticUsesExplicitRootVolume();
