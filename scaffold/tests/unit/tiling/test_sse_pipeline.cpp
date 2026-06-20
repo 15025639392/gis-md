@@ -20913,6 +20913,81 @@ void testTileLoadSchedulerStopsDuringDestroyBeforePlanning() {
           "TileLoadScheduler: destroying lifecycle stops before planning side effects");
 }
 
+void testTileLoadSchedulerSkipsDispatcherDuplicateAfterPlanning() {
+    class CountingContentProvider final : public TilesetContentProvider {
+    public:
+        std::string id() const override { return "scheduler-duplicate-content"; }
+        bool supportsTile(const TileKey&) const override { return true; }
+        void requestTileContent(const TileKey&,
+                                CancellationToken,
+                                ContentCallback,
+                                HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+        }
+        TileContentLoadResult decodeContent(
+            const uint8_t*,
+            size_t) override {
+            return TileContentLoadResult::failed();
+        }
+        int requestCount = 0;
+    };
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = testCacheKeyForTile(key);
+    CountingContentProvider provider;
+    bool planned = false;
+    bool marked = false;
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                &provider},
+            testCacheKeyForTile,
+            [&lifecycle,
+             &planned,
+             &key,
+             &cacheKey](const TileKey&,
+                        const std::string&,
+                        TilesetTile*& tileState) {
+                planned = true;
+                tileState = nullptr;
+                {
+                    std::lock_guard<std::mutex> lock(lifecycle.mutex());
+                    lifecycle.pendingLoads().addContentTerminalResult(
+                        PendingContentTerminalResult{
+                            key,
+                            cacheKey,
+                            TileLoadPriorityGroup::Normal,
+                            0.0,
+                            TileContentLoadStatus::RetryLater});
+                }
+                TileLoadRequestSnapshot snapshot;
+                snapshot.contentProviderSupportsTile = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [&marked](const TileKey&) { marked = true; });
+
+    check(outcome.issued == 0 && !outcome.blockedByInflight,
+          "TileLoadScheduler: dispatcher duplicate skip does not report inflight block");
+    check(planned && !marked && provider.requestCount == 0 &&
+              lifecycle.counts().contentTerminalResults == 1,
+          "TileLoadScheduler: dispatcher duplicate skip avoids request side effects after planning");
+}
+
 void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 2;
@@ -26519,6 +26594,7 @@ int main() {
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation();
     testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot();
     testTileLoadSchedulerStopsDuringDestroyBeforePlanning();
+    testTileLoadSchedulerSkipsDispatcherDuplicateAfterPlanning();
     testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds();
     testTileResourceDirtyInvalidatesRevisionAndCacheOnly();
     testTilesetFrameResourceBudgetLimitsWorkerRequests();
