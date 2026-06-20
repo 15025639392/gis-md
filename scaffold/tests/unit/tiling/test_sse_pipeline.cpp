@@ -16316,6 +16316,33 @@ void testTileContentUnloadCoordinatorRemovesExternalContent() {
           "TileContentUnloadCoordinator: unreferenced external content unloads wrapper and clears stale empty marker");
 }
 
+void testTileContentUnloadCoordinatorKeepsReferencedExternalContent() {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.content.contentKind = TileContentKind::External;
+    tile.content.loadState = TileLoadState::Done;
+    tile.addReference();
+    const std::string cacheKey = "test:0:0:0";
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
+
+    const TileCacheUnloadContentResult result =
+        TileContentUnloadCoordinator::unloadContent(
+            tile,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            nullptr);
+
+    check(result == TileCacheUnloadContentResult::Keep &&
+              emptyContentRegistry.contains(cacheKey) &&
+              tile.content.contentKind == TileContentKind::External &&
+              tile.content.loadState == TileLoadState::Done &&
+              tile.referenceCount() == 1,
+          "TileContentUnloadCoordinator: referenced external content keeps cache state for retry");
+}
+
 void testTileContentUnloadCoordinatorRemovesRenderContentCache() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.contentKind = TileContentKind::Render;
@@ -26920,6 +26947,7 @@ int main() {
     testTileContentUnloadCoordinatorErasesEmptyContentRegistryKey();
     testTileContentUnloadCoordinatorKeepsLoadingContent();
     testTileContentUnloadCoordinatorRemovesExternalContent();
+    testTileContentUnloadCoordinatorKeepsReferencedExternalContent();
     testTileContentUnloadCoordinatorRemovesRenderContentCache();
     testTileContentUnloadCoordinatorKeepsProtectedUpsampleSource();
     testTileContentUnloadCoordinatorRemovesCompletedProtectedSource();
