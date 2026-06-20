@@ -3951,6 +3951,13 @@ void testQuantizedMeshLayerJsonFailedConfigurePreservesPreviousState() {
       "scheme": "tms",
       "maxzoom": 9
     })json";
+    const std::string emptyTilesLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": [],
+      "maxzoom": 9
+    })json";
 
     check(provider.configureFromLayerJson(
               validLayerJson, "https://example.invalid/terrain/layer.json"),
@@ -3966,6 +3973,16 @@ void testQuantizedMeshLayerJsonFailedConfigurePreservesPreviousState() {
               provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 0}) &&
               provider.maxZoom() == 4,
           "QuantizedMeshTerrainProvider: failed layer configure preserves previous state");
+
+    check(!provider.configureFromLayerJson(
+              emptyTilesLayerJson,
+              "https://example.invalid/empty-tiles/layer.json"),
+          "QuantizedMeshTerrainProvider: empty tiles array rejects like cesium-native");
+    check(provider.buildUrl(TileKey{"Geographic-TMS", 1, 1, 0}) == stableUrl &&
+              provider.attribution() == "stable terrain credit" &&
+              provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 0}) &&
+              provider.maxZoom() == 4,
+          "QuantizedMeshTerrainProvider: empty tiles array failure preserves previous state");
 }
 
 void testQuantizedMeshLayerJsonNonStringParentUrlIgnored() {
