@@ -32,6 +32,21 @@ TEST(QuadtreeTilingSchemeTest, PositionToTileMatchesCesiumNativeProjectedGrid) {
     EXPECT_EQ(2721, tile->y);
 }
 
+TEST(QuadtreeTilingSchemeTest, PositionToTilePreservesLocalSchemeIdentity) {
+    const QuadtreeTilingScheme scheme(Rectangle(-180.0, -90.0, 180.0, 90.0),
+                                      2,
+                                      1,
+                                      "Geographic-TMS");
+
+    const auto tile = scheme.positionToTile(0.0, 0.0, 0);
+
+    ASSERT_TRUE(tile.has_value());
+    EXPECT_EQ("Geographic-TMS", tile->schemeId);
+    EXPECT_EQ(0, tile->z);
+    EXPECT_EQ(1, tile->x);
+    EXPECT_EQ(0, tile->y);
+}
+
 TEST(QuadtreeTilingSchemeTest, PositionToTileReturnsEmptyOutsideRectangle) {
     const QuadtreeTilingScheme scheme(Rectangle(-10.0, -5.0, 10.0, 5.0),
                                       1,
