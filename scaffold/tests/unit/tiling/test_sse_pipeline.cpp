@@ -4145,7 +4145,7 @@ void testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding() {
           "QuantizedMeshParser: metadata-only path keeps padded-header compatibility");
 }
 
-void testQuantizedMeshShortOctNormalStopsExtensionParsing() {
+void testQuantizedMeshShortOctNormalUsesRemainingBytesLikeCesiumNative() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const std::string metadata = R"json({
@@ -4164,13 +4164,15 @@ void testQuantizedMeshShortOctNormalStopsExtensionParsing() {
 
     check(mesh != nullptr,
           "QuantizedMeshParser: short oct-normal fixture remains parseable");
-    check(mesh && mesh->metadataAvailability.empty(),
-          "QuantizedMeshParser: short oct-normal extension stops later metadata parsing like cesium-native");
+    check(mesh && mesh->metadataAvailability.size() == 1 &&
+              mesh->metadataAvailability[0] ==
+                  std::array<int, 5>{0, 0, 0, 1, 0},
+          "QuantizedMeshParser: short oct-normal length still advances by declared length like cesium-native");
 
     const std::vector<std::array<int, 5>> metadataOnly =
         QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
-    check(metadataOnly.empty(),
-          "QuantizedMeshParser: metadata-only path also stops after short oct-normal extension");
+    check(metadataOnly == mesh->metadataAvailability,
+          "QuantizedMeshParser: metadata-only path follows short oct-normal length like cesium-native");
 }
 
 void testQuantizedMeshMalformedMetadataStopsExtensionParsing() {
@@ -22323,7 +22325,7 @@ int main() {
     testQuantizedMeshLayerJsonAvailabilitySkipsNonArrayLevels();
     testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative();
     testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding();
-    testQuantizedMeshShortOctNormalStopsExtensionParsing();
+    testQuantizedMeshShortOctNormalUsesRemainingBytesLikeCesiumNative();
     testQuantizedMeshMalformedMetadataStopsExtensionParsing();
     testQuantizedMeshRejectsTruncatedEdgeIndices();
     testQuantizedMeshRejectsIllFormedCoreBuffers();
