@@ -5060,6 +5060,28 @@ void testQuantizedMeshRasterizerParsesUint32IndexPadding() {
           "QuantizedMeshParser: rasterizer produces a minimal grid after uint32 index parsing");
 }
 
+void testQuantizedMeshMetadataOnlyParsesUint32IndexPadding() {
+    const std::string metadata = R"json({
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":1}]
+      ]
+    })json";
+    std::vector<uint8_t> bytes = makeLargeQuantizedMeshBytesWithUint32EdgeIndex();
+    appendPod<uint8_t>(bytes, 4);
+    appendPod<uint32_t>(
+        bytes,
+        static_cast<uint32_t>(sizeof(uint32_t) + metadata.size()));
+    appendPod<uint32_t>(bytes, static_cast<uint32_t>(metadata.size()));
+    bytes.insert(bytes.end(), metadata.begin(), metadata.end());
+
+    const std::vector<std::array<int, 5>> metadataOnly =
+        QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
+
+    check(metadataOnly.size() == 1 &&
+              metadataOnly[0] == std::array<int, 5>{0, 0, 0, 1, 1},
+          "QuantizedMeshParser: metadata-only path accepts uint32 index padding like cesium-native");
+}
+
 void testQuantizedMeshRejectsMissingUint32IndexPadding() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -23524,6 +23546,7 @@ int main() {
     testQuantizedMeshRejectsEachTruncatedEdge();
     testQuantizedMeshParsesUint32IndicesAndEdges();
     testQuantizedMeshRasterizerParsesUint32IndexPadding();
+    testQuantizedMeshMetadataOnlyParsesUint32IndexPadding();
     testQuantizedMeshRejectsMissingUint32IndexPadding();
     testQuantizedMeshRasterizerRejectsMissingUint32IndexPadding();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
