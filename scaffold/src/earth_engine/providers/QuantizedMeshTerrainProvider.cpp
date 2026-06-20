@@ -553,7 +553,7 @@ bool QuantizedMeshTerrainProvider::appendLayerFromJson(
     // metadata subtrees determine whether tiles are requestable.
     layer.minZoom = 0;
     layer.maxZoom = j.value("maxzoom", maxZoom_);
-    layer.version = j.value("version", std::string());
+    layer.version = j.value("version", std::string("1.0.0"));
     layer.extensionsToRequest = createExtensionsQueryParameter(
         {"octvertexnormals", "metadata"},
         jsonStringArray(j, "extensions"));
