@@ -83,13 +83,13 @@ std::string normalizeUrlPath(const std::string& path) {
     return normalized.empty() && absolute ? "/" : normalized;
 }
 
-std::string percentEncodeNonAscii(std::string value) {
+std::string percentEncodeUnsafeUrlBytes(std::string value) {
     static constexpr char hex[] = "0123456789ABCDEF";
     std::string encoded;
     encoded.reserve(value.size());
 
     for (const unsigned char c : value) {
-        if (c < 0x80U) {
+        if (c > 0x20U && c < 0x80U) {
             encoded.push_back(static_cast<char>(c));
             continue;
         }
@@ -103,15 +103,15 @@ std::string percentEncodeNonAscii(std::string value) {
 
 std::string resolveUrl(const std::string& baseUrl, const std::string& relative) {
     if (hasUrlScheme(relative)) {
-        return percentEncodeNonAscii(relative);
+        return percentEncodeUnsafeUrlBytes(relative);
     }
     if (relative.rfind("//", 0) == 0) {
-        return percentEncodeNonAscii("https:" + relative);
+        return percentEncodeUnsafeUrlBytes("https:" + relative);
     }
 
     const std::string baseWithoutFragment = baseUrl.substr(0, baseUrl.find('#'));
     if (!relative.empty() && relative.front() == '#') {
-        return percentEncodeNonAscii(baseWithoutFragment + relative);
+        return percentEncodeUnsafeUrlBytes(baseWithoutFragment + relative);
     }
 
     std::string baseWithoutQuery = baseWithoutFragment;
@@ -120,10 +120,10 @@ std::string resolveUrl(const std::string& baseUrl, const std::string& relative) 
         baseWithoutQuery.erase(baseQueryPos);
     }
     if (relative.empty()) {
-        return percentEncodeNonAscii(baseWithoutQuery);
+        return percentEncodeUnsafeUrlBytes(baseWithoutQuery);
     }
     if (!relative.empty() && relative.front() == '?') {
-        return percentEncodeNonAscii(baseWithoutQuery + relative);
+        return percentEncodeUnsafeUrlBytes(baseWithoutQuery + relative);
     }
 
     std::string relativePath = relative;
@@ -169,7 +169,7 @@ std::string resolveUrl(const std::string& baseUrl, const std::string& relative) 
         mergedPath = directory + relativePath;
     }
 
-    return percentEncodeNonAscii(
+    return percentEncodeUnsafeUrlBytes(
         prefix + normalizeUrlPath(mergedPath) + relativeSuffix);
 }
 
