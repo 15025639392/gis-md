@@ -3850,6 +3850,55 @@ void testQuantizedMeshMetadataUpdateStartsBelowSubtreeTileLevel() {
           "QuantizedMeshTerrainProvider: metadata update keeps sibling range unavailable");
 }
 
+void testQuantizedMeshMetadataUpdateSkipsNonArrayLevelsWithoutAdvancing() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "metadataAvailability": 2
+    })json";
+
+    check(provider.configureFromLayerJson(
+              layerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: non-array metadata update layer configures");
+
+    const TileKey subtreeKey{"Geographic-TMS", 2, 0, 0};
+    const TileKey levelThreeKey{"Geographic-TMS", 3, 0, 0};
+    const TileKey levelThreeSiblingKey{"Geographic-TMS", 3, 1, 0};
+    check(provider.availabilityState(levelThreeKey) ==
+              TileAvailabilityState::Unknown,
+          "QuantizedMeshTerrainProvider: non-array metadata target child starts unknown");
+
+    const std::string metadata = R"json({
+      "available": [
+        "not-a-level-array",
+        [{"startX":0,"startY":0,"endX":0,"endY":0}]
+      ]
+    })json";
+    const std::vector<uint8_t> bytes = makeQuantizedMeshBytes(metadata);
+
+    DecodedHeightmap heightmap;
+    DecodedHeightmap::QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = subtreeKey;
+    update.metadataAvailability =
+        QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
+    heightmap.quantizedMeshAvailabilityUpdates.push_back(update);
+
+    provider.applyAvailabilityUpdates(heightmap);
+
+    check(provider.availabilityState(levelThreeKey) ==
+              TileAvailabilityState::Available,
+          "QuantizedMeshTerrainProvider: metadata non-array levels do not advance absolute target level like cesium-native");
+    check(provider.availabilityState(levelThreeSiblingKey) ==
+              TileAvailabilityState::NotAvailable,
+          "QuantizedMeshTerrainProvider: skipped non-array metadata level keeps same-level sibling unavailable");
+}
+
 void testQuantizedMeshAvailabilityUpdateSkipsInvalidLayerIndex() {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
@@ -23618,6 +23667,7 @@ int main() {
     testQuantizedMeshTileMetadataIgnoredWithoutMetadataAvailability();
     testQuantizedMeshEmptyTileMetadataMarksSubtreeLoaded();
     testQuantizedMeshMetadataUpdateStartsBelowSubtreeTileLevel();
+    testQuantizedMeshMetadataUpdateSkipsNonArrayLevelsWithoutAdvancing();
     testQuantizedMeshAvailabilityUpdateSkipsInvalidLayerIndex();
     testQuantizedMeshLayerJsonEmptyAvailabilityMatchesCesiumNative();
     testQuantizedMeshLayerJsonDefaultFormatMatchesCesiumNative();
