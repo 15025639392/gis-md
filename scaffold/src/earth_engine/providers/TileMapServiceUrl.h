@@ -1,8 +1,24 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace earth_engine {
+
+struct TileMapServiceTileSet {
+    std::string url;
+    uint32_t level = 0;
+};
+
+struct TileMapServiceMetadata {
+    std::string fileExtension = "png";
+    uint32_t tileWidth = 256;
+    uint32_t tileHeight = 256;
+    uint32_t minimumLevel = 0;
+    uint32_t maximumLevel = 25;
+    std::vector<TileMapServiceTileSet> tileSets;
+};
 
 /// Cesium-native TileMapServiceRasterOverlay URL fallback:
 /// resolve tilemapresource.xml relative to a TMS endpoint while preserving
@@ -16,5 +32,7 @@ std::string tileMapServiceTileUrl(const std::string& baseUrl,
                                   int x,
                                   int y,
                                   const std::string& fileExtension);
+
+TileMapServiceMetadata parseTileMapServiceMetadata(const std::string& xml);
 
 } // namespace earth_engine

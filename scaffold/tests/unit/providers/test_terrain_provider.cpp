@@ -610,3 +610,60 @@ TEST(TileMapServiceUrlTest, BuildsTileUrlFromAbsoluteTilesetHrefLikeCesiumNative
             5,
             ".png"));
 }
+
+TEST(TileMapServiceUrlTest, ParsesTileFormatAndTileSetsLikeCesiumNative) {
+    const std::string xml = R"xml(
+      <TileMap>
+        <TileFormat width="128" height="64" extension="jpg" />
+        <TileSets profile="global-mercator">
+          <TileSet href="0" order="0" />
+          <TileSet href="levels/2" order="2" />
+        </TileSets>
+      </TileMap>
+    )xml";
+
+    const TileMapServiceMetadata metadata =
+        parseTileMapServiceMetadata(xml);
+
+    EXPECT_EQ("jpg", metadata.fileExtension);
+    EXPECT_EQ(128u, metadata.tileWidth);
+    EXPECT_EQ(64u, metadata.tileHeight);
+    EXPECT_EQ(0u, metadata.minimumLevel);
+    EXPECT_EQ(2u, metadata.maximumLevel);
+    ASSERT_EQ(2u, metadata.tileSets.size());
+    EXPECT_EQ("0", metadata.tileSets[0].url);
+    EXPECT_EQ(0u, metadata.tileSets[0].level);
+    EXPECT_EQ("levels/2", metadata.tileSets[1].url);
+    EXPECT_EQ(2u, metadata.tileSets[1].level);
+}
+
+TEST(TileMapServiceUrlTest, ParsesTileSetsDefaultsLikeCesiumNative) {
+    const std::string xml = R"xml(
+      <TileMap>
+        <TileSets>
+          <TileSet />
+        </TileSets>
+      </TileMap>
+    )xml";
+
+    const TileMapServiceMetadata metadata =
+        parseTileMapServiceMetadata(xml);
+
+    EXPECT_EQ("png", metadata.fileExtension);
+    EXPECT_EQ(256u, metadata.tileWidth);
+    EXPECT_EQ(256u, metadata.tileHeight);
+    EXPECT_EQ(0u, metadata.minimumLevel);
+    EXPECT_EQ(0u, metadata.maximumLevel);
+    ASSERT_EQ(1u, metadata.tileSets.size());
+    EXPECT_EQ("0", metadata.tileSets[0].url);
+    EXPECT_EQ(0u, metadata.tileSets[0].level);
+}
+
+TEST(TileMapServiceUrlTest, DefaultsLevelsWhenNoTileSetsLikeCesiumNative) {
+    const TileMapServiceMetadata metadata =
+        parseTileMapServiceMetadata("<TileMap></TileMap>");
+
+    EXPECT_EQ(0u, metadata.minimumLevel);
+    EXPECT_EQ(25u, metadata.maximumLevel);
+    EXPECT_TRUE(metadata.tileSets.empty());
+}

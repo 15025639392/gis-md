@@ -1,6 +1,12 @@
 #include "TileMapServiceUrl.h"
 
+#include <algorithm>
+#include <cctype>
+#include <limits>
+#include <optional>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace earth_engine {
@@ -96,6 +102,109 @@ std::string resolveRelativeUrl(const std::string& baseUrl,
     return prefix + normalizePath(mergedPath) + relativeSuffix;
 }
 
+bool isXmlNameCharacter(char value) {
+    return std::isalnum(static_cast<unsigned char>(value)) || value == '_' ||
+           value == '-' || value == ':' || value == '.';
+}
+
+void skipWhitespace(std::string_view value, size_t& index) {
+    while (index < value.size() &&
+           std::isspace(static_cast<unsigned char>(value[index]))) {
+        ++index;
+    }
+}
+
+std::optional<std::string> attributeValue(std::string_view tag,
+                                          std::string_view name) {
+    size_t index = 0;
+    while (index < tag.size()) {
+        skipWhitespace(tag, index);
+        if (index >= tag.size() || tag[index] == '<' || tag[index] == '/' ||
+            tag[index] == '>') {
+            ++index;
+            continue;
+        }
+
+        const size_t nameStart = index;
+        while (index < tag.size() && isXmlNameCharacter(tag[index])) {
+            ++index;
+        }
+        const std::string_view attributeName =
+            tag.substr(nameStart, index - nameStart);
+
+        skipWhitespace(tag, index);
+        if (index >= tag.size() || tag[index] != '=') {
+            continue;
+        }
+        ++index;
+        skipWhitespace(tag, index);
+        if (index >= tag.size()) {
+            return std::nullopt;
+        }
+
+        std::string value;
+        if (tag[index] == '"' || tag[index] == '\'') {
+            const char quote = tag[index++];
+            const size_t valueStart = index;
+            const size_t valueEnd = tag.find(quote, valueStart);
+            if (valueEnd == std::string_view::npos) {
+                return std::nullopt;
+            }
+            value = std::string(tag.substr(valueStart, valueEnd - valueStart));
+            index = valueEnd + 1;
+        } else {
+            const size_t valueStart = index;
+            while (index < tag.size() &&
+                   !std::isspace(static_cast<unsigned char>(tag[index])) &&
+                   tag[index] != '/' && tag[index] != '>') {
+                ++index;
+            }
+            value = std::string(tag.substr(valueStart, index - valueStart));
+        }
+
+        if (attributeName == name) {
+            return value;
+        }
+    }
+
+    return std::nullopt;
+}
+
+std::optional<uint32_t> attributeUint32(std::string_view tag,
+                                        std::string_view name) {
+    const std::optional<std::string> value = attributeValue(tag, name);
+    if (!value) {
+        return std::nullopt;
+    }
+
+    size_t consumed = 0;
+    const unsigned long parsed = std::stoul(*value, &consumed, 10);
+    if (consumed != value->size() ||
+        parsed > std::numeric_limits<uint32_t>::max()) {
+        throw std::out_of_range("TMS uint32 attribute is out of range");
+    }
+    return static_cast<uint32_t>(parsed);
+}
+
+std::optional<std::string_view> firstTag(std::string_view xml,
+                                         std::string_view tagName) {
+    const std::string needle = "<" + std::string(tagName);
+    size_t start = xml.find(needle);
+    while (start != std::string_view::npos) {
+        const size_t nameEnd = start + needle.size();
+        if (nameEnd < xml.size() && !isXmlNameCharacter(xml[nameEnd])) {
+            const size_t end = xml.find('>', nameEnd);
+            if (end == std::string_view::npos) {
+                return std::nullopt;
+            }
+            return xml.substr(start, end - start + 1);
+        }
+        start = xml.find(needle, nameEnd);
+    }
+
+    return std::nullopt;
+}
+
 } // namespace
 
 std::string tileMapServiceXmlUrl(const std::string& url) {
@@ -138,6 +247,59 @@ std::string tileMapServiceTileUrl(const std::string& baseUrl,
     const std::string relative = tileSetUrl + "/" + std::to_string(x) + "/" +
                                  std::to_string(y) + fileExtension;
     return resolveRelativeUrl(baseUrl, relative);
+}
+
+TileMapServiceMetadata parseTileMapServiceMetadata(const std::string& xml) {
+    TileMapServiceMetadata metadata;
+    const std::string_view view(xml);
+
+    if (const std::optional<std::string_view> tileFormat =
+            firstTag(view, "TileFormat")) {
+        metadata.fileExtension =
+            attributeValue(*tileFormat, "extension").value_or("png");
+        metadata.tileWidth =
+            attributeUint32(*tileFormat, "width").value_or(256);
+        metadata.tileHeight =
+            attributeUint32(*tileFormat, "height").value_or(256);
+    }
+
+    uint32_t minimumLevel = std::numeric_limits<uint32_t>::max();
+    uint32_t maximumLevel = 0;
+
+    const std::string_view tileSetNeedle = "<TileSet";
+    size_t start = view.find(tileSetNeedle);
+    while (start != std::string_view::npos) {
+        const size_t nameEnd = start + tileSetNeedle.size();
+        if (nameEnd < view.size() && isXmlNameCharacter(view[nameEnd])) {
+            start = view.find(tileSetNeedle, nameEnd);
+            continue;
+        }
+
+        const size_t end = view.find('>', nameEnd);
+        if (end == std::string_view::npos) {
+            break;
+        }
+
+        const std::string_view tag = view.substr(start, end - start + 1);
+        TileMapServiceTileSet tileSet;
+        tileSet.level = attributeUint32(tag, "order").value_or(0);
+        tileSet.url =
+            attributeValue(tag, "href").value_or(std::to_string(tileSet.level));
+        metadata.tileSets.push_back(tileSet);
+
+        minimumLevel = std::min(minimumLevel, tileSet.level);
+        maximumLevel = std::max(maximumLevel, tileSet.level);
+        start = view.find(tileSetNeedle, end + 1);
+    }
+
+    if (maximumLevel < minimumLevel && maximumLevel == 0) {
+        minimumLevel = 0;
+        maximumLevel = 25;
+    }
+
+    metadata.minimumLevel = std::min(minimumLevel, maximumLevel);
+    metadata.maximumLevel = maximumLevel;
+    return metadata;
 }
 
 } // namespace earth_engine
