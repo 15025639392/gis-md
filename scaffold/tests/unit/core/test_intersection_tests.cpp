@@ -85,6 +85,15 @@ TEST(IntersectionTestsTest, RayPlaneTreatsNearParallelAsMiss) {
     EXPECT_FALSE(IntersectionTests::rayPlane(ray, plane).has_value());
 }
 
+TEST(IntersectionTestsTest, RayPlaneReturnsOriginWhenRayStartsOnPlane) {
+    // Source-derived from cesium-native IntersectionTests::rayPlane:
+    // t == 0 is a valid intersection because only t < 0 is rejected.
+    const Ray ray(Vec3(1.0, 2.0, 3.0), Vec3::unitZ());
+    const Plane plane(Vec3::unitZ(), -3.0);
+
+    EXPECT_EQ(ray.origin(), IntersectionTests::rayPlane(ray, plane));
+}
+
 TEST(IntersectionTestsTest, RayEllipsoidMatchesCesiumNativeCases) {
     // Ported from cesium-native CesiumGeometry/test/TestIntersectionTests.cpp.
     struct Case {
