@@ -12722,6 +12722,53 @@ void testTilesetContentFailedMaterializesLatentChildrenWithoutRetry() {
           "Tileset: Failed content remains non-retryable after latent child materialization");
 }
 
+void testTilesetCacheUnloadFailedUnknownPreservesChildren() {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, {childKey}}},
+        TileContentLoadStatus::Failed);
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        nullptr,
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTestAccess::ensureTile(tileset, rootKey);
+    TilesetTestAccess::requestMissingTile(tileset, rootKey);
+    TilesetTestAccess::processPendingUploads(tileset);
+
+    TilesetTile* root = TilesetTestAccess::findTile(tileset, rootKey);
+    check(root && root->content.loadState == TileLoadState::Failed &&
+              root->content.contentKind == TileContentKind::Unknown &&
+              root->children.size() == 1,
+          "Tileset: failed unknown cache-unload setup has latent children");
+    if (!root || root->children.empty()) return;
+
+    TilesetTile* child = root->children.front();
+    TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
+    check(tileset.loadDiagnostics().unloadQueueTiles == 1,
+          "Tileset: failed unknown tile enters cache unload queue like cesium-native");
+
+    TilesetTestAccess::unloadCachedBytes(tileset, -1);
+
+    TilesetTile* rootAfter = TilesetTestAccess::findTile(tileset, rootKey);
+    TilesetTile* childAfter = TilesetTestAccess::findTile(tileset, childKey);
+    check(rootAfter == root &&
+              rootAfter->content.loadState == TileLoadState::Unloaded &&
+              rootAfter->content.contentKind == TileContentKind::Unknown,
+          "Tileset: cache unload resets failed unknown tile to unloaded");
+    check(childAfter == child &&
+              rootAfter->children.size() == 1 &&
+              rootAfter->children.front() == childAfter,
+          "Tileset: cache unload preserves failed unknown latent children");
+}
+
 void testTilesetFailedTerminalDoesNotRetry() {
     auto provider = std::make_unique<TerminalTerrainProvider>(
         TerrainTileLoadStatus::Failed);
@@ -13362,6 +13409,21 @@ void testTileIndexStateQueuesOnlyUnloadableTiles() {
     loadingTile->content.contentKind = TileContentKind::Render;
     loadingTile->content.loadState = TileLoadState::ContentLoading;
     tiles["loading"] = std::move(loadingTile);
+
+    auto failedUnknownTile = std::make_unique<TilesetTile>(
+        TileKey{"test", 0, 0, 2},
+        Rectangle{});
+    failedUnknownTile->content.contentKind = TileContentKind::Unknown;
+    failedUnknownTile->content.loadState = TileLoadState::Failed;
+    tiles["failed-unknown"] = std::move(failedUnknownTile);
+
+    auto unloadedUnknownTile = std::make_unique<TilesetTile>(
+        TileKey{"test", 0, 0, 3},
+        Rectangle{});
+    unloadedUnknownTile->content.contentKind = TileContentKind::Unknown;
+    unloadedUnknownTile->content.loadState = TileLoadState::Unloaded;
+    tiles["unloaded-unknown"] = std::move(unloadedUnknownTile);
+
     tiles["null"] = nullptr;
 
     TileIndexState::markEligibleForUnloading(
@@ -13375,18 +13437,31 @@ void testTileIndexStateQueuesOnlyUnloadableTiles() {
     TileIndexState::markEligibleForUnloading(
         unloadQueue,
         tiles,
+        "failed-unknown");
+    TileIndexState::markEligibleForUnloading(
+        unloadQueue,
+        tiles,
+        "unloaded-unknown");
+    TileIndexState::markEligibleForUnloading(
+        unloadQueue,
+        tiles,
         "null");
     TileIndexState::markEligibleForUnloading(
         unloadQueue,
         tiles,
         "missing");
 
-    check(unloadQueue.size() == 1 && unloadQueue.contains("render"),
-          "TileIndexState: only unloadable tile content enters unload queue");
+    check(unloadQueue.size() == 2 &&
+              unloadQueue.contains("render") &&
+              unloadQueue.contains("failed-unknown") &&
+              !unloadQueue.contains("unloaded-unknown"),
+          "TileIndexState: unload queue includes failed unknown content but not unloaded unknown content");
 
     TileIndexState::markIneligibleForUnloading(unloadQueue, "render");
-    check(unloadQueue.empty(),
-          "TileIndexState: ineligible tile is removed from unload queue");
+    check(unloadQueue.size() == 1 &&
+              !unloadQueue.contains("render") &&
+              unloadQueue.contains("failed-unknown"),
+          "TileIndexState: ineligible tile is removed without clearing other unloadable tiles");
 }
 
 void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
@@ -15756,9 +15831,13 @@ void testTileUnloadPolicyClassifiesQueueEligibility() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
 
     tile.content.contentKind = TileContentKind::Unknown;
-    tile.content.loadState = TileLoadState::Done;
+    tile.content.loadState = TileLoadState::Unloaded;
     check(!TileUnloadPolicy::isEligibleForContentUnloadQueue(tile),
-          "TileUnloadPolicy: unknown content is not queued for unloading");
+          "TileUnloadPolicy: unloaded unknown content is not queued for unloading");
+
+    tile.content.loadState = TileLoadState::Failed;
+    check(TileUnloadPolicy::isEligibleForContentUnloadQueue(tile),
+          "TileUnloadPolicy: failed unknown content is queue eligible like cesium-native");
 
     tile.content.contentKind = TileContentKind::Render;
     tile.content.loadState = TileLoadState::ContentLoading;
@@ -24226,6 +24305,7 @@ int main() {
     testTilesetRetryLaterRemainsRetryable();
     testTilesetContentRetryLaterMaterializesLatentChildren();
     testTilesetContentFailedMaterializesLatentChildrenWithoutRetry();
+    testTilesetCacheUnloadFailedUnknownPreservesChildren();
     testTilesetFailedTerminalDoesNotRetry();
     testTilesetEmptyContentReachesDone();
     testTilesetRenderContentRequiresDoneState();

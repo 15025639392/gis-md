@@ -8,9 +8,6 @@ namespace earth_engine {
 
 bool TileUnloadPolicy::isEligibleForContentUnloadQueue(
     const TilesetTile& tile) {
-    if (tile.content.contentKind == TileContentKind::Unknown) {
-        return false;
-    }
     if (tile.content.loadState == TileLoadState::Unloaded ||
         tile.content.loadState == TileLoadState::ContentLoading ||
         tile.content.loadState == TileLoadState::Unloading) {
