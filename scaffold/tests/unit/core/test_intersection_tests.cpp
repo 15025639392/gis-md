@@ -150,6 +150,19 @@ TEST(IntersectionTestsTest, RayEllipsoidMatchesCesiumNativeCases) {
     }
 }
 
+TEST(IntersectionTestsTest, RayEllipsoidReturnsRepeatedRootForOutsideTangent) {
+    // Source-derived from cesium-native IntersectionTests::rayEllipsoid:
+    // outside rays with qw2 == product return the repeated tangent distance
+    // for both entry and exit.
+    const auto interval = IntersectionTests::rayEllipsoid(
+        Ray(Vec3(1.0, 1.0, 0.0), Vec3(-1.0, 0.0, 0.0)),
+        Vec3(1.0, 1.0, 1.0));
+
+    ASSERT_TRUE(interval.has_value());
+    EXPECT_DOUBLE_EQ(1.0, interval->entryDistance);
+    EXPECT_DOUBLE_EQ(1.0, interval->exitDistance);
+}
+
 TEST(IntersectionTestsTest, RayTriangleMatchesCesiumNativeCases) {
     // Ported from cesium-native CesiumGeometry/test/TestIntersectionTests.cpp.
     const Vec3 v0(-1.0, 0.0, 0.0);
