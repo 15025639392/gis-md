@@ -66,6 +66,24 @@ TEST(BoundingRegionBuilderTest, ExpandsPositionsAcrossShortestLongitudeArc) {
     EXPECT_DOUBLE_EQ(20.0, region.maximumHeight);
 }
 
+TEST(BoundingRegionBuilderTest, ExpandPositionReturnsFalseWhenAlreadyIncluded) {
+    // Source-derived from cesium-native BoundingRegionBuilder:
+    // expandToIncludePosition returns whether latitude, longitude, or height
+    // state changed, not merely whether the input was accepted.
+    BoundingRegionBuilder builder;
+
+    EXPECT_TRUE(builder.expandToIncludePosition(Cartographic(0.0, 0.0, 10.0)));
+    EXPECT_FALSE(builder.expandToIncludePosition(Cartographic(0.0, 0.0, 10.0)));
+
+    EXPECT_TRUE(builder.expandToIncludePosition(Cartographic(0.0, 0.0, 5.0)));
+    EXPECT_FALSE(builder.expandToIncludePosition(Cartographic(0.0, 0.0, 7.0)));
+
+    const auto region = builder.toRegion();
+    expectRectangleNear(region.rectangle, Rectangle(0.0, 0.0, 0.0, 0.0));
+    EXPECT_DOUBLE_EQ(5.0, region.minimumHeight);
+    EXPECT_DOUBLE_EQ(10.0, region.maximumHeight);
+}
+
 TEST(BoundingRegionBuilderTest, PolePositionsExpandLatitudeAndHeightOnly) {
     BoundingRegionBuilder builder;
 
