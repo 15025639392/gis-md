@@ -40,4 +40,9 @@ private:
     BingMapsImageryOptions options_;
 };
 
+std::string bingMapsMetadataUrl(const std::string& baseUrl,
+                                const std::string& mapStyle,
+                                const std::string& key,
+                                const std::string& culture = "");
+
 } // namespace earth_engine

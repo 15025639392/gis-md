@@ -903,6 +903,22 @@ TEST(BingMapsImageryProviderTest, InvertsYAtCesiumNativeMaximumLevel) {
         provider.buildUrl(TileKey{"XYZ-WebMercator", 30, 0, 0}));
 }
 
+TEST(BingMapsImageryProviderTest, BuildsMetadataUrlLikeCesiumNative) {
+    EXPECT_EQ(
+        "https://dev.virtualearth.net/REST/v1/Imagery/Metadata/Aerial?incl=ImageryProviders&key=abc&uriScheme=https",
+        bingMapsMetadataUrl(
+            "https://dev.virtualearth.net/",
+            "Aerial",
+            "abc"));
+    EXPECT_EQ(
+        "https://dev.virtualearth.net/root/REST/v1/Imagery/Metadata/Road?incl=ImageryProviders&key=a%20b&uriScheme=https&culture=zh-CN",
+        bingMapsMetadataUrl(
+            "https://dev.virtualearth.net/root/session.json?old=1",
+            "Road",
+            "a b",
+            "zh-CN"));
+}
+
 TEST(TileMapServiceUrlTest, AppendsTileMapResourceXmlBeforeQueryLikeCesiumNative) {
     EXPECT_EQ(
         "https://example.com/tms/tilemapresource.xml",

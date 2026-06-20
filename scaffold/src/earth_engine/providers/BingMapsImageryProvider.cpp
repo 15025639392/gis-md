@@ -4,6 +4,7 @@
 #include <functional>
 #include <sstream>
 #include <string>
+#include <vector>
 #include <utility>
 
 namespace earth_engine {
@@ -11,6 +12,23 @@ namespace {
 
 bool isAbsoluteUrl(const std::string& url) {
     return url.find("://") != std::string::npos || url.rfind("//", 0) == 0;
+}
+
+std::string escapeQueryValue(const std::string& value) {
+    static constexpr char hex[] = "0123456789ABCDEF";
+    std::string result;
+    for (unsigned char c : value) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' ||
+            c == '~') {
+            result.push_back(static_cast<char>(c));
+        } else {
+            result.push_back('%');
+            result.push_back(hex[c >> 4]);
+            result.push_back(hex[c & 0x0f]);
+        }
+    }
+    return result;
 }
 
 std::string resolveUrl(const std::string& baseUrl,
@@ -52,6 +70,28 @@ std::string resolveUrl(const std::string& baseUrl,
         }
     }
     return prefix + relativeOrAbsolute;
+}
+
+std::string withQuery(std::string url,
+                      const std::vector<std::pair<std::string, std::string>>&
+                          query) {
+    std::string fragment;
+    const size_t fragmentStart = url.find('#');
+    if (fragmentStart != std::string::npos) {
+        fragment = url.substr(fragmentStart);
+        url.erase(fragmentStart);
+    }
+
+    url += url.find('?') == std::string::npos ? '?' : '&';
+    for (size_t i = 0; i < query.size(); ++i) {
+        if (i > 0) {
+            url.push_back('&');
+        }
+        url += query[i].first;
+        url.push_back('=');
+        url += escapeQueryValue(query[i].second);
+    }
+    return url + fragment;
 }
 
 std::string replaceTemplateParameters(
@@ -208,6 +248,22 @@ std::string BingMapsImageryProvider::tileXYToQuadKey(int level, int x, int y) {
         quadkey += std::to_string(digit);
     }
     return quadkey;
+}
+
+std::string bingMapsMetadataUrl(const std::string& baseUrl,
+                                const std::string& mapStyle,
+                                const std::string& key,
+                                const std::string& culture) {
+    std::vector<std::pair<std::string, std::string>> query{
+        {"incl", "ImageryProviders"},
+        {"key", key},
+        {"uriScheme", "https"}};
+    if (!culture.empty()) {
+        query.emplace_back("culture", culture);
+    }
+    return withQuery(
+        resolveUrl(baseUrl, "REST/v1/Imagery/Metadata/" + mapStyle),
+        query);
 }
 
 } // namespace earth_engine
