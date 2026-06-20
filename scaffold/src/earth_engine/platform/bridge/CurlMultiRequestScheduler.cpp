@@ -174,6 +174,8 @@ struct CurlMultiRequestScheduler::Impl {
     }
 
     void shutdown() {
+        std::array<std::deque<std::shared_ptr<RequestState>>, 3>
+            cancelledPending;
         bool shouldJoin = false;
         {
             std::lock_guard<std::mutex> lk(mutex);
@@ -183,8 +185,8 @@ struct CurlMultiRequestScheduler::Impl {
                     for (auto& request : bucket) {
                         request->cancelled.store(true, std::memory_order_release);
                     }
-                    bucket.clear();
                 }
+                cancelledPending.swap(pending);
                 for (auto& [easy, request] : active) {
                     request->cancelled.store(true, std::memory_order_release);
                 }
@@ -196,6 +198,14 @@ struct CurlMultiRequestScheduler::Impl {
 
         if (shouldJoin) {
             worker.join();
+        }
+
+        for (auto& bucket : cancelledPending) {
+            for (auto& request : bucket) {
+                if (request->callback) {
+                    request->callback(-1, {});
+                }
+            }
         }
     }
 

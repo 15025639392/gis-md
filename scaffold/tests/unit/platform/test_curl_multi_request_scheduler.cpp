@@ -430,6 +430,35 @@ TEST(CurlMultiRequestScheduler, ShutdownMayBeRequestedFromCallback) {
     scheduler.reset();
 }
 
+TEST(CurlMultiRequestScheduler, ShutdownWakesQueuedBlockingRequest) {
+    LocalHttpServer server;
+    CurlMultiRequestScheduler scheduler(1);
+
+    auto active = scheduler.get(
+        server.url("/hold/blocking-active"),
+        [](int, std::vector<uint8_t>) {},
+        {HttpRequestPriority::Normal});
+    ASSERT_TRUE(server.waitForPath("/hold/blocking-active", 3s));
+
+    std::atomic<bool> returned{false};
+    std::thread blockingThread([&]() {
+        const std::vector<uint8_t> body = scheduler.getBlocking(
+            server.url("/queued-blocking"),
+            {HttpRequestPriority::Normal},
+            5s);
+        EXPECT_TRUE(body.empty());
+        returned.store(true);
+    });
+
+    std::this_thread::sleep_for(100ms);
+    scheduler.shutdown();
+    blockingThread.join();
+    server.releaseAll();
+
+    EXPECT_TRUE(returned.load());
+    EXPECT_FALSE(server.hasSeen("/queued-blocking"));
+}
+
 TEST(CurlMultiRequestScheduler, SchedulersDoNotCleanupGlobalCurlForEachOther) {
     LocalHttpServer server;
     std::atomic<int> callbacks{0};
