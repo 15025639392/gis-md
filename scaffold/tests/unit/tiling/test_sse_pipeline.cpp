@@ -17342,6 +17342,41 @@ void testTileUpsampleSourcePreparerQueuesTemporaryFailedAncestor() {
           "TileUpsampleSourcePreparer: temporary failed ancestor is queued urgently for retry");
 }
 
+void testTileUpsampleSourcePreparerFinalizesContentLoadedAncestor() {
+    TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{});
+    TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
+    parent.children.push_back(&child);
+
+    parent.content.contentKind = TileContentKind::Render;
+    parent.content.loadState = TileLoadState::ContentLoaded;
+    child.content.upsampledFromParent = true;
+
+    int ensuredMeshes = 0;
+    std::vector<TileKey> queuedKeys;
+    const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
+        child,
+        11.0,
+        [&ensuredMeshes](TilesetTile& tile) {
+            ++ensuredMeshes;
+            tile.content.loadState = TileLoadState::Done;
+            tile.content.renderContent.setMeshReady(true);
+            tile.content.renderContent.setSurfaceMesh(
+                std::make_unique<SurfaceTileMesh>());
+        },
+        [&queuedKeys](const TileKey& key,
+                      TileLoadPriorityGroup,
+                      double) {
+            queuedKeys.push_back(key);
+        });
+
+    check(prepared &&
+              ensuredMeshes == 1 &&
+              queuedKeys.empty() &&
+              parent.content.loadState == TileLoadState::Done &&
+              TileUpsampleSourcePreparer::findSourceTile(child) == &parent,
+          "TileUpsampleSourcePreparer: content-loaded ancestor is finalized before upsample request proceeds");
+}
+
 void testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.contentKind = TileContentKind::Render;
@@ -29266,6 +29301,7 @@ int main() {
     testTileUnloadPolicyProtectsUpsampledLoadingSources();
     testTileUpsampleSourcePreparerSkipsPermanentFailedAncestor();
     testTileUpsampleSourcePreparerQueuesTemporaryFailedAncestor();
+    testTileUpsampleSourcePreparerFinalizesContentLoadedAncestor();
     testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded();
     testTileUnloadPolicyReleasesRasterOverlayReferencesWithExplicitClear();
     testTileUnloadPolicyFindsQueuedTilesByLoadState();
