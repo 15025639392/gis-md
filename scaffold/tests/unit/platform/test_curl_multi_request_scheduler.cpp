@@ -398,6 +398,38 @@ TEST(CurlMultiRequestScheduler, RequestHandleMayOutliveScheduler) {
     EXPECT_EQ(callbacks.load(), 0);
 }
 
+TEST(CurlMultiRequestScheduler, ShutdownMayBeRequestedFromCallback) {
+    LocalHttpServer server;
+    auto scheduler = std::make_unique<CurlMultiRequestScheduler>(1);
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool callbackReturned = false;
+
+    auto handle = scheduler->get(
+        server.url("/callback-shutdown"),
+        [&](int code, std::vector<uint8_t>) {
+            EXPECT_EQ(code, 200);
+            scheduler->shutdown();
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                callbackReturned = true;
+            }
+            cv.notify_one();
+        },
+        {HttpRequestPriority::Normal});
+
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(lock, 3s, [&]() {
+            return callbackReturned;
+        }));
+    }
+
+    handle.reset();
+    scheduler.reset();
+}
+
 TEST(CurlMultiRequestScheduler, SchedulersDoNotCleanupGlobalCurlForEachOther) {
     LocalHttpServer server;
     std::atomic<int> callbacks{0};

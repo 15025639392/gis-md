@@ -188,8 +188,9 @@ struct CurlMultiRequestScheduler::Impl {
                 for (auto& [easy, request] : active) {
                     request->cancelled.store(true, std::memory_order_release);
                 }
-                shouldJoin = worker.joinable();
             }
+            shouldJoin = worker.joinable() &&
+                         worker.get_id() != std::this_thread::get_id();
         }
         wake();
 
