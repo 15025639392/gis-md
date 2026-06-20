@@ -14219,7 +14219,17 @@ TEST(GltfParserTest, TilesetJsonContentProviderScalesGeometricErrorByTransform) 
           0, 0, 0, 1
         ],
         "boundingVolume": {"sphere": [0, 0, 0, 1]},
-        "geometricError": 10
+        "geometricError": 10,
+        "children": [
+          {
+            "boundingVolume": {"sphere": [0, 0, 0, 1]},
+            "geometricError": 5
+          },
+          {
+            "boundingVolume": {"sphere": [0, 0, 0, 1]},
+            "geometricError": 5
+          }
+        ]
       }
     })json";
 
@@ -14238,6 +14248,16 @@ TEST(GltfParserTest, TilesetJsonContentProviderScalesGeometricErrorByTransform) 
         provider.tileMetadata(rootChildren.front());
     ASSERT_TRUE(metadata.has_value());
     EXPECT_DOUBLE_EQ(40.0, metadata->geometricError);
+
+    const std::vector<TileKey> children =
+        provider.childTiles(rootChildren.front());
+    ASSERT_EQ(2u, children.size());
+    for (const TileKey& child : children) {
+        const std::optional<TilesetContentTileMetadata> childMetadata =
+            provider.tileMetadata(child);
+        ASSERT_TRUE(childMetadata.has_value());
+        EXPECT_DOUBLE_EQ(20.0, childMetadata->geometricError);
+    }
 }
 
 TEST(GltfParserTest, TilesetJsonContentProviderDefaultsMissingGeometricError) {
