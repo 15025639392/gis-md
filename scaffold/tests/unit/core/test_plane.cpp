@@ -5,6 +5,14 @@
 
 using namespace earth_engine;
 
+TEST(PlaneTest, DefaultConstructorMatchesCesiumNativeOriginXyPlane) {
+    const Plane plane;
+
+    EXPECT_EQ(Vec3::unitZ(), plane.getNormal());
+    EXPECT_DOUBLE_EQ(0.0, plane.getDistance());
+    EXPECT_DOUBLE_EQ(0.0, plane.getPointDistance(Vec3::zero()));
+}
+
 TEST(PlaneTest, ConstructorRequiresNormalizedNormal) {
     // Ported from cesium-native CesiumGeometry/test/TestPlane.cpp.
     EXPECT_NO_THROW(Plane(Vec3::unitX(), 0.0));
