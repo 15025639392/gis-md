@@ -1084,6 +1084,18 @@ std::vector<uint8_t> makeLargeQuantizedMeshBytesWithUint32EdgeIndex() {
     return bytes;
 }
 
+std::vector<uint8_t> makeLargeQuantizedMeshBytesMissingUint32IndexPadding() {
+    std::vector<uint8_t> bytes = makeLargeQuantizedMeshBytesWithUint32EdgeIndex();
+    constexpr uint32_t vertexCount = 65537;
+    constexpr size_t paddingOffset =
+        92 + static_cast<size_t>(vertexCount) * 3u * sizeof(uint16_t);
+    bytes.erase(
+        bytes.begin() + static_cast<std::ptrdiff_t>(paddingOffset),
+        bytes.begin() + static_cast<std::ptrdiff_t>(
+                            paddingOffset + sizeof(uint16_t)));
+    return bytes;
+}
+
 void writeBytes(const std::filesystem::path& path,
                 const std::vector<uint8_t>& bytes) {
     std::filesystem::create_directories(path.parent_path());
@@ -4502,6 +4514,23 @@ void testQuantizedMeshParsesUint32IndicesAndEdges() {
                           65536u) != mesh->indices.end();
     check(keepsHighEdgeIndex,
           "QuantizedMeshParser: uint32 edge index is preserved instead of truncated");
+}
+
+void testQuantizedMeshRejectsMissingUint32IndexPadding() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(rootKey);
+    const std::vector<uint8_t> bytes =
+        makeLargeQuantizedMeshBytesMissingUint32IndexPadding();
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            bounds);
+
+    check(mesh == nullptr,
+          "QuantizedMeshParser: missing uint32 index padding is rejected like cesium-native");
 }
 
 void testQuantizedMeshSkirtNormalsCopyEdgeNormals() {
@@ -22513,6 +22542,7 @@ int main() {
     testQuantizedMeshRejectsDecodedIndicesOutsideVertexRange();
     testQuantizedMeshRejectsEachTruncatedEdge();
     testQuantizedMeshParsesUint32IndicesAndEdges();
+    testQuantizedMeshRejectsMissingUint32IndexPadding();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
     testQuantizedMeshSkirtHeightMatchesCesiumNativeFormula();
     testQuantizedMeshOctEncodedNormalsExtension();
