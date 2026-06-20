@@ -13788,6 +13788,17 @@ void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
         TileLoadPriorityGroup::Normal,
         1.0,
         nullptr});
+    {
+        FrameResourceBudgetConfig config;
+        config.maxMainThreadFinalizesPerFrame = 1;
+        FrameResourceBudget budget;
+        budget.beginFrame(1, config);
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        check(lifecycle.pendingLoads()
+                  .takeHighestPriorityUpload(false, budget)
+                  .has_value(),
+              "TileIndexState: claimed upload test dequeues erased payload");
+    }
 
     TileIndexState::eraseCacheKeyState(
         erasedCacheKey,
