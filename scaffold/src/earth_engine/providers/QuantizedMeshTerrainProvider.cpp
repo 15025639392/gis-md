@@ -563,6 +563,22 @@ void setQueryParameter(std::string& url,
     size_t valueEnd = parsed.query.find('&', pos);
     if (valueEnd == std::string::npos) valueEnd = parsed.query.size();
     parsed.query.replace(pos, valueEnd - pos, assignment);
+
+    pos += assignment.size();
+    while (pos < parsed.query.size()) {
+        const size_t partStart = parsed.query[pos] == '&' ? pos + 1 : pos;
+        const size_t partEnd = parsed.query.find('&', partStart);
+        const size_t end =
+            partEnd == std::string::npos ? parsed.query.size() : partEnd;
+        const size_t equals = parsed.query.find('=', partStart);
+        const size_t keyEnd =
+            equals == std::string::npos || equals > end ? end : equals;
+        if (parsed.query.compare(partStart, keyEnd - partStart, name) == 0) {
+            parsed.query.erase(pos, end - pos);
+            continue;
+        }
+        pos = end;
+    }
     url = composeUrl(parsed);
 }
 

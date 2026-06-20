@@ -6437,6 +6437,26 @@ void testQuantizedMeshLayerJsonVersionAndExtensionQuery() {
               "https://example.invalid/terrain/1/1/0.terrain?extensions=metadata&v=2",
           "QuantizedMeshTerrainProvider: extensions query is replaced like cesium-native UriQuery");
 
+    QuantizedMeshTerrainProvider duplicateExtensionProvider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string duplicateExtensionLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain?extensions=old&v={version}&extensions=older"],
+      "version": "2",
+      "extensions": ["metadata"],
+      "minzoom": 0,
+      "maxzoom": 4
+    })json";
+    check(duplicateExtensionProvider.configureFromLayerJson(
+              duplicateExtensionLayerJson,
+              "https://example.invalid/terrain/layer.json"),
+          "QuantizedMeshTerrainProvider: duplicate extension query layer configures");
+    check(duplicateExtensionProvider.buildUrl(TileKey{"Geographic-TMS", 1, 1, 0}) ==
+              "https://example.invalid/terrain/1/1/0.terrain?extensions=metadata&v=2",
+          "QuantizedMeshTerrainProvider: duplicate extensions are collapsed like cesium-native UriQuery");
+
     QuantizedMeshTerrainProvider prefixProvider("https://example.invalid/fallback/{z}/{x}/{y}.terrain");
     const std::string prefixLayerJson = R"json({
       "format": "quantized-mesh-1.0",
