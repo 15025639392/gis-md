@@ -3622,6 +3622,39 @@ void testQuantizedMeshRejectsTruncatedEdgeIndices() {
           "QuantizedMeshParser: truncated edge indices reject ill-formed quantized mesh like cesium-native");
 }
 
+void testQuantizedMeshRejectsEachTruncatedEdge() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(rootKey);
+    const std::vector<uint8_t> validBytes = makeQuantizedMeshBytes("", true);
+    constexpr size_t edgeStart =
+        92 + 3 * 3 * sizeof(uint16_t) +
+        sizeof(uint32_t) + 3 * sizeof(uint16_t);
+    constexpr size_t edgeByteLength =
+        sizeof(uint32_t) + 2 * sizeof(uint16_t);
+
+    const std::array<std::pair<const char*, size_t>, 4> edgeCuts{{
+        {"west", edgeStart + sizeof(uint32_t)},
+        {"south", edgeStart + edgeByteLength + sizeof(uint32_t)},
+        {"east", edgeStart + edgeByteLength * 2 + sizeof(uint32_t)},
+        {"north", edgeStart + edgeByteLength * 3 + sizeof(uint32_t)}
+    }};
+
+    for (const auto& [edgeName, byteCount] : edgeCuts) {
+        std::vector<uint8_t> truncatedBytes(
+            validBytes.begin(),
+            validBytes.begin() + static_cast<std::ptrdiff_t>(byteCount));
+        std::unique_ptr<SurfaceTileMesh> mesh =
+            QuantizedMeshParser::parseToSurfaceTileMesh(
+                truncatedBytes.data(),
+                truncatedBytes.size(),
+                bounds);
+        check(mesh == nullptr,
+              std::string("QuantizedMeshParser: truncated ") + edgeName +
+                  " edge indices reject like cesium-native");
+    }
+}
+
 void testQuantizedMeshParsesUint32IndicesAndEdges() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -21164,6 +21197,7 @@ int main() {
     testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative();
     testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding();
     testQuantizedMeshRejectsTruncatedEdgeIndices();
+    testQuantizedMeshRejectsEachTruncatedEdge();
     testQuantizedMeshParsesUint32IndicesAndEdges();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
     testQuantizedMeshRtcOriginFromBoundingSphereCenter();
