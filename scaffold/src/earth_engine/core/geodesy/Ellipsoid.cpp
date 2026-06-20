@@ -82,7 +82,9 @@ Vec3 Ellipsoid::geodeticSurfaceNormal(const Cartographic& cart) const {
     double lat = cart.latitude();
     double lng = cart.longitude();
     double cosLat = std::cos(lat);
-    return Vec3(cosLat * std::cos(lng), cosLat * std::sin(lng), std::sin(lat));
+    return Vec3(cosLat * std::cos(lng),
+                cosLat * std::sin(lng),
+                std::sin(lat)).normalized();
 }
 
 Vec3 Ellipsoid::geodeticSurfaceNormal(const Vec3& ecef) const {

@@ -100,6 +100,15 @@ TEST(EllipsoidTest, TriAxialGeodeticSurfaceNormalUsesAllRadii) {
     EXPECT_NEAR(expected.z(), normal.z(), 1e-12);
 }
 
+TEST(EllipsoidTest, CartographicSurfaceNormalNormalizesLikeCesiumNative) {
+    // 无对应测试；cesium-native Ellipsoid::geodeticSurfaceNormal(Cartographic)
+    // normalizes the trigonometric vector before returning it.
+    const Vec3 normal = Ellipsoid::WGS84().geodeticSurfaceNormal(
+        Cartographic::fromRadians(1.0e6, 1.0e6));
+
+    EXPECT_DOUBLE_EQ(1.0, normal.length());
+}
+
 TEST(EllipsoidTest, GeodeticSurfaceNormalAtCenterMatchesCesiumNativeNonFinite) {
     // Cesium-native normalizes position * oneOverRadiiSquared directly; the
     // ellipsoid center is not a valid geodetic surface-normal input.
