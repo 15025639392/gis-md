@@ -629,7 +629,9 @@ double TileBoundsMetrics::boundingVolumeDistance(
                 volume.cylinderRegion.computeDistanceSquaredToPosition(
                     cameraPosition)));
         case TileBoundingVolumeKind::S2Cell:
-            return 0.0;
+            return std::sqrt(std::max(
+                0.0,
+                volume.s2Cell.computeDistanceSquaredToPosition(cameraPosition)));
     }
     return 0.0;
 }
@@ -652,7 +654,7 @@ bool TileBoundsMetrics::boundingVolumeContainsPosition(
         case TileBoundingVolumeKind::CylinderRegion:
             return volume.cylinderRegion.contains(position);
         case TileBoundingVolumeKind::S2Cell:
-            return false;
+            return volume.s2Cell.contains(position);
     }
     return false;
 }
