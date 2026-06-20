@@ -48,16 +48,6 @@ bool TilePendingLoadQueue::containsCacheKey(
     return contentTerminalIt != contentTerminalResults_.end();
 }
 
-bool TilePendingLoadQueue::hasTerrainUpload(
-    const std::string& cacheKey) const {
-    return terrainUploadKeys_.count(cacheKey) != 0;
-}
-
-bool TilePendingLoadQueue::hasContentUpload(
-    const std::string& cacheKey) const {
-    return contentUploadKeys_.count(cacheKey) != 0;
-}
-
 void TilePendingLoadQueue::addTerrainUpload(PendingTerrainUpload upload) {
     terrainUploadKeys_.insert(upload.cacheKey);
     terrainUploads_.push_back(std::move(upload));

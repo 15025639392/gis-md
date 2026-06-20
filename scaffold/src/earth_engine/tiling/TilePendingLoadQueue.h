@@ -41,8 +41,6 @@ struct PendingTerminalResult {
 class TilePendingLoadQueue {
 public:
     bool containsCacheKey(const std::string& cacheKey) const;
-    bool hasTerrainUpload(const std::string& cacheKey) const;
-    bool hasContentUpload(const std::string& cacheKey) const;
 
     void addTerrainUpload(PendingTerrainUpload upload);
     void addTerrainTerminalResult(PendingTerrainTerminalResult result);
