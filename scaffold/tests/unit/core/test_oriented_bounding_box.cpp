@@ -419,6 +419,18 @@ TEST(OrientedBoundingBoxTest, ToSphereMatchesCesiumNativeCornerRadius) {
     EXPECT_DOUBLE_EQ(7.0, sphere.getRadius());
 }
 
+TEST(OrientedBoundingBoxTest, ToSphereIdentityHalfAxesMatchesCesiumNative) {
+    OrientedBoundingBox box(Vec3(1.0, 2.0, 3.0),
+                            Vec3(1.0, 0.0, 0.0),
+                            Vec3(0.0, 1.0, 0.0),
+                            Vec3(0.0, 0.0, 1.0));
+
+    const BoundingSphere sphere = box.toSphere();
+
+    EXPECT_EQ(Vec3(1.0, 2.0, 3.0), sphere.getCenter());
+    EXPECT_DOUBLE_EQ(std::sqrt(3.0), sphere.getRadius());
+}
+
 TEST(OrientedBoundingBoxTest, ToSphereRotationKeepsCesiumNativeRadius) {
     const double fortyFiveDegrees = std::acos(-1.0) / 4.0;
     const Mat4 rotation = Mat4::rotationY(fortyFiveDegrees);
