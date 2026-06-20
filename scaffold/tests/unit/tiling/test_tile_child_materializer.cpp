@@ -267,3 +267,35 @@ TEST(TileChildMaterializerTest, CanRefineUsesCachedAndAvailableTerrainSignals) {
                 : TileAvailabilityState::NotAvailable;
         }));
 }
+
+TEST(TileChildMaterializerTest, CanRefineBlocksAvailabilityBoundaryAndTerrainUpsampledTiles) {
+    TilesetTile tile(TileKey{"Geographic-TMS", 0, 0, 0}, Rectangle{});
+
+    EXPECT_FALSE(TileChildMaterializer::canRefine(
+        tile,
+        TileRefinementAvailabilityOptions{
+            false,
+            false,
+            false,
+            true,
+            true,
+            4},
+        [](const TileKey&) { return std::string{"child"}; },
+        [](const std::string&) { return true; },
+        [](const TileKey&) { return TileAvailabilityState::Available; }));
+
+    tile.content.upsampledFromParent = true;
+    tile.content.rasterUpsampledForMoreDetail = false;
+    EXPECT_FALSE(TileChildMaterializer::canRefine(
+        tile,
+        TileRefinementAvailabilityOptions{
+            true,
+            true,
+            false,
+            false,
+            true,
+            4},
+        [](const TileKey&) { return std::string{"child"}; },
+        [](const std::string&) { return true; },
+        [](const TileKey&) { return TileAvailabilityState::Available; }));
+}
