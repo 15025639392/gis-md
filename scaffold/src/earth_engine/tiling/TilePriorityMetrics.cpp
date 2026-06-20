@@ -1,6 +1,5 @@
 #include "TilePriorityMetrics.h"
 
-#include <algorithm>
 #include <limits>
 
 namespace earth_engine {
@@ -17,9 +16,7 @@ double TilePriorityMetrics::computeTilePriority(
     }
 
     tileDirection = tileDirection / magnitude;
-    double viewDot = tileDirection.dot(cameraDirection);
-    viewDot = std::max(-1.0, std::min(1.0, viewDot));
-    return (1.0 - viewDot) * distance;
+    return (1.0 - tileDirection.dot(cameraDirection)) * distance;
 }
 
 } // namespace earth_engine

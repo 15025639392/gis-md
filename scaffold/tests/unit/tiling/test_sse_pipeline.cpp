@@ -13252,8 +13252,8 @@ void testTilePriorityMetricsMatchesCesiumNativeFormula() {
                        Vec3(10.0, 0.0, 0.0),
                        cameraPosition,
                        Vec3(2.0, 0.0, 0.0),
-                       distance)) < 1e-12,
-          "TilePriorityMetrics: view dot is clamped like cesium-native");
+                       distance) + distance) < 1e-12,
+          "TilePriorityMetrics: view dot follows cesium-native formula without clamping");
 }
 
 void testTileSelectionInputMetricsComputesCenterPriorityAndSse() {
