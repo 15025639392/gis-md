@@ -17377,6 +17377,34 @@ void testTileUpsampleSourcePreparerFinalizesContentLoadedAncestor() {
           "TileUpsampleSourcePreparer: content-loaded ancestor is finalized before upsample request proceeds");
 }
 
+void testTileUpsampleSourcePreparerWaitsForLoadingAncestor() {
+    TilesetTile parent(TileKey{"test", 1, 0, 0}, Rectangle{});
+    TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &parent);
+    parent.children.push_back(&child);
+
+    parent.content.loadState = TileLoadState::ContentLoading;
+    child.content.upsampledFromParent = true;
+
+    int ensuredMeshes = 0;
+    std::vector<TileKey> queuedKeys;
+    const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
+        child,
+        5.0,
+        [&ensuredMeshes](TilesetTile&) {
+            ++ensuredMeshes;
+        },
+        [&queuedKeys](const TileKey& key,
+                      TileLoadPriorityGroup,
+                      double) {
+            queuedKeys.push_back(key);
+        });
+
+    check(!prepared &&
+              ensuredMeshes == 0 &&
+              queuedKeys.empty(),
+          "TileUpsampleSourcePreparer: loading ancestor waits without duplicate queue or mesh work");
+}
+
 void testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.contentKind = TileContentKind::Render;
@@ -29302,6 +29330,7 @@ int main() {
     testTileUpsampleSourcePreparerSkipsPermanentFailedAncestor();
     testTileUpsampleSourcePreparerQueuesTemporaryFailedAncestor();
     testTileUpsampleSourcePreparerFinalizesContentLoadedAncestor();
+    testTileUpsampleSourcePreparerWaitsForLoadingAncestor();
     testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded();
     testTileUnloadPolicyReleasesRasterOverlayReferencesWithExplicitClear();
     testTileUnloadPolicyFindsQueuedTilesByLoadState();
