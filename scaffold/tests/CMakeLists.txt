@@ -178,6 +178,12 @@ add_executable(test_tile_key
 target_link_libraries(test_tile_key PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_key COMMAND test_tile_key)
 
+add_executable(test_raster_overlay_details
+    unit/tiling/test_raster_overlay_details.cpp
+)
+target_link_libraries(test_raster_overlay_details PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_raster_overlay_details COMMAND test_raster_overlay_details)
+
 add_executable(test_tile_id
     unit/tiling/test_tile_id.cpp
 )

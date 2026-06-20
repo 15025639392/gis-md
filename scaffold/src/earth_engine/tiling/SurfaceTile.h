@@ -99,6 +99,17 @@ struct RasterOverlayDetails {
         rasterOverlayProjections = {RasterOverlayProjection::Geographic};
         rasterOverlayRectangles = {rectangle};
     }
+
+    void merge(const RasterOverlayDetails& other) {
+        rasterOverlayProjections.insert(
+            rasterOverlayProjections.end(),
+            other.rasterOverlayProjections.begin(),
+            other.rasterOverlayProjections.end());
+        rasterOverlayRectangles.insert(
+            rasterOverlayRectangles.end(),
+            other.rasterOverlayRectangles.begin(),
+            other.rasterOverlayRectangles.end());
+    }
 };
 
 struct SurfaceTileMesh {
