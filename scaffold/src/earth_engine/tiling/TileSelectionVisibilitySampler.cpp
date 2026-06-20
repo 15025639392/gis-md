@@ -64,7 +64,6 @@ TileSelectionVisibilitySample TileSelectionVisibilitySampler::sampleChildBounds(
                 sample.inFrustum ||
                 TileBoundsMetrics::tileIntersectsFrustum(*child, view.frustum);
         }
-        break;
     }
     return sample;
 }

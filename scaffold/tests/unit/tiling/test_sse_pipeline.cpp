@@ -19351,6 +19351,38 @@ void testTileSelectionVisibilitySamplerUsesCameraAndChildBounds() {
     check(childSample.visibleFromCamera && !childSample.inFrustum,
           "TileSelectionVisibilitySampler: child bounds use first visible child");
 
+    TilesetTile cameraOnlyChild(
+        TileKey{"test", 1, 2, 0},
+        Rectangle{-0.02, -0.02, 0.02, 0.02},
+        &parent);
+    TilesetTile frustumChild(
+        TileKey{"test", 1, 3, 0},
+        Rectangle{0.5, -0.02, 0.54, 0.02},
+        &parent);
+    const Cartographic frustumTargetCartographic(0.52, 0.0, 0.0);
+    const Vec3 frustumTarget =
+        Ellipsoid::WGS84().cartographicToCartesian(frustumTargetCartographic);
+    const Vec3 frustumUp =
+        Ellipsoid::WGS84().geodeticSurfaceNormal(frustumTargetCartographic);
+    Camera frustumCamera;
+    frustumCamera.setPerspective(0.05, 1.0, 10000000.0);
+    frustumCamera.lookAt(
+        frustumTarget + frustumUp * 1000000.0,
+        frustumTarget,
+        Vec3::unitZ());
+    const SelectorView frustumView =
+        makeSelectorView(frustumCamera, 800, 800);
+    const std::vector<TilesetTile*> mixedChildren{
+        &cameraOnlyChild,
+        &frustumChild};
+    const TileSelectionVisibilitySample mixedChildSample =
+        TileSelectionVisibilitySampler::sampleChildBounds(
+            mixedChildren,
+            {frustumView},
+            cameraContext);
+    check(mixedChildSample.visibleFromCamera && mixedChildSample.inFrustum,
+          "TileSelectionVisibilitySampler: child bounds aggregate frustum visibility across visible children");
+
     const TileSelectionVisibilityContext disabledCameraContext{
         false,
         0.0,
