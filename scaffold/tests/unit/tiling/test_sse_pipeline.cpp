@@ -13867,6 +13867,58 @@ void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
           "TileIndexState: erase removes matching load queue and lifecycle work only");
 }
 
+void testTileIndexStateErasesTerminalResults() {
+    const TileKey erasedKey{"test", 1, 0, 0};
+    const TileKey keptKey{"test", 1, 0, 1};
+    const auto cacheKeyForTile = [](const TileKey& key) {
+        return key.schemeId + ":" +
+               std::to_string(key.z) + ":" +
+               std::to_string(key.x) + ":" +
+               std::to_string(key.y);
+    };
+    const std::string erasedCacheKey = cacheKeyForTile(erasedKey);
+    const std::string keptCacheKey = cacheKeyForTile(keptKey);
+
+    TileUnloadQueue unloadQueue;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    TileEmptyContentRegistry emptyContentRegistry;
+    TileLoadQueue loadQueue;
+    TileLoadLifecycle lifecycle;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainTerminalResult(
+            PendingTerrainTerminalResult{
+                erasedKey,
+                erasedCacheKey,
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TerrainTileLoadStatus::RetryLater});
+        lifecycle.pendingLoads().addContentTerminalResult(
+            PendingContentTerminalResult{
+                keptKey,
+                keptCacheKey,
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadStatus::RetryLater});
+    }
+
+    TileIndexState::eraseCacheKeyState(
+        erasedCacheKey,
+        unloadQueue,
+        terrainCache,
+        emptyContentRegistry,
+        loadQueue,
+        lifecycle,
+        cacheKeyForTile);
+
+    check(!lifecycle.containsWorkForCacheKey(erasedCacheKey) &&
+              lifecycle.containsWorkForCacheKey(keptCacheKey) &&
+              lifecycle.counts().terrainTerminalResults == 0 &&
+              lifecycle.counts().contentTerminalResults == 1,
+          "TileIndexState: erase clears matching terminal results without touching other keys");
+}
+
 void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
@@ -29607,6 +29659,7 @@ int main() {
     testTileCacheUnloadCoordinatorDropsMissingKeysAndContinues();
     testTileCacheUnloadCoordinatorDefersRefreshDuringSmoothing();
     testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches();
+    testTileIndexStateErasesTerminalResults();
     testTileContentCacheManagerOwnsBytesQueueAndUnload();
     testTileContentCacheManagerEraseIndexClearsClaimedUploadWork();
     testTileContentCacheManagerClearsStaleEmptyMarkerOnUnknownUnload();
