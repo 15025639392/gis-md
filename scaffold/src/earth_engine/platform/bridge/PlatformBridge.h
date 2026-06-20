@@ -4,6 +4,7 @@
 #include <string>
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 namespace earth_engine {
 
@@ -63,6 +64,12 @@ public:
         const std::string& url,
         std::function<void(int statusCode, std::vector<uint8_t> body)> callback,
         HttpRequestOptions options = {}) = 0;
+    virtual std::unique_ptr<class HttpRequest> post(
+        const std::string& url,
+        std::vector<uint8_t> body,
+        const std::string& contentType,
+        std::function<void(int statusCode, std::vector<uint8_t> body)> callback,
+        HttpRequestOptions options = {});
     virtual int maximumActiveRequests() const { return -1; }
 
     // ---- 文件系统 ----
@@ -92,5 +99,17 @@ public:
     virtual ~HttpRequest() = default;
     virtual void cancel() = 0;
 };
+
+inline std::unique_ptr<HttpRequest> PlatformBridge::post(
+    const std::string&,
+    std::vector<uint8_t>,
+    const std::string&,
+    std::function<void(int statusCode, std::vector<uint8_t> body)> callback,
+    HttpRequestOptions) {
+    if (callback) {
+        callback(-1, {});
+    }
+    return nullptr;
+}
 
 } // namespace earth_engine

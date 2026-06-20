@@ -59,11 +59,15 @@ struct CurlMultiRequestScheduler::Impl {
     struct RequestState {
         uint64_t sequence = 0;
         std::string url;
+        std::string method = "GET";
+        std::vector<uint8_t> uploadBody;
+        std::string contentType;
         std::function<void(int, std::vector<uint8_t>)> callback;
         HttpRequestPriority priority = HttpRequestPriority::Normal;
         std::vector<uint8_t> body;
         std::array<char, CURL_ERROR_SIZE> errorBuffer{};
         CURL* easy = nullptr;
+        curl_slist* headers = nullptr;
         bool active = false;
         bool notifyCallbackOnShutdown = false;
         std::atomic<bool> cancelled{false};
@@ -126,14 +130,20 @@ struct CurlMultiRequestScheduler::Impl {
         shutdown();
     }
 
-    std::unique_ptr<HttpRequest> get(
+    std::unique_ptr<HttpRequest> request(
+        std::string method,
         const std::string& url,
+        std::vector<uint8_t> uploadBody,
+        std::string contentType,
         std::function<void(int, std::vector<uint8_t>)> callback,
         HttpRequestOptions options,
         bool notifyCallbackOnShutdown = false) {
         auto state = std::make_shared<RequestState>();
         state->sequence = nextSequence++;
+        state->method = std::move(method);
         state->url = url;
+        state->uploadBody = std::move(uploadBody);
+        state->contentType = std::move(contentType);
         state->callback = std::move(callback);
         state->priority = options.priority;
         state->notifyCallbackOnShutdown = notifyCallbackOnShutdown;
@@ -156,6 +166,36 @@ struct CurlMultiRequestScheduler::Impl {
         }
 
         return std::make_unique<RequestHandle>(wakeState, state);
+    }
+
+    std::unique_ptr<HttpRequest> get(
+        const std::string& url,
+        std::function<void(int, std::vector<uint8_t>)> callback,
+        HttpRequestOptions options,
+        bool notifyCallbackOnShutdown = false) {
+        return request(
+            "GET",
+            url,
+            {},
+            {},
+            std::move(callback),
+            options,
+            notifyCallbackOnShutdown);
+    }
+
+    std::unique_ptr<HttpRequest> post(
+        const std::string& url,
+        std::vector<uint8_t> body,
+        const std::string& contentType,
+        std::function<void(int, std::vector<uint8_t>)> callback,
+        HttpRequestOptions options) {
+        return request(
+            "POST",
+            url,
+            std::move(body),
+            contentType,
+            std::move(callback),
+            options);
     }
 
     void cancelQueuedRequests() {
@@ -359,9 +399,30 @@ private:
         curl_easy_setopt(easy, CURLOPT_PRIVATE, request.get());
         curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
         curl_easy_setopt(easy, CURLOPT_ERRORBUFFER, request->errorBuffer.data());
+        if (request->method == "POST") {
+            curl_easy_setopt(easy, CURLOPT_POST, 1L);
+            curl_easy_setopt(
+                easy,
+                CURLOPT_POSTFIELDS,
+                request->uploadBody.empty()
+                    ? ""
+                    : reinterpret_cast<const char*>(
+                          request->uploadBody.data()));
+            curl_easy_setopt(
+                easy,
+                CURLOPT_POSTFIELDSIZE,
+                static_cast<long>(request->uploadBody.size()));
+            if (!request->contentType.empty()) {
+                const std::string header =
+                    "Content-Type: " + request->contentType;
+                request->headers =
+                    curl_slist_append(request->headers, header.c_str());
+                curl_easy_setopt(easy, CURLOPT_HTTPHEADER, request->headers);
+            }
+        }
 
         if (curl_multi_add_handle(multi, easy) != CURLM_OK) {
-            curl_easy_cleanup(easy);
+            cleanupEasy(request);
             request->easy = nullptr;
             request->active = false;
             return false;
@@ -390,7 +451,7 @@ private:
         for (auto& request : cancelled) {
             if (request->easy) {
                 curl_multi_remove_handle(multi, request->easy);
-                curl_easy_cleanup(request->easy);
+                cleanupEasy(request);
                 request->easy = nullptr;
             }
             request->active = false;
@@ -427,7 +488,7 @@ private:
             const CURLcode curlResult = message->data.result;
 
             if (request->cancelled.load(std::memory_order_acquire)) {
-                curl_easy_cleanup(easy);
+                cleanupEasy(request);
                 request->easy = nullptr;
                 request->active = false;
                 continue;
@@ -452,7 +513,7 @@ private:
                     request->url.c_str());
             }
 #endif
-            curl_easy_cleanup(easy);
+            cleanupEasy(request);
             request->easy = nullptr;
             request->active = false;
 
@@ -473,19 +534,32 @@ private:
     }
 
     void cleanupActiveWithoutCallbacks() {
-        std::vector<CURL*> handles;
+        std::vector<std::shared_ptr<RequestState>> requests;
         {
             std::lock_guard<std::mutex> lk(mutex);
             for (auto& [easy, request] : active) {
-                handles.push_back(easy);
-                request->easy = nullptr;
-                request->active = false;
+                (void)easy;
+                requests.push_back(request);
             }
             active.clear();
         }
-        for (CURL* easy : handles) {
-            curl_multi_remove_handle(multi, easy);
-            curl_easy_cleanup(easy);
+        for (auto& request : requests) {
+            if (request->easy) {
+                curl_multi_remove_handle(multi, request->easy);
+                cleanupEasy(request);
+                request->easy = nullptr;
+            }
+            request->active = false;
+        }
+    }
+
+    void cleanupEasy(const std::shared_ptr<RequestState>& request) {
+        if (request->easy) {
+            curl_easy_cleanup(request->easy);
+        }
+        if (request->headers) {
+            curl_slist_free_all(request->headers);
+            request->headers = nullptr;
         }
     }
 };
@@ -506,6 +580,20 @@ std::unique_ptr<HttpRequest> CurlMultiRequestScheduler::get(
     std::function<void(int, std::vector<uint8_t>)> callback,
     HttpRequestOptions options) {
     return impl_->get(url, std::move(callback), options);
+}
+
+std::unique_ptr<HttpRequest> CurlMultiRequestScheduler::post(
+    const std::string& url,
+    std::vector<uint8_t> body,
+    const std::string& contentType,
+    std::function<void(int, std::vector<uint8_t>)> callback,
+    HttpRequestOptions options) {
+    return impl_->post(
+        url,
+        std::move(body),
+        contentType,
+        std::move(callback),
+        options);
 }
 
 std::vector<uint8_t> CurlMultiRequestScheduler::getBlocking(

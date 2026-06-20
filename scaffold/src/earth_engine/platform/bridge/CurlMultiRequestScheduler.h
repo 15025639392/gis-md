@@ -27,6 +27,12 @@ public:
         const std::string& url,
         std::function<void(int statusCode, std::vector<uint8_t> body)> callback,
         HttpRequestOptions options);
+    std::unique_ptr<HttpRequest> post(
+        const std::string& url,
+        std::vector<uint8_t> body,
+        const std::string& contentType,
+        std::function<void(int statusCode, std::vector<uint8_t> body)> callback,
+        HttpRequestOptions options);
     std::vector<uint8_t> getBlocking(
         const std::string& url,
         HttpRequestOptions options = {},

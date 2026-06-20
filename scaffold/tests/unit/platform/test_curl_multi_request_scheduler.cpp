@@ -12,6 +12,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <cctype>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -25,6 +26,13 @@ namespace {
 
 class LocalHttpServer {
 public:
+    struct SeenRequest {
+        std::string method;
+        std::string path;
+        std::string headers;
+        std::string body;
+    };
+
     LocalHttpServer() {
         listenFd_ = ::socket(AF_INET, SOCK_STREAM, 0);
         require(listenFd_ >= 0, "socket");
@@ -115,6 +123,11 @@ public:
         return seenPaths_;
     }
 
+    std::vector<SeenRequest> seenRequests() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return seenRequests_;
+    }
+
     void releaseOne() {
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -165,10 +178,30 @@ private:
             request.append(buffer, buffer + n);
         }
 
+        const size_t headerEnd = request.find("\r\n\r\n");
+        const std::string headers = request.substr(0, headerEnd + 4);
+        const size_t contentLength = parseContentLength(headers);
+        while (request.size() < headerEnd + 4 + contentLength) {
+            const ssize_t n = ::recv(fd, buffer, sizeof(buffer), 0);
+            if (n <= 0) {
+                ::close(fd);
+                return;
+            }
+            request.append(buffer, buffer + n);
+        }
+
+        const std::string method = parseMethod(request);
         const std::string path = parsePath(request);
+        const std::string body =
+            request.substr(headerEnd + 4, contentLength);
         {
             std::lock_guard<std::mutex> lock(mutex_);
             seenPaths_.push_back(path);
+            seenRequests_.push_back(SeenRequest{
+                method,
+                path,
+                headers,
+                body});
         }
         cv_.notify_all();
 
@@ -182,11 +215,11 @@ private:
             }
         }
 
-        const std::string body = path;
+        const std::string responseBody = path;
         const std::string response =
             "HTTP/1.1 200 OK\r\nContent-Length: " +
-            std::to_string(body.size()) +
-            "\r\nConnection: close\r\n\r\n" + body;
+            std::to_string(responseBody.size()) +
+            "\r\nConnection: close\r\n\r\n" + responseBody;
         ::send(fd, response.data(), response.size(), 0);
         ::close(fd);
     }
@@ -197,6 +230,39 @@ private:
         const size_t secondSpace = request.find(' ', firstSpace + 1);
         if (secondSpace == std::string::npos) return "/";
         return request.substr(firstSpace + 1, secondSpace - firstSpace - 1);
+    }
+
+    static std::string parseMethod(const std::string& request) {
+        const size_t firstSpace = request.find(' ');
+        if (firstSpace == std::string::npos) return "";
+        return request.substr(0, firstSpace);
+    }
+
+    static size_t parseContentLength(const std::string& headers) {
+        std::string lower = headers;
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](char c) {
+            return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        });
+        const std::string key = "content-length:";
+        const size_t start = lower.find(key);
+        if (start == std::string::npos) {
+            return 0;
+        }
+        size_t valueStart = start + key.size();
+        while (valueStart < lower.size() &&
+               std::isspace(static_cast<unsigned char>(lower[valueStart]))) {
+            ++valueStart;
+        }
+        size_t valueEnd = valueStart;
+        while (valueEnd < lower.size() &&
+               std::isdigit(static_cast<unsigned char>(lower[valueEnd]))) {
+            ++valueEnd;
+        }
+        if (valueEnd == valueStart) {
+            return 0;
+        }
+        return static_cast<size_t>(
+            std::stoul(lower.substr(valueStart, valueEnd - valueStart)));
     }
 
     bool containsLocked(const std::string& path) const {
@@ -211,6 +277,7 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::vector<std::string> seenPaths_;
+    std::vector<SeenRequest> seenRequests_;
     bool released_ = false;
     bool stopping_ = false;
     int releaseBudget_ = 0;
@@ -282,6 +349,54 @@ TEST(CurlMultiRequestScheduler, PreservesFifoWithinSamePriority) {
     EXPECT_FALSE(server.hasSeen("/high/second"));
 
     server.releaseAll();
+    scheduler.shutdown();
+}
+
+TEST(CurlMultiRequestScheduler, PostsBodyWithContentType) {
+    LocalHttpServer server;
+    CurlMultiRequestScheduler scheduler(1);
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    int statusCode = 0;
+    std::string responseBody;
+    bool callbackReturned = false;
+
+    const std::string payload = "{\"mapType\":\"satellite\"}";
+    auto handle = scheduler.post(
+        server.url("/v1/createSession?key=api-key"),
+        std::vector<uint8_t>(payload.begin(), payload.end()),
+        "application/json",
+        [&](int code, std::vector<uint8_t> body) {
+            std::lock_guard<std::mutex> lock(mutex);
+            statusCode = code;
+            responseBody.assign(body.begin(), body.end());
+            callbackReturned = true;
+            cv.notify_one();
+        },
+        {HttpRequestPriority::Normal});
+
+    ASSERT_TRUE(server.waitForPath("/v1/createSession?key=api-key", 3s));
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(lock, 3s, [&]() {
+            return callbackReturned;
+        }));
+    }
+
+    const std::vector<LocalHttpServer::SeenRequest> seen =
+        server.seenRequests();
+    ASSERT_EQ(1u, seen.size());
+    EXPECT_EQ("POST", seen[0].method);
+    EXPECT_EQ("/v1/createSession?key=api-key", seen[0].path);
+    EXPECT_NE(
+        std::string::npos,
+        seen[0].headers.find("Content-Type: application/json"));
+    EXPECT_EQ(payload, seen[0].body);
+    EXPECT_EQ(200, statusCode);
+    EXPECT_EQ("/v1/createSession?key=api-key", responseBody);
+
+    handle.reset();
     scheduler.shutdown();
 }
 

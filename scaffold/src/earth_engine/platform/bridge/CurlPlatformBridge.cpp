@@ -34,6 +34,20 @@ std::unique_ptr<HttpRequest> CurlPlatformBridge::get(
         options);
 }
 
+std::unique_ptr<HttpRequest> CurlPlatformBridge::post(
+    const std::string& url,
+    std::vector<uint8_t> body,
+    const std::string& contentType,
+    std::function<void(int, std::vector<uint8_t>)> callback,
+    HttpRequestOptions options) {
+    return CurlMultiRequestScheduler::shared().post(
+        url,
+        std::move(body),
+        contentType,
+        std::move(callback),
+        options);
+}
+
 int CurlPlatformBridge::maximumActiveRequests() const {
     return CurlMultiRequestScheduler::shared().maximumActiveRequests();
 }

@@ -89,6 +89,20 @@ std::unique_ptr<HttpRequest> AndroidPlatformBridge::get(
         options);
 }
 
+std::unique_ptr<HttpRequest> AndroidPlatformBridge::post(
+    const std::string& url,
+    std::vector<uint8_t> body,
+    const std::string& contentType,
+    std::function<void(int, std::vector<uint8_t>)> callback,
+    HttpRequestOptions options) {
+    return impl_->networkBridge.post(
+        url,
+        std::move(body),
+        contentType,
+        std::move(callback),
+        options);
+}
+
 int AndroidPlatformBridge::maximumActiveRequests() const {
     return impl_->networkBridge.maximumActiveRequests();
 }
