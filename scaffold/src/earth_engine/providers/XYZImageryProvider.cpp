@@ -85,6 +85,10 @@ double radiansToDegrees(double radians) {
     return radians * 180.0 / 3.14159265358979323846264338327950288;
 }
 
+double degreesToRadians(double degrees) {
+    return degrees * 3.14159265358979323846264338327950288 / 180.0;
+}
+
 struct TileDegreesRectangle {
     double west = 0.0;
     double south = 0.0;
@@ -92,11 +96,26 @@ struct TileDegreesRectangle {
     double north = 0.0;
 };
 
+struct TileProjectedRectangle {
+    double minimumX = 0.0;
+    double minimumY = 0.0;
+    double maximumX = 0.0;
+    double maximumY = 0.0;
+};
+
 double webMercatorFractionToLatitudeDegrees(double fraction) {
     const double mercatorAngle =
         3.14159265358979323846264338327950288 -
         2.0 * 3.14159265358979323846264338327950288 * fraction;
     return radiansToDegrees(std::atan(std::sinh(mercatorAngle)));
+}
+
+double webMercatorLatitudeDegreesToProjectedY(double latitudeDegrees) {
+    constexpr double kWgs84MaximumRadius = 6378137.0;
+    const double latitude = degreesToRadians(latitudeDegrees);
+    const double sinLatitude = std::sin(latitude);
+    return 0.5 * std::log((1.0 + sinLatitude) / (1.0 - sinLatitude)) *
+           kWgs84MaximumRadius;
 }
 
 TileDegreesRectangle tileDegreesRectangleForScheme(const TileKey& key) {
@@ -144,6 +163,24 @@ TileDegreesRectangle tileDegreesRectangleForScheme(const TileKey& key) {
         webMercatorFractionToLatitudeDegrees(southFraction),
         east,
         webMercatorFractionToLatitudeDegrees(northFraction)};
+}
+
+TileProjectedRectangle tileProjectedRectangleForScheme(const TileKey& key) {
+    const TileDegreesRectangle degrees = tileDegreesRectangleForScheme(key);
+    if (key.schemeId == "Geographic-TMS") {
+        return TileProjectedRectangle{
+            degreesToRadians(degrees.west),
+            degreesToRadians(degrees.south),
+            degreesToRadians(degrees.east),
+            degreesToRadians(degrees.north)};
+    }
+
+    constexpr double kWgs84MaximumRadius = 6378137.0;
+    return TileProjectedRectangle{
+        degreesToRadians(degrees.west) * kWgs84MaximumRadius,
+        webMercatorLatitudeDegreesToProjectedY(degrees.south),
+        degreesToRadians(degrees.east) * kWgs84MaximumRadius,
+        webMercatorLatitudeDegreesToProjectedY(degrees.north)};
 }
 
 } // namespace
@@ -248,6 +285,12 @@ std::string XYZImageryProvider::buildUrl(const TileKey& key) const {
     replace("{southDegrees}", std::to_string(tileRect.south));
     replace("{eastDegrees}", std::to_string(tileRect.east));
     replace("{northDegrees}", std::to_string(tileRect.north));
+    const TileProjectedRectangle projectedRect =
+        tileProjectedRectangleForScheme(providerKey);
+    replace("{minimumX}", std::to_string(projectedRect.minimumX));
+    replace("{minimumY}", std::to_string(projectedRect.minimumY));
+    replace("{maximumX}", std::to_string(projectedRect.maximumX));
+    replace("{maximumY}", std::to_string(projectedRect.maximumY));
     replace("{width}", std::to_string(tileWidth_));
     replace("{height}", std::to_string(tileHeight_));
     replace("{groupedY}", std::to_string(key.y));

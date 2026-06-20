@@ -2029,6 +2029,15 @@ void testXYZImageryProviderUrlTemplateBoundsAndSizePlaceholders() {
           "XYZImageryProvider: bounds and size placeholders match cesium-native URL template semantics");
 }
 
+void testXYZImageryProviderUrlTemplateProjectedBoundsPlaceholders() {
+    XYZImageryProvider provider(
+        "https://example.invalid/{minimumX}/{minimumY}/{maximumX}/{maximumY}.png");
+
+    check(provider.buildUrl(TileKey{"XYZ-WebMercator", 1, 0, 0}) ==
+              "https://example.invalid/-20037508.342789/0.000000/0.000000/20037508.342789.png",
+          "XYZImageryProvider: projected bounds placeholders match cesium-native WebMercator rectangle semantics");
+}
+
 void testHeightmapTerrainProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
     HeightmapTerrainProvider provider(
         "https://example.invalid/{z}/{x}/{y}.png");
@@ -23630,6 +23639,7 @@ int main() {
     testXYZImageryProviderBridgeCompletionDoesNotRunDecodeInline();
     testXYZImageryProviderUrlTemplateReversePlaceholders();
     testXYZImageryProviderUrlTemplateBoundsAndSizePlaceholders();
+    testXYZImageryProviderUrlTemplateProjectedBoundsPlaceholders();
     testHeightmapTerrainProviderUsesAsyncBridgeWithoutWorkerBlockingWait();
     testQuantizedMeshProviderUsesAsyncBridgeWithoutWorkerBlockingWait();
     testQuantizedMeshProviderHttpErrorFailsTerminally();
