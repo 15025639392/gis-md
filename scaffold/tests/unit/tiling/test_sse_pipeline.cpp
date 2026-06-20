@@ -28794,6 +28794,33 @@ void testTilesetSoftwareOcclusionPreservesNegativeExplicitRegionHeight() {
           "Tileset: software occlusion preserves negative explicit region height");
 }
 
+void testTilesetSoftwareOcclusionPreservesNegativeExplicitS2Height() {
+    TilesetTile tile;
+    tile.key = TileKey{"Geographic-TMS", 4, 0, 0};
+    tile.bounds = Rectangle::fromDegrees(140.0, -1.0, 141.0, 1.0);
+    tile.boundingVolume = TileBoundingVolume::fromS2Cell(
+        S2CellBoundingVolume(
+            S2CellID::fromQuadtreeTileID(0, 4, 14, 7),
+            -1000.0,
+            -1000.0));
+
+    const std::optional<Rectangle> volumeRectangle =
+        tile.boundingVolume->estimateGlobeRectangle();
+    check(volumeRectangle.has_value(),
+          "Tileset: software occlusion negative S2 test has estimated rectangle");
+    if (!volumeRectangle) return;
+    check(!volumeRectangle->contains(0.0, 0.0),
+          "Tileset: software occlusion negative S2 test is away from camera longitude");
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 cameraPosition = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(0.0, 0.0, 1000000.0));
+
+    check(TileSoftwareOcclusionPolicy::check(tile, cameraPosition) ==
+              TileOcclusionState::Occluded,
+          "Tileset: software occlusion preserves negative explicit S2 height");
+}
+
 void testTilesetChildrenInheritParentTerrainHeightRange() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -30887,6 +30914,7 @@ int main() {
     testTilesetSoftwareOcclusionUsesExplicitRegionHeightForFallbackSamples();
     testTilesetSoftwareOcclusionDoesNotInflateExplicitRegionToDefaultTerrainHeight();
     testTilesetSoftwareOcclusionPreservesNegativeExplicitRegionHeight();
+    testTilesetSoftwareOcclusionPreservesNegativeExplicitS2Height();
     testTilesetChildrenInheritParentTerrainHeightRange();
     testTilesetSampleHeightUsesBestLoadedTerrainTile();
     testTilesetSampleHeightFallsBackToLoadedAncestorTerrain();
