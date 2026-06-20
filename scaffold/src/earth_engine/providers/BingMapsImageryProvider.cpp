@@ -2,10 +2,11 @@
 
 #include <cstdint>
 #include <functional>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
-#include <vector>
 #include <utility>
+#include <vector>
 
 namespace earth_engine {
 namespace {
@@ -170,6 +171,83 @@ int invertedY(int level, int y) {
     return static_cast<int>((int64_t{1} << level) - 1 - y);
 }
 
+int jsonIntOrDefault(const nlohmann::json& object,
+                     const char* name,
+                     int defaultValue) {
+    const auto it = object.find(name);
+    if (it == object.end() || !it->is_number_unsigned()) {
+        return defaultValue;
+    }
+    return static_cast<int>(it->get<unsigned int>());
+}
+
+std::vector<std::string> jsonStringArray(const nlohmann::json& object,
+                                         const char* name) {
+    std::vector<std::string> values;
+    const auto it = object.find(name);
+    if (it == object.end() || !it->is_array()) {
+        return values;
+    }
+    for (const nlohmann::json& value : *it) {
+        if (value.is_string()) {
+            values.push_back(value.get<std::string>());
+        }
+    }
+    return values;
+}
+
+std::vector<BingMapsCredit> collectCredits(const nlohmann::json& resource) {
+    std::vector<BingMapsCredit> credits;
+    const auto providersIt = resource.find("imageryProviders");
+    if (providersIt == resource.end() || !providersIt->is_array()) {
+        return credits;
+    }
+
+    for (const nlohmann::json& provider : *providersIt) {
+        const auto attributionIt = provider.find("attribution");
+        if (attributionIt == provider.end() || !attributionIt->is_string()) {
+            continue;
+        }
+
+        BingMapsCredit credit;
+        credit.attribution = attributionIt->get<std::string>();
+
+        const auto coverageAreasIt = provider.find("coverageAreas");
+        if (coverageAreasIt != provider.end() && coverageAreasIt->is_array()) {
+            for (const nlohmann::json& area : *coverageAreasIt) {
+                const auto bboxIt = area.find("bbox");
+                const auto zoomMinIt = area.find("zoomMin");
+                const auto zoomMaxIt = area.find("zoomMax");
+                if (bboxIt == area.end() || !bboxIt->is_array() ||
+                    bboxIt->size() != 4 || zoomMinIt == area.end() ||
+                    zoomMaxIt == area.end() ||
+                    !zoomMinIt->is_number_unsigned() ||
+                    !zoomMaxIt->is_number_unsigned()) {
+                    continue;
+                }
+                if (!(*bboxIt)[0].is_number() || !(*bboxIt)[1].is_number() ||
+                    !(*bboxIt)[2].is_number() || !(*bboxIt)[3].is_number()) {
+                    continue;
+                }
+
+                BingMapsCreditCoverageArea coverage;
+                coverage.southDegrees = (*bboxIt)[0].get<double>();
+                coverage.westDegrees = (*bboxIt)[1].get<double>();
+                coverage.northDegrees = (*bboxIt)[2].get<double>();
+                coverage.eastDegrees = (*bboxIt)[3].get<double>();
+                coverage.zoomMin =
+                    static_cast<int>(zoomMinIt->get<unsigned int>());
+                coverage.zoomMax =
+                    static_cast<int>(zoomMaxIt->get<unsigned int>());
+                credit.coverageAreas.push_back(coverage);
+            }
+        }
+
+        credits.push_back(std::move(credit));
+    }
+    return credits;
+}
+
 } // namespace
 
 BingMapsImageryProvider::BingMapsImageryProvider(
@@ -264,6 +342,66 @@ std::string bingMapsMetadataUrl(const std::string& baseUrl,
     return withQuery(
         resolveUrl(baseUrl, "REST/v1/Imagery/Metadata/" + mapStyle),
         query);
+}
+
+BingMapsMetadataParseResult parseBingMapsMetadata(
+    const std::string& metadataJson) {
+    nlohmann::json response =
+        nlohmann::json::parse(metadataJson, nullptr, false);
+    if (response.is_discarded()) {
+        return BingMapsMetadataParseResult{
+            false,
+            BingMapsMetadata{},
+            "Error while parsing Bing Maps imagery metadata"};
+    }
+
+    const nlohmann::json* error = response.contains("errorDetails") &&
+                                          response["errorDetails"].is_array() &&
+                                          !response["errorDetails"].empty()
+                                      ? &response["errorDetails"][0]
+                                      : nullptr;
+    if (error && error->is_string()) {
+        return BingMapsMetadataParseResult{
+            false,
+            BingMapsMetadata{},
+            "Received an error from the Bing Maps imagery metadata service: " +
+                error->get<std::string>()};
+    }
+
+    if (!response.contains("resourceSets") ||
+        !response["resourceSets"].is_array() ||
+        response["resourceSets"].empty() ||
+        !response["resourceSets"][0].contains("resources") ||
+        !response["resourceSets"][0]["resources"].is_array() ||
+        response["resourceSets"][0]["resources"].empty()) {
+        return BingMapsMetadataParseResult{
+            false,
+            BingMapsMetadata{},
+            "Resources were not found in the Bing Maps imagery metadata response."};
+    }
+
+    const nlohmann::json& resource =
+        response["resourceSets"][0]["resources"][0];
+    BingMapsMetadata metadata;
+    metadata.imageWidth = jsonIntOrDefault(resource, "imageWidth", 256);
+    metadata.imageHeight = jsonIntOrDefault(resource, "imageHeight", 256);
+    metadata.zoomMax = jsonIntOrDefault(resource, "zoomMax", 30);
+    metadata.imageUrlSubdomains =
+        jsonStringArray(resource, "imageUrlSubdomains");
+    metadata.credits = collectCredits(resource);
+
+    const auto imageUrlIt = resource.find("imageUrl");
+    if (imageUrlIt != resource.end() && imageUrlIt->is_string()) {
+        metadata.imageUrl = imageUrlIt->get<std::string>();
+    }
+    if (metadata.imageUrl.empty()) {
+        return BingMapsMetadataParseResult{
+            false,
+            BingMapsMetadata{},
+            "Bing Maps tile imageUrl is missing or empty."};
+    }
+
+    return BingMapsMetadataParseResult{true, std::move(metadata), std::string()};
 }
 
 } // namespace earth_engine

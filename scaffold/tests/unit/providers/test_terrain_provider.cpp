@@ -919,6 +919,97 @@ TEST(BingMapsImageryProviderTest, BuildsMetadataUrlLikeCesiumNative) {
             "zh-CN"));
 }
 
+TEST(BingMapsImageryProviderTest, ParsesMetadataLikeCesiumNative) {
+    const BingMapsMetadataParseResult result = parseBingMapsMetadata(R"json({
+        "resourceSets": [{
+            "resources": [{
+                "imageWidth": 512,
+                "imageHeight": 256,
+                "zoomMax": 19,
+                "imageUrl": "https://ecn.{subdomain}.tiles.virtualearth.net/tiles/a{quadkey}.jpeg",
+                "imageUrlSubdomains": ["t0", 4, "t2"],
+                "imageryProviders": [{
+                    "attribution": "Provider A",
+                    "coverageAreas": [{
+                        "bbox": [-10.0, 20.0, 30.0, 40.0],
+                        "zoomMin": 1,
+                        "zoomMax": 9
+                    }, {
+                        "bbox": [1.0, 2.0, 3.0],
+                        "zoomMin": 1,
+                        "zoomMax": 9
+                    }]
+                }, {
+                    "coverageAreas": []
+                }]
+            }]
+        }]
+    })json");
+
+    ASSERT_TRUE(result.valid) << result.error;
+    EXPECT_EQ(512, result.metadata.imageWidth);
+    EXPECT_EQ(256, result.metadata.imageHeight);
+    EXPECT_EQ(19, result.metadata.zoomMax);
+    EXPECT_EQ(
+        "https://ecn.{subdomain}.tiles.virtualearth.net/tiles/a{quadkey}.jpeg",
+        result.metadata.imageUrl);
+    EXPECT_EQ((std::vector<std::string>{"t0", "t2"}),
+              result.metadata.imageUrlSubdomains);
+    ASSERT_EQ(1u, result.metadata.credits.size());
+    EXPECT_EQ("Provider A", result.metadata.credits[0].attribution);
+    ASSERT_EQ(1u, result.metadata.credits[0].coverageAreas.size());
+    const BingMapsCreditCoverageArea& coverage =
+        result.metadata.credits[0].coverageAreas[0];
+    EXPECT_DOUBLE_EQ(-10.0, coverage.southDegrees);
+    EXPECT_DOUBLE_EQ(20.0, coverage.westDegrees);
+    EXPECT_DOUBLE_EQ(30.0, coverage.northDegrees);
+    EXPECT_DOUBLE_EQ(40.0, coverage.eastDegrees);
+    EXPECT_EQ(1, coverage.zoomMin);
+    EXPECT_EQ(9, coverage.zoomMax);
+}
+
+TEST(BingMapsImageryProviderTest, MetadataDefaultsMatchCesiumNative) {
+    const BingMapsMetadataParseResult result = parseBingMapsMetadata(R"json({
+        "resourceSets": [{
+            "resources": [{
+                "imageUrl": "tiles/{quadkey}.png"
+            }]
+        }]
+    })json");
+
+    ASSERT_TRUE(result.valid) << result.error;
+    EXPECT_EQ(256, result.metadata.imageWidth);
+    EXPECT_EQ(256, result.metadata.imageHeight);
+    EXPECT_EQ(30, result.metadata.zoomMax);
+    EXPECT_TRUE(result.metadata.imageUrlSubdomains.empty());
+}
+
+TEST(BingMapsImageryProviderTest, RejectsInvalidMetadataLikeCesiumNative) {
+    BingMapsMetadataParseResult result = parseBingMapsMetadata("not-json");
+    EXPECT_FALSE(result.valid);
+    EXPECT_NE(std::string::npos, result.error.find("Error while parsing"));
+
+    result = parseBingMapsMetadata(R"json({
+        "errorDetails": ["bad key"]
+    })json");
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(
+        "Received an error from the Bing Maps imagery metadata service: bad key",
+        result.error);
+
+    result = parseBingMapsMetadata(R"json({
+        "resourceSets": [{"resources": [{}]}]
+    })json");
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ("Bing Maps tile imageUrl is missing or empty.", result.error);
+
+    result = parseBingMapsMetadata(R"json({"resourceSets": []})json");
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(
+        "Resources were not found in the Bing Maps imagery metadata response.",
+        result.error);
+}
+
 TEST(TileMapServiceUrlTest, AppendsTileMapResourceXmlBeforeQueryLikeCesiumNative) {
     EXPECT_EQ(
         "https://example.com/tms/tilemapresource.xml",

@@ -16,6 +16,35 @@ struct BingMapsImageryOptions {
     int tileHeight = 256;
 };
 
+struct BingMapsCreditCoverageArea {
+    double southDegrees = 0.0;
+    double westDegrees = 0.0;
+    double northDegrees = 0.0;
+    double eastDegrees = 0.0;
+    int zoomMin = 0;
+    int zoomMax = 0;
+};
+
+struct BingMapsCredit {
+    std::string attribution;
+    std::vector<BingMapsCreditCoverageArea> coverageAreas;
+};
+
+struct BingMapsMetadata {
+    std::string imageUrl;
+    std::vector<std::string> imageUrlSubdomains;
+    int imageWidth = 256;
+    int imageHeight = 256;
+    int zoomMax = 30;
+    std::vector<BingMapsCredit> credits;
+};
+
+struct BingMapsMetadataParseResult {
+    bool valid = false;
+    BingMapsMetadata metadata;
+    std::string error;
+};
+
 class BingMapsImageryProvider : public XYZImageryProvider {
 public:
     BingMapsImageryProvider(std::string baseUrl,
@@ -44,5 +73,8 @@ std::string bingMapsMetadataUrl(const std::string& baseUrl,
                                 const std::string& mapStyle,
                                 const std::string& key,
                                 const std::string& culture = "");
+
+BingMapsMetadataParseResult parseBingMapsMetadata(
+    const std::string& metadataJson);
 
 } // namespace earth_engine
