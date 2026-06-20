@@ -19741,6 +19741,60 @@ void testTileLoadSchedulerQueuesUpsampledTerrainWhenNetworkInflightIsFull() {
     }
 }
 
+void testTileLoadSchedulerSkipsCachedTerrainWhenNetworkInflightIsFull() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    CancellationToken token;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        check(lifecycle.requestState().beginTerrainRequest("busy", token),
+              "TileLoadScheduler: cached terrain test starts one network inflight request");
+    }
+
+    const TileKey key{"test", 1, 0, 0};
+    bool planned = false;
+    bool marked = false;
+
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            testCacheKeyForTile,
+            [&planned](const TileKey&,
+                       const std::string&,
+                       TilesetTile*& tileState) {
+                planned = true;
+                tileState = nullptr;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.terrainProviderSupportsTile = true;
+                snapshot.terrainAlreadyCached = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [&marked](const TileKey&) { marked = true; });
+
+    check(outcome.issued == 0 && !outcome.blockedByInflight,
+          "TileLoadScheduler: cached terrain skip is not blocked by full network inflight capacity");
+    check(planned && !marked && lifecycle.pendingRequestCount() == 1,
+          "TileLoadScheduler: cached terrain skip has no dispatch side effects");
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().completeTerrainRequest("busy");
+    }
+}
+
 void testTileLoadSchedulerSortsAndQueuesUpsampledTerrain() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -25500,6 +25554,7 @@ int main() {
     testTileLoadSchedulerSkipsKnownEmptyContentBeforeInflightBlock();
     testTileLoadSchedulerBlocksTerrainFanoutOverInflightCapacity();
     testTileLoadSchedulerQueuesUpsampledTerrainWhenNetworkInflightIsFull();
+    testTileLoadSchedulerSkipsCachedTerrainWhenNetworkInflightIsFull();
     testTileLoadSchedulerSortsAndQueuesUpsampledTerrain();
     testTileLoadSchedulerSkipsEmptyUpsampledCacheKey();
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation();
