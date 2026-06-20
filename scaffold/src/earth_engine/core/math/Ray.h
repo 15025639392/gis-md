@@ -10,7 +10,6 @@ namespace earth_engine {
 /// 射线：origin + t * direction（direction 已归一化）
 class Ray {
 public:
-    Ray() : origin_(), direction_(Vec3::unitZ()) {}
     Ray(const Vec3& origin, const Vec3& direction);
 
     const Vec3& origin() const { return origin_; }

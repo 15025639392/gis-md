@@ -5,6 +5,7 @@
 #include "earth_engine/core/math/Vec3.h"
 
 #include <stdexcept>
+#include <type_traits>
 
 using namespace earth_engine;
 
@@ -17,6 +18,9 @@ void expectVec3Near(const Vec3& actual, const Vec3& expected, double epsilon) {
 }
 
 } // namespace
+
+static_assert(!std::is_default_constructible_v<Ray>,
+              "Ray matches cesium-native: origin and normalized direction are required.");
 
 TEST(RayTest, ConstructorRequiresNormalizedDirection) {
     // Ported from cesium-native CesiumGeometry::Ray constructor semantics:
