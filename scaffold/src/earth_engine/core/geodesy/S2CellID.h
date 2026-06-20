@@ -12,6 +12,8 @@
 
 namespace earth_engine {
 
+struct TileKey;
+
 class S2CellID {
 public:
     static S2CellID fromToken(std::string_view token);
@@ -22,6 +24,8 @@ public:
                                        uint32_t level,
                                        uint32_t x,
                                        uint32_t y);
+    static S2CellID fromQuadtreeTileID(uint8_t face,
+                                       const TileKey& tile);
 
     explicit S2CellID(uint64_t id) noexcept : id_(id) {}
 

@@ -1,6 +1,7 @@
 #include "S2CellID.h"
 
 #include "earth_engine/core/math/MathUtils.h"
+#include "earth_engine/tiling/TileKey.h"
 
 #include <algorithm>
 #include <array>
@@ -238,6 +239,13 @@ S2CellID S2CellID::fromQuadtreeTileID(uint8_t face,
         ? encodeHilbert2D(level, x, y)
         : encodeHilbert2D(level, y, x);
     return fromFaceLevelPosition(face, level, position);
+}
+
+S2CellID S2CellID::fromQuadtreeTileID(uint8_t face, const TileKey& tile) {
+    return fromQuadtreeTileID(face,
+                              static_cast<uint32_t>(tile.z),
+                              static_cast<uint32_t>(tile.x),
+                              static_cast<uint32_t>(tile.y));
 }
 
 bool S2CellID::isValid() const noexcept {

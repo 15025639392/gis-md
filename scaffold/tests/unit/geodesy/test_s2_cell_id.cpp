@@ -4,6 +4,7 @@
 #include "earth_engine/core/geodesy/S2CellID.h"
 #include "earth_engine/core/math/MathUtils.h"
 #include "earth_engine/core/math/Rectangle.h"
+#include "earth_engine/tiling/TileKey.h"
 
 #include <array>
 #include <cmath>
@@ -108,6 +109,14 @@ TEST(S2CellIDTest, FromQuadtreeTileIdMatchesCesiumNative) {
                   1,
                   1)
                   .getID());
+}
+
+TEST(S2CellIDTest, FromTileKeyQuadtreeTileIdOverloadMatchesCesiumNativeShape) {
+    const uint8_t face = S2CellID::fromToken("1").getFace();
+    const TileKey tile{"Geographic-TMS", 1, 1, 0};
+
+    EXPECT_EQ(S2CellID::fromToken("1c").getID(),
+              S2CellID::fromQuadtreeTileID(face, tile).getID());
 }
 
 TEST(S2CellIDTest, OddFacesSwapQuadtreeAxesLikeCesiumNative) {
