@@ -15253,6 +15253,15 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyTerrainTerminalResult(
         tile,
+        TerrainTileLoadStatus::Cancelled);
+    check(!action.markEmptyCacheKey &&
+              action.resourcesDirty &&
+              tile.content.contentKind == TileContentKind::Unknown &&
+              tile.content.loadState == TileLoadState::FailedTemporarily,
+          "TileTerminalLoadPolicy: cancelled terrain maps to temporary failure");
+
+    action = TileTerminalLoadPolicy::applyTerrainTerminalResult(
+        tile,
         TerrainTileLoadStatus::Success);
     check(!action.markEmptyCacheKey &&
               action.resourcesDirty &&
@@ -15466,6 +15475,23 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
               failedTerrainTile.content.contentKind == TileContentKind::Unknown &&
               failedTerrainTile.content.loadState == TileLoadState::Failed,
           "TileTerminalLoadCommitter: failed terrain clears stale empty registry marker");
+
+    TilesetTile cancelledTerrainTile(TileKey{"test", 0, 5, 0}, Rectangle{});
+    emptyContentRegistry.insert("terrain-cancelled");
+    action = TileTerminalLoadCommitter::commitTerrainTerminalResult(
+        cancelledTerrainTile,
+        "terrain-cancelled",
+        TerrainTileLoadStatus::Cancelled,
+        emptyContentRegistry);
+    check(!action.markEmptyCacheKey &&
+              !action.ensureChildren &&
+              action.resourcesDirty &&
+              !emptyContentRegistry.contains("terrain-cancelled") &&
+              cancelledTerrainTile.content.contentKind ==
+                  TileContentKind::Unknown &&
+              cancelledTerrainTile.content.loadState ==
+                  TileLoadState::FailedTemporarily,
+          "TileTerminalLoadCommitter: cancelled terrain clears stale empty marker as retryable work");
 }
 
 void testTileContentUploadPolicyPreparesGltfRenderContent() {
