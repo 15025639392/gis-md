@@ -400,6 +400,10 @@ std::vector<std::array<int, 5>> QuantizedMeshParser::parseMetadataAvailability(
             offset += sizeof(uint32_t);
 
             if (offset + extLen > len) break;
+            if (extId == 1 &&
+                extLen < static_cast<size_t>(vertexCount) * 2u) {
+                break;
+            }
             if (extId == 4 && extLen >= sizeof(uint32_t)) {
                 uint32_t metadataJsonLength = 0;
                 std::memcpy(&metadataJsonLength, data + offset, sizeof(uint32_t));
@@ -646,8 +650,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
             // Oct-encoded per-vertex normals (cesium-native attribute compression)
             const size_t normCount = vc;
             if (extLen < normCount * 2) {
-                offset += extLen;
-                continue;
+                break;
             }
             octNormals.reserve(normCount);
             for (size_t i = 0; i < normCount; ++i) {
