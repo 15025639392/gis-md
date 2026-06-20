@@ -82,6 +82,7 @@ TileTerminalLoadPolicy::applyContentTerminalResult(
             break;
         case TileContentLoadStatus::Cancelled:
             markUnknownTemporaryFailure(tile);
+            action.ensureChildren = true;
             action.resourcesDirty = true;
             break;
         case TileContentLoadStatus::Failed:

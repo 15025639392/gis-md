@@ -7682,6 +7682,7 @@ public:
                             CancellationToken,
                             ContentCallback callback,
                             HttpRequestPriority = HttpRequestPriority::Normal) override {
+        ++requestCount;
         callback(key, terminalResult());
     }
 
@@ -7689,11 +7690,15 @@ public:
         return TileContentLoadResult::failed();
     }
 
+    int requestCount = 0;
+
 private:
     TileContentLoadResult terminalResult() const {
         switch (terminalStatus_) {
             case TileContentLoadStatus::RetryLater:
                 return TileContentLoadResult::retryLater();
+            case TileContentLoadStatus::Cancelled:
+                return TileContentLoadResult::cancelled();
             case TileContentLoadStatus::Failed:
                 return TileContentLoadResult::failed();
             default:
@@ -12655,6 +12660,28 @@ void testTilesetRetryLaterRemainsRetryable() {
           "Tileset: FailedTemporarily terrain remains retryable");
 }
 
+void testTilesetCancelledRemainsRetryable() {
+    auto provider = std::make_unique<TerminalTerrainProvider>(
+        TerrainTileLoadStatus::Cancelled);
+    TerminalTerrainProvider* rawProvider = provider.get();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+
+    TilesetTestAccess::ensureTile(tileset, rootKey);
+    TilesetTestAccess::requestMissingTile(tileset, rootKey);
+    TilesetTestAccess::processPendingUploads(tileset);
+    TilesetTile* root = TilesetTestAccess::findTile(tileset, rootKey);
+    check(root && root->content.loadState == TileLoadState::FailedTemporarily,
+          "Tileset: Cancelled maps to FailedTemporarily");
+    check(root && root->content.contentKind == TileContentKind::Unknown,
+          "Tileset: Cancelled keeps content unknown");
+
+    TilesetTestAccess::requestMissingTile(tileset, rootKey);
+    check(rawProvider->requestCount == 2,
+          "Tileset: Cancelled terrain remains retryable");
+}
+
 void testTilesetContentRetryLaterMaterializesLatentChildren() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 0, 0};
@@ -12684,6 +12711,43 @@ void testTilesetContentRetryLaterMaterializesLatentChildren() {
               root->children.front() &&
               root->children.front()->key == childKey,
           "Tileset: RetryLater content still materializes latent children like cesium-native");
+}
+
+void testTilesetContentCancelledMaterializesLatentChildrenAndRetries() {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, {childKey}}},
+        TileContentLoadStatus::Cancelled);
+    SelectionTreeContentProvider* rawProvider = contentProvider.get();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        nullptr,
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTestAccess::ensureTile(tileset, rootKey);
+    TilesetTestAccess::requestMissingTile(tileset, rootKey);
+    TilesetTestAccess::processPendingUploads(tileset);
+
+    TilesetTile* root = TilesetTestAccess::findTile(tileset, rootKey);
+    check(root &&
+              root->content.loadState == TileLoadState::FailedTemporarily &&
+              root->content.contentKind == TileContentKind::Unknown,
+          "Tileset: Cancelled content remains a retryable unknown tile");
+    check(root && root->children.size() == 1 &&
+              root->children.front() &&
+              root->children.front()->key == childKey,
+          "Tileset: Cancelled content still materializes latent children like cesium-native");
+
+    TilesetTestAccess::requestMissingTile(tileset, rootKey);
+    check(rawProvider->requestCount == 2,
+          "Tileset: Cancelled content remains retryable");
 }
 
 void testTilesetContentFailedMaterializesLatentChildrenWithoutRetry() {
@@ -14589,11 +14653,11 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
         tile,
         TileContentLoadStatus::Cancelled);
     check(!action.markEmptyCacheKey &&
-              !action.ensureChildren &&
+              action.ensureChildren &&
               action.resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::FailedTemporarily,
-          "TileTerminalLoadPolicy: cancelled content maps to temporary failure");
+          "TileTerminalLoadPolicy: cancelled content maps to temporary failure and latent child materialization");
 
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         tile,
@@ -24777,7 +24841,9 @@ int main() {
     testTilesetCanRefineQuantizedMeshPastLayerMaxzoomWhenAvailable();
     testTilesetRequestsExplicitAvailabilityPastProviderMaxzoom();
     testTilesetRetryLaterRemainsRetryable();
+    testTilesetCancelledRemainsRetryable();
     testTilesetContentRetryLaterMaterializesLatentChildren();
+    testTilesetContentCancelledMaterializesLatentChildrenAndRetries();
     testTilesetContentFailedMaterializesLatentChildrenWithoutRetry();
     testTilesetCacheUnloadFailedUnknownPreservesChildren();
     testTilesetFailedTerminalDoesNotRetry();
