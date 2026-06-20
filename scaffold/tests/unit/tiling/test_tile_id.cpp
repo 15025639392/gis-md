@@ -8,6 +8,25 @@
 
 using namespace earth_engine;
 
+TEST(TileKeyTest, DefaultAndEqualityMatchCesiumNativeQuadtreeTileId) {
+    // 无对应独立 cesium-native 测试；QuadtreeTileID header defines
+    // level/x/y identity equality, and gis-md TileKey keeps schemeId as the
+    // additional local tiling-scheme identity field.
+    const TileKey defaultID;
+    const TileKey same{"", 0, 0, 0};
+    const TileKey differentScheme{"Geographic-TMS", 0, 0, 0};
+    const TileKey differentLevel{"", 1, 0, 0};
+    const TileKey differentX{"", 0, 1, 0};
+    const TileKey differentY{"", 0, 0, 1};
+
+    EXPECT_EQ(same, defaultID);
+    EXPECT_FALSE(defaultID != same);
+    EXPECT_NE(defaultID, differentScheme);
+    EXPECT_NE(defaultID, differentLevel);
+    EXPECT_NE(defaultID, differentX);
+    EXPECT_NE(defaultID, differentY);
+}
+
 TEST(TileKeyTest, ParentMatchesCesiumNativeQuadtreeTileId) {
     // Ported from cesium-native QuadtreeTileID::getParent semantics.
     EXPECT_EQ((TileKey{"Geographic-TMS", 0, 0, 0}),
