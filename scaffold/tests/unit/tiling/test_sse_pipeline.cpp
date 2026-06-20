@@ -16069,12 +16069,21 @@ void testTileUnloadPolicyDefersReferencedSubtreesAndExternalWork() {
 void testTileUnloadPolicyProtectsUpsampledLoadingSources() {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
+    TilesetTile grandchild(TileKey{"test", 2, 0, 0}, Rectangle{}, &child);
     parent.children.push_back(&child);
 
     child.content.upsampledFromParent = true;
     child.content.loadState = TileLoadState::ContentLoading;
     check(TileUnloadPolicy::hasContentLoadingUpsampledDescendant(parent),
           "TileUnloadPolicy: detects loading upsampled descendant");
+
+    child.content.upsampledFromParent = false;
+    child.content.loadState = TileLoadState::Done;
+    child.children.push_back(&grandchild);
+    grandchild.content.upsampledFromParent = true;
+    grandchild.content.loadState = TileLoadState::ContentLoading;
+    check(!TileUnloadPolicy::hasContentLoadingUpsampledDescendant(parent),
+          "TileUnloadPolicy: deeper upsampled descendants do not protect ancestors");
 
     parent.content.renderContent.setSurfaceDrawable(true);
     parent.selectionFrameState.completeRenderable = true;
