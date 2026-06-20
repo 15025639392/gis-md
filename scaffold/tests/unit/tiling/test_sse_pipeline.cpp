@@ -4696,6 +4696,42 @@ void testQuantizedMeshOctEncodedNormalsExtension() {
           "QuantizedMeshParser: oct normals are copied onto skirt vertices");
 }
 
+void testQuantizedMeshOctEncodedNormalsPreserveArbitraryDirection() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes("", true, false);
+
+    appendPod<uint8_t>(bytes, 1);
+    appendPod<uint32_t>(bytes, 6);
+    const uint8_t encodedNormal[] = {
+        141, 221,
+        141, 221,
+        141, 221
+    };
+    bytes.insert(bytes.end(), encodedNormal, encodedNormal + sizeof(encodedNormal));
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            scheme->tileToRectangle(rootKey));
+
+    const Vec3 expected(0.13834289277321496,
+                        0.9684002494125046,
+                        0.20751433915982243);
+    check(mesh != nullptr && mesh->vertices.size() > 3,
+          "QuantizedMeshParser: arbitrary oct-normal extension mesh parses");
+    if (!mesh || mesh->vertices.empty()) return;
+    bool allNormalsMatch = true;
+    for (size_t i = 0; i < mesh->vertices.size(); ++i) {
+        const Vec3 delta = mesh->vertices[i].normalEcef - expected;
+        allNormalsMatch = allNormalsMatch && delta.length() < 0.006;
+    }
+    check(allNormalsMatch,
+          "QuantizedMeshParser: arbitrary oct normal is decoded onto tile and skirt vertices like cesium-native");
+}
+
 void testQuantizedMeshOctEncodedNormalsIgnoresTrailingExtensionBytes() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -22610,6 +22646,7 @@ int main() {
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
     testQuantizedMeshSkirtHeightMatchesCesiumNativeFormula();
     testQuantizedMeshOctEncodedNormalsExtension();
+    testQuantizedMeshOctEncodedNormalsPreserveArbitraryDirection();
     testQuantizedMeshOctEncodedNormalsIgnoresTrailingExtensionBytes();
     testQuantizedMeshOctEncodedNormalsUsesLastExtension();
     testQuantizedMeshRtcOriginFromBoundingSphereCenter();
