@@ -280,7 +280,13 @@ void XYZImageryProvider::setOpenGlobusPolarGroupsEnabled(bool enabled) {
 bool XYZImageryProvider::supportsTile(const TileKey& key) const {
     if (key.z < minZoom_ || key.z > maxZoom_) return false;
     if (key.schemeId != schemeId_) return false;
-    if (!openGlobusGroupedY_) return key.schemeId == "XYZ-WebMercator";
+    if (!openGlobusGroupedY_) {
+        const int64_t xTiles = xTileCountForScheme(key.schemeId, key.z);
+        const int64_t yTiles = yTileCountForScheme(key.schemeId, key.z);
+        return xTiles > 0 && yTiles > 0 &&
+               key.x >= 0 && static_cast<int64_t>(key.x) < xTiles &&
+               key.y >= 0 && static_cast<int64_t>(key.y) < yTiles;
+    }
 
     const int tilesAtZoom = 1 << key.z;
     if (key.y < 0 || key.y >= 3 * tilesAtZoom) return false;
