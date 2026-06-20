@@ -14036,6 +14036,89 @@ void testTileContentCacheManagerDefersExternalSubtreeWithClaimedUpload() {
           "TileContentCacheManager: external wrapper unload defers while subtree has claimed upload work");
 }
 
+void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadCompletes() {
+    TileContentCacheManager manager;
+    TileContentLifecycleManager lifecycle;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+
+    const TileKey rootKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    const std::string rootCacheKey = TileCacheKey::forTile(rootKey);
+    const std::string childCacheKey = TileCacheKey::forTile(childKey);
+    auto root = std::make_unique<TilesetTile>(rootKey, Rectangle{});
+    auto child = std::make_unique<TilesetTile>(childKey, Rectangle{}, root.get());
+    TilesetTile* rootRaw = root.get();
+    rootRaw->children.push_back(child.get());
+    rootRaw->content.loadState = TileLoadState::Done;
+    rootRaw->content.contentKind = TileContentKind::External;
+    lifecycle.terrainCache()[childCacheKey] = makeFlatHeightmap(7.0f);
+    {
+        FrameResourceBudgetConfig config;
+        config.maxMainThreadFinalizesPerFrame = 1;
+        FrameResourceBudget budget;
+        budget.beginFrame(1, config);
+        std::lock_guard<std::mutex> lock(lifecycle.loadLifecycle().mutex());
+        lifecycle.loadLifecycle().pendingLoads().addContentUpload(
+            PendingContentUpload{
+                childKey,
+                childCacheKey,
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadResult::empty()});
+        check(lifecycle.loadLifecycle()
+                  .pendingLoads()
+                  .takeHighestPriorityUpload(false, budget)
+                  .has_value(),
+              "TileContentCacheManager: claimed completion retry test dequeues payload");
+    }
+    tiles[rootCacheKey] = std::move(root);
+    tiles[childCacheKey] = std::move(child);
+
+    manager.updateTotalBytesUsed(tiles, lifecycle);
+    manager.markEligibleForUnloading(tiles, rootCacheKey);
+    bool clearChildrenCalled = false;
+
+    manager.unloadCachedBytes(
+        0,
+        0.0,
+        false,
+        tiles,
+        lifecycle,
+        nullptr,
+        [&clearChildrenCalled](TilesetTile&) {
+            clearChildrenCalled = true;
+        });
+    check(manager.unloadQueue().contains(rootCacheKey) &&
+              !clearChildrenCalled &&
+              !rootRaw->children.empty(),
+          "TileContentCacheManager: claimed upload keeps external wrapper queued before retry");
+
+    lifecycle.loadLifecycle().cancelAndEraseCacheKey(childCacheKey);
+    manager.unloadCachedBytes(
+        0,
+        0.0,
+        false,
+        tiles,
+        lifecycle,
+        nullptr,
+        [&clearChildrenCalled,
+         &tiles,
+         &childCacheKey](TilesetTile& tile) {
+            clearChildrenCalled = true;
+            tile.children.clear();
+            tiles.erase(childCacheKey);
+        });
+
+    check(!manager.unloadQueue().contains(rootCacheKey) &&
+              clearChildrenCalled &&
+              rootRaw->children.empty() &&
+              tiles.find(childCacheKey) == tiles.end() &&
+              !lifecycle.loadLifecycle().containsWorkForCacheKey(childCacheKey) &&
+              rootRaw->content.loadState == TileLoadState::Unloaded &&
+              rootRaw->content.contentKind == TileContentKind::Unknown,
+          "TileContentCacheManager: external subtree unload retries after claimed upload work completes");
+}
+
 void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
@@ -28657,6 +28740,7 @@ int main() {
     testTileContentCacheManagerDefersByteRefreshDuringSmoothing();
     testTileContentCacheManagerDefersExternalSubtreeWithActiveWork();
     testTileContentCacheManagerDefersExternalSubtreeWithClaimedUpload();
+    testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadCompletes();
     testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes();
     testTileCacheMetricsCountsHeightmapAndTilePayloads();
     testTileCacheMetricsTotalsTileAndTerrainCachePayloads();
