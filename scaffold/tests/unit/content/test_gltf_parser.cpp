@@ -14207,6 +14207,39 @@ TEST(GltfParserTest, TilesetParsesBoundingVolumeCylinderExtension) {
     EXPECT_EQ(TileContentLoadStatus::Empty, result.status);
 }
 
+TEST(GltfParserTest, TilesetJsonContentProviderScalesGeometricErrorByTransform) {
+    const std::string tilesetJson = R"json({
+      "asset": {"version": "1.1"},
+      "geometricError": 100,
+      "root": {
+        "transform": [
+          2, 0, 0, 0,
+          0, 3, 0, 0,
+          0, 0, 4, 0,
+          0, 0, 0, 1
+        ],
+        "boundingVolume": {"sphere": [0, 0, 0, 1]},
+        "geometricError": 10
+      }
+    })json";
+
+    TilesetJsonContentProvider provider(
+        "file:///earth-md/scaled-geometric-error-tileset.json",
+        bytesFromString(tilesetJson),
+        "scaled geometric error tileset");
+
+    ASSERT_TRUE(provider.valid());
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    const std::vector<TileKey> rootChildren =
+        provider.childTiles(roots.front());
+    ASSERT_EQ(1u, rootChildren.size());
+    const std::optional<TilesetContentTileMetadata> metadata =
+        provider.tileMetadata(rootChildren.front());
+    ASSERT_TRUE(metadata.has_value());
+    EXPECT_DOUBLE_EQ(40.0, metadata->geometricError);
+}
+
 TEST(GltfParserTest, TilesetFailsMalformedExternalTilesetNumericMetadata) {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
