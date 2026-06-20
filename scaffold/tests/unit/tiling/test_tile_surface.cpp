@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/tiling/SurfaceMeshResourcePreparer.h"
 #include "earth_engine/tiling/TileSurface.h"
+#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/TilesetTile.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/TilePlan.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
@@ -600,4 +603,26 @@ TEST(TileSurfaceTest, NormalMapUsesNoSkirtVertexRangeBegin) {
     decoded = decoded.normalized();
 
     EXPECT_GT(decoded.dot(surface.vertices.front().normalEcef.normalized()), 0.999);
+}
+
+TEST(TileSurfaceTest, SurfaceResourceLocalOriginUsesNoSkirtVertexRange) {
+    auto mesh = std::make_unique<SurfaceTileMesh>();
+    SurfaceVertex surfaceA;
+    surfaceA.positionEcef = Vec3(0.0, 0.0, 0.0);
+    SurfaceVertex surfaceB;
+    surfaceB.positionEcef = Vec3(2.0, 0.0, 0.0);
+    SurfaceVertex skirt;
+    skirt.positionEcef = Vec3(1000.0, 0.0, 0.0);
+    mesh->vertices = {surfaceA, surfaceB, skirt};
+    mesh->skirtMeta.noSkirtVerticesBegin = 0;
+    mesh->skirtMeta.noSkirtVerticesCount = 2;
+
+    TilesetTile tile(TileKey{"Geographic-TMS", 0, 0, 0}, Rectangle{});
+    tile.content.renderContent.setSurfaceMesh(std::move(mesh));
+
+    SurfaceMeshResourcePreparer::prepare(tile, nullptr);
+
+    EXPECT_NEAR(1.0, tile.content.renderContent.renderLocalOrigin().x(), 1e-12);
+    EXPECT_NEAR(0.0, tile.content.renderContent.renderLocalOrigin().y(), 1e-12);
+    EXPECT_NEAR(0.0, tile.content.renderContent.renderLocalOrigin().z(), 1e-12);
 }

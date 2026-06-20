@@ -23,12 +23,22 @@ void SurfaceMeshResourcePreparer::prepare(TilesetTile& tile,
         tile.content.renderContent.setSurfaceLocalOrigin(Vec3::zero());
     }
     if (!mesh->hasLocalOriginEcef && !mesh->vertices.empty()) {
+        size_t vertexBegin = 0;
+        size_t vertexCount = mesh->vertices.size();
+        const SkirtMetadata& skirt = mesh->skirtMeta;
+        if (skirt.noSkirtVerticesCount > 0 &&
+            skirt.noSkirtVerticesBegin < mesh->vertices.size() &&
+            skirt.noSkirtVerticesCount <=
+                mesh->vertices.size() - skirt.noSkirtVerticesBegin) {
+            vertexBegin = skirt.noSkirtVerticesBegin;
+            vertexCount = skirt.noSkirtVerticesCount;
+        }
         Vec3 localOrigin = Vec3::zero();
-        for (const auto& v : mesh->vertices) {
-            localOrigin += v.positionEcef;
+        for (size_t i = 0; i < vertexCount; ++i) {
+            localOrigin += mesh->vertices[vertexBegin + i].positionEcef;
         }
         tile.content.renderContent.setSurfaceLocalOrigin(
-            localOrigin / static_cast<double>(mesh->vertices.size()));
+            localOrigin / static_cast<double>(vertexCount));
     }
 
     if (!device || mesh->vertices.empty()) {
