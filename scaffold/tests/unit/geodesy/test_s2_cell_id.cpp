@@ -35,6 +35,9 @@ void expectCartographicNear(const Cartographic& actual,
 
 TEST(S2CellIDTest, TokenAndIdSemanticsMatchCesiumNative) {
     EXPECT_TRUE(S2CellID(3458764513820540928ULL).isValid());
+    EXPECT_TRUE(S2CellID::fromToken("1").isValid());
+    EXPECT_TRUE(S2CellID::fromToken("2ef59bd34").isValid());
+    EXPECT_TRUE(S2CellID::fromToken("2ef59bd352b93ac3").isValid());
     EXPECT_EQ(3458764513820540928ULL, S2CellID::fromToken("3").getID());
     EXPECT_EQ(288230376151711744ULL, S2CellID::fromToken("04").getID());
     EXPECT_EQ(3383782026967071427ULL,
