@@ -692,6 +692,18 @@ bool TileBoundsMetrics::boundingVolumeIntersectsFrustum(
             return frustum.intersectsOBB(
                 volume.cylinderRegion.toOrientedBoundingBox());
         case TileBoundingVolumeKind::S2Cell:
+            for (auto index : {Frustum::PlaneIndex::Left,
+                               Frustum::PlaneIndex::Right,
+                               Frustum::PlaneIndex::Bottom,
+                               Frustum::PlaneIndex::Top,
+                               Frustum::PlaneIndex::Near,
+                               Frustum::PlaneIndex::Far}) {
+                const FrustumPlane& fp = frustum.plane(index);
+                if (volume.s2Cell.intersectPlane(
+                        Plane(fp.normal, fp.distance)) < 0) {
+                    return false;
+                }
+            }
             return true;
     }
     return false;

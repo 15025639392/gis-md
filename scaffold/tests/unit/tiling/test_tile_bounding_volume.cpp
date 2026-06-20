@@ -8,6 +8,7 @@
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Transforms.h"
+#include "earth_engine/scene/Camera.h"
 #include "earth_engine/tiling/TileBoundingVolume.h"
 #include "earth_engine/tiling/TileBoundsMetrics.h"
 
@@ -338,6 +339,19 @@ TEST(TileBoundingVolumeTest, S2CellIntersectPlaneMatchesCesiumNative) {
     EXPECT_EQ(-1, s2.intersectPlane(outsidePlane));
 
     EXPECT_EQ(1, s2.intersectPlane(Plane::ORIGIN_YZ));
+}
+
+TEST(TileBoundingVolumeTest, S2CellFrustumCullingUsesCellPlanesLikeCesiumNative) {
+    Camera camera;
+    camera.lookAt(Vec3(0.0, 0.0, 10.0), Vec3::zero(), Vec3::unitY());
+    camera.setPerspective(kPi * 0.5, 1.0, 20.0);
+    const Frustum frustum = camera.frustum(800.0, 800.0);
+    const TileBoundingVolume volume = TileBoundingVolume::fromS2Cell(
+        S2CellBoundingVolume(S2CellID::fromToken("1"), 0.0, 100000.0));
+
+    EXPECT_FALSE(TileBoundsMetrics::boundingVolumeIntersectsFrustum(
+        volume,
+        frustum));
 }
 
 TEST(TileBoundingVolumeTest, RegionCenterUsesBoundingRegionObbLikeCesiumNative) {
