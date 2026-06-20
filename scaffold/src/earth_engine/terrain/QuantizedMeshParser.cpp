@@ -665,6 +665,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
             if (extLen < normCount * 2) {
                 break;
             }
+            octNormals.clear();
             octNormals.reserve(normCount);
             for (size_t i = 0; i < normCount; ++i) {
                 uint8_t ox = data[offset + i * 2];

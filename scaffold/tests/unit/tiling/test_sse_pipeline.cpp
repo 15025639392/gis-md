@@ -4453,6 +4453,46 @@ void testQuantizedMeshOctEncodedNormalsIgnoresTrailingExtensionBytes() {
           "QuantizedMeshParser: oct normals use vertexCount byte pairs and ignore trailing extension bytes");
 }
 
+void testQuantizedMeshOctEncodedNormalsUsesLastExtension() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes("", true, false);
+
+    appendPod<uint8_t>(bytes, 1);
+    appendPod<uint32_t>(bytes, 6);
+    const uint8_t firstNormals[] = {
+        128, 255,
+        128, 255,
+        128, 255
+    };
+    bytes.insert(bytes.end(), firstNormals, firstNormals + sizeof(firstNormals));
+
+    appendPod<uint8_t>(bytes, 1);
+    appendPod<uint32_t>(bytes, 6);
+    const uint8_t secondNormals[] = {
+        255, 128,
+        255, 128,
+        255, 128
+    };
+    bytes.insert(bytes.end(), secondNormals, secondNormals + sizeof(secondNormals));
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            scheme->tileToRectangle(rootKey));
+
+    check(mesh != nullptr && mesh->vertices.size() > 3,
+          "QuantizedMeshParser: duplicate oct-normal extension mesh parses");
+    if (!mesh || mesh->vertices.empty()) return;
+
+    check(mesh->vertices[0].normalEcef.x() > 0.9999 &&
+              std::abs(mesh->vertices[0].normalEcef.y()) < 0.004 &&
+              std::abs(mesh->vertices[0].normalEcef.z()) < 0.004,
+          "QuantizedMeshParser: later oct-normal extension replaces earlier extension like cesium-native");
+}
+
 void testQuantizedMeshRtcOriginFromBoundingSphereCenter() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -22146,6 +22186,7 @@ int main() {
     testQuantizedMeshSkirtHeightMatchesCesiumNativeFormula();
     testQuantizedMeshOctEncodedNormalsExtension();
     testQuantizedMeshOctEncodedNormalsIgnoresTrailingExtensionBytes();
+    testQuantizedMeshOctEncodedNormalsUsesLastExtension();
     testQuantizedMeshRtcOriginFromBoundingSphereCenter();
     testQuantizedMeshHeaderHeightRangeIsExposed();
     testQuantizedMeshVertexUvAndHeightGolden();
