@@ -309,4 +309,13 @@ WebMapServiceCapabilitiesValidation validateWebMapServiceCapabilities(
     return WebMapServiceCapabilitiesValidation{true, std::string()};
 }
 
+std::string webMapServiceCapabilitiesUrl(const std::string& baseUrl,
+                                         const std::string& version) {
+    UrlParts parts = splitUrl(baseUrl);
+    setQueryValue(parts.query, "request", "GetCapabilities", true);
+    setQueryValue(parts.query, "version", version, true);
+    setQueryValue(parts.query, "service", "WMS", true);
+    return joinUrl(parts);
+}
+
 } // namespace earth_engine

@@ -48,4 +48,8 @@ WebMapServiceCapabilitiesValidation validateWebMapServiceCapabilities(
     const std::string& capabilitiesXml,
     const WebMapServiceImageryOptions& options);
 
+std::string webMapServiceCapabilitiesUrl(
+    const std::string& baseUrl,
+    const std::string& version = "1.3.0");
+
 } // namespace earth_engine

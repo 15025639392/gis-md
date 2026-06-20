@@ -749,6 +749,18 @@ TEST(WebMapServiceImageryProviderTest, RejectsInvalidCapabilitiesNumbersLikeCesi
     EXPECT_EQ("Invalid web map service XML document", validation.error);
 }
 
+TEST(WebMapServiceImageryProviderTest, BuildsCapabilitiesUrlLikeCesiumNative) {
+    EXPECT_EQ(
+        "https://example.com/wms?request=GetCapabilities&version=1.3.0&service=WMS",
+        webMapServiceCapabilitiesUrl("https://example.com/wms", "1.3.0"));
+
+    EXPECT_EQ(
+        "https://example.com/wms?token=abc&request=GetCapabilities&version=1.1.1&service=WMS#frag",
+        webMapServiceCapabilitiesUrl(
+            "https://example.com/wms?token=abc&request=Old&version=0&service=Other#frag",
+            "1.1.1"));
+}
+
 TEST(TileMapServiceUrlTest, AppendsTileMapResourceXmlBeforeQueryLikeCesiumNative) {
     EXPECT_EQ(
         "https://example.com/tms/tilemapresource.xml",
