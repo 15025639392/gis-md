@@ -354,6 +354,20 @@ TEST(TileBoundingVolumeTest, S2CellFrustumCullingUsesCellPlanesLikeCesiumNative)
         frustum));
 }
 
+TEST(TileBoundingVolumeTest, FrustumCullingIgnoresNearAndFarPlanesLikeCesiumNative) {
+    Camera camera;
+    camera.lookAt(Vec3(0.0, 0.0, 10.0), Vec3::zero(), Vec3::unitY());
+    camera.setPerspective(kPi * 0.5, 1.0, 20.0);
+    const Frustum frustum = camera.frustum(800.0, 800.0);
+    const TileBoundingVolume beyondFar =
+        TileBoundingVolume::fromSphere(Vec3(0.0, 0.0, -50.0), 1.0);
+
+    EXPECT_FALSE(frustum.intersectsSphere(beyondFar.sphere));
+    EXPECT_TRUE(TileBoundsMetrics::boundingVolumeIntersectsFrustum(
+        beyondFar,
+        frustum));
+}
+
 TEST(TileBoundingVolumeTest, RegionCenterUsesBoundingRegionObbLikeCesiumNative) {
     const TileBoundingVolume region =
         TileBoundingVolume::fromRegion(

@@ -65,6 +65,45 @@ struct BoundingRegionPlanes {
     bool valid = false;
 };
 
+constexpr std::array<Frustum::PlaneIndex, 4> kSelectionCullingPlanes = {
+    Frustum::PlaneIndex::Left,
+    Frustum::PlaneIndex::Right,
+    Frustum::PlaneIndex::Top,
+    Frustum::PlaneIndex::Bottom};
+
+bool sphereIntersectsSelectionFrustum(const BoundingSphere& sphere,
+                                      const Frustum& frustum) {
+    for (const Frustum::PlaneIndex index : kSelectionCullingPlanes) {
+        const FrustumPlane& fp = frustum.plane(index);
+        if (sphere.intersectPlane(Plane(fp.normal, fp.distance)) < 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool obbIntersectsSelectionFrustum(const OrientedBoundingBox& obb,
+                                   const Frustum& frustum) {
+    for (const Frustum::PlaneIndex index : kSelectionCullingPlanes) {
+        const FrustumPlane& fp = frustum.plane(index);
+        if (obb.intersectPlane(Plane(fp.normal, fp.distance)) < 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool s2CellIntersectsSelectionFrustum(const S2CellBoundingVolume& s2Cell,
+                                      const Frustum& frustum) {
+    for (const Frustum::PlaneIndex index : kSelectionCullingPlanes) {
+        const FrustumPlane& fp = frustum.plane(index);
+        if (s2Cell.intersectPlane(Plane(fp.normal, fp.distance)) < 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 BoundingRegionPlanes computeBoundingRegionPlanes(
     const Rectangle& bounds,
     const Ellipsoid& ellipsoid) {
@@ -674,7 +713,7 @@ bool TileBoundsMetrics::boundingVolumeIntersectsFrustum(
                     volume.region,
                     volume.minimumHeight,
                     volume.maximumHeight);
-            if (obb) return frustum.intersectsOBB(*obb);
+            if (obb) return obbIntersectsSelectionFrustum(*obb, frustum);
             const Vec3 center = tileBoundsCenterFromRectangle(volume.region);
             const double radius = computeTileBoundsRadius(
                 volume.region,
@@ -682,29 +721,20 @@ bool TileBoundsMetrics::boundingVolumeIntersectsFrustum(
                 terrainHeightPadding(
                     volume.minimumHeight,
                     volume.maximumHeight));
-            return frustum.intersectsSphere(center, radius);
+            return sphereIntersectsSelectionFrustum(
+                BoundingSphere(center, radius),
+                frustum);
         }
         case TileBoundingVolumeKind::Sphere:
-            return frustum.intersectsSphere(volume.sphere);
+            return sphereIntersectsSelectionFrustum(volume.sphere, frustum);
         case TileBoundingVolumeKind::Box:
-            return frustum.intersectsOBB(volume.box);
+            return obbIntersectsSelectionFrustum(volume.box, frustum);
         case TileBoundingVolumeKind::CylinderRegion:
-            return frustum.intersectsOBB(
-                volume.cylinderRegion.toOrientedBoundingBox());
+            return obbIntersectsSelectionFrustum(
+                volume.cylinderRegion.toOrientedBoundingBox(),
+                frustum);
         case TileBoundingVolumeKind::S2Cell:
-            for (auto index : {Frustum::PlaneIndex::Left,
-                               Frustum::PlaneIndex::Right,
-                               Frustum::PlaneIndex::Bottom,
-                               Frustum::PlaneIndex::Top,
-                               Frustum::PlaneIndex::Near,
-                               Frustum::PlaneIndex::Far}) {
-                const FrustumPlane& fp = frustum.plane(index);
-                if (volume.s2Cell.intersectPlane(
-                        Plane(fp.normal, fp.distance)) < 0) {
-                    return false;
-                }
-            }
-            return true;
+            return s2CellIntersectsSelectionFrustum(volume.s2Cell, frustum);
     }
     return false;
 }
