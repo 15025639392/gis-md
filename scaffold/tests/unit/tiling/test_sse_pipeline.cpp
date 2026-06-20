@@ -3522,6 +3522,40 @@ void testQuantizedMeshLayerJsonRejectsUnknownProjection() {
           "QuantizedMeshTerrainProvider: rejected projection leaves existing provider state intact");
 }
 
+void testQuantizedMeshLayerJsonFailedConfigurePreservesPreviousState() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string validLayerJson = R"json({
+      "attribution": "stable terrain credit",
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["stable/{z}/{x}/{y}.terrain"],
+      "maxzoom": 4
+    })json";
+    const std::string invalidLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "maxzoom": 9
+    })json";
+
+    check(provider.configureFromLayerJson(
+              validLayerJson, "https://example.invalid/terrain/layer.json"),
+          "QuantizedMeshTerrainProvider: baseline layer configures");
+    const std::string stableUrl =
+        provider.buildUrl(TileKey{"Geographic-TMS", 1, 1, 0});
+
+    check(!provider.configureFromLayerJson(
+              invalidLayerJson, "https://example.invalid/bad/layer.json"),
+          "QuantizedMeshTerrainProvider: layer without tiles rejects");
+    check(provider.buildUrl(TileKey{"Geographic-TMS", 1, 1, 0}) == stableUrl &&
+              provider.attribution() == "stable terrain credit" &&
+              provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 0}) &&
+              provider.maxZoom() == 4,
+          "QuantizedMeshTerrainProvider: failed layer configure preserves previous state");
+}
+
 void testQuantizedMeshRejectsOutOfRangeGeographicTiles() {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
@@ -21580,6 +21614,7 @@ int main() {
     testHeightmapTerrainProviderExposesAttribution();
     testQuantizedMeshLayerJsonWebMercatorProjectionMatchesCesiumNative();
     testQuantizedMeshLayerJsonRejectsUnknownProjection();
+    testQuantizedMeshLayerJsonFailedConfigurePreservesPreviousState();
     testQuantizedMeshRejectsOutOfRangeGeographicTiles();
     testQuantizedMeshLayerJsonMinzoomDoesNotGateAvailability();
     testQuantizedMeshLayerJsonMaxzoomDoesNotGateExplicitAvailability();

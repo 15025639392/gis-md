@@ -503,6 +503,35 @@ bool QuantizedMeshTerrainProvider::configureFromLayerJsonUrl(
 bool QuantizedMeshTerrainProvider::configureFromLayerJson(
     const std::string& layerJson,
     const std::string& layerJsonUrl) {
+    const auto oldLayers = layers_;
+    const auto oldUrlTemplate = urlTemplate_;
+    const auto oldAttribution = attribution_;
+    const auto oldLayerJsonUrl = layerJsonUrl_;
+    const auto oldSchemeId = schemeId_;
+    const auto oldVersion = version_;
+    const auto oldExtensionsToRequest = extensionsToRequest_;
+    const auto oldAvailabilityRanges = availabilityRanges_;
+    const auto oldLoadedSubtrees = loadedSubtrees_;
+    const bool oldHasAvailability = hasAvailability_;
+    const int oldAvailabilityLevels = availabilityLevels_;
+    const int oldMinZoom = minZoom_;
+    const int oldMaxZoom = maxZoom_;
+    const auto restorePreviousState = [&]() {
+        layers_ = oldLayers;
+        urlTemplate_ = oldUrlTemplate;
+        attribution_ = oldAttribution;
+        layerJsonUrl_ = oldLayerJsonUrl;
+        schemeId_ = oldSchemeId;
+        version_ = oldVersion;
+        extensionsToRequest_ = oldExtensionsToRequest;
+        availabilityRanges_ = oldAvailabilityRanges;
+        loadedSubtrees_ = oldLoadedSubtrees;
+        hasAvailability_ = oldHasAvailability;
+        availabilityLevels_ = oldAvailabilityLevels;
+        minZoom_ = oldMinZoom;
+        maxZoom_ = oldMaxZoom;
+    };
+
     try {
         auto j = nlohmann::json::parse(layerJson);
         if (j.value("format", "quantized-mesh-1.0") != "quantized-mesh-1.0") return false;
@@ -514,6 +543,7 @@ bool QuantizedMeshTerrainProvider::configureFromLayerJson(
 
         layers_.clear();
         if (!appendLayerFromJson(j, layerJsonUrl)) {
+            restorePreviousState();
             return false;
         }
         appendParentLayers(j, layerJsonUrl);
@@ -526,6 +556,7 @@ bool QuantizedMeshTerrainProvider::configureFromLayerJson(
 #endif
         return !urlTemplate_.empty();
     } catch (...) {
+        restorePreviousState();
         return false;
     }
 }
