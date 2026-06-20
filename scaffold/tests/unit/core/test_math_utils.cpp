@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/core/math/MathUtils.h"
+#include "earth_engine/core/math/Mat4.h"
+#include "earth_engine/core/math/Vec3.h"
 
 #include <cmath>
 #include <limits>
@@ -36,6 +38,42 @@ TEST(MathUtilsTest, EqualsEpsilonMatchesCesiumNative) {
     EXPECT_FALSE(MathUtils::equalsEpsilon(3699175.1634344,
                                           3699175.2,
                                           MathUtils::Epsilon9));
+}
+
+TEST(MathUtilsTest, EqualsEpsilonVec3MatchesCesiumNativeComponentSemantics) {
+    const Vec3 base(1000.0, -2000.0, 0.0);
+    const Vec3 relativeMatch(1000.0005, -2000.0005, 5e-7);
+    const Vec3 relativeMiss(1000.0005, -2000.0005, 2e-6);
+
+    EXPECT_TRUE(MathUtils::equalsEpsilon(base, relativeMatch, MathUtils::Epsilon6));
+    EXPECT_FALSE(MathUtils::equalsEpsilon(base, relativeMiss, MathUtils::Epsilon6));
+
+    EXPECT_TRUE(MathUtils::equalsEpsilon(base,
+                                        Vec3(1000.0, -2000.0, 1e-5),
+                                        MathUtils::Epsilon12,
+                                        MathUtils::Epsilon4));
+    EXPECT_FALSE(MathUtils::equalsEpsilon(base,
+                                         Vec3(1000.0, -2000.0, 1e-3),
+                                         MathUtils::Epsilon12,
+                                         MathUtils::Epsilon4));
+}
+
+TEST(MathUtilsTest, EqualsEpsilonMat4MatchesCesiumNativeColumnSemantics) {
+    Mat4 base = Mat4::identity();
+    Mat4 within = base;
+    within(0, 0) += 5e-7;
+    within(2, 3) = -5e-7;
+
+    Mat4 outside = within;
+    outside(1, 2) = 2e-6;
+
+    EXPECT_TRUE(MathUtils::equalsEpsilon(base, within, MathUtils::Epsilon6));
+    EXPECT_FALSE(MathUtils::equalsEpsilon(base, outside, MathUtils::Epsilon6));
+
+    EXPECT_TRUE(MathUtils::equalsEpsilon(base,
+                                        outside,
+                                        MathUtils::Epsilon12,
+                                        MathUtils::Epsilon5));
 }
 
 TEST(MathUtilsTest, RelativeEpsilonAndSignMatchCesiumNativeSourceSemantics) {

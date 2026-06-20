@@ -1,5 +1,8 @@
 #pragma once
 
+#include "Mat4.h"
+#include "Vec3.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -63,6 +66,44 @@ public:
         const double diff = std::abs(left - right);
         return diff <= absoluteEpsilon ||
                diff <= relativeEpsilonToAbsolute(left, right, relativeEpsilon);
+    }
+
+    static bool equalsEpsilon(const Vec3& left,
+                              const Vec3& right,
+                              double relativeEpsilon) noexcept {
+        return equalsEpsilon(left, right, relativeEpsilon, relativeEpsilon);
+    }
+
+    static bool equalsEpsilon(const Vec3& left,
+                              const Vec3& right,
+                              double relativeEpsilon,
+                              double absoluteEpsilon) noexcept {
+        return equalsEpsilon(left.x(), right.x(), relativeEpsilon, absoluteEpsilon) &&
+               equalsEpsilon(left.y(), right.y(), relativeEpsilon, absoluteEpsilon) &&
+               equalsEpsilon(left.z(), right.z(), relativeEpsilon, absoluteEpsilon);
+    }
+
+    static bool equalsEpsilon(const Mat4& left,
+                              const Mat4& right,
+                              double relativeEpsilon) noexcept {
+        return equalsEpsilon(left, right, relativeEpsilon, relativeEpsilon);
+    }
+
+    static bool equalsEpsilon(const Mat4& left,
+                              const Mat4& right,
+                              double relativeEpsilon,
+                              double absoluteEpsilon) noexcept {
+        for (int row = 0; row < 4; ++row) {
+            for (int col = 0; col < 4; ++col) {
+                if (!equalsEpsilon(left(row, col),
+                                   right(row, col),
+                                   relativeEpsilon,
+                                   absoluteEpsilon)) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     static constexpr double sign(double value) noexcept {
