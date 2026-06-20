@@ -43,6 +43,22 @@ TEST(Mat4Test, TransformPointUsesCesiumNativeWOneSemantics) {
                    1e-12);
 }
 
+TEST(Mat4Test, TransformPointAppliesHomogeneousPerspectiveDivide) {
+    // Source-derived from cesium-native's GLM matrix/vector semantics:
+    // points are transformed with w=1 and converted back from homogeneous
+    // coordinates, so non-affine matrices must divide xyz by the resulting w.
+    glm::dmat4 raw(1.0);
+    raw[0][0] = 4.0;
+    raw[1][1] = 6.0;
+    raw[2][2] = 8.0;
+    raw[3][3] = 2.0;
+    const Mat4 transform(raw);
+
+    expectVec3Near(transform.transformPoint(Vec3(1.0, 2.0, 3.0)),
+                   Vec3(2.0, 6.0, 12.0),
+                   1e-12);
+}
+
 TEST(Mat4Test, TransformVectorUsesCesiumNativeWZeroSemantics) {
     const Mat4 transform =
         Mat4::translation(Vec3(10.0, 20.0, 30.0)) *
