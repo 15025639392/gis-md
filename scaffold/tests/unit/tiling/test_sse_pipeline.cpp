@@ -19478,6 +19478,85 @@ void testTileLoadSchedulerSkipsKnownEmptyContentBeforeInflightBlock() {
     }
 }
 
+void testTileLoadSchedulerBlocksTerrainFanoutOverInflightCapacity() {
+    class FanoutTerrainProvider final : public TerrainProvider {
+    public:
+        std::string id() const override { return "scheduler-fanout-terrain"; }
+        std::string schemeId() const override { return "test"; }
+        int minZoom() const override { return 0; }
+        int maxZoom() const override { return 1; }
+        int tileSize() const override { return 2; }
+        std::string buildUrl(const TileKey&) const override {
+            return "memory://scheduler-fanout-terrain";
+        }
+        int estimatedRequestFanout(const TileKey&) const override {
+            return 2;
+        }
+        void requestTile(const TileKey&,
+                         CancellationToken,
+                         HeightmapCallback,
+                         HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+        }
+        std::unique_ptr<DecodedHeightmap> decodeTile(
+            const uint8_t*,
+            size_t) override {
+            return nullptr;
+        }
+        int requestCount = 0;
+    };
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 2;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    CancellationToken token;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        check(lifecycle.requestState().beginTerrainRequest("busy", token),
+              "TileLoadScheduler: fanout test starts one inflight request");
+    }
+    const TileKey key{"test", 0, 0, 0};
+    FanoutTerrainProvider provider;
+    bool marked = false;
+
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                &provider,
+                nullptr},
+            testCacheKeyForTile,
+            [](const TileKey&,
+               const std::string&,
+               TilesetTile*& tileState) {
+                tileState = nullptr;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.terrainProviderSupportsTile = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [&marked](const TileKey&) { marked = true; });
+
+    check(outcome.issued == 0 && outcome.blockedByInflight,
+          "TileLoadScheduler: terrain fanout that exceeds inflight capacity blocks request loop");
+    check(provider.requestCount == 0 && !marked &&
+              lifecycle.pendingRequestCount() == 1,
+          "TileLoadScheduler: fanout inflight block has no request side effects");
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().completeTerrainRequest("busy");
+    }
+}
+
 void testTileLoadSchedulerSortsAndQueuesUpsampledTerrain() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -25234,6 +25313,7 @@ int main() {
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeInflightBlock();
     testTileLoadSchedulerSkipsEmptyCacheKeyBeforeInflightBlock();
     testTileLoadSchedulerSkipsKnownEmptyContentBeforeInflightBlock();
+    testTileLoadSchedulerBlocksTerrainFanoutOverInflightCapacity();
     testTileLoadSchedulerSortsAndQueuesUpsampledTerrain();
     testTileLoadSchedulerSkipsEmptyUpsampledCacheKey();
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation();
