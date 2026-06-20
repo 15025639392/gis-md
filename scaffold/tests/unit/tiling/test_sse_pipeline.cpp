@@ -4675,6 +4675,25 @@ void testQuantizedMeshWaterMaskExtensions() {
               duplicate->waterMask.data.empty(),
           "QuantizedMeshParser: later one-byte water mask replaces earlier 256x256 mask like cesium-native");
 
+    std::vector<uint8_t> unknownThenWaterBytes = makeQuantizedMeshBytes();
+    appendPod<uint8_t>(unknownThenWaterBytes, 99);
+    appendPod<uint32_t>(unknownThenWaterBytes, 3);
+    appendPod<uint8_t>(unknownThenWaterBytes, 11);
+    appendPod<uint8_t>(unknownThenWaterBytes, 22);
+    appendPod<uint8_t>(unknownThenWaterBytes, 33);
+    appendPod<uint8_t>(unknownThenWaterBytes, 2);
+    appendPod<uint32_t>(unknownThenWaterBytes, 1);
+    appendPod<uint8_t>(unknownThenWaterBytes, 255);
+    std::unique_ptr<SurfaceTileMesh> unknownThenWater =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            unknownThenWaterBytes.data(),
+            unknownThenWaterBytes.size(),
+            bounds,
+            true);
+    check(unknownThenWater && unknownThenWater->waterMask.allWater &&
+              !unknownThenWater->waterMask.allLand,
+          "QuantizedMeshParser: unknown extensions are skipped before later known extensions like cesium-native");
+
     std::unique_ptr<SurfaceTileMesh> disabled =
         QuantizedMeshParser::parseToSurfaceTileMesh(
             allWaterBytes.data(),
