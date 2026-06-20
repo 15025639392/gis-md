@@ -13,6 +13,7 @@
 #include "../providers/QuantizedMeshTerrainProvider.h"
 #include "../providers/TileMapServiceImageryProvider.h"
 #include "../providers/TileMapServiceUrl.h"
+#include "../providers/WebMapServiceImageryProvider.h"
 #include "../providers/XYZImageryProvider.h"
 #include "../renderer/RenderDevice.h"
 #include "../scene/Camera.h"
@@ -170,6 +171,33 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
                                       std::move(source.provider),
                                       std::move(source.scheme),
                                       options);
+            continue;
+        }
+
+        if (overlayConfig.imageryKind == ImagerySourceKind::WebMapService) {
+            WebMapServiceImageryOptions wmsOptions;
+            wmsOptions.version = overlayConfig.wmsVersion;
+            wmsOptions.layers = overlayConfig.wmsLayers;
+            wmsOptions.format = overlayConfig.wmsFormat;
+            wmsOptions.minimumLevel = overlayConfig.minimumZoom;
+            wmsOptions.maximumLevel = overlayConfig.maximumZoom;
+            if (overlayConfig.imageryTileWidth > 0) {
+                wmsOptions.tileWidth = overlayConfig.imageryTileWidth;
+            }
+            if (overlayConfig.imageryTileHeight > 0) {
+                wmsOptions.tileHeight = overlayConfig.imageryTileHeight;
+            }
+
+            auto wms = std::make_unique<WebMapServiceImageryProvider>(
+                overlayConfig.urlTemplate,
+                std::move(wmsOptions),
+                overlayConfig.attribution);
+            wms->setPlatformBridge(&platformBridge_);
+            addActivatedRasterOverlay(
+                rasterOverlays,
+                std::move(wms),
+                TileScheme::createGeographicTMS(),
+                makeRasterOverlayOptions(overlayConfig));
             continue;
         }
 

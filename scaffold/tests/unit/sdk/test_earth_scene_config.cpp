@@ -27,23 +27,17 @@ TEST(EarthSceneConfig, StoresSceneSourceDefinitions) {
         false,
     };
     config.tileset = {4.0, 2.0};
-    config.rasterOverlays.push_back({
-        ImagerySourceKind::Xyz,
-        "http://imagery.example/{z}/{x}/{y}.png",
-        "",
-        "imagery",
-        0,
-        18,
-        0,
-        0,
-        20,
-        2.0,
-        0.92f,
-        RasterOverlayRole::AnnotationOverlay,
-        RasterOverlayPriority::Low,
-        RasterOverlayFallbackPolicy::SkipUntilReady,
-        false,
-    });
+    RasterOverlaySourceConfig imagery;
+    imagery.imageryKind = ImagerySourceKind::Xyz;
+    imagery.urlTemplate = "http://imagery.example/{z}/{x}/{y}.png";
+    imagery.attribution = "imagery";
+    imagery.maximumZoom = 18;
+    imagery.opacity = 0.92f;
+    imagery.role = RasterOverlayRole::AnnotationOverlay;
+    imagery.priority = RasterOverlayPriority::Low;
+    imagery.fallbackPolicy = RasterOverlayFallbackPolicy::SkipUntilReady;
+    imagery.blocksCompleteRenderable = false;
+    config.rasterOverlays.push_back(imagery);
     config.fixedSimulationJulianDate = 2461188.75;
 
     EarthSceneConfig copied = config;
@@ -64,12 +58,12 @@ TEST(EarthSceneConfig, StoresSceneSourceDefinitions) {
 
 TEST(EarthSceneConfig, StoresTileMapServiceImagerySourceDefinitions) {
     EarthSceneConfig config;
-    config.rasterOverlays.push_back({
-        ImagerySourceKind::TileMapService,
-        "",
-        "https://example.com/tms/tilemapresource.xml",
-        "tms attribution",
-    });
+    RasterOverlaySourceConfig overlay;
+    overlay.imageryKind = ImagerySourceKind::TileMapService;
+    overlay.tileMapResourceUrl =
+        "https://example.com/tms/tilemapresource.xml";
+    overlay.attribution = "tms attribution";
+    config.rasterOverlays.push_back(overlay);
 
     ASSERT_EQ(1u, config.rasterOverlays.size());
     EXPECT_EQ(ImagerySourceKind::TileMapService,
@@ -77,4 +71,33 @@ TEST(EarthSceneConfig, StoresTileMapServiceImagerySourceDefinitions) {
     EXPECT_EQ("https://example.com/tms/tilemapresource.xml",
               config.rasterOverlays[0].tileMapResourceUrl);
     EXPECT_EQ("tms attribution", config.rasterOverlays[0].attribution);
+}
+
+TEST(EarthSceneConfig, StoresWebMapServiceImagerySourceDefinitions) {
+    EarthSceneConfig config;
+    RasterOverlaySourceConfig overlay;
+    overlay.imageryKind = ImagerySourceKind::WebMapService;
+    overlay.urlTemplate = "https://example.com/wms";
+    overlay.attribution = "wms attribution";
+    overlay.minimumZoom = 1;
+    overlay.maximumZoom = 12;
+    overlay.wmsVersion = "1.1.1";
+    overlay.wmsLayers = "imagery,labels";
+    overlay.wmsFormat = "image/jpeg";
+    overlay.imageryTileWidth = 512;
+    overlay.imageryTileHeight = 256;
+    config.rasterOverlays.push_back(overlay);
+
+    ASSERT_EQ(1u, config.rasterOverlays.size());
+    const RasterOverlaySourceConfig& copied = config.rasterOverlays[0];
+    EXPECT_EQ(ImagerySourceKind::WebMapService, copied.imageryKind);
+    EXPECT_EQ("https://example.com/wms", copied.urlTemplate);
+    EXPECT_EQ("wms attribution", copied.attribution);
+    EXPECT_EQ(1, copied.minimumZoom);
+    EXPECT_EQ(12, copied.maximumZoom);
+    EXPECT_EQ("1.1.1", copied.wmsVersion);
+    EXPECT_EQ("imagery,labels", copied.wmsLayers);
+    EXPECT_EQ("image/jpeg", copied.wmsFormat);
+    EXPECT_EQ(512, copied.imageryTileWidth);
+    EXPECT_EQ(256, copied.imageryTileHeight);
 }

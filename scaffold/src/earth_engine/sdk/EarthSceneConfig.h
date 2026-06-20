@@ -16,7 +16,8 @@ enum class TerrainSourceKind {
 enum class ImagerySourceKind {
     Debug,
     Xyz,
-    TileMapService
+    TileMapService,
+    WebMapService
 };
 
 struct SceneCameraConfig {
@@ -59,6 +60,11 @@ struct RasterOverlaySourceConfig {
     RasterOverlayFallbackPolicy fallbackPolicy =
         RasterOverlayFallbackPolicy::AncestorOrPlaceholder;
     bool blocksCompleteRenderable = true;
+    std::string wmsVersion = "1.3.0";
+    std::string wmsLayers;
+    std::string wmsFormat = "image/png";
+    int imageryTileWidth = 0;
+    int imageryTileHeight = 0;
 };
 
 struct GltfSourceConfig {
