@@ -4875,6 +4875,24 @@ void testQuantizedMeshLayerJsonVersionAndExtensionQuery() {
               "https://example.invalid/terrain/1/1/0.terrain?extensions=metadata&v=2",
           "QuantizedMeshTerrainProvider: extensions query is replaced like cesium-native UriQuery");
 
+    QuantizedMeshTerrainProvider prefixProvider("https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string prefixLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain?myextensions=old&v={version}"],
+      "version": "2",
+      "extensions": ["metadata"],
+      "minzoom": 0,
+      "maxzoom": 4
+    })json";
+    check(prefixProvider.configureFromLayerJson(
+              prefixLayerJson, "https://example.invalid/terrain/layer.json"),
+          "QuantizedMeshTerrainProvider: prefixed extension query layer configures");
+    check(prefixProvider.buildUrl(TileKey{"Geographic-TMS", 1, 1, 0}) ==
+              "https://example.invalid/terrain/1/1/0.terrain?myextensions=old&v=2&extensions=metadata",
+          "QuantizedMeshTerrainProvider: extension query replacement matches exact key like cesium-native UriQuery");
+
     QuantizedMeshTerrainProvider unknownProvider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
     const std::string unknownLayerJson = R"json({

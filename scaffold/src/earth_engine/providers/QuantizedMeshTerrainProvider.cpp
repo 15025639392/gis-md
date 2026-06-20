@@ -526,9 +526,27 @@ void setQueryParameter(std::string& url,
         return;
     }
 
-    const std::string needle = name + "=";
-    size_t pos = url.find(needle, queryStart + 1);
-    if (pos == std::string::npos) {
+    size_t pos = queryStart + 1;
+    bool found = false;
+    while (pos <= url.size()) {
+        const size_t valueStart = url.find('=', pos);
+        const size_t paramEnd = url.find('&', pos);
+        const size_t keyEnd =
+            valueStart == std::string::npos ||
+                    (paramEnd != std::string::npos && valueStart > paramEnd)
+                ? paramEnd
+                : valueStart;
+        if (keyEnd == std::string::npos) break;
+        if (url.compare(pos, keyEnd - pos, name) == 0) {
+            found = true;
+            break;
+        }
+        if (paramEnd == std::string::npos) {
+            break;
+        }
+        pos = paramEnd + 1;
+    }
+    if (!found) {
         url += "&" + assignment;
         return;
     }
