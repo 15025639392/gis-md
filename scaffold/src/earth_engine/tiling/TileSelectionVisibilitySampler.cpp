@@ -5,17 +5,25 @@
 #include "TileSelectionCullingPolicy.h"
 #include "TilesetTile.h"
 
+#include <optional>
+
 namespace earth_engine {
 
 bool TileSelectionVisibilitySampler::boundsVisible(
     const TilesetTile& tile,
     const std::vector<SelectorView>& views,
     const TileSelectionVisibilityContext& context) {
-    if (context.renderTilesUnderCamera &&
-        tile.bounds.contains(
-            context.cameraLongitude,
-            context.cameraLatitude)) {
-        return true;
+    if (context.renderTilesUnderCamera) {
+        const std::optional<Rectangle> cameraTestBounds =
+            tile.boundingVolume
+            ? tile.boundingVolume->estimateGlobeRectangle()
+            : std::optional<Rectangle>(tile.bounds);
+        if (cameraTestBounds &&
+            cameraTestBounds->contains(
+                context.cameraLongitude,
+                context.cameraLatitude)) {
+            return true;
+        }
     }
 
     for (const auto& view : views) {

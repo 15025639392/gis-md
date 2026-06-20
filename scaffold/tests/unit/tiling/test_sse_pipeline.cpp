@@ -16978,6 +16978,23 @@ void testTileSelectionVisibilitySamplerUsesCameraAndChildBounds() {
             disabledCameraContext);
     check(!disabledSample.visibleFromCamera && !disabledSample.inFrustum,
           "TileSelectionVisibilitySampler: disabled render-under-camera requires frustum");
+
+    TilesetTile explicitVolumeTile(
+        TileKey{"test", 0, 2, 0},
+        Rectangle{2.0, 2.0, 3.0, 3.0});
+    explicitVolumeTile.boundingVolume =
+        TileBoundingVolume::fromRegion(
+            Rectangle{-0.25, -0.25, 0.25, 0.25},
+            0.0,
+            0.0);
+    const TileSelectionVisibilitySample explicitVolumeSample =
+        TileSelectionVisibilitySampler::sampleTileBounds(
+            explicitVolumeTile,
+            noViews,
+            cameraContext);
+    check(explicitVolumeSample.visibleFromCamera &&
+              !explicitVolumeSample.inFrustum,
+          "TileSelectionVisibilitySampler: render-under-camera uses explicit bounding volume like cesium-native");
 }
 
 void testTileSelectionVisibilitySamplerChoosesSelectionBoundsLikeNative() {
