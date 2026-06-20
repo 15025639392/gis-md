@@ -160,6 +160,35 @@ struct TilesetTestAccess {
                    terrainCacheKey(tileset, key)) > 0;
     }
 
+    static bool containsPendingWorkFor(Tileset& tileset,
+                                       const TileKey& key) {
+        return tileset.contentLifecycle_
+            .loadLifecycle()
+            .containsWorkForCacheKey(terrainCacheKey(tileset, key));
+    }
+
+    static bool claimContentUpload(Tileset& tileset, const TileKey& key) {
+        FrameResourceBudgetConfig config;
+        config.maxMainThreadFinalizesPerFrame = 1;
+        FrameResourceBudget budget;
+        budget.beginFrame(1, config);
+        const std::string cacheKey = terrainCacheKey(tileset, key);
+        std::lock_guard<std::mutex> lock(
+            tileset.contentLifecycle_.loadLifecycle().mutex());
+        tileset.contentLifecycle_.loadLifecycle().pendingLoads().addContentUpload(
+            PendingContentUpload{
+                key,
+                cacheKey,
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadResult::empty()});
+        return tileset.contentLifecycle_
+            .loadLifecycle()
+            .pendingLoads()
+            .takeHighestPriorityUpload(false, budget)
+            .has_value();
+    }
+
     static void ensureTileChildren(Tileset& tileset, TilesetTile& tile) {
         tileset.contentAccess_.ensureTileChildren(tile);
     }
@@ -28201,6 +28230,39 @@ void testTilesetClearChildrenErasesFlatMapDescendants() {
           "Tileset: recreated child is present in parent child list");
 }
 
+void testTilesetClearChildrenErasesClaimedUploadDescendantWork() {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: clear-children claimed upload root tile is created");
+    if (!root) return;
+
+    TilesetTestAccess::putTerrainCache(
+        tileset, rootKey, makeFlatHeightmap(1.0f));
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(!root->children.empty(),
+          "Tileset: clear-children claimed upload setup creates child");
+    if (root->children.empty()) return;
+
+    const TileKey childKey = root->children.front()->key;
+    TilesetTestAccess::queueNormal(tileset, childKey);
+    check(TilesetTestAccess::claimContentUpload(tileset, childKey) &&
+              TilesetTestAccess::containsPendingWorkFor(tileset, childKey),
+          "Tileset: clear-children claimed upload test creates active descendant work");
+
+    TilesetTestAccess::clearChildrenRecursively(tileset, *root);
+
+    check(root->children.empty() &&
+              TilesetTestAccess::findTile(tileset, childKey) == nullptr &&
+              !TilesetTestAccess::loadQueueContainsAny(tileset, childKey) &&
+              !TilesetTestAccess::containsPendingWorkFor(tileset, childKey),
+          "Tileset: clear-children removes claimed descendant work with tile indexes");
+}
+
 void testTilesetClearChildrenIgnoresStaleTerrainCallback() {
     auto provider = std::make_unique<ManualCompletionTerrainProvider>();
     ManualCompletionTerrainProvider* rawProvider = provider.get();
@@ -29089,6 +29151,7 @@ int main() {
     testTilesetUpsampledChildQueuesParentUntilSourceReady();
     testTilesetUpsampledChildFinalizesContentLoadedParent();
     testTilesetClearChildrenErasesFlatMapDescendants();
+    testTilesetClearChildrenErasesClaimedUploadDescendantWork();
     testTilesetClearChildrenIgnoresStaleTerrainCallback();
     testTilesetClearChildrenIgnoresStaleContentCallback();
     testTilesetUnloadKeepsParentWithReferencedDescendant();
