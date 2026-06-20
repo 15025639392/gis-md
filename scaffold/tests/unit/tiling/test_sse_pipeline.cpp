@@ -19019,6 +19019,39 @@ void testTilePendingLoadQueueFiltersNonUrgentDuringInteraction() {
           "TilePendingLoadQueue: skipped non-urgent upload remains queued");
 }
 
+void testTilePendingLoadQueueKeepsUploadWhenFinalizeBudgetBlocks() {
+    TilePendingLoadQueue queue;
+    const TileKey key{"test", 1, 0, 0};
+    FrameResourceBudgetConfig blockedConfig;
+    blockedConfig.maxMainThreadFinalizesPerFrame = 0;
+    FrameResourceBudget blockedBudget;
+    blockedBudget.beginFrame(1, blockedConfig);
+
+    queue.addContentUpload(PendingContentUpload{
+        key,
+        "content",
+        TileLoadPriorityGroup::Urgent,
+        0.0,
+        TileContentLoadResult::failed()});
+
+    std::optional<PendingLoadFinalize> blocked =
+        queue.takeHighestPriorityUpload(false, blockedBudget);
+    check(!blocked && queue.contentUploadCount() == 1 &&
+              queue.containsCacheKey("content"),
+          "TilePendingLoadQueue: finalize budget block keeps upload pending");
+
+    FrameResourceBudgetConfig retryConfig;
+    retryConfig.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget retryBudget;
+    retryBudget.beginFrame(2, retryConfig);
+    std::optional<PendingLoadFinalize> retry =
+        queue.takeHighestPriorityUpload(false, retryBudget);
+    check(retry && retry->kind == PendingLoadFinalizeKind::Content &&
+              retry->contentUpload &&
+              retry->contentUpload->cacheKey == "content",
+          "TilePendingLoadQueue: upload blocked by previous frame budget remains retryable");
+}
+
 void testTilePendingLoadQueueTakesTerminalResultsByPriority() {
     TilePendingLoadQueue queue;
     const TileKey lowKey{"test", 1, 0, 0};
@@ -28072,6 +28105,7 @@ int main() {
     testTileFrameWorkCoordinatorReselectsDuringActiveInteraction();
     testTilePendingLoadQueueUsesSharedPriorityOrder();
     testTilePendingLoadQueueFiltersNonUrgentDuringInteraction();
+    testTilePendingLoadQueueKeepsUploadWhenFinalizeBudgetBlocks();
     testTilePendingLoadQueueTakesTerminalResultsByPriority();
     testTilePendingLoadQueueRejectsEmptyCacheKeys();
     testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads();
