@@ -969,6 +969,52 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
     return bytes;
 }
 
+std::vector<uint8_t> makeLargeUint16QuantizedMeshBytesWithSkirts() {
+    constexpr uint32_t vertexCount = 65535u;
+    std::vector<uint8_t> bytes;
+    bytes.reserve(92u + vertexCount * 6u + 64u);
+
+    for (int i = 0; i < 3; ++i) appendPod<double>(bytes, 0.0);
+    appendPod<float>(bytes, 0.0f);
+    appendPod<float>(bytes, 100.0f);
+    for (int i = 0; i < 7; ++i) appendPod<double>(bytes, 0.0);
+    appendPod<uint32_t>(bytes, vertexCount);
+
+    appendPod<uint16_t>(bytes, zigZagEncode16(0));
+    appendPod<uint16_t>(bytes, zigZagEncode16(32767));
+    appendPod<uint16_t>(bytes, zigZagEncode16(-32767));
+    for (uint32_t i = 3; i < vertexCount; ++i) {
+        appendPod<uint16_t>(bytes, zigZagEncode16(0));
+    }
+
+    appendPod<uint16_t>(bytes, zigZagEncode16(0));
+    appendPod<uint16_t>(bytes, zigZagEncode16(0));
+    appendPod<uint16_t>(bytes, zigZagEncode16(32767));
+    for (uint32_t i = 3; i < vertexCount; ++i) {
+        appendPod<uint16_t>(bytes, zigZagEncode16(0));
+    }
+
+    for (uint32_t i = 0; i < vertexCount; ++i) {
+        appendPod<uint16_t>(bytes, zigZagEncode16(0));
+    }
+
+    appendPod<uint32_t>(bytes, 1);
+    appendPod<uint16_t>(bytes, 0);
+    appendPod<uint16_t>(bytes, 0);
+    appendPod<uint16_t>(bytes, 0);
+
+    auto appendEdge = [&](uint16_t a, uint16_t b) {
+        appendPod<uint32_t>(bytes, 2u);
+        appendPod<uint16_t>(bytes, a);
+        appendPod<uint16_t>(bytes, b);
+    };
+    appendEdge(0, 2);
+    appendEdge(1, 0);
+    appendEdge(1, 2);
+    appendEdge(2, 1);
+    return bytes;
+}
+
 std::vector<uint8_t> makeQuantizedMeshBytesWithHeaderPadding(
     const std::string& metadataJson) {
     std::vector<uint8_t> bytes = makeQuantizedMeshBytes(metadataJson);
@@ -5186,6 +5232,32 @@ void testQuantizedMeshSkirtHeightMatchesCesiumNativeFormula() {
     check(std::abs((top.height() - skirt.height()) - expectedSkirtHeight) <
               1e-6,
           "QuantizedMeshParser: skirt height uses cesium-native geometric-error formula");
+}
+
+void testQuantizedMeshUint16IndicesPromoteForSkirtVertices() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(rootKey);
+    const std::vector<uint8_t> bytes =
+        makeLargeUint16QuantizedMeshBytesWithSkirts();
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            bounds);
+
+    check(mesh != nullptr,
+          "QuantizedMeshParser: large uint16-index mesh with skirts parses");
+    if (!mesh) return;
+
+    const auto maxIndexIt =
+        std::max_element(mesh->indices.begin(), mesh->indices.end());
+    check(mesh->skirtMeta.noSkirtVerticesCount == 65535u &&
+              mesh->vertices.size() > 65535u &&
+              maxIndexIt != mesh->indices.end() &&
+              *maxIndexIt > std::numeric_limits<uint16_t>::max(),
+          "QuantizedMeshParser: uint16 source indices promote to uint32 references when skirts exceed 16-bit vertex range");
 }
 
 void testQuantizedMeshOctEncodedNormalsExtension() {
@@ -23394,6 +23466,7 @@ int main() {
     testQuantizedMeshSkirtIndicesMatchCesiumNativeOrder();
     testQuantizedMeshSkirtVerticesExpandOutsideTileEdges();
     testQuantizedMeshSkirtHeightMatchesCesiumNativeFormula();
+    testQuantizedMeshUint16IndicesPromoteForSkirtVertices();
     testQuantizedMeshOctEncodedNormalsExtension();
     testQuantizedMeshOctEncodedNormalsPreserveArbitraryDirection();
     testQuantizedMeshOctEncodedNormalsIgnoresTrailingExtensionBytes();
