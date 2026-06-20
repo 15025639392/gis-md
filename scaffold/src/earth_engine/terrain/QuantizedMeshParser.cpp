@@ -99,9 +99,9 @@ std::vector<std::array<int, 5>> parseMetadataAvailabilityJson(
 std::unique_ptr<DecodedHeightmap> QuantizedMeshParser::parseAndRasterize(
     const uint8_t* data, size_t len, int outputGridSize) {
 
-    if (len < 88 || !data) {
+    if (len < kHeaderSize || !data) {
 #ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_ERROR, "QMParser", "fail: len=%zu < 88", len);
+        __android_log_print(ANDROID_LOG_ERROR, "QMParser", "fail: len=%zu < %zu", len, kHeaderSize);
 #endif
         return nullptr;
     }

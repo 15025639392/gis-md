@@ -3692,6 +3692,21 @@ void testQuantizedMeshRejectsIllFormedCoreBuffers() {
           "QuantizedMeshParser: ill-formed index buffer rejects like cesium-native");
 }
 
+void testQuantizedMeshRasterizerRejectsHeaderWithoutVertexCount() {
+    for (const size_t byteCount : {size_t{88}, size_t{91}}) {
+        std::vector<uint8_t> headerWithoutVertexCount(byteCount);
+
+        std::unique_ptr<DecodedHeightmap> heightmap =
+            QuantizedMeshParser::parseAndRasterize(
+                headerWithoutVertexCount.data(),
+                headerWithoutVertexCount.size(),
+                64);
+
+        check(heightmap == nullptr,
+              "QuantizedMeshParser: rasterizer rejects incomplete 92-byte header like cesium-native");
+    }
+}
+
 void testQuantizedMeshRejectsEachTruncatedEdge() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -21387,6 +21402,7 @@ int main() {
     testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding();
     testQuantizedMeshRejectsTruncatedEdgeIndices();
     testQuantizedMeshRejectsIllFormedCoreBuffers();
+    testQuantizedMeshRasterizerRejectsHeaderWithoutVertexCount();
     testQuantizedMeshRejectsEachTruncatedEdge();
     testQuantizedMeshParsesUint32IndicesAndEdges();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
