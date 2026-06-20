@@ -18631,6 +18631,38 @@ void testTileLoadLifecycleCountsAndFindsPendingWork() {
           "TileLoadLifecycle: reports idle after requests and loads drain");
 }
 
+void testTileLoadLifecycleCancelErasesTerminalResults() {
+    TileLoadLifecycle lifecycle;
+    const TileKey terrainKey{"test", 0, 0, 0};
+    const TileKey contentKey{"test", 0, 1, 0};
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainTerminalResult(
+            PendingTerrainTerminalResult{
+                terrainKey,
+                "terrain-terminal",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TerrainTileLoadStatus::RetryLater});
+        lifecycle.pendingLoads().addContentTerminalResult(
+            PendingContentTerminalResult{
+                contentKey,
+                "content-terminal",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadStatus::RetryLater});
+    }
+
+    lifecycle.cancelAndEraseCacheKey("terrain-terminal");
+    check(!lifecycle.containsWorkForCacheKey("terrain-terminal") &&
+              lifecycle.containsWorkForCacheKey("content-terminal"),
+          "TileLoadLifecycle: cancel erases only matching terrain terminal result");
+
+    lifecycle.cancelAndEraseCacheKey("content-terminal");
+    check(!lifecycle.hasPendingWork(),
+          "TileLoadLifecycle: cancel erases content terminal result and leaves lifecycle idle");
+}
+
 void testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks() {
     TileLoadLifecycle lifecycle;
     CancellationToken token;
@@ -25643,6 +25675,7 @@ int main() {
     testPendingLoadStateRejectsEmptyCacheKeys();
     testTilePendingRequestStateCancelsAndRejectsDuringDestroy();
     testTileLoadLifecycleCountsAndFindsPendingWork();
+    testTileLoadLifecycleCancelErasesTerminalResults();
     testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks();
     testTileContentLifecycleManagerOwnsLifecycleState();
     testTileContentStateTransitionOwnsLoadAndContentStateChanges();
