@@ -853,6 +853,31 @@ TEST(ImplicitTileIdUtilitiesTest, MortonIndexMatchesCesiumNativeExamples) {
                   OctreeTileID{12, 5, 6, 8}));
 }
 
+TEST(ImplicitTileIdUtilitiesTest,
+     RelativeMortonIndexMatchesCesiumNativeForDeepNonzeroSubtreeRoots) {
+    const TileKey quadtreeRoot{"Geographic-TMS", 4, 3, 5};
+    const TileKey quadtreeDescendant{"Geographic-TMS", 7, 28, 43};
+    EXPECT_EQ((TileKey{"Geographic-TMS", 3, 4, 3}),
+              ImplicitTileIdUtilities::absoluteTileIdToRelative(
+                  quadtreeRoot,
+                  quadtreeDescendant));
+    EXPECT_EQ(26ULL,
+              ImplicitTileIdUtilities::relativeMortonIndex(
+                  quadtreeRoot,
+                  quadtreeDescendant));
+
+    const OctreeTileID octreeRoot{4, 3, 5, 2};
+    const OctreeTileID octreeDescendant{7, 28, 43, 21};
+    EXPECT_EQ((OctreeTileID{3, 4, 3, 5}),
+              ImplicitTileIdUtilities::absoluteTileIdToRelative(
+                  octreeRoot,
+                  octreeDescendant));
+    EXPECT_EQ(342ULL,
+              ImplicitTileIdUtilities::relativeMortonIndex(
+                  octreeRoot,
+                  octreeDescendant));
+}
+
 TEST(ImplicitTileIdUtilitiesTest, LevelDenominatorMatchesCesiumNative) {
     EXPECT_DOUBLE_EQ(1.0, ImplicitTileIdUtilities::levelDenominator(0));
     EXPECT_DOUBLE_EQ(2.0, ImplicitTileIdUtilities::levelDenominator(1));
