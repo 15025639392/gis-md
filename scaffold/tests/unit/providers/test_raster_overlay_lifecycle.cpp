@@ -1149,29 +1149,29 @@ TEST(RasterOverlayLifecycleTest, SurfaceRasterBindingClassifiesAncestorWhileChil
     EXPECT_EQ(binding.tile, parentRaster);
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleCompositionRequiresFullCoverage) {
+TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsNoCoverageAndAcceptsFullCoverage) {
     auto scheme = TileScheme::createXYZWebMercator();
     Rectangle target = scheme->tileToRectangle(
         TileKey{scheme->id(), 1, 0, 0});
-    Rectangle westHalf(
-        target.west(),
+    Rectangle outside(
+        target.east(),
         target.south(),
-        target.west() + target.width() * 0.5,
+        target.east() + target.width() * 0.5,
         target.north());
 
-    std::vector<RasterOverlayTileProvider::RectangleSourceImage> partial;
-    partial.push_back({
+    std::vector<RasterOverlayTileProvider::RectangleSourceImage> noCoverage;
+    noCoverage.push_back({
         TileKey{scheme->id(), 2, 0, 0},
-        westHalf,
+        outside,
         makeImage(2, 2, 10)});
-    auto partialResult =
+    auto noCoverageResult =
         RasterOverlayTileProvider::composeRectangleImages(
             *scheme,
             target,
             2,
-            std::move(partial),
+            std::move(noCoverage),
             8);
-    EXPECT_EQ(nullptr, partialResult);
+    EXPECT_EQ(nullptr, noCoverageResult);
 
     std::vector<RasterOverlayTileProvider::RectangleSourceImage> full;
     full.push_back({
@@ -1240,6 +1240,38 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesSourceMoreDetailFlagLik
     ASSERT_NE(nullptr, result.image);
     EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
               result.moreDetailAvailable);
+}
+
+TEST(RasterOverlayLifecycleTest, RectangleCompositionReturnsCoveredRectangleLikeCesiumNative) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    Rectangle target = scheme->tileToRectangle(
+        TileKey{scheme->id(), 1, 0, 0});
+    Rectangle covered(
+        target.west(),
+        target.south(),
+        target.west() + target.width() * 0.5,
+        target.north());
+
+    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    sources.push_back({
+        TileKey{scheme->id(), 2, 0, 0},
+        covered,
+        makeImage(2, 2, 30),
+        RasterOverlayTile::MoreDetailAvailable::No});
+
+    auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
+        *scheme,
+        target,
+        2,
+        std::move(sources),
+        2,
+        8);
+
+    ASSERT_NE(nullptr, result.image);
+    EXPECT_EQ(2, result.image->width);
+    EXPECT_EQ(2, result.image->height);
+    EXPECT_EQ(covered, result.rectangle);
+    EXPECT_EQ(30, result.image->pixels[0]);
 }
 
 TEST(RasterOverlayLifecycleTest, WebMercatorSourceSamplingUsesProjectedY) {

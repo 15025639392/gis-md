@@ -71,6 +71,7 @@ public:
 
     /// The geographic rectangle covered by this tile.
     const Rectangle& getRectangle() const { return bounds_; }
+    void setRectangle(const Rectangle& bounds) { bounds_ = bounds; }
 
     /// cesium-native RasterOverlayTile::getTargetScreenPixels equivalent.
     /// This is the maximum number of screen pixels the geometry rectangle is

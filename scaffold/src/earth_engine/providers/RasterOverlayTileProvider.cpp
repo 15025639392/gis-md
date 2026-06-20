@@ -565,9 +565,24 @@ RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
         return {};
     }
 
-    int width = static_cast<int>(std::ceil(targetBounds.width() /
+    std::optional<Rectangle> combinedBounds;
+    for (const LoadedSourceImage& source : sources) {
+        std::optional<Rectangle> intersection =
+            targetBounds.computeIntersection(source.bounds);
+        if (!intersection) {
+            continue;
+        }
+        combinedBounds = combinedBounds
+            ? combinedBounds->computeUnion(*intersection)
+            : *intersection;
+    }
+    if (!combinedBounds) {
+        return {};
+    }
+
+    int width = static_cast<int>(std::ceil(combinedBounds->width() /
                                            projectedWidthPerPixel));
-    int height = static_cast<int>(std::ceil(projectedHeight(scheme, targetBounds) /
+    int height = static_cast<int>(std::ceil(projectedHeight(scheme, *combinedBounds) /
                                             projectedHeightPerPixel));
     width = std::clamp(width, 1, maximumTextureSize);
     height = std::clamp(height, 1, maximumTextureSize);
@@ -589,12 +604,12 @@ RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
     for (int y = 0; y < height; ++y) {
         const double v = (static_cast<double>(y) + 0.5) /
                          static_cast<double>(height);
-        const double lat = latitudeAtProjectedV(scheme, targetBounds, v);
+        const double lat = latitudeAtProjectedV(scheme, *combinedBounds, v);
         for (int x = 0; x < width; ++x) {
             const double u = (static_cast<double>(x) + 0.5) /
                              static_cast<double>(width);
-            const double lng = targetBounds.west() +
-                               u * targetBounds.width();
+            const double lng = combinedBounds->west() +
+                               u * combinedBounds->width();
 
             const LoadedSourceImage* source = findSourceForPosition(
                 scheme, sourceByKey, sources, lng, lat, sourceZoom);
@@ -639,6 +654,7 @@ RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
 
     RasterOverlayTileProvider::RectangleCompositionResult result;
     result.image = std::move(output);
+    result.rectangle = *combinedBounds;
     const bool moreDetailAvailable = std::any_of(
         sources.begin(),
         sources.end(),
@@ -662,6 +678,7 @@ RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
 
 using RectangleRequestSuccess =
     std::function<void(std::unique_ptr<DecodedImage>,
+                       Rectangle,
                        RasterOverlayTile::MoreDetailAvailable)>;
 using RectangleRequestFailure = std::function<void()>;
 
@@ -973,7 +990,10 @@ private:
                 maximumLevel,
                 maximumTextureSize);
         if (composed.image) {
-            onSuccess(std::move(composed.image), composed.moreDetailAvailable);
+            onSuccess(
+                std::move(composed.image),
+                composed.rectangle,
+                composed.moreDetailAvailable);
         } else {
             onFailure();
         }
@@ -1295,14 +1315,15 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
     CancellationToken token;
     auto* self = this;
     provider_.requestTile(key, token,
-        [self, ck](const TileKey& /*k*/, std::unique_ptr<DecodedImage> image) {
+        [self, ck](const TileKey& k, std::unique_ptr<DecodedImage> image) {
             std::lock_guard<std::mutex> lock(self->pendingMutex_);
             if (self->activeRasterSourceRequests_ > 0) {
                 --self->activeRasterSourceRequests_;
             }
             self->inFlightRequests_.erase(ck);
             if (image) {
-                self->pendingUploads_.push_back({ck, std::move(image)});
+                self->pendingUploads_.push_back(
+                    {ck, std::move(image), self->scheme_.tileToRectangle(k)});
             } else {
                 // Mark as Failed
                 auto it = self->tiles_.find(ck);
@@ -1441,13 +1462,14 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
         getMinimumLevel(),
         getMaximumLevel(),
         [self, ck](std::unique_ptr<DecodedImage> composed,
+                   Rectangle rectangle,
                    RasterOverlayTile::MoreDetailAvailable moreDetailAvailable) {
             std::lock_guard<std::mutex> providerLock(self->pendingMutex_);
             self->inFlightRequests_.erase(ck);
             self->activeRectangleRequests_.erase(ck);
             logAndroidRasterPipeline("composed", ck, 0, 0);
             self->pendingUploads_.push_back(
-                {ck, std::move(composed), moreDetailAvailable});
+                {ck, std::move(composed), rectangle, moreDetailAvailable});
         },
         [self, ck]() {
             std::lock_guard<std::mutex> providerLock(self->pendingMutex_);
@@ -1570,6 +1592,7 @@ int RasterOverlayTileProvider::processPendingUploads(
                            ? RasterOverlayTile::MoreDetailAvailable::Yes
                            : RasterOverlayTile::MoreDetailAvailable::No);
             tile.setMoreDetailAvailable(moreDetailAvailable);
+            tile.setRectangle(upload.rectangle);
             // cesium-native: transfer texture ownership to the tile.
             // The tile owns its texture; no external cache needed.
             tile.setTexture(std::move(tex));

@@ -66,6 +66,7 @@ public:
 
     struct RectangleCompositionResult {
         std::unique_ptr<DecodedImage> image;
+        Rectangle rectangle;
         RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::No;
     };
@@ -248,6 +249,7 @@ private:
     struct PendingUpload {
         std::string cacheKey;
         std::unique_ptr<DecodedImage> image;
+        Rectangle rectangle;
         RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::Unknown;
     };
