@@ -117,6 +117,14 @@ TEST(RectangleTest, WidthMatchesCesiumNativeWrappedLongitudeSpan) {
     EXPECT_NEAR(10.0 * kDegToRad, wrapping.width(), 1e-14);
 }
 
+TEST(RectangleTest, WidthAndHeightMatchCesiumNativeSimpleCase) {
+    // Ported from cesium-native GlobeRectangle::computeWidth/computeHeight.
+    const Rectangle simple(0.1, 0.2, 0.3, 0.4);
+
+    EXPECT_NEAR(0.2, simple.width(), 1e-14);
+    EXPECT_NEAR(0.2, simple.height(), 1e-14);
+}
+
 TEST(RectangleTest, WidthMatchesCesiumNativeBigWrappedLongitudeSpan) {
     // Equivalent to cesium-native computeNormalizedCoordinates' bigWrapping
     // case: from 179E to 10E spans 191 degrees through +/-180.
@@ -210,6 +218,11 @@ TEST(RectangleTest, SplitAtAntimeridianMatchesCesiumNativeOrdering) {
     Rectangle nonCrossing = Rectangle::fromDegrees(-10.0, -20.0, 30.0, 40.0);
     auto split = nonCrossing.splitAtAntimeridian();
     EXPECT_EQ(nonCrossing, split.first);
+    EXPECT_FALSE(split.second.has_value());
+
+    Rectangle nonCrossing2 = Rectangle::fromDegrees(10.0, -20.0, 30.0, 40.0);
+    split = nonCrossing2.splitAtAntimeridian();
+    EXPECT_EQ(nonCrossing2, split.first);
     EXPECT_FALSE(split.second.has_value());
 
     Rectangle crossing1 = Rectangle::fromDegrees(160.0, -20.0, -170.0, 40.0);
