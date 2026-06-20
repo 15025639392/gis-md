@@ -1931,6 +1931,46 @@ void testQuantizedMeshProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
           "QuantizedMeshTerrainProvider: diagnostics complete async bridge request after cancellation");
 }
 
+void testQuantizedMeshProviderHttpErrorFailsTerminally() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/{z}/{x}/{y}.terrain");
+    BlockingPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool callbackCalled = false;
+    TerrainTileLoadStatus completedStatus = TerrainTileLoadStatus::Success;
+
+    provider.requestTile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        CancellationToken{},
+        [&](const TileKey&, TerrainTileLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completedStatus = result.status;
+                callbackCalled = true;
+            }
+            cv.notify_one();
+        });
+
+    check(bridge.waitUntilEntered(),
+          "QuantizedMeshTerrainProvider: HTTP error test observes terrain request");
+    check(bridge.complete(404),
+          "QuantizedMeshTerrainProvider: HTTP error test completes missing terrain request");
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return callbackCalled; });
+    }
+
+    check(callbackCalled &&
+              completedStatus == TerrainTileLoadStatus::Failed &&
+              provider.requestDiagnostics().requestsCompleted == 1,
+          "QuantizedMeshTerrainProvider: 404 terrain body maps to terminal Failed like cesium-native");
+}
+
 void testQuantizedMeshLayerJsonConfigUsesSeparateBlockingFetcher() {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
@@ -22825,6 +22865,7 @@ int main() {
     testXYZImageryProviderBridgeCompletionDoesNotRunDecodeInline();
     testHeightmapTerrainProviderUsesAsyncBridgeWithoutWorkerBlockingWait();
     testQuantizedMeshProviderUsesAsyncBridgeWithoutWorkerBlockingWait();
+    testQuantizedMeshProviderHttpErrorFailsTerminally();
     testQuantizedMeshLayerJsonConfigUsesSeparateBlockingFetcher();
     testQuantizedMeshProviderFetchesMetadataViaAsyncBridge();
     testQuantizedMeshMetadataFanoutConsumesTerrainRequestBudget();

@@ -1304,7 +1304,7 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                 return;
             }
             if (!isCesiumSuccessfulHttpStatus(statusCode) || body->empty()) {
-                (*callback)(key, TerrainTileLoadResult::retryLater());
+                (*callback)(key, TerrainTileLoadResult::failed());
                 return;
             }
 #ifdef __ANDROID__
