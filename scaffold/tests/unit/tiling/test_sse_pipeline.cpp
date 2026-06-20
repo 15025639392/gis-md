@@ -15406,6 +15406,38 @@ void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
           "TilePendingLoadCommitCoordinator: missing tile uploads release cache keys without resource side effects");
 }
 
+void testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker() {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "test:0:0:0";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
+    PendingContentTerminalResult result{
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileContentLoadStatus::RetryLater};
+    bool childrenEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitContentTerminalResult(
+        result,
+        emptyContentRegistry,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    check(!emptyContentRegistry.contains(cacheKey) &&
+              childrenEnsured &&
+              resourcesDirty &&
+              tile.content.contentKind == TileContentKind::Unknown &&
+              tile.content.loadState == TileLoadState::FailedTemporarily,
+          "TilePendingLoadCommitCoordinator: retry content terminal clears stale empty marker through pending path");
+}
+
 void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
     const TileKey parentKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 1, 0};
@@ -26804,6 +26836,7 @@ int main() {
     testTileTerrainUploadPolicyMarksTerrainRenderContentStates();
     testTileTerrainUploadCommitterAppliesMeshResourceOutcome();
     testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys();
+    testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker();
     testTileRenderPlanFinalizerResolvesAncestorFallbackEntries();
     testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery();
     testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback();
