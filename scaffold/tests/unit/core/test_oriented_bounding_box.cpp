@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <vector>
 #include "earth_engine/core/math/AxisAlignedBox.h"
 #include "earth_engine/core/math/OrientedBoundingBox.h"
@@ -16,6 +17,86 @@ OrientedBoundingBox unitBox() {
                                Vec3(0.5, 0.0, 0.0),
                                Vec3(0.0, 0.5, 0.0),
                                Vec3(0.0, 0.0, 0.5));
+}
+
+std::optional<Plane> transformedPlane(const Vec3& center,
+                                      const Vec3& axis0,
+                                      const Vec3& axis1,
+                                      const Vec3& axis2,
+                                      const Vec3& localNormal,
+                                      double localDistance) {
+    glm::dmat3 axes(axis0.raw(), axis1.raw(), axis2.raw());
+    glm::dvec3 n = localNormal.raw();
+    const glm::dvec3 arbitrary(357.0, 924.0, 258.0);
+    glm::dvec3 p0 = glm::normalize(n) * -localDistance;
+    glm::dvec3 tangent = glm::normalize(glm::cross(n, arbitrary));
+    glm::dvec3 binormal = glm::normalize(glm::cross(n, tangent));
+
+    p0 = axes * p0;
+    tangent = axes * tangent;
+    binormal = axes * binormal;
+
+    glm::dvec3 worldNormal = glm::cross(tangent, binormal);
+    if (glm::length(worldNormal) == 0.0) {
+        return std::nullopt;
+    }
+    worldNormal = glm::normalize(worldNormal);
+
+    const glm::dvec3 worldPoint = p0 + center.raw();
+    const double distance = -glm::dot(worldPoint, worldNormal);
+    if (std::abs(distance) <= 0.0001 ||
+        glm::dot(worldNormal, worldNormal) <= 0.0001) {
+        return std::nullopt;
+    }
+    return Plane(Vec3(worldNormal), distance);
+}
+
+void expectTransformedPlaneClassifications(const Vec3& center,
+                                           const Vec3& axis0,
+                                           const Vec3& axis1,
+                                           const Vec3& axis2) {
+    OrientedBoundingBox box(center, axis0 * 0.5, axis1 * 0.5, axis2 * 0.5);
+    const double edgeDistance = std::sqrt(0.5);
+
+    int checkedPlanes = 0;
+    auto expectIfPlane = [&](const std::optional<Plane>& plane,
+                             int expected) {
+        if (!plane.has_value()) return;
+        ++checkedPlanes;
+        EXPECT_EQ(expected, box.intersectPlane(*plane));
+    };
+
+    std::optional<Plane> plane = transformedPlane(
+        center, axis0, axis1, axis2, Vec3(1.0, 0.0, 0.0), 0.50001);
+    expectIfPlane(plane, 1);
+
+    plane = transformedPlane(
+        center, axis0, axis1, axis2, Vec3(1.0, 0.0, 0.0), 0.49999);
+    expectIfPlane(plane, 0);
+
+    plane = transformedPlane(
+        center, axis0, axis1, axis2, Vec3(1.0, 0.0, 0.0), -0.50001);
+    expectIfPlane(plane, -1);
+
+    plane = transformedPlane(
+        center,
+        axis0,
+        axis1,
+        axis2,
+        Vec3(1.0, 1.0, 0.0),
+        edgeDistance + 0.00001);
+    expectIfPlane(plane, 1);
+
+    plane = transformedPlane(
+        center,
+        axis0,
+        axis1,
+        axis2,
+        Vec3(1.0, 1.0, 0.0),
+        -edgeDistance - 0.00001);
+    expectIfPlane(plane, -1);
+
+    EXPECT_GT(checkedPlanes, 0);
 }
 } // namespace
 
@@ -63,6 +144,51 @@ TEST(OrientedBoundingBoxTest, IntersectPlaneMatchesCesiumNativeCornerCase) {
     EXPECT_EQ(0, box.intersectPlane(Plane(normal, cornerDistance - 0.00001)));
     EXPECT_EQ(0, box.intersectPlane(Plane(normal, -cornerDistance + 0.00001)));
     EXPECT_EQ(-1, box.intersectPlane(Plane(normal, -cornerDistance - 0.00001)));
+}
+
+TEST(OrientedBoundingBoxTest, IntersectPlaneMatchesCesiumNativeTransformedCases) {
+    // Ported from cesium-native
+    // CesiumGeometry/test/TestOrientedBoundingBox.cpp transformed cases.
+    expectTransformedPlaneClassifications(
+        Vec3(1.0, 0.0, 0.0),
+        Vec3::unitX(),
+        Vec3::unitY(),
+        Vec3::unitZ());
+
+    const Mat4 rotation =
+        Mat4::rotationZ(1.2) * Mat4::rotationY(0.5) * Mat4::rotationX(-1.2);
+    expectTransformedPlaneClassifications(
+        Vec3::zero(),
+        rotation.transformVector(Vec3::unitX()),
+        rotation.transformVector(Vec3::unitY()),
+        rotation.transformVector(Vec3::unitZ()));
+
+    expectTransformedPlaneClassifications(
+        Vec3(-5.1, 0.0, 0.1),
+        rotation.transformVector(Vec3(1.5, 0.0, 0.0)),
+        rotation.transformVector(Vec3(0.0, 80.4, 0.0)),
+        rotation.transformVector(Vec3(0.0, 0.0, 2.6)));
+}
+
+TEST(OrientedBoundingBoxTest, IntersectPlaneSkipsSingularPlaneLikeCesiumNative) {
+    // Cesium-native's transformed-plane test treats singular test planes as
+    // absent; the box intersection itself remains defined for zero half axes.
+    const Vec3 center = Vec3::zero();
+    const std::optional<Plane> singularPlane = transformedPlane(
+        center,
+        Vec3::zero(),
+        Vec3(0.0, 0.4, 0.0),
+        Vec3(0.0, 0.0, 20.6),
+        Vec3(1.0, 0.0, 0.0),
+        0.50001);
+    EXPECT_FALSE(singularPlane.has_value());
+
+    OrientedBoundingBox box(center,
+                            Vec3::zero(),
+                            Vec3(0.0, 0.2, 0.0),
+                            Vec3(0.0, 0.0, 10.3));
+    EXPECT_EQ(1, box.intersectPlane(Plane(Vec3::unitX(), 0.00001)));
+    EXPECT_EQ(-1, box.intersectPlane(Plane(Vec3::unitX(), -0.00001)));
 }
 
 TEST(OrientedBoundingBoxTest, DistanceSquaredToPositionClampsToBox) {
