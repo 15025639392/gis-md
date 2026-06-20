@@ -27140,6 +27140,8 @@ void testTileSelectionMetricsFogMatchesCesiumNativeRules() {
           "TileSelectionMetrics: empty fog table disables fog");
     check(TileSelectionMetrics::isVisibleInFog(1000.0, 0.0),
           "TileSelectionMetrics: non-positive fog density is visible");
+    check(!TileSelectionMetrics::isVisibleInFog(-1.0e200, 1.0),
+          "TileSelectionMetrics: negative distance follows cesium-native fog equation");
     check(!TileSelectionMetrics::isVisibleInFog(1.0e200, 1.0),
           "TileSelectionMetrics: overflowing dense fog culls tile");
 }
