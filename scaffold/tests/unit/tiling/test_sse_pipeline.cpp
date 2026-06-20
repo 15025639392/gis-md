@@ -20265,6 +20265,51 @@ void testTileLoadLifecycleCancelErasesPendingUploads() {
           "TileLoadLifecycle: cancel erases content upload and leaves lifecycle idle");
 }
 
+void testTileLoadLifecycleCancelErasesClaimedUploads() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 2;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey terrainKey{"test", 0, 0, 0};
+    const TileKey contentKey{"test", 0, 1, 0};
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            terrainKey,
+            "terrain-upload",
+            TileLoadPriorityGroup::Urgent,
+            100.0,
+            std::make_unique<DecodedHeightmap>()});
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            contentKey,
+            "content-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileContentLoadResult::empty()});
+        check(lifecycle.pendingLoads()
+                  .takeHighestPriorityUpload(false, budget)
+                  .has_value(),
+              "TileLoadLifecycle: claimed cancel test dequeues first upload");
+        check(lifecycle.pendingLoads()
+                  .takeHighestPriorityUpload(false, budget)
+                  .has_value(),
+              "TileLoadLifecycle: claimed cancel test dequeues second upload");
+    }
+    check(lifecycle.containsWorkForCacheKey("terrain-upload") &&
+              lifecycle.containsWorkForCacheKey("content-upload"),
+          "TileLoadLifecycle: claimed upload keys remain visible before cancellation");
+
+    lifecycle.cancelAndEraseCacheKey("terrain-upload");
+    check(!lifecycle.containsWorkForCacheKey("terrain-upload") &&
+              lifecycle.containsWorkForCacheKey("content-upload"),
+          "TileLoadLifecycle: cancel erases only matching claimed terrain upload");
+
+    lifecycle.cancelAndEraseCacheKey("content-upload");
+    check(!lifecycle.hasPendingWork(),
+          "TileLoadLifecycle: cancel erases claimed content upload and leaves lifecycle idle");
+}
+
 void testTileLoadLifecycleCancelIgnoresEmptyCacheKey() {
     TileLoadLifecycle lifecycle;
     CancellationToken requestToken;
@@ -29177,6 +29222,7 @@ int main() {
     testTileLoadLifecycleCountsAndFindsPendingWork();
     testTileLoadLifecycleEmptyBatchQueryIsNoOp();
     testTileLoadLifecycleCancelErasesPendingUploads();
+    testTileLoadLifecycleCancelErasesClaimedUploads();
     testTileLoadLifecycleCancelIgnoresEmptyCacheKey();
     testTileLoadLifecycleCancelErasesTerminalResults();
     testTileLoadLifecycleCancelErasesActiveRequests();
