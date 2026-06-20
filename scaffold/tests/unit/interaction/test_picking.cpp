@@ -76,6 +76,22 @@ TEST_F(PickingServiceTest, PickReturnsCartographic) {
     EXPECT_LE(result.cartographic.latitude(), M_PI_2);
 }
 
+TEST_F(PickingServiceTest, PickTerrainTreatsZeroHeightAsTerrainHit) {
+    auto result = service_->pickTerrain(
+        400,
+        300,
+        *camera_,
+        800,
+        600,
+        [](double, double) {
+            return 0.0f;
+        });
+
+    EXPECT_EQ(PickResult::HitType::Terrain, result.hitType);
+    EXPECT_TRUE(result.isValid());
+    EXPECT_FLOAT_EQ(0.0f, result.terrainHeight);
+}
+
 TEST_F(PickingServiceTest, RayTriangleMatchesNativeBackFaceAndOriginHits) {
     const Vec3 v0(-1.0, 0.0, 0.0);
     const Vec3 v1(1.0, 0.0, 0.0);

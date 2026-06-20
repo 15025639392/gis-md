@@ -297,19 +297,22 @@ PickResult PickingService::pickTerrain(
             static_cast<float>(result.cartographic.longitude()),
             static_cast<float>(result.cartographic.latitude()));
 
-        if (h != 0.0f) {
-            result.hitType = PickResult::HitType::Terrain;
-            result.terrainHeight = h;
+        result.hitType = PickResult::HitType::Terrain;
+        result.terrainHeight = h;
+        result.cartographic = Cartographic::fromRadians(
+            result.cartographic.longitude(),
+            result.cartographic.latitude(),
+            static_cast<double>(h));
 
-            // 更新世界位置：沿法线位移
-            const auto& e = Ellipsoid::WGS84();
-            auto surfacePt = e.cartographicToCartesian(result.cartographic);
-            auto normal = e.geodeticSurfaceNormal(result.cartographic);
-            result.worldPosition = Vec3(
-                surfacePt.x() + normal.x() * static_cast<double>(h),
-                surfacePt.y() + normal.y() * static_cast<double>(h),
-                surfacePt.z() + normal.z() * static_cast<double>(h));
-        }
+        const auto& e = Ellipsoid::WGS84();
+        result.worldPosition = e.cartographicToCartesian(result.cartographic);
+
+        Ray ray = camera.getPickRay(
+            static_cast<double>(screenXPixels),
+            static_cast<double>(screenYPixels),
+            viewportWidthPixels,
+            viewportHeightPixels);
+        result.distance = (result.worldPosition - ray.origin()).length();
     }
 
     return result;
