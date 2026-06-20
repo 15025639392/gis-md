@@ -3631,6 +3631,47 @@ void testQuantizedMeshRejectsTruncatedEdgeIndices() {
           "QuantizedMeshParser: truncated edge indices reject ill-formed quantized mesh like cesium-native");
 }
 
+void testQuantizedMeshRejectsIllFormedCoreBuffers() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(rootKey);
+
+    std::vector<uint8_t> shortHeader(32);
+    std::unique_ptr<SurfaceTileMesh> headerMesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            shortHeader.data(),
+            shortHeader.size(),
+            bounds);
+    check(headerMesh == nullptr,
+          "QuantizedMeshParser: ill-formed header rejects like cesium-native");
+
+    const std::vector<uint8_t> validBytes = makeQuantizedMeshBytes();
+    constexpr size_t afterUBuffer = 92 + 3 * sizeof(uint16_t);
+    std::vector<uint8_t> truncatedVertexData(
+        validBytes.begin(),
+        validBytes.begin() + static_cast<std::ptrdiff_t>(afterUBuffer));
+    std::unique_ptr<SurfaceTileMesh> vertexMesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            truncatedVertexData.data(),
+            truncatedVertexData.size(),
+            bounds);
+    check(vertexMesh == nullptr,
+          "QuantizedMeshParser: ill-formed vertex data rejects like cesium-native");
+
+    constexpr size_t afterTriangleCount =
+        92 + 3 * 3 * sizeof(uint16_t) + sizeof(uint32_t);
+    std::vector<uint8_t> truncatedIndices(
+        validBytes.begin(),
+        validBytes.begin() + static_cast<std::ptrdiff_t>(afterTriangleCount));
+    std::unique_ptr<SurfaceTileMesh> indexMesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            truncatedIndices.data(),
+            truncatedIndices.size(),
+            bounds);
+    check(indexMesh == nullptr,
+          "QuantizedMeshParser: ill-formed index buffer rejects like cesium-native");
+}
+
 void testQuantizedMeshRejectsEachTruncatedEdge() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -21295,6 +21336,7 @@ int main() {
     testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative();
     testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding();
     testQuantizedMeshRejectsTruncatedEdgeIndices();
+    testQuantizedMeshRejectsIllFormedCoreBuffers();
     testQuantizedMeshRejectsEachTruncatedEdge();
     testQuantizedMeshParsesUint32IndicesAndEdges();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
