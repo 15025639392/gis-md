@@ -21223,6 +21223,94 @@ void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
           "TileMissingRequestScheduler: cleared empty marker allows retry request");
 }
 
+void testTileMissingRequestSchedulerRetriesTerrainAfterEmptyMarkerCleared() {
+    class RetryTerrainProvider final : public TerrainProvider {
+    public:
+        std::string id() const override { return "missing-retry-terrain"; }
+        std::string schemeId() const override { return "test"; }
+        int minZoom() const override { return 0; }
+        int maxZoom() const override { return 1; }
+        int tileSize() const override { return 2; }
+        std::string buildUrl(const TileKey&) const override {
+            return "memory://missing-retry-terrain";
+        }
+        void requestTile(const TileKey& key,
+                         CancellationToken,
+                         HeightmapCallback callback,
+                         HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+            callback(key, TerrainTileLoadResult::retryLater());
+        }
+        std::unique_ptr<DecodedHeightmap> decodeTile(
+            const uint8_t*,
+            size_t) override {
+            return nullptr;
+        }
+        int requestCount = 0;
+    };
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    RetryTerrainProvider provider;
+    TileEmptyContentRegistry emptyContentRegistry;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = testCacheKeyForTile(key);
+    auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
+    tile->content.loadState = TileLoadState::FailedTemporarily;
+    TilesetTile* tileRaw = tile.get();
+    tiles[cacheKey] = std::move(tile);
+    emptyContentRegistry.insert(cacheKey);
+
+    auto requestOnce = [&]() {
+        return TileMissingRequestScheduler::request(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileMissingRequestSchedulerInput{
+                lifecycle,
+                budget,
+                &provider,
+                nullptr,
+                tiles,
+                terrainCache,
+                emptyContentRegistry},
+            testCacheKeyForTile,
+            [](TilesetTile&, double) { return false; },
+            [&tiles](const TileKey& tileKey) -> TilesetTile* {
+                const std::string lookupKey = testCacheKeyForTile(tileKey);
+                auto it = tiles.find(lookupKey);
+                return it == tiles.end() ? nullptr : it->second.get();
+            });
+    };
+
+    TileLoadRequestOutcome outcome = requestOnce();
+    check(outcome.issued == 0 &&
+              provider.requestCount == 0 &&
+              tileRaw->content.loadState == TileLoadState::FailedTemporarily,
+          "TileMissingRequestScheduler: stale empty marker blocks terrain retry before terminal correction");
+
+    TileTerminalLoadCommitter::commitTerrainTerminalResult(
+        *tileRaw,
+        cacheKey,
+        TerrainTileLoadStatus::RetryLater,
+        emptyContentRegistry);
+    outcome = requestOnce();
+    check(outcome.issued == 1 &&
+              provider.requestCount == 1 &&
+              lifecycle.counts().terrainTerminalResults == 1 &&
+              tileRaw->content.loadState == TileLoadState::ContentLoading,
+          "TileMissingRequestScheduler: cleared empty marker allows terrain retry request");
+}
+
 void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 2;
@@ -26833,6 +26921,7 @@ int main() {
     testTileLoadSchedulerSkipsDispatcherDuplicateAfterPlanning();
     testTileLoadSchedulerStopsAfterDispatchBudgetBlock();
     testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared();
+    testTileMissingRequestSchedulerRetriesTerrainAfterEmptyMarkerCleared();
     testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds();
     testTileResourceDirtyInvalidatesRevisionAndCacheOnly();
     testTilesetFrameResourceBudgetLimitsWorkerRequests();
