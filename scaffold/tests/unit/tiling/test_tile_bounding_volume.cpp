@@ -429,6 +429,62 @@ TEST(TileBoundingVolumeTest, RegionDistanceMatchesCesiumNative) {
     }
 }
 
+TEST(TileBoundingVolumeTest, DegenerateRegionDistanceMatchesCesiumNative) {
+    struct Case {
+        double longitude;
+        double latitude;
+        double height;
+        double expectedDistance;
+    };
+
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    const Rectangle rectangle(-1.03, 0.2292, -1.03, 0.2292);
+    const TileBoundingVolume region =
+        TileBoundingVolume::fromRegion(rectangle, 0.0, 3.0);
+    const auto distanceFrom = [&ellipsoid](const Case& testCase,
+                                           double longitude,
+                                           double latitude,
+                                           double height) {
+        const Vec3 boxPosition = ellipsoid.cartographicToCartesian(
+            Cartographic::fromRadians(longitude, latitude, height));
+        const Vec3 position = ellipsoid.cartographicToCartesian(
+            Cartographic::fromRadians(
+                testCase.longitude,
+                testCase.latitude,
+                testCase.height));
+        return boxPosition.distanceTo(position);
+    };
+
+    const Case cases[] = {
+        {-1.03, 0.2292, 4.0, 1.0},
+        {-1.03, 0.2292, 3.0, 0.0},
+        {-1.03, 0.2292, 2.0, 0.0},
+        {-1.02, 0.2291, 2.0, 0.0},
+    };
+
+    for (const Case& testCase : cases) {
+        double expectedDistance = testCase.expectedDistance;
+        if (testCase.longitude != rectangle.west() ||
+            testCase.latitude != rectangle.south()) {
+            expectedDistance = distanceFrom(
+                testCase,
+                rectangle.west(),
+                rectangle.south(),
+                2.0);
+        }
+        const Vec3 position = ellipsoid.cartographicToCartesian(
+            Cartographic::fromRadians(
+                testCase.longitude,
+                testCase.latitude,
+                testCase.height));
+        const double epsilon = std::max(1e-6, std::abs(expectedDistance) * 1e-6);
+
+        EXPECT_NEAR(expectedDistance,
+                    TileBoundsMetrics::boundingVolumeDistance(region, position),
+                    epsilon);
+    }
+}
+
 TEST(TileBoundingVolumeTest, SphereConvertsToCircumscribedOrientedBox) {
     const TileBoundingVolume sphere =
         TileBoundingVolume::fromSphere(Vec3(1.0, 2.0, 3.0), 10.0);

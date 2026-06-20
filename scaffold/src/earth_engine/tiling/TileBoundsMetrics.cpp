@@ -416,6 +416,11 @@ double computeBoundingRegionDistanceSquared(
     const BoundingRegionPlanes planes =
         computeBoundingRegionPlanes(bounds, ellipsoid);
     if (!planes.valid) {
+        const std::optional<OrientedBoundingBox> obb =
+            computeBoundingRegionObb(bounds, minimumHeight, maximumHeight);
+        if (obb) {
+            return obb->computeDistanceSquaredToPosition(cameraPosition);
+        }
         const double distance = computeApproximateDistanceToTileBounds(
             bounds,
             cameraPosition,
