@@ -580,3 +580,33 @@ TEST(TileMapServiceUrlTest, ResolvesBesideNonTileMapXmlLikeCesiumNative) {
         tileMapServiceXmlUrl(
             "https://example.com/tms/other.xml?some=parameter#frag"));
 }
+
+TEST(TileMapServiceUrlTest, BuildsTileUrlFromTilesetHrefLikeCesiumNative) {
+    EXPECT_EQ(
+        "https://example.com/tms/3/12/5.png",
+        tileMapServiceTileUrl(
+            "https://example.com/tms/",
+            "3",
+            12,
+            5,
+            ".png"));
+    EXPECT_EQ(
+        "https://example.com/tms/levels/3/12/5.jpg",
+        tileMapServiceTileUrl(
+            "https://example.com/tms/tilemapresource.xml?token=ignored",
+            "levels/3",
+            12,
+            5,
+            ".jpg"));
+}
+
+TEST(TileMapServiceUrlTest, BuildsTileUrlFromAbsoluteTilesetHrefLikeCesiumNative) {
+    EXPECT_EQ(
+        "https://cdn.example.com/tiles/3/12/5.png",
+        tileMapServiceTileUrl(
+            "https://example.com/tms/tilemapresource.xml",
+            "https://cdn.example.com/tiles/3",
+            12,
+            5,
+            ".png"));
+}
