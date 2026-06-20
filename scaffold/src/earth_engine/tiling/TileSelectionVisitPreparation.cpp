@@ -37,7 +37,8 @@ TileSelectionVisitPreparationResult TileSelectionVisitPreparation::prepare(
     }
     result.culledLoadPlan = TileSelectionCullingPolicy::planCulledTileLoad(
         options.preloadSiblings,
-        options.forbidHoles);
+        options.forbidHoles,
+        tile.refine);
     result.viewerRequestVolumeAllowed =
         TileViewerRequestVolumePolicy::allowsAnyView(
             tile.viewerRequestVolume,

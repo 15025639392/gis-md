@@ -18692,19 +18692,38 @@ void testTileSelectionCullingPolicyChecksAnyViewFogVisibility() {
 
 void testTileSelectionCullingPolicyPlansCulledTileLoads() {
     TileSelectionCullLoadPlan plan =
-        TileSelectionCullingPolicy::planCulledTileLoad(false, false);
+        TileSelectionCullingPolicy::planCulledTileLoad(
+            false,
+            false,
+            TileRefine::Replace);
     check(!plan.queueLoad,
           "TileSelectionCullingPolicy: culled tile is not loaded by default");
 
-    plan = TileSelectionCullingPolicy::planCulledTileLoad(true, false);
+    plan = TileSelectionCullingPolicy::planCulledTileLoad(
+        true,
+        false,
+        TileRefine::Replace);
     check(plan.queueLoad && plan.group == TileLoadPriorityGroup::Preload,
           "TileSelectionCullingPolicy: preload siblings queues culled tile as preload");
 
-    plan = TileSelectionCullingPolicy::planCulledTileLoad(false, true);
-    check(plan.queueLoad && plan.group == TileLoadPriorityGroup::Normal,
-          "TileSelectionCullingPolicy: forbid holes queues culled tile normally");
+    plan = TileSelectionCullingPolicy::planCulledTileLoad(
+        false,
+        true,
+        TileRefine::Add);
+    check(!plan.queueLoad,
+          "TileSelectionCullingPolicy: forbid holes does not queue ADD culled tile");
 
-    plan = TileSelectionCullingPolicy::planCulledTileLoad(true, true);
+    plan = TileSelectionCullingPolicy::planCulledTileLoad(
+        false,
+        true,
+        TileRefine::Replace);
+    check(plan.queueLoad && plan.group == TileLoadPriorityGroup::Normal,
+          "TileSelectionCullingPolicy: forbid holes queues REPLACE culled tile normally");
+
+    plan = TileSelectionCullingPolicy::planCulledTileLoad(
+        true,
+        true,
+        TileRefine::Replace);
     check(plan.queueLoad && plan.group == TileLoadPriorityGroup::Normal,
           "TileSelectionCullingPolicy: forbid holes takes priority over sibling preload");
 }

@@ -62,15 +62,21 @@ TileSelectionCullResult TileSelectionCullingPolicy::evaluateFog(
 
 TileSelectionCullLoadPlan TileSelectionCullingPolicy::planCulledTileLoad(
     bool preloadSiblings,
-    bool forbidHoles) {
-    if (!preloadSiblings && !forbidHoles) {
-        return TileSelectionCullLoadPlan{};
+    bool forbidHoles,
+    TileRefine refine) {
+    if (forbidHoles && refine == TileRefine::Replace) {
+        return TileSelectionCullLoadPlan{
+            true,
+            TileLoadPriorityGroup::Normal};
     }
 
-    return TileSelectionCullLoadPlan{
-        true,
-        forbidHoles ? TileLoadPriorityGroup::Normal
-                    : TileLoadPriorityGroup::Preload};
+    if (preloadSiblings) {
+        return TileSelectionCullLoadPlan{
+            true,
+            TileLoadPriorityGroup::Preload};
+    }
+
+    return TileSelectionCullLoadPlan{};
 }
 
 bool TileSelectionCullingPolicy::meetsScreenSpaceError(

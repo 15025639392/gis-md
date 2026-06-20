@@ -46,7 +46,8 @@ struct TileSelectionCullingPolicy {
 
     static TileSelectionCullLoadPlan planCulledTileLoad(
         bool preloadSiblings,
-        bool forbidHoles);
+        bool forbidHoles,
+        TileRefine refine);
 
     static bool meetsScreenSpaceError(
         bool culled,
