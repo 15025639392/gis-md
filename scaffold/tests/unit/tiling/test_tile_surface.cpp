@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <limits>
 #include <optional>
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
@@ -439,6 +440,28 @@ TEST(TileSurfaceTest, UpsampledChildMeshIsClippedFromParentRenderMesh) {
         EXPECT_GE(vertex.uv[1], 0.0f);
         EXPECT_LE(vertex.uv[1], 1.0f);
     }
+}
+
+TEST(TileSurfaceTest, UpsampledChildMeshIgnoresInvalidNoSkirtIndexRange) {
+    Rectangle parentBounds = Rectangle::fromDegrees(0.0, 0.0, 2.0, 2.0);
+    Rectangle childBounds = Rectangle::fromDegrees(1.0, 1.0, 2.0, 2.0);
+
+    SurfaceTileMesh parentMesh = TileSurface::buildEllipsoidMesh(parentBounds, 1);
+    ASSERT_GT(parentMesh.indices.size(), 0u);
+
+    parentMesh.skirtMeta.noSkirtIndicesBegin =
+        std::numeric_limits<uint32_t>::max();
+    parentMesh.skirtMeta.noSkirtIndicesCount = 2;
+
+    std::optional<SurfaceTileMesh> childMesh =
+        TileSurface::upsampleChildMeshFromParent(
+            parentMesh,
+            parentBounds,
+            childBounds);
+
+    ASSERT_TRUE(childMesh.has_value());
+    EXPECT_GT(childMesh->vertices.size(), 0u);
+    EXPECT_GT(childMesh->indices.size(), 0u);
 }
 
 TEST(TileSurfaceTest, SurfaceTileTerrainCanAddSkirt) {

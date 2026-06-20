@@ -555,15 +555,16 @@ std::optional<SurfaceTileMesh> TileSurface::upsampleChildMeshFromParent(
     child.metadataAvailability = parentMesh.metadataAvailability;
     child.rasterOverlayDetails.setGeographicRectangle(childBounds);
 
-    const uint32_t indexBegin = parentMesh.skirtMeta.noSkirtIndicesCount > 0
-        ? parentMesh.skirtMeta.noSkirtIndicesBegin
-        : 0;
-    const uint32_t indexEnd = parentMesh.skirtMeta.noSkirtIndicesCount > 0
-        ? indexBegin + parentMesh.skirtMeta.noSkirtIndicesCount
-        : static_cast<uint32_t>(parentMesh.indices.size());
-    const uint32_t safeIndexEnd = std::min<uint32_t>(
-        indexEnd,
-        static_cast<uint32_t>(parentMesh.indices.size()));
+    uint32_t indexBegin = 0;
+    uint32_t safeIndexEnd = static_cast<uint32_t>(parentMesh.indices.size());
+    const SkirtMetadata& skirt = parentMesh.skirtMeta;
+    if (skirt.noSkirtIndicesCount > 0 &&
+        skirt.noSkirtIndicesBegin < parentMesh.indices.size() &&
+        skirt.noSkirtIndicesCount <=
+            parentMesh.indices.size() - skirt.noSkirtIndicesBegin) {
+        indexBegin = skirt.noSkirtIndicesBegin;
+        safeIndexEnd = skirt.noSkirtIndicesBegin + skirt.noSkirtIndicesCount;
+    }
 
     double minHeight = std::numeric_limits<double>::max();
     double maxHeight = std::numeric_limits<double>::lowest();
