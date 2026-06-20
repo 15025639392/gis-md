@@ -213,6 +213,17 @@ TEST(DecodedHeightmapTest, BilinearOutOfRangeClamped) {
     EXPECT_FLOAT_EQ(10.0f, h2);
 }
 
+TEST(DecodedHeightmapTest, NoDataMatchesOpenGlobusRgbTerrain) {
+    DecodedHeightmap hm;
+    hm.noDataValues = {-32768.0f, -10000.0f};
+
+    EXPECT_TRUE(hm.isNoData(50000.5f));
+    EXPECT_TRUE(hm.isNoData(-32768.0f));
+    EXPECT_TRUE(hm.isNoData(-10000.0f));
+    EXPECT_FALSE(hm.isNoData(50000.0f));
+    EXPECT_FALSE(hm.isNoData(123.0f));
+}
+
 TEST(TerrainTileTest, NoDataFallsBackToLowZoomParentSeaLevel) {
     auto scheme = TileScheme::createXYZWebMercator();
     const TileKey parentKey{"XYZ-WebMercator", 8, 120, 88};
