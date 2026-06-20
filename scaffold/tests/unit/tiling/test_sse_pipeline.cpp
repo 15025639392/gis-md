@@ -19065,6 +19065,45 @@ void testTilePendingLoadQueueTakesTerminalResultsByPriority() {
           "TilePendingLoadQueue: shared terminal take removes only selected result");
 }
 
+void testTilePendingLoadQueueRejectsEmptyCacheKeys() {
+    TilePendingLoadQueue queue;
+    const TileKey key{"test", 1, 0, 0};
+
+    queue.addTerrainUpload(PendingTerrainUpload{
+        key,
+        "",
+        TileLoadPriorityGroup::Urgent,
+        0.0,
+        nullptr});
+    queue.addContentUpload(PendingContentUpload{
+        key,
+        "",
+        TileLoadPriorityGroup::Urgent,
+        0.0,
+        TileContentLoadResult::failed()});
+    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+        key,
+        "",
+        TileLoadPriorityGroup::Urgent,
+        0.0,
+        TerrainTileLoadStatus::Failed});
+    queue.addContentTerminalResult(PendingContentTerminalResult{
+        key,
+        "",
+        TileLoadPriorityGroup::Urgent,
+        0.0,
+        TileContentLoadStatus::Failed});
+
+    check(!queue.hasWork() &&
+              queue.terrainUploadCount() == 0 &&
+              queue.contentUploadCount() == 0 &&
+              queue.terrainTerminalResultCount() == 0 &&
+              queue.contentTerminalResultCount() == 0,
+          "TilePendingLoadQueue: empty cache keys do not create pending work");
+    check(!queue.containsCacheKey(""),
+          "TilePendingLoadQueue: empty cache key is never treated as pending");
+}
+
 void testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads() {
     TileLoadLifecycle lifecycle;
     const TileKey terrainKey{"test", 1, 0, 0};
@@ -28034,6 +28073,7 @@ int main() {
     testTilePendingLoadQueueUsesSharedPriorityOrder();
     testTilePendingLoadQueueFiltersNonUrgentDuringInteraction();
     testTilePendingLoadQueueTakesTerminalResultsByPriority();
+    testTilePendingLoadQueueRejectsEmptyCacheKeys();
     testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads();
     testTilePendingLoadProcessorBudgetsTerminalResults();
     testTilePendingLoadProcessorCountsTerminalElapsedAgainstMainThreadBudget();
