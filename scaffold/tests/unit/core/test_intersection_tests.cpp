@@ -283,6 +283,19 @@ TEST(IntersectionTestsTest, RayAabbParametricReturnsEntryOrExitDistance) {
     EXPECT_DOUBLE_EQ(1.0, *inside);
 }
 
+TEST(IntersectionTestsTest, RayAabbParametricSkipsNearParallelAxesLikeCesiumNative) {
+    // Cesium-native skips axes with abs(direction) < Epsilon6 without checking
+    // whether the origin lies within that slab.
+    const AxisAlignedBox aabb(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+    const Ray ray(Vec3(-1.0, 2.0, 0.5), Vec3(1.0, 0.0, 0.0));
+
+    const auto t = IntersectionTests::rayAABBParametric(ray, aabb);
+
+    ASSERT_TRUE(t.has_value());
+    EXPECT_DOUBLE_EQ(1.0, *t);
+    EXPECT_EQ(Vec3(0.0, 2.0, 0.5), IntersectionTests::rayAABB(ray, aabb));
+}
+
 TEST(IntersectionTestsTest, RayObbMatchesCesiumNativeCases) {
     // Ported from cesium-native CesiumGeometry/test/TestIntersectionTests.cpp.
     struct Case {
