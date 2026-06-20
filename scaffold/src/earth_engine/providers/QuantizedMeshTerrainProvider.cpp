@@ -555,8 +555,15 @@ bool QuantizedMeshTerrainProvider::appendLayerFromJson(
     layer.maxZoom = j.value("maxzoom", 30);
     layer.version = j.value("version", std::string("1.0.0"));
     layer.attribution = j.value("attribution", std::string());
+    std::vector<std::string> knownExtensions{
+        "octvertexnormals",
+        "metadata"
+    };
+    if (waterMaskEnabled_) {
+        knownExtensions.push_back("watermask");
+    }
     layer.extensionsToRequest = createExtensionsQueryParameter(
-        {"octvertexnormals", "metadata"},
+        knownExtensions,
         jsonStringArray(j, "extensions"));
 
     const bool hasMetadataAvailability =

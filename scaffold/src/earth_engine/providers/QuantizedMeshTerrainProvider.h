@@ -42,6 +42,7 @@ public:
     void setTileSize(int ts) { tileSize_ = ts; }
     void setPlatformBridge(PlatformBridge* bridge);
     void setFlipYForUrl(bool flip) { flipYForUrl_ = flip; }
+    void setWaterMaskEnabled(bool enabled) { waterMaskEnabled_ = enabled; }
     bool configureFromLayerJsonUrl(const std::string& layerJsonUrl);
     bool configureFromLayerJson(const std::string& layerJson,
                                 const std::string& layerJsonUrl);
@@ -175,6 +176,7 @@ private:
     int maxZoom_ = 15;
     int tileSize_ = 65;   // default 64×64 grid
     bool flipYForUrl_ = false;
+    bool waterMaskEnabled_ = false;
     PlatformBridge* platformBridge_ = nullptr;
     std::atomic<int> requestsStarted_{0};
     std::atomic<int> requestsCompleted_{0};

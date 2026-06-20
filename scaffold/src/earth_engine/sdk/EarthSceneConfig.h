@@ -33,6 +33,7 @@ struct TerrainSourceConfig {
     int maximumZoom = 0;
     int tileSize = 0;
     bool flipYForUrl = false;
+    bool enableWaterMask = false;
 };
 
 struct SceneTilesetConfig {
