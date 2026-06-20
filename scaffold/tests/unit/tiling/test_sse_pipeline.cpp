@@ -20832,6 +20832,30 @@ void testTilePendingRequestStateCancelsAndRejectsDuringDestroy() {
     state.completeTerrainRequest("terrain-after-destroy");
 }
 
+void testTilePendingRequestStateClearWaitsForCallbackDrain() {
+    TilePendingRequestState state;
+    CancellationToken terrainToken;
+    check(state.beginTerrainRequest("terrain", terrainToken),
+          "TilePendingRequestState: early-clear test starts terrain request");
+
+    state.markDestroyingAndCancelRequests();
+    state.clearAfterCallbacksComplete();
+
+    const PendingRequestCounts counts = state.counts();
+    check(state.destroying() &&
+              state.contains("terrain") &&
+              counts.terrainRequests == 1 &&
+              counts.totalRequests == 1 &&
+              !state.beginContentRequest("content-after-early-clear",
+                                         CancellationToken{}),
+          "TilePendingRequestState: clear before callback drain preserves destroying pending state");
+
+    state.completeTerrainRequest("terrain");
+    state.clearAfterCallbacksComplete();
+    check(!state.destroying() && state.empty(),
+          "TilePendingRequestState: clear reopens only after callbacks drain");
+}
+
 void testTilePendingRequestStateDestroyMarkIsIdempotent() {
     TilePendingRequestState state;
     CancellationToken terrainToken;
@@ -30178,6 +30202,7 @@ int main() {
     testTilePendingRequestStateCountsAndCompletesRequests();
     testPendingLoadStateRejectsEmptyCacheKeys();
     testTilePendingRequestStateCancelsAndRejectsDuringDestroy();
+    testTilePendingRequestStateClearWaitsForCallbackDrain();
     testTilePendingRequestStateDestroyMarkIsIdempotent();
     testTilePendingRequestStateCancelIgnoresUnknownKeys();
     testTileLoadLifecycleCountsAndFindsPendingWork();

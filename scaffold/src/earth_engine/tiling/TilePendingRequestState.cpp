@@ -88,7 +88,9 @@ void TilePendingRequestState::markDestroyingAndCancelRequests() {
 }
 
 void TilePendingRequestState::clearAfterCallbacksComplete() {
-    pendingRequests_.clear();
+    if (!pendingRequests_.empty()) {
+        return;
+    }
     pendingContentRequestKeys_.clear();
     pendingRequestTokens_.clear();
     destroying_ = false;
