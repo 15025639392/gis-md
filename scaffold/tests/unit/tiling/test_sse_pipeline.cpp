@@ -19695,6 +19695,36 @@ void testTileLoadLifecycleCountsAndFindsPendingWork() {
           "TileLoadLifecycle: reports idle after requests and loads drain");
 }
 
+void testTileLoadLifecycleEmptyBatchQueryIsNoOp() {
+    TileLoadLifecycle lifecycle;
+    CancellationToken token;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        check(lifecycle.requestState().beginTerrainRequest(
+                  "terrain-request",
+                  token),
+              "TileLoadLifecycle: empty batch query test starts request");
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            TileKey{"test", 0, 0, 0},
+            "content-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileContentLoadResult::empty()});
+    }
+
+    check(!lifecycle.containsWorkForAnyCacheKey({}),
+          "TileLoadLifecycle: empty cache key batch query returns no work");
+    check(!token.isCancelled() &&
+              lifecycle.containsWorkForCacheKey("terrain-request") &&
+              lifecycle.containsWorkForCacheKey("content-upload"),
+          "TileLoadLifecycle: empty cache key batch query leaves existing work untouched");
+
+    lifecycle.cancelAndEraseCacheKey("terrain-request");
+    lifecycle.cancelAndEraseCacheKey("content-upload");
+    check(!lifecycle.hasPendingWork(),
+          "TileLoadLifecycle: empty batch query test cleanup drains work");
+}
+
 void testTileLoadLifecycleCancelErasesPendingUploads() {
     TileLoadLifecycle lifecycle;
     const TileKey terrainKey{"test", 0, 0, 0};
@@ -28273,6 +28303,7 @@ int main() {
     testTilePendingRequestStateCancelsAndRejectsDuringDestroy();
     testTilePendingRequestStateCancelIgnoresUnknownKeys();
     testTileLoadLifecycleCountsAndFindsPendingWork();
+    testTileLoadLifecycleEmptyBatchQueryIsNoOp();
     testTileLoadLifecycleCancelErasesPendingUploads();
     testTileLoadLifecycleCancelIgnoresEmptyCacheKey();
     testTileLoadLifecycleCancelErasesTerminalResults();
