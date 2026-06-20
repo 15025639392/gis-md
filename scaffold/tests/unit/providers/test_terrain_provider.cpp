@@ -667,3 +667,54 @@ TEST(TileMapServiceUrlTest, DefaultsLevelsWhenNoTileSetsLikeCesiumNative) {
     EXPECT_EQ(25u, metadata.maximumLevel);
     EXPECT_TRUE(metadata.tileSets.empty());
 }
+
+TEST(TileMapServiceUrlTest, ParsesProfileSchemeLikeCesiumNative) {
+    TileMapServiceMetadata metadata = parseTileMapServiceMetadata(R"xml(
+      <TileMap>
+        <TileSets profile="global-mercator" />
+      </TileMap>
+    )xml");
+
+    EXPECT_EQ("TMS-WebMercator", metadata.schemeId);
+    EXPECT_FALSE(metadata.boundingBoxCoordinatesInDegrees);
+
+    metadata = parseTileMapServiceMetadata(R"xml(
+      <TileMap>
+        <TileSets profile="geodetic" />
+      </TileMap>
+    )xml");
+
+    EXPECT_EQ("Geographic-TMS", metadata.schemeId);
+    EXPECT_TRUE(metadata.boundingBoxCoordinatesInDegrees);
+
+    metadata = parseTileMapServiceMetadata(R"xml(
+      <TileMap>
+        <TileSets profile="global-geodetic" />
+      </TileMap>
+    )xml");
+
+    EXPECT_EQ("Geographic-TMS", metadata.schemeId);
+    EXPECT_TRUE(metadata.boundingBoxCoordinatesInDegrees);
+}
+
+TEST(TileMapServiceUrlTest, FallsBackToSrsForUnknownProfileLikeCesiumNative) {
+    TileMapServiceMetadata metadata = parseTileMapServiceMetadata(R"xml(
+      <TileMap>
+        <SRS>EPSG:4326</SRS>
+        <TileSets profile="custom" />
+      </TileMap>
+    )xml");
+
+    EXPECT_EQ("Geographic-TMS", metadata.schemeId);
+    EXPECT_TRUE(metadata.boundingBoxCoordinatesInDegrees);
+
+    metadata = parseTileMapServiceMetadata(R"xml(
+      <TileMap>
+        <SRS>EPSG:900913</SRS>
+        <TileSets profile="custom" />
+      </TileMap>
+    )xml");
+
+    EXPECT_EQ("TMS-WebMercator", metadata.schemeId);
+    EXPECT_TRUE(metadata.boundingBoxCoordinatesInDegrees);
+}

@@ -205,6 +205,57 @@ std::optional<std::string_view> firstTag(std::string_view xml,
     return std::nullopt;
 }
 
+std::optional<std::string> firstElementText(std::string_view xml,
+                                            std::string_view tagName) {
+    const std::optional<std::string_view> tag = firstTag(xml, tagName);
+    if (!tag) {
+        return std::nullopt;
+    }
+
+    const size_t start = tag->data() - xml.data() + tag->size();
+    const std::string close = "</" + std::string(tagName) + ">";
+    const size_t end = xml.find(close, start);
+    if (end == std::string_view::npos) {
+        return std::nullopt;
+    }
+    return std::string(xml.substr(start, end - start));
+}
+
+void parseProfileAndSrs(std::string_view xml, TileMapServiceMetadata& metadata) {
+    std::string profile = "mercator";
+    if (const std::optional<std::string_view> tileSets =
+            firstTag(xml, "TileSets")) {
+        profile = attributeValue(*tileSets, "profile").value_or("mercator");
+    }
+
+    if (profile == "mercator" || profile == "global-mercator") {
+        metadata.schemeId = "TMS-WebMercator";
+        metadata.boundingBoxCoordinatesInDegrees =
+            profile.rfind("global-", 0) != 0;
+        return;
+    }
+
+    if (profile == "geodetic" || profile == "global-geodetic") {
+        metadata.schemeId = "Geographic-TMS";
+        metadata.boundingBoxCoordinatesInDegrees = true;
+        return;
+    }
+
+    const std::optional<std::string> srs = firstElementText(xml, "SRS");
+    if (!srs) {
+        return;
+    }
+
+    if (srs->find("4326") != std::string::npos) {
+        metadata.schemeId = "Geographic-TMS";
+        metadata.boundingBoxCoordinatesInDegrees = true;
+    } else if (srs->find("3857") != std::string::npos ||
+               srs->find("900913") != std::string::npos) {
+        metadata.schemeId = "TMS-WebMercator";
+        metadata.boundingBoxCoordinatesInDegrees = true;
+    }
+}
+
 } // namespace
 
 std::string tileMapServiceXmlUrl(const std::string& url) {
@@ -252,6 +303,8 @@ std::string tileMapServiceTileUrl(const std::string& baseUrl,
 TileMapServiceMetadata parseTileMapServiceMetadata(const std::string& xml) {
     TileMapServiceMetadata metadata;
     const std::string_view view(xml);
+
+    parseProfileAndSrs(view, metadata);
 
     if (const std::optional<std::string_view> tileFormat =
             firstTag(view, "TileFormat")) {
