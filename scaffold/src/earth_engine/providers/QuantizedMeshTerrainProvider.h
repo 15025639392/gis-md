@@ -36,6 +36,7 @@ public:
     int minZoom() const override { return minZoom_; }
     int maxZoom() const override { return maxZoom_; }
     int tileSize() const override { return tileSize_; }
+    std::string attribution() const override { return attribution_; }
 
     void setZoomRange(int minZ, int maxZ);
     void setTileSize(int ts) { tileSize_ = ts; }
@@ -89,6 +90,7 @@ private:
         int availabilityLevels = -1;
         int minZoom = 0;
         int maxZoom = 15;
+        std::string attribution;
     };
     struct LayerAvailabilityRequest {
         size_t layerIndex = 0;

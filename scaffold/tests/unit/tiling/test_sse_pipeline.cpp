@@ -3447,6 +3447,35 @@ void testQuantizedMeshLayerJsonDefaultMaxzoomMatchesCesiumNative() {
           "QuantizedMeshTerrainProvider: default maxzoom still bounds out-of-range tiles");
 }
 
+void testQuantizedMeshLayerJsonAttributionMatchesCesiumNative() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain",
+        "fallback credit");
+    const std::string layerJson = R"json({
+      "attribution": "This amazing data is courtesy The Amazing Data Source!",
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"]
+    })json";
+
+    check(provider.configureFromLayerJson(
+              layerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: attribution layer configures");
+    check(provider.attribution() ==
+              "This amazing data is courtesy The Amazing Data Source!",
+          "QuantizedMeshTerrainProvider: layer.json attribution is exposed like cesium-native credit");
+}
+
+void testHeightmapTerrainProviderExposesAttribution() {
+    HeightmapTerrainProvider provider(
+        "https://example.invalid/{z}/{x}/{y}.png",
+        "height source credit");
+
+    check(provider.attribution() == "height source credit",
+          "HeightmapTerrainProvider: terrain attribution metadata is exposed");
+}
+
 void testQuantizedMeshLayerJsonWebMercatorProjectionMatchesCesiumNative() {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
@@ -21537,6 +21566,8 @@ int main() {
     testQuantizedMeshLayerJsonDefaultFormatMatchesCesiumNative();
     testQuantizedMeshLayerJsonDefaultVersionMatchesCesiumNative();
     testQuantizedMeshLayerJsonDefaultMaxzoomMatchesCesiumNative();
+    testQuantizedMeshLayerJsonAttributionMatchesCesiumNative();
+    testHeightmapTerrainProviderExposesAttribution();
     testQuantizedMeshLayerJsonWebMercatorProjectionMatchesCesiumNative();
     testQuantizedMeshLayerJsonRejectsUnknownProjection();
     testQuantizedMeshRejectsOutOfRangeGeographicTiles();

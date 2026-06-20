@@ -45,6 +45,7 @@ public:
     int minZoom() const override { return minZoom_; }
     int maxZoom() const override { return maxZoom_; }
     int tileSize() const override { return tileSize_; }
+    std::string attribution() const override { return attribution_; }
 
     void setZoomRange(int minZ, int maxZ);
     void setMaxNativeZoom(int maxNativeZ) { maxNativeZoom_ = maxNativeZ; }

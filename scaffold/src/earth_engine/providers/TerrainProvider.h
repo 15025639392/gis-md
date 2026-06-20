@@ -140,6 +140,9 @@ public:
     /// 瓦片尺寸（像素）
     virtual int tileSize() const = 0;
 
+    /// Display credit / attribution for this terrain source.
+    virtual std::string attribution() const { return ""; }
+
     /// Whether this provider can serve the tile. Providers with metadata
     /// availability should reject unsupported tiles before network request.
     virtual bool supportsTile(const TileKey& key) const {
