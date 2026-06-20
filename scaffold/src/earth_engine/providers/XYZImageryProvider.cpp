@@ -253,8 +253,10 @@ std::string XYZImageryProvider::id() const {
 }
 
 void XYZImageryProvider::setZoomRange(int minZoom, int maxZoom) {
-    minZoom_ = minZoom;
-    maxZoom_ = maxZoom;
+    minZoom_ = std::max(0, minZoom);
+    if (maxZoom > 0) {
+        maxZoom_ = maxZoom;
+    }
 }
 
 void XYZImageryProvider::setTileSize(int width, int height) {

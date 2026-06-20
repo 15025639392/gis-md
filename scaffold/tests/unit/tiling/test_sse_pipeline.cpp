@@ -2081,6 +2081,39 @@ void testXYZImageryProviderDefaultMaximumLevelMatchesCesiumNative() {
           "XYZImageryProvider: default reverseZ uses maximumLevel 25 like cesium-native");
 }
 
+void testProviderZeroMaximumZoomPreservesDefaults() {
+    XYZImageryProvider imagery(
+        "https://example.invalid/{z}/{x}/{y}.png");
+    HeightmapTerrainProvider heightmap(
+        "https://example.invalid/{z}/{x}/{y}.png");
+    QuantizedMeshTerrainProvider quantizedMesh(
+        "https://example.invalid/{z}/{x}/{y}.terrain");
+
+    imagery.setZoomRange(0, 0);
+    heightmap.setZoomRange(0, 0);
+    quantizedMesh.setZoomRange(0, 0);
+
+    check(imagery.maxZoom() == 25 &&
+              imagery.supportsTile(TileKey{"XYZ-WebMercator", 25, 0, 0}),
+          "XYZImageryProvider: zero maximum zoom keeps cesium-native default level");
+    check(heightmap.maxZoom() == 14 &&
+              heightmap.supportsTile(TileKey{"XYZ-WebMercator", 14, 0, 0}),
+          "HeightmapTerrainProvider: zero maximum zoom preserves provider default");
+    check(quantizedMesh.maxZoom() == 15,
+          "QuantizedMeshTerrainProvider: zero maximum zoom preserves provider default");
+}
+
+void testProviderExplicitMaximumZoomStillLimitsTiles() {
+    XYZImageryProvider imagery(
+        "https://example.invalid/{z}/{x}/{y}.png");
+    imagery.setZoomRange(0, 6);
+
+    check(imagery.maxZoom() == 6 &&
+              imagery.supportsTile(TileKey{"XYZ-WebMercator", 6, 0, 0}) &&
+              !imagery.supportsTile(TileKey{"XYZ-WebMercator", 7, 0, 0}),
+          "XYZImageryProvider: positive maximum zoom remains an explicit limit");
+}
+
 void testRasterOverlayProviderDefaultMaximumLevelMatchesCesiumNative() {
     XYZImageryProvider provider(
         "https://example.invalid/{z}/{x}/{y}.png");
@@ -31064,6 +31097,8 @@ int main() {
     testXYZImageryProviderBridgeCompletionDoesNotRunDecodeInline();
     testXYZImageryProviderUrlTemplateReversePlaceholders();
     testXYZImageryProviderDefaultMaximumLevelMatchesCesiumNative();
+    testProviderZeroMaximumZoomPreservesDefaults();
+    testProviderExplicitMaximumZoomStillLimitsTiles();
     testRasterOverlayProviderDefaultMaximumLevelMatchesCesiumNative();
     testStandardTileSchemeMaximumLevelsMatchRasterOverlayDefaults();
     testXYZImageryProviderUrlTemplateBoundsAndSizePlaceholders();

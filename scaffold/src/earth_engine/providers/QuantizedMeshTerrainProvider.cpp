@@ -76,8 +76,10 @@ void QuantizedMeshTerrainProvider::setPlatformBridge(PlatformBridge* bridge) {
 }
 
 void QuantizedMeshTerrainProvider::setZoomRange(int minZ, int maxZ) {
-    minZoom_ = minZ;
-    maxZoom_ = maxZ;
+    minZoom_ = std::max(0, minZ);
+    if (maxZ > 0) {
+        maxZoom_ = maxZ;
+    }
 }
 
 namespace {
