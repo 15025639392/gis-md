@@ -218,6 +218,33 @@ TEST(TransformsTest, PerspectiveMatricesMatchCesiumNativeReverseZ) {
     expectMatrixNear(byFrustum, byFov, 1e-14);
 }
 
+TEST(TransformsTest, PerspectiveProjectionContainsFrustumSamples) {
+    // Ported from cesium-native CesiumGeometry/test/TestTransforms.cpp:
+    // points inside the camera frustum must map into Vulkan-style reverse-Z
+    // clip coordinates: -w..w in x/y and 0..w in z.
+    const double horizontalFov = MathUtils::degreesToRadians(60.0);
+    const double verticalFov = MathUtils::degreesToRadians(45.0);
+    const double zNear = 1.0;
+    const double zFar = 20000.0;
+    const Mat4 projection =
+        Transforms::createPerspectiveMatrix(horizontalFov,
+                                            verticalFov,
+                                            zNear,
+                                            zFar);
+
+    const double hDim = std::tan(horizontalFov * 0.5);
+    const double vDim = std::tan(verticalFov * 0.5);
+    const glm::dvec4 samples[] = {
+        glm::dvec4(0.0, 0.0, -zNear - 0.1, 1.0),
+        glm::dvec4(hDim * 10.0 * 0.25, vDim * 10.0 * -0.25, -10.0, 1.0),
+        glm::dvec4(hDim * 1000.0 * -0.5, vDim * 1000.0 * 0.5, -1000.0, 1.0),
+        glm::dvec4(0.0, 0.0, -zFar + 0.1, 1.0)};
+
+    for (const glm::dvec4& sample : samples) {
+        EXPECT_TRUE(pointInClipVolume(projection.raw() * sample));
+    }
+}
+
 TEST(TransformsTest, SkewedPerspectiveProjectionMatchesCesiumNativeMapping) {
     const double horizontalFov = MathUtils::degreesToRadians(60.0);
     const double verticalFov = MathUtils::degreesToRadians(45.0);
