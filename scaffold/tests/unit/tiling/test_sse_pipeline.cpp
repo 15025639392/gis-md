@@ -106,6 +106,7 @@
 #include "earth_engine/tiling/TileUnloadPolicy.h"
 #include "earth_engine/tiling/TileUnloadQueue.h"
 #include "earth_engine/tiling/TileUpdateSelectionWorkRunner.h"
+#include "earth_engine/tiling/TileUpsampleSourcePreparer.h"
 #include "earth_engine/tiling/Tileset.h"
 #include "earth_engine/tiling/TilesetSelectionFrameFacade.h"
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
@@ -17272,6 +17273,43 @@ void testTileUnloadPolicyProtectsUpsampledLoadingSources() {
           "TileUnloadPolicy: protected unload releases main-thread render resources");
 }
 
+void testTileUpsampleSourcePreparerSkipsPermanentFailedAncestor() {
+    TilesetTile grandparent(TileKey{"test", 0, 0, 0}, Rectangle{});
+    TilesetTile failedParent(TileKey{"test", 1, 0, 0}, Rectangle{}, &grandparent);
+    TilesetTile child(TileKey{"test", 2, 0, 0}, Rectangle{}, &failedParent);
+    grandparent.children.push_back(&failedParent);
+    failedParent.children.push_back(&child);
+
+    grandparent.content.contentKind = TileContentKind::Render;
+    grandparent.content.loadState = TileLoadState::Done;
+    grandparent.content.renderContent.setMeshReady(true);
+    grandparent.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    failedParent.content.loadState = TileLoadState::Failed;
+    failedParent.content.contentKind = TileContentKind::Unknown;
+    child.content.upsampledFromParent = true;
+
+    int ensuredMeshes = 0;
+    std::vector<TileKey> queuedKeys;
+    const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
+        child,
+        42.0,
+        [&ensuredMeshes](TilesetTile&) {
+            ++ensuredMeshes;
+        },
+        [&queuedKeys](const TileKey& key,
+                      TileLoadPriorityGroup,
+                      double) {
+            queuedKeys.push_back(key);
+        });
+
+    check(prepared &&
+              ensuredMeshes == 0 &&
+              queuedKeys.empty() &&
+              TileUpsampleSourcePreparer::findSourceTile(child) ==
+                  &grandparent,
+          "TileUpsampleSourcePreparer: permanent failed ancestor is not retried when an older source is ready");
+}
+
 void testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.contentKind = TileContentKind::Render;
@@ -29194,6 +29232,7 @@ int main() {
     testTileRasterOverlayStateOwnsMappingsAndMissingProjections();
     testTileUnloadPolicyDefersReferencedSubtreesAndExternalWork();
     testTileUnloadPolicyProtectsUpsampledLoadingSources();
+    testTileUpsampleSourcePreparerSkipsPermanentFailedAncestor();
     testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded();
     testTileUnloadPolicyReleasesRasterOverlayReferencesWithExplicitClear();
     testTileUnloadPolicyFindsQueuedTilesByLoadState();
