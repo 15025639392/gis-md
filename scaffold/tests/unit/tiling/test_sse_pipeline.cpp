@@ -13694,6 +13694,46 @@ void testTileCacheUnloadCoordinatorDropsMissingKeysAndContinues() {
           "TileCacheUnloadCoordinator: stale queue keys are dropped before continuing to later candidates");
 }
 
+void testTileCacheUnloadCoordinatorDefersRefreshDuringSmoothing() {
+    TileUnloadQueue unloadQueue;
+    unloadQueue.pushBackIfAbsent("free");
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto free = std::make_unique<TilesetTile>(
+        TileKey{"test", 0, 0, 0},
+        Rectangle{});
+    free->content.contentKind = TileContentKind::Render;
+    free->content.loadState = TileLoadState::Done;
+    tiles["free"] = std::move(free);
+
+    int unloadAttempts = 0;
+    const TileCacheUnloadResult result = TileCacheUnloadCoordinator::run(
+        unloadQueue,
+        tiles,
+        1,
+        0,
+        0.0,
+        true,
+        false,
+        [](const TilesetTile&) {
+            return false;
+        },
+        [&](TilesetTile&) {
+            ++unloadAttempts;
+            return TileCacheUnloadContentResult::Remove;
+        },
+        [&](const std::string& key) {
+            unloadQueue.erase(key);
+        },
+        [](TilesetTile&) {});
+
+    check(unloadAttempts == 1 &&
+              unloadQueue.empty() &&
+              result.cacheBytesDirty &&
+              !result.shouldRefreshTotalBytes,
+          "TileCacheUnloadCoordinator: smoothing keeps cache bytes dirty without same-frame refresh");
+}
+
 void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
     const TileKey erasedKey{"test", 1, 2, 3};
     const TileKey keptKey{"test", 1, 2, 4};
@@ -26027,6 +26067,7 @@ int main() {
     testTileCacheUnloadCoordinatorRotatesDeferredCandidates();
     testTileCacheUnloadCoordinatorStopsAfterAllCandidatesDeferred();
     testTileCacheUnloadCoordinatorDropsMissingKeysAndContinues();
+    testTileCacheUnloadCoordinatorDefersRefreshDuringSmoothing();
     testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches();
     testTileContentCacheManagerOwnsBytesQueueAndUnload();
     testTileCacheMetricsCountsHeightmapAndTilePayloads();
