@@ -47,7 +47,7 @@ TileSelectionCullResult TileSelectionCullingPolicy::evaluateFog(
     const TileSelectionCullResult& current,
     bool visibleInFog,
     bool enableFogCulling) {
-    if (!current.shouldVisit || visibleInFog) {
+    if (!current.shouldVisit || current.culled || visibleInFog) {
         return current;
     }
 

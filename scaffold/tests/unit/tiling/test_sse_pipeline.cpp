@@ -18666,6 +18666,13 @@ void testTileSelectionCullingPolicyEvaluatesFrustumAndFogGates() {
         TileSelectionCullingPolicy::evaluateFog(outsideCull, false, true);
     check(frustumStoppedFog.reason == TileSelectionCullReason::Frustum,
           "TileSelectionCullingPolicy: fog does not replace prior frustum stop");
+
+    const TileSelectionCullResult frustumVisitedFog =
+        TileSelectionCullingPolicy::evaluateFog(outsideNoCull, false, true);
+    check(frustumVisitedFog.culled &&
+              frustumVisitedFog.shouldVisit &&
+              frustumVisitedFog.reason == TileSelectionCullReason::Frustum,
+          "TileSelectionCullingPolicy: fog does not replace disabled-frustum cull");
 }
 
 void testTileSelectionCullingPolicyChecksAnyViewFogVisibility() {
