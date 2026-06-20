@@ -19,6 +19,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <cstdint>
+#include <cmath>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -78,6 +79,71 @@ int64_t xTileCountForScheme(const std::string& schemeId, int z) {
 int64_t yTileCountForScheme(const std::string&, int z) {
     if (z < 0 || z >= 62) return 0;
     return int64_t{1} << z;
+}
+
+double radiansToDegrees(double radians) {
+    return radians * 180.0 / 3.14159265358979323846264338327950288;
+}
+
+struct TileDegreesRectangle {
+    double west = 0.0;
+    double south = 0.0;
+    double east = 0.0;
+    double north = 0.0;
+};
+
+double webMercatorFractionToLatitudeDegrees(double fraction) {
+    const double mercatorAngle =
+        3.14159265358979323846264338327950288 -
+        2.0 * 3.14159265358979323846264338327950288 * fraction;
+    return radiansToDegrees(std::atan(std::sinh(mercatorAngle)));
+}
+
+TileDegreesRectangle tileDegreesRectangleForScheme(const TileKey& key) {
+    const int64_t xTiles = xTileCountForScheme(key.schemeId, key.z);
+    const int64_t yTiles = yTileCountForScheme(key.schemeId, key.z);
+    if (xTiles <= 0 || yTiles <= 0) return {};
+
+    const double west =
+        static_cast<double>(key.x) / static_cast<double>(xTiles) * 360.0 -
+        180.0;
+    const double east =
+        static_cast<double>(key.x + 1) / static_cast<double>(xTiles) * 360.0 -
+        180.0;
+
+    if (key.schemeId == "Geographic-TMS") {
+        const double south =
+            -90.0 +
+            static_cast<double>(key.y) / static_cast<double>(yTiles) * 180.0;
+        const double north =
+            -90.0 +
+            static_cast<double>(key.y + 1) / static_cast<double>(yTiles) *
+                180.0;
+        return TileDegreesRectangle{west, south, east, north};
+    }
+
+    if (key.schemeId == "TMS-WebMercator") {
+        const double northFraction =
+            static_cast<double>(yTiles - key.y - 1) /
+            static_cast<double>(yTiles);
+        const double southFraction =
+            static_cast<double>(yTiles - key.y) / static_cast<double>(yTiles);
+        return TileDegreesRectangle{
+            west,
+            webMercatorFractionToLatitudeDegrees(southFraction),
+            east,
+            webMercatorFractionToLatitudeDegrees(northFraction)};
+    }
+
+    const double northFraction =
+        static_cast<double>(key.y) / static_cast<double>(yTiles);
+    const double southFraction =
+        static_cast<double>(key.y + 1) / static_cast<double>(yTiles);
+    return TileDegreesRectangle{
+        west,
+        webMercatorFractionToLatitudeDegrees(southFraction),
+        east,
+        webMercatorFractionToLatitudeDegrees(northFraction)};
 }
 
 } // namespace
@@ -176,6 +242,14 @@ std::string XYZImageryProvider::buildUrl(const TileKey& key) const {
         replace("{reverseY}", std::to_string(yTiles - 1 - providerKey.y));
     }
     replace("{reverseZ}", std::to_string(maxZoom_ - providerKey.z));
+    const TileDegreesRectangle tileRect =
+        tileDegreesRectangleForScheme(providerKey);
+    replace("{westDegrees}", std::to_string(tileRect.west));
+    replace("{southDegrees}", std::to_string(tileRect.south));
+    replace("{eastDegrees}", std::to_string(tileRect.east));
+    replace("{northDegrees}", std::to_string(tileRect.north));
+    replace("{width}", std::to_string(tileWidth_));
+    replace("{height}", std::to_string(tileHeight_));
     replace("{groupedY}", std::to_string(key.y));
     if (url.find("{tileGroup}") != std::string::npos) {
         std::string group = "mercator";

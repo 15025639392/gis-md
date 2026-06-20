@@ -2019,6 +2019,16 @@ void testXYZImageryProviderUrlTemplateReversePlaceholders() {
           "XYZImageryProvider: Geographic-TMS reverse placeholders use two root X tiles like cesium-native");
 }
 
+void testXYZImageryProviderUrlTemplateBoundsAndSizePlaceholders() {
+    XYZImageryProvider provider(
+        "https://example.invalid/{westDegrees}/{southDegrees}/{eastDegrees}/{northDegrees}/{width}/{height}.png");
+    provider.setTileSize(512, 256);
+
+    check(provider.buildUrl(TileKey{"XYZ-WebMercator", 1, 0, 0}) ==
+              "https://example.invalid/-180.000000/0.000000/0.000000/85.051129/512/256.png",
+          "XYZImageryProvider: bounds and size placeholders match cesium-native URL template semantics");
+}
+
 void testHeightmapTerrainProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
     HeightmapTerrainProvider provider(
         "https://example.invalid/{z}/{x}/{y}.png");
@@ -23619,6 +23629,7 @@ int main() {
     testXYZImageryProviderUsesAsyncBridgeWithoutWorkerBlockingWait();
     testXYZImageryProviderBridgeCompletionDoesNotRunDecodeInline();
     testXYZImageryProviderUrlTemplateReversePlaceholders();
+    testXYZImageryProviderUrlTemplateBoundsAndSizePlaceholders();
     testHeightmapTerrainProviderUsesAsyncBridgeWithoutWorkerBlockingWait();
     testQuantizedMeshProviderUsesAsyncBridgeWithoutWorkerBlockingWait();
     testQuantizedMeshProviderHttpErrorFailsTerminally();
