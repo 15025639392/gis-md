@@ -282,6 +282,9 @@ uint8_t TileQuadtreeAvailability::computeAvailability(
         const uint32_t childMortonIndex = mortonIndex(
             (x & subtreeRelativeMask) >> levelsLeftAfterNextLevel,
             (y & subtreeRelativeMask) >> levelsLeftAfterNextLevel);
+        if (!subtreeAccessor.isConstant() && !subtreeAccessor.isBufferView()) {
+            return 0;
+        }
         const std::optional<uint32_t> childIndex =
             childSubtreeIndex(subtreeAccessor, childMortonIndex);
         if (!childIndex) {
@@ -540,6 +543,9 @@ uint8_t TileOctreeAvailability::computeAvailability(
                 levelsLeftAfterNextLevel,
             (static_cast<uint32_t>(tileID.z) & subtreeRelativeMask) >>
                 levelsLeftAfterNextLevel);
+        if (!subtreeAccessor.isConstant() && !subtreeAccessor.isBufferView()) {
+            return 0;
+        }
         const std::optional<uint32_t> childIndex =
             childSubtreeIndex(subtreeAccessor, childMortonIndex);
         if (!childIndex) {

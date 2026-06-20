@@ -402,6 +402,21 @@ TEST(TileQuadtreeAvailabilityTest, ChildSubtreeAvailabilityMatchesCesiumNative) 
     }
 }
 
+TEST(TileQuadtreeAvailabilityTest, InvalidSubtreeAvailabilityAccessorMakesTraversalUnavailableLikeCesiumNative) {
+    TileQuadtreeAvailability availability(3, 5);
+    ASSERT_TRUE(availability.addSubtree(
+        0,
+        0,
+        0,
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            TileSubtreeBufferView{0, 1, 4},
+            {std::vector<std::byte>(1, static_cast<std::byte>(0xFF))}}));
+
+    EXPECT_EQ(0, availability.computeAvailability(3, 0, 0));
+}
+
 TEST(TileQuadtreeAvailabilityTest, ChildSubtreeLoadedFlagMatchesCesiumNative) {
     TileQuadtreeAvailability availability(3, 5);
     ASSERT_TRUE(availability.addSubtree(0, 0, 0, makeQuadtreeFixtureRootSubtree()));
@@ -864,6 +879,19 @@ TEST(TileOctreeAvailabilityTest, ChildSubtreeAvailabilityMatchesCesiumNative) {
             }
         }
     }
+}
+
+TEST(TileOctreeAvailabilityTest, InvalidSubtreeAvailabilityAccessorMakesTraversalUnavailableLikeCesiumNative) {
+    TileOctreeAvailability availability(3, 5);
+    ASSERT_TRUE(availability.addSubtree(
+        OctreeTileID{0, 0, 0, 0},
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            TileSubtreeBufferView{0, 1, 4},
+            {std::vector<std::byte>(1, static_cast<std::byte>(0xFF))}}));
+
+    EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{3, 0, 0, 0}));
 }
 
 TEST(TileOctreeAvailabilityTest, ChildSubtreeLoadedFlagMatchesCesiumNative) {
