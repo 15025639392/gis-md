@@ -14712,6 +14712,37 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
           "TileTerminalLoadPolicy: terminal render without upload maps to permanent failure");
 }
 
+void testTileTerminalLoadPolicyClearsRasterMappingsForNonRenderTerminalStates() {
+    auto addRasterMapping = [](TilesetTile& tile) {
+        tile.rasterOverlayState.mappings().push_back(
+            std::make_unique<RasterMappedToTilesetTile>());
+    };
+
+    TilesetTile emptyContent(TileKey{"test", 0, 0, 0}, Rectangle{});
+    addRasterMapping(emptyContent);
+    TileTerminalLoadPolicy::applyContentTerminalResult(
+        emptyContent,
+        TileContentLoadStatus::Empty);
+    check(emptyContent.rasterOverlayState.mappings().empty(),
+          "TileTerminalLoadPolicy: empty content clears stale raster mappings");
+
+    TilesetTile retryContent(TileKey{"test", 0, 0, 0}, Rectangle{});
+    addRasterMapping(retryContent);
+    TileTerminalLoadPolicy::applyContentTerminalResult(
+        retryContent,
+        TileContentLoadStatus::RetryLater);
+    check(retryContent.rasterOverlayState.mappings().empty(),
+          "TileTerminalLoadPolicy: retry content clears stale raster mappings");
+
+    TilesetTile failedTerrain(TileKey{"test", 0, 0, 0}, Rectangle{});
+    addRasterMapping(failedTerrain);
+    TileTerminalLoadPolicy::applyTerrainTerminalResult(
+        failedTerrain,
+        TerrainTileLoadStatus::Failed);
+    check(failedTerrain.rasterOverlayState.mappings().empty(),
+          "TileTerminalLoadPolicy: failed terrain clears stale raster mappings");
+}
+
 void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
     TileEmptyContentRegistry emptyContentRegistry;
     TilesetTile terrainTile(TileKey{"test", 0, 0, 0}, Rectangle{});
@@ -24911,6 +24942,7 @@ int main() {
     testTileLoadDiagnosticsCollectorCountsQueuesLifecycleAndTiles();
     testTileTerminalLoadPolicyMapsTerrainTerminalStates();
     testTileTerminalLoadPolicyMapsContentTerminalStates();
+    testTileTerminalLoadPolicyClearsRasterMappingsForNonRenderTerminalStates();
     testTileTerminalLoadCommitterWritesEmptyRegistryActions();
     testTileContentUploadPolicyPreparesGltfRenderContent();
     testTileContentUploadPolicyMarksGltfRenderResourceFailure();

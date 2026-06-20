@@ -8,10 +8,12 @@ namespace earth_engine {
 namespace {
 
 void markUnknownTemporaryFailure(TilesetTile& tile) {
+    tile.rasterOverlayState.mappings().clear();
     tile.markContentFailedTemporarily();
 }
 
 void markUnknownPermanentFailure(TilesetTile& tile) {
+    tile.rasterOverlayState.mappings().clear();
     tile.markContentFailedPermanently();
 }
 
@@ -40,6 +42,7 @@ TileTerminalLoadPolicy::applyTerrainTerminalResult(
     switch (status) {
         case TerrainTileLoadStatus::Empty: {
             action.markEmptyCacheKey = true;
+            tile.rasterOverlayState.mappings().clear();
             tile.markEmptyContentLoaded();
             applyNativeEmptyContentRefinement(tile);
             tile.markEmptyContentDone();
@@ -70,11 +73,13 @@ TileTerminalLoadPolicy::applyContentTerminalResult(
     switch (status) {
         case TileContentLoadStatus::Empty:
             action.markEmptyCacheKey = true;
+            tile.rasterOverlayState.mappings().clear();
             applyNativeEmptyContentRefinement(tile);
             tile.markEmptyContentDone();
             action.resourcesDirty = true;
             break;
         case TileContentLoadStatus::External:
+            tile.rasterOverlayState.mappings().clear();
             tile.markExternalContentDone();
             action.ensureChildren = true;
             action.resourcesDirty = true;
