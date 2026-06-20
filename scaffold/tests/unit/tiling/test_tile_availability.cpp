@@ -364,6 +364,17 @@ TEST(TileQuadtreeAvailabilityTest, OutOfRangeCoordinatesAreUnavailableLikeCesium
     EXPECT_EQ(0, availability.computeAvailability(2, 1, 4, root));
 }
 
+TEST(TileQuadtreeAvailabilityTest, GlobalQueryRejectsLevelsAboveMaximumLikeCesiumNative) {
+    TileQuadtreeAvailability availability(3, 2);
+    ASSERT_TRUE(availability.addSubtree(0, 0, 0, makeQuadtreeFixtureRootSubtree()));
+    const TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+
+    EXPECT_NE(0, availability.computeAvailability(2, 0, 0));
+    EXPECT_EQ(0, availability.computeAvailability(3, 0, 0));
+    EXPECT_NE(0, availability.computeAvailability(3, 0, 0, root));
+}
+
 TEST(TileQuadtreeAvailabilityTest, ChildSubtreeAvailabilityMatchesCesiumNative) {
     TileQuadtreeAvailability availability(3, 5);
     ASSERT_TRUE(availability.addSubtree(0, 0, 0, makeQuadtreeFixtureRootSubtree()));
@@ -774,6 +785,21 @@ TEST(TileOctreeAvailabilityTest, OutOfRangeCoordinatesAreUnavailableLikeCesiumNa
     EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{2, 4, 1, 1}, root));
     EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{2, 1, 4, 1}, root));
     EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{2, 1, 1, 4}, root));
+}
+
+TEST(TileOctreeAvailabilityTest, GlobalQueryRejectsLevelsAboveMaximumLikeCesiumNative) {
+    TileOctreeAvailability availability(3, 2);
+    ASSERT_TRUE(availability.addSubtree(
+        OctreeTileID{0, 0, 0, 0},
+        makeOctreeFixtureRootSubtree()));
+    const TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+
+    EXPECT_NE(0, availability.computeAvailability(OctreeTileID{2, 0, 0, 0}));
+    EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{3, 0, 0, 0}));
+    EXPECT_NE(
+        0,
+        availability.computeAvailability(OctreeTileID{3, 0, 0, 0}, root));
 }
 
 TEST(TileOctreeAvailabilityTest, ChildSubtreeAvailabilityMatchesCesiumNative) {
