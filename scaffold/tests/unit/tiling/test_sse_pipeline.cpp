@@ -21511,7 +21511,9 @@ void testTileLoadRequestDispatcherDropsCancelledCallbacks() {
     const TileKey key{"test", 0, 0, 0};
     bool issued = false;
     DeferredTerrainProvider terrainProvider;
+    DeferredTerrainProvider terminalTerrainProvider;
     DeferredContentProvider contentProvider;
+    DeferredContentProvider renderContentProvider;
 
     const TileLoadDispatchResult terrainIssued =
         TileLoadRequestDispatcher::requestTerrain(
@@ -21539,18 +21541,54 @@ void testTileLoadRequestDispatcherDropsCancelledCallbacks() {
             TileLoadPriorityGroup::Normal,
             0.0,
             []() {});
+    const TileLoadDispatchResult terminalTerrainIssued =
+        TileLoadRequestDispatcher::requestTerrain(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            terminalTerrainProvider,
+            key,
+            "cancel-terrain-terminal",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            []() {});
+    const TileLoadDispatchResult renderContentIssued =
+        TileLoadRequestDispatcher::requestContent(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            renderContentProvider,
+            key,
+            "cancel-content-render",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            []() {});
 
     check(terrainIssued == TileLoadDispatchResult::Issued &&
               contentIssued == TileLoadDispatchResult::Issued &&
+              terminalTerrainIssued == TileLoadDispatchResult::Issued &&
+              renderContentIssued == TileLoadDispatchResult::Issued &&
               issued,
           "TileLoadRequestDispatcher: deferred requests are issued before cancellation");
 
     lifecycle.cancelAndEraseCacheKey("cancel-terrain");
     lifecycle.cancelAndEraseCacheKey("cancel-content");
+    lifecycle.cancelAndEraseCacheKey("cancel-terrain-terminal");
+    lifecycle.cancelAndEraseCacheKey("cancel-content-render");
     terrainProvider.terrainCallback(
         key,
         TerrainTileLoadResult::success(std::make_unique<DecodedHeightmap>()));
     contentProvider.contentCallback(key, TileContentLoadResult::empty());
+    terminalTerrainProvider.terrainCallback(
+        key,
+        TerrainTileLoadResult::retryLater());
+    renderContentProvider.contentCallback(
+        key,
+        TileContentLoadResult::render(std::make_unique<GltfModel>()));
 
     check(!lifecycle.hasPendingWork(),
           "TileLoadRequestDispatcher: cancelled callbacks do not enqueue stale pending work");
