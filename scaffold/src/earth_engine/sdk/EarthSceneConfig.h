@@ -77,6 +77,8 @@ struct RasterOverlaySourceConfig {
     std::vector<std::string> wmtsSubdomains;
     std::map<std::string, std::string> wmtsDimensions;
     std::string bingBaseUrl;
+    std::string bingMapStyle = "Aerial";
+    std::string bingKey;
     std::string bingCulture;
     std::vector<std::string> bingSubdomains;
 };

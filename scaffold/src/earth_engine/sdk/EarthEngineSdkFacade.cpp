@@ -272,29 +272,72 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
         }
 
         if (overlayConfig.imageryKind == ImagerySourceKind::BingMaps) {
-            BingMapsImageryOptions bingOptions;
-            bingOptions.culture = overlayConfig.bingCulture;
-            bingOptions.subdomains = overlayConfig.bingSubdomains;
-            bingOptions.minimumLevel = overlayConfig.minimumZoom;
-            bingOptions.maximumLevel = overlayConfig.maximumZoom;
-            if (overlayConfig.imageryTileWidth > 0) {
-                bingOptions.tileWidth = overlayConfig.imageryTileWidth;
-            }
-            if (overlayConfig.imageryTileHeight > 0) {
-                bingOptions.tileHeight = overlayConfig.imageryTileHeight;
+            if (!overlayConfig.urlTemplate.empty()) {
+                BingMapsImageryOptions bingOptions;
+                bingOptions.culture = overlayConfig.bingCulture;
+                bingOptions.subdomains = overlayConfig.bingSubdomains;
+                bingOptions.minimumLevel = overlayConfig.minimumZoom;
+                bingOptions.maximumLevel = overlayConfig.maximumZoom;
+                if (overlayConfig.imageryTileWidth > 0) {
+                    bingOptions.tileWidth = overlayConfig.imageryTileWidth;
+                }
+                if (overlayConfig.imageryTileHeight > 0) {
+                    bingOptions.tileHeight = overlayConfig.imageryTileHeight;
+                }
+
+                auto bing = std::make_unique<BingMapsImageryProvider>(
+                    overlayConfig.bingBaseUrl,
+                    overlayConfig.urlTemplate,
+                    std::move(bingOptions),
+                    overlayConfig.attribution);
+                bing->setPlatformBridge(&platformBridge_);
+                addActivatedRasterOverlay(
+                    rasterOverlays,
+                    std::move(bing),
+                    TileScheme::createXYZWebMercator(),
+                    makeRasterOverlayOptions(overlayConfig));
+                continue;
             }
 
-            auto bing = std::make_unique<BingMapsImageryProvider>(
+            const std::string metadataUrl = bingMapsMetadataUrl(
                 overlayConfig.bingBaseUrl,
-                overlayConfig.urlTemplate,
-                std::move(bingOptions),
+                overlayConfig.bingMapStyle,
+                overlayConfig.bingKey,
+                overlayConfig.bingCulture);
+            QuantizedMeshLayerJsonFetcher fetcher(&platformBridge_);
+            const std::vector<uint8_t> bytes = fetcher.fetchBlocking(
+                metadataUrl);
+            if (bytes.empty()) {
+                logError(platformBridge_,
+                         "Bing Maps metadata load failed: " + metadataUrl);
+                continue;
+            }
+
+            BingMapsMetadataParseResult metadata = parseBingMapsMetadata(
+                std::string(bytes.begin(), bytes.end()));
+            if (!metadata.valid) {
+                logError(platformBridge_,
+                         "Bing Maps metadata validation failed: " +
+                             metadata.error);
+                continue;
+            }
+
+            BingMapsImagerySource source = createBingMapsImagerySource(
+                overlayConfig.bingBaseUrl,
+                metadata.metadata,
+                overlayConfig.bingCulture,
                 overlayConfig.attribution);
-            bing->setPlatformBridge(&platformBridge_);
-            addActivatedRasterOverlay(
-                rasterOverlays,
-                std::move(bing),
-                TileScheme::createXYZWebMercator(),
-                makeRasterOverlayOptions(overlayConfig));
+            if (!source.provider || !source.scheme) {
+                logError(platformBridge_,
+                         "Bing Maps metadata did not create a provider: " +
+                             metadataUrl);
+                continue;
+            }
+            source.provider->setPlatformBridge(&platformBridge_);
+            addActivatedRasterOverlay(rasterOverlays,
+                                      std::move(source.provider),
+                                      std::move(source.scheme),
+                                      makeRasterOverlayOptions(overlayConfig));
             continue;
         }
 

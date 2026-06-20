@@ -148,6 +148,8 @@ TEST(EarthSceneConfig, StoresBingMapsImagerySourceDefinitions) {
     RasterOverlaySourceConfig overlay;
     overlay.imageryKind = ImagerySourceKind::BingMaps;
     overlay.bingBaseUrl = "https://dev.virtualearth.net/";
+    overlay.bingMapStyle = "Road";
+    overlay.bingKey = "bing-key";
     overlay.urlTemplate =
         "https://ecn.{subdomain}.tiles.virtualearth.net/tiles/a{quadkey}.jpeg?mkt={culture}";
     overlay.attribution = "bing attribution";
@@ -163,6 +165,8 @@ TEST(EarthSceneConfig, StoresBingMapsImagerySourceDefinitions) {
     const RasterOverlaySourceConfig& copied = config.rasterOverlays[0];
     EXPECT_EQ(ImagerySourceKind::BingMaps, copied.imageryKind);
     EXPECT_EQ("https://dev.virtualearth.net/", copied.bingBaseUrl);
+    EXPECT_EQ("Road", copied.bingMapStyle);
+    EXPECT_EQ("bing-key", copied.bingKey);
     EXPECT_EQ(
         "https://ecn.{subdomain}.tiles.virtualearth.net/tiles/a{quadkey}.jpeg?mkt={culture}",
         copied.urlTemplate);
