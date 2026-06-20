@@ -117,6 +117,28 @@ TEST(QuantizedMeshTerrainProviderTest, ConfiguresFromCesiumLayerJson) {
     EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 12, 6487, 2685}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, WebMercatorLayerJsonUsesOneByOneRootLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.com/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:3857",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 12
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/terrain/layer.json"));
+
+    EXPECT_EQ("XYZ-WebMercator", provider.schemeId());
+    EXPECT_EQ("https://example.invalid/terrain/{z}/{x}/{y}.terrain",
+              provider.urlTemplate());
+    EXPECT_TRUE(provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 0, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 1, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 0}));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, AvailabilityUsesInclusiveTileCenterLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/{z}/{x}/{y}.terrain");
