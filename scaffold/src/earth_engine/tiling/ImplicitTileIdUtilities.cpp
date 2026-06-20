@@ -83,17 +83,35 @@ std::string normalizeUrlPath(const std::string& path) {
     return normalized.empty() && absolute ? "/" : normalized;
 }
 
+std::string percentEncodeNonAscii(std::string value) {
+    static constexpr char hex[] = "0123456789ABCDEF";
+    std::string encoded;
+    encoded.reserve(value.size());
+
+    for (const unsigned char c : value) {
+        if (c < 0x80U) {
+            encoded.push_back(static_cast<char>(c));
+            continue;
+        }
+        encoded.push_back('%');
+        encoded.push_back(hex[c >> 4U]);
+        encoded.push_back(hex[c & 0x0FU]);
+    }
+
+    return encoded;
+}
+
 std::string resolveUrl(const std::string& baseUrl, const std::string& relative) {
     if (hasUrlScheme(relative)) {
-        return relative;
+        return percentEncodeNonAscii(relative);
     }
     if (relative.rfind("//", 0) == 0) {
-        return "https:" + relative;
+        return percentEncodeNonAscii("https:" + relative);
     }
 
     const std::string baseWithoutFragment = baseUrl.substr(0, baseUrl.find('#'));
     if (!relative.empty() && relative.front() == '#') {
-        return baseWithoutFragment + relative;
+        return percentEncodeNonAscii(baseWithoutFragment + relative);
     }
 
     std::string baseWithoutQuery = baseWithoutFragment;
@@ -102,10 +120,10 @@ std::string resolveUrl(const std::string& baseUrl, const std::string& relative) 
         baseWithoutQuery.erase(baseQueryPos);
     }
     if (relative.empty()) {
-        return baseWithoutQuery;
+        return percentEncodeNonAscii(baseWithoutQuery);
     }
     if (!relative.empty() && relative.front() == '?') {
-        return baseWithoutQuery + relative;
+        return percentEncodeNonAscii(baseWithoutQuery + relative);
     }
 
     std::string relativePath = relative;
@@ -151,7 +169,8 @@ std::string resolveUrl(const std::string& baseUrl, const std::string& relative) 
         mergedPath = directory + relativePath;
     }
 
-    return prefix + normalizeUrlPath(mergedPath) + relativeSuffix;
+    return percentEncodeNonAscii(
+        prefix + normalizeUrlPath(mergedPath) + relativeSuffix);
 }
 
 uint64_t spread2(uint64_t value) {

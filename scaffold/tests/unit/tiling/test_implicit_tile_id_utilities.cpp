@@ -122,6 +122,18 @@ TEST(ImplicitTileIdUtilitiesTest, ResolveUrlPreservesQueryAndFragmentLikeCesiumN
                   TileKey{"Geographic-TMS", 11, 2, 3}));
 }
 
+TEST(ImplicitTileIdUtilitiesTest, ResolveUrlEscapesNonAsciiPathLikeCesiumNativeUri) {
+    const std::string greekPath =
+        std::string("/") +
+        "\xE1\xBF\xAC\xCF\x8C\xCE\xB4\xCE\xBF\xCF\x82";
+
+    EXPECT_EQ("https://example.com/%E1%BF%AC%CF%8C%CE%B4%CE%BF%CF%82",
+              ImplicitTileIdUtilities::resolveUrl(
+                  "https://example.com/base/tileset.json",
+                  greekPath,
+                  TileKey{"Geographic-TMS", 11, 2, 3}));
+}
+
 TEST(ImplicitTileIdUtilitiesTest, ComputeObbQuadtreeBoundingVolumeMatchesCesiumNative) {
     const OrientedBoundingBox root(Vec3(1.0, 2.0, 3.0),
                                   Vec3(10.0, 0.0, 0.0),
