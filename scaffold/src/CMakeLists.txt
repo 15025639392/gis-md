@@ -483,6 +483,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/providers/DebugImageryProvider.cpp
     earth_engine/providers/XYZImageryProvider.h
     earth_engine/providers/XYZImageryProvider.cpp
+    earth_engine/providers/TileMapServiceImageryProvider.h
+    earth_engine/providers/TileMapServiceImageryProvider.cpp
     earth_engine/providers/ProviderRequestDiagnosticsAggregator.h
     earth_engine/providers/ProviderRequestDiagnosticsAggregator.cpp
     earth_engine/providers/TerrainProvider.h

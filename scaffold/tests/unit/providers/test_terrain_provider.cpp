@@ -3,6 +3,7 @@
 #include "earth_engine/providers/HeightmapTerrainProvider.h"
 #include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
+#include "earth_engine/providers/TileMapServiceImageryProvider.h"
 #include "earth_engine/providers/TileMapServiceUrl.h"
 #include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
@@ -786,4 +787,51 @@ TEST(TileMapServiceUrlTest, ParsesGlobalMercatorBoundingBoxAsProjectedLikeCesium
     EXPECT_TRUE(metadata.projectedCoverageRectangle->equalsEpsilon(
         Rectangle(-1000.0, -2000.0, 3000.0, 4000.0),
         0.0));
+}
+
+TEST(TileMapServiceImageryProviderTest, ConfiguresProviderFromMetadataLikeCesiumNative) {
+    TileMapServiceMetadata metadata;
+    metadata.fileExtension = "jpg";
+    metadata.tileWidth = 128;
+    metadata.tileHeight = 64;
+    metadata.minimumLevel = 2;
+    metadata.maximumLevel = 3;
+    metadata.schemeId = "Geographic-TMS";
+    metadata.tileSets = {
+        TileMapServiceTileSet{"levels/2", 2},
+        TileMapServiceTileSet{"levels/3", 3}};
+
+    TileMapServiceImageryProvider provider(
+        "https://example.com/tms/tilemapresource.xml?token=ignored",
+        metadata,
+        "test attribution");
+
+    EXPECT_EQ("tms-imagery", provider.type());
+    EXPECT_EQ("Geographic-TMS", provider.schemeId());
+    EXPECT_EQ(2, provider.minZoom());
+    EXPECT_EQ(3, provider.maxZoom());
+    EXPECT_EQ(128, provider.tileWidth());
+    EXPECT_EQ(64, provider.tileHeight());
+    EXPECT_EQ("test attribution", provider.attribution());
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 3, 4, 1}));
+    EXPECT_EQ(
+        "https://example.com/tms/levels/3/4/1.jpg",
+        provider.buildUrl(TileKey{"Geographic-TMS", 3, 4, 1}));
+}
+
+TEST(TileMapServiceImageryProviderTest, RejectsTilesWithoutTilesetLikeCesiumNative) {
+    TileMapServiceMetadata metadata;
+    metadata.minimumLevel = 2;
+    metadata.maximumLevel = 4;
+    metadata.schemeId = "TMS-WebMercator";
+    metadata.tileSets = {TileMapServiceTileSet{"levels/2", 2}};
+
+    TileMapServiceImageryProvider provider(
+        "https://example.com/tms/tilemapresource.xml",
+        metadata);
+
+    EXPECT_TRUE(provider.supportsTile(TileKey{"TMS-WebMercator", 2, 1, 1}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"TMS-WebMercator", 4, 1, 1}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"XYZ-WebMercator", 2, 1, 1}));
+    EXPECT_EQ("", provider.buildUrl(TileKey{"TMS-WebMercator", 4, 1, 1}));
 }
