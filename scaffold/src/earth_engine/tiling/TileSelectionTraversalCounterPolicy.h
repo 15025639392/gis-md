@@ -17,7 +17,7 @@ struct TileSelectionTraversalCounterPlan {
 };
 
 struct TileSelectionTraversalCounterPolicy {
-    static TileSelectionTraversalCounterPlan planVisitStart();
+    static TileSelectionTraversalCounterPlan planVisitAccepted();
     static TileSelectionTraversalCounterPlan planOutcome(
         const TileSelectionVisitOutcomePlan& outcome);
     static TileSelectionTraversalCounterPlan planRefineFlow(

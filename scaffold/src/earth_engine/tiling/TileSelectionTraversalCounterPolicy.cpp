@@ -3,7 +3,7 @@
 namespace earth_engine {
 
 TileSelectionTraversalCounterPlan
-TileSelectionTraversalCounterPolicy::planVisitStart() {
+TileSelectionTraversalCounterPolicy::planVisitAccepted() {
     TileSelectionTraversalCounterPlan plan;
     plan.visited = 1;
     return plan;

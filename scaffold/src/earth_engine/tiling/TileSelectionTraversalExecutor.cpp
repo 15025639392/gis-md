@@ -38,10 +38,6 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTileIfNeeded(
     const SelectorFrame& selectorFrame,
     uint32_t depth,
     bool ancestorMeetsSse) {
-    const TileSelectionTraversalCounterPlan visitStartCounters =
-        TileSelectionTraversalCounterPolicy::planVisitStart();
-    context.counters.visited += visitStartCounters.visited;
-
     const Cartographic cameraCart =
         Ellipsoid::WGS84().cartesianToCartographic(
             context.lastCameraPosition);
@@ -97,6 +93,10 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTileIfNeeded(
             ? context.createCulledTileDetails(tile)
             : TileTraversalDetails{};
     }
+
+    const TileSelectionTraversalCounterPlan visitAcceptedCounters =
+        TileSelectionTraversalCounterPolicy::planVisitAccepted();
+    context.counters.visited += visitAcceptedCounters.visited;
 
     return visitTile(context,
                      tile,

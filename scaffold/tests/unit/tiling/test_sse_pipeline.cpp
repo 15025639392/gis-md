@@ -577,6 +577,11 @@ struct TilesetTestAccess {
         return tileset.tilePlan_;
     }
 
+    static const TileSelectionCounters& selectionCounters(
+        const Tileset& tileset) {
+        return tileset.selectionCounters_;
+    }
+
     static void updateLodTransitions(Tileset& tileset,
                                      double deltaSeconds) {
         TileLodTransitionFrameUpdater::update(
@@ -19045,12 +19050,12 @@ void testTileSelectionVisitPreparationBuildsOutcomePlan() {
 
 void testTileSelectionTraversalCounterPolicyPlansTraversalCounters() {
     TileSelectionTraversalCounterPlan counters =
-        TileSelectionTraversalCounterPolicy::planVisitStart();
+        TileSelectionTraversalCounterPolicy::planVisitAccepted();
     check(counters.visited == 1 &&
               counters.frustumCulled == 0 &&
               counters.fogCulled == 0 &&
               counters.culledVisited == 0,
-          "TileSelectionTraversalCounterPolicy: visit start increments only visited");
+          "TileSelectionTraversalCounterPolicy: accepted visit increments only visited");
 
     TileSelectionVisitOutcomePlan outcome;
     outcome.shouldExit = true;
@@ -27130,7 +27135,9 @@ void testTilesetFogDensityTableIsConfigurable() {
         TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
         check(root != nullptr,
               "Tileset: fog-density configurable root tile is created");
-        if (!root) return TilePlan{};
+        if (!root) {
+            return std::pair<TilePlan, TileSelectionCounters>{};
+        }
 
         const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
         Camera camera;
@@ -27149,17 +27156,26 @@ void testTilesetFogDensityTableIsConfigurable() {
             camera.position(),
             camera.direction());
         TilesetTestAccess::selectTiles(tileset, frameState);
-        return tileset.tilePlan();
+        return std::pair<TilePlan, TileSelectionCounters>{
+            tileset.tilePlan(),
+            TilesetTestAccess::selectionCounters(tileset)};
     };
 
-    TilePlan clearPlan = runWithFogTable({{0.0, 0.0}});
-    TilePlan densePlan = runWithFogTable({{0.0, 1.0}, {1000000.0, 1.0}});
+    const auto [clearPlan, clearCounters] = runWithFogTable({{0.0, 0.0}});
+    const auto [densePlan, denseCounters] =
+        runWithFogTable({{0.0, 1.0}, {1000000.0, 1.0}});
 
     check(!clearPlan.visibleTiles.empty(),
           "Tileset: zero fog density table permits root selection");
+    check(clearCounters.visited > 0 &&
+              clearCounters.fogCulled == 0,
+          "Tileset: visible fog root counts as visited");
     check(densePlan.visibleTiles.empty() &&
               densePlan.notRenderingNodeCount > 0,
           "Tileset: custom dense fog density table culls selected roots");
+    check(denseCounters.visited == 0 &&
+              denseCounters.fogCulled > 0,
+          "Tileset: fog early exit is culled but not visited like cesium-native");
 }
 
 void testTileSelectionMetricsFogMatchesCesiumNativeRules() {
