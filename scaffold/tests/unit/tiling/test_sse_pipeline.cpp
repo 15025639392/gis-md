@@ -13933,6 +13933,83 @@ void testTileContentCacheManagerDefersExternalSubtreeWithActiveWork() {
           "TileContentCacheManager: external wrapper unload defers while subtree has active work");
 }
 
+void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
+    TileContentCacheManager manager;
+    TileContentLifecycleManager lifecycle;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+
+    const TileKey rootKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    const std::string rootCacheKey = TileCacheKey::forTile(rootKey);
+    const std::string childCacheKey = TileCacheKey::forTile(childKey);
+    auto root = std::make_unique<TilesetTile>(rootKey, Rectangle{});
+    auto child = std::make_unique<TilesetTile>(childKey, Rectangle{}, root.get());
+    TilesetTile* rootRaw = root.get();
+    TilesetTile* childRaw = child.get();
+    rootRaw->children.push_back(childRaw);
+    rootRaw->content.loadState = TileLoadState::Done;
+    rootRaw->content.contentKind = TileContentKind::External;
+    childRaw->content.loadState = TileLoadState::Done;
+    childRaw->content.contentKind = TileContentKind::Render;
+    lifecycle.terrainCache()[childCacheKey] = makeFlatHeightmap(7.0f);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.loadLifecycle().mutex());
+        lifecycle.loadLifecycle().pendingLoads().addContentUpload(
+            PendingContentUpload{
+                childKey,
+                childCacheKey,
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadResult::empty()});
+    }
+    tiles[rootCacheKey] = std::move(root);
+    tiles[childCacheKey] = std::move(child);
+
+    manager.updateTotalBytesUsed(tiles, lifecycle);
+    manager.markEligibleForUnloading(tiles, rootCacheKey);
+    bool clearChildrenCalled = false;
+
+    manager.unloadCachedBytes(
+        0,
+        0.0,
+        false,
+        tiles,
+        lifecycle,
+        nullptr,
+        [&clearChildrenCalled](TilesetTile&) {
+            clearChildrenCalled = true;
+        });
+    check(manager.unloadQueue().contains(rootCacheKey) &&
+              !clearChildrenCalled &&
+              !rootRaw->children.empty() &&
+              tiles.find(childCacheKey) != tiles.end(),
+          "TileContentCacheManager: active external subtree work keeps wrapper queued for retry");
+
+    lifecycle.loadLifecycle().cancelAndEraseCacheKey(childCacheKey);
+    manager.unloadCachedBytes(
+        0,
+        0.0,
+        false,
+        tiles,
+        lifecycle,
+        nullptr,
+        [&clearChildrenCalled,
+         &tiles,
+         &childCacheKey](TilesetTile& tile) {
+            clearChildrenCalled = true;
+            tile.children.clear();
+            tiles.erase(childCacheKey);
+        });
+
+    check(!manager.unloadQueue().contains(rootCacheKey) &&
+              clearChildrenCalled &&
+              rootRaw->children.empty() &&
+              tiles.find(childCacheKey) == tiles.end() &&
+              rootRaw->content.loadState == TileLoadState::Unloaded &&
+              rootRaw->content.contentKind == TileContentKind::Unknown,
+          "TileContentCacheManager: external subtree unload retries after active work completes");
+}
+
 void testTileCacheMetricsCountsHeightmapAndTilePayloads() {
     DecodedHeightmap heightmap;
     heightmap.rawData.resize(7);
@@ -26212,6 +26289,7 @@ int main() {
     testTileContentCacheManagerOwnsBytesQueueAndUnload();
     testTileContentCacheManagerDefersByteRefreshDuringSmoothing();
     testTileContentCacheManagerDefersExternalSubtreeWithActiveWork();
+    testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes();
     testTileCacheMetricsCountsHeightmapAndTilePayloads();
     testTileCacheMetricsTotalsTileAndTerrainCachePayloads();
     testTileRenderablePolicyClassifiesRenderableContent();
