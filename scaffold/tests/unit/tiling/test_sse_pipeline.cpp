@@ -2062,6 +2062,11 @@ void testXYZImageryProviderUrlTemplateReversePlaceholders() {
               "https://example.invalid/3/2/5/5/2/3.png",
           "XYZImageryProvider: reverse placeholders match cesium-native URL template semantics");
 
+    provider.setSchemeId("TMS-WebMercator");
+    check(provider.buildUrl(TileKey{"TMS-WebMercator", 2, 1, 2}) ==
+              "https://example.invalid/2/1/2/2/1/4.png",
+          "XYZImageryProvider: TMS-WebMercator reverse placeholders use one root tile like cesium-native");
+
     provider.setSchemeId("Geographic-TMS");
     check(provider.buildUrl(TileKey{"Geographic-TMS", 2, 6, 1}) ==
               "https://example.invalid/2/6/1/1/2/4.png",
