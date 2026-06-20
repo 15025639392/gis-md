@@ -968,6 +968,13 @@ TEST(TileOctreeAvailabilityTest, ChildSubtreeAvailabilityMatchesCesiumNative) {
                 EXPECT_EQ(subtreeShouldBeAvailable,
                           (state & SubtreeAvailable) != 0);
                 EXPECT_EQ(subtreeShouldBeAvailable, childIndex.has_value());
+                if (subtreeShouldBeAvailable) {
+                    EXPECT_EQ(
+                        static_cast<uint8_t>(TileAvailable | SubtreeAvailable),
+                        state);
+                } else {
+                    EXPECT_EQ(static_cast<uint8_t>(Reachable), state);
+                }
             }
         }
     }
