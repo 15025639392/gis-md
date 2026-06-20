@@ -18627,6 +18627,54 @@ void testTileLoadSchedulerSortsAndQueuesUpsampledTerrain() {
           "TileLoadScheduler: upsampled requests enter pending upload queue");
 }
 
+void testTileLoadSchedulerSkipsEmptyUpsampledCacheKey() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey key{"test", 1, 0, 0};
+    TilesetTile tile(key, Rectangle{});
+    tile.content.upsampledFromParent = true;
+    bool prepared = false;
+    bool marked = false;
+
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            testCacheKeyForTile,
+            [&tile](const TileKey&,
+                    const std::string&,
+                    TilesetTile*& tileState) {
+                tileState = &tile;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.hasTile = true;
+                snapshot.upsampledFromParent = true;
+                return snapshot;
+            },
+            [](const std::string&) { return true; },
+            [&prepared](TilesetTile&, double) {
+                prepared = true;
+                return true;
+            },
+            [&marked](const TileKey&) { marked = true; });
+
+    check(outcome.issued == 0 && !outcome.blockedByInflight,
+          "TileLoadScheduler: empty cache key skips upsampled terrain request");
+    check(!prepared && !marked && !lifecycle.hasPendingWork(),
+          "TileLoadScheduler: skipped empty upsampled key has no side effects");
+}
+
 void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 2;
@@ -24182,6 +24230,7 @@ int main() {
     testTileLoadRequestPlannerClassifiesRequestKinds();
     testTileLoadSchedulerBlocksBeforePlanningWhenInflightIsFull();
     testTileLoadSchedulerSortsAndQueuesUpsampledTerrain();
+    testTileLoadSchedulerSkipsEmptyUpsampledCacheKey();
     testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds();
     testTileResourceDirtyInvalidatesRevisionAndCacheOnly();
     testTilesetFrameResourceBudgetLimitsWorkerRequests();

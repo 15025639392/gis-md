@@ -73,6 +73,9 @@ public:
             if (requestKind == TileLoadRequestKind::Skip) {
                 continue;
             }
+            if (isEmptyTile(cacheKey)) {
+                continue;
+            }
 
             if (requestKind == TileLoadRequestKind::UpsampledTerrain) {
                 if (!tileState ||
@@ -104,7 +107,7 @@ public:
             }
 
             if (requestKind == TileLoadRequestKind::Content) {
-                if (isEmptyTile(cacheKey) || !input.contentProvider) {
+                if (!input.contentProvider) {
                     continue;
                 }
                 const TileLoadDispatchResult dispatchResult =
@@ -130,7 +133,6 @@ public:
             }
 
             if (requestKind != TileLoadRequestKind::Terrain ||
-                isEmptyTile(cacheKey) ||
                 !input.terrainProvider) {
                 continue;
             }
