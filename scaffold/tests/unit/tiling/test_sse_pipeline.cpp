@@ -16298,6 +16298,7 @@ void testTileContentUnloadCoordinatorRemovesExternalContent() {
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
 
     const TileCacheUnloadContentResult result =
         TileContentUnloadCoordinator::unloadContent(
@@ -16308,10 +16309,11 @@ void testTileContentUnloadCoordinatorRemovesExternalContent() {
             nullptr);
 
     check(result == TileCacheUnloadContentResult::RemoveAndClearChildren &&
+              !emptyContentRegistry.contains(cacheKey) &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::Unloaded &&
               tile.unconditionallyRefine,
-          "TileContentUnloadCoordinator: unreferenced external content unloads wrapper and requests child cleanup");
+          "TileContentUnloadCoordinator: unreferenced external content unloads wrapper and clears stale empty marker");
 }
 
 void testTileContentUnloadCoordinatorRemovesRenderContentCache() {
