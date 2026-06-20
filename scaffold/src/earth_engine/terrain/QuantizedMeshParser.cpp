@@ -546,6 +546,14 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
         indices[i] = dec;
         if (code == 0) ++highest;
     }
+    if (std::any_of(indices.begin(), indices.end(), [&](uint32_t idx) { return idx >= vc; })) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "QMParser",
+            "parseToSurfaceTileMesh fail: decoded index outside vertex range vc=%u tri=%u",
+            vc, triCount);
+#endif
+        return nullptr;
+    }
 
     if (idxCount == 0 || triCount == 0) {
 #ifdef __ANDROID__
@@ -595,6 +603,18 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     const std::vector<uint32_t>& south = *southEdge;
     const std::vector<uint32_t>& east = *eastEdge;
     const std::vector<uint32_t>& north = *northEdge;
+    auto edgeHasInvalidIndex = [&](const std::vector<uint32_t>& edge) {
+        return std::any_of(edge.begin(), edge.end(), [&](uint32_t idx) { return idx >= vc; });
+    };
+    if (edgeHasInvalidIndex(west) || edgeHasInvalidIndex(south) ||
+        edgeHasInvalidIndex(east) || edgeHasInvalidIndex(north)) {
+#ifdef __ANDROID__
+        __android_log_print(ANDROID_LOG_ERROR, "QMParser",
+            "parseToSurfaceTileMesh fail: edge index outside vertex range vc=%u",
+            vc);
+#endif
+        return nullptr;
+    }
 
     auto mesh = std::make_unique<SurfaceTileMesh>();
     mesh->rasterOverlayDetails.setGeographicRectangle(bounds);

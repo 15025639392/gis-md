@@ -3707,6 +3707,55 @@ void testQuantizedMeshRasterizerRejectsHeaderWithoutVertexCount() {
     }
 }
 
+void testQuantizedMeshRejectsDecodedIndicesOutsideVertexRange() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+
+    {
+        std::vector<uint8_t> bytes =
+            makeQuantizedMeshBytes("", false, true);
+        constexpr size_t thirdTriangleIndexOffset =
+            92 + 3 * 3 * sizeof(uint16_t) + sizeof(uint32_t) +
+            2 * sizeof(uint16_t);
+        const uint16_t invalidHighWaterMarkCode = 0xffffu;
+        std::memcpy(
+            bytes.data() + thirdTriangleIndexOffset,
+            &invalidHighWaterMarkCode,
+            sizeof(invalidHighWaterMarkCode));
+
+        std::unique_ptr<SurfaceTileMesh> mesh =
+            QuantizedMeshParser::parseToSurfaceTileMesh(
+                bytes.data(),
+                bytes.size(),
+                scheme->tileToRectangle(rootKey));
+
+        check(mesh == nullptr,
+              "QuantizedMeshParser: decoded triangle indices outside vertex range are rejected");
+    }
+
+    {
+        std::vector<uint8_t> bytes =
+            makeQuantizedMeshBytes("", true, true);
+        constexpr size_t firstWestEdgeIndexOffset =
+            92 + 3 * 3 * sizeof(uint16_t) + sizeof(uint32_t) +
+            3 * sizeof(uint16_t) + sizeof(uint32_t);
+        const uint16_t invalidEdgeIndex = 99u;
+        std::memcpy(
+            bytes.data() + firstWestEdgeIndexOffset,
+            &invalidEdgeIndex,
+            sizeof(invalidEdgeIndex));
+
+        std::unique_ptr<SurfaceTileMesh> mesh =
+            QuantizedMeshParser::parseToSurfaceTileMesh(
+                bytes.data(),
+                bytes.size(),
+                scheme->tileToRectangle(rootKey));
+
+        check(mesh == nullptr,
+              "QuantizedMeshParser: edge indices outside vertex range are rejected");
+    }
+}
+
 void testQuantizedMeshRejectsEachTruncatedEdge() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -21435,6 +21484,7 @@ int main() {
     testQuantizedMeshRejectsTruncatedEdgeIndices();
     testQuantizedMeshRejectsIllFormedCoreBuffers();
     testQuantizedMeshRasterizerRejectsHeaderWithoutVertexCount();
+    testQuantizedMeshRejectsDecodedIndicesOutsideVertexRange();
     testQuantizedMeshRejectsEachTruncatedEdge();
     testQuantizedMeshParsesUint32IndicesAndEdges();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
