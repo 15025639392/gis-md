@@ -534,6 +534,15 @@ TEST(XYZImageryProviderTest, OpenGlobusGroupedYMapsUrlLocalYAndExposesGroup) {
     EXPECT_EQ("https://example.com/south/3/4/4?gy=20", provider.buildUrl(south));
 }
 
+TEST(XYZImageryProviderTest, OpenGlobusGroupedYRejectsOutOfRangeX) {
+    XYZImageryProvider provider("https://example.com/{z}/{x}/{y}.png");
+    provider.setOpenGlobusGroupedY(true);
+
+    EXPECT_TRUE(provider.supportsTile(TileKey{"OpenGlobus-Earth", 3, 7, 4}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"OpenGlobus-Earth", 3, 8, 4}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"OpenGlobus-Earth", 3, -1, 4}));
+}
+
 TEST(XYZImageryProviderTest, OpenGlobusGroupedYCanRejectPolarGroupsWhenProviderLacksPolarCoverage) {
     XYZImageryProvider provider("https://example.com/{z}/{x}/{y}.png");
     provider.setOpenGlobusGroupedY(true);

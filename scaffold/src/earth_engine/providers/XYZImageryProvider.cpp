@@ -289,6 +289,7 @@ bool XYZImageryProvider::supportsTile(const TileKey& key) const {
     }
 
     const int tilesAtZoom = 1 << key.z;
+    if (key.x < 0 || key.x >= tilesAtZoom) return false;
     if (key.y < 0 || key.y >= 3 * tilesAtZoom) return false;
     if (!openGlobusPolarGroupsEnabled_ && key.y >= tilesAtZoom) return false;
     return true;
