@@ -907,20 +907,19 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
         return loadRectangleTile(tile, budget);
     }
 
-    // cesium-native: only load if Unloaded or Failed.
-    // Loading/Loaded/Done tiles are already in progress or complete.
-    // Placeholder tiles can never be loaded.
+    // cesium-native ActivatedRasterOverlay::doLoad: only Unloaded tiles start
+    // a load. Loading/Loaded/Done/Failed/Placeholder are terminal or already
+    // in progress from this entry point.
     auto state = tile.getState();
     switch (state) {
         case RasterOverlayTile::LoadState::Unloaded:
-        case RasterOverlayTile::LoadState::Failed:
             break;  // OK to load
         case RasterOverlayTile::LoadState::Loading:
         case RasterOverlayTile::LoadState::Loaded:
         case RasterOverlayTile::LoadState::Done:
-            return true;  // Already in progress or complete
+        case RasterOverlayTile::LoadState::Failed:
         case RasterOverlayTile::LoadState::Placeholder:
-            return false;  // Placeholder tiles can never be loaded
+            return true;  // Already in progress or complete
     }
 
     const TileKey& key = tile.getTileID();
@@ -982,10 +981,10 @@ bool RasterOverlayTileProvider::loadTileThrottled(RasterOverlayTile& tile,
         return loadRectangleTile(tile, budget);
     }
 
-    // cesium-native: check throttle limit before loading
-    if (tile.getState() == RasterOverlayTile::LoadState::Loading ||
-        tile.getState() == RasterOverlayTile::LoadState::Loaded ||
-        tile.getState() == RasterOverlayTile::LoadState::Done) {
+    // cesium-native: loadTileThrottled only starts Unloaded tiles. Rectangle
+    // tiles keep the Loading continuation above so source fanout can be issued
+    // across frames under the local request budget.
+    if (tile.getState() != RasterOverlayTile::LoadState::Unloaded) {
         return true;
     }
 
@@ -1001,7 +1000,6 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
     auto state = tile.getState();
     switch (state) {
         case RasterOverlayTile::LoadState::Unloaded:
-        case RasterOverlayTile::LoadState::Failed:
             break;
         case RasterOverlayTile::LoadState::Loading: {
             const std::string ck = tile.getCacheKey();
@@ -1022,9 +1020,9 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
         }
         case RasterOverlayTile::LoadState::Loaded:
         case RasterOverlayTile::LoadState::Done:
-            return true;
+        case RasterOverlayTile::LoadState::Failed:
         case RasterOverlayTile::LoadState::Placeholder:
-            return false;
+            return true;
     }
 
     const std::string ck = tile.getCacheKey();

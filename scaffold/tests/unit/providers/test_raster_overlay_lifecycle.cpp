@@ -66,12 +66,15 @@ public:
                      CancellationToken,
                      TileCallback callback,
                      HttpRequestPriority = HttpRequestPriority::Normal) override {
+        ++requestCount;
         callback(key, nullptr);
     }
     std::unique_ptr<DecodedImage> decodeTile(
         const uint8_t*, size_t) override {
         return nullptr;
     }
+
+    int requestCount = 0;
 };
 
 class ConfigurableImageryProvider final : public ImageryProvider {
@@ -277,6 +280,39 @@ TEST(RasterOverlayLifecycleTest, RectangleAtMaximumSourceZoomReportsNoMoreDetail
     EXPECT_EQ(1, uploaderPtr->uploadCount);
     EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
               rectangleTile->isMoreDetailAvailable());
+}
+
+TEST(RasterOverlayLifecycleTest, FailedRasterTilesAreTerminalLikeCesiumNative) {
+    NullImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    auto tile = provider.getTile(TileKey{scheme->id(), 2, 1, 1});
+    ASSERT_NE(nullptr, tile);
+    ASSERT_TRUE(provider.loadTile(*tile));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, tile->getState());
+    const int failedTileRequests = imagery.requestCount;
+
+    EXPECT_TRUE(provider.loadTile(*tile));
+    EXPECT_TRUE(provider.loadTileThrottled(*tile, nullptr));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, tile->getState());
+    EXPECT_EQ(failedTileRequests, imagery.requestCount);
+
+    Rectangle rootBounds =
+        scheme->tileToRectangle(TileKey{scheme->id(), 0, 0, 0});
+    auto rectangleTile = provider.getTile(rootBounds, 8.0, 8.0);
+    ASSERT_NE(nullptr, rectangleTile);
+    ASSERT_TRUE(rectangleTile->isRectangleTile());
+    EXPECT_TRUE(provider.loadTileThrottled(*rectangleTile, nullptr));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed,
+              rectangleTile->getState());
+    const int failedRectangleRequests = imagery.requestCount;
+
+    EXPECT_TRUE(provider.loadTileThrottled(*rectangleTile, nullptr));
+    EXPECT_TRUE(provider.loadTile(*rectangleTile));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed,
+              rectangleTile->getState());
+    EXPECT_EQ(failedRectangleRequests, imagery.requestCount);
 }
 
 TEST(RasterOverlayLifecycleTest, SharedFrameBudgetLimitsRasterUploadsPerFrame) {
