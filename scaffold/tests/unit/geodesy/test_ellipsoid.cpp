@@ -274,6 +274,8 @@ TEST(EllipsoidTest, TryScaleToGeocentricSurfaceMatchesCesiumNative) {
     const Ellipsoid e(2.0, 3.0, 4.0);
 
     EXPECT_FALSE(e.tryScaleToGeocentricSurface(Vec3::zero()).has_value());
+    EXPECT_FALSE(e.tryScaleToGeocentricSurface(Vec3(1e-13, 0.0, 0.0))
+                     .has_value());
 
     auto xAxis = e.tryScaleToGeocentricSurface(Vec3(8.0, 0.0, 0.0));
     ASSERT_TRUE(xAxis.has_value());
