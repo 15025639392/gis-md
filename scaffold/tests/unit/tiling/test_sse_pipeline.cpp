@@ -16899,6 +16899,43 @@ void testTileSubtreeWorkTrackerFindsActiveLifecycleWork() {
               lifecycle,
               cacheKeyForTile),
           "TileSubtreeWorkTracker: root terminal result marks subtree active");
+
+    lifecycle.cancelAndEraseCacheKey(rootCacheKey);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().beginTerrainRequest(
+            childCacheKey,
+            CancellationToken{});
+    }
+    check(TileSubtreeWorkTracker::hasActiveContentWork(
+              root,
+              lifecycle,
+              cacheKeyForTile),
+          "TileSubtreeWorkTracker: descendant terrain request marks subtree active");
+
+    lifecycle.cancelAndEraseCacheKey(childCacheKey);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainTerminalResult(
+            PendingTerrainTerminalResult{
+                child.key,
+                childCacheKey,
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TerrainTileLoadStatus::RetryLater});
+    }
+    check(TileSubtreeWorkTracker::hasActiveContentWork(
+              root,
+              lifecycle,
+              cacheKeyForTile),
+          "TileSubtreeWorkTracker: descendant terrain terminal result marks subtree active");
+
+    lifecycle.cancelAndEraseCacheKey(childCacheKey);
+    check(!TileSubtreeWorkTracker::hasActiveContentWork(
+              root,
+              lifecycle,
+              cacheKeyForTile),
+          "TileSubtreeWorkTracker: erased terrain work leaves subtree inactive");
 }
 
 void testTileSubtreeTraversalBuildsDescendantRemovalPlan() {
