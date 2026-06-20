@@ -2,9 +2,13 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cctype>
 #include <functional>
+#include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -21,6 +25,61 @@ struct UrlParts {
     std::vector<QueryPart> query;
     std::string fragment;
 };
+
+bool isXmlNameCharacter(char value) {
+    return std::isalnum(static_cast<unsigned char>(value)) || value == '_' ||
+           value == '-' || value == ':' || value == '.';
+}
+
+std::optional<std::string_view> firstElementRange(std::string_view xml,
+                                                  std::string_view tagName,
+                                                  size_t searchStart = 0) {
+    const std::string openNeedle = "<" + std::string(tagName);
+    size_t open = xml.find(openNeedle, searchStart);
+    while (open != std::string_view::npos) {
+        const size_t nameEnd = open + openNeedle.size();
+        if (nameEnd >= xml.size() || isXmlNameCharacter(xml[nameEnd])) {
+            open = xml.find(openNeedle, nameEnd);
+            continue;
+        }
+
+        const size_t openEnd = xml.find('>', nameEnd);
+        if (openEnd == std::string_view::npos) {
+            return std::nullopt;
+        }
+        if (openEnd > open && xml[openEnd - 1] == '/') {
+            return xml.substr(open, openEnd - open + 1);
+        }
+
+        const std::string closeNeedle = "</" + std::string(tagName) + ">";
+        const size_t close = xml.find(closeNeedle, openEnd + 1);
+        if (close == std::string_view::npos) {
+            return std::nullopt;
+        }
+        return xml.substr(open, close + closeNeedle.size() - open);
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> firstElementText(std::string_view xml,
+                                            std::string_view tagName) {
+    const std::optional<std::string_view> element =
+        firstElementRange(xml, tagName);
+    if (!element) {
+        return std::nullopt;
+    }
+    const size_t openEnd = element->find('>');
+    if (openEnd == std::string_view::npos ||
+        (openEnd > 0 && (*element)[openEnd - 1] == '/')) {
+        return std::string();
+    }
+    const std::string closeNeedle = "</" + std::string(tagName) + ">";
+    const size_t close = element->rfind(closeNeedle);
+    if (close == std::string_view::npos || close < openEnd + 1) {
+        return std::nullopt;
+    }
+    return std::string(element->substr(openEnd + 1, close - openEnd - 1));
+}
 
 UrlParts splitUrl(std::string url) {
     UrlParts parts;
@@ -91,6 +150,18 @@ std::string joinUrl(const UrlParts& parts) {
     return result;
 }
 
+int countConfiguredWmsLayers(const std::string& layers) {
+    int count = 0;
+    std::stringstream sstream(layers);
+    std::string layer;
+    while (std::getline(sstream, layer, ',')) {
+        if (!layer.empty()) {
+            ++count;
+        }
+    }
+    return count;
+}
+
 } // namespace
 
 WebMapServiceImageryProvider::WebMapServiceImageryProvider(
@@ -156,6 +227,86 @@ std::string WebMapServiceImageryProvider::buildUrl(const TileKey& key) const {
     setQueryValue(parts.query, "height", std::to_string(tileHeight()), true);
 
     return joinUrl(parts);
+}
+
+WebMapServiceCapabilitiesValidation validateWebMapServiceCapabilities(
+    const std::string& capabilitiesXml,
+    const WebMapServiceImageryOptions& options) {
+    const std::optional<std::string_view> service =
+        firstElementRange(capabilitiesXml, "Service");
+    if (!service) {
+        return WebMapServiceCapabilitiesValidation{
+            false,
+            "Web map service XML document does not have a Service element. "};
+    }
+
+    if (!firstElementRange(*service, "Name")) {
+        return WebMapServiceCapabilitiesValidation{
+            false,
+            "Invalid web map service XML document (Service > Name is missing) "};
+    }
+
+    if (const std::optional<std::string> maxWidthText =
+            firstElementText(*service, "MaxWidth")) {
+        try {
+            const int maxWidth = std::stoi(*maxWidthText);
+            if (options.tileWidth > maxWidth) {
+                return WebMapServiceCapabilitiesValidation{
+                    false,
+                    "configured tile width (" +
+                        std::to_string(options.tileWidth) +
+                        ") exceeds Service >> MaxWidth defined in WMS "
+                        "document (" +
+                        std::to_string(maxWidth) + ")."};
+            }
+        } catch (const std::invalid_argument&) {
+            return WebMapServiceCapabilitiesValidation{
+                false,
+                "Invalid web map service XML document"};
+        }
+    }
+
+    if (const std::optional<std::string> maxHeightText =
+            firstElementText(*service, "MaxHeight")) {
+        try {
+            const int maxHeight = std::stoi(*maxHeightText);
+            if (options.tileHeight > maxHeight) {
+                return WebMapServiceCapabilitiesValidation{
+                    false,
+                    "configured tile height (" +
+                        std::to_string(options.tileHeight) +
+                        ") exceeds Service >> MaxHeight defined in WMS "
+                        "document (" +
+                        std::to_string(maxHeight) + ")."};
+            }
+        } catch (const std::invalid_argument&) {
+            return WebMapServiceCapabilitiesValidation{
+                false,
+                "Invalid web map service XML document"};
+        }
+    }
+
+    if (const std::optional<std::string> layerLimitText =
+            firstElementText(*service, "LayerLimit")) {
+        try {
+            const int layerLimit = std::stoi(*layerLimitText);
+            const int layerCount = countConfiguredWmsLayers(options.layers);
+            if (layerCount > layerLimit) {
+                return WebMapServiceCapabilitiesValidation{
+                    false,
+                    "the number of configured layers (" +
+                        std::to_string(layerCount) +
+                        ") exceeds WMS LayerLimit " +
+                        std::to_string(layerLimit)};
+            }
+        } catch (const std::invalid_argument&) {
+            return WebMapServiceCapabilitiesValidation{
+                false,
+                "Invalid web map service XML document"};
+        }
+    }
+
+    return WebMapServiceCapabilitiesValidation{true, std::string()};
 }
 
 } // namespace earth_engine

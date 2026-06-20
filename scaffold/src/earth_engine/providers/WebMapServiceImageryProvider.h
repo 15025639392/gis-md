@@ -16,6 +16,11 @@ struct WebMapServiceImageryOptions {
     int tileHeight = 256;
 };
 
+struct WebMapServiceCapabilitiesValidation {
+    bool valid = false;
+    std::string error;
+};
+
 /// Web Map Service imagery provider aligned with cesium-native's WMS
 /// GetMap URL construction. Network loading and image decoding are inherited
 /// from XYZImageryProvider.
@@ -38,5 +43,9 @@ private:
     std::string baseUrl_;
     WebMapServiceImageryOptions options_;
 };
+
+WebMapServiceCapabilitiesValidation validateWebMapServiceCapabilities(
+    const std::string& capabilitiesXml,
+    const WebMapServiceImageryOptions& options);
 
 } // namespace earth_engine

@@ -650,6 +650,105 @@ TEST(WebMapServiceImageryProviderTest, RejectsUnsupportedTiles) {
     EXPECT_EQ("", provider.buildUrl(TileKey{"XYZ-WebMercator", 0, 0, 0}));
 }
 
+TEST(WebMapServiceImageryProviderTest, ValidatesCapabilitiesServiceLikeCesiumNative) {
+    WebMapServiceImageryOptions options;
+
+    WebMapServiceCapabilitiesValidation validation =
+        validateWebMapServiceCapabilities("<WMS_Capabilities />", options);
+    EXPECT_FALSE(validation.valid);
+    EXPECT_EQ(
+        "Web map service XML document does not have a Service element. ",
+        validation.error);
+
+    validation = validateWebMapServiceCapabilities(
+        "<WMS_Capabilities><Service /></WMS_Capabilities>",
+        options);
+    EXPECT_FALSE(validation.valid);
+    EXPECT_EQ(
+        "Invalid web map service XML document (Service > Name is missing) ",
+        validation.error);
+
+    validation = validateWebMapServiceCapabilities(
+        "<WMS_Capabilities><Service><Name>WMS</Name></Service></WMS_Capabilities>",
+        options);
+    EXPECT_TRUE(validation.valid);
+    EXPECT_EQ("", validation.error);
+}
+
+TEST(WebMapServiceImageryProviderTest, ValidatesCapabilitiesTileSizeLikeCesiumNative) {
+    WebMapServiceImageryOptions options;
+    options.tileWidth = 512;
+    options.tileHeight = 256;
+
+    WebMapServiceCapabilitiesValidation validation =
+        validateWebMapServiceCapabilities(R"xml(
+          <WMS_Capabilities>
+            <Service>
+              <Name>WMS</Name>
+              <MaxWidth>256</MaxWidth>
+            </Service>
+          </WMS_Capabilities>
+        )xml",
+                                          options);
+    EXPECT_FALSE(validation.valid);
+    EXPECT_EQ(
+        "configured tile width (512) exceeds Service >> MaxWidth defined in WMS document (256).",
+        validation.error);
+
+    validation = validateWebMapServiceCapabilities(R"xml(
+      <WMS_Capabilities>
+        <Service>
+          <Name>WMS</Name>
+          <MaxHeight>128</MaxHeight>
+        </Service>
+      </WMS_Capabilities>
+    )xml",
+                                                   options);
+    EXPECT_FALSE(validation.valid);
+    EXPECT_EQ(
+        "configured tile height (256) exceeds Service >> MaxHeight defined in WMS document (128).",
+        validation.error);
+}
+
+TEST(WebMapServiceImageryProviderTest, ValidatesCapabilitiesLayerLimitLikeCesiumNative) {
+    WebMapServiceImageryOptions options;
+    options.layers = "imagery,,labels,roads";
+
+    WebMapServiceCapabilitiesValidation validation =
+        validateWebMapServiceCapabilities(R"xml(
+          <WMS_Capabilities>
+            <Service>
+              <Name>WMS</Name>
+              <LayerLimit>2</LayerLimit>
+            </Service>
+          </WMS_Capabilities>
+        )xml",
+                                          options);
+
+    EXPECT_FALSE(validation.valid);
+    EXPECT_EQ(
+        "the number of configured layers (3) exceeds WMS LayerLimit 2",
+        validation.error);
+}
+
+TEST(WebMapServiceImageryProviderTest, RejectsInvalidCapabilitiesNumbersLikeCesiumNative) {
+    WebMapServiceImageryOptions options;
+
+    WebMapServiceCapabilitiesValidation validation =
+        validateWebMapServiceCapabilities(R"xml(
+          <WMS_Capabilities>
+            <Service>
+              <Name>WMS</Name>
+              <MaxWidth>not-a-number</MaxWidth>
+            </Service>
+          </WMS_Capabilities>
+        )xml",
+                                          options);
+
+    EXPECT_FALSE(validation.valid);
+    EXPECT_EQ("Invalid web map service XML document", validation.error);
+}
+
 TEST(TileMapServiceUrlTest, AppendsTileMapResourceXmlBeforeQueryLikeCesiumNative) {
     EXPECT_EQ(
         "https://example.com/tms/tilemapresource.xml",
