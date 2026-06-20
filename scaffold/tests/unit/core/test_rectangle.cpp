@@ -138,6 +138,22 @@ TEST(RectangleTest, ContainsRectangleMatchesCesiumNativeFullyContains) {
     EXPECT_FALSE(outer.contains(Rectangle(0.2, 0.3, 0.8, 1.1)));
 }
 
+TEST(RectangleTest, ContainsRectangleHandlesAntimeridianLongitudeSets) {
+    const Rectangle worldSameLatitude(-M_PI, -0.5, M_PI, 0.5);
+    const Rectangle narrowCrossing(170.0 * kDegToRad, -0.5, -170.0 * kDegToRad, 0.5);
+    const Rectangle innerCrossing(175.0 * kDegToRad, -0.25, -175.0 * kDegToRad, 0.25);
+    const Rectangle easternInside(172.0 * kDegToRad, -0.25, 178.0 * kDegToRad, 0.25);
+    const Rectangle westernInside(-178.0 * kDegToRad, -0.25, -172.0 * kDegToRad, 0.25);
+    const Rectangle crossesPrimeMeridian(-10.0 * kDegToRad, -0.25, 10.0 * kDegToRad, 0.25);
+
+    EXPECT_TRUE(worldSameLatitude.contains(narrowCrossing));
+    EXPECT_TRUE(narrowCrossing.contains(innerCrossing));
+    EXPECT_TRUE(narrowCrossing.contains(easternInside));
+    EXPECT_TRUE(narrowCrossing.contains(westernInside));
+    EXPECT_FALSE(narrowCrossing.contains(worldSameLatitude));
+    EXPECT_FALSE(narrowCrossing.contains(crossesPrimeMeridian));
+}
+
 TEST(RectangleTest, IntersectsMatchesCesiumNativeOverlaps) {
     // Source-derived from cesium-native CesiumGeometry::Rectangle::overlaps.
     // gis-md Rectangle stores geodetic radians, so use a non-wrapping range.

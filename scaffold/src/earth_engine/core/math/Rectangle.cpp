@@ -2,6 +2,7 @@
 #include "MathUtils.h"
 #include <glm/glm.hpp>
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace earth_engine {
@@ -78,8 +79,43 @@ bool Rectangle::contains(double lngRad, double latRad) const {
 }
 
 bool Rectangle::contains(const Rectangle& other) const {
-    return contains(other.west_, other.south_) &&
-           contains(other.east_, other.north_);
+    if (other.south_ < south_ || other.north_ > north_) {
+        return false;
+    }
+
+    using LongitudeIntervals = std::array<std::pair<double, double>, 2>;
+    auto splitLongitudeRange = [](const Rectangle& rectangle,
+                                  LongitudeIntervals& intervals) {
+        if (rectangle.crossesAntimeridian()) {
+            intervals[0] = {rectangle.west_, kPi};
+            intervals[1] = {-kPi, rectangle.east_};
+            return 2;
+        }
+
+        intervals[0] = {rectangle.west_, rectangle.east_};
+        return 1;
+    };
+
+    LongitudeIntervals ownIntervals{};
+    LongitudeIntervals otherIntervals{};
+    const int ownCount = splitLongitudeRange(*this, ownIntervals);
+    const int otherCount = splitLongitudeRange(other, otherIntervals);
+
+    for (int otherIndex = 0; otherIndex < otherCount; ++otherIndex) {
+        bool contained = false;
+        for (int ownIndex = 0; ownIndex < ownCount; ++ownIndex) {
+            if (otherIntervals[otherIndex].first >= ownIntervals[ownIndex].first &&
+                otherIntervals[otherIndex].second <= ownIntervals[ownIndex].second) {
+                contained = true;
+                break;
+            }
+        }
+        if (!contained) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 bool Rectangle::intersects(const Rectangle& other) const {
