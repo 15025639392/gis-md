@@ -128,6 +128,32 @@ public:
     int requestCount = 0;
 };
 
+class MalformedImageryProvider final : public ImageryProvider {
+public:
+    std::string id() const override { return "malformed"; }
+    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 18; }
+    int tileWidth() const override { return 2; }
+    int tileHeight() const override { return 2; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     TileCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
+        auto image = std::make_unique<DecodedImage>();
+        image->width = 2;
+        image->height = 2;
+        image->channels = 4;
+        image->pixels.resize(4);
+        callback(key, std::move(image));
+    }
+    std::unique_ptr<DecodedImage> decodeTile(
+        const uint8_t*, size_t) override {
+        return nullptr;
+    }
+};
+
 class ParentFallbackImageryProvider final : public ImageryProvider {
 public:
     std::string id() const override { return "parent-fallback"; }
@@ -518,6 +544,24 @@ TEST(RasterOverlayLifecycleTest, FailedRasterTilesAreTerminalLikeCesiumNative) {
     EXPECT_EQ(RasterOverlayTile::LoadState::Failed,
               rectangleTile->getState());
     EXPECT_EQ(failedRectangleRequests, imagery.requestCount);
+}
+
+TEST(RasterOverlayLifecycleTest, MalformedRasterImagesFailBeforeUploadLikeCesiumNative) {
+    MalformedImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    auto tile = provider.getTile(TileKey{scheme->id(), 2, 1, 1});
+    ASSERT_NE(nullptr, tile);
+    ASSERT_TRUE(provider.loadTile(*tile));
+
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, tile->getState());
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
+              tile->isMoreDetailAvailable());
+    EXPECT_EQ(0, uploaderPtr->uploadCount);
 }
 
 TEST(RasterOverlayLifecycleTest, SharedFrameBudgetLimitsRasterUploadsPerFrame) {

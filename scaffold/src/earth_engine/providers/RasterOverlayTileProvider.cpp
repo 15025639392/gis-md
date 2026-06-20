@@ -229,6 +229,18 @@ bool isWebMercatorScheme(const TileScheme& scheme) {
            id == "OpenGlobus-Earth";
 }
 
+bool isDecodedImageUploadable(const DecodedImage& image) {
+    if (image.width <= 0 || image.height <= 0 || image.channels <= 0) {
+        return false;
+    }
+    const int64_t requiredBytes =
+        static_cast<int64_t>(image.width) *
+        static_cast<int64_t>(image.height) *
+        static_cast<int64_t>(image.channels);
+    return requiredBytes > 0 &&
+           image.pixels.size() >= static_cast<size_t>(requiredBytes);
+}
+
 double webMercatorY(double latRad) {
     const double lat = std::clamp(
         latRad, -kMaxWebMercatorLat, kMaxWebMercatorLat);
@@ -1239,7 +1251,7 @@ int RasterOverlayTileProvider::processPendingUploads(
         if (it == tiles_.end()) continue;
 
         RasterOverlayTile& tile = *it->second;
-        if (!upload.image) {
+        if (!upload.image || !isDecodedImageUploadable(*upload.image)) {
             tile.setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
             tile.setState(RasterOverlayTile::LoadState::Failed);
             revision_.fetch_add(1, std::memory_order_relaxed);
