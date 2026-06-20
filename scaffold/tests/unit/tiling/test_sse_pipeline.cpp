@@ -2170,6 +2170,98 @@ void testQuantizedMeshProviderFetchesMetadataViaAsyncBridge() {
     std::filesystem::remove_all(root);
 }
 
+void testQuantizedMeshProviderSkipsLoadedUnderlyingMetadataSubtree() {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth_md_qm_loaded_underlying_metadata_test";
+    std::filesystem::remove_all(root);
+
+    const std::string parentLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["parentTiles/{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "metadataAvailability": 1,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+    {
+        std::filesystem::create_directories(root / "parent");
+        std::ofstream out(root / "parent" / "layer.json");
+        out << parentLayerJson;
+    }
+
+    const std::string childLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["childTiles/{z}/{x}/{y}.terrain"],
+      "parentUrl": "../parent",
+      "maxzoom": 4,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    check(provider.configureFromLayerJson(
+              childLayerJson,
+              "file://" + (root / "child" / "layer.json").generic_string()),
+          "QuantizedMeshTerrainProvider: loaded-subtree metadata layer configures");
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    check(provider.estimatedRequestFanout(rootKey) == 2,
+          "QuantizedMeshTerrainProvider: unloaded underlying subtree adds metadata fanout");
+
+    DecodedHeightmap loadedSubtree;
+    DecodedHeightmap::QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 1;
+    update.subtreeKey = rootKey;
+    loadedSubtree.quantizedMeshAvailabilityUpdates.push_back(std::move(update));
+    provider.applyAvailabilityUpdates(loadedSubtree);
+    check(provider.estimatedRequestFanout(rootKey) == 1,
+          "QuantizedMeshTerrainProvider: loaded underlying subtree removes metadata fanout like cesium-native");
+
+    QueuedPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    TerrainTileLoadResult completed = TerrainTileLoadResult::retryLater();
+    provider.requestTile(
+        rootKey,
+        CancellationToken{},
+        [&](const TileKey&, TerrainTileLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                done = true;
+            }
+            cv.notify_one();
+        });
+
+    check(bridge.waitUntilPendingCount(1) &&
+              bridge.pendingUrl(0).find("childTiles/0/0/0.terrain") !=
+                  std::string::npos,
+          "QuantizedMeshTerrainProvider: loaded-subtree request starts terrain body only");
+    check(bridge.completeNext(206, makeQuantizedMeshBytes()),
+          "QuantizedMeshTerrainProvider: loaded-subtree terrain body completes");
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        cv.wait_for(lock, std::chrono::seconds(5), [&] { return done; });
+    }
+    check(done &&
+              completed.status == TerrainTileLoadStatus::Success &&
+              completed.heightmap &&
+              completed.heightmap->quantizedMeshAvailabilityUpdates.empty() &&
+              bridge.pendingCount() == 0,
+          "QuantizedMeshTerrainProvider: loaded underlying subtree does not issue duplicate metadata request");
+
+    std::filesystem::remove_all(root);
+}
+
 void testQuantizedMeshMetadataFanoutConsumesTerrainRequestBudget() {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
@@ -22882,6 +22974,7 @@ int main() {
     testQuantizedMeshProviderHttpErrorFailsTerminally();
     testQuantizedMeshLayerJsonConfigUsesSeparateBlockingFetcher();
     testQuantizedMeshProviderFetchesMetadataViaAsyncBridge();
+    testQuantizedMeshProviderSkipsLoadedUnderlyingMetadataSubtree();
     testQuantizedMeshMetadataFanoutConsumesTerrainRequestBudget();
     testActivatedRasterOverlayBindsProviderOwner();
     testActivatedRasterOverlayEnsuresProvider();
