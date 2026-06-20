@@ -19850,6 +19850,36 @@ void testTileLoadRequestDispatcherSkipsEmptyCacheKeys() {
 }
 
 void testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback() {
+    class SyncTerrainProvider final : public TerrainProvider {
+    public:
+        explicit SyncTerrainProvider(bool& issuedBeforeCallback)
+            : issuedBeforeCallback_(issuedBeforeCallback) {}
+
+        std::string id() const override { return "dispatcher-terrain"; }
+        std::string schemeId() const override { return "test"; }
+        int minZoom() const override { return 0; }
+        int maxZoom() const override { return 1; }
+        int tileSize() const override { return 2; }
+        std::string buildUrl(const TileKey&) const override {
+            return "memory://dispatcher-terrain";
+        }
+        void requestTile(const TileKey& key,
+                         CancellationToken,
+                         HeightmapCallback callback,
+                         HttpRequestPriority = HttpRequestPriority::Normal) override {
+            callbackSawIssued = issuedBeforeCallback_;
+            callback(key, TerrainTileLoadResult::retryLater());
+        }
+        std::unique_ptr<DecodedHeightmap> decodeTile(
+            const uint8_t*,
+            size_t) override {
+            return nullptr;
+        }
+
+        bool& issuedBeforeCallback_;
+        bool callbackSawIssued = false;
+    };
+
     class SyncContentProvider final : public TilesetContentProvider {
     public:
         explicit SyncContentProvider(bool& issuedBeforeCallback)
@@ -19906,6 +19936,33 @@ void testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback() {
     check(requestState.empty() &&
               pendingLoads.contentTerminalResultCount() == 1,
           "TileLoadRequestDispatcher: synchronous content callback queues terminal result");
+
+    TilePendingRequestState terrainRequestState;
+    TilePendingLoadQueue terrainPendingLoads;
+    FrameResourceBudget terrainBudget;
+    terrainBudget.beginFrame(1, config);
+    bool terrainIssued = false;
+    SyncTerrainProvider terrainProvider(terrainIssued);
+
+    const TileLoadDispatchResult terrainResult =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            terrainRequestState,
+            terrainPendingLoads,
+            terrainBudget,
+            terrainProvider,
+            key,
+            "terrain",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&terrainIssued]() { terrainIssued = true; });
+
+    check(terrainResult == TileLoadDispatchResult::Issued &&
+              terrainProvider.callbackSawIssued &&
+              terrainRequestState.empty() &&
+              terrainPendingLoads.terrainTerminalResultCount() == 1,
+          "TileLoadRequestDispatcher: synchronous terrain callback runs after issued side effects");
 }
 
 void testTileLoadRequestDispatcherDropsCancelledCallbacks() {
