@@ -493,6 +493,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/providers/QuantizedMeshTerrainProvider.cpp
     earth_engine/providers/QuantizedMeshLayerJsonFetcher.h
     earth_engine/providers/QuantizedMeshLayerJsonFetcher.cpp
+    earth_engine/providers/TileMapServiceUrl.h
+    earth_engine/providers/TileMapServiceUrl.cpp
     earth_engine/providers/RasterOverlayTile.h
     earth_engine/providers/RasterOverlayTile.cpp
     earth_engine/providers/RasterTextureUploader.h

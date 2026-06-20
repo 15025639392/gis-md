@@ -3,6 +3,7 @@
 #include "earth_engine/providers/HeightmapTerrainProvider.h"
 #include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
+#include "earth_engine/providers/TileMapServiceUrl.h"
 #include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/platform/bridge/PlatformBridge.h"
 #include "earth_engine/terrain/TerrainTile.h"
@@ -555,4 +556,27 @@ TEST(XYZImageryProviderTest, OpenGlobusGroupedYCanRejectPolarGroupsWhenProviderL
     EXPECT_TRUE(provider.supportsTile(mercator));
     EXPECT_FALSE(provider.supportsTile(north));
     EXPECT_FALSE(provider.supportsTile(south));
+}
+
+TEST(TileMapServiceUrlTest, AppendsTileMapResourceXmlBeforeQueryLikeCesiumNative) {
+    EXPECT_EQ(
+        "https://example.com/tms/tilemapresource.xml",
+        tileMapServiceXmlUrl("https://example.com/tms"));
+    EXPECT_EQ(
+        "https://example.com/tms/tilemapresource.xml?some=parameter",
+        tileMapServiceXmlUrl("https://example.com/tms?some=parameter"));
+}
+
+TEST(TileMapServiceUrlTest, DoesNotAddSlashAfterExistingXmlWithQueryLikeCesiumNative) {
+    EXPECT_EQ(
+        "https://example.com/tms/tilemapresource.xml?some=parameter",
+        tileMapServiceXmlUrl(
+            "https://example.com/tms/tilemapresource.xml?some=parameter"));
+}
+
+TEST(TileMapServiceUrlTest, ResolvesBesideNonTileMapXmlLikeCesiumNative) {
+    EXPECT_EQ(
+        "https://example.com/tms/tilemapresource.xml?some=parameter#frag",
+        tileMapServiceXmlUrl(
+            "https://example.com/tms/other.xml?some=parameter#frag"));
 }
