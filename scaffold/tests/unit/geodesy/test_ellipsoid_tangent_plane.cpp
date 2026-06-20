@@ -85,3 +85,38 @@ TEST(EllipsoidTangentPlaneTest, ProjectPointToNearestOnPlaneUsesLocalAxes) {
     EXPECT_NEAR(12.5, projected.x, 1e-9);
     EXPECT_NEAR(-4.25, projected.y, 1e-9);
 }
+
+TEST(EllipsoidTangentPlaneTest, ProjectPointBelowPlaneHitsAlongForwardNormal) {
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 surface = ellipsoid.cartographicToCartesian(
+        Cartographic::fromDegrees(116.397, 39.908, 0.0));
+    const EllipsoidTangentPlane tangentPlane(surface, ellipsoid);
+
+    const Vec3 point = tangentPlane.getOrigin() +
+                       tangentPlane.getXAxis() * -7.0 +
+                       tangentPlane.getYAxis() * 9.5 -
+                       tangentPlane.getZAxis() * 100.0;
+
+    const glm::dvec2 projected =
+        tangentPlane.projectPointToNearestOnPlane(point);
+
+    EXPECT_NEAR(-7.0, projected.x, 1e-9);
+    EXPECT_NEAR(9.5, projected.y, 1e-9);
+}
+
+TEST(EllipsoidTangentPlaneTest, ProjectPointAlreadyOnPlaneReturnsLocalCoordinates) {
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 surface = ellipsoid.cartographicToCartesian(
+        Cartographic::fromDegrees(116.397, 39.908, 0.0));
+    const EllipsoidTangentPlane tangentPlane(surface, ellipsoid);
+
+    const Vec3 point = tangentPlane.getOrigin() +
+                       tangentPlane.getXAxis() * 3.25 +
+                       tangentPlane.getYAxis() * 8.0;
+
+    const glm::dvec2 projected =
+        tangentPlane.projectPointToNearestOnPlane(point);
+
+    EXPECT_NEAR(3.25, projected.x, 1e-9);
+    EXPECT_NEAR(8.0, projected.y, 1e-9);
+}
