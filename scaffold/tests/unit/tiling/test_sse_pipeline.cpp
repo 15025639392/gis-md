@@ -13843,6 +13843,42 @@ void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
           "TileContentCacheManager: unload removes render content and updates owned state");
 }
 
+void testTileContentCacheManagerDefersByteRefreshDuringSmoothing() {
+    TileContentCacheManager manager;
+    TileContentLifecycleManager lifecycle;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = TileCacheKey::forTile(key);
+    auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
+    tile->content.loadState = TileLoadState::Done;
+    tile->content.contentKind = TileContentKind::Render;
+    tiles[cacheKey] = std::move(tile);
+    lifecycle.terrainCache()[cacheKey] = makeFlatHeightmap(4.0f);
+
+    manager.updateTotalBytesUsed(tiles, lifecycle);
+    const int64_t bytesBeforeUnload = manager.totalBytesUsed();
+    manager.cacheBytesDirty() = false;
+    manager.markEligibleForUnloading(tiles, cacheKey);
+
+    manager.unloadCachedBytes(
+        0,
+        0.0,
+        true,
+        tiles,
+        lifecycle,
+        nullptr,
+        [](TilesetTile&) {});
+
+    check(bytesBeforeUnload > 0 &&
+              manager.totalBytesUsed() == bytesBeforeUnload &&
+              manager.cacheBytesDirty() &&
+              !manager.unloadQueue().contains(cacheKey) &&
+              lifecycle.terrainCache().find(cacheKey) ==
+                  lifecycle.terrainCache().end(),
+          "TileContentCacheManager: smoothing defers byte refresh while preserving dirty cache state");
+}
+
 void testTileCacheMetricsCountsHeightmapAndTilePayloads() {
     DecodedHeightmap heightmap;
     heightmap.rawData.resize(7);
@@ -26070,6 +26106,7 @@ int main() {
     testTileCacheUnloadCoordinatorDefersRefreshDuringSmoothing();
     testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches();
     testTileContentCacheManagerOwnsBytesQueueAndUnload();
+    testTileContentCacheManagerDefersByteRefreshDuringSmoothing();
     testTileCacheMetricsCountsHeightmapAndTilePayloads();
     testTileCacheMetricsTotalsTileAndTerrainCachePayloads();
     testTileRenderablePolicyClassifiesRenderableContent();
