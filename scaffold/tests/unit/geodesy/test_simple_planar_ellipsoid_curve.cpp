@@ -122,12 +122,22 @@ TEST(SimplePlanarEllipsoidCurveTest, InterpolatesHeightAndAdditionalHeight) {
             Cartographic(0.25, 1.0, endHeight));
 
     ASSERT_TRUE(curve.has_value());
-    const Vec3 midpoint = curve->getPosition(0.5, 10.0);
-    const std::optional<Cartographic> cartographic =
-        Ellipsoid::WGS84().tryCartesianToCartographic(midpoint);
+    for (const double percentage : {0.25, 0.5, 0.75}) {
+        const std::optional<Cartographic> cartographic =
+            Ellipsoid::WGS84().tryCartesianToCartographic(
+                curve->getPosition(percentage));
 
-    ASSERT_TRUE(cartographic.has_value());
-    EXPECT_NEAR(72.5, cartographic->height(), 1e-4);
+        ASSERT_TRUE(cartographic.has_value());
+        const double expectedHeight =
+            startHeight + (endHeight - startHeight) * percentage;
+        EXPECT_NEAR(expectedHeight, cartographic->height(), 1e-4);
+    }
+
+    const std::optional<Cartographic> additionalHeight =
+        Ellipsoid::WGS84().tryCartesianToCartographic(
+            curve->getPosition(0.5, 10.0));
+    ASSERT_TRUE(additionalHeight.has_value());
+    EXPECT_NEAR(72.5, additionalHeight->height(), 1e-4);
 }
 
 TEST(SimplePlanarEllipsoidCurveTest, HandlesNegativeHeightPathWithoutFlippingEarthSide) {
