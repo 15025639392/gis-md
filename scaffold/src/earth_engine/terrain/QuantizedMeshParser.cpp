@@ -414,7 +414,6 @@ std::vector<std::array<int, 5>> QuantizedMeshParser::parseMetadataAvailability(
             std::memcpy(&extLen, data + offset, sizeof(uint32_t));
             offset += sizeof(uint32_t);
 
-            if (offset + extLen > len) break;
             if (extId == 1 &&
                 offset + static_cast<size_t>(vertexCount) * 2u > len) {
                 break;
@@ -430,6 +429,7 @@ std::vector<std::array<int, 5>> QuantizedMeshParser::parseMetadataAvailability(
                     metadataJsonLength));
             }
 
+            if (extLen > len - offset) break;
             offset += extLen;
         }
 
@@ -657,7 +657,6 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     while (offset + kExtHeaderSize <= len) {
         uint8_t extId = data[offset]; offset += 1;
         uint32_t extLen; std::memcpy(&extLen, data + offset, 4); offset += 4;
-        if (offset + extLen > len) break;
 
         if (extId == 1) {
             // Oct-encoded per-vertex normals (cesium-native attribute compression)
@@ -683,6 +682,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
                 octNormals.push_back(Vec3(fx * lenInv, fy * lenInv, fz * lenInv));
             }
         } else if (enableWaterMask && extId == 2 && extLen == 65536) {
+            if (extLen > len - offset) break;
             waterMask.allLand = false;
             waterMask.allWater = false;
             waterMask.data.assign(256 * 256 * 4, 0);
@@ -694,6 +694,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
                 waterMask.data[i * 4 + 3] = v;
             }
         } else if (enableWaterMask && extId == 2 && extLen == 1) {
+            if (extLen > len - offset) break;
             uint8_t v = data[offset];
             waterMask.allWater = (v != 0);
             waterMask.allLand = !waterMask.allWater;
@@ -715,6 +716,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
             mesh->metadataAvailability =
                 parseMetadataAvailabilityJson(metadataJson);
         }
+        if (extLen > len - offset) break;
         offset += extLen;
     }
 
