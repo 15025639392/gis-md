@@ -9,8 +9,10 @@
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Transforms.h"
 #include "earth_engine/scene/Camera.h"
+#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileBoundingVolume.h"
 #include "earth_engine/tiling/TileBoundsMetrics.h"
+#include "earth_engine/tiling/TilesetTile.h"
 
 #include <algorithm>
 #include <array>
@@ -366,6 +368,25 @@ TEST(TileBoundingVolumeTest, FrustumCullingIgnoresNearAndFarPlanesLikeCesiumNati
     EXPECT_TRUE(TileBoundsMetrics::boundingVolumeIntersectsFrustum(
         beyondFar,
         frustum));
+}
+
+TEST(TileBoundingVolumeTest, TileBoundsFrustumCullingIgnoresNearAndFarPlanesLikeCesiumNative) {
+    const Rectangle bounds = Rectangle::fromDegrees(-0.01, -0.01, 0.01, 0.01);
+    const Vec3 center =
+        TileBoundsMetrics::boundingVolumeCenter(
+            TileBoundingVolume::fromRegion(bounds, 0.0, 0.0));
+    const Vec3 up = center.normalized();
+
+    Camera camera;
+    camera.lookAt(center + up * 1000.0, center, Vec3::unitZ());
+    camera.setPerspective(kPi * 0.5, 1.0, 500.0);
+
+    TilesetTile tile;
+    tile.bounds = bounds;
+
+    const Frustum frustum = camera.frustum(800.0, 800.0);
+    ASSERT_FALSE(frustum.containsPoint(center));
+    EXPECT_TRUE(TileBoundsMetrics::tileIntersectsFrustum(tile, frustum));
 }
 
 TEST(TileBoundingVolumeTest, RegionCenterUsesBoundingRegionObbLikeCesiumNative) {

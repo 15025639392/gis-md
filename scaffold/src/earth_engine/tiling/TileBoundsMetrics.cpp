@@ -599,14 +599,12 @@ bool TileBoundsMetrics::tileIntersectsFrustum(const TilesetTile& tile,
     if (tile.boundingVolume) {
         return boundingVolumeIntersectsFrustum(*tile.boundingVolume, frustum);
     }
-    if (const std::optional<OrientedBoundingBox> obb =
-            tileBoundingRegionObb(tile)) {
-        return frustum.intersectsOBB(*obb);
-    }
-    const Vec3 center = tileBoundsCenter(tile.bounds);
-    return frustum.intersectsSphere(
-        center,
-        tileBoundsRadius(tile, center));
+    return boundingVolumeIntersectsFrustum(
+        TileBoundingVolume::fromRegion(
+            tile.bounds,
+            terrainMinimumHeight(tile),
+            terrainMaximumHeight(tile)),
+        frustum);
 }
 
 double TileBoundsMetrics::approximateDistanceToTileBounds(
