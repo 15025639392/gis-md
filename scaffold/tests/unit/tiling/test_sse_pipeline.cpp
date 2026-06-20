@@ -13845,6 +13845,36 @@ void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
           "TileContentCacheManager: unload removes render content and updates owned state");
 }
 
+void testTileContentCacheManagerClearsStaleEmptyMarkerOnUnknownUnload() {
+    TileContentCacheManager manager;
+    TileContentLifecycleManager lifecycle;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = TileCacheKey::forTile(key);
+    auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
+    tile->content.loadState = TileLoadState::Failed;
+    tile->content.contentKind = TileContentKind::Unknown;
+    tiles[cacheKey] = std::move(tile);
+    lifecycle.emptyContentRegistry().insert(cacheKey);
+
+    manager.markEligibleForUnloading(tiles, cacheKey);
+    manager.unloadCachedBytes(
+        -1,
+        0.0,
+        false,
+        tiles,
+        lifecycle,
+        nullptr,
+        [](TilesetTile&) {});
+
+    check(!manager.unloadQueue().contains(cacheKey) &&
+              !lifecycle.emptyContentRegistry().contains(cacheKey) &&
+              tiles[cacheKey]->content.loadState == TileLoadState::Unloaded &&
+              tiles[cacheKey]->content.contentKind == TileContentKind::Unknown,
+          "TileContentCacheManager: unloading unknown content clears stale empty marker");
+}
+
 void testTileContentCacheManagerDefersByteRefreshDuringSmoothing() {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
@@ -26838,6 +26868,7 @@ int main() {
     testTileCacheUnloadCoordinatorDefersRefreshDuringSmoothing();
     testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches();
     testTileContentCacheManagerOwnsBytesQueueAndUnload();
+    testTileContentCacheManagerClearsStaleEmptyMarkerOnUnknownUnload();
     testTileContentCacheManagerDefersByteRefreshDuringSmoothing();
     testTileContentCacheManagerDefersExternalSubtreeWithActiveWork();
     testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes();

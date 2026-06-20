@@ -64,12 +64,12 @@ public:
                 terrainCache.erase(cacheKey);
                 break;
             case TileContentKind::Empty:
-                emptyContentRegistry.erase(cacheKey);
                 break;
             case TileContentKind::Unknown:
                 break;
         }
 
+        emptyContentRegistry.erase(cacheKey);
         TileUnloadPolicy::markContentUnloaded(tile);
         return result;
     }
