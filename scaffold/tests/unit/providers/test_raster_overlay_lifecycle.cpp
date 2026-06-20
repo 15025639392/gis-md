@@ -208,6 +208,45 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomFollowsCesiumTargetScreenPix
     EXPECT_EQ(3, maxClampedTile->getSourceZoom());
 }
 
+TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayLevelRange) {
+    ConfigurableImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    Rectangle z3Bounds =
+        scheme->tileToRectangle(TileKey{scheme->id(), 3, 2, 3});
+
+    RasterOverlay::Options options;
+    options.minimumZoom = 5;
+    auto minZoomImagery = std::make_unique<ConfigurableImageryProvider>();
+    RasterOverlay minOverlay(
+        std::move(minZoomImagery),
+        TileScheme::createXYZWebMercator(),
+        options);
+    RasterOverlayTileProvider minProvider(
+        minOverlay.getProvider(),
+        minOverlay.getTileScheme(),
+        nullptr);
+    minProvider.setOwner(&minOverlay);
+    auto minTile = minProvider.getTile(z3Bounds, 512.0, 512.0);
+    ASSERT_NE(nullptr, minTile);
+    EXPECT_EQ(5, minTile->getSourceZoom());
+
+    options.minimumZoom = 0;
+    options.maximumZoom = 3;
+    auto maxZoomImagery = std::make_unique<ConfigurableImageryProvider>();
+    RasterOverlay maxOverlay(
+        std::move(maxZoomImagery),
+        TileScheme::createXYZWebMercator(),
+        options);
+    RasterOverlayTileProvider maxProvider(
+        maxOverlay.getProvider(),
+        maxOverlay.getTileScheme(),
+        nullptr);
+    maxProvider.setOwner(&maxOverlay);
+    auto maxTile = maxProvider.getTile(z3Bounds, 1024.0, 256.0);
+    ASSERT_NE(nullptr, maxTile);
+    EXPECT_EQ(3, maxTile->getSourceZoom());
+}
+
 TEST(RasterOverlayLifecycleTest, DirectTileCreationRejectsUnsupportedProviderTiles) {
     ConfigurableImageryProvider imagery;
     imagery.minZoomValue = 2;
@@ -218,6 +257,31 @@ TEST(RasterOverlayLifecycleTest, DirectTileCreationRejectsUnsupportedProviderTil
     EXPECT_EQ(nullptr, provider.getTile(TileKey{scheme->id(), 1, 0, 0}));
     EXPECT_EQ(nullptr, provider.getTile(TileKey{scheme->id(), 5, 0, 0}));
     EXPECT_EQ(nullptr, provider.getTile(TileKey{"Geographic-TMS", 2, 0, 0}));
+    EXPECT_EQ(0, provider.getCachedTileCount());
+
+    auto supported = provider.getTile(TileKey{scheme->id(), 2, 0, 0});
+    ASSERT_NE(nullptr, supported);
+    EXPECT_EQ(1, provider.getCachedTileCount());
+}
+
+TEST(RasterOverlayLifecycleTest, DirectTileCreationRejectsUnsupportedOverlayLevels) {
+    auto imagery = std::make_unique<ConfigurableImageryProvider>();
+    RasterOverlay::Options options;
+    options.minimumZoom = 2;
+    options.maximumZoom = 4;
+    RasterOverlay overlay(
+        std::move(imagery),
+        TileScheme::createXYZWebMercator(),
+        options);
+    RasterOverlayTileProvider provider(
+        overlay.getProvider(),
+        overlay.getTileScheme(),
+        nullptr);
+    provider.setOwner(&overlay);
+    auto scheme = TileScheme::createXYZWebMercator();
+
+    EXPECT_EQ(nullptr, provider.getTile(TileKey{scheme->id(), 1, 0, 0}));
+    EXPECT_EQ(nullptr, provider.getTile(TileKey{scheme->id(), 5, 0, 0}));
     EXPECT_EQ(0, provider.getCachedTileCount());
 
     auto supported = provider.getTile(TileKey{scheme->id(), 2, 0, 0});
@@ -357,6 +421,45 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceFailureFallsBackToParentTile) {
         imagery.requestedKeys.end(),
         TileKey{scheme->id(), 7, imagery.failingKey.x / 2,
                 imagery.failingKey.y / 2}) != imagery.requestedKeys.end());
+}
+
+TEST(RasterOverlayLifecycleTest, RectangleSourceFailureDoesNotFallbackBelowOverlayMinimumLevel) {
+    ParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setLevelRange(8, 10);
+
+    const int expectedSourceZoom = 8;
+    TileKey centerKey =
+        scheme->positionToTile(0.1, 0.2, expectedSourceZoom);
+    Rectangle centerBounds = scheme->tileToRectangle(centerKey);
+    Rectangle tileBounds(
+        centerBounds.west() - centerBounds.width() * 0.5,
+        centerBounds.south() - centerBounds.height() * 0.5,
+        centerBounds.east() + centerBounds.width() * 0.5,
+        centerBounds.north() + centerBounds.height() * 0.5);
+
+    imagery.failingKey =
+        scheme->positionToTile(
+            tileBounds.east(),
+            tileBounds.south(),
+            expectedSourceZoom);
+
+    auto rectangleTile = provider.getTile(tileBounds, 1024.0, 1024.0);
+    ASSERT_NE(nullptr, rectangleTile);
+    EXPECT_EQ(expectedSourceZoom, rectangleTile->getSourceZoom());
+
+    EXPECT_TRUE(provider.loadTile(*rectangleTile));
+
+    const TileKey parentBelowMinimum{
+        scheme->id(),
+        expectedSourceZoom - 1,
+        imagery.failingKey.x / 2,
+        imagery.failingKey.y / 2};
+    EXPECT_TRUE(std::find(
+        imagery.requestedKeys.begin(),
+        imagery.requestedKeys.end(),
+        parentBelowMinimum) == imagery.requestedKeys.end());
 }
 
 TEST(RasterOverlayLifecycleTest, RectangleAtMaximumSourceZoomReportsNoMoreDetail) {

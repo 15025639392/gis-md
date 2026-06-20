@@ -317,9 +317,13 @@ int computeLevelFromTargetScreenPixels(const TileScheme& scheme,
                                        const Rectangle& bounds,
                                        double targetScreenPixelsX,
                                        double targetScreenPixelsY,
-                                       double maximumScreenSpaceError) {
-    const int minZoom = std::max(scheme.minZoom(), provider.minZoom());
-    const int maxZoom = std::min(scheme.maxZoom(), provider.maxZoom());
+                                       double maximumScreenSpaceError,
+                                       int minimumLevel,
+                                       int maximumLevel) {
+    const int minZoom =
+        std::max({scheme.minZoom(), provider.minZoom(), minimumLevel});
+    const int maxZoom =
+        std::min({scheme.maxZoom(), provider.maxZoom(), maximumLevel});
     if (maxZoom < minZoom) return scheme.minZoom();
 
     const SchemeDimensions dimensions =
@@ -359,9 +363,13 @@ int chooseRectangleSourceZoom(const TileScheme& scheme,
                         double targetScreenPixelsY,
                         double maximumScreenSpaceError,
                         int maximumTextureSize,
+                        int minimumLevel,
+                        int maximumLevel,
                         TileRange* outRange = nullptr) {
-    const int minZoom = std::max(scheme.minZoom(), provider.minZoom());
-    const int maxZoom = std::min(scheme.maxZoom(), provider.maxZoom());
+    const int minZoom =
+        std::max({scheme.minZoom(), provider.minZoom(), minimumLevel});
+    const int maxZoom =
+        std::min({scheme.maxZoom(), provider.maxZoom(), maximumLevel});
     if (maxZoom < minZoom) {
         if (outRange) *outRange = TileRange{};
         return scheme.minZoom();
@@ -373,7 +381,9 @@ int chooseRectangleSourceZoom(const TileScheme& scheme,
         geometryBounds,
         targetScreenPixelsX,
         targetScreenPixelsY,
-        maximumScreenSpaceError);
+        maximumScreenSpaceError,
+        minZoom,
+        maxZoom);
     const int maxTextureSize =
         maximumCombinedTextureSize(uploader, maximumTextureSize);
 
@@ -404,7 +414,9 @@ RectangleSourcePlan buildRectangleSourcePlan(
     double targetScreenPixelsX,
     double targetScreenPixelsY,
     double maximumScreenSpaceError,
-    int maximumTextureSize) {
+    int maximumTextureSize,
+    int minimumLevel,
+    int maximumLevel) {
     RectangleSourcePlan plan;
     plan.sourceZoom = chooseRectangleSourceZoom(
         scheme,
@@ -416,6 +428,8 @@ RectangleSourcePlan buildRectangleSourcePlan(
         targetScreenPixelsY,
         maximumScreenSpaceError,
         maximumTextureSize,
+        minimumLevel,
+        maximumLevel,
         &plan.range);
     plan.sourceKeys.reserve(
         static_cast<size_t>(std::max(0, plan.range.count())));
@@ -604,6 +618,7 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
                            RectangleSourcePlan plan,
                            Rectangle bounds,
                            int textureSize,
+                           int minimumSourceLevel,
                            RectangleRequestSuccess success,
                            RectangleRequestFailure failure)
         : provider(imageryProvider)
@@ -611,6 +626,7 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
         , sourcePlan(std::move(plan))
         , targetBounds(bounds)
         , maximumTextureSize(textureSize)
+        , minimumLevel(minimumSourceLevel)
         , onSuccess(std::move(success))
         , onFailure(std::move(failure))
         , remaining(sourcePlan.budgetUnits()) {
@@ -683,9 +699,7 @@ private:
                 // cesium-native QuadtreeRasterOverlayTileProvider:
                 // failed sub-tiles try their parent before reporting an empty
                 // contribution to the combined geometry image.
-                if (requestedKey.z >
-                    std::max(self->scheme.minZoom(),
-                             self->provider.minZoom())) {
+                if (requestedKey.z > self->minimumLevel) {
                     const TileKey parentKey = parentTileKey(requestedKey);
                     if (self->provider.supportsTile(parentKey)) {
                         self->requestSource(parentKey, onSourceFinished);
@@ -737,6 +751,7 @@ private:
     RectangleSourcePlan sourcePlan;
     Rectangle targetBounds;
     int maximumTextureSize = 0;
+    int minimumLevel = 0;
     RectangleRequestSuccess onSuccess;
     RectangleRequestFailure onFailure;
     mutable std::mutex mutex;
@@ -790,7 +805,22 @@ void RasterOverlayTileProvider::setOwner(RasterOverlay* owner) {
     if (owner_) {
         coverageRectangle_ = owner_->getOptions().coverageRectangle;
         setMaximumTextureSize(owner_->getOptions().maximumTextureSize);
+        setLevelRange(owner_->getOptions().minimumZoom,
+                      owner_->getOptions().maximumZoom);
     }
+}
+
+int RasterOverlayTileProvider::getMinimumLevel() const {
+    return std::max({scheme_.minZoom(), provider_.minZoom(), minimumLevel_});
+}
+
+int RasterOverlayTileProvider::getMaximumLevel() const {
+    const int configuredMaximumLevel =
+        maximumLevel_ > 0
+            ? maximumLevel_
+            : std::min(scheme_.maxZoom(), provider_.maxZoom());
+    return std::min({scheme_.maxZoom(), provider_.maxZoom(),
+                     configuredMaximumLevel});
 }
 
 std::string RasterOverlayTileProvider::tileCacheKey(const TileKey& key) const {
@@ -812,7 +842,7 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
         return getPlaceholderTile();
     }
 
-    if (key.z < 0 || key.z > scheme_.maxZoom()) return nullptr;
+    if (key.z < getMinimumLevel() || key.z > getMaximumLevel()) return nullptr;
     if (!provider_.supportsTile(key)) return nullptr;
 
     std::string ck = tileCacheKey(key);
@@ -825,7 +855,7 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
     // Create new tile in Unloaded state
     Rectangle bounds = scheme_.tileToRectangle(key);
     auto tile = std::make_shared<RasterOverlayTile>(*this, key, bounds, ck);
-    tile->setMaxZoom(std::min(scheme_.maxZoom(), provider_.maxZoom()));
+    tile->setMaxZoom(getMaximumLevel());
     tile->lastUsedFrame = frameNumber_;
     tiles_[ck] = tile;
     return tile;
@@ -855,7 +885,9 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
         targetScreenPixelsX,
         targetScreenPixelsY,
         maximumScreenSpaceError_,
-        maximumTextureSize_);
+        maximumTextureSize_,
+        getMinimumLevel(),
+        getMaximumLevel());
 
     const std::string ck = rectangleTileCacheKey(
         scheme_, geometryBounds, sourcePlan.sourceZoom);
@@ -874,7 +906,7 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
 
     auto tile = std::make_shared<RasterOverlayTile>(
         *this, representativeKey, geometryBounds, ck);
-    tile->setMaxZoom(std::min(scheme_.maxZoom(), provider_.maxZoom()));
+    tile->setMaxZoom(getMaximumLevel());
     tile->setRectangleTileLevel(sourcePlan.sourceZoom);
     tile->setTargetScreenPixels(targetScreenPixelsX, targetScreenPixelsY);
     tile->lastUsedFrame = frameNumber_;
@@ -890,7 +922,9 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::resolveTile(
     const double centerLng = (bounds.west() + bounds.east()) * 0.5;
     const double centerLat = (bounds.south() + bounds.north()) * 0.5;
 
-    for (int z = desiredZoom; z >= scheme_.minZoom(); --z) {
+    for (int z = std::min(desiredZoom, getMaximumLevel());
+         z >= getMinimumLevel();
+         --z) {
         TileKey key = scheme_.positionToTile(centerLng, centerLat, z);
         TilePtr tile = getTile(key);
 
@@ -1076,7 +1110,9 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
         tile.getTargetScreenPixelsX(),
         tile.getTargetScreenPixelsY(),
         maximumScreenSpaceError_,
-        maximumTextureSize_);
+        maximumTextureSize_,
+        getMinimumLevel(),
+        getMaximumLevel());
 
     if (sourcePlan.empty()) {
         logAndroidRasterPipeline("empty-plan", ck, 0, sourcePlan.sourceZoom);
@@ -1109,6 +1145,7 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
         sourcePlan,
         targetBounds,
         maxTextureSize,
+        getMinimumLevel(),
         [self, ck](std::unique_ptr<DecodedImage> composed) {
             std::lock_guard<std::mutex> providerLock(self->pendingMutex_);
             self->inFlightRequests_.erase(ck);

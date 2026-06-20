@@ -153,6 +153,12 @@ public:
     void setMaximumTextureSize(int maximumTextureSize) {
         maximumTextureSize_ = maximumTextureSize > 0 ? maximumTextureSize : 2048;
     }
+    int getMinimumLevel() const;
+    int getMaximumLevel() const;
+    void setLevelRange(int minimumLevel, int maximumLevel) {
+        minimumLevel_ = minimumLevel > 0 ? minimumLevel : 0;
+        maximumLevel_ = maximumLevel > 0 ? maximumLevel : 0;
+    }
 
     /// Process completed uploads on the main thread.
     /// Should be called once per frame.
@@ -242,6 +248,8 @@ private:
     uint64_t frameNumber_ = 0;
     double maximumScreenSpaceError_ = 2.0;
     int maximumTextureSize_ = 2048;
+    int minimumLevel_ = 0;
+    int maximumLevel_ = 0;
 
 };
 
