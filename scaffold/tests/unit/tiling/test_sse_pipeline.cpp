@@ -4585,6 +4585,33 @@ void testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding() {
           "QuantizedMeshParser: metadata-only path keeps padded-header compatibility");
 }
 
+void testQuantizedMeshMetadataOnlySkipsUnknownExtensions() {
+    const std::string metadata = R"json({
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+    std::vector<uint8_t> bytes = makeQuantizedMeshBytes();
+    appendPod<uint8_t>(bytes, 99);
+    appendPod<uint32_t>(bytes, 3);
+    appendPod<uint8_t>(bytes, 11);
+    appendPod<uint8_t>(bytes, 22);
+    appendPod<uint8_t>(bytes, 33);
+    appendPod<uint8_t>(bytes, 4);
+    appendPod<uint32_t>(
+        bytes,
+        static_cast<uint32_t>(sizeof(uint32_t) + metadata.size()));
+    appendPod<uint32_t>(bytes, static_cast<uint32_t>(metadata.size()));
+    bytes.insert(bytes.end(), metadata.begin(), metadata.end());
+
+    const std::vector<std::array<int, 5>> metadataOnly =
+        QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
+
+    check(metadataOnly.size() == 1 &&
+              metadataOnly[0] == std::array<int, 5>{0, 0, 0, 1, 0},
+          "QuantizedMeshParser: metadata-only path skips unknown extensions before later metadata like cesium-native");
+}
+
 void testQuantizedMeshShortOctNormalUsesRemainingBytesLikeCesiumNative() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -23443,6 +23470,7 @@ int main() {
     testQuantizedMeshMetadataSkipsNonArrayLevelsAfterAdvancing();
     testQuantizedMeshMetadataSkipsNonObjectRangesAfterAdvancingLevel();
     testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding();
+    testQuantizedMeshMetadataOnlySkipsUnknownExtensions();
     testQuantizedMeshShortOctNormalUsesRemainingBytesLikeCesiumNative();
     testQuantizedMeshMalformedMetadataStopsExtensionParsing();
     testQuantizedMeshMetadataParsesBeforeOversizedExtensionSkip();
