@@ -3877,6 +3877,31 @@ void testQuantizedMeshLayerJsonAvailabilityUint32Defaults() {
           "QuantizedMeshTerrainProvider: negative availability fields default to zero like cesium-native");
 }
 
+void testQuantizedMeshLayerJsonAvailabilitySkipsNonArrayLevels() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "available": [
+        "not-a-level-array",
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+
+    check(provider.configureFromLayerJson(
+              layerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: non-array availability levels configure like cesium-native");
+    check(provider.supportsTile(TileKey{"Geographic-TMS", 0, 1, 0}),
+          "QuantizedMeshTerrainProvider: availability level does not advance for non-array entries");
+    check(provider.availabilityState(TileKey{"Geographic-TMS", 1, 0, 0}) ==
+              TileAvailabilityState::NotAvailable,
+          "QuantizedMeshTerrainProvider: skipped non-array level does not leave an availability hole");
+}
+
 void testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -21925,6 +21950,7 @@ int main() {
     testQuantizedMeshLayerJsonMinzoomDoesNotGateAvailability();
     testQuantizedMeshLayerJsonMaxzoomDoesNotGateExplicitAvailability();
     testQuantizedMeshLayerJsonAvailabilityUint32Defaults();
+    testQuantizedMeshLayerJsonAvailabilitySkipsNonArrayLevels();
     testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative();
     testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding();
     testQuantizedMeshShortOctNormalStopsExtensionParsing();

@@ -666,19 +666,25 @@ bool QuantizedMeshTerrainProvider::appendLayerFromJson(
     // quantized-mesh metadata subtrees.
     if (!metadataAvailability &&
         j.contains("available") && j["available"].is_array()) {
-        layer.availabilityRanges.resize(j["available"].size());
-        for (size_t level = 0; level < j["available"].size(); ++level) {
-            const auto& levelRanges = j["available"][level];
+        int availabilityLevel = 0;
+        for (const auto& levelRanges : j["available"]) {
             if (!levelRanges.is_array()) continue;
+            if (static_cast<size_t>(availabilityLevel) >=
+                layer.availabilityRanges.size()) {
+                layer.availabilityRanges.resize(
+                    static_cast<size_t>(availabilityLevel) + 1);
+            }
             for (const auto& range : levelRanges) {
                 if (!range.is_object()) continue;
-                layer.availabilityRanges[level].push_back({
+                layer.availabilityRanges[static_cast<size_t>(availabilityLevel)]
+                    .push_back({
                     jsonUint32OrDefault(range, "startX"),
                     jsonUint32OrDefault(range, "startY"),
                     jsonUint32OrDefault(range, "endX"),
                     jsonUint32OrDefault(range, "endY")
                 });
             }
+            ++availabilityLevel;
         }
     }
 
