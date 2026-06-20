@@ -2952,11 +2952,17 @@ public:
         const DecodedImage& image,
         const RasterTextureUploadOptions&) override {
         ++uploadCount;
+        lastWidth = image.width;
+        lastHeight = image.height;
+        lastPixels = image.pixels;
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
         return std::make_unique<DummyTexture>(image.width, image.height);
     }
 
     int uploadCount = 0;
+    int lastWidth = 0;
+    int lastHeight = 0;
+    std::vector<uint8_t> lastPixels;
 };
 
 std::unique_ptr<DecodedImage> makeDecodedRgbaImage(int width, int height) {
@@ -2967,6 +2973,20 @@ std::unique_ptr<DecodedImage> makeDecodedRgbaImage(int width, int height) {
     image->pixels.resize(
         static_cast<size_t>(width) * static_cast<size_t>(height) * 4u,
         255);
+    return image;
+}
+
+std::unique_ptr<DecodedImage> makeDecodedRgbaImage(
+    int width,
+    int height,
+    uint8_t value) {
+    auto image = std::make_unique<DecodedImage>();
+    image->width = width;
+    image->height = height;
+    image->channels = 4;
+    image->pixels.resize(
+        static_cast<size_t>(width) * static_cast<size_t>(height) * 4u,
+        value);
     return image;
 }
 
@@ -3050,6 +3070,73 @@ void testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize() {
 
     check(rectangleTile && rectangleTile->getSourceZoom() == 5,
           "RasterOverlayTileProvider: rectangle source zoom is reduced until combined texture fits like cesium-native");
+}
+
+void testRasterOverlayRectangleSourceFailureUsesParentImage() {
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<SlowRasterTextureUploader>();
+    SlowRasterTextureUploader* rawUploader = uploader.get();
+    RasterOverlayTileProvider provider(
+        imagery,
+        *imageryScheme,
+        std::move(uploader));
+
+    const TileKey centerKey =
+        imageryScheme->positionToTile(0.1, 0.2, 8);
+    const Rectangle centerBounds = imageryScheme->tileToRectangle(centerKey);
+    const Rectangle targetBounds(
+        centerBounds.west() - centerBounds.width() * 0.5,
+        centerBounds.south() - centerBounds.height() * 0.5,
+        centerBounds.east() + centerBounds.width() * 0.5,
+        centerBounds.north() + centerBounds.height() * 0.5);
+
+    RasterOverlayTileProvider::TilePtr rectangleTile =
+        provider.getTile(targetBounds, 256.0, 256.0);
+
+    FrameResourceBudgetConfig requestConfig;
+    requestConfig.maxRasterNetworkRequestsPerFrame = 64;
+    requestConfig.maxRasterNetworkInflight = 64;
+    FrameResourceBudget requestBudget;
+    requestBudget.beginFrame(1, requestConfig);
+
+    check(rectangleTile && rectangleTile->getSourceZoom() == 8 &&
+              provider.loadTileThrottled(*rectangleTile, &requestBudget) &&
+              !imagery.pendingRequests.empty(),
+          "RasterOverlayTileProvider: failed-source fallback setup requests target-level source tiles");
+
+    const TileKey failedSource =
+        imageryScheme->positionToTile(targetBounds.east(), targetBounds.south(), 8);
+    size_t nextRequest = 0;
+    while (nextRequest < imagery.pendingRequests.size()) {
+        auto request = std::move(imagery.pendingRequests[nextRequest++]);
+        if (request.key == failedSource) {
+            request.callback(request.key, nullptr);
+        } else {
+            request.callback(
+                request.key,
+                makeDecodedRgbaImage(64, 64, static_cast<uint8_t>(request.key.z)));
+        }
+    }
+
+    FrameResourceBudget uploadBudget;
+    uploadBudget.beginFrame(1, requestConfig);
+    const int uploads = provider.processPendingUploads(false, &uploadBudget);
+
+    const bool hasLevel8Pixels =
+        std::find(rawUploader->lastPixels.begin(),
+                  rawUploader->lastPixels.end(),
+                  uint8_t{8}) != rawUploader->lastPixels.end();
+    const bool hasParentLevel7Pixels =
+        std::find(rawUploader->lastPixels.begin(),
+                  rawUploader->lastPixels.end(),
+                  uint8_t{7}) != rawUploader->lastPixels.end();
+
+    check(uploads == 1 &&
+              rectangleTile->getState() == RasterOverlayTile::LoadState::Loaded,
+          "RasterOverlayTileProvider: parent fallback source still produces a loaded rectangle image");
+    check(hasLevel8Pixels && hasParentLevel7Pixels,
+          "RasterOverlayTileProvider: failed source tile is filled from parent imagery like cesium-native");
 }
 
 void testRasterOverlayRectangleCompositionUsesProjectedWebMercatorHeight() {
@@ -23877,6 +23964,7 @@ int main() {
     testRasterOverlayRectangleSourceRequestsAreBudgetedAcrossFrames();
     testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches();
     testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize();
+    testRasterOverlayRectangleSourceFailureUsesParentImage();
     testRasterOverlayRectangleCompositionUsesProjectedWebMercatorHeight();
     testRasterOverlayRectangleCompositionKeepsTinyProjectedOverlap();
     testRasterOverlayUploadsStopAfterElapsedBudgetExpires();
