@@ -65,6 +65,7 @@ struct CurlMultiRequestScheduler::Impl {
         std::array<char, CURL_ERROR_SIZE> errorBuffer{};
         CURL* easy = nullptr;
         bool active = false;
+        bool notifyCallbackOnShutdown = false;
         std::atomic<bool> cancelled{false};
     };
 
@@ -128,12 +129,14 @@ struct CurlMultiRequestScheduler::Impl {
     std::unique_ptr<HttpRequest> get(
         const std::string& url,
         std::function<void(int, std::vector<uint8_t>)> callback,
-        HttpRequestOptions options) {
+        HttpRequestOptions options,
+        bool notifyCallbackOnShutdown = false) {
         auto state = std::make_shared<RequestState>();
         state->sequence = nextSequence++;
         state->url = url;
         state->callback = std::move(callback);
         state->priority = options.priority;
+        state->notifyCallbackOnShutdown = notifyCallbackOnShutdown;
 
         {
             std::lock_guard<std::mutex> lk(mutex);
@@ -176,6 +179,7 @@ struct CurlMultiRequestScheduler::Impl {
     void shutdown() {
         std::array<std::deque<std::shared_ptr<RequestState>>, 3>
             cancelledPending;
+        std::vector<std::shared_ptr<RequestState>> cancelledActiveCallbacks;
         bool shouldJoin = false;
         {
             std::lock_guard<std::mutex> lk(mutex);
@@ -189,6 +193,9 @@ struct CurlMultiRequestScheduler::Impl {
                 cancelledPending.swap(pending);
                 for (auto& [easy, request] : active) {
                     request->cancelled.store(true, std::memory_order_release);
+                    if (request->notifyCallbackOnShutdown) {
+                        cancelledActiveCallbacks.push_back(request);
+                    }
                 }
             }
             shouldJoin = worker.joinable() &&
@@ -205,6 +212,11 @@ struct CurlMultiRequestScheduler::Impl {
                 if (request->callback) {
                     request->callback(-1, {});
                 }
+            }
+        }
+        for (auto& request : cancelledActiveCallbacks) {
+            if (request->callback) {
+                request->callback(-1, {});
             }
         }
     }
@@ -509,7 +521,7 @@ std::vector<uint8_t> CurlMultiRequestScheduler::getBlocking(
     };
     auto state = std::make_shared<BlockingState>();
 
-    auto request = get(url, [state](int code, std::vector<uint8_t> body) {
+    auto request = impl_->get(url, [state](int code, std::vector<uint8_t> body) {
         {
             std::lock_guard<std::mutex> lk(state->mutex);
             if (code == 200) {
@@ -518,7 +530,7 @@ std::vector<uint8_t> CurlMultiRequestScheduler::getBlocking(
             state->done = true;
         }
         state->cv.notify_one();
-    }, options);
+    }, options, true);
 
     bool done = false;
     const auto deadline = std::chrono::steady_clock::now() + timeout;
