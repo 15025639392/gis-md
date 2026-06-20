@@ -66,6 +66,15 @@ void TilePendingLoadQueue::addTerrainTerminalResult(
     if (result.cacheKey.empty()) {
         return;
     }
+    const auto existingIt = std::find_if(
+        terrainTerminalResults_.begin(),
+        terrainTerminalResults_.end(),
+        [&result](const PendingTerrainTerminalResult& pending) {
+            return pending.cacheKey == result.cacheKey;
+        });
+    if (existingIt != terrainTerminalResults_.end()) {
+        return;
+    }
     terrainTerminalResults_.push_back(std::move(result));
 }
 
@@ -82,6 +91,15 @@ void TilePendingLoadQueue::addContentUpload(PendingContentUpload upload) {
 void TilePendingLoadQueue::addContentTerminalResult(
     PendingContentTerminalResult result) {
     if (result.cacheKey.empty()) {
+        return;
+    }
+    const auto existingIt = std::find_if(
+        contentTerminalResults_.begin(),
+        contentTerminalResults_.end(),
+        [&result](const PendingContentTerminalResult& pending) {
+            return pending.cacheKey == result.cacheKey;
+        });
+    if (existingIt != contentTerminalResults_.end()) {
         return;
     }
     contentTerminalResults_.push_back(std::move(result));

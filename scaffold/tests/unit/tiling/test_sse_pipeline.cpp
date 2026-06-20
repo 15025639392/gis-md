@@ -19982,6 +19982,55 @@ void testTilePendingLoadQueueTakesTerminalResultsByPriority() {
           "TilePendingLoadQueue: shared terminal take removes only selected result");
 }
 
+void testTilePendingLoadQueueDeduplicatesTerminalResultsByKind() {
+    TilePendingLoadQueue queue;
+    const TileKey firstKey{"test", 1, 0, 0};
+    const TileKey secondKey{"test", 1, 1, 0};
+    FrameResourceBudgetConfig config;
+    config.maxTerminalStateTransitionsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+        firstKey,
+        "terrain-terminal",
+        TileLoadPriorityGroup::Normal,
+        1.0,
+        TerrainTileLoadStatus::RetryLater});
+    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+        secondKey,
+        "terrain-terminal",
+        TileLoadPriorityGroup::Urgent,
+        100.0,
+        TerrainTileLoadStatus::Cancelled});
+    queue.addContentTerminalResult(PendingContentTerminalResult{
+        firstKey,
+        "content-terminal",
+        TileLoadPriorityGroup::Normal,
+        1.0,
+        TileContentLoadStatus::RetryLater});
+    queue.addContentTerminalResult(PendingContentTerminalResult{
+        secondKey,
+        "content-terminal",
+        TileLoadPriorityGroup::Urgent,
+        100.0,
+        TileContentLoadStatus::Cancelled});
+
+    check(queue.terrainTerminalResultCount() == 1 &&
+              queue.contentTerminalResultCount() == 1,
+          "TilePendingLoadQueue: duplicate terminal cache keys are not queued twice per kind");
+
+    std::optional<PendingTerminalResult> first =
+        queue.takeHighestPriorityTerminalResult(budget);
+    std::optional<PendingTerminalResult> second =
+        queue.takeHighestPriorityTerminalResult(budget);
+    std::optional<PendingTerminalResult> third =
+        queue.takeHighestPriorityTerminalResult(budget);
+
+    check(first && second && !third,
+          "TilePendingLoadQueue: duplicate terminal results leave only one state transition per kind");
+}
+
 void testTilePendingLoadQueueKeepsTerminalResultWhenBudgetBlocks() {
     TilePendingLoadQueue queue;
     const TileKey key{"test", 1, 0, 0};
@@ -30057,6 +30106,7 @@ int main() {
     testTilePendingLoadQueueKeepsUploadWhenFinalizeBudgetBlocks();
     testTilePendingLoadQueueDeduplicatesUploadsByKind();
     testTilePendingLoadQueueTakesTerminalResultsByPriority();
+    testTilePendingLoadQueueDeduplicatesTerminalResultsByKind();
     testTilePendingLoadQueueKeepsTerminalResultWhenBudgetBlocks();
     testTilePendingLoadQueueRejectsEmptyCacheKeys();
     testTilePendingLoadQueueEraseIgnoresUnknownKeys();
