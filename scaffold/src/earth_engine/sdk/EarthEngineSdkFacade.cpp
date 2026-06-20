@@ -14,12 +14,15 @@
 #include "../providers/TileMapServiceImageryProvider.h"
 #include "../providers/TileMapServiceUrl.h"
 #include "../providers/WebMapServiceImageryProvider.h"
+#include "../providers/WebMapTileServiceImageryProvider.h"
 #include "../providers/XYZImageryProvider.h"
 #include "../renderer/RenderDevice.h"
 #include "../scene/Camera.h"
 #include "../tiling/Tileset.h"
 
+#include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -221,6 +224,45 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
                 rasterOverlays,
                 std::move(wms),
                 TileScheme::createGeographicTMS(),
+                makeRasterOverlayOptions(overlayConfig));
+            continue;
+        }
+
+        if (overlayConfig.imageryKind == ImagerySourceKind::WebMapTileService) {
+            WebMapTileServiceImageryOptions wmtsOptions;
+            if (!overlayConfig.wmtsFormat.empty()) {
+                wmtsOptions.format = overlayConfig.wmtsFormat;
+            }
+            wmtsOptions.layer = overlayConfig.wmtsLayer;
+            wmtsOptions.style = overlayConfig.wmtsStyle;
+            wmtsOptions.tileMatrixSetId =
+                overlayConfig.wmtsTileMatrixSetId;
+            wmtsOptions.tileMatrixLabels =
+                overlayConfig.wmtsTileMatrixLabels.empty()
+                    ? std::optional<std::vector<std::string>>()
+                    : std::make_optional(overlayConfig.wmtsTileMatrixLabels);
+            wmtsOptions.subdomains = overlayConfig.wmtsSubdomains;
+            wmtsOptions.dimensions = overlayConfig.wmtsDimensions.empty()
+                ? std::optional<std::map<std::string, std::string>>()
+                : std::make_optional(overlayConfig.wmtsDimensions);
+            wmtsOptions.minimumLevel = overlayConfig.minimumZoom;
+            wmtsOptions.maximumLevel = overlayConfig.maximumZoom;
+            if (overlayConfig.imageryTileWidth > 0) {
+                wmtsOptions.tileWidth = overlayConfig.imageryTileWidth;
+            }
+            if (overlayConfig.imageryTileHeight > 0) {
+                wmtsOptions.tileHeight = overlayConfig.imageryTileHeight;
+            }
+
+            auto wmts = std::make_unique<WebMapTileServiceImageryProvider>(
+                overlayConfig.urlTemplate,
+                std::move(wmtsOptions),
+                overlayConfig.attribution);
+            wmts->setPlatformBridge(&platformBridge_);
+            addActivatedRasterOverlay(
+                rasterOverlays,
+                std::move(wmts),
+                TileScheme::createXYZWebMercator(),
                 makeRasterOverlayOptions(overlayConfig));
             continue;
         }

@@ -101,3 +101,42 @@ TEST(EarthSceneConfig, StoresWebMapServiceImagerySourceDefinitions) {
     EXPECT_EQ(512, copied.imageryTileWidth);
     EXPECT_EQ(256, copied.imageryTileHeight);
 }
+
+TEST(EarthSceneConfig, StoresWebMapTileServiceImagerySourceDefinitions) {
+    EarthSceneConfig config;
+    RasterOverlaySourceConfig overlay;
+    overlay.imageryKind = ImagerySourceKind::WebMapTileService;
+    overlay.urlTemplate = "https://example.com/wmts";
+    overlay.attribution = "wmts attribution";
+    overlay.minimumZoom = 2;
+    overlay.maximumZoom = 10;
+    overlay.wmtsFormat = "image/png";
+    overlay.wmtsLayer = "imagery";
+    overlay.wmtsStyle = "default";
+    overlay.wmtsTileMatrixSetId = "GoogleMapsCompatible";
+    overlay.wmtsTileMatrixLabels = {"0", "1", "2"};
+    overlay.wmtsSubdomains = {"a", "b"};
+    overlay.wmtsDimensions = {{"time", "2026-06-21"}};
+    overlay.imageryTileWidth = 512;
+    overlay.imageryTileHeight = 512;
+    config.rasterOverlays.push_back(overlay);
+
+    ASSERT_EQ(1u, config.rasterOverlays.size());
+    const RasterOverlaySourceConfig& copied = config.rasterOverlays[0];
+    EXPECT_EQ(ImagerySourceKind::WebMapTileService, copied.imageryKind);
+    EXPECT_EQ("https://example.com/wmts", copied.urlTemplate);
+    EXPECT_EQ("wmts attribution", copied.attribution);
+    EXPECT_EQ(2, copied.minimumZoom);
+    EXPECT_EQ(10, copied.maximumZoom);
+    EXPECT_EQ("image/png", copied.wmtsFormat);
+    EXPECT_EQ("imagery", copied.wmtsLayer);
+    EXPECT_EQ("default", copied.wmtsStyle);
+    EXPECT_EQ("GoogleMapsCompatible", copied.wmtsTileMatrixSetId);
+    EXPECT_EQ((std::vector<std::string>{"0", "1", "2"}),
+              copied.wmtsTileMatrixLabels);
+    EXPECT_EQ((std::vector<std::string>{"a", "b"}),
+              copied.wmtsSubdomains);
+    EXPECT_EQ("2026-06-21", copied.wmtsDimensions.at("time"));
+    EXPECT_EQ(512, copied.imageryTileWidth);
+    EXPECT_EQ(512, copied.imageryTileHeight);
+}

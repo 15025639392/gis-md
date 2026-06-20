@@ -2,6 +2,7 @@
 
 #include "../layers/RasterOverlay.h"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -17,7 +18,8 @@ enum class ImagerySourceKind {
     Debug,
     Xyz,
     TileMapService,
-    WebMapService
+    WebMapService,
+    WebMapTileService
 };
 
 struct SceneCameraConfig {
@@ -65,6 +67,13 @@ struct RasterOverlaySourceConfig {
     std::string wmsFormat = "image/png";
     int imageryTileWidth = 0;
     int imageryTileHeight = 0;
+    std::string wmtsFormat;
+    std::string wmtsLayer;
+    std::string wmtsStyle;
+    std::string wmtsTileMatrixSetId;
+    std::vector<std::string> wmtsTileMatrixLabels;
+    std::vector<std::string> wmtsSubdomains;
+    std::map<std::string, std::string> wmtsDimensions;
 };
 
 struct GltfSourceConfig {
