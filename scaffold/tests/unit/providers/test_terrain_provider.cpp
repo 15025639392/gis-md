@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <cmath>
+#include <nlohmann/json.hpp>
 #include <string>
 #include "earth_engine/providers/BingMapsImageryProvider.h"
 #include "earth_engine/providers/GoogleMapTilesImageryProvider.h"
@@ -1096,6 +1097,12 @@ TEST(GoogleMapTilesImageryProviderTest, BuildsCreateSessionRequestLikeCesiumNati
     options.highDpi = true;
     options.layerTypes =
         std::vector<std::string>{"layerRoadmap", "layerTraffic"};
+    options.styles = nlohmann::json::array(
+        {nlohmann::json{{"featureType", "road"},
+                        {"elementType", "geometry"},
+                        {"stylers",
+                         nlohmann::json::array(
+                             {nlohmann::json{{"color", "#123456"}}})}}});
     options.overlay = false;
 
     EXPECT_EQ(
@@ -1112,6 +1119,14 @@ TEST(GoogleMapTilesImageryProviderTest, BuildsCreateSessionRequestLikeCesiumNati
     EXPECT_NE(
         std::string::npos,
         payload.find("\"layerTypes\":[\"layerRoadmap\",\"layerTraffic\"]"));
+    const nlohmann::json payloadJson = nlohmann::json::parse(payload);
+    ASSERT_TRUE(payloadJson.contains("styles"));
+    ASSERT_TRUE(payloadJson["styles"].is_array());
+    ASSERT_EQ(1u, payloadJson["styles"].size());
+    EXPECT_EQ("road", payloadJson["styles"][0]["featureType"]);
+    EXPECT_EQ("geometry", payloadJson["styles"][0]["elementType"]);
+    EXPECT_EQ("#123456",
+              payloadJson["styles"][0]["stylers"][0]["color"]);
     EXPECT_NE(std::string::npos, payload.find("\"overlay\":false"));
 }
 
@@ -1130,6 +1145,7 @@ TEST(GoogleMapTilesImageryProviderTest, CreateSessionOmitsAbsentOptionalsLikeCes
     EXPECT_EQ(std::string::npos, payload.find("scale"));
     EXPECT_EQ(std::string::npos, payload.find("highDpi"));
     EXPECT_EQ(std::string::npos, payload.find("layerTypes"));
+    EXPECT_EQ(std::string::npos, payload.find("styles"));
     EXPECT_EQ(std::string::npos, payload.find("overlay"));
 }
 

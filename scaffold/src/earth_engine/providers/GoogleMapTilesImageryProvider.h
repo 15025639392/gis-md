@@ -3,6 +3,8 @@
 #include "XYZImageryProvider.h"
 #include "../tiling/TileScheme.h"
 
+#include <nlohmann/json.hpp>
+
 #include <memory>
 #include <optional>
 #include <string>
@@ -31,6 +33,7 @@ struct GoogleMapTilesNewSessionOptions {
     std::optional<std::string> scale;
     std::optional<bool> highDpi;
     std::optional<std::vector<std::string>> layerTypes;
+    std::optional<nlohmann::json> styles;
     std::optional<bool> overlay;
     std::string apiBaseUrl = "https://tile.googleapis.com/";
 };

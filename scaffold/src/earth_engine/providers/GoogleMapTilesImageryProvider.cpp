@@ -94,6 +94,9 @@ std::string googleMapTilesCreateSessionPayload(
     if (options.layerTypes) {
         payload["layerTypes"] = *options.layerTypes;
     }
+    if (options.styles) {
+        payload["styles"] = *options.styles;
+    }
     if (options.overlay) {
         payload["overlay"] = *options.overlay;
     }
