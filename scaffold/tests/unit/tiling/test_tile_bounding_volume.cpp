@@ -132,7 +132,18 @@ TEST(TileBoundingVolumeTest, S2CellDoesNotPretendToHaveLocalGeometryYet) {
             20.0));
 
     EXPECT_FALSE(volume.toOrientedBoundingBox().has_value());
-    EXPECT_FALSE(volume.estimateGlobeRectangle().has_value());
+}
+
+TEST(TileBoundingVolumeTest, EstimateGlobeRectangleForS2CellLikeCesiumNative) {
+    const S2CellID cellID = S2CellID::fromQuadtreeTileID(1, 1, 0, 1);
+    const TileBoundingVolume volume = TileBoundingVolume::fromS2Cell(
+        S2CellBoundingVolume(cellID, 10.0, 20.0));
+
+    const std::optional<Rectangle> estimated =
+        volume.estimateGlobeRectangle();
+
+    ASSERT_TRUE(estimated.has_value());
+    expectRectangleNear(cellID.computeBoundingRectangle(), *estimated, 0.0);
 }
 
 TEST(TileBoundingVolumeTest, CenterUsesContainedVolumeKind) {

@@ -138,7 +138,7 @@ std::optional<Rectangle> TileBoundingVolume::estimateGlobeRectangle(
                 .estimateGlobeRectangle(ellipsoid);
         }
         case TileBoundingVolumeKind::S2Cell:
-            return std::nullopt;
+            return s2Cell.getCellID().computeBoundingRectangle();
     }
     return std::nullopt;
 }
