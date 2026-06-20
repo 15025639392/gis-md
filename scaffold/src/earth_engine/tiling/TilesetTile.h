@@ -12,6 +12,7 @@
 #include "TileRenderContentState.h"
 #include "TileSelectionFrameState.h"
 #include "TileBoundingVolume.h"
+#include "../core/math/MathUtils.h"
 #include "../core/math/Rectangle.h"
 #include "../providers/TerrainProvider.h"
 #include "TileScheme.h"
@@ -53,6 +54,26 @@ struct TilesetTile {
     /// cesium-native: getParent() — returns parent tile (may be nullptr).
     TilesetTile* getParent() { return parent; }
     const TilesetTile* getParent() const { return parent; }
+
+    double nonZeroGeometricError() const {
+        if (geometricError > MathUtils::Epsilon5) {
+            return geometricError;
+        }
+
+        const TilesetTile* ancestor = parent;
+        double divisor = 1.0;
+        while (ancestor) {
+            if (!ancestor->unconditionallyRefine) {
+                divisor *= 2.0;
+                if (ancestor->geometricError > MathUtils::Epsilon5) {
+                    return ancestor->geometricError / divisor;
+                }
+            }
+            ancestor = ancestor->parent;
+        }
+
+        return MathUtils::Epsilon5;
+    }
 
     // ---- Content (terrain mesh / GPU buffers / glTF render resources) ----
     TileContentRuntimeState content;

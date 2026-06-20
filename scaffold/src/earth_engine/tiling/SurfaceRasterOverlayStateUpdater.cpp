@@ -60,7 +60,7 @@ SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
         const RasterTargetScreenPixels rasterScreenPixels =
             RasterOverlayScreenSpaceMetrics::computeDesiredScreenPixels(
                 rasterTargetRectangle,
-                tile.geometricError,
+                tile.nonZeroGeometricError(),
                 maximumScreenSpaceError);
         const RasterMappedToTilesetTile::MoreDetail moreDetail =
             overlay.update(

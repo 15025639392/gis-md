@@ -13989,6 +13989,39 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
               tile.unconditionallyRefine,
           "TileTerminalLoadPolicy: empty terrain marks empty content and native unconditional refinement");
 
+    TilesetTile zeroErrorRoot(TileKey{"test", 0, 0, 0}, Rectangle{});
+    zeroErrorRoot.geometricError = 0.0;
+    check(std::abs(
+              zeroErrorRoot.nonZeroGeometricError() -
+              MathUtils::Epsilon5) < 1e-12,
+          "TilesetTile: zero root geometric error falls back to cesium-native epsilon");
+
+    TilesetTile nonZeroAncestor(TileKey{"test", 0, 0, 0}, Rectangle{});
+    nonZeroAncestor.geometricError = 32.0;
+    TilesetTile unconditionalParent(
+        TileKey{"test", 1, 0, 0},
+        Rectangle{},
+        &nonZeroAncestor);
+    unconditionalParent.geometricError = 0.0;
+    unconditionalParent.unconditionallyRefine = true;
+    TilesetTile zeroErrorChild(
+        TileKey{"test", 2, 0, 0},
+        Rectangle{},
+        &unconditionalParent);
+    zeroErrorChild.geometricError = 0.0;
+    check(std::abs(zeroErrorChild.nonZeroGeometricError() - 16.0) < 1e-12,
+          "TilesetTile: nonzero geometric error skips unconditional ancestors like cesium-native");
+
+    action = TileTerminalLoadPolicy::applyTerrainTerminalResult(
+        zeroErrorRoot,
+        TerrainTileLoadStatus::Empty);
+    check(action.markEmptyCacheKey &&
+              action.resourcesDirty &&
+              zeroErrorRoot.content.contentKind == TileContentKind::Empty &&
+              zeroErrorRoot.content.loadState == TileLoadState::Done &&
+              !zeroErrorRoot.unconditionallyRefine,
+          "TileTerminalLoadPolicy: zero-error root empty terrain does not become unconditional");
+
     action = TileTerminalLoadPolicy::applyTerrainTerminalResult(
         tile,
         TerrainTileLoadStatus::RetryLater);

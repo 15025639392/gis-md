@@ -32,10 +32,11 @@ TileTerminalLoadPolicy::applyTerrainTerminalResult(
             while (ancestor && ancestor->unconditionallyRefine) {
                 ancestor = ancestor->parent;
             }
+            const double tileError = tile.nonZeroGeometricError();
             const double parentError = ancestor
-                ? ancestor->geometricError
-                : tile.geometricError * 2.0;
-            if (tile.geometricError >= parentError) {
+                ? ancestor->nonZeroGeometricError()
+                : tileError * 2.0;
+            if (tileError >= parentError) {
                 tile.unconditionallyRefine = true;
             }
             tile.markEmptyContentDone();

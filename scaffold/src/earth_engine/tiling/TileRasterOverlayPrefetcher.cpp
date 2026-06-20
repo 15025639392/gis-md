@@ -69,7 +69,7 @@ void TileRasterOverlayPrefetcher::prefetch(
         const RasterTargetScreenPixels rasterScreenPixels =
             RasterOverlayScreenSpaceMetrics::computeDesiredScreenPixels(
                 rasterTargetRectangle,
-                tile.geometricError,
+                tile.nonZeroGeometricError(),
                 maximumScreenSpaceError);
 
         RasterMappedToTilesetTile& mapped =
