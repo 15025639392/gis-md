@@ -291,25 +291,37 @@ TEST(RectangleTest, SplitAtAntimeridianMatchesCesiumNativeOrdering) {
     split = crossing1.splitAtAntimeridian();
     EXPECT_NEAR(crossing1.west(), split.first.west(), 1e-14);
     EXPECT_NEAR(M_PI, split.first.east(), 1e-14);
+    EXPECT_NEAR(crossing1.south(), split.first.south(), 1e-14);
+    EXPECT_NEAR(crossing1.north(), split.first.north(), 1e-14);
     ASSERT_TRUE(split.second.has_value());
     EXPECT_NEAR(-M_PI, split.second->west(), 1e-14);
     EXPECT_NEAR(crossing1.east(), split.second->east(), 1e-14);
+    EXPECT_NEAR(crossing1.south(), split.second->south(), 1e-14);
+    EXPECT_NEAR(crossing1.north(), split.second->north(), 1e-14);
 
     Rectangle crossing2 = Rectangle::fromDegrees(170.0, -20.0, -160.0, 40.0);
     split = crossing2.splitAtAntimeridian();
     EXPECT_NEAR(-M_PI, split.first.west(), 1e-14);
     EXPECT_NEAR(crossing2.east(), split.first.east(), 1e-14);
+    EXPECT_NEAR(crossing2.south(), split.first.south(), 1e-14);
+    EXPECT_NEAR(crossing2.north(), split.first.north(), 1e-14);
     ASSERT_TRUE(split.second.has_value());
     EXPECT_NEAR(crossing2.west(), split.second->west(), 1e-14);
     EXPECT_NEAR(M_PI, split.second->east(), 1e-14);
+    EXPECT_NEAR(crossing2.south(), split.second->south(), 1e-14);
+    EXPECT_NEAR(crossing2.north(), split.second->north(), 1e-14);
 
     Rectangle crossing3 = Rectangle::fromDegrees(-10.0, -20.0, -160.0, 40.0);
     split = crossing3.splitAtAntimeridian();
     EXPECT_NEAR(crossing3.west(), split.first.west(), 1e-14);
     EXPECT_NEAR(M_PI, split.first.east(), 1e-14);
+    EXPECT_NEAR(crossing3.south(), split.first.south(), 1e-14);
+    EXPECT_NEAR(crossing3.north(), split.first.north(), 1e-14);
     ASSERT_TRUE(split.second.has_value());
     EXPECT_NEAR(-M_PI, split.second->west(), 1e-14);
     EXPECT_NEAR(crossing3.east(), split.second->east(), 1e-14);
+    EXPECT_NEAR(crossing3.south(), split.second->south(), 1e-14);
+    EXPECT_NEAR(crossing3.north(), split.second->north(), 1e-14);
 }
 
 TEST(RectangleTest, ComputeIntersectionMatchesCesiumNativeGlobeRectangleBranches) {
