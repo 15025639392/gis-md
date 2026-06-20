@@ -64,7 +64,7 @@ TileMapServiceImagerySource createTileMapServiceImagerySource(
         parseTileMapServiceMetadata(tileMapResourceXml);
     TileMapServiceImagerySource source;
     source.coverageRectangle =
-        tileMapServiceGeographicCoverageRectangle(metadata);
+        tileMapServiceResolvedGeographicCoverageRectangle(metadata);
     source.scheme = tileMapServiceTileScheme(metadata);
     source.provider = std::make_unique<TileMapServiceImageryProvider>(
         tileMapResourceUrl,

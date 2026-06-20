@@ -846,6 +846,28 @@ TEST(TileMapServiceUrlTest, ConvertsProjectedCoverageToGeographicOverlayRectangl
     EXPECT_FALSE(tileMapServiceGeographicCoverageRectangle(metadata).has_value());
 }
 
+TEST(TileMapServiceUrlTest, ResolvesDefaultCoverageLikeCesiumNative) {
+    TileMapServiceMetadata metadata = parseTileMapServiceMetadata(R"xml(
+      <TileMap>
+        <TileSets profile="global-mercator" />
+      </TileMap>
+    )xml");
+
+    EXPECT_TRUE(tileMapServiceResolvedGeographicCoverageRectangle(metadata)
+                    .equalsEpsilon(
+                        WebMercatorProjection::maximumGlobeRectangle(),
+                        1e-12));
+
+    metadata = parseTileMapServiceMetadata(R"xml(
+      <TileMap>
+        <TileSets profile="global-geodetic" />
+      </TileMap>
+    )xml");
+
+    EXPECT_TRUE(tileMapServiceResolvedGeographicCoverageRectangle(metadata)
+                    .equalsEpsilon(Rectangle::MAXIMUM, 1e-12));
+}
+
 TEST(TileMapServiceUrlTest, CreatesTileSchemeFromMetadataProfile) {
     TileMapServiceMetadata metadata =
         parseTileMapServiceMetadata(R"xml(

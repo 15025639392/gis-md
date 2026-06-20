@@ -388,6 +388,19 @@ std::optional<Rectangle> tileMapServiceGeographicCoverageRectangle(
         *metadata.projectedCoverageRectangle);
 }
 
+Rectangle tileMapServiceResolvedGeographicCoverageRectangle(
+    const TileMapServiceMetadata& metadata) {
+    if (const std::optional<Rectangle> coverage =
+            tileMapServiceGeographicCoverageRectangle(metadata)) {
+        return *coverage;
+    }
+
+    if (metadata.schemeId == "Geographic-TMS") {
+        return GeographicProjection::maximumGlobeRectangle();
+    }
+    return WebMercatorProjection::maximumGlobeRectangle();
+}
+
 std::unique_ptr<TileScheme> tileMapServiceTileScheme(
     const TileMapServiceMetadata& metadata) {
     if (metadata.schemeId == "Geographic-TMS") {

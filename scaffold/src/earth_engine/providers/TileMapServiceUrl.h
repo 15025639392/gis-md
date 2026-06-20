@@ -55,6 +55,11 @@ std::optional<std::string> tileMapServiceTileUrlForKey(
 std::optional<Rectangle> tileMapServiceGeographicCoverageRectangle(
     const TileMapServiceMetadata& metadata);
 
+/// Cesium-native default coverage: with no BoundingBox, use the selected
+/// tiling scheme rectangle; WebMercator is limited to its maximum latitude.
+Rectangle tileMapServiceResolvedGeographicCoverageRectangle(
+    const TileMapServiceMetadata& metadata);
+
 std::unique_ptr<TileScheme> tileMapServiceTileScheme(
     const TileMapServiceMetadata& metadata);
 
