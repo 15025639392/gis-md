@@ -294,6 +294,24 @@ TEST(TileQuadtreeAvailabilityTest, UnloadedNodeOnlyMakesSubtreeRootAvailable) {
               availability.computeAvailability(3, 0, 0, nullptr));
 }
 
+TEST(TileQuadtreeAvailabilityTest, LocalQueryInvalidTileAndContentAccessorsRemainReachableLikeCesiumNative) {
+    TileQuadtreeAvailability availability(3, 5);
+    TileAvailabilityNode node;
+    node.setLoadedSubtree(
+        TileAvailabilitySubtree{
+            TileSubtreeBufferView{0, 1, 4},
+            TileSubtreeBufferView{0, 1, 5},
+            ConstantTileAvailability{false},
+            {std::vector<std::byte>(1, static_cast<std::byte>(0xFF))}},
+        64);
+
+    EXPECT_EQ(Reachable, availability.computeAvailability(1, 0, 0, &node));
+    EXPECT_EQ(
+        static_cast<uint8_t>(
+            Reachable | TileAvailable | SubtreeAvailable | SubtreeLoaded),
+        availability.computeAvailability(0, 0, 0, &node));
+}
+
 TEST(TileQuadtreeAvailabilityTest, ZeroSubtreeLevelsAreUnavailable) {
     TileQuadtreeAvailability availability(0, 5);
     TileQuadtreeAvailability overflowingAvailability(16, 20);
@@ -771,6 +789,26 @@ TEST(TileOctreeAvailabilityTest, UnloadedNodeOnlyMakesSubtreeRootAvailable) {
               availability.computeAvailability(
                   OctreeTileID{3, 0, 0, 0},
                   nullptr));
+}
+
+TEST(TileOctreeAvailabilityTest, LocalQueryInvalidTileAndContentAccessorsRemainReachableLikeCesiumNative) {
+    TileOctreeAvailability availability(3, 5);
+    TileAvailabilityNode node;
+    node.setLoadedSubtree(
+        TileAvailabilitySubtree{
+            TileSubtreeBufferView{0, 1, 4},
+            TileSubtreeBufferView{0, 1, 5},
+            ConstantTileAvailability{false},
+            {std::vector<std::byte>(1, static_cast<std::byte>(0xFF))}},
+        512);
+
+    EXPECT_EQ(
+        Reachable,
+        availability.computeAvailability(OctreeTileID{1, 0, 0, 0}, &node));
+    EXPECT_EQ(
+        static_cast<uint8_t>(
+            Reachable | TileAvailable | SubtreeAvailable | SubtreeLoaded),
+        availability.computeAvailability(OctreeTileID{0, 0, 0, 0}, &node));
 }
 
 TEST(TileOctreeAvailabilityTest, ZeroSubtreeLevelsAreUnavailable) {
