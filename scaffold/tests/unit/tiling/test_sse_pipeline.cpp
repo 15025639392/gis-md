@@ -96,6 +96,7 @@
 #include "earth_engine/tiling/TileTraversalDetails.h"
 #include "earth_engine/tiling/TileViewerRequestVolumePolicy.h"
 #include "earth_engine/tiling/TileSubtreeTraversal.h"
+#include "earth_engine/tiling/TileSubtreeWorkTracker.h"
 #include "earth_engine/tiling/TileSurface.h"
 #include "earth_engine/tiling/TileSurfaceMeshEnsurer.h"
 #include "earth_engine/tiling/TileSurfaceMeshResolutionPolicy.h"
@@ -16720,6 +16721,56 @@ void testTileSubtreeTraversalCollectsRootAndDescendants() {
           "TileSubtreeTraversal: maps collected tiles to cache keys");
 }
 
+void testTileSubtreeWorkTrackerFindsActiveLifecycleWork() {
+    TilesetTile root(TileKey{"test", 0, 0, 0}, Rectangle{});
+    TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &root);
+    root.children.push_back(&child);
+    TileLoadLifecycle lifecycle;
+    const auto cacheKeyForTile = [](const TileKey& key) {
+        return TileCacheKey::forTile(key);
+    };
+    const std::string rootCacheKey = cacheKeyForTile(root.key);
+    const std::string childCacheKey = cacheKeyForTile(child.key);
+
+    check(!TileSubtreeWorkTracker::hasActiveContentWork(
+              root,
+              lifecycle,
+              cacheKeyForTile),
+          "TileSubtreeWorkTracker: empty lifecycle has no active subtree work");
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            child.key,
+            childCacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileContentLoadResult::empty()});
+    }
+    check(TileSubtreeWorkTracker::hasActiveContentWork(
+              root,
+              lifecycle,
+              cacheKeyForTile),
+          "TileSubtreeWorkTracker: descendant pending upload marks subtree active");
+
+    lifecycle.cancelAndEraseCacheKey(childCacheKey);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addContentTerminalResult(
+            PendingContentTerminalResult{
+                root.key,
+                rootCacheKey,
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadStatus::RetryLater});
+    }
+    check(TileSubtreeWorkTracker::hasActiveContentWork(
+              root,
+              lifecycle,
+              cacheKeyForTile),
+          "TileSubtreeWorkTracker: root terminal result marks subtree active");
+}
+
 void testTileSubtreeTraversalBuildsDescendantRemovalPlan() {
     TilesetTile root(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile first(TileKey{"test", 1, 0, 0}, Rectangle{}, &root);
@@ -26168,6 +26219,7 @@ int main() {
     testTileUnloadPolicyReleasesRasterOverlayReferencesWithExplicitClear();
     testTileUnloadPolicyFindsQueuedTilesByLoadState();
     testTileSubtreeTraversalCollectsRootAndDescendants();
+    testTileSubtreeWorkTrackerFindsActiveLifecycleWork();
     testTileSubtreeTraversalBuildsDescendantRemovalPlan();
     testTileTraversalDetailsPolicySummarizesSingleAndCulledTiles();
     testTileTraversalDetailsPolicyAggregatesChildren();
