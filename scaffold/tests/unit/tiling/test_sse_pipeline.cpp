@@ -12803,6 +12803,21 @@ void testTileSelectionInputMetricsSseMatchesCesiumNativeGolden() {
             1000.0);
     check(std::abs(zeroViewportSse) < 1e-12,
           "TileSelectionInputMetrics: zero-height viewport has zero SSE like cesium-native");
+
+    const double insideTileSse =
+        TileSelectionInputMetrics::screenSpaceErrorForView(
+            1.0,
+            projection,
+            800,
+            0.0);
+    const double clampedDistanceSse =
+        TileSelectionInputMetrics::screenSpaceErrorForView(
+            1.0,
+            projection,
+            800,
+            1e-7);
+    check(std::abs(insideTileSse - clampedDistanceSse) < 1e-3,
+          "TileSelectionInputMetrics: zero distance uses cesium-native 1e-7 clamp");
 }
 
 void testTileLoadPriorityPolicyMatchesNativeOrdering() {
