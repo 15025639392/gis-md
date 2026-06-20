@@ -4659,6 +4659,22 @@ void testQuantizedMeshWaterMaskExtensions() {
               mixed->waterMask.data[12345 * 4 + 2] == 255,
           "QuantizedMeshParser: water mask alpha values preserve cesium-native 0-land 255-water semantics");
 
+    std::vector<uint8_t> duplicateBytes =
+        makeQuantizedMeshBytesWithWaterMask(mask);
+    appendPod<uint8_t>(duplicateBytes, 2);
+    appendPod<uint32_t>(duplicateBytes, 1);
+    appendPod<uint8_t>(duplicateBytes, 255);
+    std::unique_ptr<SurfaceTileMesh> duplicate =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            duplicateBytes.data(),
+            duplicateBytes.size(),
+            bounds,
+            true);
+    check(duplicate && duplicate->waterMask.allWater &&
+              !duplicate->waterMask.allLand &&
+              duplicate->waterMask.data.empty(),
+          "QuantizedMeshParser: later one-byte water mask replaces earlier 256x256 mask like cesium-native");
+
     std::unique_ptr<SurfaceTileMesh> disabled =
         QuantizedMeshParser::parseToSurfaceTileMesh(
             allWaterBytes.data(),

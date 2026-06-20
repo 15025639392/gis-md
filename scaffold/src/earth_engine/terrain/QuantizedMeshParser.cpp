@@ -685,7 +685,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
         } else if (enableWaterMask && extId == 2 && extLen == 65536) {
             waterMask.allLand = false;
             waterMask.allWater = false;
-            waterMask.data.resize(256 * 256 * 4);
+            waterMask.data.assign(256 * 256 * 4, 0);
             for (int i = 0; i < 256 * 256; ++i) {
                 uint8_t v = data[offset + i];
                 waterMask.data[i * 4] = 255;
@@ -697,6 +697,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
             uint8_t v = data[offset];
             waterMask.allWater = (v != 0);
             waterMask.allLand = !waterMask.allWater;
+            waterMask.data.clear();
         } else if (extId == 4) {
             // cesium-native: metadata JSON with availability rectangles.
             // Extension payload starts with uint32 metadataJsonLength, then JSON.
