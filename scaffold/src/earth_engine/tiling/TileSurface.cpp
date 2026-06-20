@@ -660,11 +660,19 @@ SurfaceNormalMap TileSurface::buildNormalMap(const SurfaceTileMesh& mesh) {
     // Use skirt metadata when available for precise surface vertex count;
     // fall back to grid-size-based count for meshes without skirt metadata.
     const int n = mesh.gridSize + 1;
-    const size_t surfaceVertexCount =
-        mesh.skirtMeta.noSkirtVerticesCount > 0
-            ? static_cast<size_t>(mesh.skirtMeta.noSkirtVerticesCount)
-            : static_cast<size_t>(n * n);
-    if (mesh.vertices.size() < surfaceVertexCount) return normalMap;
+    size_t surfaceVertexBegin = 0;
+    size_t surfaceVertexCount = static_cast<size_t>(n * n);
+    const SkirtMetadata& skirt = mesh.skirtMeta;
+    if (skirt.noSkirtVerticesCount > 0 &&
+        skirt.noSkirtVerticesBegin < mesh.vertices.size() &&
+        skirt.noSkirtVerticesCount <=
+            mesh.vertices.size() - skirt.noSkirtVerticesBegin) {
+        surfaceVertexBegin = skirt.noSkirtVerticesBegin;
+        surfaceVertexCount = skirt.noSkirtVerticesCount;
+    }
+    if (mesh.vertices.size() < surfaceVertexBegin + surfaceVertexCount) {
+        return normalMap;
+    }
 
     normalMap.width = n;
     normalMap.height = n;
@@ -676,12 +684,13 @@ SurfaceNormalMap TileSurface::buildNormalMap(const SurfaceTileMesh& mesh) {
     };
 
     for (size_t i = 0; i < surfaceVertexCount; ++i) {
-        Vec3 nrm = mesh.vertices[i].normalEcef;
+        const SurfaceVertex& vertex = mesh.vertices[surfaceVertexBegin + i];
+        Vec3 nrm = vertex.normalEcef;
         if (nrm.lengthSquared() > 0.0) {
             nrm = nrm.normalized();
         } else {
             nrm = Ellipsoid::WGS84().geodeticSurfaceNormal(
-                mesh.vertices[i].positionEcef);
+                vertex.positionEcef);
         }
 
         const size_t dst = i * 4;

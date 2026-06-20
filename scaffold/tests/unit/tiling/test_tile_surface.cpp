@@ -544,3 +544,29 @@ TEST(TileSurfaceTest, NormalMapEncodesSurfaceNormalsAsRgba8) {
     EXPECT_GT(decoded.dot(vertex.normalEcef.normalized()), 0.999);
     EXPECT_EQ(255, normalMap.rgba[pixel + 3]);
 }
+
+TEST(TileSurfaceTest, NormalMapUsesNoSkirtVertexRangeBegin) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    Rectangle bounds = scheme->tileToRectangle(TileKey{"XYZ-WebMercator", 2, 2, 1});
+    SurfaceTileMesh surface = TileSurface::buildEllipsoidMesh(bounds, 1);
+    ASSERT_EQ(4u, surface.vertices.size());
+
+    SurfaceTileMesh mesh = surface;
+    SurfaceVertex skirtLikeVertex = surface.vertices.front();
+    skirtLikeVertex.normalEcef = Vec3(-1.0, 0.0, 0.0);
+    mesh.vertices.insert(mesh.vertices.begin(), skirtLikeVertex);
+    mesh.skirtMeta.noSkirtVerticesBegin = 1;
+    mesh.skirtMeta.noSkirtVerticesCount = 4;
+
+    SurfaceNormalMap normalMap = TileSurface::buildNormalMap(mesh);
+
+    ASSERT_TRUE(normalMap.valid());
+    ASSERT_EQ(16u, normalMap.rgba.size());
+    Vec3 decoded(
+        static_cast<double>(normalMap.rgba[0]) / 255.0 * 2.0 - 1.0,
+        static_cast<double>(normalMap.rgba[1]) / 255.0 * 2.0 - 1.0,
+        static_cast<double>(normalMap.rgba[2]) / 255.0 * 2.0 - 1.0);
+    decoded = decoded.normalized();
+
+    EXPECT_GT(decoded.dot(surface.vertices.front().normalEcef.normalized()), 0.999);
+}
