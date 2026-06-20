@@ -12899,6 +12899,12 @@ void testTilesetFailedTerminalDoesNotRetry() {
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
     check(rawProvider->requestCount == 1,
           "Tileset: terminal Failed terrain is not retried by normal queue");
+
+    TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
+    TilesetTestAccess::unloadCachedBytes(tileset, -1);
+    check(root && root->content.loadState == TileLoadState::Unloaded &&
+              root->content.contentKind == TileContentKind::Unknown,
+          "Tileset: cache unload resets terminal Failed terrain to unloaded unknown content");
 }
 
 void testTilesetEmptyContentReachesDone() {
