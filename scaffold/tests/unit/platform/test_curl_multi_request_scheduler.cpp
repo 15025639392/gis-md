@@ -350,6 +350,35 @@ TEST(CurlMultiRequestScheduler, CancelledQueuedRequestNeverStartsOrCallbacks) {
     scheduler.shutdown();
 }
 
+TEST(CurlMultiRequestScheduler, CancelledActiveRequestFreesSlotForQueuedRequest) {
+    LocalHttpServer server;
+    CurlMultiRequestScheduler scheduler(1);
+
+    std::atomic<int> activeCallbacks{0};
+    auto active = scheduler.get(
+        server.url("/hold/active-cancel"),
+        [&](int, std::vector<uint8_t>) { activeCallbacks.fetch_add(1); },
+        {HttpRequestPriority::Normal});
+    ASSERT_TRUE(server.waitForPath("/hold/active-cancel", 3s));
+
+    std::atomic<int> queuedCallbacks{0};
+    auto queued = scheduler.get(
+        server.url("/queued-after-active-cancel"),
+        [&](int, std::vector<uint8_t>) { queuedCallbacks.fetch_add(1); },
+        {HttpRequestPriority::Normal});
+
+    active->cancel();
+    ASSERT_TRUE(server.waitForPath("/queued-after-active-cancel", 3s));
+    EXPECT_EQ(activeCallbacks.load(), 0);
+
+    server.releaseAll();
+    for (int i = 0; i < 100 && queuedCallbacks.load() == 0; ++i) {
+        std::this_thread::sleep_for(20ms);
+    }
+    EXPECT_EQ(queuedCallbacks.load(), 1);
+    scheduler.shutdown();
+}
+
 TEST(CurlMultiRequestScheduler, RequestHandleMayOutliveScheduler) {
     LocalHttpServer server;
     std::unique_ptr<HttpRequest> handle;

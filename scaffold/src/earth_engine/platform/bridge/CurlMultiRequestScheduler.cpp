@@ -246,6 +246,7 @@ private:
         while (true) {
             startPendingRequests();
             cancelActiveRequests();
+            startPendingRequests();
 
             int running = 0;
             if (multi) {
