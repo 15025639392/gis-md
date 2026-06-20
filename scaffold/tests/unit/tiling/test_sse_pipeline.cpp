@@ -19123,6 +19123,54 @@ void testTileLoadSchedulerSkipsPendingCacheKeyBeforeInflightBlock() {
     }
 }
 
+void testTileLoadSchedulerSkipsEmptyCacheKeyBeforeInflightBlock() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    CancellationToken token;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        check(lifecycle.requestState().beginTerrainRequest("busy", token),
+              "TileLoadScheduler: test starts one inflight request before empty key");
+    }
+    bool planned = false;
+
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                TileKey{"test", 0, 0, 0},
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            [](const TileKey&) { return std::string{}; },
+            [&planned](const TileKey&,
+                       const std::string&,
+                       TilesetTile*& tileState) {
+                planned = true;
+                tileState = nullptr;
+                return TileLoadRequestSnapshot{};
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [](const TileKey&) {});
+
+    check(outcome.issued == 0 && !outcome.blockedByInflight,
+          "TileLoadScheduler: empty cache key skip does not report inflight block");
+    check(!planned && lifecycle.pendingRequestCount() == 1,
+          "TileLoadScheduler: empty cache key skip happens before request planning");
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().completeTerrainRequest("busy");
+    }
+}
+
 void testTileLoadSchedulerSortsAndQueuesUpsampledTerrain() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -24862,6 +24910,7 @@ int main() {
     testTileLoadRequestPlannerClassifiesRequestKinds();
     testTileLoadSchedulerBlocksBeforePlanningWhenInflightIsFull();
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeInflightBlock();
+    testTileLoadSchedulerSkipsEmptyCacheKeyBeforeInflightBlock();
     testTileLoadSchedulerSortsAndQueuesUpsampledTerrain();
     testTileLoadSchedulerSkipsEmptyUpsampledCacheKey();
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation();

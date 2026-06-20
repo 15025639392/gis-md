@@ -56,6 +56,9 @@ public:
 
             const TileKey requestKey = request.key;
             const std::string cacheKey = cacheKeyForTile(requestKey);
+            if (cacheKey.empty()) {
+                continue;
+            }
             if (input.lifecycle.containsWorkForCacheKey(cacheKey)) {
                 continue;
             }
