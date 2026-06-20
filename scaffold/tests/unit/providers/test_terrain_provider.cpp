@@ -5,7 +5,9 @@
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/platform/bridge/PlatformBridge.h"
+#include "earth_engine/terrain/TerrainTile.h"
 #include "earth_engine/tiling/TileKey.h"
+#include "earth_engine/tiling/TileScheme.h"
 
 using namespace earth_engine;
 
@@ -48,6 +50,16 @@ public:
 private:
     std::vector<uint8_t> pixels_;
 };
+
+std::unique_ptr<DecodedHeightmap> makeFlatHeightmapForProviderTest(
+    float height) {
+    auto heightmap = std::make_unique<DecodedHeightmap>();
+    heightmap->tileSize = 2;
+    heightmap->heights = {height, height, height, height};
+    heightmap->minHeight = height;
+    heightmap->maxHeight = height;
+    return heightmap;
+}
 
 } // namespace
 
@@ -199,6 +211,48 @@ TEST(DecodedHeightmapTest, BilinearOutOfRangeClamped) {
     // (2.0, -1.0) → (1, 0) = top-right corner = 10
     float h2 = hm.sampleBilinear(2.0f, -1.0f);
     EXPECT_FLOAT_EQ(10.0f, h2);
+}
+
+TEST(TerrainTileTest, NoDataFallsBackToLowZoomParentSeaLevel) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    const TileKey parentKey{"XYZ-WebMercator", 8, 120, 88};
+    const TileKey childKey{"XYZ-WebMercator", 9, 240, 176};
+
+    TerrainTile parent(
+        parentKey,
+        *scheme,
+        makeFlatHeightmapForProviderTest(123.0f));
+    TerrainTile child(
+        childKey,
+        *scheme,
+        makeFlatHeightmapForProviderTest(60001.0f));
+
+    const Rectangle childBounds = scheme->tileToRectangle(childKey);
+    const double lng = (childBounds.west() + childBounds.east()) * 0.5;
+    const double lat = (childBounds.south() + childBounds.north()) * 0.5;
+
+    EXPECT_FLOAT_EQ(0.0f, child.sampleHeight(lng, lat, &parent));
+}
+
+TEST(TerrainTileTest, NoDataFallsBackToHighZoomParentHeight) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    const TileKey parentKey{"XYZ-WebMercator", 9, 240, 176};
+    const TileKey childKey{"XYZ-WebMercator", 10, 480, 352};
+
+    TerrainTile parent(
+        parentKey,
+        *scheme,
+        makeFlatHeightmapForProviderTest(123.0f));
+    TerrainTile child(
+        childKey,
+        *scheme,
+        makeFlatHeightmapForProviderTest(60001.0f));
+
+    const Rectangle childBounds = scheme->tileToRectangle(childKey);
+    const double lng = (childBounds.west() + childBounds.east()) * 0.5;
+    const double lat = (childBounds.south() + childBounds.north()) * 0.5;
+
+    EXPECT_FLOAT_EQ(123.0f, child.sampleHeight(lng, lat, &parent));
 }
 
 TEST(XYZImageryProviderTest, RejectsOpenGlobusTileUnlessGroupedYEnabled) {
