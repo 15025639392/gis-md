@@ -367,11 +367,14 @@ std::optional<std::string> tileMapServiceTileUrlForKey(
         return std::nullopt;
     }
 
+    const std::string extension = metadata.fileExtension.empty()
+        ? std::string()
+        : "." + metadata.fileExtension;
     return tileMapServiceTileUrl(baseUrl,
                                  metadata.tileSets[tileSetIndex].url,
                                  key.x,
                                  key.y,
-                                 "." + metadata.fileExtension);
+                                 extension);
 }
 
 std::optional<Rectangle> tileMapServiceGeographicCoverageRectangle(

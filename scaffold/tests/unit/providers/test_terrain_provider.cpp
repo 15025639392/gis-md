@@ -649,6 +649,22 @@ TEST(TileMapServiceUrlTest, ReturnsNoTileUrlWhenLevelHasNoTilesetLikeCesiumNativ
         TileKey{"TMS-WebMercator", 4, 0, 0}));
 }
 
+TEST(TileMapServiceUrlTest, BuildsTileUrlForEmptyExtensionLikeCesiumNative) {
+    TileMapServiceMetadata metadata;
+    metadata.fileExtension = "";
+    metadata.minimumLevel = 0;
+    metadata.maximumLevel = 0;
+    metadata.tileSets = {TileMapServiceTileSet{"0", 0}};
+
+    const std::optional<std::string> url = tileMapServiceTileUrlForKey(
+        "https://example.com/tms/tilemapresource.xml",
+        metadata,
+        TileKey{"TMS-WebMercator", 0, 0, 0});
+
+    ASSERT_TRUE(url.has_value());
+    EXPECT_EQ("https://example.com/tms/0/0/0", *url);
+}
+
 TEST(TileMapServiceUrlTest, ParsesTileFormatAndTileSetsLikeCesiumNative) {
     const std::string xml = R"xml(
       <TileMap>
