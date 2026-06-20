@@ -22064,6 +22064,148 @@ void testTileLoadRequestDispatcherRejectsRequestsDuringDestroy() {
     }
 }
 
+void testTileLoadRequestDispatcherDropsDestroyingCallbacks() {
+    class DeferredTerrainProvider final : public TerrainProvider {
+    public:
+        std::string id() const override { return "dispatcher-destroy-callback-terrain"; }
+        std::string schemeId() const override { return "test"; }
+        int minZoom() const override { return 0; }
+        int maxZoom() const override { return 1; }
+        int tileSize() const override { return 2; }
+        std::string buildUrl(const TileKey&) const override {
+            return "memory://dispatcher-destroy-callback-terrain";
+        }
+        void requestTile(const TileKey&,
+                         CancellationToken,
+                         HeightmapCallback callback,
+                         HttpRequestPriority = HttpRequestPriority::Normal) override {
+            terrainCallback = std::move(callback);
+        }
+        std::unique_ptr<DecodedHeightmap> decodeTile(
+            const uint8_t*,
+            size_t) override {
+            return nullptr;
+        }
+        HeightmapCallback terrainCallback;
+    };
+
+    class DeferredContentProvider final : public TilesetContentProvider {
+    public:
+        std::string id() const override { return "dispatcher-destroy-callback-content"; }
+        bool supportsTile(const TileKey&) const override { return true; }
+        void requestTileContent(const TileKey&,
+                                CancellationToken,
+                                ContentCallback callback,
+                                HttpRequestPriority = HttpRequestPriority::Normal) override {
+            contentCallback = std::move(callback);
+        }
+        TileContentLoadResult decodeContent(
+            const uint8_t*,
+            size_t) override {
+            return TileContentLoadResult::failed();
+        }
+        ContentCallback contentCallback;
+    };
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    DeferredTerrainProvider uploadTerrainProvider;
+    DeferredTerrainProvider terminalTerrainProvider;
+    DeferredContentProvider uploadContentProvider;
+    DeferredContentProvider terminalContentProvider;
+
+    const TileLoadDispatchResult terrainUploadIssued =
+        TileLoadRequestDispatcher::requestTerrain(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            uploadTerrainProvider,
+            key,
+            "destroy-terrain-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            []() {});
+    const TileLoadDispatchResult terrainTerminalIssued =
+        TileLoadRequestDispatcher::requestTerrain(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            terminalTerrainProvider,
+            key,
+            "destroy-terrain-terminal",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            []() {});
+    const TileLoadDispatchResult contentUploadIssued =
+        TileLoadRequestDispatcher::requestContent(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            uploadContentProvider,
+            key,
+            "destroy-content-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            []() {});
+    const TileLoadDispatchResult contentTerminalIssued =
+        TileLoadRequestDispatcher::requestContent(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            terminalContentProvider,
+            key,
+            "destroy-content-terminal",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            []() {});
+
+    check(terrainUploadIssued == TileLoadDispatchResult::Issued &&
+              terrainTerminalIssued == TileLoadDispatchResult::Issued &&
+              contentUploadIssued == TileLoadDispatchResult::Issued &&
+              contentTerminalIssued == TileLoadDispatchResult::Issued,
+          "TileLoadRequestDispatcher: destroy-callback test issues deferred requests");
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().markDestroyingAndCancelRequests();
+    }
+
+    auto heightmap = std::make_unique<DecodedHeightmap>();
+    heightmap->tileSize = 2;
+    heightmap->heights = {1.0f, 1.0f, 1.0f, 1.0f};
+    uploadTerrainProvider.terrainCallback(
+        key,
+        TerrainTileLoadResult::success(std::move(heightmap)));
+    terminalTerrainProvider.terrainCallback(
+        key,
+        TerrainTileLoadResult::retryLater());
+    uploadContentProvider.contentCallback(
+        key,
+        TileContentLoadResult::render(std::make_unique<GltfModel>()));
+    terminalContentProvider.contentCallback(
+        key,
+        TileContentLoadResult::retryLater());
+
+    check(!lifecycle.hasPendingWork(),
+          "TileLoadRequestDispatcher: destroying callbacks drain requests without queuing stale work");
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().clearAfterCallbacksComplete();
+    }
+}
+
 void testTileLoadRequestDispatcherSkipsPendingTerminalResultKeys() {
     class SyncTerminalTerrainProvider final : public TerrainProvider {
     public:
@@ -30224,6 +30366,7 @@ int main() {
     testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback();
     testTileLoadRequestDispatcherDropsCancelledCallbacks();
     testTileLoadRequestDispatcherRejectsRequestsDuringDestroy();
+    testTileLoadRequestDispatcherDropsDestroyingCallbacks();
     testTileLoadRequestDispatcherSkipsPendingTerminalResultKeys();
     testTileLoadRequestDispatcherSkipsInflightRequestKeys();
     testTileLoadRequestDispatcherSkipsPendingUploadKeys();
