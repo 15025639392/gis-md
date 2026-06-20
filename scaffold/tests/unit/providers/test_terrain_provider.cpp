@@ -5,6 +5,7 @@
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/providers/TileMapServiceImageryProvider.h"
 #include "earth_engine/providers/TileMapServiceUrl.h"
+#include "earth_engine/providers/WebMapServiceImageryProvider.h"
 #include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Projection.h"
@@ -601,6 +602,52 @@ TEST(XYZImageryProviderTest, OpenGlobusGroupedYCanRejectPolarGroupsWhenProviderL
     EXPECT_TRUE(provider.supportsTile(mercator));
     EXPECT_FALSE(provider.supportsTile(north));
     EXPECT_FALSE(provider.supportsTile(south));
+}
+
+TEST(WebMapServiceImageryProviderTest, BuildsGetMapUrlLikeCesiumNative) {
+    WebMapServiceImageryOptions options;
+    options.layers = "land,labels";
+    WebMapServiceImageryProvider provider(
+        "https://example.com/wms",
+        options,
+        "wms attribution");
+
+    EXPECT_EQ("wms-imagery", provider.type());
+    EXPECT_EQ("Geographic-TMS", provider.schemeId());
+    EXPECT_EQ(0, provider.minZoom());
+    EXPECT_EQ(14, provider.maxZoom());
+    EXPECT_EQ(256, provider.tileWidth());
+    EXPECT_EQ(256, provider.tileHeight());
+    EXPECT_EQ("wms attribution", provider.attribution());
+    EXPECT_EQ(
+        "https://example.com/wms?crs=EPSG:4326&styles=&transparent=true&service=WMS&request=GetMap&version=1.3.0&bbox=-90.000000,0.000000,90.000000,180.000000&layers=land,labels&format=image/png&width=256&height=256",
+        provider.buildUrl(TileKey{"Geographic-TMS", 0, 1, 0}));
+}
+
+TEST(WebMapServiceImageryProviderTest, PreservesUserDefaultParametersLikeCesiumNative) {
+    WebMapServiceImageryOptions options;
+    options.version = "1.1.1";
+    options.layers = "imagery";
+    options.format = "image/jpeg";
+    options.tileWidth = 512;
+    options.tileHeight = 128;
+
+    WebMapServiceImageryProvider provider(
+        "https://example.com/wms?crs=EPSG:3857&styles=default&transparent=false&service=Custom&request=Old&bbox=old#frag",
+        options);
+
+    EXPECT_EQ(
+        "https://example.com/wms?crs=EPSG:3857&styles=default&transparent=false&service=Custom&request=GetMap&bbox=-90.000000,-180.000000,90.000000,0.000000&version=1.1.1&layers=imagery&format=image/jpeg&width=512&height=128#frag",
+        provider.buildUrl(TileKey{"Geographic-TMS", 0, 0, 0}));
+}
+
+TEST(WebMapServiceImageryProviderTest, RejectsUnsupportedTiles) {
+    WebMapServiceImageryProvider provider("https://example.com/wms");
+
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 1, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 0, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 2, 0}));
+    EXPECT_EQ("", provider.buildUrl(TileKey{"XYZ-WebMercator", 0, 0, 0}));
 }
 
 TEST(TileMapServiceUrlTest, AppendsTileMapResourceXmlBeforeQueryLikeCesiumNative) {
