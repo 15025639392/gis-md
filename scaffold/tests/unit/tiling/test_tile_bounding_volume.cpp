@@ -211,6 +211,16 @@ TEST(TileBoundingVolumeTest, S2CellCenterUsesCellHeightMidpointLikeCesiumNative)
     expectVec3Near(expectedCenter, actualCenter, 1e-7);
 }
 
+TEST(TileBoundingVolumeTest, S2CellConstructsFaceTwoNorthPoleLikeCesiumNative) {
+    const S2CellBoundingVolume s2(
+        S2CellID::fromToken("5"),
+        1000.0,
+        2000.0);
+
+    EXPECT_TRUE(s2.getCellID().isValid());
+    EXPECT_EQ(5764607523034234880ULL, s2.getCellID().getID());
+}
+
 TEST(TileBoundingVolumeTest, S2CellDistanceAndContainsCenterLikeCesiumNative) {
     const S2CellBoundingVolume s2(
         S2CellID::fromToken("1"),
