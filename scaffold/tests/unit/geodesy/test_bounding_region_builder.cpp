@@ -97,6 +97,22 @@ TEST(BoundingRegionBuilderTest, ExpandsSimpleRectangleFirstLikeCesiumNative) {
     expectRectangleNear(builder.toRectangle(), Rectangle(0.1, 0.2, 0.3, 0.4));
 }
 
+TEST(BoundingRegionBuilderTest, ExpandsAntimeridianRectangleFirstLikeCesiumNative) {
+    BoundingRegionBuilder builder;
+
+    EXPECT_TRUE(builder.expandToIncludeRectangle(
+        Rectangle::fromDegrees(175.0, -10.0, 173.0, 20.0)));
+    expectRectangleNear(
+        builder.toRectangle(),
+        Rectangle::fromDegrees(175.0, -10.0, 173.0, 20.0));
+
+    EXPECT_FALSE(builder.expandToIncludeRectangle(
+        Rectangle::fromDegrees(176.0, -9.0, 172.0, 19.0)));
+    expectRectangleNear(
+        builder.toRectangle(),
+        Rectangle::fromDegrees(175.0, -10.0, 173.0, 20.0));
+}
+
 TEST(BoundingRegionBuilderTest, ExpandsRectanglesWithAntimeridianSemantics) {
     struct Case {
         Rectangle first;
