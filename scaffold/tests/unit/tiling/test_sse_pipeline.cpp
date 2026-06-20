@@ -16177,6 +16177,21 @@ void testTileViewerRequestVolumePolicyChecksOptionalVolume() {
               Vec3(20.1, 0.0, 0.0)),
           "TileViewerRequestVolumePolicy: camera outside request volume is rejected");
 
+    const TileBoundingVolume box =
+        TileBoundingVolume::fromBox(
+            Vec3::zero(),
+            Vec3::unitX(),
+            Vec3::unitY(),
+            Vec3::unitZ());
+    check(TileViewerRequestVolumePolicy::containsPosition(
+              box,
+              Vec3(1.0, 0.0, 0.0)),
+          "TileViewerRequestVolumePolicy: box boundary is contained like cesium-native");
+    check(!TileViewerRequestVolumePolicy::containsPosition(
+              box,
+              Vec3(1.0 + 1e-12, 0.0, 0.0)),
+          "TileViewerRequestVolumePolicy: box containment is not distance-tolerance inflated");
+
     std::vector<SelectorView> views(2);
     views[0].position = Vec3(20.1, 0.0, 0.0);
     views[1].position = Vec3(12.0, 0.0, 0.0);

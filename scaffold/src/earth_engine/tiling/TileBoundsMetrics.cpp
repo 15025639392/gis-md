@@ -693,8 +693,7 @@ bool TileBoundsMetrics::boundingVolumeContainsPosition(
         case TileBoundingVolumeKind::Sphere:
             return volume.sphere.contains(position);
         case TileBoundingVolumeKind::Box:
-            return volume.box.computeDistanceSquaredToPosition(position) <=
-                   1e-8;
+            return volume.box.contains(position);
         case TileBoundingVolumeKind::CylinderRegion:
             return volume.cylinderRegion.contains(position);
         case TileBoundingVolumeKind::S2Cell:
