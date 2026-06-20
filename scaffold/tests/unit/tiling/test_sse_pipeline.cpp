@@ -19374,6 +19374,15 @@ void testTileSelectionRefinementPolicyContinueDeeper() {
         false);
     check(!decision.shouldContinue,
           "TileSelectionRefinementPolicy: renderable tile does not continue deeper");
+
+    decision = TileSelectionRefinementPolicy::continueDeeperDecision(
+        false,
+        TileSelectionState::RefinedAndKicked,
+        false,
+        false);
+    check(decision.shouldContinue && decision.ancestorMeetsSse &&
+              decision.queueUrgent,
+          "TileSelectionRefinementPolicy: kicked refined tile continues deeper using original refined state");
 }
 
 void testTileSelectionRefinementPolicyPreloadRefinedAncestor() {
