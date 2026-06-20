@@ -97,6 +97,15 @@ struct TileChildMaterializer {
             TilesetTile* child = ensureTile(childInfo.key);
             if (!child) continue;
             child->geometricError = parent.geometricError * 0.5;
+            const double minimumHeight =
+                TileBoundsMetrics::terrainMinimumHeight(parent);
+            const double maximumHeight =
+                TileBoundsMetrics::terrainMaximumHeight(parent);
+            child->boundingVolume = TileBoundingVolume::fromRegion(
+                child->bounds,
+                minimumHeight,
+                maximumHeight);
+            child->contentBoundingVolume = child->boundingVolume;
             if (!child->content.renderContent.isMeshReady()) {
                 TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                     *child,

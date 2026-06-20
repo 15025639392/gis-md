@@ -21666,10 +21666,18 @@ void testTilesetChildrenInheritParentTerrainHeightRange() {
             child &&
             child->content.renderContent.hasTerrainHeightRange() &&
             std::abs(child->content.renderContent.terrainMinimumHeight() - minimumHeight) < 1e-6 &&
-            std::abs(child->content.renderContent.terrainMaximumHeight() - maximumHeight) < 1e-6;
+            std::abs(child->content.renderContent.terrainMaximumHeight() - maximumHeight) < 1e-6 &&
+            child->boundingVolume &&
+            child->boundingVolume->kind == TileBoundingVolumeKind::Region &&
+            std::abs(child->boundingVolume->minimumHeight - minimumHeight) < 1e-6 &&
+            std::abs(child->boundingVolume->maximumHeight - maximumHeight) < 1e-6 &&
+            child->contentBoundingVolume &&
+            child->contentBoundingVolume->kind == TileBoundingVolumeKind::Region &&
+            std::abs(child->contentBoundingVolume->minimumHeight - minimumHeight) < 1e-6 &&
+            std::abs(child->contentBoundingVolume->maximumHeight - maximumHeight) < 1e-6;
     }
     check(allChildrenInherited,
-          "Tileset: child terrain bounds inherit parent QM updated height range");
+          "Tileset: child terrain bounds and volumes inherit parent QM updated height range");
 }
 
 void testTilesetSampleHeightUsesBestLoadedTerrainTile() {
