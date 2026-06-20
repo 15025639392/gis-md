@@ -13443,6 +13443,13 @@ void testTileLoadQueueDeduplicatesAndUpgradesPriority() {
     check(queue.front().priority == 1000.0,
           "TileLoadQueue: upgraded request keeps selected priority value");
 
+    queue.queue(key, TileLoadPriorityGroup::Normal, 0.0);
+    queue.queue(key, TileLoadPriorityGroup::Urgent, 2000.0);
+    check(queue.size() == 1 &&
+              queue.front().group == TileLoadPriorityGroup::Urgent &&
+              queue.front().priority == 1000.0,
+          "TileLoadQueue: duplicate requests cannot downgrade an already higher-priority entry");
+
     queue.resize(4);
     check(queue.size() == 1,
           "TileLoadQueue: resize does not grow default load requests");
