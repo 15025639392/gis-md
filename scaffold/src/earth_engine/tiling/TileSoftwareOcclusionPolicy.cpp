@@ -137,11 +137,9 @@ double occlusionSampleHeightForTile(const TilesetTile& tile) {
 
     switch (tile.boundingVolume->kind) {
         case TileBoundingVolumeKind::Region:
-            return std::max(0.0, tile.boundingVolume->maximumHeight);
+            return tile.boundingVolume->maximumHeight;
         case TileBoundingVolumeKind::S2Cell:
-            return std::max(
-                0.0,
-                tile.boundingVolume->s2Cell.getMaximumHeight());
+            return tile.boundingVolume->s2Cell.getMaximumHeight();
         case TileBoundingVolumeKind::Sphere:
         case TileBoundingVolumeKind::Box:
         case TileBoundingVolumeKind::CylinderRegion:

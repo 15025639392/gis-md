@@ -28775,6 +28775,25 @@ void testTilesetSoftwareOcclusionDoesNotInflateExplicitRegionToDefaultTerrainHei
           "Tileset: software occlusion does not inflate explicit region to default terrain height");
 }
 
+void testTilesetSoftwareOcclusionPreservesNegativeExplicitRegionHeight() {
+    TilesetTile tile;
+    tile.key = TileKey{"Geographic-TMS", 4, 0, 0};
+    tile.bounds = Rectangle::fromDegrees(140.0, -1.0, 141.0, 1.0);
+    tile.boundingVolume =
+        TileBoundingVolume::fromRegion(
+            Rectangle::fromDegrees(30.0, -0.01, 30.1, 0.01),
+            -1000.0,
+            -1000.0);
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 cameraPosition = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(0.0, 0.0, 1000000.0));
+
+    check(TileSoftwareOcclusionPolicy::check(tile, cameraPosition) ==
+              TileOcclusionState::Occluded,
+          "Tileset: software occlusion preserves negative explicit region height");
+}
+
 void testTilesetChildrenInheritParentTerrainHeightRange() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -30867,6 +30886,7 @@ int main() {
     testTilesetSoftwareOcclusionUsesExplicitVolumeRectangleForUnderCamera();
     testTilesetSoftwareOcclusionUsesExplicitRegionHeightForFallbackSamples();
     testTilesetSoftwareOcclusionDoesNotInflateExplicitRegionToDefaultTerrainHeight();
+    testTilesetSoftwareOcclusionPreservesNegativeExplicitRegionHeight();
     testTilesetChildrenInheritParentTerrainHeightRange();
     testTilesetSampleHeightUsesBestLoadedTerrainTile();
     testTilesetSampleHeightFallsBackToLoadedAncestorTerrain();
