@@ -55,6 +55,38 @@ bool pointInClipVolume(const glm::dvec4& point) {
            0.0 <= point.z && point.z <= w;
 }
 
+template <typename Callback>
+void forEachCesiumFrustumSample(double horizontalFov,
+                                double verticalFov,
+                                double zNear,
+                                double zFar,
+                                Callback callback) {
+    for (int i = 0; i < 11; ++i) {
+        double horizontalAngle =
+            -horizontalFov * 0.5 + i * horizontalFov / 10.0;
+        horizontalAngle = std::clamp(horizontalAngle,
+                                     -horizontalFov + 0.1,
+                                     horizontalFov - 0.1);
+        const double sinHorizontal = std::sin(horizontalAngle);
+        for (int j = 0; j < 10; ++j) {
+            double verticalAngle =
+                -verticalFov * 0.5 + j * verticalFov / 10.0;
+            verticalAngle = std::clamp(verticalAngle,
+                                       -verticalFov + 0.1,
+                                       verticalFov - 0.1);
+            const double sinVertical = std::sin(verticalAngle);
+            for (int k = 0; k < 10; ++k) {
+                double depth = zNear + k * (zFar - zNear) / 10.0;
+                depth = std::clamp(depth, zNear + 0.1, zFar - 0.1);
+                callback(glm::dvec4(sinHorizontal * depth,
+                                    sinVertical * depth,
+                                    -depth,
+                                    1.0));
+            }
+        }
+    }
+}
+
 } // namespace
 
 TEST(TransformsTest, UpAxisTransformsMatchCesiumNativeConstants) {
@@ -233,32 +265,14 @@ TEST(TransformsTest, PerspectiveProjectionContainsFrustumSamples) {
                                             zNear,
                                             zFar);
 
-    for (int i = 0; i < 11; ++i) {
-        double horizontalAngle =
-            -horizontalFov * 0.5 + i * horizontalFov / 10.0;
-        horizontalAngle = std::clamp(horizontalAngle,
-                                     -horizontalFov + 0.1,
-                                     horizontalFov - 0.1);
-        const double sinHorizontal = std::sin(horizontalAngle);
-        for (int j = 0; j < 10; ++j) {
-            double verticalAngle =
-                -verticalFov * 0.5 + j * verticalFov / 10.0;
-            verticalAngle = std::clamp(verticalAngle,
-                                       -verticalFov + 0.1,
-                                       verticalFov - 0.1);
-            const double sinVertical = std::sin(verticalAngle);
-            for (int k = 0; k < 10; ++k) {
-                double depth = zNear + k * (zFar - zNear) / 10.0;
-                depth = std::clamp(depth, zNear + 0.1, zFar - 0.1);
-                const glm::dvec4 sample(
-                    sinHorizontal * depth,
-                    sinVertical * depth,
-                    -depth,
-                    1.0);
-                EXPECT_TRUE(pointInClipVolume(projection.raw() * sample));
-            }
-        }
-    }
+    forEachCesiumFrustumSample(
+        horizontalFov,
+        verticalFov,
+        zNear,
+        zFar,
+        [&projection](const glm::dvec4& sample) {
+            EXPECT_TRUE(pointInClipVolume(projection.raw() * sample));
+        });
 }
 
 TEST(TransformsTest, SkewedPerspectiveProjectionMatchesCesiumNativeMapping) {
@@ -284,19 +298,29 @@ TEST(TransformsTest, SkewedPerspectiveProjectionMatchesCesiumNativeMapping) {
         zNear,
         zFar);
 
-    const glm::dvec4 point(hDim * 0.25, vDim * 0.25, -10.0, 1.0);
-    glm::dvec4 symmetricProjected = symmetric.raw() * point;
-    glm::dvec4 skewedProjected = skewed.raw() * point;
-    symmetricProjected /= symmetricProjected.w;
-    skewedProjected /= skewedProjected.w;
+    forEachCesiumFrustumSample(
+        horizontalFov,
+        verticalFov,
+        zNear,
+        zFar,
+        [&symmetric, &skewed](const glm::dvec4& sample) {
+            glm::dvec4 skewedProjected = skewed.raw() * sample;
+            if (!pointInClipVolume(skewedProjected)) {
+                return;
+            }
 
-    EXPECT_NEAR(symmetricProjected.x,
-                skewedProjected.x / 2.0 + 0.5,
-                1e-14);
-    EXPECT_NEAR(symmetricProjected.y,
-                skewedProjected.y / 2.0 - 0.5,
-                1e-14);
-    EXPECT_NEAR(symmetricProjected.z, skewedProjected.z, 1e-14);
+            glm::dvec4 symmetricProjected = symmetric.raw() * sample;
+            skewedProjected /= skewedProjected.w;
+            symmetricProjected /= symmetricProjected.w;
+
+            EXPECT_NEAR(symmetricProjected.x,
+                        skewedProjected.x / 2.0 + 0.5,
+                        1e-14);
+            EXPECT_NEAR(symmetricProjected.y,
+                        skewedProjected.y / 2.0 - 0.5,
+                        1e-14);
+            EXPECT_NEAR(symmetricProjected.z, skewedProjected.z, 1e-14);
+        });
 }
 
 TEST(TransformsTest, InfinitePerspectiveMatrixMatchesCesiumNativeReverseZ) {
@@ -355,32 +379,14 @@ TEST(TransformsTest, OrthographicProjectionContainsPerspectiveFrustumPoint) {
         zNear,
         zFar);
 
-    for (int i = 0; i < 11; ++i) {
-        double horizontalAngle =
-            -horizontalFov * 0.5 + i * horizontalFov / 10.0;
-        horizontalAngle = std::clamp(horizontalAngle,
-                                     -horizontalFov + 0.1,
-                                     horizontalFov - 0.1);
-        const double sinHorizontal = std::sin(horizontalAngle);
-        for (int j = 0; j < 10; ++j) {
-            double verticalAngle =
-                -verticalFov * 0.5 + j * verticalFov / 10.0;
-            verticalAngle = std::clamp(verticalAngle,
-                                       -verticalFov + 0.1,
-                                       verticalFov - 0.1);
-            const double sinVertical = std::sin(verticalAngle);
-            for (int k = 0; k < 10; ++k) {
-                double depth = zNear + k * (zFar - zNear) / 10.0;
-                depth = std::clamp(depth, zNear + 0.1, zFar - 0.1);
-                const glm::dvec4 sample(
-                    sinHorizontal * depth,
-                    sinVertical * depth,
-                    -depth,
-                    1.0);
-                EXPECT_TRUE(pointInClipVolume(orthographic.raw() * sample));
-            }
-        }
-    }
+    forEachCesiumFrustumSample(
+        horizontalFov,
+        verticalFov,
+        zNear,
+        zFar,
+        [&orthographic](const glm::dvec4& sample) {
+            EXPECT_TRUE(pointInClipVolume(orthographic.raw() * sample));
+        });
 }
 
 TEST(TransformsTest, ViewMatrixMatchesCesiumNativePoseInverse) {
