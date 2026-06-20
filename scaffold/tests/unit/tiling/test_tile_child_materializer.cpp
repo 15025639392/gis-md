@@ -196,3 +196,38 @@ TEST(TileChildMaterializerTest, RasterUpsampledTileCanContinueSubdividingForImag
         [](const std::string&) { return false; },
         [](const TileKey&) { return TileAvailabilityState::NotAvailable; }));
 }
+
+TEST(TileChildMaterializerTest, CanRefineHonorsContentRulesBeforeTerrainSignals) {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    auto noCacheKey = [](const TileKey&) { return std::string{}; };
+    auto noTerrainCached = [](const std::string&) { return false; };
+    auto noAvailability = [](const TileKey&) {
+        return TileAvailabilityState::NotAvailable;
+    };
+
+    EXPECT_TRUE(TileChildMaterializer::canRefine(
+        tile,
+        TileRefinementAvailabilityOptions{
+            false,
+            true,
+            false,
+            false,
+            false,
+            4},
+        noCacheKey,
+        noTerrainCached,
+        noAvailability));
+
+    EXPECT_FALSE(TileChildMaterializer::canRefine(
+        tile,
+        TileRefinementAvailabilityOptions{
+            false,
+            false,
+            true,
+            false,
+            true,
+            4},
+        [](const TileKey&) { return std::string{"child"}; },
+        [](const std::string&) { return true; },
+        [](const TileKey&) { return TileAvailabilityState::Available; }));
+}
