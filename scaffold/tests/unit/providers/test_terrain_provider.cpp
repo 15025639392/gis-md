@@ -552,6 +552,13 @@ TEST(XYZImageryProviderTest, ReverseZUsesProviderMaximumLevelLikeCesiumNative) {
               provider.buildUrl(TileKey{"XYZ-WebMercator", 3, 0, 0}));
 }
 
+TEST(XYZImageryProviderTest, UnknownPlaceholderMatchesCesiumNativeSentinel) {
+    XYZImageryProvider provider("https://example.com/{nope}/{x}.png");
+
+    EXPECT_EQ("https://example.com/[UNKNOWN PLACEHOLDER]/0.png",
+              provider.buildUrl(TileKey{"XYZ-WebMercator", 0, 0, 0}));
+}
+
 TEST(XYZImageryProviderTest, OpenGlobusGroupedYMapsUrlLocalYAndExposesGroup) {
     XYZImageryProvider provider(
         "https://example.com/{tileGroup}/{z}/{x}/{y}?gy={groupedY}");
