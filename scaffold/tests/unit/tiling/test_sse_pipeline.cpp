@@ -15835,6 +15835,35 @@ void testTileContentUnloadCoordinatorRemovesExternalContent() {
           "TileContentUnloadCoordinator: unreferenced external content unloads wrapper and requests child cleanup");
 }
 
+void testTileContentUnloadCoordinatorRemovesRenderContentCache() {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.content.contentKind = TileContentKind::Render;
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.renderContent.setMeshReady(true);
+    tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    const std::string cacheKey = "test:0:0:0";
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    terrainCache[cacheKey] = std::make_unique<DecodedHeightmap>();
+    TileEmptyContentRegistry emptyContentRegistry;
+
+    const TileCacheUnloadContentResult result =
+        TileContentUnloadCoordinator::unloadContent(
+            tile,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            nullptr);
+
+    check(result == TileCacheUnloadContentResult::Remove &&
+              terrainCache.find(cacheKey) == terrainCache.end() &&
+              tile.content.contentKind == TileContentKind::Unknown &&
+              tile.content.loadState == TileLoadState::Unloaded &&
+              !tile.content.renderContent.hasSurfaceMesh() &&
+              !tile.content.renderContent.isMeshReady(),
+          "TileContentUnloadCoordinator: render content unload clears terrain cache and render resources");
+}
+
 void testTileIndexStateErasesEmptyContentRegistryKey() {
     TileUnloadQueue unloadQueue;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
@@ -25761,6 +25790,7 @@ int main() {
     testTileContentUnloadCoordinatorErasesEmptyContentRegistryKey();
     testTileContentUnloadCoordinatorKeepsLoadingContent();
     testTileContentUnloadCoordinatorRemovesExternalContent();
+    testTileContentUnloadCoordinatorRemovesRenderContentCache();
     testTileIndexStateErasesEmptyContentRegistryKey();
     testTileTerrainHeightRangePolicySetsAndInheritsRanges();
     testTileTerrainHeightRangePolicyAppliesMeshOrHeightmapRanges();
