@@ -12727,6 +12727,7 @@ void testTilesetContentRetryLaterMaterializesLatentChildren() {
         std::vector<TileKey>{rootKey},
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, {childKey}}});
+    SelectionTreeContentProvider* rawProvider = contentProvider.get();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
         nullptr,
@@ -12749,6 +12750,10 @@ void testTilesetContentRetryLaterMaterializesLatentChildren() {
               root->children.front() &&
               root->children.front()->key == childKey,
           "Tileset: RetryLater content still materializes latent children like cesium-native");
+
+    TilesetTestAccess::requestMissingTile(tileset, rootKey);
+    check(rawProvider->requestCount == 2,
+          "Tileset: RetryLater content remains retryable");
 }
 
 void testTilesetContentCancelledMaterializesLatentChildrenAndRetries() {
