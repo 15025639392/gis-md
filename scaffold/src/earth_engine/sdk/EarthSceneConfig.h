@@ -19,7 +19,8 @@ enum class ImagerySourceKind {
     Xyz,
     TileMapService,
     WebMapService,
-    WebMapTileService
+    WebMapTileService,
+    BingMaps
 };
 
 struct SceneCameraConfig {
@@ -75,6 +76,9 @@ struct RasterOverlaySourceConfig {
     std::vector<std::string> wmtsTileMatrixLabels;
     std::vector<std::string> wmtsSubdomains;
     std::map<std::string, std::string> wmtsDimensions;
+    std::string bingBaseUrl;
+    std::string bingCulture;
+    std::vector<std::string> bingSubdomains;
 };
 
 struct GltfSourceConfig {

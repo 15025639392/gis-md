@@ -7,6 +7,7 @@
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../layers/RasterOverlay.h"
 #include "../platform/bridge/PlatformBridge.h"
+#include "../providers/BingMapsImageryProvider.h"
 #include "../providers/DebugImageryProvider.h"
 #include "../providers/HeightmapTerrainProvider.h"
 #include "../providers/QuantizedMeshLayerJsonFetcher.h"
@@ -266,6 +267,33 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
                 overlayConfig.wmtsSchemeId == "Geographic-TMS"
                     ? TileScheme::createGeographicTMS()
                     : TileScheme::createXYZWebMercator(),
+                makeRasterOverlayOptions(overlayConfig));
+            continue;
+        }
+
+        if (overlayConfig.imageryKind == ImagerySourceKind::BingMaps) {
+            BingMapsImageryOptions bingOptions;
+            bingOptions.culture = overlayConfig.bingCulture;
+            bingOptions.subdomains = overlayConfig.bingSubdomains;
+            bingOptions.minimumLevel = overlayConfig.minimumZoom;
+            bingOptions.maximumLevel = overlayConfig.maximumZoom;
+            if (overlayConfig.imageryTileWidth > 0) {
+                bingOptions.tileWidth = overlayConfig.imageryTileWidth;
+            }
+            if (overlayConfig.imageryTileHeight > 0) {
+                bingOptions.tileHeight = overlayConfig.imageryTileHeight;
+            }
+
+            auto bing = std::make_unique<BingMapsImageryProvider>(
+                overlayConfig.bingBaseUrl,
+                overlayConfig.urlTemplate,
+                std::move(bingOptions),
+                overlayConfig.attribution);
+            bing->setPlatformBridge(&platformBridge_);
+            addActivatedRasterOverlay(
+                rasterOverlays,
+                std::move(bing),
+                TileScheme::createXYZWebMercator(),
                 makeRasterOverlayOptions(overlayConfig));
             continue;
         }

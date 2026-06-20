@@ -142,3 +142,36 @@ TEST(EarthSceneConfig, StoresWebMapTileServiceImagerySourceDefinitions) {
     EXPECT_EQ(512, copied.imageryTileWidth);
     EXPECT_EQ(512, copied.imageryTileHeight);
 }
+
+TEST(EarthSceneConfig, StoresBingMapsImagerySourceDefinitions) {
+    EarthSceneConfig config;
+    RasterOverlaySourceConfig overlay;
+    overlay.imageryKind = ImagerySourceKind::BingMaps;
+    overlay.bingBaseUrl = "https://dev.virtualearth.net/";
+    overlay.urlTemplate =
+        "https://ecn.{subdomain}.tiles.virtualearth.net/tiles/a{quadkey}.jpeg?mkt={culture}";
+    overlay.attribution = "bing attribution";
+    overlay.minimumZoom = 1;
+    overlay.maximumZoom = 19;
+    overlay.imageryTileWidth = 256;
+    overlay.imageryTileHeight = 256;
+    overlay.bingCulture = "en-US";
+    overlay.bingSubdomains = {"t0", "t1", "t2"};
+    config.rasterOverlays.push_back(overlay);
+
+    ASSERT_EQ(1u, config.rasterOverlays.size());
+    const RasterOverlaySourceConfig& copied = config.rasterOverlays[0];
+    EXPECT_EQ(ImagerySourceKind::BingMaps, copied.imageryKind);
+    EXPECT_EQ("https://dev.virtualearth.net/", copied.bingBaseUrl);
+    EXPECT_EQ(
+        "https://ecn.{subdomain}.tiles.virtualearth.net/tiles/a{quadkey}.jpeg?mkt={culture}",
+        copied.urlTemplate);
+    EXPECT_EQ("bing attribution", copied.attribution);
+    EXPECT_EQ(1, copied.minimumZoom);
+    EXPECT_EQ(19, copied.maximumZoom);
+    EXPECT_EQ(256, copied.imageryTileWidth);
+    EXPECT_EQ(256, copied.imageryTileHeight);
+    EXPECT_EQ("en-US", copied.bingCulture);
+    EXPECT_EQ((std::vector<std::string>{"t0", "t1", "t2"}),
+              copied.bingSubdomains);
+}
