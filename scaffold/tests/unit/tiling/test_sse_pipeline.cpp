@@ -19170,6 +19170,51 @@ void testTilePendingLoadQueueRejectsEmptyCacheKeys() {
           "TilePendingLoadQueue: empty cache key is never treated as pending");
 }
 
+void testTilePendingLoadQueueEraseIgnoresUnknownKeys() {
+    TilePendingLoadQueue queue;
+    const TileKey terrainUploadKey{"test", 1, 0, 0};
+    const TileKey contentUploadKey{"test", 1, 1, 0};
+    const TileKey terrainTerminalKey{"test", 1, 0, 1};
+    const TileKey contentTerminalKey{"test", 1, 1, 1};
+
+    queue.addTerrainUpload(PendingTerrainUpload{
+        terrainUploadKey,
+        "terrain-upload",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        nullptr});
+    queue.addContentUpload(PendingContentUpload{
+        contentUploadKey,
+        "content-upload",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileContentLoadResult::failed()});
+    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+        terrainTerminalKey,
+        "terrain-terminal",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TerrainTileLoadStatus::RetryLater});
+    queue.addContentTerminalResult(PendingContentTerminalResult{
+        contentTerminalKey,
+        "content-terminal",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileContentLoadStatus::RetryLater});
+
+    queue.eraseCacheKey("missing");
+
+    check(queue.containsCacheKey("terrain-upload") &&
+              queue.containsCacheKey("content-upload") &&
+              queue.containsCacheKey("terrain-terminal") &&
+              queue.containsCacheKey("content-terminal") &&
+              queue.terrainUploadCount() == 1 &&
+              queue.contentUploadCount() == 1 &&
+              queue.terrainTerminalResultCount() == 1 &&
+              queue.contentTerminalResultCount() == 1,
+          "TilePendingLoadQueue: erasing unknown key leaves all pending work untouched");
+}
+
 void testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads() {
     TileLoadLifecycle lifecycle;
     const TileKey terrainKey{"test", 1, 0, 0};
@@ -28354,6 +28399,7 @@ int main() {
     testTilePendingLoadQueueTakesTerminalResultsByPriority();
     testTilePendingLoadQueueKeepsTerminalResultWhenBudgetBlocks();
     testTilePendingLoadQueueRejectsEmptyCacheKeys();
+    testTilePendingLoadQueueEraseIgnoresUnknownKeys();
     testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads();
     testTilePendingLoadProcessorBudgetsTerminalResults();
     testTilePendingLoadProcessorReportsUnchangedWhenBudgetBlocksAllWork();
