@@ -71,6 +71,7 @@ TEST_F(TMSTileSchemeTest, PositionToTileKnownTMS) {
     EXPECT_EQ("TMS-WebMercator", key.schemeId);
     // x should match XYZ (same Mercator projection)
     EXPECT_EQ(6744, key.x);
+    EXPECT_EQ(5087, key.y);
 }
 
 TEST_F(TMSTileSchemeTest, TileRangeZoom1) {
@@ -148,6 +149,25 @@ TEST(GeographicTMSSchemeTest, CesiumGeodeticLevelZeroIsTwoByOne) {
     EXPECT_NEAR(180.0, eastRoot.eastDegrees(), 1e-9);
     EXPECT_NEAR(-90.0, westRoot.southDegrees(), 1e-9);
     EXPECT_NEAR(90.0, westRoot.northDegrees(), 1e-9);
+}
+
+TEST(GeographicTMSSchemeTest, TileToRectangleUsesCesiumRootCountsAndSouthUpY) {
+    auto scheme = TileScheme::createGeographicTMS();
+
+    Rectangle southwest = scheme->tileToRectangle(
+        TileKey{"Geographic-TMS", 1, 0, 0});
+    Rectangle northeast = scheme->tileToRectangle(
+        TileKey{"Geographic-TMS", 1, 3, 1});
+
+    EXPECT_NEAR(-180.0, southwest.westDegrees(), 1e-12);
+    EXPECT_NEAR(-90.0, southwest.eastDegrees(), 1e-12);
+    EXPECT_NEAR(-90.0, southwest.southDegrees(), 1e-12);
+    EXPECT_NEAR(0.0, southwest.northDegrees(), 1e-12);
+
+    EXPECT_NEAR(90.0, northeast.westDegrees(), 1e-12);
+    EXPECT_NEAR(180.0, northeast.eastDegrees(), 1e-12);
+    EXPECT_NEAR(0.0, northeast.southDegrees(), 1e-12);
+    EXPECT_NEAR(90.0, northeast.northDegrees(), 1e-12);
 }
 
 TEST(GeographicTMSSchemeTest, LevelResolutionUsesCesiumNativeLatitudeSpan) {
