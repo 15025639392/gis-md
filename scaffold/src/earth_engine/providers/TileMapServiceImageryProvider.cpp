@@ -60,9 +60,13 @@ TileMapServiceImagerySource createTileMapServiceImagerySource(
     const std::string& tileMapResourceUrl,
     const std::string& tileMapResourceXml,
     const std::string& attribution) {
+    TileMapServiceImagerySource source;
+    if (!tileMapServiceXmlIsLoadable(tileMapResourceXml)) {
+        return source;
+    }
+
     TileMapServiceMetadata metadata =
         parseTileMapServiceMetadata(tileMapResourceXml);
-    TileMapServiceImagerySource source;
     if (metadata.tileSets.empty()) {
         return source;
     }

@@ -409,6 +409,22 @@ std::unique_ptr<TileScheme> tileMapServiceTileScheme(
     return TileScheme::createTMS();
 }
 
+bool tileMapServiceXmlIsLoadable(const std::string& xml) {
+    const std::string_view view(xml);
+    if (!firstTag(view, "TileSets")) {
+        return false;
+    }
+
+    const std::optional<std::string> srs = firstElementText(view, "SRS");
+    if (!srs) {
+        return true;
+    }
+
+    return srs->find("4326") != std::string::npos ||
+           srs->find("3857") != std::string::npos ||
+           srs->find("900913") != std::string::npos;
+}
+
 TileMapServiceMetadata parseTileMapServiceMetadata(const std::string& xml) {
     TileMapServiceMetadata metadata;
     const std::string_view view(xml);

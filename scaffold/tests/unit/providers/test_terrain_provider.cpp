@@ -793,6 +793,22 @@ TEST(TileMapServiceUrlTest, ParsesProfileSchemeLikeCesiumNative) {
     EXPECT_TRUE(metadata.boundingBoxCoordinatesInDegrees);
 }
 
+TEST(TileMapServiceUrlTest, LoadableXmlRejectsUnsupportedSrsLikeCesiumNative) {
+    EXPECT_TRUE(tileMapServiceXmlIsLoadable(R"xml(
+      <TileMap>
+        <SRS>EPSG:4326</SRS>
+        <TileSets profile="global-geodetic" />
+      </TileMap>
+    )xml"));
+
+    EXPECT_FALSE(tileMapServiceXmlIsLoadable(R"xml(
+      <TileMap>
+        <SRS>EPSG:1234</SRS>
+        <TileSets profile="custom" />
+      </TileMap>
+    )xml"));
+}
+
 TEST(TileMapServiceUrlTest, FallsBackToSrsForUnknownProfileLikeCesiumNative) {
     TileMapServiceMetadata metadata = parseTileMapServiceMetadata(R"xml(
       <TileMap>
@@ -1044,6 +1060,23 @@ TEST(TileMapServiceImageryProviderTest, RejectsSourceWithoutTileSetsLikeCesiumNa
           <TileMap>
             <BoundingBox minx="-10" miny="-20" maxx="30" maxy="40" />
             <TileSets profile="global-geodetic" />
+          </TileMap>
+        )xml");
+
+    EXPECT_EQ(nullptr, source.provider);
+    EXPECT_EQ(nullptr, source.scheme);
+    EXPECT_FALSE(source.coverageRectangle.has_value());
+}
+
+TEST(TileMapServiceImageryProviderTest, RejectsSourceWithUnsupportedSrsLikeCesiumNative) {
+    TileMapServiceImagerySource source = createTileMapServiceImagerySource(
+        "https://example.com/tms/tilemapresource.xml",
+        R"xml(
+          <TileMap>
+            <SRS>EPSG:1234</SRS>
+            <TileSets profile="custom">
+              <TileSet href="levels/0" order="0" />
+            </TileSets>
           </TileMap>
         )xml");
 

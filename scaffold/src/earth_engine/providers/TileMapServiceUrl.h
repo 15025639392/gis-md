@@ -63,6 +63,10 @@ Rectangle tileMapServiceResolvedGeographicCoverageRectangle(
 std::unique_ptr<TileScheme> tileMapServiceTileScheme(
     const TileMapServiceMetadata& metadata);
 
+/// Cesium-native TMS provider creation preflight: TileSets must be present,
+/// and a declared SRS must be one of EPSG:4326, EPSG:3857, or EPSG:900913.
+bool tileMapServiceXmlIsLoadable(const std::string& xml);
+
 TileMapServiceMetadata parseTileMapServiceMetadata(const std::string& xml);
 
 } // namespace earth_engine
