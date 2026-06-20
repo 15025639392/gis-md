@@ -3645,6 +3645,62 @@ void testRasterMappedFailureFallbackMatchesOverlayOwner() {
           "RasterMappedToTilesetTile: ancestor imagery UV window covers child geometry");
 }
 
+void testRasterMappedFailedTileWithoutAncestorBecomesReadyNonBlocking() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+
+    RasterOverlayTileProvider provider(
+        overlay->getProvider(),
+        overlay->getTileScheme(),
+        nullptr);
+    provider.setOwner(overlay.get());
+    provider.setFrameNumber(1);
+
+    RasterOverlayDetails details;
+    details.setGeographicRectangle(
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
+
+    RasterMappedToTilesetTile mapped;
+    std::vector<RasterOverlayProjection> missingProjections;
+    const TileKey geometryKey{"Geographic-TMS", 3, 4, 2};
+    mapped.update(
+        geometryKey,
+        details,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+    RasterOverlayTile* failedTile = mapped.getLoadingTile();
+    failedTile->setState(RasterOverlayTile::LoadState::Failed);
+    failedTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+
+    const auto failedUpdate = mapped.update(
+        geometryKey,
+        details,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+
+    check(failedUpdate == RasterMappedToTilesetTile::MoreDetail::No,
+          "RasterMappedToTilesetTile: failed tile with no ancestor suppresses more detail like cesium-native");
+    check(mapped.getReadyTile() == failedTile &&
+              mapped.getLoadingTile() == nullptr &&
+              mapped.getState() == RasterMappedToTilesetTile::State::Attached,
+          "RasterMappedToTilesetTile: failed tile with no ancestor becomes ready so geometry is non-blocking");
+    check(!mapped.isMoreDetailAvailable(),
+          "RasterMappedToTilesetTile: failed ready tile never reports more detail available");
+}
+
 void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -23807,6 +23863,7 @@ int main() {
     testRasterMappedNonRegionBoundingVolumeUsesPlaceholder();
     testRasterMappedAttachedUnknownReportsMoreDetail();
     testRasterMappedFailureFallbackMatchesOverlayOwner();
+    testRasterMappedFailedTileWithoutAncestorBecomesReadyNonBlocking();
     testRasterMappedTemporaryAncestorDoesNotReportMoreDetail();
     testRasterOverlayNativeTranslationAndRendererWindow();
     testQuantizedMeshAvailabilityLevels();
