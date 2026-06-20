@@ -973,7 +973,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
 
     addSkirtEdge(sortedWest,  -lonOff, 0,       false);
     addSkirtEdge(sortedSouth, 0,       -latOff, false);
-    addSkirtEdge(sortedEast,  lonOff,  0,       false);
+    addSkirtEdge(sortedEast,  -lonOff, 0,       false);
     addSkirtEdge(sortedNorth, 0,       latOff,  false);
 
     mesh->gpuVertices.resize(mesh->vertices.size());

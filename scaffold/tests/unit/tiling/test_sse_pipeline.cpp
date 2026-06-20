@@ -4650,6 +4650,62 @@ void testQuantizedMeshSkirtCountsMatchCesiumNativeFormula() {
           "QuantizedMeshParser: skirt vertex and index counts match cesium-native formula");
 }
 
+void testQuantizedMeshSkirtVerticesExpandOutsideTileEdges() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey interiorKey{"Geographic-TMS", 2, 1, 1};
+    const Rectangle bounds = scheme->tileToRectangle(interiorKey);
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes("", true, false);
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            bounds);
+
+    check(mesh != nullptr && mesh->vertices.size() >= 11,
+          "QuantizedMeshParser: skirt-expansion test mesh parses");
+    if (!mesh || mesh->vertices.size() < 11) return;
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Cartographic west =
+        ellipsoid.cartesianToCartographic(mesh->vertices[3].positionEcef);
+    const Cartographic westTop =
+        ellipsoid.cartesianToCartographic(mesh->vertices[0].positionEcef);
+    const Cartographic south =
+        ellipsoid.cartesianToCartographic(mesh->vertices[5].positionEcef);
+    const Cartographic southTop =
+        ellipsoid.cartesianToCartographic(mesh->vertices[1].positionEcef);
+    const Cartographic east =
+        ellipsoid.cartesianToCartographic(mesh->vertices[7].positionEcef);
+    const Cartographic eastTop =
+        ellipsoid.cartesianToCartographic(mesh->vertices[2].positionEcef);
+    const Cartographic north =
+        ellipsoid.cartesianToCartographic(mesh->vertices[9].positionEcef);
+    const Cartographic northTop =
+        ellipsoid.cartesianToCartographic(mesh->vertices[2].positionEcef);
+    const double longitudeOffset = (bounds.west() - bounds.east()) * 0.0001;
+    const double latitudeOffset = (bounds.north() - bounds.south()) * 0.0001;
+
+    check(std::abs((west.longitude() - westTop.longitude()) - longitudeOffset) <
+                  1e-8 &&
+              std::abs(west.latitude() - westTop.latitude()) < 1e-8,
+          "QuantizedMeshParser: west skirt longitude offset matches cesium-native");
+    check(std::abs((south.latitude() - southTop.latitude()) +
+                  latitudeOffset) <
+                  1e-8 &&
+              std::abs(south.longitude() - southTop.longitude()) < 1e-8,
+          "QuantizedMeshParser: south skirt latitude offset matches cesium-native");
+    check(std::abs((east.longitude() - eastTop.longitude()) - longitudeOffset) <
+                  1e-8 &&
+              std::abs(east.latitude() - eastTop.latitude()) < 1e-8,
+          "QuantizedMeshParser: east skirt longitude offset matches cesium-native");
+    check(std::abs((north.latitude() - northTop.latitude()) - latitudeOffset) <
+                  1e-8 &&
+              std::abs(north.longitude() - northTop.longitude()) < 1e-8,
+          "QuantizedMeshParser: north skirt latitude offset matches cesium-native");
+}
+
 void testQuantizedMeshSkirtHeightMatchesCesiumNativeFormula() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -22673,6 +22729,7 @@ int main() {
     testQuantizedMeshRasterizerRejectsMissingUint32IndexPadding();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
     testQuantizedMeshSkirtCountsMatchCesiumNativeFormula();
+    testQuantizedMeshSkirtVerticesExpandOutsideTileEdges();
     testQuantizedMeshSkirtHeightMatchesCesiumNativeFormula();
     testQuantizedMeshOctEncodedNormalsExtension();
     testQuantizedMeshOctEncodedNormalsPreserveArbitraryDirection();
