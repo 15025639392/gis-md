@@ -243,14 +243,14 @@ public:
             heightmap.noDataValues.size() * sizeof(float));
         bytes += static_cast<int64_t>(
             heightmap.metadataAvailability.size() *
-            sizeof(std::array<int, 5>));
+            sizeof(QuantizedMeshAvailabilityRange));
         for (const auto& update : heightmap.quantizedMeshAvailabilityUpdates) {
             bytes += static_cast<int64_t>(
                 sizeof(DecodedHeightmap::QuantizedMeshAvailabilityUpdate));
             bytes += static_cast<int64_t>(update.subtreeKey.schemeId.size());
             bytes += static_cast<int64_t>(
                 update.metadataAvailability.size() *
-                sizeof(std::array<int, 5>));
+                sizeof(QuantizedMeshAvailabilityRange));
         }
         if (heightmap.surfaceMesh) {
             bytes += static_cast<int64_t>(
@@ -276,7 +276,7 @@ public:
                 surface_.mesh->waterMask.data.size());
             bytes += static_cast<int64_t>(
                 surface_.mesh->metadataAvailability.size() *
-                sizeof(std::array<int, 5>));
+                sizeof(QuantizedMeshAvailabilityRange));
         }
         if (gltfModel) {
             bytes += gltfModel->byteSize();

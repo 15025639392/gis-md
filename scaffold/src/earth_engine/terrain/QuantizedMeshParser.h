@@ -40,7 +40,7 @@ public:
     /// cesium-native QuantizedMeshLoader::loadMetadata equivalent.
     /// Parses only Quantized Mesh extension ID=4 availability rectangles.
     /// Each entry: {levelOffset, startX, startY, endX, endY}.
-    static std::vector<std::array<int, 5>> parseMetadataAvailability(
+    static std::vector<QuantizedMeshAvailabilityRange> parseMetadataAvailability(
         const uint8_t* data, size_t len);
 
 private:

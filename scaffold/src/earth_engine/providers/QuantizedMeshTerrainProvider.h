@@ -54,11 +54,11 @@ public:
     int estimatedRequestFanout(const TileKey& key) const override;
 
     /// cesium-native: dynamically add availability from QM metadata
-    void addAvailabilityRects(int level, const std::vector<std::array<int, 4>>& rects);
+    void addAvailabilityRects(int level, const std::vector<TileAvailabilityRect>& rects);
     void addAvailabilityRectsForTile(
         const TileKey& subtreeKey,
         int level,
-        const std::vector<std::array<int, 4>>& rects);
+        const std::vector<TileAvailabilityRect>& rects);
     /// cesium-native: track loaded subtrees for sparse datasets
     bool isSubtreeLoaded(int subtreeLevel, uint64_t mortonIndex) const;
     void markSubtreeLoaded(int subtreeLevel, uint64_t mortonIndex);
@@ -85,7 +85,7 @@ private:
         std::string schemeId = "Geographic-TMS";
         std::string version;
         std::string extensionsToRequest;
-        std::vector<std::vector<std::array<int, 4>>> availabilityRanges;
+        std::vector<std::vector<TileAvailabilityRect>> availabilityRanges;
         std::vector<std::unordered_set<uint64_t>> loadedSubtrees;
         bool hasAvailability = false;
         int availabilityLevels = -1;
@@ -126,7 +126,7 @@ private:
     void addAvailabilityRectsToLayer(
         LayerConfig& layer,
         int level,
-        const std::vector<std::array<int, 4>>& rects);
+        const std::vector<TileAvailabilityRect>& rects);
     std::string buildUrlForLayer(const LayerConfig& layer,
                                  const TileKey& key) const;
     void syncLegacyFieldsFromPrimaryLayer();
@@ -169,7 +169,7 @@ private:
     std::string schemeId_ = "Geographic-TMS";
     std::string version_;
     std::string extensionsToRequest_;
-    std::vector<std::vector<std::array<int, 4>>> availabilityRanges_;
+    std::vector<std::vector<TileAvailabilityRect>> availabilityRanges_;
     std::vector<std::unordered_set<uint64_t>> loadedSubtrees_;
     bool hasAvailability_ = false;
     int availabilityLevels_ = -1;  // -1 = not using subtree mode

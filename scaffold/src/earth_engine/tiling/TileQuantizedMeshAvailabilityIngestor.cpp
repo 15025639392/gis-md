@@ -28,13 +28,13 @@ void TileQuantizedMeshAvailabilityIngestor::ingest(
         return;
     }
 
-    const std::vector<std::array<int, 5>> metadataAvailability =
+    const std::vector<QuantizedMeshAvailabilityRange> metadataAvailability =
         QuantizedMeshParser::parseMetadataAvailability(
             heightmap.rawData.data(),
             heightmap.rawData.size());
 
     for (const auto& r : metadataAvailability) {
-        int absLevel = key.z + 1 + r[0];
+        int absLevel = key.z + 1 + static_cast<int>(r[0]);
         if (absLevel >= 0) {
             qmProvider->addAvailabilityRectsForTile(
                 key,

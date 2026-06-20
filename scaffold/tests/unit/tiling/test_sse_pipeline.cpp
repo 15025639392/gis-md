@@ -3641,7 +3641,7 @@ void testTilesetByteEstimateUsesActualMeshPayload() {
         static_cast<int64_t>(mesh->indices.size() * sizeof(uint32_t)) +
         static_cast<int64_t>(mesh->waterMask.data.size()) +
         static_cast<int64_t>(
-            mesh->metadataAvailability.size() * sizeof(std::array<int, 5>));
+            mesh->metadataAvailability.size() * sizeof(QuantizedMeshAvailabilityRange));
 
     check(TilesetTestAccess::estimateTileBytes(tile) == expected,
           "Tileset: byte estimate uses actual mesh payload");
@@ -4616,12 +4616,12 @@ void testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative() {
     check(mesh && mesh->metadataAvailability.size() == 2,
           "QuantizedMeshParser: metadata availability skips length prefix");
     check(mesh && mesh->metadataAvailability[0] ==
-              std::array<int, 5>{0, 0, 0, 1, 0} &&
+              QuantizedMeshAvailabilityRange{0, 0, 0, 1, 0} &&
               mesh->metadataAvailability[1] ==
-              std::array<int, 5>{1, 2, 1, 3, 1},
+              QuantizedMeshAvailabilityRange{1, 2, 1, 3, 1},
           "QuantizedMeshParser: metadata availability level offsets match cesium-native");
 
-    const std::vector<std::array<int, 5>> metadataOnly =
+    const std::vector<QuantizedMeshAvailabilityRange> metadataOnly =
         QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
     check(metadataOnly == mesh->metadataAvailability,
           "QuantizedMeshParser: metadata-only path matches cesium-native loadMetadata");
@@ -4633,13 +4633,30 @@ void testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative() {
     })json";
     const std::vector<uint8_t> negativeBytes =
         makeQuantizedMeshBytes(negativeMetadata);
-    const std::vector<std::array<int, 5>> negativeOnly =
+    const std::vector<QuantizedMeshAvailabilityRange> negativeOnly =
         QuantizedMeshParser::parseMetadataAvailability(
             negativeBytes.data(),
             negativeBytes.size());
     check(negativeOnly.size() == 1 &&
-              negativeOnly[0] == std::array<int, 5>{0, 0, 1, 2, 0},
+              negativeOnly[0] == QuantizedMeshAvailabilityRange{0u, 0u, 1u, 2u, 0u},
           "QuantizedMeshParser: metadata uint32 fields default like cesium-native");
+
+    const std::string maxUint32Metadata = R"json({
+      "available": [
+        [{"startX":4294967295,"startY":0,"endX":4294967295,"endY":0}]
+      ]
+    })json";
+    const std::vector<uint8_t> maxUint32Bytes =
+        makeQuantizedMeshBytes(maxUint32Metadata);
+    const std::vector<QuantizedMeshAvailabilityRange> maxUint32Only =
+        QuantizedMeshParser::parseMetadataAvailability(
+            maxUint32Bytes.data(),
+            maxUint32Bytes.size());
+    check(maxUint32Only.size() == 1 &&
+              maxUint32Only[0] ==
+                  QuantizedMeshAvailabilityRange{
+                      0u, 4294967295u, 0u, 4294967295u, 0u},
+          "QuantizedMeshParser: metadata preserves full uint32 coordinates like cesium-native");
 
     const std::string nonArrayLevelMetadata = R"json({
       "available": [
@@ -4649,17 +4666,17 @@ void testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative() {
     })json";
     const std::vector<uint8_t> nonArrayLevelBytes =
         makeQuantizedMeshBytes(nonArrayLevelMetadata);
-    const std::vector<std::array<int, 5>> nonArrayLevelOnly =
+    const std::vector<QuantizedMeshAvailabilityRange> nonArrayLevelOnly =
         QuantizedMeshParser::parseMetadataAvailability(
             nonArrayLevelBytes.data(),
             nonArrayLevelBytes.size());
     check(nonArrayLevelOnly.size() == 1 &&
-              nonArrayLevelOnly[0] == std::array<int, 5>{0, 2, 1, 3, 1},
+              nonArrayLevelOnly[0] == QuantizedMeshAvailabilityRange{0, 2, 1, 3, 1},
           "QuantizedMeshParser: metadata non-array levels do not advance availability level like cesium-native");
 
     const std::vector<uint8_t> missingAvailableBytes =
         makeQuantizedMeshBytes(R"json({"foo":[]})json");
-    const std::vector<std::array<int, 5>> missingAvailableOnly =
+    const std::vector<QuantizedMeshAvailabilityRange> missingAvailableOnly =
         QuantizedMeshParser::parseMetadataAvailability(
             missingAvailableBytes.data(),
             missingAvailableBytes.size());
@@ -4668,7 +4685,7 @@ void testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative() {
 
     const std::vector<uint8_t> nonArrayAvailableBytes =
         makeQuantizedMeshBytes(R"json({"available":"not-an-array"})json");
-    const std::vector<std::array<int, 5>> nonArrayAvailableOnly =
+    const std::vector<QuantizedMeshAvailabilityRange> nonArrayAvailableOnly =
         QuantizedMeshParser::parseMetadataAvailability(
             nonArrayAvailableBytes.data(),
             nonArrayAvailableBytes.size());
@@ -4693,13 +4710,13 @@ void testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative() {
             twoMetadataBytes.data(),
             twoMetadataBytes.size(),
             scheme->tileToRectangle(rootKey));
-    const std::vector<std::array<int, 5>> twoMetadataOnly =
+    const std::vector<QuantizedMeshAvailabilityRange> twoMetadataOnly =
         QuantizedMeshParser::parseMetadataAvailability(
             twoMetadataBytes.data(),
             twoMetadataBytes.size());
     check(twoMetadataMesh && twoMetadataMesh->metadataAvailability.size() == 1 &&
               twoMetadataMesh->metadataAvailability[0] ==
-                  std::array<int, 5>{0, 2, 2, 3, 3},
+                  QuantizedMeshAvailabilityRange{0, 2, 2, 3, 3},
           "QuantizedMeshParser: later metadata extension replaces earlier metadata like cesium-native");
     check(twoMetadataOnly == twoMetadataMesh->metadataAvailability,
           "QuantizedMeshParser: metadata-only path keeps the final metadata extension like cesium-native");
@@ -4714,11 +4731,11 @@ void testQuantizedMeshMetadataSkipsNonArrayLevelsWithoutAdvancing() {
     })json";
     const std::vector<uint8_t> bytes = makeQuantizedMeshBytes(metadata);
 
-    const std::vector<std::array<int, 5>> metadataOnly =
+    const std::vector<QuantizedMeshAvailabilityRange> metadataOnly =
         QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
 
     check(metadataOnly.size() == 1 &&
-              metadataOnly[0] == std::array<int, 5>{0, 0, 0, 1, 0},
+              metadataOnly[0] == QuantizedMeshAvailabilityRange{0, 0, 0, 1, 0},
           "QuantizedMeshParser: metadata non-array levels do not advance startingLevel like cesium-native");
 }
 
@@ -4737,12 +4754,12 @@ void testQuantizedMeshMetadataSkipsNonObjectRangesAfterAdvancingLevel() {
     })json";
     const std::vector<uint8_t> bytes = makeQuantizedMeshBytes(metadata);
 
-    const std::vector<std::array<int, 5>> metadataOnly =
+    const std::vector<QuantizedMeshAvailabilityRange> metadataOnly =
         QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
 
     check(metadataOnly.size() == 2 &&
-              metadataOnly[0] == std::array<int, 5>{0, 0, 0, 1, 0} &&
-              metadataOnly[1] == std::array<int, 5>{1, 2, 1, 3, 1},
+              metadataOnly[0] == QuantizedMeshAvailabilityRange{0, 0, 0, 1, 0} &&
+              metadataOnly[1] == QuantizedMeshAvailabilityRange{1, 2, 1, 3, 1},
           "QuantizedMeshParser: metadata skips non-object ranges while advancing array levels like cesium-native");
 }
 
@@ -4755,11 +4772,11 @@ void testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding() {
     const std::vector<uint8_t> bytes =
         makeQuantizedMeshBytesWithHeaderPadding(metadata);
 
-    const std::vector<std::array<int, 5>> metadataOnly =
+    const std::vector<QuantizedMeshAvailabilityRange> metadataOnly =
         QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
 
     check(metadataOnly.size() == 1 &&
-              metadataOnly[0] == std::array<int, 5>{0, 0, 0, 0, 0},
+              metadataOnly[0] == QuantizedMeshAvailabilityRange{0, 0, 0, 0, 0},
           "QuantizedMeshParser: metadata-only path keeps padded-header compatibility");
 }
 
@@ -4782,11 +4799,11 @@ void testQuantizedMeshMetadataOnlySkipsUnknownExtensions() {
     appendPod<uint32_t>(bytes, static_cast<uint32_t>(metadata.size()));
     bytes.insert(bytes.end(), metadata.begin(), metadata.end());
 
-    const std::vector<std::array<int, 5>> metadataOnly =
+    const std::vector<QuantizedMeshAvailabilityRange> metadataOnly =
         QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
 
     check(metadataOnly.size() == 1 &&
-              metadataOnly[0] == std::array<int, 5>{0, 0, 0, 1, 0},
+              metadataOnly[0] == QuantizedMeshAvailabilityRange{0, 0, 0, 1, 0},
           "QuantizedMeshParser: metadata-only path skips unknown extensions before later metadata like cesium-native");
 }
 
@@ -4804,11 +4821,11 @@ void testQuantizedMeshMetadataOnlySkipsWaterMaskExtensions() {
     appendPod<uint32_t>(bytes, static_cast<uint32_t>(metadata.size()));
     bytes.insert(bytes.end(), metadata.begin(), metadata.end());
 
-    const std::vector<std::array<int, 5>> metadataOnly =
+    const std::vector<QuantizedMeshAvailabilityRange> metadataOnly =
         QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
 
     check(metadataOnly.size() == 1 &&
-              metadataOnly[0] == std::array<int, 5>{0, 1, 0, 1, 1},
+              metadataOnly[0] == QuantizedMeshAvailabilityRange{0, 1, 0, 1, 1},
           "QuantizedMeshParser: metadata-only path skips water-mask extensions before later metadata like cesium-native");
 }
 
@@ -4833,10 +4850,10 @@ void testQuantizedMeshShortOctNormalUsesRemainingBytesLikeCesiumNative() {
           "QuantizedMeshParser: short oct-normal fixture remains parseable");
     check(mesh && mesh->metadataAvailability.size() == 1 &&
               mesh->metadataAvailability[0] ==
-                  std::array<int, 5>{0, 0, 0, 1, 0},
+                  QuantizedMeshAvailabilityRange{0, 0, 0, 1, 0},
           "QuantizedMeshParser: short oct-normal length still advances by declared length like cesium-native");
 
-    const std::vector<std::array<int, 5>> metadataOnly =
+    const std::vector<QuantizedMeshAvailabilityRange> metadataOnly =
         QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
     check(metadataOnly == mesh->metadataAvailability,
           "QuantizedMeshParser: metadata-only path follows short oct-normal length like cesium-native");
@@ -4864,7 +4881,7 @@ void testQuantizedMeshMalformedMetadataStopsExtensionParsing() {
     check(mesh && mesh->metadataAvailability.empty(),
           "QuantizedMeshParser: malformed metadata extension stops later metadata parsing like cesium-native");
 
-    const std::vector<std::array<int, 5>> metadataOnly =
+    const std::vector<QuantizedMeshAvailabilityRange> metadataOnly =
         QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
     check(metadataOnly.empty(),
           "QuantizedMeshParser: metadata-only path stops after malformed metadata extension");
@@ -4891,10 +4908,10 @@ void testQuantizedMeshMetadataParsesBeforeOversizedExtensionSkip() {
           "QuantizedMeshParser: oversized metadata extension fixture remains parseable");
     check(mesh && mesh->metadataAvailability.size() == 1 &&
               mesh->metadataAvailability[0] ==
-                  std::array<int, 5>{0, 0, 0, 1, 0},
+                  QuantizedMeshAvailabilityRange{0, 0, 0, 1, 0},
           "QuantizedMeshParser: metadata parses before oversized extension skip like cesium-native");
 
-    const std::vector<std::array<int, 5>> metadataOnly =
+    const std::vector<QuantizedMeshAvailabilityRange> metadataOnly =
         QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
     check(metadataOnly == mesh->metadataAvailability,
           "QuantizedMeshParser: metadata-only path parses before oversized extension skip like cesium-native");
@@ -4922,10 +4939,10 @@ void testQuantizedMeshIncompleteExtensionHeaderStopsParsing() {
           "QuantizedMeshParser: incomplete extension header leaves mesh parseable like cesium-native");
     check(mesh && mesh->metadataAvailability.size() == 1 &&
               mesh->metadataAvailability[0] ==
-                  std::array<int, 5>{0, 0, 0, 1, 0},
+                  QuantizedMeshAvailabilityRange{0, 0, 0, 1, 0},
           "QuantizedMeshParser: incomplete extension header stops after preserving prior metadata");
 
-    const std::vector<std::array<int, 5>> metadataOnly =
+    const std::vector<QuantizedMeshAvailabilityRange> metadataOnly =
         QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
     check(metadataOnly == mesh->metadataAvailability,
           "QuantizedMeshParser: metadata-only path also stops on incomplete extension header");
@@ -4953,7 +4970,7 @@ void testQuantizedMeshEmptyMetadataExtensionReplacesPreviousMetadata() {
     check(mesh && mesh->metadataAvailability.empty(),
           "QuantizedMeshParser: later empty metadata extension replaces earlier metadata like cesium-native");
 
-    const std::vector<std::array<int, 5>> metadataOnly =
+    const std::vector<QuantizedMeshAvailabilityRange> metadataOnly =
         QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
     check(metadataOnly.empty(),
           "QuantizedMeshParser: metadata-only path keeps final empty metadata extension like cesium-native");
@@ -5282,11 +5299,11 @@ void testQuantizedMeshMetadataOnlyParsesUint32IndexPadding() {
     appendPod<uint32_t>(bytes, static_cast<uint32_t>(metadata.size()));
     bytes.insert(bytes.end(), metadata.begin(), metadata.end());
 
-    const std::vector<std::array<int, 5>> metadataOnly =
+    const std::vector<QuantizedMeshAvailabilityRange> metadataOnly =
         QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
 
     check(metadataOnly.size() == 1 &&
-              metadataOnly[0] == std::array<int, 5>{0, 0, 0, 1, 1},
+              metadataOnly[0] == QuantizedMeshAvailabilityRange{0, 0, 0, 1, 1},
           "QuantizedMeshParser: metadata-only path accepts uint32 index padding like cesium-native");
 }
 
@@ -5313,10 +5330,10 @@ void testQuantizedMeshVertexCount65536UsesUint16Indices() {
                       mesh->indices.end(),
           "QuantizedMeshParser: uint16 boundary edge index 65535 is preserved");
 
-    const std::vector<std::array<int, 5>> metadataOnly =
+    const std::vector<QuantizedMeshAvailabilityRange> metadataOnly =
         QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
     check(metadataOnly.size() == 1 &&
-              metadataOnly[0] == std::array<int, 5>{0, 0, 0, 1, 0},
+              metadataOnly[0] == QuantizedMeshAvailabilityRange{0, 0, 0, 1, 0},
           "QuantizedMeshParser: metadata-only path does not require uint32 padding at vertexCount 65536");
 }
 
@@ -6000,7 +6017,7 @@ void testQuantizedMeshWaterMaskExtensions() {
               invalidWater->waterMask.data.empty() &&
               invalidWater->metadataAvailability.size() == 1 &&
               invalidWater->metadataAvailability[0] ==
-                  std::array<int, 5>{0, 0, 0, 1, 0},
+                  QuantizedMeshAvailabilityRange{0, 0, 0, 1, 0},
           "QuantizedMeshParser: unsupported water mask lengths are skipped before later extensions like cesium-native");
 
     std::vector<uint8_t> unknownThenWaterBytes = makeQuantizedMeshBytes();
@@ -6057,7 +6074,7 @@ void testQuantizedMeshWaterMaskExtensions() {
               !disabledWithMetadata->waterMask.valid() &&
               disabledWithMetadata->metadataAvailability.size() == 1 &&
               disabledWithMetadata->metadataAvailability[0] ==
-                  std::array<int, 5>{0, 0, 0, 1, 0},
+                  QuantizedMeshAvailabilityRange{0, 0, 0, 1, 0},
           "QuantizedMeshParser: disabled water mask still advances to later metadata like cesium-native");
 }
 
@@ -13024,7 +13041,7 @@ void testTileCacheMetricsCountsHeightmapAndTilePayloads() {
         7 +
         static_cast<int64_t>(3 * sizeof(float)) +
         static_cast<int64_t>(2 * sizeof(float)) +
-        static_cast<int64_t>(4 * sizeof(std::array<int, 5>));
+        static_cast<int64_t>(4 * sizeof(QuantizedMeshAvailabilityRange));
     check(TileCacheMetrics::estimateHeightmapBytes(heightmap) ==
               expectedHeightmapBytes,
           "TileCacheMetrics: heightmap estimate counts decoded payloads");
@@ -13047,7 +13064,7 @@ void testTileCacheMetricsCountsHeightmapAndTilePayloads() {
         static_cast<int64_t>(2 * sizeof(SurfaceVertex)) +
         static_cast<int64_t>(5 * sizeof(uint32_t)) +
         6 +
-        static_cast<int64_t>(sizeof(std::array<int, 5>)) +
+        static_cast<int64_t>(sizeof(QuantizedMeshAvailabilityRange)) +
         expectedHeightmapBytes;
     check(TileCacheMetrics::estimateTileBytes(tile) == expectedTileBytes,
           "TileCacheMetrics: tile estimate counts mesh and retained heightmap");

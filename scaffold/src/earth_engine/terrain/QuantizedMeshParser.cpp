@@ -40,7 +40,7 @@ bool pointInTriangle(double px, double py,
     return (outU >= 0) && (outV >= 0) && (outU + outV <= 1.0);
 }
 
-int jsonUint32OrDefault(const nlohmann::json& object, const char* name) {
+uint32_t jsonUint32OrDefault(const nlohmann::json& object, const char* name) {
     auto it = object.find(name);
     if (it == object.end()) return 0;
 
@@ -57,14 +57,12 @@ int jsonUint32OrDefault(const nlohmann::json& object, const char* name) {
 
     constexpr uint64_t kMaxUint32 = 0xffffffffull;
     if (value > kMaxUint32) return 0;
-    return value > static_cast<uint64_t>(std::numeric_limits<int>::max())
-        ? std::numeric_limits<int>::max()
-        : static_cast<int>(value);
+    return static_cast<uint32_t>(value);
 }
 
-std::vector<std::array<int, 5>> parseMetadataAvailabilityJson(
+std::vector<QuantizedMeshAvailabilityRange> parseMetadataAvailabilityJson(
     const std::string& metadataJson) {
-    std::vector<std::array<int, 5>> availability;
+    std::vector<QuantizedMeshAvailabilityRange> availability;
     auto j = nlohmann::json::parse(metadataJson, nullptr, false);
     if (j.is_discarded() ||
         !j.contains("available") ||
@@ -81,7 +79,7 @@ std::vector<std::array<int, 5>> parseMetadataAvailabilityJson(
         for (const auto& range : levelRanges) {
             if (!range.is_object()) continue;
             availability.push_back({
-                subArrayIndex,
+                static_cast<uint32_t>(subArrayIndex),
                 jsonUint32OrDefault(range, "startX"),
                 jsonUint32OrDefault(range, "startY"),
                 jsonUint32OrDefault(range, "endX"),
@@ -418,7 +416,7 @@ std::unique_ptr<DecodedHeightmap> QuantizedMeshParser::parseAndRasterize(
     return hm;
 }
 
-std::vector<std::array<int, 5>> QuantizedMeshParser::parseMetadataAvailability(
+std::vector<QuantizedMeshAvailabilityRange> QuantizedMeshParser::parseMetadataAvailability(
     const uint8_t* data, size_t len) {
     if (len < kHeaderSize || !data) return {};
 
@@ -427,7 +425,7 @@ std::vector<std::array<int, 5>> QuantizedMeshParser::parseMetadataAvailability(
     if (vertexCount == 0 || vertexCount > 500000) return {};
 
     auto parseFromPayloadOffset =
-        [&](size_t payloadOffset) -> std::optional<std::vector<std::array<int, 5>>> {
+        [&](size_t payloadOffset) -> std::optional<std::vector<QuantizedMeshAvailabilityRange>> {
         size_t offset = payloadOffset;
         const size_t vertexAttributeBytes =
             static_cast<size_t>(vertexCount) * 3u * sizeof(uint16_t);
@@ -459,7 +457,7 @@ std::vector<std::array<int, 5>> QuantizedMeshParser::parseMetadataAvailability(
         }
 
         constexpr size_t kExtHeaderSize = 5;
-        std::optional<std::vector<std::array<int, 5>>> latestMetadata;
+        std::optional<std::vector<QuantizedMeshAvailabilityRange>> latestMetadata;
         while (offset + kExtHeaderSize <= len) {
             const uint8_t extId = data[offset];
             offset += sizeof(uint8_t);
@@ -490,12 +488,12 @@ std::vector<std::array<int, 5>> QuantizedMeshParser::parseMetadataAvailability(
         return latestMetadata;
     };
 
-    std::optional<std::vector<std::array<int, 5>>> availability =
+    std::optional<std::vector<QuantizedMeshAvailabilityRange>> availability =
         parseFromPayloadOffset(kHeaderSize);
     if (availability) return *availability;
 
     availability = parseFromPayloadOffset(kHeaderSize + sizeof(uint32_t));
-    return availability.value_or(std::vector<std::array<int, 5>>{});
+    return availability.value_or(std::vector<QuantizedMeshAvailabilityRange>{});
 }
 
 std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(

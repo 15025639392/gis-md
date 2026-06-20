@@ -9,6 +9,9 @@
 
 namespace earth_engine {
 
+using TileAvailabilityRect = std::array<uint32_t, 4>;
+using QuantizedMeshAvailabilityRange = std::array<uint32_t, 5>;
+
 enum class SurfaceTileMeshWinding {
     Outward
 };
@@ -127,7 +130,7 @@ struct SurfaceTileMesh {
     // levelOffset = sub-array index in the "available" JSON.
     // Actual absolute level = tileLevel + levelOffset
     // Aligned with cesium-native loadAvailabilityRectangles startingLevel + i.
-    std::vector<std::array<int, 5>> metadataAvailability;
+    std::vector<QuantizedMeshAvailabilityRange> metadataAvailability;
     /// cesium-native TileRenderContent::getRasterOverlayDetails equivalent.
     RasterOverlayDetails rasterOverlayDetails;
 };

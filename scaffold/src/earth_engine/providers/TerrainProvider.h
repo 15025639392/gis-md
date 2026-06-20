@@ -67,7 +67,7 @@ struct DecodedHeightmap {
 
     /// cesium-native: availability rectangles from QM metadata (extension ID=4).
     /// Each entry: {levelOffset, startX, startY, endX, endY}
-    std::vector<std::array<int, 5>> metadataAvailability;
+    std::vector<QuantizedMeshAvailabilityRange> metadataAvailability;
     bool metadataAvailabilityProcessed = false;
 
     /// cesium-native LayerJsonTerrainLoader: when loading a tile from an
@@ -76,7 +76,7 @@ struct DecodedHeightmap {
     struct QuantizedMeshAvailabilityUpdate {
         int layerIndex = -1;
         TileKey subtreeKey;
-        std::vector<std::array<int, 5>> metadataAvailability;
+        std::vector<QuantizedMeshAvailabilityRange> metadataAvailability;
     };
     std::vector<QuantizedMeshAvailabilityUpdate> quantizedMeshAvailabilityUpdates;
 };

@@ -433,7 +433,7 @@ std::vector<std::string> jsonStringArray(
     return result;
 }
 
-int jsonUint32OrDefault(const nlohmann::json& object, const char* name) {
+uint32_t jsonUint32OrDefault(const nlohmann::json& object, const char* name) {
     auto it = object.find(name);
     if (it == object.end()) return 0;
 
@@ -450,9 +450,7 @@ int jsonUint32OrDefault(const nlohmann::json& object, const char* name) {
 
     constexpr uint64_t kMaxUint32 = 0xffffffffull;
     if (value > kMaxUint32) return 0;
-    return value > static_cast<uint64_t>(std::numeric_limits<int>::max())
-        ? std::numeric_limits<int>::max()
-        : static_cast<int>(value);
+    return static_cast<uint32_t>(value);
 }
 
 int jsonInt32OrDefault(const nlohmann::json& object,
@@ -1387,7 +1385,7 @@ QuantizedMeshTerrainProvider::requestDiagnostics() const {
 }
 
 void QuantizedMeshTerrainProvider::addAvailabilityRects(
-    int level, const std::vector<std::array<int, 4>>& rects) {
+    int level, const std::vector<TileAvailabilityRect>& rects) {
     if (level < 0) return;
     if (!layers_.empty()) {
         addAvailabilityRectsToLayer(layers_.front(), level, rects);
@@ -1407,7 +1405,7 @@ void QuantizedMeshTerrainProvider::addAvailabilityRects(
 void QuantizedMeshTerrainProvider::addAvailabilityRectsToLayer(
     LayerConfig& layer,
     int level,
-    const std::vector<std::array<int, 4>>& rects) {
+    const std::vector<TileAvailabilityRect>& rects) {
     if (level < 0) return;
     layer.hasAvailability = true;
     if (static_cast<size_t>(level) >= layer.availabilityRanges.size()) {
@@ -1422,7 +1420,7 @@ void QuantizedMeshTerrainProvider::addAvailabilityRectsToLayer(
 void QuantizedMeshTerrainProvider::addAvailabilityRectsForTile(
     const TileKey& subtreeKey,
     int level,
-    const std::vector<std::array<int, 4>>& rects) {
+    const std::vector<TileAvailabilityRect>& rects) {
     if (layers_.empty()) {
         addAvailabilityRects(level, rects);
         return;
@@ -1520,7 +1518,8 @@ void QuantizedMeshTerrainProvider::applyAvailabilityUpdates(
 
         LayerConfig& layer = layers_[static_cast<size_t>(update.layerIndex)];
         for (const auto& r : update.metadataAvailability) {
-            const int absLevel = update.subtreeKey.z + 1 + r[0];
+            const int absLevel =
+                update.subtreeKey.z + 1 + static_cast<int>(r[0]);
             if (absLevel >= 0) {
                 addAvailabilityRectsToLayer(
                     layer, absLevel, {{r[1], r[2], r[3], r[4]}});
