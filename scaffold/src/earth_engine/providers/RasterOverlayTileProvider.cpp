@@ -115,6 +115,42 @@ TileRange computeRange(const TileScheme& scheme,
     return range;
 }
 
+bool isBaseLayer(const RasterOverlay* owner) {
+    return !owner || owner->role() == RasterOverlayRole::BaseImagery;
+}
+
+Rectangle edgeStretchedSourceBounds(const Rectangle& geometryBounds,
+                                    const Rectangle& coverageBounds) {
+    if (std::optional<Rectangle> intersection =
+            geometryBounds.computeIntersection(coverageBounds)) {
+        return *intersection;
+    }
+
+    double south = 0.0;
+    double north = 0.0;
+    if (geometryBounds.south() >= coverageBounds.north()) {
+        south = north = coverageBounds.north();
+    } else if (geometryBounds.north() <= coverageBounds.south()) {
+        south = north = coverageBounds.south();
+    } else {
+        south = std::max(geometryBounds.south(), coverageBounds.south());
+        north = std::min(geometryBounds.north(), coverageBounds.north());
+    }
+
+    double west = 0.0;
+    double east = 0.0;
+    if (geometryBounds.west() >= coverageBounds.east()) {
+        west = east = coverageBounds.east();
+    } else if (geometryBounds.east() <= coverageBounds.west()) {
+        west = east = coverageBounds.west();
+    } else {
+        west = std::max(geometryBounds.west(), coverageBounds.west());
+        east = std::min(geometryBounds.east(), coverageBounds.east());
+    }
+
+    return Rectangle(west, south, east, north);
+}
+
 TileRange trimCesiumNativeBoundarySlop(const TileScheme& scheme,
                                        const Rectangle& bounds,
                                        int zoom,
@@ -499,6 +535,10 @@ double clampUnit(double v) {
     return std::max(0.0, std::min(1.0, v));
 }
 
+double clampToRange(double value, double a, double b) {
+    return std::clamp(value, std::min(a, b), std::max(a, b));
+}
+
 struct LoadedSourceImage {
     TileKey key;
     Rectangle bounds;
@@ -576,8 +616,9 @@ RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
             ? combinedBounds->computeUnion(*intersection)
             : *intersection;
     }
-    if (!combinedBounds) {
-        return {};
+    const bool edgeStretchMode = !combinedBounds;
+    if (edgeStretchMode) {
+        combinedBounds = targetBounds;
     }
 
     int width = static_cast<int>(std::ceil(combinedBounds->width() /
@@ -613,15 +654,36 @@ RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
 
             const LoadedSourceImage* source = findSourceForPosition(
                 scheme, sourceByKey, sources, lng, lat, sourceZoom);
+            if (!source && edgeStretchMode) {
+                for (const auto& candidate : sources) {
+                    const double sampleLng = clampToRange(
+                        lng,
+                        candidate.bounds.west(),
+                        candidate.bounds.east());
+                    const double sampleLat = clampToRange(
+                        lat,
+                        candidate.bounds.south(),
+                        candidate.bounds.north());
+                    if (candidate.image &&
+                        candidate.bounds.contains(sampleLng, sampleLat)) {
+                        source = &candidate;
+                        break;
+                    }
+                }
+            }
             if (!source || !source->image) continue;
 
             const DecodedImage& src = *source->image;
+            const double sampleLng =
+                clampToRange(lng, source->bounds.west(), source->bounds.east());
+            const double sampleLat =
+                clampToRange(lat, source->bounds.south(), source->bounds.north());
             const double su = clampUnit(
-                (lng - source->bounds.west()) / source->bounds.width());
+                (sampleLng - source->bounds.west()) / source->bounds.width());
             const double sv = projectedVForLatitudeInternal(
                 scheme,
                 source->bounds,
-                lat);
+                sampleLat);
             const int sx = std::clamp(
                 static_cast<int>(su * static_cast<double>(src.width)),
                 0,
@@ -1179,7 +1241,12 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
     std::optional<Rectangle> sourceBounds =
         geometryBounds.computeIntersection(coverageRectangle_);
     if (!sourceBounds) {
-        return nullptr;
+        if (!isBaseLayer(owner_)) {
+            return nullptr;
+        }
+        sourceBounds = edgeStretchedSourceBounds(
+            geometryBounds,
+            coverageRectangle_);
     }
 
     RectangleSourcePlan sourcePlan = buildRectangleSourcePlan(
@@ -1403,9 +1470,15 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
     std::optional<Rectangle> sourceBounds =
         tile.getRectangle().computeIntersection(coverageRectangle_);
     if (!sourceBounds) {
-        tile.setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
-        tile.setState(RasterOverlayTile::LoadState::Failed);
-        return false;
+        if (!isBaseLayer(owner_)) {
+            tile.setMoreDetailAvailable(
+                RasterOverlayTile::MoreDetailAvailable::No);
+            tile.setState(RasterOverlayTile::LoadState::Failed);
+            return false;
+        }
+        sourceBounds = edgeStretchedSourceBounds(
+            tile.getRectangle(),
+            coverageRectangle_);
     }
 
     RectangleSourcePlan sourcePlan = buildRectangleSourcePlan(

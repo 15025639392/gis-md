@@ -3168,6 +3168,43 @@ void testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches() {
           "RasterOverlayTileProvider: trimmed rectangle requests keep only overlapping source tiles");
 }
 
+void testRasterOverlayBaseRectangleSourceStretchesCoverageEdge() {
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
+
+    const Rectangle coverageBounds = imageryScheme->tileToRectangle(
+        TileKey{"XYZ-WebMercator", 3, 2, 3});
+    const Rectangle southAdjacentBounds = imageryScheme->tileToRectangle(
+        TileKey{"XYZ-WebMercator", 3, 2, 4});
+    provider.setCoverageRectangle(coverageBounds);
+
+    RasterOverlayTileProvider::TilePtr rectangleTile =
+        provider.getTile(southAdjacentBounds, 512.0, 512.0);
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    check(rectangleTile &&
+              provider.loadTileThrottled(*rectangleTile, &budget) &&
+              !imagery.pendingRequests.empty(),
+          "RasterOverlayTileProvider: base imagery outside coverage requests nearest edge source like cesium-native");
+
+    bool allRequestsTouchCoverageSouthEdge = !imagery.pendingRequests.empty();
+    for (const auto& request : imagery.pendingRequests) {
+        const Rectangle requestBounds = imageryScheme->tileToRectangle(request.key);
+        allRequestsTouchCoverageSouthEdge =
+            allRequestsTouchCoverageSouthEdge &&
+            requestBounds.south() <= coverageBounds.south() &&
+            requestBounds.north() >= coverageBounds.south();
+    }
+    check(allRequestsTouchCoverageSouthEdge,
+          "RasterOverlayTileProvider: stretched base source range stays on the coverage edge");
+}
+
 void testRasterOverlayRectangleSourceFailureRequestsParentSource() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -3207,6 +3244,31 @@ void testRasterOverlayRectangleSourceFailureRequestsParentSource() {
             });
     check(requestedParent,
           "RasterOverlayTileProvider: failed source tile requests parent source like cesium-native");
+}
+
+void testRasterOverlayRectangleCompositionStretchesEdgeTexels() {
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    const TileKey sourceKey{"XYZ-WebMercator", 3, 2, 3};
+    const Rectangle sourceBounds = imageryScheme->tileToRectangle(sourceKey);
+    const Rectangle targetBounds = imageryScheme->tileToRectangle(
+        TileKey{"XYZ-WebMercator", 3, 2, 4});
+
+    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    sources.push_back(RasterOverlayTileProvider::RectangleSourceImage{
+        sourceKey,
+        sourceBounds,
+        makeDecodedRgbaImage(8, 8)});
+
+    std::unique_ptr<DecodedImage> composed =
+        RasterOverlayTileProvider::composeRectangleImages(
+            *imageryScheme,
+            targetBounds,
+            sourceKey.z,
+            std::move(sources),
+            4096);
+
+    check(composed && composed->width > 0 && composed->height > 0,
+          "RasterOverlayTileProvider: base imagery composition stretches edge texels over outside coverage like cesium-native");
 }
 
 void testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize() {
@@ -31125,7 +31187,9 @@ int main() {
     testRasterOverlayProviderRectangleTile();
     testRasterOverlayRectangleSourceRequestsAreBudgetedAcrossFrames();
     testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches();
+    testRasterOverlayBaseRectangleSourceStretchesCoverageEdge();
     testRasterOverlayRectangleSourceFailureRequestsParentSource();
+    testRasterOverlayRectangleCompositionStretchesEdgeTexels();
     testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize();
     testRasterOverlayRectangleCompositionUsesProjectedWebMercatorHeight();
     testRasterOverlayRectangleCompositionKeepsTinyProjectedOverlap();
