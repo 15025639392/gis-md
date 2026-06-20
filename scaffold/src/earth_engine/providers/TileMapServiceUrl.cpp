@@ -1,5 +1,8 @@
 #include "TileMapServiceUrl.h"
 
+#include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/Projection.h"
+
 #include <algorithm>
 #include <cctype>
 #include <limits>
@@ -186,6 +189,21 @@ std::optional<uint32_t> attributeUint32(std::string_view tag,
     return static_cast<uint32_t>(parsed);
 }
 
+std::optional<double> attributeDouble(std::string_view tag,
+                                      std::string_view name) {
+    const std::optional<std::string> value = attributeValue(tag, name);
+    if (!value) {
+        return std::nullopt;
+    }
+
+    size_t consumed = 0;
+    const double parsed = std::stod(*value, &consumed);
+    if (consumed != value->size()) {
+        throw std::invalid_argument("TMS double attribute has trailing data");
+    }
+    return parsed;
+}
+
 std::optional<std::string_view> firstTag(std::string_view xml,
                                          std::string_view tagName) {
     const std::string needle = "<" + std::string(tagName);
@@ -256,6 +274,39 @@ void parseProfileAndSrs(std::string_view xml, TileMapServiceMetadata& metadata) 
     }
 }
 
+Projection projectionForSchemeId(const std::string& schemeId) {
+    if (schemeId == "Geographic-TMS") {
+        return GeographicProjection(Ellipsoid::WGS84());
+    }
+    return WebMercatorProjection(Ellipsoid::WGS84());
+}
+
+void parseBoundingBox(std::string_view xml, TileMapServiceMetadata& metadata) {
+    const std::optional<std::string_view> boundingBox =
+        firstTag(xml, "BoundingBox");
+    if (!boundingBox) {
+        return;
+    }
+
+    const std::optional<double> west = attributeDouble(*boundingBox, "minx");
+    const std::optional<double> south = attributeDouble(*boundingBox, "miny");
+    const std::optional<double> east = attributeDouble(*boundingBox, "maxx");
+    const std::optional<double> north = attributeDouble(*boundingBox, "maxy");
+    if (!west || !south || !east || !north) {
+        return;
+    }
+
+    if (!metadata.boundingBoxCoordinatesInDegrees) {
+        metadata.projectedCoverageRectangle =
+            Rectangle(*west, *south, *east, *north);
+        return;
+    }
+
+    metadata.projectedCoverageRectangle = projectRectangleSimple(
+        projectionForSchemeId(metadata.schemeId),
+        Rectangle::fromDegrees(*west, *south, *east, *north));
+}
+
 } // namespace
 
 std::string tileMapServiceXmlUrl(const std::string& url) {
@@ -305,6 +356,7 @@ TileMapServiceMetadata parseTileMapServiceMetadata(const std::string& xml) {
     const std::string_view view(xml);
 
     parseProfileAndSrs(view, metadata);
+    parseBoundingBox(view, metadata);
 
     if (const std::optional<std::string_view> tileFormat =
             firstTag(view, "TileFormat")) {

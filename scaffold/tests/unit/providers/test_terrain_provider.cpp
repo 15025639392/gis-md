@@ -5,6 +5,8 @@
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/providers/TileMapServiceUrl.h"
 #include "earth_engine/providers/XYZImageryProvider.h"
+#include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/platform/bridge/PlatformBridge.h"
 #include "earth_engine/terrain/TerrainTile.h"
 #include "earth_engine/tiling/TileKey.h"
@@ -717,4 +719,36 @@ TEST(TileMapServiceUrlTest, FallsBackToSrsForUnknownProfileLikeCesiumNative) {
 
     EXPECT_EQ("TMS-WebMercator", metadata.schemeId);
     EXPECT_TRUE(metadata.boundingBoxCoordinatesInDegrees);
+}
+
+TEST(TileMapServiceUrlTest, ParsesDegreesBoundingBoxAsProjectedCoverageLikeCesiumNative) {
+    const TileMapServiceMetadata metadata = parseTileMapServiceMetadata(R"xml(
+      <TileMap>
+        <BoundingBox minx="-10" miny="-20" maxx="30" maxy="40" />
+        <TileSets profile="mercator" />
+      </TileMap>
+    )xml");
+
+    ASSERT_TRUE(metadata.projectedCoverageRectangle.has_value());
+    const Rectangle expected = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        Rectangle::fromDegrees(-10.0, -20.0, 30.0, 40.0));
+
+    EXPECT_TRUE(metadata.projectedCoverageRectangle->equalsEpsilon(
+        expected,
+        1e-6));
+}
+
+TEST(TileMapServiceUrlTest, ParsesGlobalMercatorBoundingBoxAsProjectedLikeCesiumNative) {
+    const TileMapServiceMetadata metadata = parseTileMapServiceMetadata(R"xml(
+      <TileMap>
+        <BoundingBox minx="-1000" miny="-2000" maxx="3000" maxy="4000" />
+        <TileSets profile="global-mercator" />
+      </TileMap>
+    )xml");
+
+    ASSERT_TRUE(metadata.projectedCoverageRectangle.has_value());
+    EXPECT_TRUE(metadata.projectedCoverageRectangle->equalsEpsilon(
+        Rectangle(-1000.0, -2000.0, 3000.0, 4000.0),
+        0.0));
 }

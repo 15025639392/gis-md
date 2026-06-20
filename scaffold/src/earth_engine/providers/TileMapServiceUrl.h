@@ -1,6 +1,9 @@
 #pragma once
 
+#include "earth_engine/core/math/Rectangle.h"
+
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -19,6 +22,7 @@ struct TileMapServiceMetadata {
     uint32_t maximumLevel = 25;
     std::string schemeId = "TMS-WebMercator";
     bool boundingBoxCoordinatesInDegrees = true;
+    std::optional<Rectangle> projectedCoverageRectangle;
     std::vector<TileMapServiceTileSet> tileSets;
 };
 
