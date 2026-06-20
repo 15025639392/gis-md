@@ -83,6 +83,18 @@ TEST(ImplicitTileIdUtilitiesTest, ResolveUrlPreservesTemplateEdgeCases) {
                   "../tiles/{level",
                   TileKey{"Geographic-TMS", 11, 2, 3}));
 
+    EXPECT_EQ("https://example.com/base/tiles/11/3",
+              ImplicitTileIdUtilities::resolveUrl(
+                  "https://example.com/base/tileset.json",
+                  "tiles/{level}/{}/{y}",
+                  TileKey{"Geographic-TMS", 11, 2, 3}));
+
+    EXPECT_EQ("https://example.com/base/tiles/11}/3",
+              ImplicitTileIdUtilities::resolveUrl(
+                  "https://example.com/base/tileset.json",
+                  "tiles/{level}}/{y}",
+                  TileKey{"Geographic-TMS", 11, 2, 3}));
+
     EXPECT_EQ("https://example.com/base/tileset.json",
               ImplicitTileIdUtilities::resolveUrl(
                   "https://example.com/base/tileset.json?token=base#section",
