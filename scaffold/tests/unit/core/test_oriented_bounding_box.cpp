@@ -420,6 +420,9 @@ TEST(OrientedBoundingBoxTest, FromSphereBuildsCircumscribedBox) {
     OrientedBoundingBox box = OrientedBoundingBox::fromSphere(sphere);
 
     EXPECT_EQ(Vec3(1.0, 2.0, 3.0), box.getCenter());
+    EXPECT_EQ(Vec3(10.0, 0.0, 0.0), box.getHalfAxis(0));
+    EXPECT_EQ(Vec3(0.0, 10.0, 0.0), box.getHalfAxis(1));
+    EXPECT_EQ(Vec3(0.0, 0.0, 10.0), box.getHalfAxis(2));
     EXPECT_EQ(Vec3(20.0, 20.0, 20.0), box.getLengths());
     EXPECT_TRUE(box.contains(Vec3(11.0, 2.0, 3.0)));
     EXPECT_FALSE(box.contains(Vec3(11.0 + 1e-12, 2.0, 3.0)));
