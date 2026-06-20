@@ -17,6 +17,9 @@ TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledTerrain(
     if (requestState.destroying()) {
         return TileLoadDispatchResult::Destroying;
     }
+    if (cacheKey.empty()) {
+        return TileLoadDispatchResult::Skipped;
+    }
     if (requestState.contains(cacheKey) ||
         pendingLoads.containsCacheKey(cacheKey)) {
         return TileLoadDispatchResult::Skipped;

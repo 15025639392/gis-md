@@ -18513,6 +18513,113 @@ void testTileLoadRequestDispatcherBlocksWhenBudgetIsExhausted() {
           "TileLoadRequestDispatcher: blocked request has no side effects");
 }
 
+void testTileLoadRequestDispatcherSkipsEmptyCacheKeys() {
+    class CountingTerrainProvider final : public TerrainProvider {
+    public:
+        std::string id() const override { return "dispatcher-empty-terrain"; }
+        std::string schemeId() const override { return "test"; }
+        int minZoom() const override { return 0; }
+        int maxZoom() const override { return 1; }
+        int tileSize() const override { return 2; }
+        std::string buildUrl(const TileKey&) const override {
+            return "memory://dispatcher-empty-terrain";
+        }
+        void requestTile(const TileKey&,
+                         CancellationToken,
+                         HeightmapCallback,
+                         HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+        }
+        std::unique_ptr<DecodedHeightmap> decodeTile(
+            const uint8_t*,
+            size_t) override {
+            return nullptr;
+        }
+        int requestCount = 0;
+    };
+
+    class CountingContentProvider final : public TilesetContentProvider {
+    public:
+        std::string id() const override { return "dispatcher-empty-content"; }
+        bool supportsTile(const TileKey&) const override { return true; }
+        void requestTileContent(const TileKey&,
+                                CancellationToken,
+                                ContentCallback,
+                                HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+        }
+        TileContentLoadResult decodeContent(
+            const uint8_t*,
+            size_t) override {
+            return TileContentLoadResult::failed();
+        }
+        int requestCount = 0;
+    };
+
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+
+    CountingTerrainProvider terrainProvider;
+    const TileLoadDispatchResult terrainResult =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            terrainProvider,
+            key,
+            "",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    CountingContentProvider contentProvider;
+    const TileLoadDispatchResult contentResult =
+        TileLoadRequestDispatcher::requestContent(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            contentProvider,
+            key,
+            "",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    const TileLoadDispatchResult upsampleResult =
+        TileLoadRequestDispatcher::queueUpsampledTerrain(
+            mutex,
+            requestState,
+            pendingLoads,
+            budget,
+            key,
+            "",
+            TileLoadPriorityGroup::Normal,
+            0.0);
+
+    check(terrainResult == TileLoadDispatchResult::Skipped &&
+              contentResult == TileLoadDispatchResult::Skipped &&
+              upsampleResult == TileLoadDispatchResult::Skipped,
+          "TileLoadRequestDispatcher: empty cache keys are skipped");
+    check(!issued &&
+              terrainProvider.requestCount == 0 &&
+              contentProvider.requestCount == 0 &&
+              requestState.empty() &&
+              !pendingLoads.hasWork(),
+          "TileLoadRequestDispatcher: skipped empty cache keys have no side effects");
+}
+
 void testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback() {
     class SyncContentProvider final : public TilesetContentProvider {
     public:
@@ -24700,6 +24807,7 @@ int main() {
     testTileContentLifecycleManagerOwnsLifecycleState();
     testTileContentStateTransitionOwnsLoadAndContentStateChanges();
     testTileLoadRequestDispatcherBlocksWhenBudgetIsExhausted();
+    testTileLoadRequestDispatcherSkipsEmptyCacheKeys();
     testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback();
     testTileLoadRequestDispatcherSkipsPendingTerminalResultKeys();
     testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending();

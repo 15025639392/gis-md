@@ -54,6 +54,9 @@ public:
             if (requestState.destroying()) {
                 return TileLoadDispatchResult::Destroying;
             }
+            if (cacheKey.empty()) {
+                return TileLoadDispatchResult::Skipped;
+            }
             if (requestState.contains(cacheKey) ||
                 pendingLoads.containsCacheKey(cacheKey)) {
                 return TileLoadDispatchResult::Skipped;
@@ -130,6 +133,9 @@ public:
             std::lock_guard<std::mutex> lock(mutex);
             if (requestState.destroying()) {
                 return TileLoadDispatchResult::Destroying;
+            }
+            if (cacheKey.empty()) {
+                return TileLoadDispatchResult::Skipped;
             }
             if (requestState.contains(cacheKey) ||
                 pendingLoads.containsCacheKey(cacheKey)) {
