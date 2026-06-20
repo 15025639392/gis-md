@@ -53,22 +53,43 @@ struct CurlMultiRequestScheduler::Impl {
         std::atomic<bool> cancelled{false};
     };
 
+    struct WakeState {
+        std::mutex mutex;
+        std::condition_variable* cv = nullptr;
+        CURLM* multi = nullptr;
+        bool alive = false;
+    };
+
     class RequestHandle : public HttpRequest {
     public:
-        RequestHandle(Impl* scheduler, std::weak_ptr<RequestState> state)
-            : scheduler_(scheduler), state_(std::move(state)) {}
+        RequestHandle(std::weak_ptr<WakeState> wakeState,
+                      std::weak_ptr<RequestState> state)
+            : wakeState_(std::move(wakeState)), state_(std::move(state)) {}
         ~RequestHandle() override { cancel(); }
         void cancel() override {
             if (auto state = state_.lock()) {
                 state->cancelled.store(true, std::memory_order_release);
-                if (scheduler_) {
-                    scheduler_->wake();
-                }
+                wake(wakeState_);
             }
         }
 
     private:
-        Impl* scheduler_ = nullptr;
+        static void wake(const std::weak_ptr<WakeState>& weakWakeState) {
+            if (auto wakeState = weakWakeState.lock()) {
+                std::lock_guard<std::mutex> lock(wakeState->mutex);
+                if (!wakeState->alive) {
+                    return;
+                }
+                if (wakeState->cv) {
+                    wakeState->cv->notify_one();
+                }
+                if (wakeState->multi) {
+                    curl_multi_wakeup(wakeState->multi);
+                }
+            }
+        }
+
+        std::weak_ptr<WakeState> wakeState_;
         std::weak_ptr<RequestState> state_;
     };
 
@@ -76,6 +97,12 @@ struct CurlMultiRequestScheduler::Impl {
         : maximumActiveRequests(std::max(1, maximumActiveRequestsValue)) {
         curl_global_init(CURL_GLOBAL_DEFAULT);
         multi = curl_multi_init();
+        {
+            std::lock_guard<std::mutex> lock(wakeState->mutex);
+            wakeState->cv = &cv;
+            wakeState->multi = multi;
+            wakeState->alive = true;
+        }
         worker = std::thread([this]() { run(); });
     }
 
@@ -111,7 +138,7 @@ struct CurlMultiRequestScheduler::Impl {
             wake();
         }
 
-        return std::make_unique<RequestHandle>(this, state);
+        return std::make_unique<RequestHandle>(wakeState, state);
     }
 
     void cancelQueuedRequests() {
@@ -158,13 +185,20 @@ struct CurlMultiRequestScheduler::Impl {
     }
 
     void wake() {
-        cv.notify_one();
-        if (multi) {
-            curl_multi_wakeup(multi);
+        std::lock_guard<std::mutex> lock(wakeState->mutex);
+        if (!wakeState->alive) {
+            return;
+        }
+        if (wakeState->cv) {
+            wakeState->cv->notify_one();
+        }
+        if (wakeState->multi) {
+            curl_multi_wakeup(wakeState->multi);
         }
     }
 
     CURLM* multi = nullptr;
+    std::shared_ptr<WakeState> wakeState = std::make_shared<WakeState>();
     std::mutex mutex;
     std::condition_variable cv;
     std::array<std::deque<std::shared_ptr<RequestState>>, 3> pending;
@@ -226,6 +260,12 @@ private:
 
         cleanupPendingWithoutCallbacks();
         cleanupActiveWithoutCallbacks();
+        {
+            std::lock_guard<std::mutex> lock(wakeState->mutex);
+            wakeState->cv = nullptr;
+            wakeState->multi = nullptr;
+            wakeState->alive = false;
+        }
         if (multi) {
             curl_multi_cleanup(multi);
             multi = nullptr;

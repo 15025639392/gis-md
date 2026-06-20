@@ -349,3 +349,22 @@ TEST(CurlMultiRequestScheduler, CancelledQueuedRequestNeverStartsOrCallbacks) {
     server.releaseAll();
     scheduler.shutdown();
 }
+
+TEST(CurlMultiRequestScheduler, RequestHandleMayOutliveScheduler) {
+    LocalHttpServer server;
+    std::unique_ptr<HttpRequest> handle;
+    std::atomic<int> callbacks{0};
+
+    {
+        CurlMultiRequestScheduler scheduler(1);
+        handle = scheduler.get(
+            server.url("/hold/outlive"),
+            [&](int, std::vector<uint8_t>) { callbacks.fetch_add(1); },
+            {HttpRequestPriority::Normal});
+        ASSERT_TRUE(server.waitForPath("/hold/outlive", 3s));
+    }
+
+    handle.reset();
+    server.releaseAll();
+    EXPECT_EQ(callbacks.load(), 0);
+}
