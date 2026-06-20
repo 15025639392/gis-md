@@ -22817,6 +22817,75 @@ void testTileLoadSchedulerContinuesAfterUpsampleSourceWait() {
           "TileLoadScheduler: later terrain request still issues without local upsample upload");
 }
 
+void testTileLoadSchedulerContinuesAfterMissingUpsampleTileState() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey missingTileStateKey{"test", 2, 0, 0};
+    const TileKey readyUpsampleKey{"test", 2, 1, 0};
+    TilesetTile readyTile(readyUpsampleKey, Rectangle{});
+    readyTile.content.upsampledFromParent = true;
+    std::vector<int> plannedColumns;
+    std::vector<int> preparedColumns;
+    std::vector<int> markedColumns;
+
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {
+                TileLoadRequest{
+                    readyUpsampleKey,
+                    TileLoadPriorityGroup::Normal,
+                    50.0},
+                TileLoadRequest{
+                    missingTileStateKey,
+                    TileLoadPriorityGroup::Urgent,
+                    100.0},
+            },
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            testCacheKeyForTile,
+            [&missingTileStateKey,
+             &readyTile,
+             &plannedColumns](const TileKey& key,
+                               const std::string&,
+                               TilesetTile*& tileState) {
+                plannedColumns.push_back(key.x);
+                TileLoadRequestSnapshot snapshot;
+                snapshot.hasTile = true;
+                snapshot.upsampledFromParent = true;
+                tileState = key == missingTileStateKey ? nullptr : &readyTile;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [&preparedColumns](TilesetTile& tile, double) {
+                preparedColumns.push_back(tile.key.x);
+                return true;
+            },
+            [&markedColumns](const TileKey& key) {
+                markedColumns.push_back(key.x);
+            });
+
+    check(outcome.issued == 1 && !outcome.blockedByInflight,
+          "TileLoadScheduler: missing upsample tile state does not block later request");
+    check(plannedColumns.size() == 2 &&
+              plannedColumns[0] == missingTileStateKey.x &&
+              plannedColumns[1] == readyUpsampleKey.x &&
+              preparedColumns.size() == 1 &&
+              preparedColumns.front() == readyUpsampleKey.x,
+          "TileLoadScheduler: missing upsample tile state skips source preparation");
+    check(markedColumns.size() == 1 &&
+              markedColumns.front() == readyUpsampleKey.x &&
+              lifecycle.counts().terrainUploads == 1,
+          "TileLoadScheduler: later upsampled tile still enters local upload queue");
+}
+
 void testTileLoadSchedulerSkipsEmptyUpsampledCacheKey() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -29613,6 +29682,7 @@ int main() {
     testTileLoadSchedulerSkipsCachedTerrainWhenNetworkInflightIsFull();
     testTileLoadSchedulerSortsAndQueuesUpsampledTerrain();
     testTileLoadSchedulerContinuesAfterUpsampleSourceWait();
+    testTileLoadSchedulerContinuesAfterMissingUpsampleTileState();
     testTileLoadSchedulerSkipsEmptyUpsampledCacheKey();
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation();
     testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot();
