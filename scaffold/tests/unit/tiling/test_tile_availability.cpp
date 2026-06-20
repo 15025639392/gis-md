@@ -1293,6 +1293,8 @@ TEST(TileOctreeAvailabilityTest, AddNodeRejectsOutOfRangeRootCoordinates) {
     TileOctreeAvailability availability(3, 5);
 
     EXPECT_EQ(nullptr,
+              availability.findChildNode(OctreeTileID{0, 0, 0, 0}, nullptr));
+    EXPECT_EQ(nullptr,
               availability.addNode(OctreeTileID{0, 1, 0, 0}, nullptr));
     EXPECT_EQ(nullptr,
               availability.addNode(OctreeTileID{0, 0, 1, 0}, nullptr));

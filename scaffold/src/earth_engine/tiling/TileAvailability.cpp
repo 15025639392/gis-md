@@ -731,7 +731,7 @@ TileAvailabilityNode* TileOctreeAvailability::findChildNode(
     TileAvailabilityNode* parentNode) const {
     const std::optional<uint32_t> index =
         findChildNodeIndex(tileID, parentNode);
-    if (!index || *index >= parentNode->childNodes.size()) {
+    if (!index || !parentNode || *index >= parentNode->childNodes.size()) {
         return nullptr;
     }
     return parentNode->childNodes[*index].get();
