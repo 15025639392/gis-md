@@ -3475,10 +3475,10 @@ void testQuantizedMeshLayerJsonDefaultVersionMatchesCesiumNative() {
 
     check(provider.configureFromLayerJson(
               layerJson, "https://example.invalid/layer.json"),
-          "QuantizedMeshTerrainProvider: missing version defaults like cesium-native");
+          "QuantizedMeshTerrainProvider: missing version layer configures");
     check(provider.buildUrl(TileKey{"Geographic-TMS", 1, 1, 0}) ==
-              "https://example.invalid/1/1/0.terrain?v=1.0.0",
-          "QuantizedMeshTerrainProvider: default version substitutes 1.0.0");
+              "https://example.invalid/1/1/0.terrain?v=",
+          "QuantizedMeshTerrainProvider: missing version substitutes empty string like cesium-native");
 }
 
 void testQuantizedMeshLayerJsonDefaultMaxzoomMatchesCesiumNative() {
