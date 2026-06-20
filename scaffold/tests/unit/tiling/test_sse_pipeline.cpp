@@ -13601,6 +13601,53 @@ void testTileCacheUnloadCoordinatorRotatesDeferredCandidates() {
           "TileCacheUnloadCoordinator: deferred referenced candidate rotates and later candidate unloads");
 }
 
+void testTileCacheUnloadCoordinatorStopsAfterAllCandidatesDeferred() {
+    TileUnloadQueue unloadQueue;
+    unloadQueue.pushBackIfAbsent("a");
+    unloadQueue.pushBackIfAbsent("b");
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    for (int y = 0; y < 2; ++y) {
+        auto tile = std::make_unique<TilesetTile>(
+            TileKey{"test", 0, 0, y},
+            Rectangle{});
+        tile->content.contentKind = TileContentKind::Render;
+        tile->content.loadState = TileLoadState::Done;
+        tile->addReference();
+        tiles[y == 0 ? "a" : "b"] = std::move(tile);
+    }
+
+    int unloadAttempts = 0;
+    int markedIneligibleCount = 0;
+    const TileCacheUnloadResult result = TileCacheUnloadCoordinator::run(
+        unloadQueue,
+        tiles,
+        2,
+        0,
+        0.0,
+        false,
+        false,
+        [](const TilesetTile&) {
+            return false;
+        },
+        [&](TilesetTile&) {
+            ++unloadAttempts;
+            return TileCacheUnloadContentResult::Remove;
+        },
+        [&](const std::string&) {
+            ++markedIneligibleCount;
+        },
+        [](TilesetTile&) {});
+
+    check(unloadAttempts == 0 &&
+              markedIneligibleCount == 0 &&
+              unloadQueue.size() == 2 &&
+              unloadQueue.front() == "a" &&
+              !result.cacheBytesDirty &&
+              !result.shouldRefreshTotalBytes,
+          "TileCacheUnloadCoordinator: all-deferred queue scans once without dirtying cache bytes");
+}
+
 void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
     const TileKey erasedKey{"test", 1, 2, 3};
     const TileKey keptKey{"test", 1, 2, 4};
@@ -25893,6 +25940,7 @@ int main() {
     testTileUnloadQueueMaintainsLruOrderAndDeduplicatesKeys();
     testTileIndexStateQueuesOnlyUnloadableTiles();
     testTileCacheUnloadCoordinatorRotatesDeferredCandidates();
+    testTileCacheUnloadCoordinatorStopsAfterAllCandidatesDeferred();
     testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches();
     testTileContentCacheManagerOwnsBytesQueueAndUnload();
     testTileCacheMetricsCountsHeightmapAndTilePayloads();
