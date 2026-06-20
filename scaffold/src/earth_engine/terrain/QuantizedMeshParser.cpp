@@ -405,6 +405,7 @@ std::vector<std::array<int, 5>> QuantizedMeshParser::parseMetadataAvailability(
         }
 
         constexpr size_t kExtHeaderSize = 5;
+        std::optional<std::vector<std::array<int, 5>>> latestMetadata;
         while (offset + kExtHeaderSize <= len) {
             const uint8_t extId = data[offset];
             offset += sizeof(uint8_t);
@@ -424,7 +425,7 @@ std::vector<std::array<int, 5>> QuantizedMeshParser::parseMetadataAvailability(
                 std::memcpy(&metadataJsonLength, data + offset, sizeof(uint32_t));
                 const size_t jsonOffset = offset + sizeof(uint32_t);
                 if (metadataJsonLength > len - jsonOffset) break;
-                return parseMetadataAvailabilityJson(std::string(
+                latestMetadata = parseMetadataAvailabilityJson(std::string(
                     reinterpret_cast<const char*>(data + jsonOffset),
                     metadataJsonLength));
             }
@@ -432,7 +433,7 @@ std::vector<std::array<int, 5>> QuantizedMeshParser::parseMetadataAvailability(
             offset += extLen;
         }
 
-        return std::nullopt;
+        return latestMetadata;
     };
 
     std::optional<std::vector<std::array<int, 5>>> availability =

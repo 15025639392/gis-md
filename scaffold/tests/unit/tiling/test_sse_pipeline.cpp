@@ -1014,6 +1014,19 @@ std::vector<uint8_t> makeQuantizedMeshBytesWithMalformedMetadataThenMetadata(
     return bytes;
 }
 
+std::vector<uint8_t> makeQuantizedMeshBytesWithTwoMetadataExtensions(
+    const std::string& firstMetadataJson,
+    const std::string& secondMetadataJson) {
+    std::vector<uint8_t> bytes = makeQuantizedMeshBytes(firstMetadataJson);
+    appendPod<uint8_t>(bytes, 4);
+    appendPod<uint32_t>(
+        bytes,
+        static_cast<uint32_t>(sizeof(uint32_t) + secondMetadataJson.size()));
+    appendPod<uint32_t>(bytes, static_cast<uint32_t>(secondMetadataJson.size()));
+    bytes.insert(bytes.end(), secondMetadataJson.begin(), secondMetadataJson.end());
+    return bytes;
+}
+
 std::vector<uint8_t> makeLargeQuantizedMeshBytesWithUint32EdgeIndex() {
     constexpr uint32_t vertexCount = 65537;
     constexpr uint32_t highEdgeIndex = vertexCount - 1;
@@ -4014,6 +4027,35 @@ void testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative() {
     check(nonArrayLevelOnly.size() == 1 &&
               nonArrayLevelOnly[0] == std::array<int, 5>{0, 2, 1, 3, 1},
           "QuantizedMeshParser: metadata non-array levels do not advance availability level");
+
+    const std::string firstMetadata = R"json({
+      "available": [
+        [{"startX":0,"startY":0,"endX":0,"endY":0}]
+      ]
+    })json";
+    const std::string secondMetadata = R"json({
+      "available": [
+        [{"startX":2,"startY":2,"endX":3,"endY":3}]
+      ]
+    })json";
+    const std::vector<uint8_t> twoMetadataBytes =
+        makeQuantizedMeshBytesWithTwoMetadataExtensions(
+            firstMetadata, secondMetadata);
+    std::unique_ptr<SurfaceTileMesh> twoMetadataMesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            twoMetadataBytes.data(),
+            twoMetadataBytes.size(),
+            scheme->tileToRectangle(rootKey));
+    const std::vector<std::array<int, 5>> twoMetadataOnly =
+        QuantizedMeshParser::parseMetadataAvailability(
+            twoMetadataBytes.data(),
+            twoMetadataBytes.size());
+    check(twoMetadataMesh && twoMetadataMesh->metadataAvailability.size() == 1 &&
+              twoMetadataMesh->metadataAvailability[0] ==
+                  std::array<int, 5>{0, 2, 2, 3, 3},
+          "QuantizedMeshParser: later metadata extension replaces earlier metadata like cesium-native");
+    check(twoMetadataOnly == twoMetadataMesh->metadataAvailability,
+          "QuantizedMeshParser: metadata-only path keeps the final metadata extension like cesium-native");
 }
 
 void testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding() {
