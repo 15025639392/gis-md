@@ -6,7 +6,6 @@ TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledTerrain(
     std::mutex& mutex,
     TilePendingRequestState& requestState,
     TilePendingLoadQueue& pendingLoads,
-    FrameResourceBudget& budget,
     const TileKey& key,
     const std::string& cacheKey,
     TileLoadPriorityGroup group,
@@ -22,7 +21,6 @@ TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledTerrain(
         pendingLoads.containsCacheKey(cacheKey)) {
         return TileLoadDispatchResult::Skipped;
     }
-    (void)budget;
     pendingLoads.addTerrainUpload(
         PendingTerrainUpload{key, cacheKey, group, priority, nullptr});
     return TileLoadDispatchResult::Issued;

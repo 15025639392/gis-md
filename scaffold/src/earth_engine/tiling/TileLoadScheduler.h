@@ -89,7 +89,6 @@ public:
                         input.lifecycle.mutex(),
                         input.lifecycle.requestState(),
                         input.lifecycle.pendingLoads(),
-                        input.budget,
                         requestKey,
                         cacheKey,
                         request.group,

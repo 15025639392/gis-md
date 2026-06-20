@@ -29,7 +29,6 @@ public:
         std::mutex& mutex,
         TilePendingRequestState& requestState,
         TilePendingLoadQueue& pendingLoads,
-        FrameResourceBudget& budget,
         const TileKey& key,
         const std::string& cacheKey,
         TileLoadPriorityGroup group,
