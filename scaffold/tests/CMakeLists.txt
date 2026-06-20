@@ -238,6 +238,12 @@ add_executable(test_tile_surface
 target_link_libraries(test_tile_surface PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_surface COMMAND test_tile_surface)
 
+add_executable(test_raster_overlay_screen_space_metrics
+    unit/tiling/test_raster_overlay_screen_space_metrics.cpp
+)
+target_link_libraries(test_raster_overlay_screen_space_metrics PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_raster_overlay_screen_space_metrics COMMAND test_raster_overlay_screen_space_metrics)
+
 # ============================================================
 # stage 4 tests
 # ============================================================
