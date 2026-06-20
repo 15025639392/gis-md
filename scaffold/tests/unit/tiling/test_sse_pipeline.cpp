@@ -972,6 +972,57 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
     return bytes;
 }
 
+std::vector<uint8_t> makeZeroTriangleQuantizedMeshBytes(
+    const std::string& metadataJson = "") {
+    std::vector<uint8_t> bytes;
+
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<float>(bytes, 0.0f);
+    appendPod<float>(bytes, 100.0f);
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<uint32_t>(bytes, 3);
+
+    const uint16_t u[] = {
+        zigZagEncode16(0),
+        zigZagEncode16(32767),
+        zigZagEncode16(-32767)
+    };
+    const uint16_t v[] = {
+        zigZagEncode16(0),
+        zigZagEncode16(0),
+        zigZagEncode16(32767)
+    };
+    const uint16_t h[] = {
+        zigZagEncode16(0),
+        zigZagEncode16(0),
+        zigZagEncode16(0)
+    };
+    for (uint16_t value : u) appendPod<uint16_t>(bytes, value);
+    for (uint16_t value : v) appendPod<uint16_t>(bytes, value);
+    for (uint16_t value : h) appendPod<uint16_t>(bytes, value);
+
+    appendPod<uint32_t>(bytes, 0);
+    for (int i = 0; i < 4; ++i) appendPod<uint32_t>(bytes, 0);
+
+    if (!metadataJson.empty()) {
+        appendPod<uint8_t>(bytes, 4);
+        appendPod<uint32_t>(
+            bytes,
+            static_cast<uint32_t>(sizeof(uint32_t) + metadataJson.size()));
+        appendPod<uint32_t>(bytes, static_cast<uint32_t>(metadataJson.size()));
+        bytes.insert(bytes.end(), metadataJson.begin(), metadataJson.end());
+    }
+    return bytes;
+}
+
 std::vector<uint8_t> makeLargeUint16QuantizedMeshBytesWithSkirts() {
     constexpr uint32_t vertexCount = 65535u;
     std::vector<uint8_t> bytes;
@@ -4643,6 +4694,21 @@ void testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative() {
         QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
     check(metadataOnly == mesh->metadataAvailability,
           "QuantizedMeshParser: metadata-only path matches cesium-native loadMetadata");
+
+    const std::vector<uint8_t> zeroTriangleBytes =
+        makeZeroTriangleQuantizedMeshBytes(metadata);
+    std::unique_ptr<SurfaceTileMesh> zeroTriangleMesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            zeroTriangleBytes.data(),
+            zeroTriangleBytes.size(),
+            scheme->tileToRectangle(rootKey));
+    check(zeroTriangleMesh &&
+              zeroTriangleMesh->vertices.size() == 3 &&
+              zeroTriangleMesh->indices.empty(),
+          "QuantizedMeshParser: zero-triangle mesh remains parseable like cesium-native");
+    check(zeroTriangleMesh &&
+              zeroTriangleMesh->metadataAvailability == metadataOnly,
+          "QuantizedMeshParser: zero-triangle mesh still decodes metadata availability like cesium-native");
 
     const std::string negativeMetadata = R"json({
       "available": [

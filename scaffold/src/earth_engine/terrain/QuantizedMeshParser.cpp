@@ -568,7 +568,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
         return nullptr;
     }
     uint32_t triCount = readU32();
-    if (triCount == 0 || triCount > vc * 4) {
+    if (triCount > vc * 4) {
         // Retry with 4-byte alignment like parseAndRasterize.
         offset = idxOffset;
         if ((offset % 4) != 0) offset += 2;
@@ -590,7 +590,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     }
     const uint32_t idxCount = triCount * 3;
     size_t idxByte = idx32 ? 4 : 2;
-    if (offset + idxCount * idxByte > len || triCount == 0 || triCount > vc * 4) {
+    if (offset + idxCount * idxByte > len || triCount > vc * 4) {
 #ifdef __ANDROID__
         __android_log_print(ANDROID_LOG_ERROR, "QMParser",
             "parseToSurfaceTileMesh fail: index overflow vc=%u tri=%u idxCount=%u idxByte=%zu off=%zu len=%zu",
@@ -614,15 +614,6 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
         __android_log_print(ANDROID_LOG_ERROR, "QMParser",
             "parseToSurfaceTileMesh fail: decoded index outside vertex range vc=%u tri=%u",
             vc, triCount);
-#endif
-        return nullptr;
-    }
-
-    if (idxCount == 0 || triCount == 0) {
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_ERROR, "QMParser",
-            "parseToSurfaceTileMesh fail: zero indices vc=%u tri=%u off=%zu len=%zu",
-            vc, triCount, offset, len);
 #endif
         return nullptr;
     }
