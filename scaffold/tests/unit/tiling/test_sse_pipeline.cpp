@@ -18572,6 +18572,128 @@ void testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback() {
           "TileLoadRequestDispatcher: synchronous content callback queues terminal result");
 }
 
+void testTileLoadRequestDispatcherSkipsPendingTerminalResultKeys() {
+    class SyncTerminalTerrainProvider final : public TerrainProvider {
+    public:
+        std::string id() const override { return "dispatcher-terminal-terrain"; }
+        std::string schemeId() const override { return "test"; }
+        int minZoom() const override { return 0; }
+        int maxZoom() const override { return 1; }
+        int tileSize() const override { return 2; }
+        std::string buildUrl(const TileKey&) const override {
+            return "memory://dispatcher-terminal-terrain";
+        }
+        void requestTile(const TileKey& key,
+                         CancellationToken,
+                         HeightmapCallback callback,
+                         HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+            callback(key, TerrainTileLoadResult::retryLater());
+        }
+        std::unique_ptr<DecodedHeightmap> decodeTile(
+            const uint8_t*,
+            size_t) override {
+            return nullptr;
+        }
+        int requestCount = 0;
+    };
+
+    class SyncTerminalContentProvider final : public TilesetContentProvider {
+    public:
+        std::string id() const override { return "dispatcher-terminal-content"; }
+        bool supportsTile(const TileKey&) const override { return true; }
+        void requestTileContent(const TileKey& key,
+                                CancellationToken,
+                                ContentCallback callback,
+                                HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+            callback(key, TileContentLoadResult::retryLater());
+        }
+        TileContentLoadResult decodeContent(
+            const uint8_t*,
+            size_t) override {
+            return TileContentLoadResult::failed();
+        }
+        int requestCount = 0;
+    };
+
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+
+    SyncTerminalTerrainProvider terrainProvider;
+    const TileLoadDispatchResult terrainFirst =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            terrainProvider,
+            key,
+            "terrain-terminal",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            []() {});
+    const TileLoadDispatchResult terrainSecond =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            terrainProvider,
+            key,
+            "terrain-terminal",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            []() {});
+    check(terrainFirst == TileLoadDispatchResult::Issued &&
+              terrainSecond == TileLoadDispatchResult::Skipped &&
+              terrainProvider.requestCount == 1 &&
+              pendingLoads.terrainTerminalResultCount() == 1,
+          "TileLoadRequestDispatcher: pending terrain terminal result suppresses duplicate request");
+
+    SyncTerminalContentProvider contentProvider;
+    const TileLoadDispatchResult contentFirst =
+        TileLoadRequestDispatcher::requestContent(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            contentProvider,
+            key,
+            "content-terminal",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            []() {});
+    const TileLoadDispatchResult contentSecond =
+        TileLoadRequestDispatcher::requestContent(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            contentProvider,
+            key,
+            "content-terminal",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            []() {});
+    check(contentFirst == TileLoadDispatchResult::Issued &&
+              contentSecond == TileLoadDispatchResult::Skipped &&
+              contentProvider.requestCount == 1 &&
+              pendingLoads.contentTerminalResultCount() == 1,
+          "TileLoadRequestDispatcher: pending content terminal result suppresses duplicate request");
+}
+
 void testTileLoadRequestDispatcherPassesNetworkPriority() {
     class RecordingTerrainProvider final : public TerrainProvider {
     public:
@@ -24428,6 +24550,7 @@ int main() {
     testTileContentStateTransitionOwnsLoadAndContentStateChanges();
     testTileLoadRequestDispatcherBlocksWhenBudgetIsExhausted();
     testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback();
+    testTileLoadRequestDispatcherSkipsPendingTerminalResultKeys();
     testTileLoadRequestDispatcherPassesNetworkPriority();
     testTileLoadRequestPlannerClassifiesRequestKinds();
     testTileLoadSchedulerBlocksBeforePlanningWhenInflightIsFull();

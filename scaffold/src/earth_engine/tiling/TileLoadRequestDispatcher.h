@@ -55,7 +55,7 @@ public:
                 return TileLoadDispatchResult::Destroying;
             }
             if (requestState.contains(cacheKey) ||
-                pendingLoads.hasContentUpload(cacheKey)) {
+                pendingLoads.containsCacheKey(cacheKey)) {
                 return TileLoadDispatchResult::Skipped;
             }
             if (!budget.tryIssue(
@@ -132,8 +132,7 @@ public:
                 return TileLoadDispatchResult::Destroying;
             }
             if (requestState.contains(cacheKey) ||
-                pendingLoads.hasTerrainUpload(cacheKey) ||
-                pendingLoads.hasContentUpload(cacheKey)) {
+                pendingLoads.containsCacheKey(cacheKey)) {
                 return TileLoadDispatchResult::Skipped;
             }
             if (!budget.tryIssue(
