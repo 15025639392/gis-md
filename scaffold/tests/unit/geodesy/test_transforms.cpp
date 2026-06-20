@@ -7,6 +7,7 @@
 #include "earth_engine/core/math/Mat4.h"
 #include "earth_engine/core/math/Vec3.h"
 
+#include <algorithm>
 #include <cmath>
 #include <glm/gtc/quaternion.hpp>
 #include <limits>
@@ -232,16 +233,31 @@ TEST(TransformsTest, PerspectiveProjectionContainsFrustumSamples) {
                                             zNear,
                                             zFar);
 
-    const double hDim = std::tan(horizontalFov * 0.5);
-    const double vDim = std::tan(verticalFov * 0.5);
-    const glm::dvec4 samples[] = {
-        glm::dvec4(0.0, 0.0, -zNear - 0.1, 1.0),
-        glm::dvec4(hDim * 10.0 * 0.25, vDim * 10.0 * -0.25, -10.0, 1.0),
-        glm::dvec4(hDim * 1000.0 * -0.5, vDim * 1000.0 * 0.5, -1000.0, 1.0),
-        glm::dvec4(0.0, 0.0, -zFar + 0.1, 1.0)};
-
-    for (const glm::dvec4& sample : samples) {
-        EXPECT_TRUE(pointInClipVolume(projection.raw() * sample));
+    for (int i = 0; i < 11; ++i) {
+        double horizontalAngle =
+            -horizontalFov * 0.5 + i * horizontalFov / 10.0;
+        horizontalAngle = std::clamp(horizontalAngle,
+                                     -horizontalFov + 0.1,
+                                     horizontalFov - 0.1);
+        const double sinHorizontal = std::sin(horizontalAngle);
+        for (int j = 0; j < 10; ++j) {
+            double verticalAngle =
+                -verticalFov * 0.5 + j * verticalFov / 10.0;
+            verticalAngle = std::clamp(verticalAngle,
+                                       -verticalFov + 0.1,
+                                       verticalFov - 0.1);
+            const double sinVertical = std::sin(verticalAngle);
+            for (int k = 0; k < 10; ++k) {
+                double depth = zNear + k * (zFar - zNear) / 10.0;
+                depth = std::clamp(depth, zNear + 0.1, zFar - 0.1);
+                const glm::dvec4 sample(
+                    sinHorizontal * depth,
+                    sinVertical * depth,
+                    -depth,
+                    1.0);
+                EXPECT_TRUE(pointInClipVolume(projection.raw() * sample));
+            }
+        }
     }
 }
 
@@ -339,13 +355,32 @@ TEST(TransformsTest, OrthographicProjectionContainsPerspectiveFrustumPoint) {
         zNear,
         zFar);
 
-    const glm::dvec4 point(
-        std::sin(MathUtils::degreesToRadians(20.0)) * 10000.0,
-        std::sin(MathUtils::degreesToRadians(10.0)) * 10000.0,
-        -10000.0,
-        1.0);
-
-    EXPECT_TRUE(pointInClipVolume(orthographic.raw() * point));
+    for (int i = 0; i < 11; ++i) {
+        double horizontalAngle =
+            -horizontalFov * 0.5 + i * horizontalFov / 10.0;
+        horizontalAngle = std::clamp(horizontalAngle,
+                                     -horizontalFov + 0.1,
+                                     horizontalFov - 0.1);
+        const double sinHorizontal = std::sin(horizontalAngle);
+        for (int j = 0; j < 10; ++j) {
+            double verticalAngle =
+                -verticalFov * 0.5 + j * verticalFov / 10.0;
+            verticalAngle = std::clamp(verticalAngle,
+                                       -verticalFov + 0.1,
+                                       verticalFov - 0.1);
+            const double sinVertical = std::sin(verticalAngle);
+            for (int k = 0; k < 10; ++k) {
+                double depth = zNear + k * (zFar - zNear) / 10.0;
+                depth = std::clamp(depth, zNear + 0.1, zFar - 0.1);
+                const glm::dvec4 sample(
+                    sinHorizontal * depth,
+                    sinVertical * depth,
+                    -depth,
+                    1.0);
+                EXPECT_TRUE(pointInClipVolume(orthographic.raw() * sample));
+            }
+        }
+    }
 }
 
 TEST(TransformsTest, ViewMatrixMatchesCesiumNativePoseInverse) {
