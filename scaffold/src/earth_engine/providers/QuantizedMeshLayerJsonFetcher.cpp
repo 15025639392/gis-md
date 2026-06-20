@@ -12,6 +12,13 @@
 #include <mutex>
 
 namespace earth_engine {
+namespace {
+
+bool isCesiumSuccessfulHttpStatus(int statusCode) {
+    return statusCode == 0 || (statusCode >= 200 && statusCode < 300);
+}
+
+} // namespace
 
 QuantizedMeshLayerJsonFetcher::QuantizedMeshLayerJsonFetcher(
     PlatformBridge* platformBridge)
@@ -48,7 +55,9 @@ std::vector<uint8_t> QuantizedMeshLayerJsonFetcher::fetchBlocking(
             [state](int code, std::vector<uint8_t> body) {
                 {
                     std::lock_guard<std::mutex> lk(state->mutex);
-                    if (code == 200) state->result = std::move(body);
+                    if (isCesiumSuccessfulHttpStatus(code)) {
+                        state->result = std::move(body);
+                    }
                     state->done = true;
                 }
                 state->cv.notify_one();

@@ -1942,9 +1942,9 @@ void testQuantizedMeshLayerJsonConfigUsesSeparateBlockingFetcher() {
       ]
     })json";
     check(bridge.complete(
-              200,
+              206,
               std::vector<uint8_t>(layerJson.begin(), layerJson.end())),
-          "QuantizedMeshTerrainProvider: test bridge completes layer.json config fetch");
+          "QuantizedMeshTerrainProvider: test bridge completes partial-content layer.json config fetch like cesium-native");
     configThread.join();
 
     ProviderRequestDiagnostics doneDiag = provider.requestDiagnostics();
