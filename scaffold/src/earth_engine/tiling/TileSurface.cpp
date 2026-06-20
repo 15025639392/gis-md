@@ -368,8 +368,14 @@ SurfaceTileMesh TileSurface::buildTerrainMesh(const Rectangle& tileBounds,
 
                     SurfaceVertex skirtVert;
                     setPosition(skirtVert, skirtEcef);
-                    skirtVert.normalEcef =
-                        ellipsoid.geodeticSurfaceNormal(skirtEcef);
+                    skirtVert.normalEcef = topVert.normalEcef;
+                    if (skirtVert.normalEcef.lengthSquared() > 0.0) {
+                        skirtVert.normalEcef =
+                            skirtVert.normalEcef.normalized();
+                    } else {
+                        skirtVert.normalEcef =
+                            ellipsoid.geodeticSurfaceNormal(skirtEcef);
+                    }
                     skirtVert.uv = topVert.uv;
                     mesh.vertices.push_back(skirtVert);
                 }

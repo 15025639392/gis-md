@@ -496,6 +496,37 @@ TEST(TileSurfaceTest, SurfaceTileTerrainCanAddSkirt) {
     EXPECT_EQ(noSkirt.gridSize + 1, normalMap.height);
 }
 
+TEST(TileSurfaceTest, SurfaceTileTerrainSkirtNormalsCopyEdgeNormals) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    TileKey key{"XYZ-WebMercator", 1, 1, 1};
+    Rectangle bounds = scheme->tileToRectangle(key);
+
+    auto heightmap = std::make_unique<DecodedHeightmap>();
+    heightmap->tileSize = 2;
+    heightmap->heights = {0.0f, 1000.0f, 0.0f, 1000.0f};
+    heightmap->minHeight = 0.0f;
+    heightmap->maxHeight = 1000.0f;
+    TerrainTile terrain(key, *scheme, std::move(heightmap));
+
+    SurfaceTileMesh mesh = TileSurface::buildTerrainMesh(bounds, &terrain, 2, -50.0);
+    ASSERT_GT(mesh.skirtMeta.noSkirtVerticesCount, 0u);
+    ASSERT_GT(mesh.vertices.size(), mesh.skirtMeta.noSkirtVerticesCount);
+
+    const uint32_t safeGrid = static_cast<uint32_t>(mesh.gridSize);
+    const uint32_t n = safeGrid + 1u;
+    const uint32_t sourceWestSouth = safeGrid * n;
+    const SurfaceVertex& source = mesh.vertices[sourceWestSouth];
+    const SurfaceVertex& skirt = mesh.vertices[mesh.skirtMeta.noSkirtVerticesCount];
+
+    Vec3 sourceNormal = source.normalEcef.normalized();
+    Vec3 skirtNormal = skirt.normalEcef.normalized();
+    Vec3 ellipsoidSkirtNormal =
+        Ellipsoid::WGS84().geodeticSurfaceNormal(skirt.positionEcef);
+
+    EXPECT_GT(skirtNormal.dot(sourceNormal), 0.999999);
+    EXPECT_LT(skirtNormal.dot(ellipsoidSkirtNormal), 0.999999);
+}
+
 TEST(TileSurfaceTest, SurfaceTileTerrainNormalsComeFromGeometry) {
     auto scheme = TileScheme::createXYZWebMercator();
     TileKey key{"XYZ-WebMercator", 1, 1, 1};
