@@ -6,10 +6,8 @@ bool TileTraversalDetailsPolicy::wasRenderedLastFrameForTraversalDetails(
     TileSelectionState previousSelectionState,
     TileRefine refine,
     bool anyDescendantWasRenderedLastFrame) {
-    const TileSelectionState previousState =
-        originalSelectionState(previousSelectionState);
-    return previousState == TileSelectionState::Rendered ||
-           (previousState == TileSelectionState::Refined &&
+    return previousSelectionState == TileSelectionState::Rendered ||
+           (previousSelectionState == TileSelectionState::Refined &&
             (refine == TileRefine::Add ||
              anyDescendantWasRenderedLastFrame));
 }

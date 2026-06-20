@@ -13210,11 +13210,11 @@ void testTileSubtreeTraversalBuildsDescendantRemovalPlan() {
 }
 
 void testTileTraversalDetailsPolicySummarizesSingleAndCulledTiles() {
-    check(TileTraversalDetailsPolicy::wasRenderedLastFrameForTraversalDetails(
+    check(!TileTraversalDetailsPolicy::wasRenderedLastFrameForTraversalDetails(
               TileSelectionState::RenderedAndKicked,
               TileRefine::Replace,
               false),
-          "TileTraversalDetails: kicked rendered tile counts as rendered last frame");
+          "TileTraversalDetails: kicked rendered tile does not count as rendered last frame like cesium-native");
     check(TileTraversalDetailsPolicy::wasRenderedLastFrameForTraversalDetails(
               TileSelectionState::Refined,
               TileRefine::Add,
@@ -13230,6 +13230,16 @@ void testTileTraversalDetailsPolicySummarizesSingleAndCulledTiles() {
               TileRefine::Replace,
               false),
           "TileTraversalDetails: REPLACE refined tile without rendered descendants was not rendered");
+    check(!TileTraversalDetailsPolicy::wasRenderedLastFrameForTraversalDetails(
+              TileSelectionState::RefinedAndKicked,
+              TileRefine::Add,
+              false),
+          "TileTraversalDetails: kicked ADD refined tile does not count as rendered last frame like cesium-native");
+    check(!TileTraversalDetailsPolicy::wasRenderedLastFrameForTraversalDetails(
+              TileSelectionState::RefinedAndKicked,
+              TileRefine::Replace,
+              true),
+          "TileTraversalDetails: kicked REPLACE refined tile does not inherit rendered descendants like cesium-native");
 
     const TileTraversalDetails rendered =
         TileTraversalDetailsPolicy::forSingleTile(true, true);
