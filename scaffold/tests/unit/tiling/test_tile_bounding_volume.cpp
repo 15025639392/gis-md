@@ -621,6 +621,18 @@ TEST(TileBoundingVolumeTest, EstimateGlobeRectangleReturnsMaximumWhenContainingO
     expectRectangleNear(maximum, *box.estimateGlobeRectangle(), 0.0);
 }
 
+TEST(TileBoundingVolumeTest, EstimateGlobeRectangleReturnsMaximumWhenSphereContainsOriginOffCenter) {
+    const Rectangle maximum(-kPi, -kPi * 0.5, kPi, kPi * 0.5);
+    const TileBoundingVolume sphere =
+        TileBoundingVolume::fromSphere(Vec3(1.0, 2.0, 3.0), 4.0);
+
+    const std::optional<Rectangle> estimated =
+        sphere.estimateGlobeRectangle();
+
+    ASSERT_TRUE(estimated.has_value());
+    expectRectangleNear(maximum, *estimated, 0.0);
+}
+
 TEST(TileBoundingVolumeTest, EstimateGlobeRectangleForSphereLikeCesiumNative) {
     const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
     const Vec3 center = ellipsoid.cartographicToCartesian(
