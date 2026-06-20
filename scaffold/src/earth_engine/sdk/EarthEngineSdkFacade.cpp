@@ -9,6 +9,7 @@
 #include "../platform/bridge/PlatformBridge.h"
 #include "../providers/BingMapsImageryProvider.h"
 #include "../providers/DebugImageryProvider.h"
+#include "../providers/GoogleMapTilesImageryProvider.h"
 #include "../providers/HeightmapTerrainProvider.h"
 #include "../providers/QuantizedMeshLayerJsonFetcher.h"
 #include "../providers/QuantizedMeshTerrainProvider.h"
@@ -331,6 +332,38 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
                 logError(platformBridge_,
                          "Bing Maps metadata did not create a provider: " +
                              metadataUrl);
+                continue;
+            }
+            source.provider->setPlatformBridge(&platformBridge_);
+            addActivatedRasterOverlay(rasterOverlays,
+                                      std::move(source.provider),
+                                      std::move(source.scheme),
+                                      makeRasterOverlayOptions(overlayConfig));
+            continue;
+        }
+
+        if (overlayConfig.imageryKind == ImagerySourceKind::GoogleMapTiles) {
+            GoogleMapTilesExistingSessionOptions googleOptions;
+            googleOptions.apiBaseUrl = overlayConfig.googleMapTilesApiBaseUrl;
+            googleOptions.key = overlayConfig.googleMapTilesKey;
+            googleOptions.session = overlayConfig.googleMapTilesSession;
+            googleOptions.showLogo = overlayConfig.googleMapTilesShowLogo;
+            googleOptions.maximumLevel =
+                overlayConfig.maximumZoom > 0 ? overlayConfig.maximumZoom : 28;
+            if (overlayConfig.imageryTileWidth > 0) {
+                googleOptions.tileWidth = overlayConfig.imageryTileWidth;
+            }
+            if (overlayConfig.imageryTileHeight > 0) {
+                googleOptions.tileHeight = overlayConfig.imageryTileHeight;
+            }
+
+            GoogleMapTilesImagerySource source =
+                createGoogleMapTilesImagerySource(
+                    std::move(googleOptions),
+                    overlayConfig.attribution);
+            if (!source.provider || !source.scheme) {
+                logError(platformBridge_,
+                         "Google Map Tiles existing session did not create a provider");
                 continue;
             }
             source.provider->setPlatformBridge(&platformBridge_);

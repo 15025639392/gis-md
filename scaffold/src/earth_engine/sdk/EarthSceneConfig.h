@@ -20,7 +20,8 @@ enum class ImagerySourceKind {
     TileMapService,
     WebMapService,
     WebMapTileService,
-    BingMaps
+    BingMaps,
+    GoogleMapTiles
 };
 
 struct SceneCameraConfig {
@@ -81,6 +82,10 @@ struct RasterOverlaySourceConfig {
     std::string bingKey;
     std::string bingCulture;
     std::vector<std::string> bingSubdomains;
+    std::string googleMapTilesApiBaseUrl = "https://tile.googleapis.com/";
+    std::string googleMapTilesKey;
+    std::string googleMapTilesSession;
+    bool googleMapTilesShowLogo = true;
 };
 
 struct GltfSourceConfig {

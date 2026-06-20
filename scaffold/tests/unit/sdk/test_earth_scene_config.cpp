@@ -179,3 +179,31 @@ TEST(EarthSceneConfig, StoresBingMapsImagerySourceDefinitions) {
     EXPECT_EQ((std::vector<std::string>{"t0", "t1", "t2"}),
               copied.bingSubdomains);
 }
+
+TEST(EarthSceneConfig, StoresGoogleMapTilesImagerySourceDefinitions) {
+    EarthSceneConfig config;
+    RasterOverlaySourceConfig overlay;
+    overlay.imageryKind = ImagerySourceKind::GoogleMapTiles;
+    overlay.googleMapTilesApiBaseUrl = "https://tile.googleapis.com/";
+    overlay.googleMapTilesKey = "google-key";
+    overlay.googleMapTilesSession = "session-token";
+    overlay.googleMapTilesShowLogo = false;
+    overlay.attribution = "google attribution";
+    overlay.maximumZoom = 28;
+    overlay.imageryTileWidth = 512;
+    overlay.imageryTileHeight = 256;
+    config.rasterOverlays.push_back(overlay);
+
+    ASSERT_EQ(1u, config.rasterOverlays.size());
+    const RasterOverlaySourceConfig& copied = config.rasterOverlays[0];
+    EXPECT_EQ(ImagerySourceKind::GoogleMapTiles, copied.imageryKind);
+    EXPECT_EQ("https://tile.googleapis.com/",
+              copied.googleMapTilesApiBaseUrl);
+    EXPECT_EQ("google-key", copied.googleMapTilesKey);
+    EXPECT_EQ("session-token", copied.googleMapTilesSession);
+    EXPECT_FALSE(copied.googleMapTilesShowLogo);
+    EXPECT_EQ("google attribution", copied.attribution);
+    EXPECT_EQ(28, copied.maximumZoom);
+    EXPECT_EQ(512, copied.imageryTileWidth);
+    EXPECT_EQ(256, copied.imageryTileHeight);
+}
