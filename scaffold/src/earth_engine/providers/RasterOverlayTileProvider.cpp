@@ -672,6 +672,8 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
                            std::deque<std::pair<std::string, uint64_t>>& sourceCacheLru,
                            int64_t& sourceCacheBytes,
                            uint64_t& sourceCacheGeneration,
+                           std::unordered_map<std::string,
+                                              InFlightRectangleSource>& sourceInFlight,
                            int64_t sourceCacheBudgetBytes,
                            std::mutex& sourceCacheMutex,
                            RectangleSourcePlan plan,
@@ -687,6 +689,7 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
         , cacheLru(sourceCacheLru)
         , cacheBytes(sourceCacheBytes)
         , cacheGeneration(sourceCacheGeneration)
+        , inFlight(sourceInFlight)
         , cacheBudgetBytes(sourceCacheBudgetBytes)
         , cacheMutex(sourceCacheMutex)
         , sourcePlan(std::move(plan))
@@ -731,7 +734,7 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
             }
             issuedAny = true;
             onSourceIssued();
-            requestSource(sourceKey, sourceKey, false, onSourceFinished);
+            requestSource(sourceKey, sourceKey, false, true, onSourceFinished);
         }
         return issuedAny;
     }
@@ -746,6 +749,7 @@ private:
         const TileKey& requestedKey,
         const TileKey& originalKey,
         bool ancestorFallback,
+        bool shareInFlight,
         const std::function<void()>& onSourceFinished) {
         std::optional<LoadedSourceImage> cachedSource;
         {
@@ -769,6 +773,35 @@ private:
         }
 
         auto self = shared_from_this();
+        if (shareInFlight) {
+            const std::string inFlightKey = sourceCacheKey(originalKey);
+            auto waiter =
+                [self, ancestorFallback, onSourceFinished](
+                    const CachedRectangleSource* cached) {
+                    onSourceFinished();
+                    if (cached && cached->image) {
+                        LoadedSourceImage source;
+                        source.key = cached->key;
+                        source.bounds = cached->bounds;
+                        source.image = cloneDecodedImage(*cached->image);
+                        source.ancestorFallback =
+                            ancestorFallback || cached->ancestorFallback;
+                        self->finishOneSource(std::move(source));
+                    } else {
+                        self->finishOneSource(LoadedSourceImage{});
+                    }
+                };
+            {
+                std::lock_guard<std::mutex> lock(cacheMutex);
+                auto [it, inserted] =
+                    inFlight.try_emplace(inFlightKey, InFlightRectangleSource{});
+                it->second.waiters.push_back(std::move(waiter));
+                if (!inserted) {
+                    return;
+                }
+            }
+        }
+
         CancellationToken token;
         provider.requestTile(
             requestedKey,
@@ -783,6 +816,8 @@ private:
                     source.image = std::move(image);
                     source.ancestorFallback = ancestorFallback;
                     self->cacheSource(originalKey, source);
+                    CachedRectangleSource completed =
+                        self->cachedSourceFromLoaded(source);
                     if (loadedKey != originalKey) {
                         LoadedSourceImage directSource;
                         directSource.key = loadedKey;
@@ -791,8 +826,7 @@ private:
                         directSource.ancestorFallback = false;
                         self->cacheSource(loadedKey, directSource);
                     }
-                    onSourceFinished();
-                    self->finishOneSource(std::move(source));
+                    self->finishInFlightSource(originalKey, &completed);
                     return;
                 }
 
@@ -806,14 +840,43 @@ private:
                             parentKey,
                             originalKey,
                             true,
+                            false,
                             onSourceFinished);
                         return;
                     }
                 }
 
-                onSourceFinished();
-                self->finishOneSource(LoadedSourceImage{});
+                self->finishInFlightSource(originalKey, nullptr);
             });
+    }
+
+    CachedRectangleSource cachedSourceFromLoaded(
+        const LoadedSourceImage& source) const {
+        CachedRectangleSource cached;
+        cached.key = source.key;
+        cached.bounds = source.bounds;
+        if (source.image) {
+            cached.image = std::make_shared<DecodedImage>(*source.image);
+            cached.sizeBytes = decodedImageSizeBytes(*source.image);
+        }
+        cached.ancestorFallback = source.ancestorFallback;
+        return cached;
+    }
+
+    void finishInFlightSource(const TileKey& originalKey,
+                              const CachedRectangleSource* source) {
+        std::vector<std::function<void(const CachedRectangleSource*)>> waiters;
+        {
+            std::lock_guard<std::mutex> lock(cacheMutex);
+            auto it = inFlight.find(sourceCacheKey(originalKey));
+            if (it != inFlight.end()) {
+                waiters = std::move(it->second.waiters);
+                inFlight.erase(it);
+            }
+        }
+        for (auto& waiter : waiters) {
+            waiter(source);
+        }
     }
 
     void cacheSource(const TileKey& requestedKey,
@@ -907,6 +970,7 @@ private:
     std::deque<std::pair<std::string, uint64_t>>& cacheLru;
     int64_t& cacheBytes;
     uint64_t& cacheGeneration;
+    std::unordered_map<std::string, InFlightRectangleSource>& inFlight;
     int64_t cacheBudgetBytes = 0;
     std::mutex& cacheMutex;
     RectangleSourcePlan sourcePlan;
@@ -1335,6 +1399,7 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
         rectangleSourceCacheLru_,
         rectangleSourceCacheBytes_,
         rectangleSourceCacheGeneration_,
+        inFlightRectangleSources_,
         subTileCacheBytes_,
         pendingMutex_,
         sourcePlan,

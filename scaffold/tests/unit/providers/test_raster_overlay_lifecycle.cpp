@@ -16,6 +16,8 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <deque>
+#include <vector>
 
 using namespace earth_engine;
 
@@ -181,6 +183,44 @@ public:
 
     TileKey failingKey{"XYZ-WebMercator", -1, -1, -1};
     std::vector<TileKey> requestedKeys;
+};
+
+class DeferredImageryProvider final : public ImageryProvider {
+public:
+    std::string id() const override { return "deferred"; }
+    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 10; }
+    int tileWidth() const override { return 256; }
+    int tileHeight() const override { return 256; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     TileCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
+        requestedKeys.push_back(key);
+        pending.push_back(Pending{key, std::move(callback)});
+    }
+    std::unique_ptr<DecodedImage> decodeTile(
+        const uint8_t*, size_t) override {
+        return nullptr;
+    }
+
+    void completeNext() {
+        ASSERT_FALSE(pending.empty());
+        Pending item = std::move(pending.front());
+        pending.pop_front();
+        item.callback(
+            item.key,
+            makeImage(256, 256, static_cast<uint8_t>(item.key.z)));
+    }
+
+    struct Pending {
+        TileKey key;
+        TileCallback callback;
+    };
+    std::vector<TileKey> requestedKeys;
+    std::deque<Pending> pending;
 };
 
 class CountingRasterUploader final : public RasterTextureUploader {
@@ -483,6 +523,43 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceTilesAreCachedLikeCesiumNative) 
     EXPECT_EQ(1, provider.processPendingUploads(false));
 
     EXPECT_EQ(1, static_cast<int>(imagery.requestedKeys.size()));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, eastTile->getState());
+}
+
+TEST(RasterOverlayLifecycleTest, ConcurrentRectangleSourceRequestsShareInFlightTileLikeCesiumNative) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+    const Rectangle eastHalf(
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.south(),
+        sourceBounds.east(),
+        sourceBounds.north());
+
+    auto westTile = provider.getTile(westHalf, 256.0, 512.0);
+    auto eastTile = provider.getTile(eastHalf, 256.0, 512.0);
+    ASSERT_NE(nullptr, westTile);
+    ASSERT_NE(nullptr, eastTile);
+
+    ASSERT_TRUE(provider.loadTile(*westTile));
+    ASSERT_TRUE(provider.loadTile(*eastTile));
+    EXPECT_EQ(1, static_cast<int>(imagery.requestedKeys.size()));
+    ASSERT_EQ(1, static_cast<int>(imagery.pending.size()));
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
+
+    imagery.completeNext();
+
+    EXPECT_EQ(2, provider.processPendingUploads(false));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, westTile->getState());
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, eastTile->getState());
 }
 

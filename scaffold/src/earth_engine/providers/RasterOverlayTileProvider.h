@@ -246,8 +246,13 @@ private:
         int64_t sizeBytes = 0;
         uint64_t generation = 0;
     };
+    struct InFlightRectangleSource {
+        std::vector<std::function<void(const CachedRectangleSource*)>> waiters;
+    };
     std::unordered_map<std::string, CachedRectangleSource>
         rectangleSourceCache_;
+    std::unordered_map<std::string, InFlightRectangleSource>
+        inFlightRectangleSources_;
     std::deque<std::pair<std::string, uint64_t>> rectangleSourceCacheLru_;
     int64_t rectangleSourceCacheBytes_ = 0;
     int64_t subTileCacheBytes_ = 16 * 1024 * 1024;
