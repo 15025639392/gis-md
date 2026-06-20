@@ -15789,6 +15789,46 @@ void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
           "TilePendingLoadCommitCoordinator: missing tile uploads release cache keys without resource side effects");
 }
 
+void testTilePendingLoadCommitCoordinatorSkipsMissingTileTerminalResults() {
+    const TileKey terrainKey{"test", 0, 0, 0};
+    const TileKey contentKey{"test", 0, 1, 0};
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert("missing-terrain");
+    emptyContentRegistry.insert("missing-content");
+    PendingTerrainTerminalResult terrainResult{
+        terrainKey,
+        "missing-terrain",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TerrainTileLoadStatus::RetryLater};
+    PendingContentTerminalResult contentResult{
+        contentKey,
+        "missing-content",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileContentLoadStatus::RetryLater};
+    bool childrenEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+        terrainResult,
+        emptyContentRegistry,
+        [](const TileKey&) -> TilesetTile* { return nullptr; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+    TilePendingLoadCommitCoordinator::commitContentTerminalResult(
+        contentResult,
+        emptyContentRegistry,
+        [](const TileKey&) -> TilesetTile* { return nullptr; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    check(!childrenEnsured &&
+              !resourcesDirty &&
+              emptyContentRegistry.contains("missing-terrain") &&
+              emptyContentRegistry.contains("missing-content"),
+          "TilePendingLoadCommitCoordinator: missing tile terminal results have no state side effects");
+}
+
 void testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker() {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:0:0:0";
@@ -29730,6 +29770,7 @@ int main() {
     testTileTerrainUploadPolicyMarksTerrainRenderContentStates();
     testTileTerrainUploadCommitterAppliesMeshResourceOutcome();
     testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys();
+    testTilePendingLoadCommitCoordinatorSkipsMissingTileTerminalResults();
     testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker();
     testTilePendingLoadCommitCoordinatorClearsContentCancelledEmptyMarker();
     testTilePendingLoadCommitCoordinatorClearsTerrainRetryEmptyMarker();
