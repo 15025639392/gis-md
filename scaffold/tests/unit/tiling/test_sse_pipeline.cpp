@@ -21795,6 +21795,87 @@ void testTileLoadSchedulerSkipsDispatcherDuplicateAfterPlanning() {
           "TileLoadScheduler: dispatcher duplicate skip avoids request side effects after planning");
 }
 
+void testTileLoadSchedulerSkipsTerrainDispatcherDuplicateAfterPlanning() {
+    class CountingTerrainProvider final : public TerrainProvider {
+    public:
+        std::string id() const override { return "scheduler-duplicate-terrain"; }
+        std::string schemeId() const override { return "test"; }
+        int minZoom() const override { return 0; }
+        int maxZoom() const override { return 1; }
+        int tileSize() const override { return 2; }
+        std::string buildUrl(const TileKey&) const override {
+            return "memory://scheduler-duplicate-terrain";
+        }
+        void requestTile(const TileKey&,
+                         CancellationToken,
+                         HeightmapCallback,
+                         HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+        }
+        std::unique_ptr<DecodedHeightmap> decodeTile(
+            const uint8_t*,
+            size_t) override {
+            return nullptr;
+        }
+        int requestCount = 0;
+    };
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = testCacheKeyForTile(key);
+    CountingTerrainProvider provider;
+    bool planned = false;
+    bool marked = false;
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                &provider,
+                nullptr},
+            testCacheKeyForTile,
+            [&lifecycle,
+             &planned,
+             &key,
+             &cacheKey](const TileKey&,
+                        const std::string&,
+                        TilesetTile*& tileState) {
+                planned = true;
+                tileState = nullptr;
+                {
+                    std::lock_guard<std::mutex> lock(lifecycle.mutex());
+                    lifecycle.pendingLoads().addTerrainTerminalResult(
+                        PendingTerrainTerminalResult{
+                            key,
+                            cacheKey,
+                            TileLoadPriorityGroup::Normal,
+                            0.0,
+                            TerrainTileLoadStatus::RetryLater});
+                }
+                TileLoadRequestSnapshot snapshot;
+                snapshot.terrainProviderSupportsTile = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [&marked](const TileKey&) { marked = true; });
+
+    check(outcome.issued == 0 && !outcome.blockedByInflight,
+          "TileLoadScheduler: terrain dispatcher duplicate skip does not report inflight block");
+    check(planned && !marked && provider.requestCount == 0 &&
+              lifecycle.counts().terrainTerminalResults == 1,
+          "TileLoadScheduler: terrain dispatcher duplicate skip avoids request side effects after planning");
+}
+
 void testTileLoadSchedulerStopsAfterDispatchBudgetBlock() {
     class DeferredContentProvider final : public TilesetContentProvider {
     public:
@@ -27662,6 +27743,7 @@ int main() {
     testTileLoadSchedulerSkipsInflightRequestBeforeSnapshot();
     testTileLoadSchedulerStopsDuringDestroyBeforePlanning();
     testTileLoadSchedulerSkipsDispatcherDuplicateAfterPlanning();
+    testTileLoadSchedulerSkipsTerrainDispatcherDuplicateAfterPlanning();
     testTileLoadSchedulerStopsAfterDispatchBudgetBlock();
     testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared();
     testTileMissingRequestSchedulerRetriesTerrainAfterEmptyMarkerCleared();
