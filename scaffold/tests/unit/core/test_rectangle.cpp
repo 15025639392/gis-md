@@ -372,6 +372,19 @@ TEST(RectangleTest, ComputeUnionMatchesCesiumNativeGlobeRectangleBranches) {
                                    1e-14));
 }
 
+TEST(RectangleTest, ComputeUnionPreservesPositivePiBoundaryLikeCesiumNative) {
+    // Cesium-native intentionally avoids normalizing +PI while computing
+    // unions so the maximum rectangle remains [-PI, PI], not [-PI, -PI].
+    const Rectangle subset = Rectangle::fromDegrees(-90.0, -45.0, 90.0, 45.0);
+
+    const Rectangle unionRectangle = Rectangle::MAXIMUM.computeUnion(subset);
+
+    EXPECT_DOUBLE_EQ(-M_PI, unionRectangle.west());
+    EXPECT_DOUBLE_EQ(M_PI, unionRectangle.east());
+    EXPECT_DOUBLE_EQ(-M_PI * 0.5, unionRectangle.south());
+    EXPECT_DOUBLE_EQ(M_PI * 0.5, unionRectangle.north());
+}
+
 TEST(RectangleTest, ComputeUnionMatchesCesiumNativeGeometryCases) {
     // CesiumGeometry::Rectangle uses arbitrary 2D coordinates; gis-md
     // Rectangle stores geodetic radians, so this mirrors the same overlap
