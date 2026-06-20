@@ -158,6 +158,26 @@ TEST(QuantizedMeshTerrainProviderTest, MetadataAvailabilityStartsUnknownChildren
               provider.availabilityState(child));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, MetadataAvailabilityLoadedSubtreeTableUsesCeilLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 20,
+      "metadataAvailability": 10
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    EXPECT_FALSE(provider.isSubtreeLoaded(1, 0));
+    EXPECT_TRUE(provider.isSubtreeLoaded(2, 0));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, NonInt32MetadataAvailabilityIsIgnoredLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
