@@ -4188,6 +4188,30 @@ void testQuantizedMeshMetadataSkipsNonArrayLevelsWithoutAdvancing() {
           "QuantizedMeshParser: metadata non-array levels do not advance startingLevel like cesium-native");
 }
 
+void testQuantizedMeshMetadataSkipsNonObjectRangesAfterAdvancingLevel() {
+    const std::string metadata = R"json({
+      "available": [
+        [
+          "not-a-range-object",
+          {"startX":0,"startY":0,"endX":1,"endY":0}
+        ],
+        [
+          17,
+          {"startX":2,"startY":1,"endX":3,"endY":1}
+        ]
+      ]
+    })json";
+    const std::vector<uint8_t> bytes = makeQuantizedMeshBytes(metadata);
+
+    const std::vector<std::array<int, 5>> metadataOnly =
+        QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
+
+    check(metadataOnly.size() == 2 &&
+              metadataOnly[0] == std::array<int, 5>{0, 0, 0, 1, 0} &&
+              metadataOnly[1] == std::array<int, 5>{1, 2, 1, 3, 1},
+          "QuantizedMeshParser: metadata skips non-object ranges while advancing array levels like cesium-native");
+}
+
 void testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding() {
     const std::string metadata = R"json({
       "available": [
@@ -22452,6 +22476,7 @@ int main() {
     testQuantizedMeshLayerJsonAvailabilitySkipsNonArrayLevels();
     testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative();
     testQuantizedMeshMetadataSkipsNonArrayLevelsWithoutAdvancing();
+    testQuantizedMeshMetadataSkipsNonObjectRangesAfterAdvancingLevel();
     testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding();
     testQuantizedMeshShortOctNormalUsesRemainingBytesLikeCesiumNative();
     testQuantizedMeshMalformedMetadataStopsExtensionParsing();
