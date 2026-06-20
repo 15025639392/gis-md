@@ -2081,6 +2081,20 @@ void testXYZImageryProviderDefaultMaximumLevelMatchesCesiumNative() {
           "XYZImageryProvider: default reverseZ uses maximumLevel 25 like cesium-native");
 }
 
+void testRasterOverlayProviderDefaultMaximumLevelMatchesCesiumNative() {
+    XYZImageryProvider provider(
+        "https://example.invalid/{z}/{x}/{y}.png");
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider overlayProvider(provider, *scheme, nullptr);
+
+    check(scheme->maxZoom() == 25 &&
+              overlayProvider.getMaximumLevel() == 25,
+          "RasterOverlayTileProvider: standard scheme does not clamp cesium-native default maximum level");
+    check(overlayProvider.getTile(TileKey{"XYZ-WebMercator", 25, 0, 0}) !=
+              nullptr,
+          "RasterOverlayTileProvider: default URL-template overlay can create z25 tiles like cesium-native");
+}
+
 void testXYZImageryProviderUrlTemplateBoundsAndSizePlaceholders() {
     XYZImageryProvider provider(
         "https://example.invalid/{westDegrees}/{southDegrees}/{eastDegrees}/{northDegrees}/{width}/{height}.png");
@@ -31036,6 +31050,7 @@ int main() {
     testXYZImageryProviderBridgeCompletionDoesNotRunDecodeInline();
     testXYZImageryProviderUrlTemplateReversePlaceholders();
     testXYZImageryProviderDefaultMaximumLevelMatchesCesiumNative();
+    testRasterOverlayProviderDefaultMaximumLevelMatchesCesiumNative();
     testXYZImageryProviderUrlTemplateBoundsAndSizePlaceholders();
     testXYZImageryProviderUrlTemplateProjectedBoundsPlaceholders();
     testXYZImageryProviderUrlTemplateUnknownAndCaseInsensitivePlaceholders();

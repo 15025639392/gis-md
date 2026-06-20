@@ -63,7 +63,7 @@ public:
     std::string crsProfile() const override { return crs().id(); }
     int tileSize() const override { return 256; }
     int minZoom() const override { return 0; }
-    int maxZoom() const override { return 22; }
+    int maxZoom() const override { return 25; }
     std::string yDirection() const override { return "down"; }
     int tileCountX(int zoom) const override { return quadtreeTileCount(1, zoom); }
     int tileCountY(int zoom) const override { return quadtreeTileCount(1, zoom); }
@@ -136,7 +136,7 @@ public:
     std::string crsProfile() const override { return crs().id(); }
     int tileSize() const override { return 256; }
     int minZoom() const override { return 0; }
-    int maxZoom() const override { return 22; }
+    int maxZoom() const override { return 25; }
     std::string yDirection() const override { return "up"; }
     int tileCountX(int zoom) const override { return quadtreeTileCount(1, zoom); }
     int tileCountY(int zoom) const override { return quadtreeTileCount(1, zoom); }
@@ -317,7 +317,7 @@ public:
     std::string crsProfile() const override { return "EPSG:4326"; }
     int tileSize() const override { return 256; }
     int minZoom() const override { return 0; }
-    int maxZoom() const override { return 22; }
+    int maxZoom() const override { return 25; }
     std::string yDirection() const override { return "up"; }  // y=0 = south
     int tileCountX(int zoom) const override { return quadtreeTileCount(2, zoom); }
     int tileCountY(int zoom) const override { return quadtreeTileCount(1, zoom); }
