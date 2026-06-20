@@ -20858,6 +20858,61 @@ void testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot() {
           "TileLoadScheduler: pending upload key skip happens before snapshot side effects");
 }
 
+void testTileLoadSchedulerStopsDuringDestroyBeforePlanning() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().markDestroyingAndCancelRequests();
+    }
+
+    bool cacheKeyRequested = false;
+    bool planned = false;
+    bool emptyChecked = false;
+    bool prepared = false;
+    bool marked = false;
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                TileKey{"test", 0, 0, 0},
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            [&cacheKeyRequested](const TileKey&) {
+                cacheKeyRequested = true;
+                return std::string{"unexpected"};
+            },
+            [&planned](const TileKey&,
+                       const std::string&,
+                       TilesetTile*& tileState) {
+                planned = true;
+                tileState = nullptr;
+                return TileLoadRequestSnapshot{};
+            },
+            [&emptyChecked](const std::string&) {
+                emptyChecked = true;
+                return false;
+            },
+            [&prepared](TilesetTile&, double) {
+                prepared = true;
+                return true;
+            },
+            [&marked](const TileKey&) { marked = true; });
+
+    check(outcome.issued == 0 && !outcome.blockedByInflight,
+          "TileLoadScheduler: destroying lifecycle stops without reporting inflight block");
+    check(!cacheKeyRequested && !planned && !emptyChecked &&
+              !prepared && !marked,
+          "TileLoadScheduler: destroying lifecycle stops before planning side effects");
+}
+
 void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 2;
@@ -26463,6 +26518,7 @@ int main() {
     testTileLoadSchedulerSkipsEmptyUpsampledCacheKey();
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation();
     testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot();
+    testTileLoadSchedulerStopsDuringDestroyBeforePlanning();
     testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds();
     testTileResourceDirtyInvalidatesRevisionAndCacheOnly();
     testTilesetFrameResourceBudgetLimitsWorkerRequests();
