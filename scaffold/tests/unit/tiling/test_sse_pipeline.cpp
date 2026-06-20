@@ -19710,6 +19710,25 @@ void testTileLoadRequestDispatcherBlocksWhenBudgetIsExhausted() {
         int requestCount = 0;
     };
 
+    class SyncContentProvider final : public TilesetContentProvider {
+    public:
+        std::string id() const override { return "dispatcher-budget-content"; }
+        bool supportsTile(const TileKey&) const override { return true; }
+        void requestTileContent(const TileKey&,
+                                CancellationToken,
+                                ContentCallback,
+                                HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+        }
+        TileContentLoadResult decodeContent(
+            const uint8_t*,
+            size_t) override {
+            return TileContentLoadResult::failed();
+        }
+
+        int requestCount = 0;
+    };
+
     std::mutex mutex;
     std::condition_variable condition;
     TilePendingRequestState requestState;
@@ -19740,6 +19759,34 @@ void testTileLoadRequestDispatcherBlocksWhenBudgetIsExhausted() {
           "TileLoadRequestDispatcher: exhausted budget blocks terrain request");
     check(!issued && provider.requestCount == 0 && requestState.empty(),
           "TileLoadRequestDispatcher: blocked request has no side effects");
+
+    FrameResourceBudget contentBudget;
+    contentBudget.beginFrame(1, config);
+    SyncContentProvider contentProvider;
+    bool contentIssued = false;
+
+    const TileLoadDispatchResult contentResult =
+        TileLoadRequestDispatcher::requestContent(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            contentBudget,
+            contentProvider,
+            key,
+            "blocked-content",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&contentIssued]() { contentIssued = true; });
+
+    check(contentResult == TileLoadDispatchResult::Blocked,
+          "TileLoadRequestDispatcher: exhausted budget blocks content request");
+    check(!contentIssued &&
+              contentProvider.requestCount == 0 &&
+              requestState.empty() &&
+              !pendingLoads.hasWork() &&
+              contentBudget.networkRequestsIssued() == 0,
+          "TileLoadRequestDispatcher: blocked content request has no side effects");
 }
 
 void testTileLoadRequestDispatcherSkipsEmptyCacheKeys() {
