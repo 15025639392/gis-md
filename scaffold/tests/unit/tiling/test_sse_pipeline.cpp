@@ -3416,6 +3416,29 @@ void testQuantizedMeshMetadataAvailabilityRequiresInt32() {
           "QuantizedMeshTerrainProvider: non-int32 metadataAvailability is ignored like cesium-native");
     check(provider.supportsTile(TileKey{"Geographic-TMS", 1, 0, 0}),
           "QuantizedMeshTerrainProvider: ignored metadataAvailability lets layer availability load");
+
+    QuantizedMeshTerrainProvider zeroProvider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string zeroLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "metadataAvailability": 0,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}],
+        [{"startX":0,"startY":0,"endX":0,"endY":0}]
+      ]
+    })json";
+    check(zeroProvider.configureFromLayerJson(
+              zeroLayerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: zero metadataAvailability configures like cesium-native");
+    check(zeroProvider.availabilityLevels() == 0,
+          "QuantizedMeshTerrainProvider: zero metadataAvailability is retained like cesium-native");
+    check(zeroProvider.availabilityState(TileKey{"Geographic-TMS", 1, 0, 0}) ==
+              TileAvailabilityState::NotAvailable,
+          "QuantizedMeshTerrainProvider: zero metadataAvailability still shadows layer available like cesium-native");
 }
 
 void testQuantizedMeshLayerJsonEmptyAvailabilityMatchesCesiumNative() {
