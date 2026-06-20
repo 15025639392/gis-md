@@ -33,6 +33,7 @@
 #include "earth_engine/tiling/TileContentCacheManager.h"
 #include "earth_engine/tiling/TileContentLifecycleManager.h"
 #include "earth_engine/tiling/TileContentStateTransition.h"
+#include "earth_engine/tiling/TileContentUnloadCoordinator.h"
 #include "earth_engine/tiling/TileContentUploadCommitter.h"
 #include "earth_engine/tiling/TileContentUploadPolicy.h"
 #include "earth_engine/tiling/TileEmptyContentRegistry.h"
@@ -15757,6 +15758,31 @@ void testTileEmptyContentRegistryOwnsEmptyCacheKeys() {
           "TileEmptyContentRegistry: clears all empty content cache keys");
 }
 
+void testTileContentUnloadCoordinatorErasesEmptyContentRegistryKey() {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.content.contentKind = TileContentKind::Empty;
+    tile.content.loadState = TileLoadState::Done;
+    const std::string cacheKey = "test:0:0:0";
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
+
+    const TileCacheUnloadContentResult result =
+        TileContentUnloadCoordinator::unloadContent(
+            tile,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            nullptr);
+
+    check(result == TileCacheUnloadContentResult::Remove &&
+              !emptyContentRegistry.contains(cacheKey) &&
+              tile.content.contentKind == TileContentKind::Unknown &&
+              tile.content.loadState == TileLoadState::Unloaded,
+          "TileContentUnloadCoordinator: empty content unload clears empty registry and tile content state");
+}
+
 void testTileIndexStateErasesEmptyContentRegistryKey() {
     TileUnloadQueue unloadQueue;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
@@ -25680,6 +25706,7 @@ int main() {
     testTileLodTransitionControllerFadesOutPreviousRenderContent();
     testTileLodTransitionControllerRestartsReturnedFadeOutTile();
     testTileEmptyContentRegistryOwnsEmptyCacheKeys();
+    testTileContentUnloadCoordinatorErasesEmptyContentRegistryKey();
     testTileIndexStateErasesEmptyContentRegistryKey();
     testTileTerrainHeightRangePolicySetsAndInheritsRanges();
     testTileTerrainHeightRangePolicyAppliesMeshOrHeightmapRanges();
