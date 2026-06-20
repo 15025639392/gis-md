@@ -485,6 +485,22 @@ TEST(TileBoundingVolumeTest, DegenerateRegionDistanceMatchesCesiumNative) {
     }
 }
 
+TEST(TileBoundingVolumeTest, RegionIntersectPlaneMatchesCesiumNative) {
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    const Rectangle rectangle(0.0, 0.0, 1.0, 1.0);
+    const std::optional<OrientedBoundingBox> obb =
+        TileBoundsMetrics::boundingRegionObb(rectangle, 0.0, 1.0);
+    ASSERT_TRUE(obb.has_value());
+
+    const Vec3 normal = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(0.0, 0.0, 1.0)).normalized();
+    const Vec3 surface = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(0.0, 0.0, 0.0));
+    const Plane plane(normal, -surface.distanceTo(Vec3::zero()));
+
+    EXPECT_EQ(0, obb->intersectPlane(plane));
+}
+
 TEST(TileBoundingVolumeTest, SphereConvertsToCircumscribedOrientedBox) {
     const TileBoundingVolume sphere =
         TileBoundingVolume::fromSphere(Vec3(1.0, 2.0, 3.0), 10.0);
