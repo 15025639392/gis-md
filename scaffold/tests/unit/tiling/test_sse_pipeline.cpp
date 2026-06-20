@@ -3923,6 +3923,33 @@ void testQuantizedMeshLayerJsonAvailabilitySkipsNonArrayLevels() {
     check(provider.availabilityState(TileKey{"Geographic-TMS", 1, 0, 0}) ==
               TileAvailabilityState::NotAvailable,
           "QuantizedMeshTerrainProvider: skipped non-array level does not leave an availability hole");
+
+    QuantizedMeshTerrainProvider rangeProvider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string rangeLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "available": [
+        [
+          "not-a-range-object",
+          {"startX":0,"startY":0,"endX":1,"endY":0}
+        ],
+        [
+          17,
+          {"startX":0,"startY":0,"endX":0,"endY":0}
+        ]
+      ]
+    })json";
+    check(rangeProvider.configureFromLayerJson(
+              rangeLayerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: non-object availability ranges configure like cesium-native");
+    check(rangeProvider.supportsTile(TileKey{"Geographic-TMS", 1, 0, 0}),
+          "QuantizedMeshTerrainProvider: non-object ranges are skipped without discarding valid ranges");
+    check(!rangeProvider.supportsTile(TileKey{"Geographic-TMS", 1, 1, 0}),
+          "QuantizedMeshTerrainProvider: skipped non-object range does not create extra availability");
 }
 
 void testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative() {
