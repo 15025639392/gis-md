@@ -213,7 +213,7 @@ std::unique_ptr<DecodedHeightmap> QuantizedMeshParser::parseAndRasterize(
     if (offset + 4 > len) return nullptr;
     triangleCount = readU32();
 
-    if (triangleCount == 0 || triangleCount > vertexCount * 4) {
+    if (triangleCount > vertexCount * 4) {
         // Retry with 4-byte alignment (some tilers pad to 4-byte boundary)
         offset = idxOffset;
         if ((offset % 4) != 0) offset += 2;
@@ -227,7 +227,7 @@ std::unique_ptr<DecodedHeightmap> QuantizedMeshParser::parseAndRasterize(
 
     const uint32_t indicesCount = triangleCount * 3;
     size_t indexSize = use32BitIndices ? 4 : 2;
-    if (offset + indicesCount * indexSize > len || triangleCount == 0 || triangleCount > vertexCount * 4) {
+    if (offset + indicesCount * indexSize > len || triangleCount > vertexCount * 4) {
 #ifdef __ANDROID__
         __android_log_print(ANDROID_LOG_ERROR, "QMParser", "fail: idx overflow off=%zu cnt=%u sz=%zu len=%zu",
             offset, indicesCount, indexSize, len);

@@ -5095,6 +5095,27 @@ void testQuantizedMeshRasterizerRejectsTruncatedEdgeIndices() {
           "QuantizedMeshParser: rasterizer rejects truncated edge indices like cesium-native");
 }
 
+void testQuantizedMeshRasterizerAcceptsZeroTriangleMesh() {
+    const std::string metadata = R"json({
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+    const std::vector<uint8_t> bytes =
+        makeZeroTriangleQuantizedMeshBytes(metadata);
+
+    std::unique_ptr<DecodedHeightmap> heightmap =
+        QuantizedMeshParser::parseAndRasterize(bytes.data(), bytes.size(), 8);
+
+    check(heightmap != nullptr,
+          "QuantizedMeshParser: rasterizer accepts zero-triangle mesh like cesium-native");
+    check(heightmap && heightmap->tileSize == 9 &&
+              heightmap->heights.size() == 81 &&
+              heightmap->minHeight == 0.0 &&
+              heightmap->maxHeight == 100.0,
+          "QuantizedMeshParser: zero-triangle rasterizer still produces a usable heightmap");
+}
+
 void testQuantizedMeshRejectsIllFormedCoreBuffers() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -23713,6 +23734,7 @@ int main() {
     testQuantizedMeshEmptyMetadataExtensionReplacesPreviousMetadata();
     testQuantizedMeshRejectsTruncatedEdgeIndices();
     testQuantizedMeshRasterizerRejectsTruncatedEdgeIndices();
+    testQuantizedMeshRasterizerAcceptsZeroTriangleMesh();
     testQuantizedMeshRejectsIllFormedCoreBuffers();
     testQuantizedMeshRasterizerRejectsHeaderWithoutVertexCount();
     testQuantizedMeshRasterizerRejectsIllFormedCoreBuffers();
