@@ -137,3 +137,62 @@ TEST(TileChildMaterializerTest, RasterUpsampledChildrenSplitSubdivisionAndRemain
             child->content.renderContent.terrainMaximumHeight());
     }
 }
+
+TEST(TileChildMaterializerTest, RasterUpsampledTileCanContinueSubdividingForImageryDetail) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 10, 512, 512},
+        Rectangle::fromDegrees(106.0, 29.0, 107.0, 30.0));
+    parent.geometricError = 64.0;
+    parent.content.upsampledFromParent = true;
+    parent.content.rasterUpsampledForMoreDetail = true;
+    parent.content.renderContent.setTerrainHeightRange(100.0, 500.0);
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    const bool changed =
+        TileChildMaterializer::materializeRasterUpsampledChildren(
+            parent,
+            parent.bounds,
+            64.0,
+            ensure);
+
+    ASSERT_TRUE(changed);
+    ASSERT_EQ(4u, parent.children.size());
+    for (TilesetTile* child : parent.children) {
+        ASSERT_NE(nullptr, child);
+        EXPECT_EQ(&parent, child->parent);
+        EXPECT_TRUE(child->content.upsampledFromParent);
+        EXPECT_TRUE(child->content.rasterUpsampledForMoreDetail);
+        EXPECT_DOUBLE_EQ(32.0, child->geometricError);
+        EXPECT_TRUE(child->content.renderContent.hasTerrainHeightRange());
+        EXPECT_DOUBLE_EQ(
+            100.0,
+            child->content.renderContent.terrainMinimumHeight());
+        EXPECT_DOUBLE_EQ(
+            500.0,
+            child->content.renderContent.terrainMaximumHeight());
+    }
+
+    EXPECT_TRUE(TileChildMaterializer::canRefine(
+        parent,
+        TileRefinementAvailabilityOptions{
+            true,
+            false,
+            false,
+            false,
+            true,
+            18},
+        [](const TileKey&) { return std::string{"child"}; },
+        [](const std::string&) { return false; },
+        [](const TileKey&) { return TileAvailabilityState::NotAvailable; }));
+}
