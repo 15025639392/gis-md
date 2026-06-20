@@ -56,6 +56,7 @@
 #include "earth_engine/tiling/TilePendingRequestState.h"
 #include "earth_engine/tiling/TilePlan.h"
 #include "earth_engine/tiling/TilePriorityMetrics.h"
+#include "earth_engine/tiling/TileQuantizedMeshAvailabilityIngestor.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileRasterOverlayFrameProcessor.h"
 #include "earth_engine/tiling/TileRenderablePolicy.h"
@@ -3452,6 +3453,43 @@ void testQuantizedMeshMetadataAvailabilityRequiresInt32() {
     check(zeroProvider.availabilityState(TileKey{"Geographic-TMS", 1, 0, 0}) ==
               TileAvailabilityState::NotAvailable,
           "QuantizedMeshTerrainProvider: zero metadataAvailability still shadows layer available like cesium-native");
+}
+
+void testQuantizedMeshTileMetadataIgnoredWithoutMetadataAvailability() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+
+    check(provider.configureFromLayerJson(
+              layerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: no-metadataAvailability layer configures");
+    check(provider.availabilityState(TileKey{"Geographic-TMS", 1, 0, 1}) ==
+              TileAvailabilityState::NotAvailable,
+          "QuantizedMeshTerrainProvider: no-metadataAvailability layer starts without metadata descendants");
+
+    DecodedHeightmap heightmap;
+    heightmap.rawData = makeQuantizedMeshBytes(R"json({
+      "available": [
+        [{"startX":0,"startY":1,"endX":0,"endY":1}]
+      ]
+    })json");
+    TileQuantizedMeshAvailabilityIngestor::ingest(
+        &provider,
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        heightmap);
+
+    check(provider.availabilityState(TileKey{"Geographic-TMS", 1, 0, 1}) ==
+              TileAvailabilityState::NotAvailable,
+          "QuantizedMeshTerrainProvider: tile metadata availability is ignored without metadataAvailability like cesium-native");
 }
 
 void testQuantizedMeshLayerJsonEmptyAvailabilityMatchesCesiumNative() {
@@ -22229,6 +22267,7 @@ int main() {
     testQuantizedMeshAvailabilityInclusiveCenterBoundary();
     testQuantizedMeshMetadataAvailabilityStartsAtRoots();
     testQuantizedMeshMetadataAvailabilityRequiresInt32();
+    testQuantizedMeshTileMetadataIgnoredWithoutMetadataAvailability();
     testQuantizedMeshLayerJsonEmptyAvailabilityMatchesCesiumNative();
     testQuantizedMeshLayerJsonDefaultFormatMatchesCesiumNative();
     testQuantizedMeshLayerJsonFormatIsIgnored();
