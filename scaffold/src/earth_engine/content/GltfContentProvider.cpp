@@ -2496,18 +2496,11 @@ float pntsSrgbByteToLinear(uint8_t value) {
 }
 
 std::array<float, 4> pntsRgb565ToLinear(uint16_t value) {
-    constexpr uint16_t kMask5 = (1u << 5u) - 1u;
-    constexpr uint16_t kMask6 = (1u << 6u) - 1u;
-    constexpr float kNormalize5 = 1.0f / 31.0f;
-    constexpr float kNormalize6 = 1.0f / 63.0f;
-
-    const uint16_t red = static_cast<uint16_t>(value >> 11u);
-    const uint16_t green = static_cast<uint16_t>((value >> 5u) & kMask6);
-    const uint16_t blue = static_cast<uint16_t>(value & kMask5);
+    const glm::dvec3 rgb = AttributeCompression::decodeRGB565(value);
     return {
-        std::pow(static_cast<float>(red) * kNormalize5, 2.2f),
-        std::pow(static_cast<float>(green) * kNormalize6, 2.2f),
-        std::pow(static_cast<float>(blue) * kNormalize5, 2.2f),
+        std::pow(static_cast<float>(rgb.x), 2.2f),
+        std::pow(static_cast<float>(rgb.y), 2.2f),
+        std::pow(static_cast<float>(rgb.z), 2.2f),
         1.0f};
 }
 

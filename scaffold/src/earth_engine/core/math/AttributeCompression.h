@@ -38,6 +38,21 @@ public:
         constexpr uint8_t kRangeMax = 255;
         return octDecodeInRange(x, y, kRangeMax);
     }
+
+    static glm::dvec3 decodeRGB565(uint16_t value) noexcept {
+        constexpr uint16_t kMask5 = (1u << 5u) - 1u;
+        constexpr uint16_t kMask6 = (1u << 6u) - 1u;
+        constexpr double kNormalize5 = 1.0 / 31.0;
+        constexpr double kNormalize6 = 1.0 / 63.0;
+
+        const uint16_t red = static_cast<uint16_t>(value >> 11u);
+        const uint16_t green = static_cast<uint16_t>((value >> 5u) & kMask6);
+        const uint16_t blue = value & kMask5;
+
+        return glm::dvec3(red * kNormalize5,
+                          green * kNormalize6,
+                          blue * kNormalize5);
+    }
 };
 
 } // namespace earth_engine

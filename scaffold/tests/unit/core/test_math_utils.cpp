@@ -86,6 +86,27 @@ TEST(AttributeCompressionTest, OctDecodeMatchesCesiumNative) {
     }
 }
 
+TEST(AttributeCompressionTest, DecodeRGB565MatchesCesiumNative) {
+    const std::array<uint16_t, 4> input{{
+        0u,
+        2081u,
+        33800u,
+        65535u,
+    }};
+    const std::array<glm::dvec3, 4> expected{{
+        glm::dvec3(0.0),
+        glm::dvec3(1.0 / 31.0, 1.0 / 63.0, 1.0 / 31.0),
+        glm::dvec3(16.0 / 31.0, 32.0 / 63.0, 8.0 / 31.0),
+        glm::dvec3(1.0),
+    }};
+
+    for (size_t i = 0; i < expected.size(); ++i) {
+        const glm::dvec3 value = AttributeCompression::decodeRGB565(input[i]);
+        EXPECT_TRUE(equalsEpsilon(value, expected[i], MathUtils::Epsilon6))
+            << "index " << i;
+    }
+}
+
 TEST(MathUtilsTest, EqualsEpsilonMatchesCesiumNative) {
     EXPECT_TRUE(MathUtils::equalsEpsilon(0.0, 0.01, MathUtils::Epsilon2));
     EXPECT_FALSE(MathUtils::equalsEpsilon(0.0, 0.1, MathUtils::Epsilon2));
