@@ -3725,6 +3725,23 @@ void testQuantizedMeshMetadataAvailabilityStartsAtRoots() {
     check(bounded.isSubtreeLoaded(1, 1234),
           "QuantizedMeshTerrainProvider: marking past-max subtree does not resize loaded set");
 
+    QuantizedMeshTerrainProvider exactMultiple(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string exactMultipleLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 20,
+      "metadataAvailability": 10
+    })json";
+    check(exactMultiple.configureFromLayerJson(
+              exactMultipleLayerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: exact-multiple metadata layer configures");
+    check(!exactMultiple.isSubtreeLoaded(1, 0) &&
+              exactMultiple.isSubtreeLoaded(2, 0),
+          "QuantizedMeshTerrainProvider: loaded subtree table uses cesium-native ceil(maxzoom / metadataAvailability)");
+
     QuantizedMeshTerrainProvider shadowed(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
     const std::string shadowedLayerJson = R"json({
