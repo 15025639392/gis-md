@@ -13433,6 +13433,17 @@ void testTileSelectionKickPolicyKicksDescendantsForNativeReasons() {
               true,
               1.0f),
           "TileSelectionKickPolicy: fully faded-in tile keeps descendants");
+    check(!TileSelectionKickPolicy::shouldKickDescendants(
+              fadingDescendants,
+              true,
+              false,
+              20,
+              true,
+              true,
+              TileSelectionState::RenderedAndKicked,
+              true,
+              0.5f),
+          "TileSelectionKickPolicy: kicked rendered state does not trigger fade-in kick like cesium-native");
 
     TileTraversalDetails unconditionalMissing;
     unconditionalMissing.allAreRenderable = false;

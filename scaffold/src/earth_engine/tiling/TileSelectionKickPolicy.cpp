@@ -18,8 +18,7 @@ bool TileSelectionKickPolicy::shouldKickDescendants(
     const bool kickDueToTileFadingIn =
         enableLodTransitionPeriod &&
         kickDescendantsWhileFadingIn &&
-        originalSelectionState(previousSelectionState) ==
-            TileSelectionState::Rendered &&
+        previousSelectionState == TileSelectionState::Rendered &&
         hasLodTransitionRenderContent &&
         lodTransitionFadePercentage < 1.0f;
 
