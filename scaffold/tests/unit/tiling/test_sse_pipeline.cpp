@@ -19380,7 +19380,25 @@ std::string testCacheKeyForTile(const TileKey& key) {
            std::to_string(key.y);
 }
 
-void testTileLoadSchedulerBlocksBeforePlanningWhenInflightIsFull() {
+void testTileLoadSchedulerBlocksContentRequestWhenInflightIsFull() {
+    class CountingContentProvider final : public TilesetContentProvider {
+    public:
+        std::string id() const override { return "scheduler-content-inflight"; }
+        bool supportsTile(const TileKey&) const override { return true; }
+        void requestTileContent(const TileKey&,
+                                CancellationToken,
+                                ContentCallback,
+                                HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+        }
+        TileContentLoadResult decodeContent(
+            const uint8_t*,
+            size_t) override {
+            return TileContentLoadResult::failed();
+        }
+        int requestCount = 0;
+    };
+
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkInflight = 1;
@@ -19393,6 +19411,8 @@ void testTileLoadSchedulerBlocksBeforePlanningWhenInflightIsFull() {
               "TileLoadScheduler: test starts one inflight request");
     }
     bool planned = false;
+    bool marked = false;
+    CountingContentProvider provider;
 
     TileLoadRequestOutcome outcome =
         TileLoadScheduler::requestMissingTiles(
@@ -19404,23 +19424,25 @@ void testTileLoadSchedulerBlocksBeforePlanningWhenInflightIsFull() {
                 lifecycle,
                 budget,
                 nullptr,
-                nullptr},
+                &provider},
             testCacheKeyForTile,
             [&planned](const TileKey&,
                        const std::string&,
                        TilesetTile*& tileState) {
                 planned = true;
                 tileState = nullptr;
-                return TileLoadRequestSnapshot{};
+                TileLoadRequestSnapshot snapshot;
+                snapshot.contentProviderSupportsTile = true;
+                return snapshot;
             },
             [](const std::string&) { return false; },
             [](TilesetTile&, double) { return false; },
-            [](const TileKey&) {});
+            [&marked](const TileKey&) { marked = true; });
 
     check(outcome.issued == 0 && outcome.blockedByInflight,
-          "TileLoadScheduler: full inflight budget blocks request loop");
-    check(!planned,
-          "TileLoadScheduler: inflight block happens before request planning");
+          "TileLoadScheduler: full inflight budget blocks content request loop");
+    check(planned && !marked && provider.requestCount == 0,
+          "TileLoadScheduler: content inflight block happens after request classification without dispatch side effects");
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
@@ -19654,6 +19676,68 @@ void testTileLoadSchedulerBlocksTerrainFanoutOverInflightCapacity() {
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.requestState().completeTerrainRequest("busy");
+    }
+}
+
+void testTileLoadSchedulerQueuesUpsampledTerrainWhenNetworkInflightIsFull() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    CancellationToken token;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        check(lifecycle.requestState().beginTerrainRequest("busy", token),
+              "TileLoadScheduler: upsample test starts one network inflight request");
+    }
+
+    const TileKey key{"test", 1, 0, 0};
+    TilesetTile tile(key, Rectangle{});
+    tile.content.upsampledFromParent = true;
+    bool prepared = false;
+    bool marked = false;
+
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            testCacheKeyForTile,
+            [&tile](const TileKey&,
+                    const std::string&,
+                    TilesetTile*& tileState) {
+                tileState = &tile;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.hasTile = true;
+                snapshot.upsampledFromParent = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [&prepared](TilesetTile&, double) {
+                prepared = true;
+                return true;
+            },
+            [&marked](const TileKey&) { marked = true; });
+
+    check(outcome.issued == 1 && !outcome.blockedByInflight,
+          "TileLoadScheduler: upsampled terrain is not blocked by full network inflight capacity");
+    check(prepared && marked &&
+              lifecycle.counts().terrainUploads == 1 &&
+              lifecycle.pendingRequestCount() == 1,
+          "TileLoadScheduler: upsampled terrain queues local upload without issuing network request");
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().completeTerrainRequest("busy");
+        lifecycle.pendingLoads().clear();
     }
 }
 
@@ -25410,11 +25494,12 @@ int main() {
     testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending();
     testTileLoadRequestDispatcherPassesNetworkPriority();
     testTileLoadRequestPlannerClassifiesRequestKinds();
-    testTileLoadSchedulerBlocksBeforePlanningWhenInflightIsFull();
+    testTileLoadSchedulerBlocksContentRequestWhenInflightIsFull();
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeInflightBlock();
     testTileLoadSchedulerSkipsEmptyCacheKeyBeforeInflightBlock();
     testTileLoadSchedulerSkipsKnownEmptyContentBeforeInflightBlock();
     testTileLoadSchedulerBlocksTerrainFanoutOverInflightCapacity();
+    testTileLoadSchedulerQueuesUpsampledTerrainWhenNetworkInflightIsFull();
     testTileLoadSchedulerSortsAndQueuesUpsampledTerrain();
     testTileLoadSchedulerSkipsEmptyUpsampledCacheKey();
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation();

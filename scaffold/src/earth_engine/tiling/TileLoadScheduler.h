@@ -66,18 +66,6 @@ public:
                 continue;
             }
 
-            {
-                std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
-                if (!input.budget.hasNetworkInflightCapacity(
-                        static_cast<uint32_t>(
-                            input.lifecycle
-                                .requestState()
-                                .totalRequestCount()))) {
-                    outcome.blockedByInflight = true;
-                    break;
-                }
-            }
-
             TilesetTile* tileState = nullptr;
             const TileLoadRequestSnapshot snapshot =
                 makeSnapshot(requestKey, cacheKey, tileState);
@@ -120,6 +108,18 @@ public:
             if (requestKind == TileLoadRequestKind::Content) {
                 if (!input.contentProvider) {
                     continue;
+                }
+                {
+                    std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
+                    if (!input.budget.hasNetworkInflightCapacity(
+                            FrameResourceLane::ContentRequest,
+                            static_cast<uint32_t>(
+                                input.lifecycle
+                                    .requestState()
+                                    .totalRequestCount()))) {
+                        outcome.blockedByInflight = true;
+                        break;
+                    }
                 }
                 const TileLoadDispatchResult dispatchResult =
                     TileLoadRequestDispatcher::requestContent(
