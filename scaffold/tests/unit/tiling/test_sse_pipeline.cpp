@@ -18381,6 +18381,62 @@ void testTilePendingLoadProcessorCountsTerminalElapsedAgainstMainThreadBudget() 
           "TilePendingLoadProcessor: terminal result records main-thread elapsed time");
 }
 
+void testTilePendingLoadProcessorTerminalElapsedStopsUploads() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxTerminalStateTransitionsPerFrame = 4;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    config.mainThreadTimeMs = 0.5;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey terminalKey{"test", 1, 0, 0};
+    const TileKey uploadKey{"test", 1, 1, 0};
+    std::vector<std::string> events;
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainTerminalResult(
+            PendingTerrainTerminalResult{
+                terminalKey,
+                "terminal",
+                TileLoadPriorityGroup::Urgent,
+                10.0,
+                TerrainTileLoadStatus::RetryLater});
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            uploadKey,
+            "upload",
+            TileLoadPriorityGroup::Urgent,
+            100.0,
+            TileContentLoadResult::failed()});
+    }
+
+    const bool changed =
+        TilePendingLoadProcessor::processPendingLoads(
+            TilePendingLoadProcessorInput{
+                lifecycle,
+                budget,
+                false,
+                [](FrameResourceLane lane) -> std::optional<double> {
+                    return lane == FrameResourceLane::TerminalState
+                               ? std::optional<double>{1.0}
+                               : std::nullopt;
+                }},
+            [&events](const PendingTerrainTerminalResult&) {
+                events.push_back("terminal");
+            },
+            [](const PendingContentTerminalResult&) {},
+            [](PendingTerrainUpload&) {},
+            [&events](PendingContentUpload&) {
+                events.push_back("upload");
+            });
+
+    check(changed && events.size() == 1 && events[0] == "terminal",
+          "TilePendingLoadProcessor: terminal elapsed can exhaust shared main-thread time budget before uploads");
+    check(lifecycle.counts().contentUploads == 1 &&
+              budget.mainThreadElapsedMs() >= 1.0,
+          "TilePendingLoadProcessor: upload remains pending after terminal time budget is exhausted");
+}
+
 void testTilePendingUploadCompletionErasesUploadKeys() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -25581,6 +25637,7 @@ int main() {
     testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads();
     testTilePendingLoadProcessorBudgetsTerminalResults();
     testTilePendingLoadProcessorCountsTerminalElapsedAgainstMainThreadBudget();
+    testTilePendingLoadProcessorTerminalElapsedStopsUploads();
     testTilePendingUploadCompletionErasesUploadKeys();
     testTilePendingRequestStateCountsAndCompletesRequests();
     testPendingLoadStateRejectsEmptyCacheKeys();
