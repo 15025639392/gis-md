@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 
 namespace earth_engine {
 
@@ -82,7 +83,9 @@ public:
         config.maxRasterNetworkInflight = rasterNetworkLimit;
         config.maxMainThreadFinalizesPerFrame =
             input.resourceSmoothingActive ? 1u
-                                          : input.maximumSimultaneousTileLoads;
+                                          : input.maximumSimultaneousTileLoads == 0
+                                              ? std::numeric_limits<uint32_t>::max()
+                                              : input.maximumSimultaneousTileLoads;
         config.maxTerminalStateTransitionsPerFrame =
             input.resourceSmoothingActive
                 ? std::max<uint32_t>(1u, input.maximumSimultaneousTileLoads / 2u)

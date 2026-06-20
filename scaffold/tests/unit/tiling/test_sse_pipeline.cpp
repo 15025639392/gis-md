@@ -24868,6 +24868,33 @@ void testTileFrameResourceBudgetPlannerAlignsRasterBudgetWithTransportLane() {
           "TileFrameResourceBudgetPlanner: wider transports can still run a full rectangle raster fanout");
 }
 
+void testTileFrameResourceBudgetPlannerKeepsMainThreadFinalizesWhenWorkerLoadsDisabled() {
+    FrameResourceBudgetConfig config =
+        TileFrameResourceBudgetPlanner::plan(
+            TileFrameResourceBudgetPlanInput::withTransportLimit(
+                0,
+                20,
+                0.0,
+                false,
+                false));
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    check(!budget.tryIssue(
+              FrameResourceLane::TerrainRequest,
+              FrameResourcePriority::Normal),
+          "TileFrameResourceBudgetPlanner: disabled worker loads block new terrain requests");
+    check(config.maxMainThreadFinalizesPerFrame ==
+              std::numeric_limits<uint32_t>::max() &&
+              budget.tryFinalize(
+                  FrameResourceLane::TerrainFinalize,
+                  FrameResourcePriority::Normal) &&
+              budget.tryFinalize(
+                  FrameResourceLane::ContentFinalize,
+                  FrameResourcePriority::Normal),
+          "TileFrameResourceBudgetPlanner: disabled worker loads still allow existing main-thread finalizes");
+}
+
 void testTileFrameBudgetFallbackKeepsUploadsAliveWhenWorkerLoadsDisabled() {
     FrameResourceBudgetConfig requestConfig =
         TileFrameBudgetFallback::requestConfig(0, 0.0);
@@ -30432,6 +30459,7 @@ int main() {
     testTileResourceDirtyInvalidatesRevisionAndCacheOnly();
     testTilesetFrameResourceBudgetLimitsWorkerRequests();
     testTileFrameResourceBudgetPlannerAlignsRasterBudgetWithTransportLane();
+    testTileFrameResourceBudgetPlannerKeepsMainThreadFinalizesWhenWorkerLoadsDisabled();
     testTileFrameBudgetFallbackKeepsUploadsAliveWhenWorkerLoadsDisabled();
     testTilesetFrameResourceBudgetUsesProviderTransportLane();
     testTilesetLoadDiagnosticsExposeTerrainProviderRequestDiagnostics();
