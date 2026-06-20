@@ -2038,8 +2038,8 @@ void testQuantizedMeshProviderFetchesMetadataViaAsyncBridge() {
               terrainDiag.peakWorkerBlockingRequests == 0,
           "QuantizedMeshTerrainProvider: terrain bridge request does not occupy worker");
 
-    check(bridge.completeNext(200, makeQuantizedMeshBytes()),
-          "QuantizedMeshTerrainProvider: test bridge completes terrain body");
+    check(bridge.completeNext(206, makeQuantizedMeshBytes()),
+          "QuantizedMeshTerrainProvider: test bridge completes partial-content terrain body like cesium-native");
     check(bridge.waitUntilPendingCount(1) &&
               bridge.pendingUrl(0).find("parentTiles/0/0/0.terrain") !=
                   std::string::npos,

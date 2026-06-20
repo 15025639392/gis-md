@@ -1162,7 +1162,7 @@ void QuantizedMeshTerrainProvider::handleAsyncTileBody(
     auto bodyPtr =
         std::make_shared<std::vector<uint8_t>>(std::move(body));
 
-    if (statusCode != 200 ||
+    if (!isCesiumSuccessfulHttpStatus(statusCode) ||
         bodyPtr->empty() ||
         tokenPtr->isCancelled() ||
         availabilityRequestsPtr->empty()) {
@@ -1303,7 +1303,7 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                 (*callback)(key, TerrainTileLoadResult::cancelled());
                 return;
             }
-            if (statusCode != 200 || body->empty()) {
+            if (!isCesiumSuccessfulHttpStatus(statusCode) || body->empty()) {
                 (*callback)(key, TerrainTileLoadResult::retryLater());
                 return;
             }
