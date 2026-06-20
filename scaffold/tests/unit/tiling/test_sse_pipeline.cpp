@@ -2071,6 +2071,38 @@ void testQuantizedMeshProviderFetchesMetadataViaAsyncBridge() {
               doneDiag.peakWorkerBlockingRequests == 0,
           "QuantizedMeshTerrainProvider: async metadata completes without worker blocking");
 
+    provider.applyAvailabilityUpdates(*completed.heightmap);
+    done = false;
+    completed = TerrainTileLoadResult::retryLater();
+    provider.requestTile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        CancellationToken{},
+        [&](const TileKey&, TerrainTileLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                done = true;
+            }
+            cv.notify_one();
+        });
+
+    check(bridge.waitUntilPendingCount(1) &&
+              bridge.pendingUrl(0).find("childTiles/0/0/0.terrain") !=
+                  std::string::npos,
+          "QuantizedMeshTerrainProvider: loaded metadata subtree skips duplicate parent metadata request");
+    check(bridge.completeNext(206, makeQuantizedMeshBytes()),
+          "QuantizedMeshTerrainProvider: duplicate metadata skip completes terrain request");
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        cv.wait_for(lock, std::chrono::seconds(5), [&] { return done; });
+    }
+    check(done &&
+              completed.status == TerrainTileLoadStatus::Success &&
+              completed.heightmap &&
+              completed.heightmap->quantizedMeshAvailabilityUpdates.empty() &&
+              bridge.pendingCount() == 0,
+          "QuantizedMeshTerrainProvider: loaded metadata subtree does not request or emit duplicate updates");
+
     std::filesystem::remove_all(root);
 }
 
