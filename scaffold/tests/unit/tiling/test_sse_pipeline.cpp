@@ -3063,6 +3063,35 @@ void testRasterOverlayRectangleCompositionUsesProjectedWebMercatorHeight() {
           "RasterOverlayTileProvider: WebMercator rectangle composition sizes target images in projected space like cesium-native");
 }
 
+void testRasterOverlayRectangleCompositionKeepsTinyProjectedOverlap() {
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    const TileKey sourceKey{"XYZ-WebMercator", 2, 1, 0};
+    const Rectangle sourceBounds = imageryScheme->tileToRectangle(sourceKey);
+    const double tinyHeight = sourceBounds.height() * 0.001;
+    const Rectangle targetBounds(
+        sourceBounds.west(),
+        sourceBounds.north() - tinyHeight,
+        sourceBounds.east(),
+        sourceBounds.north());
+
+    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    sources.push_back(RasterOverlayTileProvider::RectangleSourceImage{
+        sourceKey,
+        sourceBounds,
+        makeDecodedRgbaImage(64, 64)});
+
+    std::unique_ptr<DecodedImage> composed =
+        RasterOverlayTileProvider::composeRectangleImages(
+            *imageryScheme,
+            targetBounds,
+            sourceKey.z,
+            std::move(sources),
+            4096);
+
+    check(composed && composed->width == 64 && composed->height == 1,
+          "RasterOverlayTileProvider: tiny target overlap still produces a one-pixel projected image like cesium-native");
+}
+
 void testRasterOverlayUploadsStopAfterElapsedBudgetExpires() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -23705,6 +23734,7 @@ int main() {
     testRasterOverlayRectangleSourceRequestsAreBudgetedAcrossFrames();
     testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches();
     testRasterOverlayRectangleCompositionUsesProjectedWebMercatorHeight();
+    testRasterOverlayRectangleCompositionKeepsTinyProjectedOverlap();
     testRasterOverlayUploadsStopAfterElapsedBudgetExpires();
     testRasterMappedUsesRenderContentDetailsRectangle();
     testRasterMappedMissingProjectionUsesPlaceholder();
