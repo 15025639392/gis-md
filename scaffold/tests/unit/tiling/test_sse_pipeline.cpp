@@ -15864,6 +15864,63 @@ void testTileContentUnloadCoordinatorRemovesRenderContentCache() {
           "TileContentUnloadCoordinator: render content unload clears terrain cache and render resources");
 }
 
+void testTileContentUnloadCoordinatorKeepsProtectedUpsampleSource() {
+    TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
+    TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
+    parent.children.push_back(&child);
+
+    parent.content.contentKind = TileContentKind::Render;
+    parent.content.loadState = TileLoadState::Done;
+    parent.content.renderContent.setMeshReady(true);
+    parent.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    parent.content.renderContent.setSurfaceDrawable(true);
+    parent.selectionFrameState.completeRenderable = true;
+    parent.selectionFrameState.renderable = true;
+    parent.content.renderContent.setSurfaceSource(SurfaceDrawableSource::OwnTerrain);
+    child.content.upsampledFromParent = true;
+    child.content.loadState = TileLoadState::ContentLoading;
+    const std::string cacheKey = "test:0:0:0";
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    terrainCache[cacheKey] = std::make_unique<DecodedHeightmap>();
+    TileEmptyContentRegistry emptyContentRegistry;
+
+    const TileCacheUnloadContentResult firstResult =
+        TileContentUnloadCoordinator::unloadContent(
+            parent,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            nullptr);
+
+    check(firstResult == TileCacheUnloadContentResult::Keep &&
+              parent.content.contentKind == TileContentKind::Render &&
+              parent.content.loadState == TileLoadState::Unloading &&
+              parent.content.renderContent.hasSurfaceMesh() &&
+              !parent.content.renderContent.isSurfaceDrawable() &&
+              parent.content.renderContent.currentSurfaceSource() ==
+                  SurfaceDrawableSource::None &&
+              !parent.selectionFrameState.completeRenderable &&
+              !parent.selectionFrameState.renderable &&
+              terrainCache.find(cacheKey) != terrainCache.end(),
+          "TileContentUnloadCoordinator: protected upsample source enters Unloading after releasing main-thread resources");
+
+    const TileCacheUnloadContentResult secondResult =
+        TileContentUnloadCoordinator::unloadContent(
+            parent,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            nullptr);
+
+    check(secondResult == TileCacheUnloadContentResult::Keep &&
+              parent.content.contentKind == TileContentKind::Render &&
+              parent.content.loadState == TileLoadState::Unloading &&
+              parent.content.renderContent.hasSurfaceMesh() &&
+              terrainCache.find(cacheKey) != terrainCache.end(),
+          "TileContentUnloadCoordinator: protected upsample source remains kept while child is loading");
+}
+
 void testTileIndexStateErasesEmptyContentRegistryKey() {
     TileUnloadQueue unloadQueue;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
@@ -25791,6 +25848,7 @@ int main() {
     testTileContentUnloadCoordinatorKeepsLoadingContent();
     testTileContentUnloadCoordinatorRemovesExternalContent();
     testTileContentUnloadCoordinatorRemovesRenderContentCache();
+    testTileContentUnloadCoordinatorKeepsProtectedUpsampleSource();
     testTileIndexStateErasesEmptyContentRegistryKey();
     testTileTerrainHeightRangePolicySetsAndInheritsRanges();
     testTileTerrainHeightRangePolicyAppliesMeshOrHeightmapRanges();
