@@ -4622,6 +4622,34 @@ void testQuantizedMeshSkirtNormalsCopyEdgeNormals() {
           "QuantizedMeshParser: skirt normals copy source edge normals like cesium-native");
 }
 
+void testQuantizedMeshSkirtCountsMatchCesiumNativeFormula() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes("", true, false);
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            scheme->tileToRectangle(rootKey));
+
+    constexpr uint32_t coreVertexCount = 3;
+    constexpr uint32_t coreIndexCount = 3;
+    constexpr uint32_t totalSkirtVertices = 8;
+    constexpr uint32_t totalSkirtIndices = (totalSkirtVertices - 4) * 6;
+    check(mesh != nullptr,
+          "QuantizedMeshParser: skirt-count test mesh parses");
+    check(mesh && mesh->skirtMeta.noSkirtVerticesCount == coreVertexCount &&
+              mesh->skirtMeta.noSkirtIndicesCount == coreIndexCount,
+          "QuantizedMeshParser: no-skirt metadata preserves original mesh ranges");
+    check(mesh && mesh->vertices.size() ==
+                  static_cast<size_t>(coreVertexCount + totalSkirtVertices) &&
+              mesh->indices.size() ==
+                  static_cast<size_t>(coreIndexCount + totalSkirtIndices),
+          "QuantizedMeshParser: skirt vertex and index counts match cesium-native formula");
+}
+
 void testQuantizedMeshSkirtHeightMatchesCesiumNativeFormula() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -22644,6 +22672,7 @@ int main() {
     testQuantizedMeshRejectsMissingUint32IndexPadding();
     testQuantizedMeshRasterizerRejectsMissingUint32IndexPadding();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
+    testQuantizedMeshSkirtCountsMatchCesiumNativeFormula();
     testQuantizedMeshSkirtHeightMatchesCesiumNativeFormula();
     testQuantizedMeshOctEncodedNormalsExtension();
     testQuantizedMeshOctEncodedNormalsPreserveArbitraryDirection();
