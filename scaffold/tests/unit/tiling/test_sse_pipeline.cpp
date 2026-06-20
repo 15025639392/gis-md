@@ -4533,6 +4533,17 @@ void testQuantizedMeshRejectsMissingUint32IndexPadding() {
           "QuantizedMeshParser: missing uint32 index padding is rejected like cesium-native");
 }
 
+void testQuantizedMeshRasterizerRejectsMissingUint32IndexPadding() {
+    const std::vector<uint8_t> bytes =
+        makeLargeQuantizedMeshBytesMissingUint32IndexPadding();
+
+    std::unique_ptr<DecodedHeightmap> heightmap =
+        QuantizedMeshParser::parseAndRasterize(bytes.data(), bytes.size(), 64);
+
+    check(heightmap == nullptr,
+          "QuantizedMeshParser: rasterizer rejects missing uint32 index padding like cesium-native");
+}
+
 void testQuantizedMeshSkirtNormalsCopyEdgeNormals() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -22543,6 +22554,7 @@ int main() {
     testQuantizedMeshRejectsEachTruncatedEdge();
     testQuantizedMeshParsesUint32IndicesAndEdges();
     testQuantizedMeshRejectsMissingUint32IndexPadding();
+    testQuantizedMeshRasterizerRejectsMissingUint32IndexPadding();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
     testQuantizedMeshSkirtHeightMatchesCesiumNativeFormula();
     testQuantizedMeshOctEncodedNormalsExtension();
