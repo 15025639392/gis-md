@@ -449,6 +449,37 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceFailureFallsBackToParentTile) {
                 imagery.failingKey.y / 2}) != imagery.requestedKeys.end());
 }
 
+TEST(RasterOverlayLifecycleTest, RectangleAncestorFallbackReportsNoMoreDetailLikeCesiumNative) {
+    ParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const int expectedSourceZoom = 8;
+    TileKey key = scheme->positionToTile(0.1, 0.2, expectedSourceZoom);
+    Rectangle bounds = scheme->tileToRectangle(key);
+    imagery.failingKey = key;
+
+    auto rectangleTile = provider.getTile(bounds, 512.0, 512.0);
+    ASSERT_NE(nullptr, rectangleTile);
+    EXPECT_EQ(expectedSourceZoom, rectangleTile->getSourceZoom());
+
+    ASSERT_TRUE(provider.loadTile(*rectangleTile));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              rectangleTile->getState());
+    EXPECT_EQ(1, uploaderPtr->uploadCount);
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
+              rectangleTile->isMoreDetailAvailable());
+    EXPECT_TRUE(std::find(
+        imagery.requestedKeys.begin(),
+        imagery.requestedKeys.end(),
+        TileKey{scheme->id(), expectedSourceZoom - 1, key.x / 2, key.y / 2}) !=
+        imagery.requestedKeys.end());
+}
+
 TEST(RasterOverlayLifecycleTest, RectangleSourceFailureDoesNotFallbackBelowOverlayMinimumLevel) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

@@ -228,6 +228,8 @@ private:
     struct PendingUpload {
         std::string cacheKey;
         std::unique_ptr<DecodedImage> image;
+        RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
+            RasterOverlayTile::MoreDetailAvailable::Unknown;
     };
     std::deque<PendingUpload> pendingUploads_;
     mutable std::mutex pendingMutex_;

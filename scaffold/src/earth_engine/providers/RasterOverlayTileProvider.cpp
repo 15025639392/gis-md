@@ -483,6 +483,13 @@ struct LoadedSourceImage {
     TileKey key;
     Rectangle bounds;
     std::unique_ptr<DecodedImage> image;
+    bool ancestorFallback = false;
+};
+
+struct RectangleCompositionResult {
+    std::unique_ptr<DecodedImage> image;
+    RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
+        RasterOverlayTile::MoreDetailAvailable::No;
 };
 
 const LoadedSourceImage* findSourceForPosition(
@@ -508,11 +515,12 @@ const LoadedSourceImage* findSourceForPosition(
     return nullptr;
 }
 
-std::unique_ptr<DecodedImage> combineRectangleImages(
+RectangleCompositionResult combineRectangleImages(
     const TileScheme& scheme,
     const Rectangle& targetBounds,
     int sourceZoom,
     std::vector<LoadedSourceImage>&& sources,
+    int maximumSourceZoom,
     int maximumTextureSize) {
     sources.erase(
         std::remove_if(sources.begin(), sources.end(),
@@ -523,7 +531,7 @@ std::unique_ptr<DecodedImage> combineRectangleImages(
                                   source.image->channels < 3;
                        }),
         sources.end());
-    if (sources.empty()) return nullptr;
+    if (sources.empty()) return {};
 
     double projectedWidthPerPixel = std::numeric_limits<double>::max();
     double projectedHeightPerPixel = std::numeric_limits<double>::max();
@@ -539,7 +547,7 @@ std::unique_ptr<DecodedImage> combineRectangleImages(
     if (projectedWidthPerPixel <= 0.0 || projectedHeightPerPixel <= 0.0 ||
         !std::isfinite(projectedWidthPerPixel) ||
         !std::isfinite(projectedHeightPerPixel)) {
-        return nullptr;
+        return {};
     }
 
     int width = static_cast<int>(std::ceil(targetBounds.width() /
@@ -611,14 +619,27 @@ std::unique_ptr<DecodedImage> combineRectangleImages(
     }
 
     if (filledPixels != width * height) {
-        return nullptr;
+        return {};
     }
 
-    return output;
+    RectangleCompositionResult result;
+    result.image = std::move(output);
+    const bool moreDetailAvailable = std::any_of(
+        sources.begin(),
+        sources.end(),
+        [maximumSourceZoom](const LoadedSourceImage& source) {
+            return !source.ancestorFallback && source.key.z < maximumSourceZoom;
+        });
+    result.moreDetailAvailable =
+        moreDetailAvailable
+            ? RasterOverlayTile::MoreDetailAvailable::Yes
+            : RasterOverlayTile::MoreDetailAvailable::No;
+    return result;
 }
 
 using RectangleRequestSuccess =
-    std::function<void(std::unique_ptr<DecodedImage>)>;
+    std::function<void(std::unique_ptr<DecodedImage>,
+                       RasterOverlayTile::MoreDetailAvailable)>;
 using RectangleRequestFailure = std::function<void()>;
 
 } // namespace
@@ -631,6 +652,7 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
                            Rectangle bounds,
                            int textureSize,
                            int minimumSourceLevel,
+                           int maximumSourceLevel,
                            RectangleRequestSuccess success,
                            RectangleRequestFailure failure)
         : provider(imageryProvider)
@@ -639,6 +661,7 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
         , targetBounds(bounds)
         , maximumTextureSize(textureSize)
         , minimumLevel(minimumSourceLevel)
+        , maximumLevel(maximumSourceLevel)
         , onSuccess(std::move(success))
         , onFailure(std::move(failure))
         , remaining(sourcePlan.budgetUnits()) {
@@ -676,7 +699,7 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
             }
             issuedAny = true;
             onSourceIssued();
-            requestSource(sourceKey, onSourceFinished);
+            requestSource(sourceKey, false, onSourceFinished);
         }
         return issuedAny;
     }
@@ -689,13 +712,14 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
 private:
     void requestSource(
         const TileKey& requestedKey,
+        bool ancestorFallback,
         const std::function<void()>& onSourceFinished) {
         auto self = shared_from_this();
         CancellationToken token;
         provider.requestTile(
             requestedKey,
             token,
-            [self, requestedKey, onSourceFinished](
+            [self, requestedKey, ancestorFallback, onSourceFinished](
                 const TileKey& loadedKey,
                 std::unique_ptr<DecodedImage> image) mutable {
                 if (image) {
@@ -703,6 +727,7 @@ private:
                     source.key = loadedKey;
                     source.bounds = self->scheme.tileToRectangle(loadedKey);
                     source.image = std::move(image);
+                    source.ancestorFallback = ancestorFallback;
                     onSourceFinished();
                     self->finishOneSource(std::move(source));
                     return;
@@ -714,7 +739,7 @@ private:
                 if (requestedKey.z > self->minimumLevel) {
                     const TileKey parentKey = parentTileKey(requestedKey);
                     if (self->provider.supportsTile(parentKey)) {
-                        self->requestSource(parentKey, onSourceFinished);
+                        self->requestSource(parentKey, true, onSourceFinished);
                         return;
                     }
                 }
@@ -744,15 +769,16 @@ private:
             completedSources = std::move(sources);
         }
 
-        std::unique_ptr<DecodedImage> composed =
+        RectangleCompositionResult composed =
             combineRectangleImages(
                 scheme,
                 targetBounds,
                 sourcePlan.sourceZoom,
                 std::move(completedSources),
+                maximumLevel,
                 maximumTextureSize);
-        if (composed) {
-            onSuccess(std::move(composed));
+        if (composed.image) {
+            onSuccess(std::move(composed.image), composed.moreDetailAvailable);
         } else {
             onFailure();
         }
@@ -764,6 +790,7 @@ private:
     Rectangle targetBounds;
     int maximumTextureSize = 0;
     int minimumLevel = 0;
+    int maximumLevel = 0;
     RectangleRequestSuccess onSuccess;
     RectangleRequestFailure onFailure;
     mutable std::mutex mutex;
@@ -786,14 +813,16 @@ RasterOverlayTileProvider::composeRectangleImages(
         sources.push_back(LoadedSourceImage{
             source.key,
             source.bounds,
-            std::move(source.image)});
+            std::move(source.image),
+            false});
     }
     return combineRectangleImages(
         scheme,
         targetBounds,
         sourceZoom,
         std::move(sources),
-        maximumTextureSize);
+        sourceZoom,
+        maximumTextureSize).image;
 }
 
 double RasterOverlayTileProvider::projectedVForLatitude(
@@ -1158,12 +1187,15 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
         targetBounds,
         maxTextureSize,
         getMinimumLevel(),
-        [self, ck](std::unique_ptr<DecodedImage> composed) {
+        getMaximumLevel(),
+        [self, ck](std::unique_ptr<DecodedImage> composed,
+                   RasterOverlayTile::MoreDetailAvailable moreDetailAvailable) {
             std::lock_guard<std::mutex> providerLock(self->pendingMutex_);
             self->inFlightRequests_.erase(ck);
             self->activeRectangleRequests_.erase(ck);
             logAndroidRasterPipeline("composed", ck, 0, 0);
-            self->pendingUploads_.push_back({ck, std::move(composed)});
+            self->pendingUploads_.push_back(
+                {ck, std::move(composed), moreDetailAvailable});
         },
         [self, ck]() {
             std::lock_guard<std::mutex> providerLock(self->pendingMutex_);
@@ -1278,10 +1310,14 @@ int RasterOverlayTileProvider::processPendingUploads(
         if (tex) {
             const int sourceLevel =
                 tile.isRectangleTile() ? tile.getSourceZoom() : tile.getTileID().z;
-            tile.setMoreDetailAvailable(
-                sourceLevel < tile.getMaxZoom()
-                    ? RasterOverlayTile::MoreDetailAvailable::Yes
-                    : RasterOverlayTile::MoreDetailAvailable::No);
+            const RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
+                upload.moreDetailAvailable !=
+                        RasterOverlayTile::MoreDetailAvailable::Unknown
+                    ? upload.moreDetailAvailable
+                    : (sourceLevel < tile.getMaxZoom()
+                           ? RasterOverlayTile::MoreDetailAvailable::Yes
+                           : RasterOverlayTile::MoreDetailAvailable::No);
+            tile.setMoreDetailAvailable(moreDetailAvailable);
             // cesium-native: transfer texture ownership to the tile.
             // The tile owns its texture; no external cache needed.
             tile.setTexture(std::move(tex));
