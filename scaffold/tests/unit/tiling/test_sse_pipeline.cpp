@@ -37,6 +37,7 @@
 #include "earth_engine/tiling/TileContentUploadCommitter.h"
 #include "earth_engine/tiling/TileContentUploadPolicy.h"
 #include "earth_engine/tiling/TileEmptyContentRegistry.h"
+#include "earth_engine/tiling/TileFrameBudgetFallback.h"
 #include "earth_engine/tiling/TileFrameResourceBudgetPlanner.h"
 #include "earth_engine/tiling/TileFrameState.h"
 #include "earth_engine/tiling/TileFrameWorkCoordinator.h"
@@ -121,6 +122,7 @@
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
+#include <limits>
 #include <list>
 #include <mutex>
 #include <thread>
@@ -24866,6 +24868,36 @@ void testTileFrameResourceBudgetPlannerAlignsRasterBudgetWithTransportLane() {
           "TileFrameResourceBudgetPlanner: wider transports can still run a full rectangle raster fanout");
 }
 
+void testTileFrameBudgetFallbackKeepsUploadsAliveWhenWorkerLoadsDisabled() {
+    FrameResourceBudgetConfig requestConfig =
+        TileFrameBudgetFallback::requestConfig(0, 0.0);
+    FrameResourceBudget requestBudget;
+    requestBudget.beginFrame(1, requestConfig);
+    check(!requestBudget.tryIssue(
+              FrameResourceLane::TerrainRequest,
+              FrameResourcePriority::Normal),
+          "TileFrameBudgetFallback: maximumSimultaneousTileLoads=0 still blocks new worker requests");
+
+    FrameResourceBudgetConfig uploadConfig =
+        TileFrameBudgetFallback::uploadConfig(
+            0,
+            0.0,
+            false,
+            false,
+            1);
+    FrameResourceBudget uploadBudget;
+    uploadBudget.beginFrame(1, uploadConfig);
+    check(uploadConfig.maxMainThreadFinalizesPerFrame ==
+              std::numeric_limits<uint32_t>::max() &&
+              uploadBudget.tryFinalize(
+                  FrameResourceLane::TerrainFinalize,
+                  FrameResourcePriority::Normal) &&
+              uploadBudget.tryFinalize(
+                  FrameResourceLane::ContentFinalize,
+                  FrameResourcePriority::Normal),
+          "TileFrameBudgetFallback: disabled worker loads do not block existing main-thread uploads");
+}
+
 void testTilesetFrameResourceBudgetUsesProviderTransportLane() {
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 20;
@@ -30400,6 +30432,7 @@ int main() {
     testTileResourceDirtyInvalidatesRevisionAndCacheOnly();
     testTilesetFrameResourceBudgetLimitsWorkerRequests();
     testTileFrameResourceBudgetPlannerAlignsRasterBudgetWithTransportLane();
+    testTileFrameBudgetFallbackKeepsUploadsAliveWhenWorkerLoadsDisabled();
     testTilesetFrameResourceBudgetUsesProviderTransportLane();
     testTilesetLoadDiagnosticsExposeTerrainProviderRequestDiagnostics();
     testTilesetLoadDiagnosticsExposeRasterProviderRequestDiagnostics();

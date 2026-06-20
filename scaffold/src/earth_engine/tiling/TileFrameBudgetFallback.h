@@ -4,6 +4,7 @@
 #include "../core/resources/FrameResourceBudget.h"
 
 #include <cstdint>
+#include <limits>
 
 namespace earth_engine {
 
@@ -29,7 +30,9 @@ struct TileFrameBudgetFallback {
         config.maxMainThreadFinalizesPerFrame =
             resourceSmoothingActive
                 ? smoothedMainThreadUploadLimit
-                : maximumSimultaneousTileLoads;
+                : maximumSimultaneousTileLoads == 0
+                    ? std::numeric_limits<uint32_t>::max()
+                    : maximumSimultaneousTileLoads;
         config.mainThreadTimeMs = mainThreadLoadingTimeLimit;
         config.interactionActive = interactionActive;
         config.smoothingActive = resourceSmoothingActive;
