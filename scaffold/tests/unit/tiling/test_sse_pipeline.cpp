@@ -1019,6 +1019,62 @@ std::vector<uint8_t> makeLargeUint16QuantizedMeshBytesWithSkirts() {
     return bytes;
 }
 
+std::vector<uint8_t> makeBoundaryUint16QuantizedMeshBytes(
+    const std::string& metadataJson = "") {
+    constexpr uint32_t vertexCount = 65536u;
+    constexpr uint16_t highEdgeIndex = 65535u;
+
+    std::vector<uint8_t> bytes;
+    appendPod<double>(bytes, 1.0); appendPod<double>(bytes, 2.0); appendPod<double>(bytes, 3.0);
+    appendPod<float>(bytes, 0.0f); appendPod<float>(bytes, 100.0f);
+    appendPod<double>(bytes, 1.0); appendPod<double>(bytes, 2.0); appendPod<double>(bytes, 3.0);
+    appendPod<double>(bytes, 4.0);
+    appendPod<double>(bytes, 0.0); appendPod<double>(bytes, 0.0); appendPod<double>(bytes, 0.0);
+    appendPod<uint32_t>(bytes, vertexCount);
+
+    appendPod<uint16_t>(bytes, zigZagEncode16(0));
+    appendPod<uint16_t>(bytes, zigZagEncode16(32767));
+    appendPod<uint16_t>(bytes, zigZagEncode16(-32767));
+    for (uint32_t i = 3; i < vertexCount; ++i) {
+        appendPod<uint16_t>(bytes, zigZagEncode16(0));
+    }
+    appendPod<uint16_t>(bytes, zigZagEncode16(0));
+    appendPod<uint16_t>(bytes, zigZagEncode16(0));
+    appendPod<uint16_t>(bytes, zigZagEncode16(32767));
+    for (uint32_t i = 3; i < vertexCount; ++i) {
+        appendPod<uint16_t>(bytes, zigZagEncode16(0));
+    }
+    for (uint32_t i = 0; i < vertexCount; ++i) {
+        appendPod<uint16_t>(bytes, zigZagEncode16(0));
+    }
+
+    appendPod<uint32_t>(bytes, 1);
+    appendPod<uint16_t>(bytes, 0);
+    appendPod<uint16_t>(bytes, 0);
+    appendPod<uint16_t>(bytes, 0);
+
+    auto appendEdge = [&](uint16_t a, uint16_t b) {
+        appendPod<uint32_t>(bytes, 2u);
+        appendPod<uint16_t>(bytes, a);
+        appendPod<uint16_t>(bytes, b);
+    };
+    appendEdge(0, 2);
+    appendEdge(2, highEdgeIndex);
+    appendEdge(1, highEdgeIndex);
+    appendEdge(0, 1);
+
+    if (!metadataJson.empty()) {
+        appendPod<uint8_t>(bytes, 4);
+        appendPod<uint32_t>(
+            bytes,
+            static_cast<uint32_t>(sizeof(uint32_t) + metadataJson.size()));
+        appendPod<uint32_t>(bytes, static_cast<uint32_t>(metadataJson.size()));
+        bytes.insert(bytes.end(), metadataJson.begin(), metadataJson.end());
+    }
+
+    return bytes;
+}
+
 std::vector<uint8_t> makeQuantizedMeshBytesWithHeaderPadding(
     const std::string& metadataJson) {
     std::vector<uint8_t> bytes = makeQuantizedMeshBytes(metadataJson);
@@ -5189,6 +5245,36 @@ void testQuantizedMeshMetadataOnlyParsesUint32IndexPadding() {
     check(metadataOnly.size() == 1 &&
               metadataOnly[0] == std::array<int, 5>{0, 0, 0, 1, 1},
           "QuantizedMeshParser: metadata-only path accepts uint32 index padding like cesium-native");
+}
+
+void testQuantizedMeshVertexCount65536UsesUint16Indices() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::string metadata = R"json({
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+    const std::vector<uint8_t> bytes =
+        makeBoundaryUint16QuantizedMeshBytes(metadata);
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            scheme->tileToRectangle(rootKey));
+
+    check(mesh != nullptr,
+          "QuantizedMeshParser: vertexCount 65536 still uses uint16 source indices like cesium-native");
+    check(mesh && std::find(mesh->indices.begin(), mesh->indices.end(), 65535u) !=
+                      mesh->indices.end(),
+          "QuantizedMeshParser: uint16 boundary edge index 65535 is preserved");
+
+    const std::vector<std::array<int, 5>> metadataOnly =
+        QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
+    check(metadataOnly.size() == 1 &&
+              metadataOnly[0] == std::array<int, 5>{0, 0, 0, 1, 0},
+          "QuantizedMeshParser: metadata-only path does not require uint32 padding at vertexCount 65536");
 }
 
 void testQuantizedMeshRejectsMissingUint32IndexPadding() {
@@ -23714,6 +23800,7 @@ int main() {
     testQuantizedMeshParsesUint32IndicesAndEdges();
     testQuantizedMeshRasterizerParsesUint32IndexPadding();
     testQuantizedMeshMetadataOnlyParsesUint32IndexPadding();
+    testQuantizedMeshVertexCount65536UsesUint16Indices();
     testQuantizedMeshRejectsMissingUint32IndexPadding();
     testQuantizedMeshRasterizerRejectsMissingUint32IndexPadding();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
