@@ -108,6 +108,16 @@ TEST(CullingVolumeTest, PerspectiveFieldOfViewDoesNotCrashAtOrigin) {
         glm::half_pi<double>()));
 }
 
+TEST(CullingVolumeTest, DefaultPlanesMatchCesiumNative) {
+    const CullingVolume volume;
+    const Plane defaultPlane(Vec3::unitZ(), 0.0);
+
+    EXPECT_TRUE(planeNear(volume.leftPlane, defaultPlane, 0.0));
+    EXPECT_TRUE(planeNear(volume.rightPlane, defaultPlane, 0.0));
+    EXPECT_TRUE(planeNear(volume.topPlane, defaultPlane, 0.0));
+    EXPECT_TRUE(planeNear(volume.bottomPlane, defaultPlane, 0.0));
+}
+
 TEST(CullingVolumeTest, FieldOfViewAndClipMatrixConstructorsMatchCesiumNative) {
     const Vec3 position(1e5, 1e5, 1e5);
     const Vec3 direction(0.0, 0.0, 1.0);
