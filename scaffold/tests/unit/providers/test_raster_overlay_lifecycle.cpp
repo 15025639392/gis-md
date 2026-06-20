@@ -486,6 +486,52 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceTilesAreCachedLikeCesiumNative) 
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, eastTile->getState());
 }
 
+TEST(RasterOverlayLifecycleTest, RectangleSourceCacheHonorsSubTileCacheByteBudget) {
+    auto ownedImagery = std::make_unique<ParentFallbackImageryProvider>();
+    ParentFallbackImageryProvider* imagery = ownedImagery.get();
+    RasterOverlay::Options options;
+    options.subTileCacheBytes = 0;
+    RasterOverlay overlay(
+        std::move(ownedImagery),
+        TileScheme::createXYZWebMercator(),
+        options);
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(
+        overlay.getProvider(),
+        overlay.getTileScheme(),
+        std::move(uploader));
+    provider.setOwner(&overlay);
+
+    auto* scheme = &overlay.getTileScheme();
+    const TileKey sourceKey{scheme->id(), 3, 2, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+    const Rectangle eastHalf(
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.south(),
+        sourceBounds.east(),
+        sourceBounds.north());
+
+    auto westTile = provider.getTile(westHalf, 256.0, 512.0);
+    ASSERT_NE(nullptr, westTile);
+    ASSERT_TRUE(provider.loadTile(*westTile));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(1, static_cast<int>(imagery->requestedKeys.size()));
+
+    auto eastTile = provider.getTile(eastHalf, 256.0, 512.0);
+    ASSERT_NE(nullptr, eastTile);
+    ASSERT_TRUE(provider.loadTile(*eastTile));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+
+    EXPECT_EQ(2, static_cast<int>(imagery->requestedKeys.size()));
+    EXPECT_EQ(sourceKey, imagery->requestedKeys[0]);
+    EXPECT_EQ(sourceKey, imagery->requestedKeys[1]);
+}
+
 TEST(RasterOverlayLifecycleTest, RectangleSourceFallbacksAreCachedByRequestedTileLikeCesiumNative) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

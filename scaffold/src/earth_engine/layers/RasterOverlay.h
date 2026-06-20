@@ -2,6 +2,7 @@
 
 #include <string>
 #include <memory>
+#include <cstdint>
 
 #include "../core/math/Rectangle.h"
 
@@ -44,6 +45,9 @@ public:
 
         /// Maximum screen space error for LOD selection.
         double maximumScreenSpaceError = 2.0;
+
+        /// Maximum bytes used to cache source sub-tiles for rectangle mapping.
+        int64_t subTileCacheBytes = 16 * 1024 * 1024;
 
         /// Maximum raster overlay texture size in either direction.
         int maximumTextureSize = 2048;

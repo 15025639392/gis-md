@@ -12,6 +12,7 @@
 #include <memory>
 #include <vector>
 #include <string>
+#include <utility>
 #include <unordered_map>
 #include <unordered_set>
 #include <deque>
@@ -19,6 +20,7 @@
 #include <functional>
 #include <chrono>
 #include <atomic>
+#include <cstdint>
 
 namespace earth_engine {
 
@@ -153,6 +155,8 @@ public:
     void setMaximumTextureSize(int maximumTextureSize) {
         maximumTextureSize_ = maximumTextureSize > 0 ? maximumTextureSize : 2048;
     }
+    int64_t getSubTileCacheBytes() const { return subTileCacheBytes_; }
+    void setSubTileCacheBytes(int64_t subTileCacheBytes);
     int getMinimumLevel() const;
     int getMaximumLevel() const;
     void setLevelRange(int minimumLevel, int maximumLevel) {
@@ -239,9 +243,15 @@ private:
         Rectangle bounds;
         std::shared_ptr<const DecodedImage> image;
         bool ancestorFallback = false;
+        int64_t sizeBytes = 0;
+        uint64_t generation = 0;
     };
     std::unordered_map<std::string, CachedRectangleSource>
         rectangleSourceCache_;
+    std::deque<std::pair<std::string, uint64_t>> rectangleSourceCacheLru_;
+    int64_t rectangleSourceCacheBytes_ = 0;
+    int64_t subTileCacheBytes_ = 16 * 1024 * 1024;
+    uint64_t rectangleSourceCacheGeneration_ = 0;
 
     /// Tiles currently in-flight (requested but not yet responded).
     std::unordered_set<std::string> inFlightRequests_;

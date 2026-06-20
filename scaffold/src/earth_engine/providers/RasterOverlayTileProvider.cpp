@@ -251,6 +251,11 @@ std::unique_ptr<DecodedImage> cloneDecodedImage(const DecodedImage& image) {
     return clone;
 }
 
+int64_t decodedImageSizeBytes(const DecodedImage& image) {
+    return static_cast<int64_t>(sizeof(DecodedImage)) +
+           static_cast<int64_t>(image.pixels.size());
+}
+
 double webMercatorY(double latRad) {
     const double lat = std::clamp(
         latRad, -kMaxWebMercatorLat, kMaxWebMercatorLat);
@@ -664,6 +669,10 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
                            const TileScheme& tileScheme,
                            std::unordered_map<std::string,
                                               CachedRectangleSource>& sourceCache,
+                           std::deque<std::pair<std::string, uint64_t>>& sourceCacheLru,
+                           int64_t& sourceCacheBytes,
+                           uint64_t& sourceCacheGeneration,
+                           int64_t sourceCacheBudgetBytes,
                            std::mutex& sourceCacheMutex,
                            RectangleSourcePlan plan,
                            Rectangle bounds,
@@ -675,6 +684,10 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
         : provider(imageryProvider)
         , scheme(tileScheme)
         , cache(sourceCache)
+        , cacheLru(sourceCacheLru)
+        , cacheBytes(sourceCacheBytes)
+        , cacheGeneration(sourceCacheGeneration)
+        , cacheBudgetBytes(sourceCacheBudgetBytes)
         , cacheMutex(sourceCacheMutex)
         , sourcePlan(std::move(plan))
         , targetBounds(bounds)
@@ -739,6 +752,7 @@ private:
             std::lock_guard<std::mutex> lock(cacheMutex);
             auto it = cache.find(sourceCacheKey(originalKey));
             if (it != cache.end() && it->second.image) {
+                touchCachedSource(sourceCacheKey(originalKey), it->second);
                 LoadedSourceImage source;
                 source.key = it->second.key;
                 source.bounds = it->second.bounds;
@@ -805,13 +819,51 @@ private:
     void cacheSource(const TileKey& requestedKey,
                      const LoadedSourceImage& source) {
         if (!source.image) return;
+        if (cacheBudgetBytes <= 0) {
+            std::lock_guard<std::mutex> lock(cacheMutex);
+            cache.clear();
+            cacheLru.clear();
+            cacheBytes = 0;
+            return;
+        }
         CachedRectangleSource cached;
         cached.key = source.key;
         cached.bounds = source.bounds;
         cached.image = std::make_shared<DecodedImage>(*source.image);
         cached.ancestorFallback = source.ancestorFallback;
+        cached.sizeBytes = decodedImageSizeBytes(*source.image);
         std::lock_guard<std::mutex> lock(cacheMutex);
-        cache[sourceCacheKey(requestedKey)] = std::move(cached);
+        const std::string key = sourceCacheKey(requestedKey);
+        auto existing = cache.find(key);
+        if (existing != cache.end()) {
+            cacheBytes -= existing->second.sizeBytes;
+        }
+        cached.generation = ++cacheGeneration;
+        cacheBytes += cached.sizeBytes;
+        cacheLru.emplace_back(key, cached.generation);
+        cache[key] = std::move(cached);
+        pruneCacheToBudget();
+    }
+
+    void touchCachedSource(const std::string& key, CachedRectangleSource& source) {
+        source.generation = ++cacheGeneration;
+        cacheLru.emplace_back(key, source.generation);
+    }
+
+    void pruneCacheToBudget() {
+        while (cacheBytes > cacheBudgetBytes && !cacheLru.empty()) {
+            auto [key, generation] = cacheLru.front();
+            cacheLru.pop_front();
+            auto it = cache.find(key);
+            if (it == cache.end() || it->second.generation != generation) {
+                continue;
+            }
+            cacheBytes -= it->second.sizeBytes;
+            cache.erase(it);
+        }
+        if (cacheBytes < 0) {
+            cacheBytes = 0;
+        }
     }
 
     void finishOneSource(LoadedSourceImage&& source) {
@@ -852,6 +904,10 @@ private:
     ImageryProvider& provider;
     const TileScheme& scheme;
     std::unordered_map<std::string, CachedRectangleSource>& cache;
+    std::deque<std::pair<std::string, uint64_t>>& cacheLru;
+    int64_t& cacheBytes;
+    uint64_t& cacheGeneration;
+    int64_t cacheBudgetBytes = 0;
     std::mutex& cacheMutex;
     RectangleSourcePlan sourcePlan;
     Rectangle targetBounds;
@@ -913,8 +969,33 @@ void RasterOverlayTileProvider::setOwner(RasterOverlay* owner) {
     if (owner_) {
         coverageRectangle_ = owner_->getOptions().coverageRectangle;
         setMaximumTextureSize(owner_->getOptions().maximumTextureSize);
+        setSubTileCacheBytes(owner_->getOptions().subTileCacheBytes);
         setLevelRange(owner_->getOptions().minimumZoom,
                       owner_->getOptions().maximumZoom);
+    }
+}
+
+void RasterOverlayTileProvider::setSubTileCacheBytes(int64_t subTileCacheBytes) {
+    std::lock_guard<std::mutex> lock(pendingMutex_);
+    subTileCacheBytes_ = std::max<int64_t>(0, subTileCacheBytes);
+    while (rectangleSourceCacheBytes_ > subTileCacheBytes_ &&
+           !rectangleSourceCacheLru_.empty()) {
+        auto [key, generation] = rectangleSourceCacheLru_.front();
+        rectangleSourceCacheLru_.pop_front();
+        auto it = rectangleSourceCache_.find(key);
+        if (it == rectangleSourceCache_.end() ||
+            it->second.generation != generation) {
+            continue;
+        }
+        rectangleSourceCacheBytes_ -= it->second.sizeBytes;
+        rectangleSourceCache_.erase(it);
+    }
+    if (subTileCacheBytes_ == 0 || rectangleSourceCacheBytes_ < 0) {
+        if (subTileCacheBytes_ == 0) {
+            rectangleSourceCache_.clear();
+            rectangleSourceCacheLru_.clear();
+        }
+        rectangleSourceCacheBytes_ = 0;
     }
 }
 
@@ -1251,6 +1332,10 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
         provider_,
         scheme_,
         rectangleSourceCache_,
+        rectangleSourceCacheLru_,
+        rectangleSourceCacheBytes_,
+        rectangleSourceCacheGeneration_,
+        subTileCacheBytes_,
         pendingMutex_,
         sourcePlan,
         targetBounds,

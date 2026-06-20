@@ -19,6 +19,9 @@ RasterOverlay::RasterOverlay(std::unique_ptr<ImageryProvider> provider,
     if (options_.maximumScreenSpaceError <= 0.0) {
         options_.maximumScreenSpaceError = 2.0;
     }
+    if (options_.subTileCacheBytes < 0) {
+        options_.subTileCacheBytes = 0;
+    }
     if (options_.maximumTextureSize <= 0) {
         options_.maximumTextureSize = 2048;
     }
