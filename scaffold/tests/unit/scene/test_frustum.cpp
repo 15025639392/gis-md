@@ -58,6 +58,12 @@ TEST(FrustumTest, PlanesAreNormalized) {
     }
 }
 
+TEST(FrustumTest, CullingResultValuesMatchCesiumNative) {
+    EXPECT_EQ(-1, static_cast<int>(CullingResult::Outside));
+    EXPECT_EQ(0, static_cast<int>(CullingResult::Intersecting));
+    EXPECT_EQ(1, static_cast<int>(CullingResult::Inside));
+}
+
 TEST(FrustumTest, ExtractedPlanesMatchCesiumNativeCullingVolumeGolden) {
     // Ported from the behavior covered by cesium-native
     // CesiumGeometry/test/TestCullingVolume.cpp. For a camera at (0,0,10)
