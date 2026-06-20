@@ -22162,6 +22162,19 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
 
     snapshot = TileLoadRequestSnapshot{};
     snapshot.hasTile = true;
+    snapshot.loadState = TileLoadState::Unloaded;
+    snapshot.terrainProviderSupportsTile = true;
+    check(TileLoadRequestPlanner::classify(snapshot) ==
+              TileLoadRequestKind::Terrain,
+          "TileLoadRequestPlanner: unloaded terrain tile remains requestable");
+
+    snapshot.contentProviderSupportsTile = true;
+    check(TileLoadRequestPlanner::classify(snapshot) ==
+              TileLoadRequestKind::Content,
+          "TileLoadRequestPlanner: unloaded content tile remains requestable");
+
+    snapshot = TileLoadRequestSnapshot{};
+    snapshot.hasTile = true;
     snapshot.upsampledFromParent = true;
     snapshot.loadState = TileLoadState::FailedTemporarily;
     check(TileLoadRequestPlanner::classify(snapshot) ==
