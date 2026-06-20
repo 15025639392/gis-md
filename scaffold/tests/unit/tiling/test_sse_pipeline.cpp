@@ -4612,6 +4612,28 @@ void testQuantizedMeshMetadataOnlySkipsUnknownExtensions() {
           "QuantizedMeshParser: metadata-only path skips unknown extensions before later metadata like cesium-native");
 }
 
+void testQuantizedMeshMetadataOnlySkipsWaterMaskExtensions() {
+    const std::string metadata = R"json({
+      "available": [
+        [{"startX":1,"startY":0,"endX":1,"endY":1}]
+      ]
+    })json";
+    std::vector<uint8_t> bytes = makeQuantizedMeshBytesWithWaterMask({255});
+    appendPod<uint8_t>(bytes, 4);
+    appendPod<uint32_t>(
+        bytes,
+        static_cast<uint32_t>(sizeof(uint32_t) + metadata.size()));
+    appendPod<uint32_t>(bytes, static_cast<uint32_t>(metadata.size()));
+    bytes.insert(bytes.end(), metadata.begin(), metadata.end());
+
+    const std::vector<std::array<int, 5>> metadataOnly =
+        QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
+
+    check(metadataOnly.size() == 1 &&
+              metadataOnly[0] == std::array<int, 5>{0, 1, 0, 1, 1},
+          "QuantizedMeshParser: metadata-only path skips water-mask extensions before later metadata like cesium-native");
+}
+
 void testQuantizedMeshShortOctNormalUsesRemainingBytesLikeCesiumNative() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -23471,6 +23493,7 @@ int main() {
     testQuantizedMeshMetadataSkipsNonObjectRangesAfterAdvancingLevel();
     testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding();
     testQuantizedMeshMetadataOnlySkipsUnknownExtensions();
+    testQuantizedMeshMetadataOnlySkipsWaterMaskExtensions();
     testQuantizedMeshShortOctNormalUsesRemainingBytesLikeCesiumNative();
     testQuantizedMeshMalformedMetadataStopsExtensionParsing();
     testQuantizedMeshMetadataParsesBeforeOversizedExtensionSkip();
