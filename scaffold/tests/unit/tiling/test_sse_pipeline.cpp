@@ -14864,6 +14864,18 @@ void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {
     check(!plan.visitChildren,
           "TileSelectionPreTraversalPolicy: non-refinable tile does not visit children");
 
+    refineFlow.ancestorMeetsSse = true;
+    plan = TileSelectionPreTraversalPolicy::plan(
+        TileSelectionPreTraversalInput{
+            false,
+            TileRefine::Replace,
+            refineFlow});
+    check(plan.finishAsSingleTile &&
+              plan.finishReason ==
+                  TileSelectionPreTraversalFinishReason::CannotRefine &&
+              plan.singleTileShouldQueueLoad,
+          "TileSelectionPreTraversalPolicy: leaf load eligibility ignores ancestor-meets-SSE like cesium-native");
+
     refineFlow = TileSelectionRefineFlowResult{};
     refineFlow.refine = false;
     refineFlow.ancestorMeetsSse = true;
