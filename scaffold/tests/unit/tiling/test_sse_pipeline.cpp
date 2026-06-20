@@ -22714,7 +22714,7 @@ void testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending() {
           "TileLoadRequestDispatcher: skipped upsampled terrain leaves existing pending work intact");
 }
 
-void testTileLoadRequestDispatcherBlocksUpsampledTerrainWhenBudgetExhausted() {
+void testTileLoadRequestDispatcherQueuesUpsampledTerrainWhenNetworkBudgetExhausted() {
     std::mutex mutex;
     TilePendingRequestState requestState;
     TilePendingLoadQueue pendingLoads;
@@ -22735,12 +22735,12 @@ void testTileLoadRequestDispatcherBlocksUpsampledTerrainWhenBudgetExhausted() {
             TileLoadPriorityGroup::Urgent,
             100.0);
 
-    check(result == TileLoadDispatchResult::Blocked,
-          "TileLoadRequestDispatcher: exhausted budget blocks upsampled terrain enqueue");
+    check(result == TileLoadDispatchResult::Issued,
+          "TileLoadRequestDispatcher: exhausted network budget does not block local upsampled terrain enqueue");
     check(requestState.empty() &&
-              !pendingLoads.hasWork() &&
+              pendingLoads.terrainUploadCount() == 1 &&
               budget.networkRequestsIssued() == 0,
-          "TileLoadRequestDispatcher: blocked upsampled terrain has no pending state side effects");
+          "TileLoadRequestDispatcher: local upsampled terrain queues upload without issuing a network request");
 }
 
 void testTileLoadRequestDispatcherPassesNetworkPriority() {
@@ -30372,7 +30372,7 @@ int main() {
     testTileLoadRequestDispatcherSkipsPendingUploadKeys();
     testTileLoadRequestDispatcherSkipsClaimedUploadKeys();
     testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending();
-    testTileLoadRequestDispatcherBlocksUpsampledTerrainWhenBudgetExhausted();
+    testTileLoadRequestDispatcherQueuesUpsampledTerrainWhenNetworkBudgetExhausted();
     testTileLoadRequestDispatcherPassesNetworkPriority();
     testTileLoadRequestPlannerClassifiesRequestKinds();
     testTileLoadSchedulerBlocksContentRequestWhenInflightIsFull();

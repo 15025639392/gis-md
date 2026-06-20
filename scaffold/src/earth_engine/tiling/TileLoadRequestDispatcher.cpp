@@ -1,7 +1,5 @@
 #include "TileLoadRequestDispatcher.h"
 
-#include "TileLoadPriorityPolicy.h"
-
 namespace earth_engine {
 
 TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledTerrain(
@@ -24,10 +22,7 @@ TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledTerrain(
         pendingLoads.containsCacheKey(cacheKey)) {
         return TileLoadDispatchResult::Skipped;
     }
-    if (!budget.tryIssue(FrameResourceLane::TerrainRequest,
-                         TileLoadPriorityPolicy::toFramePriority(group))) {
-        return TileLoadDispatchResult::Blocked;
-    }
+    (void)budget;
     pendingLoads.addTerrainUpload(
         PendingTerrainUpload{key, cacheKey, group, priority, nullptr});
     return TileLoadDispatchResult::Issued;
