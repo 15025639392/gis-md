@@ -588,8 +588,6 @@ bool QuantizedMeshTerrainProvider::configureFromLayerJson(
                 jsonStringOrDefault(j, "projection", "EPSG:4326")).empty()) {
             return false;
         }
-        if (j.value("scheme", "tms") != "tms") return false;
-
         layers_.clear();
         if (!appendLayerFromJson(j, layerJsonUrl)) {
             restorePreviousState();
@@ -715,7 +713,6 @@ bool QuantizedMeshTerrainProvider::appendParentLayers(
                 jsonStringOrDefault(parent, "projection", "EPSG:4326")).empty()) {
             return false;
         }
-        if (parent.value("scheme", "tms") != "tms") return false;
         if (!appendLayerFromJson(parent, resolvedUrl)) {
             return false;
         }
