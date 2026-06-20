@@ -19904,6 +19904,39 @@ void testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback() {
         bool callbackSawIssued = false;
     };
 
+    class SyncSuccessfulTerrainProvider final : public TerrainProvider {
+    public:
+        explicit SyncSuccessfulTerrainProvider(bool& issuedBeforeCallback)
+            : issuedBeforeCallback_(issuedBeforeCallback) {}
+
+        std::string id() const override { return "dispatcher-terrain-success"; }
+        std::string schemeId() const override { return "test"; }
+        int minZoom() const override { return 0; }
+        int maxZoom() const override { return 1; }
+        int tileSize() const override { return 2; }
+        std::string buildUrl(const TileKey&) const override {
+            return "memory://dispatcher-terrain-success";
+        }
+        void requestTile(const TileKey& key,
+                         CancellationToken,
+                         HeightmapCallback callback,
+                         HttpRequestPriority = HttpRequestPriority::Normal) override {
+            callbackSawIssued = issuedBeforeCallback_;
+            auto heightmap = std::make_unique<DecodedHeightmap>();
+            heightmap->tileSize = 2;
+            heightmap->heights = {0.0f, 0.0f, 0.0f, 0.0f};
+            callback(key, TerrainTileLoadResult::success(std::move(heightmap)));
+        }
+        std::unique_ptr<DecodedHeightmap> decodeTile(
+            const uint8_t*,
+            size_t) override {
+            return nullptr;
+        }
+
+        bool& issuedBeforeCallback_;
+        bool callbackSawIssued = false;
+    };
+
     std::mutex mutex;
     std::condition_variable condition;
     TilePendingRequestState requestState;
@@ -19963,6 +19996,34 @@ void testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback() {
               terrainRequestState.empty() &&
               terrainPendingLoads.terrainTerminalResultCount() == 1,
           "TileLoadRequestDispatcher: synchronous terrain callback runs after issued side effects");
+
+    TilePendingRequestState uploadRequestState;
+    TilePendingLoadQueue uploadPendingLoads;
+    FrameResourceBudget uploadBudget;
+    uploadBudget.beginFrame(1, config);
+    bool uploadIssued = false;
+    SyncSuccessfulTerrainProvider uploadProvider(uploadIssued);
+
+    const TileLoadDispatchResult uploadResult =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            uploadRequestState,
+            uploadPendingLoads,
+            uploadBudget,
+            uploadProvider,
+            key,
+            "terrain-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&uploadIssued]() { uploadIssued = true; });
+
+    check(uploadResult == TileLoadDispatchResult::Issued &&
+              uploadProvider.callbackSawIssued &&
+              uploadRequestState.empty() &&
+              uploadPendingLoads.terrainUploadCount() == 1 &&
+              uploadPendingLoads.terrainTerminalResultCount() == 0,
+          "TileLoadRequestDispatcher: synchronous successful terrain callback queues upload work");
 }
 
 void testTileLoadRequestDispatcherDropsCancelledCallbacks() {
