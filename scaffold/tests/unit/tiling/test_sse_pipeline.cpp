@@ -20444,6 +20444,119 @@ void testTileLoadRequestDispatcherSkipsPendingTerminalResultKeys() {
           "TileLoadRequestDispatcher: pending content terminal result suppresses duplicate request");
 }
 
+void testTileLoadRequestDispatcherSkipsPendingUploadKeys() {
+    class CountingTerrainProvider final : public TerrainProvider {
+    public:
+        std::string id() const override { return "dispatcher-upload-terrain"; }
+        std::string schemeId() const override { return "test"; }
+        int minZoom() const override { return 0; }
+        int maxZoom() const override { return 1; }
+        int tileSize() const override { return 2; }
+        std::string buildUrl(const TileKey&) const override {
+            return "memory://dispatcher-upload-terrain";
+        }
+        void requestTile(const TileKey&,
+                         CancellationToken,
+                         HeightmapCallback,
+                         HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+        }
+        std::unique_ptr<DecodedHeightmap> decodeTile(
+            const uint8_t*,
+            size_t) override {
+            return nullptr;
+        }
+        int requestCount = 0;
+    };
+
+    class CountingContentProvider final : public TilesetContentProvider {
+    public:
+        std::string id() const override { return "dispatcher-upload-content"; }
+        bool supportsTile(const TileKey&) const override { return true; }
+        void requestTileContent(const TileKey&,
+                                CancellationToken,
+                                ContentCallback,
+                                HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+        }
+        TileContentLoadResult decodeContent(
+            const uint8_t*,
+            size_t) override {
+            return TileContentLoadResult::failed();
+        }
+        int requestCount = 0;
+    };
+
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        pendingLoads.addTerrainUpload(PendingTerrainUpload{
+            key,
+            "terrain-upload-pending",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            nullptr});
+        pendingLoads.addContentUpload(PendingContentUpload{
+            key,
+            "content-upload-pending",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileContentLoadResult::render(std::make_unique<GltfModel>())});
+    }
+
+    bool issued = false;
+    CountingTerrainProvider terrainProvider;
+    const TileLoadDispatchResult terrainResult =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            terrainProvider,
+            key,
+            "terrain-upload-pending",
+            TileLoadPriorityGroup::Urgent,
+            100.0,
+            [&issued]() { issued = true; });
+
+    CountingContentProvider contentProvider;
+    const TileLoadDispatchResult contentResult =
+        TileLoadRequestDispatcher::requestContent(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            contentProvider,
+            key,
+            "content-upload-pending",
+            TileLoadPriorityGroup::Urgent,
+            100.0,
+            [&issued]() { issued = true; });
+
+    check(terrainResult == TileLoadDispatchResult::Skipped &&
+              contentResult == TileLoadDispatchResult::Skipped,
+          "TileLoadRequestDispatcher: pending uploads suppress duplicate requests");
+    check(!issued &&
+              terrainProvider.requestCount == 0 &&
+              contentProvider.requestCount == 0 &&
+              requestState.empty() &&
+              pendingLoads.terrainUploadCount() == 1 &&
+              pendingLoads.contentUploadCount() == 1 &&
+              budget.networkRequestsIssued() == 0,
+          "TileLoadRequestDispatcher: pending upload skip has no request or budget side effects");
+}
+
 void testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending() {
     std::mutex mutex;
     TilePendingRequestState requestState;
@@ -27287,6 +27400,7 @@ int main() {
     testTileLoadRequestDispatcherDropsCancelledCallbacks();
     testTileLoadRequestDispatcherRejectsRequestsDuringDestroy();
     testTileLoadRequestDispatcherSkipsPendingTerminalResultKeys();
+    testTileLoadRequestDispatcherSkipsPendingUploadKeys();
     testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending();
     testTileLoadRequestDispatcherBlocksUpsampledTerrainWhenBudgetExhausted();
     testTileLoadRequestDispatcherPassesNetworkPriority();
