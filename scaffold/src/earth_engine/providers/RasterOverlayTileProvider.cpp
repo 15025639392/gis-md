@@ -78,14 +78,19 @@ bool uploadAllowedDuringInteraction(
     return pixels <= kInteractionRasterUploadMaxPixels;
 }
 
-int maximumCombinedTextureSize(const RasterTextureUploader* uploader) {
-    if (!uploader) return kMaximumCombinedTextureSizeFallback;
+int maximumCombinedTextureSize(const RasterTextureUploader* uploader,
+                               int configuredMaximumTextureSize) {
+    const int configuredMaxTextureSize =
+        configuredMaximumTextureSize > 0
+            ? configuredMaximumTextureSize
+            : kMaximumCombinedTextureSizeFallback;
+    if (!uploader) return configuredMaxTextureSize;
     const int backendMaxTextureSize = uploader->maxTextureSize();
     if (backendMaxTextureSize <= 0) {
-        return kMaximumCombinedTextureSizeFallback;
+        return configuredMaxTextureSize;
     }
     return std::max(1, std::min(backendMaxTextureSize,
-                                kMaximumCombinedTextureSizeFallback));
+                                configuredMaxTextureSize));
 }
 
 struct TileRange {
@@ -353,6 +358,7 @@ int chooseRectangleSourceZoom(const TileScheme& scheme,
                         double targetScreenPixelsX,
                         double targetScreenPixelsY,
                         double maximumScreenSpaceError,
+                        int maximumTextureSize,
                         TileRange* outRange = nullptr) {
     const int minZoom = std::max(scheme.minZoom(), provider.minZoom());
     const int maxZoom = std::min(scheme.maxZoom(), provider.maxZoom());
@@ -368,7 +374,8 @@ int chooseRectangleSourceZoom(const TileScheme& scheme,
         targetScreenPixelsX,
         targetScreenPixelsY,
         maximumScreenSpaceError);
-    const int maxTextureSize = maximumCombinedTextureSize(uploader);
+    const int maxTextureSize =
+        maximumCombinedTextureSize(uploader, maximumTextureSize);
 
     TileRange range = trimCesiumNativeBoundarySlop(
         scheme, sourceBounds, zoom, computeRange(scheme, sourceBounds, zoom));
@@ -396,7 +403,8 @@ RectangleSourcePlan buildRectangleSourcePlan(
     const Rectangle& sourceBounds,
     double targetScreenPixelsX,
     double targetScreenPixelsY,
-    double maximumScreenSpaceError) {
+    double maximumScreenSpaceError,
+    int maximumTextureSize) {
     RectangleSourcePlan plan;
     plan.sourceZoom = chooseRectangleSourceZoom(
         scheme,
@@ -407,6 +415,7 @@ RectangleSourcePlan buildRectangleSourcePlan(
         targetScreenPixelsX,
         targetScreenPixelsY,
         maximumScreenSpaceError,
+        maximumTextureSize,
         &plan.range);
     plan.sourceKeys.reserve(
         static_cast<size_t>(std::max(0, plan.range.count())));
@@ -780,6 +789,7 @@ void RasterOverlayTileProvider::setOwner(RasterOverlay* owner) {
     owner_ = owner;
     if (owner_) {
         coverageRectangle_ = owner_->getOptions().coverageRectangle;
+        setMaximumTextureSize(owner_->getOptions().maximumTextureSize);
     }
 }
 
@@ -844,7 +854,8 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
         *sourceBounds,
         targetScreenPixelsX,
         targetScreenPixelsY,
-        maximumScreenSpaceError_);
+        maximumScreenSpaceError_,
+        maximumTextureSize_);
 
     const std::string ck = rectangleTileCacheKey(
         scheme_, geometryBounds, sourcePlan.sourceZoom);
@@ -1064,7 +1075,8 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
         *sourceBounds,
         tile.getTargetScreenPixelsX(),
         tile.getTargetScreenPixelsY(),
-        maximumScreenSpaceError_);
+        maximumScreenSpaceError_,
+        maximumTextureSize_);
 
     if (sourcePlan.empty()) {
         logAndroidRasterPipeline("empty-plan", ck, 0, sourcePlan.sourceZoom);
@@ -1089,7 +1101,8 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
 
     auto* self = this;
     const Rectangle targetBounds = tile.getRectangle();
-    const int maxTextureSize = maximumCombinedTextureSize(textureUploader_.get());
+    const int maxTextureSize =
+        maximumCombinedTextureSize(textureUploader_.get(), maximumTextureSize_);
     auto request = std::make_shared<RectangleSourceRequest>(
         provider_,
         scheme_,

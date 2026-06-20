@@ -45,6 +45,9 @@ public:
         /// Maximum screen space error for LOD selection.
         double maximumScreenSpaceError = 2.0;
 
+        /// Maximum raster overlay texture size in either direction.
+        int maximumTextureSize = 2048;
+
         /// Minimum/maximum zoom overrides (0 = use provider defaults).
         int minimumZoom = 0;
         int maximumZoom = 0;

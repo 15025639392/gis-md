@@ -149,6 +149,10 @@ public:
         maximumScreenSpaceError_ =
             maximumScreenSpaceError > 0.0 ? maximumScreenSpaceError : 2.0;
     }
+    int getMaximumTextureSize() const { return maximumTextureSize_; }
+    void setMaximumTextureSize(int maximumTextureSize) {
+        maximumTextureSize_ = maximumTextureSize > 0 ? maximumTextureSize : 2048;
+    }
 
     /// Process completed uploads on the main thread.
     /// Should be called once per frame.
@@ -237,6 +241,7 @@ private:
     /// Used to stamp lastUsedFrame on tiles in getTile().
     uint64_t frameNumber_ = 0;
     double maximumScreenSpaceError_ = 2.0;
+    int maximumTextureSize_ = 2048;
 
 };
 

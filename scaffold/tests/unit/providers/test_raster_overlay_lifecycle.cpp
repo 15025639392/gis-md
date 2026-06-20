@@ -159,7 +159,7 @@ public:
 
 class CountingRasterUploader final : public RasterTextureUploader {
 public:
-    int maxTextureSize() const override { return 2048; }
+    int maxTextureSize() const override { return maxTextureSizeValue; }
 
     std::unique_ptr<Texture> uploadRasterTexture(
         const DecodedImage& image,
@@ -170,6 +170,7 @@ public:
     }
 
     int uploadCount = 0;
+    int maxTextureSizeValue = 2048;
     DecodedImage lastUpload;
 };
 
@@ -253,6 +254,58 @@ TEST(RasterOverlayLifecycleTest, RectangleCoverageRejectsOutsideAndClipsSourcePl
         Rectangle requestedBounds = scheme->tileToRectangle(requested);
         EXPECT_TRUE(requestedBounds.intersects(options.coverageRectangle));
     }
+}
+
+TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayMaximumTextureSize) {
+    ConfigurableImageryProvider imagery;
+    imagery.tileWidthValue = 256;
+    imagery.tileHeightValue = 256;
+    auto scheme = TileScheme::createXYZWebMercator();
+    Rectangle rootBounds =
+        scheme->tileToRectangle(TileKey{scheme->id(), 0, 0, 0});
+
+    auto defaultUploader = std::make_unique<CountingRasterUploader>();
+    defaultUploader->maxTextureSizeValue = 2048;
+    RasterOverlayTileProvider defaultProvider(
+        imagery,
+        *scheme,
+        std::move(defaultUploader));
+    auto defaultTile = defaultProvider.getTile(rootBounds, 131072.0, 131072.0);
+    ASSERT_NE(nullptr, defaultTile);
+    EXPECT_EQ(3, defaultTile->getSourceZoom());
+
+    auto constrainedUploader = std::make_unique<CountingRasterUploader>();
+    constrainedUploader->maxTextureSizeValue = 2048;
+    RasterOverlayTileProvider constrainedProvider(
+        imagery,
+        *scheme,
+        std::move(constrainedUploader));
+    constrainedProvider.setMaximumTextureSize(256);
+    auto constrainedTile =
+        constrainedProvider.getTile(rootBounds, 131072.0, 131072.0);
+    ASSERT_NE(nullptr, constrainedTile);
+    EXPECT_EQ(0, constrainedTile->getSourceZoom());
+
+    auto ownedImagery = std::make_unique<ConfigurableImageryProvider>();
+    ownedImagery->tileWidthValue = 256;
+    ownedImagery->tileHeightValue = 256;
+    RasterOverlay::Options options;
+    options.maximumTextureSize = 256;
+    RasterOverlay overlay(
+        std::move(ownedImagery),
+        TileScheme::createXYZWebMercator(),
+        options);
+    auto ownerUploader = std::make_unique<CountingRasterUploader>();
+    ownerUploader->maxTextureSizeValue = 2048;
+    RasterOverlayTileProvider ownerProvider(
+        overlay.getProvider(),
+        overlay.getTileScheme(),
+        std::move(ownerUploader));
+    ownerProvider.setOwner(&overlay);
+    EXPECT_EQ(256, ownerProvider.getMaximumTextureSize());
+    auto ownerTile = ownerProvider.getTile(rootBounds, 131072.0, 131072.0);
+    ASSERT_NE(nullptr, ownerTile);
+    EXPECT_EQ(0, ownerTile->getSourceZoom());
 }
 
 TEST(RasterOverlayLifecycleTest, RectangleSourceFailureFallsBackToParentTile) {
