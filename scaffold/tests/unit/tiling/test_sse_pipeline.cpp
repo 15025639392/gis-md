@@ -19277,6 +19277,13 @@ void testTileSelectionRefinementPolicyOcclusionGate() {
               true,
               true,
               false,
+              TileSelectionState::Refined,
+              false),
+          "TileSelectionRefinementPolicy: refined tile without refined child checks occlusion like cesium-native");
+    check(TileSelectionRefinementPolicy::shouldCheckOcclusion(
+              true,
+              true,
+              false,
               TileSelectionState::RefinedAndKicked,
               true),
           "TileSelectionRefinementPolicy: kicked refined state checks occlusion like cesium-native");
@@ -19308,6 +19315,12 @@ void testTileSelectionRefinementPolicyOcclusionAction() {
               TileSelectionState::Refined) ==
               TileSelectionOcclusionAction::None,
           "TileSelectionRefinementPolicy: unavailable occlusion keeps previous refinement");
+    check(TileSelectionRefinementPolicy::occlusionAction(
+              TileOcclusionState::OcclusionUnavailable,
+              false,
+              TileSelectionState::Rendered) ==
+              TileSelectionOcclusionAction::None,
+          "TileSelectionRefinementPolicy: disabled occlusion delay keeps refinement");
     check(TileSelectionRefinementPolicy::occlusionAction(
               TileOcclusionState::NotOccluded,
               true,
