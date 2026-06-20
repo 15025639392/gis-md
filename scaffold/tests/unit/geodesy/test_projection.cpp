@@ -409,3 +409,34 @@ TEST(ProjectionTest, ComputeProjectedRectangleSizeUsesMaximumHeightLikeCesiumNat
     EXPECT_NEAR(expectedWidth, size.x, 1e-6);
     EXPECT_GT(size.x, surfaceWidth);
 }
+
+TEST(ProjectionTest, ComputeProjectedRectangleSizeChecksPrimeMeridianWhenProjectedXCrossesZero) {
+    // Source-derived from cesium-native CesiumGeospatial/src/Projection.cpp:
+    // when projected X crosses zero, the Y size is also measured at X=0.
+    // A tri-axial ellipsoid makes this branch observable.
+    const Ellipsoid ellipsoid(3.0, 2.0, 4.0);
+    const GeographicProjection projection(ellipsoid);
+    const double maxHeight = 0.0;
+
+    const Rectangle projected = projectRectangleSimple(
+        projection,
+        Rectangle::fromDegrees(-60.0, 20.0, 60.0, 40.0));
+
+    const glm::dvec2 size = computeProjectedRectangleSize(
+        projection,
+        projected,
+        maxHeight,
+        ellipsoid);
+
+    const double centerMeridianHeight = ellipsoid
+        .cartographicToCartesian(Cartographic::fromDegrees(0.0, 20.0, maxHeight))
+        .distanceTo(ellipsoid.cartographicToCartesian(
+            Cartographic::fromDegrees(0.0, 40.0, maxHeight)));
+    const double edgeMeridianHeight = ellipsoid
+        .cartographicToCartesian(Cartographic::fromDegrees(-60.0, 20.0, maxHeight))
+        .distanceTo(ellipsoid.cartographicToCartesian(
+            Cartographic::fromDegrees(-60.0, 40.0, maxHeight)));
+
+    EXPECT_GT(centerMeridianHeight, edgeMeridianHeight);
+    EXPECT_NEAR(centerMeridianHeight, size.y, 1e-14);
+}
