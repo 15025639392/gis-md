@@ -31,6 +31,14 @@ void expectRectangleNear(const Rectangle& expected,
     EXPECT_NEAR(expected.north(), actual.north(), epsilon);
 }
 
+void expectVec3Near(const Vec3& expected,
+                    const Vec3& actual,
+                    double epsilon) {
+    EXPECT_NEAR(expected.x(), actual.x(), epsilon);
+    EXPECT_NEAR(expected.y(), actual.y(), epsilon);
+    EXPECT_NEAR(expected.z(), actual.z(), epsilon);
+}
+
 } // namespace
 
 TEST(TileBoundingVolumeTest, TransformLeavesRegionUnchangedLikeCesiumNative) {
@@ -170,6 +178,24 @@ TEST(TileBoundingVolumeTest, CenterUsesContainedVolumeKind) {
                 glm::dvec2(0.0, kPi * 0.5)));
     EXPECT_EQ(cylinder.cylinderRegion.getCenter(),
               TileBoundsMetrics::boundingVolumeCenter(cylinder));
+}
+
+TEST(TileBoundingVolumeTest, S2CellCenterUsesCellHeightMidpointLikeCesiumNative) {
+    const S2CellBoundingVolume s2(
+        S2CellID::fromToken("5"),
+        1000.0,
+        2000.0);
+    const TileBoundingVolume volume = TileBoundingVolume::fromS2Cell(s2);
+    const Vec3 expectedCenter = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic::fromRadians(
+            s2.getCellID().getCenter().longitude(),
+            s2.getCellID().getCenter().latitude(),
+            1500.0));
+
+    const Vec3 actualCenter =
+        TileBoundsMetrics::boundingVolumeCenter(volume);
+
+    expectVec3Near(expectedCenter, actualCenter, 1e-7);
 }
 
 TEST(TileBoundingVolumeTest, RegionCenterUsesBoundingRegionObbLikeCesiumNative) {

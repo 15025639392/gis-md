@@ -598,7 +598,7 @@ Vec3 TileBoundsMetrics::boundingVolumeCenter(
         case TileBoundingVolumeKind::CylinderRegion:
             return volume.cylinderRegion.getCenter();
         case TileBoundingVolumeKind::S2Cell:
-            return Vec3::zero();
+            return volume.s2Cell.getCenter();
     }
     return Vec3::zero();
 }
