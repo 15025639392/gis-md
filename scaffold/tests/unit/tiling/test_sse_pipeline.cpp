@@ -26461,6 +26461,98 @@ void testTilesetAdditiveRefinementRendersFailedChildHoleAndSiblings() {
           "Tileset: ADD failed-child selection does not kick descendants");
 }
 
+void testTilesetReplaceRefinementStopsWhenParentMeetsSse() {
+    // Aligns cesium-native "No refinement happen when tile meet SSE": a
+    // REPLACE tile that satisfies SSE renders itself and does not visit or
+    // load its unloaded children.
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::vector<TileKey> childKeys = {
+        {"Geographic-TMS", 1, 0, 0},
+        {"Geographic-TMS", 1, 1, 0},
+        {"Geographic-TMS", 1, 0, 1},
+        {"Geographic-TMS", 1, 1, 1}};
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, childKeys}});
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: replace-parent-meets-SSE root tile is created");
+    if (!root) return;
+
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Empty;
+    root->refine = TileRefine::Replace;
+    root->geometricError = 1.0;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(root->children.size() == childKeys.size(),
+          "Tileset: replace-parent-meets-SSE children are linked");
+    if (root->children.size() != childKeys.size()) return;
+    for (TilesetTile* child : root->children) {
+        if (!child) continue;
+        child->content.loadState = TileLoadState::Unloaded;
+        child->content.contentKind = TileContentKind::Unknown;
+        child->geometricError = 0.0;
+    }
+
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    Camera camera;
+    camera.lookAt(center + center.normalized() * 80000000.0,
+                  center,
+                  Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 145;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const auto& visibleTiles = tileset.tilePlan().visibleTiles;
+    const auto visibleEnd = visibleTiles.end();
+    const bool rootVisible =
+        std::find(visibleTiles.begin(), visibleEnd, rootKey) != visibleEnd;
+    bool anyChildVisible = false;
+    bool anyChildQueued = false;
+    bool anyChildVisited = false;
+    for (const TileKey& childKey : childKeys) {
+        anyChildVisible |=
+            std::find(visibleTiles.begin(), visibleEnd, childKey) != visibleEnd;
+        anyChildQueued |= TilesetTestAccess::loadQueueContainsAny(
+            tileset,
+            childKey);
+        for (const TileSelectionRecord& record :
+             tileset.tilePlan().selectionRecords) {
+            anyChildVisited |= record.key == childKey;
+        }
+    }
+
+    check(rootVisible &&
+              root->selectionFrameState.selectionState ==
+                  TileSelectionState::Rendered,
+          "Tileset: REPLACE parent meeting SSE renders itself");
+    check(!anyChildVisible && !anyChildQueued && !anyChildVisited,
+          "Tileset: REPLACE parent meeting SSE does not visit or load children like cesium-native");
+    check(TilesetTestAccess::loadQueueContainsNormal(tileset, rootKey),
+          "Tileset: REPLACE parent meeting SSE queues only the parent load");
+}
+
 void testTilesetReplaceRefinementRendersChildrenWhenReady() {
     // Aligns cesium-native "Child should be chosen when parent doesn't meet
     // SSE": with REPLACE refinement, loaded renderable children replace their
@@ -31247,6 +31339,7 @@ int main() {
     testTilesetLoadDiagnosticsExposeNativeLifecycleStates();
     testTilesetAdditiveRefinementRendersParentAndChildren();
     testTilesetAdditiveRefinementRendersFailedChildHoleAndSiblings();
+    testTilesetReplaceRefinementStopsWhenParentMeetsSse();
     testTilesetReplaceRefinementRendersChildrenWhenReady();
     testTilesetReplaceRefinementFallsBackToParentWhileChildrenLoad();
     testTilesetReplaceRefinementRendersFailedChildrenAsHoles();
