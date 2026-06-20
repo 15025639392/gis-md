@@ -18879,6 +18879,102 @@ void testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback() {
           "TileLoadRequestDispatcher: synchronous content callback queues terminal result");
 }
 
+void testTileLoadRequestDispatcherDropsCancelledCallbacks() {
+    class DeferredTerrainProvider final : public TerrainProvider {
+    public:
+        std::string id() const override { return "dispatcher-cancel-terrain"; }
+        std::string schemeId() const override { return "test"; }
+        int minZoom() const override { return 0; }
+        int maxZoom() const override { return 1; }
+        int tileSize() const override { return 2; }
+        std::string buildUrl(const TileKey&) const override {
+            return "memory://dispatcher-cancel-terrain";
+        }
+        void requestTile(const TileKey&,
+                         CancellationToken,
+                         HeightmapCallback callback,
+                         HttpRequestPriority = HttpRequestPriority::Normal) override {
+            terrainCallback = std::move(callback);
+        }
+        std::unique_ptr<DecodedHeightmap> decodeTile(
+            const uint8_t*,
+            size_t) override {
+            return nullptr;
+        }
+        HeightmapCallback terrainCallback;
+    };
+
+    class DeferredContentProvider final : public TilesetContentProvider {
+    public:
+        std::string id() const override { return "dispatcher-cancel-content"; }
+        bool supportsTile(const TileKey&) const override { return true; }
+        void requestTileContent(const TileKey&,
+                                CancellationToken,
+                                ContentCallback callback,
+                                HttpRequestPriority = HttpRequestPriority::Normal) override {
+            contentCallback = std::move(callback);
+        }
+        TileContentLoadResult decodeContent(
+            const uint8_t*,
+            size_t) override {
+            return TileContentLoadResult::failed();
+        }
+        ContentCallback contentCallback;
+    };
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+    DeferredTerrainProvider terrainProvider;
+    DeferredContentProvider contentProvider;
+
+    const TileLoadDispatchResult terrainIssued =
+        TileLoadRequestDispatcher::requestTerrain(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            terrainProvider,
+            key,
+            "cancel-terrain",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+    const TileLoadDispatchResult contentIssued =
+        TileLoadRequestDispatcher::requestContent(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            contentProvider,
+            key,
+            "cancel-content",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            []() {});
+
+    check(terrainIssued == TileLoadDispatchResult::Issued &&
+              contentIssued == TileLoadDispatchResult::Issued &&
+              issued,
+          "TileLoadRequestDispatcher: deferred requests are issued before cancellation");
+
+    lifecycle.cancelAndEraseCacheKey("cancel-terrain");
+    lifecycle.cancelAndEraseCacheKey("cancel-content");
+    terrainProvider.terrainCallback(
+        key,
+        TerrainTileLoadResult::success(std::make_unique<DecodedHeightmap>()));
+    contentProvider.contentCallback(key, TileContentLoadResult::empty());
+
+    check(!lifecycle.hasPendingWork(),
+          "TileLoadRequestDispatcher: cancelled callbacks do not enqueue stale pending work");
+}
+
 void testTileLoadRequestDispatcherSkipsPendingTerminalResultKeys() {
     class SyncTerminalTerrainProvider final : public TerrainProvider {
     public:
@@ -25129,6 +25225,7 @@ int main() {
     testTileLoadRequestDispatcherBlocksWhenBudgetIsExhausted();
     testTileLoadRequestDispatcherSkipsEmptyCacheKeys();
     testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback();
+    testTileLoadRequestDispatcherDropsCancelledCallbacks();
     testTileLoadRequestDispatcherSkipsPendingTerminalResultKeys();
     testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending();
     testTileLoadRequestDispatcherPassesNetworkPriority();
