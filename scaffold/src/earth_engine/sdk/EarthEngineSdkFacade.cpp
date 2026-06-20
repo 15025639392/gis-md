@@ -188,6 +188,30 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
                 wmsOptions.tileHeight = overlayConfig.imageryTileHeight;
             }
 
+            const std::string capabilitiesUrl =
+                webMapServiceCapabilitiesUrl(overlayConfig.urlTemplate,
+                                             wmsOptions.version);
+            QuantizedMeshLayerJsonFetcher fetcher(&platformBridge_);
+            const std::vector<uint8_t> bytes =
+                fetcher.fetchBlocking(capabilitiesUrl);
+            if (bytes.empty()) {
+                logError(platformBridge_,
+                         "WMS GetCapabilities load failed: " +
+                             capabilitiesUrl);
+                continue;
+            }
+
+            const WebMapServiceCapabilitiesValidation validation =
+                validateWebMapServiceCapabilities(
+                    std::string(bytes.begin(), bytes.end()),
+                    wmsOptions);
+            if (!validation.valid) {
+                logError(platformBridge_,
+                         "WMS GetCapabilities validation failed: " +
+                             validation.error);
+                continue;
+            }
+
             auto wms = std::make_unique<WebMapServiceImageryProvider>(
                 overlayConfig.urlTemplate,
                 std::move(wmsOptions),
