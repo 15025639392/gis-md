@@ -22137,6 +22137,64 @@ void testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot() {
           "TileLoadScheduler: pending upload key skip happens before snapshot side effects");
 }
 
+void testTileLoadSchedulerSkipsClaimedUploadBeforeSnapshot() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 4;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey key{"test", 1, 0, 0};
+    const std::string cacheKey = testCacheKeyForTile(key);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            nullptr});
+        check(lifecycle.pendingLoads()
+                  .takeHighestPriorityUpload(false, budget)
+                  .has_value(),
+              "TileLoadScheduler: claimed upload test dequeues upload payload");
+    }
+
+    bool planned = false;
+    bool marked = false;
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            testCacheKeyForTile,
+            [&planned](const TileKey&,
+                       const std::string&,
+                       TilesetTile*& tileState) {
+                planned = true;
+                tileState = nullptr;
+                return TileLoadRequestSnapshot{};
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [&marked](const TileKey&) { marked = true; });
+
+    check(outcome.issued == 0 && !outcome.blockedByInflight,
+          "TileLoadScheduler: claimed upload key skips without reporting inflight block");
+    check(!planned &&
+              !marked &&
+              lifecycle.containsWorkForCacheKey(cacheKey) &&
+              lifecycle.hasPendingWork(),
+          "TileLoadScheduler: claimed upload key skip happens before snapshot side effects");
+}
+
 void testTileLoadSchedulerSkipsPendingTerminalBeforeSnapshot() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -28669,6 +28727,7 @@ int main() {
     testTileLoadSchedulerSkipsEmptyUpsampledCacheKey();
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation();
     testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot();
+    testTileLoadSchedulerSkipsClaimedUploadBeforeSnapshot();
     testTileLoadSchedulerSkipsPendingTerminalBeforeSnapshot();
     testTileLoadSchedulerSkipsInflightRequestBeforeSnapshot();
     testTileLoadSchedulerStopsDuringDestroyBeforePlanning();
