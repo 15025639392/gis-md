@@ -14878,6 +14878,16 @@ void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {
     check(!plan.singleTileShouldQueueLoad,
           "TileSelectionPreTraversalPolicy: ancestor-meets-SSE continuation suppresses duplicate normal load");
 
+    refineFlow.ancestorMeetsSse = false;
+    plan = TileSelectionPreTraversalPolicy::plan(
+        TileSelectionPreTraversalInput{
+            true,
+            TileRefine::Replace,
+            refineFlow});
+    check(plan.finishAsSingleTile &&
+              plan.singleTileShouldQueueLoad,
+          "TileSelectionPreTraversalPolicy: tile meeting SSE queues its own normal load");
+
     refineFlow = TileSelectionRefineFlowResult{};
     refineFlow.refine = true;
     refineFlow.queueUrgentLoad = true;
