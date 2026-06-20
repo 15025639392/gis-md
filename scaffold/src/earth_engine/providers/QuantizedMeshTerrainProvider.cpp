@@ -623,7 +623,7 @@ bool QuantizedMeshTerrainProvider::appendLayerFromJson(
     layer.minZoom = 0;
     layer.maxZoom = jsonInt32OrDefault(j, "maxzoom", 30);
     layer.version = jsonStringOrEmpty(j, "version");
-    layer.attribution = j.value("attribution", std::string());
+    layer.attribution = jsonStringOrEmpty(j, "attribution");
     std::vector<std::string> knownExtensions{
         "octvertexnormals",
         "metadata"

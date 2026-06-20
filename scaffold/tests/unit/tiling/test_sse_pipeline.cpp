@@ -3541,6 +3541,25 @@ void testQuantizedMeshLayerJsonAttributionMatchesCesiumNative() {
           "QuantizedMeshTerrainProvider: layer.json attribution is exposed like cesium-native credit");
 }
 
+void testQuantizedMeshLayerJsonNonStringAttributionIgnored() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain",
+        "fallback credit");
+    const std::string layerJson = R"json({
+      "attribution": 1234,
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"]
+    })json";
+
+    check(provider.configureFromLayerJson(
+              layerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: non-string attribution layer configures like cesium-native");
+    check(provider.attribution().empty(),
+          "QuantizedMeshTerrainProvider: non-string attribution is ignored like cesium-native");
+}
+
 void testHeightmapTerrainProviderExposesAttribution() {
     HeightmapTerrainProvider provider(
         "https://example.invalid/{z}/{x}/{y}.png",
@@ -21794,6 +21813,7 @@ int main() {
     testQuantizedMeshLayerJsonDefaultMaxzoomMatchesCesiumNative();
     testQuantizedMeshLayerJsonNonIntegerMaxzoomDefaults();
     testQuantizedMeshLayerJsonAttributionMatchesCesiumNative();
+    testQuantizedMeshLayerJsonNonStringAttributionIgnored();
     testHeightmapTerrainProviderExposesAttribution();
     testQuantizedMeshLayerJsonWebMercatorProjectionMatchesCesiumNative();
     testQuantizedMeshLayerJsonRejectsUnknownProjection();
