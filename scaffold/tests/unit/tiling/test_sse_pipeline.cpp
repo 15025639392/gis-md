@@ -4747,6 +4747,42 @@ void testQuantizedMeshWaterMaskExtensions() {
               duplicate->waterMask.data.empty(),
           "QuantizedMeshParser: later one-byte water mask replaces earlier 256x256 mask like cesium-native");
 
+    std::vector<uint8_t> invalidWaterThenMetadata = makeQuantizedMeshBytes();
+    appendPod<uint8_t>(invalidWaterThenMetadata, 2);
+    appendPod<uint32_t>(invalidWaterThenMetadata, 2);
+    appendPod<uint8_t>(invalidWaterThenMetadata, 7);
+    appendPod<uint8_t>(invalidWaterThenMetadata, 9);
+    const std::string metadata = R"json({
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+    appendPod<uint8_t>(invalidWaterThenMetadata, 4);
+    appendPod<uint32_t>(
+        invalidWaterThenMetadata,
+        static_cast<uint32_t>(sizeof(uint32_t) + metadata.size()));
+    appendPod<uint32_t>(
+        invalidWaterThenMetadata,
+        static_cast<uint32_t>(metadata.size()));
+    invalidWaterThenMetadata.insert(
+        invalidWaterThenMetadata.end(),
+        metadata.begin(),
+        metadata.end());
+    std::unique_ptr<SurfaceTileMesh> invalidWater =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            invalidWaterThenMetadata.data(),
+            invalidWaterThenMetadata.size(),
+            bounds,
+            true);
+    check(invalidWater &&
+              invalidWater->waterMask.allLand &&
+              !invalidWater->waterMask.allWater &&
+              invalidWater->waterMask.data.empty() &&
+              invalidWater->metadataAvailability.size() == 1 &&
+              invalidWater->metadataAvailability[0] ==
+                  std::array<int, 5>{0, 0, 0, 1, 0},
+          "QuantizedMeshParser: unsupported water mask lengths are skipped before later extensions like cesium-native");
+
     std::vector<uint8_t> unknownThenWaterBytes = makeQuantizedMeshBytes();
     appendPod<uint8_t>(unknownThenWaterBytes, 99);
     appendPod<uint32_t>(unknownThenWaterBytes, 3);
