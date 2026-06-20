@@ -3524,6 +3524,37 @@ void testQuantizedMeshTileMetadataIgnoredWithoutMetadataAvailability() {
           "QuantizedMeshTerrainProvider: tile metadata availability is ignored without metadataAvailability like cesium-native");
 }
 
+void testQuantizedMeshEmptyTileMetadataMarksSubtreeLoaded() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "metadataAvailability": 10
+    })json";
+
+    check(provider.configureFromLayerJson(
+              layerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: empty metadata subtree layer configures");
+    check(provider.availabilityState(TileKey{"Geographic-TMS", 1, 0, 0}) ==
+              TileAvailabilityState::Unknown,
+          "QuantizedMeshTerrainProvider: unloaded empty metadata subtree starts unknown");
+
+    DecodedHeightmap heightmap;
+    heightmap.rawData = makeQuantizedMeshBytes(R"json({"available":[]})json");
+    TileQuantizedMeshAvailabilityIngestor::ingest(
+        &provider,
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        heightmap);
+
+    check(provider.availabilityState(TileKey{"Geographic-TMS", 1, 0, 0}) ==
+              TileAvailabilityState::NotAvailable,
+          "QuantizedMeshTerrainProvider: empty tile metadata marks subtree loaded like cesium-native");
+}
+
 void testQuantizedMeshLayerJsonEmptyAvailabilityMatchesCesiumNative() {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
@@ -22338,6 +22369,7 @@ int main() {
     testQuantizedMeshMetadataAvailabilityStartsAtRoots();
     testQuantizedMeshMetadataAvailabilityRequiresInt32();
     testQuantizedMeshTileMetadataIgnoredWithoutMetadataAvailability();
+    testQuantizedMeshEmptyTileMetadataMarksSubtreeLoaded();
     testQuantizedMeshLayerJsonEmptyAvailabilityMatchesCesiumNative();
     testQuantizedMeshLayerJsonDefaultFormatMatchesCesiumNative();
     testQuantizedMeshLayerJsonFormatIsIgnored();
