@@ -130,6 +130,33 @@ Rectangle occlusionRectangleForTile(const TilesetTile& tile) {
     return tile.bounds;
 }
 
+double occlusionSampleHeightForTile(const TilesetTile& tile) {
+    double sampleHeight =
+        std::max(0.0, TileBoundsMetrics::terrainMaximumHeight(tile));
+    if (!tile.boundingVolume) {
+        return sampleHeight;
+    }
+
+    switch (tile.boundingVolume->kind) {
+        case TileBoundingVolumeKind::Region:
+            sampleHeight =
+                std::max(sampleHeight, tile.boundingVolume->maximumHeight);
+            break;
+        case TileBoundingVolumeKind::S2Cell:
+            sampleHeight =
+                std::max(
+                    sampleHeight,
+                    tile.boundingVolume->s2Cell.getMaximumHeight());
+            break;
+        case TileBoundingVolumeKind::Sphere:
+        case TileBoundingVolumeKind::Box:
+        case TileBoundingVolumeKind::CylinderRegion:
+            break;
+    }
+
+    return sampleHeight;
+}
+
 } // namespace
 
 TileOcclusionState TileSoftwareOcclusionPolicy::check(
@@ -182,8 +209,7 @@ TileOcclusionState TileSoftwareOcclusionPolicy::check(
         }
     }
 
-    const double sampleHeight =
-        std::max(0.0, TileBoundsMetrics::terrainMaximumHeight(tile));
+    const double sampleHeight = occlusionSampleHeightForTile(tile);
     const double midLon = tileMidLongitude(occlusionRectangle);
     const double midLat =
         (occlusionRectangle.south() + occlusionRectangle.north()) * 0.5;

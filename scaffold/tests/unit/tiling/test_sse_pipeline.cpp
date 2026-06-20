@@ -28737,6 +28737,25 @@ void testTilesetSoftwareOcclusionUsesExplicitVolumeRectangleForUnderCamera() {
           "Tileset: software occlusion uses explicit volume rectangle for under-camera visibility");
 }
 
+void testTilesetSoftwareOcclusionUsesExplicitRegionHeightForFallbackSamples() {
+    TilesetTile tile;
+    tile.key = TileKey{"Geographic-TMS", 4, 0, 0};
+    tile.bounds = Rectangle::fromDegrees(140.0, -1.0, 141.0, 1.0);
+    tile.boundingVolume =
+        TileBoundingVolume::fromRegion(
+            Rectangle::fromDegrees(34.8, -0.05, 35.2, 0.05),
+            0.0,
+            2000000.0);
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 cameraPosition = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(0.0, 0.0, 1000000.0));
+
+    check(TileSoftwareOcclusionPolicy::check(tile, cameraPosition) ==
+              TileOcclusionState::NotOccluded,
+          "Tileset: software occlusion samples explicit region height before culling");
+}
+
 void testTilesetChildrenInheritParentTerrainHeightRange() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -30827,6 +30846,7 @@ int main() {
     testTilesetDefaultSoftwareOcclusionCanCullFarSideTile();
     testTilesetSoftwareOcclusionKeepsNonBoxVolumeUnderCameraVisible();
     testTilesetSoftwareOcclusionUsesExplicitVolumeRectangleForUnderCamera();
+    testTilesetSoftwareOcclusionUsesExplicitRegionHeightForFallbackSamples();
     testTilesetChildrenInheritParentTerrainHeightRange();
     testTilesetSampleHeightUsesBestLoadedTerrainTile();
     testTilesetSampleHeightFallsBackToLoadedAncestorTerrain();
