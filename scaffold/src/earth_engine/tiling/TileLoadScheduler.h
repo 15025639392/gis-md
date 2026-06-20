@@ -64,6 +64,9 @@ public:
 
             const TileKey requestKey = request.key;
             const std::string cacheKey = cacheKeyForTile(requestKey);
+            if (input.lifecycle.containsWorkForCacheKey(cacheKey)) {
+                continue;
+            }
             TilesetTile* tileState = nullptr;
             const TileLoadRequestSnapshot snapshot =
                 makeSnapshot(requestKey, cacheKey, tileState);

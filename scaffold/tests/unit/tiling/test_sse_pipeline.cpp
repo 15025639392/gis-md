@@ -19035,6 +19035,68 @@ void testTileLoadSchedulerSkipsEmptyUpsampledCacheKey() {
           "TileLoadScheduler: skipped empty upsampled key has no side effects");
 }
 
+void testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey key{"test", 1, 0, 0};
+    TilesetTile tile(key, Rectangle{});
+    tile.content.upsampledFromParent = true;
+    const std::string cacheKey = testCacheKeyForTile(key);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainTerminalResult(
+            PendingTerrainTerminalResult{
+                key,
+                cacheKey,
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TerrainTileLoadStatus::RetryLater});
+    }
+    bool prepared = false;
+    bool marked = false;
+
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            testCacheKeyForTile,
+            [&tile](const TileKey&,
+                    const std::string&,
+                    TilesetTile*& tileState) {
+                tileState = &tile;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.hasTile = true;
+                snapshot.upsampledFromParent = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [&prepared](TilesetTile&, double) {
+                prepared = true;
+                return true;
+            },
+            [&marked](const TileKey&) { marked = true; });
+
+    check(outcome.issued == 0 && !outcome.blockedByInflight,
+          "TileLoadScheduler: pending cache key skips upsampled terrain request");
+    check(!prepared && !marked,
+          "TileLoadScheduler: pending cache key skips upsample preparation side effects");
+    check(lifecycle.counts().terrainTerminalResults == 1 &&
+              !lifecycle.containsWorkForCacheKey("unexpected"),
+          "TileLoadScheduler: pending cache key skip preserves existing pending work");
+}
+
 void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 2;
@@ -24596,6 +24658,7 @@ int main() {
     testTileLoadSchedulerBlocksBeforePlanningWhenInflightIsFull();
     testTileLoadSchedulerSortsAndQueuesUpsampledTerrain();
     testTileLoadSchedulerSkipsEmptyUpsampledCacheKey();
+    testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation();
     testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds();
     testTileResourceDirtyInvalidatesRevisionAndCacheOnly();
     testTilesetFrameResourceBudgetLimitsWorkerRequests();
