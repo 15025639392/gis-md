@@ -40,6 +40,24 @@ TEST(TileKeyTest, HashKeepsQuadtreeIdentityFieldsDistinct) {
     EXPECT_NE(keys.end(), keys.find(TileKey{"Geographic-TMS", 1, 2, 3}));
 }
 
+TEST(OctreeTileIDTest, DefaultAndEqualityMatchCesiumNativeHeaderSemantics) {
+    // 无对应测试；cesium-native OctreeTileID defaults to level/x/y/z = 0
+    // and compares all identity fields exactly.
+    const OctreeTileID defaultID;
+    const OctreeTileID same{0, 0, 0, 0};
+    const OctreeTileID differentLevel{1, 0, 0, 0};
+    const OctreeTileID differentX{0, 1, 0, 0};
+    const OctreeTileID differentY{0, 0, 1, 0};
+    const OctreeTileID differentZ{0, 0, 0, 1};
+
+    EXPECT_EQ(same, defaultID);
+    EXPECT_FALSE(defaultID != same);
+    EXPECT_NE(defaultID, differentLevel);
+    EXPECT_NE(defaultID, differentX);
+    EXPECT_NE(defaultID, differentY);
+    EXPECT_NE(defaultID, differentZ);
+}
+
 TEST(TileIdUtilitiesTest, CreatesStringForExplicitContentUrl) {
     const TileID tileID = std::string("tiles/0/0/0.b3dm");
 
