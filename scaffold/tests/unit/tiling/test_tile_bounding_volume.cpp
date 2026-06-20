@@ -286,6 +286,18 @@ TEST(TileBoundingVolumeTest, S2CellDistanceCaseTwoMatchesCesiumNative) {
                 1e-7);
 }
 
+TEST(TileBoundingVolumeTest, S2CellDistanceCaseThreeMatchesCesiumNative) {
+    const S2CellBoundingVolume s2(
+        S2CellID::fromToken("1"),
+        0.0,
+        100000.0);
+    const Vec3 position = s2.getVertices()[2] + Vec3(1.0, 1.0, 1.0);
+
+    EXPECT_NEAR(3.0,
+                s2.computeDistanceSquaredToPosition(position),
+                1e-7);
+}
+
 TEST(TileBoundingVolumeTest, RegionCenterUsesBoundingRegionObbLikeCesiumNative) {
     const TileBoundingVolume region =
         TileBoundingVolume::fromRegion(
