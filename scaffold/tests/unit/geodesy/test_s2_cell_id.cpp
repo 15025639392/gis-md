@@ -1,8 +1,25 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/core/geodesy/S2CellID.h"
+#include "earth_engine/core/math/MathUtils.h"
+#include "earth_engine/core/math/Rectangle.h"
+
+#include <cmath>
 
 using namespace earth_engine;
+
+namespace {
+
+void expectRectangleNear(const Rectangle& actual,
+                         const Rectangle& expected,
+                         double epsilon = MathUtils::Epsilon14) {
+    EXPECT_NEAR(actual.west(), expected.west(), epsilon);
+    EXPECT_NEAR(actual.south(), expected.south(), epsilon);
+    EXPECT_NEAR(actual.east(), expected.east(), epsilon);
+    EXPECT_NEAR(actual.north(), expected.north(), epsilon);
+}
+
+} // namespace
 
 TEST(S2CellIDTest, TokenAndIdSemanticsMatchCesiumNative) {
     EXPECT_TRUE(S2CellID(3458764513820540928ULL).isValid());
@@ -114,4 +131,70 @@ TEST(S2CellIDTest, ParentAndChildMatchCesiumNativeS2Hierarchy) {
     EXPECT_EQ("2ef59bd352b93ac4", parent.toToken());
     EXPECT_EQ(29, parent.getLevel());
     EXPECT_EQ(deep.getID(), parent.getChild(1).getID());
+}
+
+TEST(S2CellIDTest, RootBoundingRectanglesMatchCesiumNative) {
+    const double poleMinLatitude =
+        std::asin(std::sqrt(1.0 / 3.0)) - 0.5 * MathUtils::Epsilon15;
+
+    expectRectangleNear(
+        S2CellID::fromFaceLevelPosition(0, 0, 0).computeBoundingRectangle(),
+        Rectangle(
+            -MathUtils::PiOverFour,
+            -MathUtils::PiOverFour,
+            MathUtils::PiOverFour,
+            MathUtils::PiOverFour));
+    expectRectangleNear(
+        S2CellID::fromFaceLevelPosition(1, 0, 0).computeBoundingRectangle(),
+        Rectangle(
+            MathUtils::PiOverFour,
+            -MathUtils::PiOverFour,
+            3.0 * MathUtils::PiOverFour,
+            MathUtils::PiOverFour));
+    expectRectangleNear(
+        S2CellID::fromFaceLevelPosition(2, 0, 0).computeBoundingRectangle(),
+        Rectangle(
+            -MathUtils::OnePi,
+            poleMinLatitude,
+            MathUtils::OnePi,
+            MathUtils::PiOverTwo));
+    expectRectangleNear(
+        S2CellID::fromFaceLevelPosition(3, 0, 0).computeBoundingRectangle(),
+        Rectangle(
+            3.0 * MathUtils::PiOverFour,
+            -MathUtils::PiOverFour,
+            -3.0 * MathUtils::PiOverFour,
+            MathUtils::PiOverFour));
+    expectRectangleNear(
+        S2CellID::fromFaceLevelPosition(4, 0, 0).computeBoundingRectangle(),
+        Rectangle(
+            -3.0 * MathUtils::PiOverFour,
+            -MathUtils::PiOverFour,
+            -MathUtils::PiOverFour,
+            MathUtils::PiOverFour));
+    expectRectangleNear(
+        S2CellID::fromFaceLevelPosition(5, 0, 0).computeBoundingRectangle(),
+        Rectangle(
+            -MathUtils::OnePi,
+            -MathUtils::PiOverTwo,
+            MathUtils::OnePi,
+            -poleMinLatitude));
+}
+
+TEST(S2CellIDTest, LevelOneBoundingRectanglesMatchCesiumNative) {
+    expectRectangleNear(
+        S2CellID::fromFaceLevelPosition(0, 1, 0).computeBoundingRectangle(),
+        Rectangle(
+            -MathUtils::PiOverFour,
+            -MathUtils::PiOverFour,
+            0.0,
+            0.0));
+
+    const Rectangle polar =
+        S2CellID::fromFaceLevelPosition(2, 1, 0).computeBoundingRectangle();
+    EXPECT_NEAR(0.0, polar.west(), MathUtils::Epsilon14);
+    EXPECT_NEAR(MathUtils::PiOverTwo, polar.east(), MathUtils::Epsilon14);
+    EXPECT_LT(polar.south(),
+              MathUtils::PiOverFour - MathUtils::OnePi / 20.0);
+    EXPECT_NEAR(MathUtils::PiOverTwo, polar.north(), MathUtils::Epsilon14);
 }

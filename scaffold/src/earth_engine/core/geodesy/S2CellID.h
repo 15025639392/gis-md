@@ -5,6 +5,8 @@
 #include <string>
 #include <string_view>
 
+#include "earth_engine/core/math/Rectangle.h"
+
 namespace earth_engine {
 
 class S2CellID {
@@ -27,6 +29,7 @@ public:
     uint8_t getFace() const noexcept;
     S2CellID getParent() const noexcept;
     S2CellID getChild(size_t index) const noexcept;
+    Rectangle computeBoundingRectangle() const;
 
 private:
     uint64_t id_ = 0;
