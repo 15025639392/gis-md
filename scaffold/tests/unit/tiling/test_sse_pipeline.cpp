@@ -3139,6 +3139,50 @@ void testRasterOverlayRectangleSourceFailureUsesParentImage() {
           "RasterOverlayTileProvider: failed source tile is filled from parent imagery like cesium-native");
 }
 
+void testRasterOverlayRectangleAtMaximumSourceZoomHasNoMoreDetail() {
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<SlowRasterTextureUploader>();
+    RasterOverlayTileProvider provider(
+        imagery,
+        *imageryScheme,
+        std::move(uploader));
+
+    const TileKey centerKey =
+        imageryScheme->positionToTile(0.1, 0.2, 8);
+    const Rectangle targetBounds = imageryScheme->tileToRectangle(centerKey);
+    RasterOverlayTileProvider::TilePtr rectangleTile =
+        provider.getTile(targetBounds, 128.0, 128.0);
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget requestBudget;
+    requestBudget.beginFrame(1, config);
+
+    check(rectangleTile && rectangleTile->getSourceZoom() == 8 &&
+              provider.loadTileThrottled(*rectangleTile, &requestBudget) &&
+              !imagery.pendingRequests.empty(),
+          "RasterOverlayTileProvider: maximum source zoom test reaches provider maximum level");
+
+    for (auto& request : imagery.pendingRequests) {
+        request.callback(
+            request.key,
+            makeDecodedRgbaImage(64, 64, static_cast<uint8_t>(request.key.z)));
+    }
+
+    FrameResourceBudget uploadBudget;
+    uploadBudget.beginFrame(1, config);
+    const int uploads = provider.processPendingUploads(false, &uploadBudget);
+
+    check(uploads == 1 &&
+              rectangleTile->getState() == RasterOverlayTile::LoadState::Loaded,
+          "RasterOverlayTileProvider: maximum source zoom rectangle upload completes");
+    check(rectangleTile->isMoreDetailAvailable() ==
+              RasterOverlayTile::MoreDetailAvailable::No,
+          "RasterOverlayTileProvider: source level at maximum reports no more detail like cesium-native");
+}
+
 void testRasterOverlayRectangleCompositionUsesProjectedWebMercatorHeight() {
     auto imageryScheme = TileScheme::createXYZWebMercator();
     const TileKey sourceKey{"XYZ-WebMercator", 2, 1, 0};
@@ -23965,6 +24009,7 @@ int main() {
     testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches();
     testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize();
     testRasterOverlayRectangleSourceFailureUsesParentImage();
+    testRasterOverlayRectangleAtMaximumSourceZoomHasNoMoreDetail();
     testRasterOverlayRectangleCompositionUsesProjectedWebMercatorHeight();
     testRasterOverlayRectangleCompositionKeepsTinyProjectedOverlap();
     testRasterOverlayUploadsStopAfterElapsedBudgetExpires();
