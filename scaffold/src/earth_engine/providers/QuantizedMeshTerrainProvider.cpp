@@ -416,6 +416,10 @@ bool isTileInLayerRange(const TileKey& key, const std::string& schemeId) {
            static_cast<double>(key.y) < yTiles;
 }
 
+bool isCesiumSuccessfulHttpStatus(int statusCode) {
+    return statusCode == 0 || (statusCode >= 200 && statusCode < 300);
+}
+
 std::vector<std::string> jsonStringArray(
     const nlohmann::json& j,
     const char* name) {
@@ -1224,7 +1228,7 @@ void QuantizedMeshTerrainProvider::requestAsyncMetadataAndFinalize(
                     std::lock_guard<std::mutex> lock(metadataState->mutex);
                     if (!metadataState->finalized &&
                         !token->isCancelled() &&
-                        metadataStatusCode == 200 &&
+                        isCesiumSuccessfulHttpStatus(metadataStatusCode) &&
                         !metadataBody.empty()) {
                         metadataState->bodies[i] = std::move(metadataBody);
                     }

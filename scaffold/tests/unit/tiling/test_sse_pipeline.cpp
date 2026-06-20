@@ -2050,8 +2050,8 @@ void testQuantizedMeshProviderFetchesMetadataViaAsyncBridge() {
               metadataDiag.peakWorkerBlockingRequests == 0,
           "QuantizedMeshTerrainProvider: pending metadata bridge request does not occupy worker");
 
-    check(bridge.completeNext(200, makeQuantizedMeshBytes(parentMetadata)),
-          "QuantizedMeshTerrainProvider: test bridge completes metadata body");
+    check(bridge.completeNext(206, makeQuantizedMeshBytes(parentMetadata)),
+          "QuantizedMeshTerrainProvider: test bridge completes partial-content metadata body like cesium-native");
     {
         std::unique_lock<std::mutex> lock(mutex);
         cv.wait_for(lock, std::chrono::seconds(5), [&] { return done; });
