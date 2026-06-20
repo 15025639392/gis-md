@@ -10119,6 +10119,15 @@ void testTileSelectionInputMetricsSseMatchesCesiumNativeGolden() {
             1000.0);
     check(std::abs(tallViewportSse - 12.0) < 1e-12,
           "TileSelectionInputMetrics: SSE scales with viewport height");
+
+    const double zeroViewportSse =
+        TileSelectionInputMetrics::screenSpaceErrorForView(
+            10.0,
+            projection,
+            0,
+            1000.0);
+    check(std::abs(zeroViewportSse) < 1e-12,
+          "TileSelectionInputMetrics: zero-height viewport has zero SSE like cesium-native");
 }
 
 void testTileLoadPriorityPolicyMatchesNativeOrdering() {

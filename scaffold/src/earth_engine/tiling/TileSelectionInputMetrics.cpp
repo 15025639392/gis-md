@@ -46,8 +46,7 @@ double TileSelectionInputMetrics::screenSpaceErrorForView(
     if (geometricError <= 0.0) return 0.0;
 
     const double safeDistance = std::max(distance, 1e-7);
-    const double viewportHeight =
-        std::max(1.0, static_cast<double>(viewportHeightPixels));
+    const double viewportHeight = static_cast<double>(viewportHeightPixels);
     const glm::dmat4& projection = projectionMatrix.raw();
     glm::dvec4 centerNdc =
         projection * glm::dvec4(0.0, 0.0, -safeDistance, 1.0);
