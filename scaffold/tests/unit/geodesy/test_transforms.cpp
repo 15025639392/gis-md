@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/core/geodesy/Transforms.h"
+#include "earth_engine/core/geodesy/Cartographic.h"
+#include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/math/MathUtils.h"
 #include "earth_engine/core/math/Mat4.h"
 #include "earth_engine/core/math/Vec3.h"
@@ -28,6 +30,10 @@ void expectVec3Near(const Vec3& actual,
     EXPECT_NEAR(expected.x(), actual.x(), epsilon);
     EXPECT_NEAR(expected.y(), actual.y(), epsilon);
     EXPECT_NEAR(expected.z(), actual.z(), epsilon);
+}
+
+Vec3 columnVector(const Mat4& matrix, int col) {
+    return Vec3(matrix(0, col), matrix(1, col), matrix(2, col));
 }
 
 void expectMatrixNear(const Mat4& actual,
@@ -130,6 +136,62 @@ TEST(TransformsTest, GetUpAxisTransformMatchesCesiumNativeCases) {
               Transforms::getUpAxisTransform(UpAxis::Z, UpAxis::X));
     EXPECT_EQ(Transforms::Z_UP_TO_Y_UP(),
               Transforms::getUpAxisTransform(UpAxis::Z, UpAxis::Y));
+}
+
+TEST(TransformsTest, EastNorthUpToFixedFrameMatchesCesiumNativeSpecialCases) {
+    // Ported from cesium-native CesiumGeospatial/src/GlobeTransforms.cpp:
+    // the ellipsoid center and both poles have explicit local-frame branches.
+    const Mat4 zeroFrame = Transforms::eastNorthUpToFixedFrame(Vec3::zero());
+    expectVec3Near(columnVector(zeroFrame, 0), Vec3(0.0, 1.0, 0.0), 1e-12);
+    expectVec3Near(columnVector(zeroFrame, 1), Vec3(-1.0, 0.0, 0.0), 1e-12);
+    expectVec3Near(columnVector(zeroFrame, 2), Vec3(0.0, 0.0, 1.0), 1e-12);
+    expectVec3Near(columnVector(zeroFrame, 3), Vec3::zero(), 1e-12);
+
+    const double polarRadius = Ellipsoid::WGS84().semiMinorAxis();
+    const Mat4 northPoleFrame =
+        Transforms::eastNorthUpToFixedFrame(Vec3(0.0, 0.0, polarRadius));
+    expectVec3Near(columnVector(northPoleFrame, 0), Vec3(0.0, 1.0, 0.0), 1e-12);
+    expectVec3Near(columnVector(northPoleFrame, 1), Vec3(-1.0, 0.0, 0.0), 1e-12);
+    expectVec3Near(columnVector(northPoleFrame, 2), Vec3(0.0, 0.0, 1.0), 1e-12);
+    expectVec3Near(columnVector(northPoleFrame, 3),
+                   Vec3(0.0, 0.0, polarRadius),
+                   1e-12);
+
+    const Mat4 southPoleFrame =
+        Transforms::eastNorthUpToFixedFrame(Vec3(0.0, 0.0, -polarRadius));
+    expectVec3Near(columnVector(southPoleFrame, 0), Vec3(0.0, 1.0, 0.0), 1e-12);
+    expectVec3Near(columnVector(southPoleFrame, 1), Vec3(1.0, 0.0, 0.0), 1e-12);
+    expectVec3Near(columnVector(southPoleFrame, 2), Vec3(0.0, 0.0, -1.0), 1e-12);
+    expectVec3Near(columnVector(southPoleFrame, 3),
+                   Vec3(0.0, 0.0, -polarRadius),
+                   1e-12);
+}
+
+TEST(TransformsTest, EastNorthUpToFixedFrameMatchesCesiumNativeGeneralCase) {
+    // Cesium derives east from the ECEF xy-plane, up from the ellipsoid
+    // geodetic normal, and north as cross(up, east).
+    const Vec3 origin = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic::fromDegrees(116.397, 39.908, 50.0));
+
+    const Mat4 frame = Transforms::eastNorthUpToFixedFrame(origin);
+    const Vec3 east = Vec3(-origin.y(), origin.x(), 0.0).normalized();
+    const Vec3 up = Ellipsoid::WGS84().geodeticSurfaceNormal(origin);
+    const Vec3 north = up.cross(east);
+
+    expectVec3Near(columnVector(frame, 0), east, 1e-12);
+    expectVec3Near(columnVector(frame, 1), north, 1e-12);
+    expectVec3Near(columnVector(frame, 2), up, 1e-12);
+    expectVec3Near(columnVector(frame, 3), origin, 1e-12);
+}
+
+TEST(TransformsTest, EcefEnuRoundtripUsesEastNorthUpFrame) {
+    const Cartographic origin = Cartographic::fromDegrees(116.397, 39.908, 50.0);
+    const Vec3 localPoint(12.5, -30.0, 4.0);
+
+    const Mat4 enuToEcef = Transforms::enuToEcef(origin);
+    const Mat4 ecefToEnu = Transforms::ecefToEnu(origin);
+
+    expectVec3Near(ecefToEnu * (enuToEcef * localPoint), localPoint, 1e-6);
 }
 
 TEST(TransformsTest, PerspectiveMatricesMatchCesiumNativeReverseZ) {
