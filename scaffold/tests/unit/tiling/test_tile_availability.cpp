@@ -799,6 +799,42 @@ TEST(TileOctreeAvailabilityTest, ChildSubtreeLoadedFlagMatchesCesiumNative) {
     }
 }
 
+TEST(TileOctreeAvailabilityTest, AddSubtreeTraversesLoadedDescendantNodes) {
+    TileOctreeAvailability availability(3, 8);
+    ASSERT_TRUE(availability.addSubtree(
+        OctreeTileID{0, 0, 0, 0},
+        makeOctreeFixtureRootSubtree()));
+    ASSERT_TRUE(availability.addSubtree(
+        OctreeTileID{3, 0, 0, 0},
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            {}}));
+
+    ASSERT_TRUE(availability.addSubtree(
+        OctreeTileID{6, 0, 0, 0},
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{false},
+            {}}));
+
+    const uint8_t loadedState =
+        availability.computeAvailability(OctreeTileID{6, 0, 0, 0});
+    EXPECT_TRUE((loadedState & TileAvailable) != 0);
+    EXPECT_TRUE((loadedState & SubtreeAvailable) != 0);
+    EXPECT_TRUE((loadedState & SubtreeLoaded) != 0);
+
+    EXPECT_FALSE(availability.addSubtree(
+        OctreeTileID{6, 0, 0, 0},
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{false},
+            {}}));
+}
+
 TEST(TileOctreeAvailabilityTest, AddSubtreeRejectsNonBoundaryOrUnavailableChildLikeCesiumNative) {
     TileOctreeAvailability availability(3, 5);
     ASSERT_TRUE(availability.addSubtree(
