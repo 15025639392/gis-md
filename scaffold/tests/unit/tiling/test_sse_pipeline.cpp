@@ -18465,6 +18465,10 @@ void testTilePendingUploadCompletionErasesUploadKeys() {
               "TilePendingUploadCompletion: test dequeues pending upload payloads before completion cleanup");
     }
 
+    check(lifecycle.containsWorkForCacheKey("terrain") &&
+              lifecycle.containsWorkForCacheKey("content"),
+          "TilePendingUploadCompletion: dequeued uploads retain cache keys until completion cleanup");
+
     TilePendingUploadCompletion::eraseTerrainUpload(lifecycle, "terrain");
     check(!lifecycle.containsWorkForCacheKey("terrain") &&
               lifecycle.containsWorkForCacheKey("content"),
