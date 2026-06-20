@@ -18131,6 +18131,11 @@ void testTilePendingRequestStateCancelsAndRejectsDuringDestroy() {
     check(state.empty(),
           "TilePendingRequestState: callbacks can drain requests after destroy");
     state.clearAfterCallbacksComplete();
+    check(!state.destroying(),
+          "TilePendingRequestState: clearing after callbacks reopens state for reuse");
+    check(state.beginTerrainRequest("terrain-after-destroy", CancellationToken{}),
+          "TilePendingRequestState: accepts new requests after destroy drain completes");
+    state.completeTerrainRequest("terrain-after-destroy");
 }
 
 void testTileLoadLifecycleCountsAndFindsPendingWork() {

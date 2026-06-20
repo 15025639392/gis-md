@@ -85,7 +85,10 @@ void TilePendingRequestState::markDestroyingAndCancelRequests() {
 }
 
 void TilePendingRequestState::clearAfterCallbacksComplete() {
+    pendingRequests_.clear();
+    pendingContentRequestKeys_.clear();
     pendingRequestTokens_.clear();
+    destroying_ = false;
 }
 
 } // namespace earth_engine
