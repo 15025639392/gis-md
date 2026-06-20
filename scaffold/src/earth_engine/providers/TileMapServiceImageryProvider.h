@@ -3,9 +3,20 @@
 #include "TileMapServiceUrl.h"
 #include "XYZImageryProvider.h"
 
+#include <memory>
+#include <optional>
 #include <string>
 
 namespace earth_engine {
+
+class TileScheme;
+class TileMapServiceImageryProvider;
+
+struct TileMapServiceImagerySource {
+    std::unique_ptr<TileMapServiceImageryProvider> provider;
+    std::unique_ptr<TileScheme> scheme;
+    std::optional<Rectangle> coverageRectangle;
+};
 
 /// Tile Map Service imagery provider aligned with cesium-native's
 /// TileMapServiceTileProvider URL and level selection semantics.
@@ -33,5 +44,10 @@ private:
     std::string tileMapResourceUrl_;
     TileMapServiceMetadata metadata_;
 };
+
+TileMapServiceImagerySource createTileMapServiceImagerySource(
+    const std::string& tileMapResourceUrl,
+    const std::string& tileMapResourceXml,
+    const std::string& attribution = "");
 
 } // namespace earth_engine

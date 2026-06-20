@@ -887,3 +887,33 @@ TEST(TileMapServiceImageryProviderTest, RejectsTilesWithoutTilesetLikeCesiumNati
     EXPECT_FALSE(provider.supportsTile(TileKey{"XYZ-WebMercator", 2, 1, 1}));
     EXPECT_EQ("", provider.buildUrl(TileKey{"TMS-WebMercator", 4, 1, 1}));
 }
+
+TEST(TileMapServiceImageryProviderTest, CreatesSourceFromXmlForRasterOverlayInstall) {
+    TileMapServiceImagerySource source = createTileMapServiceImagerySource(
+        "https://example.com/tms/tilemapresource.xml",
+        R"xml(
+          <TileMap>
+            <BoundingBox minx="-10" miny="-20" maxx="30" maxy="40" />
+            <TileFormat width="128" height="64" extension="jpg" />
+            <TileSets profile="global-geodetic">
+              <TileSet href="levels/0" order="0" />
+            </TileSets>
+          </TileMap>
+        )xml",
+        "tms attribution");
+
+    ASSERT_NE(nullptr, source.provider);
+    ASSERT_NE(nullptr, source.scheme);
+    EXPECT_EQ("Geographic-TMS", source.scheme->id());
+    EXPECT_EQ("Geographic-TMS", source.provider->schemeId());
+    EXPECT_EQ(128, source.provider->tileWidth());
+    EXPECT_EQ(64, source.provider->tileHeight());
+    EXPECT_EQ("tms attribution", source.provider->attribution());
+    EXPECT_EQ(
+        "https://example.com/tms/levels/0/1/0.jpg",
+        source.provider->buildUrl(TileKey{"Geographic-TMS", 0, 1, 0}));
+    ASSERT_TRUE(source.coverageRectangle.has_value());
+    EXPECT_TRUE(source.coverageRectangle->equalsEpsilon(
+        Rectangle::fromDegrees(-10.0, -20.0, 30.0, 40.0),
+        1e-12));
+}

@@ -1,5 +1,7 @@
 #include "TileMapServiceImageryProvider.h"
 
+#include "earth_engine/tiling/TileScheme.h"
+
 #include <functional>
 #include <sstream>
 #include <utility>
@@ -52,6 +54,23 @@ void TileMapServiceImageryProvider::requestTile(
         std::move(token),
         std::move(callback),
         priority);
+}
+
+TileMapServiceImagerySource createTileMapServiceImagerySource(
+    const std::string& tileMapResourceUrl,
+    const std::string& tileMapResourceXml,
+    const std::string& attribution) {
+    TileMapServiceMetadata metadata =
+        parseTileMapServiceMetadata(tileMapResourceXml);
+    TileMapServiceImagerySource source;
+    source.coverageRectangle =
+        tileMapServiceGeographicCoverageRectangle(metadata);
+    source.scheme = tileMapServiceTileScheme(metadata);
+    source.provider = std::make_unique<TileMapServiceImageryProvider>(
+        tileMapResourceUrl,
+        std::move(metadata),
+        attribution);
+    return source;
 }
 
 } // namespace earth_engine
