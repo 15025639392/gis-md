@@ -54,9 +54,7 @@ std::string HeightmapTerrainProvider::id() const {
 
 void HeightmapTerrainProvider::setZoomRange(int minZ, int maxZ) {
     minZoom_ = std::max(0, minZ);
-    if (maxZ > 0) {
-        maxZoom_ = maxZ;
-    }
+    maxZoom_ = std::max(0, maxZ);
 }
 
 void HeightmapTerrainProvider::setEncoding(Encoding encoding) {

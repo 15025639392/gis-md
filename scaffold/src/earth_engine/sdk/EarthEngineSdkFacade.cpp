@@ -55,6 +55,18 @@ void logError(PlatformBridge& platformBridge, const std::string& message) {
     platformBridge.log(LogLevel::Error, "EarthEngineSdk", message);
 }
 
+template <typename Provider>
+void applyConfiguredZoomRange(Provider& provider,
+                              int minimumZoom,
+                              int maximumZoom) {
+    if (minimumZoom <= 0 && maximumZoom <= 0) {
+        return;
+    }
+
+    provider.setZoomRange(minimumZoom,
+                          maximumZoom > 0 ? maximumZoom : provider.maxZoom());
+}
+
 std::unique_ptr<TerrainProvider> createTerrainProvider(
     const TerrainSourceConfig& config,
     PlatformBridge& platformBridge) {
@@ -65,7 +77,7 @@ std::unique_ptr<TerrainProvider> createTerrainProvider(
     if (config.kind == TerrainSourceKind::QuantizedMesh) {
         auto qm = std::make_unique<QuantizedMeshTerrainProvider>(
             config.urlTemplate, config.attribution);
-        qm->setZoomRange(config.minimumZoom, config.maximumZoom);
+        applyConfiguredZoomRange(*qm, config.minimumZoom, config.maximumZoom);
         qm->setTileSize(config.tileSize);
         qm->setFlipYForUrl(config.flipYForUrl);
         qm->setWaterMaskEnabled(config.enableWaterMask);
@@ -80,7 +92,7 @@ std::unique_ptr<TerrainProvider> createTerrainProvider(
 
     auto hm = std::make_unique<HeightmapTerrainProvider>(
         config.urlTemplate, config.attribution);
-    hm->setZoomRange(config.minimumZoom, config.maximumZoom);
+    applyConfiguredZoomRange(*hm, config.minimumZoom, config.maximumZoom);
     hm->setEncoding(HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
     hm->setTileSize(config.tileSize);
     hm->setPlatformBridge(&platformBridge);
@@ -120,8 +132,10 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
 
         auto xyz = std::make_unique<XYZImageryProvider>(
             overlayConfig.urlTemplate, overlayConfig.attribution);
-        xyz->setZoomRange(overlayConfig.minimumZoom,
-                          overlayConfig.maximumZoom);
+        applyConfiguredZoomRange(
+            *xyz,
+            overlayConfig.minimumZoom,
+            overlayConfig.maximumZoom);
         xyz->setPlatformBridge(&platformBridge_);
         addActivatedRasterOverlay(
             rasterOverlays,
