@@ -897,7 +897,8 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
     const Vec3& boundingSphereCenterEcef = Vec3::zero(),
     float minimumHeight = 0.0f,
     float maximumHeight = 100.0f,
-    const Vec3& tileCenterEcef = Vec3::zero()) {
+    const Vec3& tileCenterEcef = Vec3::zero(),
+    const Vec3& horizonOcclusionPoint = Vec3::zero()) {
     std::vector<uint8_t> bytes;
 
     appendPod<double>(bytes, tileCenterEcef.x());
@@ -909,7 +910,9 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
     appendPod<double>(bytes, boundingSphereCenterEcef.y());
     appendPod<double>(bytes, boundingSphereCenterEcef.z());
     appendPod<double>(bytes, 0.0);
-    for (int i = 0; i < 3; ++i) appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, horizonOcclusionPoint.x());
+    appendPod<double>(bytes, horizonOcclusionPoint.y());
+    appendPod<double>(bytes, horizonOcclusionPoint.z());
     appendPod<uint32_t>(bytes, 3);
 
     const uint16_t u[] = {
@@ -5636,6 +5639,32 @@ void testQuantizedMeshHeaderHeightRangeIsExposed() {
               std::abs(mesh->minimumHeight - minimumHeight) < 1e-6 &&
               std::abs(mesh->maximumHeight - maximumHeight) < 1e-6,
           "QuantizedMeshParser: header min/max heights match cesium-native bounding region inputs");
+}
+
+void testQuantizedMeshHeaderHorizonOcclusionPointIsExposed() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(rootKey);
+    const Vec3 horizonOcclusionPoint(0.25, -0.5, 0.75);
+    const std::vector<uint8_t> bytes = makeQuantizedMeshBytes(
+        "", false, false, Vec3::zero(), 0.0f, 100.0f, Vec3::zero(),
+        horizonOcclusionPoint);
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            bounds);
+
+    check(mesh != nullptr,
+          "QuantizedMeshParser: horizon-occlusion header test mesh parses");
+    check(mesh && mesh->hasHorizonOcclusionPoint,
+          "QuantizedMeshParser: nonzero horizon occlusion point is marked present");
+    const Vec3 delta = mesh
+        ? mesh->horizonOcclusionPoint - horizonOcclusionPoint
+        : Vec3::zero();
+    check(delta.length() < 1e-12,
+          "QuantizedMeshParser: horizon occlusion point is preserved from quantized-mesh header like cesium-native");
 }
 
 void testQuantizedMeshVertexUvAndHeightGolden() {
@@ -23651,6 +23680,7 @@ int main() {
     testQuantizedMeshOctEncodedNormalsUsesLastExtension();
     testQuantizedMeshRtcOriginFromBoundingSphereCenter();
     testQuantizedMeshHeaderHeightRangeIsExposed();
+    testQuantizedMeshHeaderHorizonOcclusionPointIsExposed();
     testQuantizedMeshVertexUvAndHeightGolden();
     testQuantizedMeshWaterMaskExtensions();
     testQuantizedMeshProviderRasterizesCesiumHeightmapGrid();
