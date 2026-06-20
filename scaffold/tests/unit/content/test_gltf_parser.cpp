@@ -14308,6 +14308,83 @@ TEST(GltfParserTest, TilesetJsonContentProviderDefaultsMissingGeometricError) {
     }
 }
 
+TEST(GltfParserTest, TilesetJsonContentProviderNormalizesRefineCase) {
+    const std::string tilesetJson = R"json({
+      "asset": {"version": "1.0"},
+      "geometricError": 240,
+      "root": {
+        "boundingVolume": {
+          "region": [-1.3197209591796106, 0.6988424218,
+                     -1.3196390408203893, 0.6989055782, 0, 88]
+        },
+        "geometricError": 70,
+        "refine": "aDD",
+        "children": [
+          {
+            "boundingVolume": {
+              "region": [-1.3197209591796106, 0.6988424218,
+                         -1.31968, 0.698874, 0, 20]
+            },
+            "refine": "rEpLaCe",
+            "geometricError": 5
+          },
+          {
+            "boundingVolume": {
+              "region": [-1.31968, 0.6988424218,
+                         -1.3196390408203893, 0.698874, 0, 20]
+            },
+            "refine": "rEpLaCe",
+            "geometricError": 5
+          },
+          {
+            "boundingVolume": {
+              "region": [-1.31968, 0.698874,
+                         -1.3196390408203893, 0.6989055782, 0, 20]
+            },
+            "refine": "rEpLaCe",
+            "geometricError": 5
+          },
+          {
+            "boundingVolume": {
+              "region": [-1.3197209591796106, 0.698874,
+                         -1.31968, 0.6989055782, 0, 20]
+            },
+            "refine": "rEpLaCe",
+            "geometricError": 5
+          }
+        ]
+      }
+    })json";
+
+    TilesetJsonContentProvider provider(
+        "file:///earth-md/no-capitalized-refine-tileset.json",
+        bytesFromString(tilesetJson),
+        "mixed-case refine tileset");
+
+    ASSERT_TRUE(provider.valid());
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    const std::vector<TileKey> rootChildren =
+        provider.childTiles(roots.front());
+    ASSERT_EQ(1u, rootChildren.size());
+
+    const std::optional<TilesetContentTileMetadata> rootMetadata =
+        provider.tileMetadata(rootChildren.front());
+    ASSERT_TRUE(rootMetadata.has_value());
+    EXPECT_EQ(TileRefine::Add, rootMetadata->refine);
+
+    const std::vector<TileKey> children =
+        provider.childTiles(rootChildren.front());
+    ASSERT_EQ(4u, children.size());
+    for (const TileKey& child : children) {
+        const std::optional<TilesetContentTileMetadata> metadata =
+            provider.tileMetadata(child);
+        ASSERT_TRUE(metadata.has_value());
+        EXPECT_DOUBLE_EQ(5.0, metadata->geometricError);
+        EXPECT_EQ(TileRefine::Replace, metadata->refine);
+    }
+}
+
 TEST(GltfParserTest, TilesetFailsMalformedExternalTilesetNumericMetadata) {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
