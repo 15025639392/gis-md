@@ -337,3 +337,31 @@ TEST(ProjectionTest, ComputeProjectedRectangleSizeMatchesCesiumNativeEquatorCase
     EXPECT_GT(narrowSize.x, ellipsoid.maximumRadius() * 2.0);
     EXPECT_NEAR(meridianHeight, narrowSize.y, 1.0);
 }
+
+TEST(ProjectionTest, ComputeProjectedRectangleSizeUsesMaximumHeightLikeCesiumNative) {
+    const GeographicProjection projection(Ellipsoid::WGS84());
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    const double maxHeight = 1000.0;
+
+    const Rectangle projected = projectRectangleSimple(
+        projection,
+        Rectangle::fromDegrees(-10.0, 0.0, 10.0, 0.0));
+
+    const glm::dvec2 size = computeProjectedRectangleSize(
+        projection,
+        projected,
+        maxHeight,
+        ellipsoid);
+
+    const double expectedWidth = ellipsoid
+        .cartographicToCartesian(Cartographic::fromDegrees(-10.0, 0.0, maxHeight))
+        .distanceTo(ellipsoid.cartographicToCartesian(
+            Cartographic::fromDegrees(10.0, 0.0, maxHeight)));
+    const double surfaceWidth = ellipsoid
+        .cartographicToCartesian(Cartographic::fromDegrees(-10.0, 0.0, 0.0))
+        .distanceTo(ellipsoid.cartographicToCartesian(
+            Cartographic::fromDegrees(10.0, 0.0, 0.0)));
+
+    EXPECT_NEAR(expectedWidth, size.x, 1e-6);
+    EXPECT_GT(size.x, surfaceWidth);
+}
