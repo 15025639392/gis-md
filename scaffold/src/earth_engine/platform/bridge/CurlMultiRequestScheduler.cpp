@@ -38,6 +38,21 @@ size_t priorityBucket(HttpRequestPriority priority) {
     return static_cast<size_t>(value);
 }
 
+struct CurlGlobalLifetime {
+    CurlGlobalLifetime() {
+        curl_global_init(CURL_GLOBAL_DEFAULT);
+    }
+
+    ~CurlGlobalLifetime() {
+        curl_global_cleanup();
+    }
+};
+
+CurlGlobalLifetime& curlGlobalLifetime() {
+    static CurlGlobalLifetime lifetime;
+    return lifetime;
+}
+
 } // namespace
 
 struct CurlMultiRequestScheduler::Impl {
@@ -95,7 +110,7 @@ struct CurlMultiRequestScheduler::Impl {
 
     explicit Impl(int maximumActiveRequestsValue)
         : maximumActiveRequests(std::max(1, maximumActiveRequestsValue)) {
-        curl_global_init(CURL_GLOBAL_DEFAULT);
+        (void)curlGlobalLifetime();
         multi = curl_multi_init();
         {
             std::lock_guard<std::mutex> lock(wakeState->mutex);
@@ -108,7 +123,6 @@ struct CurlMultiRequestScheduler::Impl {
 
     ~Impl() {
         shutdown();
-        curl_global_cleanup();
     }
 
     std::unique_ptr<HttpRequest> get(

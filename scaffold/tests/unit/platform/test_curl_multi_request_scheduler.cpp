@@ -368,3 +368,31 @@ TEST(CurlMultiRequestScheduler, RequestHandleMayOutliveScheduler) {
     server.releaseAll();
     EXPECT_EQ(callbacks.load(), 0);
 }
+
+TEST(CurlMultiRequestScheduler, SchedulersDoNotCleanupGlobalCurlForEachOther) {
+    LocalHttpServer server;
+    std::atomic<int> callbacks{0};
+
+    CurlMultiRequestScheduler owner(1);
+    auto active = owner.get(
+        server.url("/hold/owner"),
+        [&](int code, std::vector<uint8_t> body) {
+            if (code == 200 && std::string(body.begin(), body.end()) ==
+                                   "/hold/owner") {
+                callbacks.fetch_add(1);
+            }
+        },
+        {HttpRequestPriority::Normal});
+    ASSERT_TRUE(server.waitForPath("/hold/owner", 3s));
+
+    {
+        CurlMultiRequestScheduler temporary(1);
+    }
+
+    server.releaseAll();
+    for (int i = 0; i < 100 && callbacks.load() == 0; ++i) {
+        std::this_thread::sleep_for(20ms);
+    }
+    owner.shutdown();
+    EXPECT_EQ(callbacks.load(), 1);
+}
