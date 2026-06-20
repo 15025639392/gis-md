@@ -12,6 +12,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/core/math/Vec3.h
     earth_engine/core/math/Vec3.cpp
     earth_engine/core/math/MathUtils.h
+    earth_engine/core/math/AttributeCompression.h
     earth_engine/core/math/Mat4.h
     earth_engine/core/math/Mat4.cpp
     earth_engine/core/math/Ray.h

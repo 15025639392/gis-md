@@ -2,6 +2,7 @@
 #ifdef __ANDROID__
 #include <android/log.h>
 #endif
+#include "../core/math/AttributeCompression.h"
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/QuadtreeGeometricError.h"
@@ -702,17 +703,8 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
             for (size_t i = 0; i < normCount; ++i) {
                 uint8_t ox = data[offset + i * 2];
                 uint8_t oy = data[offset + i * 2 + 1];
-                // octDecode (cesium-native AttributeCompression)
-                double fx = static_cast<double>(ox) * 2.0 / 255.0 - 1.0;
-                double fy = static_cast<double>(oy) * 2.0 / 255.0 - 1.0;
-                double fz = 1.0 - std::abs(fx) - std::abs(fy);
-                if (fz < 0.0) {
-                    double oldX = fx;
-                    fx = (1.0 - std::abs(fy)) * (oldX >= 0.0 ? 1.0 : -1.0);
-                    fy = (1.0 - std::abs(oldX)) * (fy >= 0.0 ? 1.0 : -1.0);
-                }
-                double lenInv = 1.0 / std::sqrt(fx * fx + fy * fy + fz * fz);
-                octNormals.push_back(Vec3(fx * lenInv, fy * lenInv, fz * lenInv));
+                octNormals.push_back(
+                    Vec3(AttributeCompression::octDecode(ox, oy)));
             }
         } else if (enableWaterMask && extId == 2 && extLen == 65536) {
             if (extLen > len - offset) break;

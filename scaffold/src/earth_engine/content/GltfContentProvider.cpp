@@ -5,6 +5,7 @@
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/Transforms.h"
+#include "../core/math/AttributeCompression.h"
 #include "../core/math/MathUtils.h"
 #include "../platform/bridge/CurlMultiRequestScheduler.h"
 
@@ -1767,22 +1768,7 @@ uint32_t readI3dmBatchId(const uint8_t* binary,
 }
 
 glm::dvec3 octDecodeInRange(uint16_t x, uint16_t y, uint16_t rangeMax) {
-    const double range = static_cast<double>(rangeMax);
-    glm::dvec3 result(
-        double(x) / range * 2.0 - 1.0,
-        double(y) / range * 2.0 - 1.0,
-        0.0);
-    result.z = 1.0 - std::abs(result.x) - std::abs(result.y);
-    if (result.z < 0.0) {
-        const double oldX = result.x;
-        const auto signNotZero = [](double value) {
-            return value < 0.0 ? -1.0 : 1.0;
-        };
-        result.x = (1.0 - std::abs(result.y)) * signNotZero(oldX);
-        result.y = (1.0 - std::abs(oldX)) * signNotZero(result.y);
-    }
-    const double length = glm::length(result);
-    return length > 0.0 ? result / length : glm::dvec3(0.0, 0.0, 1.0);
+    return AttributeCompression::octDecodeInRange(x, y, rangeMax);
 }
 
 glm::dvec3 octDecodeInRange(uint16_t x, uint16_t y) {
