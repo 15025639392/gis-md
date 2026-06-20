@@ -3595,6 +3595,26 @@ void testQuantizedMeshLayerJsonWebMercatorProjectionMatchesCesiumNative() {
           "QuantizedMeshTerrainProvider: WebMercator layer rejects Geographic-TMS keys");
 }
 
+void testQuantizedMeshLayerJsonNonStringProjectionDefaults() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": 3857,
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 4
+    })json";
+
+    check(provider.configureFromLayerJson(
+              layerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: non-string projection layer configures like cesium-native");
+    check(provider.schemeId() == "Geographic-TMS",
+          "QuantizedMeshTerrainProvider: non-string projection defaults to EPSG:4326 like cesium-native");
+    check(provider.supportsTile(TileKey{"Geographic-TMS", 0, 1, 0}),
+          "QuantizedMeshTerrainProvider: defaulted geographic projection keeps two root tiles");
+}
+
 void testQuantizedMeshLayerJsonRejectsUnknownProjection() {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
@@ -21816,6 +21836,7 @@ int main() {
     testQuantizedMeshLayerJsonNonStringAttributionIgnored();
     testHeightmapTerrainProviderExposesAttribution();
     testQuantizedMeshLayerJsonWebMercatorProjectionMatchesCesiumNative();
+    testQuantizedMeshLayerJsonNonStringProjectionDefaults();
     testQuantizedMeshLayerJsonRejectsUnknownProjection();
     testQuantizedMeshLayerJsonFailedConfigurePreservesPreviousState();
     testQuantizedMeshRejectsOutOfRangeGeographicTiles();

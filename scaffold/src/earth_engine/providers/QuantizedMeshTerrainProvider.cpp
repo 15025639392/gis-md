@@ -489,6 +489,17 @@ std::string jsonStringOrEmpty(const nlohmann::json& object, const char* name) {
     return it->get<std::string>();
 }
 
+std::string jsonStringOrDefault(
+    const nlohmann::json& object,
+    const char* name,
+    const std::string& defaultValue) {
+    auto it = object.find(name);
+    if (it == object.end() || !it->is_string()) {
+        return defaultValue;
+    }
+    return it->get<std::string>();
+}
+
 std::string createExtensionsQueryParameter(
     const std::vector<std::string>& knownExtensions,
     const std::vector<std::string>& extensions) {
@@ -574,7 +585,7 @@ bool QuantizedMeshTerrainProvider::configureFromLayerJson(
         auto j = nlohmann::json::parse(layerJson);
         if (j.value("format", "quantized-mesh-1.0") != "quantized-mesh-1.0") return false;
         if (schemeIdForLayerProjection(
-                j.value("projection", "EPSG:4326")).empty()) {
+                jsonStringOrDefault(j, "projection", "EPSG:4326")).empty()) {
             return false;
         }
         if (j.value("scheme", "tms") != "tms") return false;
@@ -612,7 +623,7 @@ bool QuantizedMeshTerrainProvider::appendLayerFromJson(
         resolveTerrainTemplate(layerJsonUrl, j["tiles"][0].get<std::string>());
     layer.layerJsonUrl = layerJsonUrl;
     layer.schemeId = schemeIdForLayerProjection(
-        j.value("projection", "EPSG:4326"));
+        jsonStringOrDefault(j, "projection", "EPSG:4326"));
     if (layer.schemeId.empty()) {
         return false;
     }
@@ -701,7 +712,7 @@ bool QuantizedMeshTerrainProvider::appendParentLayers(
         auto parent = nlohmann::json::parse(body);
         if (parent.value("format", "quantized-mesh-1.0") != "quantized-mesh-1.0") return false;
         if (schemeIdForLayerProjection(
-                parent.value("projection", "EPSG:4326")).empty()) {
+                jsonStringOrDefault(parent, "projection", "EPSG:4326")).empty()) {
             return false;
         }
         if (parent.value("scheme", "tms") != "tms") return false;
