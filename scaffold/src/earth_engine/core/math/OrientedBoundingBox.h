@@ -7,7 +7,6 @@
 #include "Vec3.h"
 
 #include <cmath>
-#include <limits>
 #include <glm/mat3x3.hpp>
 #include <glm/mat4x4.hpp>
 #include <glm/geometric.hpp>
@@ -158,11 +157,9 @@ public:
     bool contains(const Vec3& position) const noexcept {
         const glm::dvec3 local =
             inverseHalfAxes_ * (position - center_).raw();
-        const double closedUnitBoundary =
-            std::nextafter(1.0, std::numeric_limits<double>::max());
-        return std::abs(local.x) <= closedUnitBoundary &&
-               std::abs(local.y) <= closedUnitBoundary &&
-               std::abs(local.z) <= closedUnitBoundary;
+        return std::abs(local.x) <= 1.0 &&
+               std::abs(local.y) <= 1.0 &&
+               std::abs(local.z) <= 1.0;
     }
 
     OrientedBoundingBox transform(const Mat4& transformation) const noexcept {

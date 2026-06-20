@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <vector>
 #include "earth_engine/core/math/AxisAlignedBox.h"
@@ -300,6 +301,10 @@ TEST(OrientedBoundingBoxTest, ContainsRejectsAnyPointBeyondCesiumNativeUnitBound
 
     EXPECT_TRUE(box.contains(Vec3(3.0, 5.0, 7.0)));
     EXPECT_FALSE(box.contains(Vec3(3.0 + 1e-15, 5.0, 7.0)));
+
+    const double worldXJustOutside =
+        1.0 + 2.0 * std::nextafter(1.0, std::numeric_limits<double>::max());
+    EXPECT_FALSE(box.contains(Vec3(worldXJustOutside, 2.0, 3.0)));
 }
 
 TEST(OrientedBoundingBoxTest, InverseHalfAxesMatchesCesiumNative) {
@@ -326,8 +331,8 @@ TEST(OrientedBoundingBoxTest, ContainsMatchesCesiumNativeRotatedBox) {
 
     EXPECT_FALSE(box.contains(Vec3::zero()));
     EXPECT_TRUE(box.contains(center));
-    EXPECT_TRUE(box.contains(center + axis0 + axis1 + axis2));
-    EXPECT_TRUE(box.contains(center - axis0 - axis1 - axis2));
+    EXPECT_TRUE(box.contains(center + axis0 * 0.5 + axis1 * 0.5 + axis2 * 0.5));
+    EXPECT_TRUE(box.contains(center - axis0 * 0.5 - axis1 * 0.5 - axis2 * 0.5));
     EXPECT_FALSE(box.contains(center + rotation.transformVector(Vec3(3.0, 0.0, 0.0))));
     EXPECT_FALSE(box.contains(center + rotation.transformVector(Vec3(0.0, 4.0, 0.0))));
     EXPECT_FALSE(box.contains(center + rotation.transformVector(Vec3(0.0, 0.0, 5.0))));
@@ -395,18 +400,18 @@ TEST(OrientedBoundingBoxTest, ToAxisAlignedMatchesCesiumNativeRotatedBox) {
 }
 
 TEST(OrientedBoundingBoxTest, FromAxisAlignedMatchesCesiumNative) {
-    const AxisAlignedBox aabb(-1.0, -2.0, -3.0, 5.0, 8.0, 11.0);
+    const AxisAlignedBox aabb(-2.0, -4.0, -8.0, 2.0, 4.0, 8.0);
 
     const OrientedBoundingBox box = OrientedBoundingBox::fromAxisAligned(aabb);
 
     EXPECT_EQ(aabb.center(), box.getCenter());
-    EXPECT_EQ(Vec3(3.0, 0.0, 0.0), box.getHalfAxis(0));
-    EXPECT_EQ(Vec3(0.0, 5.0, 0.0), box.getHalfAxis(1));
-    EXPECT_EQ(Vec3(0.0, 0.0, 7.0), box.getHalfAxis(2));
-    EXPECT_EQ(Vec3(6.0, 10.0, 14.0), box.getLengths());
-    EXPECT_TRUE(box.contains(Vec3(-1.0, -2.0, -3.0)));
-    EXPECT_TRUE(box.contains(Vec3(5.0, 8.0, 11.0)));
-    EXPECT_FALSE(box.contains(Vec3(5.0 + 1e-12, 8.0, 11.0)));
+    EXPECT_EQ(Vec3(2.0, 0.0, 0.0), box.getHalfAxis(0));
+    EXPECT_EQ(Vec3(0.0, 4.0, 0.0), box.getHalfAxis(1));
+    EXPECT_EQ(Vec3(0.0, 0.0, 8.0), box.getHalfAxis(2));
+    EXPECT_EQ(Vec3(4.0, 8.0, 16.0), box.getLengths());
+    EXPECT_TRUE(box.contains(Vec3(-2.0, -4.0, -8.0)));
+    EXPECT_TRUE(box.contains(Vec3(2.0, 4.0, 8.0)));
+    EXPECT_FALSE(box.contains(Vec3(2.0 + 1e-12, 4.0, 8.0)));
 }
 
 TEST(OrientedBoundingBoxTest, FromSphereBuildsCircumscribedBox) {
