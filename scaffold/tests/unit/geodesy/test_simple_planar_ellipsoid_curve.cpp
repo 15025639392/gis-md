@@ -5,6 +5,9 @@
 #include "earth_engine/core/geodesy/SimplePlanarEllipsoidCurve.h"
 #include "earth_engine/core/math/Vec3.h"
 
+#include <cmath>
+#include <optional>
+
 using namespace earth_engine;
 
 namespace {
@@ -44,6 +47,14 @@ void expectVec3Near(const Vec3& expected, const Vec3& actual, double epsilon) {
     EXPECT_NEAR(expected.x(), actual.x(), epsilon);
     EXPECT_NEAR(expected.y(), actual.y(), epsilon);
     EXPECT_NEAR(expected.z(), actual.z(), epsilon);
+}
+
+template <typename Callback>
+void forEachCurveSample(Callback callback) {
+    constexpr int kSteps = 25;
+    for (int i = 0; i <= kSteps; ++i) {
+        callback(static_cast<double>(i) / static_cast<double>(kSteps));
+    }
 }
 
 } // namespace
@@ -86,7 +97,11 @@ TEST(SimplePlanarEllipsoidCurveTest, MidpointIsCoplanarWithEndpointsAndEarthCent
     const Vec3 planeNormal =
         (kPhiladelphiaEcef - midpoint).cross(kTokyoEcef - midpoint).normalized();
 
-    EXPECT_NEAR(0.0, midpoint.dot(planeNormal), 1e-5);
+    forEachCurveSample([&](double percentage) {
+        EXPECT_NEAR(0.0,
+                    curve->getPosition(percentage).dot(planeNormal),
+                    1e-5);
+    });
 }
 
 TEST(SimplePlanarEllipsoidCurveTest, RejectsCenterEcefCoordinates) {
@@ -107,9 +122,11 @@ TEST(SimplePlanarEllipsoidCurveTest, SameStartAndEndPointStaysFixed) {
             kPhiladelphiaEcef);
 
     ASSERT_TRUE(curve.has_value());
-    expectVec3Near(kPhiladelphiaEcef, curve->getPosition(0.25), 1e-6);
-    expectVec3Near(kPhiladelphiaEcef, curve->getPosition(0.5), 1e-6);
-    expectVec3Near(kPhiladelphiaEcef, curve->getPosition(0.75), 1e-6);
+    forEachCurveSample([&](double percentage) {
+        expectVec3Near(kPhiladelphiaEcef,
+                       curve->getPosition(percentage),
+                       1e-6);
+    });
 }
 
 TEST(SimplePlanarEllipsoidCurveTest, InterpolatesHeightAndAdditionalHeight) {
@@ -122,7 +139,7 @@ TEST(SimplePlanarEllipsoidCurveTest, InterpolatesHeightAndAdditionalHeight) {
             Cartographic(0.25, 1.0, endHeight));
 
     ASSERT_TRUE(curve.has_value());
-    for (const double percentage : {0.25, 0.5, 0.75}) {
+    forEachCurveSample([&](double percentage) {
         const std::optional<Cartographic> cartographic =
             Ellipsoid::WGS84().tryCartesianToCartographic(
                 curve->getPosition(percentage));
@@ -131,7 +148,7 @@ TEST(SimplePlanarEllipsoidCurveTest, InterpolatesHeightAndAdditionalHeight) {
         const double expectedHeight =
             startHeight + (endHeight - startHeight) * percentage;
         EXPECT_NEAR(expectedHeight, cartographic->height(), 1e-4);
-    }
+    });
 
     const std::optional<Cartographic> additionalHeight =
         Ellipsoid::WGS84().tryCartesianToCartographic(
@@ -166,14 +183,16 @@ TEST(SimplePlanarEllipsoidCurveTest, NearAntipodePathStaysAboveEarth) {
             kPhiladelphiaAntipodeEcef);
 
     ASSERT_TRUE(curve.has_value());
-    for (const double percentage : {0.25, 0.5, 0.75}) {
+    forEachCurveSample([&](double percentage) {
         const std::optional<Cartographic> cartographic =
             Ellipsoid::WGS84().tryCartesianToCartographic(
                 curve->getPosition(percentage));
 
         ASSERT_TRUE(cartographic.has_value());
-        EXPECT_GT(cartographic->height(), 0.0);
-    }
+        if (percentage > 0.0 && percentage < 1.0) {
+            EXPECT_GT(cartographic->height(), 0.0);
+        }
+    });
 }
 
 TEST(SimplePlanarEllipsoidCurveTest, ReversePathHasSameMidpoint) {
@@ -209,7 +228,9 @@ TEST(SimplePlanarEllipsoidCurveTest, LlhConstructorMatchesEquivalentEcefCurve) {
 
     ASSERT_TRUE(llhCurve.has_value());
     ASSERT_TRUE(ecefCurve.has_value());
-    expectVec3Near(ecefCurve->getPosition(0.5),
-                   llhCurve->getPosition(0.5),
-                   1e-6);
+    forEachCurveSample([&](double percentage) {
+        expectVec3Near(ecefCurve->getPosition(percentage),
+                       llhCurve->getPosition(percentage),
+                       1e-6);
+    });
 }
