@@ -228,6 +228,38 @@ TEST(TileBoundingVolumeTest, S2CellDistanceAndContainsCenterLikeCesiumNative) {
         s2.getCenter()));
 }
 
+TEST(TileBoundingVolumeTest, S2CellDistanceCaseOneMatchesCesiumNative) {
+    const S2CellBoundingVolume s2(
+        S2CellID::fromToken("1"),
+        0.0,
+        100000.0);
+    constexpr double testDistance = 100.0;
+    const std::array<Plane, 6>& planes = s2.getBoundingPlanes();
+
+    const Plane topPlane(
+        planes[0].getNormal(),
+        planes[0].getDistance() - testDistance);
+    Vec3 position = topPlane.projectPointOntoPlane(s2.getCenter());
+
+    EXPECT_NEAR(testDistance,
+                std::sqrt(s2.computeDistanceSquaredToPosition(position)),
+                1e-7);
+
+    const Plane sidePlane0(
+        planes[2].getNormal(),
+        planes[2].getDistance() - testDistance);
+    const std::array<Vec3, 8>& vertices = s2.getVertices();
+    const Vec3 faceCenter =
+        ((vertices[0] + vertices[1]) * 0.5 +
+         (vertices[4] + vertices[5]) * 0.5) *
+        0.5;
+    position = sidePlane0.projectPointOntoPlane(faceCenter);
+
+    EXPECT_NEAR(testDistance,
+                std::sqrt(s2.computeDistanceSquaredToPosition(position)),
+                1e-7);
+}
+
 TEST(TileBoundingVolumeTest, RegionCenterUsesBoundingRegionObbLikeCesiumNative) {
     const TileBoundingVolume region =
         TileBoundingVolume::fromRegion(
