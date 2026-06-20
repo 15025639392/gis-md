@@ -3718,6 +3718,44 @@ void testQuantizedMeshSkirtNormalsCopyEdgeNormals() {
           "QuantizedMeshParser: skirt normals copy source edge normals like cesium-native");
 }
 
+void testQuantizedMeshOctEncodedNormalsExtension() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(rootKey);
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes("", true, true);
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            bounds);
+
+    check(mesh != nullptr && mesh->vertices.size() > 3,
+          "QuantizedMeshParser: oct-normal extension mesh parses with skirts");
+    if (!mesh || mesh->vertices.size() < 4) return;
+
+    check(mesh->vertices[0].normalEcef.z() > 0.9999 &&
+              std::abs(mesh->vertices[0].normalEcef.x()) < 0.004 &&
+              std::abs(mesh->vertices[0].normalEcef.y()) < 0.004,
+          "QuantizedMeshParser: oct-normal byte pair 128,128 decodes near +Z like cesium-native");
+    check(mesh->vertices[1].normalEcef.x() > 0.9999 &&
+              std::abs(mesh->vertices[1].normalEcef.y()) < 0.004 &&
+              std::abs(mesh->vertices[1].normalEcef.z()) < 0.004,
+          "QuantizedMeshParser: oct-normal byte pair 255,128 decodes near +X like cesium-native");
+    check(mesh->vertices[2].normalEcef.y() > 0.9999 &&
+              std::abs(mesh->vertices[2].normalEcef.x()) < 0.004 &&
+              std::abs(mesh->vertices[2].normalEcef.z()) < 0.004,
+          "QuantizedMeshParser: oct-normal byte pair 128,255 decodes near +Y like cesium-native");
+
+    const uint32_t firstSkirtVertex =
+        mesh->skirtMeta.noSkirtVerticesBegin +
+        mesh->skirtMeta.noSkirtVerticesCount;
+    check((mesh->vertices[firstSkirtVertex].normalEcef -
+           mesh->vertices[0].normalEcef).length() < 1e-12,
+          "QuantizedMeshParser: oct normals are copied onto skirt vertices");
+}
+
 void testQuantizedMeshRtcOriginFromBoundingSphereCenter() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -21260,6 +21298,7 @@ int main() {
     testQuantizedMeshRejectsEachTruncatedEdge();
     testQuantizedMeshParsesUint32IndicesAndEdges();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
+    testQuantizedMeshOctEncodedNormalsExtension();
     testQuantizedMeshRtcOriginFromBoundingSphereCenter();
     testQuantizedMeshHeaderHeightRangeIsExposed();
     testQuantizedMeshVertexUvAndHeightGolden();
