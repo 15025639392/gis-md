@@ -292,6 +292,16 @@ TEST(OrientedBoundingBoxTest, ContainsMatchesCesiumNativeLocalUnitCube) {
     EXPECT_FALSE(box.contains(Vec3(1.0, 2.0, 8.0)));
 }
 
+TEST(OrientedBoundingBoxTest, ContainsRejectsAnyPointBeyondCesiumNativeUnitBoundary) {
+    OrientedBoundingBox box(Vec3(1.0, 2.0, 3.0),
+                            Vec3(2.0, 0.0, 0.0),
+                            Vec3(0.0, 3.0, 0.0),
+                            Vec3(0.0, 0.0, 4.0));
+
+    EXPECT_TRUE(box.contains(Vec3(3.0, 5.0, 7.0)));
+    EXPECT_FALSE(box.contains(Vec3(3.0 + 1e-15, 5.0, 7.0)));
+}
+
 TEST(OrientedBoundingBoxTest, InverseHalfAxesMatchesCesiumNative) {
     OrientedBoundingBox box(Vec3(1.0, 2.0, 3.0),
                             Vec3(2.0, 0.0, 0.0),
