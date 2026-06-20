@@ -14,6 +14,8 @@ TileTerminalLoadCommitter::commitTerrainTerminalResult(
         TileTerminalLoadPolicy::applyTerrainTerminalResult(tile, status);
     if (action.markEmptyCacheKey) {
         emptyContentRegistry.insert(cacheKey);
+    } else {
+        emptyContentRegistry.erase(cacheKey);
     }
     return action;
 }
@@ -28,6 +30,8 @@ TileTerminalLoadCommitter::commitContentTerminalResult(
         TileTerminalLoadPolicy::applyContentTerminalResult(tile, status);
     if (action.markEmptyCacheKey) {
         emptyContentRegistry.insert(cacheKey);
+    } else {
+        emptyContentRegistry.erase(cacheKey);
     }
     return action;
 }
