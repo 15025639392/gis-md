@@ -4518,6 +4518,35 @@ void testQuantizedMeshRasterizerRejectsHeaderWithoutVertexCount() {
     }
 }
 
+void testQuantizedMeshRasterizerRejectsIllFormedCoreBuffers() {
+    const std::vector<uint8_t> validBytes = makeQuantizedMeshBytes();
+
+    constexpr size_t afterUBuffer = 92 + 3 * sizeof(uint16_t);
+    std::vector<uint8_t> truncatedVertexData(
+        validBytes.begin(),
+        validBytes.begin() + static_cast<std::ptrdiff_t>(afterUBuffer));
+    std::unique_ptr<DecodedHeightmap> vertexHeightmap =
+        QuantizedMeshParser::parseAndRasterize(
+            truncatedVertexData.data(),
+            truncatedVertexData.size(),
+            64);
+    check(vertexHeightmap == nullptr,
+          "QuantizedMeshParser: rasterizer rejects ill-formed vertex data like cesium-native");
+
+    constexpr size_t afterTriangleCount =
+        92 + 3 * 3 * sizeof(uint16_t) + sizeof(uint32_t);
+    std::vector<uint8_t> truncatedIndices(
+        validBytes.begin(),
+        validBytes.begin() + static_cast<std::ptrdiff_t>(afterTriangleCount));
+    std::unique_ptr<DecodedHeightmap> indexHeightmap =
+        QuantizedMeshParser::parseAndRasterize(
+            truncatedIndices.data(),
+            truncatedIndices.size(),
+            64);
+    check(indexHeightmap == nullptr,
+          "QuantizedMeshParser: rasterizer rejects ill-formed index buffer like cesium-native");
+}
+
 void testQuantizedMeshRejectsDecodedIndicesOutsideVertexRange() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -22880,6 +22909,7 @@ int main() {
     testQuantizedMeshRasterizerRejectsTruncatedEdgeIndices();
     testQuantizedMeshRejectsIllFormedCoreBuffers();
     testQuantizedMeshRasterizerRejectsHeaderWithoutVertexCount();
+    testQuantizedMeshRasterizerRejectsIllFormedCoreBuffers();
     testQuantizedMeshRejectsDecodedIndicesOutsideVertexRange();
     testQuantizedMeshRasterizerRejectsDecodedIndicesOutsideVertexRange();
     testQuantizedMeshRasterizerRejectsEdgeIndicesOutsideVertexRange();
