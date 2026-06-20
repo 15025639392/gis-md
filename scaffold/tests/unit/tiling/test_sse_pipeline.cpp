@@ -2095,6 +2095,20 @@ void testRasterOverlayProviderDefaultMaximumLevelMatchesCesiumNative() {
           "RasterOverlayTileProvider: default URL-template overlay can create z25 tiles like cesium-native");
 }
 
+void testStandardTileSchemeMaximumLevelsMatchRasterOverlayDefaults() {
+    auto xyz = TileScheme::createXYZWebMercator();
+    auto tms = TileScheme::createTMS();
+    auto geographic = TileScheme::createGeographicTMS();
+    auto openGlobus = TileScheme::createOpenGlobusEarth();
+
+    check(xyz->maxZoom() == 25 &&
+              tms->maxZoom() == 25 &&
+              geographic->maxZoom() == 25,
+          "TileScheme: standard quadtree schemes allow cesium-native raster overlay default maximum level");
+    check(openGlobus->maxZoom() == 22,
+          "TileScheme: OpenGlobus grouped scheme keeps its project-specific maximum level");
+}
+
 void testXYZImageryProviderUrlTemplateBoundsAndSizePlaceholders() {
     XYZImageryProvider provider(
         "https://example.invalid/{westDegrees}/{southDegrees}/{eastDegrees}/{northDegrees}/{width}/{height}.png");
@@ -31051,6 +31065,7 @@ int main() {
     testXYZImageryProviderUrlTemplateReversePlaceholders();
     testXYZImageryProviderDefaultMaximumLevelMatchesCesiumNative();
     testRasterOverlayProviderDefaultMaximumLevelMatchesCesiumNative();
+    testStandardTileSchemeMaximumLevelsMatchRasterOverlayDefaults();
     testXYZImageryProviderUrlTemplateBoundsAndSizePlaceholders();
     testXYZImageryProviderUrlTemplateProjectedBoundsPlaceholders();
     testXYZImageryProviderUrlTemplateUnknownAndCaseInsensitivePlaceholders();
