@@ -13433,6 +13433,13 @@ void testTileLoadQueueDeduplicatesAndUpgradesPriority() {
           "TileLoadQueue: higher priority group upgrades queued request");
     check(queue.front().priority == 1000.0,
           "TileLoadQueue: upgraded request keeps selected priority value");
+
+    queue.resize(4);
+    check(queue.size() == 1,
+          "TileLoadQueue: resize does not grow default load requests");
+    queue.resize(0);
+    check(queue.empty(),
+          "TileLoadQueue: resize truncates queued load requests");
 }
 
 void testTileUnloadQueueMaintainsLruOrderAndDeduplicatesKeys() {

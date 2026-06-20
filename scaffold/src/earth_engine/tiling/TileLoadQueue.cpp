@@ -43,6 +43,9 @@ void TileLoadQueue::clear() {
 }
 
 void TileLoadQueue::resize(size_t size) {
+    if (size >= requests_.size()) {
+        return;
+    }
     requests_.resize(size);
 }
 
