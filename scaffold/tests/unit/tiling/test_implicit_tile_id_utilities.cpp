@@ -857,4 +857,8 @@ TEST(ImplicitTileIdUtilitiesTest, LevelDenominatorMatchesCesiumNative) {
     EXPECT_DOUBLE_EQ(1.0, ImplicitTileIdUtilities::levelDenominator(0));
     EXPECT_DOUBLE_EQ(2.0, ImplicitTileIdUtilities::levelDenominator(1));
     EXPECT_DOUBLE_EQ(4.0, ImplicitTileIdUtilities::levelDenominator(2));
+    EXPECT_DOUBLE_EQ(4294967296.0,
+                     ImplicitTileIdUtilities::levelDenominator(32));
+    EXPECT_DOUBLE_EQ(1099511627776.0,
+                     ImplicitTileIdUtilities::levelDenominator(40));
 }
