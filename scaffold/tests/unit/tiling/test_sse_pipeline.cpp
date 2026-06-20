@@ -3022,6 +3022,47 @@ void testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches() {
           "RasterOverlayTileProvider: trimmed rectangle requests keep only overlapping source tiles");
 }
 
+void testRasterOverlayRectangleCompositionUsesProjectedWebMercatorHeight() {
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    const TileKey sourceKey{"XYZ-WebMercator", 2, 1, 0};
+    const Rectangle sourceBounds = imageryScheme->tileToRectangle(sourceKey);
+    const double midLatitude =
+        (sourceBounds.south() + sourceBounds.north()) * 0.5;
+    const Rectangle targetBounds(
+        sourceBounds.west(),
+        midLatitude,
+        sourceBounds.east(),
+        sourceBounds.north());
+
+    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    sources.push_back(RasterOverlayTileProvider::RectangleSourceImage{
+        sourceKey,
+        sourceBounds,
+        makeDecodedRgbaImage(64, 64)});
+
+    std::unique_ptr<DecodedImage> composed =
+        RasterOverlayTileProvider::composeRectangleImages(
+            *imageryScheme,
+            targetBounds,
+            sourceKey.z,
+            std::move(sources),
+            4096);
+
+    const double sourceProjectedHeight =
+        std::log(std::tan(sourceBounds.north() * 0.5 + M_PI * 0.25)) -
+        std::log(std::tan(sourceBounds.south() * 0.5 + M_PI * 0.25));
+    const double targetProjectedHeight =
+        std::log(std::tan(targetBounds.north() * 0.5 + M_PI * 0.25)) -
+        std::log(std::tan(targetBounds.south() * 0.5 + M_PI * 0.25));
+    const int expectedHeight = static_cast<int>(
+        std::ceil(targetProjectedHeight / (sourceProjectedHeight / 64.0)));
+
+    check(composed && composed->width == 64 &&
+              composed->height == expectedHeight &&
+              expectedHeight != 32,
+          "RasterOverlayTileProvider: WebMercator rectangle composition sizes target images in projected space like cesium-native");
+}
+
 void testRasterOverlayUploadsStopAfterElapsedBudgetExpires() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -23663,6 +23704,7 @@ int main() {
     testRasterOverlayProviderRectangleTile();
     testRasterOverlayRectangleSourceRequestsAreBudgetedAcrossFrames();
     testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches();
+    testRasterOverlayRectangleCompositionUsesProjectedWebMercatorHeight();
     testRasterOverlayUploadsStopAfterElapsedBudgetExpires();
     testRasterMappedUsesRenderContentDetailsRectangle();
     testRasterMappedMissingProjectionUsesPlaceholder();

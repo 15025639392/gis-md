@@ -248,6 +248,19 @@ double projectedHeight(const TileScheme& scheme, const Rectangle& bounds) {
                  projectedSouth(scheme, bounds)));
 }
 
+double latitudeAtProjectedV(const TileScheme& scheme,
+                            const Rectangle& bounds,
+                            double v) {
+    if (!isWebMercatorScheme(scheme)) {
+        return bounds.north() - v * bounds.height();
+    }
+
+    const double north = projectedNorth(scheme, bounds);
+    const double south = projectedSouth(scheme, bounds);
+    const double projected = north - v * std::abs(north - south);
+    return std::atan(std::sinh(projected));
+}
+
 double projectedVForLatitudeInternal(const TileScheme& scheme,
                                      const Rectangle& bounds,
                                      double lat) {
@@ -481,7 +494,8 @@ std::unique_ptr<DecodedImage> combineRectangleImages(
             source.bounds.width() / static_cast<double>(source.image->width));
         projectedHeightPerPixel = std::min(
             projectedHeightPerPixel,
-            source.bounds.height() / static_cast<double>(source.image->height));
+            projectedHeight(scheme, source.bounds) /
+                static_cast<double>(source.image->height));
     }
     if (projectedWidthPerPixel <= 0.0 || projectedHeightPerPixel <= 0.0 ||
         !std::isfinite(projectedWidthPerPixel) ||
@@ -491,7 +505,7 @@ std::unique_ptr<DecodedImage> combineRectangleImages(
 
     int width = static_cast<int>(std::ceil(targetBounds.width() /
                                            projectedWidthPerPixel));
-    int height = static_cast<int>(std::ceil(targetBounds.height() /
+    int height = static_cast<int>(std::ceil(projectedHeight(scheme, targetBounds) /
                                             projectedHeightPerPixel));
     width = std::clamp(width, 1, maximumTextureSize);
     height = std::clamp(height, 1, maximumTextureSize);
@@ -513,8 +527,7 @@ std::unique_ptr<DecodedImage> combineRectangleImages(
     for (int y = 0; y < height; ++y) {
         const double v = (static_cast<double>(y) + 0.5) /
                          static_cast<double>(height);
-        const double lat = targetBounds.north() -
-                           v * targetBounds.height();
+        const double lat = latitudeAtProjectedV(scheme, targetBounds, v);
         for (int x = 0; x < width; ++x) {
             const double u = (static_cast<double>(x) + 0.5) /
                              static_cast<double>(width);
