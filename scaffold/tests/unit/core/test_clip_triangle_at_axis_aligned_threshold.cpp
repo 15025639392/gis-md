@@ -2,6 +2,7 @@
 
 #include "earth_engine/core/math/ClipTriangleAtAxisAlignedThreshold.h"
 
+#include <limits>
 #include <vector>
 
 using namespace earth_engine;
@@ -172,6 +173,14 @@ TEST(ClipTriangleAtAxisAlignedThresholdTest, AppendsToExistingResult) {
 
     const std::vector<TriangleClipVertex> expected{99, 0, 1, 2};
     EXPECT_EQ(expected, actual);
+}
+
+TEST(ClipTriangleAtAxisAlignedThresholdTest, InterpolatedVertexEqualityUsesCesiumNativeEpsilon) {
+    const InterpolatedVertex vertex{1, 2, 0.25};
+
+    EXPECT_EQ(vertex, (InterpolatedVertex{1, 2, 0.25 + std::numeric_limits<double>::epsilon()}));
+    EXPECT_NE(vertex, (InterpolatedVertex{1, 2, 0.25 + 2.0 * std::numeric_limits<double>::epsilon()}));
+    EXPECT_NE(vertex, (InterpolatedVertex{2, 1, 0.25}));
 }
 
 TEST(ClipTriangleAtAxisAlignedThresholdTest, KeepsThresholdVertexAndSkipsCoincidentInterpolation) {
