@@ -404,17 +404,15 @@ std::vector<std::array<int, 5>> QuantizedMeshParser::parseMetadataAvailability(
                 extLen < static_cast<size_t>(vertexCount) * 2u) {
                 break;
             }
-            if (extId == 4 && extLen >= sizeof(uint32_t)) {
+            if (extId == 4) {
+                if (offset + sizeof(uint32_t) > len) break;
                 uint32_t metadataJsonLength = 0;
                 std::memcpy(&metadataJsonLength, data + offset, sizeof(uint32_t));
                 const size_t jsonOffset = offset + sizeof(uint32_t);
-                const size_t maxJsonLength = extLen - sizeof(uint32_t);
-                if (metadataJsonLength <= maxJsonLength &&
-                    jsonOffset + metadataJsonLength <= len) {
-                    return parseMetadataAvailabilityJson(std::string(
-                        reinterpret_cast<const char*>(data + jsonOffset),
-                        metadataJsonLength));
-                }
+                if (metadataJsonLength > len - jsonOffset) break;
+                return parseMetadataAvailabilityJson(std::string(
+                    reinterpret_cast<const char*>(data + jsonOffset),
+                    metadataJsonLength));
             }
 
             offset += extLen;
@@ -683,24 +681,22 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
             uint8_t v = data[offset];
             waterMask.allWater = (v != 0);
             waterMask.allLand = !waterMask.allWater;
-        } else if (extId == 4 && extLen >= sizeof(uint32_t)) {
+        } else if (extId == 4) {
             // cesium-native: metadata JSON with availability rectangles.
             // Extension payload starts with uint32 metadataJsonLength, then JSON.
             // Format: "available": [[{startX,startY,endX,endY},...],...]
             // Each sub-array i corresponds to level (startingLevel + i).
             // Aligned with cesium-native loadAvailabilityRectangles.
+            if (offset + sizeof(uint32_t) > len) break;
             uint32_t metadataJsonLength = 0;
             std::memcpy(&metadataJsonLength, data + offset, sizeof(uint32_t));
             const size_t jsonOffset = offset + sizeof(uint32_t);
-            const size_t maxJsonLength = extLen - sizeof(uint32_t);
-            if (metadataJsonLength <= maxJsonLength &&
-                jsonOffset + metadataJsonLength <= len) {
-                std::string metadataJson(
-                    reinterpret_cast<const char*>(data + jsonOffset),
-                    metadataJsonLength);
-                mesh->metadataAvailability =
-                    parseMetadataAvailabilityJson(metadataJson);
-            }
+            if (metadataJsonLength > len - jsonOffset) break;
+            std::string metadataJson(
+                reinterpret_cast<const char*>(data + jsonOffset),
+                metadataJsonLength);
+            mesh->metadataAvailability =
+                parseMetadataAvailabilityJson(metadataJson);
         }
         offset += extLen;
     }

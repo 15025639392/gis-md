@@ -999,6 +999,21 @@ std::vector<uint8_t> makeQuantizedMeshBytesWithShortOctNormalThenMetadata(
     return bytes;
 }
 
+std::vector<uint8_t> makeQuantizedMeshBytesWithMalformedMetadataThenMetadata(
+    const std::string& metadataJson) {
+    std::vector<uint8_t> bytes = makeQuantizedMeshBytes();
+    appendPod<uint8_t>(bytes, 4);
+    appendPod<uint32_t>(bytes, sizeof(uint32_t));
+    appendPod<uint32_t>(bytes, 0xffffffffu);
+    appendPod<uint8_t>(bytes, 4);
+    appendPod<uint32_t>(
+        bytes,
+        static_cast<uint32_t>(sizeof(uint32_t) + metadataJson.size()));
+    appendPod<uint32_t>(bytes, static_cast<uint32_t>(metadataJson.size()));
+    bytes.insert(bytes.end(), metadataJson.begin(), metadataJson.end());
+    return bytes;
+}
+
 std::vector<uint8_t> makeLargeQuantizedMeshBytesWithUint32EdgeIndex() {
     constexpr uint32_t vertexCount = 65537;
     constexpr uint32_t highEdgeIndex = vertexCount - 1;
@@ -3792,6 +3807,34 @@ void testQuantizedMeshShortOctNormalStopsExtensionParsing() {
         QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
     check(metadataOnly.empty(),
           "QuantizedMeshParser: metadata-only path also stops after short oct-normal extension");
+}
+
+void testQuantizedMeshMalformedMetadataStopsExtensionParsing() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::string metadata = R"json({
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytesWithMalformedMetadataThenMetadata(metadata);
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            scheme->tileToRectangle(rootKey));
+
+    check(mesh != nullptr,
+          "QuantizedMeshParser: malformed metadata fixture remains parseable");
+    check(mesh && mesh->metadataAvailability.empty(),
+          "QuantizedMeshParser: malformed metadata extension stops later metadata parsing like cesium-native");
+
+    const std::vector<std::array<int, 5>> metadataOnly =
+        QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
+    check(metadataOnly.empty(),
+          "QuantizedMeshParser: metadata-only path stops after malformed metadata extension");
 }
 
 void testQuantizedMeshRejectsTruncatedEdgeIndices() {
@@ -21680,6 +21723,7 @@ int main() {
     testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative();
     testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding();
     testQuantizedMeshShortOctNormalStopsExtensionParsing();
+    testQuantizedMeshMalformedMetadataStopsExtensionParsing();
     testQuantizedMeshRejectsTruncatedEdgeIndices();
     testQuantizedMeshRejectsIllFormedCoreBuffers();
     testQuantizedMeshRasterizerRejectsHeaderWithoutVertexCount();
