@@ -266,6 +266,19 @@ TEST(ProjectionTest, GetProjectionEllipsoidMatchesCesiumNativeVariantVisitor) {
     EXPECT_EQ(Ellipsoid::UNIT_SPHERE(), getProjectionEllipsoid(webMercator));
 }
 
+TEST(ProjectionTest, ProjectAndUnprojectPositionUseCesiumNativeVariantVisitor) {
+    const Projection projection = WebMercatorProjection(Ellipsoid::WGS84());
+    const Cartographic position =
+        Cartographic::fromDegrees(12.5, -34.25, 678.0);
+
+    const Vec3 projected = projectPosition(projection, position);
+    const Cartographic roundtrip = unprojectPosition(projection, projected);
+
+    EXPECT_NEAR(position.longitude(), roundtrip.longitude(), 1e-14);
+    EXPECT_NEAR(position.latitude(), roundtrip.latitude(), 1e-14);
+    EXPECT_DOUBLE_EQ(position.height(), roundtrip.height());
+}
+
 TEST(ProjectionTest, ProjectAndUnprojectRegionSimplePreservesProjectedRectangleAndHeights) {
     const Projection projection = WebMercatorProjection(Ellipsoid::WGS84());
     const BoundingRegionBuilder::BoundingRegion region{
