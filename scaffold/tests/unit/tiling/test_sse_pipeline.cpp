@@ -18711,6 +18711,9 @@ void testTileViewerRequestVolumePolicyChecksOptionalVolume() {
     views[1].position = Vec3(30.0, 0.0, 0.0);
     check(!TileViewerRequestVolumePolicy::allowsAnyView(volume, views),
           "TileViewerRequestVolumePolicy: outside selector views reject tile");
+    views.clear();
+    check(!TileViewerRequestVolumePolicy::allowsAnyView(volume, views),
+          "TileViewerRequestVolumePolicy: present volume rejects empty selector views");
 }
 
 void testTileSelectionCullingPolicyChoosesChildrenBoundsLikeNative() {
