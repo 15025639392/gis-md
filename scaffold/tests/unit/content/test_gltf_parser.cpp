@@ -14376,6 +14376,46 @@ TEST(GltfParserTest, TilesetJsonContentProviderScalesGeometricErrorByTransform) 
     }
 }
 
+TEST(GltfParserTest, TilesetJsonContentProviderTransformsViewerRequestVolume) {
+    const std::string tilesetJson = R"json({
+      "asset": {"version": "1.1"},
+      "root": {
+        "transform": [
+          2, 0, 0, 0,
+          0, 3, 0, 0,
+          0, 0, 4, 0,
+          10, 20, 30, 1
+        ],
+        "boundingVolume": {"sphere": [0, 0, 0, 1]},
+        "viewerRequestVolume": {"sphere": [1, 2, 3, 5]},
+        "geometricError": 10
+      }
+    })json";
+
+    TilesetJsonContentProvider provider(
+        "file:///earth-md/viewer-request-volume-tileset.json",
+        bytesFromString(tilesetJson),
+        "viewer request volume tileset");
+
+    ASSERT_TRUE(provider.valid());
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    const std::vector<TileKey> rootChildren =
+        provider.childTiles(roots.front());
+    ASSERT_EQ(1u, rootChildren.size());
+
+    const std::optional<TilesetContentTileMetadata> metadata =
+        provider.tileMetadata(rootChildren.front());
+    ASSERT_TRUE(metadata.has_value());
+    ASSERT_TRUE(metadata->viewerRequestVolume.has_value());
+    EXPECT_EQ(TileBoundingVolumeKind::Sphere,
+              metadata->viewerRequestVolume->kind);
+    EXPECT_EQ(Vec3(12.0, 26.0, 42.0),
+              metadata->viewerRequestVolume->sphere.getCenter());
+    EXPECT_DOUBLE_EQ(20.0,
+                     metadata->viewerRequestVolume->sphere.getRadius());
+}
+
 TEST(GltfParserTest, TilesetJsonContentProviderDefaultsMissingGeometricError) {
     const std::string tilesetJson = R"json({
       "asset": {"version": "1.0"},
