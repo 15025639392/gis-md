@@ -997,6 +997,32 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRequiresFullCoverage) {
     EXPECT_EQ(20, fullResult->pixels[0]);
 }
 
+TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsMalformedSourceImages) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    Rectangle target = scheme->tileToRectangle(
+        TileKey{scheme->id(), 1, 0, 0});
+
+    auto malformed = std::make_unique<DecodedImage>();
+    malformed->width = 2;
+    malformed->height = 2;
+    malformed->channels = 4;
+    malformed->pixels.resize(4);
+
+    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    sources.push_back({
+        TileKey{scheme->id(), 1, 0, 0},
+        target,
+        std::move(malformed)});
+    auto result =
+        RasterOverlayTileProvider::composeRectangleImages(
+            *scheme,
+            target,
+            1,
+            std::move(sources),
+            8);
+    EXPECT_EQ(nullptr, result);
+}
+
 TEST(RasterOverlayLifecycleTest, WebMercatorSourceSamplingUsesProjectedY) {
     auto scheme = TileScheme::createXYZWebMercator();
     Rectangle bounds = scheme->tileToRectangle(

@@ -525,9 +525,8 @@ RectangleCompositionResult combineRectangleImages(
     sources.erase(
         std::remove_if(sources.begin(), sources.end(),
                        [](const LoadedSourceImage& source) {
-                           return !source.image || source.image->pixels.empty() ||
-                                  source.image->width <= 0 ||
-                                  source.image->height <= 0 ||
+                           return !source.image ||
+                                  !isDecodedImageUploadable(*source.image) ||
                                   source.image->channels < 3;
                        }),
         sources.end());
