@@ -9,6 +9,14 @@
 
 using namespace earth_engine;
 
+TEST(TileAvailabilityFlagsTest, ValuesMatchCesiumNative) {
+    EXPECT_EQ(1U, static_cast<uint8_t>(TileAvailable));
+    EXPECT_EQ(2U, static_cast<uint8_t>(ContentAvailable));
+    EXPECT_EQ(4U, static_cast<uint8_t>(SubtreeAvailable));
+    EXPECT_EQ(8U, static_cast<uint8_t>(SubtreeLoaded));
+    EXPECT_EQ(16U, static_cast<uint8_t>(Reachable));
+}
+
 TEST(TileAvailabilityUtilitiesTest, CountOnesInByteMatchesCesiumNative) {
     for (uint16_t value = 0; value <= 0xFFU; ++value) {
         uint8_t expected = 0;
