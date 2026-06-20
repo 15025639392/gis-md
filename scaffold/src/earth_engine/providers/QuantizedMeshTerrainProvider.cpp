@@ -609,7 +609,8 @@ bool QuantizedMeshTerrainProvider::configureFromLayerJson(
 
 bool QuantizedMeshTerrainProvider::appendLayerFromJson(
     const nlohmann::json& j,
-    const std::string& layerJsonUrl) {
+    const std::string& layerJsonUrl,
+    const std::string& forcedSchemeId) {
     const std::vector<std::string> tileTemplates = jsonStringArray(j, "tiles");
     if (tileTemplates.empty()) {
         return false;
@@ -619,8 +620,10 @@ bool QuantizedMeshTerrainProvider::appendLayerFromJson(
     layer.urlTemplate =
         resolveTerrainTemplate(layerJsonUrl, tileTemplates.front());
     layer.layerJsonUrl = layerJsonUrl;
-    layer.schemeId = schemeIdForLayerProjection(
-        jsonStringOrDefault(j, "projection", "EPSG:4326"));
+    layer.schemeId = forcedSchemeId.empty()
+        ? schemeIdForLayerProjection(
+              jsonStringOrDefault(j, "projection", "EPSG:4326"))
+        : forcedSchemeId;
     if (layer.schemeId.empty()) {
         return false;
     }
@@ -713,11 +716,9 @@ bool QuantizedMeshTerrainProvider::appendParentLayers(
     try {
         const std::string body(bytes.begin(), bytes.end());
         auto parent = nlohmann::json::parse(body);
-        if (schemeIdForLayerProjection(
-                jsonStringOrDefault(parent, "projection", "EPSG:4326")).empty()) {
-            return false;
-        }
-        if (!appendLayerFromJson(parent, resolvedUrl)) {
+        const std::string parentSchemeId =
+            layers_.empty() ? std::string{} : layers_.front().schemeId;
+        if (!appendLayerFromJson(parent, resolvedUrl, parentSchemeId)) {
             return false;
         }
         appendParentLayers(parent, resolvedUrl);

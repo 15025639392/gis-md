@@ -100,7 +100,8 @@ private:
     };
 
     bool appendLayerFromJson(const nlohmann::json& j,
-                             const std::string& layerJsonUrl);
+                             const std::string& layerJsonUrl,
+                             const std::string& forcedSchemeId = {});
     bool appendParentLayers(const nlohmann::json& j,
                             const std::string& layerJsonUrl);
     size_t firstAvailableLayerIndex(const TileKey& key) const;

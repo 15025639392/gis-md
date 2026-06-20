@@ -5069,6 +5069,61 @@ void testQuantizedMeshParentLayerFallback() {
     std::filesystem::remove_all(root);
 }
 
+void testQuantizedMeshParentLayerUsesPrimaryProjection() {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth_md_qm_parent_projection_test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "child");
+    std::filesystem::create_directories(root / "parent");
+
+    const std::string parentLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:NOT_A_REAL_ONE",
+      "tiles": ["parentTiles/{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}],
+        [{"startX":2,"startY":0,"endX":2,"endY":0}]
+      ]
+    })json";
+    {
+        std::ofstream out(root / "parent" / "layer.json");
+        out << parentLayerJson;
+    }
+
+    const std::string childLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "tiles": ["childTiles/{z}/{x}/{y}.terrain"],
+      "parentUrl": "../parent",
+      "maxzoom": 4,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}],
+        [{"startX":0,"startY":0,"endX":0,"endY":0}]
+      ]
+    })json";
+
+    const std::string childLayerUrl =
+        "file://" + (root / "child" / "layer.json").generic_string();
+    const std::string parentBase =
+        "file://" + (root / "parent").generic_string();
+
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    check(provider.configureFromLayerJson(childLayerJson, childLayerUrl),
+          "QuantizedMeshTerrainProvider: parent projection fixture configures");
+
+    const TileKey parentTile{"Geographic-TMS", 1, 2, 0};
+    check(provider.supportsTile(parentTile),
+          "QuantizedMeshTerrainProvider: parent layer uses primary projection like cesium-native");
+    check(provider.buildUrl(parentTile) ==
+              parentBase + "/parentTiles/1/2/0.terrain",
+          "QuantizedMeshTerrainProvider: primary-projection parent fallback builds parent URL");
+
+    std::filesystem::remove_all(root);
+}
+
 void testQuantizedMeshLoadsUnderlyingLayerAvailabilityWithTile() {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
@@ -21996,6 +22051,7 @@ int main() {
     testQuantizedMeshLayerJsonUriResolution();
     testQuantizedMeshFabdemLayerJsonShape();
     testQuantizedMeshParentLayerFallback();
+    testQuantizedMeshParentLayerUsesPrimaryProjection();
     testQuantizedMeshLoadsUnderlyingLayerAvailabilityWithTile();
     testTilesetDefersAvailabilityBoundaryChildrenUntilContentLoaded();
     testTilesetTotalBytesIncludesDecodedHeightmapPayload();
