@@ -126,6 +126,10 @@ TEST(QuantizedMeshTerrainProviderTest, AvailabilityUsesInclusiveTileCenterLikeCe
 
     EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 1, 0, 0}));
     EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 1, 1, 0}));
+
+    provider.addAvailabilityRects(2, {{{4, 0, 4, 0}}});
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 1, 2, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 1, 3, 0}));
 }
 
 TEST(QuantizedMeshTerrainProviderTest, MetadataAvailabilityStartsUnknownChildrenLikeCesiumNative) {
