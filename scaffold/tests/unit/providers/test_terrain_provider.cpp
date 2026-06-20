@@ -128,6 +128,36 @@ TEST(QuantizedMeshTerrainProviderTest, AvailabilityUsesInclusiveTileCenterLikeCe
     EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 1, 1, 0}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, MetadataAvailabilityStartsUnknownChildrenLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "minzoom": 0,
+      "maxzoom": 17,
+      "metadataAvailability": 10
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    const TileKey root{"Geographic-TMS", 0, 0, 0};
+    const TileKey child{"Geographic-TMS", 1, 0, 0};
+
+    EXPECT_TRUE(provider.supportsTile(root));
+    EXPECT_EQ(TileAvailabilityState::Unknown, provider.availabilityState(child));
+    EXPECT_FALSE(provider.supportsTile(child));
+
+    provider.markSubtreeLoaded(0, 0);
+
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(child));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, NormalizesDotSlashRelativeTileTemplate) {
     QuantizedMeshTerrainProvider provider("https://example.com/fallback/{z}/{x}/{y}.terrain");
     const std::string layerJson = R"json({
