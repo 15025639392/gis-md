@@ -136,6 +136,12 @@ add_executable(test_projection
 target_link_libraries(test_projection PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_projection COMMAND test_projection)
 
+add_executable(test_quadtree_geometric_error
+    unit/geodesy/test_quadtree_geometric_error.cpp
+)
+target_link_libraries(test_quadtree_geometric_error PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_quadtree_geometric_error COMMAND test_quadtree_geometric_error)
+
 add_executable(test_ellipsoid
     unit/geodesy/test_ellipsoid.cpp
 )

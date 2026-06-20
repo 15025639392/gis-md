@@ -1,4 +1,5 @@
 #include "TileSurface.h"
+#include "../core/geodesy/QuadtreeGeometricError.h"
 #ifdef __ANDROID__
 #include <android/log.h>
 #endif
@@ -319,16 +320,10 @@ SurfaceTileMesh TileSurface::buildTerrainMesh(const Rectangle& tileBounds,
     //   - calculateSkirtHeight(): 5.0 × levelMaxGeometricError
     //   - longitudeOffset / latitudeOffset: 0.0001 × tile extent
     if (terrainTile && terrainTile->valid() && skirtHeightMeters < 0.0) {
-        // --- cesium-native calcQuadtreeMaxGeometricError ---
-        // From CesiumGeospatial/src/calcQuadtreeMaxGeometricError.cpp:
-        //   return ellipsoid.getMaximumRadius() * 0.25 / 65.0;
-        const double maxGeometricError =
-            ellipsoid.semiMajorAxis() * 0.25 / 65.0;
-
         // Per cesium-native's calculateSkirtHeight():
         //   skirtHeight = 5.0 × calcQuadtreeMaxGeometricError × rectangle.computeWidth()
         const double skirtHeight =
-            5.0 * maxGeometricError * tileBounds.width();
+            calcQuadtreeSkirtHeight(ellipsoid, tileBounds);
 
         // Overlap offsets for adjacency – 0.0001 × tile angular extent
         const double longitudeOffset =

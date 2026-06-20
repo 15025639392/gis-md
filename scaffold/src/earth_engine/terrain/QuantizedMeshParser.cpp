@@ -4,6 +4,7 @@
 #endif
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
+#include "../core/geodesy/QuadtreeGeometricError.h"
 
 #include <algorithm>
 #include <cmath>
@@ -92,19 +93,9 @@ std::vector<QuantizedMeshAvailabilityRange> parseMetadataAvailabilityJson(
     return availability;
 }
 
-double calcQuadtreeMaxGeometricError(const Ellipsoid& ellipsoid) {
-    constexpr double kTerrainHeightmapQuality = 0.25;
-    constexpr double kHeightmapWidth = 65.0;
-    return ellipsoid.maximumRadius() *
-           kTerrainHeightmapQuality /
-           kHeightmapWidth;
-}
-
 double calculateSkirtHeight(const Ellipsoid& ellipsoid,
                             const Rectangle& rectangle) {
-    return calcQuadtreeMaxGeometricError(ellipsoid) *
-           rectangle.width() *
-           5.0;
+    return calcQuadtreeSkirtHeight(ellipsoid, rectangle);
 }
 
 } // namespace

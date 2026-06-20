@@ -6,26 +6,12 @@
 #include "TileScheme.h"
 #include "RasterMappedToTilesetTile.h"
 #include "../core/geodesy/Ellipsoid.h"
+#include "../core/geodesy/QuadtreeGeometricError.h"
 
 #include <algorithm>
 #include <optional>
 
 namespace earth_engine {
-
-namespace {
-
-constexpr double kTerrainMapQuality = 0.25;
-constexpr double kTerrainMapWidth = 65.0;
-
-double cesiumTerrainGeometricError(const Rectangle& bounds) {
-    // cesium-native LayerJsonTerrainLoader:
-    // 8.0 * calcQuadtreeMaxGeometricError(ellipsoid) * rectangle.computeWidth()
-    const double maxGeometricErrorPerRadian =
-        Ellipsoid::WGS84().semiMajorAxis() * kTerrainMapQuality / kTerrainMapWidth;
-    return 8.0 * maxGeometricErrorPerRadian * bounds.width();
-}
-
-} // namespace
 
 TilesetTile* TilesetTileRegistry::ensureTile(
     const TileKey& key,
@@ -68,7 +54,7 @@ TilesetTile* TilesetTileRegistry::ensureTile(
         *tile,
         contentMetadata,
         parent,
-        cesiumTerrainGeometricError(tile->bounds),
+        calcLayerJsonTerrainGeometricError(Ellipsoid::WGS84(), tile->bounds),
         rasterOverlayCount);
 
     TilesetTile* raw = tile.get();
