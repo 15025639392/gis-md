@@ -82,6 +82,12 @@ TEST(BoundingSphereTest, ContainsMatchesCesiumNativeBoundaryCase) {
     EXPECT_FALSE(sphere.contains(center + Vec3(radius + epsilon, 0.0, 0.0)));
 }
 
+TEST(BoundingSphereTest, ContainsUsesSignedRadiusLikeCesiumNative) {
+    const BoundingSphere negativeRadius(Vec3(1.0, 2.0, 3.0), -1.0);
+
+    EXPECT_FALSE(negativeRadius.contains(negativeRadius.getCenter()));
+}
+
 TEST(BoundingSphereTest, TransformTranslationMatchesCesiumNative) {
     BoundingSphere sphere(Vec3(1.0, 2.0, 3.0), 45.0);
 

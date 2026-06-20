@@ -42,7 +42,7 @@ public:
 
     /// Computes whether the given position is contained within the sphere.
     bool contains(const Vec3& position) const noexcept {
-        return (position - center_).lengthSquared() <= radius_ * radius_;
+        return (position - center_).length() <= radius_;
     }
 
     /// Transforms this bounding sphere. For non-uniform scale, the radius uses
