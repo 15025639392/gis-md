@@ -42,7 +42,10 @@ TileBoundingVolume::toOrientedBoundingBox() const {
                 minimumHeight,
                 maximumHeight);
         case TileBoundingVolumeKind::S2Cell:
-            return std::nullopt;
+            return TileBoundsMetrics::boundingRegionObb(
+                s2Cell.getCellID().computeBoundingRectangle(),
+                s2Cell.getMinimumHeight(),
+                s2Cell.getMaximumHeight());
     }
     return std::nullopt;
 }

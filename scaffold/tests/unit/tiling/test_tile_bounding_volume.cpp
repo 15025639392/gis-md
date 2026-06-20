@@ -132,14 +132,27 @@ TEST(TileBoundingVolumeTest, S2CellStoresHeightsAndIgnoresTransform) {
     EXPECT_DOUBLE_EQ(20.0, transformed.s2Cell.getMaximumHeight());
 }
 
-TEST(TileBoundingVolumeTest, S2CellDoesNotPretendToHaveLocalGeometryYet) {
+TEST(TileBoundingVolumeTest, S2CellConvertsToBoundingRegionObbLikeCesiumNative) {
     const TileBoundingVolume volume = TileBoundingVolume::fromS2Cell(
         S2CellBoundingVolume(
             S2CellID::fromQuadtreeTileID(1, 1, 0, 1),
             10.0,
             20.0));
+    const std::optional<OrientedBoundingBox> expected =
+        TileBoundsMetrics::boundingRegionObb(
+            volume.s2Cell.getCellID().computeBoundingRectangle(),
+            volume.s2Cell.getMinimumHeight(),
+            volume.s2Cell.getMaximumHeight());
 
-    EXPECT_FALSE(volume.toOrientedBoundingBox().has_value());
+    const std::optional<OrientedBoundingBox> actual =
+        volume.toOrientedBoundingBox();
+
+    ASSERT_TRUE(expected.has_value());
+    ASSERT_TRUE(actual.has_value());
+    expectVec3Near(expected->getCenter(), actual->getCenter(), 1e-7);
+    expectVec3Near(expected->getHalfAxis(0), actual->getHalfAxis(0), 1e-7);
+    expectVec3Near(expected->getHalfAxis(1), actual->getHalfAxis(1), 1e-7);
+    expectVec3Near(expected->getHalfAxis(2), actual->getHalfAxis(2), 1e-7);
 }
 
 TEST(TileBoundingVolumeTest, EstimateGlobeRectangleForS2CellLikeCesiumNative) {
