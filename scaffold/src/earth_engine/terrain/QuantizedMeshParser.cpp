@@ -428,7 +428,10 @@ std::vector<std::array<int, 5>> QuantizedMeshParser::parseMetadataAvailability(
 }
 
 std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
-    const uint8_t* data, size_t len, const Rectangle& bounds) {
+    const uint8_t* data,
+    size_t len,
+    const Rectangle& bounds,
+    bool enableWaterMask) {
 
     if (len < kHeaderSize || !data) {
 #ifdef __ANDROID__
@@ -662,7 +665,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
                 double lenInv = 1.0 / std::sqrt(fx * fx + fy * fy + fz * fz);
                 octNormals.push_back(Vec3(fx * lenInv, fy * lenInv, fz * lenInv));
             }
-        } else if (extId == 2 && extLen == 65536) {
+        } else if (enableWaterMask && extId == 2 && extLen == 65536) {
             waterMask.allLand = false;
             waterMask.allWater = false;
             waterMask.data.resize(256 * 256 * 4);
@@ -673,7 +676,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
                 waterMask.data[i * 4 + 2] = 255;
                 waterMask.data[i * 4 + 3] = v;
             }
-        } else if (extId == 2 && extLen == 1) {
+        } else if (enableWaterMask && extId == 2 && extLen == 1) {
             uint8_t v = data[offset];
             waterMask.allWater = (v != 0);
             waterMask.allLand = !waterMask.allWater;

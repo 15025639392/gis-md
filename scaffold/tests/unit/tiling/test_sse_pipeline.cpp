@@ -4161,7 +4161,8 @@ void testQuantizedMeshWaterMaskExtensions() {
         QuantizedMeshParser::parseToSurfaceTileMesh(
             allWaterBytes.data(),
             allWaterBytes.size(),
-            bounds);
+            bounds,
+            true);
     check(allWater && allWater->waterMask.allWater &&
               !allWater->waterMask.allLand &&
               allWater->waterMask.data.empty(),
@@ -4173,7 +4174,8 @@ void testQuantizedMeshWaterMaskExtensions() {
         QuantizedMeshParser::parseToSurfaceTileMesh(
             allLandBytes.data(),
             allLandBytes.size(),
-            bounds);
+            bounds,
+            true);
     check(allLand && allLand->waterMask.allLand &&
               !allLand->waterMask.allWater &&
               allLand->waterMask.data.empty(),
@@ -4188,7 +4190,8 @@ void testQuantizedMeshWaterMaskExtensions() {
         QuantizedMeshParser::parseToSurfaceTileMesh(
             maskBytes.data(),
             maskBytes.size(),
-            bounds);
+            bounds,
+            true);
     check(mixed && !mixed->waterMask.allLand &&
               !mixed->waterMask.allWater &&
               mixed->waterMask.data.size() == 256 * 256 * 4,
@@ -4199,6 +4202,18 @@ void testQuantizedMeshWaterMaskExtensions() {
               mixed->waterMask.data[12345 * 4 + 1] == 255 &&
               mixed->waterMask.data[12345 * 4 + 2] == 255,
           "QuantizedMeshParser: water mask alpha values preserve cesium-native 0-land 255-water semantics");
+
+    std::unique_ptr<SurfaceTileMesh> disabled =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            allWaterBytes.data(),
+            allWaterBytes.size(),
+            bounds,
+            false);
+    check(disabled && !disabled->waterMask.allWater &&
+              disabled->waterMask.allLand &&
+              disabled->waterMask.data.empty() &&
+              !disabled->waterMask.valid(),
+          "QuantizedMeshParser: disabled water mask ignores extension like cesium-native");
 }
 
 void testQuantizedMeshProviderRasterizesCesiumHeightmapGrid() {

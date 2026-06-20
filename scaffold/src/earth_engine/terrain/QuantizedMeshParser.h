@@ -34,7 +34,8 @@ public:
     /// @param bounds geographic bounds of the tile in radians
     static std::unique_ptr<SurfaceTileMesh> parseToSurfaceTileMesh(
         const uint8_t* data, size_t len,
-        const Rectangle& bounds);
+        const Rectangle& bounds,
+        bool enableWaterMask = false);
 
     /// cesium-native QuantizedMeshLoader::loadMetadata equivalent.
     /// Parses only Quantized Mesh extension ID=4 availability rectangles.

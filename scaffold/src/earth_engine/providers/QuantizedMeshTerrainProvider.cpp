@@ -1253,7 +1253,8 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                 hm->surfaceMesh = QuantizedMeshParser::parseToSurfaceTileMesh(
                     body->data(),
                     body->size(),
-                    geographicTmsRectangle(key));
+                    geographicTmsRectangle(key),
+                    waterMaskEnabled_);
                 for (size_t i = 0; i < availabilityRequests->size(); ++i) {
                     const LayerAvailabilityRequest& request =
                         (*availabilityRequests)[i];
