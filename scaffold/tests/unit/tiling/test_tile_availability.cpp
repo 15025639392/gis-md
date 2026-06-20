@@ -560,6 +560,33 @@ TEST(TileQuadtreeAvailabilityTest, AddNodeAndAddLoadedSubtreeMatchCesiumNative) 
     EXPECT_TRUE((loadedState & SubtreeLoaded) != 0);
 }
 
+TEST(TileQuadtreeAvailabilityTest, AddNodeReplacesExistingChildNodeLikeCesiumNative) {
+    TileQuadtreeAvailability availability(3, 5);
+    ASSERT_TRUE(availability.addSubtree(0, 0, 0, makeQuadtreeFixtureRootSubtree()));
+    TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+
+    TileAvailabilityNode* firstNode = availability.addNode(3, 0, 1, root);
+    ASSERT_NE(nullptr, firstNode);
+    ASSERT_TRUE(availability.addLoadedSubtree(
+        firstNode,
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{false},
+            {}}));
+
+    TileAvailabilityNode* secondNode = availability.addNode(3, 0, 1, root);
+    ASSERT_NE(nullptr, secondNode);
+    EXPECT_NE(firstNode, secondNode);
+    EXPECT_EQ(secondNode, availability.findChildNode(3, 0, 1, root));
+
+    const uint8_t replacedState = availability.computeAvailability(3, 0, 1);
+    EXPECT_TRUE((replacedState & TileAvailable) != 0);
+    EXPECT_TRUE((replacedState & SubtreeAvailable) != 0);
+    EXPECT_FALSE((replacedState & SubtreeLoaded) != 0);
+}
+
 TEST(TileQuadtreeAvailabilityTest, AddSubtreeRejectsExistingEmptyNodeLikeCesiumNative) {
     TileQuadtreeAvailability availability(3, 5);
     ASSERT_TRUE(availability.addSubtree(0, 0, 0, makeQuadtreeFixtureRootSubtree()));
