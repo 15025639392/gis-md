@@ -46,6 +46,12 @@ add_executable(test_math_utils
 target_link_libraries(test_math_utils PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_math_utils COMMAND test_math_utils)
 
+add_executable(test_attribute_compression
+    unit/core/test_attribute_compression.cpp
+)
+target_link_libraries(test_attribute_compression PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_attribute_compression COMMAND test_attribute_compression)
+
 add_executable(test_plane
     unit/core/test_plane.cpp
 )
