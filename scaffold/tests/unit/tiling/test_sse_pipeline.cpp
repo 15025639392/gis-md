@@ -19937,6 +19937,31 @@ void testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback() {
         bool callbackSawIssued = false;
     };
 
+    class SyncRenderContentProvider final : public TilesetContentProvider {
+    public:
+        explicit SyncRenderContentProvider(bool& issuedBeforeCallback)
+            : issuedBeforeCallback_(issuedBeforeCallback) {}
+
+        std::string id() const override { return "dispatcher-content-render"; }
+        bool supportsTile(const TileKey&) const override { return true; }
+        void requestTileContent(const TileKey& key,
+                                CancellationToken,
+                                ContentCallback callback,
+                                HttpRequestPriority = HttpRequestPriority::Normal) override {
+            callbackSawIssued = issuedBeforeCallback_;
+            callback(key, TileContentLoadResult::render(
+                              std::make_unique<GltfModel>()));
+        }
+        TileContentLoadResult decodeContent(
+            const uint8_t*,
+            size_t) override {
+            return TileContentLoadResult::failed();
+        }
+
+        bool& issuedBeforeCallback_;
+        bool callbackSawIssued = false;
+    };
+
     std::mutex mutex;
     std::condition_variable condition;
     TilePendingRequestState requestState;
@@ -20024,6 +20049,34 @@ void testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback() {
               uploadPendingLoads.terrainUploadCount() == 1 &&
               uploadPendingLoads.terrainTerminalResultCount() == 0,
           "TileLoadRequestDispatcher: synchronous successful terrain callback queues upload work");
+
+    TilePendingRequestState contentUploadRequestState;
+    TilePendingLoadQueue contentUploadPendingLoads;
+    FrameResourceBudget contentUploadBudget;
+    contentUploadBudget.beginFrame(1, config);
+    bool contentUploadIssued = false;
+    SyncRenderContentProvider contentUploadProvider(contentUploadIssued);
+
+    const TileLoadDispatchResult contentUploadResult =
+        TileLoadRequestDispatcher::requestContent(
+            mutex,
+            condition,
+            contentUploadRequestState,
+            contentUploadPendingLoads,
+            contentUploadBudget,
+            contentUploadProvider,
+            key,
+            "content-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&contentUploadIssued]() { contentUploadIssued = true; });
+
+    check(contentUploadResult == TileLoadDispatchResult::Issued &&
+              contentUploadProvider.callbackSawIssued &&
+              contentUploadRequestState.empty() &&
+              contentUploadPendingLoads.contentUploadCount() == 1 &&
+              contentUploadPendingLoads.contentTerminalResultCount() == 0,
+          "TileLoadRequestDispatcher: synchronous render content callback queues upload work");
 }
 
 void testTileLoadRequestDispatcherDropsCancelledCallbacks() {
