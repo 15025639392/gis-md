@@ -15810,6 +15810,31 @@ void testTileContentUnloadCoordinatorKeepsLoadingContent() {
           "TileContentUnloadCoordinator: loading content unload is kept without clearing cache state");
 }
 
+void testTileContentUnloadCoordinatorRemovesExternalContent() {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.content.contentKind = TileContentKind::External;
+    tile.content.loadState = TileLoadState::Done;
+    tile.unconditionallyRefine = true;
+    const std::string cacheKey = "test:0:0:0";
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    TileEmptyContentRegistry emptyContentRegistry;
+
+    const TileCacheUnloadContentResult result =
+        TileContentUnloadCoordinator::unloadContent(
+            tile,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            nullptr);
+
+    check(result == TileCacheUnloadContentResult::RemoveAndClearChildren &&
+              tile.content.contentKind == TileContentKind::Unknown &&
+              tile.content.loadState == TileLoadState::Unloaded &&
+              tile.unconditionallyRefine,
+          "TileContentUnloadCoordinator: unreferenced external content unloads wrapper and requests child cleanup");
+}
+
 void testTileIndexStateErasesEmptyContentRegistryKey() {
     TileUnloadQueue unloadQueue;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
@@ -25735,6 +25760,7 @@ int main() {
     testTileEmptyContentRegistryOwnsEmptyCacheKeys();
     testTileContentUnloadCoordinatorErasesEmptyContentRegistryKey();
     testTileContentUnloadCoordinatorKeepsLoadingContent();
+    testTileContentUnloadCoordinatorRemovesExternalContent();
     testTileIndexStateErasesEmptyContentRegistryKey();
     testTileTerrainHeightRangePolicySetsAndInheritsRanges();
     testTileTerrainHeightRangePolicyAppliesMeshOrHeightmapRanges();
