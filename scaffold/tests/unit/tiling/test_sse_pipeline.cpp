@@ -975,6 +975,50 @@ std::vector<uint8_t> makeQuantizedMeshBytesWithHeaderPadding(
     return bytes;
 }
 
+std::vector<uint8_t> makeLargeQuantizedMeshBytesWithUint32EdgeIndex() {
+    constexpr uint32_t vertexCount = 65537;
+    constexpr uint32_t highEdgeIndex = vertexCount - 1;
+    std::vector<uint8_t> bytes;
+
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<float>(bytes, 0.0f);
+    appendPod<float>(bytes, 100.0f);
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    for (int i = 0; i < 3; ++i) appendPod<double>(bytes, 0.0);
+    appendPod<uint32_t>(bytes, vertexCount);
+
+    for (uint32_t i = 0; i < vertexCount; ++i) {
+        appendPod<uint16_t>(bytes, 0);
+    }
+    for (uint32_t i = 0; i < vertexCount; ++i) {
+        appendPod<uint16_t>(bytes, 0);
+    }
+    for (uint32_t i = 0; i < vertexCount; ++i) {
+        appendPod<uint16_t>(bytes, 0);
+    }
+
+    if ((bytes.size() % 4u) != 0u) {
+        appendPod<uint16_t>(bytes, 0);
+    }
+    appendPod<uint32_t>(bytes, 1);
+    appendPod<uint32_t>(bytes, 0);
+    appendPod<uint32_t>(bytes, 0);
+    appendPod<uint32_t>(bytes, 0);
+
+    appendPod<uint32_t>(bytes, 2);
+    appendPod<uint32_t>(bytes, 0);
+    appendPod<uint32_t>(bytes, highEdgeIndex);
+    for (int i = 0; i < 3; ++i) {
+        appendPod<uint32_t>(bytes, 0);
+    }
+    return bytes;
+}
+
 void writeBytes(const std::filesystem::path& path,
                 const std::vector<uint8_t>& bytes) {
     std::filesystem::create_directories(path.parent_path());
@@ -3576,6 +3620,31 @@ void testQuantizedMeshRejectsTruncatedEdgeIndices() {
             bounds);
     check(truncatedMesh == nullptr,
           "QuantizedMeshParser: truncated edge indices reject ill-formed quantized mesh like cesium-native");
+}
+
+void testQuantizedMeshParsesUint32IndicesAndEdges() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(rootKey);
+    const std::vector<uint8_t> bytes =
+        makeLargeQuantizedMeshBytesWithUint32EdgeIndex();
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            bounds);
+
+    check(mesh != nullptr,
+          "QuantizedMeshParser: uint32 index quantized mesh parses like cesium-native");
+    check(mesh && mesh->vertices.size() > 65537,
+          "QuantizedMeshParser: uint32 edge indices generate skirts past uint16 range");
+    const bool keepsHighEdgeIndex =
+        mesh && std::find(mesh->indices.begin(),
+                          mesh->indices.end(),
+                          65536u) != mesh->indices.end();
+    check(keepsHighEdgeIndex,
+          "QuantizedMeshParser: uint32 edge index is preserved instead of truncated");
 }
 
 void testQuantizedMeshSkirtNormalsCopyEdgeNormals() {
@@ -21095,6 +21164,7 @@ int main() {
     testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative();
     testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding();
     testQuantizedMeshRejectsTruncatedEdgeIndices();
+    testQuantizedMeshParsesUint32IndicesAndEdges();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
     testQuantizedMeshRtcOriginFromBoundingSphereCenter();
     testQuantizedMeshHeaderHeightRangeIsExposed();
