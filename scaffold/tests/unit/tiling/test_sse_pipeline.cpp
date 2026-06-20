@@ -19293,6 +19293,60 @@ void testTilePendingLoadProcessorBudgetsTerminalResults() {
           "TilePendingLoadProcessor: terminal budget leaves excess terminal results pending");
 }
 
+void testTilePendingLoadProcessorReportsUnchangedWhenBudgetBlocksAllWork() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxTerminalStateTransitionsPerFrame = 0;
+    config.maxMainThreadFinalizesPerFrame = 0;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey terminalKey{"test", 1, 0, 0};
+    const TileKey uploadKey{"test", 1, 1, 0};
+    std::vector<std::string> events;
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainTerminalResult(
+            PendingTerrainTerminalResult{
+                terminalKey,
+                "terminal",
+                TileLoadPriorityGroup::Urgent,
+                0.0,
+                TerrainTileLoadStatus::RetryLater});
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            uploadKey,
+            "upload",
+            TileLoadPriorityGroup::Urgent,
+            0.0,
+            TileContentLoadResult::failed()});
+    }
+
+    const bool changed =
+        TilePendingLoadProcessor::processPendingLoads(
+            TilePendingLoadProcessorInput{
+                lifecycle,
+                budget,
+                false,
+                {}},
+            [&events](const PendingTerrainTerminalResult&) {
+                events.push_back("terminal");
+            },
+            [](const PendingContentTerminalResult&) {},
+            [](PendingTerrainUpload&) {},
+            [&events](PendingContentUpload&) {
+                events.push_back("upload");
+            });
+
+    const TileLoadLifecycleCounts counts = lifecycle.counts();
+    check(!changed && events.empty(),
+          "TilePendingLoadProcessor: budget-blocked pending work does not report changes");
+    check(counts.terrainTerminalResults == 1 &&
+              counts.contentUploads == 1 &&
+              lifecycle.containsWorkForCacheKey("terminal") &&
+              lifecycle.containsWorkForCacheKey("upload"),
+          "TilePendingLoadProcessor: budget-blocked pending work remains queued");
+}
+
 void testTilePendingLoadProcessorCountsTerminalElapsedAgainstMainThreadBudget() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -28144,6 +28198,7 @@ int main() {
     testTilePendingLoadQueueRejectsEmptyCacheKeys();
     testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads();
     testTilePendingLoadProcessorBudgetsTerminalResults();
+    testTilePendingLoadProcessorReportsUnchangedWhenBudgetBlocksAllWork();
     testTilePendingLoadProcessorCountsTerminalElapsedAgainstMainThreadBudget();
     testTilePendingLoadProcessorTerminalElapsedStopsUploads();
     testTilePendingUploadCompletionErasesUploadKeys();
