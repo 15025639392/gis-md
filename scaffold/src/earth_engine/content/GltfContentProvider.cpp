@@ -2268,7 +2268,7 @@ void requestBodyAsync(
             }
             if (statusCode != 200 || body.empty()) {
                 ContentRequestCompletionGuard completion{requestsCompleted};
-                (*callbackPtr)(key, TileContentLoadResult::retryLater());
+                (*callbackPtr)(key, TileContentLoadResult::failed());
                 return;
             }
 

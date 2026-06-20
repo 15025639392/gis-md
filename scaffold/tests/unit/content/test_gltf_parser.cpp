@@ -14455,6 +14455,70 @@ TEST(GltfParserTest, TilesetJsonContentProviderLoadsEmptyContentObject) {
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
+TEST(GltfParserTest, TilesetJsonContentProviderFailsMissingTileContent) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth-md-error-missing-content-tileset";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    const std::string tilesetJson = R"json({
+      "asset": {
+        "version": "1.0",
+        "tilesetVersion": "1.2.3"
+      },
+      "extras": {
+        "name": "Sample Tileset"
+      },
+      "geometricError": 240,
+      "root": {
+        "boundingVolume": {
+          "region": [-1.3197209591796106, 0.6988424218,
+                     -1.3196390408203893, 0.6989055782, 0, 88]
+        },
+        "geometricError": 70,
+        "refine": "REPLACE",
+        "content": {
+          "uri": "nonexistent.b3dm",
+          "boundingVolume": {
+            "region": [-1.3197004795898053, 0.6988582109,
+                       -1.3196595204101946, 0.6988897891, 0, 88]
+          }
+        }
+      }
+    })json";
+    const std::filesystem::path tilesetPath = root / "tileset.json";
+    writeBytes(tilesetPath, bytesFromString(tilesetJson));
+
+    TilesetJsonContentProvider provider(
+        "file://" + tilesetPath.generic_string(),
+        bytesFromString(tilesetJson),
+        "missing tile content fixture");
+
+    ASSERT_TRUE(provider.valid());
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    const std::vector<TileKey> rootChildren =
+        provider.childTiles(roots.front());
+    ASSERT_EQ(1u, rootChildren.size());
+
+    const std::optional<TilesetContentTileMetadata> metadata =
+        provider.tileMetadata(rootChildren.front());
+    ASSERT_TRUE(metadata.has_value());
+    EXPECT_DOUBLE_EQ(70.0, metadata->geometricError);
+    ASSERT_TRUE(metadata->contentBoundingVolume.has_value());
+    EXPECT_EQ(
+        TileBoundingVolumeKind::Region,
+        metadata->contentBoundingVolume->kind);
+
+    const TileContentLoadResult result =
+        requestTileContentBlocking(provider, rootChildren.front());
+    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(nullptr, result.gltfModel);
+
+    std::filesystem::remove_all(root);
+}
+
 TEST(GltfParserTest, TilesetFailsMalformedExternalTilesetNumericMetadata) {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
