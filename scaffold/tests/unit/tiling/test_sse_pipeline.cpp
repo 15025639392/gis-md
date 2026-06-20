@@ -16648,6 +16648,31 @@ void testTileContentUnloadCoordinatorKeepsLoadingContent() {
           "TileContentUnloadCoordinator: loading content unload is kept without clearing cache state");
 }
 
+void testTileContentUnloadCoordinatorRemovesFailedUnknownContent() {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.content.contentKind = TileContentKind::Unknown;
+    tile.content.loadState = TileLoadState::Failed;
+    const std::string cacheKey = "test:0:0:0";
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
+
+    const TileCacheUnloadContentResult result =
+        TileContentUnloadCoordinator::unloadContent(
+            tile,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            nullptr);
+
+    check(result == TileCacheUnloadContentResult::Remove &&
+              !emptyContentRegistry.contains(cacheKey) &&
+              tile.content.contentKind == TileContentKind::Unknown &&
+              tile.content.loadState == TileLoadState::Unloaded,
+          "TileContentUnloadCoordinator: failed unknown content unload resets state and clears stale empty marker");
+}
+
 void testTileContentUnloadCoordinatorRemovesExternalContent() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.contentKind = TileContentKind::External;
@@ -29151,6 +29176,7 @@ int main() {
     testTileEmptyContentRegistryOwnsEmptyCacheKeys();
     testTileContentUnloadCoordinatorErasesEmptyContentRegistryKey();
     testTileContentUnloadCoordinatorKeepsLoadingContent();
+    testTileContentUnloadCoordinatorRemovesFailedUnknownContent();
     testTileContentUnloadCoordinatorRemovesExternalContent();
     testTileContentUnloadCoordinatorKeepsReferencedExternalContent();
     testTileContentUnloadCoordinatorRemovesRenderContentCache();
