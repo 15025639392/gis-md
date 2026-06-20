@@ -19609,6 +19609,13 @@ void testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks() {
             TileLoadPriorityGroup::Normal,
             0.0,
             nullptr});
+        lifecycle.pendingLoads().addContentTerminalResult(
+            PendingContentTerminalResult{
+                TileKey{"test", 0, 1, 0},
+                "content-terminal",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadStatus::RetryLater});
     }
 
     std::atomic<bool> destroyReturned{false};
@@ -19622,6 +19629,9 @@ void testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks() {
     }
     check(token.isCancelled(),
           "TileLoadLifecycle: destroy cancels pending request token");
+    check(!lifecycle.containsWorkForCacheKey("terrain-upload") &&
+              !lifecycle.containsWorkForCacheKey("content-terminal"),
+          "TileLoadLifecycle: destroy clears queued pending load work before callbacks drain");
     check(!destroyReturned.load(),
           "TileLoadLifecycle: destroy waits for pending callback completion");
     {
