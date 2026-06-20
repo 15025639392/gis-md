@@ -14279,6 +14279,50 @@ TEST(GltfParserTest, TilesetJsonContentProviderParsesBoxBoundingVolume) {
     EXPECT_EQ(Vec3(0.0, 0.0, 10.0), box.getHalfAxis(2));
 }
 
+TEST(GltfParserTest, TilesetJsonContentProviderSkipsChildrenMissingBoundingVolume) {
+    const std::string tilesetJson = R"json({
+      "asset": {"version": "1.0"},
+      "geometricError": 240,
+      "root": {
+        "boundingVolume": {
+          "region": [-1.3197209591796106, 0.6988424218,
+                     -1.3196390408203893, 0.6989055782, 0, 88]
+        },
+        "geometricError": 70,
+        "refine": "REPLACE",
+        "content": {"uri": "parent.b3dm"},
+        "children": [
+          {
+            "geometricError": 5,
+            "content": {"uri": "ll.b3dm"}
+          },
+          {
+            "geometricError": 0,
+            "content": {"uri": "lr.b3dm"}
+          }
+        ]
+      }
+    })json";
+
+    TilesetJsonContentProvider provider(
+        "file:///earth-md/no-child-bounding-volume-tileset.json",
+        bytesFromString(tilesetJson),
+        "missing child boundingVolume tileset");
+
+    ASSERT_TRUE(provider.valid());
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    const std::vector<TileKey> rootChildren =
+        provider.childTiles(roots.front());
+    ASSERT_EQ(1u, rootChildren.size());
+
+    const std::optional<TilesetContentTileMetadata> rootMetadata =
+        provider.tileMetadata(rootChildren.front());
+    ASSERT_TRUE(rootMetadata.has_value());
+    EXPECT_DOUBLE_EQ(70.0, rootMetadata->geometricError);
+    EXPECT_TRUE(provider.childTiles(rootChildren.front()).empty());
+}
+
 TEST(GltfParserTest, TilesetJsonContentProviderScalesGeometricErrorByTransform) {
     const std::string tilesetJson = R"json({
       "asset": {"version": "1.1"},
