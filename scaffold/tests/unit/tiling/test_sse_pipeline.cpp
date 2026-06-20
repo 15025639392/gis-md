@@ -6269,6 +6269,28 @@ void testQuantizedMeshHeaderHorizonOcclusionPointIsExposed() {
           "QuantizedMeshParser: horizon occlusion point is preserved from quantized-mesh header like cesium-native");
 }
 
+void testQuantizedMeshHeaderZeroHorizonOcclusionPointIsStillExposed() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(rootKey);
+    const std::vector<uint8_t> bytes = makeQuantizedMeshBytes(
+        "", false, false, Vec3::zero(), 0.0f, 100.0f, Vec3::zero(),
+        Vec3::zero());
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            bounds);
+
+    check(mesh != nullptr,
+          "QuantizedMeshParser: zero horizon-occlusion header test mesh parses");
+    check(mesh && mesh->hasHorizonOcclusionPoint,
+          "QuantizedMeshParser: zero horizon occlusion point is still present in the quantized-mesh header like cesium-native");
+    check(mesh && mesh->horizonOcclusionPoint == Vec3::zero(),
+          "QuantizedMeshParser: zero horizon occlusion point is preserved without value-based filtering");
+}
+
 void testQuantizedMeshVertexUvAndHeightGolden() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -28923,6 +28945,24 @@ void testTilesetSoftwareOcclusionKeepsVisibleQuantizedMeshHorizonPoint() {
           "Tileset: software occlusion keeps visible quantized-mesh horizon point");
 }
 
+void testTilesetSoftwareOcclusionUsesZeroQuantizedMeshHorizonPoint() {
+    TilesetTile tile;
+    tile.key = TileKey{"Geographic-TMS", 4, 0, 0};
+    tile.bounds = Rectangle::fromDegrees(10.0, -0.01, 10.1, 0.01);
+    auto mesh = std::make_unique<SurfaceTileMesh>();
+    mesh->hasHorizonOcclusionPoint = true;
+    mesh->horizonOcclusionPoint = Vec3::zero();
+    tile.content.renderContent.setSurfaceMesh(std::move(mesh));
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 cameraPosition = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(0.0, 0.0, 1000000.0));
+
+    check(TileSoftwareOcclusionPolicy::check(tile, cameraPosition) ==
+              TileOcclusionState::Occluded,
+          "Tileset: software occlusion treats zero quantized-mesh horizon point as header-provided data");
+}
+
 void testTilesetChildrenInheritParentTerrainHeightRange() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -30693,6 +30733,7 @@ int main() {
     testQuantizedMeshRtcOriginFromBoundingSphereCenter();
     testQuantizedMeshHeaderHeightRangeIsExposed();
     testQuantizedMeshHeaderHorizonOcclusionPointIsExposed();
+    testQuantizedMeshHeaderZeroHorizonOcclusionPointIsStillExposed();
     testQuantizedMeshVertexUvAndHeightGolden();
     testQuantizedMeshWaterMaskExtensions();
     testQuantizedMeshProviderRasterizesCesiumHeightmapGrid();
@@ -31019,6 +31060,7 @@ int main() {
     testTilesetSoftwareOcclusionPreservesNegativeExplicitS2Height();
     testTilesetSoftwareOcclusionUsesQuantizedMeshHorizonPoint();
     testTilesetSoftwareOcclusionKeepsVisibleQuantizedMeshHorizonPoint();
+    testTilesetSoftwareOcclusionUsesZeroQuantizedMeshHorizonPoint();
     testTilesetChildrenInheritParentTerrainHeightRange();
     testTilesetSampleHeightUsesBestLoadedTerrainTile();
     testTilesetSampleHeightFallsBackToLoadedAncestorTerrain();

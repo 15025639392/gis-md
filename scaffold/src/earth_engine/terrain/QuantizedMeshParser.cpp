@@ -680,8 +680,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     mesh->maximumHeight = hdr.maximumHeight;
     mesh->horizonOcclusionPoint =
         Vec3(hdr.horizonOcclusionX, hdr.horizonOcclusionY, hdr.horizonOcclusionZ);
-    mesh->hasHorizonOcclusionPoint =
-        mesh->horizonOcclusionPoint.lengthSquared() > 0.0;
+    mesh->hasHorizonOcclusionPoint = true;
 
     // --- Parse extensions (oct-encoded normals, water mask, metadata) ---
     WaterMask waterMask;
