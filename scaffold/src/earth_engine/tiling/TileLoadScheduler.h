@@ -52,6 +52,16 @@ public:
                 if (input.lifecycle.requestState().destroying()) {
                     break;
                 }
+            }
+
+            const TileKey requestKey = request.key;
+            const std::string cacheKey = cacheKeyForTile(requestKey);
+            if (input.lifecycle.containsWorkForCacheKey(cacheKey)) {
+                continue;
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
                 if (!input.budget.hasNetworkInflightCapacity(
                         static_cast<uint32_t>(
                             input.lifecycle
@@ -62,11 +72,6 @@ public:
                 }
             }
 
-            const TileKey requestKey = request.key;
-            const std::string cacheKey = cacheKeyForTile(requestKey);
-            if (input.lifecycle.containsWorkForCacheKey(cacheKey)) {
-                continue;
-            }
             TilesetTile* tileState = nullptr;
             const TileLoadRequestSnapshot snapshot =
                 makeSnapshot(requestKey, cacheKey, tileState);

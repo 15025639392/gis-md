@@ -18920,6 +18920,56 @@ void testTileLoadSchedulerBlocksBeforePlanningWhenInflightIsFull() {
     }
 }
 
+void testTileLoadSchedulerSkipsPendingCacheKeyBeforeInflightBlock() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = testCacheKeyForTile(key);
+    CancellationToken token;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        check(lifecycle.requestState().beginTerrainRequest(cacheKey, token),
+              "TileLoadScheduler: test starts one inflight request for pending key");
+    }
+    bool planned = false;
+
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            testCacheKeyForTile,
+            [&planned](const TileKey&,
+                       const std::string&,
+                       TilesetTile*& tileState) {
+                planned = true;
+                tileState = nullptr;
+                return TileLoadRequestSnapshot{};
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [](const TileKey&) {});
+
+    check(outcome.issued == 0 && !outcome.blockedByInflight,
+          "TileLoadScheduler: pending cache key skip does not report inflight block");
+    check(!planned,
+          "TileLoadScheduler: pending cache key skip happens before request planning");
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().completeTerrainRequest(cacheKey);
+    }
+}
+
 void testTileLoadSchedulerSortsAndQueuesUpsampledTerrain() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -24656,6 +24706,7 @@ int main() {
     testTileLoadRequestDispatcherPassesNetworkPriority();
     testTileLoadRequestPlannerClassifiesRequestKinds();
     testTileLoadSchedulerBlocksBeforePlanningWhenInflightIsFull();
+    testTileLoadSchedulerSkipsPendingCacheKeyBeforeInflightBlock();
     testTileLoadSchedulerSortsAndQueuesUpsampledTerrain();
     testTileLoadSchedulerSkipsEmptyUpsampledCacheKey();
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation();
