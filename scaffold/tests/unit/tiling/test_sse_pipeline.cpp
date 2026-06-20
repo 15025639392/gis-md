@@ -12827,6 +12827,11 @@ void testTileSelectionInputMetricsSseMatchesCesiumNativeGolden() {
 }
 
 void testTileLoadPriorityPolicyMatchesNativeOrdering() {
+    check(static_cast<int>(TileLoadPriorityGroup::Preload) == 0 &&
+              static_cast<int>(TileLoadPriorityGroup::Normal) == 1 &&
+              static_cast<int>(TileLoadPriorityGroup::Urgent) == 2,
+          "TileLoadPriorityPolicy: priority group values match cesium-native");
+
     check(TileLoadPriorityPolicy::hasHigherPriority(
               TileLoadPriorityGroup::Urgent,
               100.0,
