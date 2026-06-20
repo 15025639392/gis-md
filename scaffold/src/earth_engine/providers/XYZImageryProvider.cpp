@@ -20,9 +20,12 @@
 #include <cstring>
 #include <cstdint>
 #include <cmath>
+#include <cctype>
 #include <memory>
 #include <mutex>
 #include <sstream>
+#include <utility>
+#include <vector>
 
 namespace earth_engine {
 
@@ -183,6 +186,49 @@ TileProjectedRectangle tileProjectedRectangleForScheme(const TileKey& key) {
         webMercatorLatitudeDegreesToProjectedY(degrees.north)};
 }
 
+std::string asciiLower(std::string value) {
+    for (char& c : value) {
+        c = static_cast<char>(
+            std::tolower(static_cast<unsigned char>(c)));
+    }
+    return value;
+}
+
+std::string substituteUrlTemplateParameters(
+    const std::string& templateUrl,
+    const std::vector<std::pair<std::string, std::string>>& placeholders) {
+    std::string result;
+    size_t startPos = 0;
+    while (true) {
+        const size_t open = templateUrl.find('{', startPos);
+        if (open == std::string::npos) break;
+        result.append(templateUrl, startPos, open - startPos);
+
+        const size_t close = templateUrl.find('}', open + 1);
+        if (close == std::string::npos) {
+            startPos = open;
+            break;
+        }
+
+        const std::string placeholder =
+            asciiLower(templateUrl.substr(open + 1, close - open - 1));
+        bool replaced = false;
+        for (const auto& [name, value] : placeholders) {
+            if (name == placeholder) {
+                result.append(value);
+                replaced = true;
+                break;
+            }
+        }
+        if (!replaced) {
+            result.append("[UNKNOWN PLACEHOLDER]");
+        }
+        startPos = close + 1;
+    }
+    result.append(templateUrl, startPos, templateUrl.length() - startPos);
+    return result;
+}
+
 } // namespace
 
 // ============================================================
@@ -257,59 +303,52 @@ TileKey XYZImageryProvider::providerKeyForTile(const TileKey& key) const {
 
 std::string XYZImageryProvider::buildUrl(const TileKey& key) const {
     const TileKey providerKey = providerKeyForTile(key);
-    std::string url = urlTemplate_;
-    auto replace = [&url](const std::string& ph, const std::string& val) {
-        size_t pos = 0;
-        while ((pos = url.find(ph, pos)) != std::string::npos) {
-            url.replace(pos, ph.length(), val);
-            pos += val.length();
-        }
-    };
-    replace("{z}", std::to_string(providerKey.z));
-    replace("{x}", std::to_string(providerKey.x));
-    replace("{y}", std::to_string(providerKey.y));
     const int64_t xTiles = xTileCountForScheme(providerKey.schemeId,
                                                providerKey.z);
     const int64_t yTiles = yTileCountForScheme(providerKey.schemeId,
                                                providerKey.z);
-    if (xTiles > 0) {
-        replace("{reverseX}", std::to_string(xTiles - 1 - providerKey.x));
-    }
-    if (yTiles > 0) {
-        replace("{reverseY}", std::to_string(yTiles - 1 - providerKey.y));
-    }
-    replace("{reverseZ}", std::to_string(maxZoom_ - providerKey.z));
     const TileDegreesRectangle tileRect =
         tileDegreesRectangleForScheme(providerKey);
-    replace("{westDegrees}", std::to_string(tileRect.west));
-    replace("{southDegrees}", std::to_string(tileRect.south));
-    replace("{eastDegrees}", std::to_string(tileRect.east));
-    replace("{northDegrees}", std::to_string(tileRect.north));
     const TileProjectedRectangle projectedRect =
         tileProjectedRectangleForScheme(providerKey);
-    replace("{minimumX}", std::to_string(projectedRect.minimumX));
-    replace("{minimumY}", std::to_string(projectedRect.minimumY));
-    replace("{maximumX}", std::to_string(projectedRect.maximumX));
-    replace("{maximumY}", std::to_string(projectedRect.maximumY));
-    replace("{width}", std::to_string(tileWidth_));
-    replace("{height}", std::to_string(tileHeight_));
-    replace("{groupedY}", std::to_string(key.y));
-    if (url.find("{tileGroup}") != std::string::npos) {
-        std::string group = "mercator";
-        const int tilesAtZoom = 1 << key.z;
-        if (key.y >= 2 * tilesAtZoom) group = "south";
-        else if (key.y >= tilesAtZoom) group = "north";
-        replace("{tileGroup}", group);
+
+    std::string group = "mercator";
+    const int tilesAtZoom = 1 << key.z;
+    if (key.y >= 2 * tilesAtZoom) group = "south";
+    else if (key.y >= tilesAtZoom) group = "north";
+
+    int subdomain = (providerKey.x + providerKey.y) % 4;
+    if (urlTemplate_.find("0{s}") != std::string::npos) {
+        subdomain += 1;
     }
-    if (url.find("{s}") != std::string::npos) {
-        // 高德等使用 1-4 子域；OSM 等使用 0-3
-        // 简单规则：如果模板中有 "0{s}" 则在前面补 0 的基础上用 1-4
-        bool hasLeadingZero = (url.find("0{s}") != std::string::npos);
-        int s = (providerKey.x + providerKey.y) % 4;
-        if (hasLeadingZero) s += 1;  // 1-4 range
-        replace("{s}", std::to_string(s));
+
+    std::vector<std::pair<std::string, std::string>> placeholders{
+        {"z", std::to_string(providerKey.z)},
+        {"x", std::to_string(providerKey.x)},
+        {"y", std::to_string(providerKey.y)},
+        {"reversez", std::to_string(maxZoom_ - providerKey.z)},
+        {"westdegrees", std::to_string(tileRect.west)},
+        {"southdegrees", std::to_string(tileRect.south)},
+        {"eastdegrees", std::to_string(tileRect.east)},
+        {"northdegrees", std::to_string(tileRect.north)},
+        {"minimumx", std::to_string(projectedRect.minimumX)},
+        {"minimumy", std::to_string(projectedRect.minimumY)},
+        {"maximumx", std::to_string(projectedRect.maximumX)},
+        {"maximumy", std::to_string(projectedRect.maximumY)},
+        {"width", std::to_string(tileWidth_)},
+        {"height", std::to_string(tileHeight_)},
+        {"groupedy", std::to_string(key.y)},
+        {"tilegroup", group},
+        {"s", std::to_string(subdomain)}};
+    if (xTiles > 0) {
+        placeholders.emplace_back("reversex",
+                                  std::to_string(xTiles - 1 - providerKey.x));
     }
-    return url;
+    if (yTiles > 0) {
+        placeholders.emplace_back("reversey",
+                                  std::to_string(yTiles - 1 - providerKey.y));
+    }
+    return substituteUrlTemplateParameters(urlTemplate_, placeholders);
 }
 
 void XYZImageryProvider::requestTile(const TileKey& key,
