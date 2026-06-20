@@ -24895,6 +24895,33 @@ void testTileFrameResourceBudgetPlannerKeepsMainThreadFinalizesWhenWorkerLoadsDi
           "TileFrameResourceBudgetPlanner: disabled worker loads still allow existing main-thread finalizes");
 }
 
+void testTileFrameResourceBudgetPlannerKeepsTerminalTransitionsWhenWorkerLoadsDisabled() {
+    FrameResourceBudgetConfig config =
+        TileFrameResourceBudgetPlanner::plan(
+            TileFrameResourceBudgetPlanInput::withTransportLimit(
+                0,
+                20,
+                0.0,
+                false,
+                false));
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    check(!budget.tryIssue(
+              FrameResourceLane::ContentRequest,
+              FrameResourcePriority::Normal),
+          "TileFrameResourceBudgetPlanner: disabled worker loads block new content requests");
+    check(config.maxTerminalStateTransitionsPerFrame ==
+              std::numeric_limits<uint32_t>::max() &&
+              budget.tryFinalize(
+                  FrameResourceLane::TerminalState,
+                  FrameResourcePriority::Normal) &&
+              budget.tryFinalize(
+                  FrameResourceLane::TerminalState,
+                  FrameResourcePriority::Normal),
+          "TileFrameResourceBudgetPlanner: disabled worker loads still allow existing terminal transitions");
+}
+
 void testTileFrameBudgetFallbackKeepsUploadsAliveWhenWorkerLoadsDisabled() {
     FrameResourceBudgetConfig requestConfig =
         TileFrameBudgetFallback::requestConfig(0, 0.0);
@@ -30485,6 +30512,7 @@ int main() {
     testTilesetFrameResourceBudgetLimitsWorkerRequests();
     testTileFrameResourceBudgetPlannerAlignsRasterBudgetWithTransportLane();
     testTileFrameResourceBudgetPlannerKeepsMainThreadFinalizesWhenWorkerLoadsDisabled();
+    testTileFrameResourceBudgetPlannerKeepsTerminalTransitionsWhenWorkerLoadsDisabled();
     testTileFrameBudgetFallbackKeepsUploadsAliveWhenWorkerLoadsDisabled();
     testTilesetFrameResourceBudgetUsesProviderTransportLane();
     testTilesetLoadDiagnosticsExposeTerrainProviderRequestDiagnostics();
