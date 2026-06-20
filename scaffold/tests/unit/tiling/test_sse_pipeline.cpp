@@ -21656,6 +21656,20 @@ void testTilesetCreatesUpsampledChildrenForUnavailableSiblings() {
               std::abs(sw->geometricError - root->geometricError * 0.5) < 1e-9 &&
               std::abs(se->geometricError - root->geometricError * 0.5) < 1e-9,
           "Tileset: child geometric error is parent error halved like cesium-native");
+    check(sw && se && nw && ne &&
+              sw->key == TileKey{"Geographic-TMS", 1, 0, 0} &&
+              se->key == TileKey{"Geographic-TMS", 1, 1, 0} &&
+              nw->key == TileKey{"Geographic-TMS", 1, 0, 1} &&
+              ne->key == TileKey{"Geographic-TMS", 1, 1, 1} &&
+              std::abs(sw->bounds.west() + MathUtils::OnePi) < 1e-9 &&
+              std::abs(sw->bounds.south() + MathUtils::PiOverTwo) < 1e-9 &&
+              std::abs(sw->bounds.east() + MathUtils::PiOverTwo) < 1e-9 &&
+              std::abs(sw->bounds.north()) < 1e-9 &&
+              std::abs(ne->bounds.west() + MathUtils::PiOverTwo) < 1e-9 &&
+              std::abs(ne->bounds.south()) < 1e-9 &&
+              std::abs(ne->bounds.east()) < 1e-9 &&
+              std::abs(ne->bounds.north() - MathUtils::PiOverTwo) < 1e-9,
+          "Tileset: Geographic-TMS terrain children preserve cesium-native order and rectangles");
     check(se && !TilesetTestAccess::isTileRenderable(tileset, *se),
           "Tileset: upsampled child waits for main-thread upsample finish before becoming renderable");
 
