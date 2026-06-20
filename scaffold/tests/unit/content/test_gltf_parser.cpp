@@ -14405,6 +14405,56 @@ TEST(GltfParserTest, TilesetJsonContentProviderNormalizesRefineCase) {
     }
 }
 
+TEST(GltfParserTest, TilesetJsonContentProviderLoadsEmptyContentObject) {
+    const std::string tilesetJson = R"json({
+      "asset": {"version": "1.0"},
+      "geometricError": 240,
+      "root": {
+        "boundingVolume": {
+          "region": [-1.3197209591796106, 0.6988424218,
+                     -1.3196390408203893, 0.6989055782, 0, 88]
+        },
+        "geometricError": 70,
+        "refine": "ADD",
+        "children": [
+          {
+            "boundingVolume": {
+              "region": [-1.31968, 0.6988424218,
+                         -1.3196390408203893, 0.698874, 0, 20]
+            },
+            "geometricError": 12,
+            "content": {}
+          }
+        ]
+      }
+    })json";
+
+    TilesetJsonContentProvider provider(
+        "file:///earth-md/empty-tile-tileset.json",
+        bytesFromString(tilesetJson),
+        "empty tile content object tileset");
+
+    ASSERT_TRUE(provider.valid());
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    const std::vector<TileKey> rootChildren =
+        provider.childTiles(roots.front());
+    ASSERT_EQ(1u, rootChildren.size());
+    const std::vector<TileKey> children =
+        provider.childTiles(rootChildren.front());
+    ASSERT_EQ(1u, children.size());
+
+    const std::optional<TilesetContentTileMetadata> metadata =
+        provider.tileMetadata(children.front());
+    ASSERT_TRUE(metadata.has_value());
+    EXPECT_DOUBLE_EQ(12.0, metadata->geometricError);
+
+    const TileContentLoadResult result =
+        requestTileContentBlocking(provider, children.front());
+    EXPECT_EQ(TileContentLoadStatus::Empty, result.status);
+    EXPECT_EQ(nullptr, result.gltfModel);
+}
+
 TEST(GltfParserTest, TilesetFailsMalformedExternalTilesetNumericMetadata) {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
