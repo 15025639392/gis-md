@@ -3,12 +3,25 @@
 #include "../tiling/Tileset.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace earth_engine {
 namespace {
 
 int toDiagnosticInt(uint32_t value) {
-    return static_cast<int>(value);
+    constexpr uint32_t maxInt =
+        static_cast<uint32_t>(std::numeric_limits<int>::max());
+    return value > maxInt
+               ? std::numeric_limits<int>::max()
+               : static_cast<int>(value);
+}
+
+void addSaturating(int& target, int value) {
+    if (value <= 0) {
+        return;
+    }
+    const int available = std::numeric_limits<int>::max() - target;
+    target += std::min(value, available);
 }
 
 void resetProviderDiagnostics(Diagnostics& diag) {
@@ -58,29 +71,36 @@ void resetResourceBudgetDiagnostics(Diagnostics& diag) {
 void applyResourceBudgetSnapshot(
     Diagnostics& diag,
     const SceneFrameResourceBudgetDiagnosticsSnapshot& budget) {
-    diag.budgetNetworkRequestsIssued += budget.networkRequestsIssued;
-    diag.budgetNetworkRequestsLimit += budget.networkRequestsLimit;
-    diag.budgetTerrainContentNetworkRequestsIssued +=
-        budget.terrainContentNetworkRequestsIssued;
-    diag.budgetTerrainContentNetworkRequestsLimit +=
-        budget.terrainContentNetworkRequestsLimit;
-    diag.budgetRasterNetworkRequestsIssued +=
-        budget.rasterNetworkRequestsIssued;
-    diag.budgetRasterNetworkRequestsLimit +=
-        budget.rasterNetworkRequestsLimit;
-    diag.budgetNetworkInflightLimit += budget.networkInflightLimit;
-    diag.budgetTerrainContentNetworkInflightLimit +=
-        budget.terrainContentNetworkInflightLimit;
-    diag.budgetRasterNetworkInflightLimit +=
-        budget.rasterNetworkInflightLimit;
-    diag.budgetMainThreadFinalizesUsed += budget.mainThreadFinalizesUsed;
-    diag.budgetMainThreadFinalizesLimit += budget.mainThreadFinalizesLimit;
-    diag.budgetTerminalStateTransitionsUsed +=
-        budget.terminalStateTransitionsUsed;
-    diag.budgetTerminalStateTransitionsLimit +=
-        budget.terminalStateTransitionsLimit;
-    diag.budgetRasterUploadsUsed += budget.rasterUploadsUsed;
-    diag.budgetRasterUploadsLimit += budget.rasterUploadsLimit;
+    addSaturating(diag.budgetNetworkRequestsIssued,
+                  budget.networkRequestsIssued);
+    addSaturating(diag.budgetNetworkRequestsLimit,
+                  budget.networkRequestsLimit);
+    addSaturating(diag.budgetTerrainContentNetworkRequestsIssued,
+                  budget.terrainContentNetworkRequestsIssued);
+    addSaturating(diag.budgetTerrainContentNetworkRequestsLimit,
+                  budget.terrainContentNetworkRequestsLimit);
+    addSaturating(diag.budgetRasterNetworkRequestsIssued,
+                  budget.rasterNetworkRequestsIssued);
+    addSaturating(diag.budgetRasterNetworkRequestsLimit,
+                  budget.rasterNetworkRequestsLimit);
+    addSaturating(diag.budgetNetworkInflightLimit,
+                  budget.networkInflightLimit);
+    addSaturating(diag.budgetTerrainContentNetworkInflightLimit,
+                  budget.terrainContentNetworkInflightLimit);
+    addSaturating(diag.budgetRasterNetworkInflightLimit,
+                  budget.rasterNetworkInflightLimit);
+    addSaturating(diag.budgetMainThreadFinalizesUsed,
+                  budget.mainThreadFinalizesUsed);
+    addSaturating(diag.budgetMainThreadFinalizesLimit,
+                  budget.mainThreadFinalizesLimit);
+    addSaturating(diag.budgetTerminalStateTransitionsUsed,
+                  budget.terminalStateTransitionsUsed);
+    addSaturating(diag.budgetTerminalStateTransitionsLimit,
+                  budget.terminalStateTransitionsLimit);
+    addSaturating(diag.budgetRasterUploadsUsed,
+                  budget.rasterUploadsUsed);
+    addSaturating(diag.budgetRasterUploadsLimit,
+                  budget.rasterUploadsLimit);
     diag.budgetMainThreadElapsedMs += budget.mainThreadElapsedMs;
     diag.budgetMainThreadTimeLimitMs =
         std::max(diag.budgetMainThreadTimeLimitMs,
@@ -201,24 +221,28 @@ SceneFrameResourceBudgetDiagnosticsSnapshot::fromBudget(
 
 void SceneFrameResourceBudgetDiagnosticsSnapshot::add(
     const SceneFrameResourceBudgetDiagnosticsSnapshot& next) {
-    networkRequestsIssued += next.networkRequestsIssued;
-    networkRequestsLimit += next.networkRequestsLimit;
-    terrainContentNetworkRequestsIssued +=
-        next.terrainContentNetworkRequestsIssued;
-    terrainContentNetworkRequestsLimit +=
-        next.terrainContentNetworkRequestsLimit;
-    rasterNetworkRequestsIssued += next.rasterNetworkRequestsIssued;
-    rasterNetworkRequestsLimit += next.rasterNetworkRequestsLimit;
-    networkInflightLimit += next.networkInflightLimit;
-    terrainContentNetworkInflightLimit +=
-        next.terrainContentNetworkInflightLimit;
-    rasterNetworkInflightLimit += next.rasterNetworkInflightLimit;
-    mainThreadFinalizesUsed += next.mainThreadFinalizesUsed;
-    mainThreadFinalizesLimit += next.mainThreadFinalizesLimit;
-    terminalStateTransitionsUsed += next.terminalStateTransitionsUsed;
-    terminalStateTransitionsLimit += next.terminalStateTransitionsLimit;
-    rasterUploadsUsed += next.rasterUploadsUsed;
-    rasterUploadsLimit += next.rasterUploadsLimit;
+    addSaturating(networkRequestsIssued, next.networkRequestsIssued);
+    addSaturating(networkRequestsLimit, next.networkRequestsLimit);
+    addSaturating(terrainContentNetworkRequestsIssued,
+                  next.terrainContentNetworkRequestsIssued);
+    addSaturating(terrainContentNetworkRequestsLimit,
+                  next.terrainContentNetworkRequestsLimit);
+    addSaturating(rasterNetworkRequestsIssued,
+                  next.rasterNetworkRequestsIssued);
+    addSaturating(rasterNetworkRequestsLimit, next.rasterNetworkRequestsLimit);
+    addSaturating(networkInflightLimit, next.networkInflightLimit);
+    addSaturating(terrainContentNetworkInflightLimit,
+                  next.terrainContentNetworkInflightLimit);
+    addSaturating(rasterNetworkInflightLimit,
+                  next.rasterNetworkInflightLimit);
+    addSaturating(mainThreadFinalizesUsed, next.mainThreadFinalizesUsed);
+    addSaturating(mainThreadFinalizesLimit, next.mainThreadFinalizesLimit);
+    addSaturating(terminalStateTransitionsUsed,
+                  next.terminalStateTransitionsUsed);
+    addSaturating(terminalStateTransitionsLimit,
+                  next.terminalStateTransitionsLimit);
+    addSaturating(rasterUploadsUsed, next.rasterUploadsUsed);
+    addSaturating(rasterUploadsLimit, next.rasterUploadsLimit);
     mainThreadElapsedMs += next.mainThreadElapsedMs;
     mainThreadTimeLimitMs =
         std::max(mainThreadTimeLimitMs, next.mainThreadTimeLimitMs);

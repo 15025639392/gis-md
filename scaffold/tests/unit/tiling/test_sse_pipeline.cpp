@@ -25498,6 +25498,31 @@ void testSceneFrameResourceBudgetDiagnosticsSnapshotAggregatesBudgetLanes() {
           "SceneFrameResourceBudgetDiagnosticsSnapshot: preserves timing and frame mode flags");
 }
 
+void testSceneFrameResourceBudgetDiagnosticsSnapshotSaturatesUnlimitedLimits() {
+    FrameResourceBudgetConfig unlimitedConfig;
+    unlimitedConfig.maxMainThreadFinalizesPerFrame =
+        std::numeric_limits<uint32_t>::max();
+    FrameResourceBudget unlimitedBudget;
+    unlimitedBudget.beginFrame(12, unlimitedConfig);
+
+    SceneFrameResourceBudgetDiagnosticsSnapshot snapshot =
+        SceneFrameResourceBudgetDiagnosticsSnapshot::fromBudget(
+            unlimitedBudget.snapshot());
+    check(snapshot.mainThreadFinalizesLimit ==
+              std::numeric_limits<int>::max(),
+          "SceneFrameResourceBudgetDiagnosticsSnapshot: unlimited uint32 limits saturate for diagnostics");
+
+    FrameResourceBudgetConfig finiteConfig;
+    finiteConfig.maxMainThreadFinalizesPerFrame = 8;
+    FrameResourceBudget finiteBudget;
+    finiteBudget.beginFrame(13, finiteConfig);
+    snapshot.add(SceneFrameResourceBudgetDiagnosticsSnapshot::fromBudget(
+        finiteBudget.snapshot()));
+    check(snapshot.mainThreadFinalizesLimit ==
+              std::numeric_limits<int>::max(),
+          "SceneFrameResourceBudgetDiagnosticsSnapshot: aggregated unlimited limits remain saturated");
+}
+
 void testSceneRenderCommandDiagnosticsSnapshotCountsRenderCommandLanes() {
     Texture* sharedTexture = reinterpret_cast<Texture*>(0x1);
     Texture* secondTexture = reinterpret_cast<Texture*>(0x2);
@@ -30471,6 +30496,7 @@ int main() {
     testSceneTilesetDiagnosticsExposeRasterRequestLanes();
     testSceneProviderRequestDiagnosticsSnapshotAggregatesProviderLanes();
     testSceneFrameResourceBudgetDiagnosticsSnapshotAggregatesBudgetLanes();
+    testSceneFrameResourceBudgetDiagnosticsSnapshotSaturatesUnlimitedLimits();
     testSceneRenderCommandDiagnosticsSnapshotCountsRenderCommandLanes();
     testSceneSurfaceCommandGenerationDiagnosticsSnapshotTracksSurfaceGenerations();
     testTilesetFrameResourceBudgetSeparatesRasterFanoutFromTerrainRequests();
