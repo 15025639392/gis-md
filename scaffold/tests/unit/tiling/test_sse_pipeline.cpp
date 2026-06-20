@@ -6804,6 +6804,55 @@ void testS2CellBoundingVolumeDistanceAndPlaneIntersectionMatchNative() {
     check(volume.computeDistanceSquaredToPosition(volume.getCenter()) == 0.0,
           "S2CellBoundingVolume: distance is zero inside bounding volume like cesium-native");
 
+    constexpr double caseOneDistance = 100.0;
+    const auto& boundingPlanes = volume.getBoundingPlanes();
+    const Plane topPlane(
+        boundingPlanes[0].getNormal(),
+        boundingPlanes[0].getDistance() - caseOneDistance);
+    Vec3 position = topPlane.projectPointOntoPlane(volume.getCenter());
+    check(std::abs(std::sqrt(volume.computeDistanceSquaredToPosition(position)) -
+                   caseOneDistance) < 1e-7,
+          "S2CellBoundingVolume: one selected top plane distance matches cesium-native");
+
+    const Plane sidePlane(
+        boundingPlanes[2].getNormal(),
+        boundingPlanes[2].getDistance() - caseOneDistance);
+    const auto& vertices = volume.getVertices();
+    const Vec3 faceCenter =
+        ((vertices[0] + vertices[1]) * 0.5 +
+         (vertices[4] + vertices[5]) * 0.5) *
+        0.5;
+    position = sidePlane.projectPointOntoPlane(faceCenter);
+    check(std::abs(std::sqrt(volume.computeDistanceSquaredToPosition(position)) -
+                   caseOneDistance) < 1e-7,
+          "S2CellBoundingVolume: one selected side plane distance matches cesium-native");
+
+    constexpr double caseTwoDistance = 5.0;
+    position = (vertices[0] + vertices[1]) * 0.5;
+    position.z() -= caseTwoDistance;
+    check(std::abs(std::sqrt(volume.computeDistanceSquaredToPosition(position)) -
+                   caseTwoDistance) < 1e-7,
+          "S2CellBoundingVolume: top and side plane edge distance matches cesium-native");
+
+    position = (vertices[0] + vertices[4]) * 0.5;
+    position.x() -= 1.0;
+    position.z() -= 1.0;
+    check(std::abs(volume.computeDistanceSquaredToPosition(position) - 2.0) <
+              1e-7,
+          "S2CellBoundingVolume: two side plane edge distance matches cesium-native");
+
+    position = (vertices[5] + vertices[6]) * 0.5;
+    position.x() -= 10000.0;
+    position.y() -= 1.0;
+    check(std::abs(std::sqrt(volume.computeDistanceSquaredToPosition(position)) -
+                   10000.0) < 1e-7,
+          "S2CellBoundingVolume: obtuse bottom-side distance matches cesium-native");
+
+    position = vertices[2] + Vec3(1.0, 1.0, 1.0);
+    check(std::abs(volume.computeDistanceSquaredToPosition(position) - 3.0) <
+              1e-7,
+          "S2CellBoundingVolume: three selected plane vertex distance matches cesium-native");
+
     const Vec3 outsideManyPlanes(-ellipsoid.semiMajorAxis(), 0.0, 0.0);
     const double expectedDistance =
         ellipsoid.semiMajorAxis() +
