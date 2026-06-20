@@ -20446,6 +20446,40 @@ void testTileContentLifecycleManagerExposesClaimedUploadWork() {
           "TileContentLifecycleManager: claimed upload completion clears exposed pending work");
 }
 
+void testTileContentLifecycleManagerShutdownClearsClaimedUploadWork() {
+    TileContentLifecycleManager manager;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(manager.loadLifecycle().mutex());
+        manager.loadLifecycle().pendingLoads().addTerrainUpload(
+            PendingTerrainUpload{
+                TileKey{"test", 0, 0, 0},
+                "terrain-upload",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                nullptr});
+        check(manager.loadLifecycle()
+                  .pendingLoads()
+                  .takeHighestPriorityUpload(false, budget)
+                  .has_value(),
+              "TileContentLifecycleManager: shutdown claimed upload test dequeues payload");
+    }
+    check(manager.hasPendingWork() &&
+              manager.loadLifecycle().containsWorkForCacheKey(
+                  "terrain-upload"),
+          "TileContentLifecycleManager: claimed upload is visible before shutdown");
+
+    manager.shutdown();
+
+    check(!manager.hasPendingWork() &&
+              !manager.loadLifecycle().containsWorkForCacheKey(
+                  "terrain-upload"),
+          "TileContentLifecycleManager: shutdown clears claimed upload work");
+}
+
 void testTileLoadRequestDispatcherBlocksWhenBudgetIsExhausted() {
     class SyncTerrainProvider final : public TerrainProvider {
     public:
@@ -29032,6 +29066,7 @@ int main() {
     testTileLoadLifecycleDestroyClearsClaimedUploadKeys();
     testTileContentLifecycleManagerOwnsLifecycleState();
     testTileContentLifecycleManagerExposesClaimedUploadWork();
+    testTileContentLifecycleManagerShutdownClearsClaimedUploadWork();
     testTileContentStateTransitionOwnsLoadAndContentStateChanges();
     testTileLoadRequestDispatcherBlocksWhenBudgetIsExhausted();
     testTileLoadRequestDispatcherSkipsEmptyCacheKeys();
