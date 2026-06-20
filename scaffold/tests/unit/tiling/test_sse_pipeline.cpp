@@ -20083,6 +20083,36 @@ void testTileLoadLifecycleDestroyWithoutRequestsReturnsImmediately() {
     }
 }
 
+void testTileLoadLifecycleDestroyClearsClaimedUploadKeys() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            TileKey{"test", 0, 0, 0},
+            "content-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileContentLoadResult::empty()});
+        std::optional<PendingLoadFinalize> upload =
+            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+        check(upload && upload->kind == PendingLoadFinalizeKind::Content,
+              "TileLoadLifecycle: destroy claimed upload test dequeues payload");
+    }
+    check(lifecycle.hasPendingWork() &&
+              lifecycle.containsWorkForCacheKey("content-upload"),
+          "TileLoadLifecycle: claimed upload key is visible before destroy");
+
+    lifecycle.markDestroyingCancelAndWait();
+
+    check(!lifecycle.hasPendingWork() &&
+              !lifecycle.containsWorkForCacheKey("content-upload"),
+          "TileLoadLifecycle: destroy clears claimed upload keys with pending load state");
+}
+
 void testTileContentLifecycleManagerOwnsLifecycleState() {
     TileContentLifecycleManager manager;
     CancellationToken token;
@@ -28490,6 +28520,7 @@ int main() {
     testTileLoadLifecycleCancelErasesActiveRequests();
     testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks();
     testTileLoadLifecycleDestroyWithoutRequestsReturnsImmediately();
+    testTileLoadLifecycleDestroyClearsClaimedUploadKeys();
     testTileContentLifecycleManagerOwnsLifecycleState();
     testTileContentStateTransitionOwnsLoadAndContentStateChanges();
     testTileLoadRequestDispatcherBlocksWhenBudgetIsExhausted();
