@@ -19078,6 +19078,45 @@ void testTileLoadLifecycleCancelErasesTerminalResults() {
           "TileLoadLifecycle: cancel erases content terminal result and leaves lifecycle idle");
 }
 
+void testTileLoadLifecycleCancelErasesActiveRequests() {
+    TileLoadLifecycle lifecycle;
+    CancellationToken terrainToken;
+    CancellationToken contentToken;
+    CancellationToken keptToken;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().beginTerrainRequest(
+            "terrain-request",
+            terrainToken);
+        lifecycle.requestState().beginContentRequest(
+            "content-request",
+            contentToken);
+        lifecycle.requestState().beginTerrainRequest(
+            "kept-request",
+            keptToken);
+    }
+
+    lifecycle.cancelAndEraseCacheKey("terrain-request");
+    check(terrainToken.isCancelled() &&
+              !contentToken.isCancelled() &&
+              !keptToken.isCancelled() &&
+              !lifecycle.containsWorkForCacheKey("terrain-request") &&
+              lifecycle.containsWorkForCacheKey("content-request") &&
+              lifecycle.containsWorkForCacheKey("kept-request"),
+          "TileLoadLifecycle: cancel erases active terrain request without touching other keys");
+
+    lifecycle.cancelAndEraseCacheKey("content-request");
+    check(contentToken.isCancelled() &&
+              !keptToken.isCancelled() &&
+              !lifecycle.containsWorkForCacheKey("content-request") &&
+              lifecycle.containsWorkForCacheKey("kept-request"),
+          "TileLoadLifecycle: cancel erases active content request and preserves unrelated request");
+
+    lifecycle.cancelAndEraseCacheKey("kept-request");
+    check(keptToken.isCancelled() && !lifecycle.hasPendingWork(),
+          "TileLoadLifecycle: cancel drains final active request");
+}
+
 void testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks() {
     TileLoadLifecycle lifecycle;
     CancellationToken token;
@@ -26101,6 +26140,7 @@ int main() {
     testTilePendingRequestStateCancelsAndRejectsDuringDestroy();
     testTileLoadLifecycleCountsAndFindsPendingWork();
     testTileLoadLifecycleCancelErasesTerminalResults();
+    testTileLoadLifecycleCancelErasesActiveRequests();
     testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks();
     testTileContentLifecycleManagerOwnsLifecycleState();
     testTileContentStateTransitionOwnsLoadAndContentStateChanges();
