@@ -4353,6 +4353,17 @@ void testQuantizedMeshRejectsTruncatedEdgeIndices() {
           "QuantizedMeshParser: truncated edge indices reject ill-formed quantized mesh like cesium-native");
 }
 
+void testQuantizedMeshRasterizerRejectsTruncatedEdgeIndices() {
+    std::vector<uint8_t> bytes = makeQuantizedMeshBytes("", true);
+    bytes.pop_back();
+
+    std::unique_ptr<DecodedHeightmap> heightmap =
+        QuantizedMeshParser::parseAndRasterize(bytes.data(), bytes.size(), 64);
+
+    check(heightmap == nullptr,
+          "QuantizedMeshParser: rasterizer rejects truncated edge indices like cesium-native");
+}
+
 void testQuantizedMeshRejectsIllFormedCoreBuffers() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -22567,6 +22578,7 @@ int main() {
     testQuantizedMeshMalformedMetadataStopsExtensionParsing();
     testQuantizedMeshMetadataParsesBeforeOversizedExtensionSkip();
     testQuantizedMeshRejectsTruncatedEdgeIndices();
+    testQuantizedMeshRasterizerRejectsTruncatedEdgeIndices();
     testQuantizedMeshRejectsIllFormedCoreBuffers();
     testQuantizedMeshRasterizerRejectsHeaderWithoutVertexCount();
     testQuantizedMeshRejectsDecodedIndicesOutsideVertexRange();

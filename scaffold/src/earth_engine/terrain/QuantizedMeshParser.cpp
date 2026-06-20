@@ -282,6 +282,46 @@ std::unique_ptr<DecodedHeightmap> QuantizedMeshParser::parseAndRasterize(
         return nullptr;
     }
 
+    auto validateEdge = [&]() -> bool {
+        if (offset + sizeof(uint32_t) > len) {
+            return false;
+        }
+        const uint32_t edgeCount = readU32();
+        if (static_cast<size_t>(edgeCount) > (len - offset) / indexSize) {
+            return false;
+        }
+        for (uint32_t i = 0; i < edgeCount; ++i) {
+            uint32_t edgeIndex = 0;
+            if (use32BitIndices) {
+                std::memcpy(&edgeIndex, data + offset, sizeof(uint32_t));
+                offset += sizeof(uint32_t);
+            } else {
+                uint16_t value = 0;
+                std::memcpy(&value, data + offset, sizeof(uint16_t));
+                offset += sizeof(uint16_t);
+                edgeIndex = value;
+            }
+            if (edgeIndex >= vertexCount) {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (!validateEdge() || !validateEdge() ||
+        !validateEdge() || !validateEdge()) {
+#ifdef __ANDROID__
+        __android_log_print(
+            ANDROID_LOG_ERROR,
+            "QMParser",
+            "fail: raster edge buffer invalid vc=%u tri=%u off=%zu len=%zu",
+            vertexCount,
+            triangleCount,
+            offset,
+            len);
+#endif
+        return nullptr;
+    }
+
     // --- Rasterize triangles into a regular grid ---
     const double heightRange = hdr.maximumHeight - hdr.minimumHeight;
     const int n = outputGridSize + 1;  // vertices per side
