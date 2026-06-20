@@ -587,6 +587,18 @@ TEST(TileQuadtreeAvailabilityTest, AddNodeAndAddLoadedSubtreeMatchCesiumNative) 
     EXPECT_TRUE((loadedState & SubtreeLoaded) != 0);
 }
 
+TEST(TileQuadtreeAvailabilityTest, AddNodeIgnoresMaximumLevelLikeCesiumNative) {
+    TileQuadtreeAvailability availability(3, 2);
+    ASSERT_TRUE(availability.addSubtree(0, 0, 0, makeQuadtreeFixtureRootSubtree()));
+    TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+
+    TileAvailabilityNode* node = availability.addNode(3, 0, 0, root);
+    ASSERT_NE(nullptr, node);
+    EXPECT_EQ(node, availability.findChildNode(3, 0, 0, root));
+    EXPECT_EQ(0, availability.computeAvailability(3, 0, 0));
+}
+
 TEST(TileQuadtreeAvailabilityTest, AddNodeReplacesExistingChildNodeLikeCesiumNative) {
     TileQuadtreeAvailability availability(3, 5);
     ASSERT_TRUE(availability.addSubtree(0, 0, 0, makeQuadtreeFixtureRootSubtree()));
@@ -1044,6 +1056,21 @@ TEST(TileOctreeAvailabilityTest, AddNodeAndAddLoadedSubtreeMatchCesiumNative) {
     EXPECT_TRUE((loadedState & TileAvailable) != 0);
     EXPECT_TRUE((loadedState & SubtreeAvailable) != 0);
     EXPECT_TRUE((loadedState & SubtreeLoaded) != 0);
+}
+
+TEST(TileOctreeAvailabilityTest, AddNodeIgnoresMaximumLevelLikeCesiumNative) {
+    TileOctreeAvailability availability(3, 2);
+    ASSERT_TRUE(availability.addSubtree(
+        OctreeTileID{0, 0, 0, 0},
+        makeOctreeFixtureRootSubtree()));
+    TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+
+    const OctreeTileID id{3, 0, 0, 0};
+    TileAvailabilityNode* node = availability.addNode(id, root);
+    ASSERT_NE(nullptr, node);
+    EXPECT_EQ(node, availability.findChildNode(id, root));
+    EXPECT_EQ(0, availability.computeAvailability(id));
 }
 
 TEST(TileOctreeAvailabilityTest, AddNodeReplacesExistingChildNodeLikeCesiumNative) {
