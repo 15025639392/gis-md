@@ -52,6 +52,7 @@
 #include "earth_engine/tiling/TileLodTransitionFrameUpdater.h"
 #include "earth_engine/tiling/TilePendingLoadQueue.h"
 #include "earth_engine/tiling/TilePendingLoadProcessor.h"
+#include "earth_engine/tiling/TilePendingLoadCommitCoordinator.h"
 #include "earth_engine/tiling/TilePendingUploadCompletion.h"
 #include "earth_engine/tiling/TilePendingRequestState.h"
 #include "earth_engine/tiling/TilePlan.h"
@@ -14954,6 +14955,70 @@ void testTileTerrainUploadCommitterAppliesMeshResourceOutcome() {
           "TileTerrainUploadCommitter: failed mesh preparation rolls back terrain render content and requests dirty resources");
 }
 
+void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    PendingTerrainUpload terrainUpload{
+        TileKey{"test", 0, 0, 0},
+        "missing-terrain",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        nullptr};
+    PendingContentUpload contentUpload{
+        TileKey{"test", 0, 1, 0},
+        "missing-content",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileContentLoadResult::empty()};
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            terrainUpload.key,
+            terrainUpload.cacheKey,
+            terrainUpload.group,
+            terrainUpload.priority,
+            nullptr});
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            contentUpload.key,
+            contentUpload.cacheKey,
+            contentUpload.group,
+            contentUpload.priority,
+            TileContentLoadResult::empty()});
+        check(lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget) &&
+                  lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget),
+              "TilePendingLoadCommitCoordinator: test dequeues missing tile uploads before commit");
+    }
+
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache;
+    bool resourcesDirty = false;
+    TilePendingLoadCommitCoordinator::commitTerrainUpload(
+        terrainUpload,
+        nullptr,
+        terrainCache,
+        lifecycle,
+        false,
+        [](const TileKey&) -> TilesetTile* { return nullptr; },
+        [](const TileKey&, const DecodedHeightmap&) {},
+        [](TilesetTile&) {},
+        [&resourcesDirty]() { resourcesDirty = true; });
+    TilePendingLoadCommitCoordinator::commitContentUpload(
+        contentUpload,
+        terrainCache,
+        lifecycle,
+        [](const TileKey&) -> TilesetTile* { return nullptr; },
+        [](TilesetTile&) {},
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    check(!resourcesDirty &&
+              !lifecycle.containsWorkForCacheKey("missing-terrain") &&
+              !lifecycle.containsWorkForCacheKey("missing-content"),
+          "TilePendingLoadCommitCoordinator: missing tile uploads release cache keys without resource side effects");
+}
+
 void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
     const TileKey parentKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 1, 0};
@@ -25599,6 +25664,7 @@ int main() {
     testTileContentUploadCommitterAppliesRenderResourceOutcome();
     testTileTerrainUploadPolicyMarksTerrainRenderContentStates();
     testTileTerrainUploadCommitterAppliesMeshResourceOutcome();
+    testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys();
     testTileRenderPlanFinalizerResolvesAncestorFallbackEntries();
     testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery();
     testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback();
