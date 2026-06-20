@@ -3038,6 +3038,20 @@ void testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches() {
           "RasterOverlayTileProvider: trimmed rectangle requests keep only overlapping source tiles");
 }
 
+void testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize() {
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
+
+    const Rectangle rootBounds = imageryScheme->tileToRectangle(
+        TileKey{imageryScheme->id(), 0, 0, 0});
+    RasterOverlayTileProvider::TilePtr rectangleTile =
+        provider.getTile(rootBounds, 131072.0, 131072.0);
+
+    check(rectangleTile && rectangleTile->getSourceZoom() == 5,
+          "RasterOverlayTileProvider: rectangle source zoom is reduced until combined texture fits like cesium-native");
+}
+
 void testRasterOverlayRectangleCompositionUsesProjectedWebMercatorHeight() {
     auto imageryScheme = TileScheme::createXYZWebMercator();
     const TileKey sourceKey{"XYZ-WebMercator", 2, 1, 0};
@@ -23862,6 +23876,7 @@ int main() {
     testRasterOverlayProviderRectangleTile();
     testRasterOverlayRectangleSourceRequestsAreBudgetedAcrossFrames();
     testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches();
+    testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize();
     testRasterOverlayRectangleCompositionUsesProjectedWebMercatorHeight();
     testRasterOverlayRectangleCompositionKeepsTinyProjectedOverlap();
     testRasterOverlayUploadsStopAfterElapsedBudgetExpires();
