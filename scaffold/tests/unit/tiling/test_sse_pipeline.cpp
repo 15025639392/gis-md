@@ -19170,6 +19170,11 @@ void testTileLoadRequestPlannerClassifiesRequestKinds() {
     check(TileLoadRequestPlanner::classify(snapshot) ==
               TileLoadRequestKind::Skip,
           "TileLoadRequestPlanner: already loading tile is skipped");
+
+    snapshot.loadState = TileLoadState::Unloading;
+    check(TileLoadRequestPlanner::classify(snapshot) ==
+              TileLoadRequestKind::Skip,
+          "TileLoadRequestPlanner: unloading tile cannot be reloaded until unload finishes");
 }
 
 std::string testCacheKeyForTile(const TileKey& key) {
