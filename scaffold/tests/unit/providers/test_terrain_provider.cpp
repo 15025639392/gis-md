@@ -117,6 +117,17 @@ TEST(QuantizedMeshTerrainProviderTest, ConfiguresFromCesiumLayerJson) {
     EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 12, 6487, 2685}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, AvailabilityUsesInclusiveTileCenterLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/{z}/{x}/{y}.terrain");
+    provider.setZoomRange(0, 10);
+
+    provider.addAvailabilityRects(2, {{{0, 0, 0, 0}}});
+
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 1, 0, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 1, 1, 0}));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, NormalizesDotSlashRelativeTileTemplate) {
     QuantizedMeshTerrainProvider provider("https://example.com/fallback/{z}/{x}/{y}.terrain");
     const std::string layerJson = R"json({
