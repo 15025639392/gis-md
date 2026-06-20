@@ -5948,6 +5948,26 @@ void testQuantizedMeshLayerJsonVersionAndExtensionQuery() {
               "https://example.invalid/terrain/2/3/1.terrain?v=1.0.0&extensions=octvertexnormals-watermask",
           "QuantizedMeshTerrainProvider: watermask-only request does not add metadata like cesium-native");
 
+    QuantizedMeshTerrainProvider disabledWaterMaskProvider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string onlyWaterMaskLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "version": "1.0.0",
+      "tiles": ["{z}/{x}/{y}.terrain?v={version}"],
+      "extensions": ["watermask"],
+      "minzoom": 0,
+      "maxzoom": 4
+    })json";
+    check(disabledWaterMaskProvider.configureFromLayerJson(
+              onlyWaterMaskLayerJson,
+              "https://example.invalid/terrain/layer.json"),
+          "QuantizedMeshTerrainProvider: disabled watermask-only extension layer configures");
+    check(disabledWaterMaskProvider.buildUrl(TileKey{"Geographic-TMS", 2, 3, 1}) ==
+              "https://example.invalid/terrain/2/3/1.terrain?v=1.0.0",
+          "QuantizedMeshTerrainProvider: disabled watermask-only request omits extensions like cesium-native");
+
     QuantizedMeshTerrainProvider overrideProvider("https://example.invalid/fallback/{z}/{x}/{y}.terrain");
     const std::string overrideLayerJson = R"json({
       "format": "quantized-mesh-1.0",
