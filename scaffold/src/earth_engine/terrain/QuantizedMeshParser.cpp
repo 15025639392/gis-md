@@ -74,17 +74,19 @@ std::vector<std::array<int, 5>> parseMetadataAvailabilityJson(
 
     int subArrayIndex = 0;
     for (const auto& levelRanges : j["available"]) {
-        if (levelRanges.is_array()) {
-            for (const auto& range : levelRanges) {
-                if (!range.is_object()) continue;
-                availability.push_back({
-                    subArrayIndex,
-                    jsonUint32OrDefault(range, "startX"),
-                    jsonUint32OrDefault(range, "startY"),
-                    jsonUint32OrDefault(range, "endX"),
-                    jsonUint32OrDefault(range, "endY")
-                });
-            }
+        if (!levelRanges.is_array()) {
+            continue;
+        }
+
+        for (const auto& range : levelRanges) {
+            if (!range.is_object()) continue;
+            availability.push_back({
+                subArrayIndex,
+                jsonUint32OrDefault(range, "startX"),
+                jsonUint32OrDefault(range, "startY"),
+                jsonUint32OrDefault(range, "endX"),
+                jsonUint32OrDefault(range, "endY")
+            });
         }
         ++subArrayIndex;
     }

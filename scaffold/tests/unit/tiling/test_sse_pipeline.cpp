@@ -4506,8 +4506,8 @@ void testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative() {
             nonArrayLevelBytes.data(),
             nonArrayLevelBytes.size());
     check(nonArrayLevelOnly.size() == 1 &&
-              nonArrayLevelOnly[0] == std::array<int, 5>{1, 2, 1, 3, 1},
-          "QuantizedMeshParser: metadata non-array levels still advance availability level like cesium-native");
+              nonArrayLevelOnly[0] == std::array<int, 5>{0, 2, 1, 3, 1},
+          "QuantizedMeshParser: metadata non-array levels do not advance availability level like cesium-native");
 
     const std::vector<uint8_t> missingAvailableBytes =
         makeQuantizedMeshBytes(R"json({"foo":[]})json");
@@ -4557,7 +4557,7 @@ void testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative() {
           "QuantizedMeshParser: metadata-only path keeps the final metadata extension like cesium-native");
 }
 
-void testQuantizedMeshMetadataSkipsNonArrayLevelsAfterAdvancing() {
+void testQuantizedMeshMetadataSkipsNonArrayLevelsWithoutAdvancing() {
     const std::string metadata = R"json({
       "available": [
         "not-a-level-array",
@@ -4570,8 +4570,8 @@ void testQuantizedMeshMetadataSkipsNonArrayLevelsAfterAdvancing() {
         QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
 
     check(metadataOnly.size() == 1 &&
-              metadataOnly[0] == std::array<int, 5>{1, 0, 0, 1, 0},
-          "QuantizedMeshParser: metadata non-array levels still advance startingLevel like cesium-native");
+              metadataOnly[0] == std::array<int, 5>{0, 0, 0, 1, 0},
+          "QuantizedMeshParser: metadata non-array levels do not advance startingLevel like cesium-native");
 }
 
 void testQuantizedMeshMetadataSkipsNonObjectRangesAfterAdvancingLevel() {
@@ -23641,7 +23641,7 @@ int main() {
     testQuantizedMeshLayerJsonAvailabilityUint32Defaults();
     testQuantizedMeshLayerJsonAvailabilitySkipsNonArrayLevels();
     testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative();
-    testQuantizedMeshMetadataSkipsNonArrayLevelsAfterAdvancing();
+    testQuantizedMeshMetadataSkipsNonArrayLevelsWithoutAdvancing();
     testQuantizedMeshMetadataSkipsNonObjectRangesAfterAdvancingLevel();
     testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding();
     testQuantizedMeshMetadataOnlySkipsUnknownExtensions();
