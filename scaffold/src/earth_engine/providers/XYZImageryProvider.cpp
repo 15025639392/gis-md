@@ -18,6 +18,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -65,6 +66,19 @@ void logAndroidXyzFailure(const char*,
                           size_t,
                           const std::string&) {}
 #endif
+
+int64_t xTileCountForScheme(const std::string& schemeId, int z) {
+    if (z < 0 || z >= 62) return 0;
+    if (schemeId == "Geographic-TMS") {
+        return int64_t{1} << (z + 1);
+    }
+    return int64_t{1} << z;
+}
+
+int64_t yTileCountForScheme(const std::string&, int z) {
+    if (z < 0 || z >= 62) return 0;
+    return int64_t{1} << z;
+}
 
 } // namespace
 
@@ -151,6 +165,17 @@ std::string XYZImageryProvider::buildUrl(const TileKey& key) const {
     replace("{z}", std::to_string(providerKey.z));
     replace("{x}", std::to_string(providerKey.x));
     replace("{y}", std::to_string(providerKey.y));
+    const int64_t xTiles = xTileCountForScheme(providerKey.schemeId,
+                                               providerKey.z);
+    const int64_t yTiles = yTileCountForScheme(providerKey.schemeId,
+                                               providerKey.z);
+    if (xTiles > 0) {
+        replace("{reverseX}", std::to_string(xTiles - 1 - providerKey.x));
+    }
+    if (yTiles > 0) {
+        replace("{reverseY}", std::to_string(yTiles - 1 - providerKey.y));
+    }
+    replace("{reverseZ}", std::to_string(maxZoom_ - providerKey.z));
     replace("{groupedY}", std::to_string(key.y));
     if (url.find("{tileGroup}") != std::string::npos) {
         std::string group = "mercator";

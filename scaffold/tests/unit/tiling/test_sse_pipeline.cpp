@@ -2004,6 +2004,21 @@ void testXYZImageryProviderBridgeCompletionDoesNotRunDecodeInline() {
           "XYZImageryProvider: successful bridge decode completes diagnostics on worker");
 }
 
+void testXYZImageryProviderUrlTemplateReversePlaceholders() {
+    XYZImageryProvider provider(
+        "https://example.invalid/{z}/{x}/{y}/{reverseX}/{reverseY}/{reverseZ}.png");
+    provider.setZoomRange(0, 6);
+
+    check(provider.buildUrl(TileKey{"XYZ-WebMercator", 3, 2, 5}) ==
+              "https://example.invalid/3/2/5/5/2/3.png",
+          "XYZImageryProvider: reverse placeholders match cesium-native URL template semantics");
+
+    provider.setSchemeId("Geographic-TMS");
+    check(provider.buildUrl(TileKey{"Geographic-TMS", 2, 6, 1}) ==
+              "https://example.invalid/2/6/1/1/2/4.png",
+          "XYZImageryProvider: Geographic-TMS reverse placeholders use two root X tiles like cesium-native");
+}
+
 void testHeightmapTerrainProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
     HeightmapTerrainProvider provider(
         "https://example.invalid/{z}/{x}/{y}.png");
@@ -23603,6 +23618,7 @@ int main() {
     testRasterOverlayProviderRetention();
     testXYZImageryProviderUsesAsyncBridgeWithoutWorkerBlockingWait();
     testXYZImageryProviderBridgeCompletionDoesNotRunDecodeInline();
+    testXYZImageryProviderUrlTemplateReversePlaceholders();
     testHeightmapTerrainProviderUsesAsyncBridgeWithoutWorkerBlockingWait();
     testQuantizedMeshProviderUsesAsyncBridgeWithoutWorkerBlockingWait();
     testQuantizedMeshProviderHttpErrorFailsTerminally();
