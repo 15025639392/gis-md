@@ -13817,6 +13817,7 @@ void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
     tile->content.contentKind = TileContentKind::Render;
     tiles[cacheKey] = std::move(tile);
     lifecycle.terrainCache()[cacheKey] = makeFlatHeightmap(4.0f);
+    lifecycle.emptyContentRegistry().insert(cacheKey);
 
     manager.updateTotalBytesUsed(tiles, lifecycle);
     manager.markEligibleForUnloading(tiles, cacheKey);
@@ -13840,9 +13841,10 @@ void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
               !manager.unloadQueue().contains(cacheKey) &&
               lifecycle.terrainCache().find(cacheKey) ==
                   lifecycle.terrainCache().end() &&
+              !lifecycle.emptyContentRegistry().contains(cacheKey) &&
               tiles[cacheKey]->content.loadState == TileLoadState::Unloaded &&
               !clearChildrenCalled,
-          "TileContentCacheManager: unload removes render content and updates owned state");
+          "TileContentCacheManager: unload removes render content and stale empty marker");
 }
 
 void testTileContentCacheManagerClearsStaleEmptyMarkerOnUnknownUnload() {
