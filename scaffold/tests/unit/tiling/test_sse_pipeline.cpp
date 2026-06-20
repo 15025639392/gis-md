@@ -3426,6 +3426,27 @@ void testQuantizedMeshLayerJsonDefaultVersionMatchesCesiumNative() {
           "QuantizedMeshTerrainProvider: default version substitutes 1.0.0");
 }
 
+void testQuantizedMeshLayerJsonDefaultMaxzoomMatchesCesiumNative() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "metadataAvailability": 10
+    })json";
+
+    check(provider.configureFromLayerJson(
+              layerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: missing maxzoom layer configures");
+    check(provider.maxZoom() == 30,
+          "QuantizedMeshTerrainProvider: missing maxzoom defaults to 30 like cesium-native");
+    check(provider.availabilityState(TileKey{"Geographic-TMS", 31, 0, 0}) ==
+              TileAvailabilityState::NotAvailable,
+          "QuantizedMeshTerrainProvider: default maxzoom still bounds out-of-range tiles");
+}
+
 void testQuantizedMeshLayerJsonWebMercatorProjectionMatchesCesiumNative() {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
@@ -21515,6 +21536,7 @@ int main() {
     testQuantizedMeshLayerJsonEmptyAvailabilityMatchesCesiumNative();
     testQuantizedMeshLayerJsonDefaultFormatMatchesCesiumNative();
     testQuantizedMeshLayerJsonDefaultVersionMatchesCesiumNative();
+    testQuantizedMeshLayerJsonDefaultMaxzoomMatchesCesiumNative();
     testQuantizedMeshLayerJsonWebMercatorProjectionMatchesCesiumNative();
     testQuantizedMeshLayerJsonRejectsUnknownProjection();
     testQuantizedMeshRejectsOutOfRangeGeographicTiles();

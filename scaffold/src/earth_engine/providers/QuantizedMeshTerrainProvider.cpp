@@ -552,7 +552,7 @@ bool QuantizedMeshTerrainProvider::appendLayerFromJson(
     // directly gate tile availability. Availability rectangles and loaded
     // metadata subtrees determine whether tiles are requestable.
     layer.minZoom = 0;
-    layer.maxZoom = j.value("maxzoom", maxZoom_);
+    layer.maxZoom = j.value("maxzoom", 30);
     layer.version = j.value("version", std::string("1.0.0"));
     layer.extensionsToRequest = createExtensionsQueryParameter(
         {"octvertexnormals", "metadata"},
