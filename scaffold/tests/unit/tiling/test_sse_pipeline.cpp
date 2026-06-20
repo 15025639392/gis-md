@@ -19539,6 +19539,16 @@ void testTilePendingRequestStateCountsAndCompletesRequests() {
               afterMismatchedComplete.contentRequests == 0 &&
               afterMismatchedComplete.totalRequests == 0,
           "TilePendingRequestState: completion cleanup preserves request-kind invariants");
+
+    check(state.beginTerrainRequest("terrain-mismatched-complete",
+                                    CancellationToken{}),
+          "TilePendingRequestState: begins terrain request for inverse invariant cleanup");
+    state.completeContentRequest("terrain-mismatched-complete");
+    const PendingRequestCounts afterInverseMismatchedComplete = state.counts();
+    check(state.empty() &&
+              afterInverseMismatchedComplete.terrainRequests == 0 &&
+              afterInverseMismatchedComplete.totalRequests == 0,
+          "TilePendingRequestState: inverse completion cleanup preserves request-kind invariants");
 }
 
 void testPendingLoadStateRejectsEmptyCacheKeys() {
