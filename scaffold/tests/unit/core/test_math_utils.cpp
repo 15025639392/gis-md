@@ -269,3 +269,14 @@ TEST(MathUtilsTest, ModMatchesCesiumNativeSignedCases) {
                                          MathUtils::mod(-1.1, -1.0),
                                          MathUtils::Epsilon15));
 }
+
+TEST(MathUtilsTest, ModPreservesCesiumNativeEarlyReturnSignedZero) {
+    const double positiveZero = MathUtils::mod(0.0, 1.0);
+    const double negativeZero = MathUtils::mod(-0.0, -1.0);
+
+    EXPECT_DOUBLE_EQ(0.0, positiveZero);
+    EXPECT_FALSE(std::signbit(positiveZero));
+
+    EXPECT_DOUBLE_EQ(-0.0, negativeZero);
+    EXPECT_TRUE(std::signbit(negativeZero));
+}
