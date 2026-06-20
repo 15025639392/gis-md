@@ -942,6 +942,29 @@ TEST(TileMapServiceImageryProviderTest, RejectsTilesWithoutTilesetLikeCesiumNati
     EXPECT_EQ("", provider.buildUrl(TileKey{"TMS-WebMercator", 4, 1, 1}));
 }
 
+TEST(TileMapServiceImageryProviderTest, ZoomOverrideDoesNotRewriteTilesetLevelBase) {
+    TileMapServiceMetadata metadata;
+    metadata.fileExtension = "png";
+    metadata.minimumLevel = 2;
+    metadata.maximumLevel = 4;
+    metadata.schemeId = "TMS-WebMercator";
+    metadata.tileSets = {
+        TileMapServiceTileSet{"levels/2", 2},
+        TileMapServiceTileSet{"levels/3", 3},
+        TileMapServiceTileSet{"levels/4", 4}};
+
+    TileMapServiceImageryProvider provider(
+        "https://example.com/tms/tilemapresource.xml",
+        metadata);
+    provider.setZoomRange(3, 4);
+
+    EXPECT_FALSE(provider.supportsTile(TileKey{"TMS-WebMercator", 2, 0, 0}));
+    EXPECT_TRUE(provider.supportsTile(TileKey{"TMS-WebMercator", 3, 0, 0}));
+    EXPECT_EQ(
+        "https://example.com/tms/levels/3/0/0.png",
+        provider.buildUrl(TileKey{"TMS-WebMercator", 3, 0, 0}));
+}
+
 TEST(TileMapServiceImageryProviderTest, CreatesSourceFromXmlForRasterOverlayInstall) {
     TileMapServiceImagerySource source = createTileMapServiceImagerySource(
         "https://example.com/tms/tilemapresource.xml",
