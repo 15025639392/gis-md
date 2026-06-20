@@ -12,6 +12,7 @@
 #include "earth_engine/tiling/TilesetTile.h"
 #include "earth_engine/tiling/TileScheme.h"
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 
@@ -123,6 +124,35 @@ public:
     int requestCount = 0;
 };
 
+class ParentFallbackImageryProvider final : public ImageryProvider {
+public:
+    std::string id() const override { return "parent-fallback"; }
+    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 10; }
+    int tileWidth() const override { return 256; }
+    int tileHeight() const override { return 256; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     TileCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
+        requestedKeys.push_back(key);
+        if (key == failingKey) {
+            callback(key, nullptr);
+            return;
+        }
+        callback(key, makeImage(256, 256, static_cast<uint8_t>(key.z)));
+    }
+    std::unique_ptr<DecodedImage> decodeTile(
+        const uint8_t*, size_t) override {
+        return nullptr;
+    }
+
+    TileKey failingKey{"XYZ-WebMercator", -1, -1, -1};
+    std::vector<TileKey> requestedKeys;
+};
+
 class CountingRasterUploader final : public RasterTextureUploader {
 public:
     int maxTextureSize() const override { return 2048; }
@@ -131,10 +161,12 @@ public:
         const DecodedImage& image,
         const RasterTextureUploadOptions&) override {
         ++uploadCount;
+        lastUpload = image;
         return std::make_unique<TestTexture>(image.width, image.height);
     }
 
     int uploadCount = 0;
+    DecodedImage lastUpload;
 };
 
 } // namespace
@@ -169,6 +201,57 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomFollowsCesiumTargetScreenPix
     auto maxClampedTile = maxClampedProvider.getTile(z3Bounds, 1024.0, 256.0);
     ASSERT_NE(nullptr, maxClampedTile);
     EXPECT_EQ(3, maxClampedTile->getSourceZoom());
+}
+
+TEST(RasterOverlayLifecycleTest, RectangleSourceFailureFallsBackToParentTile) {
+    ParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const int expectedSourceZoom = 8;
+    TileKey centerKey =
+        scheme->positionToTile(0.1, 0.2, expectedSourceZoom);
+    Rectangle centerBounds = scheme->tileToRectangle(centerKey);
+    Rectangle tileBounds(
+        centerBounds.west() - centerBounds.width() * 0.5,
+        centerBounds.south() - centerBounds.height() * 0.5,
+        centerBounds.east() + centerBounds.width() * 0.5,
+        centerBounds.north() + centerBounds.height() * 0.5);
+
+    imagery.failingKey =
+        scheme->positionToTile(
+            tileBounds.east(),
+            tileBounds.south(),
+            expectedSourceZoom);
+
+    auto rectangleTile = provider.getTile(tileBounds, 1024.0, 1024.0);
+    ASSERT_NE(nullptr, rectangleTile);
+    EXPECT_EQ(expectedSourceZoom, rectangleTile->getSourceZoom());
+
+    ASSERT_TRUE(provider.loadTile(*rectangleTile));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              rectangleTile->getState());
+    EXPECT_EQ(1, uploaderPtr->uploadCount);
+
+    const std::vector<uint8_t>& pixels = uploaderPtr->lastUpload.pixels;
+    ASSERT_FALSE(pixels.empty());
+    EXPECT_TRUE(std::any_of(
+        pixels.begin(),
+        pixels.end(),
+        [](uint8_t value) { return value == 7; }));
+    EXPECT_TRUE(std::any_of(
+        pixels.begin(),
+        pixels.end(),
+        [](uint8_t value) { return value == 8; }));
+    EXPECT_TRUE(std::find(
+        imagery.requestedKeys.begin(),
+        imagery.requestedKeys.end(),
+        TileKey{scheme->id(), 7, imagery.failingKey.x / 2,
+                imagery.failingKey.y / 2}) != imagery.requestedKeys.end());
 }
 
 TEST(RasterOverlayLifecycleTest, SharedFrameBudgetLimitsRasterUploadsPerFrame) {
