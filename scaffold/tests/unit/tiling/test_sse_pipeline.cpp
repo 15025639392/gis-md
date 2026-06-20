@@ -5461,6 +5461,45 @@ void testQuantizedMeshRejectsIllFormedCoreBuffers() {
           "QuantizedMeshParser: ill-formed index buffer rejects like cesium-native");
 }
 
+void testQuantizedMeshRejectsZeroVertexCount() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(rootKey);
+
+    std::vector<uint8_t> bytes;
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<float>(bytes, 0.0f);
+    appendPod<float>(bytes, 100.0f);
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 1.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, 0.0);
+    appendPod<uint32_t>(bytes, 0);
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            bounds);
+    check(mesh == nullptr,
+          "QuantizedMeshParser: zero vertexCount rejects as ill-formed quantized mesh");
+
+    std::unique_ptr<DecodedHeightmap> heightmap =
+        QuantizedMeshParser::parseAndRasterize(bytes.data(), bytes.size(), 64);
+    check(heightmap == nullptr,
+          "QuantizedMeshParser: rasterizer rejects zero vertexCount like cesium-native");
+
+    const std::vector<QuantizedMeshAvailabilityRange> metadataOnly =
+        QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
+    check(metadataOnly.empty(),
+          "QuantizedMeshParser: metadata-only path rejects zero vertexCount");
+}
+
 void testQuantizedMeshRasterizerRejectsHeaderWithoutVertexCount() {
     for (const size_t byteCount : {size_t{88}, size_t{91}}) {
         std::vector<uint8_t> headerWithoutVertexCount(byteCount);
@@ -31084,6 +31123,7 @@ int main() {
     testQuantizedMeshRasterizerRejectsTruncatedEdgeIndices();
     testQuantizedMeshRasterizerAcceptsZeroTriangleMesh();
     testQuantizedMeshRejectsIllFormedCoreBuffers();
+    testQuantizedMeshRejectsZeroVertexCount();
     testQuantizedMeshRasterizerRejectsHeaderWithoutVertexCount();
     testQuantizedMeshRasterizerRejectsIllFormedCoreBuffers();
     testQuantizedMeshRejectsDecodedIndicesOutsideVertexRange();
