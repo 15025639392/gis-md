@@ -17044,6 +17044,30 @@ void testTileSubtreeWorkTrackerFindsActiveLifecycleWork() {
           "TileSubtreeWorkTracker: descendant pending upload marks subtree active");
 
     lifecycle.cancelAndEraseCacheKey(childCacheKey);
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            child.key,
+            childCacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileContentLoadResult::empty()});
+        check(lifecycle.pendingLoads()
+                  .takeHighestPriorityUpload(false, budget)
+                  .has_value(),
+              "TileSubtreeWorkTracker: claimed upload test dequeues payload");
+    }
+    check(TileSubtreeWorkTracker::hasActiveContentWork(
+              root,
+              lifecycle,
+              cacheKeyForTile),
+          "TileSubtreeWorkTracker: descendant claimed upload marks subtree active");
+
+    lifecycle.cancelAndEraseCacheKey(childCacheKey);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addContentTerminalResult(
