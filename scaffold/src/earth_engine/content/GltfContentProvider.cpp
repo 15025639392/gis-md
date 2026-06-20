@@ -954,13 +954,26 @@ std::optional<std::string> parseContentUri(const nlohmann::json& tileJson) {
     if (contentIt == tileJson.end() || !contentIt->is_object()) {
         return std::nullopt;
     }
+    auto legacyUrl = [&]() -> std::optional<std::string> {
+        auto urlIt = contentIt->find("url");
+        if (urlIt != contentIt->end() && urlIt->is_string()) {
+            return urlIt->get<std::string>();
+        }
+        return std::nullopt;
+    };
     auto uriIt = contentIt->find("uri");
     if (uriIt != contentIt->end() && uriIt->is_string()) {
-        return uriIt->get<std::string>();
+        std::string uri = uriIt->get<std::string>();
+        if (!uri.empty()) {
+            return uri;
+        }
+        if (std::optional<std::string> url = legacyUrl()) {
+            return *url;
+        }
+        return uri;
     }
-    auto urlIt = contentIt->find("url");
-    if (urlIt != contentIt->end() && urlIt->is_string()) {
-        return urlIt->get<std::string>();
+    if (std::optional<std::string> url = legacyUrl()) {
+        return *url;
     }
     return std::string{};
 }
@@ -1232,7 +1245,16 @@ bool contentObjectHasMalformedUriFields(
 
     auto uriIt = contentJson.find("uri");
     if (uriIt != contentJson.end()) {
-        return !uriIt->is_string() || uriIt->get<std::string>().empty();
+        if (!uriIt->is_string()) {
+            return true;
+        }
+        if (!uriIt->get<std::string>().empty()) {
+            return false;
+        }
+        auto urlIt = contentJson.find("url");
+        return urlIt == contentJson.end() ||
+               !urlIt->is_string() ||
+               urlIt->get<std::string>().empty();
     }
 
     auto urlIt = contentJson.find("url");

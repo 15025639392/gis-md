@@ -14455,6 +14455,52 @@ TEST(GltfParserTest, TilesetJsonContentProviderLoadsEmptyContentObject) {
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
+TEST(GltfParserTest, TilesetJsonContentProviderFallsBackToLegacyUrlWhenUriEmpty) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth-md-empty-uri-legacy-url-tileset";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    writeBytes(root / "parent.glb", makeTriangleGlb());
+
+    const std::string tilesetJson = R"json({
+      "asset": {"version": "1.0"},
+      "geometricError": 240,
+      "root": {
+        "boundingVolume": {
+          "region": [-1.3197209591796106, 0.6988424218,
+                     -1.3196390408203893, 0.6989055782, 0, 88]
+        },
+        "geometricError": 70,
+        "refine": "REPLACE",
+        "content": {
+          "uri": "",
+          "url": "parent.glb"
+        }
+      }
+    })json";
+
+    TilesetJsonContentProvider provider(
+        "file://" + (root / "tileset.json").generic_string(),
+        bytesFromString(tilesetJson),
+        "empty uri legacy url tileset");
+
+    ASSERT_TRUE(provider.valid());
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    const std::vector<TileKey> rootChildren =
+        provider.childTiles(roots.front());
+    ASSERT_EQ(1u, rootChildren.size());
+
+    const TileContentLoadResult result =
+        requestTileContentBlocking(provider, rootChildren.front());
+    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    expectRenderableModelGeometry(*result.gltfModel);
+
+    std::filesystem::remove_all(root);
+}
+
 TEST(GltfParserTest, TilesetJsonContentProviderFailsMissingTileContent) {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
