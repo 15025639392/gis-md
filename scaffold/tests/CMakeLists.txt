@@ -148,6 +148,12 @@ add_executable(test_ellipsoid
 target_link_libraries(test_ellipsoid PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_ellipsoid COMMAND test_ellipsoid)
 
+add_executable(test_ellipsoid_tangent_plane
+    unit/geodesy/test_ellipsoid_tangent_plane.cpp
+)
+target_link_libraries(test_ellipsoid_tangent_plane PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_ellipsoid_tangent_plane COMMAND test_ellipsoid_tangent_plane)
+
 add_executable(test_transforms
     unit/geodesy/test_transforms.cpp
 )
