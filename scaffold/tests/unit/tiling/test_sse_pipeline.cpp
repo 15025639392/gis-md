@@ -1040,6 +1040,15 @@ std::vector<uint8_t> makeQuantizedMeshBytesWithTwoMetadataExtensions(
     return bytes;
 }
 
+std::vector<uint8_t> makeQuantizedMeshBytesWithMetadataThenEmptyMetadata(
+    const std::string& metadataJson) {
+    std::vector<uint8_t> bytes = makeQuantizedMeshBytes(metadataJson);
+    appendPod<uint8_t>(bytes, 4);
+    appendPod<uint32_t>(bytes, sizeof(uint32_t));
+    appendPod<uint32_t>(bytes, 0);
+    return bytes;
+}
+
 std::vector<uint8_t> makeLargeQuantizedMeshBytesWithUint32EdgeIndex() {
     constexpr uint32_t vertexCount = 65537;
     constexpr uint32_t highEdgeIndex = vertexCount - 1;
@@ -4647,6 +4656,34 @@ void testQuantizedMeshIncompleteExtensionHeaderStopsParsing() {
         QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
     check(metadataOnly == mesh->metadataAvailability,
           "QuantizedMeshParser: metadata-only path also stops on incomplete extension header");
+}
+
+void testQuantizedMeshEmptyMetadataExtensionReplacesPreviousMetadata() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::string metadata = R"json({
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytesWithMetadataThenEmptyMetadata(metadata);
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            scheme->tileToRectangle(rootKey));
+
+    check(mesh != nullptr,
+          "QuantizedMeshParser: empty metadata extension fixture remains parseable");
+    check(mesh && mesh->metadataAvailability.empty(),
+          "QuantizedMeshParser: later empty metadata extension replaces earlier metadata like cesium-native");
+
+    const std::vector<std::array<int, 5>> metadataOnly =
+        QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
+    check(metadataOnly.empty(),
+          "QuantizedMeshParser: metadata-only path keeps final empty metadata extension like cesium-native");
 }
 
 void testQuantizedMeshRejectsTruncatedEdgeIndices() {
@@ -23174,6 +23211,7 @@ int main() {
     testQuantizedMeshMalformedMetadataStopsExtensionParsing();
     testQuantizedMeshMetadataParsesBeforeOversizedExtensionSkip();
     testQuantizedMeshIncompleteExtensionHeaderStopsParsing();
+    testQuantizedMeshEmptyMetadataExtensionReplacesPreviousMetadata();
     testQuantizedMeshRejectsTruncatedEdgeIndices();
     testQuantizedMeshRasterizerRejectsTruncatedEdgeIndices();
     testQuantizedMeshRejectsIllFormedCoreBuffers();
