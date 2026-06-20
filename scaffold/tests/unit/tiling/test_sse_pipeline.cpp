@@ -3617,6 +3617,48 @@ void testQuantizedMeshMetadataUpdateStartsBelowSubtreeTileLevel() {
           "QuantizedMeshTerrainProvider: metadata update keeps sibling range unavailable");
 }
 
+void testQuantizedMeshAvailabilityUpdateSkipsInvalidLayerIndex() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "metadataAvailability": 2
+    })json";
+
+    check(provider.configureFromLayerJson(
+              layerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: invalid availability update layer configures");
+
+    const TileKey subtreeKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    check(provider.availabilityState(childKey) == TileAvailabilityState::Unknown,
+          "QuantizedMeshTerrainProvider: invalid update child starts unknown");
+
+    DecodedHeightmap heightmap;
+    DecodedHeightmap::QuantizedMeshAvailabilityUpdate negativeUpdate;
+    negativeUpdate.layerIndex = -1;
+    negativeUpdate.subtreeKey = subtreeKey;
+    negativeUpdate.metadataAvailability = {{0, 0, 0, 0, 0}};
+    heightmap.quantizedMeshAvailabilityUpdates.push_back(negativeUpdate);
+
+    DecodedHeightmap::QuantizedMeshAvailabilityUpdate outOfRangeUpdate;
+    outOfRangeUpdate.layerIndex = 1;
+    outOfRangeUpdate.subtreeKey = subtreeKey;
+    outOfRangeUpdate.metadataAvailability = {{0, 0, 0, 0, 0}};
+    heightmap.quantizedMeshAvailabilityUpdates.push_back(outOfRangeUpdate);
+
+    provider.applyAvailabilityUpdates(heightmap);
+
+    check(provider.availabilityState(childKey) == TileAvailabilityState::Unknown,
+          "QuantizedMeshTerrainProvider: invalid availability update does not mutate layer availability");
+    check(!provider.isSubtreeLoaded(0, 0),
+          "QuantizedMeshTerrainProvider: invalid availability update does not mark subtree loaded");
+}
+
 void testQuantizedMeshLayerJsonEmptyAvailabilityMatchesCesiumNative() {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
@@ -22757,6 +22799,7 @@ int main() {
     testQuantizedMeshTileMetadataIgnoredWithoutMetadataAvailability();
     testQuantizedMeshEmptyTileMetadataMarksSubtreeLoaded();
     testQuantizedMeshMetadataUpdateStartsBelowSubtreeTileLevel();
+    testQuantizedMeshAvailabilityUpdateSkipsInvalidLayerIndex();
     testQuantizedMeshLayerJsonEmptyAvailabilityMatchesCesiumNative();
     testQuantizedMeshLayerJsonDefaultFormatMatchesCesiumNative();
     testQuantizedMeshLayerJsonFormatIsIgnored();
