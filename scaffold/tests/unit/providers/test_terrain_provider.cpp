@@ -1133,6 +1133,71 @@ TEST(GoogleMapTilesImageryProviderTest, CreateSessionOmitsAbsentOptionalsLikeCes
     EXPECT_EQ(std::string::npos, payload.find("overlay"));
 }
 
+TEST(GoogleMapTilesImageryProviderTest, ParsesCreateSessionResponseLikeCesiumNative) {
+    GoogleMapTilesNewSessionOptions request;
+    request.apiBaseUrl = "https://tile.googleapis.com";
+    request.key = "api-key";
+
+    const GoogleMapTilesSessionParseResult result =
+        parseGoogleMapTilesCreateSessionResponse(
+            R"json({
+                "session": "session-token",
+                "tileWidth": 512,
+                "tileHeight": 256
+            })json",
+            request);
+
+    ASSERT_TRUE(result.valid) << result.error;
+    EXPECT_EQ("api-key", result.session.key);
+    EXPECT_EQ("session-token", result.session.session);
+    EXPECT_EQ("https://tile.googleapis.com/", result.session.apiBaseUrl);
+    EXPECT_EQ(28, result.session.maximumLevel);
+    EXPECT_EQ(512, result.session.tileWidth);
+    EXPECT_EQ(256, result.session.tileHeight);
+    EXPECT_TRUE(result.session.showLogo);
+}
+
+TEST(GoogleMapTilesImageryProviderTest, RejectsInvalidCreateSessionResponseLikeCesiumNative) {
+    GoogleMapTilesNewSessionOptions request;
+
+    GoogleMapTilesSessionParseResult result =
+        parseGoogleMapTilesCreateSessionResponse("not-json", request);
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(
+        "Failed to parse response from Google Map Tiles API createSession service:",
+        result.error);
+
+    result = parseGoogleMapTilesCreateSessionResponse("[1,2]", request);
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(
+        "Response from Google Map Tiles API createSession service was not a JSON object.",
+        result.error);
+
+    result = parseGoogleMapTilesCreateSessionResponse(
+        R"json({"tileWidth": 256, "tileHeight": 256})json",
+        request);
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(
+        "Response from Google Map Tiles API createSession service did not contain a valid 'session' property.",
+        result.error);
+
+    result = parseGoogleMapTilesCreateSessionResponse(
+        R"json({"session": "abc", "tileHeight": 256})json",
+        request);
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(
+        "Response from Google Map Tiles API createSession service did not contain a valid 'tileWidth' property.",
+        result.error);
+
+    result = parseGoogleMapTilesCreateSessionResponse(
+        R"json({"session": "abc", "tileWidth": 256})json",
+        request);
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(
+        "Response from Google Map Tiles API createSession service did not contain a valid 'tileHeight' property.",
+        result.error);
+}
+
 TEST(TileMapServiceUrlTest, AppendsTileMapResourceXmlBeforeQueryLikeCesiumNative) {
     EXPECT_EQ(
         "https://example.com/tms/tilemapresource.xml",

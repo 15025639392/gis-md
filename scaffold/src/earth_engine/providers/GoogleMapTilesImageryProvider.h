@@ -31,6 +31,12 @@ struct GoogleMapTilesNewSessionOptions {
     std::string apiBaseUrl = "https://tile.googleapis.com/";
 };
 
+struct GoogleMapTilesSessionParseResult {
+    bool valid = false;
+    GoogleMapTilesExistingSessionOptions session;
+    std::string error;
+};
+
 class GoogleMapTilesImageryProvider : public XYZImageryProvider {
 public:
     explicit GoogleMapTilesImageryProvider(
@@ -55,5 +61,9 @@ std::string googleMapTilesCreateSessionUrl(
 
 std::string googleMapTilesCreateSessionPayload(
     const GoogleMapTilesNewSessionOptions& options);
+
+GoogleMapTilesSessionParseResult parseGoogleMapTilesCreateSessionResponse(
+    const std::string& responseJson,
+    const GoogleMapTilesNewSessionOptions& requestOptions);
 
 } // namespace earth_engine

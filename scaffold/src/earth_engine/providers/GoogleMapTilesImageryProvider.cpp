@@ -100,6 +100,63 @@ std::string googleMapTilesCreateSessionPayload(
     return payload.dump();
 }
 
+GoogleMapTilesSessionParseResult parseGoogleMapTilesCreateSessionResponse(
+    const std::string& responseJson,
+    const GoogleMapTilesNewSessionOptions& requestOptions) {
+    nlohmann::json response =
+        nlohmann::json::parse(responseJson, nullptr, false);
+    if (response.is_discarded()) {
+        return GoogleMapTilesSessionParseResult{
+            false,
+            GoogleMapTilesExistingSessionOptions{},
+            "Failed to parse response from Google Map Tiles API createSession service:"};
+    }
+    if (!response.is_object()) {
+        return GoogleMapTilesSessionParseResult{
+            false,
+            GoogleMapTilesExistingSessionOptions{},
+            "Response from Google Map Tiles API createSession service was not a JSON object."};
+    }
+
+    const auto sessionIt = response.find("session");
+    if (sessionIt == response.end() || !sessionIt->is_string()) {
+        return GoogleMapTilesSessionParseResult{
+            false,
+            GoogleMapTilesExistingSessionOptions{},
+            "Response from Google Map Tiles API createSession service did not contain a valid 'session' property."};
+    }
+
+    const auto tileWidthIt = response.find("tileWidth");
+    if (tileWidthIt == response.end() || !tileWidthIt->is_number()) {
+        return GoogleMapTilesSessionParseResult{
+            false,
+            GoogleMapTilesExistingSessionOptions{},
+            "Response from Google Map Tiles API createSession service did not contain a valid 'tileWidth' property."};
+    }
+
+    const auto tileHeightIt = response.find("tileHeight");
+    if (tileHeightIt == response.end() || !tileHeightIt->is_number()) {
+        return GoogleMapTilesSessionParseResult{
+            false,
+            GoogleMapTilesExistingSessionOptions{},
+            "Response from Google Map Tiles API createSession service did not contain a valid 'tileHeight' property."};
+    }
+
+    GoogleMapTilesExistingSessionOptions session;
+    session.key = requestOptions.key;
+    session.session = sessionIt->get<std::string>();
+    session.apiBaseUrl = ensureTrailingSlash(requestOptions.apiBaseUrl);
+    session.maximumLevel = 28;
+    session.tileWidth = tileWidthIt->get<int>();
+    session.tileHeight = tileHeightIt->get<int>();
+    session.showLogo = true;
+
+    return GoogleMapTilesSessionParseResult{
+        true,
+        std::move(session),
+        std::string()};
+}
+
 GoogleMapTilesImageryProvider::GoogleMapTilesImageryProvider(
     GoogleMapTilesExistingSessionOptions options,
     std::string attribution)
