@@ -76,6 +76,7 @@
 #include "earth_engine/tiling/TileSelectionKickPolicy.h"
 #include "earth_engine/tiling/TileSelectionMetrics.h"
 #include "earth_engine/tiling/TileSelectionPlanAppender.h"
+#include "earth_engine/tiling/TileSelectionPostTraversalCommitter.h"
 #include "earth_engine/tiling/TileSelectionPostTraversalPolicy.h"
 #include "earth_engine/tiling/TileSelectionPreTraversalPolicy.h"
 #include "earth_engine/tiling/TileSelectionRefineFlowPolicy.h"
@@ -18677,6 +18678,67 @@ void testTileSelectionPostTraversalPolicyBuildsCommitPlan() {
           "TileSelectionPostTraversalPolicy: non-kick commit skips preload when policy declines");
 }
 
+void testTileSelectionPostTraversalCommitterReturnsParentDetailsAfterKick() {
+    TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
+    TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
+    parent.children.push_back(&child);
+
+    TilePlan tilePlan;
+    tilePlan.visibleTiles.push_back(parent.key);
+    tilePlan.visibleTiles.push_back(child.key);
+
+    TileLoadQueue loadQueue;
+    loadQueue.queue(child.key, TileLoadPriorityGroup::Normal, 2.0);
+
+    TileSelectionCounters counters;
+    TileSelectionPostTraversalCommitPlan plan;
+    plan.kickVisitedDescendants = true;
+    plan.trimRenderedDescendants = true;
+    plan.returnSingleTileDetails = true;
+    plan.restoreChildLoadQueue = true;
+    plan.queueParentNormal = true;
+    plan.wasReallyRenderedLastFrame = false;
+
+    bool kicked = false;
+    std::vector<TileLoadRequest> queuedRequests;
+    const TileSelectionPostTraversalCommitResult result =
+        TileSelectionPostTraversalCommitter::commit(
+            parent,
+            tilePlan,
+            loadQueue,
+            counters,
+            plan,
+            TileSelectionPostTraversalCommitContext{
+                1,
+                0,
+                4.0,
+                5.0,
+                false},
+            [&kicked](TilesetTile& kickedTile) {
+                kicked = kickedTile.key.z == 0;
+            },
+            [&queuedRequests](const TileKey& key,
+                              TileLoadPriorityGroup group,
+                              double priority) {
+                queuedRequests.push_back(TileLoadRequest{key, group, priority});
+            },
+            [](TilesetTile&, double, bool, double) {});
+
+    check(kicked &&
+              tilePlan.visibleTiles.size() == 1 &&
+              tilePlan.visibleTiles.front() == parent.key &&
+              loadQueue.empty() &&
+              queuedRequests.size() == 1 &&
+              queuedRequests.front().key == parent.key &&
+              queuedRequests.front().group == TileLoadPriorityGroup::Normal,
+          "TileSelectionPostTraversalCommitter: kick trims descendants and reloads parent");
+    check(result.returnedSingleTileDetails &&
+              !result.details.allAreRenderable &&
+              !result.details.anyWereRenderedLastFrame &&
+              result.details.notYetRenderableCount == 1,
+          "TileSelectionPostTraversalCommitter: kicked missing parent returns single-tile details like cesium-native");
+}
+
 void testTileViewerRequestVolumePolicyChecksOptionalVolume() {
     const std::optional<TileBoundingVolume> noVolume;
     check(!TileViewerRequestVolumePolicy::hasRequestVolume(noVolume),
@@ -31039,6 +31101,7 @@ int main() {
     testTileSelectionPostTraversalPolicyPlansRefinedAncestorPreload();
     testTileSelectionPostTraversalPolicyPlansFadingKickWithoutParentReload();
     testTileSelectionPostTraversalPolicyBuildsCommitPlan();
+    testTileSelectionPostTraversalCommitterReturnsParentDetailsAfterKick();
     testTileViewerRequestVolumePolicyChecksOptionalVolume();
     testTileSelectionCullingPolicyChoosesChildrenBoundsLikeNative();
     testTileSelectionCullingPolicyEvaluatesFrustumAndFogGates();
