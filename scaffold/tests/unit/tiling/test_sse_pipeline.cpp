@@ -19631,6 +19631,32 @@ void testTilePendingRequestStateCancelsAndRejectsDuringDestroy() {
     state.completeTerrainRequest("terrain-after-destroy");
 }
 
+void testTilePendingRequestStateCancelIgnoresUnknownKeys() {
+    TilePendingRequestState state;
+    CancellationToken terrainToken;
+    CancellationToken contentToken;
+    check(state.beginTerrainRequest("terrain", terrainToken) &&
+              state.beginContentRequest("content", contentToken),
+          "TilePendingRequestState: unknown cancel test starts requests");
+
+    state.cancelAndErase("missing");
+
+    const PendingRequestCounts counts = state.counts();
+    check(!terrainToken.isCancelled() &&
+              !contentToken.isCancelled() &&
+              state.contains("terrain") &&
+              state.contains("content") &&
+              counts.terrainRequests == 1 &&
+              counts.contentRequests == 1 &&
+              counts.totalRequests == 2,
+          "TilePendingRequestState: unknown cancel leaves existing requests untouched");
+
+    state.cancelAndErase("terrain");
+    state.cancelAndErase("content");
+    check(state.empty(),
+          "TilePendingRequestState: unknown cancel test cleanup drains requests");
+}
+
 void testTileLoadLifecycleCountsAndFindsPendingWork() {
     TileLoadLifecycle lifecycle;
     CancellationToken token;
@@ -28245,6 +28271,7 @@ int main() {
     testTilePendingRequestStateCountsAndCompletesRequests();
     testPendingLoadStateRejectsEmptyCacheKeys();
     testTilePendingRequestStateCancelsAndRejectsDuringDestroy();
+    testTilePendingRequestStateCancelIgnoresUnknownKeys();
     testTileLoadLifecycleCountsAndFindsPendingWork();
     testTileLoadLifecycleCancelErasesPendingUploads();
     testTileLoadLifecycleCancelIgnoresEmptyCacheKey();
