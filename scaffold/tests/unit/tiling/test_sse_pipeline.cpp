@@ -20031,6 +20031,60 @@ void testTilePendingLoadQueueDeduplicatesTerminalResultsByKind() {
           "TilePendingLoadQueue: duplicate terminal results leave only one state transition per kind");
 }
 
+void testTilePendingLoadQueueKeepsOneResultShapePerKind() {
+    TilePendingLoadQueue queue;
+    const TileKey terrainKey{"test", 1, 0, 0};
+    const TileKey contentKey{"test", 1, 1, 0};
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    config.maxTerminalStateTransitionsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    queue.addTerrainUpload(PendingTerrainUpload{
+        terrainKey,
+        "terrain",
+        TileLoadPriorityGroup::Normal,
+        1.0,
+        nullptr});
+    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+        terrainKey,
+        "terrain",
+        TileLoadPriorityGroup::Urgent,
+        100.0,
+        TerrainTileLoadStatus::RetryLater});
+    queue.addContentTerminalResult(PendingContentTerminalResult{
+        contentKey,
+        "content",
+        TileLoadPriorityGroup::Normal,
+        1.0,
+        TileContentLoadStatus::RetryLater});
+    queue.addContentUpload(PendingContentUpload{
+        contentKey,
+        "content",
+        TileLoadPriorityGroup::Urgent,
+        100.0,
+        TileContentLoadResult::empty()});
+
+    check(queue.terrainUploadCount() == 1 &&
+              queue.terrainTerminalResultCount() == 0 &&
+              queue.contentUploadCount() == 0 &&
+              queue.contentTerminalResultCount() == 1,
+          "TilePendingLoadQueue: same-kind upload and terminal result are mutually exclusive");
+
+    std::optional<PendingLoadFinalize> upload =
+        queue.takeHighestPriorityUpload(false, budget);
+    std::optional<PendingTerminalResult> terminal =
+        queue.takeHighestPriorityTerminalResult(budget);
+    std::optional<PendingLoadFinalize> extraUpload =
+        queue.takeHighestPriorityUpload(false, budget);
+    std::optional<PendingTerminalResult> extraTerminal =
+        queue.takeHighestPriorityTerminalResult(budget);
+
+    check(upload && terminal && !extraUpload && !extraTerminal,
+          "TilePendingLoadQueue: same-kind duplicate result shapes produce one action per cache key");
+}
+
 void testTilePendingLoadQueueKeepsTerminalResultWhenBudgetBlocks() {
     TilePendingLoadQueue queue;
     const TileKey key{"test", 1, 0, 0};
@@ -30107,6 +30161,7 @@ int main() {
     testTilePendingLoadQueueDeduplicatesUploadsByKind();
     testTilePendingLoadQueueTakesTerminalResultsByPriority();
     testTilePendingLoadQueueDeduplicatesTerminalResultsByKind();
+    testTilePendingLoadQueueKeepsOneResultShapePerKind();
     testTilePendingLoadQueueKeepsTerminalResultWhenBudgetBlocks();
     testTilePendingLoadQueueRejectsEmptyCacheKeys();
     testTilePendingLoadQueueEraseIgnoresUnknownKeys();

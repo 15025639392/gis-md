@@ -55,6 +55,15 @@ void TilePendingLoadQueue::addTerrainUpload(PendingTerrainUpload upload) {
     if (upload.cacheKey.empty()) {
         return;
     }
+    const auto terminalIt = std::find_if(
+        terrainTerminalResults_.begin(),
+        terrainTerminalResults_.end(),
+        [&upload](const PendingTerrainTerminalResult& pending) {
+            return pending.cacheKey == upload.cacheKey;
+        });
+    if (terminalIt != terrainTerminalResults_.end()) {
+        return;
+    }
     if (!terrainUploadKeys_.insert(upload.cacheKey).second) {
         return;
     }
@@ -64,6 +73,9 @@ void TilePendingLoadQueue::addTerrainUpload(PendingTerrainUpload upload) {
 void TilePendingLoadQueue::addTerrainTerminalResult(
     PendingTerrainTerminalResult result) {
     if (result.cacheKey.empty()) {
+        return;
+    }
+    if (terrainUploadKeys_.count(result.cacheKey)) {
         return;
     }
     const auto existingIt = std::find_if(
@@ -82,6 +94,15 @@ void TilePendingLoadQueue::addContentUpload(PendingContentUpload upload) {
     if (upload.cacheKey.empty()) {
         return;
     }
+    const auto terminalIt = std::find_if(
+        contentTerminalResults_.begin(),
+        contentTerminalResults_.end(),
+        [&upload](const PendingContentTerminalResult& pending) {
+            return pending.cacheKey == upload.cacheKey;
+        });
+    if (terminalIt != contentTerminalResults_.end()) {
+        return;
+    }
     if (!contentUploadKeys_.insert(upload.cacheKey).second) {
         return;
     }
@@ -91,6 +112,9 @@ void TilePendingLoadQueue::addContentUpload(PendingContentUpload upload) {
 void TilePendingLoadQueue::addContentTerminalResult(
     PendingContentTerminalResult result) {
     if (result.cacheKey.empty()) {
+        return;
+    }
+    if (contentUploadKeys_.count(result.cacheKey)) {
         return;
     }
     const auto existingIt = std::find_if(
