@@ -499,6 +499,53 @@ TEST(TileBoundingVolumeTest, DegenerateRegionDistanceMatchesCesiumNative) {
     }
 }
 
+TEST(TileBoundingVolumeTest, RegionDistanceFallsBackToObbWhenCartographicFailsLikeCesiumNative) {
+    const TileBoundingVolume region =
+        TileBoundingVolume::fromRegion(
+            Rectangle::fromDegrees(-5.0, -3.0, 7.0, 4.0),
+            -50.0,
+            1234.0);
+    const std::optional<OrientedBoundingBox> obb =
+        TileBoundsMetrics::boundingRegionObb(
+            region.region,
+            region.minimumHeight,
+            region.maximumHeight);
+    ASSERT_TRUE(obb.has_value());
+
+    const Vec3 position = Vec3::zero();
+
+    EXPECT_NEAR(
+        std::sqrt(obb->computeDistanceSquaredToPosition(position)),
+        TileBoundsMetrics::boundingVolumeDistance(region, position),
+        1e-6);
+}
+
+TEST(TileBoundingVolumeTest, RegionDistanceKeepsObbLowerBoundLikeCesiumNative) {
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    const Rectangle rectangle = Rectangle::fromDegrees(-5.0, -3.0, 7.0, 4.0);
+    const TileBoundingVolume region =
+        TileBoundingVolume::fromRegion(rectangle, -50.0, 1234.0);
+    const std::optional<OrientedBoundingBox> obb =
+        TileBoundsMetrics::boundingRegionObb(
+            region.region,
+            region.minimumHeight,
+            region.maximumHeight);
+    ASSERT_TRUE(obb.has_value());
+
+    const Vec3 position = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(
+            rectangle.east() + rectangle.width() * 0.25,
+            (rectangle.south() + rectangle.north()) * 0.5,
+            100.0));
+
+    const double actual =
+        TileBoundsMetrics::boundingVolumeDistance(region, position);
+    const double obbDistance =
+        std::sqrt(obb->computeDistanceSquaredToPosition(position));
+
+    EXPECT_GE(actual + 1e-6, obbDistance);
+}
+
 TEST(TileBoundingVolumeTest, RegionIntersectPlaneMatchesCesiumNative) {
     const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
     const Rectangle rectangle(0.0, 0.0, 1.0, 1.0);
