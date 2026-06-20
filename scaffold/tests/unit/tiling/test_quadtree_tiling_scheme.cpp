@@ -55,6 +55,18 @@ TEST(QuadtreeTilingSchemeTest, PositionToTileClampsPositiveEdgesToFinalTile) {
     EXPECT_EQ(7, tile->y);
 }
 
+TEST(QuadtreeTilingSchemeTest, PositionToTileIncludesNegativeEdgesInFirstTile) {
+    const QuadtreeTilingScheme scheme(Rectangle(-180.0, -90.0, 180.0, 90.0),
+                                      2,
+                                      1);
+
+    const auto tile = scheme.positionToTile(-180.0, -90.0, 3);
+    ASSERT_TRUE(tile.has_value());
+    EXPECT_EQ(3, tile->z);
+    EXPECT_EQ(0, tile->x);
+    EXPECT_EQ(0, tile->y);
+}
+
 TEST(QuadtreeTilingSchemeTest, TileToRectangleMatchesCesiumNativeGrid) {
     const QuadtreeTilingScheme scheme(Rectangle(-180.0, -90.0, 180.0, 90.0),
                                       2,
