@@ -82,6 +82,11 @@ TEST(MathUtilsTest, RelativeEpsilonAndSignMatchCesiumNativeSourceSemantics) {
     EXPECT_DOUBLE_EQ(0.0,
                      MathUtils::relativeEpsilonToAbsolute(0.0, 0.0, 0.01));
 
+    EXPECT_EQ(Vec3(0.1, 0.2, 0.003),
+              MathUtils::relativeEpsilonToAbsolute(Vec3(10.0, -20.0, 0.0),
+                                                   Vec3(-5.0, 3.0, -0.3),
+                                                   0.01));
+
     EXPECT_DOUBLE_EQ(1.0, MathUtils::sign(42.0));
     EXPECT_DOUBLE_EQ(-1.0, MathUtils::sign(-42.0));
     EXPECT_DOUBLE_EQ(0.0, MathUtils::sign(0.0));

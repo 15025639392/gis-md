@@ -53,6 +53,14 @@ public:
         return relativeEpsilon * std::max(std::abs(a), std::abs(b));
     }
 
+    static Vec3 relativeEpsilonToAbsolute(const Vec3& a,
+                                          const Vec3& b,
+                                          double relativeEpsilon) noexcept {
+        return Vec3(relativeEpsilonToAbsolute(a.x(), b.x(), relativeEpsilon),
+                    relativeEpsilonToAbsolute(a.y(), b.y(), relativeEpsilon),
+                    relativeEpsilonToAbsolute(a.z(), b.z(), relativeEpsilon));
+    }
+
     static constexpr bool equalsEpsilon(double left,
                                         double right,
                                         double relativeEpsilon) noexcept {
