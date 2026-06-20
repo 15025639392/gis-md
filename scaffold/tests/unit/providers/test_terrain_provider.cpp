@@ -2,6 +2,7 @@
 #include <cmath>
 #include <string>
 #include "earth_engine/providers/BingMapsImageryProvider.h"
+#include "earth_engine/providers/GoogleMapTilesImageryProvider.h"
 #include "earth_engine/providers/HeightmapTerrainProvider.h"
 #include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
@@ -1040,6 +1041,47 @@ TEST(BingMapsImageryProviderTest, CreatesSourceFromMetadataLikeCesiumNative) {
     EXPECT_EQ(
         "https://dev.virtualearth.net/root/tiles/t0/0.jpeg?mkt=en-US&n=z",
         source.provider->buildUrl(TileKey{"XYZ-WebMercator", 0, 0, 0}));
+}
+
+TEST(GoogleMapTilesImageryProviderTest, BuildsExistingSessionUrlLikeCesiumNative) {
+    GoogleMapTilesExistingSessionOptions options;
+    options.apiBaseUrl = "https://tile.googleapis.com";
+    options.session = "session-token";
+    options.key = "api key";
+    options.maximumLevel = 28;
+    options.tileWidth = 512;
+    options.tileHeight = 512;
+
+    GoogleMapTilesImageryProvider provider(
+        options,
+        "google attribution");
+
+    EXPECT_EQ("google-map-tiles-imagery", provider.type());
+    EXPECT_EQ("XYZ-WebMercator", provider.schemeId());
+    EXPECT_EQ(0, provider.minZoom());
+    EXPECT_EQ(28, provider.maxZoom());
+    EXPECT_EQ(512, provider.tileWidth());
+    EXPECT_EQ(512, provider.tileHeight());
+    EXPECT_EQ("google attribution", provider.attribution());
+    EXPECT_EQ("https://tile.googleapis.com/",
+              provider.options().apiBaseUrl);
+    EXPECT_EQ(
+        "https://tile.googleapis.com/v1/2dtiles/2/3/0?session=session-token&key=api%20key",
+        provider.buildUrl(TileKey{"XYZ-WebMercator", 2, 3, 3}));
+}
+
+TEST(GoogleMapTilesImageryProviderTest, RejectsUnsupportedTiles) {
+    GoogleMapTilesExistingSessionOptions options;
+    options.session = "session";
+    options.key = "key";
+    options.maximumLevel = 1;
+    GoogleMapTilesImageryProvider provider(options);
+
+    EXPECT_TRUE(provider.supportsTile(TileKey{"XYZ-WebMercator", 1, 1, 1}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 1, 1, 1}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"XYZ-WebMercator", 2, 0, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 1, 0}));
+    EXPECT_EQ("", provider.buildUrl(TileKey{"XYZ-WebMercator", 2, 0, 0}));
 }
 
 TEST(TileMapServiceUrlTest, AppendsTileMapResourceXmlBeforeQueryLikeCesiumNative) {
