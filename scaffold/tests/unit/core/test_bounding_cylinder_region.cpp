@@ -85,6 +85,30 @@ TEST(BoundingCylinderRegionTest, PartialCylinderToOrientedBoundingBoxMatchesCesi
 }
 
 TEST(BoundingCylinderRegionTest,
+     AngularBoundsCrossZeroBetweenEndpointsLikeCesiumNative) {
+    const double quarterPi = MathUtils::OnePi / 4.0;
+    const BoundingCylinderRegion region(
+        Vec3::zero(),
+        glm::dquat(1.0, 0.0, 0.0, 0.0),
+        3.0,
+        glm::dvec2(1.0, 2.0),
+        glm::dvec2(-quarterPi, quarterPi));
+
+    const double sqrtHalf = std::sqrt(0.5);
+    const double minX = sqrtHalf;
+    const double maxX = 2.0;
+    const double minY = -2.0 * sqrtHalf;
+    const double maxY = 2.0 * sqrtHalf;
+
+    expectObbNear(region.toOrientedBoundingBox(),
+                  Vec3((minX + maxX) * 0.5, 0.0, 0.0),
+                  Vec3((maxX - minX) * 0.5, 0.0, 0.0),
+                  Vec3(0.0, (maxY - minY) * 0.5, 0.0),
+                  Vec3(0.0, 0.0, 1.5),
+                  MathUtils::Epsilon14);
+}
+
+TEST(BoundingCylinderRegionTest,
      ReversedAngularBoundsCrossNegativePiLikeCesiumNative) {
     const BoundingCylinderRegion region(
         Vec3::zero(),
