@@ -22013,6 +22013,53 @@ void testTilesetCreatesNonRootTerrainChildrenInCesiumOrder() {
           "Tileset: non-root partial terrain availability still materializes unavailable siblings as upsampled children");
 }
 
+void testTilesetCreatesNonRootUpsampledTerrainSiblingsInCesiumOrder() {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    SparseTerrainProvider* rawProvider = provider.get();
+    rawProvider->extraAvailableKeys = {
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        TileKey{"Geographic-TMS", 2, 2, 0},
+    };
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: non-root upsample sibling setup creates root tile");
+    if (!root) return;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(root->children.size() == 4,
+          "Tileset: non-root upsample sibling setup creates root children");
+    if (root->children.size() < 2 || !root->children[1]) return;
+
+    TilesetTile* se = root->children[1];
+    check(se->key == TileKey{"Geographic-TMS", 1, 1, 0} &&
+              !se->content.upsampledFromParent,
+          "Tileset: non-root upsample sibling setup uses a real available parent tile");
+
+    TilesetTestAccess::ensureTileChildren(tileset, *se);
+    check(se->children.size() == 4,
+          "Tileset: non-root partial availability creates four terrain children like cesium-native");
+    TilesetTile* childSw = se->children.size() == 4 ? se->children[0] : nullptr;
+    TilesetTile* childSe = se->children.size() == 4 ? se->children[1] : nullptr;
+    TilesetTile* childNw = se->children.size() == 4 ? se->children[2] : nullptr;
+    TilesetTile* childNe = se->children.size() == 4 ? se->children[3] : nullptr;
+
+    check(childSw && childSe && childNw && childNe &&
+              childSw->key == TileKey{"Geographic-TMS", 2, 2, 0} &&
+              childSe->key == TileKey{"Geographic-TMS", 2, 3, 0} &&
+              childNw->key == TileKey{"Geographic-TMS", 2, 2, 1} &&
+              childNe->key == TileKey{"Geographic-TMS", 2, 3, 1},
+          "Tileset: non-root upsample siblings preserve cesium-native SW/SE/NW/NE keys");
+    check(childSw && !childSw->content.upsampledFromParent &&
+              childSe && childSe->content.upsampledFromParent &&
+              childNw && childNw->content.upsampledFromParent &&
+              childNe && childNe->content.upsampledFromParent,
+          "Tileset: non-root unavailable terrain siblings are UpsampledQuadtreeNode equivalents");
+}
+
 void testTilesetAncestorFallbackIsClippedToMissingChild() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -23574,6 +23621,7 @@ int main() {
     testTilesetSampleHeightFallsBackToLoadedAncestorTerrain();
     testTilesetCreatesUpsampledChildrenForUnavailableSiblings();
     testTilesetCreatesNonRootTerrainChildrenInCesiumOrder();
+    testTilesetCreatesNonRootUpsampledTerrainSiblingsInCesiumOrder();
     testTilesetAncestorFallbackIsClippedToMissingChild();
     testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster();
     testPresentationTraceRecordsDeterministicCameraState();
