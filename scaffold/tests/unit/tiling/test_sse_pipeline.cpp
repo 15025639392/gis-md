@@ -15461,7 +15461,24 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
               retryTile.content.loadState == TileLoadState::FailedTemporarily,
           "TileTerminalLoadCommitter: retry content clears stale empty registry marker");
 
-    TilesetTile failedTerrainTile(TileKey{"test", 0, 4, 0}, Rectangle{});
+    TilesetTile cancelledContentTile(TileKey{"test", 0, 4, 0}, Rectangle{});
+    emptyContentRegistry.insert("content-cancelled");
+    action = TileTerminalLoadCommitter::commitContentTerminalResult(
+        cancelledContentTile,
+        "content-cancelled",
+        TileContentLoadStatus::Cancelled,
+        emptyContentRegistry);
+    check(!action.markEmptyCacheKey &&
+              action.ensureChildren &&
+              action.resourcesDirty &&
+              !emptyContentRegistry.contains("content-cancelled") &&
+              cancelledContentTile.content.contentKind ==
+                  TileContentKind::Unknown &&
+              cancelledContentTile.content.loadState ==
+                  TileLoadState::FailedTemporarily,
+          "TileTerminalLoadCommitter: cancelled content clears stale empty registry marker");
+
+    TilesetTile failedTerrainTile(TileKey{"test", 0, 5, 0}, Rectangle{});
     emptyContentRegistry.insert("terrain-failed");
     action = TileTerminalLoadCommitter::commitTerrainTerminalResult(
         failedTerrainTile,
@@ -15476,7 +15493,7 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
               failedTerrainTile.content.loadState == TileLoadState::Failed,
           "TileTerminalLoadCommitter: failed terrain clears stale empty registry marker");
 
-    TilesetTile cancelledTerrainTile(TileKey{"test", 0, 5, 0}, Rectangle{});
+    TilesetTile cancelledTerrainTile(TileKey{"test", 0, 6, 0}, Rectangle{});
     emptyContentRegistry.insert("terrain-cancelled");
     action = TileTerminalLoadCommitter::commitTerrainTerminalResult(
         cancelledTerrainTile,
