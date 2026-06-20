@@ -21547,6 +21547,67 @@ void testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot() {
           "TileLoadScheduler: pending upload key skip happens before snapshot side effects");
 }
 
+void testTileLoadSchedulerSkipsInflightRequestBeforeSnapshot() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey key{"test", 1, 0, 0};
+    const std::string cacheKey = testCacheKeyForTile(key);
+    CancellationToken token;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        check(lifecycle.requestState().beginTerrainRequest(cacheKey, token),
+              "TileLoadScheduler: test starts inflight request for pending key");
+    }
+
+    bool planned = false;
+    bool emptyChecked = false;
+    bool prepared = false;
+    bool marked = false;
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            testCacheKeyForTile,
+            [&planned](const TileKey&,
+                       const std::string&,
+                       TilesetTile*& tileState) {
+                planned = true;
+                tileState = nullptr;
+                return TileLoadRequestSnapshot{};
+            },
+            [&emptyChecked](const std::string&) {
+                emptyChecked = true;
+                return false;
+            },
+            [&prepared](TilesetTile&, double) {
+                prepared = true;
+                return true;
+            },
+            [&marked](const TileKey&) { marked = true; });
+
+    check(outcome.issued == 0 && !outcome.blockedByInflight,
+          "TileLoadScheduler: inflight cache key skips without reporting inflight block");
+    check(!planned && !emptyChecked && !prepared && !marked &&
+              lifecycle.containsWorkForCacheKey(cacheKey),
+          "TileLoadScheduler: inflight cache key skip happens before snapshot side effects");
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().completeTerrainRequest(cacheKey);
+    }
+}
+
 void testTileLoadSchedulerStopsDuringDestroyBeforePlanning() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -27540,6 +27601,7 @@ int main() {
     testTileLoadSchedulerSkipsEmptyUpsampledCacheKey();
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation();
     testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot();
+    testTileLoadSchedulerSkipsInflightRequestBeforeSnapshot();
     testTileLoadSchedulerStopsDuringDestroyBeforePlanning();
     testTileLoadSchedulerSkipsDispatcherDuplicateAfterPlanning();
     testTileLoadSchedulerStopsAfterDispatchBudgetBlock();
