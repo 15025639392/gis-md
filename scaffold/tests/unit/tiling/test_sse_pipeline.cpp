@@ -4622,6 +4622,36 @@ void testQuantizedMeshSkirtNormalsCopyEdgeNormals() {
           "QuantizedMeshParser: skirt normals copy source edge normals like cesium-native");
 }
 
+void testQuantizedMeshSkirtNormalsCopyEachEdgeSourceNormal() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes("", true, false);
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            scheme->tileToRectangle(rootKey));
+
+    check(mesh != nullptr && mesh->vertices.size() >= 11,
+          "QuantizedMeshParser: skirt edge-normal test mesh parses");
+    if (!mesh || mesh->vertices.size() < 11) return;
+
+    check((mesh->vertices[3].normalEcef -
+           mesh->vertices[0].normalEcef).length() < 1e-12,
+          "QuantizedMeshParser: west skirt normal copies west edge source like cesium-native");
+    check((mesh->vertices[5].normalEcef -
+           mesh->vertices[1].normalEcef).length() < 1e-12,
+          "QuantizedMeshParser: south skirt normal copies south edge source like cesium-native");
+    check((mesh->vertices[7].normalEcef -
+           mesh->vertices[2].normalEcef).length() < 1e-12,
+          "QuantizedMeshParser: east skirt normal copies east edge source like cesium-native");
+    check((mesh->vertices[9].normalEcef -
+           mesh->vertices[2].normalEcef).length() < 1e-12,
+          "QuantizedMeshParser: north skirt normal copies north edge source like cesium-native");
+}
+
 void testQuantizedMeshSkirtCountsMatchCesiumNativeFormula() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -22728,6 +22758,7 @@ int main() {
     testQuantizedMeshRejectsMissingUint32IndexPadding();
     testQuantizedMeshRasterizerRejectsMissingUint32IndexPadding();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
+    testQuantizedMeshSkirtNormalsCopyEachEdgeSourceNormal();
     testQuantizedMeshSkirtCountsMatchCesiumNativeFormula();
     testQuantizedMeshSkirtVerticesExpandOutsideTileEdges();
     testQuantizedMeshSkirtHeightMatchesCesiumNativeFormula();
