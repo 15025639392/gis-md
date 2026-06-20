@@ -22162,6 +22162,126 @@ void testTileLoadSchedulerContentThenTerrainShareDispatchBudget() {
           "TileLoadScheduler: shared dispatch budget block stops before lower-priority planning");
 }
 
+void testTileLoadSchedulerTerrainThenContentShareDispatchBudget() {
+    class DeferredContentProvider final : public TilesetContentProvider {
+    public:
+        std::string id() const override {
+            return "scheduler-shared-budget-content-after-terrain";
+        }
+        bool supportsTile(const TileKey&) const override { return true; }
+        void requestTileContent(const TileKey&,
+                                CancellationToken,
+                                ContentCallback,
+                                HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+        }
+        TileContentLoadResult decodeContent(
+            const uint8_t*,
+            size_t) override {
+            return TileContentLoadResult::failed();
+        }
+        int requestCount = 0;
+    };
+
+    class DeferredTerrainProvider final : public TerrainProvider {
+    public:
+        std::string id() const override {
+            return "scheduler-shared-budget-terrain-first";
+        }
+        std::string schemeId() const override { return "test"; }
+        int minZoom() const override { return 0; }
+        int maxZoom() const override { return 1; }
+        int tileSize() const override { return 2; }
+        std::string buildUrl(const TileKey&) const override {
+            return "memory://scheduler-shared-budget-terrain-first";
+        }
+        void requestTile(const TileKey&,
+                         CancellationToken,
+                         HeightmapCallback,
+                         HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+        }
+        std::unique_ptr<DecodedHeightmap> decodeTile(
+            const uint8_t*,
+            size_t) override {
+            return nullptr;
+        }
+        int requestCount = 0;
+    };
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxTerrainContentNetworkRequestsPerFrame = 1;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey terrainKey{"test", 0, 0, 0};
+    const TileKey contentKey{"content", 0, 1, 0};
+    const TileKey skippedKey{"content", 0, 2, 0};
+    DeferredTerrainProvider terrainProvider;
+    DeferredContentProvider contentProvider;
+    std::vector<std::string> plannedKeys;
+    std::vector<std::string> markedKeys;
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {
+                TileLoadRequest{
+                    skippedKey,
+                    TileLoadPriorityGroup::Preload,
+                    10.0},
+                TileLoadRequest{
+                    contentKey,
+                    TileLoadPriorityGroup::Normal,
+                    50.0},
+                TileLoadRequest{
+                    terrainKey,
+                    TileLoadPriorityGroup::Urgent,
+                    100.0},
+            },
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                &terrainProvider,
+                &contentProvider},
+            testCacheKeyForTile,
+            [&plannedKeys](const TileKey& key,
+                           const std::string&,
+                           TilesetTile*& tileState) {
+                plannedKeys.push_back(key.schemeId + ":" +
+                                      std::to_string(key.x));
+                tileState = nullptr;
+                TileLoadRequestSnapshot snapshot;
+                if (key.schemeId == "content") {
+                    snapshot.contentProviderSupportsTile = true;
+                } else {
+                    snapshot.terrainProviderSupportsTile = true;
+                }
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [&markedKeys](const TileKey& key) {
+                markedKeys.push_back(key.schemeId + ":" +
+                                     std::to_string(key.x));
+            });
+
+    check(outcome.issued == 1 && !outcome.blockedByInflight,
+          "TileLoadScheduler: terrain and content share dispatch request budget without reporting inflight block");
+    check(terrainProvider.requestCount == 1 &&
+              contentProvider.requestCount == 0 &&
+              budget.terrainContentNetworkRequestsIssued() == 1 &&
+              budget.networkRequestsIssued() == 1,
+          "TileLoadScheduler: terrain request consumes the shared terrain/content network lane");
+    check(plannedKeys.size() == 2 &&
+              plannedKeys[0] == "test:0" &&
+              plannedKeys[1] == "content:1" &&
+              markedKeys.size() == 1 &&
+              markedKeys[0] == "test:0",
+          "TileLoadScheduler: terrain-first shared budget block stops before lower-priority planning");
+}
+
 void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
     class RetryContentProvider final : public TilesetContentProvider {
     public:
@@ -27953,6 +28073,7 @@ int main() {
     testTileLoadSchedulerStopsAfterDispatchBudgetBlock();
     testTileLoadSchedulerStopsAfterTerrainDispatchBudgetBlock();
     testTileLoadSchedulerContentThenTerrainShareDispatchBudget();
+    testTileLoadSchedulerTerrainThenContentShareDispatchBudget();
     testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared();
     testTileMissingRequestSchedulerRetriesTerrainAfterEmptyMarkerCleared();
     testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds();
