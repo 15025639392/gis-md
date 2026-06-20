@@ -15438,6 +15438,35 @@ void testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker() {
           "TilePendingLoadCommitCoordinator: retry content terminal clears stale empty marker through pending path");
 }
 
+void testTilePendingLoadCommitCoordinatorClearsTerrainRetryEmptyMarker() {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "test:0:0:0";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
+    PendingTerrainTerminalResult result{
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TerrainTileLoadStatus::RetryLater};
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+        result,
+        emptyContentRegistry,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    check(!emptyContentRegistry.contains(cacheKey) &&
+              resourcesDirty &&
+              tile.content.contentKind == TileContentKind::Unknown &&
+              tile.content.loadState == TileLoadState::FailedTemporarily,
+          "TilePendingLoadCommitCoordinator: retry terrain terminal clears stale empty marker through pending path");
+}
+
 void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
     const TileKey parentKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 1, 0};
@@ -26837,6 +26866,7 @@ int main() {
     testTileTerrainUploadCommitterAppliesMeshResourceOutcome();
     testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys();
     testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker();
+    testTilePendingLoadCommitCoordinatorClearsTerrainRetryEmptyMarker();
     testTileRenderPlanFinalizerResolvesAncestorFallbackEntries();
     testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery();
     testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback();
