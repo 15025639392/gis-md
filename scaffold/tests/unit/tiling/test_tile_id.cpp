@@ -84,6 +84,15 @@ TEST(TileIdUtilitiesTest, CreatesStringForExplicitContentUrl) {
               TileIdUtilities::createTileIdString(tileID));
 }
 
+TEST(TileIdUtilitiesTest, DefaultTileIdIsBlankStringLikeCesiumNative) {
+    const TileID tileID;
+
+    ASSERT_TRUE(std::holds_alternative<std::string>(tileID));
+    EXPECT_TRUE(std::get<std::string>(tileID).empty());
+    EXPECT_EQ("", TileIdUtilities::createTileIdString(tileID));
+    EXPECT_FALSE(TileIdUtilities::isLoadable(tileID));
+}
+
 TEST(TileIdUtilitiesTest, CreatesStringForQuadtreeTileId) {
     const TileID tileID = TileKey{"Geographic-TMS", 10, 23, 144};
 
