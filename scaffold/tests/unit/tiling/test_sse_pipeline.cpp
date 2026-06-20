@@ -3333,6 +3333,32 @@ void testQuantizedMeshLayerJsonEmptyAvailabilityMatchesCesiumNative() {
           "QuantizedMeshTerrainProvider: empty layer availability does not imply descendants");
 }
 
+void testQuantizedMeshLayerJsonWebMercatorProjectionMatchesCesiumNative() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:3857",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "minzoom": 0,
+      "maxzoom": 4
+    })json";
+
+    check(provider.configureFromLayerJson(
+              layerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: WebMercator layer configures like cesium-native");
+    check(provider.schemeId() == "XYZ-WebMercator",
+          "QuantizedMeshTerrainProvider: WebMercator layer exposes one-root tile scheme");
+    check(provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 0, 0}),
+          "QuantizedMeshTerrainProvider: WebMercator root tile is requestable");
+    check(!provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 1, 0}) &&
+              !provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 0, 1}),
+          "QuantizedMeshTerrainProvider: WebMercator root level is 1x1 like cesium-native");
+    check(!provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 0}),
+          "QuantizedMeshTerrainProvider: WebMercator layer rejects Geographic-TMS keys");
+}
+
 void testQuantizedMeshRejectsOutOfRangeGeographicTiles() {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
@@ -21061,6 +21087,7 @@ int main() {
     testQuantizedMeshAvailabilityInclusiveCenterBoundary();
     testQuantizedMeshMetadataAvailabilityStartsAtRoots();
     testQuantizedMeshLayerJsonEmptyAvailabilityMatchesCesiumNative();
+    testQuantizedMeshLayerJsonWebMercatorProjectionMatchesCesiumNative();
     testQuantizedMeshRejectsOutOfRangeGeographicTiles();
     testQuantizedMeshLayerJsonMinzoomDoesNotGateAvailability();
     testQuantizedMeshLayerJsonMaxzoomDoesNotGateExplicitAvailability();

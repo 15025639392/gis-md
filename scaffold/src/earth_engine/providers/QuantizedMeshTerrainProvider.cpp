@@ -395,13 +395,22 @@ uint64_t mortonEncode2D(uint32_t x, uint32_t y) {
     return result;
 }
 
-bool isGeographicTmsTileInRange(const TileKey& key) {
-    if (key.schemeId != "Geographic-TMS" || key.z < 0 ||
+std::string schemeIdForLayerProjection(const std::string& projection) {
+    if (projection == "EPSG:4326") return "Geographic-TMS";
+    if (projection == "EPSG:3857") return "XYZ-WebMercator";
+    return {};
+}
+
+bool isTileInLayerRange(const TileKey& key, const std::string& schemeId) {
+    if (key.schemeId != schemeId || key.z < 0 ||
         key.x < 0 || key.y < 0) {
         return false;
     }
 
-    const double xTiles = std::ldexp(1.0, key.z + 1);
+    const bool geographic = schemeId == "Geographic-TMS";
+    const double xTiles = geographic
+        ? std::ldexp(1.0, key.z + 1)
+        : std::ldexp(1.0, key.z);
     const double yTiles = std::ldexp(1.0, key.z);
     return static_cast<double>(key.x) < xTiles &&
            static_cast<double>(key.y) < yTiles;
@@ -497,7 +506,10 @@ bool QuantizedMeshTerrainProvider::configureFromLayerJson(
     try {
         auto j = nlohmann::json::parse(layerJson);
         if (j.value("format", "") != "quantized-mesh-1.0") return false;
-        if (j.value("projection", "EPSG:4326") != "EPSG:4326") return false;
+        if (schemeIdForLayerProjection(
+                j.value("projection", "EPSG:4326")).empty()) {
+            return false;
+        }
         if (j.value("scheme", "tms") != "tms") return false;
 
         layers_.clear();
@@ -530,6 +542,11 @@ bool QuantizedMeshTerrainProvider::appendLayerFromJson(
     layer.urlTemplate =
         resolveTerrainTemplate(layerJsonUrl, j["tiles"][0].get<std::string>());
     layer.layerJsonUrl = layerJsonUrl;
+    layer.schemeId = schemeIdForLayerProjection(
+        j.value("projection", "EPSG:4326"));
+    if (layer.schemeId.empty()) {
+        return false;
+    }
     // cesium-native LayerJsonTerrainLoader reads layer.json maxzoom for
     // availability storage/subtree bookkeeping, but minzoom/maxzoom do not
     // directly gate tile availability. Availability rectangles and loaded
@@ -609,7 +626,10 @@ bool QuantizedMeshTerrainProvider::appendParentLayers(
         const std::string body(bytes.begin(), bytes.end());
         auto parent = nlohmann::json::parse(body);
         if (parent.value("format", "") != "quantized-mesh-1.0") return false;
-        if (parent.value("projection", "EPSG:4326") != "EPSG:4326") return false;
+        if (schemeIdForLayerProjection(
+                parent.value("projection", "EPSG:4326")).empty()) {
+            return false;
+        }
         if (parent.value("scheme", "tms") != "tms") return false;
         if (!appendLayerFromJson(parent, resolvedUrl)) {
             return false;
@@ -627,6 +647,7 @@ void QuantizedMeshTerrainProvider::syncLegacyFieldsFromPrimaryLayer() {
     const LayerConfig& primary = layers_.front();
     urlTemplate_ = primary.urlTemplate;
     layerJsonUrl_ = primary.layerJsonUrl;
+    schemeId_ = primary.schemeId;
     version_ = primary.version;
     extensionsToRequest_ = primary.extensionsToRequest;
     availabilityRanges_ = primary.availabilityRanges;
@@ -655,7 +676,10 @@ uint32_t QuantizedMeshTerrainProvider::maximumAvailableLevelAtTileCenter(
     uint32_t maxLevel = 0;
     if (layer.availabilityRanges.empty()) return maxLevel;
 
-    const double keyXTiles = std::ldexp(1.0, key.z + 1);
+    const bool geographic = layer.schemeId == "Geographic-TMS";
+    const double keyXTiles = geographic
+        ? std::ldexp(1.0, key.z + 1)
+        : std::ldexp(1.0, key.z);
     const double keyYTiles = std::ldexp(1.0, key.z);
     const double centerX = (static_cast<double>(key.x) + 0.5) / keyXTiles;
     const double centerY = (static_cast<double>(key.y) + 0.5) / keyYTiles;
@@ -665,7 +689,9 @@ uint32_t QuantizedMeshTerrainProvider::maximumAvailableLevelAtTileCenter(
         if (ranges.empty()) continue;
 
         const int level = static_cast<int>(levelIndex);
-        const double xTiles = std::ldexp(1.0, level + 1);
+        const double xTiles = geographic
+            ? std::ldexp(1.0, level + 1)
+            : std::ldexp(1.0, level);
         const double yTiles = std::ldexp(1.0, level);
         for (const auto& range : ranges) {
             // cesium-native QuadtreeRectangleAvailability stores each
@@ -707,7 +733,7 @@ bool QuantizedMeshTerrainProvider::isSubtreeLoadedInLayer(
 TileAvailabilityState QuantizedMeshTerrainProvider::availabilityStateInLayer(
     const LayerConfig& layer,
     const TileKey& key) const {
-    if (!isGeographicTmsTileInRange(key)) {
+    if (!isTileInLayerRange(key, layer.schemeId)) {
         return TileAvailabilityState::NotAvailable;
     }
     if (!layer.hasAvailability) return TileAvailabilityState::Available;
@@ -748,13 +774,14 @@ TileAvailabilityState QuantizedMeshTerrainProvider::availabilityState(
         if (key.z < minZoom_ || key.z > maxZoom_) {
             return TileAvailabilityState::NotAvailable;
         }
-        if (!isGeographicTmsTileInRange(key)) {
+        if (!isTileInLayerRange(key, schemeId_)) {
             return TileAvailabilityState::NotAvailable;
         }
         if (!hasAvailability_) return TileAvailabilityState::Available;
 
         LayerConfig legacy;
         legacy.urlTemplate = urlTemplate_;
+        legacy.schemeId = schemeId_;
         legacy.version = version_;
         legacy.extensionsToRequest = extensionsToRequest_;
         legacy.availabilityRanges = availabilityRanges_;
@@ -888,6 +915,7 @@ std::string QuantizedMeshTerrainProvider::buildUrl(const TileKey& key) const {
 
     LayerConfig legacy;
     legacy.urlTemplate = urlTemplate_;
+    legacy.schemeId = schemeId_;
     legacy.version = version_;
     legacy.extensionsToRequest = extensionsToRequest_;
     return buildUrlForLayer(legacy, key);

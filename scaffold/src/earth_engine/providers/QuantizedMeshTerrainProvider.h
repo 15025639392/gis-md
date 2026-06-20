@@ -31,7 +31,7 @@ public:
     std::string id() const override;
     std::string type() const override { return "quantized-mesh-terrain"; }
 
-    std::string schemeId() const override { return "Geographic-TMS"; }
+    std::string schemeId() const override { return schemeId_; }
 
     int minZoom() const override { return minZoom_; }
     int maxZoom() const override { return maxZoom_; }
@@ -80,6 +80,7 @@ private:
     struct LayerConfig {
         std::string urlTemplate;
         std::string layerJsonUrl;
+        std::string schemeId = "Geographic-TMS";
         std::string version;
         std::string extensionsToRequest;
         std::vector<std::vector<std::array<int, 4>>> availabilityRanges;
@@ -161,6 +162,7 @@ private:
     std::string urlTemplate_;
     std::string attribution_;
     std::string layerJsonUrl_;
+    std::string schemeId_ = "Geographic-TMS";
     std::string version_;
     std::string extensionsToRequest_;
     std::vector<std::vector<std::array<int, 4>>> availabilityRanges_;
