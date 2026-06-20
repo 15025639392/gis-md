@@ -86,6 +86,17 @@ TEST(BoundingRegionBuilderTest, PolePositionsExpandLatitudeAndHeightOnly) {
     EXPECT_DOUBLE_EQ(8.0, expanded.maximumHeight);
 }
 
+TEST(BoundingRegionBuilderTest, ExpandsSimpleRectangleFirstLikeCesiumNative) {
+    BoundingRegionBuilder builder;
+
+    EXPECT_TRUE(builder.expandToIncludeRectangle(Rectangle(0.1, 0.2, 0.3, 0.4)));
+    expectRectangleNear(builder.toRectangle(), Rectangle(0.1, 0.2, 0.3, 0.4));
+
+    EXPECT_FALSE(builder.expandToIncludeRectangle(
+        Rectangle(0.15, 0.25, 0.25, 0.35)));
+    expectRectangleNear(builder.toRectangle(), Rectangle(0.1, 0.2, 0.3, 0.4));
+}
+
 TEST(BoundingRegionBuilderTest, ExpandsRectanglesWithAntimeridianSemantics) {
     struct Case {
         Rectangle first;
