@@ -525,6 +525,25 @@ TEST(XYZImageryProviderTest, GeographicSchemeUsesCesiumNativeTwoByOneRoot) {
     EXPECT_FALSE(provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 0, 0}));
 }
 
+TEST(XYZImageryProviderTest, GeographicProjectedPlaceholdersUseCesiumNativeProjection) {
+    XYZImageryProvider provider(
+        "https://example.com?minx={minimumX}&miny={minimumY}&maxx={maximumX}&maxy={maximumY}");
+    provider.setSchemeId("Geographic-TMS");
+
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey key{"Geographic-TMS", 0, 1, 0};
+    const Rectangle projected = projectRectangleSimple(
+        GeographicProjection(Ellipsoid::WGS84()),
+        scheme->tileToRectangle(key));
+
+    EXPECT_EQ(
+        "https://example.com?minx=" + std::to_string(projected.west()) +
+            "&miny=" + std::to_string(projected.south()) +
+            "&maxx=" + std::to_string(projected.east()) +
+            "&maxy=" + std::to_string(projected.north()),
+        provider.buildUrl(key));
+}
+
 TEST(XYZImageryProviderTest, OpenGlobusGroupedYMapsUrlLocalYAndExposesGroup) {
     XYZImageryProvider provider(
         "https://example.com/{tileGroup}/{z}/{x}/{y}?gy={groupedY}");

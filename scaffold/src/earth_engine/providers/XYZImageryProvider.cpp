@@ -170,15 +170,15 @@ TileDegreesRectangle tileDegreesRectangleForScheme(const TileKey& key) {
 
 TileProjectedRectangle tileProjectedRectangleForScheme(const TileKey& key) {
     const TileDegreesRectangle degrees = tileDegreesRectangleForScheme(key);
+    constexpr double kWgs84MaximumRadius = 6378137.0;
     if (key.schemeId == "Geographic-TMS") {
         return TileProjectedRectangle{
-            degreesToRadians(degrees.west),
-            degreesToRadians(degrees.south),
-            degreesToRadians(degrees.east),
-            degreesToRadians(degrees.north)};
+            degreesToRadians(degrees.west) * kWgs84MaximumRadius,
+            degreesToRadians(degrees.south) * kWgs84MaximumRadius,
+            degreesToRadians(degrees.east) * kWgs84MaximumRadius,
+            degreesToRadians(degrees.north) * kWgs84MaximumRadius};
     }
 
-    constexpr double kWgs84MaximumRadius = 6378137.0;
     return TileProjectedRectangle{
         degreesToRadians(degrees.west) * kWgs84MaximumRadius,
         webMercatorLatitudeDegreesToProjectedY(degrees.south),
