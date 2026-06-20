@@ -86,6 +86,29 @@ TEST(BoundingRegionBuilderTest, PolePositionsExpandLatitudeAndHeightOnly) {
     EXPECT_DOUBLE_EQ(8.0, expanded.maximumHeight);
 }
 
+TEST(BoundingRegionBuilderTest, PoleToleranceMatchesCesiumNativeAccessors) {
+    BoundingRegionBuilder builder;
+
+    EXPECT_DOUBLE_EQ(MathUtils::Epsilon10, builder.poleTolerance());
+    builder.setPoleTolerance(0.25);
+    EXPECT_DOUBLE_EQ(0.25, builder.poleTolerance());
+
+    EXPECT_TRUE(builder.expandToIncludePosition(
+        Cartographic(1.0, MathUtils::PiOverTwo - 0.1, -5.0)));
+    const auto polarOnly = builder.toRegion();
+    EXPECT_EQ(Rectangle::EMPTY, polarOnly.rectangle);
+    EXPECT_DOUBLE_EQ(1.0, polarOnly.minimumHeight);
+    EXPECT_DOUBLE_EQ(-1.0, polarOnly.maximumHeight);
+
+    EXPECT_TRUE(builder.expandToIncludePosition(Cartographic(0.25, 0.25, 8.0)));
+    const auto expanded = builder.toRegion();
+    EXPECT_TRUE(expanded.rectangle.contains(0.25, 0.25));
+    EXPECT_TRUE(expanded.rectangle.contains(0.25, MathUtils::PiOverTwo - 0.1));
+    EXPECT_FALSE(expanded.rectangle.contains(1.0, 0.25));
+    EXPECT_DOUBLE_EQ(-5.0, expanded.minimumHeight);
+    EXPECT_DOUBLE_EQ(8.0, expanded.maximumHeight);
+}
+
 TEST(BoundingRegionBuilderTest, ExpandsSimpleRectangleFirstLikeCesiumNative) {
     BoundingRegionBuilder builder;
 
