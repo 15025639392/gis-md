@@ -14,6 +14,20 @@ namespace earth_engine {
 namespace {
 
 constexpr uint32_t kMaxLevel = 30;
+constexpr uint8_t kSwapMask = 0x01;
+constexpr uint8_t kInvertMask = 0x02;
+constexpr uint8_t kPosToIj[4][4] = {
+    {0, 1, 3, 2},
+    {0, 2, 3, 1},
+    {3, 2, 0, 1},
+    {3, 1, 0, 2},
+};
+constexpr uint8_t kPosToOrientation[4] = {
+    kSwapMask,
+    0,
+    0,
+    static_cast<uint8_t>(kSwapMask | kInvertMask),
+};
 
 void rotate(uint32_t n, uint32_t& x, uint32_t& y, bool rx, bool ry) {
     if (ry) {
@@ -26,21 +40,23 @@ void rotate(uint32_t n, uint32_t& x, uint32_t& y, bool rx, bool ry) {
     std::swap(x, y);
 }
 
-void decodeHilbert2D(uint32_t level, uint64_t index, uint32_t& x, uint32_t& y) {
+void decodeS2Position(uint8_t face,
+                      uint32_t level,
+                      uint64_t position,
+                      uint32_t& x,
+                      uint32_t& y) {
+    uint8_t orientation = face & kSwapMask;
     x = 0;
     y = 0;
 
-    for (uint32_t s = 1; s < (uint32_t{1} << level); s <<= 1U) {
-        const bool rx = ((index >> 1U) & 1U) != 0;
-        const bool ry = ((index ^ static_cast<uint64_t>(rx)) & 1U) != 0;
-        rotate(s, x, y, rx, ry);
-        if (rx) {
-            x += s;
-        }
-        if (ry) {
-            y += s;
-        }
-        index >>= 2U;
+    for (uint32_t depth = 1; depth <= level; ++depth) {
+        const uint32_t shift = 2U * (level - depth);
+        const uint8_t childPosition =
+            static_cast<uint8_t>((position >> shift) & 0x3U);
+        const uint8_t ij = kPosToIj[orientation][childPosition];
+        x = (x << 1U) | (ij >> 1U);
+        y = (y << 1U) | (ij & 1U);
+        orientation ^= kPosToOrientation[childPosition];
     }
 }
 
@@ -106,6 +122,10 @@ double longitude(const CartesianUnit& point) {
     return std::atan2(point.y, point.x);
 }
 
+Cartographic toCartographic(const CartesianUnit& point) {
+    return Cartographic(longitude(point), latitude(point), 0.0);
+}
+
 std::pair<double, double> minimalLongitudeInterval(
     std::array<double, 4> longitudes,
     size_t count) {
@@ -147,6 +167,12 @@ int hexValue(char c) {
         return c - 'a' + 10;
     }
     return -1;
+}
+
+uint64_t positionWithinLevel(uint64_t id, uint32_t level) {
+    const uint32_t lsbShift = 2U * (kMaxLevel - level);
+    const uint64_t positionMask = (uint64_t{1} << 61U) - 1U;
+    return (id & positionMask) >> (lsbShift + 1U);
 }
 
 } // namespace
@@ -246,6 +272,44 @@ uint8_t S2CellID::getFace() const noexcept {
     return static_cast<uint8_t>(id_ >> 61U);
 }
 
+Cartographic S2CellID::getCenter() const {
+    const uint32_t level = static_cast<uint32_t>(getLevel());
+    const uint64_t position = positionWithinLevel(id_, level);
+
+    uint32_t x = 0;
+    uint32_t y = 0;
+    decodeS2Position(getFace(), level, position, x, y);
+
+    const double denominator = static_cast<double>(uint32_t{1} << level);
+    const double u =
+        stToUv((static_cast<double>(x) + 0.5) / denominator);
+    const double v =
+        stToUv((static_cast<double>(y) + 0.5) / denominator);
+    return toCartographic(faceUvToXyz(getFace(), u, v));
+}
+
+std::array<Cartographic, 4> S2CellID::getVertices() const {
+    const uint32_t level = static_cast<uint32_t>(getLevel());
+    const uint64_t position = positionWithinLevel(id_, level);
+
+    uint32_t x = 0;
+    uint32_t y = 0;
+    decodeS2Position(getFace(), level, position, x, y);
+
+    const double denominator = static_cast<double>(uint32_t{1} << level);
+    const double u0 = stToUv(static_cast<double>(x) / denominator);
+    const double u1 = stToUv(static_cast<double>(x + 1U) / denominator);
+    const double v0 = stToUv(static_cast<double>(y) / denominator);
+    const double v1 = stToUv(static_cast<double>(y + 1U) / denominator);
+
+    const uint8_t face = getFace();
+    return {
+        toCartographic(faceUvToXyz(face, u0, v0)),
+        toCartographic(faceUvToXyz(face, u1, v0)),
+        toCartographic(faceUvToXyz(face, u1, v1)),
+        toCartographic(faceUvToXyz(face, u0, v1))};
+}
+
 S2CellID S2CellID::getParent() const noexcept {
     const uint64_t parentLowestBit = lowestOnBit(id_) << 2U;
     return S2CellID((id_ & (~parentLowestBit + 1ULL)) | parentLowestBit);
@@ -307,13 +371,11 @@ Rectangle S2CellID::computeBoundingRectangle() const {
     }
 
     const uint32_t level = static_cast<uint32_t>(getLevel());
-    const uint32_t lsbShift = 2U * (kMaxLevel - level);
-    const uint64_t positionMask = (uint64_t{1} << 61U) - 1U;
-    const uint64_t position = (id_ & positionMask) >> (lsbShift + 1U);
+    const uint64_t position = positionWithinLevel(id_, level);
 
     uint32_t x = 0;
     uint32_t y = 0;
-    decodeHilbert2D(level, position, x, y);
+    decodeS2Position(face, level, position, x, y);
 
     const double denominator = static_cast<double>(uint32_t{1} << level);
     const double u0 = stToUv(static_cast<double>(x) / denominator);

@@ -1,9 +1,11 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/S2CellID.h"
 #include "earth_engine/core/math/MathUtils.h"
 #include "earth_engine/core/math/Rectangle.h"
 
+#include <array>
 #include <cmath>
 
 using namespace earth_engine;
@@ -17,6 +19,16 @@ void expectRectangleNear(const Rectangle& actual,
     EXPECT_NEAR(actual.south(), expected.south(), epsilon);
     EXPECT_NEAR(actual.east(), expected.east(), epsilon);
     EXPECT_NEAR(actual.north(), expected.north(), epsilon);
+}
+
+void expectCartographicNear(const Cartographic& actual,
+                            double longitude,
+                            double latitude,
+                            double height = 0.0,
+                            double epsilon = MathUtils::Epsilon10) {
+    EXPECT_NEAR(longitude, actual.longitude(), epsilon);
+    EXPECT_NEAR(latitude, actual.latitude(), epsilon);
+    EXPECT_NEAR(height, actual.height(), epsilon);
 }
 
 } // namespace
@@ -131,6 +143,69 @@ TEST(S2CellIDTest, ParentAndChildMatchCesiumNativeS2Hierarchy) {
     EXPECT_EQ("2ef59bd352b93ac4", parent.toToken());
     EXPECT_EQ(29, parent.getLevel());
     EXPECT_EQ(deep.getID(), parent.getChild(1).getID());
+}
+
+TEST(S2CellIDTest, CentersMatchCesiumNative) {
+    expectCartographicNear(S2CellID::fromToken("1").getCenter(), 0.0, 0.0);
+    expectCartographicNear(
+        S2CellID::fromToken("3").getCenter(),
+        MathUtils::degreesToRadians(90.0),
+        0.0);
+
+    const Cartographic northPole = S2CellID::fromToken("5").getCenter();
+    EXPECT_NEAR(MathUtils::degreesToRadians(90.0),
+                northPole.latitude(),
+                MathUtils::Epsilon10);
+    EXPECT_NEAR(0.0, northPole.height(), MathUtils::Epsilon10);
+
+    const Cartographic dateline = S2CellID::fromToken("7").getCenter();
+    EXPECT_NEAR(MathUtils::degreesToRadians(180.0),
+                std::abs(dateline.longitude()),
+                MathUtils::Epsilon10);
+    EXPECT_NEAR(0.0, dateline.latitude(), MathUtils::Epsilon10);
+    EXPECT_NEAR(0.0, dateline.height(), MathUtils::Epsilon10);
+
+    expectCartographicNear(
+        S2CellID::fromToken("9").getCenter(),
+        MathUtils::degreesToRadians(-90.0),
+        0.0);
+
+    const Cartographic southPole = S2CellID::fromToken("b").getCenter();
+    EXPECT_NEAR(MathUtils::degreesToRadians(-90.0),
+                southPole.latitude(),
+                MathUtils::Epsilon10);
+    EXPECT_NEAR(0.0, southPole.height(), MathUtils::Epsilon10);
+
+    expectCartographicNear(
+        S2CellID::fromToken("2ef59bd352b93ac3").getCenter(),
+        MathUtils::degreesToRadians(105.64131803774308),
+        MathUtils::degreesToRadians(-10.490091033598308));
+    expectCartographicNear(
+        S2CellID::fromToken("1234567").getCenter(),
+        MathUtils::degreesToRadians(9.868307318504081),
+        MathUtils::degreesToRadians(27.468392925827605));
+}
+
+TEST(S2CellIDTest, VerticesMatchCesiumNative) {
+    const std::array<Cartographic, 4> vertices =
+        S2CellID::fromToken("2ef59bd352b93ac3").getVertices();
+
+    expectCartographicNear(
+        vertices[0],
+        MathUtils::degreesToRadians(105.64131799299665),
+        MathUtils::degreesToRadians(-10.490091077431977));
+    expectCartographicNear(
+        vertices[1],
+        MathUtils::degreesToRadians(105.64131808248949),
+        MathUtils::degreesToRadians(-10.490091072946313));
+    expectCartographicNear(
+        vertices[2],
+        MathUtils::degreesToRadians(105.64131808248948),
+        MathUtils::degreesToRadians(-10.490090989764633));
+    expectCartographicNear(
+        vertices[3],
+        MathUtils::degreesToRadians(105.64131799299665),
+        MathUtils::degreesToRadians(-10.4900909942503));
 }
 
 TEST(S2CellIDTest, RootBoundingRectanglesMatchCesiumNative) {

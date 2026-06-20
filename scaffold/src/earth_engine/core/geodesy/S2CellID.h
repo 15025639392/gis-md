@@ -5,7 +5,10 @@
 #include <string>
 #include <string_view>
 
+#include "Cartographic.h"
 #include "earth_engine/core/math/Rectangle.h"
+
+#include <array>
 
 namespace earth_engine {
 
@@ -27,6 +30,8 @@ public:
     std::string toToken() const;
     int32_t getLevel() const noexcept;
     uint8_t getFace() const noexcept;
+    Cartographic getCenter() const;
+    std::array<Cartographic, 4> getVertices() const;
     S2CellID getParent() const noexcept;
     S2CellID getChild(size_t index) const noexcept;
     Rectangle computeBoundingRectangle() const;
