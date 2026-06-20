@@ -2068,6 +2068,19 @@ void testXYZImageryProviderUrlTemplateReversePlaceholders() {
           "XYZImageryProvider: Geographic-TMS reverse placeholders use two root X tiles like cesium-native");
 }
 
+void testXYZImageryProviderDefaultMaximumLevelMatchesCesiumNative() {
+    XYZImageryProvider provider(
+        "https://example.invalid/{z}/{reverseZ}.png");
+
+    check(provider.maxZoom() == 25,
+          "XYZImageryProvider: default maximum level matches cesium-native UrlTemplateRasterOverlay");
+    check(provider.supportsTile(TileKey{"XYZ-WebMercator", 25, 0, 0}),
+          "XYZImageryProvider: default maximum level keeps z25 requestable like cesium-native");
+    check(provider.buildUrl(TileKey{"XYZ-WebMercator", 3, 0, 0}) ==
+              "https://example.invalid/3/22.png",
+          "XYZImageryProvider: default reverseZ uses maximumLevel 25 like cesium-native");
+}
+
 void testXYZImageryProviderUrlTemplateBoundsAndSizePlaceholders() {
     XYZImageryProvider provider(
         "https://example.invalid/{westDegrees}/{southDegrees}/{eastDegrees}/{northDegrees}/{width}/{height}.png");
@@ -30981,6 +30994,7 @@ int main() {
     testXYZImageryProviderUsesAsyncBridgeWithoutWorkerBlockingWait();
     testXYZImageryProviderBridgeCompletionDoesNotRunDecodeInline();
     testXYZImageryProviderUrlTemplateReversePlaceholders();
+    testXYZImageryProviderDefaultMaximumLevelMatchesCesiumNative();
     testXYZImageryProviderUrlTemplateBoundsAndSizePlaceholders();
     testXYZImageryProviderUrlTemplateProjectedBoundsPlaceholders();
     testXYZImageryProviderUrlTemplateUnknownAndCaseInsensitivePlaceholders();
