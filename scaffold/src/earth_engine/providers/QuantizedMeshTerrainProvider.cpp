@@ -583,7 +583,6 @@ bool QuantizedMeshTerrainProvider::configureFromLayerJson(
 
     try {
         auto j = nlohmann::json::parse(layerJson);
-        if (j.value("format", "quantized-mesh-1.0") != "quantized-mesh-1.0") return false;
         if (schemeIdForLayerProjection(
                 jsonStringOrDefault(j, "projection", "EPSG:4326")).empty()) {
             return false;
@@ -708,7 +707,6 @@ bool QuantizedMeshTerrainProvider::appendParentLayers(
     try {
         const std::string body(bytes.begin(), bytes.end());
         auto parent = nlohmann::json::parse(body);
-        if (parent.value("format", "quantized-mesh-1.0") != "quantized-mesh-1.0") return false;
         if (schemeIdForLayerProjection(
                 jsonStringOrDefault(parent, "projection", "EPSG:4326")).empty()) {
             return false;
