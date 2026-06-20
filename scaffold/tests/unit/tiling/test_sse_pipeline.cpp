@@ -1971,6 +1971,48 @@ void testQuantizedMeshProviderHttpErrorFailsTerminally() {
           "QuantizedMeshTerrainProvider: 404 terrain body maps to terminal Failed like cesium-native");
 }
 
+void testQuantizedMeshProviderInvalidBodyFailsTerminally() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/{z}/{x}/{y}.terrain");
+    BlockingPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool callbackCalled = false;
+    TerrainTileLoadStatus completedStatus = TerrainTileLoadStatus::Success;
+    std::vector<uint8_t> truncatedBody = makeQuantizedMeshBytes();
+    truncatedBody.resize(16);
+
+    provider.requestTile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        CancellationToken{},
+        [&](const TileKey&, TerrainTileLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completedStatus = result.status;
+                callbackCalled = true;
+            }
+            cv.notify_one();
+        });
+
+    check(bridge.waitUntilEntered(),
+          "QuantizedMeshTerrainProvider: invalid-body test observes terrain request");
+    check(bridge.complete(206, truncatedBody),
+          "QuantizedMeshTerrainProvider: invalid-body test completes malformed terrain request");
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return callbackCalled; });
+    }
+
+    check(callbackCalled &&
+              completedStatus == TerrainTileLoadStatus::Failed &&
+              provider.requestDiagnostics().requestsCompleted == 1,
+          "QuantizedMeshTerrainProvider: malformed terrain body maps to terminal Failed like cesium-native");
+}
+
 void testQuantizedMeshLayerJsonConfigUsesSeparateBlockingFetcher() {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
@@ -22980,6 +23022,7 @@ int main() {
     testHeightmapTerrainProviderUsesAsyncBridgeWithoutWorkerBlockingWait();
     testQuantizedMeshProviderUsesAsyncBridgeWithoutWorkerBlockingWait();
     testQuantizedMeshProviderHttpErrorFailsTerminally();
+    testQuantizedMeshProviderInvalidBodyFailsTerminally();
     testQuantizedMeshLayerJsonConfigUsesSeparateBlockingFetcher();
     testQuantizedMeshProviderFetchesMetadataViaAsyncBridge();
     testQuantizedMeshProviderSkipsLoadedUnderlyingMetadataSubtree();
