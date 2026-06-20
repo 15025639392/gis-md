@@ -14207,6 +14207,78 @@ TEST(GltfParserTest, TilesetParsesBoundingVolumeCylinderExtension) {
     EXPECT_EQ(TileContentLoadStatus::Empty, result.status);
 }
 
+TEST(GltfParserTest, TilesetJsonContentProviderParsesSphereBoundingVolume) {
+    const std::string tilesetJson = R"json({
+      "asset": {"version": "1.0"},
+      "geometricError": 240,
+      "root": {
+        "boundingVolume": {
+          "sphere": [0, 0, 10, 141.4214]
+        },
+        "geometricError": 70
+      }
+    })json";
+
+    TilesetJsonContentProvider provider(
+        "file:///earth-md/sphere-bounding-volume-tileset.json",
+        bytesFromString(tilesetJson),
+        "sphere bounding volume tileset");
+
+    ASSERT_TRUE(provider.valid());
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    const std::vector<TileKey> rootChildren =
+        provider.childTiles(roots.front());
+    ASSERT_EQ(1u, rootChildren.size());
+    const std::optional<TilesetContentTileMetadata> metadata =
+        provider.tileMetadata(rootChildren.front());
+    ASSERT_TRUE(metadata.has_value());
+    ASSERT_TRUE(metadata->boundingVolume.has_value());
+    EXPECT_EQ(TileBoundingVolumeKind::Sphere, metadata->boundingVolume->kind);
+    EXPECT_EQ(
+        Vec3(0.0, 0.0, 10.0),
+        metadata->boundingVolume->sphere.getCenter());
+    EXPECT_DOUBLE_EQ(141.4214, metadata->boundingVolume->sphere.getRadius());
+}
+
+TEST(GltfParserTest, TilesetJsonContentProviderParsesBoxBoundingVolume) {
+    const std::string tilesetJson = R"json({
+      "asset": {"version": "1.0"},
+      "geometricError": 240,
+      "root": {
+        "boundingVolume": {
+          "box": [0, 0, 10,
+                  100, 0, 0,
+                  0, 100, 0,
+                  0, 0, 10]
+        },
+        "geometricError": 70
+      }
+    })json";
+
+    TilesetJsonContentProvider provider(
+        "file:///earth-md/box-bounding-volume-tileset.json",
+        bytesFromString(tilesetJson),
+        "box bounding volume tileset");
+
+    ASSERT_TRUE(provider.valid());
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    const std::vector<TileKey> rootChildren =
+        provider.childTiles(roots.front());
+    ASSERT_EQ(1u, rootChildren.size());
+    const std::optional<TilesetContentTileMetadata> metadata =
+        provider.tileMetadata(rootChildren.front());
+    ASSERT_TRUE(metadata.has_value());
+    ASSERT_TRUE(metadata->boundingVolume.has_value());
+    EXPECT_EQ(TileBoundingVolumeKind::Box, metadata->boundingVolume->kind);
+    const OrientedBoundingBox& box = metadata->boundingVolume->box;
+    EXPECT_EQ(Vec3(0.0, 0.0, 10.0), box.getCenter());
+    EXPECT_EQ(Vec3(100.0, 0.0, 0.0), box.getHalfAxis(0));
+    EXPECT_EQ(Vec3(0.0, 100.0, 0.0), box.getHalfAxis(1));
+    EXPECT_EQ(Vec3(0.0, 0.0, 10.0), box.getHalfAxis(2));
+}
+
 TEST(GltfParserTest, TilesetJsonContentProviderScalesGeometricErrorByTransform) {
     const std::string tilesetJson = R"json({
       "asset": {"version": "1.1"},
