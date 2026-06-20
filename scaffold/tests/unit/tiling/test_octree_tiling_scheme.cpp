@@ -6,6 +6,22 @@
 
 using namespace earth_engine;
 
+TEST(OctreeTilingSchemeTest, OctreeTileIdValueSemanticsMatchCesiumNative) {
+    const OctreeTileID root;
+    EXPECT_EQ(0, root.level);
+    EXPECT_EQ(0, root.x);
+    EXPECT_EQ(0, root.y);
+    EXPECT_EQ(0, root.z);
+
+    const OctreeTileID tile{3, 4, 5, 6};
+    EXPECT_EQ(3, tile.level);
+    EXPECT_EQ(4, tile.x);
+    EXPECT_EQ(5, tile.y);
+    EXPECT_EQ(6, tile.z);
+    EXPECT_EQ(tile, (OctreeTileID{3, 4, 5, 6}));
+    EXPECT_NE(tile, (OctreeTileID{3, 4, 5, 7}));
+}
+
 TEST(OctreeTilingSchemeTest, TileCountsUseCesiumNativeRootShiftSemantics) {
     const OctreeTilingScheme scheme(AxisAlignedBox(-10.0, -20.0, -30.0,
                                                   10.0, 20.0, 30.0),
