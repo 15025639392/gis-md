@@ -241,6 +241,14 @@ TileAvailabilitySubtree makeQuadtreeFixtureRootSubtree() {
          std::move(subtreeAvailabilityBuffer)}};
 }
 
+TileAvailabilitySubtree makeInvalidSubtreeAvailabilityRootSubtree() {
+    return TileAvailabilitySubtree{
+        ConstantTileAvailability{true},
+        ConstantTileAvailability{true},
+        TileSubtreeBufferView{0, 1, 4},
+        {std::vector<std::byte>(1, static_cast<std::byte>(0xFF))}};
+}
+
 TileAvailabilitySubtree makeOctreeFixtureRootSubtree() {
     std::vector<std::byte> contentAvailabilityBuffer(16);
     for (size_t i = 0; i < 9U; ++i) {
@@ -408,11 +416,7 @@ TEST(TileQuadtreeAvailabilityTest, InvalidSubtreeAvailabilityAccessorMakesTraver
         0,
         0,
         0,
-        TileAvailabilitySubtree{
-            ConstantTileAvailability{true},
-            ConstantTileAvailability{true},
-            TileSubtreeBufferView{0, 1, 4},
-            {std::vector<std::byte>(1, static_cast<std::byte>(0xFF))}}));
+        makeInvalidSubtreeAvailabilityRootSubtree()));
 
     EXPECT_EQ(0, availability.computeAvailability(3, 0, 0));
 }
@@ -533,6 +537,28 @@ TEST(TileQuadtreeAvailabilityTest, AddSubtreeRejectsNonBoundaryOrUnavailableChil
             ConstantTileAvailability{true},
             ConstantTileAvailability{false},
             {}}));
+}
+
+TEST(TileQuadtreeAvailabilityTest, AddSubtreeRejectsInvalidSubtreeAvailabilityAccessorLikeCesiumNative) {
+    TileQuadtreeAvailability availability(3, 5);
+    ASSERT_TRUE(availability.addSubtree(
+        0,
+        0,
+        0,
+        makeInvalidSubtreeAvailabilityRootSubtree()));
+    TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+
+    EXPECT_FALSE(availability.addSubtree(
+        3,
+        0,
+        0,
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{false},
+            {}}));
+    EXPECT_EQ(nullptr, availability.findChildNode(3, 0, 0, root));
 }
 
 TEST(TileQuadtreeAvailabilityTest, AddSubtreeRejectsOutOfRangeChildCoordinates) {
@@ -667,6 +693,20 @@ TEST(TileQuadtreeAvailabilityTest, AddNodeRejectsNonBoundaryOrUnavailableChildLi
 
     EXPECT_EQ(nullptr, availability.addNode(2, 0, 0, root));
     EXPECT_EQ(nullptr, availability.addNode(3, 2, 6, root));
+}
+
+TEST(TileQuadtreeAvailabilityTest, AddNodeRejectsInvalidSubtreeAvailabilityAccessorLikeCesiumNative) {
+    TileQuadtreeAvailability availability(3, 5);
+    ASSERT_TRUE(availability.addSubtree(
+        0,
+        0,
+        0,
+        makeInvalidSubtreeAvailabilityRootSubtree()));
+    TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+
+    EXPECT_EQ(nullptr, availability.addNode(3, 0, 0, root));
+    EXPECT_EQ(nullptr, availability.findChildNode(3, 0, 0, root));
 }
 
 TEST(TileQuadtreeAvailabilityTest, AddNodeRejectsOutOfRangeRootCoordinates) {
@@ -885,11 +925,7 @@ TEST(TileOctreeAvailabilityTest, InvalidSubtreeAvailabilityAccessorMakesTraversa
     TileOctreeAvailability availability(3, 5);
     ASSERT_TRUE(availability.addSubtree(
         OctreeTileID{0, 0, 0, 0},
-        TileAvailabilitySubtree{
-            ConstantTileAvailability{true},
-            ConstantTileAvailability{true},
-            TileSubtreeBufferView{0, 1, 4},
-            {std::vector<std::byte>(1, static_cast<std::byte>(0xFF))}}));
+        makeInvalidSubtreeAvailabilityRootSubtree()));
 
     EXPECT_EQ(0, availability.computeAvailability(OctreeTileID{3, 0, 0, 0}));
 }
@@ -1013,6 +1049,25 @@ TEST(TileOctreeAvailabilityTest, AddSubtreeRejectsNonBoundaryOrUnavailableChildL
             ConstantTileAvailability{true},
             ConstantTileAvailability{false},
             {}}));
+}
+
+TEST(TileOctreeAvailabilityTest, AddSubtreeRejectsInvalidSubtreeAvailabilityAccessorLikeCesiumNative) {
+    TileOctreeAvailability availability(3, 5);
+    ASSERT_TRUE(availability.addSubtree(
+        OctreeTileID{0, 0, 0, 0},
+        makeInvalidSubtreeAvailabilityRootSubtree()));
+    TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+    const OctreeTileID childId{3, 0, 0, 0};
+
+    EXPECT_FALSE(availability.addSubtree(
+        childId,
+        TileAvailabilitySubtree{
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{true},
+            ConstantTileAvailability{false},
+            {}}));
+    EXPECT_EQ(nullptr, availability.findChildNode(childId, root));
 }
 
 TEST(TileOctreeAvailabilityTest, AddSubtreeRejectsOutOfRangeChildCoordinates) {
@@ -1160,6 +1215,19 @@ TEST(TileOctreeAvailabilityTest, AddNodeRejectsNonBoundaryOrUnavailableChildLike
 
     EXPECT_EQ(nullptr, availability.addNode(OctreeTileID{2, 0, 0, 0}, root));
     EXPECT_EQ(nullptr, availability.addNode(OctreeTileID{3, 2, 0, 3}, root));
+}
+
+TEST(TileOctreeAvailabilityTest, AddNodeRejectsInvalidSubtreeAvailabilityAccessorLikeCesiumNative) {
+    TileOctreeAvailability availability(3, 5);
+    ASSERT_TRUE(availability.addSubtree(
+        OctreeTileID{0, 0, 0, 0},
+        makeInvalidSubtreeAvailabilityRootSubtree()));
+    TileAvailabilityNode* root = availability.rootNode();
+    ASSERT_NE(nullptr, root);
+    const OctreeTileID childId{3, 0, 0, 0};
+
+    EXPECT_EQ(nullptr, availability.addNode(childId, root));
+    EXPECT_EQ(nullptr, availability.findChildNode(childId, root));
 }
 
 TEST(TileOctreeAvailabilityTest, AddNodeRejectsOutOfRangeRootCoordinates) {
