@@ -3800,6 +3800,32 @@ void testQuantizedMeshMetadataAvailabilityRequiresInt32() {
           "QuantizedMeshTerrainProvider: zero metadataAvailability still shadows layer available like cesium-native");
 }
 
+void testQuantizedMeshWebMercatorMetadataAvailabilityStartsAtRoot() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:3857",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "metadataAvailability": 2
+    })json";
+
+    check(provider.configureFromLayerJson(
+              layerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: WebMercator metadataAvailability layer configures");
+    check(provider.schemeId() == "XYZ-WebMercator",
+          "QuantizedMeshTerrainProvider: WebMercator metadataAvailability keeps cesium-native one-root scheme");
+    check(provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 0, 0}),
+          "QuantizedMeshTerrainProvider: WebMercator metadataAvailability starts with root available");
+    check(!provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 1, 0}) &&
+              !provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 0, 1}),
+          "QuantizedMeshTerrainProvider: WebMercator metadataAvailability keeps invalid roots unavailable");
+    check(provider.availabilityState(TileKey{"XYZ-WebMercator", 1, 0, 0}) ==
+              TileAvailabilityState::Unknown,
+          "QuantizedMeshTerrainProvider: WebMercator metadataAvailability child waits for metadata subtree");
+}
+
 void testQuantizedMeshTileMetadataIgnoredWithoutMetadataAvailability() {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
@@ -23749,6 +23775,7 @@ int main() {
     testQuantizedMeshAvailabilityLevels();
     testQuantizedMeshAvailabilityInclusiveCenterBoundary();
     testQuantizedMeshMetadataAvailabilityStartsAtRoots();
+    testQuantizedMeshWebMercatorMetadataAvailabilityStartsAtRoot();
     testQuantizedMeshMetadataAvailabilityRequiresInt32();
     testQuantizedMeshTileMetadataIgnoredWithoutMetadataAvailability();
     testQuantizedMeshEmptyTileMetadataMarksSubtreeLoaded();
