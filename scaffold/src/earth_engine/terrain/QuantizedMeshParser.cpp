@@ -621,7 +621,11 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
 
         if (extId == 1) {
             // Oct-encoded per-vertex normals (cesium-native attribute compression)
-            size_t normCount = extLen / 2;
+            const size_t normCount = vc;
+            if (extLen < normCount * 2) {
+                offset += extLen;
+                continue;
+            }
             octNormals.reserve(normCount);
             for (size_t i = 0; i < normCount; ++i) {
                 uint8_t ox = data[offset + i * 2];

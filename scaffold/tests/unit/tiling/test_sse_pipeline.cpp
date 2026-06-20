@@ -3832,6 +3832,38 @@ void testQuantizedMeshOctEncodedNormalsExtension() {
           "QuantizedMeshParser: oct normals are copied onto skirt vertices");
 }
 
+void testQuantizedMeshOctEncodedNormalsIgnoresTrailingExtensionBytes() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes("", true, false);
+
+    appendPod<uint8_t>(bytes, 1);
+    appendPod<uint32_t>(bytes, 8);
+    const uint8_t normals[] = {
+        128, 255,
+        128, 255,
+        128, 255,
+        0, 0
+    };
+    bytes.insert(bytes.end(), normals, normals + sizeof(normals));
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            scheme->tileToRectangle(rootKey));
+
+    check(mesh != nullptr && mesh->vertices.size() > 3,
+          "QuantizedMeshParser: oct-normal extension with trailing bytes parses");
+    if (!mesh || mesh->vertices.size() < 3) return;
+
+    check(mesh->vertices[0].normalEcef.y() > 0.9999 &&
+              std::abs(mesh->vertices[0].normalEcef.x()) < 0.004 &&
+              std::abs(mesh->vertices[0].normalEcef.z()) < 0.004,
+          "QuantizedMeshParser: oct normals use vertexCount byte pairs and ignore trailing extension bytes");
+}
+
 void testQuantizedMeshRtcOriginFromBoundingSphereCenter() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -21407,6 +21439,7 @@ int main() {
     testQuantizedMeshParsesUint32IndicesAndEdges();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
     testQuantizedMeshOctEncodedNormalsExtension();
+    testQuantizedMeshOctEncodedNormalsIgnoresTrailingExtensionBytes();
     testQuantizedMeshRtcOriginFromBoundingSphereCenter();
     testQuantizedMeshHeaderHeightRangeIsExposed();
     testQuantizedMeshVertexUvAndHeightGolden();
