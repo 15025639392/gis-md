@@ -613,14 +613,14 @@ bool QuantizedMeshTerrainProvider::configureFromLayerJson(
 bool QuantizedMeshTerrainProvider::appendLayerFromJson(
     const nlohmann::json& j,
     const std::string& layerJsonUrl) {
-    if (!j.contains("tiles") || !j["tiles"].is_array() || j["tiles"].empty() ||
-        !j["tiles"][0].is_string()) {
+    const std::vector<std::string> tileTemplates = jsonStringArray(j, "tiles");
+    if (tileTemplates.empty()) {
         return false;
     }
 
     LayerConfig layer;
     layer.urlTemplate =
-        resolveTerrainTemplate(layerJsonUrl, j["tiles"][0].get<std::string>());
+        resolveTerrainTemplate(layerJsonUrl, tileTemplates.front());
     layer.layerJsonUrl = layerJsonUrl;
     layer.schemeId = schemeIdForLayerProjection(
         jsonStringOrDefault(j, "projection", "EPSG:4326"));
