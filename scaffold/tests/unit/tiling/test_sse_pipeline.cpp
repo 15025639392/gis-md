@@ -13442,19 +13442,21 @@ void testTileSelectionInputMetricsComputesCenterPriorityAndSse() {
             summary.distances[1]));
     check(std::abs(summary.priority - expectedPriority) < 1e-12,
           "TileSelectionInputMetrics: summary uses best per-view priority");
-    check(summary.screenSpaceError >=
-              TileSelectionInputMetrics::screenSpaceErrorForView(
-                  tile.geometricError,
-                  views[0].projectionMatrix,
-                  views[0].viewportHeightPixels,
-                  summary.distances[0]) &&
-              summary.screenSpaceError >=
-              TileSelectionInputMetrics::screenSpaceErrorForView(
-                  tile.geometricError,
-                  views[1].projectionMatrix,
-                  views[1].viewportHeightPixels,
-                  summary.distances[1]),
-          "TileSelectionInputMetrics: summary uses maximum per-view SSE");
+    const double firstViewSse =
+        TileSelectionInputMetrics::screenSpaceErrorForView(
+            tile.geometricError,
+            views[0].projectionMatrix,
+            views[0].viewportHeightPixels,
+            summary.distances[0]);
+    const double secondViewSse =
+        TileSelectionInputMetrics::screenSpaceErrorForView(
+            tile.geometricError,
+            views[1].projectionMatrix,
+            views[1].viewportHeightPixels,
+            summary.distances[1]);
+    check(std::abs(summary.screenSpaceError -
+                  std::max(firstViewSse, secondViewSse)) < 1e-12,
+          "TileSelectionInputMetrics: summary uses exact maximum per-view SSE like cesium-native");
 
     for (SelectorView& view : views) {
         view.position = TileSelectionInputMetrics::tileCenter(tile);
