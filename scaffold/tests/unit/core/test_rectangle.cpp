@@ -125,6 +125,33 @@ TEST(RectangleTest, WidthAndHeightMatchCesiumNativeSimpleCase) {
     EXPECT_NEAR(0.2, simple.height(), 1e-14);
 }
 
+TEST(RectangleTest, ContainsRectangleMatchesCesiumNativeFullyContains) {
+    // Source-derived from cesium-native CesiumGeometry::Rectangle::fullyContains.
+    // gis-md Rectangle stores geodetic radians, so use a non-wrapping range.
+    const Rectangle outer(0.0, 0.0, 1.0, 1.0);
+
+    EXPECT_TRUE(outer.contains(Rectangle(0.0, 0.0, 1.0, 1.0)));
+    EXPECT_TRUE(outer.contains(Rectangle(0.2, 0.3, 0.8, 0.9)));
+    EXPECT_FALSE(outer.contains(Rectangle(-0.1, 0.3, 0.8, 0.9)));
+    EXPECT_FALSE(outer.contains(Rectangle(0.2, -0.1, 0.8, 0.9)));
+    EXPECT_FALSE(outer.contains(Rectangle(0.2, 0.3, 1.1, 0.9)));
+    EXPECT_FALSE(outer.contains(Rectangle(0.2, 0.3, 0.8, 1.1)));
+}
+
+TEST(RectangleTest, IntersectsMatchesCesiumNativeOverlaps) {
+    // Source-derived from cesium-native CesiumGeometry::Rectangle::overlaps.
+    // gis-md Rectangle stores geodetic radians, so use a non-wrapping range.
+    const Rectangle rectangle(0.0, 0.0, 1.0, 1.0);
+
+    EXPECT_TRUE(rectangle.intersects(Rectangle(0.5, 0.5, 1.5, 1.5)));
+    EXPECT_TRUE(rectangle.intersects(Rectangle(-0.5, -0.5, 0.5, 0.5)));
+    EXPECT_TRUE(rectangle.intersects(Rectangle(0.2, 0.2, 0.8, 0.8)));
+    EXPECT_FALSE(rectangle.intersects(Rectangle(1.0, 0.2, 1.2, 0.8)));
+    EXPECT_FALSE(rectangle.intersects(Rectangle(0.2, 1.0, 0.8, 1.2)));
+    EXPECT_FALSE(rectangle.intersects(Rectangle(1.1, 0.2, 1.2, 0.8)));
+    EXPECT_FALSE(rectangle.intersects(Rectangle(0.2, 1.1, 0.8, 1.2)));
+}
+
 TEST(RectangleTest, WidthMatchesCesiumNativeBigWrappedLongitudeSpan) {
     // Equivalent to cesium-native computeNormalizedCoordinates' bigWrapping
     // case: from 179E to 10E spans 191 degrees through +/-180.
