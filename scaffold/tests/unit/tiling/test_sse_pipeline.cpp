@@ -21547,6 +21547,63 @@ void testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot() {
           "TileLoadScheduler: pending upload key skip happens before snapshot side effects");
 }
 
+void testTileLoadSchedulerSkipsPendingTerminalBeforeSnapshot() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey key{"test", 1, 0, 0};
+    const std::string cacheKey = testCacheKeyForTile(key);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addContentTerminalResult(
+            PendingContentTerminalResult{
+                key,
+                cacheKey,
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadStatus::RetryLater});
+    }
+
+    bool planned = false;
+    bool emptyChecked = false;
+    bool marked = false;
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            testCacheKeyForTile,
+            [&planned](const TileKey&,
+                       const std::string&,
+                       TilesetTile*& tileState) {
+                planned = true;
+                tileState = nullptr;
+                return TileLoadRequestSnapshot{};
+            },
+            [&emptyChecked](const std::string&) {
+                emptyChecked = true;
+                return false;
+            },
+            [](TilesetTile&, double) { return false; },
+            [&marked](const TileKey&) { marked = true; });
+
+    check(outcome.issued == 0 && !outcome.blockedByInflight,
+          "TileLoadScheduler: pending terminal key skips without reporting inflight block");
+    check(!planned && !emptyChecked && !marked &&
+              lifecycle.containsWorkForCacheKey(cacheKey) &&
+              lifecycle.counts().contentTerminalResults == 1,
+          "TileLoadScheduler: pending terminal key skip happens before snapshot side effects");
+}
+
 void testTileLoadSchedulerSkipsInflightRequestBeforeSnapshot() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -27601,6 +27658,7 @@ int main() {
     testTileLoadSchedulerSkipsEmptyUpsampledCacheKey();
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation();
     testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot();
+    testTileLoadSchedulerSkipsPendingTerminalBeforeSnapshot();
     testTileLoadSchedulerSkipsInflightRequestBeforeSnapshot();
     testTileLoadSchedulerStopsDuringDestroyBeforePlanning();
     testTileLoadSchedulerSkipsDispatcherDuplicateAfterPlanning();
