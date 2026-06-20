@@ -22714,6 +22714,109 @@ void testTileLoadSchedulerSortsAndQueuesUpsampledTerrain() {
           "TileLoadScheduler: upsampled requests enter pending upload queue");
 }
 
+void testTileLoadSchedulerContinuesAfterUpsampleSourceWait() {
+    class DeferredTerrainProvider final : public TerrainProvider {
+    public:
+        std::string id() const override {
+            return "scheduler-continue-after-upsample-wait";
+        }
+        std::string schemeId() const override { return "test"; }
+        int minZoom() const override { return 0; }
+        int maxZoom() const override { return 2; }
+        int tileSize() const override { return 2; }
+        std::string buildUrl(const TileKey&) const override {
+            return "memory://scheduler-continue-after-upsample-wait";
+        }
+        void requestTile(const TileKey&,
+                         CancellationToken,
+                         HeightmapCallback,
+                         HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+        }
+        std::unique_ptr<DecodedHeightmap> decodeTile(
+            const uint8_t*,
+            size_t) override {
+            return nullptr;
+        }
+        int requestCount = 0;
+    };
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey waitingUpsampleKey{"test", 2, 0, 0};
+    const TileKey loadableTerrainKey{"test", 1, 1, 0};
+    TilesetTile waitingTile(waitingUpsampleKey, Rectangle{});
+    waitingTile.content.upsampledFromParent = true;
+    DeferredTerrainProvider provider;
+    std::vector<int> plannedLevels;
+    std::vector<int> preparedLevels;
+    std::vector<int> markedLevels;
+
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {
+                TileLoadRequest{
+                    loadableTerrainKey,
+                    TileLoadPriorityGroup::Normal,
+                    50.0},
+                TileLoadRequest{
+                    waitingUpsampleKey,
+                    TileLoadPriorityGroup::Urgent,
+                    100.0},
+            },
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                &provider,
+                nullptr},
+            testCacheKeyForTile,
+            [&waitingUpsampleKey,
+             &waitingTile,
+             &plannedLevels](const TileKey& key,
+                              const std::string&,
+                              TilesetTile*& tileState) {
+                plannedLevels.push_back(key.z);
+                TileLoadRequestSnapshot snapshot;
+                if (key == waitingUpsampleKey) {
+                    tileState = &waitingTile;
+                    snapshot.hasTile = true;
+                    snapshot.upsampledFromParent = true;
+                } else {
+                    tileState = nullptr;
+                    snapshot.terrainProviderSupportsTile = true;
+                }
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [&preparedLevels](TilesetTile& tile, double) {
+                preparedLevels.push_back(tile.key.z);
+                return false;
+            },
+            [&markedLevels](const TileKey& key) {
+                markedLevels.push_back(key.z);
+            });
+
+    check(outcome.issued == 1 && !outcome.blockedByInflight,
+          "TileLoadScheduler: waiting upsample source does not block later request");
+    check(plannedLevels.size() == 2 &&
+              plannedLevels[0] == waitingUpsampleKey.z &&
+              plannedLevels[1] == loadableTerrainKey.z &&
+              preparedLevels.size() == 1 &&
+              preparedLevels.front() == waitingUpsampleKey.z,
+          "TileLoadScheduler: upsample wait is local to that request");
+    check(provider.requestCount == 1 &&
+              markedLevels.size() == 1 &&
+              markedLevels.front() == loadableTerrainKey.z &&
+              lifecycle.pendingRequestCount() == 1 &&
+              lifecycle.counts().terrainUploads == 0,
+          "TileLoadScheduler: later terrain request still issues without local upsample upload");
+}
+
 void testTileLoadSchedulerSkipsEmptyUpsampledCacheKey() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -29509,6 +29612,7 @@ int main() {
     testTileLoadSchedulerQueuesUpsampledTerrainWhenNetworkInflightIsFull();
     testTileLoadSchedulerSkipsCachedTerrainWhenNetworkInflightIsFull();
     testTileLoadSchedulerSortsAndQueuesUpsampledTerrain();
+    testTileLoadSchedulerContinuesAfterUpsampleSourceWait();
     testTileLoadSchedulerSkipsEmptyUpsampledCacheKey();
     testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation();
     testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot();
