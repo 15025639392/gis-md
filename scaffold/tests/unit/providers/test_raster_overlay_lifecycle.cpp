@@ -73,6 +73,32 @@ public:
     }
 };
 
+class ConfigurableImageryProvider final : public ImageryProvider {
+public:
+    std::string id() const override { return "configurable"; }
+    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    int minZoom() const override { return minZoomValue; }
+    int maxZoom() const override { return maxZoomValue; }
+    int tileWidth() const override { return tileWidthValue; }
+    int tileHeight() const override { return tileHeightValue; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     TileCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callback(key, nullptr);
+    }
+    std::unique_ptr<DecodedImage> decodeTile(
+        const uint8_t*, size_t) override {
+        return nullptr;
+    }
+
+    int minZoomValue = 0;
+    int maxZoomValue = 18;
+    int tileWidthValue = 256;
+    int tileHeightValue = 256;
+};
+
 class ImmediateImageryProvider final : public ImageryProvider {
 public:
     std::string id() const override { return "immediate"; }
@@ -112,6 +138,38 @@ public:
 };
 
 } // namespace
+
+TEST(RasterOverlayLifecycleTest, RectangleSourceZoomFollowsCesiumTargetScreenPixels) {
+    ConfigurableImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    Rectangle z3Bounds =
+        scheme->tileToRectangle(TileKey{scheme->id(), 3, 2, 3});
+
+    auto matchingTile = provider.getTile(z3Bounds, 512.0, 512.0);
+    ASSERT_NE(nullptr, matchingTile);
+    EXPECT_TRUE(matchingTile->isRectangleTile());
+    EXPECT_EQ(3, matchingTile->getSourceZoom());
+
+    auto widerTile = provider.getTile(z3Bounds, 1024.0, 256.0);
+    ASSERT_NE(nullptr, widerTile);
+    EXPECT_TRUE(widerTile->isRectangleTile());
+    EXPECT_EQ(4, widerTile->getSourceZoom());
+
+    imagery.minZoomValue = 5;
+    RasterOverlayTileProvider minClampedProvider(imagery, *scheme, nullptr);
+    auto minClampedTile = minClampedProvider.getTile(z3Bounds, 512.0, 512.0);
+    ASSERT_NE(nullptr, minClampedTile);
+    EXPECT_EQ(5, minClampedTile->getSourceZoom());
+
+    imagery.minZoomValue = 0;
+    imagery.maxZoomValue = 3;
+    RasterOverlayTileProvider maxClampedProvider(imagery, *scheme, nullptr);
+    auto maxClampedTile = maxClampedProvider.getTile(z3Bounds, 1024.0, 256.0);
+    ASSERT_NE(nullptr, maxClampedTile);
+    EXPECT_EQ(3, maxClampedTile->getSourceZoom());
+}
 
 TEST(RasterOverlayLifecycleTest, SharedFrameBudgetLimitsRasterUploadsPerFrame) {
     ImmediateImageryProvider imagery;
