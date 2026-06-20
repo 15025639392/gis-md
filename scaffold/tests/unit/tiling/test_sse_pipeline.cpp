@@ -6468,6 +6468,17 @@ void testTilesetDefersAvailabilityBoundaryChildrenUntilContentLoaded() {
     auto rootHeightmap = makeFlatHeightmap(10.0f);
     rootHeightmap->rawData = makeQuantizedMeshBytes(rootMetadata);
     TilesetTestAccess::putTerrainCache(tileset, rootKey, std::move(rootHeightmap));
+
+    for (TileLoadState state : {
+             TileLoadState::Unloaded,
+             TileLoadState::ContentLoading,
+             TileLoadState::FailedTemporarily}) {
+        root->content.loadState = state;
+        TilesetTestAccess::ensureTileChildren(tileset, *root);
+        check(root->children.empty(),
+              "Tileset: availability-boundary children wait until parent content reaches loaded state");
+    }
+
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
