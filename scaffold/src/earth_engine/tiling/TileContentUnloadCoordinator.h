@@ -40,6 +40,9 @@ public:
             TileCacheUnloadContentResult::Remove;
         switch (tile.content.contentKind) {
             case TileContentKind::External:
+                if (tile.referenceCount() > 0) {
+                    return TileCacheUnloadContentResult::Keep;
+                }
                 result = TileCacheUnloadContentResult::RemoveAndClearChildren;
                 break;
             case TileContentKind::Render:

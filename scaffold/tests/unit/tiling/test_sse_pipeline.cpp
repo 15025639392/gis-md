@@ -24695,6 +24695,15 @@ void testTilesetDirectExternalContentUnloadClearsChildren() {
     TilesetTestAccess::putTerrainCache(
         tileset, childKey, std::move(childHeightmap));
 
+    root->addReference();
+    TilesetTestAccess::unloadTileContent(tileset, *root, nullptr);
+    check(root->content.loadState == TileLoadState::Done &&
+              root->content.contentKind == TileContentKind::External &&
+              !root->children.empty() &&
+              TilesetTestAccess::findTile(tileset, childKey) != nullptr,
+          "Tileset: direct external-content unload keeps referenced wrapper");
+    root->clearReferences();
+
     TilesetTestAccess::unloadTileContent(tileset, *root, nullptr);
 
     TilesetTile* rootAfter = TilesetTestAccess::findTile(tileset, rootKey);
