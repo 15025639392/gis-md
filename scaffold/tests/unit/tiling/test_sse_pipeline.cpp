@@ -12796,6 +12796,7 @@ void testTilesetContentFailedMaterializesLatentChildrenWithoutRetry() {
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, {childKey}}},
         TileContentLoadStatus::Failed);
+    SelectionTreeContentProvider* rawProvider = contentProvider.get();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
         nullptr,
@@ -12822,6 +12823,8 @@ void testTilesetContentFailedMaterializesLatentChildrenWithoutRetry() {
     TilesetTestAccess::requestMissingTile(tileset, rootKey);
     check(root && root->content.loadState == TileLoadState::Failed,
           "Tileset: Failed content remains non-retryable after latent child materialization");
+    check(rawProvider->requestCount == 1,
+          "Tileset: terminal Failed content is not retried by normal queue");
 }
 
 void testTilesetCacheUnloadFailedUnknownPreservesChildren() {
