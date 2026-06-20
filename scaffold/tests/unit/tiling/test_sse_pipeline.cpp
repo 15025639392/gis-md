@@ -13865,6 +13865,54 @@ void testTileContentCacheManagerOwnsBytesQueueAndUnload() {
           "TileContentCacheManager: unload removes render content and stale empty marker");
 }
 
+void testTileContentCacheManagerEraseIndexClearsClaimedUploadWork() {
+    TileContentCacheManager manager;
+    TileContentLifecycleManager lifecycle;
+    TileLoadQueue loadQueue;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = TileCacheKey::forTile(key);
+    auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
+    tile->content.loadState = TileLoadState::Done;
+    tile->content.contentKind = TileContentKind::Render;
+    tiles[cacheKey] = std::move(tile);
+    lifecycle.terrainCache()[cacheKey] = makeFlatHeightmap(2.0f);
+    lifecycle.emptyContentRegistry().insert(cacheKey);
+    loadQueue.queue(key, TileLoadPriorityGroup::Normal, 0.0);
+    manager.markEligibleForUnloading(tiles, cacheKey);
+    {
+        FrameResourceBudgetConfig config;
+        config.maxMainThreadFinalizesPerFrame = 1;
+        FrameResourceBudget budget;
+        budget.beginFrame(1, config);
+        std::lock_guard<std::mutex> lock(lifecycle.loadLifecycle().mutex());
+        lifecycle.loadLifecycle().pendingLoads().addContentUpload(
+            PendingContentUpload{
+                key,
+                cacheKey,
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadResult::empty()});
+        check(lifecycle.loadLifecycle()
+                  .pendingLoads()
+                  .takeHighestPriorityUpload(false, budget)
+                  .has_value(),
+              "TileContentCacheManager: erase-index claimed upload test dequeues payload");
+    }
+
+    manager.eraseTileIndexState(cacheKey, lifecycle, loadQueue);
+
+    check(!manager.unloadQueue().contains(cacheKey) &&
+              lifecycle.terrainCache().find(cacheKey) ==
+                  lifecycle.terrainCache().end() &&
+              !lifecycle.emptyContentRegistry().contains(cacheKey) &&
+              loadQueue.empty() &&
+              !lifecycle.loadLifecycle().containsWorkForCacheKey(cacheKey) &&
+              !lifecycle.loadLifecycle().hasPendingWork(),
+          "TileContentCacheManager: erase index clears claimed upload work and cache indexes");
+}
+
 void testTileContentCacheManagerClearsStaleEmptyMarkerOnUnknownUnload() {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
@@ -28747,6 +28795,7 @@ int main() {
     testTileCacheUnloadCoordinatorDefersRefreshDuringSmoothing();
     testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches();
     testTileContentCacheManagerOwnsBytesQueueAndUnload();
+    testTileContentCacheManagerEraseIndexClearsClaimedUploadWork();
     testTileContentCacheManagerClearsStaleEmptyMarkerOnUnknownUnload();
     testTileContentCacheManagerDefersByteRefreshDuringSmoothing();
     testTileContentCacheManagerDefersExternalSubtreeWithActiveWork();
