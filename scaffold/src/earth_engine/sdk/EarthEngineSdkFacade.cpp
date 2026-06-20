@@ -149,6 +149,13 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
                     xmlUrl,
                     std::string(bytes.begin(), bytes.end()),
                     overlayConfig.attribution);
+            if (!source.provider || !source.scheme) {
+                logError(platformBridge_,
+                         "TMS tilemapresource.xml has no usable tilesets: " +
+                             xmlUrl);
+                continue;
+            }
+
             applyConfiguredZoomRange(*source.provider,
                                      overlayConfig.minimumZoom,
                                      overlayConfig.maximumZoom);

@@ -63,6 +63,10 @@ TileMapServiceImagerySource createTileMapServiceImagerySource(
     TileMapServiceMetadata metadata =
         parseTileMapServiceMetadata(tileMapResourceXml);
     TileMapServiceImagerySource source;
+    if (metadata.tileSets.empty()) {
+        return source;
+    }
+
     source.coverageRectangle =
         tileMapServiceResolvedGeographicCoverageRectangle(metadata);
     source.scheme = tileMapServiceTileScheme(metadata);

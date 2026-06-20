@@ -1036,3 +1036,18 @@ TEST(TileMapServiceImageryProviderTest, CreatesSourceFromXmlForRasterOverlayInst
         Rectangle::fromDegrees(-10.0, -20.0, 30.0, 40.0),
         1e-12));
 }
+
+TEST(TileMapServiceImageryProviderTest, RejectsSourceWithoutTileSetsLikeCesiumNative) {
+    TileMapServiceImagerySource source = createTileMapServiceImagerySource(
+        "https://example.com/tms/tilemapresource.xml",
+        R"xml(
+          <TileMap>
+            <BoundingBox minx="-10" miny="-20" maxx="30" maxy="40" />
+            <TileSets profile="global-geodetic" />
+          </TileMap>
+        )xml");
+
+    EXPECT_EQ(nullptr, source.provider);
+    EXPECT_EQ(nullptr, source.scheme);
+    EXPECT_FALSE(source.coverageRectangle.has_value());
+}
