@@ -14462,6 +14462,7 @@ void testTileChildMaterializerCreatesAvailableAndUpsampledTerrainChildren() {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile parent(parentKey, Rectangle{});
     parent.geometricError = 100.0;
+    parent.refine = TileRefine::Add;
     parent.content.renderContent.setTerrainHeightRange(-10.0, 90.0);
 
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
@@ -14508,11 +14509,13 @@ void testTileChildMaterializerCreatesAvailableAndUpsampledTerrainChildren() {
           "TileChildMaterializer: unavailable terrain siblings become upsampled children");
     check(sw->geometricError == 50.0 &&
               se->geometricError == 50.0 &&
+              sw->refine == TileRefine::Add &&
+              se->refine == TileRefine::Add &&
               sw->content.renderContent.hasTerrainHeightRange() &&
               se->content.renderContent.hasTerrainHeightRange() &&
               sw->content.renderContent.terrainMinimumHeight() == -10.0 &&
               se->content.renderContent.terrainMaximumHeight() == 90.0,
-          "TileChildMaterializer: terrain children inherit geometric error and height range");
+          "TileChildMaterializer: terrain children inherit refine, geometric error, and height range");
 }
 
 void testTileChildMaterializerCreatesRasterUpsampledChildren() {

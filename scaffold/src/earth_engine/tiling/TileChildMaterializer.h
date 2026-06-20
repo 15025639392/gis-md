@@ -97,6 +97,7 @@ struct TileChildMaterializer {
             TilesetTile* child = ensureTile(childInfo.key);
             if (!child) continue;
             child->geometricError = parent.geometricError * 0.5;
+            child->refine = parent.refine;
             const double minimumHeight =
                 TileBoundsMetrics::terrainMinimumHeight(parent);
             const double maximumHeight =
