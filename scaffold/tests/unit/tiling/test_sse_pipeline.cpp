@@ -13438,6 +13438,10 @@ void testTileLoadQueueDeduplicatesAndUpgradesPriority() {
 void testTileUnloadQueueMaintainsLruOrderAndDeduplicatesKeys() {
     TileUnloadQueue queue;
 
+    queue.pushBackIfAbsent("");
+    check(queue.empty() && !queue.contains(""),
+          "TileUnloadQueue: empty cache keys are not queued");
+
     queue.pushBackIfAbsent("a");
     queue.pushBackIfAbsent("b");
     queue.pushBackIfAbsent("a");

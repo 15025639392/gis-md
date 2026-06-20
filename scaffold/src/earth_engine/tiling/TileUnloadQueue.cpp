@@ -3,10 +3,16 @@
 namespace earth_engine {
 
 bool TileUnloadQueue::contains(const std::string& key) const {
+    if (key.empty()) {
+        return false;
+    }
     return map_.count(key) != 0;
 }
 
 void TileUnloadQueue::pushBackIfAbsent(const std::string& key) {
+    if (key.empty()) {
+        return;
+    }
     if (contains(key)) {
         return;
     }
