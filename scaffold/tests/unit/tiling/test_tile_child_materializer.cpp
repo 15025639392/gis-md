@@ -231,3 +231,39 @@ TEST(TileChildMaterializerTest, CanRefineHonorsContentRulesBeforeTerrainSignals)
         [](const std::string&) { return true; },
         [](const TileKey&) { return TileAvailabilityState::Available; }));
 }
+
+TEST(TileChildMaterializerTest, CanRefineUsesCachedAndAvailableTerrainSignals) {
+    TilesetTile tile(TileKey{"Geographic-TMS", 0, 0, 0}, Rectangle{});
+
+    EXPECT_TRUE(TileChildMaterializer::canRefine(
+        tile,
+        TileRefinementAvailabilityOptions{
+            false,
+            false,
+            false,
+            false,
+            false,
+            4},
+        cacheKeyFor,
+        [](const std::string& cacheKey) {
+            return cacheKey == "Geographic-TMS:1:0:0";
+        },
+        [](const TileKey&) { return TileAvailabilityState::NotAvailable; }));
+
+    EXPECT_TRUE(TileChildMaterializer::canRefine(
+        tile,
+        TileRefinementAvailabilityOptions{
+            false,
+            false,
+            false,
+            false,
+            true,
+            4},
+        cacheKeyFor,
+        [](const std::string&) { return false; },
+        [](const TileKey& key) {
+            return key.x == 1 && key.y == 0
+                ? TileAvailabilityState::Available
+                : TileAvailabilityState::NotAvailable;
+        }));
+}
