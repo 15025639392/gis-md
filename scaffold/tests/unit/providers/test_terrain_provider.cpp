@@ -544,6 +544,14 @@ TEST(XYZImageryProviderTest, GeographicProjectedPlaceholdersUseCesiumNativeProje
         provider.buildUrl(key));
 }
 
+TEST(XYZImageryProviderTest, ReverseZUsesProviderMaximumLevelLikeCesiumNative) {
+    XYZImageryProvider provider("https://example.com/{reverseZ}/{z}.png");
+    provider.setZoomRange(0, 12);
+
+    EXPECT_EQ("https://example.com/9/3.png",
+              provider.buildUrl(TileKey{"XYZ-WebMercator", 3, 0, 0}));
+}
+
 TEST(XYZImageryProviderTest, OpenGlobusGroupedYMapsUrlLocalYAndExposesGroup) {
     XYZImageryProvider provider(
         "https://example.com/{tileGroup}/{z}/{x}/{y}?gy={groupedY}");
