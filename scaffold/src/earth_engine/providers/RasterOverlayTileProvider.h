@@ -60,6 +60,14 @@ public:
         TileKey key;
         Rectangle bounds;
         std::unique_ptr<DecodedImage> image;
+        RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
+            RasterOverlayTile::MoreDetailAvailable::Unknown;
+    };
+
+    struct RectangleCompositionResult {
+        std::unique_ptr<DecodedImage> image;
+        RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
+            RasterOverlayTile::MoreDetailAvailable::No;
     };
 
     /// Core rectangle composition contract. The returned image is in the target
@@ -71,6 +79,14 @@ public:
         const Rectangle& targetBounds,
         int sourceZoom,
         std::vector<RectangleSourceImage>&& sources,
+        int maximumTextureSize);
+
+    static RectangleCompositionResult composeRectangleImagesWithDetails(
+        const TileScheme& scheme,
+        const Rectangle& targetBounds,
+        int sourceZoom,
+        std::vector<RectangleSourceImage>&& sources,
+        int maximumSourceZoom,
         int maximumTextureSize);
 
     static double projectedVForLatitude(
@@ -243,6 +259,8 @@ private:
         Rectangle bounds;
         std::shared_ptr<const DecodedImage> image;
         bool ancestorFallback = false;
+        RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
+            RasterOverlayTile::MoreDetailAvailable::Unknown;
         int64_t sizeBytes = 0;
         uint64_t generation = 0;
     };

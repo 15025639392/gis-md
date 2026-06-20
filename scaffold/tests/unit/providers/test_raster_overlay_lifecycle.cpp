@@ -1217,6 +1217,31 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsMalformedSourceImage
     EXPECT_EQ(nullptr, result);
 }
 
+TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesSourceMoreDetailFlagLikeCesiumNative) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    Rectangle target = scheme->tileToRectangle(
+        TileKey{scheme->id(), 1, 0, 0});
+
+    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    sources.push_back({
+        TileKey{scheme->id(), 1, 0, 0},
+        target,
+        makeImage(2, 2, 20),
+        RasterOverlayTile::MoreDetailAvailable::No});
+
+    auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
+        *scheme,
+        target,
+        1,
+        std::move(sources),
+        4,
+        8);
+
+    ASSERT_NE(nullptr, result.image);
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
+              result.moreDetailAvailable);
+}
+
 TEST(RasterOverlayLifecycleTest, WebMercatorSourceSamplingUsesProjectedY) {
     auto scheme = TileScheme::createXYZWebMercator();
     Rectangle bounds = scheme->tileToRectangle(
