@@ -15,7 +15,8 @@ enum class TerrainSourceKind {
 
 enum class ImagerySourceKind {
     Debug,
-    Xyz
+    Xyz,
+    TileMapService
 };
 
 struct SceneCameraConfig {
@@ -44,6 +45,7 @@ struct SceneTilesetConfig {
 struct RasterOverlaySourceConfig {
     ImagerySourceKind imageryKind = ImagerySourceKind::Xyz;
     std::string urlTemplate;
+    std::string tileMapResourceUrl;
     std::string attribution;
     int minimumZoom = 0;
     int maximumZoom = 0;

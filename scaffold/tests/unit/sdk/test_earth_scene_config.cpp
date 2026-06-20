@@ -30,6 +30,7 @@ TEST(EarthSceneConfig, StoresSceneSourceDefinitions) {
     config.rasterOverlays.push_back({
         ImagerySourceKind::Xyz,
         "http://imagery.example/{z}/{x}/{y}.png",
+        "",
         "imagery",
         0,
         18,
@@ -54,8 +55,26 @@ TEST(EarthSceneConfig, StoresSceneSourceDefinitions) {
     ASSERT_EQ(copied.rasterOverlays.size(), 1u);
     EXPECT_EQ(copied.rasterOverlays[0].role,
               RasterOverlayRole::AnnotationOverlay);
+    EXPECT_EQ(copied.rasterOverlays[0].tileMapResourceUrl, "");
     EXPECT_EQ(copied.rasterOverlays[0].fallbackPolicy,
               RasterOverlayFallbackPolicy::SkipUntilReady);
     EXPECT_FALSE(copied.rasterOverlays[0].blocksCompleteRenderable);
     EXPECT_DOUBLE_EQ(copied.fixedSimulationJulianDate, 2461188.75);
+}
+
+TEST(EarthSceneConfig, StoresTileMapServiceImagerySourceDefinitions) {
+    EarthSceneConfig config;
+    config.rasterOverlays.push_back({
+        ImagerySourceKind::TileMapService,
+        "",
+        "https://example.com/tms/tilemapresource.xml",
+        "tms attribution",
+    });
+
+    ASSERT_EQ(1u, config.rasterOverlays.size());
+    EXPECT_EQ(ImagerySourceKind::TileMapService,
+              config.rasterOverlays[0].imageryKind);
+    EXPECT_EQ("https://example.com/tms/tilemapresource.xml",
+              config.rasterOverlays[0].tileMapResourceUrl);
+    EXPECT_EQ("tms attribution", config.rasterOverlays[0].attribution);
 }
