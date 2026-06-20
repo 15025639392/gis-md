@@ -20,6 +20,40 @@ std::string cacheKeyFor(const TileKey& key) {
 
 } // namespace
 
+TEST(TileChildMaterializerTest, LinkContentChildrenWithoutDuplicates) {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey firstKey{"test", 1, 0, 0};
+    const TileKey secondKey{"test", 1, 1, 0};
+    TilesetTile parent(parentKey, Rectangle{});
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    tiles.emplace(
+        "test:1:0:0",
+        std::make_unique<TilesetTile>(firstKey, Rectangle{}));
+    tiles.emplace(
+        "test:1:1:0",
+        std::make_unique<TilesetTile>(secondKey, Rectangle{}));
+
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        auto it = tiles.find(cacheKeyFor(key));
+        return it == tiles.end() ? nullptr : it->second.get();
+    };
+    const std::vector<TileKey> childKeys{firstKey, secondKey, firstKey};
+
+    const bool changed =
+        TileChildMaterializer::linkContentChildren(parent, childKeys, ensure);
+    const bool changedAgain =
+        TileChildMaterializer::linkContentChildren(parent, childKeys, ensure);
+
+    EXPECT_TRUE(changed);
+    EXPECT_FALSE(changedAgain);
+    ASSERT_EQ(2u, parent.children.size());
+    EXPECT_EQ(tiles["test:1:0:0"].get(), parent.children[0]);
+    EXPECT_EQ(tiles["test:1:1:0"].get(), parent.children[1]);
+    EXPECT_EQ(&parent, parent.children[0]->parent);
+    EXPECT_EQ(&parent, parent.children[1]->parent);
+}
+
 TEST(TileChildMaterializerTest, AnyAvailableTerrainChildCreatesFullQuadLikeCesiumNative) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 0, 0, 0},
