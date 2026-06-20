@@ -91,51 +91,67 @@ std::string resolveUrl(const std::string& baseUrl, const std::string& relative) 
         return "https:" + relative;
     }
 
-    std::string baseWithoutFragment = baseUrl.substr(0, baseUrl.find('#'));
-    const size_t queryPos = baseWithoutFragment.find('?');
-    if (queryPos != std::string::npos) {
-        baseWithoutFragment.erase(queryPos);
+    const std::string baseWithoutFragment = baseUrl.substr(0, baseUrl.find('#'));
+    if (!relative.empty() && relative.front() == '#') {
+        return baseWithoutFragment + relative;
+    }
+
+    std::string baseWithoutQuery = baseWithoutFragment;
+    const size_t baseQueryPos = baseWithoutQuery.find('?');
+    if (baseQueryPos != std::string::npos) {
+        baseWithoutQuery.erase(baseQueryPos);
     }
     if (relative.empty()) {
-        return baseWithoutFragment;
+        return baseWithoutQuery;
+    }
+    if (!relative.empty() && relative.front() == '?') {
+        return baseWithoutQuery + relative;
+    }
+
+    std::string relativePath = relative;
+    std::string relativeSuffix;
+    const size_t suffixPos = relativePath.find_first_of("?#");
+    if (suffixPos != std::string::npos) {
+        relativeSuffix = relativePath.substr(suffixPos);
+        relativePath.erase(suffixPos);
     }
 
     std::string prefix;
     std::string basePath;
-    const size_t schemePos = baseWithoutFragment.find("://");
+    const size_t schemePos = baseWithoutQuery.find("://");
     if (schemePos != std::string::npos) {
-        const size_t pathStart = baseWithoutFragment.find('/', schemePos + 3);
+        const size_t pathStart = baseWithoutQuery.find('/', schemePos + 3);
         if (pathStart == std::string::npos) {
-            prefix = baseWithoutFragment;
+            prefix = baseWithoutQuery;
             basePath = "/";
         } else {
-            prefix = baseWithoutFragment.substr(0, pathStart);
-            basePath = baseWithoutFragment.substr(pathStart);
+            prefix = baseWithoutQuery.substr(0, pathStart);
+            basePath = baseWithoutQuery.substr(pathStart);
         }
-    } else if (baseWithoutFragment.rfind("//", 0) == 0) {
-        const size_t pathStart = baseWithoutFragment.find('/', 2);
+    } else if (baseWithoutQuery.rfind("//", 0) == 0) {
+        const size_t pathStart = baseWithoutQuery.find('/', 2);
         if (pathStart == std::string::npos) {
-            prefix = "https:" + baseWithoutFragment;
+            prefix = "https:" + baseWithoutQuery;
             basePath = "/";
         } else {
-            prefix = "https:" + baseWithoutFragment.substr(0, pathStart);
-            basePath = baseWithoutFragment.substr(pathStart);
+            prefix = "https:" + baseWithoutQuery.substr(0, pathStart);
+            basePath = baseWithoutQuery.substr(pathStart);
         }
     } else {
-        basePath = baseWithoutFragment;
+        basePath = baseWithoutQuery;
     }
 
     std::string mergedPath;
-    if (!relative.empty() && relative.front() == '/') {
-        mergedPath = relative;
+    if (!relativePath.empty() && relativePath.front() == '/') {
+        mergedPath = relativePath;
     } else {
         const size_t slash = basePath.rfind('/');
         const std::string directory =
             slash == std::string::npos ? std::string{} : basePath.substr(0, slash + 1);
-        mergedPath = directory + relative;
+        mergedPath = directory + relativePath;
     }
 
-    return prefix + normalizeUrlPath(mergedPath);
+    return prefix + normalizeUrlPath(mergedPath) + relativeSuffix;
 }
 
 uint64_t spread2(uint64_t value) {

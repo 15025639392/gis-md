@@ -102,6 +102,26 @@ TEST(ImplicitTileIdUtilitiesTest, ResolveUrlPreservesTemplateEdgeCases) {
                   TileKey{"Geographic-TMS", 11, 2, 3}));
 }
 
+TEST(ImplicitTileIdUtilitiesTest, ResolveUrlPreservesQueryAndFragmentLikeCesiumNativeUri) {
+    EXPECT_EQ("https://example.com/base/tileset.json?level=11&x=2",
+              ImplicitTileIdUtilities::resolveUrl(
+                  "https://example.com/base/tileset.json?token=base#section",
+                  "?level={level}&x={x}",
+                  TileKey{"Geographic-TMS", 11, 2, 3}));
+
+    EXPECT_EQ("https://example.com/base/tileset.json?token=base#tile-3",
+              ImplicitTileIdUtilities::resolveUrl(
+                  "https://example.com/base/tileset.json?token=base#section",
+                  "#tile-{y}",
+                  TileKey{"Geographic-TMS", 11, 2, 3}));
+
+    EXPECT_EQ("https://example.com/base/subtrees/11/2.subtree?token=3#ready",
+              ImplicitTileIdUtilities::resolveUrl(
+                  "https://example.com/base/tileset.json?token=base#section",
+                  "subtrees/{level}/{x}.subtree?token={y}#ready",
+                  TileKey{"Geographic-TMS", 11, 2, 3}));
+}
+
 TEST(ImplicitTileIdUtilitiesTest, ComputeObbQuadtreeBoundingVolumeMatchesCesiumNative) {
     const OrientedBoundingBox root(Vec3(1.0, 2.0, 3.0),
                                   Vec3(10.0, 0.0, 0.0),
