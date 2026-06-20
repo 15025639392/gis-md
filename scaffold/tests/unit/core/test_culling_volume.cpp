@@ -55,14 +55,15 @@ Mat4 cesiumPerspectiveOffCenterMatrix(double left,
 Mat4 cesiumOrthographicMatrix(double left,
                               double right,
                               double bottom,
-                              double top) {
+                              double top,
+                              double nearPlane) {
     glm::dmat4 projection(1.0);
     projection[0][0] = 2.0 / (right - left);
     projection[1][1] = 2.0 / (bottom - top);
     projection[2][2] = 0.0;
     projection[3][0] = -(right + left) / (right - left);
     projection[3][1] = -(bottom + top) / (bottom - top);
-    projection[3][2] = 1.0;
+    projection[3][2] = nearPlane;
     return Mat4(projection);
 }
 
@@ -204,7 +205,36 @@ TEST(CullingVolumeTest, OrthographicMatchesCesiumNativeClipMatrix) {
             nearPlane);
 
     const Mat4 clipMatrix =
-        cesiumOrthographicMatrix(left, right, bottom, top) *
+        cesiumOrthographicMatrix(left, right, bottom, top, nearPlane) *
+        cesiumViewMatrix(position, direction, up);
+    const CullingVolume fromClip = CullingVolume::fromClipMatrix(clipMatrix);
+
+    expectCullingVolumeNear(fromOrthographic, fromClip, 1e-10);
+}
+
+TEST(CullingVolumeTest, OrthographicOffCenterUsesNearPlaneLikeCesiumNative) {
+    const Vec3 position(0.0, 0.0, 0.0);
+    const Vec3 direction(0.0, 0.0, -1.0);
+    const Vec3 up(0.0, 1.0, 0.0);
+    const double left = -2.0;
+    const double right = 2.0;
+    const double bottom = -3.0;
+    const double top = 3.0;
+    const double nearPlane = 7.0;
+
+    const CullingVolume fromOrthographic =
+        CullingVolume::fromOrthographicOffCenter(
+            position,
+            direction,
+            up,
+            left,
+            right,
+            bottom,
+            top,
+            nearPlane);
+
+    const Mat4 clipMatrix =
+        cesiumOrthographicMatrix(left, right, bottom, top, nearPlane) *
         cesiumViewMatrix(position, direction, up);
     const CullingVolume fromClip = CullingVolume::fromClipMatrix(clipMatrix);
 

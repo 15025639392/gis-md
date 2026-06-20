@@ -83,6 +83,8 @@ CullingVolume CullingVolume::fromOrthographicOffCenter(
     double bottom,
     double top,
     double nearPlane) {
+    // Cesium's infinite orthographic culling volume stores only the four side
+    // planes; nearPlane affects the omitted near/far planes, not these sides.
     (void)nearPlane;
 
     return fromClipMatrix(
