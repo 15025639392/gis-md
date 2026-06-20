@@ -3477,6 +3477,25 @@ void testQuantizedMeshLayerJsonDefaultMaxzoomMatchesCesiumNative() {
           "QuantizedMeshTerrainProvider: default maxzoom still bounds out-of-range tiles");
 }
 
+void testQuantizedMeshLayerJsonNonIntegerMaxzoomDefaults() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": "not-an-int",
+      "metadataAvailability": 10
+    })json";
+
+    check(provider.configureFromLayerJson(
+              layerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: non-integer maxzoom layer configures like cesium-native");
+    check(provider.maxZoom() == 30,
+          "QuantizedMeshTerrainProvider: non-integer maxzoom defaults to 30 like cesium-native");
+}
+
 void testQuantizedMeshLayerJsonAttributionMatchesCesiumNative() {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain",
@@ -21747,6 +21766,7 @@ int main() {
     testQuantizedMeshLayerJsonDefaultFormatMatchesCesiumNative();
     testQuantizedMeshLayerJsonDefaultVersionMatchesCesiumNative();
     testQuantizedMeshLayerJsonDefaultMaxzoomMatchesCesiumNative();
+    testQuantizedMeshLayerJsonNonIntegerMaxzoomDefaults();
     testQuantizedMeshLayerJsonAttributionMatchesCesiumNative();
     testHeightmapTerrainProviderExposesAttribution();
     testQuantizedMeshLayerJsonWebMercatorProjectionMatchesCesiumNative();

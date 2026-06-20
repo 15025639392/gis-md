@@ -451,6 +451,22 @@ int jsonUint32OrDefault(const nlohmann::json& object, const char* name) {
         : static_cast<int>(value);
 }
 
+int jsonInt32OrDefault(const nlohmann::json& object,
+                       const char* name,
+                       int defaultValue) {
+    auto it = object.find(name);
+    if (it == object.end() || !it->is_number_integer()) {
+        return defaultValue;
+    }
+
+    const int64_t value = it->get<int64_t>();
+    if (value < static_cast<int64_t>(std::numeric_limits<int>::min()) ||
+        value > static_cast<int64_t>(std::numeric_limits<int>::max())) {
+        return defaultValue;
+    }
+    return static_cast<int>(value);
+}
+
 std::string createExtensionsQueryParameter(
     const std::vector<std::string>& knownExtensions,
     const std::vector<std::string>& extensions) {
@@ -583,7 +599,7 @@ bool QuantizedMeshTerrainProvider::appendLayerFromJson(
     // directly gate tile availability. Availability rectangles and loaded
     // metadata subtrees determine whether tiles are requestable.
     layer.minZoom = 0;
-    layer.maxZoom = j.value("maxzoom", 30);
+    layer.maxZoom = jsonInt32OrDefault(j, "maxzoom", 30);
     layer.version = j.value("version", std::string("1.0.0"));
     layer.attribution = j.value("attribution", std::string());
     std::vector<std::string> knownExtensions{
