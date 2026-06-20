@@ -3948,6 +3948,22 @@ void testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative() {
     check(negativeOnly.size() == 1 &&
               negativeOnly[0] == std::array<int, 5>{0, 0, 1, 2, 0},
           "QuantizedMeshParser: metadata uint32 fields default like cesium-native");
+
+    const std::string nonArrayLevelMetadata = R"json({
+      "available": [
+        "not-a-level-array",
+        [{"startX":2,"startY":1,"endX":3,"endY":1}]
+      ]
+    })json";
+    const std::vector<uint8_t> nonArrayLevelBytes =
+        makeQuantizedMeshBytes(nonArrayLevelMetadata);
+    const std::vector<std::array<int, 5>> nonArrayLevelOnly =
+        QuantizedMeshParser::parseMetadataAvailability(
+            nonArrayLevelBytes.data(),
+            nonArrayLevelBytes.size());
+    check(nonArrayLevelOnly.size() == 1 &&
+              nonArrayLevelOnly[0] == std::array<int, 5>{0, 2, 1, 3, 1},
+          "QuantizedMeshParser: metadata non-array levels do not advance availability level");
 }
 
 void testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding() {

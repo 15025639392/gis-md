@@ -75,7 +75,6 @@ std::vector<std::array<int, 5>> parseMetadataAvailabilityJson(
     int subArrayIndex = 0;
     for (const auto& levelRanges : j["available"]) {
         if (!levelRanges.is_array()) {
-            ++subArrayIndex;
             continue;
         }
         for (const auto& range : levelRanges) {
@@ -700,7 +699,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
             // cesium-native: metadata JSON with availability rectangles.
             // Extension payload starts with uint32 metadataJsonLength, then JSON.
             // Format: "available": [[{startX,startY,endX,endY},...],...]
-            // Each sub-array i corresponds to level (startingLevel + i).
+            // Each valid level array advances the availability level.
             // Aligned with cesium-native loadAvailabilityRectangles.
             if (offset + sizeof(uint32_t) > len) break;
             uint32_t metadataJsonLength = 0;
