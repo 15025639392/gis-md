@@ -1,6 +1,7 @@
 #include "TilePriorityMetrics.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace earth_engine {
 
@@ -11,7 +12,9 @@ double TilePriorityMetrics::computeTilePriority(
     double distance) {
     Vec3 tileDirection = tileCenter - cameraPosition;
     const double magnitude = tileDirection.length();
-    if (magnitude < 1e-5) return distance;
+    if (magnitude < 1e-5) {
+        return std::numeric_limits<double>::max();
+    }
 
     tileDirection = tileDirection / magnitude;
     double viewDot = tileDirection.dot(cameraDirection);

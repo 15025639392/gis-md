@@ -12657,8 +12657,8 @@ void testTilePriorityMetricsMatchesCesiumNativeFormula() {
               cameraPosition,
               cameraPosition,
               cameraDirection,
-              distance) == distance,
-          "TilePriorityMetrics: degenerate camera-at-tile case falls back to distance");
+              distance) == std::numeric_limits<double>::max(),
+          "TilePriorityMetrics: degenerate camera-at-tile case is skipped like cesium-native");
     check(std::abs(TilePriorityMetrics::computeTilePriority(
                        Vec3(10.0, 0.0, 0.0),
                        cameraPosition,
@@ -12756,6 +12756,14 @@ void testTileSelectionInputMetricsComputesCenterPriorityAndSse() {
                   views[1].viewportHeightPixels,
                   summary.distances[1]),
           "TileSelectionInputMetrics: summary uses maximum per-view SSE");
+
+    for (SelectorView& view : views) {
+        view.position = TileSelectionInputMetrics::tileCenter(tile);
+    }
+    const TileSelectionInputSummary degenerateSummary =
+        TileSelectionInputMetrics::summarizeForViews(tile, views);
+    check(degenerateSummary.priority == std::numeric_limits<double>::max(),
+          "TileSelectionInputMetrics: all degenerate priority views stay at max like cesium-native");
 }
 
 void testTileSelectionInputMetricsSseMatchesCesiumNativeGolden() {
