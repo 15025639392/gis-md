@@ -1,10 +1,12 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/core/geodesy/Cartographic.h"
+#include "earth_engine/core/geodesy/BoundingRegionBuilder.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/GeographicProjection.h"
 #include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/geodesy/WebMercatorProjection.h"
+#include "earth_engine/core/math/AxisAlignedBox.h"
 #include "earth_engine/core/math/Rectangle.h"
 #include "earth_engine/core/math/Vec3.h"
 
@@ -262,6 +264,35 @@ TEST(ProjectionTest, GetProjectionEllipsoidMatchesCesiumNativeVariantVisitor) {
 
     EXPECT_EQ(Ellipsoid::WGS84(), getProjectionEllipsoid(geographic));
     EXPECT_EQ(Ellipsoid::UNIT_SPHERE(), getProjectionEllipsoid(webMercator));
+}
+
+TEST(ProjectionTest, ProjectAndUnprojectRegionSimplePreservesProjectedRectangleAndHeights) {
+    const Projection projection = WebMercatorProjection(Ellipsoid::WGS84());
+    const BoundingRegionBuilder::BoundingRegion region{
+        Rectangle::fromDegrees(-120.0, -40.0, -60.0, 30.0),
+        -25.0,
+        1750.0
+    };
+
+    const AxisAlignedBox box = projectRegionSimple(projection, region);
+    const Rectangle projectedRectangle =
+        projectRectangleSimple(projection, region.rectangle);
+
+    EXPECT_NEAR(projectedRectangle.west(), box.minimumX(), 1e-9);
+    EXPECT_NEAR(projectedRectangle.south(), box.minimumY(), 1e-9);
+    EXPECT_DOUBLE_EQ(region.minimumHeight, box.minimumZ());
+    EXPECT_NEAR(projectedRectangle.east(), box.maximumX(), 1e-9);
+    EXPECT_NEAR(projectedRectangle.north(), box.maximumY(), 1e-9);
+    EXPECT_DOUBLE_EQ(region.maximumHeight, box.maximumZ());
+
+    const BoundingRegionBuilder::BoundingRegion roundtrip =
+        unprojectRegionSimple(projection, box);
+    EXPECT_NEAR(region.rectangle.west(), roundtrip.rectangle.west(), 1e-15);
+    EXPECT_NEAR(region.rectangle.south(), roundtrip.rectangle.south(), 1e-14);
+    EXPECT_NEAR(region.rectangle.east(), roundtrip.rectangle.east(), 1e-15);
+    EXPECT_NEAR(region.rectangle.north(), roundtrip.rectangle.north(), 1e-14);
+    EXPECT_DOUBLE_EQ(region.minimumHeight, roundtrip.minimumHeight);
+    EXPECT_DOUBLE_EQ(region.maximumHeight, roundtrip.maximumHeight);
 }
 
 TEST(ProjectionTest, ComputeProjectedRectangleSizeMatchesCesiumNativeGlobeCases) {

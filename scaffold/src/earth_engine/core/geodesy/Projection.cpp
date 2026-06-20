@@ -72,6 +72,31 @@ Rectangle unprojectRectangleSimple(const Projection& projection,
     return std::visit(Operation{rectangle}, projection);
 }
 
+AxisAlignedBox projectRegionSimple(
+    const Projection& projection,
+    const BoundingRegionBuilder::BoundingRegion& region) {
+    const Rectangle rectangle = projectRectangleSimple(projection, region.rectangle);
+    return AxisAlignedBox(rectangle.west(),
+                          rectangle.south(),
+                          region.minimumHeight,
+                          rectangle.east(),
+                          rectangle.north(),
+                          region.maximumHeight);
+}
+
+BoundingRegionBuilder::BoundingRegion unprojectRegionSimple(
+    const Projection& projection,
+    const AxisAlignedBox& box) {
+    const Rectangle rectangle = unprojectRectangleSimple(
+        projection,
+        Rectangle(box.minimumX(), box.minimumY(), box.maximumX(), box.maximumY()));
+    return BoundingRegionBuilder::BoundingRegion{
+        rectangle,
+        box.minimumZ(),
+        box.maximumZ()
+    };
+}
+
 glm::dvec2 computeProjectedRectangleSize(const Projection& projection,
                                          const Rectangle& rectangle,
                                          double maxHeight,

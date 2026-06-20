@@ -1,9 +1,11 @@
 #pragma once
 
 #include "Cartographic.h"
+#include "BoundingRegionBuilder.h"
 #include "Ellipsoid.h"
 #include "GeographicProjection.h"
 #include "WebMercatorProjection.h"
+#include "../math/AxisAlignedBox.h"
 #include "../math/Rectangle.h"
 #include "../math/Vec3.h"
 
@@ -21,6 +23,13 @@ Rectangle projectRectangleSimple(const Projection& projection,
                                  const Rectangle& rectangle);
 Rectangle unprojectRectangleSimple(const Projection& projection,
                                    const Rectangle& rectangle);
+
+AxisAlignedBox projectRegionSimple(
+    const Projection& projection,
+    const BoundingRegionBuilder::BoundingRegion& region);
+BoundingRegionBuilder::BoundingRegion unprojectRegionSimple(
+    const Projection& projection,
+    const AxisAlignedBox& box);
 
 glm::dvec2 computeProjectedRectangleSize(const Projection& projection,
                                          const Rectangle& rectangle,
