@@ -90,11 +90,15 @@ TEST(MathUtilsTest, RelativeEpsilonAndSignMatchCesiumNativeSourceSemantics) {
     EXPECT_DOUBLE_EQ(1.0, MathUtils::sign(42.0));
     EXPECT_DOUBLE_EQ(-1.0, MathUtils::sign(-42.0));
     EXPECT_DOUBLE_EQ(0.0, MathUtils::sign(0.0));
+    const double negativeZeroSign = MathUtils::sign(-0.0);
+    EXPECT_DOUBLE_EQ(-0.0, negativeZeroSign);
+    EXPECT_TRUE(std::signbit(negativeZeroSign));
     EXPECT_TRUE(std::isnan(MathUtils::sign(std::numeric_limits<double>::quiet_NaN())));
 
     EXPECT_DOUBLE_EQ(1.0, MathUtils::signNotZero(42.0));
     EXPECT_DOUBLE_EQ(-1.0, MathUtils::signNotZero(-42.0));
     EXPECT_DOUBLE_EQ(1.0, MathUtils::signNotZero(0.0));
+    EXPECT_DOUBLE_EQ(1.0, MathUtils::signNotZero(-0.0));
 }
 
 TEST(MathUtilsTest, RoundUpAndRoundDownMatchCesiumNative) {
