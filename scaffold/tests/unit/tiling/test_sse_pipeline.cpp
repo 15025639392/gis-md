@@ -18694,6 +18694,45 @@ void testTileLoadRequestDispatcherSkipsPendingTerminalResultKeys() {
           "TileLoadRequestDispatcher: pending content terminal result suppresses duplicate request");
 }
 
+void testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending() {
+    std::mutex mutex;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        pendingLoads.addTerrainTerminalResult(
+            PendingTerrainTerminalResult{
+                key,
+                "shared-cache-key",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TerrainTileLoadStatus::RetryLater});
+    }
+
+    const TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::queueUpsampledTerrain(
+            mutex,
+            requestState,
+            pendingLoads,
+            budget,
+            key,
+            "shared-cache-key",
+            TileLoadPriorityGroup::Normal,
+            0.0);
+
+    check(result == TileLoadDispatchResult::Skipped,
+          "TileLoadRequestDispatcher: pending cache key suppresses upsampled terrain enqueue");
+    check(pendingLoads.terrainUploadCount() == 0 &&
+              pendingLoads.terrainTerminalResultCount() == 1,
+          "TileLoadRequestDispatcher: skipped upsampled terrain leaves existing pending work intact");
+}
+
 void testTileLoadRequestDispatcherPassesNetworkPriority() {
     class RecordingTerrainProvider final : public TerrainProvider {
     public:
@@ -24551,6 +24590,7 @@ int main() {
     testTileLoadRequestDispatcherBlocksWhenBudgetIsExhausted();
     testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback();
     testTileLoadRequestDispatcherSkipsPendingTerminalResultKeys();
+    testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending();
     testTileLoadRequestDispatcherPassesNetworkPriority();
     testTileLoadRequestPlannerClassifiesRequestKinds();
     testTileLoadSchedulerBlocksBeforePlanningWhenInflightIsFull();

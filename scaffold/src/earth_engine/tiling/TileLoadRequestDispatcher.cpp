@@ -18,7 +18,7 @@ TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledTerrain(
         return TileLoadDispatchResult::Destroying;
     }
     if (requestState.contains(cacheKey) ||
-        pendingLoads.hasTerrainUpload(cacheKey)) {
+        pendingLoads.containsCacheKey(cacheKey)) {
         return TileLoadDispatchResult::Skipped;
     }
     if (!budget.tryIssue(FrameResourceLane::TerrainRequest,
