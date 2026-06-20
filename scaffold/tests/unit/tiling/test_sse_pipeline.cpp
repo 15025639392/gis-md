@@ -20444,6 +20444,118 @@ void testTileLoadRequestDispatcherSkipsPendingTerminalResultKeys() {
           "TileLoadRequestDispatcher: pending content terminal result suppresses duplicate request");
 }
 
+void testTileLoadRequestDispatcherSkipsInflightRequestKeys() {
+    class CountingTerrainProvider final : public TerrainProvider {
+    public:
+        std::string id() const override { return "dispatcher-inflight-terrain"; }
+        std::string schemeId() const override { return "test"; }
+        int minZoom() const override { return 0; }
+        int maxZoom() const override { return 1; }
+        int tileSize() const override { return 2; }
+        std::string buildUrl(const TileKey&) const override {
+            return "memory://dispatcher-inflight-terrain";
+        }
+        void requestTile(const TileKey&,
+                         CancellationToken,
+                         HeightmapCallback,
+                         HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+        }
+        std::unique_ptr<DecodedHeightmap> decodeTile(
+            const uint8_t*,
+            size_t) override {
+            return nullptr;
+        }
+        int requestCount = 0;
+    };
+
+    class CountingContentProvider final : public TilesetContentProvider {
+    public:
+        std::string id() const override { return "dispatcher-inflight-content"; }
+        bool supportsTile(const TileKey&) const override { return true; }
+        void requestTileContent(const TileKey&,
+                                CancellationToken,
+                                ContentCallback,
+                                HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+        }
+        TileContentLoadResult decodeContent(
+            const uint8_t*,
+            size_t) override {
+            return TileContentLoadResult::failed();
+        }
+        int requestCount = 0;
+    };
+
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    CancellationToken terrainToken;
+    CancellationToken contentToken;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        check(requestState.beginTerrainRequest("terrain-inflight", terrainToken),
+              "TileLoadRequestDispatcher: test starts terrain inflight request");
+        check(requestState.beginContentRequest("content-inflight", contentToken),
+              "TileLoadRequestDispatcher: test starts content inflight request");
+    }
+
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+
+    CountingTerrainProvider terrainProvider;
+    const TileLoadDispatchResult terrainResult =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            terrainProvider,
+            key,
+            "terrain-inflight",
+            TileLoadPriorityGroup::Urgent,
+            100.0,
+            [&issued]() { issued = true; });
+
+    CountingContentProvider contentProvider;
+    const TileLoadDispatchResult contentResult =
+        TileLoadRequestDispatcher::requestContent(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            contentProvider,
+            key,
+            "content-inflight",
+            TileLoadPriorityGroup::Urgent,
+            100.0,
+            [&issued]() { issued = true; });
+
+    check(terrainResult == TileLoadDispatchResult::Skipped &&
+              contentResult == TileLoadDispatchResult::Skipped,
+          "TileLoadRequestDispatcher: inflight cache keys suppress duplicate requests");
+    check(!issued &&
+              terrainProvider.requestCount == 0 &&
+              contentProvider.requestCount == 0 &&
+              requestState.totalRequestCount() == 2 &&
+              !pendingLoads.hasWork() &&
+              budget.networkRequestsIssued() == 0,
+          "TileLoadRequestDispatcher: inflight duplicate skip has no request or budget side effects");
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        requestState.completeTerrainRequest("terrain-inflight");
+        requestState.completeContentRequest("content-inflight");
+    }
+}
+
 void testTileLoadRequestDispatcherSkipsPendingUploadKeys() {
     class CountingTerrainProvider final : public TerrainProvider {
     public:
@@ -27400,6 +27512,7 @@ int main() {
     testTileLoadRequestDispatcherDropsCancelledCallbacks();
     testTileLoadRequestDispatcherRejectsRequestsDuringDestroy();
     testTileLoadRequestDispatcherSkipsPendingTerminalResultKeys();
+    testTileLoadRequestDispatcherSkipsInflightRequestKeys();
     testTileLoadRequestDispatcherSkipsPendingUploadKeys();
     testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending();
     testTileLoadRequestDispatcherBlocksUpsampledTerrainWhenBudgetExhausted();
