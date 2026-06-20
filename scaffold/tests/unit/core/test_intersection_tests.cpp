@@ -492,6 +492,16 @@ TEST(IntersectionTestsTest, RaySphereFiltersNegativeParametricHits) {
     EXPECT_FALSE(IntersectionTests::raySphere(ray, sphere).has_value());
 }
 
+TEST(IntersectionTestsTest, RaySphereRejectsZeroDistanceTangent) {
+    // Source-derived from cesium-native solveQuadratic: a repeated root at
+    // exactly 0.0 is treated as no parametric hit.
+    const Ray ray(Vec3(1.0, 0.0, 0.0), Vec3::unitZ());
+    const BoundingSphere sphere(Vec3::zero(), 1.0);
+
+    EXPECT_FALSE(IntersectionTests::raySphereParametric(ray, sphere).has_value());
+    EXPECT_FALSE(IntersectionTests::raySphere(ray, sphere).has_value());
+}
+
 TEST(IntersectionTestsTest, PointInTriangle2dMatchesCesiumNativeCases) {
     // Ported from cesium-native CesiumGeometry/test/TestIntersectionTests.cpp.
     struct Case {
