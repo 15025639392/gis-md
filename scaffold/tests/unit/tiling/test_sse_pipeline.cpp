@@ -5216,6 +5216,36 @@ void testQuantizedMeshSkirtNormalsCopyEachEdgeSourceNormal() {
           "QuantizedMeshParser: north skirt normal copies north edge source like cesium-native");
 }
 
+void testQuantizedMeshFallbackNormalsPointOutward() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::vector<uint8_t> bytes = makeQuantizedMeshBytes();
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            scheme->tileToRectangle(rootKey));
+
+    check(mesh != nullptr,
+          "QuantizedMeshParser: fallback-normal test mesh parses");
+    if (!mesh) return;
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const size_t surfaceVertexCount = mesh->skirtMeta.noSkirtVerticesCount;
+    bool allNormalsPointOutward = surfaceVertexCount > 0;
+    for (size_t i = 0; i < surfaceVertexCount; ++i) {
+        const Vec3 geodeticNormal =
+            ellipsoid.geodeticSurfaceNormal(mesh->vertices[i].positionEcef);
+        allNormalsPointOutward =
+            allNormalsPointOutward &&
+            mesh->vertices[i].normalEcef.dot(geodeticNormal) >= 0.0;
+    }
+
+    check(allNormalsPointOutward,
+          "QuantizedMeshParser: fallback normals point with geodetic normal like cesium-native");
+}
+
 void testQuantizedMeshSkirtCountsMatchCesiumNativeFormula() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -23599,6 +23629,7 @@ int main() {
     testQuantizedMeshRasterizerRejectsMissingUint32IndexPadding();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
     testQuantizedMeshSkirtNormalsCopyEachEdgeSourceNormal();
+    testQuantizedMeshFallbackNormalsPointOutward();
     testQuantizedMeshSkirtCountsMatchCesiumNativeFormula();
     testQuantizedMeshSkirtIndicesMatchCesiumNativeOrder();
     testQuantizedMeshSkirtVerticesExpandOutsideTileEdges();
