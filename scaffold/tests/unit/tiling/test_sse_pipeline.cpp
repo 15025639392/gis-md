@@ -3386,6 +3386,26 @@ void testQuantizedMeshLayerJsonEmptyAvailabilityMatchesCesiumNative() {
           "QuantizedMeshTerrainProvider: empty layer availability does not imply descendants");
 }
 
+void testQuantizedMeshLayerJsonDefaultFormatMatchesCesiumNative() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "minzoom": 0,
+      "maxzoom": 4
+    })json";
+
+    check(provider.configureFromLayerJson(
+              layerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: missing format defaults to quantized-mesh-1.0 like cesium-native");
+    check(provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 0}) &&
+              provider.buildUrl(TileKey{"Geographic-TMS", 0, 0, 0}) ==
+                  "https://example.invalid/0/0/0.terrain",
+          "QuantizedMeshTerrainProvider: default-format layer remains requestable");
+}
+
 void testQuantizedMeshLayerJsonWebMercatorProjectionMatchesCesiumNative() {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
@@ -21473,6 +21493,7 @@ int main() {
     testQuantizedMeshAvailabilityInclusiveCenterBoundary();
     testQuantizedMeshMetadataAvailabilityStartsAtRoots();
     testQuantizedMeshLayerJsonEmptyAvailabilityMatchesCesiumNative();
+    testQuantizedMeshLayerJsonDefaultFormatMatchesCesiumNative();
     testQuantizedMeshLayerJsonWebMercatorProjectionMatchesCesiumNative();
     testQuantizedMeshLayerJsonRejectsUnknownProjection();
     testQuantizedMeshRejectsOutOfRangeGeographicTiles();
