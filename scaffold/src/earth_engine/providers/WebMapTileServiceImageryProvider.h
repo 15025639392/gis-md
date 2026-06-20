@@ -17,6 +17,7 @@ struct WebMapTileServiceImageryOptions {
     std::string tileMatrixSetId;
     std::optional<std::vector<std::string>> tileMatrixLabels;
     std::optional<std::map<std::string, std::string>> dimensions;
+    std::string schemeId = "XYZ-WebMercator";
     int minimumLevel = 0;
     int maximumLevel = 25;
     int tileWidth = 256;

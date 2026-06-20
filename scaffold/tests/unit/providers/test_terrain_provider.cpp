@@ -812,6 +812,26 @@ TEST(WebMapTileServiceImageryProviderTest, BuildsRestTemplateUrlLikeCesiumNative
         provider.buildUrl(TileKey{"XYZ-WebMercator", 3, 2, 2}));
 }
 
+TEST(WebMapTileServiceImageryProviderTest, SupportsGeographicTilingLikeCesiumNative) {
+    WebMapTileServiceImageryOptions options;
+    options.schemeId = "Geographic-TMS";
+    options.layer = "imagery";
+    options.style = "default";
+    options.tileMatrixSetId = "EPSG:4326";
+
+    WebMapTileServiceImageryProvider provider(
+        "https://example.com/wmts",
+        options);
+
+    EXPECT_EQ("Geographic-TMS", provider.schemeId());
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 0}));
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 1, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 2, 0}));
+    EXPECT_EQ(
+        "https://example.com/wmts?request=GetTile&version=1.0.0&service=WMTS&format=image%2Fjpeg&layer=imagery&style=default&tilematrixset=EPSG%3A4326&tilematrix=0&tilerow=0&tilecol=1",
+        provider.buildUrl(TileKey{"Geographic-TMS", 0, 1, 0}));
+}
+
 TEST(WebMapTileServiceImageryProviderTest, RejectsUnsupportedTiles) {
     WebMapTileServiceImageryProvider provider("https://example.com/wmts");
 

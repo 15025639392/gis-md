@@ -116,7 +116,7 @@ WebMapTileServiceImageryProvider::WebMapTileServiceImageryProvider(
     , url_(std::move(url))
     , options_(std::move(options))
     , useKvp_(shouldUseKvp(url_)) {
-    setSchemeId("XYZ-WebMercator");
+    setSchemeId(options_.schemeId);
     setZoomRange(options_.minimumLevel < 0 ? 0 : options_.minimumLevel,
                  options_.maximumLevel < 0 ? 0 : options_.maximumLevel);
     setTileSize(options_.tileWidth < 1 ? 1 : options_.tileWidth,
