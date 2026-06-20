@@ -3579,6 +3579,44 @@ void testQuantizedMeshEmptyTileMetadataMarksSubtreeLoaded() {
           "QuantizedMeshTerrainProvider: empty tile metadata marks subtree loaded like cesium-native");
 }
 
+void testQuantizedMeshMetadataUpdateStartsBelowSubtreeTileLevel() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "metadataAvailability": 2
+    })json";
+
+    check(provider.configureFromLayerJson(
+              layerJson, "https://example.invalid/layer.json"),
+          "QuantizedMeshTerrainProvider: non-root metadata update layer configures");
+
+    const TileKey subtreeKey{"Geographic-TMS", 2, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 3, 0, 0};
+    const TileKey siblingKey{"Geographic-TMS", 3, 1, 0};
+    check(provider.availabilityState(childKey) == TileAvailabilityState::Unknown,
+          "QuantizedMeshTerrainProvider: non-root metadata child starts unknown");
+
+    DecodedHeightmap heightmap;
+    DecodedHeightmap::QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = subtreeKey;
+    update.metadataAvailability = {{0, 0, 0, 0, 0}};
+    heightmap.quantizedMeshAvailabilityUpdates.push_back(update);
+
+    provider.applyAvailabilityUpdates(heightmap);
+
+    check(provider.availabilityState(childKey) == TileAvailabilityState::Available,
+          "QuantizedMeshTerrainProvider: metadata update starts at subtree level plus one like cesium-native");
+    check(provider.availabilityState(siblingKey) ==
+              TileAvailabilityState::NotAvailable,
+          "QuantizedMeshTerrainProvider: metadata update keeps sibling range unavailable");
+}
+
 void testQuantizedMeshLayerJsonEmptyAvailabilityMatchesCesiumNative() {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
@@ -22718,6 +22756,7 @@ int main() {
     testQuantizedMeshMetadataAvailabilityRequiresInt32();
     testQuantizedMeshTileMetadataIgnoredWithoutMetadataAvailability();
     testQuantizedMeshEmptyTileMetadataMarksSubtreeLoaded();
+    testQuantizedMeshMetadataUpdateStartsBelowSubtreeTileLevel();
     testQuantizedMeshLayerJsonEmptyAvailabilityMatchesCesiumNative();
     testQuantizedMeshLayerJsonDefaultFormatMatchesCesiumNative();
     testQuantizedMeshLayerJsonFormatIsIgnored();
