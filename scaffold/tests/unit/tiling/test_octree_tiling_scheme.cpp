@@ -66,6 +66,21 @@ TEST(OctreeTilingSchemeTest, PositionToTileClampsPositiveEdgesToFinalTile) {
     EXPECT_EQ(11, tile->z);
 }
 
+TEST(OctreeTilingSchemeTest, PositionToTileIncludesNegativeEdgesInFirstTile) {
+    const OctreeTilingScheme scheme(AxisAlignedBox(-10.0, -20.0, -30.0,
+                                                  10.0, 20.0, 30.0),
+                                    2,
+                                    2,
+                                    3);
+
+    const auto tile = scheme.positionToTile(Vec3(-10.0, -20.0, -30.0), 2);
+    ASSERT_TRUE(tile.has_value());
+    EXPECT_EQ(2, tile->level);
+    EXPECT_EQ(0, tile->x);
+    EXPECT_EQ(0, tile->y);
+    EXPECT_EQ(0, tile->z);
+}
+
 TEST(OctreeTilingSchemeTest, TileToBoxMatchesCesiumNativeGrid) {
     const OctreeTilingScheme scheme(AxisAlignedBox(0.0, 0.0, 0.0,
                                                   8.0, 12.0, 16.0),
