@@ -20,6 +20,10 @@ struct TileSelectionVisibilitySample {
 };
 
 struct TileSelectionVisibilitySampler {
+    static bool cameraInsideSelectionBounds(
+        const TilesetTile& tile,
+        const TileSelectionVisibilityContext& context);
+
     static bool boundsVisible(
         const TilesetTile& tile,
         const std::vector<SelectorView>& views,

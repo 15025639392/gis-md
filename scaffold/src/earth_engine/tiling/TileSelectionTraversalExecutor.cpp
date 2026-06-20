@@ -11,6 +11,7 @@
 #include "TileSelectionRasterOverlayPreparer.h"
 #include "TileSelectionRefineFlowPolicy.h"
 #include "TileSelectionTraversalCounterPolicy.h"
+#include "TileSelectionVisibilitySampler.h"
 #include "TileSelectionVisitPreparation.h"
 #include "TilesetTile.h"
 
@@ -44,8 +45,6 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTileIfNeeded(
     const Cartographic cameraCart =
         Ellipsoid::WGS84().cartesianToCartographic(
             context.lastCameraPosition);
-    const bool underCamera =
-        tile.bounds.contains(cameraCart.longitude(), cameraCart.latitude());
     TileSelectionFrameState& selection = tile.selectionFrameState;
     selection.ancestorMeetsSse = ancestorMeetsSse;
     const TileSelectionVisibilityContext visibilityContext{
@@ -68,7 +67,10 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTileIfNeeded(
                 context.options.maximumScreenSpaceError,
                 context.options.culledScreenSpaceError});
     selection.inFrustum = preparation.visibilitySample.inFrustum;
-    selection.cameraInside = underCamera;
+    selection.cameraInside =
+        TileSelectionVisibilitySampler::cameraInsideSelectionBounds(
+            tile,
+            visibilityContext);
     selection.priority = preparation.inputSummary.priority;
 
     const TileSelectionVisitOutcomePlan visitOutcome =

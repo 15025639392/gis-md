@@ -19411,6 +19411,10 @@ void testTileSelectionVisibilitySamplerUsesCameraAndChildBounds() {
     check(explicitVolumeSample.visibleFromCamera &&
               !explicitVolumeSample.inFrustum,
           "TileSelectionVisibilitySampler: render-under-camera uses explicit bounding volume like cesium-native");
+    check(TileSelectionVisibilitySampler::cameraInsideSelectionBounds(
+              explicitVolumeTile,
+              cameraContext),
+          "TileSelectionVisibilitySampler: camera-inside diagnostic uses explicit bounding volume like cesium-native");
 }
 
 void testTileSelectionVisibilitySamplerChoosesSelectionBoundsLikeNative() {
@@ -28607,6 +28611,59 @@ void testTilesetOcclusionUnconditionalChildSkipsAggregation() {
           "Tileset: unconditionally refined child disables child occlusion union");
 }
 
+void testTilesetCameraInsideDiagnosticUsesExplicitRootVolume() {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: camera-inside explicit root-volume tile is created");
+    if (!root) return;
+
+    root->bounds = Rectangle{2.0, 2.0, 3.0, 3.0};
+    root->boundingVolume =
+        TileBoundingVolume::fromRegion(
+            Rectangle{-0.25, -0.25, 0.25, 0.25},
+            0.0,
+            0.0);
+    const TileSelectionVisibilityContext cameraContext{
+        true,
+        0.0,
+        0.0};
+    check(TileSelectionVisibilitySampler::cameraInsideSelectionBounds(
+              *root,
+              cameraContext),
+          "Tileset: camera-inside explicit root-volume helper sees camera");
+
+    const Cartographic cameraCartographic(0.0, 0.0, 1000000.0);
+    const Vec3 cameraPosition =
+        Ellipsoid::WGS84().cartographicToCartesian(cameraCartographic);
+    const Vec3 target =
+        Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic(0.0, 0.0, 0.0));
+    Camera camera;
+    camera.lookAt(cameraPosition, target, Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 106;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    check(root->selectionFrameState.selectionState != TileSelectionState::NotVisited,
+          "Tileset: camera-inside explicit root-volume tile is visited");
+    check(root->selectionFrameState.cameraInside,
+          "Tileset: camera-inside diagnostic uses explicit bounding volume like cesium-native");
+}
+
 void testTilesetDefaultSoftwareOcclusionCanCullFarSideTile() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -30766,6 +30823,7 @@ int main() {
     testTilesetOcclusionVisibleChildKeepsParentRefining();
     testTilesetOcclusionUnavailableChildDelaysNewRefinement();
     testTilesetOcclusionUnconditionalChildSkipsAggregation();
+    testTilesetCameraInsideDiagnosticUsesExplicitRootVolume();
     testTilesetDefaultSoftwareOcclusionCanCullFarSideTile();
     testTilesetSoftwareOcclusionKeepsNonBoxVolumeUnderCameraVisible();
     testTilesetSoftwareOcclusionUsesExplicitVolumeRectangleForUnderCamera();
