@@ -1,11 +1,15 @@
 #pragma once
 
 #include "XYZImageryProvider.h"
+#include "../tiling/TileScheme.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace earth_engine {
+
+class BingMapsImageryProvider;
 
 struct BingMapsImageryOptions {
     std::string culture;
@@ -45,6 +49,11 @@ struct BingMapsMetadataParseResult {
     std::string error;
 };
 
+struct BingMapsImagerySource {
+    std::unique_ptr<BingMapsImageryProvider> provider;
+    std::unique_ptr<TileScheme> scheme;
+};
+
 class BingMapsImageryProvider : public XYZImageryProvider {
 public:
     BingMapsImageryProvider(std::string baseUrl,
@@ -76,5 +85,11 @@ std::string bingMapsMetadataUrl(const std::string& baseUrl,
 
 BingMapsMetadataParseResult parseBingMapsMetadata(
     const std::string& metadataJson);
+
+BingMapsImagerySource createBingMapsImagerySource(
+    std::string baseUrl,
+    const BingMapsMetadata& metadata,
+    std::string culture = "",
+    std::string attribution = "");
 
 } // namespace earth_engine

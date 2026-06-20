@@ -1010,6 +1010,38 @@ TEST(BingMapsImageryProviderTest, RejectsInvalidMetadataLikeCesiumNative) {
         result.error);
 }
 
+TEST(BingMapsImageryProviderTest, CreatesSourceFromMetadataLikeCesiumNative) {
+    BingMapsMetadata metadata;
+    metadata.imageUrl = "tiles/{subdomain}/{quadkey}.jpeg?mkt={culture}";
+    metadata.imageUrlSubdomains = {"t0", "t1"};
+    metadata.imageWidth = 512;
+    metadata.imageHeight = 256;
+    metadata.zoomMax = 19;
+
+    BingMapsImagerySource source = createBingMapsImagerySource(
+        "https://dev.virtualearth.net/root/metadata.json",
+        metadata,
+        "en-US",
+        "bing attribution");
+
+    ASSERT_TRUE(source.provider);
+    ASSERT_TRUE(source.scheme);
+    EXPECT_EQ("XYZ-WebMercator", source.scheme->id());
+    EXPECT_EQ("bing-maps-imagery", source.provider->type());
+    EXPECT_EQ("XYZ-WebMercator", source.provider->schemeId());
+    EXPECT_EQ(0, source.provider->minZoom());
+    EXPECT_EQ(19, source.provider->maxZoom());
+    EXPECT_EQ(512, source.provider->tileWidth());
+    EXPECT_EQ(256, source.provider->tileHeight());
+    EXPECT_EQ("bing attribution", source.provider->attribution());
+    EXPECT_EQ("en-US", source.provider->options().culture);
+    EXPECT_EQ((std::vector<std::string>{"t0", "t1"}),
+              source.provider->options().subdomains);
+    EXPECT_EQ(
+        "https://dev.virtualearth.net/root/tiles/t0/0.jpeg?mkt=en-US&n=z",
+        source.provider->buildUrl(TileKey{"XYZ-WebMercator", 0, 0, 0}));
+}
+
 TEST(TileMapServiceUrlTest, AppendsTileMapResourceXmlBeforeQueryLikeCesiumNative) {
     EXPECT_EQ(
         "https://example.com/tms/tilemapresource.xml",

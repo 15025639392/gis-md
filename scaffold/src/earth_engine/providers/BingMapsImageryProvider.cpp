@@ -404,4 +404,26 @@ BingMapsMetadataParseResult parseBingMapsMetadata(
     return BingMapsMetadataParseResult{true, std::move(metadata), std::string()};
 }
 
+BingMapsImagerySource createBingMapsImagerySource(
+    std::string baseUrl,
+    const BingMapsMetadata& metadata,
+    std::string culture,
+    std::string attribution) {
+    BingMapsImageryOptions options;
+    options.culture = std::move(culture);
+    options.subdomains = metadata.imageUrlSubdomains;
+    options.maximumLevel = metadata.zoomMax;
+    options.tileWidth = metadata.imageWidth;
+    options.tileHeight = metadata.imageHeight;
+
+    BingMapsImagerySource source;
+    source.provider = std::make_unique<BingMapsImageryProvider>(
+        std::move(baseUrl),
+        metadata.imageUrl,
+        std::move(options),
+        std::move(attribution));
+    source.scheme = TileScheme::createXYZWebMercator();
+    return source;
+}
+
 } // namespace earth_engine
