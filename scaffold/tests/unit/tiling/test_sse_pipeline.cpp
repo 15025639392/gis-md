@@ -19588,6 +19588,35 @@ void testTilePendingUploadCompletionKeepsOtherKindForSharedKey() {
           "TilePendingUploadCompletion: shared key clears only after both upload kinds complete");
 }
 
+void testTilePendingUploadCompletionClaimedUploadCountsAsWork() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            TileKey{"test", 1, 0, 0},
+            "terrain",
+            TileLoadPriorityGroup::Normal,
+            1.0,
+            nullptr});
+        std::optional<PendingLoadFinalize> upload =
+            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+        check(upload && upload->kind == PendingLoadFinalizeKind::Terrain,
+              "TilePendingUploadCompletion: claimed-upload test dequeues upload payload");
+    }
+
+    check(lifecycle.containsWorkForCacheKey("terrain") &&
+              lifecycle.hasPendingWork(),
+          "TilePendingUploadCompletion: claimed upload key keeps lifecycle work visible until completion");
+
+    TilePendingUploadCompletion::eraseTerrainUpload(lifecycle, "terrain");
+    check(!lifecycle.hasPendingWork(),
+          "TilePendingUploadCompletion: claimed upload completion leaves lifecycle idle");
+}
+
 void testTilePendingRequestStateCountsAndCompletesRequests() {
     TilePendingRequestState state;
     CancellationToken terrainToken;
@@ -28447,6 +28476,7 @@ int main() {
     testTilePendingLoadProcessorTerminalElapsedStopsUploads();
     testTilePendingUploadCompletionErasesUploadKeys();
     testTilePendingUploadCompletionKeepsOtherKindForSharedKey();
+    testTilePendingUploadCompletionClaimedUploadCountsAsWork();
     testTilePendingRequestStateCountsAndCompletesRequests();
     testPendingLoadStateRejectsEmptyCacheKeys();
     testTilePendingRequestStateCancelsAndRejectsDuringDestroy();

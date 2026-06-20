@@ -140,7 +140,9 @@ void TilePendingLoadQueue::clear() {
 }
 
 bool TilePendingLoadQueue::hasWork() const {
-    return !terrainUploads_.empty() ||
+    return !terrainUploadKeys_.empty() ||
+           !contentUploadKeys_.empty() ||
+           !terrainUploads_.empty() ||
            !terrainTerminalResults_.empty() ||
            !contentUploads_.empty() ||
            !contentTerminalResults_.empty();
