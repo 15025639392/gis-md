@@ -88,9 +88,8 @@ public:
             }
         }
 
-        double cameraHeight = Ellipsoid::WGS84().cartesianToCartographic(
+        const double cameraHeight = Ellipsoid::WGS84().cartesianToCartographic(
             input.lastCameraPosition).height();
-        cameraHeight = std::max(0.0, cameraHeight);
         const double fogDensity =
             TileSelectionMetrics::computeFogDensity(
                 input.fogDensityTable,

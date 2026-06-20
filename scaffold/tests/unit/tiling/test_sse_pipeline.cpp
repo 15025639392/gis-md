@@ -14903,6 +14903,22 @@ void testTileSelectionFrameBuilderCopiesViewsAndComputesFog() {
               std::abs(selectorFrame.fogDensities[0] - 0.001) < 1e-12 &&
               std::abs(selectorFrame.fogDensities[1] - 0.005) < 1e-12,
           "TileSelectionFrameBuilder: fog density follows each view height");
+
+    FrameState belowEllipsoidFrame;
+    SelectorView belowEllipsoidView;
+    belowEllipsoidView.position = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic::fromRadians(0.0, 0.0, -100.0));
+    belowEllipsoidFrame.selectorViews = {belowEllipsoidView};
+
+    selectorFrame = TileSelectionFrameBuilder::build(
+        belowEllipsoidFrame,
+        {
+            {-200.0, 0.001},
+            {100.0, 0.004},
+        });
+    check(selectorFrame.fogDensities.size() == 1 &&
+              std::abs(selectorFrame.fogDensities[0] - 0.002) < 1e-12,
+          "TileSelectionFrameBuilder: below-ellipsoid camera height participates in fog interpolation like cesium-native");
 }
 
 void testTileSelectionResetPolicyPlansPerFrameState() {
