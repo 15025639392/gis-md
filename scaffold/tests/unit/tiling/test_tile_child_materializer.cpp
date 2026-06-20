@@ -382,6 +382,33 @@ TEST(TileChildMaterializerTest, CanRefineStopsAtMaxZoomWithoutChildrenOrTerrainS
         [](const TileKey&) { return TileAvailabilityState::Available; }));
 }
 
+TEST(TileChildMaterializerTest, CanRefineSkipsOutOfRangeGeographicTmsChildren) {
+    TilesetTile tile(TileKey{"Geographic-TMS", 0, 2, 0}, Rectangle{});
+    int cacheChecks = 0;
+    int availabilityChecks = 0;
+
+    EXPECT_FALSE(TileChildMaterializer::canRefine(
+        tile,
+        TileRefinementAvailabilityOptions{
+            false,
+            false,
+            false,
+            false,
+            true,
+            2},
+        [](const TileKey&) { return std::string{"child"}; },
+        [&cacheChecks](const std::string&) {
+            ++cacheChecks;
+            return true;
+        },
+        [&availabilityChecks](const TileKey&) {
+            ++availabilityChecks;
+            return TileAvailabilityState::Available;
+        }));
+    EXPECT_EQ(0, cacheChecks);
+    EXPECT_EQ(0, availabilityChecks);
+}
+
 TEST(TileChildMaterializerTest, CanRefineBlocksAvailabilityBoundaryAndTerrainUpsampledTiles) {
     TilesetTile tile(TileKey{"Geographic-TMS", 0, 0, 0}, Rectangle{});
 
