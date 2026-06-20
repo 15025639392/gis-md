@@ -85,6 +85,10 @@ TileTerminalLoadPolicy::applyContentTerminalResult(
             action.resourcesDirty = true;
             break;
         case TileContentLoadStatus::Failed:
+            markUnknownPermanentFailure(tile);
+            action.ensureChildren = true;
+            action.resourcesDirty = true;
+            break;
         case TileContentLoadStatus::Render:
             markUnknownPermanentFailure(tile);
             action.resourcesDirty = true;

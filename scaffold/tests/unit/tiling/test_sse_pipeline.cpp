@@ -7643,9 +7643,11 @@ class SelectionTreeContentProvider final : public TilesetContentProvider {
 public:
     SelectionTreeContentProvider(
         std::vector<TileKey> roots,
-        std::vector<std::pair<TileKey, std::vector<TileKey>>> children)
+        std::vector<std::pair<TileKey, std::vector<TileKey>>> children,
+        TileContentLoadStatus terminalStatus = TileContentLoadStatus::RetryLater)
         : roots_(std::move(roots)),
-          children_(std::move(children)) {}
+          children_(std::move(children)),
+          terminalStatus_(terminalStatus) {}
 
     std::string id() const override {
         return "selection-tree-content";
@@ -7680,7 +7682,7 @@ public:
                             CancellationToken,
                             ContentCallback callback,
                             HttpRequestPriority = HttpRequestPriority::Normal) override {
-        callback(key, TileContentLoadResult::retryLater());
+        callback(key, terminalResult());
     }
 
     TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
@@ -7688,8 +7690,20 @@ public:
     }
 
 private:
+    TileContentLoadResult terminalResult() const {
+        switch (terminalStatus_) {
+            case TileContentLoadStatus::RetryLater:
+                return TileContentLoadResult::retryLater();
+            case TileContentLoadStatus::Failed:
+                return TileContentLoadResult::failed();
+            default:
+                return TileContentLoadResult::failed();
+        }
+    }
+
     std::vector<TileKey> roots_;
     std::vector<std::pair<TileKey, std::vector<TileKey>>> children_;
+    TileContentLoadStatus terminalStatus_ = TileContentLoadStatus::RetryLater;
 };
 
 std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
@@ -12672,6 +12686,42 @@ void testTilesetContentRetryLaterMaterializesLatentChildren() {
           "Tileset: RetryLater content still materializes latent children like cesium-native");
 }
 
+void testTilesetContentFailedMaterializesLatentChildrenWithoutRetry() {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, {childKey}}},
+        TileContentLoadStatus::Failed);
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        nullptr,
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTestAccess::ensureTile(tileset, rootKey);
+    TilesetTestAccess::requestMissingTile(tileset, rootKey);
+    TilesetTestAccess::processPendingUploads(tileset);
+
+    TilesetTile* root = TilesetTestAccess::findTile(tileset, rootKey);
+    check(root &&
+              root->content.loadState == TileLoadState::Failed &&
+              root->content.contentKind == TileContentKind::Unknown,
+          "Tileset: Failed content remains a permanent unknown failure");
+    check(root && root->children.size() == 1 &&
+              root->children.front() &&
+              root->children.front()->key == childKey,
+          "Tileset: Failed content still materializes latent children like cesium-native");
+
+    TilesetTestAccess::requestMissingTile(tileset, rootKey);
+    check(root && root->content.loadState == TileLoadState::Failed,
+          "Tileset: Failed content remains non-retryable after latent child materialization");
+}
+
 void testTilesetFailedTerminalDoesNotRetry() {
     auto provider = std::make_unique<TerminalTerrainProvider>(
         TerrainTileLoadStatus::Failed);
@@ -14469,6 +14519,16 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::FailedTemporarily,
           "TileTerminalLoadPolicy: cancelled content maps to temporary failure");
+
+    action = TileTerminalLoadPolicy::applyContentTerminalResult(
+        tile,
+        TileContentLoadStatus::Failed);
+    check(!action.markEmptyCacheKey &&
+              action.ensureChildren &&
+              action.resourcesDirty &&
+              tile.content.contentKind == TileContentKind::Unknown &&
+              tile.content.loadState == TileLoadState::Failed,
+          "TileTerminalLoadPolicy: failed content maps to permanent failure and latent child materialization");
 
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         tile,
@@ -24165,6 +24225,7 @@ int main() {
     testTilesetRequestsExplicitAvailabilityPastProviderMaxzoom();
     testTilesetRetryLaterRemainsRetryable();
     testTilesetContentRetryLaterMaterializesLatentChildren();
+    testTilesetContentFailedMaterializesLatentChildrenWithoutRetry();
     testTilesetFailedTerminalDoesNotRetry();
     testTilesetEmptyContentReachesDone();
     testTilesetRenderContentRequiresDoneState();
