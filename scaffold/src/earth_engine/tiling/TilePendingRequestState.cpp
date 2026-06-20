@@ -81,7 +81,6 @@ void TilePendingRequestState::markDestroyingAndCancelRequests() {
         token.cancel();
         (void)cacheKey;
     }
-    pendingContentRequestKeys_.clear();
 }
 
 void TilePendingRequestState::clearAfterCallbacksComplete() {

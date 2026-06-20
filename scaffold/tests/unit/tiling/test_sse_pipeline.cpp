@@ -18115,18 +18115,27 @@ void testTilePendingRequestStateCountsAndCompletesRequests() {
 
 void testTilePendingRequestStateCancelsAndRejectsDuringDestroy() {
     TilePendingRequestState state;
-    CancellationToken token;
-    check(state.beginTerrainRequest("terrain", token),
-          "TilePendingRequestState: starts request before destroy");
+    CancellationToken terrainToken;
+    CancellationToken contentToken;
+    check(state.beginTerrainRequest("terrain", terrainToken),
+          "TilePendingRequestState: starts terrain request before destroy");
+    check(state.beginContentRequest("content", contentToken),
+          "TilePendingRequestState: starts content request before destroy");
 
     state.markDestroyingAndCancelRequests();
     check(state.destroying(),
           "TilePendingRequestState: exposes destroying state");
-    check(token.isCancelled(),
-          "TilePendingRequestState: destroy cancels pending token");
+    check(terrainToken.isCancelled() && contentToken.isCancelled(),
+          "TilePendingRequestState: destroy cancels pending tokens");
+    const PendingRequestCounts destroyingCounts = state.counts();
+    check(destroyingCounts.terrainRequests == 1 &&
+              destroyingCounts.contentRequests == 1 &&
+              destroyingCounts.totalRequests == 2,
+          "TilePendingRequestState: destroy preserves pending request kinds until callbacks drain");
     check(!state.beginContentRequest("content", CancellationToken{}),
           "TilePendingRequestState: destroying state rejects new requests");
 
+    state.completeContentRequest("content");
     state.completeTerrainRequest("terrain");
     check(state.empty(),
           "TilePendingRequestState: callbacks can drain requests after destroy");
