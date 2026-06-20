@@ -15783,6 +15783,33 @@ void testTileContentUnloadCoordinatorErasesEmptyContentRegistryKey() {
           "TileContentUnloadCoordinator: empty content unload clears empty registry and tile content state");
 }
 
+void testTileContentUnloadCoordinatorKeepsLoadingContent() {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.content.contentKind = TileContentKind::Unknown;
+    tile.content.loadState = TileLoadState::ContentLoading;
+    const std::string cacheKey = "test:0:0:0";
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    terrainCache[cacheKey] = std::make_unique<DecodedHeightmap>();
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
+
+    const TileCacheUnloadContentResult result =
+        TileContentUnloadCoordinator::unloadContent(
+            tile,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            nullptr);
+
+    check(result == TileCacheUnloadContentResult::Keep &&
+              tile.content.contentKind == TileContentKind::Unknown &&
+              tile.content.loadState == TileLoadState::ContentLoading &&
+              terrainCache.find(cacheKey) != terrainCache.end() &&
+              emptyContentRegistry.contains(cacheKey),
+          "TileContentUnloadCoordinator: loading content unload is kept without clearing cache state");
+}
+
 void testTileIndexStateErasesEmptyContentRegistryKey() {
     TileUnloadQueue unloadQueue;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
@@ -25707,6 +25734,7 @@ int main() {
     testTileLodTransitionControllerRestartsReturnedFadeOutTile();
     testTileEmptyContentRegistryOwnsEmptyCacheKeys();
     testTileContentUnloadCoordinatorErasesEmptyContentRegistryKey();
+    testTileContentUnloadCoordinatorKeepsLoadingContent();
     testTileIndexStateErasesEmptyContentRegistryKey();
     testTileTerrainHeightRangePolicySetsAndInheritsRanges();
     testTileTerrainHeightRangePolicyAppliesMeshOrHeightmapRanges();
