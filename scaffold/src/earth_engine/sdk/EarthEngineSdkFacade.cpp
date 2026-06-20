@@ -237,6 +237,7 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
             wmtsOptions.style = overlayConfig.wmtsStyle;
             wmtsOptions.tileMatrixSetId =
                 overlayConfig.wmtsTileMatrixSetId;
+            wmtsOptions.schemeId = overlayConfig.wmtsSchemeId;
             wmtsOptions.tileMatrixLabels =
                 overlayConfig.wmtsTileMatrixLabels.empty()
                     ? std::optional<std::vector<std::string>>()
@@ -262,7 +263,9 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
             addActivatedRasterOverlay(
                 rasterOverlays,
                 std::move(wmts),
-                TileScheme::createXYZWebMercator(),
+                overlayConfig.wmtsSchemeId == "Geographic-TMS"
+                    ? TileScheme::createGeographicTMS()
+                    : TileScheme::createXYZWebMercator(),
                 makeRasterOverlayOptions(overlayConfig));
             continue;
         }

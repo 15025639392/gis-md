@@ -114,6 +114,7 @@ TEST(EarthSceneConfig, StoresWebMapTileServiceImagerySourceDefinitions) {
     overlay.wmtsLayer = "imagery";
     overlay.wmtsStyle = "default";
     overlay.wmtsTileMatrixSetId = "GoogleMapsCompatible";
+    overlay.wmtsSchemeId = "Geographic-TMS";
     overlay.wmtsTileMatrixLabels = {"0", "1", "2"};
     overlay.wmtsSubdomains = {"a", "b"};
     overlay.wmtsDimensions = {{"time", "2026-06-21"}};
@@ -132,6 +133,7 @@ TEST(EarthSceneConfig, StoresWebMapTileServiceImagerySourceDefinitions) {
     EXPECT_EQ("imagery", copied.wmtsLayer);
     EXPECT_EQ("default", copied.wmtsStyle);
     EXPECT_EQ("GoogleMapsCompatible", copied.wmtsTileMatrixSetId);
+    EXPECT_EQ("Geographic-TMS", copied.wmtsSchemeId);
     EXPECT_EQ((std::vector<std::string>{"0", "1", "2"}),
               copied.wmtsTileMatrixLabels);
     EXPECT_EQ((std::vector<std::string>{"a", "b"}),

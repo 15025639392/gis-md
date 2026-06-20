@@ -71,6 +71,7 @@ struct RasterOverlaySourceConfig {
     std::string wmtsLayer;
     std::string wmtsStyle;
     std::string wmtsTileMatrixSetId;
+    std::string wmtsSchemeId = "XYZ-WebMercator";
     std::vector<std::string> wmtsTileMatrixLabels;
     std::vector<std::string> wmtsSubdomains;
     std::map<std::string, std::string> wmtsDimensions;
