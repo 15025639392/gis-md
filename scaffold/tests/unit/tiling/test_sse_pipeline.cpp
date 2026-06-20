@@ -19098,6 +19098,39 @@ void testTilePendingLoadQueueTakesTerminalResultsByPriority() {
           "TilePendingLoadQueue: shared terminal take removes only selected result");
 }
 
+void testTilePendingLoadQueueKeepsTerminalResultWhenBudgetBlocks() {
+    TilePendingLoadQueue queue;
+    const TileKey key{"test", 1, 0, 0};
+    FrameResourceBudgetConfig blockedConfig;
+    blockedConfig.maxTerminalStateTransitionsPerFrame = 0;
+    FrameResourceBudget blockedBudget;
+    blockedBudget.beginFrame(1, blockedConfig);
+
+    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+        key,
+        "terminal",
+        TileLoadPriorityGroup::Urgent,
+        0.0,
+        TerrainTileLoadStatus::RetryLater});
+
+    std::optional<PendingTerminalResult> blocked =
+        queue.takeHighestPriorityTerminalResult(blockedBudget);
+    check(!blocked && queue.terrainTerminalResultCount() == 1 &&
+              queue.containsCacheKey("terminal"),
+          "TilePendingLoadQueue: terminal budget block keeps result pending");
+
+    FrameResourceBudgetConfig retryConfig;
+    retryConfig.maxTerminalStateTransitionsPerFrame = 1;
+    FrameResourceBudget retryBudget;
+    retryBudget.beginFrame(2, retryConfig);
+    std::optional<PendingTerminalResult> retry =
+        queue.takeHighestPriorityTerminalResult(retryBudget);
+    check(retry && retry->kind == PendingTerminalResultKind::Terrain &&
+              retry->terrainResult &&
+              retry->terrainResult->cacheKey == "terminal",
+          "TilePendingLoadQueue: terminal result blocked by previous frame budget remains retryable");
+}
+
 void testTilePendingLoadQueueRejectsEmptyCacheKeys() {
     TilePendingLoadQueue queue;
     const TileKey key{"test", 1, 0, 0};
@@ -28107,6 +28140,7 @@ int main() {
     testTilePendingLoadQueueFiltersNonUrgentDuringInteraction();
     testTilePendingLoadQueueKeepsUploadWhenFinalizeBudgetBlocks();
     testTilePendingLoadQueueTakesTerminalResultsByPriority();
+    testTilePendingLoadQueueKeepsTerminalResultWhenBudgetBlocks();
     testTilePendingLoadQueueRejectsEmptyCacheKeys();
     testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads();
     testTilePendingLoadProcessorBudgetsTerminalResults();
