@@ -20382,6 +20382,41 @@ void testTileContentLifecycleManagerOwnsLifecycleState() {
           "TileContentLifecycleManager: shutdown drains owned lifecycle state");
 }
 
+void testTileContentLifecycleManagerExposesClaimedUploadWork() {
+    TileContentLifecycleManager manager;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(manager.loadLifecycle().mutex());
+        manager.loadLifecycle().pendingLoads().addContentUpload(
+            PendingContentUpload{
+                TileKey{"test", 0, 0, 0},
+                "content-upload",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadResult::empty()});
+        check(manager.loadLifecycle()
+                  .pendingLoads()
+                  .takeHighestPriorityUpload(false, budget)
+                  .has_value(),
+              "TileContentLifecycleManager: claimed upload test dequeues payload");
+    }
+
+    check(manager.hasPendingWork() &&
+              manager.loadLifecycle().containsWorkForCacheKey(
+                  "content-upload"),
+          "TileContentLifecycleManager: claimed upload remains externally visible as pending work");
+
+    TilePendingUploadCompletion::eraseContentUpload(
+        manager.loadLifecycle(),
+        "content-upload");
+
+    check(!manager.hasPendingWork(),
+          "TileContentLifecycleManager: claimed upload completion clears exposed pending work");
+}
+
 void testTileLoadRequestDispatcherBlocksWhenBudgetIsExhausted() {
     class SyncTerrainProvider final : public TerrainProvider {
     public:
@@ -28934,6 +28969,7 @@ int main() {
     testTileLoadLifecycleDestroyWithoutRequestsReturnsImmediately();
     testTileLoadLifecycleDestroyClearsClaimedUploadKeys();
     testTileContentLifecycleManagerOwnsLifecycleState();
+    testTileContentLifecycleManagerExposesClaimedUploadWork();
     testTileContentStateTransitionOwnsLoadAndContentStateChanges();
     testTileLoadRequestDispatcherBlocksWhenBudgetIsExhausted();
     testTileLoadRequestDispatcherSkipsEmptyCacheKeys();
