@@ -47,6 +47,11 @@ std::optional<std::string> tileMapServiceTileUrlForKey(
     const TileMapServiceMetadata& metadata,
     const TileKey& key);
 
+/// Convert cesium-native projected TMS coverage into the geographic-radian
+/// rectangle used by RasterOverlay options.
+std::optional<Rectangle> tileMapServiceGeographicCoverageRectangle(
+    const TileMapServiceMetadata& metadata);
+
 TileMapServiceMetadata parseTileMapServiceMetadata(const std::string& xml);
 
 } // namespace earth_engine

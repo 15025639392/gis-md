@@ -373,6 +373,17 @@ std::optional<std::string> tileMapServiceTileUrlForKey(
                                  "." + metadata.fileExtension);
 }
 
+std::optional<Rectangle> tileMapServiceGeographicCoverageRectangle(
+    const TileMapServiceMetadata& metadata) {
+    if (!metadata.projectedCoverageRectangle) {
+        return std::nullopt;
+    }
+
+    return unprojectRectangleSimple(
+        projectionForSchemeId(metadata.schemeId),
+        *metadata.projectedCoverageRectangle);
+}
+
 TileMapServiceMetadata parseTileMapServiceMetadata(const std::string& xml) {
     TileMapServiceMetadata metadata;
     const std::string_view view(xml);

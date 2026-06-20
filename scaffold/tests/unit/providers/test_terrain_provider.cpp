@@ -789,6 +789,31 @@ TEST(TileMapServiceUrlTest, ParsesGlobalMercatorBoundingBoxAsProjectedLikeCesium
         0.0));
 }
 
+TEST(TileMapServiceUrlTest, ConvertsProjectedCoverageToGeographicOverlayRectangle) {
+    TileMapServiceMetadata metadata = parseTileMapServiceMetadata(R"xml(
+      <TileMap>
+        <BoundingBox minx="-10" miny="-20" maxx="30" maxy="40" />
+        <TileSets profile="mercator" />
+      </TileMap>
+    )xml");
+
+    const std::optional<Rectangle> coverage =
+        tileMapServiceGeographicCoverageRectangle(metadata);
+
+    ASSERT_TRUE(coverage.has_value());
+    EXPECT_TRUE(coverage->equalsEpsilon(
+        Rectangle::fromDegrees(-10.0, -20.0, 30.0, 40.0),
+        1e-12));
+
+    metadata = parseTileMapServiceMetadata(R"xml(
+      <TileMap>
+        <TileSets profile="global-mercator" />
+      </TileMap>
+    )xml");
+
+    EXPECT_FALSE(tileMapServiceGeographicCoverageRectangle(metadata).has_value());
+}
+
 TEST(TileMapServiceImageryProviderTest, ConfiguresProviderFromMetadataLikeCesiumNative) {
     TileMapServiceMetadata metadata;
     metadata.fileExtension = "jpg";
