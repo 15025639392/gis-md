@@ -3981,6 +3981,35 @@ void testQuantizedMeshWaterMaskExtensions() {
           "QuantizedMeshParser: water mask alpha values preserve cesium-native 0-land 255-water semantics");
 }
 
+void testQuantizedMeshProviderRasterizesCesiumHeightmapGrid() {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/{z}/{x}/{y}.terrain");
+    const float minimumHeight = -50.0f;
+    const float maximumHeight = 150.0f;
+    const std::vector<uint8_t> bytes = makeQuantizedMeshBytes(
+        "", false, false, Vec3::zero(), minimumHeight, maximumHeight);
+
+    std::unique_ptr<DecodedHeightmap> heightmap =
+        provider.decodeTile(bytes.data(), bytes.size());
+
+    check(heightmap != nullptr,
+          "QuantizedMeshTerrainProvider: quantized mesh decodes to rasterized heightmap");
+    check(heightmap && heightmap->tileSize == 65 &&
+              heightmap->heights.size() == 65u * 65u,
+          "QuantizedMeshTerrainProvider: rasterized heightmap uses cesium-native 65x65 grid");
+    check(heightmap &&
+              std::abs(heightmap->minHeight - minimumHeight) < 1e-6 &&
+              std::abs(heightmap->maxHeight - maximumHeight) < 1e-6,
+          "QuantizedMeshTerrainProvider: rasterized heightmap preserves quantized-mesh header height range");
+    check(heightmap &&
+              std::abs(heightmap->heights.front() - minimumHeight) < 1e-3f &&
+              std::abs(heightmap->heights[64] - minimumHeight) < 1e-3f &&
+              std::abs(heightmap->heights[64u * 65u] - minimumHeight) < 1e-3f,
+          "QuantizedMeshTerrainProvider: rasterized grid decodes quantized corner heights");
+    check(heightmap && heightmap->rawData == bytes,
+          "QuantizedMeshTerrainProvider: decoded heightmap retains raw quantized mesh for triangulated mesh reconstruction");
+}
+
 void testTilesetUsesQuantizedMeshRtcOrigin() {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
@@ -21366,6 +21395,7 @@ int main() {
     testQuantizedMeshHeaderHeightRangeIsExposed();
     testQuantizedMeshVertexUvAndHeightGolden();
     testQuantizedMeshWaterMaskExtensions();
+    testQuantizedMeshProviderRasterizesCesiumHeightmapGrid();
     testTilesetUsesQuantizedMeshRtcOrigin();
     testTilesetUsesQuantizedMeshHeightRange();
     testTilesetBoundsUseQuantizedMeshHeightRange();
