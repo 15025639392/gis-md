@@ -6080,6 +6080,27 @@ void testQuantizedMeshLayerJsonUriResolution() {
     check(absoluteProvider.buildUrl(TileKey{"Geographic-TMS", 2, 3, 1}) ==
               "https://cdn.example.invalid/qm/2/3/1.terrain?token=base",
           "QuantizedMeshTerrainProvider: absolute template inherits layer query like cesium-native");
+
+    QuantizedMeshTerrainProvider queryAndExtensionProvider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string queryAndExtensionLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{level}.{x}.{y}/{version}.terrain"],
+      "version": "1.0.0",
+      "extensions": ["metadata"],
+      "minzoom": 0,
+      "maxzoom": 4
+    })json";
+
+    check(queryAndExtensionProvider.configureFromLayerJson(
+              queryAndExtensionLayerJson,
+              "https://example.invalid/layer.json?param=some_parameter_here"),
+          "QuantizedMeshTerrainProvider: base-query extension layer configures");
+    check(queryAndExtensionProvider.buildUrl(TileKey{"Geographic-TMS", 0, 0, 0}) ==
+              "https://example.invalid/0.0.0/1.0.0.terrain?param=some_parameter_here&extensions=metadata",
+          "QuantizedMeshTerrainProvider: base query and extensions merge like cesium-native");
 }
 
 void testQuantizedMeshFabdemLayerJsonShape() {
