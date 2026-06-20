@@ -63,6 +63,7 @@ public:
 
 private:
     RasterOverlay& overlay_;
+    std::unique_ptr<RasterOverlayTileProvider> placeholderProvider_;
     std::unique_ptr<RasterOverlayTileProvider> tileProvider_;
     int maximumSimultaneousTileLoads_ = 20;
 };

@@ -7,7 +7,17 @@ namespace earth_engine {
 
 ActivatedRasterOverlay::ActivatedRasterOverlay(RasterOverlay& overlay)
     : overlay_(overlay)
-    , maximumSimultaneousTileLoads_(overlay.getOptions().maximumSimultaneousTileLoads) {}
+    , placeholderProvider_(std::make_unique<RasterOverlayTileProvider>(
+          overlay.getProvider(),
+          overlay.getTileScheme(),
+          nullptr))
+    , maximumSimultaneousTileLoads_(overlay.getOptions().maximumSimultaneousTileLoads) {
+    placeholderProvider_->setOwner(&overlay_);
+    placeholderProvider_->maximumSimultaneousTileLoads =
+        maximumSimultaneousTileLoads_;
+    placeholderProvider_->setMaximumScreenSpaceError(
+        overlay_.getOptions().maximumScreenSpaceError);
+}
 
 ActivatedRasterOverlay::~ActivatedRasterOverlay() = default;
 
@@ -33,8 +43,10 @@ RasterOverlayTileProvider* ActivatedRasterOverlay::ensureTileProvider(
 }
 
 RasterOverlayTile* ActivatedRasterOverlay::getPlaceholderTile() {
-    if (!tileProvider_) return nullptr;
-    return tileProvider_->getPlaceholderTile().get();
+    RasterOverlayTileProvider* provider =
+        placeholderProvider_ ? placeholderProvider_.get() : tileProvider_.get();
+    if (!provider) return nullptr;
+    return provider->getPlaceholderTile().get();
 }
 
 int ActivatedRasterOverlay::processPendingUploads(
@@ -72,6 +84,10 @@ int ActivatedRasterOverlay::getCachedTileCount() const {
 
 void ActivatedRasterOverlay::setMaximumSimultaneousTileLoads(int n) {
     maximumSimultaneousTileLoads_ = n > 0 ? n : 20;
+    if (placeholderProvider_) {
+        placeholderProvider_->maximumSimultaneousTileLoads =
+            maximumSimultaneousTileLoads_;
+    }
     if (tileProvider_) {
         tileProvider_->maximumSimultaneousTileLoads =
             maximumSimultaneousTileLoads_;

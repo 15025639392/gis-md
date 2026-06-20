@@ -2640,6 +2640,22 @@ void testActivatedRasterOverlayBindsProviderOwner() {
           "ActivatedRasterOverlay: ensureTileProvider binds provider owner like cesium-native");
 }
 
+void testActivatedRasterOverlayExposesPlaceholderBeforeProvider() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+
+    ActivatedRasterOverlay activated(*overlay);
+
+    check(activated.getTileProvider() == nullptr,
+          "ActivatedRasterOverlay: active provider is null before ensure like cesium-native");
+    check(activated.getPlaceholderTile() != nullptr &&
+              activated.getPlaceholderTile()->getState() ==
+                  RasterOverlayTile::LoadState::Placeholder,
+          "ActivatedRasterOverlay: placeholder tile exists before provider creation like cesium-native");
+}
+
 void testActivatedRasterOverlayEnsuresProvider() {
     RasterOverlay::Options options = makeRasterOverlayOptions();
     options.maximumScreenSpaceError = 4.0;
@@ -23785,6 +23801,7 @@ int main() {
     testQuantizedMeshProviderSkipsLoadedUnderlyingMetadataSubtree();
     testQuantizedMeshMetadataFanoutConsumesTerrainRequestBudget();
     testActivatedRasterOverlayBindsProviderOwner();
+    testActivatedRasterOverlayExposesPlaceholderBeforeProvider();
     testActivatedRasterOverlayEnsuresProvider();
     testRasterOverlayProviderRectangleTile();
     testRasterOverlayRectangleSourceRequestsAreBudgetedAcrossFrames();
