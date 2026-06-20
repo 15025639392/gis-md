@@ -4,6 +4,7 @@
 #include "earth_engine/providers/ImageryProvider.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/providers/RasterTextureUploader.h"
+#include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
 #include "earth_engine/renderer/RenderCommand.h"
 #include "earth_engine/renderer/RenderDevice.h"
@@ -221,6 +222,37 @@ TEST(RasterOverlayLifecycleTest, DirectTileCreationRejectsUnsupportedProviderTil
     auto supported = provider.getTile(TileKey{scheme->id(), 2, 0, 0});
     ASSERT_NE(nullptr, supported);
     EXPECT_EQ(1, provider.getCachedTileCount());
+}
+
+TEST(RasterOverlayLifecycleTest, RectangleCoverageRejectsOutsideAndClipsSourcePlan) {
+    ParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    RasterOverlay::Options options;
+    options.coverageRectangle =
+        scheme->tileToRectangle(TileKey{scheme->id(), 1, 0, 0});
+    provider.setCoverageRectangle(options.coverageRectangle);
+
+    Rectangle outside =
+        scheme->tileToRectangle(TileKey{scheme->id(), 1, 1, 1});
+    EXPECT_EQ(nullptr, provider.getTile(outside, 512.0, 512.0));
+    EXPECT_EQ(0, provider.getCachedTileCount());
+
+    Rectangle overlapping(
+        options.coverageRectangle.east() - options.coverageRectangle.width() * 0.5,
+        options.coverageRectangle.south(),
+        options.coverageRectangle.east() + options.coverageRectangle.width() * 0.5,
+        options.coverageRectangle.north());
+    auto tile = provider.getTile(overlapping, 512.0, 512.0);
+    ASSERT_NE(nullptr, tile);
+    EXPECT_TRUE(tile->isRectangleTile());
+    EXPECT_TRUE(provider.loadTileThrottled(*tile, nullptr));
+
+    ASSERT_FALSE(imagery.requestedKeys.empty());
+    for (const TileKey& requested : imagery.requestedKeys) {
+        Rectangle requestedBounds = scheme->tileToRectangle(requested);
+        EXPECT_TRUE(requestedBounds.intersects(options.coverageRectangle));
+    }
 }
 
 TEST(RasterOverlayLifecycleTest, RectangleSourceFailureFallsBackToParentTile) {

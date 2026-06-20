@@ -3,6 +3,8 @@
 #include <string>
 #include <memory>
 
+#include "../core/math/Rectangle.h"
+
 namespace earth_engine {
 
 class ImageryProvider;
@@ -46,6 +48,9 @@ public:
         /// Minimum/maximum zoom overrides (0 = use provider defaults).
         int minimumZoom = 0;
         int maximumZoom = 0;
+
+        /// Rectangle covered by this overlay, in geographic radians.
+        Rectangle coverageRectangle = Rectangle::MAXIMUM;
 
         /// Runtime presentation flags used by the unified Tileset renderer.
         bool visible = true;

@@ -1,5 +1,6 @@
 #include "RasterOverlayTileProvider.h"
 #include "ImageryProvider.h"
+#include "../layers/RasterOverlay.h"
 #include "../core/resources/FrameResourceBudget.h"
 #include "../tiling/TileScheme.h"
 #include "RasterTextureUploader.h"
@@ -347,7 +348,8 @@ int computeLevelFromTargetScreenPixels(const TileScheme& scheme,
 int chooseRectangleSourceZoom(const TileScheme& scheme,
                         const ImageryProvider& provider,
                         const RasterTextureUploader* uploader,
-                        const Rectangle& bounds,
+                        const Rectangle& geometryBounds,
+                        const Rectangle& sourceBounds,
                         double targetScreenPixelsX,
                         double targetScreenPixelsY,
                         double maximumScreenSpaceError,
@@ -362,14 +364,14 @@ int chooseRectangleSourceZoom(const TileScheme& scheme,
     int zoom = computeLevelFromTargetScreenPixels(
         scheme,
         provider,
-        bounds,
+        geometryBounds,
         targetScreenPixelsX,
         targetScreenPixelsY,
         maximumScreenSpaceError);
     const int maxTextureSize = maximumCombinedTextureSize(uploader);
 
     TileRange range = trimCesiumNativeBoundarySlop(
-        scheme, bounds, zoom, computeRange(scheme, bounds, zoom));
+        scheme, sourceBounds, zoom, computeRange(scheme, sourceBounds, zoom));
     while (zoom > minZoom) {
         const int widthPixels = range.width() * std::max(1, provider.tileWidth());
         const int heightPixels = range.height() * std::max(1, provider.tileHeight());
@@ -379,7 +381,7 @@ int chooseRectangleSourceZoom(const TileScheme& scheme,
         }
         --zoom;
         range = trimCesiumNativeBoundarySlop(
-            scheme, bounds, zoom, computeRange(scheme, bounds, zoom));
+            scheme, sourceBounds, zoom, computeRange(scheme, sourceBounds, zoom));
     }
 
     if (outRange) *outRange = range;
@@ -390,7 +392,8 @@ RectangleSourcePlan buildRectangleSourcePlan(
     const TileScheme& scheme,
     const ImageryProvider& provider,
     const RasterTextureUploader* uploader,
-    const Rectangle& bounds,
+    const Rectangle& geometryBounds,
+    const Rectangle& sourceBounds,
     double targetScreenPixelsX,
     double targetScreenPixelsY,
     double maximumScreenSpaceError) {
@@ -399,7 +402,8 @@ RectangleSourcePlan buildRectangleSourcePlan(
         scheme,
         provider,
         uploader,
-        bounds,
+        geometryBounds,
+        sourceBounds,
         targetScreenPixelsX,
         targetScreenPixelsY,
         maximumScreenSpaceError,
@@ -772,6 +776,13 @@ RasterOverlayTileProvider::RasterOverlayTileProvider(ImageryProvider& provider,
 
 RasterOverlayTileProvider::~RasterOverlayTileProvider() = default;
 
+void RasterOverlayTileProvider::setOwner(RasterOverlay* owner) {
+    owner_ = owner;
+    if (owner_) {
+        coverageRectangle_ = owner_->getOptions().coverageRectangle;
+    }
+}
+
 std::string RasterOverlayTileProvider::tileCacheKey(const TileKey& key) const {
     return key.schemeId + "/" + std::to_string(key.z) + "/" +
            std::to_string(key.x) + "/" + std::to_string(key.y);
@@ -819,11 +830,18 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
         return getPlaceholderTile();
     }
 
+    std::optional<Rectangle> sourceBounds =
+        geometryBounds.computeIntersection(coverageRectangle_);
+    if (!sourceBounds) {
+        return nullptr;
+    }
+
     RectangleSourcePlan sourcePlan = buildRectangleSourcePlan(
         scheme_,
         provider_,
         textureUploader_.get(),
         geometryBounds,
+        *sourceBounds,
         targetScreenPixelsX,
         targetScreenPixelsY,
         maximumScreenSpaceError_);
@@ -1030,11 +1048,20 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
     if (ck.empty()) return false;
     if (inFlightRequests_.count(ck)) return true;
 
+    std::optional<Rectangle> sourceBounds =
+        tile.getRectangle().computeIntersection(coverageRectangle_);
+    if (!sourceBounds) {
+        tile.setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
+        tile.setState(RasterOverlayTile::LoadState::Failed);
+        return false;
+    }
+
     RectangleSourcePlan sourcePlan = buildRectangleSourcePlan(
         scheme_,
         provider_,
         textureUploader_.get(),
         tile.getRectangle(),
+        *sourceBounds,
         tile.getTargetScreenPixelsX(),
         tile.getTargetScreenPixelsY(),
         maximumScreenSpaceError_);

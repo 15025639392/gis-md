@@ -101,7 +101,11 @@ public:
 
     /// cesium-native: returns the owner RasterOverlay.
     class RasterOverlay* getOwner() const { return owner_; }
-    void setOwner(RasterOverlay* owner) { owner_ = owner; }
+    void setOwner(RasterOverlay* owner);
+    const Rectangle& getCoverageRectangle() const { return coverageRectangle_; }
+    void setCoverageRectangle(const Rectangle& coverageRectangle) {
+        coverageRectangle_ = coverageRectangle;
+    }
 
     /// Direct access to the imagery provider.
     ImageryProvider& getImageryProvider() { return provider_; }
@@ -201,6 +205,7 @@ private:
     const TileScheme& scheme_;
     std::unique_ptr<RasterTextureUploader> textureUploader_;
     class RasterOverlay* owner_ = nullptr;
+    Rectangle coverageRectangle_ = Rectangle::MAXIMUM;
 
     /// All cached tiles retained by this provider (key → shared_ptr).
     std::unordered_map<std::string, TilePtr> tiles_;
