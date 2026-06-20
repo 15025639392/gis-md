@@ -120,8 +120,8 @@ void SurfaceTileDrawCommandBuilder::build(
     const SkirtMetadata& skirt = mesh->skirtMeta;
     if (skirt.noSkirtIndicesCount > 0 &&
         skirt.noSkirtIndicesBegin < mesh->indices.size() &&
-        skirt.noSkirtIndicesBegin + skirt.noSkirtIndicesCount <=
-            mesh->indices.size()) {
+        skirt.noSkirtIndicesCount <=
+            mesh->indices.size() - skirt.noSkirtIndicesBegin) {
         surfaceIndexOffset =
             static_cast<int>(skirt.noSkirtIndicesBegin * sizeof(uint32_t));
         surfaceIndexCount = static_cast<int>(skirt.noSkirtIndicesCount);

@@ -29580,6 +29580,72 @@ void testSurfaceTileCommandSkipsExplicitMeshMissingIndexBuffer() {
           "Surface command: explicit mesh without GPU index buffer does not fall back to renderer default indices");
 }
 
+void testSurfaceTileCommandIgnoresOverflowingNoSkirtRange() {
+    InitializedRendererHarness harness;
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {&baseActivated},
+        &harness.device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Surface command: overflowing no-skirt setup creates root tile");
+    if (!root) return;
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+    SurfaceTileMesh* mesh = root->content.renderContent.mutableSurfaceMesh();
+    check(mesh != nullptr && !mesh->indices.empty(),
+          "Surface command: overflowing no-skirt test has terrain indices");
+    if (!mesh || mesh->indices.empty()) return;
+
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    RasterMappedToTilesetTile* rootMapped =
+        root->rasterOverlayState.mappings().empty() ? nullptr : root->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* rootRaster =
+        rootMapped ? rootMapped->getLoadingTile() : nullptr;
+    check(rootRaster != nullptr,
+          "Surface command: overflowing no-skirt test maps base imagery");
+    if (!rootMapped || !rootRaster) return;
+    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
+    rootRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+
+    mesh->skirtMeta.noSkirtIndicesBegin =
+        std::numeric_limits<uint32_t>::max();
+    mesh->skirtMeta.noSkirtIndicesCount = 2;
+
+    TilesetTestAccess::setInteractionActiveForFrame(tileset, true);
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
+
+    RenderCommandList commands;
+    tileset.buildRenderCommands(harness.renderer, commands);
+    check(commands.size() == 1 &&
+              commands.front().kind == RenderCommandKind::SurfaceTile,
+          "Surface command: overflowing no-skirt metadata still draws valid full mesh");
+    if (commands.empty()) return;
+    check(commands.front().indexOffset == 0 &&
+              commands.front().indexCount ==
+                  static_cast<int>(mesh->indices.size()) &&
+              commands.front().surfaceNoSkirtIndexCount ==
+                  static_cast<int>(mesh->indices.size()) &&
+              commands.front().surfaceSkirtIndexCount == 0,
+          "Surface command: overflowing no-skirt range is ignored instead of wrapping");
+}
+
 void testTilesetUpsampledChildQueuesParentUntilSourceReady() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     SparseTerrainProvider* rawProvider = provider.get();
@@ -30634,6 +30700,7 @@ int main() {
     testClippedFallbackCommandsHaveSelectedChildStableKeys();
     testSurfaceTileCommandDrawsNoSkirtRangeForTerrainMesh();
     testSurfaceTileCommandSkipsExplicitMeshMissingIndexBuffer();
+    testSurfaceTileCommandIgnoresOverflowingNoSkirtRange();
     testTilesetUpsampledChildQueuesParentUntilSourceReady();
     testTilesetUpsampledChildFinalizesContentLoadedParent();
     testTilesetClearChildrenErasesFlatMapDescendants();
