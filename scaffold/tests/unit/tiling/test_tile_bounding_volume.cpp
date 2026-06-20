@@ -298,6 +298,21 @@ TEST(TileBoundingVolumeTest, S2CellDistanceCaseThreeMatchesCesiumNative) {
                 1e-7);
 }
 
+TEST(TileBoundingVolumeTest, S2CellDistanceCaseFourMatchesCesiumNative) {
+    const S2CellBoundingVolume s2(
+        S2CellID::fromToken("1"),
+        0.0,
+        100000.0);
+    const double maximumRadius = Ellipsoid::WGS84().maximumRadius();
+    const Vec3 position(-maximumRadius, 0.0, 0.0);
+    const double expectedDistance =
+        maximumRadius + s2.getBoundingPlanes()[1].getDistance();
+
+    EXPECT_NEAR(expectedDistance,
+                std::sqrt(s2.computeDistanceSquaredToPosition(position)),
+                1e-7);
+}
+
 TEST(TileBoundingVolumeTest, RegionCenterUsesBoundingRegionObbLikeCesiumNative) {
     const TileBoundingVolume region =
         TileBoundingVolume::fromRegion(
