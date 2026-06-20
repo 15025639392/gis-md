@@ -55,7 +55,9 @@ void TilePendingLoadQueue::addTerrainUpload(PendingTerrainUpload upload) {
     if (upload.cacheKey.empty()) {
         return;
     }
-    terrainUploadKeys_.insert(upload.cacheKey);
+    if (!terrainUploadKeys_.insert(upload.cacheKey).second) {
+        return;
+    }
     terrainUploads_.push_back(std::move(upload));
 }
 
@@ -71,7 +73,9 @@ void TilePendingLoadQueue::addContentUpload(PendingContentUpload upload) {
     if (upload.cacheKey.empty()) {
         return;
     }
-    contentUploadKeys_.insert(upload.cacheKey);
+    if (!contentUploadKeys_.insert(upload.cacheKey).second) {
+        return;
+    }
     contentUploads_.push_back(std::move(upload));
 }
 

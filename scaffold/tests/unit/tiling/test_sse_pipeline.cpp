@@ -19887,6 +19887,55 @@ void testTilePendingLoadQueueKeepsUploadWhenFinalizeBudgetBlocks() {
           "TilePendingLoadQueue: upload blocked by previous frame budget remains retryable");
 }
 
+void testTilePendingLoadQueueDeduplicatesUploadsByKind() {
+    TilePendingLoadQueue queue;
+    const TileKey firstKey{"test", 1, 0, 0};
+    const TileKey secondKey{"test", 1, 1, 0};
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    queue.addTerrainUpload(PendingTerrainUpload{
+        firstKey,
+        "terrain",
+        TileLoadPriorityGroup::Normal,
+        1.0,
+        nullptr});
+    queue.addTerrainUpload(PendingTerrainUpload{
+        secondKey,
+        "terrain",
+        TileLoadPriorityGroup::Urgent,
+        100.0,
+        nullptr});
+    queue.addContentUpload(PendingContentUpload{
+        firstKey,
+        "content",
+        TileLoadPriorityGroup::Normal,
+        1.0,
+        TileContentLoadResult::empty()});
+    queue.addContentUpload(PendingContentUpload{
+        secondKey,
+        "content",
+        TileLoadPriorityGroup::Urgent,
+        100.0,
+        TileContentLoadResult::empty()});
+
+    check(queue.terrainUploadCount() == 1 &&
+              queue.contentUploadCount() == 1,
+          "TilePendingLoadQueue: duplicate upload cache keys are not queued twice per kind");
+
+    std::optional<PendingLoadFinalize> first =
+        queue.takeHighestPriorityUpload(false, budget);
+    std::optional<PendingLoadFinalize> second =
+        queue.takeHighestPriorityUpload(false, budget);
+    std::optional<PendingLoadFinalize> third =
+        queue.takeHighestPriorityUpload(false, budget);
+
+    check(first && second && !third,
+          "TilePendingLoadQueue: duplicate uploads leave only one finalize per kind");
+}
+
 void testTilePendingLoadQueueTakesTerminalResultsByPriority() {
     TilePendingLoadQueue queue;
     const TileKey lowKey{"test", 1, 0, 0};
@@ -30006,6 +30055,7 @@ int main() {
     testTilePendingLoadQueueUsesSharedPriorityOrder();
     testTilePendingLoadQueueFiltersNonUrgentDuringInteraction();
     testTilePendingLoadQueueKeepsUploadWhenFinalizeBudgetBlocks();
+    testTilePendingLoadQueueDeduplicatesUploadsByKind();
     testTilePendingLoadQueueTakesTerminalResultsByPriority();
     testTilePendingLoadQueueKeepsTerminalResultWhenBudgetBlocks();
     testTilePendingLoadQueueRejectsEmptyCacheKeys();
