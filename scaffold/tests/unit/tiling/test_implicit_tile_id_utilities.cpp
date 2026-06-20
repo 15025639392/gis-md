@@ -765,6 +765,10 @@ TEST(ImplicitTileIdUtilitiesTest, ParentIdMatchesCesiumNativeOptionalSemantics) 
         ImplicitTileIdUtilities::parentId(TileKey{"Geographic-TMS", 2, 1, 2});
     ASSERT_TRUE(quadtreeParent.has_value());
     EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 1}), *quadtreeParent);
+    const std::optional<TileKey> quadtreeGrandparent =
+        ImplicitTileIdUtilities::parentId(*quadtreeParent);
+    ASSERT_TRUE(quadtreeGrandparent.has_value());
+    EXPECT_EQ((TileKey{"Geographic-TMS", 0, 0, 0}), *quadtreeGrandparent);
     EXPECT_FALSE(
         ImplicitTileIdUtilities::parentId(
             TileKey{"Geographic-TMS", 0, 0, 0})
@@ -774,6 +778,10 @@ TEST(ImplicitTileIdUtilitiesTest, ParentIdMatchesCesiumNativeOptionalSemantics) 
         ImplicitTileIdUtilities::parentId(OctreeTileID{2, 3, 1, 2});
     ASSERT_TRUE(octreeParent.has_value());
     EXPECT_EQ((OctreeTileID{1, 1, 0, 1}), *octreeParent);
+    const std::optional<OctreeTileID> octreeGrandparent =
+        ImplicitTileIdUtilities::parentId(*octreeParent);
+    ASSERT_TRUE(octreeGrandparent.has_value());
+    EXPECT_EQ((OctreeTileID{0, 0, 0, 0}), *octreeGrandparent);
     EXPECT_FALSE(
         ImplicitTileIdUtilities::parentId(OctreeTileID{0, 0, 0, 0})
             .has_value());
