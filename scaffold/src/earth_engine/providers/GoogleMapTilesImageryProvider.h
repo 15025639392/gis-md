@@ -1,12 +1,16 @@
 #pragma once
 
 #include "XYZImageryProvider.h"
+#include "../tiling/TileScheme.h"
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace earth_engine {
+
+class GoogleMapTilesImageryProvider;
 
 struct GoogleMapTilesExistingSessionOptions {
     std::string key;
@@ -37,6 +41,11 @@ struct GoogleMapTilesSessionParseResult {
     std::string error;
 };
 
+struct GoogleMapTilesImagerySource {
+    std::unique_ptr<GoogleMapTilesImageryProvider> provider;
+    std::unique_ptr<TileScheme> scheme;
+};
+
 class GoogleMapTilesImageryProvider : public XYZImageryProvider {
 public:
     explicit GoogleMapTilesImageryProvider(
@@ -65,5 +74,9 @@ std::string googleMapTilesCreateSessionPayload(
 GoogleMapTilesSessionParseResult parseGoogleMapTilesCreateSessionResponse(
     const std::string& responseJson,
     const GoogleMapTilesNewSessionOptions& requestOptions);
+
+GoogleMapTilesImagerySource createGoogleMapTilesImagerySource(
+    GoogleMapTilesExistingSessionOptions options,
+    std::string attribution = "");
 
 } // namespace earth_engine

@@ -1198,6 +1198,34 @@ TEST(GoogleMapTilesImageryProviderTest, RejectsInvalidCreateSessionResponseLikeC
         result.error);
 }
 
+TEST(GoogleMapTilesImageryProviderTest, CreatesSourceFromExistingSessionLikeCesiumNative) {
+    GoogleMapTilesExistingSessionOptions options;
+    options.apiBaseUrl = "https://tile.googleapis.com";
+    options.session = "session-token";
+    options.key = "api-key";
+    options.maximumLevel = 28;
+    options.tileWidth = 512;
+    options.tileHeight = 256;
+
+    GoogleMapTilesImagerySource source = createGoogleMapTilesImagerySource(
+        options,
+        "google attribution");
+
+    ASSERT_TRUE(source.provider);
+    ASSERT_TRUE(source.scheme);
+    EXPECT_EQ("XYZ-WebMercator", source.scheme->id());
+    EXPECT_EQ("google-map-tiles-imagery", source.provider->type());
+    EXPECT_EQ("XYZ-WebMercator", source.provider->schemeId());
+    EXPECT_EQ(0, source.provider->minZoom());
+    EXPECT_EQ(28, source.provider->maxZoom());
+    EXPECT_EQ(512, source.provider->tileWidth());
+    EXPECT_EQ(256, source.provider->tileHeight());
+    EXPECT_EQ("google attribution", source.provider->attribution());
+    EXPECT_EQ(
+        "https://tile.googleapis.com/v1/2dtiles/0/0/0?session=session-token&key=api-key",
+        source.provider->buildUrl(TileKey{"XYZ-WebMercator", 0, 0, 0}));
+}
+
 TEST(TileMapServiceUrlTest, AppendsTileMapResourceXmlBeforeQueryLikeCesiumNative) {
     EXPECT_EQ(
         "https://example.com/tms/tilemapresource.xml",

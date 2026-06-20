@@ -195,4 +195,15 @@ std::string GoogleMapTilesImageryProvider::buildUrl(
         {{"session", options_.session}, {"key", options_.key}});
 }
 
+GoogleMapTilesImagerySource createGoogleMapTilesImagerySource(
+    GoogleMapTilesExistingSessionOptions options,
+    std::string attribution) {
+    GoogleMapTilesImagerySource source;
+    source.provider = std::make_unique<GoogleMapTilesImageryProvider>(
+        std::move(options),
+        std::move(attribution));
+    source.scheme = TileScheme::createXYZWebMercator();
+    return source;
+}
+
 } // namespace earth_engine
