@@ -19631,6 +19631,37 @@ void testTilePendingRequestStateCancelsAndRejectsDuringDestroy() {
     state.completeTerrainRequest("terrain-after-destroy");
 }
 
+void testTilePendingRequestStateDestroyMarkIsIdempotent() {
+    TilePendingRequestState state;
+    CancellationToken terrainToken;
+    CancellationToken contentToken;
+    check(state.beginTerrainRequest("terrain", terrainToken) &&
+              state.beginContentRequest("content", contentToken),
+          "TilePendingRequestState: idempotent destroy test starts requests");
+
+    state.markDestroyingAndCancelRequests();
+    state.markDestroyingAndCancelRequests();
+
+    const PendingRequestCounts counts = state.counts();
+    check(state.destroying() &&
+              terrainToken.isCancelled() &&
+              contentToken.isCancelled() &&
+              state.contains("terrain") &&
+              state.contains("content") &&
+              counts.terrainRequests == 1 &&
+              counts.contentRequests == 1 &&
+              counts.totalRequests == 2,
+          "TilePendingRequestState: repeated destroy mark preserves pending callback state");
+    check(!state.beginTerrainRequest("terrain-after-repeat", CancellationToken{}),
+          "TilePendingRequestState: repeated destroy mark keeps rejecting new requests");
+
+    state.completeTerrainRequest("terrain");
+    state.completeContentRequest("content");
+    state.clearAfterCallbacksComplete();
+    check(!state.destroying() && state.empty(),
+          "TilePendingRequestState: idempotent destroy test cleanup resets state");
+}
+
 void testTilePendingRequestStateCancelIgnoresUnknownKeys() {
     TilePendingRequestState state;
     CancellationToken terrainToken;
@@ -28301,6 +28332,7 @@ int main() {
     testTilePendingRequestStateCountsAndCompletesRequests();
     testPendingLoadStateRejectsEmptyCacheKeys();
     testTilePendingRequestStateCancelsAndRejectsDuringDestroy();
+    testTilePendingRequestStateDestroyMarkIsIdempotent();
     testTilePendingRequestStateCancelIgnoresUnknownKeys();
     testTileLoadLifecycleCountsAndFindsPendingWork();
     testTileLoadLifecycleEmptyBatchQueryIsNoOp();
