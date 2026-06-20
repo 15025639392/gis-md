@@ -6527,6 +6527,9 @@ public:
         if (key.z == 1 && key.x == 0 && key.y == 0) {
             return TileAvailabilityState::Available;
         }
+        for (const TileKey& availableKey : extraAvailableKeys) {
+            if (key == availableKey) return TileAvailabilityState::Available;
+        }
         return TileAvailabilityState::NotAvailable;
     }
 
@@ -6548,6 +6551,7 @@ public:
     }
 
     int requestCount = 0;
+    std::vector<TileKey> extraAvailableKeys;
 };
 
 class ExplicitPastMaxZoomTerrainProvider final : public TerrainProvider {
@@ -21951,6 +21955,64 @@ void testTilesetCreatesUpsampledChildrenForUnavailableSiblings() {
           "Tileset: upsampled child is renderable after parent-mesh upsample finishes");
 }
 
+void testTilesetCreatesNonRootTerrainChildrenInCesiumOrder() {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    SparseTerrainProvider* rawProvider = provider.get();
+    rawProvider->extraAvailableKeys = {
+        TileKey{"Geographic-TMS", 1, 0, 1},
+        TileKey{"Geographic-TMS", 2, 0, 2},
+    };
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: non-root terrain child setup creates root tile");
+    if (!root) return;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(root->children.size() == 4,
+          "Tileset: non-root terrain child setup creates root children");
+    if (root->children.size() < 3 || !root->children[2]) return;
+
+    TilesetTile* nw = root->children[2];
+    check(nw->key == TileKey{"Geographic-TMS", 1, 0, 1} &&
+              !nw->content.upsampledFromParent,
+          "Tileset: non-root terrain child setup uses a real available parent tile");
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        nw->key,
+        makeFlatHeightmap(123.0f));
+
+    TilesetTestAccess::ensureTileChildren(tileset, *nw);
+    check(nw->children.size() == 4,
+          "Tileset: non-root terrain tile creates four children like cesium-native");
+    TilesetTile* childSw = nw->children.size() == 4 ? nw->children[0] : nullptr;
+    TilesetTile* childSe = nw->children.size() == 4 ? nw->children[1] : nullptr;
+    TilesetTile* childNw = nw->children.size() == 4 ? nw->children[2] : nullptr;
+    TilesetTile* childNe = nw->children.size() == 4 ? nw->children[3] : nullptr;
+    check(childSw && childSe && childNw && childNe &&
+              childSw->key == TileKey{"Geographic-TMS", 2, 0, 2} &&
+              childSe->key == TileKey{"Geographic-TMS", 2, 1, 2} &&
+              childNw->key == TileKey{"Geographic-TMS", 2, 0, 3} &&
+              childNe->key == TileKey{"Geographic-TMS", 2, 1, 3} &&
+              std::abs(childSw->bounds.west() + MathUtils::OnePi) < 1e-9 &&
+              std::abs(childSw->bounds.south()) < 1e-9 &&
+              std::abs(childSw->bounds.east() + MathUtils::OnePi * 0.75) < 1e-9 &&
+              std::abs(childSw->bounds.north() - MathUtils::PiOverTwo * 0.5) < 1e-9 &&
+              std::abs(childNe->bounds.west() + MathUtils::OnePi * 0.75) < 1e-9 &&
+              std::abs(childNe->bounds.south() - MathUtils::PiOverTwo * 0.5) < 1e-9 &&
+              std::abs(childNe->bounds.east() + MathUtils::PiOverTwo) < 1e-9 &&
+              std::abs(childNe->bounds.north() - MathUtils::PiOverTwo) < 1e-9,
+          "Tileset: non-root Geographic-TMS terrain children preserve cesium-native order and rectangles");
+    check(childSw && !childSw->content.upsampledFromParent &&
+              childSe && childSe->content.upsampledFromParent &&
+              childNw && childNw->content.upsampledFromParent &&
+              childNe && childNe->content.upsampledFromParent,
+          "Tileset: non-root partial terrain availability still materializes unavailable siblings as upsampled children");
+}
+
 void testTilesetAncestorFallbackIsClippedToMissingChild() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -23511,6 +23573,7 @@ int main() {
     testTilesetSampleHeightUsesBestLoadedTerrainTile();
     testTilesetSampleHeightFallsBackToLoadedAncestorTerrain();
     testTilesetCreatesUpsampledChildrenForUnavailableSiblings();
+    testTilesetCreatesNonRootTerrainChildrenInCesiumOrder();
     testTilesetAncestorFallbackIsClippedToMissingChild();
     testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster();
     testPresentationTraceRecordsDeterministicCameraState();
