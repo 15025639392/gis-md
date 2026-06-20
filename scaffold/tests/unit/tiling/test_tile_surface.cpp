@@ -293,6 +293,29 @@ TEST(TileSurfaceTest, ParentFallbackUvWindowSelectsChildQuadrant) {
     EXPECT_NEAR(0.5f, window.scaleV, 1e-6f);
 }
 
+TEST(TileSurfaceTest, TextureWindowMatchesCesiumNativeTranslationAndScale) {
+    // Ported from cesium-native RasterOverlayUtilities::computeTranslationAndScale:
+    // translation = (geometry.min - overlay.min) / overlay.size, scale =
+    // geometry.size / overlay.size.
+    const Rectangle imageryBounds(10.0, 20.0, 50.0, 100.0);
+    const Rectangle geometryBounds(18.0, 44.0, 38.0, 84.0);
+
+    const TileTextureWindow nativeWindow =
+        TileSurface::computeTranslationAndScale(geometryBounds, imageryBounds);
+
+    EXPECT_NEAR(0.2f, nativeWindow.offsetU, 1e-6f);
+    EXPECT_NEAR(0.3f, nativeWindow.offsetV, 1e-6f);
+    EXPECT_NEAR(0.5f, nativeWindow.scaleU, 1e-6f);
+    EXPECT_NEAR(0.5f, nativeWindow.scaleV, 1e-6f);
+
+    const TileTextureWindow rendererWindow =
+        TileSurface::textureWindowForNorthWestUv(nativeWindow);
+    EXPECT_NEAR(0.2f, rendererWindow.offsetU, 1e-6f);
+    EXPECT_NEAR(0.2f, rendererWindow.offsetV, 1e-6f);
+    EXPECT_NEAR(0.5f, rendererWindow.scaleU, 1e-6f);
+    EXPECT_NEAR(0.5f, rendererWindow.scaleV, 1e-6f);
+}
+
 TEST(TileSurfaceTest, OpenGlobusPolarMeshUsesGeographicVSampling) {
     auto scheme = TileScheme::createOpenGlobusEarth();
     TileKey northKey = scheme->positionToTile(0.0, 88.0 * M_PI / 180.0, 3);
