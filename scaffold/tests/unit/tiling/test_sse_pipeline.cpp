@@ -19493,6 +19493,36 @@ void testTileLoadLifecycleCountsAndFindsPendingWork() {
           "TileLoadLifecycle: reports idle after requests and loads drain");
 }
 
+void testTileLoadLifecycleCancelErasesPendingUploads() {
+    TileLoadLifecycle lifecycle;
+    const TileKey terrainKey{"test", 0, 0, 0};
+    const TileKey contentKey{"test", 0, 1, 0};
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            terrainKey,
+            "terrain-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            std::make_unique<DecodedHeightmap>()});
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            contentKey,
+            "content-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileContentLoadResult::empty()});
+    }
+
+    lifecycle.cancelAndEraseCacheKey("terrain-upload");
+    check(!lifecycle.containsWorkForCacheKey("terrain-upload") &&
+              lifecycle.containsWorkForCacheKey("content-upload"),
+          "TileLoadLifecycle: cancel erases only matching terrain upload");
+
+    lifecycle.cancelAndEraseCacheKey("content-upload");
+    check(!lifecycle.hasPendingWork(),
+          "TileLoadLifecycle: cancel erases content upload and leaves lifecycle idle");
+}
+
 void testTileLoadLifecycleCancelErasesTerminalResults() {
     TileLoadLifecycle lifecycle;
     const TileKey terrainKey{"test", 0, 0, 0};
@@ -27017,6 +27047,7 @@ int main() {
     testPendingLoadStateRejectsEmptyCacheKeys();
     testTilePendingRequestStateCancelsAndRejectsDuringDestroy();
     testTileLoadLifecycleCountsAndFindsPendingWork();
+    testTileLoadLifecycleCancelErasesPendingUploads();
     testTileLoadLifecycleCancelErasesTerminalResults();
     testTileLoadLifecycleCancelErasesActiveRequests();
     testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks();
