@@ -27429,6 +27429,58 @@ void testTilesetUnconditionalChildDisablesChildrenBoundsCulling() {
           "Tileset: unconditional child disables children-bounds culling like cesium-native");
 }
 
+void testTilesetEmptySelectorViewsShortCircuitTraversal() {
+    // Aligns cesium-native no-frustum selection behavior for the native
+    // selector path. gis-md's default render-under-camera fallback is tested
+    // separately, so it is disabled here; the frame runner should short-circuit
+    // before traversal rather than falling back to a synthetic camera view.
+    TilesetOptions options;
+    options.renderTilesUnderCamera = false;
+    options.preloadSiblings = false;
+
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, options);
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: empty-selector root tile is created");
+    if (!root) return;
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    Camera camera;
+    camera.lookAt(center + center.normalized() * 1000000.0,
+                  center,
+                  Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 146;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    check(frameState.selectorViews.empty(),
+          "Tileset: empty-selector test keeps no selector views");
+    check(tileset.tilePlan().visibleTiles.empty(),
+          "Tileset: empty selector views produce no visible tiles without synthetic frustum fallback");
+    check(root->selectionFrameState.selectionState == TileSelectionState::NotVisited,
+          "Tileset: empty selector views short-circuit before root traversal");
+    check(!TilesetTestAccess::loadQueueContainsAny(tileset, rootKey),
+          "Tileset: empty selector views do not queue culled root when sibling preload is disabled");
+}
+
 void testTilesetFogDensityTableIsConfigurable() {
     auto runWithFogTable =
         [](std::vector<FogDensityAtHeight> fogDensityTable) {
@@ -31353,6 +31405,7 @@ int main() {
     testTilesetLoadingDescendantLimitRestoresChildLoadQueue();
     testTilesetUnconditionallyRefineIgnoresSatisfiedSse();
     testTilesetUnconditionalChildDisablesChildrenBoundsCulling();
+    testTilesetEmptySelectorViewsShortCircuitTraversal();
     testTileSelectionMetricsFogMatchesCesiumNativeRules();
     testTilesetFogDensityTableIsConfigurable();
     testTilesetRecordsAncestorMeetsSseForDescendants();
