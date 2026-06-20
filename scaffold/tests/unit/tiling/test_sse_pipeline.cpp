@@ -3100,6 +3100,47 @@ void testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches() {
           "RasterOverlayTileProvider: trimmed rectangle requests keep only overlapping source tiles");
 }
 
+void testRasterOverlayRectangleSourceFailureRequestsParentSource() {
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
+
+    Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
+        TileKey{"XYZ-WebMercator", 3, 2, 3});
+    RasterOverlayTileProvider::TilePtr rectangleTile =
+        provider.getTile(sourceAlignedBounds, 512.0, 512.0);
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    check(rectangleTile &&
+              provider.loadTileThrottled(*rectangleTile, &budget) &&
+              imagery.pendingRequests.size() == 16,
+          "RasterOverlayTileProvider: parent-fallback fixture starts with source tile requests");
+    if (imagery.pendingRequests.empty()) return;
+
+    const TileKey failedSource = imagery.pendingRequests.front().key;
+    imagery.pendingRequests.front().callback(failedSource, nullptr);
+
+    const TileKey expectedParent{
+        failedSource.schemeId,
+        failedSource.z - 1,
+        failedSource.x / 2,
+        failedSource.y / 2};
+    const bool requestedParent =
+        std::any_of(
+            imagery.pendingRequests.begin(),
+            imagery.pendingRequests.end(),
+            [&](const PendingRectangleImageryProvider::PendingRequest& request) {
+                return request.key == expectedParent;
+            });
+    check(requestedParent,
+          "RasterOverlayTileProvider: failed source tile requests parent source like cesium-native");
+}
+
 void testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -31012,6 +31053,7 @@ int main() {
     testRasterOverlayProviderRectangleTile();
     testRasterOverlayRectangleSourceRequestsAreBudgetedAcrossFrames();
     testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches();
+    testRasterOverlayRectangleSourceFailureRequestsParentSource();
     testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize();
     testRasterOverlayRectangleCompositionUsesProjectedWebMercatorHeight();
     testRasterOverlayRectangleCompositionKeepsTinyProjectedOverlap();
