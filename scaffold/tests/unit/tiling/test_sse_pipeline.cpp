@@ -4053,6 +4053,42 @@ void testQuantizedMeshSkirtNormalsCopyEdgeNormals() {
           "QuantizedMeshParser: skirt normals copy source edge normals like cesium-native");
 }
 
+void testQuantizedMeshSkirtHeightMatchesCesiumNativeFormula() {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(rootKey);
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes("", true, true);
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            bounds);
+
+    check(mesh != nullptr,
+          "QuantizedMeshParser: skirt-height test mesh parses");
+    const uint32_t firstSkirtVertex =
+        mesh ? mesh->skirtMeta.noSkirtVerticesBegin +
+                   mesh->skirtMeta.noSkirtVerticesCount
+             : 0;
+    check(mesh && firstSkirtVertex < mesh->vertices.size(),
+          "QuantizedMeshParser: skirt-height test mesh has skirt vertices");
+    if (!mesh || firstSkirtVertex >= mesh->vertices.size()) return;
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Cartographic top =
+        ellipsoid.cartesianToCartographic(mesh->vertices[0].positionEcef);
+    const Cartographic skirt =
+        ellipsoid.cartesianToCartographic(
+            mesh->vertices[firstSkirtVertex].positionEcef);
+    const double expectedSkirtHeight =
+        ellipsoid.semiMajorAxis() * 0.25 / 65.0 * bounds.width() * 5.0;
+    check(std::abs((top.height() - skirt.height()) - expectedSkirtHeight) <
+              1e-6,
+          "QuantizedMeshParser: skirt height uses cesium-native geometric-error formula");
+}
+
 void testQuantizedMeshOctEncodedNormalsExtension() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -21731,6 +21767,7 @@ int main() {
     testQuantizedMeshRejectsEachTruncatedEdge();
     testQuantizedMeshParsesUint32IndicesAndEdges();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
+    testQuantizedMeshSkirtHeightMatchesCesiumNativeFormula();
     testQuantizedMeshOctEncodedNormalsExtension();
     testQuantizedMeshOctEncodedNormalsIgnoresTrailingExtensionBytes();
     testQuantizedMeshRtcOriginFromBoundingSphereCenter();

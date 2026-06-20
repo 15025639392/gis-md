@@ -94,6 +94,21 @@ std::vector<std::array<int, 5>> parseMetadataAvailabilityJson(
     return availability;
 }
 
+double calcQuadtreeMaxGeometricError(const Ellipsoid& ellipsoid) {
+    constexpr double kTerrainHeightmapQuality = 0.25;
+    constexpr double kHeightmapWidth = 65.0;
+    return ellipsoid.maximumRadius() *
+           kTerrainHeightmapQuality /
+           kHeightmapWidth;
+}
+
+double calculateSkirtHeight(const Ellipsoid& ellipsoid,
+                            const Rectangle& rectangle) {
+    return calcQuadtreeMaxGeometricError(ellipsoid) *
+           rectangle.width() *
+           5.0;
+}
+
 } // namespace
 
 std::unique_ptr<DecodedHeightmap> QuantizedMeshParser::parseAndRasterize(
@@ -775,7 +790,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     // then create bottom vertices and triangle strips.
     const double lonOff = (eastLng - westLng) * 0.0001;
     const double latOff = (northLat - southLat) * 0.0001;
-    const double skirtH = 5.0 * (ellipsoid.semiMajorAxis() * 0.25 / 65.0) * bounds.width();
+    const double skirtH = calculateSkirtHeight(ellipsoid, bounds);
 
     auto addSkirtEdge = [&](const std::vector<uint32_t>& edgeIdx,
                              double lo, double la, bool reverse) {
