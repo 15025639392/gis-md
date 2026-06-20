@@ -613,6 +613,41 @@ TEST(TileMapServiceUrlTest, BuildsTileUrlFromAbsoluteTilesetHrefLikeCesiumNative
             ".png"));
 }
 
+TEST(TileMapServiceUrlTest, BuildsTileUrlForKeyWithMinimumLevelOffsetLikeCesiumNative) {
+    TileMapServiceMetadata metadata;
+    metadata.fileExtension = "jpg";
+    metadata.minimumLevel = 4;
+    metadata.maximumLevel = 5;
+    metadata.tileSets = {
+        TileMapServiceTileSet{"levels/4", 4},
+        TileMapServiceTileSet{"levels/5", 5}};
+
+    const std::optional<std::string> url = tileMapServiceTileUrlForKey(
+        "https://example.com/tms/tilemapresource.xml?token=ignored",
+        metadata,
+        TileKey{"TMS-WebMercator", 5, 12, 6});
+
+    ASSERT_TRUE(url.has_value());
+    EXPECT_EQ("https://example.com/tms/levels/5/12/6.jpg", *url);
+}
+
+TEST(TileMapServiceUrlTest, ReturnsNoTileUrlWhenLevelHasNoTilesetLikeCesiumNative) {
+    TileMapServiceMetadata metadata;
+    metadata.fileExtension = "png";
+    metadata.minimumLevel = 2;
+    metadata.maximumLevel = 4;
+    metadata.tileSets = {TileMapServiceTileSet{"levels/2", 2}};
+
+    EXPECT_FALSE(tileMapServiceTileUrlForKey(
+        "https://example.com/tms/tilemapresource.xml",
+        metadata,
+        TileKey{"TMS-WebMercator", 1, 0, 0}));
+    EXPECT_FALSE(tileMapServiceTileUrlForKey(
+        "https://example.com/tms/tilemapresource.xml",
+        metadata,
+        TileKey{"TMS-WebMercator", 4, 0, 0}));
+}
+
 TEST(TileMapServiceUrlTest, ParsesTileFormatAndTileSetsLikeCesiumNative) {
     const std::string xml = R"xml(
       <TileMap>

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "earth_engine/core/math/Rectangle.h"
+#include "earth_engine/tiling/TileKey.h"
 
 #include <cstdint>
 #include <optional>
@@ -38,6 +39,13 @@ std::string tileMapServiceTileUrl(const std::string& baseUrl,
                                   int x,
                                   int y,
                                   const std::string& fileExtension);
+
+/// Cesium-native TileMapServiceTileProvider level lookup:
+/// level index is tile.z - minimumLevel; missing tile sets produce no URL.
+std::optional<std::string> tileMapServiceTileUrlForKey(
+    const std::string& baseUrl,
+    const TileMapServiceMetadata& metadata,
+    const TileKey& key);
 
 TileMapServiceMetadata parseTileMapServiceMetadata(const std::string& xml);
 

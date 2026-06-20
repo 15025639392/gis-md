@@ -351,6 +351,28 @@ std::string tileMapServiceTileUrl(const std::string& baseUrl,
     return resolveRelativeUrl(baseUrl, relative);
 }
 
+std::optional<std::string> tileMapServiceTileUrlForKey(
+    const std::string& baseUrl,
+    const TileMapServiceMetadata& metadata,
+    const TileKey& key) {
+    if (key.z < 0 ||
+        static_cast<uint32_t>(key.z) < metadata.minimumLevel) {
+        return std::nullopt;
+    }
+
+    const uint32_t tileSetIndex =
+        static_cast<uint32_t>(key.z) - metadata.minimumLevel;
+    if (tileSetIndex >= metadata.tileSets.size()) {
+        return std::nullopt;
+    }
+
+    return tileMapServiceTileUrl(baseUrl,
+                                 metadata.tileSets[tileSetIndex].url,
+                                 key.x,
+                                 key.y,
+                                 "." + metadata.fileExtension);
+}
+
 TileMapServiceMetadata parseTileMapServiceMetadata(const std::string& xml) {
     TileMapServiceMetadata metadata;
     const std::string_view view(xml);
