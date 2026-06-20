@@ -4927,6 +4927,32 @@ void testQuantizedMeshWaterMaskExtensions() {
               disabled->waterMask.data.empty() &&
               !disabled->waterMask.valid(),
           "QuantizedMeshParser: disabled water mask ignores extension like cesium-native");
+
+    std::vector<uint8_t> disabledWaterThenMetadata =
+        makeQuantizedMeshBytesWithWaterMask({255});
+    appendPod<uint8_t>(disabledWaterThenMetadata, 4);
+    appendPod<uint32_t>(
+        disabledWaterThenMetadata,
+        static_cast<uint32_t>(sizeof(uint32_t) + metadata.size()));
+    appendPod<uint32_t>(
+        disabledWaterThenMetadata,
+        static_cast<uint32_t>(metadata.size()));
+    disabledWaterThenMetadata.insert(
+        disabledWaterThenMetadata.end(),
+        metadata.begin(),
+        metadata.end());
+    std::unique_ptr<SurfaceTileMesh> disabledWithMetadata =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            disabledWaterThenMetadata.data(),
+            disabledWaterThenMetadata.size(),
+            bounds,
+            false);
+    check(disabledWithMetadata &&
+              !disabledWithMetadata->waterMask.valid() &&
+              disabledWithMetadata->metadataAvailability.size() == 1 &&
+              disabledWithMetadata->metadataAvailability[0] ==
+                  std::array<int, 5>{0, 0, 0, 1, 0},
+          "QuantizedMeshParser: disabled water mask still advances to later metadata like cesium-native");
 }
 
 void testQuantizedMeshProviderRasterizesCesiumHeightmapGrid() {
