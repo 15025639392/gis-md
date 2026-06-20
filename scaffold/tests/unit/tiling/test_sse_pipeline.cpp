@@ -19548,6 +19548,46 @@ void testTilePendingUploadCompletionErasesUploadKeys() {
           "TilePendingUploadCompletion: erases content upload key and leaves lifecycle idle");
 }
 
+void testTilePendingUploadCompletionKeepsOtherKindForSharedKey() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            TileKey{"test", 1, 0, 0},
+            "shared",
+            TileLoadPriorityGroup::Normal,
+            1.0,
+            nullptr});
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            TileKey{"test", 1, 0, 0},
+            "shared",
+            TileLoadPriorityGroup::Normal,
+            2.0,
+            TileContentLoadResult::empty()});
+        std::optional<PendingLoadFinalize> first =
+            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+        std::optional<PendingLoadFinalize> second =
+            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+        check(first && second,
+              "TilePendingUploadCompletion: shared-key test dequeues both uploads");
+    }
+
+    check(lifecycle.containsWorkForCacheKey("shared"),
+          "TilePendingUploadCompletion: shared key remains pending after both uploads are claimed");
+
+    TilePendingUploadCompletion::eraseTerrainUpload(lifecycle, "shared");
+    check(lifecycle.containsWorkForCacheKey("shared"),
+          "TilePendingUploadCompletion: terrain completion preserves shared content upload key");
+
+    TilePendingUploadCompletion::eraseContentUpload(lifecycle, "shared");
+    check(!lifecycle.hasPendingWork(),
+          "TilePendingUploadCompletion: shared key clears only after both upload kinds complete");
+}
+
 void testTilePendingRequestStateCountsAndCompletesRequests() {
     TilePendingRequestState state;
     CancellationToken terrainToken;
@@ -28406,6 +28446,7 @@ int main() {
     testTilePendingLoadProcessorCountsTerminalElapsedAgainstMainThreadBudget();
     testTilePendingLoadProcessorTerminalElapsedStopsUploads();
     testTilePendingUploadCompletionErasesUploadKeys();
+    testTilePendingUploadCompletionKeepsOtherKindForSharedKey();
     testTilePendingRequestStateCountsAndCompletesRequests();
     testPendingLoadStateRejectsEmptyCacheKeys();
     testTilePendingRequestStateCancelsAndRejectsDuringDestroy();
