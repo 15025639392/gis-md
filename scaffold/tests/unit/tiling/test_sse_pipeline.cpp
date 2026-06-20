@@ -19938,6 +19938,37 @@ void testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks() {
           "TileLoadLifecycle: destroy clears loads and drains requests");
 }
 
+void testTileLoadLifecycleDestroyWithoutRequestsReturnsImmediately() {
+    TileLoadLifecycle lifecycle;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            TileKey{"test", 0, 0, 0},
+            "terrain-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            nullptr});
+        lifecycle.pendingLoads().addContentTerminalResult(
+            PendingContentTerminalResult{
+                TileKey{"test", 0, 1, 0},
+                "content-terminal",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadStatus::RetryLater});
+    }
+
+    lifecycle.markDestroyingCancelAndWait();
+
+    check(!lifecycle.hasPendingWork() &&
+              lifecycle.pendingRequestCount() == 0,
+          "TileLoadLifecycle: destroy without inflight requests clears queued work immediately");
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        check(!lifecycle.requestState().destroying(),
+              "TileLoadLifecycle: destroy without inflight requests reopens state after cleanup");
+    }
+}
+
 void testTileContentLifecycleManagerOwnsLifecycleState() {
     TileContentLifecycleManager manager;
     CancellationToken token;
@@ -28341,6 +28372,7 @@ int main() {
     testTileLoadLifecycleCancelErasesTerminalResults();
     testTileLoadLifecycleCancelErasesActiveRequests();
     testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks();
+    testTileLoadLifecycleDestroyWithoutRequestsReturnsImmediately();
     testTileContentLifecycleManagerOwnsLifecycleState();
     testTileContentStateTransitionOwnsLoadAndContentStateChanges();
     testTileLoadRequestDispatcherBlocksWhenBudgetIsExhausted();
