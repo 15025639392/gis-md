@@ -28616,6 +28616,38 @@ void testTilesetSoftwareOcclusionKeepsNonBoxVolumeUnderCameraVisible() {
           "Tileset: software occlusion keeps non-box tile under camera visible");
 }
 
+void testTilesetSoftwareOcclusionUsesExplicitVolumeRectangleForUnderCamera() {
+    TilesetTile tile;
+    tile.key = TileKey{"Geographic-TMS", 4, 0, 0};
+    tile.bounds = Rectangle::fromDegrees(170.0, -10.0, 179.0, 10.0);
+    tile.boundingVolume = TileBoundingVolume::fromS2Cell(
+        S2CellBoundingVolume(S2CellID::fromToken("1"), 0.0, 100000.0));
+
+    const std::optional<Rectangle> volumeRectangle =
+        tile.boundingVolume->estimateGlobeRectangle();
+    check(volumeRectangle.has_value(),
+          "Tileset: software occlusion explicit-volume test has estimated rectangle");
+    if (!volumeRectangle) return;
+
+    const double cameraLongitude =
+        (volumeRectangle->west() + volumeRectangle->east()) * 0.5;
+    const double cameraLatitude =
+        (volumeRectangle->south() + volumeRectangle->north()) * 0.5;
+    check(volumeRectangle->contains(cameraLongitude, cameraLatitude) &&
+              !tile.bounds.contains(cameraLongitude, cameraLatitude),
+          "Tileset: software occlusion test camera is inside explicit volume but outside tile bounds");
+
+    const Vec3 cameraPosition = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic::fromRadians(
+            cameraLongitude,
+            cameraLatitude,
+            1000000.0));
+
+    check(TileSoftwareOcclusionPolicy::check(tile, cameraPosition) ==
+              TileOcclusionState::NotOccluded,
+          "Tileset: software occlusion uses explicit volume rectangle for under-camera visibility");
+}
+
 void testTilesetChildrenInheritParentTerrainHeightRange() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -30704,6 +30736,7 @@ int main() {
     testTilesetOcclusionUnconditionalChildSkipsAggregation();
     testTilesetDefaultSoftwareOcclusionCanCullFarSideTile();
     testTilesetSoftwareOcclusionKeepsNonBoxVolumeUnderCameraVisible();
+    testTilesetSoftwareOcclusionUsesExplicitVolumeRectangleForUnderCamera();
     testTilesetChildrenInheritParentTerrainHeightRange();
     testTilesetSampleHeightUsesBestLoadedTerrainTile();
     testTilesetSampleHeightFallsBackToLoadedAncestorTerrain();

@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 namespace earth_engine {
 namespace {
@@ -118,17 +119,29 @@ double tileMidLongitude(const Rectangle& bounds) {
            kPiForLongitudeWrap;
 }
 
+Rectangle occlusionRectangleForTile(const TilesetTile& tile) {
+    if (tile.boundingVolume) {
+        const std::optional<Rectangle> estimated =
+            tile.boundingVolume->estimateGlobeRectangle(Ellipsoid::WGS84());
+        if (estimated) {
+            return *estimated;
+        }
+    }
+    return tile.bounds;
+}
+
 } // namespace
 
 TileOcclusionState TileSoftwareOcclusionPolicy::check(
     const TilesetTile& tile,
     const Vec3& cameraPosition) {
     const auto& ellipsoid = Ellipsoid::WGS84();
+    const Rectangle occlusionRectangle = occlusionRectangleForTile(tile);
     const Cartographic cameraCart =
         ellipsoid.cartesianToCartographic(cameraPosition);
     const bool cameraInsideTileRegion =
-        tile.bounds.contains(cameraCart.longitude(),
-                             cameraCart.latitude());
+        occlusionRectangle.contains(cameraCart.longitude(),
+                                    cameraCart.latitude());
     if (cameraCart.height() <= 0.0 ||
         cameraInsideTileRegion) {
         return TileOcclusionState::NotOccluded;
@@ -171,17 +184,18 @@ TileOcclusionState TileSoftwareOcclusionPolicy::check(
 
     const double sampleHeight =
         std::max(0.0, TileBoundsMetrics::terrainMaximumHeight(tile));
-    const double midLon = tileMidLongitude(tile.bounds);
-    const double midLat = (tile.bounds.south() + tile.bounds.north()) * 0.5;
+    const double midLon = tileMidLongitude(occlusionRectangle);
+    const double midLat =
+        (occlusionRectangle.south() + occlusionRectangle.north()) * 0.5;
     const double longitudes[3] = {
-        tile.bounds.west(),
+        occlusionRectangle.west(),
         midLon,
-        tile.bounds.east()
+        occlusionRectangle.east()
     };
     const double latitudes[3] = {
-        tile.bounds.south(),
+        occlusionRectangle.south(),
         midLat,
-        tile.bounds.north()
+        occlusionRectangle.north()
     };
 
     for (double lat : latitudes) {
