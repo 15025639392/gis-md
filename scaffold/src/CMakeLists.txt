@@ -485,6 +485,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/providers/XYZImageryProvider.cpp
     earth_engine/providers/WebMapServiceImageryProvider.h
     earth_engine/providers/WebMapServiceImageryProvider.cpp
+    earth_engine/providers/WebMapTileServiceImageryProvider.h
+    earth_engine/providers/WebMapTileServiceImageryProvider.cpp
     earth_engine/providers/TileMapServiceImageryProvider.h
     earth_engine/providers/TileMapServiceImageryProvider.cpp
     earth_engine/providers/ProviderRequestDiagnosticsAggregator.h

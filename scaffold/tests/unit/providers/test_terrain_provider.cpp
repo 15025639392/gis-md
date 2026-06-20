@@ -6,6 +6,7 @@
 #include "earth_engine/providers/TileMapServiceImageryProvider.h"
 #include "earth_engine/providers/TileMapServiceUrl.h"
 #include "earth_engine/providers/WebMapServiceImageryProvider.h"
+#include "earth_engine/providers/WebMapTileServiceImageryProvider.h"
 #include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Projection.h"
@@ -759,6 +760,65 @@ TEST(WebMapServiceImageryProviderTest, BuildsCapabilitiesUrlLikeCesiumNative) {
         webMapServiceCapabilitiesUrl(
             "https://example.com/wms?token=abc&request=Old&version=0&service=Other#frag",
             "1.1.1"));
+}
+
+TEST(WebMapTileServiceImageryProviderTest, BuildsKvpUrlLikeCesiumNative) {
+    WebMapTileServiceImageryOptions options;
+    options.format = "image/png";
+    options.layer = "imagery";
+    options.style = "default";
+    options.tileMatrixSetId = "GoogleMapsCompatible";
+    options.tileMatrixLabels = std::vector<std::string>{"zero", "one", "two"};
+    options.subdomains = {"a", "b"};
+    options.dimensions = std::map<std::string, std::string>{
+        {"time", "2026-06-21"},
+    };
+
+    WebMapTileServiceImageryProvider provider(
+        "https://example.com/wmts?token=abc",
+        options,
+        "wmts attribution");
+
+    EXPECT_TRUE(provider.usesKeyValueParameters());
+    EXPECT_EQ("wmts-imagery", provider.type());
+    EXPECT_EQ("XYZ-WebMercator", provider.schemeId());
+    EXPECT_EQ(0, provider.minZoom());
+    EXPECT_EQ(25, provider.maxZoom());
+    EXPECT_EQ(256, provider.tileWidth());
+    EXPECT_EQ(256, provider.tileHeight());
+    EXPECT_EQ("wmts attribution", provider.attribution());
+    EXPECT_EQ(
+        "https://example.com/wmts?token=abc&request=GetTile&version=1.0.0&service=WMTS&format=image%2Fpng&layer=imagery&style=default&tilematrixset=GoogleMapsCompatible&tilematrix=two&tilerow=1&tilecol=1",
+        provider.buildUrl(TileKey{"XYZ-WebMercator", 2, 1, 2}));
+}
+
+TEST(WebMapTileServiceImageryProviderTest, BuildsRestTemplateUrlLikeCesiumNative) {
+    WebMapTileServiceImageryOptions options;
+    options.layer = "base layer";
+    options.style = "default";
+    options.tileMatrixSetId = "matrix";
+    options.subdomains = {"a", "b", "c"};
+    options.dimensions = std::map<std::string, std::string>{
+        {"Time", "2026-06-21T00:00:00Z"},
+    };
+
+    WebMapTileServiceImageryProvider provider(
+        "https://{s}.example.com/{Layer}/{Style}/{TileMatrixSet}/{TileMatrix}/{TileRow}/{TileCol}/{Time}/{Unknown}.png",
+        options);
+
+    EXPECT_FALSE(provider.usesKeyValueParameters());
+    EXPECT_EQ(
+        "https://b.example.com/base%20layer/default/matrix/3/5/2/2026-06-21T00%3A00%3A00Z/{Unknown}.png",
+        provider.buildUrl(TileKey{"XYZ-WebMercator", 3, 2, 2}));
+}
+
+TEST(WebMapTileServiceImageryProviderTest, RejectsUnsupportedTiles) {
+    WebMapTileServiceImageryProvider provider("https://example.com/wmts");
+
+    EXPECT_TRUE(provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 0, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 1, 0}));
+    EXPECT_EQ("", provider.buildUrl(TileKey{"Geographic-TMS", 0, 0, 0}));
 }
 
 TEST(TileMapServiceUrlTest, AppendsTileMapResourceXmlBeforeQueryLikeCesiumNative) {
