@@ -21956,6 +21956,92 @@ void testTileLoadSchedulerStopsAfterDispatchBudgetBlock() {
           "TileLoadScheduler: dispatch budget block stops before later request planning");
 }
 
+void testTileLoadSchedulerStopsAfterTerrainDispatchBudgetBlock() {
+    class DeferredTerrainProvider final : public TerrainProvider {
+    public:
+        std::string id() const override { return "scheduler-budget-terrain"; }
+        std::string schemeId() const override { return "test"; }
+        int minZoom() const override { return 0; }
+        int maxZoom() const override { return 1; }
+        int tileSize() const override { return 2; }
+        std::string buildUrl(const TileKey&) const override {
+            return "memory://scheduler-budget-terrain";
+        }
+        void requestTile(const TileKey&,
+                         CancellationToken,
+                         HeightmapCallback,
+                         HttpRequestPriority = HttpRequestPriority::Normal) override {
+            ++requestCount;
+        }
+        std::unique_ptr<DecodedHeightmap> decodeTile(
+            const uint8_t*,
+            size_t) override {
+            return nullptr;
+        }
+        int requestCount = 0;
+    };
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 1;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey firstKey{"test", 0, 0, 0};
+    const TileKey blockedKey{"test", 0, 1, 0};
+    const TileKey skippedKey{"test", 0, 2, 0};
+    DeferredTerrainProvider provider;
+    std::vector<int> plannedKeys;
+    std::vector<int> markedKeys;
+    TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {
+                TileLoadRequest{
+                    skippedKey,
+                    TileLoadPriorityGroup::Preload,
+                    10.0},
+                TileLoadRequest{
+                    blockedKey,
+                    TileLoadPriorityGroup::Normal,
+                    50.0},
+                TileLoadRequest{
+                    firstKey,
+                    TileLoadPriorityGroup::Urgent,
+                    100.0},
+            },
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                &provider,
+                nullptr},
+            testCacheKeyForTile,
+            [&plannedKeys](const TileKey& key,
+                           const std::string&,
+                           TilesetTile*& tileState) {
+                plannedKeys.push_back(key.x);
+                tileState = nullptr;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.terrainProviderSupportsTile = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [&markedKeys](const TileKey& key) {
+                markedKeys.push_back(key.x);
+            });
+
+    check(outcome.issued == 1 && !outcome.blockedByInflight,
+          "TileLoadScheduler: terrain dispatch budget block stops without inflight flag");
+    check(provider.requestCount == 1 &&
+              plannedKeys.size() == 2 &&
+              plannedKeys[0] == firstKey.x &&
+              plannedKeys[1] == blockedKey.x &&
+              markedKeys.size() == 1 &&
+              markedKeys[0] == firstKey.x,
+          "TileLoadScheduler: terrain dispatch budget block stops before later request planning");
+}
+
 void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
     class RetryContentProvider final : public TilesetContentProvider {
     public:
@@ -27745,6 +27831,7 @@ int main() {
     testTileLoadSchedulerSkipsDispatcherDuplicateAfterPlanning();
     testTileLoadSchedulerSkipsTerrainDispatcherDuplicateAfterPlanning();
     testTileLoadSchedulerStopsAfterDispatchBudgetBlock();
+    testTileLoadSchedulerStopsAfterTerrainDispatchBudgetBlock();
     testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared();
     testTileMissingRequestSchedulerRetriesTerrainAfterEmptyMarkerCleared();
     testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds();
