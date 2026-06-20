@@ -55,6 +55,7 @@ bool TilePendingRequestState::beginContentRequest(
 void TilePendingRequestState::completeTerrainRequest(
     const std::string& cacheKey) {
     pendingRequests_.erase(cacheKey);
+    pendingContentRequestKeys_.erase(cacheKey);
     pendingRequestTokens_.erase(cacheKey);
 }
 
