@@ -11,6 +11,9 @@ bool TilePendingRequestState::empty() const {
 }
 
 bool TilePendingRequestState::contains(const std::string& cacheKey) const {
+    if (cacheKey.empty()) {
+        return false;
+    }
     return pendingRequests_.count(cacheKey) != 0;
 }
 
@@ -32,7 +35,7 @@ PendingRequestCounts TilePendingRequestState::counts() const {
 bool TilePendingRequestState::beginTerrainRequest(
     const std::string& cacheKey,
     const CancellationToken& token) {
-    if (destroying_ || pendingRequests_.count(cacheKey)) {
+    if (destroying_ || cacheKey.empty() || pendingRequests_.count(cacheKey)) {
         return false;
     }
     pendingRequests_.insert(cacheKey);
@@ -43,7 +46,7 @@ bool TilePendingRequestState::beginTerrainRequest(
 bool TilePendingRequestState::beginContentRequest(
     const std::string& cacheKey,
     const CancellationToken& token) {
-    if (destroying_ || pendingRequests_.count(cacheKey)) {
+    if (destroying_ || cacheKey.empty() || pendingRequests_.count(cacheKey)) {
         return false;
     }
     pendingRequests_.insert(cacheKey);

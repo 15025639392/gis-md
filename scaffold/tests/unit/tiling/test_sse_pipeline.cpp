@@ -18303,6 +18303,52 @@ void testTilePendingRequestStateCountsAndCompletesRequests() {
           "TilePendingRequestState: completion cleanup preserves request-kind invariants");
 }
 
+void testPendingLoadStateRejectsEmptyCacheKeys() {
+    const TileKey key{"test", 0, 0, 0};
+    TilePendingRequestState requestState;
+    CancellationToken terrainToken;
+    CancellationToken contentToken;
+
+    check(!requestState.beginTerrainRequest("", terrainToken) &&
+              !requestState.beginContentRequest("", contentToken) &&
+              requestState.empty(),
+          "TilePendingRequestState: empty cache keys are rejected without side effects");
+
+    TilePendingLoadQueue pendingLoads;
+    pendingLoads.addTerrainUpload(PendingTerrainUpload{
+        key,
+        "",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        nullptr});
+    pendingLoads.addContentUpload(PendingContentUpload{
+        key,
+        "",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileContentLoadResult::failed()});
+    pendingLoads.addTerrainTerminalResult(PendingTerrainTerminalResult{
+        key,
+        "",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TerrainTileLoadStatus::Failed});
+    pendingLoads.addContentTerminalResult(PendingContentTerminalResult{
+        key,
+        "",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileContentLoadStatus::Failed});
+
+    check(!pendingLoads.hasWork() &&
+              !pendingLoads.containsCacheKey("") &&
+              pendingLoads.terrainUploadCount() == 0 &&
+              pendingLoads.contentUploadCount() == 0 &&
+              pendingLoads.terrainTerminalResultCount() == 0 &&
+              pendingLoads.contentTerminalResultCount() == 0,
+          "TilePendingLoadQueue: empty cache keys are ignored without queued work");
+}
+
 void testTilePendingRequestStateCancelsAndRejectsDuringDestroy() {
     TilePendingRequestState state;
     CancellationToken terrainToken;
@@ -24801,6 +24847,7 @@ int main() {
     testTilePendingLoadProcessorCountsTerminalElapsedAgainstMainThreadBudget();
     testTilePendingUploadCompletionErasesUploadKeys();
     testTilePendingRequestStateCountsAndCompletesRequests();
+    testPendingLoadStateRejectsEmptyCacheKeys();
     testTilePendingRequestStateCancelsAndRejectsDuringDestroy();
     testTileLoadLifecycleCountsAndFindsPendingWork();
     testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks();

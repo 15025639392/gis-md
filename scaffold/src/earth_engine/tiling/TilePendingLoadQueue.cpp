@@ -8,6 +8,9 @@ namespace earth_engine {
 
 bool TilePendingLoadQueue::containsCacheKey(
     const std::string& cacheKey) const {
+    if (cacheKey.empty()) {
+        return false;
+    }
     if (terrainUploadKeys_.count(cacheKey) ||
         contentUploadKeys_.count(cacheKey)) {
         return true;
@@ -49,22 +52,34 @@ bool TilePendingLoadQueue::containsCacheKey(
 }
 
 void TilePendingLoadQueue::addTerrainUpload(PendingTerrainUpload upload) {
+    if (upload.cacheKey.empty()) {
+        return;
+    }
     terrainUploadKeys_.insert(upload.cacheKey);
     terrainUploads_.push_back(std::move(upload));
 }
 
 void TilePendingLoadQueue::addTerrainTerminalResult(
     PendingTerrainTerminalResult result) {
+    if (result.cacheKey.empty()) {
+        return;
+    }
     terrainTerminalResults_.push_back(std::move(result));
 }
 
 void TilePendingLoadQueue::addContentUpload(PendingContentUpload upload) {
+    if (upload.cacheKey.empty()) {
+        return;
+    }
     contentUploadKeys_.insert(upload.cacheKey);
     contentUploads_.push_back(std::move(upload));
 }
 
 void TilePendingLoadQueue::addContentTerminalResult(
     PendingContentTerminalResult result) {
+    if (result.cacheKey.empty()) {
+        return;
+    }
     contentTerminalResults_.push_back(std::move(result));
 }
 
