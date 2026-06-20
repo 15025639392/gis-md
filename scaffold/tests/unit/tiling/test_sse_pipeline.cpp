@@ -53,6 +53,7 @@
 #include "earth_engine/tiling/TileLodTransitionController.h"
 #include "earth_engine/tiling/TileLodTransitionFrameUpdater.h"
 #include "earth_engine/tiling/TileMissingRequestScheduler.h"
+#include "earth_engine/tiling/TileOcclusionResolver.h"
 #include "earth_engine/tiling/TilePendingLoadQueue.h"
 #include "earth_engine/tiling/TilePendingLoadProcessor.h"
 #include "earth_engine/tiling/TilePendingLoadCommitCoordinator.h"
@@ -28676,6 +28677,23 @@ void testTilesetOcclusionVisibleChildKeepsParentRefining() {
           "Tileset: one visible child keeps parent unoccluded");
 }
 
+void testTileOcclusionResolverMissingChildProxyKeepsParentVisible() {
+    TilesetTile root;
+    root.key = TileKey{"Geographic-TMS", 0, 0, 0};
+    root.children.push_back(nullptr);
+
+    int checkedTiles = 0;
+    const TileOcclusionState result = TileOcclusionResolver::check(
+        root,
+        [&checkedTiles](const TilesetTile&) {
+            ++checkedTiles;
+            return TileOcclusionState::NotOccluded;
+        });
+
+    check(result == TileOcclusionState::NotOccluded && checkedTiles == 1,
+          "TileOcclusionResolver: missing child proxy keeps parent visible like cesium-native");
+}
+
 void testTilesetOcclusionUnavailableChildDelaysNewRefinement() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -31130,6 +31148,7 @@ int main() {
     testTilesetOcclusionUnavailableDoesNotDelayPreviouslyRefinedTile();
     testTilesetOcclusionAggregatesOccludedChildren();
     testTilesetOcclusionVisibleChildKeepsParentRefining();
+    testTileOcclusionResolverMissingChildProxyKeepsParentVisible();
     testTilesetOcclusionUnavailableChildDelaysNewRefinement();
     testTilesetOcclusionUnconditionalChildSkipsAggregation();
     testTilesetCameraInsideDiagnosticUsesExplicitRootVolume();
