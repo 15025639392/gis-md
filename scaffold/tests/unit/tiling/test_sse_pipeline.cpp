@@ -20106,6 +20106,58 @@ void testTilePendingLoadProcessorTerminalElapsedStopsUploads() {
           "TilePendingLoadProcessor: upload remains pending after terminal time budget is exhausted");
 }
 
+void testTilePendingLoadProcessorDrainsTerminalDuringInteraction() {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxTerminalStateTransitionsPerFrame = 4;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey terminalKey{"test", 1, 0, 0};
+    const TileKey uploadKey{"test", 1, 1, 0};
+    std::vector<std::string> events;
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainTerminalResult(
+            PendingTerrainTerminalResult{
+                terminalKey,
+                "terminal",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TerrainTileLoadStatus::RetryLater});
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            uploadKey,
+            "upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            nullptr});
+    }
+
+    const bool changed =
+        TilePendingLoadProcessor::processPendingLoads(
+            TilePendingLoadProcessorInput{
+                lifecycle,
+                budget,
+                true,
+                {}},
+            [&events](const PendingTerrainTerminalResult& result) {
+                events.push_back(result.cacheKey);
+            },
+            [](const PendingContentTerminalResult&) {},
+            [&events](PendingTerrainUpload& upload) {
+                events.push_back(upload.cacheKey);
+            },
+            [](PendingContentUpload&) {});
+
+    check(changed && events.size() == 1 && events[0] == "terminal",
+          "TilePendingLoadProcessor: interaction still drains terminal results");
+    check(lifecycle.counts().terrainTerminalResults == 0 &&
+              lifecycle.counts().terrainUploads == 1 &&
+              lifecycle.containsWorkForCacheKey("upload"),
+          "TilePendingLoadProcessor: interaction leaves non-urgent uploads pending after terminal drain");
+}
+
 void testTilePendingUploadCompletionErasesUploadKeys() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -29638,6 +29690,7 @@ int main() {
     testTilePendingLoadProcessorReportsUnchangedWhenBudgetBlocksAllWork();
     testTilePendingLoadProcessorCountsTerminalElapsedAgainstMainThreadBudget();
     testTilePendingLoadProcessorTerminalElapsedStopsUploads();
+    testTilePendingLoadProcessorDrainsTerminalDuringInteraction();
     testTilePendingUploadCompletionErasesUploadKeys();
     testTilePendingUploadCompletionKeepsOtherKindForSharedKey();
     testTilePendingUploadCompletionClaimedUploadCountsAsWork();
