@@ -19689,6 +19689,36 @@ void testTileLoadLifecycleCancelErasesPendingUploads() {
           "TileLoadLifecycle: cancel erases content upload and leaves lifecycle idle");
 }
 
+void testTileLoadLifecycleCancelIgnoresEmptyCacheKey() {
+    TileLoadLifecycle lifecycle;
+    CancellationToken requestToken;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        check(lifecycle.requestState().beginTerrainRequest(
+                  "terrain-request",
+                  requestToken),
+              "TileLoadLifecycle: empty cancel test starts request");
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            TileKey{"test", 0, 0, 0},
+            "content-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileContentLoadResult::empty()});
+    }
+
+    lifecycle.cancelAndEraseCacheKey("");
+
+    check(!requestToken.isCancelled() &&
+              lifecycle.containsWorkForCacheKey("terrain-request") &&
+              lifecycle.containsWorkForCacheKey("content-upload"),
+          "TileLoadLifecycle: empty cache key cancel has no side effects");
+
+    lifecycle.cancelAndEraseCacheKey("terrain-request");
+    lifecycle.cancelAndEraseCacheKey("content-upload");
+    check(!lifecycle.hasPendingWork(),
+          "TileLoadLifecycle: empty cancel test cleanup drains work");
+}
+
 void testTileLoadLifecycleCancelErasesTerminalResults() {
     TileLoadLifecycle lifecycle;
     const TileKey terrainKey{"test", 0, 0, 0};
@@ -28207,6 +28237,7 @@ int main() {
     testTilePendingRequestStateCancelsAndRejectsDuringDestroy();
     testTileLoadLifecycleCountsAndFindsPendingWork();
     testTileLoadLifecycleCancelErasesPendingUploads();
+    testTileLoadLifecycleCancelIgnoresEmptyCacheKey();
     testTileLoadLifecycleCancelErasesTerminalResults();
     testTileLoadLifecycleCancelErasesActiveRequests();
     testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks();
