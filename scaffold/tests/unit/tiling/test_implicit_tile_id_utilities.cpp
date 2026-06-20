@@ -142,6 +142,14 @@ TEST(ImplicitTileIdUtilitiesTest, ResolveUrlEscapesPathSpacesLikeCesiumNativeUri
                   TileKey{"Geographic-TMS", 11, 2, 3}));
 }
 
+TEST(ImplicitTileIdUtilitiesTest, ResolveUrlRejectsNonAsciiAlphaSchemeLikeCesiumNativeUri) {
+    EXPECT_EQ("https://example.com/base/1:tile.terrain",
+              ImplicitTileIdUtilities::resolveUrl(
+                  "https://example.com/base/layer.json",
+                  "1:tile.terrain",
+                  TileKey{"Geographic-TMS", 11, 2, 3}));
+}
+
 TEST(ImplicitTileIdUtilitiesTest, ComputeObbQuadtreeBoundingVolumeMatchesCesiumNative) {
     const OrientedBoundingBox root(Vec3(1.0, 2.0, 3.0),
                                   Vec3(10.0, 0.0, 0.0),

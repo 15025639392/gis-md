@@ -15,12 +15,25 @@ using TemplateSubstitution =
     std::function<std::string(const std::string& placeholder)>;
 
 bool hasUrlScheme(const std::string& url) {
-    const size_t colon = url.find(':');
-    if (colon == std::string::npos) {
-        return false;
+    auto isAsciiAlpha = [](unsigned char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+    };
+    auto isAsciiAlphanumeric = [isAsciiAlpha](unsigned char c) {
+        return isAsciiAlpha(c) || (c >= '0' && c <= '9');
+    };
+
+    for (size_t i = 0; i < url.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(url[i]);
+        if (c == ':') {
+            return true;
+        }
+        if ((i == 0 && !isAsciiAlpha(c)) ||
+            (!isAsciiAlphanumeric(c) && c != '+' && c != '-' && c != '.')) {
+            return false;
+        }
     }
-    const size_t firstSpecial = url.find_first_of("/?#");
-    return firstSpecial == std::string::npos || colon < firstSpecial;
+
+    return false;
 }
 
 std::string substituteTemplateParameters(
