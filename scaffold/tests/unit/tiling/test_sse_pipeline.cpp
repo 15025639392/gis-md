@@ -968,6 +968,13 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
     return bytes;
 }
 
+std::vector<uint8_t> makeQuantizedMeshBytesWithHeaderPadding(
+    const std::string& metadataJson) {
+    std::vector<uint8_t> bytes = makeQuantizedMeshBytes(metadataJson);
+    bytes.insert(bytes.begin() + 92, 4, 0);
+    return bytes;
+}
+
 void writeBytes(const std::filesystem::path& path,
                 const std::vector<uint8_t>& bytes) {
     std::filesystem::create_directories(path.parent_path());
@@ -3502,6 +3509,23 @@ void testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative() {
     check(negativeOnly.size() == 1 &&
               negativeOnly[0] == std::array<int, 5>{0, 0, 1, 2, 0},
           "QuantizedMeshParser: metadata uint32 fields default like cesium-native");
+}
+
+void testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding() {
+    const std::string metadata = R"json({
+      "available": [
+        [{"startX":0,"startY":0,"endX":0,"endY":0}]
+      ]
+    })json";
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytesWithHeaderPadding(metadata);
+
+    const std::vector<std::array<int, 5>> metadataOnly =
+        QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
+
+    check(metadataOnly.size() == 1 &&
+              metadataOnly[0] == std::array<int, 5>{0, 0, 0, 0, 0},
+          "QuantizedMeshParser: metadata-only path keeps padded-header compatibility");
 }
 
 void testQuantizedMeshRejectsTruncatedEdgeIndices() {
@@ -21012,6 +21036,7 @@ int main() {
     testQuantizedMeshLayerJsonMaxzoomDoesNotGateExplicitAvailability();
     testQuantizedMeshLayerJsonAvailabilityUint32Defaults();
     testQuantizedMeshMetadataExtensionLengthPrefixMatchesCesiumNative();
+    testQuantizedMeshMetadataOnlyPathHandlesHeaderPadding();
     testQuantizedMeshRejectsTruncatedEdgeIndices();
     testQuantizedMeshSkirtNormalsCopyEdgeNormals();
     testQuantizedMeshRtcOriginFromBoundingSphereCenter();

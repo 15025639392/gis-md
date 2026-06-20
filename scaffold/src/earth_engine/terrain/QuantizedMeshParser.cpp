@@ -358,63 +358,73 @@ std::vector<std::array<int, 5>> QuantizedMeshParser::parseMetadataAvailability(
     std::memcpy(&vertexCount, data + 88, sizeof(uint32_t));
     if (vertexCount == 0 || vertexCount > 500000) return {};
 
-    size_t offset = kHeaderSize;
-    const size_t vertexAttributeBytes =
-        static_cast<size_t>(vertexCount) * 3u * sizeof(uint16_t);
-    if (offset + vertexAttributeBytes > len) return {};
-    offset += vertexAttributeBytes;
+    auto parseFromPayloadOffset =
+        [&](size_t payloadOffset) -> std::optional<std::vector<std::array<int, 5>>> {
+        size_t offset = payloadOffset;
+        const size_t vertexAttributeBytes =
+            static_cast<size_t>(vertexCount) * 3u * sizeof(uint16_t);
+        if (offset + vertexAttributeBytes > len) return std::nullopt;
+        offset += vertexAttributeBytes;
 
-    const bool idx32 = vertexCount > 65536;
-    const size_t indexSize = idx32 ? sizeof(uint32_t) : sizeof(uint16_t);
-    if (idx32 && (offset % 4) != 0) offset += 2;
-    if (offset + sizeof(uint32_t) > len) return {};
+        const bool idx32 = vertexCount > 65536;
+        const size_t indexSize = idx32 ? sizeof(uint32_t) : sizeof(uint16_t);
+        if (idx32 && (offset % 4) != 0) offset += 2;
+        if (offset + sizeof(uint32_t) > len) return std::nullopt;
 
-    uint32_t triangleCount = 0;
-    std::memcpy(&triangleCount, data + offset, sizeof(uint32_t));
-    offset += sizeof(uint32_t);
-
-    const size_t indicesCount = static_cast<size_t>(triangleCount) * 3u;
-    if (indicesCount > (len - offset) / indexSize) return {};
-    offset += indicesCount * indexSize;
-
-    for (int edge = 0; edge < 4; ++edge) {
-        if (offset + sizeof(uint32_t) > len) return {};
-        uint32_t edgeCount = 0;
-        std::memcpy(&edgeCount, data + offset, sizeof(uint32_t));
-        offset += sizeof(uint32_t);
-        if (static_cast<size_t>(edgeCount) > (len - offset) / indexSize) {
-            return {};
-        }
-        offset += static_cast<size_t>(edgeCount) * indexSize;
-    }
-
-    constexpr size_t kExtHeaderSize = 5;
-    while (offset + kExtHeaderSize <= len) {
-        const uint8_t extId = data[offset];
-        offset += sizeof(uint8_t);
-
-        uint32_t extLen = 0;
-        std::memcpy(&extLen, data + offset, sizeof(uint32_t));
+        uint32_t triangleCount = 0;
+        std::memcpy(&triangleCount, data + offset, sizeof(uint32_t));
         offset += sizeof(uint32_t);
 
-        if (offset + extLen > len) break;
-        if (extId == 4 && extLen >= sizeof(uint32_t)) {
-            uint32_t metadataJsonLength = 0;
-            std::memcpy(&metadataJsonLength, data + offset, sizeof(uint32_t));
-            const size_t jsonOffset = offset + sizeof(uint32_t);
-            const size_t maxJsonLength = extLen - sizeof(uint32_t);
-            if (metadataJsonLength <= maxJsonLength &&
-                jsonOffset + metadataJsonLength <= len) {
-                return parseMetadataAvailabilityJson(std::string(
-                    reinterpret_cast<const char*>(data + jsonOffset),
-                    metadataJsonLength));
+        const size_t indicesCount = static_cast<size_t>(triangleCount) * 3u;
+        if (indicesCount > (len - offset) / indexSize) return std::nullopt;
+        offset += indicesCount * indexSize;
+
+        for (int edge = 0; edge < 4; ++edge) {
+            if (offset + sizeof(uint32_t) > len) return std::nullopt;
+            uint32_t edgeCount = 0;
+            std::memcpy(&edgeCount, data + offset, sizeof(uint32_t));
+            offset += sizeof(uint32_t);
+            if (static_cast<size_t>(edgeCount) > (len - offset) / indexSize) {
+                return std::nullopt;
             }
+            offset += static_cast<size_t>(edgeCount) * indexSize;
         }
 
-        offset += extLen;
-    }
+        constexpr size_t kExtHeaderSize = 5;
+        while (offset + kExtHeaderSize <= len) {
+            const uint8_t extId = data[offset];
+            offset += sizeof(uint8_t);
 
-    return {};
+            uint32_t extLen = 0;
+            std::memcpy(&extLen, data + offset, sizeof(uint32_t));
+            offset += sizeof(uint32_t);
+
+            if (offset + extLen > len) break;
+            if (extId == 4 && extLen >= sizeof(uint32_t)) {
+                uint32_t metadataJsonLength = 0;
+                std::memcpy(&metadataJsonLength, data + offset, sizeof(uint32_t));
+                const size_t jsonOffset = offset + sizeof(uint32_t);
+                const size_t maxJsonLength = extLen - sizeof(uint32_t);
+                if (metadataJsonLength <= maxJsonLength &&
+                    jsonOffset + metadataJsonLength <= len) {
+                    return parseMetadataAvailabilityJson(std::string(
+                        reinterpret_cast<const char*>(data + jsonOffset),
+                        metadataJsonLength));
+                }
+            }
+
+            offset += extLen;
+        }
+
+        return std::nullopt;
+    };
+
+    std::optional<std::vector<std::array<int, 5>>> availability =
+        parseFromPayloadOffset(kHeaderSize);
+    if (availability) return *availability;
+
+    availability = parseFromPayloadOffset(kHeaderSize + sizeof(uint32_t));
+    return availability.value_or(std::vector<std::array<int, 5>>{});
 }
 
 std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
