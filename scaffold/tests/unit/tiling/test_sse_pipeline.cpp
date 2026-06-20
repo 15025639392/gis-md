@@ -3717,6 +3717,62 @@ void testRasterMappedFailedTileWithoutAncestorBecomesReadyNonBlocking() {
           "RasterMappedToTilesetTile: failed ready tile never reports more detail available");
 }
 
+void testRasterMappedFailedReadyTileDetachSkipsRendererCallback() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+
+    RasterOverlayTileProvider provider(
+        overlay->getProvider(),
+        overlay->getTileScheme(),
+        nullptr);
+    provider.setOwner(overlay.get());
+    provider.setFrameNumber(1);
+
+    RasterOverlayDetails details;
+    details.setGeographicRectangle(
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
+
+    RasterMappedToTilesetTile mapped;
+    std::vector<RasterOverlayProjection> missingProjections;
+    const TileKey geometryKey{"Geographic-TMS", 3, 4, 2};
+    mapped.update(
+        geometryKey,
+        details,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+    RasterOverlayTile* failedTile = mapped.getLoadingTile();
+    failedTile->setState(RasterOverlayTile::LoadState::Failed);
+
+    mapped.update(
+        geometryKey,
+        details,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+    check(mapped.getReadyTile() == failedTile &&
+              mapped.getState() == RasterMappedToTilesetTile::State::Attached,
+          "RasterMappedToTilesetTile: failed tile is marked attached without renderer resources like cesium-native");
+
+    RecordingPrepareRendererResources prep;
+    mapped.detachFromTile(&prep);
+
+    check(prep.detachCount == 0,
+          "RasterMappedToTilesetTile: detach skips renderer callback for failed ready tiles like cesium-native");
+    check(mapped.getState() == RasterMappedToTilesetTile::State::Unattached,
+          "RasterMappedToTilesetTile: failed ready detach still resets attachment state");
+}
+
 void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -23812,6 +23868,7 @@ int main() {
     testRasterMappedUsesRenderContentDetailsRectangle();
     testRasterMappedMissingProjectionUsesPlaceholder();
     testRasterMappedPlaceholderRemapsWhenProviderBecomesReady();
+    testRasterMappedFailedReadyTileDetachSkipsRendererCallback();
     testTilesetMissingRasterProjectionUnloadsRenderContent();
     testTilesetRasterTargetPixelsUseRenderContentRectangle();
     testTilesetEnsuresOverlayProviderBeforeMapping();
