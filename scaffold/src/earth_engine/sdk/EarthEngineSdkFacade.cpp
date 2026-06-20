@@ -9,7 +9,10 @@
 #include "../platform/bridge/PlatformBridge.h"
 #include "../providers/DebugImageryProvider.h"
 #include "../providers/HeightmapTerrainProvider.h"
+#include "../providers/QuantizedMeshLayerJsonFetcher.h"
 #include "../providers/QuantizedMeshTerrainProvider.h"
+#include "../providers/TileMapServiceImageryProvider.h"
+#include "../providers/TileMapServiceUrl.h"
 #include "../providers/XYZImageryProvider.h"
 #include "../renderer/RenderDevice.h"
 #include "../scene/Camera.h"
@@ -127,6 +130,39 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
                 std::move(dbg),
                 TileScheme::createXYZWebMercator(),
                 makeRasterOverlayOptions(overlayConfig));
+            continue;
+        }
+
+        if (overlayConfig.imageryKind == ImagerySourceKind::TileMapService) {
+            const std::string xmlUrl =
+                tileMapServiceXmlUrl(overlayConfig.tileMapResourceUrl);
+            QuantizedMeshLayerJsonFetcher fetcher(&platformBridge_);
+            const std::vector<uint8_t> bytes = fetcher.fetchBlocking(xmlUrl);
+            if (bytes.empty()) {
+                logError(platformBridge_,
+                         "TMS tilemapresource.xml load failed: " + xmlUrl);
+                continue;
+            }
+
+            TileMapServiceImagerySource source =
+                createTileMapServiceImagerySource(
+                    xmlUrl,
+                    std::string(bytes.begin(), bytes.end()),
+                    overlayConfig.attribution);
+            applyConfiguredZoomRange(*source.provider,
+                                     overlayConfig.minimumZoom,
+                                     overlayConfig.maximumZoom);
+            source.provider->setPlatformBridge(&platformBridge_);
+
+            RasterOverlay::Options options =
+                makeRasterOverlayOptions(overlayConfig);
+            if (source.coverageRectangle) {
+                options.coverageRectangle = *source.coverageRectangle;
+            }
+            addActivatedRasterOverlay(rasterOverlays,
+                                      std::move(source.provider),
+                                      std::move(source.scheme),
+                                      options);
             continue;
         }
 
