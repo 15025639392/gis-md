@@ -234,6 +234,15 @@ private:
     std::deque<PendingUpload> pendingUploads_;
     mutable std::mutex pendingMutex_;
 
+    struct CachedRectangleSource {
+        TileKey key;
+        Rectangle bounds;
+        std::shared_ptr<const DecodedImage> image;
+        bool ancestorFallback = false;
+    };
+    std::unordered_map<std::string, CachedRectangleSource>
+        rectangleSourceCache_;
+
     /// Tiles currently in-flight (requested but not yet responded).
     std::unordered_set<std::string> inFlightRequests_;
     std::unordered_map<std::string, std::shared_ptr<RectangleSourceRequest>>

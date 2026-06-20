@@ -19,6 +19,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -239,6 +240,15 @@ bool isDecodedImageUploadable(const DecodedImage& image) {
         static_cast<int64_t>(image.channels);
     return requiredBytes > 0 &&
            image.pixels.size() >= static_cast<size_t>(requiredBytes);
+}
+
+std::unique_ptr<DecodedImage> cloneDecodedImage(const DecodedImage& image) {
+    auto clone = std::make_unique<DecodedImage>();
+    clone->width = image.width;
+    clone->height = image.height;
+    clone->channels = image.channels;
+    clone->pixels = image.pixels;
+    return clone;
 }
 
 double webMercatorY(double latRad) {
@@ -475,6 +485,11 @@ TileKey parentTileKey(const TileKey& key) {
     return key.parent();
 }
 
+std::string sourceCacheKey(const TileKey& key) {
+    return key.schemeId + "/" + std::to_string(key.z) + "/" +
+           std::to_string(key.x) + "/" + std::to_string(key.y);
+}
+
 double clampUnit(double v) {
     return std::max(0.0, std::min(1.0, v));
 }
@@ -647,6 +662,9 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
     : public std::enable_shared_from_this<RectangleSourceRequest> {
     RectangleSourceRequest(ImageryProvider& imageryProvider,
                            const TileScheme& tileScheme,
+                           std::unordered_map<std::string,
+                                              CachedRectangleSource>& sourceCache,
+                           std::mutex& sourceCacheMutex,
                            RectangleSourcePlan plan,
                            Rectangle bounds,
                            int textureSize,
@@ -656,6 +674,8 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
                            RectangleRequestFailure failure)
         : provider(imageryProvider)
         , scheme(tileScheme)
+        , cache(sourceCache)
+        , cacheMutex(sourceCacheMutex)
         , sourcePlan(std::move(plan))
         , targetBounds(bounds)
         , maximumTextureSize(textureSize)
@@ -698,7 +718,7 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
             }
             issuedAny = true;
             onSourceIssued();
-            requestSource(sourceKey, false, onSourceFinished);
+            requestSource(sourceKey, sourceKey, false, onSourceFinished);
         }
         return issuedAny;
     }
@@ -711,14 +731,35 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
 private:
     void requestSource(
         const TileKey& requestedKey,
+        const TileKey& originalKey,
         bool ancestorFallback,
         const std::function<void()>& onSourceFinished) {
+        std::optional<LoadedSourceImage> cachedSource;
+        {
+            std::lock_guard<std::mutex> lock(cacheMutex);
+            auto it = cache.find(sourceCacheKey(originalKey));
+            if (it != cache.end() && it->second.image) {
+                LoadedSourceImage source;
+                source.key = it->second.key;
+                source.bounds = it->second.bounds;
+                source.image = cloneDecodedImage(*it->second.image);
+                source.ancestorFallback =
+                    ancestorFallback || it->second.ancestorFallback;
+                cachedSource = std::move(source);
+            }
+        }
+        if (cachedSource) {
+            onSourceFinished();
+            finishOneSource(std::move(*cachedSource));
+            return;
+        }
+
         auto self = shared_from_this();
         CancellationToken token;
         provider.requestTile(
             requestedKey,
             token,
-            [self, requestedKey, ancestorFallback, onSourceFinished](
+            [self, requestedKey, originalKey, ancestorFallback, onSourceFinished](
                 const TileKey& loadedKey,
                 std::unique_ptr<DecodedImage> image) mutable {
                 if (image) {
@@ -727,6 +768,15 @@ private:
                     source.bounds = self->scheme.tileToRectangle(loadedKey);
                     source.image = std::move(image);
                     source.ancestorFallback = ancestorFallback;
+                    self->cacheSource(originalKey, source);
+                    if (loadedKey != originalKey) {
+                        LoadedSourceImage directSource;
+                        directSource.key = loadedKey;
+                        directSource.bounds = source.bounds;
+                        directSource.image = cloneDecodedImage(*source.image);
+                        directSource.ancestorFallback = false;
+                        self->cacheSource(loadedKey, directSource);
+                    }
                     onSourceFinished();
                     self->finishOneSource(std::move(source));
                     return;
@@ -738,7 +788,11 @@ private:
                 if (requestedKey.z > self->minimumLevel) {
                     const TileKey parentKey = parentTileKey(requestedKey);
                     if (self->provider.supportsTile(parentKey)) {
-                        self->requestSource(parentKey, true, onSourceFinished);
+                        self->requestSource(
+                            parentKey,
+                            originalKey,
+                            true,
+                            onSourceFinished);
                         return;
                     }
                 }
@@ -746,6 +800,18 @@ private:
                 onSourceFinished();
                 self->finishOneSource(LoadedSourceImage{});
             });
+    }
+
+    void cacheSource(const TileKey& requestedKey,
+                     const LoadedSourceImage& source) {
+        if (!source.image) return;
+        CachedRectangleSource cached;
+        cached.key = source.key;
+        cached.bounds = source.bounds;
+        cached.image = std::make_shared<DecodedImage>(*source.image);
+        cached.ancestorFallback = source.ancestorFallback;
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        cache[sourceCacheKey(requestedKey)] = std::move(cached);
     }
 
     void finishOneSource(LoadedSourceImage&& source) {
@@ -785,6 +851,8 @@ private:
 
     ImageryProvider& provider;
     const TileScheme& scheme;
+    std::unordered_map<std::string, CachedRectangleSource>& cache;
+    std::mutex& cacheMutex;
     RectangleSourcePlan sourcePlan;
     Rectangle targetBounds;
     int maximumTextureSize = 0;
@@ -1182,6 +1250,8 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
     auto request = std::make_shared<RectangleSourceRequest>(
         provider_,
         scheme_,
+        rectangleSourceCache_,
+        pendingMutex_,
         sourcePlan,
         targetBounds,
         maxTextureSize,

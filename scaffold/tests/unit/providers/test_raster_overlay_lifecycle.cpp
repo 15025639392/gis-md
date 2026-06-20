@@ -449,6 +449,77 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceFailureFallsBackToParentTile) {
                 imagery.failingKey.y / 2}) != imagery.requestedKeys.end());
 }
 
+TEST(RasterOverlayLifecycleTest, RectangleSourceTilesAreCachedLikeCesiumNative) {
+    ParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+    const Rectangle eastHalf(
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.south(),
+        sourceBounds.east(),
+        sourceBounds.north());
+
+    auto westTile = provider.getTile(westHalf, 256.0, 512.0);
+    ASSERT_NE(nullptr, westTile);
+    EXPECT_EQ(sourceKey.z, westTile->getSourceZoom());
+    ASSERT_TRUE(provider.loadTile(*westTile));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(1, static_cast<int>(imagery.requestedKeys.size()));
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
+
+    auto eastTile = provider.getTile(eastHalf, 256.0, 512.0);
+    ASSERT_NE(nullptr, eastTile);
+    EXPECT_EQ(sourceKey.z, eastTile->getSourceZoom());
+    ASSERT_TRUE(provider.loadTile(*eastTile));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+
+    EXPECT_EQ(1, static_cast<int>(imagery.requestedKeys.size()));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, eastTile->getState());
+}
+
+TEST(RasterOverlayLifecycleTest, RectangleSourceFallbacksAreCachedByRequestedTileLikeCesiumNative) {
+    ParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey failingKey{scheme->id(), 3, 2, 3};
+    imagery.failingKey = failingKey;
+    const Rectangle bounds = scheme->tileToRectangle(failingKey);
+
+    auto firstTile = provider.getTile(bounds, 512.0, 512.0);
+    ASSERT_NE(nullptr, firstTile);
+    ASSERT_TRUE(provider.loadTile(*firstTile));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+    const int requestsAfterFirstLoad =
+        static_cast<int>(imagery.requestedKeys.size());
+    EXPECT_TRUE(requestsAfterFirstLoad >= 2);
+
+    Rectangle innerBounds(
+        bounds.west() + bounds.width() * 0.25,
+        bounds.south() + bounds.height() * 0.25,
+        bounds.east() - bounds.width() * 0.25,
+        bounds.north() - bounds.height() * 0.25);
+    auto secondTile = provider.getTile(innerBounds, 256.0, 256.0);
+    ASSERT_NE(nullptr, secondTile);
+    ASSERT_TRUE(provider.loadTile(*secondTile));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+
+    EXPECT_EQ(requestsAfterFirstLoad,
+              static_cast<int>(imagery.requestedKeys.size()));
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
+              secondTile->isMoreDetailAvailable());
+}
+
 TEST(RasterOverlayLifecycleTest, RectangleAncestorFallbackReportsNoMoreDetailLikeCesiumNative) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
