@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/core/math/MathUtils.h"
+#include "earth_engine/tiling/SurfaceTile.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileChildMaterializer.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -228,6 +229,62 @@ TEST(TileChildMaterializerTest, NonRootUnavailableTerrainSiblingsBecomeUpsampled
     EXPECT_TRUE(parent.children[1]->content.upsampledFromParent);
     EXPECT_TRUE(parent.children[2]->content.upsampledFromParent);
     EXPECT_TRUE(parent.children[3]->content.upsampledFromParent);
+}
+
+TEST(TileChildMaterializerTest,
+     TerrainAvailabilityUpgradeClearsStaleUpsampledMesh) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        Rectangle{});
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    ASSERT_TRUE(TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        3,
+        [](const TileKey& key) {
+            return key.x == 2 && key.y == 0
+                ? TileAvailabilityState::Available
+                : TileAvailabilityState::NotAvailable;
+        },
+        ensure));
+    ASSERT_EQ(4u, parent.children.size());
+    TilesetTile* upgradedChild = parent.children[1];
+    ASSERT_EQ((TileKey{"Geographic-TMS", 2, 3, 0}), upgradedChild->key);
+    ASSERT_TRUE(upgradedChild->content.upsampledFromParent);
+    upgradedChild->content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    upgradedChild->content.renderContent.setMeshReady(true);
+    upgradedChild->content.renderContent.setSurfaceDrawable(true);
+    upgradedChild->content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::AncestorUpsample);
+
+    const bool changed = TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        3,
+        [](const TileKey& key) {
+            return key.y == 0
+                ? TileAvailabilityState::Available
+                : TileAvailabilityState::NotAvailable;
+        },
+        ensure);
+
+    EXPECT_TRUE(changed);
+    EXPECT_FALSE(upgradedChild->content.upsampledFromParent);
+    EXPECT_FALSE(upgradedChild->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(upgradedChild->content.renderContent.isMeshReady());
+    EXPECT_FALSE(upgradedChild->content.renderContent.isSurfaceDrawable());
+    EXPECT_EQ(4u, parent.children.size());
 }
 
 TEST(TileChildMaterializerTest, NonRootGeographicTerrainChildrenPreserveBounds) {
