@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -414,6 +415,54 @@ TEST(QuantizedMeshTerrainProviderTest, InvalidBodyFailsTerminally) {
 
     EXPECT_EQ(TerrainTileLoadStatus::Failed, completedStatus);
     EXPECT_EQ(1, provider.requestDiagnostics().requestsCompleted);
+}
+
+TEST(QuantizedMeshTerrainProviderTest, LayerJsonUrlConfigUsesSeparateFetcher) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+    std::atomic<bool> configureDone{false};
+    bool configured = false;
+
+    std::thread configThread([&]() {
+        configured = provider.configureFromLayerJsonUrl(
+            "https://terrain.example.invalid/layer.json");
+        configureDone.store(true, std::memory_order_release);
+    });
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    ProviderRequestDiagnostics pendingDiag = provider.requestDiagnostics();
+    EXPECT_EQ(0, pendingDiag.requestsStarted);
+    EXPECT_EQ(0, pendingDiag.requestsCompleted);
+    EXPECT_EQ(0, pendingDiag.activeWorkerBlockingRequests);
+    EXPECT_EQ(0, pendingDiag.peakWorkerBlockingRequests);
+
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["tiles/{z}/{x}/{y}.terrain"],
+      "minzoom": 0,
+      "maxzoom": 4,
+      "available": [
+        [{"startX":0,"startY":0,"endX":0,"endY":0}]
+      ]
+    })json";
+    ASSERT_TRUE(bridge.completeNext(
+        206,
+        std::vector<uint8_t>(layerJson.begin(), layerJson.end())));
+    configThread.join();
+
+    ProviderRequestDiagnostics doneDiag = provider.requestDiagnostics();
+    EXPECT_TRUE(configured);
+    EXPECT_TRUE(configureDone.load(std::memory_order_acquire));
+    EXPECT_NE(std::string::npos,
+              provider.urlTemplate().find("tiles/{z}/{x}/{y}.terrain"));
+    EXPECT_EQ(0, doneDiag.requestsStarted);
+    EXPECT_EQ(0, doneDiag.requestsCompleted);
+    EXPECT_EQ(0, doneDiag.activeWorkerBlockingRequests);
+    EXPECT_EQ(0, doneDiag.peakWorkerBlockingRequests);
 }
 
 TEST(QuantizedMeshTerrainProviderTest, ConfiguresFromCesiumLayerJson) {
