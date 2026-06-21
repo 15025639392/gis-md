@@ -84,3 +84,37 @@ TEST(TileContentLifecycleManagerTest, ExposesClaimedUploadWork) {
 
     EXPECT_FALSE(manager.hasPendingWork());
 }
+
+TEST(TileContentLifecycleManagerTest, ShutdownClearsClaimedUploadWork) {
+    TileContentLifecycleManager manager;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    {
+        std::lock_guard<std::mutex> lock(manager.loadLifecycle().mutex());
+        manager.loadLifecycle().pendingLoads().addTerrainUpload(
+            PendingTerrainUpload{
+                TileKey{"test", 0, 0, 0},
+                "terrain-upload",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                nullptr});
+
+        EXPECT_TRUE(manager.loadLifecycle()
+                        .pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    EXPECT_TRUE(manager.hasPendingWork());
+    EXPECT_TRUE(manager.loadLifecycle().containsWorkForCacheKey(
+        "terrain-upload"));
+
+    manager.shutdown();
+
+    EXPECT_FALSE(manager.hasPendingWork());
+    EXPECT_FALSE(manager.loadLifecycle().containsWorkForCacheKey(
+        "terrain-upload"));
+}
