@@ -4,6 +4,25 @@
 
 using namespace earth_engine;
 
+TEST(TileSelectionCullingPolicyTest, ReplaceTilesUseChildrenBoundsOnlyWhenSafe) {
+    EXPECT_TRUE(TileSelectionCullingPolicy::shouldUseChildrenBounds(
+        TileRefine::Replace,
+        true,
+        false));
+    EXPECT_FALSE(TileSelectionCullingPolicy::shouldUseChildrenBounds(
+        TileRefine::Add,
+        true,
+        false));
+    EXPECT_FALSE(TileSelectionCullingPolicy::shouldUseChildrenBounds(
+        TileRefine::Replace,
+        false,
+        false));
+    EXPECT_FALSE(TileSelectionCullingPolicy::shouldUseChildrenBounds(
+        TileRefine::Replace,
+        true,
+        true));
+}
+
 TEST(TileSelectionCullingPolicyTest, VisibleTilesUseStrictMaximumSse) {
     EXPECT_TRUE(TileSelectionCullingPolicy::meetsScreenSpaceError(
         false,
@@ -40,4 +59,3 @@ TEST(TileSelectionCullingPolicyTest, CulledTilesUseCesiumCulledSseOption) {
         true,
         8.0));
 }
-
