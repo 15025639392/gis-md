@@ -1043,6 +1043,62 @@ TEST(BingMapsImageryProviderTest, MetadataDefaultsMatchCesiumNative) {
     EXPECT_TRUE(result.metadata.imageUrlSubdomains.empty());
 }
 
+TEST(BingMapsImageryProviderTest, UnsafeMetadataIntegersDefaultLikeCesiumNative) {
+    const BingMapsMetadataParseResult result = parseBingMapsMetadata(R"json({
+        "resourceSets": [{
+            "resources": [{
+                "imageWidth": -1,
+                "imageHeight": 9223372036854775807,
+                "zoomMax": "19",
+                "imageUrl": "tiles/{quadkey}.png"
+            }]
+        }]
+    })json");
+
+    ASSERT_TRUE(result.valid) << result.error;
+    EXPECT_EQ(256, result.metadata.imageWidth);
+    EXPECT_EQ(256, result.metadata.imageHeight);
+    EXPECT_EQ(30, result.metadata.zoomMax);
+}
+
+TEST(BingMapsImageryProviderTest, SkipsCoverageWithUnsafeZoomsLikeCesiumNative) {
+    const BingMapsMetadataParseResult result = parseBingMapsMetadata(R"json({
+        "resourceSets": [{
+            "resources": [{
+                "imageUrl": "tiles/{quadkey}.png",
+                "imageryProviders": [{
+                    "attribution": "Provider A",
+                    "coverageAreas": [{
+                        "bbox": [-10.0, 20.0, 30.0, 40.0],
+                        "zoomMin": -1,
+                        "zoomMax": 9
+                    }, {
+                        "bbox": [-20.0, 30.0, 40.0, 50.0],
+                        "zoomMin": 1,
+                        "zoomMax": 9223372036854775807
+                    }, {
+                        "bbox": [-30.0, 40.0, 50.0, 60.0],
+                        "zoomMin": 2,
+                        "zoomMax": 10
+                    }]
+                }]
+            }]
+        }]
+    })json");
+
+    ASSERT_TRUE(result.valid) << result.error;
+    ASSERT_EQ(1u, result.metadata.credits.size());
+    ASSERT_EQ(1u, result.metadata.credits[0].coverageAreas.size());
+    const BingMapsCreditCoverageArea& coverage =
+        result.metadata.credits[0].coverageAreas[0];
+    EXPECT_DOUBLE_EQ(-30.0, coverage.southDegrees);
+    EXPECT_DOUBLE_EQ(40.0, coverage.westDegrees);
+    EXPECT_DOUBLE_EQ(50.0, coverage.northDegrees);
+    EXPECT_DOUBLE_EQ(60.0, coverage.eastDegrees);
+    EXPECT_EQ(2, coverage.zoomMin);
+    EXPECT_EQ(10, coverage.zoomMax);
+}
+
 TEST(BingMapsImageryProviderTest, RejectsInvalidMetadataLikeCesiumNative) {
     BingMapsMetadataParseResult result = parseBingMapsMetadata("not-json");
     EXPECT_FALSE(result.valid);

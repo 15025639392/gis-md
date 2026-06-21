@@ -2,7 +2,9 @@
 
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -171,14 +173,28 @@ int invertedY(int level, int y) {
     return static_cast<int>((int64_t{1} << level) - 1 - y);
 }
 
-int jsonIntOrDefault(const nlohmann::json& object,
-                     const char* name,
-                     int defaultValue) {
+std::optional<int> jsonUint32Int(const nlohmann::json& value) {
+    if (!value.is_number_unsigned()) {
+        return std::nullopt;
+    }
+
+    const std::uint64_t parsed = value.get<std::uint64_t>();
+    if (parsed > std::numeric_limits<std::uint32_t>::max() ||
+        parsed > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+        return std::nullopt;
+    }
+
+    return static_cast<int>(parsed);
+}
+
+int jsonUint32IntOrDefault(const nlohmann::json& object,
+                           const char* name,
+                           int defaultValue) {
     const auto it = object.find(name);
-    if (it == object.end() || !it->is_number_unsigned()) {
+    if (it == object.end()) {
         return defaultValue;
     }
-    return static_cast<int>(it->get<unsigned int>());
+    return jsonUint32Int(*it).value_or(defaultValue);
 }
 
 std::vector<std::string> jsonStringArray(const nlohmann::json& object,
@@ -220,9 +236,13 @@ std::vector<BingMapsCredit> collectCredits(const nlohmann::json& resource) {
                 const auto zoomMaxIt = area.find("zoomMax");
                 if (bboxIt == area.end() || !bboxIt->is_array() ||
                     bboxIt->size() != 4 || zoomMinIt == area.end() ||
-                    zoomMaxIt == area.end() ||
-                    !zoomMinIt->is_number_unsigned() ||
-                    !zoomMaxIt->is_number_unsigned()) {
+                    zoomMaxIt == area.end()) {
+                    continue;
+                }
+
+                const std::optional<int> zoomMin = jsonUint32Int(*zoomMinIt);
+                const std::optional<int> zoomMax = jsonUint32Int(*zoomMaxIt);
+                if (!zoomMin || !zoomMax) {
                     continue;
                 }
                 if (!(*bboxIt)[0].is_number() || !(*bboxIt)[1].is_number() ||
@@ -235,10 +255,8 @@ std::vector<BingMapsCredit> collectCredits(const nlohmann::json& resource) {
                 coverage.westDegrees = (*bboxIt)[1].get<double>();
                 coverage.northDegrees = (*bboxIt)[2].get<double>();
                 coverage.eastDegrees = (*bboxIt)[3].get<double>();
-                coverage.zoomMin =
-                    static_cast<int>(zoomMinIt->get<unsigned int>());
-                coverage.zoomMax =
-                    static_cast<int>(zoomMaxIt->get<unsigned int>());
+                coverage.zoomMin = *zoomMin;
+                coverage.zoomMax = *zoomMax;
                 credit.coverageAreas.push_back(coverage);
             }
         }
@@ -383,9 +401,10 @@ BingMapsMetadataParseResult parseBingMapsMetadata(
     const nlohmann::json& resource =
         response["resourceSets"][0]["resources"][0];
     BingMapsMetadata metadata;
-    metadata.imageWidth = jsonIntOrDefault(resource, "imageWidth", 256);
-    metadata.imageHeight = jsonIntOrDefault(resource, "imageHeight", 256);
-    metadata.zoomMax = jsonIntOrDefault(resource, "zoomMax", 30);
+    metadata.imageWidth = jsonUint32IntOrDefault(resource, "imageWidth", 256);
+    metadata.imageHeight =
+        jsonUint32IntOrDefault(resource, "imageHeight", 256);
+    metadata.zoomMax = jsonUint32IntOrDefault(resource, "zoomMax", 30);
     metadata.imageUrlSubdomains =
         jsonStringArray(resource, "imageUrlSubdomains");
     metadata.credits = collectCredits(resource);
