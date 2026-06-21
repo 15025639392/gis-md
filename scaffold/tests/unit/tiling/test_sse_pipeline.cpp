@@ -4087,6 +4087,69 @@ void testTilesetPrefetchesRasterFromBoundingRegionBeforeRenderContent() {
           "Tileset: prefetch starts throttled rectangle imagery loading");
 }
 
+void testTilesetPrefetchGeneratesRenderContentDetailsFromRegion() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+
+    auto terrainProvider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(terrainProvider),
+        std::move(scheme),
+        {&activated},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: prefetch detail-generation root tile is created");
+    if (!root) return;
+
+    const Rectangle regionRectangle =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    root->bounds = Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0);
+    root->boundingVolume =
+        TileBoundingVolume::fromRegion(regionRectangle, -25.0, 125.0);
+    root->geometricError = 100.0;
+    root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    root->content.renderContent.mutableSurfaceMesh()
+        ->rasterOverlayDetails.rasterOverlayProjections.push_back(
+            RasterOverlayProjection::Geographic);
+    root->content.renderContent.setMeshReady(true);
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Render;
+
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+
+    const RasterOverlayDetails& details =
+        root->content.renderContent.rasterOverlayDetails();
+    check(details.rasterOverlayProjections.size() == 2 &&
+              details.rasterOverlayRectangles.size() == 2,
+          "Tileset: prefetch detail-generation appends render-content details");
+    check(details.rasterOverlayRectangles[1] == regionRectangle,
+          "Tileset: prefetch detail-generation uses region rectangle");
+    check(details.boundingRegion.rectangle == regionRectangle &&
+              details.boundingRegion.minimumHeight == -25.0 &&
+              details.boundingRegion.maximumHeight == 125.0,
+          "Tileset: prefetch detail-generation carries region height range");
+
+    RasterMappedToTilesetTile* mapped =
+        root->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
+    check(loadingTile != nullptr &&
+              loadingTile->isRectangleTile() &&
+              loadingTile->getRectangle() == regionRectangle,
+          "Tileset: prefetch detail-generation maps generated rectangle tile");
+    check(mapped && mapped->getTextureCoordinateID() == 1,
+          "Tileset: prefetch detail-generation preserves texture coordinate ID offset");
+    check(root->rasterOverlayState.missingProjections().empty(),
+          "Tileset: prefetch detail-generation does not report missing projection");
+}
+
 void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<PendingRectangleImageryProvider>(),
@@ -26487,6 +26550,7 @@ int main() {
     testTilesetRasterTargetPixelsUseRenderContentRectangle();
     testTilesetEnsuresOverlayProviderBeforeMapping();
     testTilesetPrefetchesRasterFromBoundingRegionBeforeRenderContent();
+    testTilesetPrefetchGeneratesRenderContentDetailsFromRegion();
     testTileRasterOverlayFrameProcessorPrefetchesByPriority();
     testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach();
     testRasterSelectionPrefetchSkipHonorsMoreDetail();

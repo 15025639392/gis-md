@@ -2,6 +2,7 @@
 
 #include "RasterMappedToTilesetTile.h"
 #include "RasterOverlayScreenSpaceMetrics.h"
+#include "TileRasterOverlayDetailsGenerator.h"
 #include "TilesetTile.h"
 
 #include "../core/resources/FrameResourceBudget.h"
@@ -62,6 +63,12 @@ void TileRasterOverlayPrefetcher::prefetch(
 
         const RasterOverlayProjection projection =
             activeProvider->getProjection();
+        if (hasRenderContentDetails && tile.boundingVolume) {
+            TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
+                tile.content.renderContent,
+                *tile.boundingVolume,
+                projection);
+        }
         const Rectangle* geometryRectangle = renderDetails
             ? renderDetails->findRectangleForOverlayProjection(projection)
             : nullptr;
