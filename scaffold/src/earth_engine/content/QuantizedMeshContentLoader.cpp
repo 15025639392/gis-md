@@ -29,6 +29,7 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
             surfaceMesh->minimumHeight,
             surfaceMesh->maximumHeight);
     }
+    result.rasterOverlayDetails = surfaceMesh->rasterOverlayDetails;
     result.surfaceMesh = std::move(surfaceMesh);
     result.availabilityUpdates.reserve(metadata.size());
     for (const QuantizedMeshMetadataContent& item : metadata) {

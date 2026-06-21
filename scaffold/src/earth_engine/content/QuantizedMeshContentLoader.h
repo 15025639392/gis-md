@@ -30,6 +30,7 @@ struct QuantizedMeshContentLoadResult {
         QuantizedMeshContentLoadStatus::Failed;
     std::unique_ptr<SurfaceTileMesh> surfaceMesh;
     std::optional<TileBoundingVolume> updatedBoundingVolume;
+    std::optional<RasterOverlayDetails> rasterOverlayDetails;
     std::vector<QuantizedMeshAvailabilityUpdate> availabilityUpdates;
 
     bool success() const {

@@ -111,6 +111,20 @@ TEST(QuantizedMeshContentLoaderTest,
                 result.surfaceMesh->rasterOverlayDetails.boundingRegion
                     .maximumHeight,
                 1e-6);
+    ASSERT_TRUE(result.rasterOverlayDetails.has_value());
+    const Rectangle* rasterRectangle =
+        result.rasterOverlayDetails->findRectangleForOverlayProjection(
+            RasterOverlayProjection::Geographic);
+    ASSERT_NE(nullptr, rasterRectangle);
+    EXPECT_EQ(geographicRootWestRectangle(), *rasterRectangle);
+    EXPECT_EQ(geographicRootWestRectangle(),
+              result.rasterOverlayDetails->boundingRegion.rectangle);
+    EXPECT_NEAR(-10.0,
+                result.rasterOverlayDetails->boundingRegion.minimumHeight,
+                1e-6);
+    EXPECT_NEAR(150.0,
+                result.rasterOverlayDetails->boundingRegion.maximumHeight,
+                1e-6);
     ASSERT_TRUE(result.updatedBoundingVolume.has_value());
     EXPECT_EQ(TileBoundingVolumeKind::Region,
               result.updatedBoundingVolume->kind);
@@ -185,5 +199,6 @@ TEST(QuantizedMeshContentLoaderTest, InvalidBodyFailsWithoutUpdates) {
     EXPECT_EQ(QuantizedMeshContentLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.surfaceMesh);
     EXPECT_FALSE(result.updatedBoundingVolume.has_value());
+    EXPECT_FALSE(result.rasterOverlayDetails.has_value());
     EXPECT_TRUE(result.availabilityUpdates.empty());
 }
