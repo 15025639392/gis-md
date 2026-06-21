@@ -137,6 +137,10 @@ struct TilesetTestAccess {
         tileset.cacheOwnership_.unloadCachedBytes(maximumCachedBytes, nullptr);
     }
 
+    static void unloadTileContent(Tileset& tileset, TilesetTile& tile) {
+        tileset.cacheOwnership_.unloadTileContent(tile, nullptr);
+    }
+
     static void requestMissingTilesWithPriorities(
         Tileset& tileset,
         const TileKey& firstKey,
@@ -1356,6 +1360,54 @@ TEST(
     TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
     TilesetTestAccess::updateTotalBytesUsed(tileset);
     TilesetTestAccess::unloadCachedBytes(tileset, 0);
+
+    TilesetTile* rootAfter = TilesetTestAccess::findTile(tileset, rootKey);
+    ASSERT_EQ(rootAfter, root);
+    EXPECT_TRUE(rootAfter->children.empty());
+    EXPECT_EQ(rootAfter->content.loadState, TileLoadState::Unloaded);
+    EXPECT_EQ(rootAfter->content.contentKind, TileContentKind::Unknown);
+    EXPECT_EQ(TilesetTestAccess::findTile(tileset, childKey), nullptr);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    DirectExternalContentUnloadClearsChildrenAfterReferencesRelease) {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+
+    root->content.contentKind = TileContentKind::External;
+    root->content.loadState = TileLoadState::Done;
+    root->unconditionallyRefine = true;
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_FALSE(root->children.empty());
+    ASSERT_NE(root->children.front(), nullptr);
+
+    const TileKey childKey = root->children.front()->key;
+    auto childHeightmap = makeFlatHeightmap(5.0f);
+    childHeightmap->rawData.resize(96, 5);
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        childKey,
+        std::move(childHeightmap));
+
+    root->addReference();
+    TilesetTestAccess::unloadTileContent(tileset, *root);
+    EXPECT_EQ(root->content.loadState, TileLoadState::Done);
+    EXPECT_EQ(root->content.contentKind, TileContentKind::External);
+    EXPECT_FALSE(root->children.empty());
+    EXPECT_NE(TilesetTestAccess::findTile(tileset, childKey), nullptr);
+    root->clearReferences();
+
+    TilesetTestAccess::unloadTileContent(tileset, *root);
 
     TilesetTile* rootAfter = TilesetTestAccess::findTile(tileset, rootKey);
     ASSERT_EQ(rootAfter, root);
