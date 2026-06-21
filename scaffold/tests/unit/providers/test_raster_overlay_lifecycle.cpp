@@ -5,6 +5,7 @@
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/providers/RasterTextureUploader.h"
 #include "earth_engine/providers/XYZImageryProvider.h"
+#include "earth_engine/layers/ActivatedRasterOverlay.h"
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
 #include "earth_engine/renderer/IPrepareRendererResources.h"
@@ -12,6 +13,7 @@
 #include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
+#include "earth_engine/tiling/SurfaceTileDrawCommandBuilder.h"
 #include "earth_engine/tiling/TilesetTile.h"
 #include "earth_engine/tiling/TileScheme.h"
 
@@ -2149,6 +2151,50 @@ TEST(RasterOverlayLifecycleTest,
 
     noTextureTile->setTexture(std::make_unique<TestTexture>(4, 4));
     EXPECT_TRUE(tile.rasterOverlayState.hasDrawableReadyMapping(1));
+}
+
+TEST(RasterOverlayLifecycleTest,
+     SurfaceBuilderRequiresDrawableBaseRasterNotJustCoverReady) {
+    RasterOverlay::Options options;
+    options.role = RasterOverlayRole::BaseImagery;
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        options);
+    ActivatedRasterOverlay activated(*overlay);
+    RasterOverlayTileProvider* provider =
+        activated.ensureTileProvider(nullptr);
+    ASSERT_NE(nullptr, provider);
+
+    TileKey key{overlay->getTileScheme().id(), 1, 1, 1};
+    RasterOverlayDetails details;
+    details.setGeographicRectangle(
+        overlay->getTileScheme().tileToRectangle(key));
+    std::vector<RasterOverlayProjection> missing;
+
+    TilesetTile tile(key, overlay->getTileScheme().tileToRectangle(key));
+    RasterMappedToTilesetTile& mapped =
+        tile.rasterOverlayState.ensureMapping(0);
+    mapped.update(key, details, 256.0, 256.0, *provider, nullptr, missing);
+    RasterOverlayTile* failedTile = mapped.getLoadingTile();
+    ASSERT_NE(nullptr, failedTile);
+    failedTile->setState(RasterOverlayTile::LoadState::Failed);
+
+    mapped.update(key, details, 256.0, 256.0, *provider, nullptr, missing);
+
+    ASSERT_TRUE(tile.rasterOverlayState.hasReadyMapping(0));
+    ASSERT_FALSE(tile.rasterOverlayState.hasDrawableReadyMapping(0));
+    EXPECT_FALSE(SurfaceTileDrawCommandBuilder::hasDrawableBaseRaster(
+        tile,
+        std::vector<ActivatedRasterOverlay*>{&activated}));
+
+    failedTile->setState(RasterOverlayTile::LoadState::Loaded);
+    failedTile->setTexture(std::make_unique<TestTexture>(4, 4));
+
+    EXPECT_TRUE(tile.rasterOverlayState.hasDrawableReadyMapping(0));
+    EXPECT_TRUE(SurfaceTileDrawCommandBuilder::hasDrawableBaseRaster(
+        tile,
+        std::vector<ActivatedRasterOverlay*>{&activated}));
 }
 
 TEST(RasterOverlayLifecycleTest, SurfaceRasterBindingClassifiesAncestorWhileChildLoads) {

@@ -83,7 +83,7 @@ TEST(
                         const std::optional<std::array<float, 4>>&) {
                 if (tile.key == drawnKey) {
                     RenderCommand command;
-                    command.domain = RenderCommandKind::SurfaceTile;
+                    command.kind = RenderCommandKind::SurfaceTile;
                     outCommands.push_back(std::move(command));
                 }
             });
@@ -145,7 +145,7 @@ TEST(
                          const std::optional<std::array<float, 4>>& clipUv) {
                 if (tile.key == renderKey && clipUv) {
                     RenderCommand command;
-                    command.domain = RenderCommandKind::SurfaceTile;
+                    command.kind = RenderCommandKind::SurfaceTile;
                     command.surfaceClipEnabled = 1.0f;
                     command.surfaceClipUv = *clipUv;
                     outCommands.push_back(std::move(command));
@@ -200,7 +200,7 @@ TEST(TileRenderEntryCommandBuilderTest, BuildsFadingEntriesOnlyInFadePass) {
                                                 std::array<float, 4>>&) {
         submittedOpacity = opacity;
         RenderCommand command;
-        command.domain = RenderCommandKind::SurfaceTile;
+        command.kind = RenderCommandKind::SurfaceTile;
         outCommands.push_back(std::move(command));
     };
 

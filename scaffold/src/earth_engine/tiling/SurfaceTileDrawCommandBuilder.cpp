@@ -55,6 +55,9 @@ bool SurfaceTileDrawCommandBuilder::hasDrawableBaseRaster(
             continue;
         }
 
+        if (!tile.rasterOverlayState.hasDrawableReadyMapping(i)) {
+            continue;
+        }
         const RasterMappedToTilesetTile* mapped =
             tile.rasterOverlayState.mappingAt(i);
         const SurfaceRasterBinding binding =
