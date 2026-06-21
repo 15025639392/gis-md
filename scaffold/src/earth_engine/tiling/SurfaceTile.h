@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../core/geodesy/BoundingRegionBuilder.h"
 #include "../core/math/Rectangle.h"
 #include "../core/math/Vec3.h"
 
@@ -74,6 +75,11 @@ struct RasterOverlayDetails {
     /// Index-aligned with rasterOverlayProjections.
     std::vector<Rectangle> rasterOverlayRectangles;
 
+    /// cesium-native RasterOverlayDetails::boundingRegion equivalent.
+    /// This is the precise content region covered by the generated overlay
+    /// texture coordinates, in geographic radians/meters.
+    BoundingRegionBuilder::BoundingRegion boundingRegion;
+
     bool empty() const { return rasterOverlayRectangles.empty(); }
 
     const Rectangle* findRectangleForOverlayProjection(
@@ -98,9 +104,12 @@ struct RasterOverlayDetails {
         return -1;
     }
 
-    void setGeographicRectangle(const Rectangle& rectangle) {
+    void setGeographicRectangle(const Rectangle& rectangle,
+                                double minimumHeight = 0.0,
+                                double maximumHeight = 0.0) {
         rasterOverlayProjections = {RasterOverlayProjection::Geographic};
         rasterOverlayRectangles = {rectangle};
+        boundingRegion = {rectangle, minimumHeight, maximumHeight};
     }
 
     void merge(const RasterOverlayDetails& other) {
@@ -112,6 +121,10 @@ struct RasterOverlayDetails {
             rasterOverlayRectangles.end(),
             other.rasterOverlayRectangles.begin(),
             other.rasterOverlayRectangles.end());
+        BoundingRegionBuilder builder;
+        builder.expandToIncludeRegion(boundingRegion);
+        builder.expandToIncludeRegion(other.boundingRegion);
+        boundingRegion = builder.toRegion();
     }
 };
 

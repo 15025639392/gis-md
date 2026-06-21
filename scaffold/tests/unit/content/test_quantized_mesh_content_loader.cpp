@@ -100,6 +100,17 @@ TEST(QuantizedMeshContentLoaderTest,
     EXPECT_TRUE(result.surfaceMesh->hasHeightRange);
     EXPECT_NEAR(-10.0, result.surfaceMesh->minimumHeight, 1e-6);
     EXPECT_NEAR(150.0, result.surfaceMesh->maximumHeight, 1e-6);
+    EXPECT_EQ(geographicRootWestRectangle(),
+              result.surfaceMesh->rasterOverlayDetails.boundingRegion
+                  .rectangle);
+    EXPECT_NEAR(-10.0,
+                result.surfaceMesh->rasterOverlayDetails.boundingRegion
+                    .minimumHeight,
+                1e-6);
+    EXPECT_NEAR(150.0,
+                result.surfaceMesh->rasterOverlayDetails.boundingRegion
+                    .maximumHeight,
+                1e-6);
     ASSERT_TRUE(result.updatedBoundingVolume.has_value());
     EXPECT_EQ(TileBoundingVolumeKind::Region,
               result.updatedBoundingVolume->kind);

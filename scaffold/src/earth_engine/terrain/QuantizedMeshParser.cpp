@@ -342,7 +342,10 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     }
 
     auto mesh = std::make_unique<SurfaceTileMesh>();
-    mesh->rasterOverlayDetails.setGeographicRectangle(bounds);
+    mesh->rasterOverlayDetails.setGeographicRectangle(
+        bounds,
+        hdr.minimumHeight,
+        hdr.maximumHeight);
     mesh->hasLocalOriginEcef = true;
     mesh->localOriginEcef =
         Vec3(hdr.boundingSphereX, hdr.boundingSphereY, hdr.boundingSphereZ);

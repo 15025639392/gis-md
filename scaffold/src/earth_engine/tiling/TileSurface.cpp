@@ -638,6 +638,10 @@ std::optional<SurfaceTileMesh> TileSurface::upsampleChildMeshFromParent(
     child.hasHeightRange = true;
     child.minimumHeight = minHeight;
     child.maximumHeight = maxHeight;
+    child.rasterOverlayDetails.setGeographicRectangle(
+        childBounds,
+        minHeight,
+        maxHeight);
     return child;
 }
 
