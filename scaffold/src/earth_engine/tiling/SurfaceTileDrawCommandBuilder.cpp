@@ -156,6 +156,18 @@ void SurfaceTileDrawCommandBuilder::build(
               baseBinding.scaleU,
               baseBinding.scaleV}
         : std::array<float, 4>{0.0f, 0.0f, 1.0f, 1.0f};
+    surfaceCommand.surfaceHasWaterMask =
+        mesh->waterMask.valid() ? 1.0f : 0.0f;
+    surfaceCommand.surfaceWaterMaskTranslationScale = {
+        static_cast<float>(mesh->waterMask.translationX),
+        static_cast<float>(mesh->waterMask.translationY),
+        static_cast<float>(mesh->waterMask.scale),
+        0.0f};
+    surfaceCommand.surfaceWaterMaskState = {
+        mesh->waterMask.allLand ? 1.0f : 0.0f,
+        mesh->waterMask.allWater ? 1.0f : 0.0f,
+        !mesh->waterMask.data.empty() ? 1.0f : 0.0f,
+        0.0f};
     if (context.surfaceClipUv) {
         surfaceCommand.surfaceClipUv = *context.surfaceClipUv;
         surfaceCommand.surfaceClipEnabled = 1.0f;

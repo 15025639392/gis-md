@@ -4225,6 +4225,14 @@ void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
     root->content.renderContent.mutableSurfaceMesh()
         ->rasterOverlayDetails.setGeographicRectangle(preciseRectangle);
     root->content.renderContent.mutableSurfaceMesh()->indices = {0, 1, 2};
+    root->content.renderContent.mutableSurfaceMesh()->waterMask.allLand = false;
+    root->content.renderContent.mutableSurfaceMesh()->waterMask.allWater = false;
+    root->content.renderContent.mutableSurfaceMesh()->waterMask.data.resize(
+        256u * 256u * 4u,
+        192);
+    root->content.renderContent.mutableSurfaceMesh()->waterMask.translationX = 0.25;
+    root->content.renderContent.mutableSurfaceMesh()->waterMask.translationY = 0.5;
+    root->content.renderContent.mutableSurfaceMesh()->waterMask.scale = 0.5;
     root->content.renderContent.setMeshReady(true);
     root->content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(96),
@@ -4253,6 +4261,18 @@ void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
                   rendererHarness.renderer.surfacePlaceholderTexture() &&
               commands.front().surfaceTextureZoom == -1,
           "Tileset: blocking base imagery draws surface geometry with the shared placeholder texture");
+    check(!commands.empty() &&
+              commands.front().surfaceHasWaterMask == 1.0f &&
+              commands.front().surfaceWaterMaskState[0] == 0.0f &&
+              commands.front().surfaceWaterMaskState[1] == 0.0f &&
+              commands.front().surfaceWaterMaskState[2] == 1.0f &&
+              std::abs(commands.front().surfaceWaterMaskTranslationScale[0] -
+                       0.25f) < 1e-6f &&
+              std::abs(commands.front().surfaceWaterMaskTranslationScale[1] -
+                       0.5f) < 1e-6f &&
+              std::abs(commands.front().surfaceWaterMaskTranslationScale[2] -
+                       0.5f) < 1e-6f,
+          "Tileset: surface command carries quantized-mesh water mask state");
     check(!TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: missing blocking base imagery keeps strict complete renderable false");
 }

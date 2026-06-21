@@ -103,6 +103,12 @@ struct RenderCommand {
     float surfaceClipEnabled = 0.0f;
     float surfaceGeneration = 0.0f;
     float surfaceHasWaterMask = 0.0f;
+    std::array<float, 4> surfaceWaterMaskTranslationScale{
+        0.0f,
+        0.0f,
+        1.0f,
+        0.0f};
+    std::array<float, 4> surfaceWaterMaskState{1.0f, 0.0f, 0.0f, 0.0f};
     int surfaceGeometryZoom = -1;
     int surfaceTextureZoom = -1;
     int surfaceMeshIndexCount = 0;

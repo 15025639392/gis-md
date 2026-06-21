@@ -757,6 +757,9 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             }
             set1("u_surfaceGeneration", cmd.surfaceGeneration);
             set1("u_hasWaterMask", cmd.surfaceHasWaterMask);
+            set4("u_waterMaskTranslationScale",
+                 cmd.surfaceWaterMaskTranslationScale);
+            set4("u_waterMaskState", cmd.surfaceWaterMaskState);
         }
         for (const auto& [name, values] : cmd.uniforms) {
             int loc = program->uniformLocation(name);
