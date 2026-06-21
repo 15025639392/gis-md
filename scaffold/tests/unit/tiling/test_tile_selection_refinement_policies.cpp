@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/tiling/TileSelectionKickPolicy.h"
 #include "earth_engine/tiling/TileSelectionPreTraversalPolicy.h"
 
 using namespace earth_engine;
@@ -48,4 +49,54 @@ TEST(
     EXPECT_FALSE(plan.additiveParentShouldQueueLoad);
     EXPECT_TRUE(plan.queuedForLoadAfterPreTraversal);
     EXPECT_TRUE(plan.ancestorMeetsSseAfterPreTraversal);
+}
+
+TEST(
+    TileSelectionKickPolicyTest,
+    AddRefinementDoesNotReaddParentAsReplacementAfterKick) {
+    TileTraversalDetails manyMissing;
+    manyMissing.allAreRenderable = false;
+    manyMissing.anyWereRenderedLastFrame = false;
+    manyMissing.notYetRenderableCount = 3;
+
+    const TileSelectionKickPlan plan =
+        TileSelectionKickPolicy::planAfterKick(
+            manyMissing,
+            false,
+            2,
+            false,
+            false,
+            TileRefine::Add,
+            true,
+            false,
+            true);
+
+    EXPECT_TRUE(plan.restoreChildLoadQueueAndLoadParent);
+    EXPECT_FALSE(plan.addRenderableReplacementToPlan);
+    EXPECT_FALSE(plan.preloadParent);
+}
+
+TEST(
+    TileSelectionKickPolicyTest,
+    ReplaceRefinementAddsRenderableParentReplacementAfterKick) {
+    TileTraversalDetails manyMissing;
+    manyMissing.allAreRenderable = false;
+    manyMissing.anyWereRenderedLastFrame = false;
+    manyMissing.notYetRenderableCount = 3;
+
+    const TileSelectionKickPlan plan =
+        TileSelectionKickPolicy::planAfterKick(
+            manyMissing,
+            false,
+            2,
+            false,
+            false,
+            TileRefine::Replace,
+            true,
+            false,
+            true);
+
+    EXPECT_TRUE(plan.restoreChildLoadQueueAndLoadParent);
+    EXPECT_TRUE(plan.addRenderableReplacementToPlan);
+    EXPECT_FALSE(plan.preloadParent);
 }
