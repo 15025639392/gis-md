@@ -44,6 +44,13 @@ struct TilesetTestAccess {
             &budget);
     }
 
+    static void requestMissingTile(Tileset& tileset, const TileKey& key) {
+        tileset.requestMissingContent({
+            TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Normal}});
+    }
+
     static void requestMissingTilesWithPriorities(
         Tileset& tileset,
         const TileKey& firstKey,
@@ -643,4 +650,45 @@ TEST(
     EXPECT_TRUE(rawProvider->completeWithHeightmap(
         highPriorityKey,
         makeFlatHeightmap(2.0f)));
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    PendingMainThreadUploadsDoNotConsumeWorkerSlots) {
+    TilesetOptions options;
+    options.maximumSimultaneousTileLoads = 2;
+    options.mainThreadLoadingTimeLimit = 1.0e-12;
+
+    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
+    ManualCompletionTerrainProvider* rawProvider = provider.get();
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        options);
+
+    const TileKey firstKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey secondKey{"Geographic-TMS", 1, 1, 0};
+    const TileKey thirdKey{"Geographic-TMS", 1, 2, 0};
+
+    TilesetTestAccess::requestMissingTile(tileset, firstKey);
+    TilesetTestAccess::requestMissingTile(tileset, secondKey);
+    ASSERT_EQ(rawProvider->pendingRequests.size(), 2u);
+
+    EXPECT_TRUE(rawProvider->completeWithHeightmap(
+        firstKey,
+        makeFlatHeightmap(1.0f)));
+    EXPECT_TRUE(rawProvider->completeWithHeightmap(
+        secondKey,
+        makeFlatHeightmap(2.0f)));
+    EXPECT_EQ(tileset.loadDiagnostics().pendingTerrainUploads, 2);
+
+    TilesetTestAccess::requestMissingTile(tileset, thirdKey);
+    ASSERT_EQ(rawProvider->pendingRequests.size(), 1u);
+    EXPECT_EQ(rawProvider->pendingRequests.front().key, thirdKey);
+
+    EXPECT_TRUE(rawProvider->completeWithHeightmap(
+        thirdKey,
+        makeFlatHeightmap(3.0f)));
 }
