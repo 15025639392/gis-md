@@ -107,3 +107,22 @@ TEST(TileSoftwareOcclusionTest, UsesExplicitVolumeRectangleForUnderCamera) {
         TileSoftwareOcclusionPolicy::check(tile, cameraPosition),
         TileOcclusionState::NotOccluded);
 }
+
+TEST(TileSoftwareOcclusionTest, UsesExplicitRegionHeightForFallbackSamples) {
+    TilesetTile tile;
+    tile.key = TileKey{"Geographic-TMS", 4, 0, 0};
+    tile.bounds = Rectangle::fromDegrees(140.0, -1.0, 141.0, 1.0);
+    tile.boundingVolume =
+        TileBoundingVolume::fromRegion(
+            Rectangle::fromDegrees(34.8, -0.05, 35.2, 0.05),
+            0.0,
+            2000000.0);
+
+    const Vec3 cameraPosition =
+        Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic::fromRadians(0.0, 0.0, 1000000.0));
+
+    EXPECT_EQ(
+        TileSoftwareOcclusionPolicy::check(tile, cameraPosition),
+        TileOcclusionState::NotOccluded);
+}
