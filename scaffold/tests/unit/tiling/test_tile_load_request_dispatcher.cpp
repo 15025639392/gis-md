@@ -537,3 +537,37 @@ TEST(TileLoadRequestDispatcherTest, DropsCancelledContentTerminalCallback) {
 
     EXPECT_FALSE(lifecycle.hasPendingWork());
 }
+
+TEST(TileLoadRequestDispatcherTest, DropsCancelledTerrainTerminalCallback) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+    DeferredTerrainProvider provider;
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::requestTerrain(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            provider,
+            key,
+            "cancel-terrain-terminal",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    ASSERT_EQ(TileLoadDispatchResult::Issued, result);
+    ASSERT_TRUE(issued);
+    ASSERT_TRUE(provider.terrainCallback);
+
+    lifecycle.cancelAndEraseCacheKey("cancel-terrain-terminal");
+    provider.terrainCallback(key, TerrainTileLoadResult::retryLater());
+
+    EXPECT_FALSE(lifecycle.hasPendingWork());
+}
