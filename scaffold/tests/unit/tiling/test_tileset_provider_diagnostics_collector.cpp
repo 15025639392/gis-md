@@ -5,7 +5,9 @@
 #include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/providers/ImageryProvider.h"
 #include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
+#include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
+#include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/platform/bridge/PlatformBridge.h"
 #include "earth_engine/scene/SceneTilesetDiagnostics.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -362,6 +364,129 @@ TEST(
     EXPECT_EQ(requests.externalResourceRequestsCompleted, 5);
     EXPECT_EQ(requests.activeExternalResourceBlockingRequests, 3);
     EXPECT_EQ(requests.peakExternalResourceBlockingRequests, 5);
+}
+
+TEST(
+    TilesetProviderDiagnosticsCollectorTest,
+    ExposesRasterProviderRequestDiagnosticsThroughTileset) {
+    BlockingPlatformBridge bridge;
+    auto imageryProvider = std::make_unique<XYZImageryProvider>(
+        "https://example.invalid/{z}/{x}/{y}.png");
+    imageryProvider->setPlatformBridge(&bridge);
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::move(imageryProvider),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activated(*overlay);
+    RasterOverlayTileProvider* rasterProvider =
+        activated.ensureTileProvider(nullptr);
+    rasterProvider->setReady(true);
+
+    auto terrainProvider = std::make_unique<DiagnosticTerrainProvider>();
+    auto terrainScheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(terrainProvider),
+        std::move(terrainScheme),
+        {&activated},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rasterKey{"XYZ-WebMercator", 1, 0, 0};
+    RasterOverlayTileProvider::TilePtr rasterTile =
+        rasterProvider->getTile(rasterKey);
+    ASSERT_TRUE(rasterTile);
+    ASSERT_TRUE(rasterProvider->loadTile(*rasterTile));
+    ASSERT_TRUE(bridge.waitUntilEntered());
+
+    const TilesetLoadDiagnostics activeDiag = tileset.loadDiagnostics();
+    EXPECT_EQ(activeDiag.rasterProviderRequests.requestsStarted, 1);
+    EXPECT_EQ(activeDiag.rasterProviderRequests.requestsCompleted, 0);
+    EXPECT_EQ(
+        activeDiag.rasterProviderRequests.activeWorkerBlockingRequests,
+        0);
+    EXPECT_EQ(activeDiag.rasterProviderRequests.peakWorkerBlockingRequests, 0);
+    EXPECT_EQ(
+        activeDiag.rasterProviderRequests.maximumTransportActiveRequests,
+        11);
+    EXPECT_EQ(activeDiag.rasterOverlayTilesLoading, 1);
+    EXPECT_EQ(activeDiag.rasterSourceRequestsInFlight, 1);
+    EXPECT_EQ(activeDiag.rasterPendingUploads, 0);
+    EXPECT_EQ(activeDiag.pendingTerrainTotal(), 0);
+    EXPECT_EQ(activeDiag.pendingContentTotal(), 0);
+
+    ASSERT_TRUE(bridge.complete(404));
+    for (int i = 0; i < 200 &&
+                    rasterProvider->requestDiagnostics().requestsCompleted == 0;
+         ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    const TilesetLoadDiagnostics doneDiag = tileset.loadDiagnostics();
+    EXPECT_EQ(doneDiag.rasterProviderRequests.requestsCompleted, 1);
+    EXPECT_EQ(
+        doneDiag.rasterProviderRequests.activeWorkerBlockingRequests,
+        0);
+    EXPECT_EQ(doneDiag.rasterProviderRequests.peakWorkerBlockingRequests, 0);
+    EXPECT_EQ(
+        doneDiag.rasterProviderRequests.maximumTransportActiveRequests,
+        11);
+    EXPECT_EQ(doneDiag.rasterOverlayTilesLoading, 0);
+    EXPECT_EQ(doneDiag.rasterSourceRequestsInFlight, 0);
+    EXPECT_EQ(doneDiag.rasterPendingUploads, 0);
+}
+
+TEST(
+    TilesetProviderDiagnosticsCollectorTest,
+    ExposesRasterProviderRequestDiagnosticsThroughScene) {
+    BlockingPlatformBridge bridge;
+    auto imageryProvider = std::make_unique<XYZImageryProvider>(
+        "https://example.invalid/{z}/{x}/{y}.png");
+    imageryProvider->setPlatformBridge(&bridge);
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::move(imageryProvider),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activated(*overlay);
+    RasterOverlayTileProvider* rasterProvider =
+        activated.ensureTileProvider(nullptr);
+    rasterProvider->setReady(true);
+
+    auto terrainProvider = std::make_unique<DiagnosticTerrainProvider>();
+    auto terrainScheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(terrainProvider),
+        std::move(terrainScheme),
+        {&activated},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rasterKey{"XYZ-WebMercator", 1, 0, 0};
+    RasterOverlayTileProvider::TilePtr rasterTile =
+        rasterProvider->getTile(rasterKey);
+    ASSERT_TRUE(rasterTile);
+    ASSERT_TRUE(rasterProvider->loadTile(*rasterTile));
+    ASSERT_TRUE(bridge.waitUntilEntered());
+
+    Diagnostics diagnostics;
+    SceneTilesetDiagnostics::reset(diagnostics);
+    SceneTilesetDiagnostics::addTileset(diagnostics, tileset, true);
+    EXPECT_EQ(diagnostics.rasterOverlayTilesLoading, 1);
+    EXPECT_EQ(diagnostics.rasterSourceRequestsInFlight, 1);
+    EXPECT_EQ(diagnostics.rasterPendingUploads, 0);
+    EXPECT_EQ(diagnostics.rasterProviderRequestsStarted, 1);
+    EXPECT_EQ(diagnostics.rasterProviderRequestsCompleted, 0);
+    EXPECT_EQ(diagnostics.rasterProviderActiveWorkerBlockingRequests, 0);
+    EXPECT_EQ(diagnostics.rasterProviderPeakWorkerBlockingRequests, 0);
+    EXPECT_EQ(diagnostics.rasterTransportActiveRequestLimit, 11);
+    EXPECT_EQ(diagnostics.pendingTerrainRequests, 0);
+    EXPECT_EQ(diagnostics.pendingContentRequests, 0);
+
+    ASSERT_TRUE(bridge.complete(404));
+    for (int i = 0; i < 200 &&
+                    rasterProvider->requestDiagnostics().requestsCompleted == 0;
+         ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
 }
 
 TEST(

@@ -21105,131 +21105,6 @@ void testTilesetFrameResourceBudgetUsesProviderTransportLane() {
     }
 }
 
-void testTilesetLoadDiagnosticsExposeRasterProviderRequestDiagnostics() {
-    BlockingPlatformBridge bridge;
-    auto imageryProvider =
-        std::make_unique<XYZImageryProvider>(
-            "https://example.invalid/{z}/{x}/{y}.png");
-    imageryProvider->setPlatformBridge(&bridge);
-    auto overlay = std::make_unique<RasterOverlay>(
-        std::move(imageryProvider),
-        TileScheme::createXYZWebMercator(),
-        makeRasterOverlayOptions());
-    ActivatedRasterOverlay activated(*overlay);
-    RasterOverlayTileProvider* rasterProvider =
-        activated.ensureTileProvider(nullptr);
-    rasterProvider->setReady(true);
-
-    auto terrainProvider =
-        std::make_unique<ManualCompletionTerrainProvider>();
-    auto terrainScheme = TileScheme::createGeographicTMS();
-    Tileset tileset(
-        std::move(terrainProvider),
-        std::move(terrainScheme),
-        {&activated},
-        nullptr,
-        TilesetOptions{});
-
-    const TileKey rasterKey{"XYZ-WebMercator", 1, 0, 0};
-    RasterOverlayTileProvider::TilePtr rasterTile =
-        rasterProvider->getTile(rasterKey);
-    check(rasterTile && rasterProvider->loadTile(*rasterTile),
-          "TilesetLoadDiagnostics: raster provider starts imagery request");
-    check(bridge.waitUntilEntered(),
-          "TilesetLoadDiagnostics: test bridge observes raster provider HTTP entry");
-
-    const TilesetLoadDiagnostics activeDiag = tileset.loadDiagnostics();
-    check(activeDiag.rasterProviderRequests.requestsStarted == 1 &&
-              activeDiag.rasterProviderRequests.requestsCompleted == 0 &&
-              activeDiag.rasterProviderRequests.activeWorkerBlockingRequests == 0 &&
-              activeDiag.rasterProviderRequests.peakWorkerBlockingRequests == 0 &&
-              activeDiag.rasterProviderRequests.maximumTransportActiveRequests == 11,
-          "TilesetLoadDiagnostics: exposes raster provider async transport limit without worker blocking");
-    check(activeDiag.rasterOverlayTilesLoading == 1 &&
-              activeDiag.rasterSourceRequestsInFlight == 1 &&
-              activeDiag.rasterPendingUploads == 0 &&
-              activeDiag.pendingTerrainTotal() == 0 &&
-              activeDiag.pendingContentTotal() == 0,
-          "TilesetLoadDiagnostics: separates raster overlay activity from terrain/content pending work");
-
-    check(bridge.complete(404),
-          "TilesetLoadDiagnostics: test bridge releases raster provider request");
-    for (int i = 0; i < 200 &&
-                    rasterProvider->requestDiagnostics().requestsCompleted == 0;
-         ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    const TilesetLoadDiagnostics doneDiag = tileset.loadDiagnostics();
-    check(doneDiag.rasterProviderRequests.requestsCompleted == 1 &&
-              doneDiag.rasterProviderRequests.activeWorkerBlockingRequests == 0 &&
-              doneDiag.rasterProviderRequests.peakWorkerBlockingRequests == 0 &&
-              doneDiag.rasterProviderRequests.maximumTransportActiveRequests == 11,
-          "TilesetLoadDiagnostics: raster provider diagnostics complete async request");
-    check(doneDiag.rasterOverlayTilesLoading == 0 &&
-              doneDiag.rasterSourceRequestsInFlight == 0 &&
-              doneDiag.rasterPendingUploads == 0,
-          "TilesetLoadDiagnostics: raster overlay activity drains after provider completion");
-}
-
-void testTilesetLoadDiagnosticsAggregatesRasterProviderRequestPeaks() {
-    ProviderRequestDiagnostics firstDiag;
-    firstDiag.requestsStarted = 2;
-    firstDiag.requestsCompleted = 1;
-    firstDiag.activeWorkerBlockingRequests = 1;
-    firstDiag.peakWorkerBlockingRequests = 3;
-    firstDiag.externalResourceRequestsStarted = 4;
-    firstDiag.externalResourceRequestsCompleted = 2;
-    firstDiag.activeExternalResourceBlockingRequests = 1;
-    firstDiag.peakExternalResourceBlockingRequests = 5;
-    firstDiag.maximumTransportActiveRequests = 8;
-
-    ProviderRequestDiagnostics secondDiag;
-    secondDiag.requestsStarted = 5;
-    secondDiag.requestsCompleted = 4;
-    secondDiag.activeWorkerBlockingRequests = 2;
-    secondDiag.peakWorkerBlockingRequests = 2;
-    secondDiag.externalResourceRequestsStarted = 3;
-    secondDiag.externalResourceRequestsCompleted = 3;
-    secondDiag.activeExternalResourceBlockingRequests = 2;
-    secondDiag.peakExternalResourceBlockingRequests = 4;
-    secondDiag.maximumTransportActiveRequests = 11;
-
-    auto firstOverlay = std::make_unique<RasterOverlay>(
-        std::make_unique<DiagnosticImageryProvider>("diag-raster-a", firstDiag),
-        TileScheme::createXYZWebMercator(),
-        makeRasterOverlayOptions());
-    auto secondOverlay = std::make_unique<RasterOverlay>(
-        std::make_unique<DiagnosticImageryProvider>("diag-raster-b", secondDiag),
-        TileScheme::createXYZWebMercator(),
-        makeRasterOverlayOptions());
-    ActivatedRasterOverlay firstActivated(*firstOverlay);
-    ActivatedRasterOverlay secondActivated(*secondOverlay);
-
-    auto terrainProvider =
-        std::make_unique<ManualCompletionTerrainProvider>();
-    auto terrainScheme = TileScheme::createGeographicTMS();
-    Tileset tileset(
-        std::move(terrainProvider),
-        std::move(terrainScheme),
-        {&firstActivated, &secondActivated},
-        nullptr,
-        TilesetOptions{});
-
-    const ProviderRequestDiagnostics requests =
-        tileset.loadDiagnostics().rasterProviderRequests;
-    check(requests.requestsStarted == 7 &&
-              requests.requestsCompleted == 5 &&
-              requests.activeWorkerBlockingRequests == 3 &&
-              requests.peakWorkerBlockingRequests == 3 &&
-              requests.maximumTransportActiveRequests == 11,
-          "TilesetLoadDiagnostics: raster provider request peaks aggregate by max");
-    check(requests.externalResourceRequestsStarted == 7 &&
-              requests.externalResourceRequestsCompleted == 5 &&
-              requests.activeExternalResourceBlockingRequests == 3 &&
-              requests.peakExternalResourceBlockingRequests == 5,
-          "TilesetLoadDiagnostics: raster provider external request peaks aggregate by max");
-}
-
 void testProviderRequestDiagnosticsAggregatorCombinesCountsAndPeaks() {
     ProviderRequestDiagnostics total;
     total.requestsStarted = 1;
@@ -21402,63 +21277,6 @@ void testSceneTilesetDiagnosticsExposeContentExternalResourceDiagnostics() {
               diagnostics.contentProviderActiveExternalResourceBlockingRequests == 0 &&
               diagnostics.contentProviderPeakExternalResourceBlockingRequests == 0,
           "SceneTilesetDiagnostics: exposes content external resource diagnostics");
-}
-
-void testSceneTilesetDiagnosticsExposeRasterRequestLanes() {
-    BlockingPlatformBridge bridge;
-    auto imageryProvider =
-        std::make_unique<XYZImageryProvider>(
-            "https://example.invalid/{z}/{x}/{y}.png");
-    imageryProvider->setPlatformBridge(&bridge);
-    auto overlay = std::make_unique<RasterOverlay>(
-        std::move(imageryProvider),
-        TileScheme::createXYZWebMercator(),
-        makeRasterOverlayOptions());
-    ActivatedRasterOverlay activated(*overlay);
-    RasterOverlayTileProvider* rasterProvider =
-        activated.ensureTileProvider(nullptr);
-    rasterProvider->setReady(true);
-
-    auto terrainProvider =
-        std::make_unique<ManualCompletionTerrainProvider>();
-    auto terrainScheme = TileScheme::createGeographicTMS();
-    Tileset tileset(
-        std::move(terrainProvider),
-        std::move(terrainScheme),
-        {&activated},
-        nullptr,
-        TilesetOptions{});
-
-    const TileKey rasterKey{"XYZ-WebMercator", 1, 0, 0};
-    RasterOverlayTileProvider::TilePtr rasterTile =
-        rasterProvider->getTile(rasterKey);
-    check(rasterTile && rasterProvider->loadTile(*rasterTile),
-          "SceneTilesetDiagnostics: raster provider starts imagery request");
-    check(bridge.waitUntilEntered(),
-          "SceneTilesetDiagnostics: test bridge observes raster provider HTTP entry");
-
-    Diagnostics diagnostics;
-    SceneTilesetDiagnostics::reset(diagnostics);
-    SceneTilesetDiagnostics::addTileset(diagnostics, tileset, true);
-    check(diagnostics.rasterOverlayTilesLoading == 1 &&
-              diagnostics.rasterSourceRequestsInFlight == 1 &&
-              diagnostics.rasterPendingUploads == 0 &&
-              diagnostics.rasterProviderRequestsStarted == 1 &&
-              diagnostics.rasterProviderRequestsCompleted == 0 &&
-              diagnostics.rasterProviderActiveWorkerBlockingRequests == 0 &&
-              diagnostics.rasterProviderPeakWorkerBlockingRequests == 0 &&
-              diagnostics.rasterTransportActiveRequestLimit == 11 &&
-              diagnostics.pendingTerrainRequests == 0 &&
-              diagnostics.pendingContentRequests == 0,
-          "SceneTilesetDiagnostics: exposes raster request lanes separately from terrain/content pending work");
-
-    check(bridge.complete(404),
-          "SceneTilesetDiagnostics: test bridge releases raster provider request");
-    for (int i = 0; i < 200 &&
-                    rasterProvider->requestDiagnostics().requestsCompleted == 0;
-         ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
 }
 
 void testSceneProviderRequestDiagnosticsSnapshotAggregatesProviderLanes() {
@@ -26945,12 +26763,9 @@ int main() {
     testTileFrameResourceBudgetPlannerKeepsTerminalTransitionsWhenWorkerLoadsDisabled();
     testTileFrameBudgetFallbackKeepsUploadsAliveWhenWorkerLoadsDisabled();
     testTilesetFrameResourceBudgetUsesProviderTransportLane();
-    testTilesetLoadDiagnosticsExposeRasterProviderRequestDiagnostics();
-    testTilesetLoadDiagnosticsAggregatesRasterProviderRequestPeaks();
     testProviderRequestDiagnosticsAggregatorCombinesCountsAndPeaks();
     testTilesetLoadDiagnosticsExposeContentProviderRequestDiagnostics();
     testSceneTilesetDiagnosticsExposeContentExternalResourceDiagnostics();
-    testSceneTilesetDiagnosticsExposeRasterRequestLanes();
     testSceneProviderRequestDiagnosticsSnapshotAggregatesProviderLanes();
     testSceneFrameResourceBudgetDiagnosticsSnapshotAggregatesBudgetLanes();
     testSceneFrameResourceBudgetDiagnosticsSnapshotSaturatesUnlimitedLimits();
