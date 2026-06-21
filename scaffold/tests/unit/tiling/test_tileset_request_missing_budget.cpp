@@ -363,6 +363,50 @@ public:
     int requestCount = 0;
 };
 
+class ExplicitPastMaxZoomTerrainProvider final : public TerrainProvider {
+public:
+    explicit ExplicitPastMaxZoomTerrainProvider(
+        std::shared_ptr<std::vector<TileKey>> requestedKeys)
+        : requestedKeys_(std::move(requestedKeys)) {}
+
+    std::string id() const override { return "explicit-past-maxzoom-terrain"; }
+    std::string schemeId() const override { return "Geographic-TMS"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 1; }
+    int tileSize() const override { return 2; }
+
+    TileAvailabilityState availabilityState(const TileKey& key) const override {
+        if (key.schemeId != schemeId()) {
+            return TileAvailabilityState::NotAvailable;
+        }
+        if (key.z == 2 && key.x == 0 && key.y == 0) {
+            return TileAvailabilityState::Available;
+        }
+        return TerrainProvider::availabilityState(key);
+    }
+
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://explicit-past-maxzoom-terrain";
+    }
+
+    void requestTile(
+        const TileKey& key,
+        CancellationToken,
+        HeightmapCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        requestedKeys_->push_back(key);
+        callback(key, TerrainTileLoadResult::retryLater());
+    }
+
+    std::unique_ptr<DecodedHeightmap> decodeTile(const uint8_t*, size_t)
+        override {
+        return nullptr;
+    }
+
+private:
+    std::shared_ptr<std::vector<TileKey>> requestedKeys_;
+};
+
 class DummyBuffer final : public Buffer {
 public:
     explicit DummyBuffer(size_t byteSize) : byteSize_(byteSize) {}
@@ -1511,4 +1555,24 @@ TEST(
     EXPECT_TRUE(rawProvider->completeWithHeightmap(
         thirdKey,
         makeFlatHeightmap(3.0f)));
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    RequestsExplicitTerrainAvailabilityPastProviderMaxzoomLikeCesiumNative) {
+    auto requestedKeys = std::make_shared<std::vector<TileKey>>();
+    auto provider =
+        std::make_unique<ExplicitPastMaxZoomTerrainProvider>(requestedKeys);
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey explicitKey{"Geographic-TMS", 2, 0, 0};
+    TilesetTestAccess::requestMissingTile(tileset, explicitKey);
+
+    ASSERT_EQ(1u, requestedKeys->size());
+    EXPECT_EQ(explicitKey, requestedKeys->front());
 }
