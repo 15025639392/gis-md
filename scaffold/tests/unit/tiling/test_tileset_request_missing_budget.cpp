@@ -27,6 +27,10 @@ struct TilesetTestAccess {
         return tileset.contentAccess_.ensureTile(key);
     }
 
+    static void ensureTileChildren(Tileset& tileset, TilesetTile& tile) {
+        tileset.contentAccess_.ensureTileChildren(tile);
+    }
+
     static TileLoadRequestOutcome requestMissingTilesWithBudget(
         Tileset& tileset,
         FrameResourceBudget& budget,
@@ -223,6 +227,48 @@ public:
 
 private:
     TileKey key_;
+};
+
+class SparseTerrainProvider final : public TerrainProvider {
+public:
+    std::string id() const override { return "sparse-terrain"; }
+    std::string schemeId() const override { return "Geographic-TMS"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 4; }
+    int tileSize() const override { return 2; }
+
+    TileAvailabilityState availabilityState(const TileKey& key) const override {
+        if (key.schemeId != schemeId()) {
+            return TileAvailabilityState::NotAvailable;
+        }
+        if (key.z == 0) {
+            return TileAvailabilityState::Available;
+        }
+        if (key.z == 1 && key.x == 0 && key.y == 0) {
+            return TileAvailabilityState::Available;
+        }
+        return TileAvailabilityState::NotAvailable;
+    }
+
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://sparse-terrain";
+    }
+
+    void requestTile(
+        const TileKey& key,
+        CancellationToken,
+        HeightmapCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        ++requestCount;
+        callback(key, TerrainTileLoadResult::retryLater());
+    }
+
+    std::unique_ptr<DecodedHeightmap> decodeTile(const uint8_t*, size_t)
+        override {
+        return nullptr;
+    }
+
+    int requestCount = 0;
 };
 
 class DummyBuffer final : public Buffer {
@@ -718,6 +764,39 @@ TEST(
     EXPECT_EQ(
         diagnostics.missingRasterOverlayProjections,
         baseline.missingRasterOverlayProjections + 1);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    UpsampledChildQueuesParentUntilSourceReady) {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    SparseTerrainProvider* rawProvider = provider.get();
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_EQ(root->children.size(), 4u);
+    ASSERT_NE(root->children[1], nullptr);
+
+    TilesetTile* upsampledChild = root->children[1];
+    ASSERT_TRUE(upsampledChild->content.upsampledFromParent);
+
+    TilesetTestAccess::requestMissingTile(tileset, upsampledChild->key);
+    const TilesetLoadDiagnostics diagnostics = tileset.loadDiagnostics();
+
+    EXPECT_EQ(upsampledChild->content.loadState, TileLoadState::Unloaded);
+    EXPECT_EQ(diagnostics.pendingTerrainUploads, 0);
+    EXPECT_EQ(rawProvider->requestCount, 0);
+    EXPECT_EQ(diagnostics.loadQueueUrgentRequests, 1);
+    EXPECT_EQ(diagnostics.loadQueueNormalRequests, 0);
 }
 
 TEST(
