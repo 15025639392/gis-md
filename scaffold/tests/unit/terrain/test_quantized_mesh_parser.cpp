@@ -1353,6 +1353,56 @@ TEST(QuantizedMeshParserHeaderTest,
     EXPECT_EQ(Vec3::zero(), mesh->horizonOcclusionPoint);
 }
 
+TEST(QuantizedMeshParserVertexDecodeTest,
+     UvAndHeightGoldenMatchCesiumNative) {
+    const Rectangle bounds = rootRectangle();
+    constexpr float minimumHeight = -50.0f;
+    constexpr float maximumHeight = 150.0f;
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes(
+            "",
+            false,
+            false,
+            Vec3::zero(),
+            minimumHeight,
+            maximumHeight);
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            bounds);
+
+    ASSERT_NE(nullptr, mesh);
+    ASSERT_EQ(3u, mesh->vertices.size());
+    EXPECT_EQ(3u, mesh->indices.size());
+
+    EXPECT_NEAR(0.0f, mesh->vertices[0].uv[0], 1e-6f);
+    EXPECT_NEAR(1.0f, mesh->vertices[0].uv[1], 1e-6f);
+    EXPECT_NEAR(1.0f, mesh->vertices[1].uv[0], 1e-6f);
+    EXPECT_NEAR(1.0f, mesh->vertices[1].uv[1], 1e-6f);
+    EXPECT_NEAR(0.0f, mesh->vertices[2].uv[0], 1e-6f);
+    EXPECT_NEAR(0.0f, mesh->vertices[2].uv[1], 1e-6f);
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Cartographic sw =
+        ellipsoid.cartesianToCartographic(mesh->vertices[0].positionEcef);
+    const Cartographic se =
+        ellipsoid.cartesianToCartographic(mesh->vertices[1].positionEcef);
+    const Cartographic nw =
+        ellipsoid.cartesianToCartographic(mesh->vertices[2].positionEcef);
+
+    EXPECT_NEAR(bounds.west(), sw.longitude(), 1e-8);
+    EXPECT_NEAR(bounds.south(), sw.latitude(), 1e-8);
+    EXPECT_NEAR(minimumHeight, sw.height(), 1e-3);
+    EXPECT_NEAR(bounds.east(), se.longitude(), 1e-8);
+    EXPECT_NEAR(bounds.south(), se.latitude(), 1e-8);
+    EXPECT_NEAR(minimumHeight, se.height(), 1e-3);
+    EXPECT_NEAR(bounds.west(), nw.longitude(), 1e-8);
+    EXPECT_NEAR(bounds.north(), nw.latitude(), 1e-8);
+    EXPECT_NEAR(minimumHeight, nw.height(), 1e-3);
+}
+
 TEST(QuantizedMeshParserValidationTest,
      RejectsDecodedTriangleIndicesOutsideVertexRange) {
     std::vector<uint8_t> bytes =
