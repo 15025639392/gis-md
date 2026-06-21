@@ -135,6 +135,8 @@ private:
     void syncLegacyFieldsFromPrimaryLayer();
     void handleAsyncTileBody(
         const TileKey& key,
+        int contentLayerIndex,
+        bool includeCurrentLayerMetadata,
         std::vector<LayerAvailabilityRequest> availabilityRequests,
         CancellationToken token,
         TerrainCallback callback,
@@ -144,6 +146,8 @@ private:
         bool usePlatformBridge);
     void requestAsyncMetadataAndFinalize(
         TileKey key,
+        int contentLayerIndex,
+        bool includeCurrentLayerMetadata,
         std::shared_ptr<std::vector<LayerAvailabilityRequest>>
             availabilityRequests,
         std::shared_ptr<CancellationToken> token,
@@ -154,6 +158,8 @@ private:
         bool usePlatformBridge);
     void finalizeAsyncTileRequest(
         TileKey key,
+        int contentLayerIndex,
+        bool includeCurrentLayerMetadata,
         std::shared_ptr<std::vector<LayerAvailabilityRequest>>
             availabilityRequests,
         std::shared_ptr<CancellationToken> token,

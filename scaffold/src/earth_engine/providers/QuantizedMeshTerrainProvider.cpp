@@ -1062,7 +1062,25 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
                                                 CancellationToken token,
                                                 TerrainCallback callback,
                                                 HttpRequestPriority priority) {
-    std::string url = buildUrl(key);
+    const size_t contentLayerIndexValue = firstAvailableLayerIndex(key);
+    const bool hasContentLayer =
+        contentLayerIndexValue < layers_.size();
+    const int contentLayerIndex = hasContentLayer
+        ? static_cast<int>(contentLayerIndexValue)
+        : -1;
+    const LayerConfig* contentLayer =
+        hasContentLayer ? &layers_[contentLayerIndexValue] : nullptr;
+    const bool includeCurrentLayerMetadata =
+        contentLayer && contentLayer->availabilityLevels >= 1 &&
+        key.z % contentLayer->availabilityLevels == 0 &&
+        !isSubtreeLoadedInLayer(
+            *contentLayer,
+            key.z / contentLayer->availabilityLevels,
+            mortonEncode2D(static_cast<uint32_t>(key.x),
+                           static_cast<uint32_t>(key.y)));
+    std::string url = contentLayer
+        ? buildUrlForLayer(*contentLayer, key)
+        : buildUrl(key);
     std::vector<LayerAvailabilityRequest> availabilityRequests =
         collectUnderlyingLayerAvailabilityRequests(key);
     if (platformBridge_) {
@@ -1079,6 +1097,8 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
             url,
             [this,
              key,
+             contentLayerIndex,
+             includeCurrentLayerMetadata,
              availabilityRequests = std::move(availabilityRequests),
              token = std::move(token),
              priority,
@@ -1087,6 +1107,8 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
                 (void)requestHandle;
                 handleAsyncTileBody(
                     key,
+                    contentLayerIndex,
+                    includeCurrentLayerMetadata,
                     std::move(availabilityRequests),
                     std::move(token),
                     std::move(callback),
@@ -1111,6 +1133,8 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
             [this,
              url,
              key,
+             contentLayerIndex,
+             includeCurrentLayerMetadata,
              availabilityRequests = std::move(availabilityRequests),
              token = std::move(token),
              priority,
@@ -1128,6 +1152,8 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
 	#endif
                 handleAsyncTileBody(
                     key,
+                    contentLayerIndex,
+                    includeCurrentLayerMetadata,
                     std::move(availabilityRequests),
                     std::move(token),
                     std::move(callback),
@@ -1145,6 +1171,8 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
         url,
         [this,
          key,
+         contentLayerIndex,
+         includeCurrentLayerMetadata,
          availabilityRequests = std::move(availabilityRequests),
          token = std::move(token),
          priority,
@@ -1153,6 +1181,8 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
             (void)requestHandle;
             handleAsyncTileBody(
                 key,
+                contentLayerIndex,
+                includeCurrentLayerMetadata,
                 std::move(availabilityRequests),
                 std::move(token),
                 std::move(callback),
@@ -1166,6 +1196,8 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
 
 void QuantizedMeshTerrainProvider::handleAsyncTileBody(
     const TileKey& key,
+    int contentLayerIndex,
+    bool includeCurrentLayerMetadata,
     std::vector<LayerAvailabilityRequest> availabilityRequests,
     CancellationToken token,
     TerrainCallback callback,
@@ -1188,6 +1220,8 @@ void QuantizedMeshTerrainProvider::handleAsyncTileBody(
         availabilityRequestsPtr->empty()) {
         finalizeAsyncTileRequest(
             key,
+            contentLayerIndex,
+            includeCurrentLayerMetadata,
             availabilityRequestsPtr,
             tokenPtr,
             callbackPtr,
@@ -1199,6 +1233,8 @@ void QuantizedMeshTerrainProvider::handleAsyncTileBody(
 
     requestAsyncMetadataAndFinalize(
         key,
+        contentLayerIndex,
+        includeCurrentLayerMetadata,
         availabilityRequestsPtr,
         tokenPtr,
         callbackPtr,
@@ -1210,6 +1246,8 @@ void QuantizedMeshTerrainProvider::handleAsyncTileBody(
 
 void QuantizedMeshTerrainProvider::requestAsyncMetadataAndFinalize(
     TileKey key,
+    int contentLayerIndex,
+    bool includeCurrentLayerMetadata,
     std::shared_ptr<std::vector<LayerAvailabilityRequest>>
         availabilityRequests,
     std::shared_ptr<CancellationToken> token,
@@ -1235,6 +1273,8 @@ void QuantizedMeshTerrainProvider::requestAsyncMetadataAndFinalize(
             [this,
              metadataState,
              key,
+             contentLayerIndex,
+             includeCurrentLayerMetadata,
              availabilityRequests,
              token,
              callback,
@@ -1265,6 +1305,8 @@ void QuantizedMeshTerrainProvider::requestAsyncMetadataAndFinalize(
                 if (shouldFinalize) {
                     finalizeAsyncTileRequest(
                         key,
+                        contentLayerIndex,
+                        includeCurrentLayerMetadata,
                         availabilityRequests,
                         token,
                         callback,
@@ -1302,6 +1344,8 @@ void QuantizedMeshTerrainProvider::requestAsyncMetadataAndFinalize(
 
 void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
     TileKey key,
+    int contentLayerIndex,
+    bool includeCurrentLayerMetadata,
     std::shared_ptr<std::vector<LayerAvailabilityRequest>>
         availabilityRequests,
     std::shared_ptr<CancellationToken> token,
@@ -1312,6 +1356,8 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
     AsyncSystem::pool().enqueue(
         [this,
          key,
+         contentLayerIndex,
+         includeCurrentLayerMetadata,
          availabilityRequests,
          token,
          callback,
@@ -1339,7 +1385,17 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                 token->isCancelled());
 #endif
             std::vector<QuantizedMeshMetadataContent> metadata;
-            metadata.reserve(availabilityRequests->size());
+            metadata.reserve(
+                availabilityRequests->size() +
+                (includeCurrentLayerMetadata ? 1u : 0u));
+            if (includeCurrentLayerMetadata && contentLayerIndex >= 0) {
+                QuantizedMeshMetadataContent currentLayerMetadata;
+                currentLayerMetadata.layerIndex = contentLayerIndex;
+                currentLayerMetadata.subtreeKey = key;
+                currentLayerMetadata.data = body->data();
+                currentLayerMetadata.size = body->size();
+                metadata.push_back(currentLayerMetadata);
+            }
             for (size_t i = 0; i < availabilityRequests->size(); ++i) {
                 const LayerAvailabilityRequest& request =
                     (*availabilityRequests)[i];

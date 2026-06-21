@@ -1688,6 +1688,112 @@ TEST(QuantizedMeshTerrainProviderTest, LoadedUnderlyingMetadataSubtreeSkipsDupli
     std::filesystem::remove_all(root);
 }
 
+TEST(QuantizedMeshTerrainProviderTest,
+     CurrentLayerMetadataAvailabilityUsesContentLayerIndexLikeCesiumNative) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth_md_qm_current_layer_metadata_provider_test";
+    std::filesystem::remove_all(root);
+
+    const std::string parentLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["parentTiles/{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "metadataAvailability": 1,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}],
+        [{"startX":2,"startY":0,"endX":2,"endY":0}]
+      ]
+    })json";
+    {
+        std::filesystem::create_directories(root / "parent");
+        std::ofstream out(root / "parent" / "layer.json");
+        out << parentLayerJson;
+    }
+
+    const std::string childLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["childTiles/{z}/{x}/{y}.terrain"],
+      "parentUrl": "../parent",
+      "maxzoom": 4,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+
+    const std::string currentLayerMetadata = R"json({
+      "available": [
+        [{"startX":4,"startY":0,"endX":4,"endY":0}]
+      ]
+    })json";
+    writeBytes(
+        root / "parent" / "parentTiles" / "1" / "2" / "0.terrain",
+        makeQuantizedMeshBytesWithMetadata(currentLayerMetadata));
+
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        childLayerJson,
+        "file://" + (root / "child" / "layer.json").generic_string()));
+
+    const TileKey parentTile{"Geographic-TMS", 1, 2, 0};
+    const TileKey metadataChild{"Geographic-TMS", 2, 4, 0};
+    QuantizedMeshAvailabilityUpdate parentRootMetadata;
+    parentRootMetadata.layerIndex = 1;
+    parentRootMetadata.subtreeKey = TileKey{"Geographic-TMS", 0, 0, 0};
+    parentRootMetadata.metadataAvailability = {{0, 2, 0, 2, 0}};
+    provider.applyAvailabilityUpdates({parentRootMetadata});
+
+    EXPECT_EQ(TileAvailabilityState::Unknown,
+              provider.availabilityState(metadataChild));
+    EXPECT_TRUE(provider.supportsTile(parentTile));
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    TerrainTileLoadResult completed = TerrainTileLoadResult::retryLater();
+    provider.requestTile(
+        parentTile,
+        CancellationToken{},
+        [&](const TileKey&, TerrainTileLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                done = true;
+            }
+            cv.notify_one();
+        });
+
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return done; }));
+    }
+
+    EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
+    ASSERT_EQ(1u, completed.quantizedMeshAvailabilityUpdates.size());
+    EXPECT_EQ(1, completed.quantizedMeshAvailabilityUpdates[0].layerIndex);
+    EXPECT_EQ(parentTile,
+              completed.quantizedMeshAvailabilityUpdates[0].subtreeKey);
+
+    provider.applyAvailabilityUpdates(
+        completed.quantizedMeshAvailabilityUpdates);
+
+    const std::string parentBase =
+        "file://" + (root / "parent").generic_string();
+    EXPECT_TRUE(provider.supportsTile(metadataChild));
+    EXPECT_EQ(parentBase + "/parentTiles/2/4/0.terrain",
+              provider.buildUrl(metadataChild));
+
+    std::filesystem::remove_all(root);
+}
+
 TEST(QuantizedMeshTerrainProviderTest, FetchesUnderlyingMetadataViaAsyncBridge) {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
