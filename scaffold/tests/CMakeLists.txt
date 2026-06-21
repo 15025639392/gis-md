@@ -238,6 +238,12 @@ add_executable(test_quantized_mesh_metadata_availability
 target_link_libraries(test_quantized_mesh_metadata_availability PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_quantized_mesh_metadata_availability COMMAND test_quantized_mesh_metadata_availability)
 
+add_executable(test_quantized_mesh_water_mask
+    unit/terrain/test_quantized_mesh_water_mask.cpp
+)
+target_link_libraries(test_quantized_mesh_water_mask PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_quantized_mesh_water_mask COMMAND test_quantized_mesh_water_mask)
+
 add_executable(test_quantized_mesh_parser_validation
     unit/terrain/test_quantized_mesh_parser_validation.cpp
 )
