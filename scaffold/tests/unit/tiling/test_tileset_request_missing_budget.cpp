@@ -10,12 +10,14 @@
 #include "earth_engine/scene/SceneTilesetDiagnostics.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileSelectionRasterOverlayPreparer.h"
+#include "earth_engine/tiling/TileSelectionPlanAppender.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 
 #include <algorithm>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -71,6 +73,34 @@ struct TilesetTestAccess {
             std::move(heightmap);
     }
 
+    static bool containsPendingWorkFor(Tileset& tileset, const TileKey& key) {
+        return tileset.contentLifecycle_
+            .loadLifecycle()
+            .containsWorkForCacheKey(terrainCacheKey(tileset, key));
+    }
+
+    static bool claimContentUpload(Tileset& tileset, const TileKey& key) {
+        FrameResourceBudgetConfig config;
+        config.maxMainThreadFinalizesPerFrame = 1;
+        FrameResourceBudget budget;
+        budget.beginFrame(1, config);
+        const std::string cacheKey = terrainCacheKey(tileset, key);
+        std::lock_guard<std::mutex> lock(
+            tileset.contentLifecycle_.loadLifecycle().mutex());
+        tileset.contentLifecycle_.loadLifecycle().pendingLoads().addContentUpload(
+            PendingContentUpload{
+                key,
+                cacheKey,
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadResult::empty()});
+        return tileset.contentLifecycle_
+            .loadLifecycle()
+            .pendingLoads()
+            .takeHighestPriorityUpload(false, budget)
+            .has_value();
+    }
+
     static void queueLoad(
         Tileset& tileset,
         const TileKey& key,
@@ -121,6 +151,25 @@ struct TilesetTestAccess {
 
     static void clearChildrenRecursively(Tileset& tileset, TilesetTile& tile) {
         tileset.cacheOwnership_.clearChildrenRecursively(&tile, nullptr);
+    }
+
+    static bool loadQueueContainsAny(
+        const Tileset& tileset,
+        const TileKey& key) {
+        for (const TileLoadRequest& request : tileset.loadQueue_) {
+            if (request.key == key) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static void queueNormal(Tileset& tileset, const TileKey& key) {
+        TileSelectionPlanAppender::queueTileLoad(
+            tileset.loadQueue_,
+            key,
+            TileLoadPriorityGroup::Normal,
+            std::numeric_limits<double>::max());
     }
 
     static void processPendingUploadsWithBudget(
@@ -899,6 +948,42 @@ TEST(
     EXPECT_EQ(recreated->parent, root);
     ASSERT_EQ(root->children.size(), 1u);
     EXPECT_EQ(root->children.front(), recreated);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    ClearChildrenErasesClaimedUploadDescendantWork) {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(1.0f));
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_FALSE(root->children.empty());
+    ASSERT_NE(root->children.front(), nullptr);
+
+    const TileKey childKey = root->children.front()->key;
+    TilesetTestAccess::queueNormal(tileset, childKey);
+    ASSERT_TRUE(TilesetTestAccess::claimContentUpload(tileset, childKey));
+    ASSERT_TRUE(TilesetTestAccess::containsPendingWorkFor(tileset, childKey));
+
+    TilesetTestAccess::clearChildrenRecursively(tileset, *root);
+
+    EXPECT_TRUE(root->children.empty());
+    EXPECT_EQ(TilesetTestAccess::findTile(tileset, childKey), nullptr);
+    EXPECT_FALSE(TilesetTestAccess::loadQueueContainsAny(tileset, childKey));
+    EXPECT_FALSE(TilesetTestAccess::containsPendingWorkFor(tileset, childKey));
 }
 
 TEST(
