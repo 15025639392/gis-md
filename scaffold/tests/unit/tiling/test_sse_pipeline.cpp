@@ -934,94 +934,6 @@ void pad4(std::vector<uint8_t>& bytes, uint8_t pad) {
     }
 }
 
-uint16_t zigZagEncode16(int32_t value) {
-    return static_cast<uint16_t>(
-        value >= 0 ? value * 2 : (-value * 2) - 1);
-}
-
-std::vector<uint8_t> makeQuantizedMeshBytes(
-    const std::string& metadataJson = "",
-    bool includeSkirtEdges = false,
-    bool includeOctNormals = false,
-    const Vec3& boundingSphereCenterEcef = Vec3::zero(),
-    float minimumHeight = 0.0f,
-    float maximumHeight = 100.0f,
-    const Vec3& tileCenterEcef = Vec3::zero(),
-    const Vec3& horizonOcclusionPoint = Vec3::zero()) {
-    std::vector<uint8_t> bytes;
-
-    appendPod<double>(bytes, tileCenterEcef.x());
-    appendPod<double>(bytes, tileCenterEcef.y());
-    appendPod<double>(bytes, tileCenterEcef.z());
-    appendPod<float>(bytes, minimumHeight);
-    appendPod<float>(bytes, maximumHeight);
-    appendPod<double>(bytes, boundingSphereCenterEcef.x());
-    appendPod<double>(bytes, boundingSphereCenterEcef.y());
-    appendPod<double>(bytes, boundingSphereCenterEcef.z());
-    appendPod<double>(bytes, 0.0);
-    appendPod<double>(bytes, horizonOcclusionPoint.x());
-    appendPod<double>(bytes, horizonOcclusionPoint.y());
-    appendPod<double>(bytes, horizonOcclusionPoint.z());
-    appendPod<uint32_t>(bytes, 3);
-
-    const uint16_t u[] = {
-        zigZagEncode16(0),
-        zigZagEncode16(32767),
-        zigZagEncode16(-32767)
-    };
-    const uint16_t v[] = {
-        zigZagEncode16(0),
-        zigZagEncode16(0),
-        zigZagEncode16(32767)
-    };
-    const uint16_t h[] = {
-        zigZagEncode16(0),
-        zigZagEncode16(0),
-        zigZagEncode16(0)
-    };
-    for (uint16_t value : u) appendPod<uint16_t>(bytes, value);
-    for (uint16_t value : v) appendPod<uint16_t>(bytes, value);
-    for (uint16_t value : h) appendPod<uint16_t>(bytes, value);
-
-    appendPod<uint32_t>(bytes, 1);
-    appendPod<uint16_t>(bytes, 0);
-    appendPod<uint16_t>(bytes, 0);
-    appendPod<uint16_t>(bytes, 0);
-    auto appendEdge = [&](std::initializer_list<uint16_t> indices) {
-        appendPod<uint32_t>(bytes, static_cast<uint32_t>(indices.size()));
-        for (uint16_t index : indices) appendPod<uint16_t>(bytes, index);
-    };
-    if (includeSkirtEdges) {
-        appendEdge({0, 2});
-        appendEdge({1, 0});
-        appendEdge({1, 2});
-        appendEdge({2, 1});
-    } else {
-        for (int i = 0; i < 4; ++i) appendPod<uint32_t>(bytes, 0);
-    }
-
-    if (includeOctNormals) {
-        appendPod<uint8_t>(bytes, 1);
-        appendPod<uint32_t>(bytes, 6);
-        const uint8_t normals[] = {
-            128, 128,
-            255, 128,
-            128, 255
-        };
-        bytes.insert(bytes.end(), normals, normals + sizeof(normals));
-    }
-
-    if (!metadataJson.empty()) {
-        appendPod<uint8_t>(bytes, 4);
-        appendPod<uint32_t>(
-            bytes,
-            static_cast<uint32_t>(sizeof(uint32_t) + metadataJson.size()));
-        appendPod<uint32_t>(bytes, static_cast<uint32_t>(metadataJson.size()));
-        bytes.insert(bytes.end(), metadataJson.begin(), metadataJson.end());
-    }
-    return bytes;
-}
-
 void writeBytes(const std::filesystem::path& path,
                 const std::vector<uint8_t>& bytes) {
     std::filesystem::create_directories(path.parent_path());
@@ -25359,50 +25271,6 @@ void testTilesetSoftwareOcclusionPreservesNegativeExplicitS2Height() {
           "Tileset: software occlusion preserves negative explicit S2 height");
 }
 
-void testTilesetChildrenInheritParentTerrainHeightRange() {
-    auto provider = std::make_unique<SparseTerrainProvider>();
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    const float minimumHeight = -320.0f;
-    const float maximumHeight = 2048.0f;
-    auto heightmap = makeFlatHeightmap(0.0f);
-    heightmap->rawData = makeQuantizedMeshBytes(
-        "", false, false, Vec3::zero(), minimumHeight, maximumHeight);
-    TilesetTestAccess::putTerrainCache(tileset, rootKey, std::move(heightmap));
-
-    check(root != nullptr,
-          "Tileset: height-range inheritance root tile is created");
-    if (!root) return;
-
-    TilesetTestAccess::ensureTileMesh(tileset, *root);
-    TilesetTestAccess::ensureTileChildren(tileset, *root);
-    check(root->children.size() == 4,
-          "Tileset: height-range inheritance creates child tiles");
-
-    bool allChildrenInherited = !root->children.empty();
-    for (const TilesetTile* child : root->children) {
-        allChildrenInherited =
-            allChildrenInherited &&
-            child &&
-            child->content.renderContent.hasTerrainHeightRange() &&
-            std::abs(child->content.renderContent.terrainMinimumHeight() - minimumHeight) < 1e-6 &&
-            std::abs(child->content.renderContent.terrainMaximumHeight() - maximumHeight) < 1e-6 &&
-            child->boundingVolume &&
-            child->boundingVolume->kind == TileBoundingVolumeKind::Region &&
-            std::abs(child->boundingVolume->minimumHeight - minimumHeight) < 1e-6 &&
-            std::abs(child->boundingVolume->maximumHeight - maximumHeight) < 1e-6 &&
-            child->contentBoundingVolume &&
-            child->contentBoundingVolume->kind == TileBoundingVolumeKind::Region &&
-            std::abs(child->contentBoundingVolume->minimumHeight - minimumHeight) < 1e-6 &&
-            std::abs(child->contentBoundingVolume->maximumHeight - maximumHeight) < 1e-6;
-    }
-    check(allChildrenInherited,
-          "Tileset: child terrain bounds and volumes inherit parent QM updated height range");
-}
-
 void testTilesetSampleHeightUsesBestLoadedTerrainTile() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -27372,7 +27240,6 @@ int main() {
     testTilesetSoftwareOcclusionDoesNotInflateExplicitRegionToDefaultTerrainHeight();
     testTilesetSoftwareOcclusionPreservesNegativeExplicitRegionHeight();
     testTilesetSoftwareOcclusionPreservesNegativeExplicitS2Height();
-    testTilesetChildrenInheritParentTerrainHeightRange();
     testTilesetSampleHeightUsesBestLoadedTerrainTile();
     testTilesetSampleHeightFallsBackToLoadedAncestorTerrain();
     testTilesetCreatesUpsampledChildrenForUnavailableSiblings();

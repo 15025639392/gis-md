@@ -4,6 +4,7 @@
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Transforms.h"
 #include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
+#include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileBoundsMetrics.h"
@@ -26,6 +27,10 @@ struct TilesetTestAccess {
 
     static void ensureTileMesh(Tileset& tileset, TilesetTile& tile) {
         tileset.meshPreparation_.ensureTileMesh(tile);
+    }
+
+    static void ensureTileChildren(Tileset& tileset, TilesetTile& tile) {
+        tileset.contentAccess_.ensureTileChildren(tile);
     }
 
     static void putTerrainCache(
@@ -135,6 +140,44 @@ std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     heightmap->maxHeight = heightMeters;
     return heightmap;
 }
+
+class SparseTerrainProvider final : public TerrainProvider {
+public:
+    std::string id() const override { return "sparse-terrain"; }
+    std::string schemeId() const override { return "Geographic-TMS"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 4; }
+    int tileSize() const override { return 2; }
+
+    TileAvailabilityState availabilityState(const TileKey& key) const override {
+        if (key.schemeId != schemeId()) {
+            return TileAvailabilityState::NotAvailable;
+        }
+        if (key.z == 0) {
+            return TileAvailabilityState::Available;
+        }
+        if (key.z == 1 && key.x == 0 && key.y == 0) {
+            return TileAvailabilityState::Available;
+        }
+        return TileAvailabilityState::NotAvailable;
+    }
+
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://sparse";
+    }
+
+    void requestTile(const TileKey&,
+                     CancellationToken,
+                     HeightmapCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callback(TileKey{}, TerrainTileLoadResult::retryLater());
+    }
+
+    std::unique_ptr<DecodedHeightmap> decodeTile(
+        const uint8_t*, size_t) override {
+        return nullptr;
+    }
+};
 
 TEST(TilesetQuantizedMeshTest,
      RtcOriginComesFromBoundingSphereCenterLikeCesiumNative) {
@@ -336,6 +379,66 @@ TEST(TilesetQuantizedMeshTest,
                   Vec3::unitZ());
     const Frustum frustum = camera.frustum(800.0, 800.0);
     EXPECT_TRUE(TilesetTestAccess::tileIntersectsFrustum(exactTile, frustum));
+}
+
+TEST(TilesetQuantizedMeshTest,
+     ChildrenInheritParentHeaderHeightRangeLikeCesiumNative) {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+
+    constexpr float minimumHeight = -320.0f;
+    constexpr float maximumHeight = 2048.0f;
+    auto heightmap = makeFlatHeightmap(0.0f);
+    heightmap->rawData = makeQuantizedMeshBytes(
+        Vec3::zero(),
+        Vec3::zero(),
+        minimumHeight,
+        maximumHeight);
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        std::move(heightmap));
+
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_EQ(4u, root->children.size());
+
+    for (const TilesetTile* child : root->children) {
+        ASSERT_NE(nullptr, child);
+        EXPECT_TRUE(child->content.renderContent.hasTerrainHeightRange());
+        EXPECT_NEAR(
+            minimumHeight,
+            child->content.renderContent.terrainMinimumHeight(),
+            1e-6);
+        EXPECT_NEAR(
+            maximumHeight,
+            child->content.renderContent.terrainMaximumHeight(),
+            1e-6);
+
+        ASSERT_TRUE(child->boundingVolume.has_value());
+        EXPECT_EQ(TileBoundingVolumeKind::Region, child->boundingVolume->kind);
+        EXPECT_NEAR(minimumHeight,
+                    child->boundingVolume->minimumHeight,
+                    1e-6);
+        EXPECT_NEAR(maximumHeight,
+                    child->boundingVolume->maximumHeight,
+                    1e-6);
+
+        ASSERT_TRUE(child->contentBoundingVolume.has_value());
+        EXPECT_EQ(TileBoundingVolumeKind::Region,
+                  child->contentBoundingVolume->kind);
+        EXPECT_NEAR(minimumHeight,
+                    child->contentBoundingVolume->minimumHeight,
+                    1e-6);
+        EXPECT_NEAR(maximumHeight,
+                    child->contentBoundingVolume->maximumHeight,
+                    1e-6);
+    }
 }
 
 } // namespace
