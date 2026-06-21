@@ -2572,8 +2572,60 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionReturnsCoveredRectangleLike
     ASSERT_NE(nullptr, result.image);
     EXPECT_EQ(2, result.image->width);
     EXPECT_EQ(2, result.image->height);
-    EXPECT_EQ(covered, result.rectangle);
+    EXPECT_TRUE(result.rectangle.equalsEpsilon(covered, 1e-12));
     EXPECT_EQ(30, result.image->pixels[0]);
+}
+
+TEST(RasterOverlayLifecycleTest, RectangleCompositionBlitsSourcePixelBlocksLikeCesiumNative) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    const TileKey westKey{scheme->id(), 2, 0, 1};
+    const TileKey eastKey{scheme->id(), 2, 1, 1};
+    const Rectangle westBounds = scheme->tileToRectangle(westKey);
+    const Rectangle eastBounds = scheme->tileToRectangle(eastKey);
+    const Rectangle target(
+        westBounds.west(),
+        westBounds.south(),
+        eastBounds.east(),
+        westBounds.north());
+
+    auto westImage = std::make_unique<DecodedImage>();
+    westImage->width = 2;
+    westImage->height = 2;
+    westImage->channels = 4;
+    westImage->pixels = {
+        10, 0, 0, 255, 11, 0, 0, 255,
+        12, 0, 0, 255, 13, 0, 0, 255};
+    auto eastImage = std::make_unique<DecodedImage>();
+    eastImage->width = 2;
+    eastImage->height = 2;
+    eastImage->channels = 4;
+    eastImage->pixels = {
+        20, 0, 0, 255, 21, 0, 0, 255,
+        22, 0, 0, 255, 23, 0, 0, 255};
+
+    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    sources.push_back({westKey, westBounds, std::move(westImage)});
+    sources.push_back({eastKey, eastBounds, std::move(eastImage)});
+
+    auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
+        *scheme,
+        target,
+        westKey.z,
+        std::move(sources),
+        westKey.z,
+        8);
+
+    ASSERT_NE(nullptr, result.image);
+    ASSERT_EQ(4, result.image->width);
+    ASSERT_EQ(2, result.image->height);
+    EXPECT_EQ(10, result.image->pixels[0]);
+    EXPECT_EQ(11, result.image->pixels[4]);
+    EXPECT_EQ(20, result.image->pixels[8]);
+    EXPECT_EQ(21, result.image->pixels[12]);
+    EXPECT_EQ(12, result.image->pixels[16]);
+    EXPECT_EQ(13, result.image->pixels[20]);
+    EXPECT_EQ(22, result.image->pixels[24]);
+    EXPECT_EQ(23, result.image->pixels[28]);
 }
 
 TEST(RasterOverlayLifecycleTest, RectangleCompositionKeepsTinyProjectedOverlap) {

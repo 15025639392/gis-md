@@ -7,6 +7,7 @@
 #include "../renderer/RenderDevice.h"
 #include "../threading/CancellationToken.h"
 #include "../debug/PerfTimer.h"
+#include "../core/math/MathUtils.h"
 
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -35,6 +36,7 @@ constexpr int64_t kInteractionRasterUploadMaxPixels = 512ll * 512ll;
 constexpr double kPi = 3.14159265358979323846264338327950288;
 constexpr double kTwoPi = 2.0 * kPi;
 constexpr double kMaxWebMercatorLat = 1.4844222297453324;
+constexpr double kPixelTolerance = 0.01;
 
 #ifdef __ANDROID__
 void logAndroidRasterPipeline(const char* stage,
@@ -246,6 +248,13 @@ double webMercatorY(double latRad) {
     return std::log(std::tan(lat * 0.5 + kPi * 0.25));
 }
 
+double latitudeAtProjectedY(const TileScheme& scheme, double projectedY) {
+    const double latitude = isWebMercatorScheme(scheme)
+        ? std::atan(std::sinh(projectedY))
+        : projectedY;
+    return std::abs(latitude) < 1e-15 ? 0.0 : latitude;
+}
+
 double projectedSouth(const TileScheme& scheme, const Rectangle& bounds) {
     return isWebMercatorScheme(scheme)
         ? webMercatorY(bounds.south())
@@ -263,19 +272,6 @@ double projectedHeight(const TileScheme& scheme, const Rectangle& bounds) {
         1e-12,
         std::abs(projectedNorth(scheme, bounds) -
                  projectedSouth(scheme, bounds)));
-}
-
-double latitudeAtProjectedV(const TileScheme& scheme,
-                            const Rectangle& bounds,
-                            double v) {
-    if (!isWebMercatorScheme(scheme)) {
-        return bounds.north() - v * bounds.height();
-    }
-
-    const double north = projectedNorth(scheme, bounds);
-    const double south = projectedSouth(scheme, bounds);
-    const double projected = north - v * std::abs(north - south);
-    return std::atan(std::sinh(projected));
 }
 
 double projectedVForLatitudeInternal(const TileScheme& scheme,
@@ -490,14 +486,6 @@ std::string sourceCacheKey(const TileKey& key) {
            std::to_string(key.x) + "/" + std::to_string(key.y);
 }
 
-double clampUnit(double v) {
-    return std::max(0.0, std::min(1.0, v));
-}
-
-double clampToRange(double value, double a, double b) {
-    return std::clamp(value, std::min(a, b), std::max(a, b));
-}
-
 struct LoadedSourceImage {
     TileKey key;
     Rectangle bounds;
@@ -507,27 +495,196 @@ struct LoadedSourceImage {
         RasterOverlayTile::MoreDetailAvailable::Unknown;
 };
 
-const LoadedSourceImage* findSourceForPosition(
+struct PixelRectangle {
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+};
+
+struct CombinedImageMeasurements {
+    Rectangle rectangle;
+    int width = 0;
+    int height = 0;
+};
+
+PixelRectangle computePixelRectangle(
+    const DecodedImage& image,
+    const Rectangle& totalRectangle,
+    const Rectangle& partRectangle,
+    const TileScheme& scheme) {
+    const double totalProjectedHeight = projectedHeight(scheme, totalRectangle);
+    const double partProjectedNorth = projectedNorth(scheme, partRectangle);
+    const double partProjectedSouth = projectedSouth(scheme, partRectangle);
+    const double totalProjectedNorth = projectedNorth(scheme, totalRectangle);
+
+    int x = static_cast<int>(MathUtils::roundDown(
+        image.width * (partRectangle.west() - totalRectangle.west()) /
+            totalRectangle.width(),
+        kPixelTolerance));
+    x = std::max(0, x);
+
+    int y = static_cast<int>(MathUtils::roundDown(
+        image.height * (totalProjectedNorth - partProjectedNorth) /
+            totalProjectedHeight,
+        kPixelTolerance));
+    y = std::max(0, y);
+
+    int maxX = static_cast<int>(MathUtils::roundUp(
+        image.width * (partRectangle.east() - totalRectangle.west()) /
+            totalRectangle.width(),
+        kPixelTolerance));
+    maxX = std::min(maxX, image.width);
+
+    int maxY = static_cast<int>(MathUtils::roundUp(
+        image.height * (totalProjectedNorth - partProjectedSouth) /
+            totalProjectedHeight,
+        kPixelTolerance));
+    maxY = std::min(maxY, image.height);
+
+    return PixelRectangle{x, y, std::max(0, maxX - x), std::max(0, maxY - y)};
+}
+
+CombinedImageMeasurements measureCombinedImage(
     const TileScheme& scheme,
-    const std::unordered_map<TileKey, size_t>& sourceByKey,
+    const Rectangle& targetBounds,
     const std::vector<LoadedSourceImage>& sources,
-    double lng,
-    double lat,
-    int sourceZoom) {
-    TileKey key = scheme.positionToTile(lng, lat, sourceZoom);
-    auto it = sourceByKey.find(key);
-    if (it != sourceByKey.end() && it->second < sources.size()) {
-        return &sources[it->second];
+    double projectedWidthPerPixel,
+    double projectedHeightPerPixel,
+    int maximumTextureSize) {
+    std::optional<Rectangle> combinedBounds;
+    for (const LoadedSourceImage& source : sources) {
+        std::optional<Rectangle> intersection =
+            targetBounds.computeIntersection(source.bounds);
+        if (!intersection) {
+            continue;
+        }
+
+        const double projectedSouthValue = projectedSouth(scheme, *intersection);
+        const double projectedNorthValue = projectedNorth(scheme, *intersection);
+        const double roundedProjectedSouth =
+            MathUtils::roundDown(
+                projectedSouthValue / projectedHeightPerPixel,
+                kPixelTolerance) *
+            projectedHeightPerPixel;
+        const double roundedProjectedNorth =
+            MathUtils::roundUp(
+                projectedNorthValue / projectedHeightPerPixel,
+                kPixelTolerance) *
+            projectedHeightPerPixel;
+
+        Rectangle expanded(
+            MathUtils::roundDown(
+                intersection->west() / projectedWidthPerPixel,
+                kPixelTolerance) *
+                projectedWidthPerPixel,
+            latitudeAtProjectedY(scheme, roundedProjectedSouth),
+            MathUtils::roundUp(
+                intersection->east() / projectedWidthPerPixel,
+                kPixelTolerance) *
+                projectedWidthPerPixel,
+            latitudeAtProjectedY(scheme, roundedProjectedNorth));
+
+        if (expanded.west() == expanded.east()) {
+            expanded = Rectangle(
+                expanded.west(),
+                expanded.south(),
+                expanded.east() + projectedWidthPerPixel,
+                expanded.north());
+        }
+        if (projectedHeight(scheme, expanded) == 0.0) {
+            expanded = Rectangle(
+                expanded.west(),
+                expanded.south(),
+                expanded.east(),
+                latitudeAtProjectedY(
+                    scheme,
+                    projectedNorth(scheme, expanded) +
+                        projectedHeightPerPixel));
+        }
+
+        combinedBounds = combinedBounds
+            ? combinedBounds->computeUnion(expanded)
+            : expanded;
     }
 
-    // Edge precision fallback. The center-of-pixel path should almost always
-    // hit by key; this handles polar/edge rectangles conservatively.
-    for (const auto& source : sources) {
-        if (source.image && source.bounds.contains(lng, lat)) {
-            return &source;
+    if (!combinedBounds) {
+        return {};
+    }
+
+    int width = static_cast<int>(MathUtils::roundUp(
+        combinedBounds->width() / projectedWidthPerPixel,
+        kPixelTolerance));
+    int height = static_cast<int>(MathUtils::roundUp(
+        projectedHeight(scheme, *combinedBounds) / projectedHeightPerPixel,
+        kPixelTolerance));
+    width = std::clamp(width, 1, maximumTextureSize);
+    height = std::clamp(height, 1, maximumTextureSize);
+    return CombinedImageMeasurements{*combinedBounds, width, height};
+}
+
+void blitImage(DecodedImage& target,
+               const Rectangle& targetRectangle,
+               const DecodedImage& source,
+               const Rectangle& sourceRectangle,
+               const TileScheme& scheme) {
+    std::optional<Rectangle> overlap =
+        targetRectangle.computeIntersection(sourceRectangle);
+    if (!overlap) {
+        return;
+    }
+
+    const PixelRectangle dst =
+        computePixelRectangle(target, targetRectangle, *overlap, scheme);
+    const PixelRectangle src =
+        computePixelRectangle(source, sourceRectangle, *overlap, scheme);
+    if (dst.width <= 0 || dst.height <= 0 ||
+        src.width <= 0 || src.height <= 0) {
+        return;
+    }
+
+    for (int y = 0; y < dst.height; ++y) {
+        const int sy = std::clamp(
+            src.y + static_cast<int>(
+                        (static_cast<int64_t>(y) * src.height) / dst.height),
+            0,
+            source.height - 1);
+        const int dy = dst.y + y;
+        if (dy < 0 || dy >= target.height) {
+            continue;
+        }
+        for (int x = 0; x < dst.width; ++x) {
+            const int sx = std::clamp(
+                src.x + static_cast<int>(
+                            (static_cast<int64_t>(x) * src.width) / dst.width),
+                0,
+                source.width - 1);
+            const int dx = dst.x + x;
+            if (dx < 0 || dx >= target.width) {
+                continue;
+            }
+
+            const size_t srcIndex =
+                (static_cast<size_t>(sy) *
+                     static_cast<size_t>(source.width) +
+                 static_cast<size_t>(sx)) *
+                static_cast<size_t>(source.channels);
+            const size_t dstIndex =
+                (static_cast<size_t>(dy) *
+                     static_cast<size_t>(target.width) +
+                 static_cast<size_t>(dx)) *
+                4u;
+            target.pixels[dstIndex + 0] = source.pixels[srcIndex + 0];
+            target.pixels[dstIndex + 1] =
+                source.channels > 1 ? source.pixels[srcIndex + 1]
+                                    : source.pixels[srcIndex + 0];
+            target.pixels[dstIndex + 2] =
+                source.channels > 2 ? source.pixels[srcIndex + 2]
+                                    : source.pixels[srcIndex + 0];
+            target.pixels[dstIndex + 3] =
+                source.channels >= 4 ? source.pixels[srcIndex + 3] : 255;
         }
     }
-    return nullptr;
 }
 
 RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
@@ -537,6 +694,7 @@ RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
     std::vector<LoadedSourceImage>&& sources,
     int maximumSourceZoom,
     int maximumTextureSize) {
+    (void)sourceZoom;
     sources.erase(
         std::remove_if(sources.begin(), sources.end(),
                        [](const LoadedSourceImage& source) {
@@ -573,100 +731,35 @@ RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
         return {};
     }
 
-    std::optional<Rectangle> combinedBounds;
-    for (const LoadedSourceImage& source : sources) {
-        std::optional<Rectangle> intersection =
-            targetBounds.computeIntersection(source.bounds);
-        if (!intersection) {
-            continue;
-        }
-        combinedBounds = combinedBounds
-            ? combinedBounds->computeUnion(*intersection)
-            : *intersection;
-    }
-    if (!combinedBounds) {
+    CombinedImageMeasurements measurements = measureCombinedImage(
+        scheme,
+        targetBounds,
+        sources,
+        projectedWidthPerPixel,
+        projectedHeightPerPixel,
+        maximumTextureSize);
+    if (measurements.width <= 0 || measurements.height <= 0) {
         return {};
     }
-
-    int width = static_cast<int>(std::ceil(combinedBounds->width() /
-                                           projectedWidthPerPixel));
-    int height = static_cast<int>(std::ceil(projectedHeight(scheme, *combinedBounds) /
-                                            projectedHeightPerPixel));
-    width = std::clamp(width, 1, maximumTextureSize);
-    height = std::clamp(height, 1, maximumTextureSize);
 
     auto output = std::make_unique<DecodedImage>();
-    output->width = width;
-    output->height = height;
+    output->width = measurements.width;
+    output->height = measurements.height;
     output->channels = 4;
-    output->pixels.resize(static_cast<size_t>(width) *
-                          static_cast<size_t>(height) * 4u, 0);
+    output->pixels.resize(static_cast<size_t>(output->width) *
+                          static_cast<size_t>(output->height) * 4u, 0);
 
-    std::unordered_map<TileKey, size_t> sourceByKey;
-    sourceByKey.reserve(sources.size());
-    for (size_t i = 0; i < sources.size(); ++i) {
-        sourceByKey[sources[i].key] = i;
-    }
-
-    int filledPixels = 0;
-    for (int y = 0; y < height; ++y) {
-        const double v = (static_cast<double>(y) + 0.5) /
-                         static_cast<double>(height);
-        const double lat = latitudeAtProjectedV(scheme, *combinedBounds, v);
-        for (int x = 0; x < width; ++x) {
-            const double u = (static_cast<double>(x) + 0.5) /
-                             static_cast<double>(width);
-            const double lng = combinedBounds->west() +
-                               u * combinedBounds->width();
-
-            const LoadedSourceImage* source = findSourceForPosition(
-                scheme, sourceByKey, sources, lng, lat, sourceZoom);
-            if (!source || !source->image) continue;
-
-            const DecodedImage& src = *source->image;
-            const double sampleLng =
-                clampToRange(lng, source->bounds.west(), source->bounds.east());
-            const double sampleLat =
-                clampToRange(lat, source->bounds.south(), source->bounds.north());
-            const double su = clampUnit(
-                (sampleLng - source->bounds.west()) / source->bounds.width());
-            const double sv = projectedVForLatitudeInternal(
-                scheme,
-                source->bounds,
-                sampleLat);
-            const int sx = std::clamp(
-                static_cast<int>(su * static_cast<double>(src.width)),
-                0,
-                src.width - 1);
-            const int sy = std::clamp(
-                static_cast<int>(sv * static_cast<double>(src.height)),
-                0,
-                src.height - 1);
-
-            const size_t srcIndex =
-                (static_cast<size_t>(sy) * static_cast<size_t>(src.width) +
-                 static_cast<size_t>(sx)) *
-                static_cast<size_t>(src.channels);
-            const size_t dstIndex =
-                (static_cast<size_t>(y) * static_cast<size_t>(width) +
-                 static_cast<size_t>(x)) * 4u;
-
-            output->pixels[dstIndex + 0] = src.pixels[srcIndex + 0];
-            output->pixels[dstIndex + 1] = src.pixels[srcIndex + 1];
-            output->pixels[dstIndex + 2] = src.pixels[srcIndex + 2];
-            output->pixels[dstIndex + 3] =
-                src.channels >= 4 ? src.pixels[srcIndex + 3] : 255;
-            ++filledPixels;
-        }
-    }
-
-    if (filledPixels != width * height) {
-        return {};
+    for (const LoadedSourceImage& source : sources) {
+        blitImage(*output,
+                  measurements.rectangle,
+                  *source.image,
+                  source.bounds,
+                  scheme);
     }
 
     RasterOverlayTileProvider::RectangleCompositionResult result;
     result.image = std::move(output);
-    result.rectangle = *combinedBounds;
+    result.rectangle = measurements.rectangle;
     const bool moreDetailAvailable = std::any_of(
         sources.begin(),
         sources.end(),
