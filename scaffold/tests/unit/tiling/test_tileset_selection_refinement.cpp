@@ -17,6 +17,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -103,6 +104,12 @@ struct TilesetTestAccess {
         TileOcclusionState state) {
         tileset.setOcclusionCallback(
             [state](const TilesetTile&) { return state; });
+    }
+
+    static void setOcclusionCallback(
+        Tileset& tileset,
+        Tileset::OcclusionCallback callback) {
+        tileset.setOcclusionCallback(std::move(callback));
     }
 };
 } // namespace earth_engine
@@ -1905,4 +1912,82 @@ TEST(
     EXPECT_FALSE(root->children.empty());
     EXPECT_GT(tileset.tilePlan().maxVisibleZoom, 0);
     EXPECT_EQ(tileset.tilePlan().selectionWaitingForOcclusionResultsCount, 0);
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
+    OcclusionUnavailableChildDelaysNewRefinement) {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::vector<TileKey> childKeys = {
+        {"Geographic-TMS", 1, 0, 0},
+        {"Geographic-TMS", 1, 1, 0}};
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, childKeys}});
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Empty;
+    root->refine = TileRefine::Replace;
+    root->geometricError = 40000.0;
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_EQ(root->children.size(), childKeys.size());
+
+    std::unordered_map<TileKey, TileOcclusionState> states;
+    states[rootKey] = TileOcclusionState::NotOccluded;
+    for (const TilesetTile* child : root->children) {
+        ASSERT_NE(child, nullptr);
+        states[child->key] = TileOcclusionState::Occluded;
+    }
+    states[root->children.front()->key] =
+        TileOcclusionState::OcclusionUnavailable;
+    TilesetTestAccess::setOcclusionCallback(
+        tileset,
+        [states](const TilesetTile& tile) {
+            auto it = states.find(tile.key);
+            return it == states.end()
+                ? TileOcclusionState::NotOccluded
+                : it->second;
+        });
+
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    root->boundingVolume = TileBoundingVolume::fromSphere(center, 1000000.0);
+    Camera camera;
+    camera.lookAt(
+        center + center.normalized() * 1000000.0,
+        center,
+        Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 153;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const bool childrenNotVisited = std::all_of(
+        root->children.begin(),
+        root->children.end(),
+        [](const TilesetTile* child) {
+            return child &&
+                   child->selectionFrameState.selectionState ==
+                       TileSelectionState::NotVisited;
+        });
+    EXPECT_TRUE(childrenNotVisited);
+    EXPECT_EQ(tileset.tilePlan().selectionWaitingForOcclusionResultsCount, 1);
 }
