@@ -23,6 +23,7 @@
 #include "earth_engine/tiling/Tileset.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <vector>
 
@@ -232,6 +233,31 @@ std::unique_ptr<GltfModel> makeTriangleGltfModel() {
     primitive.indices = {0, 1, 2};
     model->primitives.push_back(std::move(primitive));
     return model;
+}
+
+GltfPrimitive makeTransparentTrianglePrimitiveAt(const Vec3& center) {
+    GltfPrimitive primitive;
+    primitive.vertices.resize(3);
+    primitive.vertices[0].positionEcef =
+        center + Vec3(-1.0, -1.0, 0.0);
+    primitive.vertices[1].positionEcef =
+        center + Vec3(2.0, -1.0, 0.0);
+    primitive.vertices[2].positionEcef =
+        center + Vec3(-1.0, 2.0, 0.0);
+    for (SurfaceVertex& vertex : primitive.vertices) {
+        vertex.normalEcef = Vec3::unitZ();
+    }
+    primitive.vertices[0].uv = {0.0f, 0.0f};
+    primitive.vertices[1].uv = {1.0f, 0.0f};
+    primitive.vertices[2].uv = {0.0f, 1.0f};
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 1.0f}};
+    primitive.indices = {0, 1, 2};
+    primitive.alphaMode = GltfAlphaMode::Blend;
+    primitive.baseColorFactor = {1.0f, 1.0f, 1.0f, 0.5f};
+    return primitive;
 }
 
 } // namespace
@@ -766,4 +792,59 @@ TEST(SceneFrameStateTest, DiagnosticsRejectImageryOnlyAncestorFallback) {
     EXPECT_EQ(scene.diagnostics().terrainSurfaceCommandsSubmitted, 1);
     EXPECT_EQ(scene.diagnostics().globeFallbackCommands, 0);
     EXPECT_EQ(scene.diagnostics().globeFallbackMaskedTerrainEntries, 0);
+}
+
+TEST(SceneFrameStateTest, SortsTransparentGltfByCameraDepth) {
+    DummyRenderDevice device;
+    Scene scene;
+    ASSERT_TRUE(scene.setRenderDevice(&device));
+    scene.setViewport(800, 600, 1.0f);
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
+    const Vec3 cameraPosition = target + Vec3(1000000.0, 0.0, 0.0);
+    scene.camera().lookAt(cameraPosition, target, Vec3::unitZ());
+
+    auto contentTileset = std::make_unique<Tileset>(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{},
+        &device,
+        TilesetOptions{});
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root =
+        TilesetTestAccess::ensureTile(*contentTileset, rootKey);
+    ASSERT_NE(root, nullptr);
+
+    auto model = std::make_unique<GltfModel>();
+    model->primitives.push_back(
+        makeTransparentTrianglePrimitiveAt(target + Vec3(900000.0, 0.0, 0.0)));
+    model->primitives.push_back(makeTransparentTrianglePrimitiveAt(target));
+    root->content.renderContent.setGltfContent(std::move(model));
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Render;
+    scene.setTileset(std::move(contentTileset));
+
+    scene.update(1.0 / 60.0);
+    scene.render();
+
+    std::vector<RenderCommand> transparentGltf;
+    for (const RenderCommand& cmd : device.submittedCommands) {
+        if (cmd.kind == RenderCommandKind::GltfPrimitive && cmd.blend) {
+            transparentGltf.push_back(cmd);
+        }
+    }
+
+    ASSERT_EQ(transparentGltf.size(), 2u);
+    EXPECT_TRUE(transparentGltf[0].hasTranslucentSortDepth);
+    EXPECT_TRUE(transparentGltf[1].hasTranslucentSortDepth);
+    EXPECT_GT(
+        transparentGltf[0].translucentSortDepth,
+        transparentGltf[1].translucentSortDepth);
+    EXPECT_LT(
+        std::abs(transparentGltf[0].translucentSortDepth - 1000000.0),
+        1.0);
+    EXPECT_LT(
+        std::abs(transparentGltf[1].translucentSortDepth - 100000.0),
+        1.0);
 }
