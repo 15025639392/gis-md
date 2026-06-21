@@ -1099,6 +1099,139 @@ TEST(QuantizedMeshParserSkirtTest,
               static_cast<uint32_t>(std::numeric_limits<uint16_t>::max()));
 }
 
+TEST(QuantizedMeshParserOctNormalTest,
+     DecodesAxisAlignedOctEncodedNormalsLikeCesiumNative) {
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes("", true, true);
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            rootRectangle());
+
+    ASSERT_NE(nullptr, mesh);
+    ASSERT_GT(mesh->vertices.size(), 3u);
+    EXPECT_GT(mesh->vertices[0].normalEcef.z(), 0.9999);
+    EXPECT_LT(std::abs(mesh->vertices[0].normalEcef.x()), 0.004);
+    EXPECT_LT(std::abs(mesh->vertices[0].normalEcef.y()), 0.004);
+    EXPECT_GT(mesh->vertices[1].normalEcef.x(), 0.9999);
+    EXPECT_LT(std::abs(mesh->vertices[1].normalEcef.y()), 0.004);
+    EXPECT_LT(std::abs(mesh->vertices[1].normalEcef.z()), 0.004);
+    EXPECT_GT(mesh->vertices[2].normalEcef.y(), 0.9999);
+    EXPECT_LT(std::abs(mesh->vertices[2].normalEcef.x()), 0.004);
+    EXPECT_LT(std::abs(mesh->vertices[2].normalEcef.z()), 0.004);
+
+    const uint32_t firstSkirtVertex =
+        mesh->skirtMeta.noSkirtVerticesBegin +
+        mesh->skirtMeta.noSkirtVerticesCount;
+    ASSERT_LT(firstSkirtVertex, mesh->vertices.size());
+    EXPECT_LT((mesh->vertices[firstSkirtVertex].normalEcef -
+               mesh->vertices[0].normalEcef)
+                  .length(),
+              1e-12);
+}
+
+TEST(QuantizedMeshParserOctNormalTest,
+     PreservesArbitraryOctEncodedDirectionLikeCesiumNative) {
+    std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes("", true, false);
+
+    appendPod<uint8_t>(bytes, 1);
+    appendPod<uint32_t>(bytes, 6);
+    const uint8_t encodedNormal[] = {
+        141, 221,
+        141, 221,
+        141, 221
+    };
+    bytes.insert(bytes.end(),
+                 encodedNormal,
+                 encodedNormal + sizeof(encodedNormal));
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            rootRectangle());
+
+    const Vec3 expected(0.13834289277321496,
+                        0.9684002494125046,
+                        0.20751433915982243);
+    ASSERT_NE(nullptr, mesh);
+    ASSERT_FALSE(mesh->vertices.empty());
+    for (const SurfaceVertex& vertex : mesh->vertices) {
+        EXPECT_LT((vertex.normalEcef - expected).length(), 0.006);
+    }
+}
+
+TEST(QuantizedMeshParserOctNormalTest,
+     IgnoresTrailingOctNormalExtensionBytesLikeCesiumNative) {
+    std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes("", true, false);
+
+    appendPod<uint8_t>(bytes, 1);
+    appendPod<uint32_t>(bytes, 8);
+    const uint8_t normals[] = {
+        128, 255,
+        128, 255,
+        128, 255,
+        0, 0
+    };
+    bytes.insert(bytes.end(), normals, normals + sizeof(normals));
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            rootRectangle());
+
+    ASSERT_NE(nullptr, mesh);
+    ASSERT_GE(mesh->vertices.size(), 3u);
+    EXPECT_GT(mesh->vertices[0].normalEcef.y(), 0.9999);
+    EXPECT_LT(std::abs(mesh->vertices[0].normalEcef.x()), 0.004);
+    EXPECT_LT(std::abs(mesh->vertices[0].normalEcef.z()), 0.004);
+}
+
+TEST(QuantizedMeshParserOctNormalTest,
+     LaterOctNormalExtensionReplacesEarlierLikeCesiumNative) {
+    std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes("", true, false);
+
+    appendPod<uint8_t>(bytes, 1);
+    appendPod<uint32_t>(bytes, 6);
+    const uint8_t firstNormals[] = {
+        128, 255,
+        128, 255,
+        128, 255
+    };
+    bytes.insert(bytes.end(),
+                 firstNormals,
+                 firstNormals + sizeof(firstNormals));
+
+    appendPod<uint8_t>(bytes, 1);
+    appendPod<uint32_t>(bytes, 6);
+    const uint8_t secondNormals[] = {
+        255, 128,
+        255, 128,
+        255, 128
+    };
+    bytes.insert(bytes.end(),
+                 secondNormals,
+                 secondNormals + sizeof(secondNormals));
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            rootRectangle());
+
+    ASSERT_NE(nullptr, mesh);
+    ASSERT_FALSE(mesh->vertices.empty());
+    EXPECT_GT(mesh->vertices[0].normalEcef.x(), 0.9999);
+    EXPECT_LT(std::abs(mesh->vertices[0].normalEcef.y()), 0.004);
+    EXPECT_LT(std::abs(mesh->vertices[0].normalEcef.z()), 0.004);
+}
+
 TEST(QuantizedMeshParserValidationTest,
      RejectsDecodedTriangleIndicesOutsideVertexRange) {
     std::vector<uint8_t> bytes =
