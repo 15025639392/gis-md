@@ -340,6 +340,12 @@ add_executable(test_tile_update_selection_work_runner
 target_link_libraries(test_tile_update_selection_work_runner PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_update_selection_work_runner COMMAND test_tile_update_selection_work_runner)
 
+add_executable(test_tile_frame_work_coordinator
+    unit/tiling/test_tile_frame_work_coordinator.cpp
+)
+target_link_libraries(test_tile_frame_work_coordinator PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_frame_work_coordinator COMMAND test_tile_frame_work_coordinator)
+
 add_executable(test_tile_missing_request_scheduler
     unit/tiling/test_tile_missing_request_scheduler.cpp
 )
