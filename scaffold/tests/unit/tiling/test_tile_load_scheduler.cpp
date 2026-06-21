@@ -399,3 +399,60 @@ TEST(TileLoadSchedulerTest, QueuesUpsampledTerrainWhenNetworkInflightIsFull) {
         lifecycle.pendingLoads().clear();
     }
 }
+
+TEST(TileLoadSchedulerTest, SkipsCachedTerrainWhenNetworkInflightIsFull) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    CancellationToken token;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        ASSERT_TRUE(lifecycle.requestState().beginTerrainRequest(
+            "busy",
+            token));
+    }
+
+    const TileKey key{"test", 1, 0, 0};
+    bool planned = false;
+    bool marked = false;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            cacheKeyForTile,
+            [&planned](
+                const TileKey&,
+                const std::string&,
+                TilesetTile*& tileState) {
+                planned = true;
+                tileState = nullptr;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.terrainProviderSupportsTile = true;
+                snapshot.terrainAlreadyCached = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [&marked](const TileKey&) { marked = true; });
+
+    EXPECT_EQ(outcome.issued, 0u);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_TRUE(planned);
+    EXPECT_FALSE(marked);
+    EXPECT_EQ(lifecycle.pendingRequestCount(), 1u);
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().completeTerrainRequest("busy");
+    }
+}
