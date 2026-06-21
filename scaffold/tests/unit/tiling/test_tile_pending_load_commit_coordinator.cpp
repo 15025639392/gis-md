@@ -43,6 +43,34 @@ void expectContentTerminalClearsEmptyMarker(TileContentLoadStatus status) {
     EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
 }
 
+void expectTerrainTerminalClearsEmptyMarker(TerrainTileLoadStatus status) {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "test:0:0:0";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
+    PendingTerrainTerminalResult result{
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        status};
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+        result,
+        emptyContentRegistry,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
+    EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
+}
+
 } // namespace
 
 TEST(TilePendingLoadCommitCoordinatorTest,
@@ -141,6 +169,12 @@ TEST(TilePendingLoadCommitCoordinatorTest,
      ContentRetryAndCancelledClearEmptyMarker) {
     expectContentTerminalClearsEmptyMarker(TileContentLoadStatus::RetryLater);
     expectContentTerminalClearsEmptyMarker(TileContentLoadStatus::Cancelled);
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainRetryAndCancelledClearEmptyMarker) {
+    expectTerrainTerminalClearsEmptyMarker(TerrainTileLoadStatus::RetryLater);
+    expectTerrainTerminalClearsEmptyMarker(TerrainTileLoadStatus::Cancelled);
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
