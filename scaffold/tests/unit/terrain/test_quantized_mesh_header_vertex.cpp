@@ -6,6 +6,7 @@
 #include "earth_engine/tiling/TileKey.h"
 #include "earth_engine/tiling/TileScheme.h"
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -31,7 +32,8 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
     float minimumHeight = 0.0f,
     float maximumHeight = 100.0f,
     const Vec3& tileCenterEcef = Vec3::zero(),
-    const Vec3& horizonOcclusionPoint = Vec3::zero()) {
+    const Vec3& horizonOcclusionPoint = Vec3::zero(),
+    const std::array<uint16_t, 3>& quantizedHeights = {0, 0, 0}) {
     std::vector<uint8_t> bytes;
 
     appendPod<double>(bytes, tileCenterEcef.x());
@@ -59,9 +61,13 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
         zigZagEncode16(32767)
     };
     const uint16_t h[] = {
-        zigZagEncode16(0),
-        zigZagEncode16(0),
-        zigZagEncode16(0)
+        zigZagEncode16(static_cast<int32_t>(quantizedHeights[0])),
+        zigZagEncode16(
+            static_cast<int32_t>(quantizedHeights[1]) -
+            static_cast<int32_t>(quantizedHeights[0])),
+        zigZagEncode16(
+            static_cast<int32_t>(quantizedHeights[2]) -
+            static_cast<int32_t>(quantizedHeights[1]))
     };
     for (uint16_t value : u) appendPod<uint16_t>(bytes, value);
     for (uint16_t value : v) appendPod<uint16_t>(bytes, value);
@@ -221,4 +227,31 @@ TEST(QuantizedMeshParserVertexDecodeTest,
     EXPECT_NEAR(bounds.west(), nw.longitude(), 1e-8);
     EXPECT_NEAR(bounds.north(), nw.latitude(), 1e-8);
     EXPECT_NEAR(minimumHeight, nw.height(), 1e-3);
+}
+
+TEST(QuantizedMeshParserRasterizeTest,
+     HeaderHeightRangeDrivesRasterizedHeightsLikeCesiumNative) {
+    constexpr float minimumHeight = -80.0f;
+    constexpr float maximumHeight = 120.0f;
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes(
+            Vec3::zero(),
+            minimumHeight,
+            maximumHeight,
+            Vec3::zero(),
+            Vec3::zero(),
+            {0, 32767, 16384});
+
+    std::unique_ptr<DecodedHeightmap> heightmap =
+        QuantizedMeshParser::parseAndRasterize(bytes.data(), bytes.size(), 1);
+
+    ASSERT_NE(nullptr, heightmap);
+    EXPECT_EQ(2, heightmap->tileSize);
+    EXPECT_NEAR(minimumHeight, heightmap->minHeight, 1e-6);
+    EXPECT_NEAR(maximumHeight, heightmap->maxHeight, 1e-6);
+    ASSERT_EQ(4u, heightmap->heights.size());
+
+    EXPECT_NEAR(minimumHeight, heightmap->heights[0], 1e-4f);
+    EXPECT_NEAR(20.003f, heightmap->heights[1], 1e-3f);
+    EXPECT_NEAR(maximumHeight, heightmap->heights[2], 1e-4f);
 }
