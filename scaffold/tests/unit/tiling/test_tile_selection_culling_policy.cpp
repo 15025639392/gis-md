@@ -59,3 +59,39 @@ TEST(TileSelectionCullingPolicyTest, CulledTilesUseCesiumCulledSseOption) {
         true,
         8.0));
 }
+
+TEST(TileSelectionCullingPolicyTest, CulledTileLoadPlanMatchesNativeOptions) {
+    TileSelectionCullLoadPlan plan =
+        TileSelectionCullingPolicy::planCulledTileLoad(
+            false,
+            false,
+            TileRefine::Replace);
+    EXPECT_FALSE(plan.queueLoad);
+
+    plan = TileSelectionCullingPolicy::planCulledTileLoad(
+        true,
+        false,
+        TileRefine::Replace);
+    EXPECT_TRUE(plan.queueLoad);
+    EXPECT_EQ(plan.group, TileLoadPriorityGroup::Preload);
+
+    plan = TileSelectionCullingPolicy::planCulledTileLoad(
+        false,
+        true,
+        TileRefine::Add);
+    EXPECT_FALSE(plan.queueLoad);
+
+    plan = TileSelectionCullingPolicy::planCulledTileLoad(
+        false,
+        true,
+        TileRefine::Replace);
+    EXPECT_TRUE(plan.queueLoad);
+    EXPECT_EQ(plan.group, TileLoadPriorityGroup::Normal);
+
+    plan = TileSelectionCullingPolicy::planCulledTileLoad(
+        true,
+        true,
+        TileRefine::Replace);
+    EXPECT_TRUE(plan.queueLoad);
+    EXPECT_EQ(plan.group, TileLoadPriorityGroup::Normal);
+}
