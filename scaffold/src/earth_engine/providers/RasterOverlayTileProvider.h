@@ -60,6 +60,7 @@ public:
         TileKey key;
         Rectangle bounds;
         std::unique_ptr<DecodedImage> image;
+        bool ancestorFallback = false;
         RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::Unknown;
     };

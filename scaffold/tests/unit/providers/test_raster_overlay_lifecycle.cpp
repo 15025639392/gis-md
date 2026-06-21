@@ -1277,7 +1277,34 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesSourceMoreDetailFlagLik
         TileKey{scheme->id(), 1, 0, 0},
         target,
         makeImage(2, 2, 20),
+        false,
         RasterOverlayTile::MoreDetailAvailable::No});
+
+    auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
+        *scheme,
+        target,
+        1,
+        std::move(sources),
+        4,
+        8);
+
+    ASSERT_NE(nullptr, result.image);
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
+              result.moreDetailAvailable);
+}
+
+TEST(RasterOverlayLifecycleTest, RectangleCompositionIgnoresAncestorFallbackMoreDetailLikeCesiumNative) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    Rectangle target = scheme->tileToRectangle(
+        TileKey{scheme->id(), 1, 0, 0});
+
+    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    sources.push_back({
+        TileKey{scheme->id(), 0, 0, 0},
+        target,
+        makeImage(2, 2, 20),
+        true,
+        RasterOverlayTile::MoreDetailAvailable::Yes});
 
     auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
         *scheme,
@@ -1307,6 +1334,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionReturnsCoveredRectangleLike
         TileKey{scheme->id(), 2, 0, 0},
         covered,
         makeImage(2, 2, 30),
+        false,
         RasterOverlayTile::MoreDetailAvailable::No});
 
     auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
