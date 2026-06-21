@@ -754,6 +754,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayMaximumTextur
     auto constrainedTile =
         constrainedProvider.getTile(rootBounds, 131072.0, 131072.0);
     ASSERT_NE(nullptr, constrainedTile);
+    EXPECT_FALSE(constrainedTile->isRectangleTile());
     EXPECT_EQ(0, constrainedTile->getSourceZoom());
 
     auto ownedImagery = std::make_unique<ConfigurableImageryProvider>();
@@ -775,10 +776,11 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayMaximumTextur
     EXPECT_EQ(256, ownerProvider.getMaximumTextureSize());
     auto ownerTile = ownerProvider.getTile(rootBounds, 131072.0, 131072.0);
     ASSERT_NE(nullptr, ownerTile);
+    EXPECT_FALSE(ownerTile->isRectangleTile());
     EXPECT_EQ(0, ownerTile->getSourceZoom());
 }
 
-TEST(RasterOverlayLifecycleTest, LargeRectangleUsesRootTileLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest, ExactRootRectangleUsesDirectQuadtreeTileLikeCesiumNative) {
     RgbImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     auto uploader = std::make_unique<CountingRasterUploader>();
@@ -789,8 +791,9 @@ TEST(RasterOverlayLifecycleTest, LargeRectangleUsesRootTileLikeCesiumNative) {
     const Rectangle rootBounds = scheme->tileToRectangle(rootKey);
     auto tile = provider.getTile(rootBounds, 8.0, 8.0);
     ASSERT_NE(nullptr, tile);
-    EXPECT_TRUE(tile->isRectangleTile());
-    EXPECT_EQ(0, tile->getSourceZoom());
+    EXPECT_FALSE(tile->isRectangleTile());
+    EXPECT_EQ(rootKey, tile->getTileID());
+    EXPECT_EQ(scheme->id() + "/0/0/0", tile->getCacheKey());
 
     ASSERT_TRUE(provider.loadTile(*tile));
     EXPECT_EQ(1, provider.processPendingUploads(false));
