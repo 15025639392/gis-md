@@ -240,3 +240,60 @@ TEST(TilePendingLoadProcessorTest,
     EXPECT_EQ(1u, lifecycle.counts().terrainTerminalResults);
     EXPECT_GT(budget.mainThreadElapsedMs(), 0.0);
 }
+
+TEST(TilePendingLoadProcessorTest, TerminalElapsedStopsUploads) {
+    TileLoadLifecycle lifecycle;
+    const TileKey terminalKey{"test", 1, 0, 0};
+    const TileKey uploadKey{"test", 1, 1, 0};
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainTerminalResult(
+            PendingTerrainTerminalResult{
+                terminalKey,
+                "terminal",
+                TileLoadPriorityGroup::Urgent,
+                10.0,
+                TerrainTileLoadStatus::RetryLater});
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            uploadKey,
+            "upload",
+            TileLoadPriorityGroup::Urgent,
+            100.0,
+            TileContentLoadResult::failed()});
+    }
+
+    FrameResourceBudgetConfig config;
+    config.maxTerminalStateTransitionsPerFrame = 4;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    config.mainThreadTimeMs = 0.5;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    std::vector<std::string> events;
+
+    const bool changed =
+        TilePendingLoadProcessor::processPendingLoads(
+            TilePendingLoadProcessorInput{
+                lifecycle,
+                budget,
+                false,
+                [](FrameResourceLane lane) -> std::optional<double> {
+                    return lane == FrameResourceLane::TerminalState
+                               ? std::optional<double>{1.0}
+                               : std::nullopt;
+                }},
+            [&events](const PendingTerrainTerminalResult&) {
+                events.push_back("terminal");
+            },
+            [](const PendingContentTerminalResult&) {},
+            [](PendingTerrainUpload&) {},
+            [&events](PendingContentUpload&) {
+                events.push_back("upload");
+            });
+
+    ASSERT_TRUE(changed);
+    ASSERT_EQ(1u, events.size());
+    EXPECT_EQ("terminal", events[0]);
+    EXPECT_EQ(1u, lifecycle.counts().contentUploads);
+    EXPECT_GE(budget.mainThreadElapsedMs(), 1.0);
+}
