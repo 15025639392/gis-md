@@ -238,6 +238,12 @@ add_executable(test_tile_pending_load_queue
 target_link_libraries(test_tile_pending_load_queue PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_pending_load_queue COMMAND test_tile_pending_load_queue)
 
+add_executable(test_tile_pending_load_processor
+    unit/tiling/test_tile_pending_load_processor.cpp
+)
+target_link_libraries(test_tile_pending_load_processor PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_pending_load_processor COMMAND test_tile_pending_load_processor)
+
 add_executable(test_camera
     unit/scene/test_camera.cpp
 )
