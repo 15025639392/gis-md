@@ -74,3 +74,20 @@ TEST(TileOcclusionResolverTest, VisibleChildKeepsParentVisible) {
 
     EXPECT_EQ(result, TileOcclusionState::NotOccluded);
 }
+
+TEST(TileOcclusionResolverTest, MissingChildKeepsParentVisible) {
+    TilesetTile root;
+    setTileKey(root, TileKey{"Geographic-TMS", 0, 0, 0});
+    root.children.push_back(nullptr);
+
+    int checkedTiles = 0;
+    const TileOcclusionState result = TileOcclusionResolver::check(
+        root,
+        [&checkedTiles](const TilesetTile&) {
+            ++checkedTiles;
+            return TileOcclusionState::NotOccluded;
+        });
+
+    EXPECT_EQ(result, TileOcclusionState::NotOccluded);
+    EXPECT_EQ(checkedTiles, 1);
+}
