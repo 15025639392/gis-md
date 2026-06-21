@@ -74,3 +74,41 @@ TEST(TilePendingLoadQueueTest, FiltersNonUrgentUploadsDuringInteraction) {
     EXPECT_EQ(1u, queue.terrainUploadCount());
     EXPECT_TRUE(queue.containsCacheKey("normal"));
 }
+
+TEST(TilePendingLoadQueueTest, KeepsUploadWhenFinalizeBudgetBlocks) {
+    TilePendingLoadQueue queue;
+    const TileKey key{"test", 1, 0, 0};
+
+    queue.addContentUpload(PendingContentUpload{
+        key,
+        "content",
+        TileLoadPriorityGroup::Urgent,
+        0.0,
+        TileContentLoadResult::failed()});
+
+    FrameResourceBudgetConfig blockedConfig;
+    blockedConfig.maxMainThreadFinalizesPerFrame = 0;
+    FrameResourceBudget blockedBudget;
+    blockedBudget.beginFrame(1, blockedConfig);
+
+    std::optional<PendingLoadFinalize> blocked =
+        queue.takeHighestPriorityUpload(false, blockedBudget);
+
+    EXPECT_FALSE(blocked.has_value());
+    EXPECT_EQ(1u, queue.contentUploadCount());
+    EXPECT_TRUE(queue.containsCacheKey("content"));
+
+    FrameResourceBudgetConfig retryConfig;
+    retryConfig.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget retryBudget;
+    retryBudget.beginFrame(2, retryConfig);
+
+    std::optional<PendingLoadFinalize> retry =
+        queue.takeHighestPriorityUpload(false, retryBudget);
+
+    ASSERT_TRUE(retry.has_value());
+    ASSERT_TRUE(retry->contentUpload.has_value());
+    EXPECT_EQ(PendingLoadFinalizeKind::Content, retry->kind);
+    EXPECT_EQ("content", retry->contentUpload->cacheKey);
+    EXPECT_EQ(0u, queue.contentUploadCount());
+}
