@@ -232,3 +232,40 @@ TEST(
         TileRenderEntryReason::SynchronousPrep);
     EXPECT_NEAR(plan.renderEntries.front().opacity, 0.25f, 1e-6f);
 }
+
+TEST(TileRenderPlanFinalizerTest, FadingTilesBecomeFadePassEntries) {
+    const TileKey fadingKey{"test", 0, 0, 0};
+    TilesetTile fading(fadingKey, Rectangle{});
+    fading.markRenderContentDone();
+    fading.content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(4),
+        nullptr);
+
+    TilePlan plan;
+    plan.tilesFadingOut.push_back(TileTransition{fadingKey, 0.4f, 1});
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            true,
+            false,
+            0,
+            1},
+        [&fading](const TileKey& key) -> TilesetTile* {
+            return key == fading.key ? &fading : nullptr;
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return tile.hasSurfaceDrawable();
+        });
+
+    ASSERT_EQ(plan.renderEntries.size(), 1u);
+    const TileRenderEntry& entry = plan.renderEntries.front();
+    EXPECT_EQ(entry.selectedKey, fadingKey);
+    EXPECT_EQ(entry.renderKey, fadingKey);
+    EXPECT_FALSE(entry.selectedThisFrame);
+    EXPECT_EQ(entry.reason, TileRenderEntryReason::FadingOut);
+    EXPECT_EQ(entry.renderPass(), TileRenderEntryPass::Fading);
+    EXPECT_NEAR(entry.opacity, 0.4f, 1e-6f);
+}
