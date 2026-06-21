@@ -162,3 +162,52 @@ TEST(TilePendingLoadQueueTest, DeduplicatesUploadsByKind) {
     EXPECT_TRUE(second.has_value());
     EXPECT_FALSE(third.has_value());
 }
+
+TEST(TilePendingLoadQueueTest, TakesTerminalResultsByPriority) {
+    TilePendingLoadQueue queue;
+    const TileKey lowKey{"test", 1, 0, 0};
+    const TileKey highKey{"test", 1, 1, 0};
+    const TileKey contentKey{"test", 1, 1, 1};
+
+    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+        lowKey,
+        "low",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TerrainTileLoadStatus::Failed});
+    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+        highKey,
+        "high",
+        TileLoadPriorityGroup::Urgent,
+        100.0,
+        TerrainTileLoadStatus::RetryLater});
+    queue.addContentTerminalResult(PendingContentTerminalResult{
+        contentKey,
+        "content",
+        TileLoadPriorityGroup::Urgent,
+        50.0,
+        TileContentLoadStatus::Empty});
+
+    FrameResourceBudgetConfig config;
+    config.maxTerminalStateTransitionsPerFrame = 2;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    std::optional<PendingTerminalResult> first =
+        queue.takeHighestPriorityTerminalResult(budget);
+
+    ASSERT_TRUE(first.has_value());
+    ASSERT_TRUE(first->contentResult.has_value());
+    EXPECT_EQ(PendingTerminalResultKind::Content, first->kind);
+    EXPECT_EQ("content", first->contentResult->cacheKey);
+
+    std::optional<PendingTerminalResult> second =
+        queue.takeHighestPriorityTerminalResult(budget);
+
+    ASSERT_TRUE(second.has_value());
+    ASSERT_TRUE(second->terrainResult.has_value());
+    EXPECT_EQ(PendingTerminalResultKind::Terrain, second->kind);
+    EXPECT_EQ("high", second->terrainResult->cacheKey);
+    EXPECT_EQ(1u, queue.terrainTerminalResultCount());
+    EXPECT_EQ(0u, queue.contentTerminalResultCount());
+}
