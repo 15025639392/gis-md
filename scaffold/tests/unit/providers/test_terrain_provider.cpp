@@ -1622,6 +1622,46 @@ TEST(GoogleMapTilesImageryProviderTest, RequestTileSkipsTileWhenCompleteViewport
     EXPECT_FALSE(loaded);
 }
 
+TEST(GoogleMapTilesImageryProviderTest, RequestTileStillLoadsViewportForUnknownArea) {
+    GoogleMapTilesExistingSessionOptions options;
+    options.apiBaseUrl = "https://tile.googleapis.com";
+    options.session = "session";
+    options.key = "key";
+    options.maximumLevel = 2;
+    GoogleMapTilesImageryProvider provider(options);
+    provider.addAvailableTileRanges(
+        {GoogleMapTilesTileRange{2, 0, 0, 0, 0}});
+
+    const TileKey key{"XYZ-WebMercator", 2, 3, 3};
+    const std::unique_ptr<TileScheme> scheme =
+        TileScheme::createXYZWebMercator();
+    const Rectangle rect = scheme->tileToRectangle(key);
+    const std::string viewportUrl = googleMapTilesViewportUrl(
+        options,
+        key.z,
+        rect.westDegrees(),
+        rect.southDegrees(),
+        rect.eastDegrees(),
+        rect.northDegrees());
+    const std::string viewportJson = R"json({"maxZoomRects": []})json";
+    QueuedGoogleMapTilesPlatformBridge bridge(
+        {{viewportUrl,
+          std::vector<uint8_t>(viewportJson.begin(), viewportJson.end())}});
+    provider.setPlatformBridge(&bridge);
+
+    bool loaded = true;
+    provider.requestTile(
+        key,
+        CancellationToken{},
+        [&](const TileKey&, std::unique_ptr<DecodedImage> image) {
+            loaded = image != nullptr;
+        });
+
+    ASSERT_EQ(1u, bridge.requestedUrls.size());
+    EXPECT_EQ(viewportUrl, bridge.requestedUrls[0]);
+    EXPECT_FALSE(loaded);
+}
+
 TEST(TileMapServiceUrlTest, AppendsTileMapResourceXmlBeforeQueryLikeCesiumNative) {
     EXPECT_EQ(
         "https://example.com/tms/tilemapresource.xml",

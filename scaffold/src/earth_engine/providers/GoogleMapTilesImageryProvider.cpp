@@ -418,16 +418,16 @@ void GoogleMapTilesImageryProvider::requestTile(
         callback(key, nullptr);
         return;
     }
-    if (hasKnownAvailability()) {
-        if (!supportsTile(key)) {
-            callback(key, nullptr);
-            return;
-        }
+    if (isTileKnownAvailable(key)) {
         XYZImageryProvider::requestTile(
             key,
             std::move(token),
             std::move(callback),
             priority);
+        return;
+    }
+    if (isTileInCompleteAvailabilityRange(key)) {
+        callback(key, nullptr);
         return;
     }
 
