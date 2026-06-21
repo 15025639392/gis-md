@@ -443,6 +443,12 @@ add_executable(test_raster_overlay_lifecycle
 target_link_libraries(test_raster_overlay_lifecycle PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_raster_overlay_lifecycle COMMAND test_raster_overlay_lifecycle)
 
+add_executable(test_provider_request_diagnostics_aggregator
+    unit/providers/test_provider_request_diagnostics_aggregator.cpp
+)
+target_link_libraries(test_provider_request_diagnostics_aggregator PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_provider_request_diagnostics_aggregator COMMAND test_provider_request_diagnostics_aggregator)
+
 add_executable(test_curl_multi_request_scheduler
     unit/platform/test_curl_multi_request_scheduler.cpp
 )
