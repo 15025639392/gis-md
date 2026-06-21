@@ -286,6 +286,12 @@ add_executable(test_tile_load_scheduler
 target_link_libraries(test_tile_load_scheduler PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_load_scheduler COMMAND test_tile_load_scheduler)
 
+add_executable(test_tile_traversal_details
+    unit/tiling/test_tile_traversal_details.cpp
+)
+target_link_libraries(test_tile_traversal_details PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_traversal_details COMMAND test_tile_traversal_details)
+
 add_executable(test_tile_missing_request_scheduler
     unit/tiling/test_tile_missing_request_scheduler.cpp
 )
