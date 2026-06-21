@@ -112,6 +112,38 @@ public:
     bool callbackSawIssued = false;
 };
 
+class SyncTerminalMetadataTerrainProvider final : public TerrainProvider {
+public:
+    std::string id() const override {
+        return "dispatcher-terrain-terminal-metadata";
+    }
+    std::string schemeId() const override { return "test"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 1; }
+    int tileSize() const override { return 2; }
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://dispatcher-terrain-terminal-metadata";
+    }
+    void requestTile(
+        const TileKey& key,
+        CancellationToken,
+        TerrainCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        TerrainTileLoadResult result = TerrainTileLoadResult::empty();
+        result.metadata.updatedBoundingVolume =
+            TileBoundingVolume::fromRegion(
+                Rectangle(0.1, 0.2, 0.3, 0.4),
+                -10.0,
+                20.0);
+        callback(key, std::move(result));
+    }
+    std::unique_ptr<DecodedHeightmap> decodeTile(
+        const uint8_t*,
+        size_t) override {
+        return nullptr;
+    }
+};
+
 class SyncUploadTerrainProvider final : public TerrainProvider {
 public:
     explicit SyncUploadTerrainProvider(bool& issuedBeforeCallback)
@@ -263,6 +295,30 @@ public:
 
     bool& issuedBeforeCallback_;
     bool callbackSawIssued = false;
+};
+
+class SyncTerminalMetadataContentProvider final : public TilesetContentProvider {
+public:
+    std::string id() const override {
+        return "dispatcher-content-terminal-metadata";
+    }
+    bool supportsTile(const TileKey&) const override { return true; }
+    void requestTileContent(
+        const TileKey& key,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        TileContentLoadResult result = TileContentLoadResult::external();
+        result.metadata.updatedBoundingVolume =
+            TileBoundingVolume::fromRegion(
+                Rectangle(0.2, 0.3, 0.4, 0.5),
+                5.0,
+                50.0);
+        callback(key, std::move(result));
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
 };
 
 class DeferredContentProvider final : public TilesetContentProvider {
@@ -579,6 +635,94 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_TRUE(provider.callbackSawIssued);
     EXPECT_TRUE(requestState.empty());
     EXPECT_EQ(1u, pendingLoads.terrainTerminalResultCount());
+}
+
+TEST(TileLoadRequestDispatcherTest,
+     TerrainTerminalResultKeepsTileLoadResultMetadata) {
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    SyncTerminalMetadataTerrainProvider provider;
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            provider,
+            key,
+            "terrain-terminal-metadata",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            []() {});
+
+    EXPECT_EQ(TileLoadDispatchResult::Issued, result);
+    EXPECT_TRUE(requestState.empty());
+    ASSERT_EQ(1u, pendingLoads.terrainTerminalResultCount());
+
+    auto pending = pendingLoads.takeHighestPriorityTerminalResult(budget);
+    ASSERT_TRUE(pending.has_value());
+    EXPECT_EQ(TileLoadDomain::Terrain, pending->domain);
+    EXPECT_EQ(TileLoadStatus::Empty, pending->result.status);
+    ASSERT_TRUE(
+        pending->content().metadata.updatedBoundingVolume.has_value());
+    EXPECT_DOUBLE_EQ(
+        -10.0,
+        pending->content().metadata.updatedBoundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(
+        20.0,
+        pending->content().metadata.updatedBoundingVolume->maximumHeight);
+}
+
+TEST(TileLoadRequestDispatcherTest,
+     ContentTerminalResultKeepsTileLoadResultMetadata) {
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    SyncTerminalMetadataContentProvider provider;
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::requestContent(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            provider,
+            key,
+            "content-terminal-metadata",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            []() {});
+
+    EXPECT_EQ(TileLoadDispatchResult::Issued, result);
+    EXPECT_TRUE(requestState.empty());
+    ASSERT_EQ(1u, pendingLoads.contentTerminalResultCount());
+
+    auto pending = pendingLoads.takeHighestPriorityTerminalResult(budget);
+    ASSERT_TRUE(pending.has_value());
+    EXPECT_EQ(TileLoadDomain::Content, pending->domain);
+    EXPECT_EQ(TileLoadStatus::External, pending->result.status);
+    ASSERT_TRUE(
+        pending->content().metadata.updatedBoundingVolume.has_value());
+    EXPECT_DOUBLE_EQ(
+        5.0,
+        pending->content().metadata.updatedBoundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(
+        50.0,
+        pending->content().metadata.updatedBoundingVolume->maximumHeight);
 }
 
 TEST(TileLoadRequestDispatcherTest,
