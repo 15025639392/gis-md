@@ -417,7 +417,7 @@ bool tileMapServiceXmlIsLoadable(const std::string& xml) {
 
     const std::optional<std::string> srs = firstElementText(view, "SRS");
     if (!srs) {
-        return true;
+        return false;
     }
 
     return srs->find("4326") != std::string::npos ||

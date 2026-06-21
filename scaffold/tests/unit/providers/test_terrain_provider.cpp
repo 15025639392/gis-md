@@ -1958,6 +1958,12 @@ TEST(TileMapServiceUrlTest, LoadableXmlRejectsUnsupportedSrsLikeCesiumNative) {
         <TileSets profile="custom" />
       </TileMap>
     )xml"));
+
+    EXPECT_FALSE(tileMapServiceXmlIsLoadable(R"xml(
+      <TileMap>
+        <TileSets profile="global-geodetic" />
+      </TileMap>
+    )xml"));
 }
 
 TEST(TileMapServiceUrlTest, FallsBackToSrsForUnknownProfileLikeCesiumNative) {
@@ -2179,6 +2185,7 @@ TEST(TileMapServiceImageryProviderTest, CreatesSourceFromXmlForRasterOverlayInst
         "https://example.com/tms/tilemapresource.xml",
         R"xml(
           <TileMap>
+            <SRS>EPSG:4326</SRS>
             <BoundingBox minx="-10" miny="-20" maxx="30" maxy="40" />
             <TileFormat width="128" height="64" extension="jpg" />
             <TileSets profile="global-geodetic">
@@ -2209,6 +2216,7 @@ TEST(TileMapServiceImageryProviderTest, RejectsSourceWithoutTileSetsLikeCesiumNa
         "https://example.com/tms/tilemapresource.xml",
         R"xml(
           <TileMap>
+            <SRS>EPSG:4326</SRS>
             <BoundingBox minx="-10" miny="-20" maxx="30" maxy="40" />
             <TileSets profile="global-geodetic" />
           </TileMap>
