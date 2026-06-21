@@ -362,6 +362,67 @@ TEST(TileLoadSchedulerTest, BlocksTerrainFanoutOverInflightCapacity) {
     }
 }
 
+TEST(TileLoadSchedulerTest, PendingUploadsDoNotConsumeNetworkInflightSlots) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 2;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey firstUploadKey{"test", 1, 0, 0};
+    const TileKey secondUploadKey{"test", 1, 1, 0};
+    const TileKey requestKey{"test", 1, 2, 0};
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            firstUploadKey,
+            cacheKeyForTile(firstUploadKey),
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            nullptr});
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            secondUploadKey,
+            cacheKeyForTile(secondUploadKey),
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            nullptr});
+    }
+
+    DeferredTerrainProvider provider;
+    bool marked = false;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                requestKey,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                &provider,
+                nullptr},
+            cacheKeyForTile,
+            [](const TileKey&,
+               const std::string&,
+               TilesetTile*& tileState) {
+                tileState = nullptr;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.terrainProviderSupportsTile = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [&marked](const TileKey&) { marked = true; });
+
+    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_EQ(provider.requestCount, 1);
+    EXPECT_TRUE(marked);
+    EXPECT_EQ(lifecycle.counts().terrainUploads, 2u);
+    EXPECT_EQ(lifecycle.pendingRequestCount(), 1u);
+}
+
 TEST(TileLoadSchedulerTest, QueuesUpsampledTerrainWhenNetworkInflightIsFull) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
