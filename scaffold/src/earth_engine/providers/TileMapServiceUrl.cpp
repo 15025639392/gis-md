@@ -435,7 +435,7 @@ std::string tileMapServiceXmlUrl(const std::string& url) {
     const std::string suffix =
         suffixStart == std::string::npos ? std::string() : url.substr(suffixStart);
 
-    if (endsWith(prefix, kResource)) {
+    if (url.find(kResource) != std::string::npos) {
         return url;
     }
 

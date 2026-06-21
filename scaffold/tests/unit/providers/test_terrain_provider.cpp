@@ -1795,6 +1795,12 @@ TEST(TileMapServiceUrlTest, DoesNotAddSlashAfterExistingXmlWithQueryLikeCesiumNa
             "https://example.com/tms/tilemapresource.xml?some=parameter"));
 }
 
+TEST(TileMapServiceUrlTest, DoesNotFallbackWhenTileMapResourceAppearsInQueryLikeCesiumNative) {
+    EXPECT_EQ(
+        "https://example.com/tms?file=tilemapresource.xml",
+        tileMapServiceXmlUrl("https://example.com/tms?file=tilemapresource.xml"));
+}
+
 TEST(TileMapServiceUrlTest, ResolvesBesideNonTileMapXmlLikeCesiumNative) {
     EXPECT_EQ(
         "https://example.com/tms/tilemapresource.xml?some=parameter#frag",
