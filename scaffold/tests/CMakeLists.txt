@@ -274,6 +274,12 @@ add_executable(test_tile_content_lifecycle_manager
 target_link_libraries(test_tile_content_lifecycle_manager PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_content_lifecycle_manager COMMAND test_tile_content_lifecycle_manager)
 
+add_executable(test_tile_content_unload_coordinator_basic
+    unit/tiling/test_tile_content_unload_coordinator_basic.cpp
+)
+target_link_libraries(test_tile_content_unload_coordinator_basic PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_content_unload_coordinator_basic COMMAND test_tile_content_unload_coordinator_basic)
+
 add_executable(test_tile_load_request_dispatcher
     unit/tiling/test_tile_load_request_dispatcher.cpp
 )
