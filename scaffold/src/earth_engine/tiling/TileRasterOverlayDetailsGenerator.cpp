@@ -30,9 +30,14 @@ bool TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
     RasterOverlayProjection projection) {
     RasterOverlayDetails* details =
         renderContent.mutableRasterOverlayDetails();
-    if (!details ||
-        details->findRectangleForOverlayProjection(projection) != nullptr) {
+    if (!details) {
         return false;
+    }
+    for (RasterOverlayProjection existingProjection :
+         details->rasterOverlayProjections) {
+        if (existingProjection == projection) {
+            return false;
+        }
     }
     if (boundingVolume.kind != TileBoundingVolumeKind::Region) {
         return false;

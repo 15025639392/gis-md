@@ -59,7 +59,7 @@ TEST(RasterOverlayDetailsTest,
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
-     RegionGenerationAppendsAfterExistingProjectionLikeCesiumNative) {
+     RegionGenerationSkipsExistingProjectionSlotLikeCesiumNative) {
     TileRenderContentState renderContent;
     auto mesh = std::make_unique<SurfaceTileMesh>();
     mesh->rasterOverlayDetails.rasterOverlayProjections.push_back(
@@ -76,14 +76,50 @@ TEST(RasterOverlayDetailsGeneratorTest,
             boundingRegion,
             RasterOverlayProjection::Geographic);
 
+    EXPECT_FALSE(generated);
+    const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
+    ASSERT_EQ(1u, details.rasterOverlayProjections.size());
+    EXPECT_TRUE(details.rasterOverlayRectangles.empty());
+    EXPECT_EQ(-1, details.textureCoordinateIDForProjection(
+                     RasterOverlayProjection::Geographic));
+    EXPECT_TRUE(details.boundingRegion.rectangle.isEmpty());
+    EXPECT_GT(details.boundingRegion.minimumHeight,
+              details.boundingRegion.maximumHeight);
+}
+
+TEST(RasterOverlayDetailsGeneratorTest,
+     RegionGenerationAppendsMissingProjectionAfterExistingSlotLikeCesiumNative) {
+    TileRenderContentState renderContent;
+    auto mesh = std::make_unique<SurfaceTileMesh>();
+    mesh->rasterOverlayDetails.rasterOverlayProjections.push_back(
+        RasterOverlayProjection::Geographic);
+    renderContent.setSurfaceMesh(std::move(mesh));
+
+    const Rectangle region = Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    const TileBoundingVolume boundingRegion =
+        TileBoundingVolume::fromRegion(region, -25.0, 125.0);
+    const Rectangle projected = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        region);
+
+    const bool generated =
+        TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
+            renderContent,
+            boundingRegion,
+            RasterOverlayProjection::WebMercator);
+
     EXPECT_TRUE(generated);
     const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
     ASSERT_EQ(2u, details.rasterOverlayProjections.size());
     ASSERT_EQ(2u, details.rasterOverlayRectangles.size());
+    EXPECT_EQ(RasterOverlayProjection::Geographic,
+              details.rasterOverlayProjections[0]);
+    EXPECT_EQ(RasterOverlayProjection::WebMercator,
+              details.rasterOverlayProjections[1]);
     EXPECT_TRUE(details.rasterOverlayRectangles[0].isEmpty());
-    EXPECT_EQ(region, details.rasterOverlayRectangles[1]);
+    EXPECT_EQ(projected, details.rasterOverlayRectangles[1]);
     EXPECT_EQ(1, details.textureCoordinateIDForProjection(
-                     RasterOverlayProjection::Geographic));
+                     RasterOverlayProjection::WebMercator));
     EXPECT_EQ(region, details.boundingRegion.rectangle);
     EXPECT_DOUBLE_EQ(-25.0, details.boundingRegion.minimumHeight);
     EXPECT_DOUBLE_EQ(125.0, details.boundingRegion.maximumHeight);
