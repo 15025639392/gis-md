@@ -3818,6 +3818,10 @@ void testTilesetMissingRasterProjectionUnloadsRenderContent() {
           "Tileset: missing-raster-projection root tile is created");
     if (!root) return;
 
+    const Rectangle terrainRectangle =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    root->boundingVolume =
+        TileBoundingVolume::fromRegion(terrainRectangle, -25.0, 125.0);
     root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
     root->content.renderContent.setMeshReady(true);
     root->content.renderContent.setSurfaceGpuBuffers(
@@ -3851,6 +3855,54 @@ void testTilesetMissingRasterProjectionUnloadsRenderContent() {
               root->rasterOverlayState.missingProjections().front() ==
                   RasterOverlayProjection::WebMercator,
           "Tileset: missing raster projection remains diagnosable after unload");
+
+    TileLoadedContent reloadedContent;
+    reloadedContent.surfaceMesh = std::make_unique<SurfaceTileMesh>();
+    reloadedContent.surfaceMesh->rasterOverlayDetails.setGeographicRectangle(
+        terrainRectangle,
+        -25.0,
+        125.0);
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    TileTerrainUploadCommitter::prepareTerrainRenderContent(
+        *root,
+        std::move(reloadedContent),
+        overlays,
+        nullptr);
+    root->content.renderContent.setMeshReady(true);
+    root->content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(32),
+        nullptr);
+
+    commands.clear();
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    const RasterOverlayDetails& reloadedDetails =
+        root->content.renderContent.rasterOverlayDetails();
+    const Rectangle expectedWebMercator = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        terrainRectangle);
+    const Rectangle* webMercatorDetails =
+        reloadedDetails.findRectangleForOverlayProjection(
+            RasterOverlayProjection::WebMercator);
+    RasterMappedToTilesetTile* mapped =
+        root->rasterOverlayState.mappingAt(0);
+    RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
+    check(webMercatorDetails && *webMercatorDetails == expectedWebMercator,
+          "Tileset: reloaded terrain content generates missing raster projection details");
+    check(loadingTile &&
+              loadingTile->getState() !=
+                  RasterOverlayTile::LoadState::Placeholder &&
+              loadingTile->getRectangle() == expectedWebMercator,
+          "Tileset: reloaded terrain content maps generated projection to a real raster tile");
+    check(root->content.loadState != TileLoadState::Unloaded &&
+              root->content.contentKind == TileContentKind::Render &&
+              root->rasterOverlayState.missingProjections().empty(),
+          "Tileset: reloaded terrain projection closes missing-projection unload loop");
 }
 
 void testTilesetRasterTargetPixelsUseRenderContentRectangle() {
