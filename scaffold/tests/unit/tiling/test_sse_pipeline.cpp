@@ -1814,7 +1814,7 @@ void testHeightmapTerrainProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
         token,
         [&callbackCalled](const TileKey&, TerrainTileLoadResult result) {
             callbackCalled.store(true, std::memory_order_release);
-            check(result.status == TerrainTileLoadStatus::Cancelled,
+            check(result.status == TileLoadStatus::Cancelled,
                   "HeightmapTerrainProvider: cancelled async bridge request reports cancelled");
         });
 
@@ -3538,7 +3538,7 @@ public:
 
 class TerminalTerrainProvider final : public TerrainProvider {
 public:
-    explicit TerminalTerrainProvider(TerrainTileLoadStatus status)
+    explicit TerminalTerrainProvider(TileLoadStatus status)
         : status_(status) {}
 
     std::string id() const override { return "terminal-terrain"; }
@@ -3557,19 +3557,20 @@ public:
                      HttpRequestPriority = HttpRequestPriority::Normal) override {
         ++requestCount;
         switch (status_) {
-            case TerrainTileLoadStatus::Success:
+            case TileLoadStatus::Renderable:
                 callback(key, TerrainTileLoadResult::success(makeHeightmap()));
                 break;
-            case TerrainTileLoadStatus::Empty:
+            case TileLoadStatus::Empty:
                 callback(key, TerrainTileLoadResult::empty());
                 break;
-            case TerrainTileLoadStatus::RetryLater:
+            case TileLoadStatus::RetryLater:
                 callback(key, TerrainTileLoadResult::retryLater());
                 break;
-            case TerrainTileLoadStatus::Failed:
+            case TileLoadStatus::Failed:
+            case TileLoadStatus::External:
                 callback(key, TerrainTileLoadResult::failed());
                 break;
-            case TerrainTileLoadStatus::Cancelled:
+            case TileLoadStatus::Cancelled:
                 callback(key, TerrainTileLoadResult::cancelled());
                 break;
         }
@@ -3590,7 +3591,7 @@ private:
         return hm;
     }
 
-    TerrainTileLoadStatus status_;
+    TileLoadStatus status_;
 };
 
 class ManualCompletionTerrainProvider final : public TerrainProvider {
@@ -3717,7 +3718,7 @@ public:
     SelectionTreeContentProvider(
         std::vector<TileKey> roots,
         std::vector<std::pair<TileKey, std::vector<TileKey>>> children,
-        TileContentLoadStatus terminalStatus = TileContentLoadStatus::RetryLater)
+        TileLoadStatus terminalStatus = TileLoadStatus::RetryLater)
         : roots_(std::move(roots)),
           children_(std::move(children)),
           terminalStatus_(terminalStatus) {}
@@ -3768,11 +3769,11 @@ public:
 private:
     TileContentLoadResult terminalResult() const {
         switch (terminalStatus_) {
-            case TileContentLoadStatus::RetryLater:
+            case TileLoadStatus::RetryLater:
                 return TileContentLoadResult::retryLater();
-            case TileContentLoadStatus::Cancelled:
+            case TileLoadStatus::Cancelled:
                 return TileContentLoadResult::cancelled();
-            case TileContentLoadStatus::Failed:
+            case TileLoadStatus::Failed:
                 return TileContentLoadResult::failed();
             default:
                 return TileContentLoadResult::failed();
@@ -3781,7 +3782,7 @@ private:
 
     std::vector<TileKey> roots_;
     std::vector<std::pair<TileKey, std::vector<TileKey>>> children_;
-    TileContentLoadStatus terminalStatus_ = TileContentLoadStatus::RetryLater;
+    TileLoadStatus terminalStatus_ = TileLoadStatus::RetryLater;
 };
 
 std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
@@ -7787,14 +7788,14 @@ void testTilesetJsonExtrasDoNotDeclareExtensions() {
           "TilesetJsonContentProvider: extras extension-looking child stays addressable");
     if (children.empty()) return;
 
-    TileContentLoadStatus status = TileContentLoadStatus::Failed;
+    TileLoadStatus status = TileLoadStatus::Failed;
     provider.requestTileContent(
         children.front(),
         CancellationToken{},
         [&](const TileKey&, TileContentLoadResult result) {
             status = result.status;
         });
-    check(status == TileContentLoadStatus::Empty,
+    check(status == TileLoadStatus::Empty,
           "TilesetJsonContentProvider: extras extension-looking data does not mark tile unsupported");
 }
 
@@ -8815,7 +8816,7 @@ void testTilesetTotalBytesIncludesDecodedHeightmapPayload() {
 
 void testTilesetRetryLaterRemainsRetryable() {
     auto provider = std::make_unique<TerminalTerrainProvider>(
-        TerrainTileLoadStatus::RetryLater);
+        TileLoadStatus::RetryLater);
     TerminalTerrainProvider* rawProvider = provider.get();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
@@ -8837,7 +8838,7 @@ void testTilesetRetryLaterRemainsRetryable() {
 
 void testTilesetCancelledRemainsRetryable() {
     auto provider = std::make_unique<TerminalTerrainProvider>(
-        TerrainTileLoadStatus::Cancelled);
+        TileLoadStatus::Cancelled);
     TerminalTerrainProvider* rawProvider = provider.get();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
@@ -8900,7 +8901,7 @@ void testTilesetContentCancelledMaterializesLatentChildrenAndRetries() {
         std::vector<TileKey>{rootKey},
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, {childKey}}},
-        TileContentLoadStatus::Cancelled);
+        TileLoadStatus::Cancelled);
     SelectionTreeContentProvider* rawProvider = contentProvider.get();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
@@ -8937,7 +8938,7 @@ void testTilesetContentFailedMaterializesLatentChildrenWithoutRetry() {
         std::vector<TileKey>{rootKey},
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, {childKey}}},
-        TileContentLoadStatus::Failed);
+        TileLoadStatus::Failed);
     SelectionTreeContentProvider* rawProvider = contentProvider.get();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
@@ -8976,7 +8977,7 @@ void testTilesetCacheUnloadFailedUnknownPreservesChildren() {
         std::vector<TileKey>{rootKey},
         std::vector<std::pair<TileKey, std::vector<TileKey>>>{
             {rootKey, {childKey}}},
-        TileContentLoadStatus::Failed);
+        TileLoadStatus::Failed);
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
         nullptr,
@@ -9018,7 +9019,7 @@ void testTilesetCacheUnloadFailedUnknownPreservesChildren() {
 
 void testTilesetFailedTerminalDoesNotRetry() {
     auto provider = std::make_unique<TerminalTerrainProvider>(
-        TerrainTileLoadStatus::Failed);
+        TileLoadStatus::Failed);
     TerminalTerrainProvider* rawProvider = provider.get();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
@@ -9046,7 +9047,7 @@ void testTilesetFailedTerminalDoesNotRetry() {
 
 void testTilesetEmptyContentReachesDone() {
     auto provider = std::make_unique<TerminalTerrainProvider>(
-        TerrainTileLoadStatus::Empty);
+        TileLoadStatus::Empty);
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -9177,7 +9178,7 @@ void testTilesetUnconditionallyRefineRenderableOnlyWithoutChildren() {
 
 void testTilesetMainThreadLoadingTimeLimitZeroDrainsPendingUploads() {
     auto provider = std::make_unique<TerminalTerrainProvider>(
-        TerrainTileLoadStatus::Success);
+        TileLoadStatus::Renderable);
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
 
@@ -10031,14 +10032,14 @@ void testTileIndexStateErasesTerminalResults() {
                 erasedCacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
         lifecycle.pendingLoads().addContentTerminalResult(
             PendingContentTerminalResult{
                 keptKey,
                 keptCacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
 
     TileIndexState::eraseCacheKeyState(
@@ -11378,7 +11379,7 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
     TileTerminalLoadAction action =
         TileTerminalLoadPolicy::applyTerrainTerminalResult(
             tile,
-            TerrainTileLoadStatus::Empty);
+            TileLoadStatus::Empty);
     check(action.markEmptyCacheKey &&
               action.resourcesDirty &&
               !action.ensureChildren &&
@@ -11412,7 +11413,7 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyTerrainTerminalResult(
         zeroErrorRoot,
-        TerrainTileLoadStatus::Empty);
+        TileLoadStatus::Empty);
     check(action.markEmptyCacheKey &&
               action.resourcesDirty &&
               zeroErrorRoot.content.contentKind == TileContentKind::Empty &&
@@ -11422,7 +11423,7 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyTerrainTerminalResult(
         tile,
-        TerrainTileLoadStatus::RetryLater);
+        TileLoadStatus::RetryLater);
     check(!action.markEmptyCacheKey &&
               action.resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
@@ -11431,7 +11432,7 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyTerrainTerminalResult(
         tile,
-        TerrainTileLoadStatus::Cancelled);
+        TileLoadStatus::Cancelled);
     check(!action.markEmptyCacheKey &&
               action.resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
@@ -11440,7 +11441,7 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyTerrainTerminalResult(
         tile,
-        TerrainTileLoadStatus::Success);
+        TileLoadStatus::Renderable);
     check(!action.markEmptyCacheKey &&
               action.resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
@@ -11454,7 +11455,7 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
     TileTerminalLoadAction action =
         TileTerminalLoadPolicy::applyContentTerminalResult(
             tile,
-            TileContentLoadStatus::Empty);
+            TileLoadStatus::Empty);
     check(action.markEmptyCacheKey &&
               action.resourcesDirty &&
               !action.ensureChildren &&
@@ -11471,7 +11472,7 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
     lowerErrorEmptyContent.geometricError = 8.0;
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         lowerErrorEmptyContent,
-        TileContentLoadStatus::Empty);
+        TileLoadStatus::Empty);
     check(action.markEmptyCacheKey &&
               !lowerErrorEmptyContent.unconditionallyRefine &&
               lowerErrorEmptyContent.content.contentKind ==
@@ -11486,7 +11487,7 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
     equalErrorEmptyContent.geometricError = 16.0;
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         equalErrorEmptyContent,
-        TileContentLoadStatus::Empty);
+        TileLoadStatus::Empty);
     check(action.markEmptyCacheKey &&
               equalErrorEmptyContent.unconditionallyRefine &&
               equalErrorEmptyContent.content.contentKind ==
@@ -11496,7 +11497,7 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         tile,
-        TileContentLoadStatus::External);
+        TileLoadStatus::External);
     check(!action.markEmptyCacheKey &&
               action.ensureChildren &&
               action.resourcesDirty &&
@@ -11507,7 +11508,7 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         tile,
-        TileContentLoadStatus::RetryLater);
+        TileLoadStatus::RetryLater);
     check(!action.markEmptyCacheKey &&
               action.ensureChildren &&
               action.resourcesDirty &&
@@ -11517,7 +11518,7 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         tile,
-        TileContentLoadStatus::Cancelled);
+        TileLoadStatus::Cancelled);
     check(!action.markEmptyCacheKey &&
               action.ensureChildren &&
               action.resourcesDirty &&
@@ -11527,7 +11528,7 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         tile,
-        TileContentLoadStatus::Failed);
+        TileLoadStatus::Failed);
     check(!action.markEmptyCacheKey &&
               action.ensureChildren &&
               action.resourcesDirty &&
@@ -11537,7 +11538,7 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         tile,
-        TileContentLoadStatus::Render);
+        TileLoadStatus::Renderable);
     check(!action.markEmptyCacheKey &&
               !action.ensureChildren &&
               action.resourcesDirty &&
@@ -11556,7 +11557,7 @@ void testTileTerminalLoadPolicyClearsRasterMappingsForNonRenderTerminalStates() 
     addRasterMapping(emptyContent);
     TileTerminalLoadPolicy::applyContentTerminalResult(
         emptyContent,
-        TileContentLoadStatus::Empty);
+        TileLoadStatus::Empty);
     check(emptyContent.rasterOverlayState.mappings().empty(),
           "TileTerminalLoadPolicy: empty content clears stale raster mappings");
 
@@ -11564,7 +11565,7 @@ void testTileTerminalLoadPolicyClearsRasterMappingsForNonRenderTerminalStates() 
     addRasterMapping(retryContent);
     TileTerminalLoadPolicy::applyContentTerminalResult(
         retryContent,
-        TileContentLoadStatus::RetryLater);
+        TileLoadStatus::RetryLater);
     check(retryContent.rasterOverlayState.mappings().empty(),
           "TileTerminalLoadPolicy: retry content clears stale raster mappings");
 
@@ -11572,7 +11573,7 @@ void testTileTerminalLoadPolicyClearsRasterMappingsForNonRenderTerminalStates() 
     addRasterMapping(failedTerrain);
     TileTerminalLoadPolicy::applyTerrainTerminalResult(
         failedTerrain,
-        TerrainTileLoadStatus::Failed);
+        TileLoadStatus::Failed);
     check(failedTerrain.rasterOverlayState.mappings().empty(),
           "TileTerminalLoadPolicy: failed terrain clears stale raster mappings");
 }
@@ -11586,7 +11587,7 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
         TileTerminalLoadCommitter::commitTerrainTerminalResult(
             terrainTile,
             "terrain-empty",
-            TerrainTileLoadStatus::Empty,
+            TileLoadStatus::Empty,
             emptyContentRegistry);
     check(action.markEmptyCacheKey &&
               action.resourcesDirty &&
@@ -11599,7 +11600,7 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
     action = TileTerminalLoadCommitter::commitContentTerminalResult(
         contentTile,
         "content-empty",
-        TileContentLoadStatus::Empty,
+        TileLoadStatus::Empty,
         emptyContentRegistry);
     check(action.markEmptyCacheKey &&
               action.resourcesDirty &&
@@ -11613,7 +11614,7 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
     action = TileTerminalLoadCommitter::commitContentTerminalResult(
         externalTile,
         "content-external",
-        TileContentLoadStatus::External,
+        TileLoadStatus::External,
         emptyContentRegistry);
     check(!action.markEmptyCacheKey &&
               action.ensureChildren &&
@@ -11629,7 +11630,7 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
     action = TileTerminalLoadCommitter::commitContentTerminalResult(
         retryTile,
         "content-retry",
-        TileContentLoadStatus::RetryLater,
+        TileLoadStatus::RetryLater,
         emptyContentRegistry);
     check(!action.markEmptyCacheKey &&
               action.ensureChildren &&
@@ -11644,7 +11645,7 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
     action = TileTerminalLoadCommitter::commitContentTerminalResult(
         cancelledContentTile,
         "content-cancelled",
-        TileContentLoadStatus::Cancelled,
+        TileLoadStatus::Cancelled,
         emptyContentRegistry);
     check(!action.markEmptyCacheKey &&
               action.ensureChildren &&
@@ -11661,7 +11662,7 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
     action = TileTerminalLoadCommitter::commitTerrainTerminalResult(
         failedTerrainTile,
         "terrain-failed",
-        TerrainTileLoadStatus::Failed,
+        TileLoadStatus::Failed,
         emptyContentRegistry);
     check(!action.markEmptyCacheKey &&
               !action.ensureChildren &&
@@ -11676,7 +11677,7 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
     action = TileTerminalLoadCommitter::commitTerrainTerminalResult(
         cancelledTerrainTile,
         "terrain-cancelled",
-        TerrainTileLoadStatus::Cancelled,
+        TileLoadStatus::Cancelled,
         emptyContentRegistry);
     check(!action.markEmptyCacheKey &&
               !action.ensureChildren &&
@@ -12044,13 +12045,13 @@ void testTilePendingLoadCommitCoordinatorSkipsMissingTileTerminalResults() {
         "missing-terrain",
         TileLoadPriorityGroup::Normal,
         0.0,
-        TerrainTileLoadStatus::RetryLater};
+        TileLoadStatus::RetryLater};
     PendingContentTerminalResult contentResult{
         contentKey,
         "missing-content",
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileContentLoadStatus::RetryLater};
+        TileLoadStatus::RetryLater};
     bool childrenEnsured = false;
     bool resourcesDirty = false;
 
@@ -12086,7 +12087,7 @@ void testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker() {
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileContentLoadStatus::RetryLater};
+        TileLoadStatus::RetryLater};
     bool childrenEnsured = false;
     bool resourcesDirty = false;
 
@@ -12118,7 +12119,7 @@ void testTilePendingLoadCommitCoordinatorClearsContentCancelledEmptyMarker() {
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileContentLoadStatus::Cancelled};
+        TileLoadStatus::Cancelled};
     bool childrenEnsured = false;
     bool resourcesDirty = false;
 
@@ -12150,7 +12151,7 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainRetryEmptyMarker() {
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TerrainTileLoadStatus::RetryLater};
+        TileLoadStatus::RetryLater};
     bool resourcesDirty = false;
 
     TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
@@ -12179,7 +12180,7 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainCancelledEmptyMarker() {
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TerrainTileLoadStatus::Cancelled};
+        TileLoadStatus::Cancelled};
     bool resourcesDirty = false;
 
     TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
@@ -14122,7 +14123,7 @@ void testTileSubtreeWorkTrackerFindsActiveLifecycleWork() {
                 rootCacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
     check(TileSubtreeWorkTracker::hasActiveContentWork(
               root,
@@ -14152,7 +14153,7 @@ void testTileSubtreeWorkTrackerFindsActiveLifecycleWork() {
                 childCacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
     check(TileSubtreeWorkTracker::hasActiveContentWork(
               root,
@@ -16334,19 +16335,19 @@ void testTilePendingLoadQueueTakesTerminalResultsByPriority() {
         "low",
         TileLoadPriorityGroup::Normal,
         0.0,
-        TerrainTileLoadStatus::Failed});
+        TileLoadStatus::Failed});
     queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
         highKey,
         "high",
         TileLoadPriorityGroup::Urgent,
         100.0,
-        TerrainTileLoadStatus::RetryLater});
+        TileLoadStatus::RetryLater});
     queue.addContentTerminalResult(PendingContentTerminalResult{
         contentKey,
         "content",
         TileLoadPriorityGroup::Urgent,
         50.0,
-        TileContentLoadStatus::Empty});
+        TileLoadStatus::Empty});
 
     std::optional<PendingTerminalResult> first =
         queue.takeHighestPriorityTerminalResult(budget);
@@ -16379,25 +16380,25 @@ void testTilePendingLoadQueueDeduplicatesTerminalResultsByKind() {
         "terrain-terminal",
         TileLoadPriorityGroup::Normal,
         1.0,
-        TerrainTileLoadStatus::RetryLater});
+        TileLoadStatus::RetryLater});
     queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
         secondKey,
         "terrain-terminal",
         TileLoadPriorityGroup::Urgent,
         100.0,
-        TerrainTileLoadStatus::Cancelled});
+        TileLoadStatus::Cancelled});
     queue.addContentTerminalResult(PendingContentTerminalResult{
         firstKey,
         "content-terminal",
         TileLoadPriorityGroup::Normal,
         1.0,
-        TileContentLoadStatus::RetryLater});
+        TileLoadStatus::RetryLater});
     queue.addContentTerminalResult(PendingContentTerminalResult{
         secondKey,
         "content-terminal",
         TileLoadPriorityGroup::Urgent,
         100.0,
-        TileContentLoadStatus::Cancelled});
+        TileLoadStatus::Cancelled});
 
     check(queue.terrainTerminalResultCount() == 1 &&
               queue.contentTerminalResultCount() == 1,
@@ -16435,13 +16436,13 @@ void testTilePendingLoadQueueKeepsOneResultShapePerKind() {
         "terrain",
         TileLoadPriorityGroup::Urgent,
         100.0,
-        TerrainTileLoadStatus::RetryLater});
+        TileLoadStatus::RetryLater});
     queue.addContentTerminalResult(PendingContentTerminalResult{
         contentKey,
         "content",
         TileLoadPriorityGroup::Normal,
         1.0,
-        TileContentLoadStatus::RetryLater});
+        TileLoadStatus::RetryLater});
     queue.addContentUpload(PendingContentUpload{
         contentKey,
         "content",
@@ -16481,7 +16482,7 @@ void testTilePendingLoadQueueKeepsTerminalResultWhenBudgetBlocks() {
         "terminal",
         TileLoadPriorityGroup::Urgent,
         0.0,
-        TerrainTileLoadStatus::RetryLater});
+        TileLoadStatus::RetryLater});
 
     std::optional<PendingTerminalResult> blocked =
         queue.takeHighestPriorityTerminalResult(blockedBudget);
@@ -16522,13 +16523,13 @@ void testTilePendingLoadQueueRejectsEmptyCacheKeys() {
         "",
         TileLoadPriorityGroup::Urgent,
         0.0,
-        TerrainTileLoadStatus::Failed});
+        TileLoadStatus::Failed});
     queue.addContentTerminalResult(PendingContentTerminalResult{
         key,
         "",
         TileLoadPriorityGroup::Urgent,
         0.0,
-        TileContentLoadStatus::Failed});
+        TileLoadStatus::Failed});
 
     check(!queue.hasWork() &&
               queue.terrainUploadCount() == 0 &&
@@ -16564,13 +16565,13 @@ void testTilePendingLoadQueueEraseIgnoresUnknownKeys() {
         "terrain-terminal",
         TileLoadPriorityGroup::Normal,
         0.0,
-        TerrainTileLoadStatus::RetryLater});
+        TileLoadStatus::RetryLater});
     queue.addContentTerminalResult(PendingContentTerminalResult{
         contentTerminalKey,
         "content-terminal",
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileContentLoadStatus::RetryLater});
+        TileLoadStatus::RetryLater});
 
     queue.eraseCacheKey("missing");
 
@@ -16603,14 +16604,14 @@ void testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads() {
                 "terrain-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
         lifecycle.pendingLoads().addContentTerminalResult(
             PendingContentTerminalResult{
                 contentKey,
                 "content-terminal",
                 TileLoadPriorityGroup::Urgent,
                 0.0,
-                TileContentLoadStatus::Empty});
+                TileLoadStatus::Empty});
         lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
             terrainKey,
             "terrain-upload",
@@ -16676,14 +16677,14 @@ void testTilePendingLoadProcessorBudgetsTerminalResults() {
                 "first-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
         lifecycle.pendingLoads().addTerrainTerminalResult(
             PendingTerrainTerminalResult{
                 secondKey,
                 "second-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
 
     const bool changed =
@@ -16727,7 +16728,7 @@ void testTilePendingLoadProcessorReportsUnchangedWhenBudgetBlocksAllWork() {
                 "terminal",
                 TileLoadPriorityGroup::Urgent,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
             uploadKey,
             "upload",
@@ -16782,14 +16783,14 @@ void testTilePendingLoadProcessorCountsTerminalElapsedAgainstMainThreadBudget() 
                 "first-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
         lifecycle.pendingLoads().addTerrainTerminalResult(
             PendingTerrainTerminalResult{
                 secondKey,
                 "second-terminal",
                 TileLoadPriorityGroup::Normal,
                 1.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
 
     const bool changed =
@@ -16840,7 +16841,7 @@ void testTilePendingLoadProcessorTerminalElapsedStopsUploads() {
                 "terminal",
                 TileLoadPriorityGroup::Urgent,
                 10.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
             uploadKey,
             "upload",
@@ -16895,7 +16896,7 @@ void testTilePendingLoadProcessorDrainsTerminalDuringInteraction() {
                 "terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
         lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
             uploadKey,
             "upload",
@@ -17160,13 +17161,13 @@ void testPendingLoadStateRejectsEmptyCacheKeys() {
         "",
         TileLoadPriorityGroup::Normal,
         0.0,
-        TerrainTileLoadStatus::Failed});
+        TileLoadStatus::Failed});
     pendingLoads.addContentTerminalResult(PendingContentTerminalResult{
         key,
         "",
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileContentLoadStatus::Failed});
+        TileLoadStatus::Failed});
 
     check(!pendingLoads.hasWork() &&
               !pendingLoads.containsCacheKey("") &&
@@ -17477,14 +17478,14 @@ void testTileLoadLifecycleCancelErasesTerminalResults() {
                 "terrain-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
         lifecycle.pendingLoads().addContentTerminalResult(
             PendingContentTerminalResult{
                 contentKey,
                 "content-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
 
     lifecycle.cancelAndEraseCacheKey("terrain-terminal");
@@ -17557,7 +17558,7 @@ void testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks() {
                 "content-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
 
     std::atomic<bool> destroyReturned{false};
@@ -17603,7 +17604,7 @@ void testTileLoadLifecycleDestroyWithoutRequestsReturnsImmediately() {
                 "content-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
 
     lifecycle.markDestroyingCancelAndWait();
@@ -19070,7 +19071,7 @@ void testTileLoadRequestDispatcherSkipsUpsampledTerrainWhenCacheKeyPending() {
                 "shared-cache-key",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
 
     const TileLoadDispatchResult result =
@@ -20020,7 +20021,7 @@ void testTileLoadSchedulerSkipsPendingCacheKeyBeforeUpsamplePreparation() {
                 cacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
     bool prepared = false;
     bool marked = false;
@@ -20187,7 +20188,7 @@ void testTileLoadSchedulerSkipsPendingTerminalBeforeSnapshot() {
                 cacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
 
     bool planned = false;
@@ -20401,7 +20402,7 @@ void testTileLoadSchedulerSkipsDispatcherDuplicateAfterPlanning() {
                             cacheKey,
                             TileLoadPriorityGroup::Normal,
                             0.0,
-                            TileContentLoadStatus::RetryLater});
+                            TileLoadStatus::RetryLater});
                 }
                 TileLoadRequestSnapshot snapshot;
                 snapshot.contentProviderSupportsTile = true;
@@ -20482,7 +20483,7 @@ void testTileLoadSchedulerSkipsTerrainDispatcherDuplicateAfterPlanning() {
                             cacheKey,
                             TileLoadPriorityGroup::Normal,
                             0.0,
-                            TerrainTileLoadStatus::RetryLater});
+                            TileLoadStatus::RetryLater});
                 }
                 TileLoadRequestSnapshot snapshot;
                 snapshot.terrainProviderSupportsTile = true;
@@ -20977,7 +20978,7 @@ void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
     TileTerminalLoadCommitter::commitContentTerminalResult(
         *tileRaw,
         cacheKey,
-        TileContentLoadStatus::RetryLater,
+        TileLoadStatus::RetryLater,
         emptyContentRegistry);
     outcome = requestOnce();
     check(outcome.issued == 1 &&
@@ -21065,7 +21066,7 @@ void testTileMissingRequestSchedulerRetriesTerrainAfterEmptyMarkerCleared() {
     TileTerminalLoadCommitter::commitTerrainTerminalResult(
         *tileRaw,
         cacheKey,
-        TerrainTileLoadStatus::RetryLater,
+        TileLoadStatus::RetryLater,
         emptyContentRegistry);
     outcome = requestOnce();
     check(outcome.issued == 1 &&

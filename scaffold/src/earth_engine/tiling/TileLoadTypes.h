@@ -79,7 +79,7 @@ struct PendingTerrainTerminalResult {
     std::string cacheKey;
     TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;
     double priority = 0.0;
-    TerrainTileLoadStatus status = TerrainTileLoadStatus::Failed;
+    TileLoadStatus status = TileLoadStatus::Failed;
 };
 
 struct PendingContentUpload {
@@ -108,7 +108,7 @@ struct PendingContentTerminalResult {
     std::string cacheKey;
     TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;
     double priority = 0.0;
-    TileContentLoadStatus status = TileContentLoadStatus::Failed;
+    TileLoadStatus status = TileLoadStatus::Failed;
 };
 
 } // namespace earth_engine

@@ -2306,7 +2306,7 @@ std::vector<uint8_t> makeCmpt(
     return cmpt;
 }
 
-TileContentLoadStatus decodeI3dmStatus(const std::vector<uint8_t>& i3dm) {
+TileLoadStatus decodeI3dmStatus(const std::vector<uint8_t>& i3dm) {
     SingleGltfContentProvider provider(
         TileKey{"Geographic-TMS", 0, 0, 0},
         std::vector<uint8_t>{},
@@ -11757,7 +11757,7 @@ TEST(GltfParserTest, ContentProviderUsesBridgeMainBodyWithoutWorkerBlockingWait)
             std::chrono::seconds(5),
             [&]() { return done; }));
     }
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ProviderRequestDiagnostics doneDiag = provider.requestDiagnostics();
     EXPECT_EQ(1, doneDiag.requestsCompleted);
     EXPECT_EQ(0, doneDiag.activeWorkerBlockingRequests);
@@ -11812,7 +11812,7 @@ TEST(GltfParserTest, ContentProviderLoadsFileMainBodyWithoutWorkerBlockingWait) 
             std::chrono::seconds(5),
             [&]() { return done; }));
     }
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ProviderRequestDiagnostics diag = provider.requestDiagnostics();
     EXPECT_EQ(1, diag.requestsStarted);
     EXPECT_EQ(1, diag.requestsCompleted);
@@ -11837,7 +11837,7 @@ TEST(GltfParserTest, ContentProviderResolvesExternalBufferRelativeToGltfUrl) {
         reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
         fixture.jsonText.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     EXPECT_EQ(3u, result.gltfModel->vertexCount());
@@ -11883,7 +11883,7 @@ TEST(GltfParserTest, ContentProviderResolvesExternalImageRelativeToGltfUrl) {
         reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
         fixture.jsonText.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_TRUE(decodedExternalImage);
     ASSERT_EQ(1u, result.gltfModel->textures.size());
@@ -11956,7 +11956,7 @@ TEST(GltfParserTest, ContentProviderDecodesExternalWebpTextureExtension) {
         reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
         fixture.jsonText.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     EXPECT_TRUE(decodedWebp);
     EXPECT_FALSE(decodedFallback);
@@ -12025,7 +12025,7 @@ TEST(GltfParserTest, ContentProviderRejectsMissingExternalWebpTextureExtension) 
         reinterpret_cast<const uint8_t*>(fixture.jsonText.data()),
         fixture.jsonText.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(TileLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
     EXPECT_FALSE(decodedImage);
 
@@ -12122,7 +12122,7 @@ TEST(GltfParserTest, ParsesExternalRegressionAssetsWhenProvided) {
         provider.setPlatformBridge(&bridge);
         TileContentLoadResult result =
             provider.decodeContent(bytes.data(), bytes.size());
-        EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+        EXPECT_EQ(TileLoadStatus::Renderable, result.status);
         ASSERT_NE(nullptr, result.gltfModel);
         expectRenderableModelGeometry(*result.gltfModel);
         if (providerDecodedImage) {
@@ -12165,7 +12165,7 @@ TEST(GltfParserTest, ContentProviderDecodesExternalRobotExpressiveWhenProvided) 
     provider.setPlatformBridge(&bridge);
     TileContentLoadResult result =
         provider.decodeContent(bytes.data(), bytes.size());
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     EXPECT_GT(result.gltfModel->primitives.size(), 0u);
     EXPECT_GT(result.gltfModel->vertexCount(), 0u);
@@ -12198,7 +12198,7 @@ TEST(GltfParserTest, ContentProviderDecodesExternalI3dmWhenProvided) {
         "I3DM fixture");
     TileContentLoadResult result =
         provider.decodeContent(bytes.data(), bytes.size());
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     EXPECT_GT(result.gltfModel->primitives.size(), 0u);
     ASSERT_FALSE(result.gltfModel->primitives.empty());
@@ -12237,7 +12237,7 @@ TEST(GltfParserTest, RejectsExternalUnsupportedCompressedTextureAssetsWhenProvid
             fixtureCase.label);
         TileContentLoadResult result =
             provider.decodeContent(bytes.data(), bytes.size());
-        EXPECT_EQ(TileContentLoadStatus::Failed, result.status)
+        EXPECT_EQ(TileLoadStatus::Failed, result.status)
             << fixtureCase.label;
         EXPECT_EQ(nullptr, result.gltfModel) << fixtureCase.label;
     }
@@ -12277,7 +12277,7 @@ TEST(GltfParserTest, ContentProviderDecodesPntsPositionRgbAndRtcCenter) {
     TileContentLoadResult result =
         provider.decodeContent(pnts.data(), pnts.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives[0];
@@ -12333,7 +12333,7 @@ TEST(GltfParserTest, ContentProviderDecodesPntsQuantizedPositionAndRtcCenter) {
     TileContentLoadResult result =
         provider.decodeContent(pnts.data(), pnts.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives[0];
@@ -12377,7 +12377,7 @@ TEST(GltfParserTest, ContentProviderDecodesPntsNormals) {
     TileContentLoadResult result =
         provider.decodeContent(pnts.data(), pnts.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives[0];
@@ -12414,7 +12414,7 @@ TEST(GltfParserTest, ContentProviderDecodesPntsOctEncodedNormals) {
     TileContentLoadResult result =
         provider.decodeContent(pnts.data(), pnts.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives[0];
@@ -12454,7 +12454,7 @@ TEST(GltfParserTest, ContentProviderDecodesPntsConstantRgbaMaterialColor) {
     TileContentLoadResult result =
         provider.decodeContent(pnts.data(), pnts.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives[0];
@@ -12496,7 +12496,7 @@ TEST(GltfParserTest, ContentProviderDecodesPntsRgb565) {
     TileContentLoadResult result =
         provider.decodeContent(pnts.data(), pnts.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives[0];
@@ -12545,7 +12545,7 @@ TEST(GltfParserTest, ContentProviderPrefersPntsRgbOverConstantRgba) {
     TileContentLoadResult result =
         provider.decodeContent(pnts.data(), pnts.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives[0];
@@ -12588,7 +12588,7 @@ TEST(GltfParserTest, ContentProviderPrefersPntsRgbaOverConstantRgba) {
     TileContentLoadResult result =
         provider.decodeContent(pnts.data(), pnts.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives[0];
@@ -12636,7 +12636,7 @@ TEST(GltfParserTest, ContentProviderDecodesPntsJsonBatchTablePerPoint) {
     TileContentLoadResult result =
         provider.decodeContent(pnts.data(), pnts.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives[0];
@@ -12698,7 +12698,7 @@ TEST(GltfParserTest, ContentProviderDecodesPntsBatchIdsToJsonBatchTableRows) {
     TileContentLoadResult result =
         provider.decodeContent(pnts.data(), pnts.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives[0];
@@ -12737,7 +12737,7 @@ TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) 
     appendF32(positionBinary, 3.0f);
 
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus(
             "{\"POINTS_LENGTH\":1,"
             "\"POSITION\":{\"byteOffset\":0},"
@@ -12746,13 +12746,13 @@ TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) 
             "\"properties\":{\"POSITION\":0}}}}",
             positionBinary));
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus(
             "{\"POINTS_LENGTH\":1,\"POSITION\":{\"byteOffset\":0}}",
             positionBinary,
             "{\"HIERARCHY\":{\"instances\":[]}}"));
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus(
             "{\"POINTS_LENGTH\":1,\"POSITION\":{\"byteOffset\":0}}",
             positionBinary,
@@ -12766,7 +12766,7 @@ TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) 
     const size_t rgb565Offset = colorConflictBinary.size();
     appendU16(colorConflictBinary, 33800u);
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus(
             std::string("{\"POINTS_LENGTH\":1,"
                         "\"POSITION\":{\"byteOffset\":0},"
@@ -12777,7 +12777,7 @@ TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) 
             colorConflictBinary));
 
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus(
             "{\"POINTS_LENGTH\":1,"
             "\"POSITION_QUANTIZED\":{\"byteOffset\":0},"
@@ -12790,7 +12790,7 @@ TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) 
     appendU16(positionConflictBinary, 0u);
     appendU16(positionConflictBinary, 0u);
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus(
             std::string("{\"POINTS_LENGTH\":1,"
                         "\"POSITION\":{\"byteOffset\":0},"
@@ -12800,7 +12800,7 @@ TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) 
                 "\"QUANTIZED_VOLUME_SCALE\":[1,1,1]}",
             positionConflictBinary));
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus(
             "{\"POINTS_LENGTH\":1,"
             "\"POSITION\":{\"byteOffset\":0},"
@@ -12815,7 +12815,7 @@ TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) 
     const size_t octNormalOffset = normalConflictBinary.size();
     normalConflictBinary.insert(normalConflictBinary.end(), {128u, 128u});
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus(
             std::string("{\"POINTS_LENGTH\":1,"
                         "\"POSITION\":{\"byteOffset\":0},"
@@ -12825,7 +12825,7 @@ TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) 
                 std::to_string(octNormalOffset) + "}}",
             normalConflictBinary));
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus(
             "{\"POINTS_LENGTH\":1,\"POSITION\":{\"byteOffset\":0}}",
             positionBinary,
@@ -12834,7 +12834,7 @@ TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) 
     std::vector<uint8_t> batchIdBinary = positionBinary;
     batchIdBinary.push_back(0u);
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus(
             "{\"POINTS_LENGTH\":1,"
             "\"POSITION\":{\"byteOffset\":0},"
@@ -12844,7 +12844,7 @@ TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) 
             "{\"name\":[\"feature\"]}"));
 
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus(
             "{\"POINTS_LENGTH\":1,"
             "\"POSITION\":{\"byteOffset\":0},"
@@ -12855,7 +12855,7 @@ TEST(GltfParserTest, ContentProviderRejectsUnsupportedPntsSemanticsAndMetadata) 
             "{\"name\":[\"feature\"]}"));
 
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus(
             "{\"POINTS_LENGTH\":1,\"POSITION\":{\"byteOffset\":0}}",
             positionBinary,
@@ -12880,7 +12880,7 @@ TEST(GltfParserTest, ContentProviderRejectsPntsBinaryBatchTable) {
     TileContentLoadResult result =
         provider.decodeContent(pnts.data(), pnts.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(TileLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
@@ -12894,7 +12894,7 @@ TEST(GltfParserTest, ContentProviderDecodesEmptyCmptContent) {
     TileContentLoadResult result =
         provider.decodeContent(cmpt.data(), cmpt.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Empty, result.status);
+    EXPECT_EQ(TileLoadStatus::Empty, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
@@ -12915,7 +12915,7 @@ TEST(GltfParserTest, ContentProviderRejectsInvalidCmptInnerContent) {
     TileContentLoadResult result =
         provider.decodeContent(cmpt.data(), cmpt.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(TileLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
@@ -12936,7 +12936,7 @@ TEST(GltfParserTest, ContentProviderRejectsCmptImpossibleTileCount) {
     TileContentLoadResult result =
         provider.decodeContent(cmpt.data(), cmpt.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(TileLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
@@ -12951,7 +12951,7 @@ TEST(GltfParserTest, ContentProviderDecodesSingleInnerCmptWithRuntimeAnimation) 
     TileContentLoadResult result =
         provider.decodeContent(cmpt.data(), cmpt.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_TRUE(result.gltfModel->hasRuntimeAnimation());
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
@@ -12983,7 +12983,7 @@ TEST(GltfParserTest, ContentProviderRejectsCmptWithUnsupportedInnerContent) {
     TileContentLoadResult result =
         provider.decodeContent(cmpt.data(), cmpt.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(TileLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
@@ -12998,7 +12998,7 @@ TEST(GltfParserTest, ContentProviderRejectsMultiInnerCmptWithRuntimeAnimation) {
     TileContentLoadResult result =
         provider.decodeContent(cmpt.data(), cmpt.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(TileLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
@@ -13031,7 +13031,7 @@ TEST(GltfParserTest, ContentProviderDecodesCmptWithB3dmAndPnts) {
     TileContentLoadResult result =
         provider.decodeContent(cmpt.data(), cmpt.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(2u, result.gltfModel->primitives.size());
     EXPECT_EQ(GltfPrimitiveMode::Triangles,
@@ -13086,7 +13086,7 @@ TEST(GltfParserTest, ContentProviderDecodesNestedCmptContent) {
     TileContentLoadResult result =
         provider.decodeContent(cmpt.data(), cmpt.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(3u, result.gltfModel->primitives.size());
     EXPECT_EQ(
@@ -13133,7 +13133,7 @@ TEST(GltfParserTest, ContentProviderDecodesCmptWithInstancedI3dm) {
     TileContentLoadResult result =
         provider.decodeContent(cmpt.data(), cmpt.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(2u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives[0];
@@ -13169,7 +13169,7 @@ TEST(GltfParserTest, ContentProviderDecodesB3dmAndAppliesRtcCenter) {
 
     TileContentLoadResult result =
         provider.decodeContent(b3dm.data(), b3dm.size());
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
 
@@ -13194,7 +13194,7 @@ TEST(GltfParserTest, ContentProviderDecodesLegacyB3dmHeaders) {
         TileContentLoadResult result =
             provider.decodeContent(b3dm.data(), b3dm.size());
 
-        EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+        EXPECT_EQ(TileLoadStatus::Renderable, result.status);
         ASSERT_NE(nullptr, result.gltfModel);
         ASSERT_EQ(1u, result.gltfModel->primitives.size());
         ASSERT_EQ(3u, result.gltfModel->primitives[0].vertices.size());
@@ -13226,7 +13226,7 @@ TEST(GltfParserTest, ContentProviderDecodesLegacyB3dmBatchTableWithBatchIds) {
         TileContentLoadResult result =
             provider.decodeContent(b3dm.data(), b3dm.size());
 
-        EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+        EXPECT_EQ(TileLoadStatus::Renderable, result.status);
         ASSERT_NE(nullptr, result.gltfModel);
         ASSERT_EQ(1u, result.gltfModel->primitives.size());
         const GltfPrimitive& primitive = result.gltfModel->primitives[0];
@@ -13269,7 +13269,7 @@ TEST(GltfParserTest, ContentProviderRejectsMalformedB3dmRtcCenter) {
         TileContentLoadResult result =
             provider.decodeContent(b3dm.data(), b3dm.size());
 
-        EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+        EXPECT_EQ(TileLoadStatus::Failed, result.status);
         EXPECT_EQ(nullptr, result.gltfModel);
     }
 }
@@ -13287,7 +13287,7 @@ TEST(GltfParserTest, ContentProviderRejectsB3dmBatchTableMetadata) {
     TileContentLoadResult result =
         provider.decodeContent(b3dm.data(), b3dm.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(TileLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
@@ -13301,19 +13301,19 @@ TEST(GltfParserTest, ContentProviderRejectsB3dmUnsupportedMetadataExtensions) {
     };
 
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus(makeB3dm(
             makeTriangleGlb(),
             "{\"BATCH_LENGTH\":0,\"extensions\":{\"VENDOR_feature\":{}}}")));
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus(makeB3dm(
             makeLegacyBatchIdTriangleGlb(),
             "{\"BATCH_LENGTH\":2}",
             "{\"HIERARCHY\":{\"instances\":[]},"
             "\"name\":[\"zero\",\"one\"]}")));
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus(makeB3dm(
             makeLegacyBatchIdTriangleGlb(),
             "{\"BATCH_LENGTH\":2}",
@@ -13334,7 +13334,7 @@ TEST(GltfParserTest, ContentProviderDecodesB3dmBatchTableWithBatchIds) {
     TileContentLoadResult result =
         provider.decodeContent(b3dm.data(), b3dm.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives[0];
@@ -13367,7 +13367,7 @@ TEST(GltfParserTest, ContentProviderRejectsB3dmBatchIdPrefixedAttribute) {
     TileContentLoadResult result =
         provider.decodeContent(b3dm.data(), b3dm.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(TileLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
@@ -13383,7 +13383,7 @@ TEST(GltfParserTest, ContentProviderRejectsB3dmPositiveBatchLength) {
     TileContentLoadResult result =
         provider.decodeContent(b3dm.data(), b3dm.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(TileLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
@@ -13407,7 +13407,7 @@ TEST(GltfParserTest, ContentProviderRejectsLegacyB3dmUnmappedBatchTable) {
         TileContentLoadResult result =
             provider.decodeContent(b3dm.data(), b3dm.size());
 
-        EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+        EXPECT_EQ(TileLoadStatus::Failed, result.status);
         EXPECT_EQ(nullptr, result.gltfModel);
     }
 }
@@ -13425,7 +13425,7 @@ TEST(GltfParserTest, ContentProviderRejectsB3dmBatchIdOutsideBatchLength) {
     TileContentLoadResult result =
         provider.decodeContent(b3dm.data(), b3dm.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(TileLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
@@ -13443,7 +13443,7 @@ TEST(GltfParserTest, ContentProviderRejectsB3dmBinaryBatchTable) {
     TileContentLoadResult result =
         provider.decodeContent(b3dm.data(), b3dm.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(TileLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
@@ -13459,7 +13459,7 @@ TEST(GltfParserTest, ContentProviderRejectsUnknownFeatureTableSemantics) {
     const std::vector<uint8_t> b3dm = makeB3dm(
         makeTriangleGlb(),
         "{\"BATCH_LENGTH\":0,\"UNKNOWN_SEMANTIC\":1}");
-    EXPECT_EQ(TileContentLoadStatus::Failed, decodeStatus(b3dm));
+    EXPECT_EQ(TileLoadStatus::Failed, decodeStatus(b3dm));
 
     std::vector<uint8_t> i3dmFeatureBinary;
     appendF32(i3dmFeatureBinary, 0.0f);
@@ -13470,7 +13470,7 @@ TEST(GltfParserTest, ContentProviderRejectsUnknownFeatureTableSemantics) {
         "\"POSITION\":{\"byteOffset\":0},"
         "\"UNKNOWN_SEMANTIC\":1}",
         std::move(i3dmFeatureBinary));
-    EXPECT_EQ(TileContentLoadStatus::Failed, decodeStatus(i3dm));
+    EXPECT_EQ(TileLoadStatus::Failed, decodeStatus(i3dm));
 
     std::vector<uint8_t> pntsFeatureBinary;
     appendF32(pntsFeatureBinary, 0.0f);
@@ -13481,7 +13481,7 @@ TEST(GltfParserTest, ContentProviderRejectsUnknownFeatureTableSemantics) {
         "\"POSITION\":{\"byteOffset\":0},"
         "\"UNKNOWN_SEMANTIC\":1}",
         std::move(pntsFeatureBinary));
-    EXPECT_EQ(TileContentLoadStatus::Failed, decodeStatus(pnts));
+    EXPECT_EQ(TileLoadStatus::Failed, decodeStatus(pnts));
 }
 
 TEST(GltfParserTest, ContentProviderDecodesEmbeddedI3dmInstancesAndRtcCenter) {
@@ -13494,7 +13494,7 @@ TEST(GltfParserTest, ContentProviderDecodesEmbeddedI3dmInstancesAndRtcCenter) {
 
     TileContentLoadResult result =
         provider.decodeContent(i3dm.data(), i3dm.size());
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives[0];
@@ -13528,7 +13528,7 @@ TEST(GltfParserTest, ContentProviderDecodesZeroInstanceI3dmAsEmpty) {
     TileContentLoadResult result =
         provider.decodeContent(i3dm.data(), i3dm.size());
 
-    EXPECT_EQ(TileContentLoadStatus::Empty, result.status);
+    EXPECT_EQ(TileLoadStatus::Empty, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
@@ -13562,7 +13562,7 @@ TEST(GltfParserTest, ContentProviderDecodesI3dmBatchIdFeatureProperties) {
     TileContentLoadResult result =
         provider.decodeContent(i3dm.data(), i3dm.size());
 
-    ASSERT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives[0];
@@ -13636,7 +13636,7 @@ TEST(GltfParserTest, ContentProviderDecodesI3dmBatchIdComponentTypes) {
     appendU16(defaultUshort, 2u);
     TileContentLoadResult defaultResult =
         decodeSingleInstance("{\"byteOffset\":$OFFSET}", defaultUshort);
-    ASSERT_EQ(TileContentLoadStatus::Render, defaultResult.status);
+    ASSERT_EQ(TileLoadStatus::Renderable, defaultResult.status);
     ASSERT_NE(nullptr, defaultResult.gltfModel);
     ASSERT_EQ(1u, defaultResult.gltfModel->primitives.size());
     ASSERT_EQ(1u, defaultResult.gltfModel->primitives[0].instances.size());
@@ -13647,7 +13647,7 @@ TEST(GltfParserTest, ContentProviderDecodesI3dmBatchIdComponentTypes) {
     TileContentLoadResult ubyteResult = decodeSingleInstance(
         "{\"byteOffset\":$OFFSET,\"componentType\":\"UNSIGNED_BYTE\"}",
         {static_cast<uint8_t>(2u)});
-    ASSERT_EQ(TileContentLoadStatus::Render, ubyteResult.status);
+    ASSERT_EQ(TileLoadStatus::Renderable, ubyteResult.status);
     ASSERT_NE(nullptr, ubyteResult.gltfModel);
     EXPECT_EQ(2u, ubyteResult.gltfModel->primitives[0].instances[0].featureId);
 
@@ -13656,7 +13656,7 @@ TEST(GltfParserTest, ContentProviderDecodesI3dmBatchIdComponentTypes) {
     TileContentLoadResult uintResult = decodeSingleInstance(
         "{\"byteOffset\":$OFFSET,\"componentType\":\"UNSIGNED_INT\"}",
         uintBytes);
-    ASSERT_EQ(TileContentLoadStatus::Render, uintResult.status);
+    ASSERT_EQ(TileLoadStatus::Renderable, uintResult.status);
     ASSERT_NE(nullptr, uintResult.gltfModel);
     EXPECT_EQ(2u, uintResult.gltfModel->primitives[0].instances[0].featureId);
 }
@@ -13679,7 +13679,7 @@ TEST(GltfParserTest, ContentProviderRejectsMalformedI3dmBatchId) {
     appendF32(invalidComponentBinary, 0.0f);
     appendU16(invalidComponentBinary, 0u);
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeI3dmStatus(makeWithBatchId(
             "{\"byteOffset\":12,\"componentType\":\"FLOAT\"}",
             std::move(invalidComponentBinary),
@@ -13690,7 +13690,7 @@ TEST(GltfParserTest, ContentProviderRejectsMalformedI3dmBatchId) {
     appendF32(outOfRangeBinary, 0.0f);
     appendF32(outOfRangeBinary, 0.0f);
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeI3dmStatus(makeWithBatchId(
             "{\"byteOffset\":12}",
             std::move(outOfRangeBinary),
@@ -13702,7 +13702,7 @@ TEST(GltfParserTest, ContentProviderRejectsMalformedI3dmBatchId) {
     appendF32(mismatchedBatchRowsBinary, 0.0f);
     appendU16(mismatchedBatchRowsBinary, 2u);
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeI3dmStatus(makeWithBatchId(
             "{\"byteOffset\":12}",
             std::move(mismatchedBatchRowsBinary),
@@ -13731,7 +13731,7 @@ TEST(GltfParserTest, ContentProviderDecodesI3dmJsonBatchTableProperties) {
     TileContentLoadResult result =
         provider.decodeContent(i3dm.data(), i3dm.size());
 
-    ASSERT_EQ(TileContentLoadStatus::Render, result.status);
+    ASSERT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives[0];
@@ -13779,16 +13779,16 @@ TEST(GltfParserTest, ContentProviderRejectsMalformedI3dmJsonBatchTable) {
     };
 
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus("{\"Height\":[20,21]}"));
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus("{\"Height\":{\"byteOffset\":0}}"));
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus("{\"Height\":[{\"value\":20}]}"));
     EXPECT_EQ(
-        TileContentLoadStatus::Failed,
+        TileLoadStatus::Failed,
         decodeStatus("{\"HIERARCHY\":{\"instances\":[]}}"));
 }
 
@@ -13804,7 +13804,7 @@ TEST(GltfParserTest, ContentProviderRejectsI3dmBinaryBatchTable) {
         "{\"Height\":[20]}",
         {0u, 1u, 2u, 3u});
 
-    EXPECT_EQ(TileContentLoadStatus::Failed, decodeI3dmStatus(i3dm));
+    EXPECT_EQ(TileLoadStatus::Failed, decodeI3dmStatus(i3dm));
 }
 
 TEST(GltfParserTest, ContentProviderRejectsI3dmEastNorthUpTypeMismatch) {
@@ -13819,7 +13819,7 @@ TEST(GltfParserTest, ContentProviderRejectsI3dmEastNorthUpTypeMismatch) {
         "\"POSITION\":{\"byteOffset\":0}}",
         std::move(featureBinary));
 
-    EXPECT_EQ(TileContentLoadStatus::Failed, decodeI3dmStatus(i3dm));
+    EXPECT_EQ(TileLoadStatus::Failed, decodeI3dmStatus(i3dm));
 }
 
 TEST(GltfParserTest, ContentProviderRejectsI3dmPositionWithNonFiniteFloat) {
@@ -13833,7 +13833,7 @@ TEST(GltfParserTest, ContentProviderRejectsI3dmPositionWithNonFiniteFloat) {
         "\"POSITION\":{\"byteOffset\":0}}",
         std::move(featureBinary));
 
-    EXPECT_EQ(TileContentLoadStatus::Failed, decodeI3dmStatus(i3dm));
+    EXPECT_EQ(TileLoadStatus::Failed, decodeI3dmStatus(i3dm));
 }
 
 TEST(GltfParserTest, ContentProviderRejectsI3dmScaleWithNonFiniteFloat) {
@@ -13853,7 +13853,7 @@ TEST(GltfParserTest, ContentProviderRejectsI3dmScaleWithNonFiniteFloat) {
         std::to_string(scaleOffset) + "}}",
         std::move(featureBinary));
 
-    EXPECT_EQ(TileContentLoadStatus::Failed, decodeI3dmStatus(i3dm));
+    EXPECT_EQ(TileLoadStatus::Failed, decodeI3dmStatus(i3dm));
 }
 
 TEST(GltfParserTest, ContentProviderResolvesExternalI3dmGltfRelativeToTileUrl) {
@@ -13872,7 +13872,7 @@ TEST(GltfParserTest, ContentProviderResolvesExternalI3dmGltfRelativeToTileUrl) {
 
     TileContentLoadResult result =
         provider.decodeContent(i3dm.data(), i3dm.size());
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     EXPECT_EQ(2u, result.gltfModel->primitives[0].instances.size());
@@ -13902,7 +13902,7 @@ TEST(GltfParserTest, ContentProviderCombinesI3dmAndNativeGltfInstances) {
 
     TileContentLoadResult result =
         provider.decodeContent(i3dm.data(), i3dm.size());
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives[0];
@@ -13966,7 +13966,7 @@ TEST(GltfParserTest, ContentProviderCopiesI3dmFeaturesAcrossNativeGltfInstances)
 
     TileContentLoadResult result =
         provider.decodeContent(i3dm.data(), i3dm.size());
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives[0];
@@ -14204,7 +14204,7 @@ TEST(GltfParserTest, TilesetParsesBoundingVolumeCylinderExtension) {
 
     const TileContentLoadResult result =
         requestTileContentBlocking(provider, rootChildren.front());
-    EXPECT_EQ(TileContentLoadStatus::Empty, result.status);
+    EXPECT_EQ(TileLoadStatus::Empty, result.status);
 }
 
 TEST(GltfParserTest, TilesetJsonContentProviderParsesSphereBoundingVolume) {
@@ -14607,7 +14607,7 @@ TEST(GltfParserTest, TilesetJsonContentProviderLoadsEmptyContentObject) {
 
     const TileContentLoadResult result =
         requestTileContentBlocking(provider, children.front());
-    EXPECT_EQ(TileContentLoadStatus::Empty, result.status);
+    EXPECT_EQ(TileLoadStatus::Empty, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
@@ -14640,7 +14640,7 @@ TEST(GltfParserTest, TilesetJsonContentProviderTreatsNonObjectContentAsEmpty) {
 
     const TileContentLoadResult result =
         requestTileContentBlocking(provider, rootChildren.front());
-    EXPECT_EQ(TileContentLoadStatus::Empty, result.status);
+    EXPECT_EQ(TileLoadStatus::Empty, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
 }
 
@@ -14683,7 +14683,7 @@ TEST(GltfParserTest, TilesetJsonContentProviderFallsBackToLegacyUrlWhenUriEmpty)
 
     const TileContentLoadResult result =
         requestTileContentBlocking(provider, rootChildren.front());
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     expectRenderableModelGeometry(*result.gltfModel);
 
@@ -14748,7 +14748,7 @@ TEST(GltfParserTest, TilesetJsonContentProviderFailsMissingTileContent) {
 
     const TileContentLoadResult result =
         requestTileContentBlocking(provider, rootChildren.front());
-    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(TileLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
 
     std::filesystem::remove_all(root);
@@ -14842,7 +14842,7 @@ TEST(GltfParserTest, TilesetJsonContentProviderLoadsExternalTilesetChildren) {
 
     TileContentLoadResult result =
         requestTileContentBlocking(provider, externalContentKey);
-    EXPECT_EQ(TileContentLoadStatus::External, result.status);
+    EXPECT_EQ(TileLoadStatus::External, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
 
     const std::optional<TilesetContentTileMetadata> externalMetadata =
@@ -14945,7 +14945,7 @@ TEST(GltfParserTest, TilesetJsonContentProviderLoadsRenderableTileContent) {
 
     TileContentLoadResult result =
         requestTileContentBlocking(provider, rootChildren.front());
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     expectRenderableModelGeometry(*result.gltfModel);
 
@@ -14995,7 +14995,7 @@ TEST(GltfParserTest, TilesetFailsMalformedExternalTilesetNumericMetadata) {
 
     TileContentLoadResult result =
         requestTileContentBlocking(provider, children.front());
-    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(TileLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
 
     std::filesystem::remove_all(root);
@@ -15040,7 +15040,7 @@ TEST(GltfParserTest, TilesetFailsTileContentWithUnsupportedMetadataFields) {
 
         TileContentLoadResult result =
             requestTileContentBlocking(provider, children.front());
-        EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+        EXPECT_EQ(TileLoadStatus::Failed, result.status);
         EXPECT_EQ(nullptr, result.gltfModel);
     }
 }
@@ -15070,7 +15070,7 @@ TEST(GltfParserTest, TilesetContentGltfAllowsSupportedPayloadAndRendersContent) 
 
     TileContentLoadResult result =
         requestTileContentBlocking(provider, children.front());
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     expectRenderableModelGeometry(*result.gltfModel);
 
@@ -15104,7 +15104,7 @@ TEST(GltfParserTest, TilesetContentGltfAllowsRequiredSupportedPayloadAndRendersC
 
     TileContentLoadResult result =
         requestTileContentBlocking(provider, children.front());
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     expectRenderableModelGeometry(*result.gltfModel);
 
@@ -15153,7 +15153,7 @@ TEST(GltfParserTest, TilesetContentGltfAllowsEveryParserSupportedExtensionPayloa
 
     TileContentLoadResult result =
         requestTileContentBlocking(provider, children.front());
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     expectRenderableModelGeometry(*result.gltfModel);
 
@@ -15195,7 +15195,7 @@ TEST(GltfParserTest, TilesetContentGltfRejectsWebpContentWithoutDecoder) {
 
     TileContentLoadResult result =
         requestTileContentBlocking(provider, children.front());
-    EXPECT_EQ(TileContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(TileLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
 
     std::filesystem::remove_all(root);
@@ -15254,7 +15254,7 @@ TEST(GltfParserTest, TilesetContentGltfDecodesWebpContentWithDecoder) {
 
     TileContentLoadResult result =
         requestTileContentBlocking(provider, children.front());
-    EXPECT_EQ(TileContentLoadStatus::Render, result.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
     ASSERT_NE(nullptr, result.gltfModel);
     EXPECT_TRUE(decodedWebp);
     EXPECT_FALSE(decodedFallback);

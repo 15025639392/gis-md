@@ -166,7 +166,7 @@ TEST(TileSubtreeWorkTracker, FindsContentTerminalResultOnRoot) {
                 rootCacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
 
     EXPECT_TRUE(TileSubtreeWorkTracker::hasActiveContentWork(
@@ -202,7 +202,7 @@ TEST(TileSubtreeWorkTracker, FindsAndClearsTerrainLifecycleWork) {
                 childCacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
     EXPECT_TRUE(TileSubtreeWorkTracker::hasActiveContentWork(
         root,

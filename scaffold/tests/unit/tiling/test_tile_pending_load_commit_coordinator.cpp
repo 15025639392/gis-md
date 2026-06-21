@@ -12,7 +12,7 @@ using namespace earth_engine;
 
 namespace {
 
-void expectContentTerminalClearsEmptyMarker(TileContentLoadStatus status) {
+void expectContentTerminalClearsEmptyMarker(TileLoadStatus status) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:0:0:0";
     TilesetTile tile(key, Rectangle{});
@@ -43,7 +43,7 @@ void expectContentTerminalClearsEmptyMarker(TileContentLoadStatus status) {
     EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
 }
 
-void expectTerrainTerminalClearsEmptyMarker(TerrainTileLoadStatus status) {
+void expectTerrainTerminalClearsEmptyMarker(TileLoadStatus status) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:0:0:0";
     TilesetTile tile(key, Rectangle{});
@@ -85,13 +85,13 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         "missing-terrain",
         TileLoadPriorityGroup::Normal,
         0.0,
-        TerrainTileLoadStatus::RetryLater};
+        TileLoadStatus::RetryLater};
     PendingContentTerminalResult contentResult{
         contentKey,
         "missing-content",
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileContentLoadStatus::RetryLater};
+        TileLoadStatus::RetryLater};
     bool childrenEnsured = false;
     bool resourcesDirty = false;
 
@@ -461,14 +461,14 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
 TEST(TilePendingLoadCommitCoordinatorTest,
      ContentRetryAndCancelledClearEmptyMarker) {
-    expectContentTerminalClearsEmptyMarker(TileContentLoadStatus::RetryLater);
-    expectContentTerminalClearsEmptyMarker(TileContentLoadStatus::Cancelled);
+    expectContentTerminalClearsEmptyMarker(TileLoadStatus::RetryLater);
+    expectContentTerminalClearsEmptyMarker(TileLoadStatus::Cancelled);
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
      TerrainRetryAndCancelledClearEmptyMarker) {
-    expectTerrainTerminalClearsEmptyMarker(TerrainTileLoadStatus::RetryLater);
-    expectTerrainTerminalClearsEmptyMarker(TerrainTileLoadStatus::Cancelled);
+    expectTerrainTerminalClearsEmptyMarker(TileLoadStatus::RetryLater);
+    expectTerrainTerminalClearsEmptyMarker(TileLoadStatus::Cancelled);
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,

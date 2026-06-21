@@ -1404,7 +1404,7 @@ TEST(TileLoadRequestDispatcherTest,
                 "shared-cache-key",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
 
     TileLoadDispatchResult result =

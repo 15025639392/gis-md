@@ -36,11 +36,11 @@ void applyNativeEmptyContentRefinement(TilesetTile& tile) {
 TileTerminalLoadAction
 TileTerminalLoadPolicy::applyTerrainTerminalResult(
     TilesetTile& tile,
-    TerrainTileLoadStatus status) {
+    TileLoadStatus status) {
     TileTerminalLoadAction action;
 
     switch (status) {
-        case TerrainTileLoadStatus::Empty: {
+        case TileLoadStatus::Empty: {
             action.markEmptyCacheKey = true;
             tile.rasterOverlayState.mappings().clear();
             tile.markEmptyContentLoaded();
@@ -49,13 +49,14 @@ TileTerminalLoadPolicy::applyTerrainTerminalResult(
             action.resourcesDirty = true;
             break;
         }
-        case TerrainTileLoadStatus::RetryLater:
-        case TerrainTileLoadStatus::Cancelled:
+        case TileLoadStatus::RetryLater:
+        case TileLoadStatus::Cancelled:
             markUnknownTemporaryFailure(tile);
             action.resourcesDirty = true;
             break;
-        case TerrainTileLoadStatus::Failed:
-        case TerrainTileLoadStatus::Success:
+        case TileLoadStatus::Failed:
+        case TileLoadStatus::Renderable:
+        case TileLoadStatus::External:
             markUnknownPermanentFailure(tile);
             action.resourcesDirty = true;
             break;
@@ -67,39 +68,39 @@ TileTerminalLoadPolicy::applyTerrainTerminalResult(
 TileTerminalLoadAction
 TileTerminalLoadPolicy::applyContentTerminalResult(
     TilesetTile& tile,
-    TileContentLoadStatus status) {
+    TileLoadStatus status) {
     TileTerminalLoadAction action;
 
     switch (status) {
-        case TileContentLoadStatus::Empty:
+        case TileLoadStatus::Empty:
             action.markEmptyCacheKey = true;
             tile.rasterOverlayState.mappings().clear();
             applyNativeEmptyContentRefinement(tile);
             tile.markEmptyContentDone();
             action.resourcesDirty = true;
             break;
-        case TileContentLoadStatus::External:
+        case TileLoadStatus::External:
             tile.rasterOverlayState.mappings().clear();
             tile.markExternalContentDone();
             action.ensureChildren = true;
             action.resourcesDirty = true;
             break;
-        case TileContentLoadStatus::RetryLater:
+        case TileLoadStatus::RetryLater:
             markUnknownTemporaryFailure(tile);
             action.ensureChildren = true;
             action.resourcesDirty = true;
             break;
-        case TileContentLoadStatus::Cancelled:
+        case TileLoadStatus::Cancelled:
             markUnknownTemporaryFailure(tile);
             action.ensureChildren = true;
             action.resourcesDirty = true;
             break;
-        case TileContentLoadStatus::Failed:
+        case TileLoadStatus::Failed:
             markUnknownPermanentFailure(tile);
             action.ensureChildren = true;
             action.resourcesDirty = true;
             break;
-        case TileContentLoadStatus::Render:
+        case TileLoadStatus::Renderable:
             markUnknownPermanentFailure(tile);
             action.resourcesDirty = true;
             break;

@@ -179,19 +179,19 @@ TEST(TilePendingLoadQueueTest, TakesTerminalResultsByPriority) {
         "low",
         TileLoadPriorityGroup::Normal,
         0.0,
-        TerrainTileLoadStatus::Failed});
+        TileLoadStatus::Failed});
     queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
         highKey,
         "high",
         TileLoadPriorityGroup::Urgent,
         100.0,
-        TerrainTileLoadStatus::RetryLater});
+        TileLoadStatus::RetryLater});
     queue.addContentTerminalResult(PendingContentTerminalResult{
         contentKey,
         "content",
         TileLoadPriorityGroup::Urgent,
         50.0,
-        TileContentLoadStatus::Empty});
+        TileLoadStatus::Empty});
 
     FrameResourceBudgetConfig config;
     config.maxTerminalStateTransitionsPerFrame = 2;
@@ -227,25 +227,25 @@ TEST(TilePendingLoadQueueTest, DeduplicatesTerminalResultsByKind) {
         "terrain-terminal",
         TileLoadPriorityGroup::Normal,
         1.0,
-        TerrainTileLoadStatus::RetryLater});
+        TileLoadStatus::RetryLater});
     queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
         secondKey,
         "terrain-terminal",
         TileLoadPriorityGroup::Urgent,
         100.0,
-        TerrainTileLoadStatus::Cancelled});
+        TileLoadStatus::Cancelled});
     queue.addContentTerminalResult(PendingContentTerminalResult{
         firstKey,
         "content-terminal",
         TileLoadPriorityGroup::Normal,
         1.0,
-        TileContentLoadStatus::RetryLater});
+        TileLoadStatus::RetryLater});
     queue.addContentTerminalResult(PendingContentTerminalResult{
         secondKey,
         "content-terminal",
         TileLoadPriorityGroup::Urgent,
         100.0,
-        TileContentLoadStatus::Cancelled});
+        TileLoadStatus::Cancelled});
 
     EXPECT_EQ(1u, queue.terrainTerminalResultCount());
     EXPECT_EQ(1u, queue.contentTerminalResultCount());
@@ -284,13 +284,13 @@ TEST(TilePendingLoadQueueTest, KeepsOneResultShapePerKind) {
         "terrain",
         TileLoadPriorityGroup::Urgent,
         100.0,
-        TerrainTileLoadStatus::RetryLater});
+        TileLoadStatus::RetryLater});
     queue.addContentTerminalResult(PendingContentTerminalResult{
         contentKey,
         "content",
         TileLoadPriorityGroup::Normal,
         1.0,
-        TileContentLoadStatus::RetryLater});
+        TileLoadStatus::RetryLater});
     queue.addContentUpload(PendingContentUpload{
         contentKey,
         "content",
@@ -333,7 +333,7 @@ TEST(TilePendingLoadQueueTest, KeepsTerminalResultWhenBudgetBlocks) {
         "terminal",
         TileLoadPriorityGroup::Urgent,
         0.0,
-        TerrainTileLoadStatus::RetryLater});
+        TileLoadStatus::RetryLater});
 
     FrameResourceBudgetConfig blockedConfig;
     blockedConfig.maxTerminalStateTransitionsPerFrame = 0;
@@ -384,13 +384,13 @@ TEST(TilePendingLoadQueueTest, RejectsEmptyCacheKeys) {
         "",
         TileLoadPriorityGroup::Urgent,
         0.0,
-        TerrainTileLoadStatus::Failed});
+        TileLoadStatus::Failed});
     queue.addContentTerminalResult(PendingContentTerminalResult{
         key,
         "",
         TileLoadPriorityGroup::Urgent,
         0.0,
-        TileContentLoadStatus::Failed});
+        TileLoadStatus::Failed});
 
     EXPECT_FALSE(queue.hasWork());
     EXPECT_EQ(0u, queue.terrainUploadCount());
@@ -425,13 +425,13 @@ TEST(TilePendingLoadQueueTest, EraseIgnoresUnknownKeys) {
         "terrain-terminal",
         TileLoadPriorityGroup::Normal,
         0.0,
-        TerrainTileLoadStatus::RetryLater});
+        TileLoadStatus::RetryLater});
     queue.addContentTerminalResult(PendingContentTerminalResult{
         contentTerminalKey,
         "content-terminal",
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileContentLoadStatus::RetryLater});
+        TileLoadStatus::RetryLater});
 
     queue.eraseCacheKey("missing");
 

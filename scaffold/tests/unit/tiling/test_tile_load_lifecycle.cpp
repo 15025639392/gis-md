@@ -192,14 +192,14 @@ TEST(TileLoadLifecycleTest, CancelErasesTerminalResults) {
                 "terrain-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
         lifecycle.pendingLoads().addContentTerminalResult(
             PendingContentTerminalResult{
                 contentKey,
                 "content-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
 
     lifecycle.cancelAndEraseCacheKey("terrain-terminal");
@@ -270,7 +270,7 @@ TEST(TileLoadLifecycleTest, DestroyWithoutRequestsReturnsImmediately) {
                 "content-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
 
     lifecycle.markDestroyingCancelAndWait();
@@ -335,7 +335,7 @@ TEST(TileLoadLifecycleTest, DestroyCancelsAndWaitsForCallbacks) {
                 "content-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
 
     std::atomic<bool> destroyReturned{false};

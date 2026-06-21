@@ -72,7 +72,7 @@ TEST(
                 "terrain-terminal",
                 TileLoadPriorityGroup::Urgent,
                 0.0,
-                TerrainTileLoadStatus::Empty});
+                TileLoadStatus::Empty});
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
             TileKey{"test", 1, 1, 0},
             "content-upload",
@@ -85,7 +85,7 @@ TEST(
                 "content-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadStatus::Failed});
+                TileLoadStatus::Failed});
     }
 
     TileUnloadQueue unloadQueue;

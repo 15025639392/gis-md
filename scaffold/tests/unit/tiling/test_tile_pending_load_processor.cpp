@@ -21,14 +21,14 @@ TEST(TilePendingLoadProcessorTest, DrainsTerminalThenBudgetedUploads) {
                 "terrain-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
         lifecycle.pendingLoads().addContentTerminalResult(
             PendingContentTerminalResult{
                 contentKey,
                 "content-terminal",
                 TileLoadPriorityGroup::Urgent,
                 0.0,
-                TileContentLoadStatus::Empty});
+                TileLoadStatus::Empty});
         lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
             terrainKey,
             "terrain-upload",
@@ -142,14 +142,14 @@ TEST(TilePendingLoadProcessorTest, BudgetsTerminalResults) {
                 "first-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
         lifecycle.pendingLoads().addTerrainTerminalResult(
             PendingTerrainTerminalResult{
                 secondKey,
                 "second-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
 
     FrameResourceBudgetConfig config;
@@ -192,7 +192,7 @@ TEST(TilePendingLoadProcessorTest, ReportsUnchangedWhenBudgetBlocksAllWork) {
                 "terminal",
                 TileLoadPriorityGroup::Urgent,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
             uploadKey,
             "upload",
@@ -247,14 +247,14 @@ TEST(TilePendingLoadProcessorTest,
                 "first-terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
         lifecycle.pendingLoads().addTerrainTerminalResult(
             PendingTerrainTerminalResult{
                 secondKey,
                 "second-terminal",
                 TileLoadPriorityGroup::Normal,
                 1.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
 
     FrameResourceBudgetConfig config;
@@ -303,7 +303,7 @@ TEST(TilePendingLoadProcessorTest, TerminalElapsedStopsUploads) {
                 "terminal",
                 TileLoadPriorityGroup::Urgent,
                 10.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
             uploadKey,
             "upload",
@@ -360,7 +360,7 @@ TEST(TilePendingLoadProcessorTest, DrainsTerminalDuringInteraction) {
                 "terminal",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
         lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
             uploadKey,
             "upload",

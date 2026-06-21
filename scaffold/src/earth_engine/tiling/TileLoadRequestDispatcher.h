@@ -86,7 +86,7 @@ public:
                 {
                     std::lock_guard<std::mutex> lock(mutex);
                     if (!requestState.destroying() && !token.isCancelled()) {
-                        if (result.status == TileContentLoadStatus::Render &&
+                        if (result.status == TileLoadStatus::Renderable &&
                             result.gltfModel) {
                             pendingLoads.addContentUpload(
                                 PendingContentUpload{
@@ -167,7 +167,7 @@ public:
                 {
                     std::lock_guard<std::mutex> lock(mutex);
                     if (!requestState.destroying() && !token.isCancelled()) {
-                        if (result.status == TerrainTileLoadStatus::Success &&
+                        if (result.status == TileLoadStatus::Renderable &&
                             (result.heightmap || result.surfaceMesh)) {
                             pendingLoads.addTerrainUpload(
                                 PendingTerrainUpload{

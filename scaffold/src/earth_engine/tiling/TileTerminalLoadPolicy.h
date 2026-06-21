@@ -16,10 +16,10 @@ struct TileTerminalLoadAction {
 struct TileTerminalLoadPolicy {
     static TileTerminalLoadAction applyTerrainTerminalResult(
         TilesetTile& tile,
-        TerrainTileLoadStatus status);
+        TileLoadStatus status);
     static TileTerminalLoadAction applyContentTerminalResult(
         TilesetTile& tile,
-        TileContentLoadStatus status);
+        TileLoadStatus status);
 };
 
 } // namespace earth_engine

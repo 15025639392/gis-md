@@ -15,12 +15,12 @@ struct TileTerminalLoadCommitter {
     static TileTerminalLoadAction commitTerrainTerminalResult(
         TilesetTile& tile,
         const std::string& cacheKey,
-        TerrainTileLoadStatus status,
+        TileLoadStatus status,
         TileEmptyContentRegistry& emptyContentRegistry);
     static TileTerminalLoadAction commitContentTerminalResult(
         TilesetTile& tile,
         const std::string& cacheKey,
-        TileContentLoadStatus status,
+        TileLoadStatus status,
         TileEmptyContentRegistry& emptyContentRegistry);
 };
 

@@ -3076,11 +3076,11 @@ TileContentLoadResult decodeCmptContent(
             contentUrl,
             resolver,
             imageDecoder);
-        if (inner.status == TileContentLoadStatus::Empty) {
+        if (inner.status == TileLoadStatus::Empty) {
             offset += innerByteLength;
             continue;
         }
-        if (inner.status != TileContentLoadStatus::Render ||
+        if (inner.status != TileLoadStatus::Renderable ||
             !inner.gltfModel ||
             inner.gltfModel->primitives.empty()) {
             return TileContentLoadResult::failed();

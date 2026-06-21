@@ -8,6 +8,7 @@
 #include "../tiling/TileKey.h"
 #include "../tiling/TileBoundingVolume.h"
 #include "../tiling/TileLoadResultMetadata.h"
+#include "../tiling/TileLoadStatus.h"
 #include "../tiling/TileRefine.h"
 
 #include <cstddef>
@@ -22,15 +23,6 @@
 #include <vector>
 
 namespace earth_engine {
-
-enum class TileContentLoadStatus {
-    Render,
-    Empty,
-    External,
-    RetryLater,
-    Failed,
-    Cancelled
-};
 
 struct TilesetContentTileMetadata {
     TileKey key;
@@ -48,15 +40,15 @@ struct TilesetContentTileMetadata {
 };
 
 struct TileContentLoadResult {
-    TileContentLoadStatus status = TileContentLoadStatus::Failed;
+    TileLoadStatus status = TileLoadStatus::Failed;
     std::unique_ptr<GltfModel> gltfModel;
     Mat4 contentTransform = Mat4::identity();
     TileLoadResultMetadata metadata;
 
     static TileContentLoadResult render(std::unique_ptr<GltfModel> model) {
         TileContentLoadResult result;
-        result.status = model ? TileContentLoadStatus::Render
-                              : TileContentLoadStatus::Failed;
+        result.status = model ? TileLoadStatus::Renderable
+                              : TileLoadStatus::Failed;
         if (model) {
             result.metadata.rasterOverlayDetails = model->rasterOverlayDetails;
         }
@@ -66,31 +58,31 @@ struct TileContentLoadResult {
 
     static TileContentLoadResult empty() {
         TileContentLoadResult result;
-        result.status = TileContentLoadStatus::Empty;
+        result.status = TileLoadStatus::Empty;
         return result;
     }
 
     static TileContentLoadResult retryLater() {
         TileContentLoadResult result;
-        result.status = TileContentLoadStatus::RetryLater;
+        result.status = TileLoadStatus::RetryLater;
         return result;
     }
 
     static TileContentLoadResult failed() {
         TileContentLoadResult result;
-        result.status = TileContentLoadStatus::Failed;
+        result.status = TileLoadStatus::Failed;
         return result;
     }
 
     static TileContentLoadResult cancelled() {
         TileContentLoadResult result;
-        result.status = TileContentLoadStatus::Cancelled;
+        result.status = TileLoadStatus::Cancelled;
         return result;
     }
 
     static TileContentLoadResult external() {
         TileContentLoadResult result;
-        result.status = TileContentLoadStatus::External;
+        result.status = TileLoadStatus::External;
         return result;
     }
 };

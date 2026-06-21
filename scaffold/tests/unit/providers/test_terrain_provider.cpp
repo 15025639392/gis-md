@@ -376,7 +376,7 @@ TEST(QuantizedMeshTerrainProviderTest, HttpErrorFailsTerminally) {
     std::mutex mutex;
     std::condition_variable cv;
     bool callbackCalled = false;
-    TerrainTileLoadStatus completedStatus = TerrainTileLoadStatus::Success;
+    TileLoadStatus completedStatus = TileLoadStatus::Renderable;
 
     provider.requestTile(
         TileKey{"Geographic-TMS", 0, 0, 0},
@@ -400,7 +400,7 @@ TEST(QuantizedMeshTerrainProviderTest, HttpErrorFailsTerminally) {
             [&] { return callbackCalled; }));
     }
 
-    EXPECT_EQ(TerrainTileLoadStatus::Failed, completedStatus);
+    EXPECT_EQ(TileLoadStatus::Failed, completedStatus);
     EXPECT_EQ(1, provider.requestDiagnostics().requestsCompleted);
 }
 
@@ -412,7 +412,7 @@ TEST(QuantizedMeshTerrainProviderTest, InvalidBodyFailsTerminally) {
     std::mutex mutex;
     std::condition_variable cv;
     bool callbackCalled = false;
-    TerrainTileLoadStatus completedStatus = TerrainTileLoadStatus::Success;
+    TileLoadStatus completedStatus = TileLoadStatus::Renderable;
 
     provider.requestTile(
         TileKey{"Geographic-TMS", 0, 0, 0},
@@ -436,7 +436,7 @@ TEST(QuantizedMeshTerrainProviderTest, InvalidBodyFailsTerminally) {
             [&] { return callbackCalled; }));
     }
 
-    EXPECT_EQ(TerrainTileLoadStatus::Failed, completedStatus);
+    EXPECT_EQ(TileLoadStatus::Failed, completedStatus);
     EXPECT_EQ(1, provider.requestDiagnostics().requestsCompleted);
 }
 
@@ -479,7 +479,7 @@ TEST(QuantizedMeshTerrainProviderTest,
             [&] { return callbackCalled; }));
     }
 
-    EXPECT_EQ(TerrainTileLoadStatus::Success, completed.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
     ASSERT_NE(nullptr, completed.surfaceMesh);
     EXPECT_EQ(nullptr, completed.heightmap);
     EXPECT_TRUE(completed.surfaceMesh->hasHeightRange);
@@ -509,7 +509,7 @@ TEST(QuantizedMeshTerrainProviderTest, UsesAsyncBridgeWithoutWorkerBlockingWait)
     std::mutex mutex;
     std::condition_variable cv;
     bool callbackCalled = false;
-    TerrainTileLoadStatus completedStatus = TerrainTileLoadStatus::Success;
+    TileLoadStatus completedStatus = TileLoadStatus::Renderable;
 
     provider.requestTile(
         TileKey{"Geographic-TMS", 1, 0, 0},
@@ -541,7 +541,7 @@ TEST(QuantizedMeshTerrainProviderTest, UsesAsyncBridgeWithoutWorkerBlockingWait)
     }
 
     ProviderRequestDiagnostics doneDiag = provider.requestDiagnostics();
-    EXPECT_EQ(TerrainTileLoadStatus::Cancelled, completedStatus);
+    EXPECT_EQ(TileLoadStatus::Cancelled, completedStatus);
     EXPECT_EQ(1, doneDiag.requestsStarted);
     EXPECT_EQ(1, doneDiag.requestsCompleted);
     EXPECT_EQ(0, doneDiag.activeWorkerBlockingRequests);
@@ -1570,7 +1570,7 @@ TEST(QuantizedMeshTerrainProviderTest, LoadsUnderlyingLayerAvailabilityWithTileL
             [&] { return done; }));
     }
 
-    EXPECT_EQ(TerrainTileLoadStatus::Success, completed.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
     ASSERT_NE(nullptr, completed.surfaceMesh);
     EXPECT_EQ(nullptr, completed.heightmap);
     for (int i = 0;
@@ -1679,7 +1679,7 @@ TEST(QuantizedMeshTerrainProviderTest, LoadedUnderlyingMetadataSubtreeSkipsDupli
             [&] { return done; }));
     }
 
-    EXPECT_EQ(TerrainTileLoadStatus::Success, completed.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
     ASSERT_NE(nullptr, completed.surfaceMesh);
     EXPECT_EQ(nullptr, completed.heightmap);
     EXPECT_TRUE(completed.quantizedMeshAvailabilityUpdates.empty());
@@ -1787,7 +1787,7 @@ TEST(QuantizedMeshTerrainProviderTest, FetchesUnderlyingMetadataViaAsyncBridge) 
     }
 
     ProviderRequestDiagnostics doneDiag = provider.requestDiagnostics();
-    EXPECT_EQ(TerrainTileLoadStatus::Success, completed.status);
+    EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
     ASSERT_NE(nullptr, completed.surfaceMesh);
     EXPECT_EQ(nullptr, completed.heightmap);
     ASSERT_EQ(1u, completed.quantizedMeshAvailabilityUpdates.size());

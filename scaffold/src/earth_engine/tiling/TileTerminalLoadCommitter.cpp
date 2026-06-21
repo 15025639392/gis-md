@@ -8,7 +8,7 @@ TileTerminalLoadAction
 TileTerminalLoadCommitter::commitTerrainTerminalResult(
     TilesetTile& tile,
     const std::string& cacheKey,
-    TerrainTileLoadStatus status,
+    TileLoadStatus status,
     TileEmptyContentRegistry& emptyContentRegistry) {
     TileTerminalLoadAction action =
         TileTerminalLoadPolicy::applyTerrainTerminalResult(tile, status);
@@ -24,7 +24,7 @@ TileTerminalLoadAction
 TileTerminalLoadCommitter::commitContentTerminalResult(
     TilesetTile& tile,
     const std::string& cacheKey,
-    TileContentLoadStatus status,
+    TileLoadStatus status,
     TileEmptyContentRegistry& emptyContentRegistry) {
     TileTerminalLoadAction action =
         TileTerminalLoadPolicy::applyContentTerminalResult(tile, status);

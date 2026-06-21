@@ -4,6 +4,7 @@
 #include "../tiling/TileKey.h"
 #include "../tiling/TileBoundingVolume.h"
 #include "../tiling/TileLoadResultMetadata.h"
+#include "../tiling/TileLoadStatus.h"
 #include "../tiling/SurfaceTile.h"
 #include "../platform/bridge/PlatformBridge.h"
 #include "../threading/CancellationToken.h"
@@ -23,14 +24,6 @@ enum class TileAvailabilityState {
     NotAvailable,
     Available,
     Unknown
-};
-
-enum class TerrainTileLoadStatus {
-    Success,
-    Empty,
-    RetryLater,
-    Failed,
-    Cancelled
 };
 
 /// cesium-native LayerJsonTerrainLoader: when loading a tile from an
@@ -74,7 +67,7 @@ struct DecodedHeightmap {
 };
 
 struct TerrainTileLoadResult {
-    TerrainTileLoadStatus status = TerrainTileLoadStatus::Failed;
+    TileLoadStatus status = TileLoadStatus::Failed;
     std::unique_ptr<DecodedHeightmap> heightmap;
     std::unique_ptr<SurfaceTileMesh> surfaceMesh;
     TileLoadResultMetadata metadata;
@@ -85,8 +78,8 @@ struct TerrainTileLoadResult {
         std::unique_ptr<DecodedHeightmap> hm,
         std::unique_ptr<SurfaceTileMesh> mesh = nullptr) {
         TerrainTileLoadResult result;
-        result.status = (hm || mesh) ? TerrainTileLoadStatus::Success
-                                     : TerrainTileLoadStatus::Failed;
+        result.status = (hm || mesh) ? TileLoadStatus::Renderable
+                                     : TileLoadStatus::Failed;
         result.heightmap = std::move(hm);
         result.surfaceMesh = std::move(mesh);
         return result;
@@ -95,8 +88,8 @@ struct TerrainTileLoadResult {
     static TerrainTileLoadResult successWithSurfaceMesh(
         std::unique_ptr<SurfaceTileMesh> mesh) {
         TerrainTileLoadResult result;
-        result.status = mesh ? TerrainTileLoadStatus::Success
-                             : TerrainTileLoadStatus::Failed;
+        result.status = mesh ? TileLoadStatus::Renderable
+                             : TileLoadStatus::Failed;
         if (mesh) {
             result.metadata.rasterOverlayDetails = mesh->rasterOverlayDetails;
         }
@@ -106,25 +99,25 @@ struct TerrainTileLoadResult {
 
     static TerrainTileLoadResult empty() {
         TerrainTileLoadResult result;
-        result.status = TerrainTileLoadStatus::Empty;
+        result.status = TileLoadStatus::Empty;
         return result;
     }
 
     static TerrainTileLoadResult retryLater() {
         TerrainTileLoadResult result;
-        result.status = TerrainTileLoadStatus::RetryLater;
+        result.status = TileLoadStatus::RetryLater;
         return result;
     }
 
     static TerrainTileLoadResult failed() {
         TerrainTileLoadResult result;
-        result.status = TerrainTileLoadStatus::Failed;
+        result.status = TileLoadStatus::Failed;
         return result;
     }
 
     static TerrainTileLoadResult cancelled() {
         TerrainTileLoadResult result;
-        result.status = TerrainTileLoadStatus::Cancelled;
+        result.status = TileLoadStatus::Cancelled;
         return result;
     }
 };

@@ -817,7 +817,7 @@ TEST(TileLoadSchedulerTest, SkipsPendingCacheKeyBeforeUpsamplePreparation) {
                 cacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TerrainTileLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
 
     bool prepared = false;
@@ -988,7 +988,7 @@ TEST(TileLoadSchedulerTest, SkipsPendingTerminalBeforeSnapshot) {
                 cacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadStatus::RetryLater});
+                TileLoadStatus::RetryLater});
     }
 
     bool planned = false;
@@ -1195,7 +1195,7 @@ TEST(TileLoadSchedulerTest, SkipsDispatcherDuplicateAfterPlanning) {
                             cacheKey,
                             TileLoadPriorityGroup::Normal,
                             0.0,
-                            TileContentLoadStatus::RetryLater});
+                            TileLoadStatus::RetryLater});
                 }
                 TileLoadRequestSnapshot snapshot;
                 snapshot.contentProviderSupportsTile = true;
@@ -1252,7 +1252,7 @@ TEST(TileLoadSchedulerTest, SkipsTerrainDispatcherDuplicateAfterPlanning) {
                             cacheKey,
                             TileLoadPriorityGroup::Normal,
                             0.0,
-                            TerrainTileLoadStatus::RetryLater});
+                            TileLoadStatus::RetryLater});
                 }
                 TileLoadRequestSnapshot snapshot;
                 snapshot.terrainProviderSupportsTile = true;
