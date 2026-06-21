@@ -798,3 +798,56 @@ TEST(TileLoadSchedulerTest, SkipsPendingCacheKeyBeforeUpsamplePreparation) {
     EXPECT_EQ(lifecycle.counts().terrainTerminalResults, 1u);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey("unexpected"));
 }
+
+TEST(TileLoadSchedulerTest, SkipsPendingUploadBeforeSnapshot) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey key{"test", 1, 0, 0};
+    const std::string cacheKey = cacheKeyForTile(key);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            nullptr});
+    }
+
+    bool planned = false;
+    bool marked = false;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            cacheKeyForTile,
+            [&planned](
+                const TileKey&,
+                const std::string&,
+                TilesetTile*& tileState) {
+                planned = true;
+                tileState = nullptr;
+                return TileLoadRequestSnapshot{};
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [&marked](const TileKey&) { marked = true; });
+
+    EXPECT_EQ(outcome.issued, 0u);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_FALSE(planned);
+    EXPECT_FALSE(marked);
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
