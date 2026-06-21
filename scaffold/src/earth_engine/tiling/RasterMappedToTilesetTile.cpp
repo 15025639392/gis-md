@@ -78,7 +78,8 @@ const Rectangle* findRectangleForProjection(
     int32_t* textureCoordinateID = nullptr) {
     for (size_t i = 0; i < overlayDetails.rasterOverlayProjections.size(); ++i) {
         if (overlayDetails.rasterOverlayProjections[i] == projection &&
-            i < overlayDetails.rasterOverlayRectangles.size()) {
+            i < overlayDetails.rasterOverlayRectangles.size() &&
+            !overlayDetails.rasterOverlayRectangles[i].isEmpty()) {
             if (textureCoordinateID) {
                 *textureCoordinateID = static_cast<int32_t>(i);
             }

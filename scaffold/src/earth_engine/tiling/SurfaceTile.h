@@ -78,7 +78,10 @@ struct RasterOverlayDetails {
     /// cesium-native RasterOverlayDetails::boundingRegion equivalent.
     /// This is the precise content region covered by the generated overlay
     /// texture coordinates, in geographic radians/meters.
-    BoundingRegionBuilder::BoundingRegion boundingRegion;
+    BoundingRegionBuilder::BoundingRegion boundingRegion{
+        Rectangle::EMPTY,
+        1.0,
+        -1.0};
 
     bool empty() const { return rasterOverlayRectangles.empty(); }
 
@@ -86,7 +89,8 @@ struct RasterOverlayDetails {
         RasterOverlayProjection projection) const {
         for (size_t i = 0; i < rasterOverlayProjections.size(); ++i) {
             if (rasterOverlayProjections[i] == projection &&
-                i < rasterOverlayRectangles.size()) {
+                i < rasterOverlayRectangles.size() &&
+                !rasterOverlayRectangles[i].isEmpty()) {
                 return &rasterOverlayRectangles[i];
             }
         }
@@ -97,7 +101,8 @@ struct RasterOverlayDetails {
         RasterOverlayProjection projection) const {
         for (size_t i = 0; i < rasterOverlayProjections.size(); ++i) {
             if (rasterOverlayProjections[i] == projection &&
-                i < rasterOverlayRectangles.size()) {
+                i < rasterOverlayRectangles.size() &&
+                !rasterOverlayRectangles[i].isEmpty()) {
                 return static_cast<int32_t>(i);
             }
         }
@@ -113,6 +118,10 @@ struct RasterOverlayDetails {
     }
 
     void merge(const RasterOverlayDetails& other) {
+        while (rasterOverlayRectangles.size() <
+               rasterOverlayProjections.size()) {
+            rasterOverlayRectangles.push_back(Rectangle::EMPTY);
+        }
         rasterOverlayProjections.insert(
             rasterOverlayProjections.end(),
             other.rasterOverlayProjections.begin(),
@@ -121,10 +130,18 @@ struct RasterOverlayDetails {
             rasterOverlayRectangles.end(),
             other.rasterOverlayRectangles.begin(),
             other.rasterOverlayRectangles.end());
-        BoundingRegionBuilder builder;
-        builder.expandToIncludeRegion(boundingRegion);
-        builder.expandToIncludeRegion(other.boundingRegion);
-        boundingRegion = builder.toRegion();
+        const bool hasRegion = boundingRegion.minimumHeight <=
+                               boundingRegion.maximumHeight;
+        const bool otherHasRegion = other.boundingRegion.minimumHeight <=
+                                    other.boundingRegion.maximumHeight;
+        if (hasRegion && otherHasRegion) {
+            BoundingRegionBuilder builder;
+            builder.expandToIncludeRegion(boundingRegion);
+            builder.expandToIncludeRegion(other.boundingRegion);
+            boundingRegion = builder.toRegion();
+        } else if (otherHasRegion) {
+            boundingRegion = other.boundingRegion;
+        }
     }
 };
 

@@ -3850,6 +3850,81 @@ void testTilesetMissingRasterProjectionUnloadsRenderContent() {
           "Tileset: missing raster projection remains diagnosable after unload");
 }
 
+void testTilesetMissingRasterProjectionGeneratesDetailsFromRegion() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+
+    auto terrainProvider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(terrainProvider),
+        std::move(scheme),
+        {&activated},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: missing-raster-projection generation root tile is created");
+    if (!root) return;
+
+    const Rectangle regionRectangle =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    root->boundingVolume =
+        TileBoundingVolume::fromRegion(regionRectangle, -25.0, 125.0);
+    root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    root->content.renderContent.mutableSurfaceMesh()
+        ->rasterOverlayDetails.rasterOverlayProjections.push_back(
+            RasterOverlayProjection::Geographic);
+    root->content.renderContent.setMeshReady(true);
+    root->content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(32),
+        nullptr);
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Render;
+    root->rasterOverlayState.mappings().resize(1);
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(root->content.loadState == TileLoadState::Done &&
+              root->content.contentKind == TileContentKind::Render,
+          "Tileset: missing raster projection with region keeps render content loaded");
+    const RasterOverlayDetails& details =
+        root->content.renderContent.rasterOverlayDetails();
+    check(details.rasterOverlayProjections.size() == 2 &&
+              details.rasterOverlayRectangles.size() == 2,
+          "Tileset: missing raster projection generation appends detail rectangle");
+    check(details.rasterOverlayRectangles[1] == regionRectangle,
+          "Tileset: generated raster detail uses region rectangle");
+    check(details.boundingRegion.rectangle == regionRectangle &&
+              details.boundingRegion.minimumHeight == -25.0 &&
+              details.boundingRegion.maximumHeight == 125.0,
+          "Tileset: generated raster detail carries region height range");
+
+    RasterMappedToTilesetTile* mapped =
+        root->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
+    check(loadingTile != nullptr &&
+              loadingTile->isRectangleTile() &&
+              loadingTile->getRectangle() == regionRectangle,
+          "Tileset: generated raster detail maps a real rectangle tile");
+    check(mapped && mapped->getTextureCoordinateID() == 1,
+          "Tileset: generated raster detail preserves offset texture coordinate ID");
+    check(root->rasterOverlayState.missingProjections().empty(),
+          "Tileset: generated raster detail clears missing projection diagnostics");
+}
+
 void testTilesetRasterTargetPixelsUseRenderContentRectangle() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -26408,6 +26483,7 @@ int main() {
     testRasterMappedPlaceholderRemapsWhenProviderBecomesReady();
     testRasterMappedFailedReadyTileDetachSkipsRendererCallback();
     testTilesetMissingRasterProjectionUnloadsRenderContent();
+    testTilesetMissingRasterProjectionGeneratesDetailsFromRegion();
     testTilesetRasterTargetPixelsUseRenderContentRectangle();
     testTilesetEnsuresOverlayProviderBeforeMapping();
     testTilesetPrefetchesRasterFromBoundingRegionBeforeRenderContent();

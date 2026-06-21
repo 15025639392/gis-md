@@ -179,6 +179,15 @@ public:
         }
         return emptyDetails;
     }
+    RasterOverlayDetails* mutableRasterOverlayDetails() {
+        if (surface_.mesh) {
+            return &surface_.mesh->rasterOverlayDetails;
+        }
+        if (gltfModel) {
+            return &gltfModel->rasterOverlayDetails;
+        }
+        return nullptr;
+    }
     Buffer* surfaceVertexBuffer() const {
         return surface_.gpuVertexBuffer.get();
     }
