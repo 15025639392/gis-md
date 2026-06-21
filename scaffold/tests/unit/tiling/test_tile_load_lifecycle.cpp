@@ -279,3 +279,34 @@ TEST(TileLoadLifecycleTest, DestroyWithoutRequestsReturnsImmediately) {
         EXPECT_FALSE(lifecycle.requestState().destroying());
     }
 }
+
+TEST(TileLoadLifecycleTest, DestroyClearsClaimedUploadKeys) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            TileKey{"test", 0, 0, 0},
+            "content-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileContentLoadResult::empty()});
+        std::optional<PendingLoadFinalize> upload =
+            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
+
+        ASSERT_TRUE(upload.has_value());
+        EXPECT_EQ(PendingLoadFinalizeKind::Content, upload->kind);
+    }
+
+    EXPECT_TRUE(lifecycle.hasPendingWork());
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("content-upload"));
+
+    lifecycle.markDestroyingCancelAndWait();
+
+    EXPECT_FALSE(lifecycle.hasPendingWork());
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey("content-upload"));
+}
