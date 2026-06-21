@@ -1189,3 +1189,30 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_EQ(0u, pendingLoads.terrainUploadCount());
     EXPECT_EQ(1u, pendingLoads.terrainTerminalResultCount());
 }
+
+TEST(TileLoadRequestDispatcherTest,
+     QueuesUpsampledTerrainWhenNetworkBudgetExhausted) {
+    std::mutex mutex;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 0;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::queueUpsampledTerrain(
+            mutex,
+            requestState,
+            pendingLoads,
+            key,
+            "upsample-blocked",
+            TileLoadPriorityGroup::Urgent,
+            100.0);
+
+    EXPECT_EQ(TileLoadDispatchResult::Issued, result);
+    EXPECT_TRUE(requestState.empty());
+    EXPECT_EQ(1u, pendingLoads.terrainUploadCount());
+    EXPECT_EQ(0u, budget.networkRequestsIssued());
+}
