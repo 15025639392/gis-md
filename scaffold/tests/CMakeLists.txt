@@ -322,6 +322,12 @@ add_executable(test_tile_selection_plan_appender
 target_link_libraries(test_tile_selection_plan_appender PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_selection_plan_appender COMMAND test_tile_selection_plan_appender)
 
+add_executable(test_tile_selection_render_entry_policy
+    unit/tiling/test_tile_selection_render_entry_policy.cpp
+)
+target_link_libraries(test_tile_selection_render_entry_policy PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_selection_render_entry_policy COMMAND test_tile_selection_render_entry_policy)
+
 add_executable(test_tile_selection_refinement_policies
     unit/tiling/test_tile_selection_refinement_policies.cpp
 )
