@@ -1106,6 +1106,12 @@ TEST(GoogleMapTilesImageryProviderTest, KnownAvailabilityRejectsUnavailableTiles
     EXPECT_FALSE(provider.isTileKnownAvailable(
         TileKey{"XYZ-WebMercator", 2, 3, 3}));
     EXPECT_TRUE(provider.supportsTile(TileKey{"XYZ-WebMercator", 2, 1, 1}));
+    EXPECT_TRUE(provider.supportsTile(TileKey{"XYZ-WebMercator", 2, 3, 3}));
+
+    provider.addCompleteAvailabilityRanges(
+        {GoogleMapTilesTileRange{2, 0, 0, 3, 3}});
+    EXPECT_TRUE(provider.isTileInCompleteAvailabilityRange(
+        TileKey{"XYZ-WebMercator", 2, 3, 3}));
     EXPECT_FALSE(provider.supportsTile(TileKey{"XYZ-WebMercator", 2, 3, 3}));
     EXPECT_EQ("", provider.buildUrl(TileKey{"XYZ-WebMercator", 2, 3, 3}));
 }

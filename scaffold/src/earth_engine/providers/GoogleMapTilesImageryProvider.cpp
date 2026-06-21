@@ -69,6 +69,22 @@ int invertedY(int level, int y) {
     return static_cast<int>((int64_t{1} << level) - 1 - y);
 }
 
+bool tileInRanges(const TileKey& key,
+                  const std::vector<GoogleMapTilesTileRange>& ranges,
+                  const std::string& schemeId) {
+    if (key.schemeId != schemeId) {
+        return false;
+    }
+    for (const GoogleMapTilesTileRange& range : ranges) {
+        if (range.level == key.z &&
+            key.x >= range.minimumX && key.x <= range.maximumX &&
+            key.y >= range.minimumY && key.y <= range.maximumY) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 std::string googleMapTilesCreateSessionUrl(
@@ -332,7 +348,10 @@ bool GoogleMapTilesImageryProvider::supportsTile(const TileKey& key) const {
     if (!hasKnownAvailability()) {
         return true;
     }
-    return isTileKnownAvailable(key);
+    if (isTileKnownAvailable(key)) {
+        return true;
+    }
+    return !isTileInCompleteAvailabilityRange(key);
 }
 
 std::string GoogleMapTilesImageryProvider::buildUrl(
@@ -358,23 +377,26 @@ void GoogleMapTilesImageryProvider::addAvailableTileRanges(
         ranges.end());
 }
 
+void GoogleMapTilesImageryProvider::addCompleteAvailabilityRanges(
+    const std::vector<GoogleMapTilesTileRange>& ranges) {
+    completeAvailabilityRanges_.insert(
+        completeAvailabilityRanges_.end(),
+        ranges.begin(),
+        ranges.end());
+}
+
 bool GoogleMapTilesImageryProvider::hasKnownAvailability() const {
-    return !availableRanges_.empty();
+    return !availableRanges_.empty() || !completeAvailabilityRanges_.empty();
 }
 
 bool GoogleMapTilesImageryProvider::isTileKnownAvailable(
     const TileKey& key) const {
-    if (key.schemeId != schemeId()) {
-        return false;
-    }
-    for (const GoogleMapTilesTileRange& range : availableRanges_) {
-        if (range.level == key.z &&
-            key.x >= range.minimumX && key.x <= range.maximumX &&
-            key.y >= range.minimumY && key.y <= range.maximumY) {
-            return true;
-        }
-    }
-    return false;
+    return tileInRanges(key, availableRanges_, schemeId());
+}
+
+bool GoogleMapTilesImageryProvider::isTileInCompleteAvailabilityRange(
+    const TileKey& key) const {
+    return tileInRanges(key, completeAvailabilityRanges_, schemeId());
 }
 
 GoogleMapTilesImagerySource createGoogleMapTilesImagerySource(
