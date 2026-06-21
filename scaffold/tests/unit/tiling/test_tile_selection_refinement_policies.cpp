@@ -170,6 +170,57 @@ TEST(
 
 TEST(
     TileSelectionKickPolicyTest,
+    FadingInRenderedTileCanKickDescendants) {
+    TileTraversalDetails fadingDescendants;
+    fadingDescendants.allAreRenderable = true;
+    fadingDescendants.anyWereRenderedLastFrame = true;
+    fadingDescendants.notYetRenderableCount = 0;
+
+    EXPECT_TRUE(TileSelectionKickPolicy::shouldKickDescendants(
+        fadingDescendants,
+        true,
+        false,
+        20,
+        true,
+        true,
+        TileSelectionState::Rendered,
+        true,
+        0.5f));
+
+    EXPECT_FALSE(TileSelectionKickPolicy::shouldKickDescendants(
+        fadingDescendants,
+        true,
+        false,
+        20,
+        true,
+        true,
+        TileSelectionState::Rendered,
+        true,
+        1.0f));
+}
+
+TEST(
+    TileSelectionKickPolicyTest,
+    KickedRenderedStateDoesNotTriggerFadeInKick) {
+    TileTraversalDetails fadingDescendants;
+    fadingDescendants.allAreRenderable = true;
+    fadingDescendants.anyWereRenderedLastFrame = true;
+    fadingDescendants.notYetRenderableCount = 0;
+
+    EXPECT_FALSE(TileSelectionKickPolicy::shouldKickDescendants(
+        fadingDescendants,
+        true,
+        false,
+        20,
+        true,
+        true,
+        TileSelectionState::RenderedAndKicked,
+        true,
+        0.5f));
+}
+
+TEST(
+    TileSelectionKickPolicyTest,
     ReplaceRefinementAddsRenderableParentReplacementAfterKick) {
     TileTraversalDetails manyMissing;
     manyMissing.allAreRenderable = false;
