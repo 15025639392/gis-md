@@ -93,6 +93,7 @@ SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
             return action;
         }
         if (moreDetail == RasterMappedToTilesetTile::MoreDetail::Yes &&
+            tile.rasterOverlayState.hasDrawableReadyMapping(i) &&
             !firstMoreDetailAvailable) {
             firstMoreDetailAvailable = i;
         } else if (

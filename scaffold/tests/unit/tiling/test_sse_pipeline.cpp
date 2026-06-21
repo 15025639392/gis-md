@@ -13707,6 +13707,86 @@ void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
           "SurfaceRasterOverlayStateUpdater: invisible overlay releases raster tile references");
 }
 
+void testSurfaceRasterUpdaterRequiresDrawableRasterForUpsampleAction() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    TilesetTile tile(TileKey{scheme->id(), 0, 0, 0},
+                     scheme->tileToRectangle(
+                         TileKey{scheme->id(), 0, 0, 0}));
+    tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    tile.content.renderContent.mutableSurfaceMesh()
+        ->rasterOverlayDetails.setGeographicRectangle(tile.bounds);
+    tile.content.renderContent.setMeshReady(true);
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.contentKind = TileContentKind::Render;
+
+    Renderer renderer(nullptr);
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    const std::vector<size_t> order{0};
+    SurfaceRasterOverlayStateUpdater::update(
+        renderer,
+        tile,
+        overlays,
+        order,
+        nullptr,
+        16.0,
+        budget);
+    RasterMappedToTilesetTile* mapped =
+        tile.rasterOverlayState.mappingAt(0);
+    RasterOverlayTile* loadingTile =
+        mapped ? mapped->getLoadingTile() : nullptr;
+    check(loadingTile != nullptr,
+          "SurfaceRasterOverlayStateUpdater: drawable-gated upsample maps loading raster");
+    if (!mapped || !loadingTile) return;
+
+    loadingTile->setState(RasterOverlayTile::LoadState::Loaded);
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    const SurfaceRasterOverlayUpdateAction noTextureAction =
+        SurfaceRasterOverlayStateUpdater::update(
+            renderer,
+            tile,
+            overlays,
+            order,
+            nullptr,
+            16.0,
+            budget);
+
+    check(mapped->getReadyTile() == loadingTile,
+          "SurfaceRasterOverlayStateUpdater: no-texture more-detail raster is cover-ready");
+    check(!tile.rasterOverlayState.hasDrawableReadyMapping(0),
+          "SurfaceRasterOverlayStateUpdater: no-texture more-detail raster is not drawable");
+    check(!noTextureAction.createRasterOverlayUpsampledChildren,
+          "SurfaceRasterOverlayStateUpdater: no-texture raster does not request upsample children");
+
+    loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
+    const SurfaceRasterOverlayUpdateAction drawableAction =
+        SurfaceRasterOverlayStateUpdater::update(
+            renderer,
+            tile,
+            overlays,
+            order,
+            nullptr,
+            16.0,
+            budget);
+
+    check(tile.rasterOverlayState.hasDrawableReadyMapping(0),
+          "SurfaceRasterOverlayStateUpdater: textured more-detail raster is drawable");
+    check(drawableAction.createRasterOverlayUpsampledChildren,
+          "SurfaceRasterOverlayStateUpdater: drawable more-detail raster requests upsample children");
+}
+
 void testTileUnloadPolicyDefersReferencedSubtreesAndExternalWork() {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
@@ -26986,6 +27066,7 @@ int main() {
     testTilesetUnloadRenderContentPreservesLoadedChildren();
     testTilesetUnloadExternalContentClearsChildren();
     testTilesetDirectExternalContentUnloadClearsChildren();
+    testSurfaceRasterUpdaterRequiresDrawableRasterForUpsampleAction();
 
     std::cout << "\n=== " << gFailures << " failures ===\n";
     return gFailures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
