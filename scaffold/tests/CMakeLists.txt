@@ -298,6 +298,12 @@ add_executable(test_tile_unload_policy
 target_link_libraries(test_tile_unload_policy PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_unload_policy COMMAND test_tile_unload_policy)
 
+add_executable(test_tile_cache_unload_coordinator
+    unit/tiling/test_tile_cache_unload_coordinator.cpp
+)
+target_link_libraries(test_tile_cache_unload_coordinator PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_cache_unload_coordinator COMMAND test_tile_cache_unload_coordinator)
+
 add_executable(test_tile_load_request_dispatcher
     unit/tiling/test_tile_load_request_dispatcher.cpp
 )
