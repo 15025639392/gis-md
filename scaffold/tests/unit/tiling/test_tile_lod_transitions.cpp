@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/tiling/TileCacheKey.h"
+#include "earth_engine/tiling/TileLodTransitionController.h"
 #include "earth_engine/tiling/TileLodTransitionFrameUpdater.h"
 #include "earth_engine/tiling/TileRenderPlanFrameRefresher.h"
 #include "earth_engine/tiling/TileSelectionPlanAppender.h"
@@ -116,7 +117,85 @@ Tileset makeTransitionTileset() {
         options);
 }
 
+std::string testCacheKey(const TileKey& key) {
+    return key.schemeId + ":" +
+        std::to_string(key.z) + ":" +
+        std::to_string(key.x) + ":" +
+        std::to_string(key.y);
+}
+
+bool hasRenderTransitionContent(const TilesetTile& tile) {
+    return tile.content.contentKind == TileContentKind::Render;
+}
+
 } // namespace
+
+TEST(TileLodTransitionsTest, ControllerFadesOutPreviousRenderContent) {
+    const TileKey rootKey{"test", 0, 0, 0};
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    tiles.emplace(
+        testCacheKey(rootKey),
+        std::make_unique<TilesetTile>(rootKey, Rectangle{}));
+    TilesetTile& root = *tiles[testCacheKey(rootKey)];
+    root.selectionFrameState.previousSelectionState =
+        TileSelectionState::Rendered;
+    root.content.contentKind = TileContentKind::Render;
+    root.content.loadState = TileLoadState::Done;
+    root.selectionFrameState.lodTransitionFadePercentage = 0.25f;
+
+    TilePlan plan;
+    std::unordered_set<std::string> fadingKeys;
+    TileLodTransitionController::updateTransitions(
+        plan,
+        fadingKeys,
+        0.25,
+        TileLodTransitionOptions{&tiles, true, 1.0},
+        testCacheKey,
+        hasRenderTransitionContent);
+
+    EXPECT_EQ(fadingKeys.count(testCacheKey(rootKey)), 1u);
+    ASSERT_EQ(plan.tilesFadingOut.size(), 1u);
+    EXPECT_LT(
+        std::abs(
+            root.selectionFrameState.lodTransitionFadePercentage - 0.25f),
+        1e-6f);
+    EXPECT_LT(std::abs(plan.tilesFadingOut.front().opacity - 0.75f), 1e-6f);
+    EXPECT_EQ(plan.fadingNodeCount, 1);
+}
+
+TEST(TileLodTransitionsTest, ControllerRestartsReturnedFadeOutTile) {
+    const TileKey rootKey{"test", 0, 0, 0};
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    tiles.emplace(
+        testCacheKey(rootKey),
+        std::make_unique<TilesetTile>(rootKey, Rectangle{}));
+    TilesetTile& root = *tiles[testCacheKey(rootKey)];
+    root.selectionFrameState.previousSelectionState =
+        TileSelectionState::Rendered;
+    root.content.contentKind = TileContentKind::Render;
+    root.content.loadState = TileLoadState::Done;
+    root.selectionFrameState.lodTransitionFadePercentage = 0.75f;
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(rootKey);
+    std::unordered_set<std::string> fadingKeys{testCacheKey(rootKey)};
+    TileLodTransitionController::updateTransitions(
+        plan,
+        fadingKeys,
+        0.25,
+        TileLodTransitionOptions{&tiles, true, 1.0},
+        testCacheKey,
+        hasRenderTransitionContent);
+
+    EXPECT_TRUE(fadingKeys.empty());
+    EXPECT_TRUE(plan.tilesFadingOut.empty());
+    ASSERT_EQ(plan.tileTransitions.size(), 1u);
+    EXPECT_LT(
+        std::abs(
+            root.selectionFrameState.lodTransitionFadePercentage - 0.25f),
+        1e-6f);
+    EXPECT_EQ(plan.fadingNodeCount, 1);
+}
 
 TEST(TileLodTransitionsTest, UsesNativeDeltaState) {
     Tileset tileset = makeTransitionTileset();
