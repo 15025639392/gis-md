@@ -461,6 +461,7 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
                 continue;
             }
             source.provider->setPlatformBridge(&platformBridge_);
+            source.provider->loadCredits();
             addActivatedRasterOverlay(rasterOverlays,
                                       std::move(source.provider),
                                       std::move(source.scheme),

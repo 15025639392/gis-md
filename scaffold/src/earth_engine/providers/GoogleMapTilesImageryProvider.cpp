@@ -611,6 +611,95 @@ void GoogleMapTilesImageryProvider::addCompleteAvailabilityRanges(
         ranges.end());
 }
 
+void GoogleMapTilesImageryProvider::loadCredits(HttpRequestPriority priority) {
+    if (options_.session.empty() || options_.key.empty() ||
+        options_.maximumLevel < 0) {
+        return;
+    }
+
+    size_t serial = 0;
+    {
+        std::lock_guard<std::mutex> lock(creditMutex_);
+        ++creditLoadSerial_;
+        serial = creditLoadSerial_;
+        creditRequests_.clear();
+        creditRequests_.reserve(static_cast<size_t>(options_.maximumLevel) + 1);
+    }
+
+    struct CreditLoadState {
+        std::mutex mutex;
+        size_t pending = 0;
+        std::vector<std::string> copyrights;
+    };
+    auto state = std::make_shared<CreditLoadState>();
+    state->pending = static_cast<size_t>(options_.maximumLevel) + 1;
+    state->copyrights.resize(state->pending);
+
+    for (int zoom = 0; zoom <= options_.maximumLevel; ++zoom) {
+        const std::string url = googleMapTilesViewportUrl(
+            options_,
+            zoom,
+            -180.0,
+            -90.0,
+            180.0,
+            90.0);
+        auto onCredit =
+            [this, state, serial, zoom](int statusCode,
+                                        std::vector<uint8_t> body) {
+                bool complete = false;
+                std::vector<std::string> copyrights;
+                {
+                    std::lock_guard<std::mutex> lock(state->mutex);
+                    if (statusCode == 200 && !body.empty()) {
+                        state->copyrights[static_cast<size_t>(zoom)] =
+                            parseGoogleMapTilesViewportCopyright(
+                                std::string(body.begin(), body.end()));
+                    }
+                    if (state->pending > 0) {
+                        --state->pending;
+                    }
+                    complete = state->pending == 0;
+                    if (complete) {
+                        copyrights = state->copyrights;
+                    }
+                }
+
+                if (!complete) {
+                    return;
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(creditMutex_);
+                    if (serial != creditLoadSerial_) {
+                        return;
+                    }
+                }
+
+                std::string combined =
+                    combineGoogleMapTilesCredits(copyrights);
+                if (!combined.empty()) {
+                    setAttribution(std::move(combined));
+                }
+            };
+
+        std::unique_ptr<HttpRequest> request;
+        if (platformBridge()) {
+            request = platformBridge()->get(url, std::move(onCredit),
+                                            {priority});
+        } else {
+            request = CurlMultiRequestScheduler::shared().get(
+                url,
+                std::move(onCredit),
+                {priority});
+        }
+
+        std::lock_guard<std::mutex> lock(creditMutex_);
+        if (serial == creditLoadSerial_ && request) {
+            creditRequests_.push_back(std::move(request));
+        }
+    }
+}
+
 void GoogleMapTilesImageryProvider::applyViewportAvailability(
     const GoogleMapTilesViewportParseResult& viewport,
     const TileKey& requestedKey) {

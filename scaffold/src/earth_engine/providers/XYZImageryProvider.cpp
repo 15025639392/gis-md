@@ -246,6 +246,16 @@ void XYZImageryProvider::setPlatformBridge(PlatformBridge* bridge) {
     platformBridge_ = bridge;
 }
 
+std::string XYZImageryProvider::attribution() const {
+    std::lock_guard<std::mutex> lock(attributionMutex_);
+    return attribution_;
+}
+
+void XYZImageryProvider::setAttribution(std::string attribution) {
+    std::lock_guard<std::mutex> lock(attributionMutex_);
+    attribution_ = std::move(attribution);
+}
+
 std::string XYZImageryProvider::id() const {
     std::ostringstream oss;
     oss << "xyz-" << std::hash<std::string>{}(urlTemplate_);

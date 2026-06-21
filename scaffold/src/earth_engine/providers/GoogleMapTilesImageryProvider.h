@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -91,6 +92,7 @@ public:
         const std::vector<GoogleMapTilesTileRange>& ranges);
     void addCompleteAvailabilityRanges(
         const std::vector<GoogleMapTilesTileRange>& ranges);
+    void loadCredits(HttpRequestPriority priority = HttpRequestPriority::Low);
     void applyViewportAvailability(
         const GoogleMapTilesViewportParseResult& viewport,
         const TileKey& requestedKey);
@@ -106,6 +108,9 @@ private:
     GoogleMapTilesExistingSessionOptions options_;
     std::vector<GoogleMapTilesTileRange> availableRanges_;
     std::vector<GoogleMapTilesTileRange> completeAvailabilityRanges_;
+    std::mutex creditMutex_;
+    size_t creditLoadSerial_ = 0;
+    std::vector<std::unique_ptr<HttpRequest>> creditRequests_;
 };
 
 std::string googleMapTilesCreateSessionUrl(

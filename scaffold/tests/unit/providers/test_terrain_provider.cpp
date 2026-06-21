@@ -1449,6 +1449,58 @@ TEST(GoogleMapTilesImageryProviderTest, CombinesViewportCreditsLikeCesiumNative)
             "Provider A"}));
 }
 
+TEST(GoogleMapTilesImageryProviderTest, LoadCreditsFetchesGlobalViewportsLikeCesiumNative) {
+    GoogleMapTilesExistingSessionOptions options;
+    options.apiBaseUrl = "https://tile.googleapis.com";
+    options.session = "session";
+    options.key = "key";
+    options.maximumLevel = 2;
+    GoogleMapTilesImageryProvider provider(options, "initial attribution");
+
+    const std::string zoom0Url = googleMapTilesViewportUrl(
+        options,
+        0,
+        -180.0,
+        -90.0,
+        180.0,
+        90.0);
+    const std::string zoom1Url = googleMapTilesViewportUrl(
+        options,
+        1,
+        -180.0,
+        -90.0,
+        180.0,
+        90.0);
+    const std::string zoom2Url = googleMapTilesViewportUrl(
+        options,
+        2,
+        -180.0,
+        -90.0,
+        180.0,
+        90.0);
+    const std::string zoom0Json =
+        R"json({"copyright": "Imagery ©2026 Provider A"})json";
+    const std::string zoom1Json =
+        R"json({"copyright": "Imagery ©2026 Provider A, Provider B"})json";
+    const std::string zoom2Json =
+        R"json({"copyright": "Imagery ©2026 Provider C, Inc."})json";
+    QueuedGoogleMapTilesPlatformBridge bridge(
+        {{zoom0Url, std::vector<uint8_t>(zoom0Json.begin(), zoom0Json.end())},
+         {zoom1Url, std::vector<uint8_t>(zoom1Json.begin(), zoom1Json.end())},
+         {zoom2Url, std::vector<uint8_t>(zoom2Json.begin(), zoom2Json.end())}});
+    provider.setPlatformBridge(&bridge);
+
+    provider.loadCredits();
+
+    ASSERT_EQ(3u, bridge.requestedUrls.size());
+    EXPECT_EQ(zoom0Url, bridge.requestedUrls[0]);
+    EXPECT_EQ(zoom1Url, bridge.requestedUrls[1]);
+    EXPECT_EQ(zoom2Url, bridge.requestedUrls[2]);
+    EXPECT_EQ(
+        "Imagery ©2026 Provider A, Provider B, Provider C, Inc.",
+        provider.attribution());
+}
+
 TEST(GoogleMapTilesImageryProviderTest, ConvertsViewportRectsToTileRangesLikeCesiumNative) {
     GoogleMapTilesViewportParseResult viewport;
     viewport.valid = true;

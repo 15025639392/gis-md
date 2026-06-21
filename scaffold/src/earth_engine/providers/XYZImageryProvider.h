@@ -2,6 +2,7 @@
 
 #include "ImageryProvider.h"
 #include <atomic>
+#include <mutex>
 #include <string>
 
 namespace earth_engine {
@@ -44,7 +45,7 @@ public:
     std::string buildUrl(const TileKey& key) const override;
     bool supportsTile(const TileKey& key) const override;
     TileKey providerKeyForTile(const TileKey& key) const override;
-    std::string attribution() const override { return attribution_; }
+    std::string attribution() const override;
 
     void requestTile(const TileKey& key,
                      CancellationToken token,
@@ -57,9 +58,14 @@ public:
     std::unique_ptr<DecodedImage> decodeTile(
         const uint8_t* data, size_t len) override;
 
+protected:
+    void setAttribution(std::string attribution);
+    PlatformBridge* platformBridge() const { return platformBridge_; }
+
 private:
     std::string urlTemplate_;
     std::string attribution_;
+    mutable std::mutex attributionMutex_;
     int minZoom_ = 0;
     int maxZoom_ = 25;
     int tileWidth_ = 256;
@@ -73,8 +79,6 @@ private:
     std::atomic<int> activeWorkerBlockingRequests_{0};
     std::atomic<int> peakWorkerBlockingRequests_{0};
 
-protected:
-    PlatformBridge* platformBridge() const { return platformBridge_; }
 };
 
 } // namespace earth_engine
