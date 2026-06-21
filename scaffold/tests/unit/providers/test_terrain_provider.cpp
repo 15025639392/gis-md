@@ -1964,6 +1964,24 @@ TEST(TileMapServiceUrlTest, LoadableXmlRejectsUnsupportedSrsLikeCesiumNative) {
         <TileSets profile="global-geodetic" />
       </TileMap>
     )xml"));
+
+    EXPECT_FALSE(tileMapServiceXmlIsLoadable(R"xml(
+      <TileMap>
+        <Metadata>
+          <SRS>EPSG:4326</SRS>
+          <TileSets profile="global-geodetic" />
+        </Metadata>
+      </TileMap>
+    )xml"));
+
+    EXPECT_FALSE(tileMapServiceXmlIsLoadable(R"xml(
+      <TileMap>
+        <SRS>EPSG:4326</SRS>
+        <Metadata>
+          <TileSets profile="global-geodetic" />
+        </Metadata>
+      </TileMap>
+    )xml"));
 }
 
 TEST(TileMapServiceUrlTest, FallsBackToSrsForUnknownProfileLikeCesiumNative) {

@@ -240,6 +240,124 @@ std::optional<std::string> firstElementText(std::string_view xml,
     return std::string(xml.substr(start, end - start));
 }
 
+std::optional<std::string_view> rootContent(std::string_view xml) {
+    size_t rootStart = xml.find('<');
+    while (rootStart != std::string_view::npos) {
+        if (rootStart + 1 >= xml.size()) {
+            return std::nullopt;
+        }
+        const char marker = xml[rootStart + 1];
+        if (marker != '?' && marker != '!') {
+            break;
+        }
+        const std::string_view close = marker == '?' ? "?>" : ">";
+        const size_t skipped = xml.find(close, rootStart + 2);
+        if (skipped == std::string_view::npos) {
+            return std::nullopt;
+        }
+        rootStart = xml.find('<', skipped + close.size());
+    }
+    if (rootStart == std::string_view::npos || rootStart + 1 >= xml.size() ||
+        xml[rootStart + 1] == '/') {
+        return std::nullopt;
+    }
+
+    size_t nameStart = rootStart + 1;
+    while (nameStart < xml.size() &&
+           std::isspace(static_cast<unsigned char>(xml[nameStart]))) {
+        ++nameStart;
+    }
+    size_t index = nameStart;
+    while (index < xml.size() && isXmlNameCharacter(xml[index])) {
+        ++index;
+    }
+    if (index == nameStart) {
+        return std::nullopt;
+    }
+    const std::string rootName(xml.substr(nameStart, index - nameStart));
+    const size_t openEnd = xml.find('>', index);
+    if (openEnd == std::string_view::npos || openEnd == rootStart ||
+        xml[openEnd - 1] == '/') {
+        return std::string_view();
+    }
+
+    const std::string close = "</" + rootName + ">";
+    const size_t closeStart = xml.rfind(close);
+    if (closeStart == std::string_view::npos || closeStart <= openEnd) {
+        return std::nullopt;
+    }
+    return xml.substr(openEnd + 1, closeStart - openEnd - 1);
+}
+
+std::optional<std::string_view> directChildTag(std::string_view xml,
+                                               std::string_view tagName) {
+    size_t index = 0;
+    int depth = 0;
+    while (index < xml.size()) {
+        const size_t start = xml.find('<', index);
+        if (start == std::string_view::npos) {
+            return std::nullopt;
+        }
+        if (start + 1 >= xml.size()) {
+            return std::nullopt;
+        }
+        const char marker = xml[start + 1];
+        if (marker == '?' || marker == '!') {
+            const size_t skipped =
+                xml.find(marker == '?' ? "?>" : ">", start + 2);
+            if (skipped == std::string_view::npos) {
+                return std::nullopt;
+            }
+            index = skipped + (marker == '?' ? 2 : 1);
+            continue;
+        }
+        if (marker == '/') {
+            depth = std::max(0, depth - 1);
+            const size_t end = xml.find('>', start + 2);
+            if (end == std::string_view::npos) {
+                return std::nullopt;
+            }
+            index = end + 1;
+            continue;
+        }
+
+        const size_t nameStart = start + 1;
+        size_t nameEnd = nameStart;
+        while (nameEnd < xml.size() && isXmlNameCharacter(xml[nameEnd])) {
+            ++nameEnd;
+        }
+        const size_t end = xml.find('>', nameEnd);
+        if (end == std::string_view::npos) {
+            return std::nullopt;
+        }
+        if (depth == 0 &&
+            xml.substr(nameStart, nameEnd - nameStart) == tagName) {
+            return xml.substr(start, end - start + 1);
+        }
+        if (end == start || xml[end - 1] != '/') {
+            ++depth;
+        }
+        index = end + 1;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> directChildElementText(std::string_view xml,
+                                                  std::string_view tagName) {
+    const std::optional<std::string_view> tag = directChildTag(xml, tagName);
+    if (!tag) {
+        return std::nullopt;
+    }
+
+    const size_t start = tag->data() - xml.data() + tag->size();
+    const std::string close = "</" + std::string(tagName) + ">";
+    const size_t end = xml.find(close, start);
+    if (end == std::string_view::npos) {
+        return std::string();
+    }
+    return std::string(xml.substr(start, end - start));
+}
+
 void parseProfileAndSrs(std::string_view xml, TileMapServiceMetadata& metadata) {
     std::string profile = "mercator";
     if (const std::optional<std::string_view> tileSets =
@@ -411,11 +529,17 @@ std::unique_ptr<TileScheme> tileMapServiceTileScheme(
 
 bool tileMapServiceXmlIsLoadable(const std::string& xml) {
     const std::string_view view(xml);
-    if (!firstTag(view, "TileSets")) {
+    const std::optional<std::string_view> root = rootContent(view);
+    if (!root) {
         return false;
     }
 
-    const std::optional<std::string> srs = firstElementText(view, "SRS");
+    if (!directChildTag(*root, "TileSets")) {
+        return false;
+    }
+
+    const std::optional<std::string> srs =
+        directChildElementText(*root, "SRS");
     if (!srs) {
         return false;
     }
