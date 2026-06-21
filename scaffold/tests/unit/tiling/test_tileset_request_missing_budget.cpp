@@ -1036,6 +1036,46 @@ TEST(
 
 TEST(
     TilesetRequestMissingBudgetTest,
+    ClearChildrenIgnoresStaleContentCallback) {
+    const TileKey contentKey{"Geographic-TMS", 1, 0, 0};
+    auto provider =
+        std::make_unique<ManualCompletionContentProvider>(contentKey);
+    ManualCompletionContentProvider* rawProvider = provider.get();
+    DummyRenderDevice device;
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        &device,
+        TilesetOptions{},
+        std::move(provider));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    TilesetTile* child = TilesetTestAccess::ensureTile(tileset, contentKey);
+    ASSERT_NE(root, nullptr);
+    ASSERT_NE(child, nullptr);
+    ASSERT_EQ(child->parent, root);
+
+    TilesetTestAccess::requestMissingTile(tileset, contentKey);
+    ASSERT_EQ(rawProvider->pendingRequests.size(), 1u);
+
+    TilesetTestAccess::clearChildrenRecursively(tileset, *root);
+    ASSERT_EQ(TilesetTestAccess::findTile(tileset, contentKey), nullptr);
+
+    EXPECT_TRUE(rawProvider->completeWithModel(
+        contentKey,
+        makeTriangleGltfModel()));
+    TilesetTestAccess::processPendingUploads(tileset);
+
+    EXPECT_EQ(TilesetTestAccess::findTile(tileset, contentKey), nullptr);
+    const TilesetLoadDiagnostics diagnostics = tileset.loadDiagnostics();
+    EXPECT_EQ(diagnostics.pendingTerrainTotal(), 0);
+    EXPECT_EQ(diagnostics.pendingContentTotal(), 0);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
     FrameResourceBudgetSeparatesRasterFanoutFromTerrainRequests) {
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 2;
