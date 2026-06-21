@@ -15,9 +15,11 @@
 #include "earth_engine/tiling/TileScheme.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <memory>
 #include <deque>
+#include <thread>
 #include <vector>
 
 using namespace earth_engine;
@@ -239,6 +241,21 @@ public:
     int uploadCount = 0;
     int maxTextureSizeValue = 2048;
     DecodedImage lastUpload;
+};
+
+class SlowRasterUploader final : public RasterTextureUploader {
+public:
+    int maxTextureSize() const override { return 2048; }
+
+    std::unique_ptr<Texture> uploadRasterTexture(
+        const DecodedImage& image,
+        const RasterTextureUploadOptions&) override {
+        ++uploadCount;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        return std::make_unique<TestTexture>(image.width, image.height);
+    }
+
+    int uploadCount = 0;
 };
 
 class RecordingPrepareRendererResources final
@@ -925,6 +942,44 @@ TEST(RasterOverlayLifecycleTest, SharedFrameBudgetLimitsRasterUploadsPerFrame) {
     provider.setFrameNumber(2);
     EXPECT_EQ(1, provider.processPendingUploads(false, &budget));
     EXPECT_EQ(2, uploaderPtr->uploadCount);
+}
+
+TEST(RasterOverlayLifecycleTest, ElapsedUploadBudgetDefersRemainingUploads) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<SlowRasterUploader>();
+    SlowRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    TileKey firstKey{scheme->id(), 1, 0, 0};
+    TileKey secondKey{scheme->id(), 1, 1, 0};
+    auto firstTile = provider.getTile(firstKey);
+    auto secondTile = provider.getTile(secondKey);
+    ASSERT_TRUE(provider.loadTileThrottled(*firstTile));
+    ASSERT_TRUE(provider.loadTileThrottled(*secondTile));
+    ASSERT_EQ(2u, imagery.pending.size());
+
+    imagery.completeNext();
+    imagery.completeNext();
+    ASSERT_EQ(2, provider.getPendingUploadCount());
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterUploadsPerFrame = 4;
+    config.mainThreadTimeMs = 0.001;
+    FrameResourceBudget firstFrameBudget;
+    firstFrameBudget.beginFrame(1, config);
+
+    EXPECT_EQ(1, provider.processPendingUploads(false, &firstFrameBudget));
+    EXPECT_EQ(1, uploaderPtr->uploadCount);
+    EXPECT_EQ(1, provider.getPendingUploadCount());
+    EXPECT_EQ(1u, firstFrameBudget.rasterUploadsUsed());
+
+    FrameResourceBudget secondFrameBudget;
+    secondFrameBudget.beginFrame(2, config);
+
+    EXPECT_EQ(1, provider.processPendingUploads(false, &secondFrameBudget));
+    EXPECT_EQ(2, uploaderPtr->uploadCount);
+    EXPECT_EQ(0, provider.getPendingUploadCount());
 }
 
 TEST(RasterOverlayLifecycleTest, DefaultFrameBudgetUploadsMultipleRasterTiles) {
