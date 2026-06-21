@@ -767,9 +767,13 @@ private:
         std::optional<LoadedSourceImage> cachedSource;
         {
             std::lock_guard<std::mutex> lock(cacheMutex);
-            auto it = cache.find(sourceCacheKey(originalKey));
+            const std::string originalCacheKey = sourceCacheKey(originalKey);
+            auto it = cache.find(originalCacheKey);
+            if (it == cache.end() && ancestorFallback) {
+                it = cache.find(sourceCacheKey(requestedKey));
+            }
             if (it != cache.end() && it->second.image) {
-                touchCachedSource(sourceCacheKey(originalKey), it->second);
+                touchCachedSource(it->first, it->second);
                 LoadedSourceImage source;
                 source.key = it->second.key;
                 source.bounds = it->second.bounds;
