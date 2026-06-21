@@ -86,7 +86,7 @@ void TileContentAccess::ensureTileChildren(TilesetTile& tile) {
             tileScheme_.maxZoom(),
             terrainProvider_ != nullptr,
             isAvailabilityBoundaryTile(tile) &&
-                !hasLoadedTerrainContent(tile)},
+                !hasResolvedAvailabilityBoundaryContent(tile)},
         [this](const TileKey& key) {
             return ensureTile(key);
         },
@@ -95,11 +95,9 @@ void TileContentAccess::ensureTileChildren(TilesetTile& tile) {
         });
 }
 
-bool TileContentAccess::hasLoadedTerrainContent(
+bool TileContentAccess::hasResolvedAvailabilityBoundaryContent(
     const TilesetTile& tile) const {
-    const auto& terrainCache = contentLifecycle_.terrainCache();
-    const auto it = terrainCache.find(TileCacheKey::forTile(tile.key));
-    return it != terrainCache.end() && it->second != nullptr;
+    return tile.content.loadState > TileLoadState::ContentLoading;
 }
 
 bool TileContentAccess::isAvailabilityBoundaryTile(
@@ -129,8 +127,8 @@ bool TileContentAccess::canRefine(const TilesetTile& tile) const {
         [this](const TilesetTile& candidate) {
             return isAvailabilityBoundaryTile(candidate);
         },
-        [this](const TilesetTile& candidate) {
-            return hasLoadedTerrainContent(candidate);
+        [](const TilesetTile& candidate) {
+            return candidate.content.loadState > TileLoadState::ContentLoading;
         });
 }
 

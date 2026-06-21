@@ -136,15 +136,6 @@ struct TilesetTestAccess {
 
 namespace {
 
-std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
-    auto heightmap = std::make_unique<DecodedHeightmap>();
-    heightmap->tileSize = 2;
-    heightmap->heights = {heightMeters, heightMeters, heightMeters, heightMeters};
-    heightmap->minHeight = heightMeters;
-    heightmap->maxHeight = heightMeters;
-    return heightmap;
-}
-
 class SelectionTreeContentProvider final : public TilesetContentProvider {
 public:
     SelectionTreeContentProvider(
@@ -2108,11 +2099,6 @@ TEST(
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     EXPECT_TRUE(root->children.empty());
 
-    auto rootHeightmap = makeFlatHeightmap(10.0f);
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        std::move(rootHeightmap));
     auto rootSurfaceMesh = std::make_unique<SurfaceTileMesh>();
     rootSurfaceMesh->hasMetadataAvailability = true;
     rootSurfaceMesh->metadataAvailability = {{0, 0, 0, 0, 0}};
@@ -2127,12 +2113,11 @@ TEST(
         EXPECT_TRUE(root->children.empty());
     }
 
-    root->content.loadState = TileLoadState::Done;
-    DecodedHeightmap loadedHeightmap;
+    root->content.loadState = TileLoadState::ContentLoaded;
     TileQuantizedMeshAvailabilityIngestor::ingest(
         providerPtr,
         rootKey,
-        &loadedHeightmap,
+        nullptr,
         root->content.renderContent.surfaceMesh());
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     EXPECT_EQ(4u, root->children.size());

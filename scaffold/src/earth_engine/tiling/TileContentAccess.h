@@ -25,7 +25,7 @@ public:
 
     TilesetTile* ensureTile(const TileKey& key);
     void ensureTileChildren(TilesetTile& tile);
-    bool hasLoadedTerrainContent(const TilesetTile& tile) const;
+    bool hasResolvedAvailabilityBoundaryContent(const TilesetTile& tile) const;
     bool isAvailabilityBoundaryTile(const TilesetTile& tile) const;
     bool canRefine(const TilesetTile& tile) const;
 
