@@ -249,3 +249,33 @@ TEST(TileLoadLifecycleTest, CancelErasesActiveRequests) {
     EXPECT_TRUE(keptToken.isCancelled());
     EXPECT_FALSE(lifecycle.hasPendingWork());
 }
+
+TEST(TileLoadLifecycleTest, DestroyWithoutRequestsReturnsImmediately) {
+    TileLoadLifecycle lifecycle;
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            TileKey{"test", 0, 0, 0},
+            "terrain-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            nullptr});
+        lifecycle.pendingLoads().addContentTerminalResult(
+            PendingContentTerminalResult{
+                TileKey{"test", 0, 1, 0},
+                "content-terminal",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadStatus::RetryLater});
+    }
+
+    lifecycle.markDestroyingCancelAndWait();
+
+    EXPECT_FALSE(lifecycle.hasPendingWork());
+    EXPECT_EQ(0, lifecycle.pendingRequestCount());
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        EXPECT_FALSE(lifecycle.requestState().destroying());
+    }
+}
