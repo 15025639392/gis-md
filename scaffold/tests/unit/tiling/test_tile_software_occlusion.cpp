@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/S2CellID.h"
+#include "earth_engine/tiling/TileSoftwareOcclusionPolicy.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 
@@ -53,4 +56,22 @@ TEST(TileSoftwareOcclusionTest, DefaultTilesetOcclusionCullsFarSideTile) {
     EXPECT_EQ(
         TilesetTestAccess::checkOcclusion(tileset, *farSide),
         TileOcclusionState::Occluded);
+}
+
+TEST(TileSoftwareOcclusionTest, KeepsNonBoxVolumeUnderCameraVisible) {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey key{"Geographic-TMS", 2, 4, 2};
+    TilesetTile tile;
+    tile.key = key;
+    tile.bounds = scheme->tileToRectangle(key);
+    tile.boundingVolume = TileBoundingVolume::fromS2Cell(
+        S2CellBoundingVolume(S2CellID::fromToken("1"), 0.0, 100000.0));
+
+    const Vec3 cameraPosition =
+        Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic::fromRadians(0.0, 0.0, 1000000.0));
+
+    EXPECT_EQ(
+        TileSoftwareOcclusionPolicy::check(tile, cameraPosition),
+        TileOcclusionState::NotOccluded);
 }
