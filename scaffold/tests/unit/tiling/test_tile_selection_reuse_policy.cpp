@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/tiling/TileSelectionReusePolicy.h"
+#include "earth_engine/tiling/TileSelectionReuseState.h"
 
 using namespace earth_engine;
 
@@ -175,4 +176,63 @@ TEST(TileSelectionReusePolicyTest, ViewportChangeRejectsReuse) {
     EXPECT_EQ(
         TileSelectionReusePolicy::classifyReuseWithReason(input).rejectReason,
         TileSelectionReuseRejectReason::ViewportChanged);
+}
+
+TEST(TileSelectionReusePolicyTest, StaleAgeWindowRejectsOlderReuse) {
+    const FrameState previousFrame = makeBaseFrame(10);
+    const FrameState movingFrame = makeMovingFrame(previousFrame, 12);
+
+    TileSelectionReuseInput input =
+        makeInput(movingFrame, previousFrame, true);
+    input.maxStaleFrameAge = 1;
+
+    EXPECT_FALSE(TileSelectionReusePolicy::canReuseSelection(input));
+    EXPECT_EQ(
+        TileSelectionReusePolicy::classifyReuseWithReason(input).rejectReason,
+        TileSelectionReuseRejectReason::StaleAgeExceeded);
+}
+
+TEST(TileSelectionReusePolicyTest, StaleReuseRejectsLargeViewMovement) {
+    const FrameState previousFrame = makeBaseFrame(10);
+    FrameState farFrame = makeMovingFrame(previousFrame, 11);
+    farFrame.selectorViews[0].position = Vec3(1200.0, 0.0, 0.0);
+
+    const TileSelectionReuseInput input =
+        makeInput(farFrame, previousFrame, true);
+
+    EXPECT_FALSE(TileSelectionReusePolicy::canReuseSelection(input));
+    EXPECT_EQ(
+        TileSelectionReusePolicy::classifyReuseWithReason(input).rejectReason,
+        TileSelectionReuseRejectReason::StaleViewTooDifferent);
+}
+
+TEST(TileSelectionReuseStateTest, DefaultStaleWindowSpansThreeFrames) {
+    const FrameState previousFrame = makeBaseFrame(10);
+    TileSelectionReuseState reuseState;
+    reuseState.commit(previousFrame, 7, 9);
+    reuseState.recordRequestOutcome(true, true);
+
+    const FrameState thirdStaleFrame = makeMovingFrame(previousFrame, 13);
+    EXPECT_EQ(
+        reuseState.classifyReuse(
+            thirdStaleFrame,
+            7,
+            9,
+            true,
+            false,
+            true,
+            true),
+        TileSelectionReuseMode::Stale);
+
+    const FrameState fourthStaleFrame = makeMovingFrame(previousFrame, 14);
+    EXPECT_EQ(
+        reuseState.classifyReuse(
+            fourthStaleFrame,
+            7,
+            9,
+            true,
+            false,
+            true,
+            true),
+        TileSelectionReuseMode::None);
 }
