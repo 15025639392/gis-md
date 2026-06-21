@@ -1,6 +1,7 @@
 #include "TileRasterOverlayState.h"
 
 #include "RasterMappedToTilesetTile.h"
+#include "SurfaceRasterBinding.h"
 
 namespace earth_engine {
 
@@ -55,6 +56,12 @@ void TileRasterOverlayState::resizeMappingSlots(
 bool TileRasterOverlayState::hasReadyMapping(size_t index) const {
     const RasterMappedToTilesetTile* mapping = mappingAt(index);
     return mapping && mapping->getReadyTile() != nullptr;
+}
+
+bool TileRasterOverlayState::hasDrawableReadyMapping(size_t index) const {
+    const RasterMappedToTilesetTile* mapping = mappingAt(index);
+    return chooseSurfaceRasterBinding(mapping).kind !=
+           SurfaceRasterBindingKind::None;
 }
 
 void TileRasterOverlayState::releaseReferences(

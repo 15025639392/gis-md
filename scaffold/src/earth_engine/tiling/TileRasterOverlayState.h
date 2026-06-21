@@ -41,7 +41,12 @@ public:
     RasterMappedToTilesetTile& ensureMapping(size_t index);
     void releaseMapping(size_t index,
                         IPrepareRendererResources* pPrepRenderer);
+    /// Cover-ready for selection/renderability: a failed ready raster still
+    /// counts here so required imagery does not permanently block geometry.
     bool hasReadyMapping(size_t index) const;
+    /// Drawable-ready for render command binding: requires a real Loaded/Done
+    /// raster tile with a texture, matching SurfaceRasterBinding.
+    bool hasDrawableReadyMapping(size_t index) const;
     template <typename Fn>
     void forEachMapping(Fn&& fn) const {
         for (const auto& mapping : mappings_) {

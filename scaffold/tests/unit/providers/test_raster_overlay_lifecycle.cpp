@@ -2089,6 +2089,68 @@ TEST(RasterOverlayLifecycleTest, SurfaceRasterBindingAcceptsOnlyRealLoadedTiles)
               chooseSurfaceRasterBinding(&noTextureMapped).kind);
 }
 
+TEST(RasterOverlayLifecycleTest,
+     RasterOverlayStateSeparatesCoverReadyFromDrawableReady) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    TileKey key{scheme->id(), 1, 1, 1};
+    RasterOverlayDetails details;
+    details.setGeographicRectangle(scheme->tileToRectangle(key));
+    std::vector<RasterOverlayProjection> missing;
+
+    TilesetTile tile(key, scheme->tileToRectangle(key));
+    RasterMappedToTilesetTile& mapped =
+        tile.rasterOverlayState.ensureMapping(0);
+    mapped.update(key, details, 256.0, 256.0, provider, nullptr, missing);
+    RasterOverlayTile* failedTile = mapped.getLoadingTile();
+    ASSERT_NE(nullptr, failedTile);
+    failedTile->setState(RasterOverlayTile::LoadState::Failed);
+
+    mapped.update(key, details, 256.0, 256.0, provider, nullptr, missing);
+
+    EXPECT_EQ(failedTile, mapped.getReadyTile());
+    EXPECT_TRUE(tile.rasterOverlayState.hasReadyMapping(0));
+    EXPECT_FALSE(tile.rasterOverlayState.hasDrawableReadyMapping(0));
+    EXPECT_EQ(SurfaceRasterBindingKind::None,
+              chooseSurfaceRasterBinding(&mapped).kind);
+
+    TileKey noTextureKey{scheme->id(), 1, 0, 1};
+    RasterOverlayDetails noTextureDetails;
+    noTextureDetails.setGeographicRectangle(
+        scheme->tileToRectangle(noTextureKey));
+    RasterMappedToTilesetTile& noTextureMapped =
+        tile.rasterOverlayState.ensureMapping(1);
+    noTextureMapped.update(
+        noTextureKey,
+        noTextureDetails,
+        256.0,
+        256.0,
+        provider,
+        nullptr,
+        missing);
+    RasterOverlayTile* noTextureTile = noTextureMapped.getLoadingTile();
+    ASSERT_NE(nullptr, noTextureTile);
+    noTextureTile->setState(RasterOverlayTile::LoadState::Loaded);
+
+    noTextureMapped.update(
+        noTextureKey,
+        noTextureDetails,
+        256.0,
+        256.0,
+        provider,
+        nullptr,
+        missing);
+
+    EXPECT_EQ(noTextureTile, noTextureMapped.getReadyTile());
+    EXPECT_TRUE(tile.rasterOverlayState.hasReadyMapping(1));
+    EXPECT_FALSE(tile.rasterOverlayState.hasDrawableReadyMapping(1));
+
+    noTextureTile->setTexture(std::make_unique<TestTexture>(4, 4));
+    EXPECT_TRUE(tile.rasterOverlayState.hasDrawableReadyMapping(1));
+}
+
 TEST(RasterOverlayLifecycleTest, SurfaceRasterBindingClassifiesAncestorWhileChildLoads) {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createGeographicTMS();
