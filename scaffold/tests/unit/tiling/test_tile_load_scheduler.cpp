@@ -67,6 +67,31 @@ public:
     int requestCount = 0;
 };
 
+class DeferredTerrainProvider final : public TerrainProvider {
+public:
+    std::string id() const override { return "scheduler-deferred-terrain"; }
+    std::string schemeId() const override { return "test"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 2; }
+    int tileSize() const override { return 2; }
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://scheduler-deferred-terrain";
+    }
+    void requestTile(
+        const TileKey&,
+        CancellationToken,
+        HeightmapCallback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        ++requestCount;
+    }
+    std::unique_ptr<DecodedHeightmap> decodeTile(const uint8_t*, size_t)
+        override {
+        return nullptr;
+    }
+
+    int requestCount = 0;
+};
+
 } // namespace
 
 TEST(TileLoadSchedulerTest, BlocksContentRequestWhenInflightIsFull) {
@@ -519,4 +544,78 @@ TEST(TileLoadSchedulerTest, SortsAndQueuesUpsampledTerrain) {
     EXPECT_EQ(prepareOrder[1], normalKey.x);
     EXPECT_EQ(markedOrder, prepareOrder);
     EXPECT_EQ(lifecycle.counts().terrainUploads, 2u);
+}
+
+TEST(TileLoadSchedulerTest, ContinuesAfterUpsampleSourceWait) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey waitingUpsampleKey{"test", 2, 0, 0};
+    const TileKey loadableTerrainKey{"test", 1, 1, 0};
+    TilesetTile waitingTile(waitingUpsampleKey, Rectangle{});
+    waitingTile.content.upsampledFromParent = true;
+    DeferredTerrainProvider provider;
+    std::vector<int> plannedLevels;
+    std::vector<int> preparedLevels;
+    std::vector<int> markedLevels;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {
+                TileLoadRequest{
+                    loadableTerrainKey,
+                    TileLoadPriorityGroup::Normal,
+                    50.0},
+                TileLoadRequest{
+                    waitingUpsampleKey,
+                    TileLoadPriorityGroup::Urgent,
+                    100.0},
+            },
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                &provider,
+                nullptr},
+            cacheKeyForTile,
+            [&waitingUpsampleKey, &waitingTile, &plannedLevels](
+                const TileKey& key,
+                const std::string&,
+                TilesetTile*& tileState) {
+                plannedLevels.push_back(key.z);
+                TileLoadRequestSnapshot snapshot;
+                if (key == waitingUpsampleKey) {
+                    tileState = &waitingTile;
+                    snapshot.hasTile = true;
+                    snapshot.upsampledFromParent = true;
+                } else {
+                    tileState = nullptr;
+                    snapshot.terrainProviderSupportsTile = true;
+                }
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [&preparedLevels](TilesetTile& tile, double) {
+                preparedLevels.push_back(tile.key.z);
+                return false;
+            },
+            [&markedLevels](const TileKey& key) {
+                markedLevels.push_back(key.z);
+            });
+
+    ASSERT_EQ(plannedLevels.size(), 2u);
+    ASSERT_EQ(preparedLevels.size(), 1u);
+    ASSERT_EQ(markedLevels.size(), 1u);
+    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_EQ(plannedLevels[0], waitingUpsampleKey.z);
+    EXPECT_EQ(plannedLevels[1], loadableTerrainKey.z);
+    EXPECT_EQ(preparedLevels.front(), waitingUpsampleKey.z);
+    EXPECT_EQ(provider.requestCount, 1);
+    EXPECT_EQ(markedLevels.front(), loadableTerrainKey.z);
+    EXPECT_EQ(lifecycle.pendingRequestCount(), 1u);
+    EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
 }
