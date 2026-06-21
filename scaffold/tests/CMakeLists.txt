@@ -304,6 +304,12 @@ add_executable(test_tile_traversal_details
 target_link_libraries(test_tile_traversal_details PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_traversal_details COMMAND test_tile_traversal_details)
 
+add_executable(test_tile_selection_child_traversal
+    unit/tiling/test_tile_selection_child_traversal.cpp
+)
+target_link_libraries(test_tile_selection_child_traversal PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_selection_child_traversal COMMAND test_tile_selection_child_traversal)
+
 add_executable(test_tile_selection_refinement_policies
     unit/tiling/test_tile_selection_refinement_policies.cpp
 )
