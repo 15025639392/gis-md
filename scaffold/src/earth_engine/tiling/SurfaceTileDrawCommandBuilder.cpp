@@ -168,6 +168,13 @@ void SurfaceTileDrawCommandBuilder::build(
         mesh->waterMask.allWater ? 1.0f : 0.0f,
         !mesh->waterMask.data.empty() ? 1.0f : 0.0f,
         0.0f};
+    if (Texture* waterMaskTexture =
+            tile.content.renderContent.surfaceWaterMaskTexture()) {
+        while (surfaceCommand.textures.size() < 5) {
+            surfaceCommand.textures.push_back(nullptr);
+        }
+        surfaceCommand.textures.push_back(waterMaskTexture);
+    }
     if (context.surfaceClipUv) {
         surfaceCommand.surfaceClipUv = *context.surfaceClipUv;
         surfaceCommand.surfaceClipEnabled = 1.0f;

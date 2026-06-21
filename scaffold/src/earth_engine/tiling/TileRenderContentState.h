@@ -183,6 +183,9 @@ public:
         return surface_.gpuVertexBuffer.get();
     }
     Buffer* surfaceIndexBuffer() const { return surface_.gpuIndexBuffer.get(); }
+    Texture* surfaceWaterMaskTexture() const {
+        return surfaceWaterMaskTexture_.get();
+    }
     const Vec3& renderLocalOrigin() const { return surface_.localOrigin; }
     const std::vector<GltfPrimitiveRenderResources>&
     gltfPrimitiveResourcesForDraw() const {
@@ -219,6 +222,10 @@ public:
                               std::unique_ptr<Buffer> indexBuffer) {
         surface_.gpuVertexBuffer = std::move(vertexBuffer);
         surface_.gpuIndexBuffer = std::move(indexBuffer);
+    }
+
+    void setSurfaceWaterMaskTexture(std::unique_ptr<Texture> texture) {
+        surfaceWaterMaskTexture_ = std::move(texture);
     }
 
     void setGltfLocalOrigin(const Vec3& origin) {
@@ -292,6 +299,11 @@ public:
         if (surface_.gpuIndexBuffer) {
             bytes += static_cast<int64_t>(surface_.gpuIndexBuffer->size());
         }
+        if (surfaceWaterMaskTexture_) {
+            bytes += static_cast<int64_t>(
+                surfaceWaterMaskTexture_->width() *
+                surfaceWaterMaskTexture_->height() * 4);
+        }
         for (const std::unique_ptr<Texture>& texture : gltfTextureResources) {
             if (texture) {
                 bytes += static_cast<int64_t>(
@@ -345,6 +357,7 @@ public:
         surface_.mesh.reset();
         surface_.gpuVertexBuffer.reset();
         surface_.gpuIndexBuffer.reset();
+        surfaceWaterMaskTexture_.reset();
         surface_.meshReady = false;
         surface_.surfaceDrawable = false;
         surface_.surfaceSource = SurfaceDrawableSource::None;
@@ -376,6 +389,7 @@ public:
 
 private:
     TileSurfaceContentState surface_;
+    std::unique_ptr<Texture> surfaceWaterMaskTexture_;
     std::unique_ptr<GltfModel> gltfModel;
     Mat4 gltfContentTransform = Mat4::identity();
     std::vector<std::unique_ptr<Texture>> gltfTextureResources;

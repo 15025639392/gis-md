@@ -92,9 +92,27 @@ void SurfaceMeshResourcePreparer::prepare(TilesetTile& tile,
         ibDesc.type = BufferDesc::Type::Index;
         indexBuffer = device->createBuffer(ibDesc);
     }
+    std::unique_ptr<Texture> waterMaskTexture;
+    if (!mesh->waterMask.allLand && !mesh->waterMask.allWater &&
+        !mesh->waterMask.data.empty()) {
+        TextureDesc waterMaskDesc;
+        waterMaskDesc.width = 256;
+        waterMaskDesc.height = 256;
+        waterMaskDesc.format = TextureDesc::Format::RGBA8;
+        waterMaskDesc.data = mesh->waterMask.data.data();
+        waterMaskDesc.dataSize = mesh->waterMask.data.size();
+        waterMaskDesc.mipmap = false;
+        waterMaskDesc.minFilter = TextureDesc::Filter::Linear;
+        waterMaskDesc.magFilter = TextureDesc::Filter::Linear;
+        waterMaskDesc.wrapS = TextureDesc::Wrap::Clamp;
+        waterMaskDesc.wrapT = TextureDesc::Wrap::Clamp;
+        waterMaskTexture = device->createTexture(waterMaskDesc);
+    }
     tile.content.renderContent.setSurfaceGpuBuffers(
         std::move(vertexBuffer),
         std::move(indexBuffer));
+    tile.content.renderContent.setSurfaceWaterMaskTexture(
+        std::move(waterMaskTexture));
 }
 
 } // namespace earth_engine

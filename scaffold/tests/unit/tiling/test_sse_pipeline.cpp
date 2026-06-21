@@ -4237,6 +4237,10 @@ void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
     root->content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(96),
         std::make_unique<DummyBuffer>(12));
+    auto waterMaskTexture = std::make_unique<DummyTexture>(256, 256);
+    Texture* rawWaterMaskTexture = waterMaskTexture.get();
+    root->content.renderContent.setSurfaceWaterMaskTexture(
+        std::move(waterMaskTexture));
     root->geometricError = 100.0;
     root->content.loadState = TileLoadState::Done;
     root->content.contentKind = TileContentKind::Render;
@@ -4256,8 +4260,8 @@ void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
 
     check(!commands.empty() &&
               commands.front().kind == RenderCommandKind::SurfaceTile &&
-              commands.front().textures.size() == 1 &&
-              commands.front().textures.front() ==
+              commands.front().textures.size() > 5 &&
+              commands.front().textures[0] ==
                   rendererHarness.renderer.surfacePlaceholderTexture() &&
               commands.front().surfaceTextureZoom == -1,
           "Tileset: blocking base imagery draws surface geometry with the shared placeholder texture");
@@ -4273,6 +4277,9 @@ void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
               std::abs(commands.front().surfaceWaterMaskTranslationScale[2] -
                        0.5f) < 1e-6f,
           "Tileset: surface command carries quantized-mesh water mask state");
+    check(commands.front().textures.size() > 5 &&
+              commands.front().textures[5] == rawWaterMaskTexture,
+          "Tileset: surface command binds quantized-mesh water mask texture to unit 5");
     check(!TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: missing blocking base imagery keeps strict complete renderable false");
 }

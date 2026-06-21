@@ -9,6 +9,7 @@
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/terrain/TerrainTile.h"
 #include "earth_engine/providers/TerrainProvider.h"
+#include "earth_engine/renderer/RenderDevice.h"
 
 #include <cmath>
 #include <algorithm>
@@ -20,6 +21,81 @@
 using namespace earth_engine;
 
 namespace {
+
+class DummyBuffer final : public Buffer {
+public:
+    explicit DummyBuffer(size_t byteSize) : byteSize_(byteSize) {}
+    size_t size() const override { return byteSize_; }
+
+private:
+    size_t byteSize_ = 0;
+};
+
+class DummyTexture final : public Texture {
+public:
+    DummyTexture(int width, int height) : width_(width), height_(height) {}
+    int width() const override { return width_; }
+    int height() const override { return height_; }
+
+private:
+    int width_ = 0;
+    int height_ = 0;
+};
+
+class RecordingRenderDevice final : public RenderDevice {
+public:
+    Backend backendType() const override { return Backend::OpenGLES; }
+    int maxTextureSize() const override { return 4096; }
+    int maxDrawBuffers() const override { return 4; }
+    bool supportsFloatTextures() const override { return true; }
+    bool supportsInstancing() const override { return true; }
+    std::string rendererString() const override { return "Recording"; }
+
+    std::unique_ptr<Texture> createTexture(const TextureDesc& desc) override {
+        lastTextureDesc = desc;
+        ++textureCreateCount;
+        return std::make_unique<DummyTexture>(desc.width, desc.height);
+    }
+
+    bool updateTextureRegion(Texture*,
+                             int,
+                             int,
+                             int,
+                             int,
+                             const uint8_t*,
+                             size_t) override {
+        return false;
+    }
+
+    std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) override {
+        ++bufferCreateCount;
+        return std::make_unique<DummyBuffer>(desc.size);
+    }
+
+    bool updateBuffer(Buffer*, size_t, const void*, size_t) override {
+        return false;
+    }
+
+    std::unique_ptr<ShaderProgram> createShader(const ShaderDesc&) override {
+        return nullptr;
+    }
+
+    std::unique_ptr<Framebuffer> createFramebuffer(
+        const FramebufferDesc&) override {
+        return nullptr;
+    }
+
+    void beginFrame() override {}
+    void submit(const RenderCommandList&) override {}
+    void endFrame() override {}
+    void onSurfaceCreated() override {}
+    void onSurfaceChanged(int, int) override {}
+    void onSurfaceDestroyed() override {}
+
+    TextureDesc lastTextureDesc;
+    int textureCreateCount = 0;
+    int bufferCreateCount = 0;
+};
 
 double mixDouble(double a, double b, double t) {
     return a + (b - a) * t;
@@ -647,4 +723,48 @@ TEST(TileSurfaceTest, SurfaceResourceLocalOriginUsesNoSkirtVertexRange) {
     EXPECT_NEAR(1.0, tile.content.renderContent.renderLocalOrigin().x(), 1e-12);
     EXPECT_NEAR(0.0, tile.content.renderContent.renderLocalOrigin().y(), 1e-12);
     EXPECT_NEAR(0.0, tile.content.renderContent.renderLocalOrigin().z(), 1e-12);
+}
+
+TEST(TileSurfaceTest, SurfaceResourcePreparerUploadsOnlyMixedWaterMaskTexture) {
+    auto mesh = std::make_unique<SurfaceTileMesh>();
+    SurfaceVertex a;
+    a.positionEcef = Vec3(6378137.0, 0.0, 0.0);
+    SurfaceVertex b;
+    b.positionEcef = Vec3(0.0, 6378137.0, 0.0);
+    SurfaceVertex c;
+    c.positionEcef = Vec3(0.0, 0.0, 6356752.314245);
+    mesh->vertices = {a, b, c};
+    mesh->indices = {0, 1, 2};
+    mesh->waterMask.allLand = false;
+    mesh->waterMask.allWater = false;
+    mesh->waterMask.data.resize(256u * 256u * 4u, 127);
+
+    TilesetTile mixed(TileKey{"Geographic-TMS", 0, 0, 0}, Rectangle{});
+    mixed.content.renderContent.setSurfaceMesh(std::move(mesh));
+
+    RecordingRenderDevice device;
+    SurfaceMeshResourcePreparer::prepare(mixed, &device);
+
+    ASSERT_NE(nullptr, mixed.content.renderContent.surfaceWaterMaskTexture());
+    EXPECT_EQ(1, device.textureCreateCount);
+    EXPECT_EQ(256, device.lastTextureDesc.width);
+    EXPECT_EQ(256, device.lastTextureDesc.height);
+    EXPECT_EQ(TextureDesc::Format::RGBA8, device.lastTextureDesc.format);
+    EXPECT_EQ(TextureDesc::Wrap::Clamp, device.lastTextureDesc.wrapS);
+    EXPECT_EQ(TextureDesc::Wrap::Clamp, device.lastTextureDesc.wrapT);
+    EXPECT_FALSE(device.lastTextureDesc.mipmap);
+
+    auto waterOnlyMesh = std::make_unique<SurfaceTileMesh>();
+    waterOnlyMesh->vertices = {a, b, c};
+    waterOnlyMesh->indices = {0, 1, 2};
+    waterOnlyMesh->waterMask.allLand = false;
+    waterOnlyMesh->waterMask.allWater = true;
+    TilesetTile waterOnly(TileKey{"Geographic-TMS", 0, 0, 0}, Rectangle{});
+    waterOnly.content.renderContent.setSurfaceMesh(std::move(waterOnlyMesh));
+
+    RecordingRenderDevice waterOnlyDevice;
+    SurfaceMeshResourcePreparer::prepare(waterOnly, &waterOnlyDevice);
+
+    EXPECT_EQ(nullptr, waterOnly.content.renderContent.surfaceWaterMaskTexture());
+    EXPECT_EQ(0, waterOnlyDevice.textureCreateCount);
 }
