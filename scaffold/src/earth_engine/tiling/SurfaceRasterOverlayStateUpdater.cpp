@@ -30,6 +30,10 @@ SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
     tile.rasterOverlayState.clearMissingProjections();
     const RasterOverlayDetails& overlayDetails =
         tile.content.renderContent.rasterOverlayDetails();
+    const bool hasRenderContentDetails =
+        tile.content.contentKind == TileContentKind::Render &&
+        (tile.content.renderContent.hasSurfaceMesh() ||
+         tile.content.renderContent.hasGltfModel());
 
     std::optional<size_t> firstMoreDetailAvailable;
     std::optional<size_t> firstUnknownAvailability;
@@ -77,7 +81,7 @@ SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
                 tile.parent,
                 i,
                 tile.boundingVolume ? &*tile.boundingVolume : nullptr,
-                tile.content.renderContent.hasSurfaceMesh());
+                hasRenderContentDetails);
         if (tile.rasterOverlayState.hasMissingProjections()) {
             action.unloadTileContent = true;
             return action;

@@ -11546,6 +11546,36 @@ void testTileContentUploadPolicyPreparesGltfRenderContent() {
           "TileContentUploadPolicy: glTF upload replaces terrain and old render resources");
 }
 
+void testGltfRenderContentProvidesRasterOverlayDetails() {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    auto staleMesh = std::make_unique<SurfaceTileMesh>();
+    staleMesh->rasterOverlayDetails.setGeographicRectangle(
+        Rectangle{0.0, 1.0, 2.0, 3.0});
+    tile.content.renderContent.setSurfaceMesh(std::move(staleMesh));
+
+    auto model = std::make_unique<GltfModel>();
+    const Rectangle contentRectangle{4.0, 5.0, 6.0, 7.0};
+    model->rasterOverlayDetails.setGeographicRectangle(contentRectangle);
+    TileContentLoadResult result = TileContentLoadResult::render(
+        std::move(model));
+
+    TileContentUploadPolicy::prepareGltfRenderContent(
+        tile,
+        std::move(result));
+
+    const RasterOverlayDetails& details =
+        tile.content.renderContent.rasterOverlayDetails();
+    const Rectangle* found = details.findRectangleForOverlayProjection(
+        RasterOverlayProjection::Geographic);
+    check(found && found->west() == contentRectangle.west() &&
+              found->south() == contentRectangle.south() &&
+              found->east() == contentRectangle.east() &&
+              found->north() == contentRectangle.north() &&
+              tile.content.renderContent.hasGltfModel() &&
+              !tile.content.renderContent.hasSurfaceMesh(),
+          "TileRenderContentState: glTF content carries raster overlay details like cesium-native TileLoadResult");
+}
+
 void testTileContentUploadPolicyMarksGltfRenderResourceFailure() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.renderContent.setGltfContent(std::make_unique<GltfModel>());
@@ -26455,6 +26485,7 @@ int main() {
     testTileTerminalLoadPolicyClearsRasterMappingsForNonRenderTerminalStates();
     testTileTerminalLoadCommitterWritesEmptyRegistryActions();
     testTileContentUploadPolicyPreparesGltfRenderContent();
+    testGltfRenderContentProvidesRasterOverlayDetails();
     testTileContentUploadPolicyMarksGltfRenderResourceFailure();
     testTileContentUploadCommitterAppliesRenderResourceOutcome();
     testTileTerrainUploadPolicyMarksTerrainRenderContentStates();

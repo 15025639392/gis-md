@@ -30,7 +30,8 @@ void TileRasterOverlayPrefetcher::prefetch(
 
     const bool hasRenderContentDetails =
         tile.content.contentKind == TileContentKind::Render &&
-        tile.content.renderContent.hasSurfaceMesh();
+        (tile.content.renderContent.hasSurfaceMesh() ||
+         tile.content.renderContent.hasGltfModel());
     const RasterOverlayDetails* renderDetails = hasRenderContentDetails
         ? &tile.content.renderContent.rasterOverlayDetails()
         : nullptr;

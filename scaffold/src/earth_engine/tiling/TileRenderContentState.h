@@ -171,8 +171,13 @@ public:
     }
     const RasterOverlayDetails& rasterOverlayDetails() const {
         static const RasterOverlayDetails emptyDetails;
-        return surface_.mesh ? surface_.mesh->rasterOverlayDetails
-                             : emptyDetails;
+        if (surface_.mesh) {
+            return surface_.mesh->rasterOverlayDetails;
+        }
+        if (gltfModel) {
+            return gltfModel->rasterOverlayDetails;
+        }
+        return emptyDetails;
     }
     Buffer* surfaceVertexBuffer() const {
         return surface_.gpuVertexBuffer.get();
