@@ -280,6 +280,12 @@ add_executable(test_tile_content_unload_coordinator_basic
 target_link_libraries(test_tile_content_unload_coordinator_basic PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_content_unload_coordinator_basic COMMAND test_tile_content_unload_coordinator_basic)
 
+add_executable(test_tile_content_unload_coordinator_render
+    unit/tiling/test_tile_content_unload_coordinator_render.cpp
+)
+target_link_libraries(test_tile_content_unload_coordinator_render PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_content_unload_coordinator_render COMMAND test_tile_content_unload_coordinator_render)
+
 add_executable(test_tile_load_request_dispatcher
     unit/tiling/test_tile_load_request_dispatcher.cpp
 )
