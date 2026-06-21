@@ -145,6 +145,33 @@ public:
     HeightmapCallback terrainCallback;
 };
 
+class RecordingPriorityTerrainProvider final : public TerrainProvider {
+public:
+    std::string id() const override { return "dispatcher-priority-terrain"; }
+    std::string schemeId() const override { return "test"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 1; }
+    int tileSize() const override { return 2; }
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://dispatcher-priority-terrain";
+    }
+    void requestTile(
+        const TileKey& key,
+        CancellationToken,
+        HeightmapCallback callback,
+        HttpRequestPriority priority = HttpRequestPriority::Normal) override {
+        observedPriority = priority;
+        callback(key, TerrainTileLoadResult::retryLater());
+    }
+    std::unique_ptr<DecodedHeightmap> decodeTile(
+        const uint8_t*,
+        size_t) override {
+        return nullptr;
+    }
+
+    HttpRequestPriority observedPriority = HttpRequestPriority::Normal;
+};
+
 class SyncTerminalContentProvider final : public TilesetContentProvider {
 public:
     explicit SyncTerminalContentProvider(bool& issuedBeforeCallback)
@@ -184,6 +211,25 @@ public:
     }
 
     ContentCallback contentCallback;
+};
+
+class RecordingPriorityContentProvider final : public TilesetContentProvider {
+public:
+    std::string id() const override { return "dispatcher-priority-content"; }
+    bool supportsTile(const TileKey&) const override { return true; }
+    void requestTileContent(
+        const TileKey& key,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority priority = HttpRequestPriority::Normal) override {
+        observedPriority = priority;
+        callback(key, TileContentLoadResult::empty());
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+
+    HttpRequestPriority observedPriority = HttpRequestPriority::Normal;
 };
 
 class SyncRenderContentProvider final : public TilesetContentProvider {
@@ -1215,4 +1261,48 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_TRUE(requestState.empty());
     EXPECT_EQ(1u, pendingLoads.terrainUploadCount());
     EXPECT_EQ(0u, budget.networkRequestsIssued());
+}
+
+TEST(TileLoadRequestDispatcherTest, PassesNetworkPriority) {
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+
+    RecordingPriorityTerrainProvider terrainProvider;
+    TileLoadRequestDispatcher::requestTerrain(
+        mutex,
+        condition,
+        requestState,
+        pendingLoads,
+        budget,
+        terrainProvider,
+        key,
+        "priority-terrain",
+        TileLoadPriorityGroup::Urgent,
+        0.0,
+        []() {});
+
+    EXPECT_EQ(HttpRequestPriority::High, terrainProvider.observedPriority);
+
+    RecordingPriorityContentProvider contentProvider;
+    TileLoadRequestDispatcher::requestContent(
+        mutex,
+        condition,
+        requestState,
+        pendingLoads,
+        budget,
+        contentProvider,
+        key,
+        "priority-content",
+        TileLoadPriorityGroup::Preload,
+        0.0,
+        []() {});
+
+    EXPECT_EQ(HttpRequestPriority::Low, contentProvider.observedPriority);
 }
