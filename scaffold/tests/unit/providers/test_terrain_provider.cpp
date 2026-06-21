@@ -1756,7 +1756,7 @@ TEST(QuantizedMeshTerrainProviderTest,
       "scheme": "tms",
       "tiles": ["parentTiles/{z}/{x}/{y}.terrain"],
       "maxzoom": 4,
-      "metadataAvailability": 1
+      "metadataAvailability": 2
     })json";
     {
         std::filesystem::create_directories(root / "parent");
@@ -1771,7 +1771,7 @@ TEST(QuantizedMeshTerrainProviderTest,
       "tiles": ["childTiles/{z}/{x}/{y}.terrain"],
       "parentUrl": "../parent",
       "maxzoom": 4,
-      "metadataAvailability": 1
+      "metadataAvailability": 2
     })json";
 
     const std::string childMetadata = R"json({
@@ -1888,6 +1888,114 @@ TEST(QuantizedMeshTerrainProviderTest,
     EXPECT_EQ(TileLoadStatus::Renderable, secondCompleted.status);
     EXPECT_TRUE(secondCompleted.quantizedMeshAvailabilityUpdates.empty());
     EXPECT_EQ(0u, bridge.pendingCount());
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(QuantizedMeshTerrainProviderTest,
+     FailedUnderlyingMetadataMarksEmptySubtreeLoadedLikeCesiumNative) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth_md_qm_failed_underlying_metadata_provider_test";
+    std::filesystem::remove_all(root);
+
+    const std::string parentLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["parentTiles/{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "metadataAvailability": 2
+    })json";
+    {
+        std::filesystem::create_directories(root / "parent");
+        std::ofstream out(root / "parent" / "layer.json");
+        out << parentLayerJson;
+    }
+
+    const std::string childLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["childTiles/{z}/{x}/{y}.terrain"],
+      "parentUrl": "../parent",
+      "maxzoom": 4,
+      "metadataAvailability": 2
+    })json";
+    const std::string childMetadata = R"json({
+      "available": [
+        [{"startX":0,"startY":0,"endX":0,"endY":0}]
+      ]
+    })json";
+
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        childLayerJson,
+        "file://" + (root / "child" / "layer.json").generic_string()));
+
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childAvailableKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey parentOnlyKey{"Geographic-TMS", 1, 1, 0};
+    EXPECT_EQ(TileAvailabilityState::Unknown,
+              provider.availabilityState(parentOnlyKey));
+    EXPECT_EQ(2, provider.estimatedRequestFanout(rootKey));
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    TerrainTileLoadResult completed = TerrainTileLoadResult::retryLater();
+
+    provider.requestTile(
+        rootKey,
+        CancellationToken{},
+        [&](const TileKey&, TerrainTileLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                done = true;
+            }
+            cv.notify_one();
+        });
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    EXPECT_NE(std::string::npos,
+              bridge.pendingUrl(0).find("childTiles/0/0/0.terrain"));
+    ASSERT_TRUE(bridge.completeNext(
+        206,
+        makeQuantizedMeshBytesWithMetadata(childMetadata)));
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    EXPECT_NE(std::string::npos,
+              bridge.pendingUrl(0).find("parentTiles/0/0/0.terrain"));
+    ASSERT_TRUE(bridge.completeNext(500));
+
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return done; }));
+    }
+
+    EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
+    ASSERT_EQ(2u, completed.quantizedMeshAvailabilityUpdates.size());
+    EXPECT_EQ(0, completed.quantizedMeshAvailabilityUpdates[0].layerIndex);
+    EXPECT_EQ(1, completed.quantizedMeshAvailabilityUpdates[1].layerIndex);
+    EXPECT_TRUE(
+        completed.quantizedMeshAvailabilityUpdates[1]
+            .metadataAvailability.empty());
+
+    provider.applyAvailabilityUpdates(
+        completed.quantizedMeshAvailabilityUpdates);
+    EXPECT_EQ(TileAvailabilityState::Available,
+              provider.availabilityState(childAvailableKey));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(parentOnlyKey));
+    EXPECT_EQ(1, provider.estimatedRequestFanout(rootKey));
 
     std::filesystem::remove_all(root);
 }
