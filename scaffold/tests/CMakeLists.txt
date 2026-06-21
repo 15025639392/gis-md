@@ -406,6 +406,12 @@ add_executable(test_scene_render_diagnostics
 target_link_libraries(test_scene_render_diagnostics PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_scene_render_diagnostics COMMAND test_scene_render_diagnostics)
 
+add_executable(test_scene_frame_state
+    unit/scene/test_scene_frame_state.cpp
+)
+target_link_libraries(test_scene_frame_state PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_scene_frame_state COMMAND test_scene_frame_state)
+
 add_executable(test_globe
     unit/globe/test_globe.cpp
 )
