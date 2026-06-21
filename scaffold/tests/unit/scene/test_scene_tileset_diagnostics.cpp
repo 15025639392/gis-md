@@ -163,3 +163,58 @@ TEST(
         snapshot.mainThreadFinalizesLimit,
         std::numeric_limits<int>::max());
 }
+
+TEST(
+    SceneTilesetDiagnosticsSnapshotTest,
+    AppliesProviderRequestLanesToDiagnostics) {
+    SceneTilesetDiagnosticsSnapshot snapshot;
+    snapshot.contentProviderRequests.requestsStarted = 3;
+    snapshot.contentProviderRequests.requestsCompleted = 1;
+    snapshot.contentProviderRequests.activeWorkerBlockingRequests = 2;
+    snapshot.contentProviderRequests.peakWorkerBlockingRequests = 5;
+    snapshot.contentProviderRequests.transportActiveRequestLimit = 7;
+    snapshot.contentProviderRequests.externalResourceRequestsStarted = 11;
+    snapshot.contentProviderRequests.externalResourceRequestsCompleted = 9;
+    snapshot.contentProviderRequests.activeExternalResourceBlockingRequests = 4;
+    snapshot.contentProviderRequests.peakExternalResourceBlockingRequests = 13;
+
+    snapshot.rasterProviderRequests.requestsStarted = 17;
+    snapshot.rasterProviderRequests.requestsCompleted = 15;
+    snapshot.rasterProviderRequests.activeWorkerBlockingRequests = 6;
+    snapshot.rasterProviderRequests.peakWorkerBlockingRequests = 8;
+    snapshot.rasterProviderRequests.transportActiveRequestLimit = 19;
+    snapshot.rasterOverlayTilesLoading = 2;
+    snapshot.rasterSourceRequestsInFlight = 1;
+    snapshot.rasterPendingUploads = 3;
+
+    Diagnostics diagnostics;
+    SceneTilesetDiagnostics::reset(diagnostics);
+    snapshot.applyTo(diagnostics);
+
+    EXPECT_EQ(diagnostics.contentProviderRequestsStarted, 3);
+    EXPECT_EQ(diagnostics.contentProviderRequestsCompleted, 1);
+    EXPECT_EQ(diagnostics.contentProviderActiveWorkerBlockingRequests, 2);
+    EXPECT_EQ(diagnostics.contentProviderPeakWorkerBlockingRequests, 5);
+    EXPECT_EQ(diagnostics.contentTransportActiveRequestLimit, 7);
+    EXPECT_EQ(
+        diagnostics.contentProviderExternalResourceRequestsStarted,
+        11);
+    EXPECT_EQ(
+        diagnostics.contentProviderExternalResourceRequestsCompleted,
+        9);
+    EXPECT_EQ(
+        diagnostics.contentProviderActiveExternalResourceBlockingRequests,
+        4);
+    EXPECT_EQ(
+        diagnostics.contentProviderPeakExternalResourceBlockingRequests,
+        13);
+
+    EXPECT_EQ(diagnostics.rasterProviderRequestsStarted, 17);
+    EXPECT_EQ(diagnostics.rasterProviderRequestsCompleted, 15);
+    EXPECT_EQ(diagnostics.rasterProviderActiveWorkerBlockingRequests, 6);
+    EXPECT_EQ(diagnostics.rasterProviderPeakWorkerBlockingRequests, 8);
+    EXPECT_EQ(diagnostics.rasterTransportActiveRequestLimit, 19);
+    EXPECT_EQ(diagnostics.rasterOverlayTilesLoading, 2);
+    EXPECT_EQ(diagnostics.rasterSourceRequestsInFlight, 1);
+    EXPECT_EQ(diagnostics.rasterPendingUploads, 3);
+}
