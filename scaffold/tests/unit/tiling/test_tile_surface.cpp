@@ -416,6 +416,12 @@ TEST(TileSurfaceTest, UpsampledChildMeshIsClippedFromParentRenderMesh) {
     SurfaceTileMesh parentMesh = TileSurface::buildEllipsoidMesh(parentBounds, 1);
     ASSERT_EQ(4u, parentMesh.vertices.size());
     parentMesh.metadataAvailability = {{1, 0, 0, 1, 1}};
+    parentMesh.waterMask.allLand = false;
+    parentMesh.waterMask.allWater = false;
+    parentMesh.waterMask.data.resize(256u * 256u * 4u, 255);
+    parentMesh.waterMask.translationX = 0.25;
+    parentMesh.waterMask.translationY = 0.25;
+    parentMesh.waterMask.scale = 0.5;
 
     const auto& ellipsoid = Ellipsoid::WGS84();
     Cartographic raised = ellipsoid.cartesianToCartographic(
@@ -436,6 +442,12 @@ TEST(TileSurfaceTest, UpsampledChildMeshIsClippedFromParentRenderMesh) {
     EXPECT_GT(childMesh->vertices.size(), 0u);
     EXPECT_GT(childMesh->indices.size(), 0u);
     EXPECT_TRUE(childMesh->metadataAvailability.empty());
+    EXPECT_FALSE(childMesh->waterMask.allLand);
+    EXPECT_FALSE(childMesh->waterMask.allWater);
+    EXPECT_EQ(parentMesh.waterMask.data.size(), childMesh->waterMask.data.size());
+    EXPECT_DOUBLE_EQ(0.5, childMesh->waterMask.translationX);
+    EXPECT_DOUBLE_EQ(0.5, childMesh->waterMask.translationY);
+    EXPECT_DOUBLE_EQ(0.25, childMesh->waterMask.scale);
     EXPECT_TRUE(childMesh->hasHeightRange);
     EXPECT_GT(childMesh->maximumHeight, 900.0);
     const Rectangle* overlayRectangle =

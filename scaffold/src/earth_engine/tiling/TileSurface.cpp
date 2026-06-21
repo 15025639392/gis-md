@@ -558,6 +558,17 @@ std::optional<SurfaceTileMesh> TileSurface::upsampleChildMeshFromParent(
     child.winding = parentMesh.winding;
     child.sampling = parentMesh.sampling;
     child.waterMask = parentMesh.waterMask;
+    child.waterMask.scale = parentMesh.waterMask.scale * 0.5;
+    const double midLongitude =
+        parentBounds.west() + (parentBounds.east() - parentBounds.west()) * 0.5;
+    const double midLatitude =
+        parentBounds.south() + (parentBounds.north() - parentBounds.south()) * 0.5;
+    const double childX = childBounds.west() >= midLongitude ? 1.0 : 0.0;
+    const double childY = childBounds.south() >= midLatitude ? 1.0 : 0.0;
+    child.waterMask.translationX =
+        parentMesh.waterMask.translationX + child.waterMask.scale * childX;
+    child.waterMask.translationY =
+        parentMesh.waterMask.translationY + child.waterMask.scale * childY;
     child.rasterOverlayDetails.setGeographicRectangle(childBounds);
 
     uint32_t indexBegin = 0;

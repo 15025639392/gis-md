@@ -56,6 +56,9 @@ struct WaterMask {
     std::vector<uint8_t> data;  // 256×256 RGBA8, empty = no mask
     bool allLand = true;
     bool allWater = false;
+    double translationX = 0.0;
+    double translationY = 0.0;
+    double scale = 1.0;
     bool valid() const { return !data.empty() || allWater; }
 };
 
