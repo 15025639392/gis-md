@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/content/GltfModel.h"
 #include "earth_engine/terrain/TerrainTile.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileContentUnloadCoordinator.h"
@@ -20,6 +21,28 @@ public:
 private:
     size_t byteSize_ = 0;
 };
+
+std::unique_ptr<GltfModel> makeTriangleGltfModel() {
+    auto model = std::make_unique<GltfModel>();
+    GltfPrimitive primitive;
+    primitive.vertices.resize(3);
+    primitive.vertices[0].positionEcef = Vec3(0.0, 0.0, 0.0);
+    primitive.vertices[1].positionEcef = Vec3(1.0, 0.0, 0.0);
+    primitive.vertices[2].positionEcef = Vec3(0.0, 1.0, 0.0);
+    primitive.vertices[0].normalEcef = Vec3::unitZ();
+    primitive.vertices[1].normalEcef = Vec3::unitZ();
+    primitive.vertices[2].normalEcef = Vec3::unitZ();
+    primitive.vertices[0].uv = {0.0f, 0.0f};
+    primitive.vertices[1].uv = {1.0f, 0.0f};
+    primitive.vertices[2].uv = {0.0f, 1.0f};
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 1.0f}};
+    primitive.indices = {0, 1, 2};
+    model->primitives.push_back(std::move(primitive));
+    return model;
+}
 
 } // namespace
 
@@ -61,6 +84,45 @@ TEST(
     EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(tile.content.renderContent.isMeshReady());
     EXPECT_FALSE(tile.content.renderContent.isSurfaceDrawable());
+    EXPECT_FALSE(tile.selectionFrameState.renderable);
+    EXPECT_FALSE(tile.selectionFrameState.completeRenderable);
+}
+
+TEST(
+    TileContentUnloadCoordinatorRenderTest,
+    RenderContentClearsGltfModelAndPrimitiveResources) {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.content.contentKind = TileContentKind::Render;
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.renderContent.setMeshReady(true);
+    tile.content.renderContent.setGltfContent(makeTriangleGltfModel());
+    GltfPrimitiveRenderResources resources;
+    resources.vertexBuffer = std::make_unique<DummyBuffer>(96);
+    resources.indexBuffer = std::make_unique<DummyBuffer>(12);
+    resources.vertexCount = 3;
+    resources.indexCount = 3;
+    tile.content.renderContent.addGltfPrimitiveResource(std::move(resources));
+    tile.selectionFrameState.updateFrameRenderability(true);
+
+    const std::string cacheKey = "test:0:0:0";
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    TileEmptyContentRegistry emptyContentRegistry;
+
+    const TileCacheUnloadContentResult result =
+        TileContentUnloadCoordinator::unloadContent(
+            tile,
+            cacheKey,
+            terrainCache,
+            emptyContentRegistry,
+            nullptr);
+
+    EXPECT_EQ(result, TileCacheUnloadContentResult::Remove);
+    EXPECT_EQ(tile.content.renderContent.gltfModelForRead(), nullptr);
+    EXPECT_FALSE(tile.content.renderContent.hasGltfPrimitiveResources());
+    EXPECT_EQ(tile.content.contentKind, TileContentKind::Unknown);
+    EXPECT_EQ(tile.content.loadState, TileLoadState::Unloaded);
+    EXPECT_FALSE(tile.content.renderContent.isMeshReady());
     EXPECT_FALSE(tile.selectionFrameState.renderable);
     EXPECT_FALSE(tile.selectionFrameState.completeRenderable);
 }
