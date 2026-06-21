@@ -385,6 +385,87 @@ TEST(
 
 TEST(
     TilesetSelectionRefinementTest,
+    ReplaceRefinementFallsBackToParentWhileChildrenLoad) {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::vector<TileKey> childKeys = {
+        {"Geographic-TMS", 1, 0, 0},
+        {"Geographic-TMS", 1, 1, 0},
+        {"Geographic-TMS", 1, 0, 1},
+        {"Geographic-TMS", 1, 1, 1}};
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, childKeys}});
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Empty;
+    root->refine = TileRefine::Replace;
+    root->geometricError = 40000.0;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_EQ(root->children.size(), childKeys.size());
+    for (TilesetTile* child : root->children) {
+        ASSERT_NE(child, nullptr);
+        child->content.loadState = TileLoadState::Unloaded;
+        child->content.contentKind = TileContentKind::Unknown;
+        child->geometricError = 0.0;
+    }
+
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    Camera camera;
+    camera.lookAt(
+        center + center.normalized() * 1000000.0,
+        center,
+        Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 147;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const auto& visibleTiles = tileset.tilePlan().visibleTiles;
+    const auto visibleEnd = visibleTiles.end();
+    EXPECT_NE(std::find(visibleTiles.begin(), visibleEnd, rootKey), visibleEnd);
+    EXPECT_EQ(
+        root->selectionFrameState.selectionState,
+        TileSelectionState::Rendered);
+
+    bool anyChildVisible = false;
+    bool allChildrenQueued = true;
+    for (const TileKey& childKey : childKeys) {
+        anyChildVisible |=
+            std::find(visibleTiles.begin(), visibleEnd, childKey) != visibleEnd;
+        allChildrenQueued &= TilesetTestAccess::loadQueueContainsAny(
+            tileset,
+            childKey);
+    }
+
+    EXPECT_FALSE(anyChildVisible);
+    EXPECT_TRUE(allChildrenQueued);
+    EXPECT_EQ(
+        tileset.tilePlan().selectionKickedCount,
+        static_cast<int>(childKeys.size()));
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
     AdditiveRefinementRendersFailedChildHoleAndSiblings) {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const std::vector<TileKey> childKeys = {
