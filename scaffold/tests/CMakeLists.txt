@@ -352,6 +352,12 @@ add_executable(test_tile_render_entry
 target_link_libraries(test_tile_render_entry PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_render_entry COMMAND test_tile_render_entry)
 
+add_executable(test_tile_render_entry_command_builder
+    unit/tiling/test_tile_render_entry_command_builder.cpp
+)
+target_link_libraries(test_tile_render_entry_command_builder PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_render_entry_command_builder COMMAND test_tile_render_entry_command_builder)
+
 add_executable(test_tile_selection_root_policy
     unit/tiling/test_tile_selection_root_policy.cpp
 )
