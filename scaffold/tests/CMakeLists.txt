@@ -346,6 +346,12 @@ add_executable(test_tile_selection_summary_builder
 target_link_libraries(test_tile_selection_summary_builder PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_selection_summary_builder COMMAND test_tile_selection_summary_builder)
 
+add_executable(test_tile_selection_state_resetter
+    unit/tiling/test_tile_selection_state_resetter.cpp
+)
+target_link_libraries(test_tile_selection_state_resetter PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_selection_state_resetter COMMAND test_tile_selection_state_resetter)
+
 add_executable(test_tile_selection_refinement_policies
     unit/tiling/test_tile_selection_refinement_policies.cpp
 )
