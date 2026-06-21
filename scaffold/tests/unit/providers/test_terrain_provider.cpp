@@ -628,6 +628,115 @@ TEST(QuantizedMeshTerrainProviderTest, UnknownAndMalformedPlaceholdersMatchCesiu
         provider.buildUrl(TileKey{"Geographic-TMS", 2, 3, 1}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, RelativeTileTemplateResolvesAgainstLayerJsonLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["../tiles/{level}/{x}/{y}.terrain?token=tile&v={version}"],
+      "version": "7",
+      "minzoom": 0,
+      "maxzoom": 4
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/terrain/layers/main/layer.json?asset=123&token=base"));
+
+    EXPECT_EQ(
+        "https://example.invalid/terrain/layers/tiles/3/5/2.terrain?token=tile&v=7&asset=123",
+        provider.buildUrl(TileKey{"Geographic-TMS", 3, 5, 2}));
+}
+
+TEST(QuantizedMeshTerrainProviderTest, RootRelativeTileTemplateKeepsLayerQueryLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["/terrain/{z}/{x}/{y}.terrain"],
+      "minzoom": 0,
+      "maxzoom": 4
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://assets.example.invalid/ion/world/layer.json?access_token=abc"));
+
+    EXPECT_EQ(
+        "https://assets.example.invalid/terrain/1/1/0.terrain?access_token=abc",
+        provider.buildUrl(TileKey{"Geographic-TMS", 1, 1, 0}));
+}
+
+TEST(QuantizedMeshTerrainProviderTest, AbsoluteTileTemplateInheritsLayerQueryLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["https://cdn.example.invalid/qm/{level}/{x}/{y}.terrain"],
+      "minzoom": 0,
+      "maxzoom": 4
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://assets.example.invalid/layer.json?token=base"));
+
+    EXPECT_EQ(
+        "https://cdn.example.invalid/qm/2/3/1.terrain?token=base",
+        provider.buildUrl(TileKey{"Geographic-TMS", 2, 3, 1}));
+}
+
+TEST(QuantizedMeshTerrainProviderTest, BaseQueryAndExtensionQueryMergeLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{level}.{x}.{y}/{version}.terrain"],
+      "version": "1.0.0",
+      "extensions": ["metadata"],
+      "minzoom": 0,
+      "maxzoom": 4
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json?param=some_parameter_here"));
+
+    EXPECT_EQ(
+        "https://example.invalid/0.0.0/1.0.0.terrain?param=some_parameter_here&extensions=metadata",
+        provider.buildUrl(TileKey{"Geographic-TMS", 0, 0, 0}));
+}
+
+TEST(QuantizedMeshTerrainProviderTest, ExtensionQueryStaysBeforeFragmentLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["tiles/{z}/{x}/{y}.terrain#tile-fragment"],
+      "extensions": ["metadata"],
+      "minzoom": 0,
+      "maxzoom": 4
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/terrain/layer.json?token=base"));
+
+    EXPECT_EQ(
+        "https://example.invalid/terrain/tiles/2/3/1.terrain?token=base&extensions=metadata#tile-fragment",
+        provider.buildUrl(TileKey{"Geographic-TMS", 2, 3, 1}));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, WebMercatorMetadataAvailabilityStartsAtOneRootLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
