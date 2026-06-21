@@ -370,6 +370,12 @@ add_executable(test_tile_render_frame_builder
 target_link_libraries(test_tile_render_frame_builder PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_render_frame_builder COMMAND test_tile_render_frame_builder)
 
+add_executable(test_tile_render_frame_coordinator
+    unit/tiling/test_tile_render_frame_coordinator.cpp
+)
+target_link_libraries(test_tile_render_frame_coordinator PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_render_frame_coordinator COMMAND test_tile_render_frame_coordinator)
+
 add_executable(test_tile_selection_root_policy
     unit/tiling/test_tile_selection_root_policy.cpp
 )
