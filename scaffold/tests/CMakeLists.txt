@@ -262,6 +262,12 @@ add_executable(test_quantized_mesh_parser_validation
 target_link_libraries(test_quantized_mesh_parser_validation PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_quantized_mesh_parser_validation COMMAND test_quantized_mesh_parser_validation)
 
+add_executable(test_quantized_mesh_content_loader
+    unit/content/test_quantized_mesh_content_loader.cpp
+)
+target_link_libraries(test_quantized_mesh_content_loader PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_quantized_mesh_content_loader COMMAND test_quantized_mesh_content_loader)
+
 add_executable(test_tile_bounding_volume
     unit/tiling/test_tile_bounding_volume.cpp
 )

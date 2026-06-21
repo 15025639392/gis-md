@@ -5,9 +5,9 @@
 #endif
 #include "../core/async/AsyncSystem.h"
 #include "../core/cache/HttpCache.h"
+#include "../content/QuantizedMeshContentLoader.h"
 #include "../platform/bridge/CurlMultiRequestScheduler.h"
 #include "../platform/bridge/PlatformBridge.h"
-#include "../terrain/QuantizedMeshParser.h"
 #include <nlohmann/json.hpp>
 
 #include <sstream>
@@ -1338,39 +1338,39 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                 body->size(),
                 token->isCancelled());
 #endif
-            std::unique_ptr<SurfaceTileMesh> surfaceMesh;
-            surfaceMesh = QuantizedMeshParser::parseToSurfaceTileMesh(
-                body->data(),
-                body->size(),
-                geographicTmsRectangle(key),
-                waterMaskEnabled_);
-            if (!surfaceMesh) {
+            std::vector<QuantizedMeshMetadataContent> metadata;
+            metadata.reserve(availabilityRequests->size());
+            for (size_t i = 0; i < availabilityRequests->size(); ++i) {
+                const LayerAvailabilityRequest& request =
+                    (*availabilityRequests)[i];
+                QuantizedMeshMetadataContent item;
+                item.layerIndex = static_cast<int>(request.layerIndex);
+                item.subtreeKey = request.subtreeKey;
+                if (i < metadataBodies.size() &&
+                    !metadataBodies[i].empty()) {
+                    item.data = metadataBodies[i].data();
+                    item.size = metadataBodies[i].size();
+                }
+                metadata.push_back(item);
+            }
+
+            QuantizedMeshContentLoadResult contentResult =
+                QuantizedMeshContentLoader::load(
+                    body->data(),
+                    body->size(),
+                    geographicTmsRectangle(key),
+                    waterMaskEnabled_,
+                    metadata);
+            if (!contentResult.success()) {
                 (*callback)(key, TerrainTileLoadResult::failed());
                 return;
             }
 
-            std::vector<QuantizedMeshAvailabilityUpdate> availabilityUpdates;
-            for (size_t i = 0; i < availabilityRequests->size(); ++i) {
-                const LayerAvailabilityRequest& request =
-                    (*availabilityRequests)[i];
-                QuantizedMeshAvailabilityUpdate update;
-                update.layerIndex = static_cast<int>(request.layerIndex);
-                update.subtreeKey = request.subtreeKey;
-
-                if (i < metadataBodies.size() &&
-                    !metadataBodies[i].empty()) {
-                    update.metadataAvailability =
-                        QuantizedMeshParser::parseMetadataAvailability(
-                            metadataBodies[i].data(),
-                            metadataBodies[i].size());
-                }
-
-                availabilityUpdates.push_back(std::move(update));
-            }
             TerrainTileLoadResult result =
-                TerrainTileLoadResult::successWithSurfaceMesh(std::move(surfaceMesh));
+                TerrainTileLoadResult::successWithSurfaceMesh(
+                    std::move(contentResult.surfaceMesh));
             result.quantizedMeshAvailabilityUpdates =
-                std::move(availabilityUpdates);
+                std::move(contentResult.availabilityUpdates);
             (*callback)(key, std::move(result));
         });
 }
