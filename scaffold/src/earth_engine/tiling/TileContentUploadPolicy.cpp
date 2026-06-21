@@ -8,13 +8,13 @@ namespace earth_engine {
 
 void TileContentUploadPolicy::prepareGltfRenderContent(
     TilesetTile& tile,
-    TileContentLoadResult&& result) {
+    TileLoadedContent&& content) {
     tile.content.renderContent.prepareGltfContent(
-        std::move(result.gltfModel),
-        result.contentTransform);
+        std::move(content.gltfModel),
+        content.contentTransform);
     TileLoadResultMetadataApplicator::apply(
         tile,
-        std::move(result.metadata));
+        std::move(content.metadata));
     tile.markRenderContentLoaded();
 }
 

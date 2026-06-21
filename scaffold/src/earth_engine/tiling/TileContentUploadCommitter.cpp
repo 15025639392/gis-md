@@ -8,10 +8,10 @@ namespace earth_engine {
 
 void TileContentUploadCommitter::prepareRenderContent(
     TilesetTile& tile,
-    TileContentLoadResult&& result) {
+    TileLoadedContent&& content) {
     TileContentUploadPolicy::prepareGltfRenderContent(
         tile,
-        std::move(result));
+        std::move(content));
 }
 
 TileContentUploadCommitAction

@@ -652,15 +652,16 @@ TEST(TileLoadRequestDispatcherTest, QueuesSurfaceOnlyTerrainUpload) {
     ASSERT_TRUE(upload.has_value());
     ASSERT_EQ(PendingLoadFinalizeKind::Terrain, upload->kind);
     ASSERT_TRUE(upload->terrainUpload.has_value());
-    EXPECT_EQ(nullptr, upload->terrainUpload->heightmap);
-    ASSERT_NE(nullptr, upload->terrainUpload->surfaceMesh);
-    EXPECT_EQ(1u, upload->terrainUpload->surfaceMesh->vertices.size());
+    const TileLoadedContent& content = upload->terrainUpload->content;
+    EXPECT_EQ(nullptr, content.heightmap);
+    ASSERT_NE(nullptr, content.surfaceMesh);
+    EXPECT_EQ(1u, content.surfaceMesh->vertices.size());
     ASSERT_EQ(
         1u,
-        upload->terrainUpload->quantizedMeshAvailabilityUpdates.size());
+        content.quantizedMeshAvailabilityUpdates.size());
     EXPECT_EQ(
         key,
-        upload->terrainUpload->quantizedMeshAvailabilityUpdates[0].subtreeKey);
+        content.quantizedMeshAvailabilityUpdates[0].subtreeKey);
 }
 
 TEST(TileLoadRequestDispatcherTest,

@@ -83,36 +83,37 @@ public:
         IngestAvailabilityFn&& ingestAvailability,
         EnsureTileMeshFn&& ensureTileMesh,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        if (!upload.quantizedMeshAvailabilityUpdates.empty()) {
+        TileLoadedContent& content = upload.content;
+        if (!content.quantizedMeshAvailabilityUpdates.empty()) {
             if (auto* qmProvider =
                     dynamic_cast<QuantizedMeshTerrainProvider*>(
                         terrainProvider)) {
                 qmProvider->applyAvailabilityUpdates(
-                    upload.quantizedMeshAvailabilityUpdates);
+                    content.quantizedMeshAvailabilityUpdates);
             }
         }
-        if (upload.heightmap) {
+        if (content.heightmap) {
             ingestAvailability(
                 upload.key,
-                upload.heightmap.get(),
-                upload.surfaceMesh.get());
-            terrainCache[upload.cacheKey] = std::move(upload.heightmap);
-        } else if (upload.surfaceMesh) {
+                content.heightmap.get(),
+                content.surfaceMesh.get());
+            terrainCache[upload.cacheKey] = std::move(content.heightmap);
+        } else if (content.surfaceMesh) {
             ingestAvailability(
                 upload.key,
                 nullptr,
-                upload.surfaceMesh.get());
+                content.surfaceMesh.get());
         }
 
         if (TilesetTile* tile = ensureTile(upload.key)) {
-            if (upload.surfaceMesh &&
+            if (content.surfaceMesh &&
                 !tile->content.renderContent.hasSurfaceMesh()) {
                 tile->content.renderContent.setSurfaceMesh(
-                    std::move(upload.surfaceMesh));
+                    std::move(content.surfaceMesh));
             }
             TileLoadResultMetadataApplicator::apply(
                 *tile,
-                std::move(upload.metadata));
+                std::move(content.metadata));
             TileTerrainUploadCommitter::prepareTerrainRenderContent(*tile);
             if (!resourceSmoothingActive &&
                 !tile->content.renderContent.hasSurfaceMesh()) {
@@ -157,7 +158,7 @@ public:
         terrainCache.erase(upload.cacheKey);
         TileContentUploadCommitter::prepareRenderContent(
             *tile,
-            std::move(upload.result));
+            std::move(upload.content));
         ensureGltfResources(*tile);
         const TileContentUploadCommitAction action =
             TileContentUploadCommitter::finishRenderResourcePreparation(

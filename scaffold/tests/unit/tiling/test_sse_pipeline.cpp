@@ -11714,7 +11714,7 @@ void testTileContentUploadPolicyPreparesGltfRenderContent() {
 
     TileContentUploadPolicy::prepareGltfRenderContent(
         tile,
-        std::move(result));
+        TileLoadedContent::fromContentResult(std::move(result)));
 
     check(!tile.content.renderContent.hasRetainedHeightmap() &&
               !tile.content.renderContent.hasSurfaceMesh() &&
@@ -11749,7 +11749,7 @@ void testGltfRenderContentProvidesRasterOverlayDetails() {
 
     TileContentUploadPolicy::prepareGltfRenderContent(
         tile,
-        std::move(result));
+        TileLoadedContent::fromContentResult(std::move(result)));
 
     const RasterOverlayDetails& details =
         tile.content.renderContent.rasterOverlayDetails();
@@ -11789,7 +11789,7 @@ void testTileContentUploadPolicyAppliesTileLoadResultFields() {
 
     TileContentUploadPolicy::prepareGltfRenderContent(
         tile,
-        std::move(result));
+        TileLoadedContent::fromContentResult(std::move(result)));
 
     const RasterOverlayDetails& committedDetails =
         tile.content.renderContent.rasterOverlayDetails();
@@ -11842,7 +11842,7 @@ void testTileContentUploadCommitterAppliesRenderResourceOutcome() {
 
     TileContentUploadCommitter::prepareRenderContent(
         readyTile,
-        std::move(readyResult));
+        TileLoadedContent::fromContentResult(std::move(readyResult)));
     readyTile.content.renderContent.setMeshReady(true);
     TileContentUploadCommitAction action =
         TileContentUploadCommitter::finishRenderResourcePreparation(
@@ -11860,7 +11860,7 @@ void testTileContentUploadCommitterAppliesRenderResourceOutcome() {
         std::move(failedModel));
     TileContentUploadCommitter::prepareRenderContent(
         failedTile,
-        std::move(failedResult));
+        TileLoadedContent::fromContentResult(std::move(failedResult)));
     action = TileContentUploadCommitter::finishRenderResourcePreparation(
         failedTile,
         false);

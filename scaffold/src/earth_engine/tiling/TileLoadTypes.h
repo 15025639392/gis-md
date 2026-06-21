@@ -2,7 +2,9 @@
 
 #include "TileKey.h"
 #include "TileLoadPriorityPolicy.h"
+#include "TileLoadResultMetadata.h"
 #include "../content/GltfContentProvider.h"
+#include "../core/math/Mat4.h"
 #include "../providers/TerrainProvider.h"
 
 #include <limits>
@@ -24,6 +26,25 @@ struct TileLoadRequestOutcome {
     bool blockedByInflight = false;
 };
 
+struct TileLoadedContent {
+    static TileLoadedContent fromContentResult(
+        TileContentLoadResult&& result) {
+        TileLoadedContent content;
+        content.gltfModel = std::move(result.gltfModel);
+        content.contentTransform = result.contentTransform;
+        content.metadata = std::move(result.metadata);
+        return content;
+    }
+
+    std::unique_ptr<DecodedHeightmap> heightmap;
+    std::unique_ptr<SurfaceTileMesh> surfaceMesh;
+    std::unique_ptr<GltfModel> gltfModel;
+    Mat4 contentTransform = Mat4::identity();
+    TileLoadResultMetadata metadata;
+    std::vector<QuantizedMeshAvailabilityUpdate>
+        quantizedMeshAvailabilityUpdates;
+};
+
 struct PendingTerrainUpload {
     PendingTerrainUpload() = default;
     PendingTerrainUpload(TileKey key_,
@@ -38,22 +59,19 @@ struct PendingTerrainUpload {
         : key(std::move(key_)),
           cacheKey(std::move(cacheKey_)),
           group(group_),
-          priority(priority_),
-          heightmap(std::move(heightmap_)),
-          surfaceMesh(std::move(surfaceMesh_)),
-          metadata(std::move(metadata_)),
-          quantizedMeshAvailabilityUpdates(
-              std::move(availabilityUpdates_)) {}
+          priority(priority_) {
+        content.heightmap = std::move(heightmap_);
+        content.surfaceMesh = std::move(surfaceMesh_);
+        content.metadata = std::move(metadata_);
+        content.quantizedMeshAvailabilityUpdates =
+            std::move(availabilityUpdates_);
+    }
 
     TileKey key;
     std::string cacheKey;
     TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;
     double priority = 0.0;
-    std::unique_ptr<DecodedHeightmap> heightmap;
-    std::unique_ptr<SurfaceTileMesh> surfaceMesh;
-    TileLoadResultMetadata metadata;
-    std::vector<QuantizedMeshAvailabilityUpdate>
-        quantizedMeshAvailabilityUpdates;
+    TileLoadedContent content;
 };
 
 struct PendingTerrainTerminalResult {
@@ -65,11 +83,24 @@ struct PendingTerrainTerminalResult {
 };
 
 struct PendingContentUpload {
+    PendingContentUpload() = default;
+    PendingContentUpload(TileKey key_,
+                         std::string cacheKey_,
+                         TileLoadPriorityGroup group_,
+                         double priority_,
+                         TileContentLoadResult result_)
+        : key(std::move(key_)),
+          cacheKey(std::move(cacheKey_)),
+          group(group_),
+          priority(priority_) {
+        content = TileLoadedContent::fromContentResult(std::move(result_));
+    }
+
     TileKey key;
     std::string cacheKey;
     TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;
     double priority = 0.0;
-    TileContentLoadResult result;
+    TileLoadedContent content;
 };
 
 struct PendingContentTerminalResult {

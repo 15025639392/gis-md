@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../content/GltfContentProvider.h"
+#include "TileLoadTypes.h"
 
 namespace earth_engine {
 
@@ -9,7 +9,7 @@ struct TilesetTile;
 struct TileContentUploadPolicy {
     static void prepareGltfRenderContent(
         TilesetTile& tile,
-        TileContentLoadResult&& result);
+        TileLoadedContent&& content);
     static void markGltfRenderResourcesFailed(TilesetTile& tile);
 };
 
