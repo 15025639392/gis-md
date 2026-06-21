@@ -61,3 +61,24 @@ TEST(TileLoadRequestPlannerTest, ClassifiesUpsampledAndCachedTerrain) {
         TileLoadRequestKind::Skip,
         TileLoadRequestPlanner::classify(snapshot));
 }
+
+TEST(TileLoadRequestPlannerTest, SkipsNonRetryableLoadStates) {
+    TileLoadRequestSnapshot snapshot;
+    snapshot.hasTile = true;
+    snapshot.terrainProviderSupportsTile = true;
+
+    snapshot.loadState = TileLoadState::ContentLoading;
+    EXPECT_EQ(
+        TileLoadRequestKind::Skip,
+        TileLoadRequestPlanner::classify(snapshot));
+
+    snapshot.loadState = TileLoadState::Unloading;
+    EXPECT_EQ(
+        TileLoadRequestKind::Skip,
+        TileLoadRequestPlanner::classify(snapshot));
+
+    snapshot.loadState = TileLoadState::Failed;
+    EXPECT_EQ(
+        TileLoadRequestKind::Skip,
+        TileLoadRequestPlanner::classify(snapshot));
+}
