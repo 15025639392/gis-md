@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/tiling/TileFrameBudgetFallback.h"
 #include "earth_engine/tiling/TileFrameResourceBudgetPlanner.h"
 
 #include <limits>
@@ -119,5 +120,34 @@ TEST(
         FrameResourcePriority::Normal));
     EXPECT_TRUE(budget.tryFinalize(
         FrameResourceLane::TerminalState,
+        FrameResourcePriority::Normal));
+}
+
+TEST(TileFrameBudgetFallbackTest, KeepsUploadsAliveWhenWorkerLoadsDisabled) {
+    const FrameResourceBudgetConfig requestConfig =
+        TileFrameBudgetFallback::requestConfig(0, 0.0);
+    FrameResourceBudget requestBudget;
+    requestBudget.beginFrame(1, requestConfig);
+    EXPECT_FALSE(requestBudget.tryIssue(
+        FrameResourceLane::TerrainRequest,
+        FrameResourcePriority::Normal));
+
+    const FrameResourceBudgetConfig uploadConfig =
+        TileFrameBudgetFallback::uploadConfig(
+            0,
+            0.0,
+            false,
+            false,
+            1);
+    FrameResourceBudget uploadBudget;
+    uploadBudget.beginFrame(1, uploadConfig);
+    EXPECT_EQ(
+        uploadConfig.maxMainThreadFinalizesPerFrame,
+        std::numeric_limits<uint32_t>::max());
+    EXPECT_TRUE(uploadBudget.tryFinalize(
+        FrameResourceLane::TerrainFinalize,
+        FrameResourcePriority::Normal));
+    EXPECT_TRUE(uploadBudget.tryFinalize(
+        FrameResourceLane::ContentFinalize,
         FrameResourcePriority::Normal));
 }
