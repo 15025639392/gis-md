@@ -1569,6 +1569,119 @@ TEST(QuantizedMeshTerrainProviderTest, LoadedUnderlyingMetadataSubtreeSkipsDupli
     std::filesystem::remove_all(root);
 }
 
+TEST(QuantizedMeshTerrainProviderTest, FetchesUnderlyingMetadataViaAsyncBridge) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth_md_qm_async_metadata_provider_test";
+    std::filesystem::remove_all(root);
+
+    const std::string parentLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["parentTiles/{z}/{x}/{y}.terrain"],
+      "minzoom": 0,
+      "maxzoom": 4,
+      "metadataAvailability": 1,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+    {
+        std::filesystem::create_directories(root / "parent");
+        std::ofstream out(root / "parent" / "layer.json");
+        out << parentLayerJson;
+    }
+
+    const std::string childLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["childTiles/{z}/{x}/{y}.terrain"],
+      "parentUrl": "../parent",
+      "minzoom": 0,
+      "maxzoom": 4,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+    const std::string parentMetadata = R"json({
+      "available": [
+        [{"startX":2,"startY":0,"endX":2,"endY":0}]
+      ]
+    })json";
+
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        childLayerJson,
+        "file://" + (root / "child" / "layer.json").generic_string()));
+
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    TerrainTileLoadResult completed = TerrainTileLoadResult::retryLater();
+
+    provider.requestTile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        CancellationToken{},
+        [&](const TileKey&, TerrainTileLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                done = true;
+            }
+            cv.notify_one();
+        });
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    EXPECT_NE(std::string::npos,
+              bridge.pendingUrl(0).find("childTiles/0/0/0.terrain"));
+    ProviderRequestDiagnostics terrainDiag = provider.requestDiagnostics();
+    EXPECT_EQ(1, terrainDiag.requestsStarted);
+    EXPECT_EQ(0, terrainDiag.requestsCompleted);
+    EXPECT_EQ(0, terrainDiag.activeWorkerBlockingRequests);
+    EXPECT_EQ(0, terrainDiag.peakWorkerBlockingRequests);
+
+    ASSERT_TRUE(bridge.completeNext(
+        206,
+        makeQuantizedMeshBytesWithMetadata("")));
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    EXPECT_NE(std::string::npos,
+              bridge.pendingUrl(0).find("parentTiles/0/0/0.terrain"));
+    ProviderRequestDiagnostics metadataDiag = provider.requestDiagnostics();
+    EXPECT_EQ(0, metadataDiag.requestsCompleted);
+    EXPECT_EQ(0, metadataDiag.activeWorkerBlockingRequests);
+    EXPECT_EQ(0, metadataDiag.peakWorkerBlockingRequests);
+
+    ASSERT_TRUE(bridge.completeNext(
+        206,
+        makeQuantizedMeshBytesWithMetadata(parentMetadata)));
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return done; }));
+    }
+
+    ProviderRequestDiagnostics doneDiag = provider.requestDiagnostics();
+    EXPECT_EQ(TerrainTileLoadStatus::Success, completed.status);
+    ASSERT_NE(nullptr, completed.heightmap);
+    ASSERT_EQ(1u, completed.heightmap->quantizedMeshAvailabilityUpdates.size());
+    EXPECT_EQ(
+        1u,
+        completed.heightmap->quantizedMeshAvailabilityUpdates.front()
+            .metadataAvailability.size());
+    EXPECT_EQ(1, doneDiag.requestsCompleted);
+    EXPECT_EQ(0, doneDiag.activeWorkerBlockingRequests);
+    EXPECT_EQ(0, doneDiag.peakWorkerBlockingRequests);
+
+    std::filesystem::remove_all(root);
+}
+
 TEST(QuantizedMeshTerrainProviderTest, WebMercatorMetadataAvailabilityStartsAtOneRootLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
