@@ -1201,6 +1201,75 @@ TEST(
 
 TEST(
     TilesetSelectionRefinementTest,
+    SseUsesProjectionMatrixScale) {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::vector<TileKey> childKeys = {
+        {"Geographic-TMS", 1, 0, 0},
+        {"Geographic-TMS", 1, 1, 0},
+        {"Geographic-TMS", 1, 0, 1},
+        {"Geographic-TMS", 1, 1, 1}};
+    auto schemeForCenter = TileScheme::createGeographicTMS();
+    const Rectangle rootBounds = schemeForCenter->tileToRectangle(rootKey);
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(rootBounds);
+
+    Camera camera;
+    camera.lookAt(
+        center + center.normalized() * 80000000.0,
+        center,
+        Vec3::unitZ());
+
+    auto runSelection = [&](SelectorView view) {
+        auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+            std::vector<TileKey>{rootKey},
+            std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+                {rootKey, childKeys}});
+        Tileset tileset(
+            std::unique_ptr<TerrainProvider>{},
+            TileScheme::createGeographicTMS(),
+            {},
+            nullptr,
+            TilesetOptions{},
+            std::move(contentProvider));
+
+        TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+        root->content.loadState = TileLoadState::Done;
+        root->content.contentKind = TileContentKind::Empty;
+        root->refine = TileRefine::Replace;
+        root->geometricError = 400000.0;
+        TilesetTestAccess::ensureTileChildren(tileset, *root);
+        for (TilesetTile* child : root->children) {
+            child->content.loadState = TileLoadState::Done;
+            child->content.contentKind = TileContentKind::Empty;
+            child->geometricError = 0.0;
+        }
+
+        FrameState frameState;
+        frameState.frameId = 162;
+        frameState.camera = &camera;
+        frameState.viewportWidthPixels = 800;
+        frameState.viewportHeightPixels = 800;
+        frameState.selectorViews = {view};
+        TilesetTestAccess::setLastCamera(
+            tileset,
+            camera.position(),
+            camera.direction());
+        TilesetTestAccess::selectTiles(tileset, frameState);
+        return tileset.tilePlan().maxVisibleZoom;
+    };
+
+    SelectorView nativeProjection = makeSelectorView(camera, 800, 800);
+    SelectorView strongerProjection = nativeProjection;
+    strongerProjection.projectionMatrix(1, 1) *= 8.0;
+
+    const int nativeZoom = runSelection(nativeProjection);
+    const int strongerProjectionZoom = runSelection(strongerProjection);
+
+    EXPECT_EQ(nativeZoom, 0);
+    EXPECT_GT(strongerProjectionZoom, nativeZoom);
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
     ReplaceRefinementStopsWhenParentMeetsSse) {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const std::vector<TileKey> childKeys = {
