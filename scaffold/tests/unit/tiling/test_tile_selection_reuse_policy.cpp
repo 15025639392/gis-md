@@ -128,3 +128,51 @@ TEST(
         TileSelectionReusePolicy::classifyReuseWithReason(input).rejectReason,
         TileSelectionReuseRejectReason::None);
 }
+
+TEST(TileSelectionReusePolicyTest, ResourceRevisionChangeRejectsReuse) {
+    const FrameState previousFrame = makeBaseFrame(10);
+    FrameState stillFrame = previousFrame;
+    stillFrame.frameId = previousFrame.frameId + 1;
+
+    TileSelectionReuseInput input =
+        makeInput(stillFrame, previousFrame, false);
+    input.currentResourceRevision = 8;
+
+    EXPECT_FALSE(TileSelectionReusePolicy::canReuseSelection(input));
+    EXPECT_EQ(
+        TileSelectionReusePolicy::classifyReuse(input),
+        TileSelectionReuseMode::None);
+    EXPECT_EQ(
+        TileSelectionReusePolicy::classifyReuseWithReason(input).rejectReason,
+        TileSelectionReuseRejectReason::ResourceChanged);
+}
+
+TEST(TileSelectionReusePolicyTest, OverlaySignatureChangeRejectsReuse) {
+    const FrameState previousFrame = makeBaseFrame(10);
+    FrameState stillFrame = previousFrame;
+    stillFrame.frameId = previousFrame.frameId + 1;
+
+    TileSelectionReuseInput input =
+        makeInput(stillFrame, previousFrame, false);
+    input.currentOverlaySignature = 10;
+
+    EXPECT_FALSE(TileSelectionReusePolicy::canReuseSelection(input));
+    EXPECT_EQ(
+        TileSelectionReusePolicy::classifyReuseWithReason(input).rejectReason,
+        TileSelectionReuseRejectReason::ResourceChanged);
+}
+
+TEST(TileSelectionReusePolicyTest, ViewportChangeRejectsReuse) {
+    const FrameState previousFrame = makeBaseFrame(10);
+    FrameState resizedFrame = previousFrame;
+    resizedFrame.frameId = previousFrame.frameId + 1;
+    resizedFrame.viewportWidthPixels = 1024;
+
+    const TileSelectionReuseInput input =
+        makeInput(resizedFrame, previousFrame, false);
+
+    EXPECT_FALSE(TileSelectionReusePolicy::canReuseSelection(input));
+    EXPECT_EQ(
+        TileSelectionReusePolicy::classifyReuseWithReason(input).rejectReason,
+        TileSelectionReuseRejectReason::ViewportChanged);
+}
