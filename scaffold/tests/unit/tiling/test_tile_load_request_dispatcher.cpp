@@ -84,6 +84,40 @@ public:
     bool callbackSawIssued = false;
 };
 
+class SyncUploadTerrainProvider final : public TerrainProvider {
+public:
+    explicit SyncUploadTerrainProvider(bool& issuedBeforeCallback)
+        : issuedBeforeCallback_(issuedBeforeCallback) {}
+
+    std::string id() const override { return "dispatcher-terrain-upload"; }
+    std::string schemeId() const override { return "test"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 1; }
+    int tileSize() const override { return 2; }
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://dispatcher-terrain-upload";
+    }
+    void requestTile(
+        const TileKey& key,
+        CancellationToken,
+        HeightmapCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callbackSawIssued = issuedBeforeCallback_;
+        auto heightmap = std::make_unique<DecodedHeightmap>();
+        heightmap->tileSize = 2;
+        heightmap->heights = {0.0f, 0.0f, 0.0f, 0.0f};
+        callback(key, TerrainTileLoadResult::success(std::move(heightmap)));
+    }
+    std::unique_ptr<DecodedHeightmap> decodeTile(
+        const uint8_t*,
+        size_t) override {
+        return nullptr;
+    }
+
+    bool& issuedBeforeCallback_;
+    bool callbackSawIssued = false;
+};
+
 class SyncTerminalContentProvider final : public TilesetContentProvider {
 public:
     explicit SyncTerminalContentProvider(bool& issuedBeforeCallback)
@@ -294,4 +328,38 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_TRUE(provider.callbackSawIssued);
     EXPECT_TRUE(requestState.empty());
     EXPECT_EQ(1u, pendingLoads.terrainTerminalResultCount());
+}
+
+TEST(TileLoadRequestDispatcherTest,
+     RunsOnIssuedBeforeSynchronousTerrainUploadCallback) {
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+    SyncUploadTerrainProvider provider(issued);
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            provider,
+            key,
+            "terrain-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    EXPECT_EQ(TileLoadDispatchResult::Issued, result);
+    EXPECT_TRUE(provider.callbackSawIssued);
+    EXPECT_TRUE(requestState.empty());
+    EXPECT_EQ(1u, pendingLoads.terrainUploadCount());
+    EXPECT_EQ(0u, pendingLoads.terrainTerminalResultCount());
 }
