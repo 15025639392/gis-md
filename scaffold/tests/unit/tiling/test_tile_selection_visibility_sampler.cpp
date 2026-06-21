@@ -140,3 +140,28 @@ TEST(
 
     EXPECT_TRUE(sample.visibleFromCamera);
 }
+
+TEST(
+    TileSelectionVisibilitySamplerTest,
+    ExplicitBoundingVolumeControlsCameraInsideSelectionBounds) {
+    TilesetTile tile(
+        TileKey{"test", 0, 2, 0},
+        Rectangle{2.0, 2.0, 3.0, 3.0});
+    tile.boundingVolume =
+        TileBoundingVolume::fromRegion(
+            Rectangle{-0.25, -0.25, 0.25, 0.25},
+            0.0,
+            0.0);
+
+    const TileSelectionVisibilitySample sample =
+        TileSelectionVisibilitySampler::sampleTileBounds(
+            tile,
+            noViews,
+            cameraContext);
+
+    EXPECT_TRUE(sample.visibleFromCamera);
+    EXPECT_FALSE(sample.inFrustum);
+    EXPECT_TRUE(TileSelectionVisibilitySampler::cameraInsideSelectionBounds(
+        tile,
+        cameraContext));
+}
