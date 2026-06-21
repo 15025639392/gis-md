@@ -1383,6 +1383,7 @@ TEST(RasterOverlayLifecycleTest, MissingProjectionUsesOffsetPlaceholderLikeCesiu
               mapped.getLoadingTile()->getState());
     EXPECT_EQ(1, mapped.getTextureCoordinateID());
     EXPECT_EQ(RasterMappedToTilesetTile::MoreDetail::No, moreDetail);
+    EXPECT_TRUE(mapped.loadThrottled(provider));
     ASSERT_EQ(1u, missing.size());
     EXPECT_EQ(RasterOverlayProjection::Geographic, missing[0]);
     EXPECT_EQ(0, provider.getCachedTileCount());
