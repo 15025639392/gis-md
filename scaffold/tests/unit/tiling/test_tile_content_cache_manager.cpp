@@ -23,6 +23,65 @@ std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     return heightmap;
 }
 
+struct ExternalSubtreeFixture {
+    TileContentCacheManager manager;
+    TileContentLifecycleManager lifecycle;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    TileKey rootKey{"test", 0, 0, 0};
+    TileKey childKey{"test", 1, 0, 0};
+    std::string rootCacheKey = TileCacheKey::forTile(rootKey);
+    std::string childCacheKey = TileCacheKey::forTile(childKey);
+    TilesetTile* rootRaw = nullptr;
+
+    ExternalSubtreeFixture() {
+        auto root = std::make_unique<TilesetTile>(rootKey, Rectangle{});
+        auto child = std::make_unique<TilesetTile>(
+            childKey,
+            Rectangle{},
+            root.get());
+        rootRaw = root.get();
+        rootRaw->children.push_back(child.get());
+        rootRaw->content.loadState = TileLoadState::Done;
+        rootRaw->content.contentKind = TileContentKind::External;
+        lifecycle.terrainCache()[rootCacheKey] = makeFlatHeightmap(4.0f);
+        tiles[rootCacheKey] = std::move(root);
+        tiles[childCacheKey] = std::move(child);
+
+        manager.updateTotalBytesUsed(tiles, lifecycle);
+        manager.markEligibleForUnloading(tiles, rootCacheKey);
+    }
+
+    void addChildUploadWork() {
+        std::lock_guard<std::mutex> lock(lifecycle.loadLifecycle().mutex());
+        lifecycle.loadLifecycle().pendingLoads().addContentUpload(
+            PendingContentUpload{
+                childKey,
+                childCacheKey,
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadResult::empty()});
+    }
+
+    void claimChildUploadWork() {
+        FrameResourceBudgetConfig config;
+        config.maxMainThreadFinalizesPerFrame = 1;
+        FrameResourceBudget budget;
+        budget.beginFrame(1, config);
+        std::lock_guard<std::mutex> lock(lifecycle.loadLifecycle().mutex());
+        lifecycle.loadLifecycle().pendingLoads().addContentUpload(
+            PendingContentUpload{
+                childKey,
+                childCacheKey,
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadResult::empty()});
+        ASSERT_TRUE(lifecycle.loadLifecycle()
+                        .pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+};
+
 } // namespace
 
 TEST(
@@ -148,4 +207,63 @@ TEST(
     EXPECT_TRUE(loadQueue.empty());
     EXPECT_FALSE(lifecycle.loadLifecycle().containsWorkForCacheKey(cacheKey));
     EXPECT_FALSE(lifecycle.loadLifecycle().hasPendingWork());
+}
+
+TEST(
+    TileContentCacheManagerTest,
+    DefersExternalSubtreeUnloadWhileChildUploadIsPending) {
+    ExternalSubtreeFixture fixture;
+    fixture.addChildUploadWork();
+    bool clearChildrenCalled = false;
+
+    fixture.manager.unloadCachedBytes(
+        0,
+        0.0,
+        false,
+        fixture.tiles,
+        fixture.lifecycle,
+        nullptr,
+        [&clearChildrenCalled](TilesetTile&) {
+            clearChildrenCalled = true;
+        });
+
+    EXPECT_TRUE(fixture.manager.unloadQueue().contains(
+        fixture.rootCacheKey));
+    EXPECT_EQ(fixture.tiles[fixture.rootCacheKey]->content.contentKind,
+              TileContentKind::External);
+    EXPECT_EQ(fixture.tiles[fixture.rootCacheKey]->content.loadState,
+              TileLoadState::Done);
+    EXPECT_TRUE(fixture.lifecycle.loadLifecycle().containsWorkForCacheKey(
+        fixture.childCacheKey));
+    EXPECT_FALSE(clearChildrenCalled);
+}
+
+TEST(
+    TileContentCacheManagerTest,
+    DefersExternalSubtreeUnloadWhileChildUploadIsClaimed) {
+    ExternalSubtreeFixture fixture;
+    fixture.claimChildUploadWork();
+    bool clearChildrenCalled = false;
+
+    fixture.manager.unloadCachedBytes(
+        0,
+        0.0,
+        false,
+        fixture.tiles,
+        fixture.lifecycle,
+        nullptr,
+        [&clearChildrenCalled](TilesetTile&) {
+            clearChildrenCalled = true;
+        });
+
+    EXPECT_TRUE(fixture.manager.unloadQueue().contains(
+        fixture.rootCacheKey));
+    EXPECT_EQ(fixture.tiles[fixture.rootCacheKey]->content.contentKind,
+              TileContentKind::External);
+    EXPECT_EQ(fixture.tiles[fixture.rootCacheKey]->content.loadState,
+              TileLoadState::Done);
+    EXPECT_TRUE(fixture.lifecycle.loadLifecycle().containsWorkForCacheKey(
+        fixture.childCacheKey));
+    EXPECT_TRUE(fixture.lifecycle.loadLifecycle().hasPendingWork());
+    EXPECT_FALSE(clearChildrenCalled);
 }
