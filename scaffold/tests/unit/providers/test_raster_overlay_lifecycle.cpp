@@ -807,7 +807,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceFailureFallsBackToParentTile) {
                 imagery.failingKey.y / 2}) != imagery.requestedKeys.end());
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleSourceTilesAreCachedLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest, SourceTileDepotCachesTilesByTileKeyLikeCesiumNative) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     auto uploader = std::make_unique<CountingRasterUploader>();
@@ -844,7 +844,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceTilesAreCachedLikeCesiumNative) 
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, eastTile->getState());
 }
 
-TEST(RasterOverlayLifecycleTest, ConcurrentRectangleSourceRequestsShareInFlightTileLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest, ConcurrentRectangleTilesShareProviderSourceTileAssetLikeCesiumNative) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     auto uploader = std::make_unique<CountingRasterUploader>();
@@ -881,7 +881,7 @@ TEST(RasterOverlayLifecycleTest, ConcurrentRectangleSourceRequestsShareInFlightT
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, eastTile->getState());
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleSourceCacheHonorsSubTileCacheByteBudget) {
+TEST(RasterOverlayLifecycleTest, SourceTileDepotHonorsSubTileCacheByteBudget) {
     auto ownedImagery = std::make_unique<ParentFallbackImageryProvider>();
     ParentFallbackImageryProvider* imagery = ownedImagery.get();
     RasterOverlay::Options options;

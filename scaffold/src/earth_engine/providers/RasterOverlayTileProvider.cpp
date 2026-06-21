@@ -717,12 +717,12 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
     RectangleSourceRequest(ImageryProvider& imageryProvider,
                            const TileScheme& tileScheme,
                            std::unordered_map<std::string,
-                                              CachedRectangleSource>& sourceCache,
+                                              SourceTileAsset>& sourceCache,
                            std::deque<std::pair<std::string, uint64_t>>& sourceCacheLru,
                            int64_t& sourceCacheBytes,
                            uint64_t& sourceCacheGeneration,
                            std::unordered_map<std::string,
-                                              InFlightRectangleSource>& sourceInFlight,
+                                              InFlightSourceTileAsset>& sourceInFlight,
                            int64_t sourceCacheBudgetBytes,
                            std::mutex& sourceCacheMutex,
                            RectangleSourcePlan plan,
@@ -827,7 +827,7 @@ private:
             const std::string inFlightKey = sourceCacheKey(originalKey);
             auto waiter =
                 [self, ancestorFallback, onSourceFinished](
-                    const CachedRectangleSource* cached) {
+                    const SourceTileAsset* cached) {
                     onSourceFinished();
                     if (cached && cached->image) {
                         LoadedSourceImage source;
@@ -846,7 +846,7 @@ private:
             {
                 std::lock_guard<std::mutex> lock(cacheMutex);
                 auto [it, inserted] =
-                    inFlight.try_emplace(inFlightKey, InFlightRectangleSource{});
+                    inFlight.try_emplace(inFlightKey, InFlightSourceTileAsset{});
                 it->second.waiters.push_back(std::move(waiter));
                 if (!inserted) {
                     return;
@@ -872,7 +872,7 @@ private:
                             ? RasterOverlayTile::MoreDetailAvailable::Yes
                             : RasterOverlayTile::MoreDetailAvailable::No;
                     self->cacheSource(originalKey, source);
-                    CachedRectangleSource completed =
+                    SourceTileAsset completed =
                         self->cachedSourceFromLoaded(source);
                     if (loadedKey != originalKey) {
                         LoadedSourceImage directSource;
@@ -908,9 +908,9 @@ private:
             });
     }
 
-    CachedRectangleSource cachedSourceFromLoaded(
+    SourceTileAsset cachedSourceFromLoaded(
         const LoadedSourceImage& source) const {
-        CachedRectangleSource cached;
+        SourceTileAsset cached;
         cached.key = source.key;
         cached.bounds = source.bounds;
         if (source.image) {
@@ -923,8 +923,8 @@ private:
     }
 
     void finishInFlightSource(const TileKey& originalKey,
-                              const CachedRectangleSource* source) {
-        std::vector<std::function<void(const CachedRectangleSource*)>> waiters;
+                              const SourceTileAsset* source) {
+        std::vector<std::function<void(const SourceTileAsset*)>> waiters;
         {
             std::lock_guard<std::mutex> lock(cacheMutex);
             auto it = inFlight.find(sourceCacheKey(originalKey));
@@ -948,7 +948,7 @@ private:
             cacheBytes = 0;
             return;
         }
-        CachedRectangleSource cached;
+        SourceTileAsset cached;
         cached.key = source.key;
         cached.bounds = source.bounds;
         cached.image = std::make_shared<DecodedImage>(*source.image);
@@ -968,7 +968,7 @@ private:
         pruneCacheToBudget();
     }
 
-    void touchCachedSource(const std::string& key, CachedRectangleSource& source) {
+    void touchCachedSource(const std::string& key, SourceTileAsset& source) {
         source.generation = ++cacheGeneration;
         cacheLru.emplace_back(key, source.generation);
     }
@@ -1051,11 +1051,11 @@ private:
 
     ImageryProvider& provider;
     const TileScheme& scheme;
-    std::unordered_map<std::string, CachedRectangleSource>& cache;
+    std::unordered_map<std::string, SourceTileAsset>& cache;
     std::deque<std::pair<std::string, uint64_t>>& cacheLru;
     int64_t& cacheBytes;
     uint64_t& cacheGeneration;
-    std::unordered_map<std::string, InFlightRectangleSource>& inFlight;
+    std::unordered_map<std::string, InFlightSourceTileAsset>& inFlight;
     int64_t cacheBudgetBytes = 0;
     std::mutex& cacheMutex;
     RectangleSourcePlan sourcePlan;
@@ -1145,24 +1145,24 @@ void RasterOverlayTileProvider::setOwner(RasterOverlay* owner) {
 void RasterOverlayTileProvider::setSubTileCacheBytes(int64_t subTileCacheBytes) {
     std::lock_guard<std::mutex> lock(pendingMutex_);
     subTileCacheBytes_ = std::max<int64_t>(0, subTileCacheBytes);
-    while (rectangleSourceCacheBytes_ > subTileCacheBytes_ &&
-           !rectangleSourceCacheLru_.empty()) {
-        auto [key, generation] = rectangleSourceCacheLru_.front();
-        rectangleSourceCacheLru_.pop_front();
-        auto it = rectangleSourceCache_.find(key);
-        if (it == rectangleSourceCache_.end() ||
+    while (sourceTileDepotCacheBytes_ > subTileCacheBytes_ &&
+           !sourceTileDepotCacheLru_.empty()) {
+        auto [key, generation] = sourceTileDepotCacheLru_.front();
+        sourceTileDepotCacheLru_.pop_front();
+        auto it = sourceTileDepotCache_.find(key);
+        if (it == sourceTileDepotCache_.end() ||
             it->second.generation != generation) {
             continue;
         }
-        rectangleSourceCacheBytes_ -= it->second.sizeBytes;
-        rectangleSourceCache_.erase(it);
+        sourceTileDepotCacheBytes_ -= it->second.sizeBytes;
+        sourceTileDepotCache_.erase(it);
     }
-    if (subTileCacheBytes_ == 0 || rectangleSourceCacheBytes_ < 0) {
+    if (subTileCacheBytes_ == 0 || sourceTileDepotCacheBytes_ < 0) {
         if (subTileCacheBytes_ == 0) {
-            rectangleSourceCache_.clear();
-            rectangleSourceCacheLru_.clear();
+            sourceTileDepotCache_.clear();
+            sourceTileDepotCacheLru_.clear();
         }
-        rectangleSourceCacheBytes_ = 0;
+        sourceTileDepotCacheBytes_ = 0;
     }
 }
 
@@ -1537,11 +1537,11 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
     auto request = std::make_shared<RectangleSourceRequest>(
         provider_,
         scheme_,
-        rectangleSourceCache_,
-        rectangleSourceCacheLru_,
-        rectangleSourceCacheBytes_,
-        rectangleSourceCacheGeneration_,
-        inFlightRectangleSources_,
+        sourceTileDepotCache_,
+        sourceTileDepotCacheLru_,
+        sourceTileDepotCacheBytes_,
+        sourceTileDepotGeneration_,
+        sourceTileDepotInFlight_,
         subTileCacheBytes_,
         pendingMutex_,
         sourcePlan,

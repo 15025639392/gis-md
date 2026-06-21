@@ -257,7 +257,12 @@ private:
     std::deque<PendingUpload> pendingUploads_;
     mutable std::mutex pendingMutex_;
 
-    struct CachedRectangleSource {
+    /// Provider-level source imagery depot, matching cesium-native
+    /// SharedAssetDepot ownership. Rectangle geometry requests may compose
+    /// different output tiles, but the underlying quadtree source tile is
+    /// shared by TileKey here rather than owned by an individual rectangle
+    /// request.
+    struct SourceTileAsset {
         TileKey key;
         Rectangle bounds;
         std::shared_ptr<const DecodedImage> image;
@@ -267,17 +272,17 @@ private:
         int64_t sizeBytes = 0;
         uint64_t generation = 0;
     };
-    struct InFlightRectangleSource {
-        std::vector<std::function<void(const CachedRectangleSource*)>> waiters;
+    struct InFlightSourceTileAsset {
+        std::vector<std::function<void(const SourceTileAsset*)>> waiters;
     };
-    std::unordered_map<std::string, CachedRectangleSource>
-        rectangleSourceCache_;
-    std::unordered_map<std::string, InFlightRectangleSource>
-        inFlightRectangleSources_;
-    std::deque<std::pair<std::string, uint64_t>> rectangleSourceCacheLru_;
-    int64_t rectangleSourceCacheBytes_ = 0;
+    std::unordered_map<std::string, SourceTileAsset>
+        sourceTileDepotCache_;
+    std::unordered_map<std::string, InFlightSourceTileAsset>
+        sourceTileDepotInFlight_;
+    std::deque<std::pair<std::string, uint64_t>> sourceTileDepotCacheLru_;
+    int64_t sourceTileDepotCacheBytes_ = 0;
     int64_t subTileCacheBytes_ = 16 * 1024 * 1024;
-    uint64_t rectangleSourceCacheGeneration_ = 0;
+    uint64_t sourceTileDepotGeneration_ = 0;
 
     /// Tiles currently in-flight (requested but not yet responded).
     std::unordered_set<std::string> inFlightRequests_;
