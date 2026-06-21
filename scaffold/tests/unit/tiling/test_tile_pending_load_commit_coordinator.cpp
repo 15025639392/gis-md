@@ -114,6 +114,73 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     MissingTileUploadsReleaseCacheKeysWithoutResourceSideEffects) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    PendingTerrainUpload terrainUpload{
+        TileKey{"test", 0, 0, 0},
+        "missing-terrain",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        nullptr};
+    PendingContentUpload contentUpload{
+        TileKey{"test", 0, 1, 0},
+        "missing-content",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileContentLoadResult::empty()};
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            terrainUpload.key,
+            terrainUpload.cacheKey,
+            terrainUpload.group,
+            terrainUpload.priority,
+            nullptr});
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            contentUpload.key,
+            contentUpload.cacheKey,
+            contentUpload.group,
+            contentUpload.priority,
+            TileContentLoadResult::empty()});
+        EXPECT_TRUE(
+            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget)
+                .has_value());
+        EXPECT_TRUE(
+            lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget)
+                .has_value());
+    }
+
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache;
+    bool resourcesDirty = false;
+    TilePendingLoadCommitCoordinator::commitTerrainUpload(
+        terrainUpload,
+        nullptr,
+        terrainCache,
+        lifecycle,
+        false,
+        [](const TileKey&) -> TilesetTile* { return nullptr; },
+        [](const TileKey&, const DecodedHeightmap&) {},
+        [](TilesetTile&) {},
+        [&resourcesDirty]() { resourcesDirty = true; });
+    TilePendingLoadCommitCoordinator::commitContentUpload(
+        contentUpload,
+        terrainCache,
+        lifecycle,
+        [](const TileKey&) -> TilesetTile* { return nullptr; },
+        [](TilesetTile&) {},
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_FALSE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey("missing-terrain"));
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey("missing-content"));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      MissingContentUploadPreservesTerrainCache) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
