@@ -211,3 +211,53 @@ TEST(TilePendingLoadQueueTest, TakesTerminalResultsByPriority) {
     EXPECT_EQ(1u, queue.terrainTerminalResultCount());
     EXPECT_EQ(0u, queue.contentTerminalResultCount());
 }
+
+TEST(TilePendingLoadQueueTest, DeduplicatesTerminalResultsByKind) {
+    TilePendingLoadQueue queue;
+    const TileKey firstKey{"test", 1, 0, 0};
+    const TileKey secondKey{"test", 1, 1, 0};
+
+    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+        firstKey,
+        "terrain-terminal",
+        TileLoadPriorityGroup::Normal,
+        1.0,
+        TerrainTileLoadStatus::RetryLater});
+    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+        secondKey,
+        "terrain-terminal",
+        TileLoadPriorityGroup::Urgent,
+        100.0,
+        TerrainTileLoadStatus::Cancelled});
+    queue.addContentTerminalResult(PendingContentTerminalResult{
+        firstKey,
+        "content-terminal",
+        TileLoadPriorityGroup::Normal,
+        1.0,
+        TileContentLoadStatus::RetryLater});
+    queue.addContentTerminalResult(PendingContentTerminalResult{
+        secondKey,
+        "content-terminal",
+        TileLoadPriorityGroup::Urgent,
+        100.0,
+        TileContentLoadStatus::Cancelled});
+
+    EXPECT_EQ(1u, queue.terrainTerminalResultCount());
+    EXPECT_EQ(1u, queue.contentTerminalResultCount());
+
+    FrameResourceBudgetConfig config;
+    config.maxTerminalStateTransitionsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    std::optional<PendingTerminalResult> first =
+        queue.takeHighestPriorityTerminalResult(budget);
+    std::optional<PendingTerminalResult> second =
+        queue.takeHighestPriorityTerminalResult(budget);
+    std::optional<PendingTerminalResult> third =
+        queue.takeHighestPriorityTerminalResult(budget);
+
+    EXPECT_TRUE(first.has_value());
+    EXPECT_TRUE(second.has_value());
+    EXPECT_FALSE(third.has_value());
+}
