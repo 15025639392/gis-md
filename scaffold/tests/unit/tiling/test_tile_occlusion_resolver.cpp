@@ -91,3 +91,27 @@ TEST(TileOcclusionResolverTest, MissingChildKeepsParentVisible) {
     EXPECT_EQ(result, TileOcclusionState::NotOccluded);
     EXPECT_EQ(checkedTiles, 1);
 }
+
+TEST(TileOcclusionResolverTest, TerminalParentStateSkipsChildren) {
+    auto checkTerminalState = [](TileOcclusionState state) {
+        TilesetTile root;
+        TilesetTile child;
+        setTileKey(root, TileKey{"Geographic-TMS", 0, 0, 0});
+        setTileKey(child, TileKey{"Geographic-TMS", 1, 0, 0});
+        root.children.push_back(&child);
+
+        int checkedTiles = 0;
+        const TileOcclusionState result = TileOcclusionResolver::check(
+            root,
+            [state, &checkedTiles](const TilesetTile&) {
+                ++checkedTiles;
+                return state;
+            });
+
+        EXPECT_EQ(result, state);
+        EXPECT_EQ(checkedTiles, 1);
+    };
+
+    checkTerminalState(TileOcclusionState::Occluded);
+    checkTerminalState(TileOcclusionState::OcclusionUnavailable);
+}
