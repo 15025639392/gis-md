@@ -436,6 +436,22 @@ TEST(RasterOverlayLifecycleTest, RectangleCoverageRejectsOutsideAndClipsSourcePl
     }
 }
 
+TEST(RasterOverlayLifecycleTest, RectangleCoverageMissCreatesNoTileOrRequest) {
+    ParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const Rectangle coverage = scheme->tileToRectangle(
+        TileKey{scheme->id(), 3, 2, 3});
+    const Rectangle outsideCoverage = scheme->tileToRectangle(
+        TileKey{scheme->id(), 3, 2, 5});
+    provider.setCoverageRectangle(coverage);
+
+    EXPECT_EQ(nullptr, provider.getTile(outsideCoverage, 512.0, 512.0));
+    EXPECT_TRUE(imagery.requestedKeys.empty());
+    EXPECT_EQ(0, provider.getCachedTileCount());
+}
+
 TEST(RasterOverlayLifecycleTest, RectangleSourceRangeTrimsTileEdgeTouchesLikeCesiumNative) {
     ParentFallbackImageryProvider imagery;
     imagery.tileWidthValue = 64;
