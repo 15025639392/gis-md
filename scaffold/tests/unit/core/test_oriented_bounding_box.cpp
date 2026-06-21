@@ -279,6 +279,18 @@ TEST(OrientedBoundingBoxTest, DistanceSquaredToPositionHandlesDegenerateAxesLike
     }
 }
 
+TEST(OrientedBoundingBoxTest, DistanceSquaredTwoDegenerateAxesKeepsNegativeYAuxiliaryChoice) {
+    // Source-derived from cesium-native OrientedBoundingBox.cpp: the auxiliary
+    // cross vector changes only when the remaining valid axis equals +Y within
+    // Epsilon3, so a -Y axis follows the original zero-cross path.
+    OrientedBoundingBox box(Vec3(1.0, 0.0, 0.0),
+                            Vec3::zero(),
+                            Vec3(0.0, -1.0, 0.0),
+                            Vec3::zero());
+
+    EXPECT_DOUBLE_EQ(0.0, box.computeDistanceSquaredToPosition(Vec3::zero()));
+}
+
 TEST(OrientedBoundingBoxTest, ContainsMatchesCesiumNativeLocalUnitCube) {
     OrientedBoundingBox box(Vec3(1.0, 2.0, 3.0),
                             Vec3(2.0, 0.0, 0.0),

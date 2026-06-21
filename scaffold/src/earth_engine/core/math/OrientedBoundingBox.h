@@ -116,7 +116,9 @@ public:
         } else if (degenerateAxes == 2) {
             Vec3 validAxis1 = uValid ? u : (vValid ? v : w);
             Vec3 crossVector = Vec3::unitY();
-            if (std::abs(validAxis1.dot(crossVector)) > 1.0 - 1e-3) {
+            if (std::abs(validAxis1.x() - crossVector.x()) <= 1e-3 &&
+                std::abs(validAxis1.y() - crossVector.y()) <= 1e-3 &&
+                std::abs(validAxis1.z() - crossVector.z()) <= 1e-3) {
                 crossVector = Vec3::unitX();
             }
 
