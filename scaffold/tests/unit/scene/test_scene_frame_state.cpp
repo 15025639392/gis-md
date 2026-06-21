@@ -12,6 +12,7 @@
 #include "earth_engine/scene/FrameState.h"
 #include "earth_engine/scene/Frustum.h"
 #include "earth_engine/scene/PresentationTrace.h"
+#include "earth_engine/scene/ScenePresentationTraceBuilder.h"
 #include "earth_engine/scene/SceneFrameDiagnostics.h"
 #include "earth_engine/scene/SceneFrameStateBuilder.h"
 #include "earth_engine/scene/Scene.h"
@@ -77,6 +78,10 @@ struct TilesetTestAccess {
 
     static void beginTilePlan(Tileset& tileset) {
         tileset.tilePlan_ = TilePlan{};
+    }
+
+    static TilePlan& mutableTilePlan(Tileset& tileset) {
+        return tileset.tilePlan_;
     }
 
     static void addTileToCurrentPlan(Tileset& tileset, TilesetTile& tile) {
@@ -216,6 +221,11 @@ RasterOverlay::Options makeRasterOverlayOptions() {
     options.opacity = 1.0f;
     options.role = RasterOverlayRole::BaseImagery;
     return options;
+}
+
+const std::vector<std::unique_ptr<Tileset>>& emptyContentTilesets() {
+    static const std::vector<std::unique_ptr<Tileset>> empty;
+    return empty;
 }
 
 std::unique_ptr<GltfModel> makeTriangleGltfModel() {
@@ -743,6 +753,41 @@ TEST(SceneFrameStateTest, RenderPlanKeepsSurfaceBeforeBaseRasterIsDrawable) {
     ASSERT_EQ(1u, tileset.tilePlan().renderEntries.size());
     EXPECT_EQ(rootKey, tileset.tilePlan().renderEntries.front().selectedKey);
     EXPECT_EQ(rootKey, tileset.tilePlan().renderEntries.front().renderKey);
+}
+
+TEST(SceneFrameStateTest, PresentationTraceCopiesRenderEntryPassFailures) {
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+    TilePlan& plan = TilesetTestAccess::mutableTilePlan(tileset);
+    plan.renderEntryCommandMissedDrawCount = 5;
+    plan.renderEntrySelectedCommandMissedDrawCount = 2;
+    plan.renderEntryFadingCommandMissedDrawCount = 3;
+    plan.renderEntryCommandDeferredCount = 7;
+    plan.renderEntrySelectedCommandDeferredCount = 4;
+    plan.renderEntryFadingCommandDeferredCount = 3;
+
+    FrameState frameState;
+    frameState.frameId = 3;
+    RenderCommandList commands;
+    const PresentationTrace trace = ScenePresentationTraceBuilder::build(
+        ScenePresentationTraceInput{
+            frameState,
+            &tileset,
+            emptyContentTilesets(),
+            commands});
+
+    ASSERT_EQ(1u, trace.tilesets.size());
+    const PresentationTilesetTrace& tilesetTrace = trace.tilesets.front();
+    EXPECT_EQ(5, tilesetTrace.renderEntryCommandMissedDrawCount);
+    EXPECT_EQ(2, tilesetTrace.renderEntrySelectedCommandMissedDrawCount);
+    EXPECT_EQ(3, tilesetTrace.renderEntryFadingCommandMissedDrawCount);
+    EXPECT_EQ(7, tilesetTrace.renderEntryCommandDeferredCount);
+    EXPECT_EQ(4, tilesetTrace.renderEntrySelectedCommandDeferredCount);
+    EXPECT_EQ(3, tilesetTrace.renderEntryFadingCommandDeferredCount);
 }
 
 TEST(SceneFrameStateTest, DiagnosticsExposeTerrainSynchronousPrepReasons) {
