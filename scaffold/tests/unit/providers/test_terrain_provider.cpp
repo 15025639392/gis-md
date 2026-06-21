@@ -2,6 +2,8 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <mutex>
 #include <nlohmann/json.hpp>
@@ -735,6 +737,73 @@ TEST(QuantizedMeshTerrainProviderTest, ExtensionQueryStaysBeforeFragmentLikeCesi
     EXPECT_EQ(
         "https://example.invalid/terrain/tiles/2/3/1.terrain?token=base&extensions=metadata#tile-fragment",
         provider.buildUrl(TileKey{"Geographic-TMS", 2, 3, 1}));
+}
+
+TEST(QuantizedMeshTerrainProviderTest, ParentLayerFillsTopLayerGapsLikeCesiumNative) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth_md_qm_parent_layer_test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "child");
+    std::filesystem::create_directories(root / "parent");
+
+    const std::string parentLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["parentTiles/{z}/{x}/{y}.terrain?source=parent"],
+      "minzoom": 0,
+      "maxzoom": 4,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}],
+        [{"startX":2,"startY":0,"endX":2,"endY":0}]
+      ]
+    })json";
+    {
+        std::ofstream out(root / "parent" / "layer.json");
+        out << parentLayerJson;
+    }
+
+    const std::string childLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["childTiles/{level}/{x}/{y}.terrain?v={version}"],
+      "version": "9",
+      "parentUrl": "../parent",
+      "minzoom": 0,
+      "maxzoom": 4,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}],
+        [{"startX":0,"startY":0,"endX":0,"endY":0}]
+      ]
+    })json";
+
+    const std::string childLayerUrl =
+        "file://" + (root / "child" / "layer.json").generic_string();
+    const std::string childBase =
+        "file://" + (root / "child").generic_string();
+    const std::string parentBase =
+        "file://" + (root / "parent").generic_string();
+
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    ASSERT_TRUE(provider.configureFromLayerJson(childLayerJson, childLayerUrl));
+
+    const TileKey childTile{"Geographic-TMS", 1, 0, 0};
+    const TileKey parentTile{"Geographic-TMS", 1, 2, 0};
+    const TileKey missingTile{"Geographic-TMS", 1, 3, 0};
+
+    EXPECT_TRUE(provider.supportsTile(childTile));
+    EXPECT_EQ(childBase + "/childTiles/1/0/0.terrain?v=9",
+              provider.buildUrl(childTile));
+    EXPECT_TRUE(provider.supportsTile(parentTile));
+    EXPECT_EQ(parentBase + "/parentTiles/1/2/0.terrain?source=parent",
+              provider.buildUrl(parentTile));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(missingTile));
+
+    std::filesystem::remove_all(root);
 }
 
 TEST(QuantizedMeshTerrainProviderTest, WebMercatorMetadataAvailabilityStartsAtOneRootLikeCesiumNative) {
