@@ -85,6 +85,25 @@ TEST(OctreeTilingSchemeTest, PositionToTileClampsPositiveEdgesToFinalTile) {
     EXPECT_EQ(11, tile->z);
 }
 
+TEST(OctreeTilingSchemeTest, PositionToTileAssignsInternalBoundariesToUpperTile) {
+    // Source-derived from cesium-native OctreeTilingScheme::positionToTile:
+    // tile coordinates are computed with integer truncation, so exact internal
+    // boundaries fall into the tile on the positive side of each boundary.
+    const OctreeTilingScheme scheme(AxisAlignedBox(0.0, 0.0, 0.0,
+                                                  4.0, 4.0, 4.0),
+                                    1,
+                                    1,
+                                    1);
+
+    const auto tile = scheme.positionToTile(Vec3(2.0, 2.0, 2.0), 1);
+
+    ASSERT_TRUE(tile.has_value());
+    EXPECT_EQ(1, tile->level);
+    EXPECT_EQ(1, tile->x);
+    EXPECT_EQ(1, tile->y);
+    EXPECT_EQ(1, tile->z);
+}
+
 TEST(OctreeTilingSchemeTest, PositionToTileIncludesNegativeEdgesInFirstTile) {
     const OctreeTilingScheme scheme(AxisAlignedBox(-10.0, -20.0, -30.0,
                                                   10.0, 20.0, 30.0),
