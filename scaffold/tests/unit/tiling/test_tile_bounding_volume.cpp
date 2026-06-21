@@ -119,6 +119,43 @@ TEST(TileBoundingVolumeTest, TransformCylinderRegionLikeCesiumNative) {
               transformed.cylinderRegion.getRadialBounds());
 }
 
+TEST(TileBoundingVolumeTest, SphereConvertsToCircumscribedObbLikeCesiumNative) {
+    const TileBoundingVolume volume =
+        TileBoundingVolume::fromSphere(Vec3(1.0, 2.0, 3.0), 10.0);
+
+    const std::optional<OrientedBoundingBox> obb =
+        volume.toOrientedBoundingBox();
+
+    ASSERT_TRUE(obb.has_value());
+    EXPECT_EQ(Vec3(1.0, 2.0, 3.0), obb->getCenter());
+    EXPECT_EQ(Vec3(10.0, 0.0, 0.0), obb->getHalfAxis(0));
+    EXPECT_EQ(Vec3(0.0, 10.0, 0.0), obb->getHalfAxis(1));
+    EXPECT_EQ(Vec3(0.0, 0.0, 10.0), obb->getHalfAxis(2));
+}
+
+TEST(TileBoundingVolumeTest, CylinderRegionConvertsToTightObbLikeCesiumNative) {
+    const TileBoundingVolume volume =
+        TileBoundingVolume::fromCylinderRegion(
+            BoundingCylinderRegion(
+                Vec3(1.0, 2.0, 3.0),
+                glm::dquat(glm::dmat3(
+                    glm::dvec3(0.0, 1.0, 0.0),
+                    glm::dvec3(-1.0, 0.0, 0.0),
+                    glm::dvec3(0.0, 0.0, 1.0))),
+                3.0,
+                glm::dvec2(1.0, 2.0),
+                glm::dvec2(0.0, kPi * 0.5)));
+
+    const std::optional<OrientedBoundingBox> obb =
+        volume.toOrientedBoundingBox();
+
+    ASSERT_TRUE(obb.has_value());
+    expectVec3Near(Vec3(0.0, 3.0, 3.0), obb->getCenter(), 1e-6);
+    expectVec3Near(Vec3(0.0, 1.0, 0.0), obb->getHalfAxis(0), 1e-6);
+    expectVec3Near(Vec3(-1.0, 0.0, 0.0), obb->getHalfAxis(1), 1e-6);
+    expectVec3Near(Vec3(0.0, 0.0, 1.5), obb->getHalfAxis(2), 1e-6);
+}
+
 TEST(TileBoundingVolumeTest, S2CellStoresHeightsAndIgnoresTransform) {
     const S2CellBoundingVolume s2(
         S2CellID::fromQuadtreeTileID(1, 1, 0, 1),
