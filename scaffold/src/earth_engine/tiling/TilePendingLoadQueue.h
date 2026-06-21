@@ -47,8 +47,7 @@ public:
     void addContentUpload(PendingContentUpload upload);
     void addContentTerminalResult(PendingContentTerminalResult result);
 
-    void eraseTerrainUploadKey(const std::string& cacheKey);
-    void eraseContentUploadKey(const std::string& cacheKey);
+    void eraseUploadKey(const std::string& cacheKey);
     void eraseCacheKey(const std::string& cacheKey);
     void clear();
 
@@ -71,8 +70,7 @@ public:
         FrameResourceBudget& budget);
 
 private:
-    std::unordered_set<std::string> terrainUploadKeys_;
-    std::unordered_set<std::string> contentUploadKeys_;
+    std::unordered_set<std::string> uploadKeys_;
     std::deque<PendingTerrainUpload> terrainUploads_;
     std::deque<PendingTerrainTerminalResult> terrainTerminalResults_;
     std::deque<PendingContentUpload> contentUploads_;

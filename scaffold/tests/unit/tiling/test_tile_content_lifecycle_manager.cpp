@@ -78,7 +78,7 @@ TEST(TileContentLifecycleManagerTest, ExposesClaimedUploadWork) {
     EXPECT_TRUE(manager.loadLifecycle().containsWorkForCacheKey(
         "content-upload"));
 
-    TilePendingUploadCompletion::eraseContentUpload(
+    TilePendingUploadCompletion::eraseUpload(
         manager.loadLifecycle(),
         "content-upload");
 

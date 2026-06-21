@@ -7,10 +7,7 @@ namespace earth_engine {
 class TileLoadLifecycle;
 
 struct TilePendingUploadCompletion {
-    static void eraseTerrainUpload(
-        TileLoadLifecycle& lifecycle,
-        const std::string& cacheKey);
-    static void eraseContentUpload(
+    static void eraseUpload(
         TileLoadLifecycle& lifecycle,
         const std::string& cacheKey);
 };

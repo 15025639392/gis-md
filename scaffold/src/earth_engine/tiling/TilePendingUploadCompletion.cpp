@@ -4,18 +4,11 @@
 
 namespace earth_engine {
 
-void TilePendingUploadCompletion::eraseTerrainUpload(
+void TilePendingUploadCompletion::eraseUpload(
     TileLoadLifecycle& lifecycle,
     const std::string& cacheKey) {
     std::lock_guard<std::mutex> lock(lifecycle.mutex());
-    lifecycle.pendingLoads().eraseTerrainUploadKey(cacheKey);
-}
-
-void TilePendingUploadCompletion::eraseContentUpload(
-    TileLoadLifecycle& lifecycle,
-    const std::string& cacheKey) {
-    std::lock_guard<std::mutex> lock(lifecycle.mutex());
-    lifecycle.pendingLoads().eraseContentUploadKey(cacheKey);
+    lifecycle.pendingLoads().eraseUploadKey(cacheKey);
 }
 
 } // namespace earth_engine

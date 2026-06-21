@@ -130,7 +130,7 @@ public:
             }
         }
 
-        TilePendingUploadCompletion::eraseTerrainUpload(
+        TilePendingUploadCompletion::eraseUpload(
             lifecycle,
             upload.cacheKey);
     }
@@ -149,7 +149,7 @@ public:
         MarkResourcesDirtyFn&& markResourcesDirty) {
         TilesetTile* tile = ensureTile(upload.key);
         if (!tile) {
-            TilePendingUploadCompletion::eraseContentUpload(
+            TilePendingUploadCompletion::eraseUpload(
                 lifecycle,
                 upload.cacheKey);
             return;
@@ -168,7 +168,7 @@ public:
             markResourcesDirty();
         }
 
-        TilePendingUploadCompletion::eraseContentUpload(
+        TilePendingUploadCompletion::eraseUpload(
             lifecycle,
             upload.cacheKey);
     }

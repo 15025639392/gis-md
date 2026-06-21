@@ -17008,17 +17008,17 @@ void testTilePendingUploadCompletionErasesUploadKeys() {
               lifecycle.containsWorkForCacheKey("content"),
           "TilePendingUploadCompletion: dequeued uploads retain cache keys until completion cleanup");
 
-    TilePendingUploadCompletion::eraseTerrainUpload(lifecycle, "terrain");
+    TilePendingUploadCompletion::eraseUpload(lifecycle, "terrain");
     check(!lifecycle.containsWorkForCacheKey("terrain") &&
               lifecycle.containsWorkForCacheKey("content"),
           "TilePendingUploadCompletion: erases terrain upload key without clearing content upload work");
 
-    TilePendingUploadCompletion::eraseContentUpload(lifecycle, "content");
+    TilePendingUploadCompletion::eraseUpload(lifecycle, "content");
     check(!lifecycle.hasPendingWork(),
           "TilePendingUploadCompletion: erases content upload key and leaves lifecycle idle");
 }
 
-void testTilePendingUploadCompletionKeepsOtherKindForSharedKey() {
+void testTilePendingUploadCompletionRejectsDuplicateUploadKeyAcrossKinds() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxMainThreadFinalizesPerFrame = 4;
@@ -17042,20 +17042,16 @@ void testTilePendingUploadCompletionKeepsOtherKindForSharedKey() {
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
         std::optional<PendingLoadFinalize> second =
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
-        check(first && second,
-              "TilePendingUploadCompletion: shared-key test dequeues both uploads");
+        check(first && !second,
+              "TilePendingUploadCompletion: shared-key test keeps one claimed upload per cache key");
     }
 
     check(lifecycle.containsWorkForCacheKey("shared"),
-          "TilePendingUploadCompletion: shared key remains pending after both uploads are claimed");
+          "TilePendingUploadCompletion: shared key remains pending while the claimed upload is active");
 
-    TilePendingUploadCompletion::eraseTerrainUpload(lifecycle, "shared");
-    check(lifecycle.containsWorkForCacheKey("shared"),
-          "TilePendingUploadCompletion: terrain completion preserves shared content upload key");
-
-    TilePendingUploadCompletion::eraseContentUpload(lifecycle, "shared");
+    TilePendingUploadCompletion::eraseUpload(lifecycle, "shared");
     check(!lifecycle.hasPendingWork(),
-          "TilePendingUploadCompletion: shared key clears only after both upload kinds complete");
+          "TilePendingUploadCompletion: shared key clears after the unified upload completes");
 }
 
 void testTilePendingUploadCompletionClaimedUploadCountsAsWork() {
@@ -17082,7 +17078,7 @@ void testTilePendingUploadCompletionClaimedUploadCountsAsWork() {
               lifecycle.hasPendingWork(),
           "TilePendingUploadCompletion: claimed upload key keeps lifecycle work visible until completion");
 
-    TilePendingUploadCompletion::eraseTerrainUpload(lifecycle, "terrain");
+    TilePendingUploadCompletion::eraseUpload(lifecycle, "terrain");
     check(!lifecycle.hasPendingWork(),
           "TilePendingUploadCompletion: claimed upload completion leaves lifecycle idle");
 }
@@ -17719,7 +17715,7 @@ void testTileContentLifecycleManagerExposesClaimedUploadWork() {
                   "content-upload"),
           "TileContentLifecycleManager: claimed upload remains externally visible as pending work");
 
-    TilePendingUploadCompletion::eraseContentUpload(
+    TilePendingUploadCompletion::eraseUpload(
         manager.loadLifecycle(),
         "content-upload");
 
@@ -26843,7 +26839,7 @@ int main() {
     testTilePendingLoadProcessorDrainsTerminalDuringInteraction();
     testTilePendingLoadProcessorProcessesUrgentUploadDuringInteraction();
     testTilePendingUploadCompletionErasesUploadKeys();
-    testTilePendingUploadCompletionKeepsOtherKindForSharedKey();
+    testTilePendingUploadCompletionRejectsDuplicateUploadKeyAcrossKinds();
     testTilePendingUploadCompletionClaimedUploadCountsAsWork();
     testTilePendingRequestStateCountsAndCompletesRequests();
     testPendingLoadStateRejectsEmptyCacheKeys();

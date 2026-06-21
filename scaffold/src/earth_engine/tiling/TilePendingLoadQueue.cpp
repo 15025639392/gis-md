@@ -11,8 +11,7 @@ bool TilePendingLoadQueue::containsCacheKey(
     if (cacheKey.empty()) {
         return false;
     }
-    if (terrainUploadKeys_.count(cacheKey) ||
-        contentUploadKeys_.count(cacheKey)) {
+    if (uploadKeys_.count(cacheKey)) {
         return true;
     }
     const auto terrainUploadIt = std::find_if(
@@ -64,7 +63,7 @@ void TilePendingLoadQueue::addTerrainUpload(PendingTerrainUpload upload) {
     if (terminalIt != terrainTerminalResults_.end()) {
         return;
     }
-    if (!terrainUploadKeys_.insert(upload.cacheKey).second) {
+    if (!uploadKeys_.insert(upload.cacheKey).second) {
         return;
     }
     terrainUploads_.push_back(std::move(upload));
@@ -75,7 +74,7 @@ void TilePendingLoadQueue::addTerrainTerminalResult(
     if (result.cacheKey.empty()) {
         return;
     }
-    if (terrainUploadKeys_.count(result.cacheKey)) {
+    if (uploadKeys_.count(result.cacheKey)) {
         return;
     }
     const auto existingIt = std::find_if(
@@ -103,7 +102,7 @@ void TilePendingLoadQueue::addContentUpload(PendingContentUpload upload) {
     if (terminalIt != contentTerminalResults_.end()) {
         return;
     }
-    if (!contentUploadKeys_.insert(upload.cacheKey).second) {
+    if (!uploadKeys_.insert(upload.cacheKey).second) {
         return;
     }
     contentUploads_.push_back(std::move(upload));
@@ -114,7 +113,7 @@ void TilePendingLoadQueue::addContentTerminalResult(
     if (result.cacheKey.empty()) {
         return;
     }
-    if (contentUploadKeys_.count(result.cacheKey)) {
+    if (uploadKeys_.count(result.cacheKey)) {
         return;
     }
     const auto existingIt = std::find_if(
@@ -129,19 +128,13 @@ void TilePendingLoadQueue::addContentTerminalResult(
     contentTerminalResults_.push_back(std::move(result));
 }
 
-void TilePendingLoadQueue::eraseTerrainUploadKey(
+void TilePendingLoadQueue::eraseUploadKey(
     const std::string& cacheKey) {
-    terrainUploadKeys_.erase(cacheKey);
-}
-
-void TilePendingLoadQueue::eraseContentUploadKey(
-    const std::string& cacheKey) {
-    contentUploadKeys_.erase(cacheKey);
+    uploadKeys_.erase(cacheKey);
 }
 
 void TilePendingLoadQueue::eraseCacheKey(const std::string& cacheKey) {
-    terrainUploadKeys_.erase(cacheKey);
-    contentUploadKeys_.erase(cacheKey);
+    uploadKeys_.erase(cacheKey);
     terrainUploads_.erase(
         std::remove_if(
             terrainUploads_.begin(),
@@ -177,8 +170,7 @@ void TilePendingLoadQueue::eraseCacheKey(const std::string& cacheKey) {
 }
 
 void TilePendingLoadQueue::clear() {
-    terrainUploadKeys_.clear();
-    contentUploadKeys_.clear();
+    uploadKeys_.clear();
     terrainUploads_.clear();
     terrainTerminalResults_.clear();
     contentUploads_.clear();
@@ -186,8 +178,7 @@ void TilePendingLoadQueue::clear() {
 }
 
 bool TilePendingLoadQueue::hasWork() const {
-    return !terrainUploadKeys_.empty() ||
-           !contentUploadKeys_.empty() ||
+    return !uploadKeys_.empty() ||
            !terrainUploads_.empty() ||
            !terrainTerminalResults_.empty() ||
            !contentUploads_.empty() ||

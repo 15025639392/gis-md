@@ -33,7 +33,7 @@ TEST(TilePendingUploadCompletionTest, ClaimedUploadCountsAsWork) {
     EXPECT_TRUE(lifecycle.containsWorkForCacheKey("terrain"));
     EXPECT_TRUE(lifecycle.hasPendingWork());
 
-    TilePendingUploadCompletion::eraseTerrainUpload(lifecycle, "terrain");
+    TilePendingUploadCompletion::eraseUpload(lifecycle, "terrain");
 
     EXPECT_FALSE(lifecycle.hasPendingWork());
 }
@@ -73,17 +73,17 @@ TEST(TilePendingUploadCompletionTest, ErasesUploadKeys) {
     EXPECT_TRUE(lifecycle.containsWorkForCacheKey("terrain"));
     EXPECT_TRUE(lifecycle.containsWorkForCacheKey("content"));
 
-    TilePendingUploadCompletion::eraseTerrainUpload(lifecycle, "terrain");
+    TilePendingUploadCompletion::eraseUpload(lifecycle, "terrain");
 
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey("terrain"));
     EXPECT_TRUE(lifecycle.containsWorkForCacheKey("content"));
 
-    TilePendingUploadCompletion::eraseContentUpload(lifecycle, "content");
+    TilePendingUploadCompletion::eraseUpload(lifecycle, "content");
 
     EXPECT_FALSE(lifecycle.hasPendingWork());
 }
 
-TEST(TilePendingUploadCompletionTest, KeepsOtherKindForSharedKey) {
+TEST(TilePendingUploadCompletionTest, RejectsDuplicateUploadKeyAcrossKinds) {
     TileLoadLifecycle lifecycle;
 
     FrameResourceBudgetConfig config;
@@ -112,16 +112,12 @@ TEST(TilePendingUploadCompletionTest, KeepsOtherKindForSharedKey) {
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
 
         ASSERT_TRUE(first.has_value());
-        ASSERT_TRUE(second.has_value());
+        EXPECT_FALSE(second.has_value());
     }
 
     EXPECT_TRUE(lifecycle.containsWorkForCacheKey("shared"));
 
-    TilePendingUploadCompletion::eraseTerrainUpload(lifecycle, "shared");
-
-    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("shared"));
-
-    TilePendingUploadCompletion::eraseContentUpload(lifecycle, "shared");
+    TilePendingUploadCompletion::eraseUpload(lifecycle, "shared");
 
     EXPECT_FALSE(lifecycle.hasPendingWork());
 }
