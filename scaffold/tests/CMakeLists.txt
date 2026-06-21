@@ -238,6 +238,12 @@ add_executable(test_loaded_terrain_height_sampler
 target_link_libraries(test_loaded_terrain_height_sampler PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_loaded_terrain_height_sampler COMMAND test_loaded_terrain_height_sampler)
 
+add_executable(test_tileset_sample_height
+    unit/tiling/test_tileset_sample_height.cpp
+)
+target_link_libraries(test_tileset_sample_height PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tileset_sample_height COMMAND test_tileset_sample_height)
+
 add_executable(test_tile_pending_load_queue
     unit/tiling/test_tile_pending_load_queue.cpp
 )
