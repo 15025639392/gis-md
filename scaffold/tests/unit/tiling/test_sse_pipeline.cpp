@@ -11587,7 +11587,7 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
         TileTerminalLoadCommitter::commitTerrainTerminalResult(
             terrainTile,
             "terrain-empty",
-            TileLoadStatus::Empty,
+            TileLoadResult::createTerminal(TileLoadStatus::Empty),
             emptyContentRegistry);
     check(action.markEmptyCacheKey &&
               action.resourcesDirty &&
@@ -11600,7 +11600,7 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
     action = TileTerminalLoadCommitter::commitContentTerminalResult(
         contentTile,
         "content-empty",
-        TileLoadStatus::Empty,
+        TileLoadResult::createTerminal(TileLoadStatus::Empty),
         emptyContentRegistry);
     check(action.markEmptyCacheKey &&
               action.resourcesDirty &&
@@ -11614,7 +11614,7 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
     action = TileTerminalLoadCommitter::commitContentTerminalResult(
         externalTile,
         "content-external",
-        TileLoadStatus::External,
+        TileLoadResult::createTerminal(TileLoadStatus::External),
         emptyContentRegistry);
     check(!action.markEmptyCacheKey &&
               action.ensureChildren &&
@@ -11630,7 +11630,7 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
     action = TileTerminalLoadCommitter::commitContentTerminalResult(
         retryTile,
         "content-retry",
-        TileLoadStatus::RetryLater,
+        TileLoadResult::createTerminal(TileLoadStatus::RetryLater),
         emptyContentRegistry);
     check(!action.markEmptyCacheKey &&
               action.ensureChildren &&
@@ -11645,7 +11645,7 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
     action = TileTerminalLoadCommitter::commitContentTerminalResult(
         cancelledContentTile,
         "content-cancelled",
-        TileLoadStatus::Cancelled,
+        TileLoadResult::createTerminal(TileLoadStatus::Cancelled),
         emptyContentRegistry);
     check(!action.markEmptyCacheKey &&
               action.ensureChildren &&
@@ -11662,7 +11662,7 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
     action = TileTerminalLoadCommitter::commitTerrainTerminalResult(
         failedTerrainTile,
         "terrain-failed",
-        TileLoadStatus::Failed,
+        TileLoadResult::createTerminal(TileLoadStatus::Failed),
         emptyContentRegistry);
     check(!action.markEmptyCacheKey &&
               !action.ensureChildren &&
@@ -11677,7 +11677,7 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
     action = TileTerminalLoadCommitter::commitTerrainTerminalResult(
         cancelledTerrainTile,
         "terrain-cancelled",
-        TileLoadStatus::Cancelled,
+        TileLoadResult::createTerminal(TileLoadStatus::Cancelled),
         emptyContentRegistry);
     check(!action.markEmptyCacheKey &&
               !action.ensureChildren &&
@@ -20978,7 +20978,7 @@ void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
     TileTerminalLoadCommitter::commitContentTerminalResult(
         *tileRaw,
         cacheKey,
-        TileLoadStatus::RetryLater,
+        TileLoadResult::createTerminal(TileLoadStatus::RetryLater),
         emptyContentRegistry);
     outcome = requestOnce();
     check(outcome.issued == 1 &&
@@ -21066,7 +21066,7 @@ void testTileMissingRequestSchedulerRetriesTerrainAfterEmptyMarkerCleared() {
     TileTerminalLoadCommitter::commitTerrainTerminalResult(
         *tileRaw,
         cacheKey,
-        TileLoadStatus::RetryLater,
+        TileLoadResult::createTerminal(TileLoadStatus::RetryLater),
         emptyContentRegistry);
     outcome = requestOnce();
     check(outcome.issued == 1 &&

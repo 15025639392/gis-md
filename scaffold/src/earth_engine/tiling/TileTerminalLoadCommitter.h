@@ -1,7 +1,6 @@
 #pragma once
 
-#include "../content/GltfContentProvider.h"
-#include "../providers/TerrainProvider.h"
+#include "TileLoadTypes.h"
 #include "TileTerminalLoadPolicy.h"
 
 #include <string>
@@ -15,12 +14,12 @@ struct TileTerminalLoadCommitter {
     static TileTerminalLoadAction commitTerrainTerminalResult(
         TilesetTile& tile,
         const std::string& cacheKey,
-        TileLoadStatus status,
+        TileLoadResult result,
         TileEmptyContentRegistry& emptyContentRegistry);
     static TileTerminalLoadAction commitContentTerminalResult(
         TilesetTile& tile,
         const std::string& cacheKey,
-        TileLoadStatus status,
+        TileLoadResult result,
         TileEmptyContentRegistry& emptyContentRegistry);
 };
 

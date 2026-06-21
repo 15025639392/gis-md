@@ -23,7 +23,7 @@ class TilePendingLoadCommitCoordinator {
 public:
     template <typename EnsureTileFn, typename MarkResourcesDirtyFn>
     static void commitTerrainTerminalResult(
-        const PendingTerrainTerminalResult& result,
+        PendingTerrainTerminalResult& result,
         TileEmptyContentRegistry& emptyContentRegistry,
         EnsureTileFn&& ensureTile,
         MarkResourcesDirtyFn&& markResourcesDirty) {
@@ -34,7 +34,7 @@ public:
             TileTerminalLoadCommitter::commitTerrainTerminalResult(
                 *tile,
                 result.cacheKey,
-                result.status,
+                std::move(result.result),
                 emptyContentRegistry);
         if (action.resourcesDirty) {
             markResourcesDirty();
@@ -45,7 +45,7 @@ public:
               typename EnsureChildrenFn,
               typename MarkResourcesDirtyFn>
     static void commitContentTerminalResult(
-        const PendingContentTerminalResult& result,
+        PendingContentTerminalResult& result,
         TileEmptyContentRegistry& emptyContentRegistry,
         EnsureTileFn&& ensureTile,
         EnsureChildrenFn&& ensureChildren,
@@ -57,7 +57,7 @@ public:
             TileTerminalLoadCommitter::commitContentTerminalResult(
                 *tile,
                 result.cacheKey,
-                result.status,
+                std::move(result.result),
                 emptyContentRegistry);
         if (action.ensureChildren) {
             ensureChildren(*tile);

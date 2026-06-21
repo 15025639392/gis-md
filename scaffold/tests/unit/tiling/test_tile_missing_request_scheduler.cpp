@@ -123,7 +123,7 @@ TEST(TileMissingRequestSchedulerTest, RetriesAfterEmptyMarkerCleared) {
     TileTerminalLoadCommitter::commitContentTerminalResult(
         *tileRaw,
         cacheKey,
-        TileLoadStatus::RetryLater,
+        TileLoadResult::createTerminal(TileLoadStatus::RetryLater),
         emptyContentRegistry);
     outcome = requestOnce();
     EXPECT_EQ(outcome.issued, 1u);
@@ -184,7 +184,7 @@ TEST(TileMissingRequestSchedulerTest, RetriesTerrainAfterEmptyMarkerCleared) {
     TileTerminalLoadCommitter::commitTerrainTerminalResult(
         *tileRaw,
         cacheKey,
-        TileLoadStatus::RetryLater,
+        TileLoadResult::createTerminal(TileLoadStatus::RetryLater),
         emptyContentRegistry);
     outcome = requestOnce();
     EXPECT_EQ(outcome.issued, 1u);

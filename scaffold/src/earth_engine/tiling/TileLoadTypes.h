@@ -57,6 +57,12 @@ struct TileLoadedContent {
 };
 
 struct TileLoadResult {
+    static TileLoadResult createTerminal(TileLoadStatus status) {
+        TileLoadResult loadResult;
+        loadResult.status = status;
+        return loadResult;
+    }
+
     static TileLoadResult createRenderable() {
         TileLoadResult loadResult;
         loadResult.status = TileLoadStatus::Renderable;
@@ -103,6 +109,11 @@ struct TileLoadResult {
                hasRenderableContent();
     }
 
+    bool shouldApplyTerminalMetadata() const {
+        return status == TileLoadStatus::Empty ||
+               status == TileLoadStatus::External;
+    }
+
     TileLoadStatus status = TileLoadStatus::Failed;
     TileLoadedContent content;
 };
@@ -129,11 +140,35 @@ struct PendingTerrainUpload {
 };
 
 struct PendingTerrainTerminalResult {
+    PendingTerrainTerminalResult() = default;
+    PendingTerrainTerminalResult(TileKey key_,
+                                 std::string cacheKey_,
+                                 TileLoadPriorityGroup group_,
+                                 double priority_,
+                                 TileLoadStatus status_)
+        : PendingTerrainTerminalResult(
+              std::move(key_),
+              std::move(cacheKey_),
+              group_,
+              priority_,
+              TileLoadResult::createTerminal(status_)) {}
+    PendingTerrainTerminalResult(TileKey key_,
+                                 std::string cacheKey_,
+                                 TileLoadPriorityGroup group_,
+                                 double priority_,
+                                 TileLoadResult result_)
+        : key(std::move(key_)),
+          cacheKey(std::move(cacheKey_)),
+          group(group_),
+          priority(priority_),
+          result(std::move(result_)) {}
+
     TileKey key;
     std::string cacheKey;
     TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;
     double priority = 0.0;
-    TileLoadStatus status = TileLoadStatus::Failed;
+    TileLoadResult result = TileLoadResult::createTerminal(
+        TileLoadStatus::Failed);
 };
 
 struct PendingContentUpload {
@@ -158,11 +193,35 @@ struct PendingContentUpload {
 };
 
 struct PendingContentTerminalResult {
+    PendingContentTerminalResult() = default;
+    PendingContentTerminalResult(TileKey key_,
+                                 std::string cacheKey_,
+                                 TileLoadPriorityGroup group_,
+                                 double priority_,
+                                 TileLoadStatus status_)
+        : PendingContentTerminalResult(
+              std::move(key_),
+              std::move(cacheKey_),
+              group_,
+              priority_,
+              TileLoadResult::createTerminal(status_)) {}
+    PendingContentTerminalResult(TileKey key_,
+                                 std::string cacheKey_,
+                                 TileLoadPriorityGroup group_,
+                                 double priority_,
+                                 TileLoadResult result_)
+        : key(std::move(key_)),
+          cacheKey(std::move(cacheKey_)),
+          group(group_),
+          priority(priority_),
+          result(std::move(result_)) {}
+
     TileKey key;
     std::string cacheKey;
     TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;
     double priority = 0.0;
-    TileLoadStatus status = TileLoadStatus::Failed;
+    TileLoadResult result = TileLoadResult::createTerminal(
+        TileLoadStatus::Failed);
 };
 
 } // namespace earth_engine

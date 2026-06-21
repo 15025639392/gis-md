@@ -1,6 +1,9 @@
 #include "TileTerminalLoadCommitter.h"
 
 #include "TileEmptyContentRegistry.h"
+#include "TileLoadResultMetadataApplicator.h"
+
+#include <utility>
 
 namespace earth_engine {
 
@@ -8,10 +11,17 @@ TileTerminalLoadAction
 TileTerminalLoadCommitter::commitTerrainTerminalResult(
     TilesetTile& tile,
     const std::string& cacheKey,
-    TileLoadStatus status,
+    TileLoadResult result,
     TileEmptyContentRegistry& emptyContentRegistry) {
     TileTerminalLoadAction action =
-        TileTerminalLoadPolicy::applyTerrainTerminalResult(tile, status);
+        TileTerminalLoadPolicy::applyTerrainTerminalResult(
+            tile,
+            result.status);
+    if (result.shouldApplyTerminalMetadata()) {
+        TileLoadResultMetadataApplicator::apply(
+            tile,
+            std::move(result.content.metadata));
+    }
     if (action.markEmptyCacheKey) {
         emptyContentRegistry.insert(cacheKey);
     } else {
@@ -24,10 +34,17 @@ TileTerminalLoadAction
 TileTerminalLoadCommitter::commitContentTerminalResult(
     TilesetTile& tile,
     const std::string& cacheKey,
-    TileLoadStatus status,
+    TileLoadResult result,
     TileEmptyContentRegistry& emptyContentRegistry) {
     TileTerminalLoadAction action =
-        TileTerminalLoadPolicy::applyContentTerminalResult(tile, status);
+        TileTerminalLoadPolicy::applyContentTerminalResult(
+            tile,
+            result.status);
+    if (result.shouldApplyTerminalMetadata()) {
+        TileLoadResultMetadataApplicator::apply(
+            tile,
+            std::move(result.content.metadata));
+    }
     if (action.markEmptyCacheKey) {
         emptyContentRegistry.insert(cacheKey);
     } else {

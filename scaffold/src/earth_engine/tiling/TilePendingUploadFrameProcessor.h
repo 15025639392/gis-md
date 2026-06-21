@@ -44,7 +44,7 @@ public:
         IngestAvailabilityFn&& ingestAvailability,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         auto processTerrainTerminalResult =
-            [&](const PendingTerrainTerminalResult& result) {
+            [&](PendingTerrainTerminalResult& result) {
                 TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
                     result,
                     input.emptyContentRegistry,
@@ -66,7 +66,7 @@ public:
         };
 
         auto processContentTerminalResult =
-            [&](const PendingContentTerminalResult& result) {
+            [&](PendingContentTerminalResult& result) {
                 TilePendingLoadCommitCoordinator::commitContentTerminalResult(
                     result,
                     input.emptyContentRegistry,

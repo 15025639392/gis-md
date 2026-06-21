@@ -104,7 +104,7 @@ public:
                                     cacheKey,
                                     group,
                                     priority,
-                                    loadResult.status});
+                                    std::move(loadResult)});
                         }
                     }
                     requestState.completeContentRequest(cacheKey);
@@ -187,7 +187,7 @@ public:
                                     cacheKey,
                                     group,
                                     priority,
-                                    loadResult.status});
+                                    std::move(loadResult)});
                         }
                     }
                     requestState.completeTerrainRequest(cacheKey);
