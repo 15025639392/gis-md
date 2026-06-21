@@ -208,3 +208,44 @@ TEST(TileLoadLifecycleTest, CancelErasesTerminalResults) {
 
     EXPECT_FALSE(lifecycle.hasPendingWork());
 }
+
+TEST(TileLoadLifecycleTest, CancelErasesActiveRequests) {
+    TileLoadLifecycle lifecycle;
+    CancellationToken terrainToken;
+    CancellationToken contentToken;
+    CancellationToken keptToken;
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        EXPECT_TRUE(lifecycle.requestState().beginTerrainRequest(
+            "terrain-request",
+            terrainToken));
+        EXPECT_TRUE(lifecycle.requestState().beginContentRequest(
+            "content-request",
+            contentToken));
+        EXPECT_TRUE(lifecycle.requestState().beginTerrainRequest(
+            "kept-request",
+            keptToken));
+    }
+
+    lifecycle.cancelAndEraseCacheKey("terrain-request");
+
+    EXPECT_TRUE(terrainToken.isCancelled());
+    EXPECT_FALSE(contentToken.isCancelled());
+    EXPECT_FALSE(keptToken.isCancelled());
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey("terrain-request"));
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("content-request"));
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("kept-request"));
+
+    lifecycle.cancelAndEraseCacheKey("content-request");
+
+    EXPECT_TRUE(contentToken.isCancelled());
+    EXPECT_FALSE(keptToken.isCancelled());
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey("content-request"));
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("kept-request"));
+
+    lifecycle.cancelAndEraseCacheKey("kept-request");
+
+    EXPECT_TRUE(keptToken.isCancelled());
+    EXPECT_FALSE(lifecycle.hasPendingWork());
+}
