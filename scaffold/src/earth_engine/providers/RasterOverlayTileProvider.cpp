@@ -115,42 +115,6 @@ TileRange computeRange(const TileScheme& scheme,
     return range;
 }
 
-bool isBaseLayer(const RasterOverlay* owner) {
-    return !owner || owner->role() == RasterOverlayRole::BaseImagery;
-}
-
-Rectangle edgeStretchedSourceBounds(const Rectangle& geometryBounds,
-                                    const Rectangle& coverageBounds) {
-    if (std::optional<Rectangle> intersection =
-            geometryBounds.computeIntersection(coverageBounds)) {
-        return *intersection;
-    }
-
-    double south = 0.0;
-    double north = 0.0;
-    if (geometryBounds.south() >= coverageBounds.north()) {
-        south = north = coverageBounds.north();
-    } else if (geometryBounds.north() <= coverageBounds.south()) {
-        south = north = coverageBounds.south();
-    } else {
-        south = std::max(geometryBounds.south(), coverageBounds.south());
-        north = std::min(geometryBounds.north(), coverageBounds.north());
-    }
-
-    double west = 0.0;
-    double east = 0.0;
-    if (geometryBounds.west() >= coverageBounds.east()) {
-        west = east = coverageBounds.east();
-    } else if (geometryBounds.east() <= coverageBounds.west()) {
-        west = east = coverageBounds.west();
-    } else {
-        west = std::max(geometryBounds.west(), coverageBounds.west());
-        east = std::min(geometryBounds.east(), coverageBounds.east());
-    }
-
-    return Rectangle(west, south, east, north);
-}
-
 TileRange trimCesiumNativeBoundarySlop(const TileScheme& scheme,
                                        const Rectangle& bounds,
                                        int zoom,
@@ -1447,15 +1411,10 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
     std::optional<Rectangle> sourceBounds =
         tile.getRectangle().computeIntersection(coverageRectangle_);
     if (!sourceBounds) {
-        if (!isBaseLayer(owner_)) {
-            tile.setMoreDetailAvailable(
-                RasterOverlayTile::MoreDetailAvailable::No);
-            tile.setState(RasterOverlayTile::LoadState::Failed);
-            return false;
-        }
-        sourceBounds = edgeStretchedSourceBounds(
-            tile.getRectangle(),
-            coverageRectangle_);
+        tile.setMoreDetailAvailable(
+            RasterOverlayTile::MoreDetailAvailable::No);
+        tile.setState(RasterOverlayTile::LoadState::Failed);
+        return false;
     }
 
     RectangleSourcePlan sourcePlan = buildRectangleSourcePlan(

@@ -771,6 +771,28 @@ TEST(RasterOverlayLifecycleTest, FailedRasterTilesAreTerminalLikeCesiumNative) {
     EXPECT_EQ(failedRectangleRequests, imagery.requestCount);
 }
 
+TEST(RasterOverlayLifecycleTest, RectangleLoadRejectsCoverageLostAfterTileCreation) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    Rectangle initialBounds =
+        scheme->tileToRectangle(TileKey{scheme->id(), 2, 0, 0});
+    auto rectangleTile = provider.getTile(initialBounds, 8.0, 8.0);
+    ASSERT_NE(nullptr, rectangleTile);
+    ASSERT_TRUE(rectangleTile->isRectangleTile());
+
+    provider.setCoverageRectangle(
+        scheme->tileToRectangle(TileKey{scheme->id(), 2, 3, 3}));
+
+    EXPECT_FALSE(provider.loadTile(*rectangleTile));
+    EXPECT_EQ(0, imagery.requestCount);
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed,
+              rectangleTile->getState());
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
+              rectangleTile->isMoreDetailAvailable());
+}
+
 TEST(RasterOverlayLifecycleTest, MalformedRasterImagesFailBeforeUploadLikeCesiumNative) {
     MalformedImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
