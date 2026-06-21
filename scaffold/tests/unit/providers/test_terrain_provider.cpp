@@ -856,6 +856,31 @@ TEST(QuantizedMeshTerrainProviderTest, MissingParentLayerKeepsChildLayerLikeCesi
     std::filesystem::remove_all(root);
 }
 
+TEST(QuantizedMeshTerrainProviderTest, NonStringParentUrlIsIgnoredLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["childTiles/{z}/{x}/{y}.terrain"],
+      "parentUrl": 1234,
+      "maxzoom": 4,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}],
+        [{"startX":0,"startY":0,"endX":0,"endY":0}]
+      ]
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/terrain/layer.json"));
+
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 1, 0, 0}));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(TileKey{"Geographic-TMS", 1, 2, 0}));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, ParentLayerUsesPrimaryProjectionLikeCesiumNative) {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
