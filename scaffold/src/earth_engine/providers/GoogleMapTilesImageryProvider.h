@@ -129,6 +129,12 @@ std::string googleMapTilesViewportUrl(
 GoogleMapTilesViewportParseResult parseGoogleMapTilesViewportResponse(
     const std::string& responseJson);
 
+std::string parseGoogleMapTilesViewportCopyright(
+    const std::string& responseJson);
+
+std::string combineGoogleMapTilesCredits(
+    const std::vector<std::string>& copyrights);
+
 std::vector<GoogleMapTilesTileRange> googleMapTilesViewportTileRanges(
     const GoogleMapTilesViewportParseResult& viewport);
 

@@ -1426,6 +1426,29 @@ TEST(GoogleMapTilesImageryProviderTest, RejectsInvalidViewportResponseLikeCesium
         result.error);
 }
 
+TEST(GoogleMapTilesImageryProviderTest, ParsesViewportCopyrightLikeCesiumNative) {
+    EXPECT_EQ(
+        "Imagery ©2026 Provider A, Provider B",
+        parseGoogleMapTilesViewportCopyright(R"json({
+            "copyright": "Imagery ©2026 Provider A, Provider B"
+        })json"));
+    EXPECT_EQ("", parseGoogleMapTilesViewportCopyright("not-json"));
+    EXPECT_EQ("", parseGoogleMapTilesViewportCopyright("{}"));
+    EXPECT_EQ("",
+              parseGoogleMapTilesViewportCopyright(
+                  R"json({"copyright": 123})json"));
+}
+
+TEST(GoogleMapTilesImageryProviderTest, CombinesViewportCreditsLikeCesiumNative) {
+    EXPECT_EQ(
+        "Imagery ©2026 Provider A, Provider B, Provider C, Inc.",
+        combineGoogleMapTilesCredits({
+            "Imagery ©2026 Provider A, Provider B",
+            "Imagery ©2026 Provider B, Provider C, Inc.",
+            "",
+            "Provider A"}));
+}
+
 TEST(GoogleMapTilesImageryProviderTest, ConvertsViewportRectsToTileRangesLikeCesiumNative) {
     GoogleMapTilesViewportParseResult viewport;
     viewport.valid = true;

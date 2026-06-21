@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <functional>
 #include <nlohmann/json.hpp>
+#include <set>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -84,6 +85,38 @@ bool tileInRanges(const TileKey& key,
         }
     }
     return false;
+}
+
+std::string trimCopy(const std::string& value) {
+    const size_t first = value.find_first_not_of(" \t\n\r");
+    if (first == std::string::npos) {
+        return {};
+    }
+    const size_t last = value.find_last_not_of(" \t\n\r");
+    return value.substr(first, last - first + 1);
+}
+
+std::vector<std::string> splitCredits(const std::string& value) {
+    std::vector<std::string> parts;
+    size_t start = 0;
+    while (start <= value.size()) {
+        const size_t comma = value.find(',', start);
+        const size_t end = comma == std::string::npos ? value.size() : comma;
+        std::string part = trimCopy(value.substr(start, end - start));
+        if (!part.empty()) {
+            parts.push_back(std::move(part));
+        }
+        if (comma == std::string::npos) {
+            break;
+        }
+        start = comma + 1;
+    }
+    return parts;
+}
+
+bool startsWith(const std::string& value, const std::string& prefix) {
+    return value.size() >= prefix.size() &&
+           value.compare(0, prefix.size(), prefix) == 0;
 }
 
 } // namespace
@@ -268,6 +301,79 @@ GoogleMapTilesViewportParseResult parseGoogleMapTilesViewportResponse(
             northIt->get<double>()});
     }
     return result;
+}
+
+std::string parseGoogleMapTilesViewportCopyright(
+    const std::string& responseJson) {
+    nlohmann::json response =
+        nlohmann::json::parse(responseJson, nullptr, false);
+    if (response.is_discarded() || !response.is_object()) {
+        return {};
+    }
+    const auto copyrightIt = response.find("copyright");
+    if (copyrightIt == response.end() || !copyrightIt->is_string()) {
+        return {};
+    }
+    return copyrightIt->get<std::string>();
+}
+
+std::string combineGoogleMapTilesCredits(
+    const std::vector<std::string>& copyrights) {
+    static const std::string copyrightPrefix = "Imagery ©";
+    std::set<std::string> uniqueCredits;
+    std::vector<std::string> credits;
+    std::string preamble;
+
+    for (std::string creditString : copyrights) {
+        if (creditString.empty()) {
+            continue;
+        }
+        if (startsWith(creditString, copyrightPrefix)) {
+            const size_t firstNonSpace =
+                creditString.find_first_not_of(' ', copyrightPrefix.size());
+            const size_t firstNonNumberAfterSpace =
+                firstNonSpace == std::string::npos
+                    ? std::string::npos
+                    : creditString.find_first_not_of(
+                          "0123456789",
+                          firstNonSpace);
+            if (firstNonNumberAfterSpace != std::string::npos) {
+                if (preamble.empty()) {
+                    preamble =
+                        creditString.substr(0, firstNonNumberAfterSpace);
+                }
+                creditString = creditString.substr(firstNonNumberAfterSpace);
+            }
+        }
+
+        std::vector<std::string> parts = splitCredits(creditString);
+        for (size_t partIndex = 0; partIndex < parts.size(); ++partIndex) {
+            std::string credit = parts[partIndex];
+            if (partIndex != parts.size() - 1 &&
+                parts[partIndex + 1] == "Inc.") {
+                credit += ", Inc.";
+                ++partIndex;
+            }
+            if (uniqueCredits.insert(credit).second) {
+                credits.push_back(std::move(credit));
+            }
+        }
+    }
+
+    std::string joined;
+    for (size_t i = 0; i < credits.size(); ++i) {
+        if (i > 0) {
+            joined += ", ";
+        }
+        joined += credits[i];
+    }
+    if (!preamble.empty()) {
+        if (joined.empty()) {
+            return trimCopy(preamble);
+        }
+        joined = trimCopy(preamble) + " " + joined;
+    }
+    return joined;
 }
 
 std::vector<GoogleMapTilesTileRange> googleMapTilesViewportTileRanges(
