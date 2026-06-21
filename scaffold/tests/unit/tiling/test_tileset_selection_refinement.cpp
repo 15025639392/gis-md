@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/content/GltfContentProvider.h"
+#include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/math/Vec3.h"
 #include "earth_engine/scene/Camera.h"
@@ -1990,4 +1991,57 @@ TEST(
         });
     EXPECT_TRUE(childrenNotVisited);
     EXPECT_EQ(tileset.tilePlan().selectionWaitingForOcclusionResultsCount, 1);
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
+    CameraInsideDiagnosticUsesExplicitRootVolume) {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{});
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Empty;
+    root->bounds = Rectangle{2.0, 2.0, 3.0, 3.0};
+    root->boundingVolume =
+        TileBoundingVolume::fromRegion(
+            Rectangle{-0.25, -0.25, 0.25, 0.25},
+            0.0,
+            0.0);
+
+    const Cartographic cameraCartographic(0.0, 0.0, 1000000.0);
+    const Vec3 cameraPosition =
+        Ellipsoid::WGS84().cartographicToCartesian(cameraCartographic);
+    const Vec3 target =
+        Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic(0.0, 0.0, 0.0));
+    Camera camera;
+    camera.lookAt(cameraPosition, target, Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 154;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    EXPECT_NE(
+        root->selectionFrameState.selectionState,
+        TileSelectionState::NotVisited);
+    EXPECT_TRUE(root->selectionFrameState.cameraInside);
 }
