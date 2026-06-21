@@ -4,6 +4,7 @@
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
 #include "earth_engine/scene/Frustum.h"
+#include "earth_engine/scene/SceneFrameDiagnostics.h"
 #include "earth_engine/scene/Scene.h"
 
 #include <vector>
@@ -61,4 +62,59 @@ TEST(SceneFrameStateTest, SelectorViewOverrideFeedsMultipleViews) {
     scene.clearSelectorViewOverride();
     scene.update(1.0 / 60.0);
     EXPECT_EQ(scene.frameState().selectorViews.size(), 1u);
+}
+
+TEST(SceneFrameStateTest, FrameDiagnosticsResetSmoothsAndRecordsTiming) {
+    Diagnostics diagnostics;
+    diagnostics.fps = 30.0;
+    diagnostics.frameTimeMs = 123.0;
+    diagnostics.cameraUpdateMs = 12.0;
+    diagnostics.environmentUpdateMs = 13.0;
+    diagnostics.basemapStackUpdateMs = 14.0;
+    diagnostics.terrainUpdateMs = 15.0;
+    diagnostics.contentTilesetUpdateMs = 16.0;
+    diagnostics.renderCommandBuildMs = 17.0;
+    diagnostics.renderSubmitMs = 18.0;
+    diagnostics.drawCalls = 9;
+
+    SceneFrameDiagnostics::resetPerFrame(diagnostics);
+    EXPECT_EQ(diagnostics.cameraUpdateMs, 0.0);
+    EXPECT_EQ(diagnostics.environmentUpdateMs, 0.0);
+    EXPECT_EQ(diagnostics.basemapStackUpdateMs, 0.0);
+    EXPECT_EQ(diagnostics.terrainUpdateMs, 0.0);
+    EXPECT_EQ(diagnostics.contentTilesetUpdateMs, 0.0);
+    EXPECT_EQ(diagnostics.renderCommandBuildMs, 0.0);
+    EXPECT_EQ(diagnostics.renderSubmitMs, 0.0);
+    EXPECT_EQ(diagnostics.drawCalls, 9);
+
+    SceneFrameDiagnostics::updateFrameRate(diagnostics, 0.5);
+    EXPECT_NEAR(diagnostics.frameTimeMs, 500.0, 1e-9);
+    EXPECT_NEAR(diagnostics.fps, 27.2, 1e-9);
+
+    SceneFrameDiagnostics::updateFrameRate(diagnostics, 0.0);
+    EXPECT_NEAR(diagnostics.frameTimeMs, 500.0, 1e-9);
+    EXPECT_NEAR(diagnostics.fps, 27.2, 1e-9);
+
+    SceneFrameDiagnostics::recordEngineTiming(
+        diagnostics,
+        SceneFrameDiagnostics::EngineTimingScope::BeginFrame,
+        1.25);
+    SceneFrameDiagnostics::recordEngineTiming(
+        diagnostics,
+        SceneFrameDiagnostics::EngineTimingScope::SceneUpdate,
+        2.5);
+    SceneFrameDiagnostics::recordEngineTiming(
+        diagnostics,
+        SceneFrameDiagnostics::EngineTimingScope::SceneRender,
+        3.75);
+    SceneFrameDiagnostics::recordEngineTiming(
+        diagnostics,
+        SceneFrameDiagnostics::EngineTimingScope::EndFrame,
+        4.0);
+    SceneFrameDiagnostics::finishEngineFrame(diagnostics, 11.5);
+    EXPECT_NEAR(diagnostics.engineBeginFrameMs, 1.25, 1e-9);
+    EXPECT_NEAR(diagnostics.sceneUpdateMs, 2.5, 1e-9);
+    EXPECT_NEAR(diagnostics.sceneRenderMs, 3.75, 1e-9);
+    EXPECT_NEAR(diagnostics.engineEndFrameMs, 4.0, 1e-9);
+    EXPECT_NEAR(diagnostics.engineFrameCpuMs, 11.5, 1e-9);
 }
