@@ -292,6 +292,12 @@ add_executable(test_tile_missing_request_scheduler
 target_link_libraries(test_tile_missing_request_scheduler PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_missing_request_scheduler COMMAND test_tile_missing_request_scheduler)
 
+add_executable(test_tile_frame_resource_budget_planner
+    unit/tiling/test_tile_frame_resource_budget_planner.cpp
+)
+target_link_libraries(test_tile_frame_resource_budget_planner PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_frame_resource_budget_planner COMMAND test_tile_frame_resource_budget_planner)
+
 add_executable(test_camera
     unit/scene/test_camera.cpp
 )
