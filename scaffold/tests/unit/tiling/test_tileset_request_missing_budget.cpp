@@ -527,3 +527,58 @@ TEST(
             .peakWorkerBlockingRequests,
         0);
 }
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    FrameResourceBudgetSeparatesRasterFanoutFromTerrainRequests) {
+    TilesetOptions options;
+    options.maximumSimultaneousTileLoads = 2;
+
+    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
+    ManualCompletionTerrainProvider* rawProvider = provider.get();
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        options);
+
+    const TileKey lowPriorityKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey highPriorityKey{"Geographic-TMS", 1, 1, 0};
+    TilesetTestAccess::ensureTile(tileset, lowPriorityKey);
+    TilesetTestAccess::ensureTile(tileset, highPriorityKey);
+
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 1;
+    config.maxTerrainContentNetworkRequestsPerFrame = 1;
+    config.maxRasterNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 2;
+    config.maxTerrainContentNetworkInflight = 2;
+    config.maxRasterNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    ASSERT_TRUE(budget.tryIssue(
+        FrameResourceLane::RasterRequest,
+        FrameResourcePriority::Normal,
+        4));
+
+    TileLoadRequestOutcome outcome =
+        TilesetTestAccess::requestMissingTilesWithBudget(
+            tileset,
+            budget,
+            lowPriorityKey,
+            highPriorityKey);
+
+    ASSERT_EQ(rawProvider->pendingRequests.size(), 1u);
+    EXPECT_EQ(rawProvider->pendingRequests.front().key, highPriorityKey);
+    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_EQ(budget.rasterNetworkRequestsIssued(), 4u);
+    EXPECT_EQ(budget.terrainContentNetworkRequestsIssued(), 1u);
+    EXPECT_EQ(budget.networkRequestsIssued(), 5u);
+
+    EXPECT_TRUE(rawProvider->completeWithHeightmap(
+        highPriorityKey,
+        makeFlatHeightmap(2.0f)));
+}
