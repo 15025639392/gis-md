@@ -5,6 +5,7 @@
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
 #include "earth_engine/tiling/TileBoundsMetrics.h"
+#include "earth_engine/tiling/TileSelectionRasterOverlayPreparer.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 #include "earth_engine/tiling/TilesetSelectionFrameFacade.h"
@@ -26,6 +27,12 @@ struct TilesetTestAccess {
 
     static void ensureTileChildren(Tileset& tileset, TilesetTile& tile) {
         tileset.contentAccess_.ensureTileChildren(tile);
+    }
+
+    static bool isTileRenderable(Tileset& tileset, const TilesetTile& tile) {
+        return TileSelectionRasterOverlayPreparer::isRenderable(
+            tile,
+            tileset.rasterOverlays_);
     }
 
     static Vec3 tileBoundsCenter(const Rectangle& bounds) {
@@ -167,6 +174,85 @@ TEST(
 
     FrameState frameState;
     frameState.frameId = 143;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const auto& visibleTiles = tileset.tilePlan().visibleTiles;
+    const auto visibleEnd = visibleTiles.end();
+    EXPECT_NE(std::find(visibleTiles.begin(), visibleEnd, rootKey), visibleEnd);
+    size_t visibleChildCount = 0;
+    for (const TileKey& childKey : childKeys) {
+        if (std::find(visibleTiles.begin(), visibleEnd, childKey) !=
+            visibleEnd) {
+            ++visibleChildCount;
+        }
+    }
+    EXPECT_EQ(visibleChildCount, childKeys.size());
+    EXPECT_EQ(tileset.tilePlan().selectionKickedCount, 0);
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
+    AdditiveRefinementRendersFailedChildHoleAndSiblings) {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::vector<TileKey> childKeys = {
+        {"Geographic-TMS", 1, 0, 0},
+        {"Geographic-TMS", 1, 1, 0},
+        {"Geographic-TMS", 1, 0, 1}};
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, childKeys}});
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Empty;
+    root->refine = TileRefine::Add;
+    root->geometricError = 40000.0;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_EQ(root->children.size(), childKeys.size());
+    for (size_t i = 0; i < root->children.size(); ++i) {
+        TilesetTile* child = root->children[i];
+        ASSERT_NE(child, nullptr);
+        child->refine = TileRefine::Replace;
+        child->geometricError = 0.0;
+        child->content.contentKind = TileContentKind::Empty;
+        child->content.loadState =
+            i == 0 ? TileLoadState::Failed : TileLoadState::Done;
+    }
+
+    ASSERT_TRUE(TilesetTestAccess::isTileRenderable(tileset, *root));
+    for (TilesetTile* child : root->children) {
+        ASSERT_NE(child, nullptr);
+        EXPECT_TRUE(TilesetTestAccess::isTileRenderable(tileset, *child));
+    }
+
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    Camera camera;
+    camera.lookAt(
+        center + center.normalized() * 1000000.0,
+        center,
+        Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 144;
     frameState.camera = &camera;
     frameState.viewportWidthPixels = 800;
     frameState.viewportHeightPixels = 800;
