@@ -21,7 +21,7 @@ void expectContentTerminalClearsEmptyMarker(TileLoadStatus status) {
 
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
-    PendingContentTerminalResult result{
+    PendingTileLoad result{TileLoadDomain::Content,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -52,7 +52,7 @@ void expectTerrainTerminalClearsEmptyMarker(TileLoadStatus status) {
 
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert(cacheKey);
-    PendingTerrainTerminalResult result{
+    PendingTileLoad result{TileLoadDomain::Terrain,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -81,13 +81,13 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TileEmptyContentRegistry emptyContentRegistry;
     emptyContentRegistry.insert("missing-terrain");
     emptyContentRegistry.insert("missing-content");
-    PendingTerrainTerminalResult terrainResult{
+    PendingTileLoad terrainResult{TileLoadDomain::Terrain,
         terrainKey,
         "missing-terrain",
         TileLoadPriorityGroup::Normal,
         0.0,
         TileLoadStatus::RetryLater};
-    PendingContentTerminalResult contentResult{
+    PendingTileLoad contentResult{TileLoadDomain::Content,
         contentKey,
         "missing-content",
         TileLoadPriorityGroup::Normal,
@@ -126,7 +126,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         TileLoadStatus::Empty);
     result.content.metadata.updatedBoundingVolume =
         TileBoundingVolume::fromRegion(updatedRectangle, -10.0, 20.0);
-    PendingContentTerminalResult pending{
+    PendingTileLoad pending{TileLoadDomain::Content,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -166,7 +166,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             Rectangle(0.1, 0.2, 0.3, 0.4),
             -10.0,
             20.0);
-    PendingContentTerminalResult pending{
+    PendingTileLoad pending{TileLoadDomain::Content,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -194,13 +194,13 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    PendingTerrainUpload terrainUpload{
+    PendingTileLoad terrainUpload{TileLoadDomain::Terrain,
         TileKey{"test", 0, 0, 0},
         "missing-terrain",
         TileLoadPriorityGroup::Normal,
         0.0,
         TileLoadResult::createRenderableTerrain()};
-    PendingContentUpload contentUpload{
+    PendingTileLoad contentUpload{TileLoadDomain::Content,
         TileKey{"test", 0, 1, 0},
         "missing-content",
         TileLoadPriorityGroup::Normal,
@@ -208,13 +208,13 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         TileLoadResult::fromContentResult(TileContentLoadResult::empty())};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
             terrainUpload.key,
             terrainUpload.cacheKey,
             terrainUpload.group,
             terrainUpload.priority,
             TileLoadResult::createRenderableTerrain()});
-        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             contentUpload.key,
             contentUpload.cacheKey,
             contentUpload.group,
@@ -266,7 +266,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     surfaceMesh->vertices.push_back(vertex);
     SurfaceTileMesh* rawSurfaceMesh = surfaceMesh.get();
 
-    PendingTerrainUpload upload{
+    PendingTileLoad upload{TileLoadDomain::Terrain,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -282,7 +282,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     budget.beginFrame(1, config);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -339,7 +339,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         TileBoundingVolume::fromRegion(updatedRectangle, -25.0, 125.0);
     metadata.updatedContentBoundingVolume =
         TileBoundingVolume::fromRegion(updatedContentRectangle, -5.0, 15.0);
-    PendingTerrainUpload upload{
+    PendingTileLoad upload{TileLoadDomain::Terrain,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -357,7 +357,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     budget.beginFrame(1, config);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -419,7 +419,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TileLoadResultMetadata metadata;
     metadata.rasterOverlayDetails = std::move(rasterOverlayDetails);
 
-    PendingTerrainUpload upload{
+    PendingTileLoad upload{TileLoadDomain::Terrain,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -437,7 +437,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     budget.beginFrame(1, config);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -488,7 +488,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "shared-cache-key";
-    PendingContentUpload upload{
+    PendingTileLoad upload{TileLoadDomain::Content,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -496,7 +496,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         TileLoadResult::fromContentResult(TileContentLoadResult::empty())};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             upload.key,
             upload.cacheKey,
             upload.group,
@@ -562,7 +562,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     update.subtreeKey = terrainKey;
     update.metadataAvailability = {{0, 0, 0, 0, 0}};
 
-    PendingTerrainUpload upload{
+    PendingTileLoad upload{TileLoadDomain::Terrain,
         terrainKey,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -573,7 +573,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             {update})};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
             upload.key,
             upload.cacheKey,
             upload.group,

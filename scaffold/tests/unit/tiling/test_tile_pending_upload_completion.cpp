@@ -17,17 +17,17 @@ TEST(TilePendingUploadCompletionTest, ClaimedUploadCountsAsWork) {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
             TileKey{"test", 1, 0, 0},
             "terrain",
             TileLoadPriorityGroup::Normal,
             1.0,
             TileLoadResult::createRenderableTerrain()});
-        std::optional<PendingLoadFinalize> upload =
+        std::optional<PendingTileLoad> upload =
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
 
         ASSERT_TRUE(upload.has_value());
-        EXPECT_EQ(PendingLoadFinalizeKind::Terrain, upload->kind);
+        EXPECT_EQ(TileLoadDomain::Terrain, upload->domain);
     }
 
     EXPECT_TRUE(lifecycle.containsWorkForCacheKey("terrain"));
@@ -48,22 +48,22 @@ TEST(TilePendingUploadCompletionTest, ErasesUploadKeys) {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
             TileKey{"test", 1, 0, 0},
             "terrain",
             TileLoadPriorityGroup::Normal,
             1.0,
             TileLoadResult::createRenderableTerrain()});
-        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             TileKey{"test", 1, 1, 0},
             "content",
             TileLoadPriorityGroup::Normal,
             2.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
 
-        std::optional<PendingLoadFinalize> first =
+        std::optional<PendingTileLoad> first =
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
-        std::optional<PendingLoadFinalize> second =
+        std::optional<PendingTileLoad> second =
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
 
         ASSERT_TRUE(first.has_value());
@@ -93,22 +93,22 @@ TEST(TilePendingUploadCompletionTest, RejectsDuplicateUploadKeyAcrossKinds) {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
             TileKey{"test", 1, 0, 0},
             "shared",
             TileLoadPriorityGroup::Normal,
             1.0,
             TileLoadResult::createRenderableTerrain()});
-        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             TileKey{"test", 1, 0, 0},
             "shared",
             TileLoadPriorityGroup::Normal,
             2.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
 
-        std::optional<PendingLoadFinalize> first =
+        std::optional<PendingTileLoad> first =
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
-        std::optional<PendingLoadFinalize> second =
+        std::optional<PendingTileLoad> second =
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
 
         ASSERT_TRUE(first.has_value());

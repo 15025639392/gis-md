@@ -60,27 +60,25 @@ TEST(
         lifecycle.requestState().beginContentRequest(
             "content-request",
             contentToken);
-        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
             TileKey{"test", 1, 0, 0},
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
             TileLoadResult::createRenderableTerrain()});
-        lifecycle.pendingLoads().addTerrainTerminalResult(
-            PendingTerrainTerminalResult{
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
                 TileKey{"test", 1, 0, 1},
                 "terrain-terminal",
                 TileLoadPriorityGroup::Urgent,
                 0.0,
                 TileLoadStatus::Empty});
-        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             TileKey{"test", 1, 1, 0},
             "content-upload",
             TileLoadPriorityGroup::Urgent,
             0.0,
             TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
-        lifecycle.pendingLoads().addContentTerminalResult(
-            PendingContentTerminalResult{
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Content,
                 TileKey{"test", 1, 1, 1},
                 "content-terminal",
                 TileLoadPriorityGroup::Normal,

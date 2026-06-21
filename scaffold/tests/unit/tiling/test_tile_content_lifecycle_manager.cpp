@@ -60,8 +60,7 @@ TEST(TileContentLifecycleManagerTest, ExposesClaimedUploadWork) {
 
     {
         std::lock_guard<std::mutex> lock(manager.loadLifecycle().mutex());
-        manager.loadLifecycle().pendingLoads().addContentUpload(
-            PendingContentUpload{
+        manager.loadLifecycle().pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
                 TileKey{"test", 0, 0, 0},
                 "content-upload",
                 TileLoadPriorityGroup::Normal,
@@ -95,8 +94,7 @@ TEST(TileContentLifecycleManagerTest, ShutdownClearsClaimedUploadWork) {
 
     {
         std::lock_guard<std::mutex> lock(manager.loadLifecycle().mutex());
-        manager.loadLifecycle().pendingLoads().addTerrainUpload(
-            PendingTerrainUpload{
+        manager.loadLifecycle().pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
                 TileKey{"test", 0, 0, 0},
                 "terrain-upload",
                 TileLoadPriorityGroup::Normal,

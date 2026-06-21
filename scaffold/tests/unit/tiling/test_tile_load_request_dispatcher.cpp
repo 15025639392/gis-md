@@ -650,9 +650,8 @@ TEST(TileLoadRequestDispatcherTest, QueuesSurfaceOnlyTerrainUpload) {
 
     auto upload = pendingLoads.takeHighestPriorityUpload(false, budget);
     ASSERT_TRUE(upload.has_value());
-    ASSERT_EQ(PendingLoadFinalizeKind::Terrain, upload->kind);
-    ASSERT_TRUE(upload->terrainUpload.has_value());
-    const TileLoadedContent& content = upload->terrainUpload->content;
+    ASSERT_EQ(TileLoadDomain::Terrain, upload->domain);
+    const TileLoadedContent& content = upload->content();
     EXPECT_EQ(nullptr, content.heightmap);
     ASSERT_NE(nullptr, content.surfaceMesh);
     EXPECT_EQ(1u, content.surfaceMesh->vertices.size());
@@ -1076,7 +1075,7 @@ TEST(TileLoadRequestDispatcherTest, DropsDestroyingContentTerminalCallback) {
     }
 }
 
-TEST(TileLoadRequestDispatcherTest, SkipsPendingTerrainTerminalResultKeys) {
+TEST(TileLoadRequestDispatcherTest, SkipsPendingTerrainTerminalKeys) {
     std::mutex mutex;
     std::condition_variable condition;
     TilePendingRequestState requestState;
@@ -1123,7 +1122,7 @@ TEST(TileLoadRequestDispatcherTest, SkipsPendingTerrainTerminalResultKeys) {
     EXPECT_EQ(1u, budget.networkRequestsIssued());
 }
 
-TEST(TileLoadRequestDispatcherTest, SkipsPendingContentTerminalResultKeys) {
+TEST(TileLoadRequestDispatcherTest, SkipsPendingContentTerminalKeys) {
     std::mutex mutex;
     std::condition_variable condition;
     TilePendingRequestState requestState;
@@ -1253,13 +1252,13 @@ TEST(TileLoadRequestDispatcherTest, SkipsPendingUploadKeys) {
 
     {
         std::lock_guard<std::mutex> lock(mutex);
-        pendingLoads.addTerrainUpload(PendingTerrainUpload{
+        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
             key,
             "terrain-upload-pending",
             TileLoadPriorityGroup::Normal,
             0.0,
             TileLoadResult::createRenderable()});
-        pendingLoads.addContentUpload(PendingContentUpload{
+        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::Content,
             key,
             "content-upload-pending",
             TileLoadPriorityGroup::Normal,
@@ -1325,13 +1324,13 @@ TEST(TileLoadRequestDispatcherTest, SkipsClaimedUploadKeys) {
 
     {
         std::lock_guard<std::mutex> lock(mutex);
-        pendingLoads.addTerrainUpload(PendingTerrainUpload{
+        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
             key,
             "terrain-upload-claimed",
             TileLoadPriorityGroup::Normal,
             0.0,
             TileLoadResult::createRenderable()});
-        pendingLoads.addContentUpload(PendingContentUpload{
+        pendingLoads.addUpload(PendingTileLoad{TileLoadDomain::Content,
             key,
             "content-upload-claimed",
             TileLoadPriorityGroup::Normal,
@@ -1400,8 +1399,9 @@ TEST(TileLoadRequestDispatcherTest,
 
     {
         std::lock_guard<std::mutex> lock(mutex);
-        pendingLoads.addTerrainTerminalResult(
-            PendingTerrainTerminalResult{
+        pendingLoads.addTerminalResult(
+            PendingTileLoad{
+                TileLoadDomain::Terrain,
                 key,
                 "shared-cache-key",
                 TileLoadPriorityGroup::Normal,

@@ -117,7 +117,7 @@ TEST(TileSubtreeWorkTracker, FindsPendingAndClaimedContentUploadWork) {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             child.key,
             childCacheKey,
             TileLoadPriorityGroup::Normal,
@@ -137,7 +137,7 @@ TEST(TileSubtreeWorkTracker, FindsPendingAndClaimedContentUploadWork) {
     budget.beginFrame(1, config);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             child.key,
             childCacheKey,
             TileLoadPriorityGroup::Normal,
@@ -160,8 +160,7 @@ TEST(TileSubtreeWorkTracker, FindsContentTerminalResultOnRoot) {
 
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addContentTerminalResult(
-            PendingContentTerminalResult{
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Content,
                 root.key,
                 rootCacheKey,
                 TileLoadPriorityGroup::Normal,
@@ -196,8 +195,7 @@ TEST(TileSubtreeWorkTracker, FindsAndClearsTerrainLifecycleWork) {
     lifecycle.cancelAndEraseCacheKey(childCacheKey);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerrainTerminalResult(
-            PendingTerrainTerminalResult{
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
                 child.key,
                 childCacheKey,
                 TileLoadPriorityGroup::Normal,

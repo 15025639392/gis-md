@@ -118,104 +118,48 @@ struct TileLoadResult {
     TileLoadedContent content;
 };
 
-struct PendingTerrainUpload {
-    PendingTerrainUpload() = default;
-    PendingTerrainUpload(TileKey key_,
-                         std::string cacheKey_,
-                         TileLoadPriorityGroup group_,
-                         double priority_,
-                         TileLoadResult result)
-        : key(std::move(key_)),
-          cacheKey(std::move(cacheKey_)),
-          group(group_),
-          priority(priority_) {
-        content = std::move(result.content);
-    }
-
-    TileKey key;
-    std::string cacheKey;
-    TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;
-    double priority = 0.0;
-    TileLoadedContent content;
+enum class TileLoadDomain {
+    Terrain,
+    Content
 };
 
-struct PendingTerrainTerminalResult {
-    PendingTerrainTerminalResult() = default;
-    PendingTerrainTerminalResult(TileKey key_,
-                                 std::string cacheKey_,
-                                 TileLoadPriorityGroup group_,
-                                 double priority_,
-                                 TileLoadStatus status_)
-        : PendingTerrainTerminalResult(
+struct PendingTileLoad {
+    PendingTileLoad() = default;
+    PendingTileLoad(TileLoadDomain domain_,
+                    TileKey key_,
+                    std::string cacheKey_,
+                    TileLoadPriorityGroup group_,
+                    double priority_,
+                    TileLoadStatus status_)
+        : PendingTileLoad(
+              domain_,
               std::move(key_),
               std::move(cacheKey_),
               group_,
               priority_,
               TileLoadResult::createTerminal(status_)) {}
-    PendingTerrainTerminalResult(TileKey key_,
-                                 std::string cacheKey_,
-                                 TileLoadPriorityGroup group_,
-                                 double priority_,
-                                 TileLoadResult result_)
-        : key(std::move(key_)),
+    PendingTileLoad(TileLoadDomain domain_,
+                    TileKey key_,
+                    std::string cacheKey_,
+                    TileLoadPriorityGroup group_,
+                    double priority_,
+                    TileLoadResult result_)
+        : domain(domain_),
+          key(std::move(key_)),
           cacheKey(std::move(cacheKey_)),
           group(group_),
           priority(priority_),
           result(std::move(result_)) {}
 
-    TileKey key;
-    std::string cacheKey;
-    TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;
-    double priority = 0.0;
-    TileLoadResult result = TileLoadResult::createTerminal(
-        TileLoadStatus::Failed);
-};
-
-struct PendingContentUpload {
-    PendingContentUpload() = default;
-    PendingContentUpload(TileKey key_,
-                         std::string cacheKey_,
-                         TileLoadPriorityGroup group_,
-                         double priority_,
-                         TileLoadResult result_)
-        : key(std::move(key_)),
-          cacheKey(std::move(cacheKey_)),
-          group(group_),
-          priority(priority_) {
-        content = std::move(result_.content);
+    TileLoadedContent& content() {
+        return result.content;
     }
 
-    TileKey key;
-    std::string cacheKey;
-    TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;
-    double priority = 0.0;
-    TileLoadedContent content;
-};
+    const TileLoadedContent& content() const {
+        return result.content;
+    }
 
-struct PendingContentTerminalResult {
-    PendingContentTerminalResult() = default;
-    PendingContentTerminalResult(TileKey key_,
-                                 std::string cacheKey_,
-                                 TileLoadPriorityGroup group_,
-                                 double priority_,
-                                 TileLoadStatus status_)
-        : PendingContentTerminalResult(
-              std::move(key_),
-              std::move(cacheKey_),
-              group_,
-              priority_,
-              TileLoadResult::createTerminal(status_)) {}
-    PendingContentTerminalResult(TileKey key_,
-                                 std::string cacheKey_,
-                                 TileLoadPriorityGroup group_,
-                                 double priority_,
-                                 TileLoadResult result_)
-        : key(std::move(key_)),
-          cacheKey(std::move(cacheKey_)),
-          group(group_),
-          priority(priority_),
-          result(std::move(result_)) {}
-
+    TileLoadDomain domain = TileLoadDomain::Terrain;
     TileKey key;
     std::string cacheKey;
     TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;

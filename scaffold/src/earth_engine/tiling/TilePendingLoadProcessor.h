@@ -20,20 +20,15 @@ struct TilePendingLoadProcessorInput {
 
 class TilePendingLoadProcessor {
 public:
-    template <typename ProcessTerrainTerminalResultFn,
-              typename ProcessContentTerminalResultFn,
-              typename ProcessTerrainUploadFn,
-              typename ProcessContentUploadFn>
+    template <typename ProcessTerminalResultFn, typename ProcessUploadFn>
     static bool processPendingLoads(
         TilePendingLoadProcessorInput input,
-        ProcessTerrainTerminalResultFn&& processTerrainTerminalResult,
-        ProcessContentTerminalResultFn&& processContentTerminalResult,
-        ProcessTerrainUploadFn&& processTerrainUpload,
-        ProcessContentUploadFn&& processContentUpload) {
+        ProcessTerminalResultFn&& processTerminalResult,
+        ProcessUploadFn&& processUpload) {
         bool changed = false;
 
         while (true) {
-            std::optional<PendingTerminalResult> terminalResult;
+            std::optional<PendingTileLoad> terminalResult;
             {
                 std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
                 terminalResult =
@@ -46,13 +41,7 @@ public:
             }
 
             const double terminalStartMs = perf::nowMs();
-            if (terminalResult->kind == PendingTerminalResultKind::Content) {
-                processContentTerminalResult(
-                    *terminalResult->contentResult);
-            } else {
-                processTerrainTerminalResult(
-                    *terminalResult->terrainResult);
-            }
+            processTerminalResult(*terminalResult);
             changed = true;
             const std::optional<double> overrideElapsed =
                 input.elapsedOverrideMs
@@ -64,7 +53,7 @@ public:
         }
 
         while (true) {
-            std::optional<PendingLoadFinalize> finalize;
+            std::optional<PendingTileLoad> finalize;
 
             {
                 std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
@@ -79,14 +68,10 @@ public:
             }
 
             const double finalizeStartMs = perf::nowMs();
-            if (finalize->kind == PendingLoadFinalizeKind::Content) {
-                processContentUpload(*finalize->contentUpload);
-            } else {
-                processTerrainUpload(*finalize->terrainUpload);
-            }
+            processUpload(*finalize);
             changed = true;
             const FrameResourceLane finalizeLane =
-                finalize->kind == PendingLoadFinalizeKind::Content
+                finalize->domain == TileLoadDomain::Content
                     ? FrameResourceLane::ContentFinalize
                     : FrameResourceLane::TerrainFinalize;
             const std::optional<double> overrideElapsed =

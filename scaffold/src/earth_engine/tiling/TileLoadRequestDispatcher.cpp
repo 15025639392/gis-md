@@ -21,8 +21,9 @@ TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledTerrain(
         pendingLoads.containsCacheKey(cacheKey)) {
         return TileLoadDispatchResult::Skipped;
     }
-    pendingLoads.addTerrainUpload(
-        PendingTerrainUpload{
+    pendingLoads.addUpload(
+        PendingTileLoad{
+            TileLoadDomain::Terrain,
             key,
             cacheKey,
             group,

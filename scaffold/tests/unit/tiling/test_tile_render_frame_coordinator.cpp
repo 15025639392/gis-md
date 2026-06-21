@@ -102,7 +102,7 @@ TEST(
             forwardedAllowSynchronousMeshPrep = allowSynchronousMeshPrep;
             forwardedClipUv = surfaceClipUv;
             RenderCommand command;
-            command.kind = RenderCommandKind::SurfaceTile;
+            command.domain = RenderCommandKind::SurfaceTile;
             outCommands.push_back(std::move(command));
         },
         [](const std::string&) {},

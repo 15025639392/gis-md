@@ -43,17 +43,17 @@ public:
         EnsureGltfResourcesFn&& ensureGltfResources,
         IngestAvailabilityFn&& ingestAvailability,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        auto processTerrainTerminalResult =
-            [&](PendingTerrainTerminalResult& result) {
-                TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
-                    result,
-                    input.emptyContentRegistry,
-                    ensureTile,
-                    markResourcesDirty);
-            };
+        auto processTerminalResult = [&](PendingTileLoad& result) {
+            TilePendingLoadCommitCoordinator::commitTerminalResult(
+                result,
+                input.emptyContentRegistry,
+                ensureTile,
+                ensureTileChildren,
+                markResourcesDirty);
+        };
 
-        auto processTerrainUpload = [&](PendingTerrainUpload& upload) {
-            TilePendingLoadCommitCoordinator::commitTerrainUpload(
+        auto processUpload = [&](PendingTileLoad& upload) {
+            TilePendingLoadCommitCoordinator::commitUpload(
                 upload,
                 input.terrainProvider,
                 input.terrainCache,
@@ -62,25 +62,6 @@ public:
                 ensureTile,
                 ingestAvailability,
                 ensureTileMesh,
-                markResourcesDirty);
-        };
-
-        auto processContentTerminalResult =
-            [&](PendingContentTerminalResult& result) {
-                TilePendingLoadCommitCoordinator::commitContentTerminalResult(
-                    result,
-                    input.emptyContentRegistry,
-                    ensureTile,
-                    ensureTileChildren,
-                    markResourcesDirty);
-            };
-
-        auto processContentUpload = [&](PendingContentUpload& upload) {
-            TilePendingLoadCommitCoordinator::commitContentUpload(
-                upload,
-                input.terrainCache,
-                input.loadLifecycle,
-                ensureTile,
                 ensureGltfResources,
                 markResourcesDirty);
         };
@@ -91,10 +72,8 @@ public:
                 input.budget,
                 input.interactionActive,
                 {}},
-            processTerrainTerminalResult,
-            processContentTerminalResult,
-            processTerrainUpload,
-            processContentUpload);
+            processTerminalResult,
+            processUpload);
     }
 };
 

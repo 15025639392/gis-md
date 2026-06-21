@@ -56,7 +56,7 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
         [&tileset](bool uploadInteractionActive,
                    bool uploadResourceSmoothingActive,
                    FrameResourceBudget* budget) {
-            return tileset.processPendingContentUploads(
+            return tileset.processPendingLoads(
                 uploadInteractionActive,
                 uploadResourceSmoothingActive,
                 budget);

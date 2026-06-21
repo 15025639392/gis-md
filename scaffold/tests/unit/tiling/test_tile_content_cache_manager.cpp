@@ -53,8 +53,7 @@ struct ExternalSubtreeFixture {
 
     void addChildUploadWork() {
         std::lock_guard<std::mutex> lock(lifecycle.loadLifecycle().mutex());
-        lifecycle.loadLifecycle().pendingLoads().addContentUpload(
-            PendingContentUpload{
+        lifecycle.loadLifecycle().pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
                 childKey,
                 childCacheKey,
                 TileLoadPriorityGroup::Normal,
@@ -68,8 +67,7 @@ struct ExternalSubtreeFixture {
         FrameResourceBudget budget;
         budget.beginFrame(1, config);
         std::lock_guard<std::mutex> lock(lifecycle.loadLifecycle().mutex());
-        lifecycle.loadLifecycle().pendingLoads().addContentUpload(
-            PendingContentUpload{
+        lifecycle.loadLifecycle().pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
                 childKey,
                 childCacheKey,
                 TileLoadPriorityGroup::Normal,
@@ -200,8 +198,7 @@ TEST(
         FrameResourceBudget budget;
         budget.beginFrame(1, config);
         std::lock_guard<std::mutex> lock(lifecycle.loadLifecycle().mutex());
-        lifecycle.loadLifecycle().pendingLoads().addContentUpload(
-            PendingContentUpload{
+        lifecycle.loadLifecycle().pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
                 key,
                 cacheKey,
                 TileLoadPriorityGroup::Normal,

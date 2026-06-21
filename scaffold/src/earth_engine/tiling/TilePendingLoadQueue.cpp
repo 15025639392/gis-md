@@ -6,6 +6,16 @@
 
 namespace earth_engine {
 
+namespace {
+
+FrameResourceLane uploadLaneForDomain(TileLoadDomain domain) {
+    return domain == TileLoadDomain::Content
+               ? FrameResourceLane::ContentFinalize
+               : FrameResourceLane::TerrainFinalize;
+}
+
+} // namespace
+
 bool TilePendingLoadQueue::containsCacheKey(
     const std::string& cacheKey) const {
     if (cacheKey.empty()) {
@@ -14,63 +24,44 @@ bool TilePendingLoadQueue::containsCacheKey(
     if (uploadKeys_.count(cacheKey)) {
         return true;
     }
-    const auto terrainUploadIt = std::find_if(
-        terrainUploads_.begin(),
-        terrainUploads_.end(),
-        [&cacheKey](const PendingTerrainUpload& upload) {
-            return upload.cacheKey == cacheKey;
+    const auto uploadIt = std::find_if(
+        uploads_.begin(),
+        uploads_.end(),
+        [&cacheKey](const PendingTileLoad& load) {
+            return load.cacheKey == cacheKey;
         });
-    if (terrainUploadIt != terrainUploads_.end()) {
+    if (uploadIt != uploads_.end()) {
         return true;
     }
-    const auto terrainTerminalIt = std::find_if(
-        terrainTerminalResults_.begin(),
-        terrainTerminalResults_.end(),
-        [&cacheKey](const PendingTerrainTerminalResult& result) {
-            return result.cacheKey == cacheKey;
+    const auto terminalIt = std::find_if(
+        terminalResults_.begin(),
+        terminalResults_.end(),
+        [&cacheKey](const PendingTileLoad& load) {
+            return load.cacheKey == cacheKey;
         });
-    if (terrainTerminalIt != terrainTerminalResults_.end()) {
-        return true;
-    }
-    const auto contentUploadIt = std::find_if(
-        contentUploads_.begin(),
-        contentUploads_.end(),
-        [&cacheKey](const PendingContentUpload& upload) {
-            return upload.cacheKey == cacheKey;
-        });
-    if (contentUploadIt != contentUploads_.end()) {
-        return true;
-    }
-    const auto contentTerminalIt = std::find_if(
-        contentTerminalResults_.begin(),
-        contentTerminalResults_.end(),
-        [&cacheKey](const PendingContentTerminalResult& result) {
-            return result.cacheKey == cacheKey;
-        });
-    return contentTerminalIt != contentTerminalResults_.end();
+    return terminalIt != terminalResults_.end();
 }
 
-void TilePendingLoadQueue::addTerrainUpload(PendingTerrainUpload upload) {
+void TilePendingLoadQueue::addUpload(PendingTileLoad upload) {
     if (upload.cacheKey.empty()) {
         return;
     }
     const auto terminalIt = std::find_if(
-        terrainTerminalResults_.begin(),
-        terrainTerminalResults_.end(),
-        [&upload](const PendingTerrainTerminalResult& pending) {
+        terminalResults_.begin(),
+        terminalResults_.end(),
+        [&upload](const PendingTileLoad& pending) {
             return pending.cacheKey == upload.cacheKey;
         });
-    if (terminalIt != terrainTerminalResults_.end()) {
+    if (terminalIt != terminalResults_.end()) {
         return;
     }
     if (!uploadKeys_.insert(upload.cacheKey).second) {
         return;
     }
-    terrainUploads_.push_back(std::move(upload));
+    uploads_.push_back(std::move(upload));
 }
 
-void TilePendingLoadQueue::addTerrainTerminalResult(
-    PendingTerrainTerminalResult result) {
+void TilePendingLoadQueue::addTerminalResult(PendingTileLoad result) {
     if (result.cacheKey.empty()) {
         return;
     }
@@ -78,54 +69,15 @@ void TilePendingLoadQueue::addTerrainTerminalResult(
         return;
     }
     const auto existingIt = std::find_if(
-        terrainTerminalResults_.begin(),
-        terrainTerminalResults_.end(),
-        [&result](const PendingTerrainTerminalResult& pending) {
+        terminalResults_.begin(),
+        terminalResults_.end(),
+        [&result](const PendingTileLoad& pending) {
             return pending.cacheKey == result.cacheKey;
         });
-    if (existingIt != terrainTerminalResults_.end()) {
+    if (existingIt != terminalResults_.end()) {
         return;
     }
-    terrainTerminalResults_.push_back(std::move(result));
-}
-
-void TilePendingLoadQueue::addContentUpload(PendingContentUpload upload) {
-    if (upload.cacheKey.empty()) {
-        return;
-    }
-    const auto terminalIt = std::find_if(
-        contentTerminalResults_.begin(),
-        contentTerminalResults_.end(),
-        [&upload](const PendingContentTerminalResult& pending) {
-            return pending.cacheKey == upload.cacheKey;
-        });
-    if (terminalIt != contentTerminalResults_.end()) {
-        return;
-    }
-    if (!uploadKeys_.insert(upload.cacheKey).second) {
-        return;
-    }
-    contentUploads_.push_back(std::move(upload));
-}
-
-void TilePendingLoadQueue::addContentTerminalResult(
-    PendingContentTerminalResult result) {
-    if (result.cacheKey.empty()) {
-        return;
-    }
-    if (uploadKeys_.count(result.cacheKey)) {
-        return;
-    }
-    const auto existingIt = std::find_if(
-        contentTerminalResults_.begin(),
-        contentTerminalResults_.end(),
-        [&result](const PendingContentTerminalResult& pending) {
-            return pending.cacheKey == result.cacheKey;
-        });
-    if (existingIt != contentTerminalResults_.end()) {
-        return;
-    }
-    contentTerminalResults_.push_back(std::move(result));
+    terminalResults_.push_back(std::move(result));
 }
 
 void TilePendingLoadQueue::eraseUploadKey(
@@ -135,233 +87,127 @@ void TilePendingLoadQueue::eraseUploadKey(
 
 void TilePendingLoadQueue::eraseCacheKey(const std::string& cacheKey) {
     uploadKeys_.erase(cacheKey);
-    terrainUploads_.erase(
+    uploads_.erase(
         std::remove_if(
-            terrainUploads_.begin(),
-            terrainUploads_.end(),
-            [&cacheKey](const PendingTerrainUpload& upload) {
-                return upload.cacheKey == cacheKey;
+            uploads_.begin(),
+            uploads_.end(),
+            [&cacheKey](const PendingTileLoad& load) {
+                return load.cacheKey == cacheKey;
             }),
-        terrainUploads_.end());
-    terrainTerminalResults_.erase(
+        uploads_.end());
+    terminalResults_.erase(
         std::remove_if(
-            terrainTerminalResults_.begin(),
-            terrainTerminalResults_.end(),
-            [&cacheKey](const PendingTerrainTerminalResult& result) {
-                return result.cacheKey == cacheKey;
+            terminalResults_.begin(),
+            terminalResults_.end(),
+            [&cacheKey](const PendingTileLoad& load) {
+                return load.cacheKey == cacheKey;
             }),
-        terrainTerminalResults_.end());
-    contentUploads_.erase(
-        std::remove_if(
-            contentUploads_.begin(),
-            contentUploads_.end(),
-            [&cacheKey](const PendingContentUpload& upload) {
-                return upload.cacheKey == cacheKey;
-            }),
-        contentUploads_.end());
-    contentTerminalResults_.erase(
-        std::remove_if(
-            contentTerminalResults_.begin(),
-            contentTerminalResults_.end(),
-            [&cacheKey](const PendingContentTerminalResult& result) {
-                return result.cacheKey == cacheKey;
-            }),
-        contentTerminalResults_.end());
+        terminalResults_.end());
 }
 
 void TilePendingLoadQueue::clear() {
     uploadKeys_.clear();
-    terrainUploads_.clear();
-    terrainTerminalResults_.clear();
-    contentUploads_.clear();
-    contentTerminalResults_.clear();
+    uploads_.clear();
+    terminalResults_.clear();
 }
 
 bool TilePendingLoadQueue::hasWork() const {
     return !uploadKeys_.empty() ||
-           !terrainUploads_.empty() ||
-           !terrainTerminalResults_.empty() ||
-           !contentUploads_.empty() ||
-           !contentTerminalResults_.empty();
+           !uploads_.empty() ||
+           !terminalResults_.empty();
+}
+
+size_t TilePendingLoadQueue::uploadCount() const {
+    return uploads_.size();
+}
+
+size_t TilePendingLoadQueue::terminalResultCount() const {
+    return terminalResults_.size();
 }
 
 size_t TilePendingLoadQueue::terrainUploadCount() const {
-    return terrainUploads_.size();
+    return countDomain(uploads_, TileLoadDomain::Terrain);
 }
 
 size_t TilePendingLoadQueue::terrainTerminalResultCount() const {
-    return terrainTerminalResults_.size();
+    return countDomain(terminalResults_, TileLoadDomain::Terrain);
 }
 
 size_t TilePendingLoadQueue::contentUploadCount() const {
-    return contentUploads_.size();
+    return countDomain(uploads_, TileLoadDomain::Content);
 }
 
 size_t TilePendingLoadQueue::contentTerminalResultCount() const {
-    return contentTerminalResults_.size();
+    return countDomain(terminalResults_, TileLoadDomain::Content);
 }
 
-std::optional<PendingTerrainTerminalResult>
-TilePendingLoadQueue::takeHighestPriorityTerrainTerminalResult() {
-    if (terrainTerminalResults_.empty()) {
-        return std::nullopt;
-    }
-    auto bestIt = TileLoadPriorityPolicy::selectHighestPriority(
-        terrainTerminalResults_.begin(),
-        terrainTerminalResults_.end());
-    std::optional<PendingTerrainTerminalResult> result{
-        std::move(*bestIt)};
-    terrainTerminalResults_.erase(bestIt);
-    return result;
-}
-
-std::optional<PendingContentTerminalResult>
-TilePendingLoadQueue::takeHighestPriorityContentTerminalResult() {
-    if (contentTerminalResults_.empty()) {
-        return std::nullopt;
-    }
-    auto bestIt = TileLoadPriorityPolicy::selectHighestPriority(
-        contentTerminalResults_.begin(),
-        contentTerminalResults_.end());
-    std::optional<PendingContentTerminalResult> result{
-        std::move(*bestIt)};
-    contentTerminalResults_.erase(bestIt);
-    return result;
-}
-
-std::optional<PendingTerminalResult>
+std::optional<PendingTileLoad>
 TilePendingLoadQueue::takeHighestPriorityTerminalResult(
     FrameResourceBudget& budget) {
-    auto bestTerrainIt = terrainTerminalResults_.end();
-    if (!terrainTerminalResults_.empty()) {
-        bestTerrainIt = TileLoadPriorityPolicy::selectHighestPriority(
-            terrainTerminalResults_.begin(),
-            terrainTerminalResults_.end());
-    }
-
-    auto bestContentIt = contentTerminalResults_.end();
-    if (!contentTerminalResults_.empty()) {
-        bestContentIt = TileLoadPriorityPolicy::selectHighestPriority(
-            contentTerminalResults_.begin(),
-            contentTerminalResults_.end());
-    }
-
-    const bool useContent =
-        bestContentIt != contentTerminalResults_.end() &&
-        (bestTerrainIt == terrainTerminalResults_.end() ||
-         TileLoadPriorityPolicy::hasHigherPriority(
-             bestContentIt->group,
-             bestContentIt->priority,
-             bestTerrainIt->group,
-             bestTerrainIt->priority));
-
-    if (useContent) {
-        if (!budget.tryFinalize(
-                FrameResourceLane::TerminalState,
-                TileLoadPriorityPolicy::toFramePriority(
-                    bestContentIt->group))) {
-            return std::nullopt;
-        }
-        PendingTerminalResult result;
-        result.kind = PendingTerminalResultKind::Content;
-        result.contentResult.emplace(std::move(*bestContentIt));
-        contentTerminalResults_.erase(bestContentIt);
-        return result;
-    }
-
-    if (bestTerrainIt == terrainTerminalResults_.end()) {
+    if (terminalResults_.empty()) {
         return std::nullopt;
     }
+    auto bestIt = TileLoadPriorityPolicy::selectHighestPriority(
+        terminalResults_.begin(),
+        terminalResults_.end());
     if (!budget.tryFinalize(
             FrameResourceLane::TerminalState,
-            TileLoadPriorityPolicy::toFramePriority(bestTerrainIt->group))) {
+            TileLoadPriorityPolicy::toFramePriority(bestIt->group))) {
         return std::nullopt;
     }
-    PendingTerminalResult result;
-    result.kind = PendingTerminalResultKind::Terrain;
-    result.terrainResult.emplace(std::move(*bestTerrainIt));
-    terrainTerminalResults_.erase(bestTerrainIt);
+    std::optional<PendingTileLoad> result{std::move(*bestIt)};
+    terminalResults_.erase(bestIt);
     return result;
 }
 
-std::optional<PendingLoadFinalize>
+std::optional<PendingTileLoad>
 TilePendingLoadQueue::takeHighestPriorityUpload(
     PendingLoadFinalizeContext context) {
-    auto bestTerrainIt = terrainUploads_.end();
-    for (auto it = terrainUploads_.begin(); it != terrainUploads_.end(); ++it) {
+    auto bestIt = uploads_.end();
+    for (auto it = uploads_.begin(); it != uploads_.end(); ++it) {
         if (context.interactionActive &&
             it->group != TileLoadPriorityGroup::Urgent) {
             continue;
         }
-        if (bestTerrainIt == terrainUploads_.end() ||
+        if (bestIt == uploads_.end() ||
             TileLoadPriorityPolicy::hasHigherPriority(
                 it->group,
                 it->priority,
-                bestTerrainIt->group,
-                bestTerrainIt->priority)) {
-            bestTerrainIt = it;
+                bestIt->group,
+                bestIt->priority)) {
+            bestIt = it;
         }
     }
-
-    auto bestContentIt = contentUploads_.end();
-    for (auto it = contentUploads_.begin(); it != contentUploads_.end(); ++it) {
-        if (context.interactionActive &&
-            it->group != TileLoadPriorityGroup::Urgent) {
-            continue;
-        }
-        if (bestContentIt == contentUploads_.end() ||
-            TileLoadPriorityPolicy::hasHigherPriority(
-                it->group,
-                it->priority,
-                bestContentIt->group,
-                bestContentIt->priority)) {
-            bestContentIt = it;
-        }
-    }
-
-    const bool useContent =
-        bestContentIt != contentUploads_.end() &&
-        (bestTerrainIt == terrainUploads_.end() ||
-         TileLoadPriorityPolicy::hasHigherPriority(
-             bestContentIt->group,
-             bestContentIt->priority,
-             bestTerrainIt->group,
-             bestTerrainIt->priority));
-    if (useContent) {
-        if (!context.budget.tryFinalize(
-                FrameResourceLane::ContentFinalize,
-                TileLoadPriorityPolicy::toFramePriority(
-                    bestContentIt->group))) {
-            return std::nullopt;
-        }
-        PendingLoadFinalize finalize;
-        finalize.kind = PendingLoadFinalizeKind::Content;
-        finalize.contentUpload.emplace(std::move(*bestContentIt));
-        contentUploads_.erase(bestContentIt);
-        return finalize;
-    }
-
-    if (bestTerrainIt == terrainUploads_.end()) {
+    if (bestIt == uploads_.end()) {
         return std::nullopt;
     }
     if (!context.budget.tryFinalize(
-            FrameResourceLane::TerrainFinalize,
-            TileLoadPriorityPolicy::toFramePriority(bestTerrainIt->group))) {
+            uploadLaneForDomain(bestIt->domain),
+            TileLoadPriorityPolicy::toFramePriority(bestIt->group))) {
         return std::nullopt;
     }
-    PendingLoadFinalize finalize;
-    finalize.kind = PendingLoadFinalizeKind::Terrain;
-    finalize.terrainUpload.emplace(std::move(*bestTerrainIt));
-    terrainUploads_.erase(bestTerrainIt);
-    return finalize;
+    std::optional<PendingTileLoad> upload{std::move(*bestIt)};
+    uploads_.erase(bestIt);
+    return upload;
 }
 
-std::optional<PendingLoadFinalize>
+std::optional<PendingTileLoad>
 TilePendingLoadQueue::takeHighestPriorityUpload(
     bool interactionActive,
     FrameResourceBudget& budget) {
     return takeHighestPriorityUpload(
         PendingLoadFinalizeContext{interactionActive, budget});
+}
+
+size_t TilePendingLoadQueue::countDomain(
+    const std::deque<PendingTileLoad>& loads,
+    TileLoadDomain domain) {
+    return static_cast<size_t>(std::count_if(
+        loads.begin(),
+        loads.end(),
+        [domain](const PendingTileLoad& load) {
+            return load.domain == domain;
+        }));
 }
 
 } // namespace earth_engine

@@ -90,16 +90,18 @@ public:
                             TileLoadResult::fromContentResult(
                                 std::move(result));
                         if (loadResult.shouldUpload()) {
-                            pendingLoads.addContentUpload(
-                                PendingContentUpload{
+                            pendingLoads.addUpload(
+                                PendingTileLoad{
+                                    TileLoadDomain::Content,
                                     key,
                                     cacheKey,
                                     group,
                                     priority,
                                     std::move(loadResult)});
                         } else {
-                            pendingLoads.addContentTerminalResult(
-                                PendingContentTerminalResult{
+                            pendingLoads.addTerminalResult(
+                                PendingTileLoad{
+                                    TileLoadDomain::Content,
                                     key,
                                     cacheKey,
                                     group,
@@ -173,16 +175,18 @@ public:
                             TileLoadResult::fromTerrainResult(
                                 std::move(result));
                         if (loadResult.shouldUpload()) {
-                            pendingLoads.addTerrainUpload(
-                                PendingTerrainUpload{
+                            pendingLoads.addUpload(
+                                PendingTileLoad{
+                                    TileLoadDomain::Terrain,
                                     key,
                                     cacheKey,
                                     group,
                                     priority,
                                     std::move(loadResult)});
                         } else {
-                            pendingLoads.addTerrainTerminalResult(
-                                PendingTerrainTerminalResult{
+                            pendingLoads.addTerminalResult(
+                                PendingTileLoad{
+                                    TileLoadDomain::Terrain,
                                     key,
                                     cacheKey,
                                     group,

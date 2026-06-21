@@ -133,7 +133,7 @@ private:
     TileLoadRequestOutcome requestMissingContent(
         const std::vector<TileLoadRequest>& loadRequests,
         FrameResourceBudget* budget = nullptr);
-    bool processPendingContentUploads(
+    bool processPendingLoads(
         bool interactionActive,
         bool resourceSmoothingActive,
         FrameResourceBudget* budget = nullptr);

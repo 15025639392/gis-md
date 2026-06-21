@@ -117,7 +117,7 @@ TEST(
             const std::optional<std::array<float, 4>>&) {
             submittedOpacities.push_back(opacity);
             RenderCommand command;
-            command.kind = RenderCommandKind::SurfaceTile;
+            command.domain = RenderCommandKind::SurfaceTile;
             outCommands.push_back(std::move(command));
         },
         [](const std::vector<TileFrameInactiveEntry>&) {},

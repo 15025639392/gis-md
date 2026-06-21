@@ -23,7 +23,7 @@ class TilePendingLoadCommitCoordinator {
 public:
     template <typename EnsureTileFn, typename MarkResourcesDirtyFn>
     static void commitTerrainTerminalResult(
-        PendingTerrainTerminalResult& result,
+        PendingTileLoad& result,
         TileEmptyContentRegistry& emptyContentRegistry,
         EnsureTileFn&& ensureTile,
         MarkResourcesDirtyFn&& markResourcesDirty) {
@@ -34,8 +34,8 @@ public:
             TileTerminalLoadCommitter::commitTerrainTerminalResult(
                 *tile,
                 result.cacheKey,
-                std::move(result.result),
-                emptyContentRegistry);
+              std::move(result.result),
+              emptyContentRegistry);
         if (action.resourcesDirty) {
             markResourcesDirty();
         }
@@ -45,7 +45,7 @@ public:
               typename EnsureChildrenFn,
               typename MarkResourcesDirtyFn>
     static void commitContentTerminalResult(
-        PendingContentTerminalResult& result,
+        PendingTileLoad& result,
         TileEmptyContentRegistry& emptyContentRegistry,
         EnsureTileFn&& ensureTile,
         EnsureChildrenFn&& ensureChildren,
@@ -72,7 +72,7 @@ public:
               typename EnsureTileMeshFn,
               typename MarkResourcesDirtyFn>
     static void commitTerrainUpload(
-        PendingTerrainUpload& upload,
+        PendingTileLoad& upload,
         TerrainProvider* terrainProvider,
         std::unordered_map<
             std::string,
@@ -83,7 +83,7 @@ public:
         IngestAvailabilityFn&& ingestAvailability,
         EnsureTileMeshFn&& ensureTileMesh,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        TileLoadedContent& content = upload.content;
+        TileLoadedContent& content = upload.content();
         if (!content.quantizedMeshAvailabilityUpdates.empty()) {
             if (auto* qmProvider =
                     dynamic_cast<QuantizedMeshTerrainProvider*>(
@@ -139,7 +139,7 @@ public:
               typename EnsureGltfResourcesFn,
               typename MarkResourcesDirtyFn>
     static void commitContentUpload(
-        PendingContentUpload& upload,
+        PendingTileLoad& upload,
         std::unordered_map<
             std::string,
             std::unique_ptr<DecodedHeightmap>>& terrainCache,
@@ -158,7 +158,7 @@ public:
         terrainCache.erase(upload.cacheKey);
         TileContentUploadCommitter::prepareRenderContent(
             *tile,
-            std::move(upload.content));
+            std::move(upload.content()));
         ensureGltfResources(*tile);
         const TileContentUploadCommitAction action =
             TileContentUploadCommitter::finishRenderResourcePreparation(
@@ -171,6 +171,71 @@ public:
         TilePendingUploadCompletion::eraseUpload(
             lifecycle,
             upload.cacheKey);
+    }
+
+    template <typename EnsureTileFn,
+              typename EnsureChildrenFn,
+              typename MarkResourcesDirtyFn>
+    static void commitTerminalResult(
+        PendingTileLoad& result,
+        TileEmptyContentRegistry& emptyContentRegistry,
+        EnsureTileFn&& ensureTile,
+        EnsureChildrenFn&& ensureChildren,
+        MarkResourcesDirtyFn&& markResourcesDirty) {
+        if (result.domain == TileLoadDomain::Content) {
+            commitContentTerminalResult(
+                result,
+                emptyContentRegistry,
+                std::forward<EnsureTileFn>(ensureTile),
+                std::forward<EnsureChildrenFn>(ensureChildren),
+                std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
+        } else {
+            commitTerrainTerminalResult(
+                result,
+                emptyContentRegistry,
+                std::forward<EnsureTileFn>(ensureTile),
+                std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
+        }
+    }
+
+    template <typename EnsureTileFn,
+              typename IngestAvailabilityFn,
+              typename EnsureTileMeshFn,
+              typename EnsureGltfResourcesFn,
+              typename MarkResourcesDirtyFn>
+    static void commitUpload(
+        PendingTileLoad& upload,
+        TerrainProvider* terrainProvider,
+        std::unordered_map<
+            std::string,
+            std::unique_ptr<DecodedHeightmap>>& terrainCache,
+        TileLoadLifecycle& lifecycle,
+        bool resourceSmoothingActive,
+        EnsureTileFn&& ensureTile,
+        IngestAvailabilityFn&& ingestAvailability,
+        EnsureTileMeshFn&& ensureTileMesh,
+        EnsureGltfResourcesFn&& ensureGltfResources,
+        MarkResourcesDirtyFn&& markResourcesDirty) {
+        if (upload.domain == TileLoadDomain::Content) {
+            commitContentUpload(
+                upload,
+                terrainCache,
+                lifecycle,
+                std::forward<EnsureTileFn>(ensureTile),
+                std::forward<EnsureGltfResourcesFn>(ensureGltfResources),
+                std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
+        } else {
+            commitTerrainUpload(
+                upload,
+                terrainProvider,
+                terrainCache,
+                lifecycle,
+                resourceSmoothingActive,
+                std::forward<EnsureTileFn>(ensureTile),
+                std::forward<IngestAvailabilityFn>(ingestAvailability),
+                std::forward<EnsureTileMeshFn>(ensureTileMesh),
+                std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
+        }
     }
 };
 

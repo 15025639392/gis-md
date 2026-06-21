@@ -103,8 +103,7 @@ struct TilesetTestAccess {
         const std::string cacheKey = terrainCacheKey(tileset, key);
         std::lock_guard<std::mutex> lock(
             tileset.contentLifecycle_.loadLifecycle().mutex());
-        tileset.contentLifecycle_.loadLifecycle().pendingLoads().addContentUpload(
-            PendingContentUpload{
+        tileset.contentLifecycle_.loadLifecycle().pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
                 key,
                 cacheKey,
                 TileLoadPriorityGroup::Normal,
@@ -170,7 +169,7 @@ struct TilesetTestAccess {
     }
 
     static void processPendingUploads(Tileset& tileset) {
-        tileset.processPendingContentUploads(false, false);
+        tileset.processPendingLoads(false, false);
     }
 
     static bool isTileRenderable(Tileset& tileset, const TilesetTile& tile) {
@@ -205,7 +204,7 @@ struct TilesetTestAccess {
     static void processPendingUploadsWithBudget(
         Tileset& tileset,
         FrameResourceBudget& budget) {
-        tileset.processPendingContentUploads(false, false, &budget);
+        tileset.processPendingLoads(false, false, &budget);
     }
 };
 } // namespace earth_engine

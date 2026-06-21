@@ -374,13 +374,13 @@ TEST(TileLoadSchedulerTest, PendingUploadsDoNotConsumeNetworkInflightSlots) {
     const TileKey requestKey{"test", 1, 2, 0};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
             firstUploadKey,
             cacheKeyForTile(firstUploadKey),
             TileLoadPriorityGroup::Normal,
             0.0,
             TileLoadResult::createRenderableTerrain()});
-        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
             secondUploadKey,
             cacheKeyForTile(secondUploadKey),
             TileLoadPriorityGroup::Normal,
@@ -811,8 +811,7 @@ TEST(TileLoadSchedulerTest, SkipsPendingCacheKeyBeforeUpsamplePreparation) {
     const std::string cacheKey = cacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerrainTerminalResult(
-            PendingTerrainTerminalResult{
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
                 key,
                 cacheKey,
                 TileLoadPriorityGroup::Normal,
@@ -871,7 +870,7 @@ TEST(TileLoadSchedulerTest, SkipsPendingUploadBeforeSnapshot) {
     const std::string cacheKey = cacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -925,7 +924,7 @@ TEST(TileLoadSchedulerTest, SkipsClaimedUploadBeforeSnapshot) {
     const std::string cacheKey = cacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -982,8 +981,7 @@ TEST(TileLoadSchedulerTest, SkipsPendingTerminalBeforeSnapshot) {
     const std::string cacheKey = cacheKeyForTile(key);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addContentTerminalResult(
-            PendingContentTerminalResult{
+        lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Content,
                 key,
                 cacheKey,
                 TileLoadPriorityGroup::Normal,
@@ -1189,8 +1187,7 @@ TEST(TileLoadSchedulerTest, SkipsDispatcherDuplicateAfterPlanning) {
                 tileState = nullptr;
                 {
                     std::lock_guard<std::mutex> lock(lifecycle.mutex());
-                    lifecycle.pendingLoads().addContentTerminalResult(
-                        PendingContentTerminalResult{
+                    lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Content,
                             key,
                             cacheKey,
                             TileLoadPriorityGroup::Normal,
@@ -1246,8 +1243,7 @@ TEST(TileLoadSchedulerTest, SkipsTerrainDispatcherDuplicateAfterPlanning) {
                 tileState = nullptr;
                 {
                     std::lock_guard<std::mutex> lock(lifecycle.mutex());
-                    lifecycle.pendingLoads().addTerrainTerminalResult(
-                        PendingTerrainTerminalResult{
+                    lifecycle.pendingLoads().addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
                             key,
                             cacheKey,
                             TileLoadPriorityGroup::Normal,

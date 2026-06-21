@@ -11,70 +11,45 @@
 
 namespace earth_engine {
 
-enum class PendingLoadFinalizeKind {
-    Terrain,
-    Content
-};
-
-struct PendingLoadFinalize {
-    PendingLoadFinalizeKind kind = PendingLoadFinalizeKind::Terrain;
-    std::optional<PendingTerrainUpload> terrainUpload;
-    std::optional<PendingContentUpload> contentUpload;
-};
-
 struct PendingLoadFinalizeContext {
     bool interactionActive = false;
     FrameResourceBudget& budget;
-};
-
-enum class PendingTerminalResultKind {
-    Terrain,
-    Content
-};
-
-struct PendingTerminalResult {
-    PendingTerminalResultKind kind = PendingTerminalResultKind::Terrain;
-    std::optional<PendingTerrainTerminalResult> terrainResult;
-    std::optional<PendingContentTerminalResult> contentResult;
 };
 
 class TilePendingLoadQueue {
 public:
     bool containsCacheKey(const std::string& cacheKey) const;
 
-    void addTerrainUpload(PendingTerrainUpload upload);
-    void addTerrainTerminalResult(PendingTerrainTerminalResult result);
-    void addContentUpload(PendingContentUpload upload);
-    void addContentTerminalResult(PendingContentTerminalResult result);
+    void addUpload(PendingTileLoad upload);
+    void addTerminalResult(PendingTileLoad result);
 
     void eraseUploadKey(const std::string& cacheKey);
     void eraseCacheKey(const std::string& cacheKey);
     void clear();
 
     bool hasWork() const;
+    size_t uploadCount() const;
+    size_t terminalResultCount() const;
     size_t terrainUploadCount() const;
     size_t terrainTerminalResultCount() const;
     size_t contentUploadCount() const;
     size_t contentTerminalResultCount() const;
 
-    std::optional<PendingTerrainTerminalResult>
-    takeHighestPriorityTerrainTerminalResult();
-    std::optional<PendingContentTerminalResult>
-    takeHighestPriorityContentTerminalResult();
-    std::optional<PendingTerminalResult> takeHighestPriorityTerminalResult(
+    std::optional<PendingTileLoad> takeHighestPriorityTerminalResult(
         FrameResourceBudget& budget);
-    std::optional<PendingLoadFinalize> takeHighestPriorityUpload(
+    std::optional<PendingTileLoad> takeHighestPriorityUpload(
         PendingLoadFinalizeContext context);
-    std::optional<PendingLoadFinalize> takeHighestPriorityUpload(
+    std::optional<PendingTileLoad> takeHighestPriorityUpload(
         bool interactionActive,
         FrameResourceBudget& budget);
 
 private:
+    static size_t countDomain(const std::deque<PendingTileLoad>& loads,
+                              TileLoadDomain domain);
+
     std::unordered_set<std::string> uploadKeys_;
-    std::deque<PendingTerrainUpload> terrainUploads_;
-    std::deque<PendingTerrainTerminalResult> terrainTerminalResults_;
-    std::deque<PendingContentUpload> contentUploads_;
-    std::deque<PendingContentTerminalResult> contentTerminalResults_;
+    std::deque<PendingTileLoad> uploads_;
+    std::deque<PendingTileLoad> terminalResults_;
 };
 
 } // namespace earth_engine

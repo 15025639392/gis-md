@@ -9,13 +9,13 @@ TEST(TilePendingLoadQueueTest, UsesSharedUploadPriorityOrder) {
     const TileKey terrainKey{"test", 1, 0, 0};
     const TileKey contentKey{"test", 1, 1, 0};
 
-    queue.addTerrainUpload(PendingTerrainUpload{
+    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
         terrainKey,
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addContentUpload(PendingContentUpload{
+    queue.addUpload(PendingTileLoad{TileLoadDomain::Content,
         contentKey,
         "content",
         TileLoadPriorityGroup::Urgent,
@@ -27,11 +27,11 @@ TEST(TilePendingLoadQueueTest, UsesSharedUploadPriorityOrder) {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    std::optional<PendingLoadFinalize> first =
+    std::optional<PendingTileLoad> first =
         queue.takeHighestPriorityUpload(false, budget);
 
     ASSERT_TRUE(first.has_value());
-    EXPECT_EQ(PendingLoadFinalizeKind::Content, first->kind);
+    EXPECT_EQ(TileLoadDomain::Content, first->domain);
     EXPECT_EQ(0u, queue.contentUploadCount());
     EXPECT_EQ(1u, queue.terrainUploadCount());
 }
@@ -41,13 +41,13 @@ TEST(TilePendingLoadQueueTest, FiltersNonUrgentUploadsDuringInteraction) {
     const TileKey normalKey{"test", 1, 0, 0};
     const TileKey urgentKey{"test", 1, 1, 0};
 
-    queue.addTerrainUpload(PendingTerrainUpload{
+    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
         normalKey,
         "normal",
         TileLoadPriorityGroup::Normal,
         0.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addTerrainUpload(PendingTerrainUpload{
+    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
         urgentKey,
         "urgent",
         TileLoadPriorityGroup::Urgent,
@@ -59,15 +59,14 @@ TEST(TilePendingLoadQueueTest, FiltersNonUrgentUploadsDuringInteraction) {
     FrameResourceBudget budget;
     budget.beginFrame(2, config);
 
-    std::optional<PendingLoadFinalize> first =
+    std::optional<PendingTileLoad> first =
         queue.takeHighestPriorityUpload(true, budget);
 
     ASSERT_TRUE(first.has_value());
-    ASSERT_TRUE(first->terrainUpload.has_value());
-    EXPECT_EQ(PendingLoadFinalizeKind::Terrain, first->kind);
-    EXPECT_EQ("urgent", first->terrainUpload->cacheKey);
+    EXPECT_EQ(TileLoadDomain::Terrain, first->domain);
+    EXPECT_EQ("urgent", first->cacheKey);
 
-    std::optional<PendingLoadFinalize> second =
+    std::optional<PendingTileLoad> second =
         queue.takeHighestPriorityUpload(true, budget);
 
     EXPECT_FALSE(second.has_value());
@@ -79,7 +78,7 @@ TEST(TilePendingLoadQueueTest, KeepsUploadWhenFinalizeBudgetBlocks) {
     TilePendingLoadQueue queue;
     const TileKey key{"test", 1, 0, 0};
 
-    queue.addContentUpload(PendingContentUpload{
+    queue.addUpload(PendingTileLoad{TileLoadDomain::Content,
         key,
         "content",
         TileLoadPriorityGroup::Urgent,
@@ -91,7 +90,7 @@ TEST(TilePendingLoadQueueTest, KeepsUploadWhenFinalizeBudgetBlocks) {
     FrameResourceBudget blockedBudget;
     blockedBudget.beginFrame(1, blockedConfig);
 
-    std::optional<PendingLoadFinalize> blocked =
+    std::optional<PendingTileLoad> blocked =
         queue.takeHighestPriorityUpload(false, blockedBudget);
 
     EXPECT_FALSE(blocked.has_value());
@@ -103,13 +102,12 @@ TEST(TilePendingLoadQueueTest, KeepsUploadWhenFinalizeBudgetBlocks) {
     FrameResourceBudget retryBudget;
     retryBudget.beginFrame(2, retryConfig);
 
-    std::optional<PendingLoadFinalize> retry =
+    std::optional<PendingTileLoad> retry =
         queue.takeHighestPriorityUpload(false, retryBudget);
 
     ASSERT_TRUE(retry.has_value());
-    ASSERT_TRUE(retry->contentUpload.has_value());
-    EXPECT_EQ(PendingLoadFinalizeKind::Content, retry->kind);
-    EXPECT_EQ("content", retry->contentUpload->cacheKey);
+    EXPECT_EQ(TileLoadDomain::Content, retry->domain);
+    EXPECT_EQ("content", retry->cacheKey);
     EXPECT_EQ(0u, queue.contentUploadCount());
 }
 
@@ -118,25 +116,25 @@ TEST(TilePendingLoadQueueTest, DeduplicatesUploadsByKind) {
     const TileKey firstKey{"test", 1, 0, 0};
     const TileKey secondKey{"test", 1, 1, 0};
 
-    queue.addTerrainUpload(PendingTerrainUpload{
+    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
         firstKey,
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addTerrainUpload(PendingTerrainUpload{
+    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
         secondKey,
         "terrain",
         TileLoadPriorityGroup::Urgent,
         100.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addContentUpload(PendingContentUpload{
+    queue.addUpload(PendingTileLoad{TileLoadDomain::Content,
         firstKey,
         "content",
         TileLoadPriorityGroup::Normal,
         1.0,
         TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
-    queue.addContentUpload(PendingContentUpload{
+    queue.addUpload(PendingTileLoad{TileLoadDomain::Content,
         secondKey,
         "content",
         TileLoadPriorityGroup::Urgent,
@@ -151,11 +149,11 @@ TEST(TilePendingLoadQueueTest, DeduplicatesUploadsByKind) {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    std::optional<PendingLoadFinalize> first =
+    std::optional<PendingTileLoad> first =
         queue.takeHighestPriorityUpload(false, budget);
-    std::optional<PendingLoadFinalize> second =
+    std::optional<PendingTileLoad> second =
         queue.takeHighestPriorityUpload(false, budget);
-    std::optional<PendingLoadFinalize> third =
+    std::optional<PendingTileLoad> third =
         queue.takeHighestPriorityUpload(false, budget);
 
     EXPECT_TRUE(first.has_value());
@@ -169,19 +167,19 @@ TEST(TilePendingLoadQueueTest, TakesTerminalResultsByPriority) {
     const TileKey highKey{"test", 1, 1, 0};
     const TileKey contentKey{"test", 1, 1, 1};
 
-    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
         lowKey,
         "low",
         TileLoadPriorityGroup::Normal,
         0.0,
         TileLoadStatus::Failed});
-    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
         highKey,
         "high",
         TileLoadPriorityGroup::Urgent,
         100.0,
         TileLoadStatus::RetryLater});
-    queue.addContentTerminalResult(PendingContentTerminalResult{
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Content,
         contentKey,
         "content",
         TileLoadPriorityGroup::Urgent,
@@ -193,21 +191,19 @@ TEST(TilePendingLoadQueueTest, TakesTerminalResultsByPriority) {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    std::optional<PendingTerminalResult> first =
+    std::optional<PendingTileLoad> first =
         queue.takeHighestPriorityTerminalResult(budget);
 
     ASSERT_TRUE(first.has_value());
-    ASSERT_TRUE(first->contentResult.has_value());
-    EXPECT_EQ(PendingTerminalResultKind::Content, first->kind);
-    EXPECT_EQ("content", first->contentResult->cacheKey);
+    EXPECT_EQ(TileLoadDomain::Content, first->domain);
+    EXPECT_EQ("content", first->cacheKey);
 
-    std::optional<PendingTerminalResult> second =
+    std::optional<PendingTileLoad> second =
         queue.takeHighestPriorityTerminalResult(budget);
 
     ASSERT_TRUE(second.has_value());
-    ASSERT_TRUE(second->terrainResult.has_value());
-    EXPECT_EQ(PendingTerminalResultKind::Terrain, second->kind);
-    EXPECT_EQ("high", second->terrainResult->cacheKey);
+    EXPECT_EQ(TileLoadDomain::Terrain, second->domain);
+    EXPECT_EQ("high", second->cacheKey);
     EXPECT_EQ(1u, queue.terrainTerminalResultCount());
     EXPECT_EQ(0u, queue.contentTerminalResultCount());
 }
@@ -217,25 +213,25 @@ TEST(TilePendingLoadQueueTest, DeduplicatesTerminalResultsByKind) {
     const TileKey firstKey{"test", 1, 0, 0};
     const TileKey secondKey{"test", 1, 1, 0};
 
-    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
         firstKey,
         "terrain-terminal",
         TileLoadPriorityGroup::Normal,
         1.0,
         TileLoadStatus::RetryLater});
-    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
         secondKey,
         "terrain-terminal",
         TileLoadPriorityGroup::Urgent,
         100.0,
         TileLoadStatus::Cancelled});
-    queue.addContentTerminalResult(PendingContentTerminalResult{
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Content,
         firstKey,
         "content-terminal",
         TileLoadPriorityGroup::Normal,
         1.0,
         TileLoadStatus::RetryLater});
-    queue.addContentTerminalResult(PendingContentTerminalResult{
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Content,
         secondKey,
         "content-terminal",
         TileLoadPriorityGroup::Urgent,
@@ -250,11 +246,11 @@ TEST(TilePendingLoadQueueTest, DeduplicatesTerminalResultsByKind) {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    std::optional<PendingTerminalResult> first =
+    std::optional<PendingTileLoad> first =
         queue.takeHighestPriorityTerminalResult(budget);
-    std::optional<PendingTerminalResult> second =
+    std::optional<PendingTileLoad> second =
         queue.takeHighestPriorityTerminalResult(budget);
-    std::optional<PendingTerminalResult> third =
+    std::optional<PendingTileLoad> third =
         queue.takeHighestPriorityTerminalResult(budget);
 
     EXPECT_TRUE(first.has_value());
@@ -267,25 +263,25 @@ TEST(TilePendingLoadQueueTest, KeepsOneResultShapePerKind) {
     const TileKey terrainKey{"test", 1, 0, 0};
     const TileKey contentKey{"test", 1, 1, 0};
 
-    queue.addTerrainUpload(PendingTerrainUpload{
+    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
         terrainKey,
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
         terrainKey,
         "terrain",
         TileLoadPriorityGroup::Urgent,
         100.0,
         TileLoadStatus::RetryLater});
-    queue.addContentTerminalResult(PendingContentTerminalResult{
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Content,
         contentKey,
         "content",
         TileLoadPriorityGroup::Normal,
         1.0,
         TileLoadStatus::RetryLater});
-    queue.addContentUpload(PendingContentUpload{
+    queue.addUpload(PendingTileLoad{TileLoadDomain::Content,
         contentKey,
         "content",
         TileLoadPriorityGroup::Urgent,
@@ -303,13 +299,13 @@ TEST(TilePendingLoadQueueTest, KeepsOneResultShapePerKind) {
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
-    std::optional<PendingLoadFinalize> upload =
+    std::optional<PendingTileLoad> upload =
         queue.takeHighestPriorityUpload(false, budget);
-    std::optional<PendingTerminalResult> terminal =
+    std::optional<PendingTileLoad> terminal =
         queue.takeHighestPriorityTerminalResult(budget);
-    std::optional<PendingLoadFinalize> extraUpload =
+    std::optional<PendingTileLoad> extraUpload =
         queue.takeHighestPriorityUpload(false, budget);
-    std::optional<PendingTerminalResult> extraTerminal =
+    std::optional<PendingTileLoad> extraTerminal =
         queue.takeHighestPriorityTerminalResult(budget);
 
     EXPECT_TRUE(upload.has_value());
@@ -322,7 +318,7 @@ TEST(TilePendingLoadQueueTest, KeepsTerminalResultWhenBudgetBlocks) {
     TilePendingLoadQueue queue;
     const TileKey key{"test", 1, 0, 0};
 
-    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
         key,
         "terminal",
         TileLoadPriorityGroup::Urgent,
@@ -334,7 +330,7 @@ TEST(TilePendingLoadQueueTest, KeepsTerminalResultWhenBudgetBlocks) {
     FrameResourceBudget blockedBudget;
     blockedBudget.beginFrame(1, blockedConfig);
 
-    std::optional<PendingTerminalResult> blocked =
+    std::optional<PendingTileLoad> blocked =
         queue.takeHighestPriorityTerminalResult(blockedBudget);
 
     EXPECT_FALSE(blocked.has_value());
@@ -346,13 +342,12 @@ TEST(TilePendingLoadQueueTest, KeepsTerminalResultWhenBudgetBlocks) {
     FrameResourceBudget retryBudget;
     retryBudget.beginFrame(2, retryConfig);
 
-    std::optional<PendingTerminalResult> retry =
+    std::optional<PendingTileLoad> retry =
         queue.takeHighestPriorityTerminalResult(retryBudget);
 
     ASSERT_TRUE(retry.has_value());
-    ASSERT_TRUE(retry->terrainResult.has_value());
-    EXPECT_EQ(PendingTerminalResultKind::Terrain, retry->kind);
-    EXPECT_EQ("terminal", retry->terrainResult->cacheKey);
+    EXPECT_EQ(TileLoadDomain::Terrain, retry->domain);
+    EXPECT_EQ("terminal", retry->cacheKey);
     EXPECT_EQ(0u, queue.terrainTerminalResultCount());
 }
 
@@ -360,25 +355,25 @@ TEST(TilePendingLoadQueueTest, RejectsEmptyCacheKeys) {
     TilePendingLoadQueue queue;
     const TileKey key{"test", 1, 0, 0};
 
-    queue.addTerrainUpload(PendingTerrainUpload{
+    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
         key,
         "",
         TileLoadPriorityGroup::Urgent,
         0.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addContentUpload(PendingContentUpload{
+    queue.addUpload(PendingTileLoad{TileLoadDomain::Content,
         key,
         "",
         TileLoadPriorityGroup::Urgent,
         0.0,
         TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
-    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
         key,
         "",
         TileLoadPriorityGroup::Urgent,
         0.0,
         TileLoadStatus::Failed});
-    queue.addContentTerminalResult(PendingContentTerminalResult{
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Content,
         key,
         "",
         TileLoadPriorityGroup::Urgent,
@@ -400,25 +395,25 @@ TEST(TilePendingLoadQueueTest, EraseIgnoresUnknownKeys) {
     const TileKey terrainTerminalKey{"test", 1, 0, 1};
     const TileKey contentTerminalKey{"test", 1, 1, 1};
 
-    queue.addTerrainUpload(PendingTerrainUpload{
+    queue.addUpload(PendingTileLoad{TileLoadDomain::Terrain,
         terrainUploadKey,
         "terrain-upload",
         TileLoadPriorityGroup::Normal,
         0.0,
             TileLoadResult::createRenderableTerrain()});
-    queue.addContentUpload(PendingContentUpload{
+    queue.addUpload(PendingTileLoad{TileLoadDomain::Content,
         contentUploadKey,
         "content-upload",
         TileLoadPriorityGroup::Normal,
         0.0,
         TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
-    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Terrain,
         terrainTerminalKey,
         "terrain-terminal",
         TileLoadPriorityGroup::Normal,
         0.0,
         TileLoadStatus::RetryLater});
-    queue.addContentTerminalResult(PendingContentTerminalResult{
+    queue.addTerminalResult(PendingTileLoad{TileLoadDomain::Content,
         contentTerminalKey,
         "content-terminal",
         TileLoadPriorityGroup::Normal,

@@ -164,7 +164,7 @@ TileLoadRequestOutcome Tileset::requestMissingContent(
         budget);
 }
 
-bool Tileset::processPendingContentUploads(
+bool Tileset::processPendingLoads(
     bool interactionActive,
     bool resourceSmoothingActive,
     FrameResourceBudget* budget) {
