@@ -910,7 +910,10 @@ TEST(ImplicitTileIdUtilitiesTest, MortonIndexMatchesCesiumNativeExamples) {
     EXPECT_EQ(282ULL,
               ImplicitTileIdUtilities::mortonIndex(
                   OctreeTileID{11, 2, 3, 4}));
+}
 
+TEST(ImplicitTileIdUtilitiesTest,
+     RelativeMortonIndexMatchesCesiumNativeExamples) {
     EXPECT_EQ(1ULL,
               ImplicitTileIdUtilities::relativeMortonIndex(
                   TileKey{"Geographic-TMS", 11, 2, 3},
