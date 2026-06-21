@@ -1028,6 +1028,38 @@ TEST(RasterOverlayLifecycleTest, FrameBudgetSeparatesRasterFanoutFromTerrainBudg
               rectangleTile->getState());
 }
 
+TEST(RasterOverlayLifecycleTest, NotReadyProviderMapsPlaceholderLikeCesiumNative) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setReady(false);
+
+    TileKey key{scheme->id(), 2, 1, 1};
+    RasterOverlayDetails details;
+    details.setGeographicRectangle(scheme->tileToRectangle(key));
+    std::vector<RasterOverlayProjection> missing;
+
+    RasterMappedToTilesetTile mapped;
+    RasterMappedToTilesetTile::MoreDetail moreDetail = mapped.update(
+        key,
+        details,
+        256.0,
+        256.0,
+        provider,
+        nullptr,
+        missing);
+
+    ASSERT_NE(nullptr, mapped.getLoadingTile());
+    EXPECT_EQ(provider.getPlaceholderTile().get(), mapped.getLoadingTile());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Placeholder,
+              mapped.getLoadingTile()->getState());
+    EXPECT_EQ(-1, mapped.getTextureCoordinateID());
+    EXPECT_EQ(RasterMappedToTilesetTile::State::Unattached,
+              mapped.getState());
+    EXPECT_EQ(RasterMappedToTilesetTile::MoreDetail::No, moreDetail);
+    EXPECT_TRUE(missing.empty());
+}
+
 TEST(RasterOverlayLifecycleTest, MappedReadyTileRetainsProviderCacheUntilReleased) {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
