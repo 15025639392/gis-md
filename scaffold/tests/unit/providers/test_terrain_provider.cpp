@@ -514,6 +514,30 @@ TEST(QuantizedMeshTerrainProviderTest, LayerJsonExtensionsBuildQueryLikeCesiumNa
         provider.buildUrl(TileKey{"Geographic-TMS", 2, 3, 1}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, WaterMaskOptionGatesExtensionQueryLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    provider.setWaterMaskEnabled(true);
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "version": "1.33.0",
+      "tiles": ["{z}/{x}/{y}.terrain?v={version}"],
+      "extensions": ["metadata", "watermask", "octvertexnormals"],
+      "minzoom": 0,
+      "maxzoom": 4
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/terrain/layer.json"));
+
+    EXPECT_EQ(
+        "https://example.invalid/terrain/2/3/1.terrain?v=1.33.0&extensions=octvertexnormals-metadata-watermask",
+        provider.buildUrl(TileKey{"Geographic-TMS", 2, 3, 1}));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, WebMercatorMetadataAvailabilityStartsAtOneRootLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
