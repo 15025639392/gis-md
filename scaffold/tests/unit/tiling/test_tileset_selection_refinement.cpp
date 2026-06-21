@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/content/GltfContentProvider.h"
+#include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/math/Vec3.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
@@ -12,6 +13,7 @@
 #include "earth_engine/tiling/TilesetSelectionFrameFacade.h"
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <optional>
 #include <string>
@@ -1106,6 +1108,95 @@ TEST(
 
     EXPECT_EQ(farOnlyZoom, 0);
     EXPECT_GT(multiViewZoom, farOnlyZoom);
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
+    CullRequiresAllSelectorViewsToMissTile) {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::vector<TileKey> childKeys = {
+        {"Geographic-TMS", 1, 0, 0},
+        {"Geographic-TMS", 1, 1, 0},
+        {"Geographic-TMS", 1, 0, 1}};
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, childKeys}});
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Empty;
+    root->refine = TileRefine::Replace;
+    root->geometricError = 100000000.0;
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_EQ(root->children.size(), childKeys.size());
+
+    const Vec3 up = Vec3(1.0, 0.0, 0.0);
+    const Vec3 east = Vec3(0.0, 1.0, 0.0);
+    const Vec3 north = Vec3(0.0, 0.0, 1.0);
+    const Vec3 base =
+        Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic::fromRadians(0.0, 0.0, 0.0));
+    const Vec3 targetA = base;
+    const Vec3 targetB = base + east * 100000.0;
+    const Vec3 targetC = base - east * 100000.0;
+
+    const std::array<Vec3, 3> centers = {targetA, targetB, targetC};
+    for (size_t i = 0; i < childKeys.size(); ++i) {
+        TilesetTile* child =
+            TilesetTestAccess::findTile(tileset, childKeys[i]);
+        ASSERT_NE(child, nullptr);
+        child->content.loadState = TileLoadState::Done;
+        child->content.contentKind = TileContentKind::Empty;
+        child->geometricError = 0.0;
+        child->boundingVolume = TileBoundingVolume::fromSphere(
+            centers[i],
+            1000.0);
+    }
+
+    Camera cameraA;
+    cameraA.lookAt(targetA + up * 100000.0, targetA, north);
+    cameraA.setPerspective(glm::radians(10.0), 1.0, 10000000.0);
+    Camera cameraB;
+    cameraB.lookAt(targetB + up * 100000.0, targetB, north);
+    cameraB.setPerspective(glm::radians(10.0), 1.0, 10000000.0);
+
+    FrameState frameState;
+    frameState.frameId = 161;
+    frameState.camera = &cameraA;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews = {
+        makeSelectorView(cameraA, 800, 800),
+        makeSelectorView(cameraB, 800, 800)};
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        cameraA.position(),
+        cameraA.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const auto& visibleTiles = tileset.tilePlan().visibleTiles;
+    const auto visibleEnd = visibleTiles.end();
+    EXPECT_NE(
+        std::find(visibleTiles.begin(), visibleEnd, childKeys[0]),
+        visibleEnd);
+    EXPECT_NE(
+        std::find(visibleTiles.begin(), visibleEnd, childKeys[1]),
+        visibleEnd);
+    EXPECT_EQ(
+        std::find(visibleTiles.begin(), visibleEnd, childKeys[2]),
+        visibleEnd);
+    EXPECT_EQ(tileset.tilePlan().selectionOccludedCount, 0);
+    EXPECT_GE(tileset.tilePlan().notRenderingNodeCount, 1);
 }
 
 TEST(
