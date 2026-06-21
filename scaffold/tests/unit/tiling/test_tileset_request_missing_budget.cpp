@@ -9,6 +9,7 @@
 #include "earth_engine/scene/FrameState.h"
 #include "earth_engine/scene/SceneTilesetDiagnostics.h"
 #include "earth_engine/tiling/TileCacheKey.h"
+#include "earth_engine/tiling/TileSelectionRasterOverlayPreparer.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 
@@ -61,6 +62,15 @@ struct TilesetTestAccess {
         return TileCacheKey::forTile(key);
     }
 
+    static void putTerrainCache(
+        Tileset& tileset,
+        const TileKey& key,
+        std::unique_ptr<DecodedHeightmap> heightmap) {
+        tileset.contentLifecycle_.terrainCache()[
+            terrainCacheKey(tileset, key)] =
+            std::move(heightmap);
+    }
+
     static void queueLoad(
         Tileset& tileset,
         const TileKey& key,
@@ -101,6 +111,12 @@ struct TilesetTestAccess {
 
     static void processPendingUploads(Tileset& tileset) {
         tileset.processPendingContentUploads(false, false);
+    }
+
+    static bool isTileRenderable(Tileset& tileset, const TilesetTile& tile) {
+        return TileSelectionRasterOverlayPreparer::isRenderable(
+            tile,
+            tileset.rasterOverlays_);
     }
 
     static void processPendingUploadsWithBudget(
@@ -797,6 +813,52 @@ TEST(
     EXPECT_EQ(rawProvider->requestCount, 0);
     EXPECT_EQ(diagnostics.loadQueueUrgentRequests, 1);
     EXPECT_EQ(diagnostics.loadQueueNormalRequests, 0);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    UpsampledChildFinalizesContentLoadedParent) {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    SparseTerrainProvider* rawProvider = provider.get();
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(33.0f));
+    root->content.loadState = TileLoadState::ContentLoaded;
+    root->content.contentKind = TileContentKind::Render;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_EQ(root->children.size(), 4u);
+    ASSERT_NE(root->children[1], nullptr);
+
+    TilesetTile* upsampledChild = root->children[1];
+    ASSERT_TRUE(upsampledChild->content.upsampledFromParent);
+
+    TilesetTestAccess::requestMissingTile(tileset, upsampledChild->key);
+
+    EXPECT_EQ(root->content.loadState, TileLoadState::Done);
+    EXPECT_TRUE(root->content.renderContent.isMeshReady());
+    EXPECT_EQ(upsampledChild->content.loadState, TileLoadState::ContentLoading);
+    EXPECT_EQ(tileset.loadDiagnostics().pendingTerrainUploads, 1);
+    EXPECT_EQ(rawProvider->requestCount, 0);
+
+    TilesetTestAccess::processPendingUploads(tileset);
+
+    EXPECT_EQ(upsampledChild->content.loadState, TileLoadState::Done);
+    EXPECT_TRUE(upsampledChild->content.renderContent.isMeshReady());
+    EXPECT_TRUE(upsampledChild->content.renderContent.hasSurfaceMesh());
+    EXPECT_TRUE(TilesetTestAccess::isTileRenderable(tileset, *upsampledChild));
 }
 
 TEST(
