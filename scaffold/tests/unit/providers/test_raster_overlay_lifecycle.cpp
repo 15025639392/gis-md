@@ -6,6 +6,7 @@
 #include "earth_engine/providers/RasterTextureUploader.h"
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
+#include "earth_engine/renderer/IPrepareRendererResources.h"
 #include "earth_engine/renderer/RenderCommand.h"
 #include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
@@ -238,6 +239,35 @@ public:
     int uploadCount = 0;
     int maxTextureSizeValue = 2048;
     DecodedImage lastUpload;
+};
+
+class RecordingPrepareRendererResources final
+    : public IPrepareRendererResources {
+public:
+    void attachRasterInMainThread(
+        const TileKey&,
+        int32_t,
+        std::shared_ptr<const RasterOverlayTile> rasterTile,
+        Texture* texture,
+        float,
+        float,
+        float,
+        float) override {
+        ++attachCount;
+        lastRasterTile = std::move(rasterTile);
+        lastTexture = texture;
+    }
+
+    void detachRasterInMainThread(
+        const TileKey&,
+        int32_t) noexcept override {
+        ++detachCount;
+    }
+
+    int attachCount = 0;
+    int detachCount = 0;
+    std::shared_ptr<const RasterOverlayTile> lastRasterTile;
+    Texture* lastTexture = nullptr;
 };
 
 } // namespace
@@ -1204,6 +1234,70 @@ TEST(RasterOverlayLifecycleTest, NonRegionBoundingVolumeUsesPlaceholderLikeCesiu
     ASSERT_EQ(1u, missing.size());
     EXPECT_EQ(RasterOverlayProjection::Geographic, missing[0]);
     EXPECT_EQ(0, provider.getCachedTileCount());
+}
+
+TEST(RasterOverlayLifecycleTest, AttachedUnknownReportsMoreDetailLikeCesiumNative) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    TileKey key{scheme->id(), 3, 4, 2};
+    RasterOverlayDetails details;
+    details.setGeographicRectangle(scheme->tileToRectangle(key));
+    std::vector<RasterOverlayProjection> missing;
+
+    RasterMappedToTilesetTile mapped;
+    RasterMappedToTilesetTile::MoreDetail first = mapped.update(
+        key,
+        details,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missing);
+    ASSERT_EQ(RasterMappedToTilesetTile::MoreDetail::Unknown, first);
+    RasterOverlayTile* loadingTile = mapped.getLoadingTile();
+    ASSERT_NE(nullptr, loadingTile);
+    loadingTile->setTexture(std::make_unique<TestTexture>(4, 4));
+
+    RasterMappedToTilesetTile::MoreDetail promoted = mapped.update(
+        key,
+        details,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missing);
+    EXPECT_EQ(RasterMappedToTilesetTile::MoreDetail::Unknown, promoted);
+    EXPECT_EQ(RasterMappedToTilesetTile::State::Unattached,
+              mapped.getState());
+    EXPECT_EQ(loadingTile, mapped.getReadyTile());
+
+    RecordingPrepareRendererResources recorder;
+    RasterMappedToTilesetTile::MoreDetail attached = mapped.update(
+        key,
+        details,
+        512.0,
+        512.0,
+        provider,
+        &recorder,
+        missing);
+    EXPECT_EQ(RasterMappedToTilesetTile::MoreDetail::Unknown, attached);
+    EXPECT_EQ(RasterMappedToTilesetTile::State::Attached, mapped.getState());
+    EXPECT_EQ(1, recorder.attachCount);
+    EXPECT_EQ(loadingTile, recorder.lastRasterTile.get());
+    EXPECT_EQ(loadingTile->getTexture(), recorder.lastTexture);
+
+    RasterMappedToTilesetTile::MoreDetail fastPath = mapped.update(
+        key,
+        details,
+        512.0,
+        512.0,
+        provider,
+        &recorder,
+        missing);
+    EXPECT_EQ(RasterMappedToTilesetTile::MoreDetail::Yes, fastPath);
+    EXPECT_FALSE(mapped.isMoreDetailAvailable());
 }
 
 TEST(RasterOverlayLifecycleTest, MappedReadyTileRetainsProviderCacheUntilReleased) {
