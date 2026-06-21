@@ -76,6 +76,37 @@ TEST(SceneRenderCommandDiagnosticsSnapshotTest, CountsRenderCommandLanes) {
 }
 
 TEST(
+    SceneRenderCommandDiagnosticsSnapshotTest,
+    IgnoresNullTexturesAndNegativeZoomRanges) {
+    Texture* texture = reinterpret_cast<Texture*>(0x1);
+
+    RenderCommand invalidZoomSurface;
+    invalidZoomSurface.kind = RenderCommandKind::SurfaceTile;
+    invalidZoomSurface.textures = {nullptr, texture, texture};
+    invalidZoomSurface.surfaceGeometryZoom = -1;
+    invalidZoomSurface.surfaceTextureZoom = -1;
+
+    RenderCommand missingImagerySurface;
+    missingImagerySurface.kind = RenderCommandKind::SurfaceTile;
+    missingImagerySurface.surfaceGeometryZoom = 5;
+    missingImagerySurface.surfaceTextureZoom = 6;
+
+    const SceneRenderCommandDiagnosticsSnapshot snapshot =
+        SceneRenderCommandDiagnosticsSnapshot::fromCommands(
+            {invalidZoomSurface, missingImagerySurface});
+
+    EXPECT_EQ(snapshot.drawCalls, 2);
+    EXPECT_EQ(snapshot.renderSurfaceTiles, 2);
+    EXPECT_EQ(snapshot.imageryExactAttachments, 1);
+    EXPECT_EQ(snapshot.imageryMissingTiles, 1);
+    EXPECT_EQ(snapshot.gpuTextureCount, 1);
+    EXPECT_EQ(snapshot.imageryMinTargetZoom, 0);
+    EXPECT_EQ(snapshot.imageryMaxTargetZoom, 0);
+    EXPECT_EQ(snapshot.imageryMinTextureZoom, 0);
+    EXPECT_EQ(snapshot.imageryMaxTextureZoom, 0);
+}
+
+TEST(
     SceneSurfaceCommandGenerationDiagnosticsSnapshotTest,
     TracksSurfaceGenerations) {
     RenderCommand currentSurface;
