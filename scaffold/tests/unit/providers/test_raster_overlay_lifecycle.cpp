@@ -1135,6 +1135,42 @@ TEST(RasterOverlayLifecycleTest, MissingProjectionUsesOffsetPlaceholderLikeCesiu
     EXPECT_EQ(0, provider.getCachedTileCount());
 }
 
+TEST(RasterOverlayLifecycleTest, BoundingRegionMapsPreciseRectangleLikeCesiumNative) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const Rectangle regionRectangle =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    const TileBoundingVolume boundingRegion =
+        TileBoundingVolume::fromRegion(regionRectangle, 0.0, 10.0);
+    RasterOverlayDetails emptyDetails;
+    std::vector<RasterOverlayProjection> missing;
+
+    RasterMappedToTilesetTile mapped;
+    const RasterMappedToTilesetTile::MoreDetail moreDetail = mapped.update(
+        TileKey{scheme->id(), 4, 8, 8},
+        emptyDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missing,
+        nullptr,
+        0,
+        &boundingRegion,
+        false);
+
+    ASSERT_NE(nullptr, mapped.getLoadingTile());
+    EXPECT_TRUE(mapped.getLoadingTile()->isRectangleTile());
+    EXPECT_EQ(regionRectangle, mapped.getLoadingTile()->getRectangle());
+    EXPECT_EQ(0, mapped.getTextureCoordinateID());
+    EXPECT_EQ(RasterMappedToTilesetTile::MoreDetail::Unknown, moreDetail);
+    ASSERT_EQ(1u, missing.size());
+    EXPECT_EQ(RasterOverlayProjection::Geographic, missing[0]);
+    EXPECT_EQ(1, provider.getCachedTileCount());
+}
+
 TEST(RasterOverlayLifecycleTest, MappedReadyTileRetainsProviderCacheUntilReleased) {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
