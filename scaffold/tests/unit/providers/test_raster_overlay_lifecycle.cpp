@@ -134,6 +134,38 @@ public:
     int requestCount = 0;
 };
 
+class RgbImageryProvider final : public ImageryProvider {
+public:
+    std::string id() const override { return "rgb"; }
+    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 10; }
+    int tileWidth() const override { return 4; }
+    int tileHeight() const override { return 4; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     TileCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
+        requestedKeys.push_back(key);
+        auto image = std::make_unique<DecodedImage>();
+        image->width = tileWidth();
+        image->height = tileHeight();
+        image->channels = 3;
+        image->pixels.resize(
+            static_cast<size_t>(image->width) *
+            static_cast<size_t>(image->height) * 3u,
+            static_cast<uint8_t>(key.z));
+        callback(key, std::move(image));
+    }
+    std::unique_ptr<DecodedImage> decodeTile(
+        const uint8_t*, size_t) override {
+        return nullptr;
+    }
+
+    std::vector<TileKey> requestedKeys;
+};
+
 class MalformedImageryProvider final : public ImageryProvider {
 public:
     std::string id() const override { return "malformed"; }
@@ -451,6 +483,54 @@ TEST(RasterOverlayLifecycleTest, RectangleCoverageMissCreatesNoTileOrRequest) {
     EXPECT_EQ(nullptr, provider.getTile(outsideCoverage, 512.0, 512.0));
     EXPECT_TRUE(imagery.requestedKeys.empty());
     EXPECT_EQ(0, provider.getCachedTileCount());
+}
+
+TEST(RasterOverlayLifecycleTest, RectangleAlignedSingleSourceUploadsWithoutResampling) {
+    RgbImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    auto rectangleMappedTile = provider.getTile(sourceBounds, 8.0, 8.0);
+
+    ASSERT_NE(nullptr, rectangleMappedTile);
+    EXPECT_TRUE(rectangleMappedTile->isRectangleTile());
+    EXPECT_EQ(sourceKey, rectangleMappedTile->getTileID());
+    EXPECT_EQ(sourceBounds, rectangleMappedTile->getRectangle());
+    EXPECT_EQ(1, provider.getCachedTileCount());
+
+    ASSERT_TRUE(provider.loadTile(*rectangleMappedTile));
+    EXPECT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(1, uploaderPtr->uploadCount);
+    EXPECT_EQ(4, uploaderPtr->lastUpload.width);
+    EXPECT_EQ(4, uploaderPtr->lastUpload.height);
+    EXPECT_EQ(3, uploaderPtr->lastUpload.channels);
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              rectangleMappedTile->getState());
+}
+
+TEST(RasterOverlayLifecycleTest, DirectFastPathDoesNotRunForPartialRectangle) {
+    ParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+
+    auto rectangleTile = provider.getTile(westHalf, 256.0, 512.0);
+    ASSERT_NE(nullptr, rectangleTile);
+    EXPECT_TRUE(rectangleTile->isRectangleTile());
+    EXPECT_EQ(sourceKey.z, rectangleTile->getSourceZoom());
 }
 
 TEST(RasterOverlayLifecycleTest, RectangleSourceRangeTrimsTileEdgeTouchesLikeCesiumNative) {

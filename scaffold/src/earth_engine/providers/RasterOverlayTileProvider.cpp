@@ -486,6 +486,17 @@ std::string rectangleTileCacheKey(const TileScheme& scheme,
            std::to_string(sourceZoom) + "/" + bounds;
 }
 
+bool rectanglesEqualForDirectRasterTile(const Rectangle& a,
+                                        const Rectangle& b) {
+    const double span =
+        std::max({std::abs(a.width()),
+                  std::abs(a.height()),
+                  std::abs(b.width()),
+                  std::abs(b.height()),
+                  1.0});
+    return a.equalsEpsilon(b, span * 1e-12);
+}
+
 TileKey parentTileKey(const TileKey& key) {
     return key.parent();
 }
@@ -996,6 +1007,28 @@ private:
         {
             std::lock_guard<std::mutex> lock(mutex);
             completedSources = std::move(sources);
+        }
+
+        if (completedSources.size() == 1 &&
+            sourcePlan.sourceKeys.size() == 1 &&
+            completedSources.front().image &&
+            !completedSources.front().ancestorFallback &&
+            rectanglesEqualForDirectRasterTile(
+                targetBounds,
+                completedSources.front().bounds)) {
+            LoadedSourceImage& source = completedSources.front();
+            const RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
+                source.moreDetailAvailable !=
+                        RasterOverlayTile::MoreDetailAvailable::Unknown
+                    ? source.moreDetailAvailable
+                    : (source.key.z < maximumLevel
+                           ? RasterOverlayTile::MoreDetailAvailable::Yes
+                           : RasterOverlayTile::MoreDetailAvailable::No);
+            onSuccess(
+                std::move(source.image),
+                source.bounds,
+                moreDetailAvailable);
+            return;
         }
 
         RectangleCompositionResult composed =
