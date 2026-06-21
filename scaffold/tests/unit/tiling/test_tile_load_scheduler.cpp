@@ -197,3 +197,58 @@ TEST(TileLoadSchedulerTest, SkipsEmptyCacheKeyBeforeInflightBlock) {
         lifecycle.requestState().completeTerrainRequest("busy");
     }
 }
+
+TEST(TileLoadSchedulerTest, SkipsKnownEmptyContentBeforeInflightBlock) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    CancellationToken token;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        ASSERT_TRUE(lifecycle.requestState().beginTerrainRequest(
+            "busy",
+            token));
+    }
+
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = cacheKeyForTile(key);
+    bool planned = false;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            cacheKeyForTile,
+            [&planned](
+                const TileKey&,
+                const std::string&,
+                TilesetTile*& tileState) {
+                planned = true;
+                tileState = nullptr;
+                return TileLoadRequestSnapshot{};
+            },
+            [&cacheKey](const std::string& keyToCheck) {
+                return keyToCheck == cacheKey;
+            },
+            [](TilesetTile&, double) { return false; },
+            [](const TileKey&) {});
+
+    EXPECT_EQ(outcome.issued, 0u);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_FALSE(planned);
+    EXPECT_EQ(lifecycle.pendingRequestCount(), 1u);
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().completeTerrainRequest("busy");
+    }
+}
