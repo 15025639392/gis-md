@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileSelectionVisitPreparation.h"
+#include "earth_engine/tiling/TilesetTile.h"
 
 using namespace earth_engine;
 
@@ -128,4 +130,95 @@ TEST(TileSelectionVisitPreparationTest, OutcomePlanCountsVisitableCulledTiles) {
     outcome = TileSelectionVisitPreparation::outcomePlan(preparation);
     EXPECT_FALSE(outcome.shouldExit);
     EXPECT_FALSE(outcome.countCulledVisited);
+}
+
+TEST(
+    TileSelectionVisitPreparationTest,
+    CulledUnconditionallyRefinedRootStillVisits) {
+    TilesetTile root(
+        TileKey{"test", 0, 0, 0},
+        Rectangle{-0.25, -0.25, 0.25, 0.25});
+    root.unconditionallyRefine = true;
+
+    const TileSelectionVisitPreparationResult result =
+        TileSelectionVisitPreparation::prepare(
+            root,
+            {},
+            {0.0},
+            TileSelectionVisibilityContext{false, 0.0, 0.0},
+            TileSelectionVisitPreparationOptions{
+                true,
+                true,
+                false,
+                false,
+                true,
+                16.0,
+                64.0});
+
+    EXPECT_TRUE(result.cullResult.culled);
+    EXPECT_TRUE(result.cullResult.shouldVisit);
+}
+
+TEST(
+    TileSelectionVisitPreparationTest,
+    ForbidHolesReplaceChildKeepsCulledUnconditionalVisit) {
+    TilesetTile parent(
+        TileKey{"test", 0, 0, 0},
+        Rectangle{-0.25, -0.25, 0.25, 0.25});
+    TilesetTile child(
+        TileKey{"test", 1, 0, 0},
+        Rectangle{-0.25, -0.25, 0.0, 0.0},
+        &parent);
+    child.unconditionallyRefine = true;
+    child.refine = TileRefine::Replace;
+
+    const TileSelectionVisitPreparationResult result =
+        TileSelectionVisitPreparation::prepare(
+            child,
+            {},
+            {0.0},
+            TileSelectionVisibilityContext{false, 0.0, 0.0},
+            TileSelectionVisitPreparationOptions{
+                true,
+                true,
+                false,
+                true,
+                true,
+                16.0,
+                64.0});
+
+    EXPECT_TRUE(result.cullResult.culled);
+    EXPECT_TRUE(result.cullResult.shouldVisit);
+}
+
+TEST(
+    TileSelectionVisitPreparationTest,
+    AddChildStillExitsWhenCulledAndUnconditionallyRefined) {
+    TilesetTile parent(
+        TileKey{"test", 0, 0, 0},
+        Rectangle{-0.25, -0.25, 0.25, 0.25});
+    TilesetTile child(
+        TileKey{"test", 1, 0, 0},
+        Rectangle{-0.25, -0.25, 0.0, 0.0},
+        &parent);
+    child.unconditionallyRefine = true;
+    child.refine = TileRefine::Add;
+
+    const TileSelectionVisitPreparationResult result =
+        TileSelectionVisitPreparation::prepare(
+            child,
+            {},
+            {0.0},
+            TileSelectionVisibilityContext{false, 0.0, 0.0},
+            TileSelectionVisitPreparationOptions{
+                true,
+                true,
+                false,
+                true,
+                true,
+                16.0,
+                64.0});
+
+    EXPECT_TRUE(result.cullResult.culled);
+    EXPECT_FALSE(result.cullResult.shouldVisit);
 }
