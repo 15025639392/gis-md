@@ -737,6 +737,34 @@ TEST(WebMapServiceImageryProviderTest, ValidatesCapabilitiesServiceLikeCesiumNat
     EXPECT_EQ("", validation.error);
 }
 
+TEST(WebMapServiceImageryProviderTest, ValidatesDirectServiceChildrenLikeCesiumNative) {
+    WebMapServiceImageryOptions options;
+
+    WebMapServiceCapabilitiesValidation validation =
+        validateWebMapServiceCapabilities(
+            "<WMS_Capabilities><Capability><Service><Name>WMS</Name></Service></Capability></WMS_Capabilities>",
+            options);
+    EXPECT_FALSE(validation.valid);
+    EXPECT_EQ(
+        "Web map service XML document does not have a Service element. ",
+        validation.error);
+
+    validation = validateWebMapServiceCapabilities(
+        "<WMS_Capabilities><Service><Nested><Name>WMS</Name></Nested></Service></WMS_Capabilities>",
+        options);
+    EXPECT_FALSE(validation.valid);
+    EXPECT_EQ(
+        "Invalid web map service XML document (Service > Name is missing) ",
+        validation.error);
+
+    options.tileWidth = 512;
+    validation = validateWebMapServiceCapabilities(
+        "<WMS_Capabilities><Service><Name>WMS</Name><Nested><MaxWidth>256</MaxWidth></Nested></Service></WMS_Capabilities>",
+        options);
+    EXPECT_TRUE(validation.valid);
+    EXPECT_EQ("", validation.error);
+}
+
 TEST(WebMapServiceImageryProviderTest, ValidatesCapabilitiesTileSizeLikeCesiumNative) {
     WebMapServiceImageryOptions options;
     options.tileWidth = 512;

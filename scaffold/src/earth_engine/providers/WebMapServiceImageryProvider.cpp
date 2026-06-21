@@ -61,24 +61,123 @@ std::optional<std::string_view> firstElementRange(std::string_view xml,
     return std::nullopt;
 }
 
-std::optional<std::string> firstElementText(std::string_view xml,
-                                            std::string_view tagName) {
-    const std::optional<std::string_view> element =
-        firstElementRange(xml, tagName);
-    if (!element) {
+std::optional<std::string_view> elementContentRange(
+    std::string_view element) {
+    const size_t openEnd = element.find('>');
+    if (openEnd == std::string_view::npos ||
+        (openEnd > 0 && element[openEnd - 1] == '/')) {
         return std::nullopt;
     }
-    const size_t openEnd = element->find('>');
-    if (openEnd == std::string_view::npos ||
-        (openEnd > 0 && (*element)[openEnd - 1] == '/')) {
+
+    const size_t closeStart = element.rfind("</");
+    if (closeStart == std::string_view::npos || closeStart < openEnd + 1) {
+        return std::nullopt;
+    }
+    return element.substr(openEnd + 1, closeStart - openEnd - 1);
+}
+
+std::optional<std::string_view> firstChildElementRange(
+    std::string_view element,
+    std::string_view tagName) {
+    const std::optional<std::string_view> content =
+        elementContentRange(element);
+    if (!content) {
+        return std::nullopt;
+    }
+
+    size_t searchStart = 0;
+    while (searchStart < content->size()) {
+        const size_t open = content->find('<', searchStart);
+        if (open == std::string_view::npos) {
+            break;
+        }
+        if (open + 1 >= content->size()) {
+            return std::nullopt;
+        }
+
+        const char firstNameChar = (*content)[open + 1];
+        if (firstNameChar == '/' || firstNameChar == '!' ||
+            firstNameChar == '?') {
+            const size_t tagEnd = content->find('>', open + 1);
+            if (tagEnd == std::string_view::npos) {
+                return std::nullopt;
+            }
+            searchStart = tagEnd + 1;
+            continue;
+        }
+
+        size_t nameEnd = open + 1;
+        while (nameEnd < content->size() &&
+               isXmlNameCharacter((*content)[nameEnd])) {
+            ++nameEnd;
+        }
+        if (nameEnd == open + 1) {
+            return std::nullopt;
+        }
+
+        const std::string_view childName =
+            content->substr(open + 1, nameEnd - open - 1);
+        const std::optional<std::string_view> child =
+            firstElementRange(*content, childName, open);
+        if (!child) {
+            return std::nullopt;
+        }
+        if (childName == tagName) {
+            return child;
+        }
+
+        searchStart = open + child->size();
+    }
+
+    return std::nullopt;
+}
+
+std::optional<std::string_view> documentRootElementRange(std::string_view xml) {
+    size_t searchStart = 0;
+    while (searchStart < xml.size()) {
+        const size_t open = xml.find('<', searchStart);
+        if (open == std::string_view::npos || open + 1 >= xml.size()) {
+            return std::nullopt;
+        }
+
+        const char firstNameChar = xml[open + 1];
+        if (firstNameChar == '!' || firstNameChar == '?') {
+            const size_t tagEnd = xml.find('>', open + 1);
+            if (tagEnd == std::string_view::npos) {
+                return std::nullopt;
+            }
+            searchStart = tagEnd + 1;
+            continue;
+        }
+
+        size_t nameEnd = open + 1;
+        while (nameEnd < xml.size() && isXmlNameCharacter(xml[nameEnd])) {
+            ++nameEnd;
+        }
+        if (nameEnd == open + 1) {
+            return std::nullopt;
+        }
+
+        return firstElementRange(xml, xml.substr(open + 1, nameEnd - open - 1),
+                                 open);
+    }
+
+    return std::nullopt;
+}
+
+std::optional<std::string> firstChildElementText(std::string_view element,
+                                                 std::string_view tagName) {
+    const std::optional<std::string_view> child =
+        firstChildElementRange(element, tagName);
+    if (!child) {
+        return std::nullopt;
+    }
+    const std::optional<std::string_view> content =
+        elementContentRange(*child);
+    if (!content) {
         return std::string();
     }
-    const std::string closeNeedle = "</" + std::string(tagName) + ">";
-    const size_t close = element->rfind(closeNeedle);
-    if (close == std::string_view::npos || close < openEnd + 1) {
-        return std::nullopt;
-    }
-    return std::string(element->substr(openEnd + 1, close - openEnd - 1));
+    return std::string(*content);
 }
 
 UrlParts splitUrl(std::string url) {
@@ -232,22 +331,30 @@ std::string WebMapServiceImageryProvider::buildUrl(const TileKey& key) const {
 WebMapServiceCapabilitiesValidation validateWebMapServiceCapabilities(
     const std::string& capabilitiesXml,
     const WebMapServiceImageryOptions& options) {
+    const std::optional<std::string_view> root =
+        documentRootElementRange(capabilitiesXml);
+    if (!root) {
+        return WebMapServiceCapabilitiesValidation{
+            false,
+            "Web map service XML document does not have a root element."};
+    }
+
     const std::optional<std::string_view> service =
-        firstElementRange(capabilitiesXml, "Service");
+        firstChildElementRange(*root, "Service");
     if (!service) {
         return WebMapServiceCapabilitiesValidation{
             false,
             "Web map service XML document does not have a Service element. "};
     }
 
-    if (!firstElementRange(*service, "Name")) {
+    if (!firstChildElementRange(*service, "Name")) {
         return WebMapServiceCapabilitiesValidation{
             false,
             "Invalid web map service XML document (Service > Name is missing) "};
     }
 
     if (const std::optional<std::string> maxWidthText =
-            firstElementText(*service, "MaxWidth")) {
+            firstChildElementText(*service, "MaxWidth")) {
         try {
             const int maxWidth = std::stoi(*maxWidthText);
             if (options.tileWidth > maxWidth) {
@@ -267,7 +374,7 @@ WebMapServiceCapabilitiesValidation validateWebMapServiceCapabilities(
     }
 
     if (const std::optional<std::string> maxHeightText =
-            firstElementText(*service, "MaxHeight")) {
+            firstChildElementText(*service, "MaxHeight")) {
         try {
             const int maxHeight = std::stoi(*maxHeightText);
             if (options.tileHeight > maxHeight) {
@@ -287,7 +394,7 @@ WebMapServiceCapabilitiesValidation validateWebMapServiceCapabilities(
     }
 
     if (const std::optional<std::string> layerLimitText =
-            firstElementText(*service, "LayerLimit")) {
+            firstChildElementText(*service, "LayerLimit")) {
         try {
             const int layerLimit = std::stoi(*layerLimitText);
             const int layerCount = countConfiguredWmsLayers(options.layers);
