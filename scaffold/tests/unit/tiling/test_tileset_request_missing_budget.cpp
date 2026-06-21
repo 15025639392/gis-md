@@ -34,6 +34,10 @@ struct TilesetTestAccess {
         tileset.contentAccess_.ensureTileChildren(tile);
     }
 
+    static void ensureTileMesh(Tileset& tileset, TilesetTile& tile) {
+        tileset.meshPreparation_.ensureTileMesh(tile);
+    }
+
     static TileLoadRequestOutcome requestMissingTilesWithBudget(
         Tileset& tileset,
         FrameResourceBudget& budget,
@@ -1193,6 +1197,73 @@ TEST(
         childKey,
         makeFlatHeightmap(2.0f)));
     TilesetTestAccess::processPendingUploads(tileset);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    UnloadRenderContentWaitsForUpsampledChildLoading) {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(1.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+    ASSERT_EQ(root->content.loadState, TileLoadState::Done);
+    ASSERT_EQ(root->content.contentKind, TileContentKind::Render);
+    ASSERT_TRUE(root->content.renderContent.isMeshReady());
+    ASSERT_TRUE(root->content.renderContent.hasSurfaceMesh());
+    root->content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(256),
+        std::make_unique<DummyBuffer>(96));
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_FALSE(root->children.empty());
+    ASSERT_NE(root->children.front(), nullptr);
+
+    TilesetTile* child = root->children.front();
+    child->content.upsampledFromParent = true;
+    TilesetTestAccess::requestMissingTile(tileset, child->key);
+    ASSERT_EQ(child->content.loadState, TileLoadState::ContentLoading);
+    ASSERT_EQ(tileset.loadDiagnostics().pendingTerrainUploads, 1);
+
+    TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
+    TilesetTestAccess::updateTotalBytesUsed(tileset);
+    const int64_t bytesBeforeUnload = tileset.totalBytesUsed();
+    TilesetTestAccess::unloadCachedBytes(tileset, 0);
+
+    EXPECT_EQ(root->content.loadState, TileLoadState::Unloading);
+    EXPECT_EQ(root->content.contentKind, TileContentKind::Render);
+    EXPECT_TRUE(root->content.renderContent.isMeshReady());
+    EXPECT_TRUE(root->content.renderContent.hasSurfaceMesh());
+    EXPECT_EQ(root->content.renderContent.surfaceVertexBuffer(), nullptr);
+    EXPECT_EQ(root->content.renderContent.surfaceIndexBuffer(), nullptr);
+    EXPECT_LT(tileset.totalBytesUsed(), bytesBeforeUnload);
+    EXPECT_EQ(tileset.loadDiagnostics().unloadQueueTiles, 1);
+
+    TilesetTestAccess::processPendingUploads(tileset);
+
+    EXPECT_EQ(child->content.loadState, TileLoadState::Done);
+    EXPECT_EQ(child->content.contentKind, TileContentKind::Render);
+    EXPECT_TRUE(child->content.renderContent.isMeshReady());
+    EXPECT_TRUE(child->content.renderContent.hasSurfaceMesh());
+
+    TilesetTestAccess::unloadCachedBytes(tileset, 0);
+
+    EXPECT_EQ(root->content.loadState, TileLoadState::Unloaded);
+    EXPECT_EQ(root->content.contentKind, TileContentKind::Unknown);
+    EXPECT_FALSE(root->content.renderContent.isMeshReady());
+    EXPECT_FALSE(root->content.renderContent.hasSurfaceMesh());
+    EXPECT_EQ(tileset.loadDiagnostics().unloadQueueTiles, 0);
 }
 
 TEST(
