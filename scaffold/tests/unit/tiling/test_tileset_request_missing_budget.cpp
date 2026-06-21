@@ -1121,6 +1121,30 @@ TEST(
 
 TEST(
     TilesetRequestMissingBudgetTest,
+    UnloadQueueIgnoresUnloadedUnknownTiles) {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+
+    TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
+    EXPECT_EQ(tileset.loadDiagnostics().unloadQueueTiles, 0);
+
+    root->content.contentKind = TileContentKind::Empty;
+    root->content.loadState = TileLoadState::Done;
+    TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
+    EXPECT_EQ(tileset.loadDiagnostics().unloadQueueTiles, 1);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
     FrameResourceBudgetSeparatesRasterFanoutFromTerrainRequests) {
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 2;
