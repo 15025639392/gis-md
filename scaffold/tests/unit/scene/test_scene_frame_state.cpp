@@ -670,6 +670,57 @@ TEST(SceneFrameStateTest, DiagnosticsExposeTerrainRenderEntryFallbackReasons) {
     EXPECT_NEAR(0.5f, command.surfaceClipUv[3], 1e-6f);
 }
 
+TEST(SceneFrameStateTest, RenderPlanKeepsSurfaceBeforeBaseRasterIsDrawable) {
+    DummyRenderDevice device;
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{&baseActivated},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+    ASSERT_TRUE(root->hasSurfaceDrawable());
+
+    TilesetTestAccess::beginTilePlan(tileset);
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
+    ASSERT_EQ(1u, tileset.tilePlan().renderEntries.size());
+    EXPECT_EQ(rootKey, tileset.tilePlan().renderEntries.front().selectedKey);
+    EXPECT_EQ(rootKey, tileset.tilePlan().renderEntries.front().renderKey);
+
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    RasterMappedToTilesetTile* rootMapped =
+        root->rasterOverlayState.mappings().empty()
+            ? nullptr
+            : root->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* rootRaster =
+        rootMapped ? rootMapped->getLoadingTile() : nullptr;
+    ASSERT_NE(nullptr, rootRaster);
+    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
+    rootRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+
+    TilesetTestAccess::beginTilePlan(tileset);
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
+    ASSERT_EQ(1u, tileset.tilePlan().renderEntries.size());
+    EXPECT_EQ(rootKey, tileset.tilePlan().renderEntries.front().selectedKey);
+    EXPECT_EQ(rootKey, tileset.tilePlan().renderEntries.front().renderKey);
+}
+
 TEST(SceneFrameStateTest, DiagnosticsExposeTerrainSynchronousPrepReasons) {
     DummyRenderDevice device;
     Scene scene;
