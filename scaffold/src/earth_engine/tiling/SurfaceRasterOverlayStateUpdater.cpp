@@ -2,6 +2,7 @@
 
 #include "RasterMappedToTilesetTile.h"
 #include "RasterOverlayScreenSpaceMetrics.h"
+#include "TileRasterOverlayDetailsGenerator.h"
 #include "TilesetTile.h"
 
 #include "../core/resources/FrameResourceBudget.h"
@@ -9,35 +10,9 @@
 #include "../providers/RasterOverlayTileProvider.h"
 #include "../renderer/Renderer.h"
 
-#include <memory>
 #include <optional>
 
 namespace earth_engine {
-namespace {
-
-bool ensureProjectionDetailsFromRegion(TilesetTile& tile,
-                                       RasterOverlayProjection projection) {
-    RasterOverlayDetails* details =
-        tile.content.renderContent.mutableRasterOverlayDetails();
-    if (!details ||
-        details->findRectangleForOverlayProjection(projection) != nullptr) {
-        return false;
-    }
-    if (!tile.boundingVolume ||
-        tile.boundingVolume->kind != TileBoundingVolumeKind::Region) {
-        return false;
-    }
-
-    RasterOverlayDetails generated;
-    generated.setGeographicRectangle(
-        tile.boundingVolume->region,
-        tile.boundingVolume->minimumHeight,
-        tile.boundingVolume->maximumHeight);
-    details->merge(generated);
-    return true;
-}
-
-} // namespace
 
 SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
     Renderer& renderer,
@@ -78,7 +53,12 @@ SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
             tile.rasterOverlayState.ensureMapping(i);
         const RasterOverlayProjection projection =
             activeProvider->getProjection();
-        ensureProjectionDetailsFromRegion(tile, projection);
+        if (tile.boundingVolume) {
+            TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
+                tile.content.renderContent,
+                *tile.boundingVolume,
+                projection);
+        }
         const Rectangle* geometryRectangle =
             overlayDetails.findRectangleForOverlayProjection(projection);
         std::optional<Rectangle> boundingRegionRectangle;

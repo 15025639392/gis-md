@@ -1,7 +1,12 @@
 #include <gtest/gtest.h>
 
+#include <memory>
+
 #include "earth_engine/core/math/Rectangle.h"
 #include "earth_engine/tiling/SurfaceTile.h"
+#include "earth_engine/tiling/TileBoundingVolume.h"
+#include "earth_engine/tiling/TileRasterOverlayDetailsGenerator.h"
+#include "earth_engine/tiling/TileRenderContentState.h"
 
 using namespace earth_engine;
 
@@ -49,4 +54,65 @@ TEST(RasterOverlayDetailsTest,
     EXPECT_EQ(rectangle, details.boundingRegion.rectangle);
     EXPECT_DOUBLE_EQ(-123.0, details.boundingRegion.minimumHeight);
     EXPECT_DOUBLE_EQ(456.0, details.boundingRegion.maximumHeight);
+}
+
+TEST(RasterOverlayDetailsGeneratorTest,
+     RegionGenerationAppendsAfterExistingProjectionLikeCesiumNative) {
+    TileRenderContentState renderContent;
+    auto mesh = std::make_unique<SurfaceTileMesh>();
+    mesh->rasterOverlayDetails.rasterOverlayProjections.push_back(
+        RasterOverlayProjection::Geographic);
+    renderContent.setSurfaceMesh(std::move(mesh));
+
+    const Rectangle region = Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    const TileBoundingVolume boundingRegion =
+        TileBoundingVolume::fromRegion(region, -25.0, 125.0);
+
+    const bool generated =
+        TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
+            renderContent,
+            boundingRegion,
+            RasterOverlayProjection::Geographic);
+
+    EXPECT_TRUE(generated);
+    const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
+    ASSERT_EQ(2u, details.rasterOverlayProjections.size());
+    ASSERT_EQ(2u, details.rasterOverlayRectangles.size());
+    EXPECT_TRUE(details.rasterOverlayRectangles[0].isEmpty());
+    EXPECT_EQ(region, details.rasterOverlayRectangles[1]);
+    EXPECT_EQ(1, details.textureCoordinateIDForProjection(
+                     RasterOverlayProjection::Geographic));
+    EXPECT_EQ(region, details.boundingRegion.rectangle);
+    EXPECT_DOUBLE_EQ(-25.0, details.boundingRegion.minimumHeight);
+    EXPECT_DOUBLE_EQ(125.0, details.boundingRegion.maximumHeight);
+}
+
+TEST(RasterOverlayDetailsGeneratorTest,
+     RegionGenerationSkipsExistingRectangleLikeCesiumNative) {
+    TileRenderContentState renderContent;
+    auto mesh = std::make_unique<SurfaceTileMesh>();
+    const Rectangle existing = Rectangle::fromDegrees(1.0, 2.0, 3.0, 4.0);
+    mesh->rasterOverlayDetails.setGeographicRectangle(existing, 10.0, 20.0);
+    renderContent.setSurfaceMesh(std::move(mesh));
+
+    const TileBoundingVolume boundingRegion = TileBoundingVolume::fromRegion(
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0),
+        -25.0,
+        125.0);
+
+    const bool generated =
+        TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
+            renderContent,
+            boundingRegion,
+            RasterOverlayProjection::Geographic);
+
+    EXPECT_FALSE(generated);
+    const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
+    ASSERT_EQ(1u, details.rasterOverlayProjections.size());
+    ASSERT_EQ(1u, details.rasterOverlayRectangles.size());
+    EXPECT_EQ(existing, details.rasterOverlayRectangles[0]);
+    EXPECT_EQ(0, details.textureCoordinateIDForProjection(
+                     RasterOverlayProjection::Geographic));
+    EXPECT_DOUBLE_EQ(10.0, details.boundingRegion.minimumHeight);
+    EXPECT_DOUBLE_EQ(20.0, details.boundingRegion.maximumHeight);
 }

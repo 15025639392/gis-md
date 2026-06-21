@@ -228,6 +228,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/RasterOverlayScreenSpaceMetrics.cpp
     earth_engine/tiling/SurfaceRasterOverlayStateUpdater.h
     earth_engine/tiling/SurfaceRasterOverlayStateUpdater.cpp
+    earth_engine/tiling/TileRasterOverlayDetailsGenerator.h
+    earth_engine/tiling/TileRasterOverlayDetailsGenerator.cpp
     earth_engine/tiling/SurfaceTileDrawCommandBuilder.h
     earth_engine/tiling/SurfaceTileDrawCommandBuilder.cpp
     earth_engine/tiling/SurfaceMeshResourcePreparer.h
