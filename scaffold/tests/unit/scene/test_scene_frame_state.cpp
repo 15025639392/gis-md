@@ -651,6 +651,23 @@ TEST(SceneFrameStateTest, DiagnosticsExposeTerrainRenderEntryFallbackReasons) {
     EXPECT_EQ(scene.diagnostics().terrainSurfaceCommandsSubmitted, 1);
     EXPECT_EQ(scene.diagnostics().globeFallbackCommands, 0);
     EXPECT_EQ(scene.diagnostics().globeFallbackMaskedTerrainEntries, 0);
+
+    const auto surfaceCommandIt = std::find_if(
+        device.submittedCommands.begin(),
+        device.submittedCommands.end(),
+        [](const RenderCommand& submittedCommand) {
+            return submittedCommand.kind == RenderCommandKind::SurfaceTile;
+        });
+    ASSERT_NE(device.submittedCommands.end(), surfaceCommandIt);
+    const RenderCommand& command = *surfaceCommandIt;
+    EXPECT_EQ(0, command.surfaceGeometryZoom);
+    ASSERT_FALSE(command.textures.empty());
+    EXPECT_EQ(rootRaster->getTexture(), command.textures.front());
+    EXPECT_GT(command.surfaceClipEnabled, 0.5f);
+    EXPECT_NEAR(0.0f, command.surfaceClipUv[0], 1e-6f);
+    EXPECT_NEAR(0.5f, command.surfaceClipUv[1], 1e-6f);
+    EXPECT_NEAR(0.5f, command.surfaceClipUv[2], 1e-6f);
+    EXPECT_NEAR(0.5f, command.surfaceClipUv[3], 1e-6f);
 }
 
 TEST(SceneFrameStateTest, DiagnosticsExposeTerrainSynchronousPrepReasons) {
