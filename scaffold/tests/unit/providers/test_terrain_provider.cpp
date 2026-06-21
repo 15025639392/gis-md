@@ -244,6 +244,19 @@ TEST(QuantizedMeshTerrainProviderTest, AvailabilityUsesInclusiveTileCenterLikeCe
     EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 1, 3, 0}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, AvailabilityUsesMaximumCoveringLevelLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/{z}/{x}/{y}.terrain");
+    provider.setZoomRange(0, 10);
+
+    provider.addAvailabilityRects(3, {{{0, 0, 0, 0}}});
+    provider.addAvailabilityRects(1, {{{0, 0, 0, 0}}});
+
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 1, 0, 0}));
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 3, 0, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 4, 0, 0}));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, MetadataAvailabilityStartsUnknownChildrenLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
