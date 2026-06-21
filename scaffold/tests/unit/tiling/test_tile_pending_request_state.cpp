@@ -93,3 +93,28 @@ TEST(TilePendingRequestStateTest, CancelsAndRejectsDuringDestroy) {
         CancellationToken{}));
     state.completeTerrainRequest("terrain-after-destroy");
 }
+
+TEST(TilePendingRequestStateTest, ClearWaitsForCallbackDrain) {
+    TilePendingRequestState state;
+    CancellationToken terrainToken;
+
+    EXPECT_TRUE(state.beginTerrainRequest("terrain", terrainToken));
+
+    state.markDestroyingAndCancelRequests();
+    state.clearAfterCallbacksComplete();
+
+    PendingRequestCounts counts = state.counts();
+    EXPECT_TRUE(state.destroying());
+    EXPECT_TRUE(state.contains("terrain"));
+    EXPECT_EQ(1u, counts.terrainRequests);
+    EXPECT_EQ(1u, counts.totalRequests);
+    EXPECT_FALSE(state.beginContentRequest(
+        "content-after-early-clear",
+        CancellationToken{}));
+
+    state.completeTerrainRequest("terrain");
+    state.clearAfterCallbacksComplete();
+
+    EXPECT_FALSE(state.destroying());
+    EXPECT_TRUE(state.empty());
+}
