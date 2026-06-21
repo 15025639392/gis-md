@@ -1501,6 +1501,23 @@ TEST(GoogleMapTilesImageryProviderTest, LoadCreditsFetchesGlobalViewportsLikeCes
         provider.attribution());
 }
 
+TEST(GoogleMapTilesImageryProviderTest, LoadCreditsPreservesAttributionWhenNoCreditsLoad) {
+    GoogleMapTilesExistingSessionOptions options;
+    options.apiBaseUrl = "https://tile.googleapis.com";
+    options.session = "session";
+    options.key = "key";
+    options.maximumLevel = 1;
+    GoogleMapTilesImageryProvider provider(options, "initial attribution");
+
+    QueuedGoogleMapTilesPlatformBridge bridge({});
+    provider.setPlatformBridge(&bridge);
+
+    provider.loadCredits();
+
+    ASSERT_EQ(2u, bridge.requestedUrls.size());
+    EXPECT_EQ("initial attribution", provider.attribution());
+}
+
 TEST(GoogleMapTilesImageryProviderTest, ConvertsViewportRectsToTileRangesLikeCesiumNative) {
     GoogleMapTilesViewportParseResult viewport;
     viewport.valid = true;
