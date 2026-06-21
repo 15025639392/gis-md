@@ -262,6 +262,12 @@ add_executable(test_tile_pending_load_processor
 target_link_libraries(test_tile_pending_load_processor PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_pending_load_processor COMMAND test_tile_pending_load_processor)
 
+add_executable(test_tile_pending_load_commit_coordinator
+    unit/tiling/test_tile_pending_load_commit_coordinator.cpp
+)
+target_link_libraries(test_tile_pending_load_commit_coordinator PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_pending_load_commit_coordinator COMMAND test_tile_pending_load_commit_coordinator)
+
 add_executable(test_tile_pending_upload_completion
     unit/tiling/test_tile_pending_upload_completion.cpp
 )
