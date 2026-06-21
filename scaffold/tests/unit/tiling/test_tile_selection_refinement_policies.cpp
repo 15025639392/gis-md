@@ -532,6 +532,124 @@ TEST(
 }
 
 TEST(
+    TileSelectionPostTraversalCommitterTest,
+    KickCanAddRenderableReplacementAndPreloadParent) {
+    TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
+
+    TilePlan tilePlan;
+    TileLoadQueue loadQueue;
+    TileSelectionCounters counters;
+    TileSelectionPostTraversalCommitPlan plan;
+    plan.returnSingleTileDetails = true;
+    plan.addRenderableReplacementToPlan = true;
+    plan.queueParentPreload = true;
+    plan.wasReallyRenderedLastFrame = true;
+
+    bool replacementAdded = false;
+    double replacementSse = 0.0;
+    bool replacementQueuedForLoad = true;
+    double replacementPriority = 0.0;
+    std::vector<TileLoadRequest> queuedRequests;
+
+    const TileSelectionPostTraversalCommitResult result =
+        TileSelectionPostTraversalCommitter::commit(
+            parent,
+            tilePlan,
+            loadQueue,
+            counters,
+            plan,
+            TileSelectionPostTraversalCommitContext{
+                0,
+                0,
+                4.0,
+                5.0,
+                true},
+            [](TilesetTile&) {},
+            [&queuedRequests](const TileKey& key,
+                              TileLoadPriorityGroup group,
+                              double priority) {
+                queuedRequests.push_back(
+                    TileLoadRequest{key, group, priority});
+            },
+            [&replacementAdded,
+             &replacementSse,
+             &replacementQueuedForLoad,
+             &replacementPriority](
+                TilesetTile&,
+                double sse,
+                bool queuedForLoad,
+                double priority) {
+                replacementAdded = true;
+                replacementSse = sse;
+                replacementQueuedForLoad = queuedForLoad;
+                replacementPriority = priority;
+            });
+
+    EXPECT_TRUE(replacementAdded);
+    EXPECT_DOUBLE_EQ(replacementSse, 4.0);
+    EXPECT_FALSE(replacementQueuedForLoad);
+    EXPECT_DOUBLE_EQ(replacementPriority, 5.0);
+    ASSERT_EQ(queuedRequests.size(), 1u);
+    EXPECT_EQ(queuedRequests.front().key, parent.key);
+    EXPECT_EQ(queuedRequests.front().group, TileLoadPriorityGroup::Preload);
+    EXPECT_EQ(queuedRequests.front().priority, 5.0);
+    EXPECT_TRUE(result.returnedSingleTileDetails);
+    EXPECT_TRUE(result.details.allAreRenderable);
+    EXPECT_TRUE(result.details.anyWereRenderedLastFrame);
+}
+
+TEST(
+    TileSelectionPostTraversalCommitterTest,
+    NonKickCommitMarksTileRefinedAndQueuesPreload) {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+
+    TilePlan tilePlan;
+    TileLoadQueue loadQueue;
+    TileSelectionCounters counters;
+    TileSelectionPostTraversalCommitPlan plan;
+    plan.markTileRefined = true;
+    plan.queueParentPreload = true;
+
+    bool kicked = false;
+    bool replacementAdded = false;
+    std::vector<TileLoadRequest> queuedRequests;
+    const TileSelectionPostTraversalCommitResult result =
+        TileSelectionPostTraversalCommitter::commit(
+            tile,
+            tilePlan,
+            loadQueue,
+            counters,
+            plan,
+            TileSelectionPostTraversalCommitContext{
+                0,
+                0,
+                9.0,
+                3.0,
+                true},
+            [&kicked](TilesetTile&) { kicked = true; },
+            [&queuedRequests](const TileKey& key,
+                              TileLoadPriorityGroup group,
+                              double priority) {
+                queuedRequests.push_back(
+                    TileLoadRequest{key, group, priority});
+            },
+            [&replacementAdded](TilesetTile&, double, bool, double) {
+                replacementAdded = true;
+            });
+
+    EXPECT_FALSE(kicked);
+    EXPECT_FALSE(replacementAdded);
+    EXPECT_FALSE(result.returnedSingleTileDetails);
+    EXPECT_EQ(tile.selectionFrameState.selectionState,
+              TileSelectionState::Refined);
+    EXPECT_DOUBLE_EQ(tile.selectionFrameState.screenSpaceError, 9.0);
+    ASSERT_EQ(queuedRequests.size(), 1u);
+    EXPECT_EQ(queuedRequests.front().key, tile.key);
+    EXPECT_EQ(queuedRequests.front().group, TileLoadPriorityGroup::Preload);
+    EXPECT_EQ(queuedRequests.front().priority, 3.0);
+}
+
+TEST(
     TileSelectionRefinementPolicyTest,
     InitialDecisionRefinesOnlyWhenSseRequiresIt) {
     TileSelectionRefineDecision decision =
