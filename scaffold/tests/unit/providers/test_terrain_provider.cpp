@@ -44,13 +44,14 @@ uint16_t zigZagEncode16(int32_t value) {
         value >= 0 ? value * 2 : (-value * 2) - 1);
 }
 
-std::vector<uint8_t> makeQuantizedMeshBytesWithMetadata(
-    const std::string& metadataJson) {
+std::vector<uint8_t> makeQuantizedMeshBytes(
+    float minimumHeight = 0.0f,
+    float maximumHeight = 100.0f) {
     std::vector<uint8_t> bytes;
 
     for (int i = 0; i < 3; ++i) appendPod<double>(bytes, 0.0);
-    appendPod<float>(bytes, 0.0f);
-    appendPod<float>(bytes, 100.0f);
+    appendPod<float>(bytes, minimumHeight);
+    appendPod<float>(bytes, maximumHeight);
     for (int i = 0; i < 7; ++i) appendPod<double>(bytes, 0.0);
     appendPod<uint32_t>(bytes, 3);
 
@@ -76,6 +77,15 @@ std::vector<uint8_t> makeQuantizedMeshBytesWithMetadata(
     appendPod<uint32_t>(bytes, 1);
     for (int i = 0; i < 3; ++i) appendPod<uint16_t>(bytes, 0);
     for (int i = 0; i < 4; ++i) appendPod<uint32_t>(bytes, 0);
+    return bytes;
+}
+
+std::vector<uint8_t> makeQuantizedMeshBytesWithMetadata(
+    const std::string& metadataJson,
+    float minimumHeight = 0.0f,
+    float maximumHeight = 100.0f) {
+    std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes(minimumHeight, maximumHeight);
 
     appendPod<uint8_t>(bytes, 4);
     appendPod<uint32_t>(
@@ -428,6 +438,29 @@ TEST(QuantizedMeshTerrainProviderTest, InvalidBodyFailsTerminally) {
 
     EXPECT_EQ(TerrainTileLoadStatus::Failed, completedStatus);
     EXPECT_EQ(1, provider.requestDiagnostics().requestsCompleted);
+}
+
+TEST(QuantizedMeshTerrainProviderTest,
+     DecodeTileRasterizesQuantizedMeshForHeightmapFallback) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/{z}/{x}/{y}.terrain");
+    constexpr float minimumHeight = -50.0f;
+    constexpr float maximumHeight = 150.0f;
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes(minimumHeight, maximumHeight);
+
+    std::unique_ptr<DecodedHeightmap> heightmap =
+        provider.decodeTile(bytes.data(), bytes.size());
+
+    ASSERT_NE(nullptr, heightmap);
+    EXPECT_EQ(65, heightmap->tileSize);
+    ASSERT_EQ(65u * 65u, heightmap->heights.size());
+    EXPECT_NEAR(minimumHeight, heightmap->minHeight, 1e-6f);
+    EXPECT_NEAR(maximumHeight, heightmap->maxHeight, 1e-6f);
+    EXPECT_NEAR(minimumHeight, heightmap->heights.front(), 1e-3f);
+    EXPECT_NEAR(minimumHeight, heightmap->heights[64], 1e-3f);
+    EXPECT_NEAR(minimumHeight, heightmap->heights[64u * 65u], 1e-3f);
+    EXPECT_EQ(bytes, heightmap->rawData);
 }
 
 TEST(QuantizedMeshTerrainProviderTest, UsesAsyncBridgeWithoutWorkerBlockingWait) {
