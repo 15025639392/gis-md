@@ -44,3 +44,33 @@ TEST(TileOcclusionResolverTest, OccludedChildrenOccludeVisibleParent) {
 
     EXPECT_EQ(result, TileOcclusionState::Occluded);
 }
+
+TEST(TileOcclusionResolverTest, VisibleChildKeepsParentVisible) {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childAKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey childBKey{"Geographic-TMS", 1, 1, 0};
+
+    TilesetTile root;
+    TilesetTile childA;
+    TilesetTile childB;
+    setTileKey(root, rootKey);
+    setTileKey(childA, childAKey);
+    setTileKey(childB, childBKey);
+    root.children = {&childA, &childB};
+
+    std::unordered_map<TileKey, TileOcclusionState> states;
+    states[rootKey] = TileOcclusionState::NotOccluded;
+    states[childAKey] = TileOcclusionState::NotOccluded;
+    states[childBKey] = TileOcclusionState::Occluded;
+
+    const TileOcclusionState result = TileOcclusionResolver::check(
+        root,
+        [&states](const TilesetTile& tile) {
+            auto it = states.find(tile.key);
+            return it == states.end()
+                ? TileOcclusionState::NotOccluded
+                : it->second;
+        });
+
+    EXPECT_EQ(result, TileOcclusionState::NotOccluded);
+}
