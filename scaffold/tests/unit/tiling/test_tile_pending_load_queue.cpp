@@ -392,3 +392,47 @@ TEST(TilePendingLoadQueueTest, RejectsEmptyCacheKeys) {
     EXPECT_EQ(0u, queue.contentTerminalResultCount());
     EXPECT_FALSE(queue.containsCacheKey(""));
 }
+
+TEST(TilePendingLoadQueueTest, EraseIgnoresUnknownKeys) {
+    TilePendingLoadQueue queue;
+    const TileKey terrainUploadKey{"test", 1, 0, 0};
+    const TileKey contentUploadKey{"test", 1, 1, 0};
+    const TileKey terrainTerminalKey{"test", 1, 0, 1};
+    const TileKey contentTerminalKey{"test", 1, 1, 1};
+
+    queue.addTerrainUpload(PendingTerrainUpload{
+        terrainUploadKey,
+        "terrain-upload",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        nullptr});
+    queue.addContentUpload(PendingContentUpload{
+        contentUploadKey,
+        "content-upload",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileContentLoadResult::failed()});
+    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+        terrainTerminalKey,
+        "terrain-terminal",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TerrainTileLoadStatus::RetryLater});
+    queue.addContentTerminalResult(PendingContentTerminalResult{
+        contentTerminalKey,
+        "content-terminal",
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileContentLoadStatus::RetryLater});
+
+    queue.eraseCacheKey("missing");
+
+    EXPECT_TRUE(queue.containsCacheKey("terrain-upload"));
+    EXPECT_TRUE(queue.containsCacheKey("content-upload"));
+    EXPECT_TRUE(queue.containsCacheKey("terrain-terminal"));
+    EXPECT_TRUE(queue.containsCacheKey("content-terminal"));
+    EXPECT_EQ(1u, queue.terrainUploadCount());
+    EXPECT_EQ(1u, queue.contentUploadCount());
+    EXPECT_EQ(1u, queue.terrainTerminalResultCount());
+    EXPECT_EQ(1u, queue.contentTerminalResultCount());
+}
