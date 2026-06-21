@@ -674,3 +674,49 @@ TEST(TileLoadRequestDispatcherTest, RejectsRequestsDuringDestroy) {
         lifecycle.requestState().clearAfterCallbacksComplete();
     }
 }
+
+TEST(TileLoadRequestDispatcherTest, DropsDestroyingTerrainUploadCallback) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    DeferredTerrainProvider provider;
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::requestTerrain(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            provider,
+            key,
+            "destroy-terrain-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            []() {});
+
+    ASSERT_EQ(TileLoadDispatchResult::Issued, result);
+    ASSERT_TRUE(provider.terrainCallback);
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().markDestroyingAndCancelRequests();
+    }
+
+    auto heightmap = std::make_unique<DecodedHeightmap>();
+    heightmap->tileSize = 2;
+    heightmap->heights = {1.0f, 1.0f, 1.0f, 1.0f};
+    provider.terrainCallback(
+        key,
+        TerrainTileLoadResult::success(std::move(heightmap)));
+
+    EXPECT_FALSE(lifecycle.hasPendingWork());
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().clearAfterCallbacksComplete();
+    }
+}
