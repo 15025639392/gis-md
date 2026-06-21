@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/content/GltfModel.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/renderer/RenderCommand.h"
+#include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
 #include "earth_engine/scene/Frustum.h"
@@ -11,6 +14,7 @@
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 
+#include <algorithm>
 #include <vector>
 
 using namespace earth_engine;
@@ -43,6 +47,81 @@ struct TilesetTestAccess {
 
 namespace {
 
+class DummyBuffer final : public Buffer {
+public:
+    explicit DummyBuffer(size_t byteSize) : byteSize_(byteSize) {}
+    size_t size() const override { return byteSize_; }
+
+private:
+    size_t byteSize_ = 0;
+};
+
+class DummyShaderProgram final : public ShaderProgram {};
+
+class DummyTexture final : public Texture {
+public:
+    DummyTexture(int width, int height) : width_(width), height_(height) {}
+    int width() const override { return width_; }
+    int height() const override { return height_; }
+
+private:
+    int width_ = 0;
+    int height_ = 0;
+};
+
+class DummyRenderDevice final : public RenderDevice {
+public:
+    Backend backendType() const override { return Backend::OpenGLES; }
+    int maxTextureSize() const override { return 4096; }
+    int maxDrawBuffers() const override { return 4; }
+    bool supportsFloatTextures() const override { return true; }
+    bool supportsInstancing() const override { return true; }
+    std::string rendererString() const override { return "DummyRenderDevice"; }
+
+    std::unique_ptr<Texture> createTexture(const TextureDesc& desc) override {
+        return std::make_unique<DummyTexture>(desc.width, desc.height);
+    }
+
+    bool updateTextureRegion(
+        Texture*,
+        int,
+        int,
+        int,
+        int,
+        const uint8_t*,
+        size_t) override {
+        return false;
+    }
+
+    std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) override {
+        return std::make_unique<DummyBuffer>(desc.size);
+    }
+
+    bool updateBuffer(Buffer*, size_t, const void*, size_t) override {
+        return false;
+    }
+
+    std::unique_ptr<ShaderProgram> createShader(const ShaderDesc&) override {
+        return std::make_unique<DummyShaderProgram>();
+    }
+
+    std::unique_ptr<Framebuffer> createFramebuffer(
+        const FramebufferDesc&) override {
+        return nullptr;
+    }
+
+    void beginFrame() override {}
+    void submit(const RenderCommandList& commands) override {
+        submittedCommands = commands;
+    }
+    void endFrame() override {}
+    void onSurfaceCreated() override {}
+    void onSurfaceChanged(int, int) override {}
+    void onSurfaceDestroyed() override {}
+
+    RenderCommandList submittedCommands;
+};
+
 SelectorView makeSelectorView(
     const Camera& camera,
     int viewportWidth,
@@ -70,6 +149,24 @@ std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     heightmap->minHeight = heightMeters;
     heightmap->maxHeight = heightMeters;
     return heightmap;
+}
+
+std::unique_ptr<GltfModel> makeTriangleGltfModel() {
+    auto model = std::make_unique<GltfModel>();
+    GltfPrimitive primitive;
+    primitive.vertices.resize(3);
+    primitive.vertices[0].positionEcef = Vec3(0.0, 0.0, 0.0);
+    primitive.vertices[1].positionEcef = Vec3(1.0, 0.0, 0.0);
+    primitive.vertices[2].positionEcef = Vec3(0.0, 1.0, 0.0);
+    primitive.vertices[0].normalEcef = Vec3::unitZ();
+    primitive.vertices[1].normalEcef = Vec3::unitZ();
+    primitive.vertices[2].normalEcef = Vec3::unitZ();
+    primitive.vertices[0].uv = {0.0f, 0.0f};
+    primitive.vertices[1].uv = {1.0f, 0.0f};
+    primitive.vertices[2].uv = {0.0f, 1.0f};
+    primitive.indices = {0, 1, 2};
+    model->primitives.push_back(std::move(primitive));
+    return model;
 }
 
 } // namespace
@@ -330,5 +427,65 @@ TEST(
 
     EXPECT_EQ(scene.tileset(), terrainRaw);
     EXPECT_EQ(scene.additionalTilesetCount(), 1u);
+    EXPECT_NEAR(scene.tileset()->sampleHeight(0.0, 0.0), 123.0f, 1e-6f);
+}
+
+TEST(SceneFrameStateTest, AdditionalTilesetRendersGltfContent) {
+    DummyRenderDevice device;
+    Scene scene;
+    ASSERT_TRUE(scene.setRenderDevice(&device));
+    scene.setViewport(800, 600, 1.0f);
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
+    scene.camera().lookAt(
+        target + Vec3(1000000.0, 0.0, 0.0),
+        target,
+        Vec3::unitZ());
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    auto terrainTileset = std::make_unique<Tileset>(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{},
+        &device,
+        TilesetOptions{});
+    Tileset* terrainRaw = terrainTileset.get();
+    TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
+    TilesetTestAccess::putTerrainCache(
+        *terrainRaw,
+        rootKey,
+        makeFlatHeightmap(123.0f));
+    scene.setTileset(std::move(terrainTileset));
+
+    auto contentTileset = std::make_unique<Tileset>(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{},
+        &device,
+        TilesetOptions{});
+    TilesetTile* contentRoot =
+        TilesetTestAccess::ensureTile(*contentTileset, rootKey);
+    ASSERT_NE(contentRoot, nullptr);
+    contentRoot->content.renderContent.setGltfContent(
+        makeTriangleGltfModel());
+    contentRoot->content.loadState = TileLoadState::Done;
+    contentRoot->content.contentKind = TileContentKind::Render;
+
+    scene.addTileset(std::move(contentTileset));
+    scene.update(1.0 / 60.0);
+    scene.render();
+
+    const bool submittedGltf = std::any_of(
+        device.submittedCommands.begin(),
+        device.submittedCommands.end(),
+        [](const RenderCommand& cmd) {
+            return cmd.kind == RenderCommandKind::GltfPrimitive;
+        });
+    EXPECT_TRUE(submittedGltf);
+    EXPECT_GT(scene.diagnostics().renderGltfPrimitives, 0);
+    EXPECT_EQ(scene.diagnostics().contentTilesets, 1);
+    EXPECT_GT(scene.diagnostics().contentVisibleTiles, 0);
+    EXPECT_EQ(scene.tileset(), terrainRaw);
     EXPECT_NEAR(scene.tileset()->sampleHeight(0.0, 0.0), 123.0f, 1e-6f);
 }
