@@ -10,6 +10,7 @@
 
 #include <mutex>
 #include <string>
+#include <vector>
 
 using namespace earth_engine;
 
@@ -455,4 +456,67 @@ TEST(TileLoadSchedulerTest, SkipsCachedTerrainWhenNetworkInflightIsFull) {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.requestState().completeTerrainRequest("busy");
     }
+}
+
+TEST(TileLoadSchedulerTest, SortsAndQueuesUpsampledTerrain) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey normalKey{"test", 1, 0, 0};
+    const TileKey urgentKey{"test", 1, 1, 0};
+    TilesetTile normalTile(normalKey, Rectangle{});
+    TilesetTile urgentTile(urgentKey, Rectangle{});
+    normalTile.content.upsampledFromParent = true;
+    urgentTile.content.upsampledFromParent = true;
+    std::vector<int> prepareOrder;
+    std::vector<int> markedOrder;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {
+                TileLoadRequest{
+                    normalKey,
+                    TileLoadPriorityGroup::Normal,
+                    0.0},
+                TileLoadRequest{
+                    urgentKey,
+                    TileLoadPriorityGroup::Urgent,
+                    100.0},
+            },
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            cacheKeyForTile,
+            [&urgentKey, &normalTile, &urgentTile](
+                const TileKey& key,
+                const std::string&,
+                TilesetTile*& tileState) {
+                tileState = key == urgentKey ? &urgentTile : &normalTile;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.hasTile = true;
+                snapshot.upsampledFromParent = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [&prepareOrder](TilesetTile& tile, double) {
+                prepareOrder.push_back(tile.key.x);
+                return true;
+            },
+            [&markedOrder](const TileKey& key) {
+                markedOrder.push_back(key.x);
+            });
+
+    ASSERT_EQ(prepareOrder.size(), 2u);
+    EXPECT_EQ(outcome.issued, 2u);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_EQ(prepareOrder[0], urgentKey.x);
+    EXPECT_EQ(prepareOrder[1], normalKey.x);
+    EXPECT_EQ(markedOrder, prepareOrder);
+    EXPECT_EQ(lifecycle.counts().terrainUploads, 2u);
 }
