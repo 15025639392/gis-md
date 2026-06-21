@@ -92,3 +92,30 @@ TEST(FrameResourceBudgetTest, LaneSpecificLimitsOverrideDefaultNetworkLimit) {
     EXPECT_EQ(1u, snapshot.maxTerrainContentNetworkInflight);
     EXPECT_EQ(3u, snapshot.maxRasterNetworkInflight);
 }
+
+TEST(FrameResourceBudgetTest, RasterFanoutDoesNotConsumeTerrainContentLane) {
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 1;
+    config.maxTerrainContentNetworkRequestsPerFrame = 1;
+    config.maxRasterNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 2;
+    config.maxTerrainContentNetworkInflight = 2;
+    config.maxRasterNetworkInflight = 4;
+
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    EXPECT_TRUE(budget.tryIssue(
+        FrameResourceLane::RasterRequest,
+        FrameResourcePriority::Normal,
+        4));
+    EXPECT_TRUE(budget.tryIssue(
+        FrameResourceLane::TerrainRequest,
+        FrameResourcePriority::Normal));
+    EXPECT_FALSE(budget.canIssue(
+        FrameResourceLane::ContentRequest,
+        FrameResourcePriority::Normal));
+    EXPECT_EQ(4u, budget.rasterNetworkRequestsIssued());
+    EXPECT_EQ(1u, budget.terrainContentNetworkRequestsIssued());
+    EXPECT_EQ(5u, budget.networkRequestsIssued());
+}
