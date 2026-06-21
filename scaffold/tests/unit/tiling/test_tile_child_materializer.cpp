@@ -102,10 +102,26 @@ TEST(TileChildMaterializerTest, AnyAvailableTerrainChildCreatesFullQuadLikeCesiu
     EXPECT_DOUBLE_EQ(50.0, se->geometricError);
     EXPECT_EQ(TileRefine::Add, sw->refine);
     EXPECT_EQ(TileRefine::Add, se->refine);
-    EXPECT_TRUE(sw->content.renderContent.hasTerrainHeightRange());
-    EXPECT_TRUE(se->content.renderContent.hasTerrainHeightRange());
-    EXPECT_DOUBLE_EQ(-10.0, sw->content.renderContent.terrainMinimumHeight());
-    EXPECT_DOUBLE_EQ(90.0, se->content.renderContent.terrainMaximumHeight());
+    for (const TilesetTile* child : parent.children) {
+        ASSERT_NE(nullptr, child);
+        ASSERT_TRUE(child->content.renderContent.hasTerrainHeightRange());
+        EXPECT_DOUBLE_EQ(
+            -10.0,
+            child->content.renderContent.terrainMinimumHeight());
+        EXPECT_DOUBLE_EQ(
+            90.0,
+            child->content.renderContent.terrainMaximumHeight());
+        ASSERT_TRUE(child->boundingVolume.has_value());
+        EXPECT_EQ(TileBoundingVolumeKind::Region, child->boundingVolume->kind);
+        EXPECT_DOUBLE_EQ(-10.0, child->boundingVolume->minimumHeight);
+        EXPECT_DOUBLE_EQ(90.0, child->boundingVolume->maximumHeight);
+        ASSERT_TRUE(child->contentBoundingVolume.has_value());
+        EXPECT_EQ(
+            TileBoundingVolumeKind::Region,
+            child->contentBoundingVolume->kind);
+        EXPECT_DOUBLE_EQ(-10.0, child->contentBoundingVolume->minimumHeight);
+        EXPECT_DOUBLE_EQ(90.0, child->contentBoundingVolume->maximumHeight);
+    }
 }
 
 TEST(TileChildMaterializerTest, NoAvailableTerrainChildrenCreatesNoneLikeCesiumNative) {
