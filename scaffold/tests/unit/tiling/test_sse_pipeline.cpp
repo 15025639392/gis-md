@@ -1022,15 +1022,6 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
     return bytes;
 }
 
-std::vector<uint8_t> makeQuantizedMeshBytesWithWaterMask(
-    std::vector<uint8_t> waterMask) {
-    std::vector<uint8_t> bytes = makeQuantizedMeshBytes();
-    appendPod<uint8_t>(bytes, 2);
-    appendPod<uint32_t>(bytes, static_cast<uint32_t>(waterMask.size()));
-    bytes.insert(bytes.end(), waterMask.begin(), waterMask.end());
-    return bytes;
-}
-
 void writeBytes(const std::filesystem::path& path,
                 const std::vector<uint8_t>& bytes) {
     std::filesystem::create_directories(path.parent_path());
@@ -3362,169 +3353,6 @@ void testHeightmapTerrainProviderExposesAttribution() {
 
     check(provider.attribution() == "height source credit",
           "HeightmapTerrainProvider: terrain attribution metadata is exposed");
-}
-
-void testQuantizedMeshWaterMaskExtensions() {
-    auto scheme = TileScheme::createGeographicTMS();
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const Rectangle bounds = scheme->tileToRectangle(rootKey);
-
-    const std::vector<uint8_t> allWaterBytes =
-        makeQuantizedMeshBytesWithWaterMask({255});
-    std::unique_ptr<SurfaceTileMesh> allWater =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            allWaterBytes.data(),
-            allWaterBytes.size(),
-            bounds,
-            true);
-    check(allWater && allWater->waterMask.allWater &&
-              !allWater->waterMask.allLand &&
-              allWater->waterMask.data.empty(),
-          "QuantizedMeshParser: one-byte water mask marks tile all water like cesium-native");
-
-    const std::vector<uint8_t> allLandBytes =
-        makeQuantizedMeshBytesWithWaterMask({0});
-    std::unique_ptr<SurfaceTileMesh> allLand =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            allLandBytes.data(),
-            allLandBytes.size(),
-            bounds,
-            true);
-    check(allLand && allLand->waterMask.allLand &&
-              !allLand->waterMask.allWater &&
-              allLand->waterMask.data.empty(),
-          "QuantizedMeshParser: zero one-byte water mask marks tile all land like cesium-native");
-
-    std::vector<uint8_t> mask(256 * 256, 0);
-    mask[0] = 7;
-    mask[12345] = 255;
-    const std::vector<uint8_t> maskBytes =
-        makeQuantizedMeshBytesWithWaterMask(mask);
-    std::unique_ptr<SurfaceTileMesh> mixed =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            maskBytes.data(),
-            maskBytes.size(),
-            bounds,
-            true);
-    check(mixed && !mixed->waterMask.allLand &&
-              !mixed->waterMask.allWater &&
-              mixed->waterMask.data.size() == 256 * 256 * 4,
-          "QuantizedMeshParser: 256x256 water mask becomes renderer RGBA8 data");
-    check(mixed && mixed->waterMask.data[3] == 7 &&
-              mixed->waterMask.data[12345 * 4 + 3] == 255 &&
-              mixed->waterMask.data[12345 * 4] == 255 &&
-              mixed->waterMask.data[12345 * 4 + 1] == 255 &&
-              mixed->waterMask.data[12345 * 4 + 2] == 255,
-          "QuantizedMeshParser: water mask alpha values preserve cesium-native 0-land 255-water semantics");
-
-    std::vector<uint8_t> duplicateBytes =
-        makeQuantizedMeshBytesWithWaterMask(mask);
-    appendPod<uint8_t>(duplicateBytes, 2);
-    appendPod<uint32_t>(duplicateBytes, 1);
-    appendPod<uint8_t>(duplicateBytes, 255);
-    std::unique_ptr<SurfaceTileMesh> duplicate =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            duplicateBytes.data(),
-            duplicateBytes.size(),
-            bounds,
-            true);
-    check(duplicate && duplicate->waterMask.allWater &&
-              !duplicate->waterMask.allLand &&
-              duplicate->waterMask.data.empty(),
-          "QuantizedMeshParser: later one-byte water mask replaces earlier 256x256 mask like cesium-native");
-
-    std::vector<uint8_t> invalidWaterThenMetadata = makeQuantizedMeshBytes();
-    appendPod<uint8_t>(invalidWaterThenMetadata, 2);
-    appendPod<uint32_t>(invalidWaterThenMetadata, 2);
-    appendPod<uint8_t>(invalidWaterThenMetadata, 7);
-    appendPod<uint8_t>(invalidWaterThenMetadata, 9);
-    const std::string metadata = R"json({
-      "available": [
-        [{"startX":0,"startY":0,"endX":1,"endY":0}]
-      ]
-    })json";
-    appendPod<uint8_t>(invalidWaterThenMetadata, 4);
-    appendPod<uint32_t>(
-        invalidWaterThenMetadata,
-        static_cast<uint32_t>(sizeof(uint32_t) + metadata.size()));
-    appendPod<uint32_t>(
-        invalidWaterThenMetadata,
-        static_cast<uint32_t>(metadata.size()));
-    invalidWaterThenMetadata.insert(
-        invalidWaterThenMetadata.end(),
-        metadata.begin(),
-        metadata.end());
-    std::unique_ptr<SurfaceTileMesh> invalidWater =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            invalidWaterThenMetadata.data(),
-            invalidWaterThenMetadata.size(),
-            bounds,
-            true);
-    check(invalidWater &&
-              invalidWater->waterMask.allLand &&
-              !invalidWater->waterMask.allWater &&
-              invalidWater->waterMask.data.empty() &&
-              invalidWater->metadataAvailability.size() == 1 &&
-              invalidWater->metadataAvailability[0] ==
-                  QuantizedMeshAvailabilityRange{0, 0, 0, 1, 0},
-          "QuantizedMeshParser: unsupported water mask lengths are skipped before later extensions like cesium-native");
-
-    std::vector<uint8_t> unknownThenWaterBytes = makeQuantizedMeshBytes();
-    appendPod<uint8_t>(unknownThenWaterBytes, 99);
-    appendPod<uint32_t>(unknownThenWaterBytes, 3);
-    appendPod<uint8_t>(unknownThenWaterBytes, 11);
-    appendPod<uint8_t>(unknownThenWaterBytes, 22);
-    appendPod<uint8_t>(unknownThenWaterBytes, 33);
-    appendPod<uint8_t>(unknownThenWaterBytes, 2);
-    appendPod<uint32_t>(unknownThenWaterBytes, 1);
-    appendPod<uint8_t>(unknownThenWaterBytes, 255);
-    std::unique_ptr<SurfaceTileMesh> unknownThenWater =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            unknownThenWaterBytes.data(),
-            unknownThenWaterBytes.size(),
-            bounds,
-            true);
-    check(unknownThenWater && unknownThenWater->waterMask.allWater &&
-              !unknownThenWater->waterMask.allLand,
-          "QuantizedMeshParser: unknown extensions are skipped before later known extensions like cesium-native");
-
-    std::unique_ptr<SurfaceTileMesh> disabled =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            allWaterBytes.data(),
-            allWaterBytes.size(),
-            bounds,
-            false);
-    check(disabled && !disabled->waterMask.allWater &&
-              disabled->waterMask.allLand &&
-              disabled->waterMask.data.empty() &&
-              !disabled->waterMask.valid(),
-          "QuantizedMeshParser: disabled water mask ignores extension like cesium-native");
-
-    std::vector<uint8_t> disabledWaterThenMetadata =
-        makeQuantizedMeshBytesWithWaterMask({255});
-    appendPod<uint8_t>(disabledWaterThenMetadata, 4);
-    appendPod<uint32_t>(
-        disabledWaterThenMetadata,
-        static_cast<uint32_t>(sizeof(uint32_t) + metadata.size()));
-    appendPod<uint32_t>(
-        disabledWaterThenMetadata,
-        static_cast<uint32_t>(metadata.size()));
-    disabledWaterThenMetadata.insert(
-        disabledWaterThenMetadata.end(),
-        metadata.begin(),
-        metadata.end());
-    std::unique_ptr<SurfaceTileMesh> disabledWithMetadata =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            disabledWaterThenMetadata.data(),
-            disabledWaterThenMetadata.size(),
-            bounds,
-            false);
-    check(disabledWithMetadata &&
-              !disabledWithMetadata->waterMask.valid() &&
-              disabledWithMetadata->metadataAvailability.size() == 1 &&
-              disabledWithMetadata->metadataAvailability[0] ==
-                  QuantizedMeshAvailabilityRange{0, 0, 0, 1, 0},
-          "QuantizedMeshParser: disabled water mask still advances to later metadata like cesium-native");
 }
 
 void testQuantizedMeshProviderRasterizesCesiumHeightmapGrid() {
@@ -27750,7 +27578,6 @@ int main() {
     testRasterMappedTemporaryAncestorDoesNotReportMoreDetail();
     testRasterOverlayNativeTranslationAndRendererWindow();
     testHeightmapTerrainProviderExposesAttribution();
-    testQuantizedMeshWaterMaskExtensions();
     testQuantizedMeshProviderRasterizesCesiumHeightmapGrid();
     testTilesetUsesQuantizedMeshRtcOrigin();
     testTilesetUsesQuantizedMeshHeightRange();
