@@ -136,6 +136,12 @@ add_executable(test_s2_cell_id
 target_link_libraries(test_s2_cell_id PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_s2_cell_id COMMAND test_s2_cell_id)
 
+add_executable(test_s2_cell_bounding_volume
+    unit/geodesy/test_s2_cell_bounding_volume.cpp
+)
+target_link_libraries(test_s2_cell_bounding_volume PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_s2_cell_bounding_volume COMMAND test_s2_cell_bounding_volume)
+
 add_executable(test_projection
     unit/geodesy/test_projection.cpp
 )
