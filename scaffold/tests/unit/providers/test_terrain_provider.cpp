@@ -161,6 +161,71 @@ private:
     std::vector<uint8_t> pixels_;
 };
 
+class QueuedStatusPlatformBridge : public PlatformBridge {
+public:
+    void onMemoryPressure() override {}
+    void onEnterBackground() override {}
+    void onEnterForeground() override {}
+
+    std::unique_ptr<HttpRequest> get(
+        const std::string& url,
+        std::function<void(int, std::vector<uint8_t>)> callback,
+        HttpRequestOptions = {}) override {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            pending_.push_back(PendingRequest{url, std::move(callback)});
+        }
+        cv_.notify_all();
+        return std::make_unique<NoopHttpRequest>();
+    }
+
+    std::string cacheDirectory() const override { return {}; }
+    std::string documentsDirectory() const override { return {}; }
+
+    std::unique_ptr<DecodedImage> decodeImage(
+        const uint8_t*,
+        size_t) override {
+        return nullptr;
+    }
+
+    void log(LogLevel, const std::string&, const std::string&) override {}
+    DeviceInfo deviceInfo() const override { return {}; }
+    std::string getToken(const std::string&) const override { return {}; }
+
+    bool waitUntilPendingCount(size_t count) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return cv_.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return pending_.size() >= count; });
+    }
+
+    bool completeNext(int statusCode,
+                      std::vector<uint8_t> body = {}) {
+        std::function<void(int, std::vector<uint8_t>)> callback;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (pending_.empty()) {
+                return false;
+            }
+            callback = std::move(pending_.front().callback);
+            pending_.erase(pending_.begin());
+        }
+        callback(statusCode, std::move(body));
+        return true;
+    }
+
+private:
+    struct PendingRequest {
+        std::string url;
+        std::function<void(int, std::vector<uint8_t>)> callback;
+    };
+
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::vector<PendingRequest> pending_;
+};
+
 class QueuedGoogleMapTilesPlatformBridge : public PlatformBridge {
 public:
     explicit QueuedGoogleMapTilesPlatformBridge(
@@ -277,6 +342,42 @@ TEST(TerrainProviderTest, DefaultAvailabilityHonorsZoomRange) {
                   TileKey{"Geographic-TMS", 3, 0, 0}));
     EXPECT_FALSE(provider.supportsTile(
         TileKey{"XYZ-WebMercator", 1, 0, 0}));
+}
+
+TEST(QuantizedMeshTerrainProviderTest, HttpErrorFailsTerminally) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/{z}/{x}/{y}.terrain");
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool callbackCalled = false;
+    TerrainTileLoadStatus completedStatus = TerrainTileLoadStatus::Success;
+
+    provider.requestTile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        CancellationToken{},
+        [&](const TileKey&, TerrainTileLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completedStatus = result.status;
+                callbackCalled = true;
+            }
+            cv.notify_one();
+        });
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    ASSERT_TRUE(bridge.completeNext(404));
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return callbackCalled; }));
+    }
+
+    EXPECT_EQ(TerrainTileLoadStatus::Failed, completedStatus);
+    EXPECT_EQ(1, provider.requestDiagnostics().requestsCompleted);
 }
 
 TEST(QuantizedMeshTerrainProviderTest, ConfiguresFromCesiumLayerJson) {
