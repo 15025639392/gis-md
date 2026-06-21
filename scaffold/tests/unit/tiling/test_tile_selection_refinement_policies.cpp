@@ -3,6 +3,7 @@
 #include "earth_engine/tiling/TileSelectionKickPolicy.h"
 #include "earth_engine/tiling/TileSelectionPostTraversalPolicy.h"
 #include "earth_engine/tiling/TileSelectionPreTraversalPolicy.h"
+#include "earth_engine/tiling/TileSelectionRefineFlowPolicy.h"
 #include "earth_engine/tiling/TileSelectionRefinementPolicy.h"
 
 using namespace earth_engine;
@@ -401,4 +402,100 @@ TEST(
             TileSelectionOcclusionAction::StopForOccluded);
     EXPECT_FALSE(stopped.refine);
     EXPECT_TRUE(stopped.meetsSse);
+}
+
+TEST(
+    TileSelectionRefineFlowPolicyTest,
+    AppliesOcclusionActionAndCounters) {
+    const TileSelectionRefineFlowOptions options{true, true};
+    TileSelectionRefineFlowInput input;
+    input.meetsScreenSpaceError = false;
+    input.renderable = true;
+    input.previousSelectionState = TileSelectionState::Rendered;
+
+    TileSelectionRefineFlowResult result =
+        TileSelectionRefineFlowPolicy::evaluate(input, options);
+    EXPECT_TRUE(result.refine);
+    EXPECT_FALSE(result.meetsScreenSpaceError);
+    EXPECT_TRUE(result.shouldCheckOcclusion);
+    EXPECT_EQ(result.counter, TileSelectionRefineFlowCounter::None);
+
+    input.occlusion = TileOcclusionState::Occluded;
+    result = TileSelectionRefineFlowPolicy::evaluate(input, options);
+    EXPECT_FALSE(result.refine);
+    EXPECT_TRUE(result.meetsScreenSpaceError);
+    EXPECT_EQ(result.counter, TileSelectionRefineFlowCounter::Occluded);
+
+    input.occlusion = TileOcclusionState::OcclusionUnavailable;
+    result = TileSelectionRefineFlowPolicy::evaluate(input, options);
+    EXPECT_FALSE(result.refine);
+    EXPECT_TRUE(result.meetsScreenSpaceError);
+    EXPECT_EQ(
+        result.counter,
+        TileSelectionRefineFlowCounter::WaitingForOcclusion);
+}
+
+TEST(
+    TileSelectionRefineFlowPolicyTest,
+    ContinuesDeeperForPreviousUnrenderableRefinement) {
+    TileSelectionRefineFlowInput input;
+    input.meetsScreenSpaceError = true;
+    input.ancestorMeetsSse = false;
+    input.renderable = false;
+    input.previousSelectionState = TileSelectionState::Refined;
+
+    TileSelectionRefineFlowResult result =
+        TileSelectionRefineFlowPolicy::evaluate(
+            input,
+            TileSelectionRefineFlowOptions{true, true});
+
+    EXPECT_TRUE(result.refine);
+    EXPECT_TRUE(result.ancestorMeetsSse);
+    EXPECT_TRUE(result.queueUrgentLoad);
+    EXPECT_TRUE(result.queuedForLoad);
+
+    input.ancestorMeetsSse = true;
+    result = TileSelectionRefineFlowPolicy::evaluate(
+        input,
+        TileSelectionRefineFlowOptions{true, true});
+
+    EXPECT_TRUE(result.refine);
+    EXPECT_TRUE(result.ancestorMeetsSse);
+    EXPECT_FALSE(result.queueUrgentLoad);
+    EXPECT_FALSE(result.queuedForLoad);
+}
+
+TEST(
+    TileSelectionRefineFlowPolicyTest,
+    SkipsOcclusionForNativeBypassCases) {
+    TileSelectionRefineFlowInput input;
+    input.unconditionallyRefine = true;
+    input.meetsScreenSpaceError = true;
+    input.renderable = true;
+
+    TileSelectionRefineFlowResult result =
+        TileSelectionRefineFlowPolicy::evaluate(
+            input,
+            TileSelectionRefineFlowOptions{true, true});
+    EXPECT_TRUE(result.refine);
+    EXPECT_TRUE(result.meetsScreenSpaceError);
+    EXPECT_FALSE(result.shouldCheckOcclusion);
+
+    input = TileSelectionRefineFlowInput{};
+    input.meetsScreenSpaceError = false;
+    input.renderable = true;
+    input.previousSelectionState = TileSelectionState::Refined;
+    input.childWasRefinedLastFrame = true;
+    result = TileSelectionRefineFlowPolicy::evaluate(
+        input,
+        TileSelectionRefineFlowOptions{true, true});
+    EXPECT_TRUE(result.refine);
+    EXPECT_FALSE(result.shouldCheckOcclusion);
+
+    input.childWasRefinedLastFrame = false;
+    result = TileSelectionRefineFlowPolicy::evaluate(
+        input,
+        TileSelectionRefineFlowOptions{false, true});
+    EXPECT_TRUE(result.refine);
+    EXPECT_FALSE(result.shouldCheckOcclusion);
 }
