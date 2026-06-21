@@ -1,9 +1,13 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/core/math/MathUtils.h"
+#include "earth_engine/providers/DebugImageryProvider.h"
+#include "earth_engine/providers/RasterOverlayTileProvider.h"
+#include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/tiling/SurfaceTile.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileChildMaterializer.h"
+#include "earth_engine/tiling/TileRasterUpsampledChildMaterializer.h"
 #include "earth_engine/tiling/TileScheme.h"
 
 #include <memory>
@@ -14,11 +18,64 @@ using namespace earth_engine;
 
 namespace {
 
+class DummyTexture final : public Texture {
+public:
+    DummyTexture(int width, int height) : width_(width), height_(height) {}
+
+    int width() const override { return width_; }
+    int height() const override { return height_; }
+
+private:
+    int width_ = 0;
+    int height_ = 0;
+};
+
 std::string cacheKeyFor(const TileKey& key) {
     return key.schemeId + ":" +
            std::to_string(key.z) + ":" +
            std::to_string(key.x) + ":" +
            std::to_string(key.y);
+}
+
+RasterMappedToTilesetTile& addMoreDetailRasterMapping(
+    TilesetTile& tile,
+    RasterOverlayTileProvider& provider) {
+    tile.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    tile.content.renderContent.setMeshReady(true);
+    tile.content.renderContent.mutableRasterOverlayDetails()
+        ->setGeographicRectangle(tile.bounds);
+
+    auto& mapped = tile.rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missingProjections;
+    EXPECT_EQ(
+        RasterMappedToTilesetTile::MoreDetail::Unknown,
+        mapped.update(
+            tile.key,
+            tile.content.renderContent.rasterOverlayDetails(),
+            256.0,
+            256.0,
+            provider,
+            nullptr,
+            missingProjections));
+
+    RasterOverlayTile* loadingTile = mapped.getLoadingTile();
+    EXPECT_NE(nullptr, loadingTile);
+    loadingTile->setState(RasterOverlayTile::LoadState::Loaded);
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+
+    EXPECT_EQ(
+        RasterMappedToTilesetTile::MoreDetail::Yes,
+        mapped.update(
+            tile.key,
+            tile.content.renderContent.rasterOverlayDetails(),
+            256.0,
+            256.0,
+            provider,
+            nullptr,
+            missingProjections));
+    return mapped;
 }
 
 } // namespace
@@ -468,6 +525,55 @@ TEST(TileChildMaterializerTest, RasterUpsampledTileCanContinueSubdividingForImag
         [](const TileKey&) { return std::string{"child"}; },
         [](const std::string&) { return false; },
         [](const TileKey&) { return TileAvailabilityState::NotAvailable; }));
+}
+
+TEST(TileChildMaterializerTest,
+     RasterUpsampledChildrenRequireDrawableReadyRaster) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createGeographicTMS();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
+    parent.geometricError = 100.0;
+    parent.content.renderContent.setTerrainHeightRange(-5.0, 25.0);
+    RasterMappedToTilesetTile& mapped =
+        addMoreDetailRasterMapping(parent, provider);
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    EXPECT_TRUE(mapped.isMoreDetailAvailable());
+    EXPECT_FALSE(TileRasterUpsampledChildMaterializer::materialize(
+        parent,
+        100.0,
+        ensure));
+    EXPECT_TRUE(parent.children.empty());
+
+    RasterOverlayTile* readyTile = mapped.getReadyTile();
+    ASSERT_NE(nullptr, readyTile);
+    readyTile->setTexture(std::make_unique<DummyTexture>(4, 4));
+
+    EXPECT_TRUE(TileRasterUpsampledChildMaterializer::materialize(
+        parent,
+        100.0,
+        ensure));
+    ASSERT_EQ(4u, parent.children.size());
+    EXPECT_EQ(
+        Rectangle::fromDegrees(-20.0, -10.0, -10.0, 0.0),
+        parent.children[0]->bounds);
+    EXPECT_EQ(
+        Rectangle::fromDegrees(-10.0, 0.0, 0.0, 10.0),
+        parent.children[3]->bounds);
 }
 
 TEST(TileChildMaterializerTest, CanRefineHonorsContentRulesBeforeTerrainSignals) {
