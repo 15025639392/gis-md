@@ -939,3 +939,73 @@ TEST(TileLoadRequestDispatcherTest, SkipsPendingContentTerminalResultKeys) {
     EXPECT_EQ(1u, pendingLoads.contentTerminalResultCount());
     EXPECT_EQ(1u, budget.networkRequestsIssued());
 }
+
+TEST(TileLoadRequestDispatcherTest, SkipsInflightRequestKeys) {
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    CancellationToken terrainToken;
+    CancellationToken contentToken;
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        ASSERT_TRUE(requestState.beginTerrainRequest(
+            "terrain-inflight",
+            terrainToken));
+        ASSERT_TRUE(requestState.beginContentRequest(
+            "content-inflight",
+            contentToken));
+    }
+
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+    DispatcherBudgetTerrainProvider terrainProvider;
+    DispatcherBudgetContentProvider contentProvider;
+
+    TileLoadDispatchResult terrainResult =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            terrainProvider,
+            key,
+            "terrain-inflight",
+            TileLoadPriorityGroup::Urgent,
+            100.0,
+            [&issued]() { issued = true; });
+    TileLoadDispatchResult contentResult =
+        TileLoadRequestDispatcher::requestContent(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            contentProvider,
+            key,
+            "content-inflight",
+            TileLoadPriorityGroup::Urgent,
+            100.0,
+            [&issued]() { issued = true; });
+
+    EXPECT_EQ(TileLoadDispatchResult::Skipped, terrainResult);
+    EXPECT_EQ(TileLoadDispatchResult::Skipped, contentResult);
+    EXPECT_FALSE(issued);
+    EXPECT_EQ(0, terrainProvider.requestCount);
+    EXPECT_EQ(0, contentProvider.requestCount);
+    EXPECT_EQ(2u, requestState.totalRequestCount());
+    EXPECT_FALSE(pendingLoads.hasWork());
+    EXPECT_EQ(0u, budget.networkRequestsIssued());
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        requestState.completeTerrainRequest("terrain-inflight");
+        requestState.completeContentRequest("content-inflight");
+    }
+}
