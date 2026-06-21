@@ -763,7 +763,8 @@ private:
         const TileKey& originalKey,
         bool ancestorFallback,
         bool shareInFlight,
-        const std::function<void()>& onSourceFinished) {
+        const std::function<void()>& onSourceFinished,
+        std::vector<TileKey> fallbackInFlightKeys = {}) {
         std::optional<LoadedSourceImage> cachedSource;
         {
             std::lock_guard<std::mutex> lock(cacheMutex);
@@ -822,11 +823,50 @@ private:
             }
         }
 
+        if (ancestorFallback) {
+            const std::string fallbackInFlightKey = sourceCacheKey(requestedKey);
+            auto waiter =
+                [self, ancestorFallback, onSourceFinished](
+                    const SourceTileAsset* cached) {
+                    onSourceFinished();
+                    if (cached && cached->image) {
+                        LoadedSourceImage source;
+                        source.key = cached->key;
+                        source.bounds = cached->bounds;
+                        source.image = cloneDecodedImage(*cached->image);
+                        source.ancestorFallback =
+                            ancestorFallback || cached->ancestorFallback;
+                        source.moreDetailAvailable =
+                            cached->moreDetailAvailable;
+                        self->finishOneSource(std::move(source));
+                    } else {
+                        self->finishOneSource(LoadedSourceImage{});
+                    }
+                };
+            {
+                std::lock_guard<std::mutex> lock(cacheMutex);
+                auto [it, inserted] =
+                    inFlight.try_emplace(
+                        fallbackInFlightKey,
+                        InFlightSourceTileAsset{});
+                if (!inserted) {
+                    it->second.waiters.push_back(std::move(waiter));
+                    return;
+                }
+            }
+            fallbackInFlightKeys.push_back(requestedKey);
+        }
+
         CancellationToken token;
         provider.requestTile(
             requestedKey,
             token,
-            [self, requestedKey, originalKey, ancestorFallback, onSourceFinished](
+            [self,
+             requestedKey,
+             originalKey,
+             ancestorFallback,
+             onSourceFinished,
+             fallbackInFlightKeys = std::move(fallbackInFlightKeys)](
                 const TileKey& loadedKey,
                 std::unique_ptr<DecodedImage> image) mutable {
                 if (image) {
@@ -853,6 +893,9 @@ private:
                         self->cacheSource(loadedKey, directSource);
                     }
                     self->finishInFlightSource(originalKey, &completed);
+                    for (const TileKey& key : fallbackInFlightKeys) {
+                        self->finishInFlightSource(key, &completed);
+                    }
                     return;
                 }
 
@@ -867,12 +910,16 @@ private:
                             originalKey,
                             true,
                             false,
-                            onSourceFinished);
+                            onSourceFinished,
+                            std::move(fallbackInFlightKeys));
                         return;
                     }
                 }
 
                 self->finishInFlightSource(originalKey, nullptr);
+                for (const TileKey& key : fallbackInFlightKeys) {
+                    self->finishInFlightSource(key, nullptr);
+                }
             });
     }
 

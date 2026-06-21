@@ -267,6 +267,50 @@ public:
     std::deque<Pending> pending;
 };
 
+class DeferredParentFallbackImageryProvider final : public ImageryProvider {
+public:
+    std::string id() const override { return "deferred-parent-fallback"; }
+    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 10; }
+    int tileWidth() const override { return 256; }
+    int tileHeight() const override { return 256; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     TileCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
+        requestedKeys.push_back(key);
+        pending.push_back(Pending{key, std::move(callback)});
+    }
+    std::unique_ptr<DecodedImage> decodeTile(
+        const uint8_t*, size_t) override {
+        return nullptr;
+    }
+
+    void completeNext() {
+        ASSERT_FALSE(pending.empty());
+        Pending item = std::move(pending.front());
+        pending.pop_front();
+        const bool fails =
+            std::find(failingKeys.begin(), failingKeys.end(), item.key) !=
+            failingKeys.end();
+        item.callback(
+            item.key,
+            fails
+                ? nullptr
+                : makeImage(256, 256, static_cast<uint8_t>(item.key.z)));
+    }
+
+    struct Pending {
+        TileKey key;
+        TileCallback callback;
+    };
+    std::vector<TileKey> failingKeys;
+    std::vector<TileKey> requestedKeys;
+    std::deque<Pending> pending;
+};
+
 class CountingRasterUploader final : public RasterTextureUploader {
 public:
     int maxTextureSize() const override { return maxTextureSizeValue; }
@@ -1020,6 +1064,63 @@ TEST(RasterOverlayLifecycleTest, RectangleSiblingFallbacksReuseCachedParentSourc
             imagery.requestedKeys.begin(),
             imagery.requestedKeys.end(),
             parent)));
+}
+
+TEST(RasterOverlayLifecycleTest, ConcurrentSiblingFallbacksShareParentSourceInFlightLikeCesiumNative) {
+    DeferredParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey westChild{scheme->id(), 3, 2, 2};
+    const TileKey eastChild{scheme->id(), 3, 3, 2};
+    const TileKey parent{scheme->id(), 2, 1, 1};
+    imagery.failingKeys = {westChild, eastChild};
+
+    const Rectangle westBounds = scheme->tileToRectangle(westChild);
+    const Rectangle westHalf(
+        westBounds.west(),
+        westBounds.south(),
+        westBounds.west() + westBounds.width() * 0.5,
+        westBounds.north());
+    const Rectangle eastBounds = scheme->tileToRectangle(eastChild);
+    const Rectangle eastHalf(
+        eastBounds.west(),
+        eastBounds.south(),
+        eastBounds.west() + eastBounds.width() * 0.5,
+        eastBounds.north());
+
+    auto westTile = provider.getTile(westHalf, 256.0, 512.0);
+    auto eastTile = provider.getTile(eastHalf, 256.0, 512.0);
+    ASSERT_NE(nullptr, westTile);
+    ASSERT_NE(nullptr, eastTile);
+
+    ASSERT_TRUE(provider.loadTile(*westTile));
+    ASSERT_TRUE(provider.loadTile(*eastTile));
+    ASSERT_EQ(2u, imagery.pending.size());
+    EXPECT_EQ(westChild, imagery.pending[0].key);
+    EXPECT_EQ(eastChild, imagery.pending[1].key);
+
+    imagery.completeNext();
+    ASSERT_EQ(2u, imagery.pending.size());
+    EXPECT_EQ(eastChild, imagery.pending[0].key);
+    EXPECT_EQ(parent, imagery.pending[1].key);
+
+    imagery.completeNext();
+    ASSERT_EQ(1u, imagery.pending.size());
+    EXPECT_EQ(parent, imagery.pending.front().key);
+    EXPECT_EQ(
+        1,
+        static_cast<int>(std::count(
+            imagery.requestedKeys.begin(),
+            imagery.requestedKeys.end(),
+            parent)));
+
+    imagery.completeNext();
+    EXPECT_TRUE(imagery.pending.empty());
+    EXPECT_EQ(0, provider.processPendingUploads(false));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, westTile->getState());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, eastTile->getState());
 }
 
 TEST(RasterOverlayLifecycleTest, RectangleAncestorFallbackUsesParentTileLikeCesiumNative) {
