@@ -10,6 +10,7 @@
 #include "earth_engine/core/resources/FrameResourceBudget.h"
 #include "earth_engine/core/geodesy/S2CellID.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/geodesy/Transforms.h"
 #include "earth_engine/core/geodesy/WebMercatorProjection.h"
 #include "earth_engine/core/math/OrientedBoundingBox.h"
@@ -851,6 +852,36 @@ void check(bool condition, const std::string& name) {
         std::cout << "FAIL  " << name << "\n";
         ++gFailures;
     }
+    std::cout.flush();
+}
+
+Rectangle projectForProvider(const TileScheme& scheme,
+                             const Rectangle& geographicRectangle) {
+    if (scheme.crsProfile() == "EPSG:3857") {
+        return projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            geographicRectangle);
+    }
+    return geographicRectangle;
+}
+
+Rectangle projectForProvider(const RasterOverlayTileProvider& provider,
+                             const Rectangle& geographicRectangle) {
+    return projectForProvider(provider.getTileScheme(), geographicRectangle);
+}
+
+RasterOverlayDetails makeProviderDetails(const TileScheme& scheme,
+                                         const Rectangle& geographicRectangle) {
+    RasterOverlayDetails details;
+    if (scheme.crsProfile() == "EPSG:3857") {
+        details.rasterOverlayProjections = {RasterOverlayProjection::WebMercator};
+        details.rasterOverlayRectangles = {
+            projectForProvider(scheme, geographicRectangle)};
+        details.boundingRegion = {geographicRectangle, 0.0, 0.0};
+    } else {
+        details.setGeographicRectangle(geographicRectangle);
+    }
+    return details;
 }
 
 bool uniformNear(const RenderCommand& cmd,
@@ -2112,12 +2143,14 @@ void testRasterOverlayProviderRectangleTile() {
 
     provider.setFrameNumber(1);
     auto rectangleTile = provider.getTile(
-        geometryBounds, 512.0, 512.0);
+        projectForProvider(provider, geometryBounds), 512.0, 512.0);
     check(rectangleTile != nullptr,
           "RasterOverlayTileProvider: rectangle tile is created");
     check(rectangleTile && rectangleTile->isRectangleTile(),
           "RasterOverlayTileProvider: rectangle tile uses native rectangle path");
-    check(rectangleTile && rectangleTile->getRectangle() == geometryBounds,
+    check(rectangleTile &&
+              rectangleTile->getRectangle() ==
+                  projectForProvider(provider, geometryBounds),
           "RasterOverlayTileProvider: rectangle tile keeps geometry bounds");
     check(rectangleTile && !rectangleTile->getCacheKey().empty() &&
               rectangleTile->getCacheKey().find("rectangle/") == 0,
@@ -2145,7 +2178,7 @@ void testRasterOverlayProviderDirectTileForExactProviderRectangle() {
     Rectangle bounds = imageryScheme->tileToRectangle(key);
 
     provider.setFrameNumber(1);
-    auto mappedTile = provider.getTile(bounds, 512.0, 512.0);
+    auto mappedTile = provider.getTile(projectForProvider(provider, bounds), 512.0, 512.0);
     check(mappedTile != nullptr,
           "RasterOverlayTileProvider: exact provider rectangle creates raster tile");
     check(mappedTile && !mappedTile->isRectangleTile(),
@@ -2266,7 +2299,7 @@ void testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches() {
     Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
     RasterOverlayTileProvider::TilePtr rectangleTile =
-        provider.getTile(sourceAlignedBounds, 512.0, 512.0);
+        provider.getTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0);
 
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 1024;
@@ -2304,7 +2337,7 @@ void testRasterOverlayBaseRectangleSourceRejectsCoverageEdgeMiss() {
     provider.setCoverageRectangle(coverageBounds);
 
     RasterOverlayTileProvider::TilePtr rectangleTile =
-        provider.getTile(outsideCoverageBounds, 512.0, 512.0);
+        provider.getTile(projectForProvider(provider, outsideCoverageBounds), 512.0, 512.0);
 
     check(!rectangleTile,
           "RasterOverlayTileProvider: base imagery outside coverage is rejected at rectangle tile creation");
@@ -2320,7 +2353,7 @@ void testRasterOverlayRectangleSourceFailureRequestsParentSource() {
     Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
     RasterOverlayTileProvider::TilePtr rectangleTile =
-        provider.getTile(sourceAlignedBounds, 512.0, 512.0);
+        provider.getTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0);
 
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
@@ -2386,7 +2419,7 @@ void testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize() {
     const Rectangle rootBounds = imageryScheme->tileToRectangle(
         TileKey{imageryScheme->id(), 0, 0, 0});
     RasterOverlayTileProvider::TilePtr rectangleTile =
-        provider.getTile(rootBounds, 131072.0, 131072.0);
+        provider.getTile(projectForProvider(provider, rootBounds), 131072.0, 131072.0);
 
     check(rectangleTile && rectangleTile->getSourceZoom() == 5,
           "RasterOverlayTileProvider: rectangle source zoom is reduced until combined texture fits like cesium-native");
@@ -2523,10 +2556,10 @@ void testRasterMappedUsesRenderContentDetailsRectangle() {
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     provider.setFrameNumber(1);
 
-    RasterOverlayDetails details;
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0);
-    details.setGeographicRectangle(preciseRectangle);
+    RasterOverlayDetails details =
+        makeProviderDetails(*imageryScheme, preciseRectangle);
 
     RasterMappedToTilesetTile mapped;
     std::vector<RasterOverlayProjection> missingProjections;
@@ -2545,7 +2578,8 @@ void testRasterMappedUsesRenderContentDetailsRectangle() {
     check(moreDetail == RasterMappedToTilesetTile::MoreDetail::Unknown,
           "RasterMappedToTilesetTile: unloaded details tile reports unknown detail");
     check(mapped.getLoadingTile() != nullptr &&
-              mapped.getLoadingTile()->getRectangle() == preciseRectangle,
+              mapped.getLoadingTile()->getRectangle() ==
+                  projectForProvider(provider, preciseRectangle),
           "RasterMappedToTilesetTile: mapOverlayToTile uses render-content rectangle");
     check(missingProjections.empty(),
           "RasterMappedToTilesetTile: existing projection is not reported missing");
@@ -2579,7 +2613,7 @@ void testRasterMappedMissingProjectionUsesPlaceholder() {
                   RasterOverlayTile::LoadState::Placeholder,
           "RasterMappedToTilesetTile: missing projection maps to placeholder");
     check(missingProjections.size() == 1 &&
-              missingProjections.front() == RasterOverlayProjection::Geographic,
+              missingProjections.front() == RasterOverlayProjection::WebMercator,
           "RasterMappedToTilesetTile: missing projection is recorded");
     check(provider.getCachedTileCount() == 0,
           "RasterMappedToTilesetTile: missing projection does not create synthetic tile");
@@ -2592,8 +2626,8 @@ void testRasterMappedProviderNotReadyUsesPlaceholderWithoutMissingProjection() {
     provider.setReady(false);
     provider.setFrameNumber(1);
 
-    RasterOverlayDetails details;
-    details.setGeographicRectangle(
+    RasterOverlayDetails details = makeProviderDetails(
+        *imageryScheme,
         Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0));
 
     RasterMappedToTilesetTile mapped;
@@ -2633,10 +2667,10 @@ void testRasterMappedPlaceholderRemapsWhenProviderBecomesReady() {
     provider.setReady(false);
     provider.setFrameNumber(1);
 
-    RasterOverlayDetails details;
     const Rectangle preciseRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0);
-    details.setGeographicRectangle(preciseRectangle);
+    RasterOverlayDetails details =
+        makeProviderDetails(*imageryScheme, preciseRectangle);
 
     RasterMappedToTilesetTile mapped;
     std::vector<RasterOverlayProjection> missingProjections;
@@ -2669,7 +2703,8 @@ void testRasterMappedPlaceholderRemapsWhenProviderBecomesReady() {
           "RasterMappedToTilesetTile: provider-ready placeholder remaps to loading real tile");
     check(mapped.getLoadingTile() != nullptr &&
               mapped.getLoadingTile()->isRectangleTile() &&
-              mapped.getLoadingTile()->getRectangle() == preciseRectangle,
+              mapped.getLoadingTile()->getRectangle() ==
+                  projectForProvider(provider, preciseRectangle),
           "RasterMappedToTilesetTile: remapped placeholder requests precise rectangle");
     check(mapped.getTextureCoordinateID() == 0,
           "RasterMappedToTilesetTile: remapped placeholder restores texture coordinate ID");
@@ -2714,7 +2749,7 @@ void testRasterMappedLoadedContentMissingProjectionOffsetsTextureCoordinateID() 
     check(mapped.loadThrottled(provider),
           "RasterMappedToTilesetTile: missing-projection placeholder load is a no-op success");
     check(missingProjections.size() == 1 &&
-              missingProjections.front() == RasterOverlayProjection::Geographic,
+              missingProjections.front() == RasterOverlayProjection::WebMercator,
           "RasterMappedToTilesetTile: stale render details record missing projection");
     check(provider.getCachedTileCount() == 0,
           "RasterMappedToTilesetTile: stale render details do not create a cache tile");
@@ -2752,12 +2787,13 @@ void testRasterMappedBoundingRegionRequestsPreciseRectangleWithoutRenderContent(
           "RasterMappedToTilesetTile: bounding region real tile reports unknown detail");
     check(mapped.getLoadingTile() != nullptr &&
               mapped.getLoadingTile()->isRectangleTile() &&
-              mapped.getLoadingTile()->getRectangle() == regionRectangle,
+              mapped.getLoadingTile()->getRectangle() ==
+                  projectForProvider(provider, regionRectangle),
           "RasterMappedToTilesetTile: bounding region requests precise rectangle tile");
     check(mapped.getTextureCoordinateID() == 0,
           "RasterMappedToTilesetTile: bounding region missing projection gets first texture coordinate ID");
     check(missingProjections.size() == 1 &&
-              missingProjections.front() == RasterOverlayProjection::Geographic,
+              missingProjections.front() == RasterOverlayProjection::WebMercator,
           "RasterMappedToTilesetTile: bounding region records projection needed by later render content");
     check(provider.getCachedTileCount() == 1,
           "RasterMappedToTilesetTile: bounding region creates one real cached rectangle tile");
@@ -2805,8 +2841,8 @@ void testRasterMappedAttachedUnknownReportsMoreDetail() {
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     provider.setFrameNumber(1);
 
-    RasterOverlayDetails details;
-    details.setGeographicRectangle(
+    RasterOverlayDetails details = makeProviderDetails(
+        *imageryScheme,
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
 
     RasterMappedToTilesetTile mapped;
@@ -2902,11 +2938,11 @@ void testRasterMappedFailureFallbackMatchesOverlayOwner() {
     providerA.setFrameNumber(1);
     providerB.setFrameNumber(1);
 
-    RasterOverlayDetails parentDetails;
-    parentDetails.setGeographicRectangle(
+    RasterOverlayDetails parentDetails = makeProviderDetails(
+        overlayA->getTileScheme(),
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
-    RasterOverlayDetails childDetails;
-    childDetails.setGeographicRectangle(
+    RasterOverlayDetails childDetails = makeProviderDetails(
+        overlayA->getTileScheme(),
         Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0));
 
     TilesetTile parent(
@@ -3140,11 +3176,11 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
     provider.setOwner(overlay.get());
     provider.setFrameNumber(1);
 
-    RasterOverlayDetails parentDetails;
-    parentDetails.setGeographicRectangle(
+    RasterOverlayDetails parentDetails = makeProviderDetails(
+        overlay->getTileScheme(),
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
-    RasterOverlayDetails childDetails;
-    childDetails.setGeographicRectangle(
+    RasterOverlayDetails childDetails = makeProviderDetails(
+        overlay->getTileScheme(),
         Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0));
 
     TilesetTile parent(
@@ -3856,7 +3892,7 @@ void testTilesetMissingRasterProjectionUnloadsRenderContent() {
           "Tileset: missing raster projection clears mapped raster state before reload");
     check(root->rasterOverlayState.missingProjections().size() == 1 &&
               root->rasterOverlayState.missingProjections().front() ==
-                  RasterOverlayProjection::Geographic,
+                  RasterOverlayProjection::WebMercator,
           "Tileset: missing raster projection remains diagnosable after unload");
 }
 
@@ -3886,7 +3922,8 @@ void testTilesetRasterTargetPixelsUseRenderContentRectangle() {
         Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
     root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
     root->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails.setGeographicRectangle(preciseRectangle);
+        ->rasterOverlayDetails =
+            makeProviderDetails(overlay->getTileScheme(), preciseRectangle);
     root->content.renderContent.setMeshReady(true);
     root->content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(32),
@@ -3907,7 +3944,8 @@ void testTilesetRasterTargetPixelsUseRenderContentRectangle() {
     RasterMappedToTilesetTile* mapped = root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
     check(loadingTile != nullptr &&
-              loadingTile->getRectangle() == preciseRectangle,
+              loadingTile->getRectangle() ==
+                  projectForProvider(overlay->getTileScheme(), preciseRectangle),
           "Tileset: raster target-pixels request uses render-content rectangle");
     check(loadingTile != nullptr &&
               loadingTile->getTargetScreenPixelsX() < 80.0 &&
@@ -3941,7 +3979,8 @@ void testTilesetEnsuresOverlayProviderBeforeMapping() {
         Rectangle::fromDegrees(-10.0, -5.0, 2.0, 5.0);
     root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
     root->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails.setGeographicRectangle(preciseRectangle);
+        ->rasterOverlayDetails =
+            makeProviderDetails(overlay->getTileScheme(), preciseRectangle);
     root->content.renderContent.setMeshReady(true);
     root->content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(32),
@@ -3964,7 +4003,8 @@ void testTilesetEnsuresOverlayProviderBeforeMapping() {
               activated.getTileProvider()->getOwner() == overlay.get(),
           "Tileset: lazy activated overlay owns a provider before mapping");
     check(mapped && mapped->getLoadingTile() &&
-              mapped->getLoadingTile()->getRectangle() == preciseRectangle,
+              mapped->getLoadingTile()->getRectangle() ==
+                  projectForProvider(overlay->getTileScheme(), preciseRectangle),
           "Tileset: lazy provider maps raster using render-content rectangle");
 }
 
@@ -4013,7 +4053,8 @@ void testTilesetPrefetchesRasterFromBoundingRegionBeforeRenderContent() {
           "Tileset: prefetch uses an ensured raster provider");
     check(loadingTile != nullptr &&
               loadingTile->isRectangleTile() &&
-              loadingTile->getRectangle() == regionRectangle,
+              loadingTile->getRectangle() ==
+                  projectForProvider(overlay->getTileScheme(), regionRectangle),
           "Tileset: prefetch requests real imagery from bounding-region rectangle before render content");
     check(mapped && mapped->getTextureCoordinateID() == 0,
           "Tileset: prefetch bounding-region mapping records projection texture coordinate ID");
@@ -4175,7 +4216,8 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
     root->bounds = preciseRectangle;
     root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
     root->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails.setGeographicRectangle(preciseRectangle);
+        ->rasterOverlayDetails =
+            makeProviderDetails(overlay->getTileScheme(), preciseRectangle);
     root->content.renderContent.setMeshReady(true);
     root->content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(32),
@@ -4247,7 +4289,8 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
     root->bounds = preciseRectangle;
     root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
     root->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails.setGeographicRectangle(preciseRectangle);
+        ->rasterOverlayDetails =
+            makeProviderDetails(overlay->getTileScheme(), preciseRectangle);
     root->content.renderContent.setMeshReady(true);
     root->content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(32),
@@ -4313,7 +4356,8 @@ void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
     root->bounds = preciseRectangle;
     root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
     root->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails.setGeographicRectangle(preciseRectangle);
+        ->rasterOverlayDetails =
+            makeProviderDetails(baseOverlay->getTileScheme(), preciseRectangle);
     root->content.renderContent.mutableSurfaceMesh()->indices = {0, 1, 2};
     root->content.renderContent.mutableSurfaceMesh()->waterMask.allLand = false;
     root->content.renderContent.mutableSurfaceMesh()->waterMask.allWater = false;
@@ -4398,10 +4442,11 @@ void testTilesetFailedChildBaseImageryUsesAncestorCommandTexture() {
           "Tileset: failed-child base imagery setup creates parent/child tiles");
     if (!parent || !child) return;
 
-    auto makeRenderableSurface = [](TilesetTile& tile) {
+    auto makeRenderableSurface = [&](TilesetTile& tile) {
         tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
         tile.content.renderContent.mutableSurfaceMesh()
-            ->rasterOverlayDetails.setGeographicRectangle(tile.bounds);
+            ->rasterOverlayDetails =
+                makeProviderDetails(baseOverlay->getTileScheme(), tile.bounds);
         tile.content.renderContent.mutableSurfaceMesh()->indices = {0, 1, 2};
         tile.content.renderContent.setMeshReady(true);
         tile.content.renderContent.setSurfaceGpuBuffers(
@@ -4509,7 +4554,8 @@ void testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw() {
     root->bounds = preciseRectangle;
     root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
     root->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails.setGeographicRectangle(preciseRectangle);
+        ->rasterOverlayDetails =
+            makeProviderDetails(baseOverlay->getTileScheme(), preciseRectangle);
     root->content.renderContent.mutableSurfaceMesh()->indices = {0, 1, 2};
     root->content.renderContent.setMeshReady(true);
     root->content.renderContent.setSurfaceGpuBuffers(
@@ -4593,7 +4639,8 @@ void testTilesetSurfaceOverlaysCompositeIntoSingleCommand() {
     root->bounds = preciseRectangle;
     root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
     root->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails.setGeographicRectangle(preciseRectangle);
+        ->rasterOverlayDetails =
+            makeProviderDetails(baseOverlay->getTileScheme(), preciseRectangle);
     root->content.renderContent.setMeshReady(true);
     root->content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(32),
@@ -4671,7 +4718,8 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
     root->bounds = rootRectangle;
     root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
     root->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails.setGeographicRectangle(rootRectangle);
+        ->rasterOverlayDetails =
+            makeProviderDetails(overlay->getTileScheme(), rootRectangle);
     root->content.renderContent.setMeshReady(true);
     root->content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(32),
@@ -4723,11 +4771,23 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
     }
     check(allUpsampled,
           "Tileset: raster more-detail children carry upsample metadata and region bounds");
-    check(root->children.size() == 4 &&
-              root->children[0]->bounds ==
-                  Rectangle::fromDegrees(-20.0, -10.0, -10.0, 0.0) &&
-              root->children[3]->bounds ==
-                  Rectangle::fromDegrees(-10.0, 0.0, 0.0, 10.0),
+    const std::array<Rectangle, 4> expectedChildBounds{
+        Rectangle::fromDegrees(-20.0, -10.0, -10.0, 0.0),
+        Rectangle::fromDegrees(-10.0, -10.0, 0.0, 0.0),
+        Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0),
+        Rectangle::fromDegrees(-10.0, 0.0, 0.0, 10.0)};
+    bool hasExpectedChildBounds = root->children.size() == 4;
+    for (const Rectangle& expected : expectedChildBounds) {
+        hasExpectedChildBounds =
+            hasExpectedChildBounds &&
+            std::any_of(
+                root->children.begin(),
+                root->children.end(),
+                [&](const TilesetTile* child) {
+                    return child && child->bounds == expected;
+                });
+    }
+    check(hasExpectedChildBounds,
           "Tileset: raster more-detail children split the overlay rectangle SW/SE/NW/NE");
 }
 
@@ -13509,8 +13569,7 @@ void testTileRasterOverlayStateResizeReleasesRemovedMappings() {
                          TileKey{scheme->id(), 0, 0, 0}));
     tile.rasterOverlayState.ensureMappingSlots(2);
 
-    RasterOverlayDetails details;
-    details.setGeographicRectangle(tile.bounds);
+    RasterOverlayDetails details = makeProviderDetails(*scheme, tile.bounds);
     std::vector<RasterOverlayProjection> missingProjections;
     RecordingPrepareRendererResources prep;
 
@@ -13573,7 +13632,7 @@ void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
                          TileKey{scheme->id(), 0, 0, 0}));
     tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
     tile.content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails.setGeographicRectangle(tile.bounds);
+        ->rasterOverlayDetails = makeProviderDetails(*scheme, tile.bounds);
     tile.content.renderContent.setMeshReady(true);
     tile.content.loadState = TileLoadState::Done;
     tile.content.contentKind = TileContentKind::Render;
@@ -13645,7 +13704,7 @@ void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
                          TileKey{scheme->id(), 0, 0, 0}));
     tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
     tile.content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails.setGeographicRectangle(tile.bounds);
+        ->rasterOverlayDetails = makeProviderDetails(*scheme, tile.bounds);
     tile.content.renderContent.setMeshReady(true);
     tile.content.loadState = TileLoadState::Done;
     tile.content.contentKind = TileContentKind::Render;

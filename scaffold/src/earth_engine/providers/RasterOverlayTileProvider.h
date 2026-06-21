@@ -134,10 +134,9 @@ public:
     /// Returns the tile scheme.
     const TileScheme& getTileScheme() const { return scheme_; }
 
-    /// Projection used by rectangle overlay tiles. The current provider
-    /// contract composes source imagery into geographic rectangles.
+    /// Projection used by rectangle overlay tiles.
     RasterOverlayProjection getProjection() const {
-        return RasterOverlayProjection::Geographic;
+        return projection_;
     }
 
     // ── Async loading ──
@@ -235,6 +234,7 @@ private:
 
     ImageryProvider& provider_;
     const TileScheme& scheme_;
+    RasterOverlayProjection projection_ = RasterOverlayProjection::Geographic;
     std::unique_ptr<RasterTextureUploader> textureUploader_;
     class RasterOverlay* owner_ = nullptr;
     Rectangle coverageRectangle_ = Rectangle::MAXIMUM;

@@ -2,6 +2,7 @@
 
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
+#include "../core/geodesy/Projection.h"
 
 #include <algorithm>
 
@@ -101,6 +102,33 @@ RasterOverlayScreenSpaceMetrics::computeDesiredScreenPixels(
         diameters.y * maximumScreenSpaceError /
             geometricError);
     return diameters;
+}
+
+RasterTargetScreenPixels
+RasterOverlayScreenSpaceMetrics::computeDesiredScreenPixels(
+    const Rectangle& bounds,
+    RasterOverlayProjection projection,
+    double geometricError,
+    double maximumScreenSpaceError) {
+    if (projection == RasterOverlayProjection::Geographic) {
+        return computeDesiredScreenPixels(
+            bounds,
+            geometricError,
+            maximumScreenSpaceError);
+    }
+    if (geometricError <= 0.0) return {};
+
+    Projection projectionVariant =
+        WebMercatorProjection(Ellipsoid::WGS84());
+    const glm::dvec2 projectedSize =
+        computeProjectedRectangleSize(
+            projectionVariant,
+            bounds,
+            0.0,
+            Ellipsoid::WGS84());
+    return RasterTargetScreenPixels{
+        std::max(1.0, projectedSize.x * maximumScreenSpaceError / geometricError),
+        std::max(1.0, projectedSize.y * maximumScreenSpaceError / geometricError)};
 }
 
 } // namespace earth_engine

@@ -2,6 +2,7 @@
 
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/math/Rectangle.h"
 #include "earth_engine/tiling/RasterOverlayScreenSpaceMetrics.h"
 
@@ -21,6 +22,32 @@ double surfaceDistance(double longitudeA,
     const Vec3 b = ellipsoid.cartographicToCartesian(
         Cartographic::fromRadians(longitudeB, latitudeB, 0.0));
     return a.distanceTo(b);
+}
+
+TEST(RasterOverlayScreenSpaceMetricsTest,
+     WebMercatorProjectedRectangleUnprojectsBeforeMeasuring) {
+    const Rectangle geographicBounds =
+        Rectangle::fromDegrees(-10.0, -5.0, -2.0, 5.0);
+    const Rectangle webMercatorBounds = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        geographicBounds);
+    constexpr double geometricError = 1024.0;
+    constexpr double maximumScreenSpaceError = 8.0;
+
+    const RasterTargetScreenPixels geographicPixels =
+        RasterOverlayScreenSpaceMetrics::computeDesiredScreenPixels(
+            geographicBounds,
+            geometricError,
+            maximumScreenSpaceError);
+    const RasterTargetScreenPixels webMercatorPixels =
+        RasterOverlayScreenSpaceMetrics::computeDesiredScreenPixels(
+            webMercatorBounds,
+            RasterOverlayProjection::WebMercator,
+            geometricError,
+            maximumScreenSpaceError);
+
+    EXPECT_NEAR(geographicPixels.x, webMercatorPixels.x, 1e-6);
+    EXPECT_NEAR(geographicPixels.y, webMercatorPixels.y, 1e-6);
 }
 
 } // namespace

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../core/math/Rectangle.h"
+#include "SurfaceTile.h"
 
 namespace earth_engine {
 
@@ -13,6 +14,12 @@ class RasterOverlayScreenSpaceMetrics {
 public:
     static RasterTargetScreenPixels computeDesiredScreenPixels(
         const Rectangle& bounds,
+        double geometricError,
+        double maximumScreenSpaceError);
+
+    static RasterTargetScreenPixels computeDesiredScreenPixels(
+        const Rectangle& bounds,
+        RasterOverlayProjection projection,
         double geometricError,
         double maximumScreenSpaceError);
 };

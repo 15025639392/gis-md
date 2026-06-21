@@ -7,6 +7,8 @@
 #include "../renderer/RenderDevice.h"
 #include "../threading/CancellationToken.h"
 #include "../debug/PerfTimer.h"
+#include "../core/geodesy/Ellipsoid.h"
+#include "../core/geodesy/Projection.h"
 #include "../core/math/MathUtils.h"
 
 #ifdef __ANDROID__
@@ -79,6 +81,38 @@ bool uploadAllowedDuringInteraction(
     const int64_t pixels = static_cast<int64_t>(image->width) *
                            static_cast<int64_t>(image->height);
     return pixels <= kInteractionRasterUploadMaxPixels;
+}
+
+Projection projectionVariant(RasterOverlayProjection projection) {
+    switch (projection) {
+        case RasterOverlayProjection::Geographic:
+            return GeographicProjection(Ellipsoid::WGS84());
+        case RasterOverlayProjection::WebMercator:
+            return WebMercatorProjection(Ellipsoid::WGS84());
+    }
+    return GeographicProjection(Ellipsoid::WGS84());
+}
+
+RasterOverlayProjection projectionForScheme(const TileScheme& scheme) {
+    return scheme.crsProfile() == "EPSG:3857"
+        ? RasterOverlayProjection::WebMercator
+        : RasterOverlayProjection::Geographic;
+}
+
+Rectangle projectGeographicToProvider(const Rectangle& rectangle,
+                                      RasterOverlayProjection projection) {
+    if (projection == RasterOverlayProjection::Geographic) {
+        return rectangle;
+    }
+    return projectRectangleSimple(projectionVariant(projection), rectangle);
+}
+
+Rectangle unprojectProviderToGeographic(const Rectangle& rectangle,
+                                        RasterOverlayProjection projection) {
+    if (projection == RasterOverlayProjection::Geographic) {
+        return rectangle;
+    }
+    return unprojectRectangleSimple(projectionVariant(projection), rectangle);
 }
 
 int maximumCombinedTextureSize(const RasterTextureUploader* uploader,
@@ -804,6 +838,7 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
                            std::mutex& sourceCacheMutex,
                            RectangleSourcePlan plan,
                            Rectangle bounds,
+                           Rectangle outputRectangle,
                            int textureSize,
                            int minimumSourceLevel,
                            int maximumSourceLevel,
@@ -820,6 +855,7 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
         , cacheMutex(sourceCacheMutex)
         , sourcePlan(std::move(plan))
         , targetBounds(bounds)
+        , outputBounds(outputRectangle)
         , maximumTextureSize(textureSize)
         , minimumLevel(minimumSourceLevel)
         , maximumLevel(maximumSourceLevel)
@@ -1134,7 +1170,7 @@ private:
                            : RasterOverlayTile::MoreDetailAvailable::No);
             onSuccess(
                 std::move(source.image),
-                source.bounds,
+                outputBounds,
                 moreDetailAvailable);
             return;
         }
@@ -1150,7 +1186,7 @@ private:
         if (composed.image) {
             onSuccess(
                 std::move(composed.image),
-                composed.rectangle,
+                outputBounds,
                 composed.moreDetailAvailable);
         } else {
             onFailure();
@@ -1168,6 +1204,7 @@ private:
     std::mutex& cacheMutex;
     RectangleSourcePlan sourcePlan;
     Rectangle targetBounds;
+    Rectangle outputBounds;
     int maximumTextureSize = 0;
     int minimumLevel = 0;
     int maximumLevel = 0;
@@ -1235,6 +1272,7 @@ RasterOverlayTileProvider::RasterOverlayTileProvider(ImageryProvider& provider,
                                                      std::unique_ptr<RasterTextureUploader> textureUploader)
     : provider_(provider)
     , scheme_(scheme)
+    , projection_(projectionForScheme(scheme))
     , textureUploader_(std::move(textureUploader)) {}
 
 RasterOverlayTileProvider::~RasterOverlayTileProvider() = default;
@@ -1308,8 +1346,10 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
 
     if (key.z < getMinimumLevel() || key.z > getMaximumLevel()) return nullptr;
     if (!provider_.supportsTile(key)) return nullptr;
-    Rectangle bounds = scheme_.tileToRectangle(key);
-    if (!bounds.computeIntersection(coverageRectangle_)) return nullptr;
+    Rectangle geographicBounds = scheme_.tileToRectangle(key);
+    if (!geographicBounds.computeIntersection(coverageRectangle_)) return nullptr;
+    Rectangle bounds =
+        projectGeographicToProvider(geographicBounds, projection_);
 
     std::string ck = tileCacheKey(key);
     auto it = tiles_.find(ck);
@@ -1327,7 +1367,7 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
 }
 
 RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
-    const Rectangle& geometryBounds,
+    const Rectangle& providerGeometryBounds,
     double targetScreenPixelsX,
     double targetScreenPixelsY) {
     // cesium-native: return placeholder if provider is not yet ready
@@ -1335,6 +1375,8 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
         return getPlaceholderTile();
     }
 
+    const Rectangle geometryBounds =
+        unprojectProviderToGeographic(providerGeometryBounds, projection_);
     std::optional<Rectangle> sourceBounds =
         geometryBounds.computeIntersection(coverageRectangle_);
     if (!sourceBounds) {
@@ -1365,7 +1407,7 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
     }
 
     const std::string ck = rectangleTileCacheKey(
-        scheme_, geometryBounds, sourcePlan.sourceZoom);
+        scheme_, providerGeometryBounds, sourcePlan.sourceZoom);
     auto it = tiles_.find(ck);
     if (it != tiles_.end()) {
         it->second->lastUsedFrame = frameNumber_;
@@ -1380,7 +1422,7 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
         centerLng, centerLat, sourcePlan.sourceZoom);
 
     auto tile = std::make_shared<RasterOverlayTile>(
-        *this, representativeKey, geometryBounds, ck);
+        *this, representativeKey, providerGeometryBounds, ck);
     tile->setMaxZoom(getMaximumLevel());
     tile->setRectangleTileLevel(sourcePlan.sourceZoom);
     tile->setTargetScreenPixels(targetScreenPixelsX, targetScreenPixelsY);
@@ -1486,7 +1528,9 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
     sourcePlan.sourceZoom = key.z;
     sourcePlan.range = TileRange{key.x, key.y, key.x, key.y};
     sourcePlan.sourceKeys.push_back(key);
-    const Rectangle targetBounds = tile.getRectangle();
+    const Rectangle outputBounds = tile.getRectangle();
+    const Rectangle targetBounds =
+        unprojectProviderToGeographic(outputBounds, projection_);
     auto request = std::make_shared<RectangleSourceRequest>(
         provider_,
         scheme_,
@@ -1499,6 +1543,7 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
         pendingMutex_,
         std::move(sourcePlan),
         targetBounds,
+        outputBounds,
         maximumCombinedTextureSize(textureUploader_.get(), maximumTextureSize_),
         getMinimumLevel(),
         getMaximumLevel(),
@@ -1600,8 +1645,11 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
         if (inFlightRequests_.count(ck)) return true;
     }
 
+    const Rectangle outputBounds = tile.getRectangle();
+    const Rectangle targetBounds =
+        unprojectProviderToGeographic(outputBounds, projection_);
     std::optional<Rectangle> sourceBounds =
-        tile.getRectangle().computeIntersection(coverageRectangle_);
+        targetBounds.computeIntersection(coverageRectangle_);
     if (!sourceBounds) {
         tile.setMoreDetailAvailable(
             RasterOverlayTile::MoreDetailAvailable::No);
@@ -1613,7 +1661,7 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
         scheme_,
         provider_,
         textureUploader_.get(),
-        tile.getRectangle(),
+        targetBounds,
         *sourceBounds,
         tile.getTargetScreenPixelsX(),
         tile.getTargetScreenPixelsY(),
@@ -1647,7 +1695,6 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
         sourcePlan.sourceZoom);
 
     auto* self = this;
-    const Rectangle targetBounds = tile.getRectangle();
     const int maxTextureSize =
         maximumCombinedTextureSize(textureUploader_.get(), maximumTextureSize_);
     auto request = std::make_shared<RectangleSourceRequest>(
@@ -1662,6 +1709,7 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
         pendingMutex_,
         sourcePlan,
         targetBounds,
+        outputBounds,
         maxTextureSize,
         getMinimumLevel(),
         getMaximumLevel(),

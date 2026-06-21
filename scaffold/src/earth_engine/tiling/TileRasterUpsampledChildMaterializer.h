@@ -24,9 +24,15 @@ public:
 
         const RasterOverlayDetails& details =
             tile.content.renderContent.rasterOverlayDetails();
-        const Rectangle* subdivisionRectangle = nullptr;
+        Rectangle subdivisionRectangle = tile.bounds;
+        if (details.boundingRegion.minimumHeight <=
+                details.boundingRegion.maximumHeight &&
+            !details.boundingRegion.rectangle.isEmpty()) {
+            subdivisionRectangle = details.boundingRegion.rectangle;
+        }
+        bool hasMoreRasterDetail = false;
         tile.rasterOverlayState.forEachMapping([&](const auto* mapped) {
-            if (subdivisionRectangle ||
+            if (hasMoreRasterDetail ||
                 !mapped ||
                 !mapped->isMoreDetailAvailable()) {
                 return;
@@ -35,17 +41,19 @@ public:
             if (!readyTile) {
                 return;
             }
-            subdivisionRectangle = details.findRectangleForOverlayProjection(
-                readyTile->getTileProvider().getProjection());
+            if (details.findRectangleForOverlayProjection(
+                    readyTile->getTileProvider().getProjection())) {
+                hasMoreRasterDetail = true;
+            }
         });
 
-        if (!subdivisionRectangle) {
+        if (!hasMoreRasterDetail) {
             return false;
         }
 
         return TileChildMaterializer::materializeRasterUpsampledChildren(
             tile,
-            *subdivisionRectangle,
+            subdivisionRectangle,
             defaultGeometricError,
             ensureTile);
     }

@@ -6,6 +6,8 @@
 #include "TilesetTile.h"
 #include "TileBoundingVolume.h"
 #include "TileKey.h"
+#include "../core/geodesy/Ellipsoid.h"
+#include "../core/geodesy/Projection.h"
 
 #include <algorithm>
 #include <cmath>
@@ -90,14 +92,21 @@ const Rectangle* findRectangleForProjection(
 }
 
 std::optional<Rectangle> preciseRectangleFromBoundingVolume(
+    RasterOverlayProjection projection,
     const TileBoundingVolume* boundingVolume) {
     if (!boundingVolume ||
         boundingVolume->kind != TileBoundingVolumeKind::Region) {
         return std::nullopt;
     }
 
-    // The current local raster provider exposes Geographic projection. For a
-    // bounding region, the projected rectangle is exactly the region rectangle.
+    switch (projection) {
+        case RasterOverlayProjection::Geographic:
+            return boundingVolume->region;
+        case RasterOverlayProjection::WebMercator:
+            return projectRectangleSimple(
+                WebMercatorProjection(Ellipsoid::WGS84()),
+                boundingVolume->region);
+    }
     return boundingVolume->region;
 }
 
@@ -182,7 +191,7 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
     std::optional<Rectangle> boundingVolumeRectangle;
     if (!geometryRectangle && !hasRenderContentDetails) {
         boundingVolumeRectangle =
-            preciseRectangleFromBoundingVolume(boundingVolume);
+            preciseRectangleFromBoundingVolume(projection, boundingVolume);
         if (boundingVolumeRectangle) {
             geometryRectangle = &*boundingVolumeRectangle;
         }

@@ -5,6 +5,8 @@
 #include "TilesetTile.h"
 
 #include "../core/resources/FrameResourceBudget.h"
+#include "../core/geodesy/Ellipsoid.h"
+#include "../core/geodesy/Projection.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../providers/RasterOverlayTile.h"
 #include "../providers/RasterOverlayTileProvider.h"
@@ -14,6 +16,24 @@
 #include <vector>
 
 namespace earth_engine {
+namespace {
+
+std::optional<Rectangle> projectBoundingRegion(
+    const TilesetTile& tile,
+    RasterOverlayProjection projection) {
+    if (!tile.boundingVolume ||
+        tile.boundingVolume->kind != TileBoundingVolumeKind::Region) {
+        return std::nullopt;
+    }
+    if (projection == RasterOverlayProjection::WebMercator) {
+        return projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            tile.boundingVolume->region);
+    }
+    return tile.boundingVolume->region;
+}
+
+} // namespace
 
 void TileRasterOverlayPrefetcher::prefetch(
     TilesetTile& tile,
@@ -35,13 +55,10 @@ void TileRasterOverlayPrefetcher::prefetch(
     const RasterOverlayDetails* renderDetails = hasRenderContentDetails
         ? &tile.content.renderContent.rasterOverlayDetails()
         : nullptr;
-    std::optional<Rectangle> boundingRegionRectangle;
-    if (tile.boundingVolume &&
-        tile.boundingVolume->kind == TileBoundingVolumeKind::Region) {
-        boundingRegionRectangle = tile.boundingVolume->region;
-    }
-    const RasterOverlayDetails& overlayDetails =
-        tile.content.renderContent.rasterOverlayDetails();
+    static const RasterOverlayDetails emptyOverlayDetails;
+    const RasterOverlayDetails& overlayDetails = renderDetails
+        ? *renderDetails
+        : emptyOverlayDetails;
 
     for (size_t i : overlayProcessingOrder) {
         if (i >= tile.rasterOverlayState.mappingCount()) {
@@ -65,12 +82,15 @@ void TileRasterOverlayPrefetcher::prefetch(
         const Rectangle* geometryRectangle = renderDetails
             ? renderDetails->findRectangleForOverlayProjection(projection)
             : nullptr;
+        std::optional<Rectangle> boundingRegionRectangle =
+            projectBoundingRegion(tile, projection);
         const Rectangle& rasterTargetRectangle = geometryRectangle
             ? *geometryRectangle
             : (boundingRegionRectangle ? *boundingRegionRectangle : tile.bounds);
         const RasterTargetScreenPixels rasterScreenPixels =
             RasterOverlayScreenSpaceMetrics::computeDesiredScreenPixels(
                 rasterTargetRectangle,
+                projection,
                 tile.nonZeroGeometricError(),
                 maximumScreenSpaceError);
 
