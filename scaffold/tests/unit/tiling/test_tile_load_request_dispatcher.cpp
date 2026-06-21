@@ -804,3 +804,44 @@ TEST(TileLoadRequestDispatcherTest, DropsDestroyingContentUploadCallback) {
         lifecycle.requestState().clearAfterCallbacksComplete();
     }
 }
+
+TEST(TileLoadRequestDispatcherTest, DropsDestroyingContentTerminalCallback) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    DeferredContentProvider provider;
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::requestContent(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            provider,
+            key,
+            "destroy-content-terminal",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            []() {});
+
+    ASSERT_EQ(TileLoadDispatchResult::Issued, result);
+    ASSERT_TRUE(provider.contentCallback);
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().markDestroyingAndCancelRequests();
+    }
+
+    provider.contentCallback(key, TileContentLoadResult::retryLater());
+
+    EXPECT_FALSE(lifecycle.hasPendingWork());
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().clearAfterCallbacksComplete();
+    }
+}
