@@ -63,6 +63,11 @@ struct TilesetTestAccess {
         return false;
     }
 
+    static const TileSelectionCounters& selectionCounters(
+        const Tileset& tileset) {
+        return tileset.selectionCounters_;
+    }
+
     static Vec3 tileBoundsCenter(const Rectangle& bounds) {
         return TileBoundsMetrics::tileBoundsCenter(bounds);
     }
@@ -802,6 +807,71 @@ TEST(
         root->selectionFrameState.selectionState,
         TileSelectionState::NotVisited);
     EXPECT_FALSE(TilesetTestAccess::loadQueueContainsAny(tileset, rootKey));
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
+    FogDensityTableIsConfigurable) {
+    auto runWithFogTable =
+        [](std::vector<FogDensityAtHeight> fogDensityTable) {
+            TilesetOptions options;
+            options.fogDensityTable = std::move(fogDensityTable);
+
+            const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+            auto contentProvider =
+                std::make_unique<SelectionTreeContentProvider>(
+                    std::vector<TileKey>{rootKey},
+                    std::vector<std::pair<TileKey, std::vector<TileKey>>>{});
+            Tileset tileset(
+                std::unique_ptr<TerrainProvider>{},
+                TileScheme::createGeographicTMS(),
+                {},
+                nullptr,
+                options,
+                std::move(contentProvider));
+
+            TilesetTile* root =
+                TilesetTestAccess::ensureTile(tileset, rootKey);
+            root->content.loadState = TileLoadState::Done;
+            root->content.contentKind = TileContentKind::Empty;
+
+            const Vec3 center =
+                TilesetTestAccess::tileBoundsCenter(root->bounds);
+            Camera camera;
+            camera.lookAt(
+                center + center.normalized() * 100000.0,
+                center,
+                Vec3::unitZ());
+
+            FrameState frameState;
+            frameState.frameId = 157;
+            frameState.camera = &camera;
+            frameState.viewportWidthPixels = 800;
+            frameState.viewportHeightPixels = 800;
+            frameState.selectorViews.push_back(
+                makeSelectorView(camera, 800, 800));
+            TilesetTestAccess::setLastCamera(
+                tileset,
+                camera.position(),
+                camera.direction());
+            TilesetTestAccess::selectTiles(tileset, frameState);
+
+            return std::pair<TilePlan, TileSelectionCounters>{
+                tileset.tilePlan(),
+                TilesetTestAccess::selectionCounters(tileset)};
+        };
+
+    const auto [clearPlan, clearCounters] = runWithFogTable({{0.0, 0.0}});
+    const auto [densePlan, denseCounters] =
+        runWithFogTable({{0.0, 1.0}, {1000000.0, 1.0}});
+
+    EXPECT_FALSE(clearPlan.visibleTiles.empty());
+    EXPECT_GT(clearCounters.visited, 0);
+    EXPECT_EQ(clearCounters.fogCulled, 0);
+    EXPECT_TRUE(densePlan.visibleTiles.empty());
+    EXPECT_GT(densePlan.notRenderingNodeCount, 0);
+    EXPECT_EQ(denseCounters.visited, 0);
+    EXPECT_GT(denseCounters.fogCulled, 0);
 }
 
 TEST(
