@@ -80,6 +80,21 @@ struct ExternalSubtreeFixture {
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());
     }
+
+    void unloadWithClear(bool& clearChildrenCalled) {
+        manager.unloadCachedBytes(
+            0,
+            0.0,
+            false,
+            tiles,
+            lifecycle,
+            nullptr,
+            [this, &clearChildrenCalled](TilesetTile& tile) {
+                clearChildrenCalled = true;
+                tile.children.clear();
+                tiles.erase(childCacheKey);
+            });
+    }
 };
 
 } // namespace
@@ -266,4 +281,62 @@ TEST(
         fixture.childCacheKey));
     EXPECT_TRUE(fixture.lifecycle.loadLifecycle().hasPendingWork());
     EXPECT_FALSE(clearChildrenCalled);
+}
+
+TEST(
+    TileContentCacheManagerTest,
+    RetriesExternalSubtreeUnloadAfterClaimedUploadCompletes) {
+    ExternalSubtreeFixture fixture;
+    fixture.claimChildUploadWork();
+    bool clearChildrenCalled = false;
+
+    fixture.unloadWithClear(clearChildrenCalled);
+    ASSERT_TRUE(fixture.manager.unloadQueue().contains(
+        fixture.rootCacheKey));
+    ASSERT_FALSE(clearChildrenCalled);
+    ASSERT_FALSE(fixture.rootRaw->children.empty());
+
+    fixture.lifecycle.loadLifecycle().cancelAndEraseCacheKey(
+        fixture.childCacheKey);
+    fixture.unloadWithClear(clearChildrenCalled);
+
+    EXPECT_FALSE(fixture.manager.unloadQueue().contains(
+        fixture.rootCacheKey));
+    EXPECT_TRUE(clearChildrenCalled);
+    EXPECT_TRUE(fixture.rootRaw->children.empty());
+    EXPECT_EQ(fixture.tiles.find(fixture.childCacheKey), fixture.tiles.end());
+    EXPECT_FALSE(fixture.lifecycle.loadLifecycle().containsWorkForCacheKey(
+        fixture.childCacheKey));
+    EXPECT_EQ(fixture.rootRaw->content.loadState, TileLoadState::Unloaded);
+    EXPECT_EQ(fixture.rootRaw->content.contentKind, TileContentKind::Unknown);
+}
+
+TEST(
+    TileContentCacheManagerTest,
+    RetriesExternalSubtreeUnloadAfterPendingWorkCompletes) {
+    ExternalSubtreeFixture fixture;
+    fixture.tiles[fixture.childCacheKey]->content.loadState =
+        TileLoadState::Done;
+    fixture.tiles[fixture.childCacheKey]->content.contentKind =
+        TileContentKind::Render;
+    fixture.addChildUploadWork();
+    bool clearChildrenCalled = false;
+
+    fixture.unloadWithClear(clearChildrenCalled);
+    ASSERT_TRUE(fixture.manager.unloadQueue().contains(
+        fixture.rootCacheKey));
+    ASSERT_FALSE(clearChildrenCalled);
+    ASSERT_NE(fixture.tiles.find(fixture.childCacheKey), fixture.tiles.end());
+
+    fixture.lifecycle.loadLifecycle().cancelAndEraseCacheKey(
+        fixture.childCacheKey);
+    fixture.unloadWithClear(clearChildrenCalled);
+
+    EXPECT_FALSE(fixture.manager.unloadQueue().contains(
+        fixture.rootCacheKey));
+    EXPECT_TRUE(clearChildrenCalled);
+    EXPECT_TRUE(fixture.rootRaw->children.empty());
+    EXPECT_EQ(fixture.tiles.find(fixture.childCacheKey), fixture.tiles.end());
+    EXPECT_EQ(fixture.rootRaw->content.loadState, TileLoadState::Unloaded);
+    EXPECT_EQ(fixture.rootRaw->content.contentKind, TileContentKind::Unknown);
 }
