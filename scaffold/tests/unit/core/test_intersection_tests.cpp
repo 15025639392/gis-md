@@ -229,6 +229,28 @@ TEST(IntersectionTestsTest, RayTriangleParametricReturnsDistanceAlongRay) {
     EXPECT_DOUBLE_EQ(2.0, *t);
 }
 
+TEST(IntersectionTestsTest, RayTriangleParametricPreservesNegativeDistance) {
+    // Source-derived from cesium-native IntersectionTests::rayTriangle:
+    // the parametric helper reports hits behind the origin, while the point
+    // wrapper filters them out.
+    const Ray ray(Vec3(0.25, 0.25, 1.0), Vec3(0.0, 0.0, 1.0));
+    const Vec3 v0(-1.0, 0.0, 0.0);
+    const Vec3 v1(1.0, 0.0, 0.0);
+    const Vec3 v2(0.0, 1.0, 0.0);
+
+    const auto t = IntersectionTests::rayTriangleParametric(
+        ray,
+        v0,
+        v1,
+        v2,
+        false);
+
+    ASSERT_TRUE(t.has_value());
+    EXPECT_DOUBLE_EQ(-1.0, *t);
+    EXPECT_FALSE(IntersectionTests::rayTriangle(ray, v0, v1, v2, false)
+                     .has_value());
+}
+
 TEST(IntersectionTestsTest, RayAabbMatchesCesiumNativeCases) {
     // Ported from cesium-native CesiumGeometry/test/TestIntersectionTests.cpp.
     struct Case {
