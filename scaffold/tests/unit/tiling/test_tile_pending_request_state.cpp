@@ -60,3 +60,36 @@ TEST(TilePendingRequestStateTest, RejectsEmptyCacheKeys) {
     EXPECT_EQ(0u, counts.contentRequests);
     EXPECT_EQ(0u, counts.totalRequests);
 }
+
+TEST(TilePendingRequestStateTest, CancelsAndRejectsDuringDestroy) {
+    TilePendingRequestState state;
+    CancellationToken terrainToken;
+    CancellationToken contentToken;
+
+    EXPECT_TRUE(state.beginTerrainRequest("terrain", terrainToken));
+    EXPECT_TRUE(state.beginContentRequest("content", contentToken));
+
+    state.markDestroyingAndCancelRequests();
+
+    EXPECT_TRUE(state.destroying());
+    EXPECT_TRUE(terrainToken.isCancelled());
+    EXPECT_TRUE(contentToken.isCancelled());
+
+    PendingRequestCounts counts = state.counts();
+    EXPECT_EQ(1u, counts.terrainRequests);
+    EXPECT_EQ(1u, counts.contentRequests);
+    EXPECT_EQ(2u, counts.totalRequests);
+    EXPECT_FALSE(state.beginContentRequest("content", CancellationToken{}));
+
+    state.completeContentRequest("content");
+    state.completeTerrainRequest("terrain");
+    EXPECT_TRUE(state.empty());
+
+    state.clearAfterCallbacksComplete();
+
+    EXPECT_FALSE(state.destroying());
+    EXPECT_TRUE(state.beginTerrainRequest(
+        "terrain-after-destroy",
+        CancellationToken{}));
+    state.completeTerrainRequest("terrain-after-destroy");
+}
