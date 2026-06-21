@@ -244,6 +244,12 @@ add_executable(test_quantized_mesh_water_mask
 target_link_libraries(test_quantized_mesh_water_mask PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_quantized_mesh_water_mask COMMAND test_quantized_mesh_water_mask)
 
+add_executable(test_quantized_mesh_index_width
+    unit/terrain/test_quantized_mesh_index_width.cpp
+)
+target_link_libraries(test_quantized_mesh_index_width PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_quantized_mesh_index_width COMMAND test_quantized_mesh_index_width)
+
 add_executable(test_quantized_mesh_parser_validation
     unit/terrain/test_quantized_mesh_parser_validation.cpp
 )
