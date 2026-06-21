@@ -317,3 +317,41 @@ TEST(TilePendingLoadQueueTest, KeepsOneResultShapePerKind) {
     EXPECT_FALSE(extraUpload.has_value());
     EXPECT_FALSE(extraTerminal.has_value());
 }
+
+TEST(TilePendingLoadQueueTest, KeepsTerminalResultWhenBudgetBlocks) {
+    TilePendingLoadQueue queue;
+    const TileKey key{"test", 1, 0, 0};
+
+    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+        key,
+        "terminal",
+        TileLoadPriorityGroup::Urgent,
+        0.0,
+        TerrainTileLoadStatus::RetryLater});
+
+    FrameResourceBudgetConfig blockedConfig;
+    blockedConfig.maxTerminalStateTransitionsPerFrame = 0;
+    FrameResourceBudget blockedBudget;
+    blockedBudget.beginFrame(1, blockedConfig);
+
+    std::optional<PendingTerminalResult> blocked =
+        queue.takeHighestPriorityTerminalResult(blockedBudget);
+
+    EXPECT_FALSE(blocked.has_value());
+    EXPECT_EQ(1u, queue.terrainTerminalResultCount());
+    EXPECT_TRUE(queue.containsCacheKey("terminal"));
+
+    FrameResourceBudgetConfig retryConfig;
+    retryConfig.maxTerminalStateTransitionsPerFrame = 1;
+    FrameResourceBudget retryBudget;
+    retryBudget.beginFrame(2, retryConfig);
+
+    std::optional<PendingTerminalResult> retry =
+        queue.takeHighestPriorityTerminalResult(retryBudget);
+
+    ASSERT_TRUE(retry.has_value());
+    ASSERT_TRUE(retry->terrainResult.has_value());
+    EXPECT_EQ(PendingTerminalResultKind::Terrain, retry->kind);
+    EXPECT_EQ("terminal", retry->terrainResult->cacheKey);
+    EXPECT_EQ(0u, queue.terrainTerminalResultCount());
+}
