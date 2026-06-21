@@ -79,6 +79,11 @@ struct TilesetTestAccess {
             .containsWorkForCacheKey(terrainCacheKey(tileset, key));
     }
 
+    static bool hasTerrainCache(Tileset& tileset, const TileKey& key) {
+        return tileset.contentLifecycle_.terrainCache().count(
+                   terrainCacheKey(tileset, key)) > 0;
+    }
+
     static bool claimContentUpload(Tileset& tileset, const TileKey& key) {
         FrameResourceBudgetConfig config;
         config.maxMainThreadFinalizesPerFrame = 1;
@@ -984,6 +989,49 @@ TEST(
     EXPECT_EQ(TilesetTestAccess::findTile(tileset, childKey), nullptr);
     EXPECT_FALSE(TilesetTestAccess::loadQueueContainsAny(tileset, childKey));
     EXPECT_FALSE(TilesetTestAccess::containsPendingWorkFor(tileset, childKey));
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    ClearChildrenIgnoresStaleTerrainCallback) {
+    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
+    ManualCompletionTerrainProvider* rawProvider = provider.get();
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(1.0f));
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_FALSE(root->children.empty());
+    ASSERT_NE(root->children.front(), nullptr);
+
+    const TileKey childKey = root->children.front()->key;
+    TilesetTestAccess::requestMissingTile(tileset, childKey);
+    ASSERT_EQ(rawProvider->pendingRequests.size(), 1u);
+
+    TilesetTestAccess::clearChildrenRecursively(tileset, *root);
+    ASSERT_EQ(TilesetTestAccess::findTile(tileset, childKey), nullptr);
+
+    EXPECT_TRUE(rawProvider->completeWithHeightmap(
+        childKey,
+        makeFlatHeightmap(2.0f)));
+    TilesetTestAccess::processPendingUploads(tileset);
+
+    EXPECT_EQ(TilesetTestAccess::findTile(tileset, childKey), nullptr);
+    EXPECT_FALSE(TilesetTestAccess::hasTerrainCache(tileset, childKey));
+    const TilesetLoadDiagnostics diagnostics = tileset.loadDiagnostics();
+    EXPECT_EQ(diagnostics.pendingTerrainTotal(), 0);
+    EXPECT_EQ(diagnostics.pendingContentTotal(), 0);
 }
 
 TEST(
