@@ -865,6 +865,34 @@ TEST(RasterOverlayLifecycleTest, FrameBudgetLimitsRasterWorkerRequests) {
               secondTile->getState());
 }
 
+TEST(RasterOverlayLifecycleTest, NonUnloadedRasterTilesDoNotConsumeRequestBudgetLikeCesiumNative) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    auto loadedTile =
+        provider.getTile(TileKey{scheme->id(), 1, 0, 0});
+    auto failedTile =
+        provider.getTile(TileKey{scheme->id(), 1, 1, 0});
+    loadedTile->setTexture(std::make_unique<TestTexture>(2, 2));
+    failedTile->setState(RasterOverlayTile::LoadState::Failed);
+
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 1;
+    config.maxNetworkInflight = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    EXPECT_TRUE(provider.loadTileThrottled(*loadedTile, &budget));
+    EXPECT_TRUE(provider.loadTileThrottled(*failedTile, &budget));
+    EXPECT_EQ(0, imagery.requestCount);
+    EXPECT_EQ(0u, budget.networkRequestsIssued());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              loadedTile->getState());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed,
+              failedTile->getState());
+}
+
 TEST(RasterOverlayLifecycleTest, FrameBudgetAccountsRectangleSourceRequests) {
     ImmediateImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

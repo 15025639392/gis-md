@@ -616,9 +616,8 @@ RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
             ? combinedBounds->computeUnion(*intersection)
             : *intersection;
     }
-    const bool edgeStretchMode = !combinedBounds;
-    if (edgeStretchMode) {
-        combinedBounds = targetBounds;
+    if (!combinedBounds) {
+        return {};
     }
 
     int width = static_cast<int>(std::ceil(combinedBounds->width() /
@@ -654,23 +653,6 @@ RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
 
             const LoadedSourceImage* source = findSourceForPosition(
                 scheme, sourceByKey, sources, lng, lat, sourceZoom);
-            if (!source && edgeStretchMode) {
-                for (const auto& candidate : sources) {
-                    const double sampleLng = clampToRange(
-                        lng,
-                        candidate.bounds.west(),
-                        candidate.bounds.east());
-                    const double sampleLat = clampToRange(
-                        lat,
-                        candidate.bounds.south(),
-                        candidate.bounds.north());
-                    if (candidate.image &&
-                        candidate.bounds.contains(sampleLng, sampleLat)) {
-                        source = &candidate;
-                        break;
-                    }
-                }
-            }
             if (!source || !source->image) continue;
 
             const DecodedImage& src = *source->image;
@@ -1241,12 +1223,7 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
     std::optional<Rectangle> sourceBounds =
         geometryBounds.computeIntersection(coverageRectangle_);
     if (!sourceBounds) {
-        if (!isBaseLayer(owner_)) {
-            return nullptr;
-        }
-        sourceBounds = edgeStretchedSourceBounds(
-            geometryBounds,
-            coverageRectangle_);
+        return nullptr;
     }
 
     RectangleSourcePlan sourcePlan = buildRectangleSourcePlan(
