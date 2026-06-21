@@ -555,6 +555,29 @@ TEST(TileBoundingVolumeTest, RegionDistanceFallsBackToObbWhenCartographicFailsLi
         1e-6);
 }
 
+TEST(TileBoundingVolumeTest, TileRegionDistanceUsesExactTerrainHeightRangeLikeCesiumNative) {
+    const Rectangle bounds = Rectangle::fromDegrees(-5.0, -3.0, 7.0, 4.0);
+    const TileKey key{"Geographic-TMS", 5, 20, 12};
+    TilesetTile looseTile(key, bounds);
+    TilesetTile exactTile(key, bounds);
+    exactTile.content.renderContent.setTerrainHeightRange(-50.0, 1234.0);
+
+    const double centerLongitude = (bounds.west() + bounds.east()) * 0.5;
+    const double centerLatitude = (bounds.south() + bounds.north()) * 0.5;
+    const Vec3 camera = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic::fromRadians(centerLongitude, centerLatitude, 13000.0));
+
+    const double looseDistance =
+        TileBoundsMetrics::approximateDistanceToTileBounds(looseTile, camera);
+    const double exactDistance =
+        TileBoundsMetrics::approximateDistanceToTileBounds(exactTile, camera);
+
+    EXPECT_NEAR(
+        TileBoundsMetrics::kDefaultTerrainMaximumHeight - 1234.0,
+        exactDistance - looseDistance,
+        1e-6);
+}
+
 TEST(TileBoundingVolumeTest, RegionDistanceKeepsObbLowerBoundLikeCesiumNative) {
     const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
     const Rectangle rectangle = Rectangle::fromDegrees(-5.0, -3.0, 7.0, 4.0);
