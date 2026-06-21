@@ -2,7 +2,6 @@
 
 #include "RasterMappedToTilesetTile.h"
 #include "RasterOverlayScreenSpaceMetrics.h"
-#include "TileRasterOverlayDetailsGenerator.h"
 #include "TilesetTile.h"
 
 #include "../core/resources/FrameResourceBudget.h"
@@ -53,12 +52,6 @@ SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
             tile.rasterOverlayState.ensureMapping(i);
         const RasterOverlayProjection projection =
             activeProvider->getProjection();
-        if (tile.boundingVolume) {
-            TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
-                tile.content.renderContent,
-                *tile.boundingVolume,
-                projection);
-        }
         const Rectangle* geometryRectangle =
             overlayDetails.findRectangleForOverlayProjection(projection);
         std::optional<Rectangle> boundingRegionRectangle;
