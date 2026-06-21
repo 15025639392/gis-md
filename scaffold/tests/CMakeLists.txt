@@ -358,6 +358,12 @@ add_executable(test_tileset_request_missing_budget
 target_link_libraries(test_tileset_request_missing_budget PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tileset_request_missing_budget COMMAND test_tileset_request_missing_budget)
 
+add_executable(test_tileset_lifecycle
+    unit/tiling/test_tileset_lifecycle.cpp
+)
+target_link_libraries(test_tileset_lifecycle PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tileset_lifecycle COMMAND test_tileset_lifecycle)
+
 add_executable(test_tile_frame_resource_budget_planner
     unit/tiling/test_tile_frame_resource_budget_planner.cpp
 )
