@@ -80,3 +80,49 @@ TEST(
     EXPECT_NEAR(entry.surfaceClipUv[2], 0.5f, 1e-6f);
     EXPECT_NEAR(entry.surfaceClipUv[3], 0.5f, 1e-6f);
 }
+
+TEST(
+    TileRenderPlanFinalizerTest,
+    FullGeometryReplacesEarlierClippedFallback) {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
+    TilesetTile child(childKey, Rectangle{0.0, 1.0, 1.0, 2.0}, &parent);
+    parent.markRenderContentDone();
+    parent.content.renderContent.setSurfaceGpuBuffers(
+        std::make_unique<DummyBuffer>(4),
+        nullptr);
+
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {TileCacheKey::forTile(parentKey), &parent},
+        {TileCacheKey::forTile(childKey), &child}};
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(childKey);
+    plan.visibleTiles.push_back(parentKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            false,
+            0,
+            1},
+        [&tiles](const TileKey& key) {
+            return findTile(tiles, key);
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return tile.hasSurfaceDrawable();
+        });
+
+    ASSERT_EQ(plan.renderEntries.size(), 1u);
+    const TileRenderEntry& entry = plan.renderEntries.front();
+    EXPECT_EQ(entry.selectedKey, parentKey);
+    EXPECT_EQ(entry.renderKey, parentKey);
+    EXPECT_EQ(entry.reason, TileRenderEntryReason::Direct);
+    EXPECT_FALSE(entry.usesAncestorFallback);
+    EXPECT_FALSE(entry.surfaceClipEnabled);
+    EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 0);
+}
