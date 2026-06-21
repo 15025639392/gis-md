@@ -232,6 +232,12 @@ add_executable(test_quantized_mesh_parser
 target_link_libraries(test_quantized_mesh_parser PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_quantized_mesh_parser COMMAND test_quantized_mesh_parser)
 
+add_executable(test_quantized_mesh_metadata_availability
+    unit/terrain/test_quantized_mesh_metadata_availability.cpp
+)
+target_link_libraries(test_quantized_mesh_metadata_availability PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_quantized_mesh_metadata_availability COMMAND test_quantized_mesh_metadata_availability)
+
 add_executable(test_quantized_mesh_parser_validation
     unit/terrain/test_quantized_mesh_parser_validation.cpp
 )
