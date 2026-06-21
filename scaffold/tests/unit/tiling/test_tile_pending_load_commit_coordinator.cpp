@@ -10,6 +10,41 @@
 
 using namespace earth_engine;
 
+namespace {
+
+void expectContentTerminalClearsEmptyMarker(TileContentLoadStatus status) {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "test:0:0:0";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
+    PendingContentTerminalResult result{
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        status};
+    bool childrenEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitContentTerminalResult(
+        result,
+        emptyContentRegistry,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
+    EXPECT_TRUE(childrenEnsured);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
+    EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
+}
+
+} // namespace
+
 TEST(TilePendingLoadCommitCoordinatorTest,
      MissingTileTerminalResultsHaveNoSideEffects) {
     const TileKey terrainKey{"test", 0, 0, 0};
@@ -100,6 +135,12 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_FALSE(gltfEnsured);
     EXPECT_FALSE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     ContentRetryAndCancelledClearEmptyMarker) {
+    expectContentTerminalClearsEmptyMarker(TileContentLoadStatus::RetryLater);
+    expectContentTerminalClearsEmptyMarker(TileContentLoadStatus::Cancelled);
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
