@@ -195,3 +195,63 @@ TEST(
         lifecycle.requestState().completeContentRequest("content-request");
     }
 }
+
+TEST(
+    TileLoadDiagnosticsCollectorTest,
+    CountsEveryLoadStateAndContentKind) {
+    TileLoadQueue loadQueue;
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudget resourceBudget;
+    TileUnloadQueue unloadQueue;
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    tiles["unloading"] = makeTile(
+        "unloading",
+        TileLoadState::Unloading,
+        TileContentKind::Unknown);
+    tiles["failed-temporarily"] = makeTile(
+        "failed-temporarily",
+        TileLoadState::FailedTemporarily,
+        TileContentKind::Empty);
+    tiles["unloaded"] = makeTile(
+        "unloaded",
+        TileLoadState::Unloaded,
+        TileContentKind::External);
+    tiles["content-loading"] = makeTile(
+        "content-loading",
+        TileLoadState::ContentLoading,
+        TileContentKind::Render);
+    tiles["content-loaded"] = makeTile(
+        "content-loaded",
+        TileLoadState::ContentLoaded,
+        TileContentKind::Unknown);
+    tiles["done"] = makeTile(
+        "done",
+        TileLoadState::Done,
+        TileContentKind::Render);
+    tiles["failed"] = makeTile(
+        "failed",
+        TileLoadState::Failed,
+        TileContentKind::Unknown);
+
+    const TilesetLoadDiagnostics diag =
+        TileLoadDiagnosticsCollector::collect(
+            loadQueue,
+            lifecycle,
+            resourceBudget,
+            unloadQueue,
+            tiles);
+
+    EXPECT_EQ(diag.loadUnloadingTiles, 1);
+    EXPECT_EQ(diag.loadFailedTemporarilyTiles, 1);
+    EXPECT_EQ(diag.loadUnloadedTiles, 1);
+    EXPECT_EQ(diag.loadContentLoadingTiles, 1);
+    EXPECT_EQ(diag.loadContentLoadedTiles, 1);
+    EXPECT_EQ(diag.loadDoneTiles, 1);
+    EXPECT_EQ(diag.loadFailedTiles, 1);
+
+    EXPECT_EQ(diag.contentUnknownTiles, 3);
+    EXPECT_EQ(diag.contentEmptyTiles, 1);
+    EXPECT_EQ(diag.contentExternalTiles, 1);
+    EXPECT_EQ(diag.contentRenderTiles, 2);
+}
