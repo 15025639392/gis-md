@@ -326,7 +326,13 @@ std::string GoogleMapTilesImageryProvider::id() const {
 }
 
 bool GoogleMapTilesImageryProvider::supportsTile(const TileKey& key) const {
-    return XYZImageryProvider::supportsTile(key);
+    if (!XYZImageryProvider::supportsTile(key)) {
+        return false;
+    }
+    if (!hasKnownAvailability()) {
+        return true;
+    }
+    return isTileKnownAvailable(key);
 }
 
 std::string GoogleMapTilesImageryProvider::buildUrl(
@@ -342,6 +348,33 @@ std::string GoogleMapTilesImageryProvider::buildUrl(
     return withQuery(
         options_.apiBaseUrl + path,
         {{"session", options_.session}, {"key", options_.key}});
+}
+
+void GoogleMapTilesImageryProvider::addAvailableTileRanges(
+    const std::vector<GoogleMapTilesTileRange>& ranges) {
+    availableRanges_.insert(
+        availableRanges_.end(),
+        ranges.begin(),
+        ranges.end());
+}
+
+bool GoogleMapTilesImageryProvider::hasKnownAvailability() const {
+    return !availableRanges_.empty();
+}
+
+bool GoogleMapTilesImageryProvider::isTileKnownAvailable(
+    const TileKey& key) const {
+    if (key.schemeId != schemeId()) {
+        return false;
+    }
+    for (const GoogleMapTilesTileRange& range : availableRanges_) {
+        if (range.level == key.z &&
+            key.x >= range.minimumX && key.x <= range.maximumX &&
+            key.y >= range.minimumY && key.y <= range.maximumY) {
+            return true;
+        }
+    }
+    return false;
 }
 
 GoogleMapTilesImagerySource createGoogleMapTilesImagerySource(

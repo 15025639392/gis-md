@@ -82,6 +82,10 @@ public:
     std::string type() const override { return "google-map-tiles-imagery"; }
     bool supportsTile(const TileKey& key) const override;
     std::string buildUrl(const TileKey& key) const override;
+    void addAvailableTileRanges(
+        const std::vector<GoogleMapTilesTileRange>& ranges);
+    bool hasKnownAvailability() const;
+    bool isTileKnownAvailable(const TileKey& key) const;
 
     const GoogleMapTilesExistingSessionOptions& options() const {
         return options_;
@@ -89,6 +93,7 @@ public:
 
 private:
     GoogleMapTilesExistingSessionOptions options_;
+    std::vector<GoogleMapTilesTileRange> availableRanges_;
 };
 
 std::string googleMapTilesCreateSessionUrl(

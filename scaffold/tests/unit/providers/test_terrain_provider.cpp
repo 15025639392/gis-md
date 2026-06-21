@@ -1085,6 +1085,31 @@ TEST(GoogleMapTilesImageryProviderTest, RejectsUnsupportedTiles) {
     EXPECT_EQ("", provider.buildUrl(TileKey{"XYZ-WebMercator", 2, 0, 0}));
 }
 
+TEST(GoogleMapTilesImageryProviderTest, KnownAvailabilityRejectsUnavailableTiles) {
+    GoogleMapTilesExistingSessionOptions options;
+    options.session = "session";
+    options.key = "key";
+    options.maximumLevel = 2;
+    GoogleMapTilesImageryProvider provider(options);
+
+    EXPECT_TRUE(provider.supportsTile(TileKey{"XYZ-WebMercator", 2, 3, 3}));
+    EXPECT_FALSE(provider.hasKnownAvailability());
+
+    provider.addAvailableTileRanges(
+        {GoogleMapTilesTileRange{2, 0, 0, 1, 1},
+         GoogleMapTilesTileRange{1, 0, 0, 0, 0},
+         GoogleMapTilesTileRange{0, 0, 0, 0, 0}});
+
+    EXPECT_TRUE(provider.hasKnownAvailability());
+    EXPECT_TRUE(provider.isTileKnownAvailable(
+        TileKey{"XYZ-WebMercator", 2, 1, 1}));
+    EXPECT_FALSE(provider.isTileKnownAvailable(
+        TileKey{"XYZ-WebMercator", 2, 3, 3}));
+    EXPECT_TRUE(provider.supportsTile(TileKey{"XYZ-WebMercator", 2, 1, 1}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"XYZ-WebMercator", 2, 3, 3}));
+    EXPECT_EQ("", provider.buildUrl(TileKey{"XYZ-WebMercator", 2, 3, 3}));
+}
+
 TEST(GoogleMapTilesImageryProviderTest, BuildsCreateSessionRequestLikeCesiumNative) {
     GoogleMapTilesNewSessionOptions options;
     options.apiBaseUrl = "https://tile.googleapis.com";
