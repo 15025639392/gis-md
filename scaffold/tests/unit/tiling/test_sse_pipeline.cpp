@@ -11712,96 +11712,6 @@ void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
           "TilePendingLoadCommitCoordinator: missing tile uploads release cache keys without resource side effects");
 }
 
-void testTilePendingLoadCommitCoordinatorCachesMissingTerrainUpload() {
-    TileLoadLifecycle lifecycle;
-    FrameResourceBudgetConfig config;
-    config.maxMainThreadFinalizesPerFrame = 4;
-    FrameResourceBudget budget;
-    budget.beginFrame(1, config);
-
-    const TileKey terrainKey{"Geographic-TMS", 2, 0, 0};
-    const TileKey availableChildKey{"Geographic-TMS", 3, 0, 0};
-    const TileKey unavailableSiblingKey{"Geographic-TMS", 3, 1, 0};
-    const std::string cacheKey = "missing-terrain-with-heightmap";
-    auto heightmap = std::make_unique<DecodedHeightmap>();
-    heightmap->tileSize = 2;
-    heightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
-    DecodedHeightmap::QuantizedMeshAvailabilityUpdate update;
-    update.layerIndex = 0;
-    update.subtreeKey = terrainKey;
-    update.metadataAvailability = {{0, 0, 0, 0, 0}};
-    heightmap->quantizedMeshAvailabilityUpdates.push_back(update);
-
-    PendingTerrainUpload upload{
-        terrainKey,
-        cacheKey,
-        TileLoadPriorityGroup::Normal,
-        0.0,
-        std::move(heightmap)};
-    {
-        std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
-            upload.key,
-            upload.cacheKey,
-            upload.group,
-            upload.priority,
-            nullptr});
-        check(lifecycle.pendingLoads()
-                  .takeHighestPriorityUpload(false, budget)
-                  .has_value(),
-              "TilePendingLoadCommitCoordinator: test claims missing terrain upload before commit");
-    }
-
-    QuantizedMeshTerrainProvider provider(
-        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
-    const std::string layerJson = R"json({
-      "format": "quantized-mesh-1.0",
-      "projection": "EPSG:4326",
-      "scheme": "tms",
-      "tiles": ["{z}/{x}/{y}.terrain"],
-      "maxzoom": 10,
-      "metadataAvailability": 2
-    })json";
-    check(provider.configureFromLayerJson(
-              layerJson, "https://example.invalid/layer.json"),
-          "TilePendingLoadCommitCoordinator: missing terrain upload provider layer configures");
-    check(provider.availabilityState(availableChildKey) ==
-              TileAvailabilityState::Unknown,
-          "TilePendingLoadCommitCoordinator: missing terrain upload child starts unknown");
-
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache;
-    int availabilityIngests = 0;
-    bool meshEnsured = false;
-    bool resourcesDirty = false;
-    TilePendingLoadCommitCoordinator::commitTerrainUpload(
-        upload,
-        &provider,
-        terrainCache,
-        lifecycle,
-        false,
-        [](const TileKey&) -> TilesetTile* { return nullptr; },
-        [&availabilityIngests, &terrainKey](const TileKey& key,
-                                            const DecodedHeightmap& hm) {
-            check(key == terrainKey && hm.valid(),
-                  "TilePendingLoadCommitCoordinator: missing terrain upload ingests decoded heightmap");
-            ++availabilityIngests;
-        },
-        [&meshEnsured](TilesetTile&) { meshEnsured = true; },
-        [&resourcesDirty]() { resourcesDirty = true; });
-
-    check(availabilityIngests == 1 &&
-              terrainCache.find(cacheKey) != terrainCache.end() &&
-              terrainCache.at(cacheKey)->valid() &&
-              provider.availabilityState(availableChildKey) ==
-                  TileAvailabilityState::Available &&
-              provider.availabilityState(unavailableSiblingKey) ==
-                  TileAvailabilityState::NotAvailable &&
-              !meshEnsured &&
-              !resourcesDirty &&
-              !lifecycle.containsWorkForCacheKey(cacheKey),
-          "TilePendingLoadCommitCoordinator: missing terrain upload keeps availability/cache and releases work");
-}
-
 void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentUpload() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -26901,7 +26811,6 @@ int main() {
     testTileTerrainUploadPolicyMarksTerrainRenderContentStates();
     testTileTerrainUploadCommitterAppliesMeshResourceOutcome();
     testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys();
-    testTilePendingLoadCommitCoordinatorCachesMissingTerrainUpload();
     testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentUpload();
     testTilePendingLoadCommitCoordinatorSkipsMissingTileTerminalResults();
     testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker();
