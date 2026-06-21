@@ -528,6 +528,18 @@ TEST(IntersectionTestsTest, RaySphereRejectsZeroDistanceTangent) {
     EXPECT_FALSE(IntersectionTests::raySphere(ray, sphere).has_value());
 }
 
+TEST(IntersectionTestsTest, RaySphereReturnsPointFromCesiumNativeParametricHit) {
+    // Source-derived from cesium-native IntersectionTests::raySphere: the
+    // wrapper converts the accepted parametric distance back through the ray.
+    const Ray ray(Vec3(202.0, 0.0, 0.0), Vec3(-1.0, 0.0, 0.0));
+    const BoundingSphere sphere(Vec3(200.0, 0.0, 0.0), 1.0);
+
+    const auto intersection = IntersectionTests::raySphere(ray, sphere);
+
+    ASSERT_TRUE(intersection.has_value());
+    EXPECT_EQ(Vec3(201.0, 0.0, 0.0), *intersection);
+}
+
 TEST(IntersectionTestsTest, PointInTriangle2dMatchesCesiumNativeCases) {
     // Ported from cesium-native CesiumGeometry/test/TestIntersectionTests.cpp.
     struct Case {
