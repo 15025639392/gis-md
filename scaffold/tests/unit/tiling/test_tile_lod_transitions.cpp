@@ -168,3 +168,48 @@ TEST(TileLodTransitionsTest, UsesNativeDeltaState) {
     TilesetTestAccess::updateLodTransitions(tileset, 0.016);
     EXPECT_EQ(TilesetTestAccess::fadingOutSetSize(tileset), 0u);
 }
+
+TEST(TileLodTransitionsTest, AdditiveRefinedTileFadesOutAfterLeavingSelection) {
+    Tileset tileset = makeTransitionTileset();
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    TilesetTile* child = TilesetTestAccess::ensureTile(tileset, childKey);
+    ASSERT_NE(root, nullptr);
+    ASSERT_NE(child, nullptr);
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        childKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(tileset, *child);
+
+    child->refine = TileRefine::Add;
+    child->selectionFrameState.previousSelectionState =
+        TileSelectionState::Refined;
+    child->selectionFrameState.selectionState = TileSelectionState::NotVisited;
+
+    TilesetTestAccess::beginTilePlan(tileset);
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
+    TilesetTestAccess::updateLodTransitions(tileset, 0.25);
+
+    const TilePlan& plan = TilesetTestAccess::tilePlan(tileset);
+    bool childFadingOut = false;
+    float childOpacity = 0.0f;
+    for (const TileTransition& transition : plan.tilesFadingOut) {
+        if (transition.key == childKey) {
+            childFadingOut = true;
+            childOpacity = transition.opacity;
+            break;
+        }
+    }
+
+    EXPECT_TRUE(childFadingOut);
+    EXPECT_LT(std::abs(childOpacity - 0.75f), 1e-6f);
+}
