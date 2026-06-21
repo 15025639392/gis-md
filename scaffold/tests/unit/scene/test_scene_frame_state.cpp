@@ -588,6 +588,24 @@ TEST(SceneFrameStateTest, AdditionalTilesetRendersGltfContent) {
     EXPECT_GT(scene.diagnostics().renderGltfPrimitives, 0);
     EXPECT_EQ(scene.diagnostics().contentTilesets, 1);
     EXPECT_GT(scene.diagnostics().contentVisibleTiles, 0);
+    EXPECT_GT(scene.diagnostics().terrainRenderEntriesPlanned, 0);
+    EXPECT_GT(scene.diagnostics().terrainRenderEntriesSelectedPlanned, 0);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingPlanned, 0);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesAncestorFallback, 0);
+    EXPECT_GE(scene.diagnostics().terrainRenderEntriesSynchronousPrep, 0);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesDeferredPrep, 0);
+    EXPECT_GT(scene.diagnostics().terrainRenderEntriesDrawn, 0);
+    EXPECT_GT(scene.diagnostics().terrainRenderEntriesSelectedDrawn, 0);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingDrawn, 0);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesMissed, 0);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedMissed, 0);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingMissed, 0);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesDeferred, 0);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedDeferred, 0);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingDeferred, 0);
+    EXPECT_GT(scene.diagnostics().terrainSurfaceCommandsSubmitted, 0);
+    EXPECT_EQ(scene.diagnostics().globeFallbackCommands, 0);
+    EXPECT_EQ(scene.diagnostics().globeFallbackMaskedTerrainEntries, 0);
     EXPECT_EQ(scene.tileset(), terrainRaw);
     EXPECT_NEAR(scene.tileset()->sampleHeight(0.0, 0.0), 123.0f, 1e-6f);
 }
