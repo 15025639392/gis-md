@@ -951,6 +951,38 @@ TEST(RasterOverlayLifecycleTest, ConcurrentRectangleTilesShareProviderSourceTile
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, eastTile->getState());
 }
 
+TEST(RasterOverlayLifecycleTest, DirectAndRectangleTilesShareProviderSourceTileAssetLikeCesiumNative) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+
+    auto directTile = provider.getTile(sourceKey);
+    auto rectangleTile = provider.getTile(westHalf, 256.0, 512.0);
+    ASSERT_NE(nullptr, directTile);
+    ASSERT_NE(nullptr, rectangleTile);
+
+    ASSERT_TRUE(provider.loadTile(*directTile));
+    ASSERT_TRUE(provider.loadTile(*rectangleTile));
+    EXPECT_EQ(1, static_cast<int>(imagery.requestedKeys.size()));
+    ASSERT_EQ(1, static_cast<int>(imagery.pending.size()));
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
+
+    imagery.completeNext();
+
+    EXPECT_EQ(2, provider.processPendingUploads(false));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, directTile->getState());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, rectangleTile->getState());
+}
+
 TEST(RasterOverlayLifecycleTest, SourceTileDepotHonorsSubTileCacheByteBudget) {
     auto ownedImagery = std::make_unique<ParentFallbackImageryProvider>();
     ParentFallbackImageryProvider* imagery = ownedImagery.get();

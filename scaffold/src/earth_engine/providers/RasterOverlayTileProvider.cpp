@@ -1477,26 +1477,42 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
         return false;
     }
 
-    // Mark as Loading
     tile.setState(RasterOverlayTile::LoadState::Loading);
-    inFlightRequests_.insert(ck);
-    ++activeRasterSourceRequests_;
+    {
+        std::lock_guard<std::mutex> lock(pendingMutex_);
+        inFlightRequests_.insert(ck);
+    }
 
-    // cesium-native: delegate to imagery provider for async HTTP load
-    CancellationToken token;
     auto* self = this;
-    provider_.requestTile(key, token,
-        [self, ck](const TileKey& k, std::unique_ptr<DecodedImage> image) {
+    RectangleSourcePlan sourcePlan;
+    sourcePlan.sourceZoom = key.z;
+    sourcePlan.range = TileRange{key.x, key.y, key.x, key.y};
+    sourcePlan.sourceKeys.push_back(key);
+    const Rectangle targetBounds = tile.getRectangle();
+    auto request = std::make_shared<RectangleSourceRequest>(
+        provider_,
+        scheme_,
+        sourceTileDepotCache_,
+        sourceTileDepotCacheLru_,
+        sourceTileDepotCacheBytes_,
+        sourceTileDepotGeneration_,
+        sourceTileDepotInFlight_,
+        subTileCacheBytes_,
+        pendingMutex_,
+        std::move(sourcePlan),
+        targetBounds,
+        maximumCombinedTextureSize(textureUploader_.get(), maximumTextureSize_),
+        getMinimumLevel(),
+        getMaximumLevel(),
+        [self, ck](std::unique_ptr<DecodedImage> image,
+                   Rectangle rectangle,
+                   RasterOverlayTile::MoreDetailAvailable moreDetailAvailable) {
             std::lock_guard<std::mutex> lock(self->pendingMutex_);
-            if (self->activeRasterSourceRequests_ > 0) {
-                --self->activeRasterSourceRequests_;
-            }
             self->inFlightRequests_.erase(ck);
             if (image) {
                 self->pendingUploads_.push_back(
-                    {ck, std::move(image), self->scheme_.tileToRectangle(k)});
+                    {ck, std::move(image), rectangle, moreDetailAvailable});
             } else {
-                // Mark as Failed
                 auto it = self->tiles_.find(ck);
                 if (it != self->tiles_.end()) {
                     it->second->setMoreDetailAvailable(
@@ -1511,6 +1527,39 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
                 fr.retries++;
                 self->revision_.fetch_add(1, std::memory_order_relaxed);
             }
+        },
+        [self, ck]() {
+            std::lock_guard<std::mutex> lock(self->pendingMutex_);
+            self->inFlightRequests_.erase(ck);
+            auto it = self->tiles_.find(ck);
+            if (it != self->tiles_.end()) {
+                it->second->setMoreDetailAvailable(
+                    RasterOverlayTile::MoreDetailAvailable::No);
+                it->second->setState(RasterOverlayTile::LoadState::Failed);
+            }
+            auto& fr = self->failedTiles_[ck];
+            if (fr.firstFailTime == 0.0) {
+                fr.firstFailTime = std::chrono::duration<double>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+            }
+            fr.retries++;
+            self->revision_.fetch_add(1, std::memory_order_relaxed);
+        });
+
+    request->issueAll(
+        [self = this]() {
+            self->activeRasterSourceRequests_.fetch_add(
+                1,
+                std::memory_order_relaxed);
+        },
+        [self = this]() {
+            uint32_t current = self->activeRasterSourceRequests_.load(
+                std::memory_order_relaxed);
+            while (current > 0 &&
+                   !self->activeRasterSourceRequests_.compare_exchange_weak(
+                       current,
+                       current - 1,
+                       std::memory_order_relaxed)) {}
         });
 
     return true;
