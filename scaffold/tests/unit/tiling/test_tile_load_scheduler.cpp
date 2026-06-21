@@ -1334,3 +1334,77 @@ TEST(TileLoadSchedulerTest, StopsAfterTerrainDispatchBudgetBlock) {
     EXPECT_EQ(plannedKeys[1], blockedKey.x);
     EXPECT_EQ(markedKeys[0], firstKey.x);
 }
+
+TEST(TileLoadSchedulerTest, ContentThenTerrainShareDispatchBudget) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxTerrainContentNetworkRequestsPerFrame = 1;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey contentKey{"content", 0, 0, 0};
+    const TileKey terrainKey{"test", 0, 1, 0};
+    const TileKey skippedKey{"test", 0, 2, 0};
+    CountingContentProvider contentProvider;
+    DeferredTerrainProvider terrainProvider;
+    std::vector<std::string> plannedKeys;
+    std::vector<std::string> markedKeys;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {
+                TileLoadRequest{
+                    skippedKey,
+                    TileLoadPriorityGroup::Preload,
+                    10.0},
+                TileLoadRequest{
+                    terrainKey,
+                    TileLoadPriorityGroup::Normal,
+                    50.0},
+                TileLoadRequest{
+                    contentKey,
+                    TileLoadPriorityGroup::Urgent,
+                    100.0},
+            },
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                &terrainProvider,
+                &contentProvider},
+            cacheKeyForTile,
+            [&plannedKeys](
+                const TileKey& key,
+                const std::string&,
+                TilesetTile*& tileState) {
+                plannedKeys.push_back(
+                    key.schemeId + ":" + std::to_string(key.x));
+                tileState = nullptr;
+                TileLoadRequestSnapshot snapshot;
+                if (key.schemeId == "content") {
+                    snapshot.contentProviderSupportsTile = true;
+                } else {
+                    snapshot.terrainProviderSupportsTile = true;
+                }
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [&markedKeys](const TileKey& key) {
+                markedKeys.push_back(
+                    key.schemeId + ":" + std::to_string(key.x));
+            });
+
+    ASSERT_EQ(plannedKeys.size(), 2u);
+    ASSERT_EQ(markedKeys.size(), 1u);
+    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_EQ(contentProvider.requestCount, 1);
+    EXPECT_EQ(terrainProvider.requestCount, 0);
+    EXPECT_EQ(budget.terrainContentNetworkRequestsIssued(), 1u);
+    EXPECT_EQ(budget.networkRequestsIssued(), 1u);
+    EXPECT_EQ(plannedKeys[0], "content:0");
+    EXPECT_EQ(plannedKeys[1], "test:1");
+    EXPECT_EQ(markedKeys[0], "content:0");
+}
