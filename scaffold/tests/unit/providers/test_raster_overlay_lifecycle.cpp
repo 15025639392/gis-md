@@ -1385,6 +1385,117 @@ TEST(RasterOverlayLifecycleTest, FailedReadyTileDetachSkipsRendererCallbackLikeC
               mapped.getState());
 }
 
+TEST(RasterOverlayLifecycleTest, TemporaryAncestorDoesNotReportMoreDetailLikeCesiumNative) {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    RasterOverlayTileProvider provider(
+        overlay->getProvider(),
+        overlay->getTileScheme(),
+        nullptr);
+    provider.setOwner(overlay.get());
+
+    TileKey parentKey{overlay->getTileScheme().id(), 2, 1, 1};
+    TileKey childKey{overlay->getTileScheme().id(), 3, 2, 2};
+
+    RasterOverlayDetails parentDetails;
+    parentDetails.setGeographicRectangle(
+        overlay->getTileScheme().tileToRectangle(parentKey));
+    RasterOverlayDetails childDetails;
+    childDetails.setGeographicRectangle(
+        overlay->getTileScheme().tileToRectangle(childKey));
+    std::vector<RasterOverlayProjection> missing;
+
+    TilesetTile parentTile(
+        parentKey,
+        overlay->getTileScheme().tileToRectangle(parentKey));
+    RasterMappedToTilesetTile& parentMapping =
+        parentTile.rasterOverlayState.ensureMapping(0);
+    parentMapping.update(
+        parentKey,
+        parentDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missing,
+        nullptr,
+        0);
+    RasterOverlayTile* parentReady = parentMapping.getLoadingTile();
+    ASSERT_NE(nullptr, parentReady);
+    parentReady->setTexture(std::make_unique<TestTexture>(4, 4));
+    parentReady->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    parentMapping.update(
+        parentKey,
+        parentDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missing,
+        nullptr,
+        0);
+    ASSERT_EQ(parentReady, parentMapping.getReadyTile());
+    ASSERT_EQ(RasterMappedToTilesetTile::State::Unattached,
+              parentMapping.getState());
+
+    RasterMappedToTilesetTile childMapping;
+    childMapping.update(
+        childKey,
+        childDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missing,
+        nullptr,
+        0);
+    ASSERT_NE(nullptr, childMapping.getLoadingTile());
+
+    const RasterMappedToTilesetTile::MoreDetail fallback =
+        childMapping.update(
+            childKey,
+            childDetails,
+            512.0,
+            512.0,
+            provider,
+            nullptr,
+            missing,
+            &parentTile,
+            0);
+
+    EXPECT_EQ(RasterMappedToTilesetTile::MoreDetail::Unknown, fallback);
+    EXPECT_EQ(parentReady, childMapping.getReadyTile());
+    EXPECT_EQ(RasterMappedToTilesetTile::State::Unattached,
+              childMapping.getState());
+    EXPECT_FALSE(childMapping.isMoreDetailAvailable());
+
+    RecordingPrepareRendererResources recorder;
+    const RasterMappedToTilesetTile::MoreDetail attachedFallback =
+        childMapping.update(
+            childKey,
+            childDetails,
+            512.0,
+            512.0,
+            provider,
+            &recorder,
+            missing,
+            &parentTile,
+            0);
+
+    EXPECT_EQ(RasterMappedToTilesetTile::MoreDetail::Unknown,
+              attachedFallback);
+    EXPECT_EQ(RasterMappedToTilesetTile::State::TemporarilyAttached,
+              childMapping.getState());
+    EXPECT_EQ(parentReady, childMapping.getReadyTile());
+    EXPECT_FALSE(childMapping.isMoreDetailAvailable());
+    EXPECT_EQ(1, recorder.attachCount);
+    EXPECT_EQ(parentReady, recorder.lastRasterTile.get());
+    EXPECT_EQ(parentReady->getTexture(), recorder.lastTexture);
+}
+
 TEST(RasterOverlayLifecycleTest, MappedReadyTileRetainsProviderCacheUntilReleased) {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
