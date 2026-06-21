@@ -11,6 +11,7 @@
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
 #include "earth_engine/scene/Frustum.h"
+#include "earth_engine/scene/PresentationTrace.h"
 #include "earth_engine/scene/SceneFrameDiagnostics.h"
 #include "earth_engine/scene/SceneFrameStateBuilder.h"
 #include "earth_engine/scene/Scene.h"
@@ -668,6 +669,29 @@ TEST(SceneFrameStateTest, DiagnosticsExposeTerrainRenderEntryFallbackReasons) {
     EXPECT_NEAR(0.5f, command.surfaceClipUv[1], 1e-6f);
     EXPECT_NEAR(0.5f, command.surfaceClipUv[2], 1e-6f);
     EXPECT_NEAR(0.5f, command.surfaceClipUv[3], 1e-6f);
+
+    const PresentationTrace& trace = scene.presentationTrace();
+    ASSERT_EQ(1u, trace.tilesets.size());
+    ASSERT_EQ(1u, trace.tilesets.front().renderEntries.size());
+    const PresentationRenderEntryTrace& entryTrace =
+        trace.tilesets.front().renderEntries.front();
+    EXPECT_EQ(childKey, entryTrace.selectedKey);
+    EXPECT_EQ(rootKey, entryTrace.renderKey);
+    EXPECT_TRUE(entryTrace.usesAncestorFallback);
+    EXPECT_TRUE(entryTrace.surfaceClipEnabled);
+    EXPECT_EQ(command.surfaceClipUv, entryTrace.surfaceClipUv);
+
+    const auto commandTraceIt = std::find_if(
+        trace.commands.begin(),
+        trace.commands.end(),
+        [](const PresentationCommandTrace& commandTrace) {
+            return commandTrace.kind == RenderCommandKind::SurfaceTile;
+        });
+    ASSERT_NE(trace.commands.end(), commandTraceIt);
+    EXPECT_EQ(command.surfaceClipUv, commandTraceIt->surfaceClipUv);
+    EXPECT_NE(
+        std::string::npos,
+        commandTraceIt->stableKey.find("clip:Geographic-TMS/1/0/0"));
 }
 
 TEST(SceneFrameStateTest, RenderPlanKeepsSurfaceBeforeBaseRasterIsDrawable) {
