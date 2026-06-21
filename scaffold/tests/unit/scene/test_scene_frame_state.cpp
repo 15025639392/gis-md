@@ -5,6 +5,7 @@
 #include "earth_engine/scene/FrameState.h"
 #include "earth_engine/scene/Frustum.h"
 #include "earth_engine/scene/SceneFrameDiagnostics.h"
+#include "earth_engine/scene/SceneFrameStateBuilder.h"
 #include "earth_engine/scene/Scene.h"
 
 #include <vector>
@@ -117,4 +118,81 @@ TEST(SceneFrameStateTest, FrameDiagnosticsResetSmoothsAndRecordsTiming) {
     EXPECT_NEAR(diagnostics.sceneRenderMs, 3.75, 1e-9);
     EXPECT_NEAR(diagnostics.engineEndFrameMs, 4.0, 1e-9);
     EXPECT_NEAR(diagnostics.engineFrameCpuMs, 11.5, 1e-9);
+}
+
+TEST(SceneFrameStateTest, FrameStateBuilderPopulatesPerFrameState) {
+    Camera camera;
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
+    camera.lookAt(
+        target + Vec3(1000000.0, 0.0, 0.0),
+        target,
+        Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 600;
+    SceneFrameStateBuildResult buildResult =
+        SceneFrameStateBuilder::build(SceneFrameStateBuildInput{
+            frameState,
+            &camera,
+            42,
+            10.0,
+            0.5,
+            false,
+            nullptr,
+            true,
+            Vec3::unitX(),
+            8.0,
+            nullptr,
+            nullptr});
+
+    EXPECT_EQ(frameState.frameId, 42u);
+    EXPECT_NEAR(frameState.timeSeconds, 10.0, 1e-9);
+    EXPECT_NEAR(frameState.deltaSeconds, 0.5, 1e-9);
+    EXPECT_EQ(frameState.camera, &camera);
+    ASSERT_EQ(frameState.selectorViews.size(), 1u);
+    EXPECT_EQ(frameState.selectorViews.front().viewportHeightPixels, 600);
+    EXPECT_TRUE(frameState.hasInteractionFocus);
+    EXPECT_EQ(frameState.interactionFocusDirection, Vec3::unitX());
+    EXPECT_EQ(buildResult.environmentUpdateMs, 0.0);
+
+    std::vector<SelectorView> overrideViews{
+        makeSelectorView(camera, 320, 240),
+        makeSelectorView(camera, 640, 480)};
+    SceneFrameStateBuilder::build(SceneFrameStateBuildInput{
+        frameState,
+        &camera,
+        43,
+        12.6,
+        0.0,
+        true,
+        &overrideViews,
+        true,
+        Vec3::unitY(),
+        10.0,
+        nullptr,
+        nullptr});
+
+    ASSERT_EQ(frameState.selectorViews.size(), 2u);
+    EXPECT_EQ(frameState.selectorViews[0].viewportHeightPixels, 240);
+    EXPECT_EQ(frameState.selectorViews[1].viewportHeightPixels, 480);
+    EXPECT_FALSE(frameState.hasInteractionFocus);
+    EXPECT_EQ(frameState.interactionFocusDirection, Vec3::zero());
+
+    SceneFrameStateBuilder::build(SceneFrameStateBuildInput{
+        frameState,
+        &camera,
+        44,
+        12.7,
+        0.0,
+        true,
+        nullptr,
+        false,
+        Vec3::unitZ(),
+        -1.0,
+        nullptr,
+        nullptr});
+
+    EXPECT_TRUE(frameState.selectorViews.empty());
 }
