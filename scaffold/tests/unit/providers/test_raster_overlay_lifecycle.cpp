@@ -1385,6 +1385,40 @@ TEST(RasterOverlayLifecycleTest, FailedReadyTileDetachSkipsRendererCallbackLikeC
               mapped.getState());
 }
 
+TEST(RasterOverlayLifecycleTest, LoadInMainThreadOnlyPromotesLoadedTilesLikeCesiumNative) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    provider.getPlaceholderTile()->loadInMainThread();
+    EXPECT_EQ(RasterOverlayTile::LoadState::Placeholder,
+              provider.getPlaceholderTile()->getState());
+
+    TileKey key{scheme->id(), 1, 0, 0};
+    auto tileHandle = provider.getTile(key);
+    ASSERT_NE(nullptr, tileHandle);
+    RasterOverlayTile* tile = tileHandle.get();
+
+    tile->loadInMainThread();
+    EXPECT_EQ(RasterOverlayTile::LoadState::Unloaded, tile->getState());
+
+    tile->setState(RasterOverlayTile::LoadState::Loading);
+    tile->loadInMainThread();
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loading, tile->getState());
+
+    tile->setState(RasterOverlayTile::LoadState::Failed);
+    tile->loadInMainThread();
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, tile->getState());
+
+    tile->setTexture(std::make_unique<TestTexture>(4, 4));
+    ASSERT_EQ(RasterOverlayTile::LoadState::Loaded, tile->getState());
+    tile->loadInMainThread();
+    EXPECT_EQ(RasterOverlayTile::LoadState::Done, tile->getState());
+
+    tile->loadInMainThread();
+    EXPECT_EQ(RasterOverlayTile::LoadState::Done, tile->getState());
+}
+
 TEST(RasterOverlayLifecycleTest, TemporaryAncestorDoesNotReportMoreDetailLikeCesiumNative) {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
