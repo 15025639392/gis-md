@@ -63,6 +63,14 @@ struct TileLoadResult {
         return loadResult;
     }
 
+    static TileLoadResult createTerminal(
+        TileLoadStatus status,
+        TileLoadResultMetadata metadata) {
+        TileLoadResult loadResult = createTerminal(status);
+        loadResult.content.metadata = std::move(metadata);
+        return loadResult;
+    }
+
     static TileLoadResult createRenderable() {
         TileLoadResult loadResult;
         loadResult.status = TileLoadStatus::Renderable;

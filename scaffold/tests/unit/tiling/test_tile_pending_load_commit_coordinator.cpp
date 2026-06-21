@@ -174,11 +174,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     const Rectangle updatedRectangle(0.2, 0.3, 0.4, 0.5);
 
     TileLoadResult result = TileLoadResult::createTerminal(
-        TileLoadStatus::Empty);
-    result.content.metadata = makeBoundingVolumeMetadata(
-        updatedRectangle,
-        -30.0,
-        60.0);
+        TileLoadStatus::Empty,
+        makeBoundingVolumeMetadata(updatedRectangle, -30.0, 60.0));
     PendingTileLoad pending{TileLoadDomain::Terrain,
         key,
         cacheKey,
@@ -211,11 +208,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     const Rectangle updatedRectangle(0.3, 0.4, 0.5, 0.6);
 
     TileLoadResult result = TileLoadResult::createTerminal(
-        TileLoadStatus::External);
-    result.content.metadata = makeBoundingVolumeMetadata(
-        updatedRectangle,
-        5.0,
-        70.0);
+        TileLoadStatus::External,
+        makeBoundingVolumeMetadata(updatedRectangle, 5.0, 70.0));
     PendingTileLoad pending{TileLoadDomain::Content,
         key,
         cacheKey,
@@ -284,11 +278,11 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     tile.content.loadState = TileLoadState::ContentLoading;
 
     TileLoadResult result = TileLoadResult::createTerminal(
-        TileLoadStatus::RetryLater);
-    result.content.metadata = makeBoundingVolumeMetadata(
-        Rectangle(0.1, 0.2, 0.3, 0.4),
-        -10.0,
-        20.0);
+        TileLoadStatus::RetryLater,
+        makeBoundingVolumeMetadata(
+            Rectangle(0.1, 0.2, 0.3, 0.4),
+            -10.0,
+            20.0));
     PendingTileLoad pending{TileLoadDomain::Terrain,
         key,
         cacheKey,

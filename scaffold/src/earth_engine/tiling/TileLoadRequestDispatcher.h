@@ -86,28 +86,15 @@ public:
                 {
                     std::lock_guard<std::mutex> lock(mutex);
                     if (!requestState.destroying() && !token.isCancelled()) {
-                        TileLoadResult loadResult =
+                        enqueueCompletedLoadResult(
+                            pendingLoads,
+                            TileLoadDomain::Content,
+                            key,
+                            cacheKey,
+                            group,
+                            priority,
                             TileLoadResult::fromContentResult(
-                                std::move(result));
-                        if (loadResult.shouldUpload()) {
-                            pendingLoads.addUpload(
-                                PendingTileLoad{
-                                    TileLoadDomain::Content,
-                                    key,
-                                    cacheKey,
-                                    group,
-                                    priority,
-                                    std::move(loadResult)});
-                        } else {
-                            pendingLoads.addTerminalResult(
-                                PendingTileLoad{
-                                    TileLoadDomain::Content,
-                                    key,
-                                    cacheKey,
-                                    group,
-                                    priority,
-                                    std::move(loadResult)});
-                        }
+                                std::move(result)));
                     }
                     requestState.completeContentRequest(cacheKey);
                 }
@@ -171,28 +158,15 @@ public:
                 {
                     std::lock_guard<std::mutex> lock(mutex);
                     if (!requestState.destroying() && !token.isCancelled()) {
-                        TileLoadResult loadResult =
+                        enqueueCompletedLoadResult(
+                            pendingLoads,
+                            TileLoadDomain::Terrain,
+                            key,
+                            cacheKey,
+                            group,
+                            priority,
                             TileLoadResult::fromTerrainResult(
-                                std::move(result));
-                        if (loadResult.shouldUpload()) {
-                            pendingLoads.addUpload(
-                                PendingTileLoad{
-                                    TileLoadDomain::Terrain,
-                                    key,
-                                    cacheKey,
-                                    group,
-                                    priority,
-                                    std::move(loadResult)});
-                        } else {
-                            pendingLoads.addTerminalResult(
-                                PendingTileLoad{
-                                    TileLoadDomain::Terrain,
-                                    key,
-                                    cacheKey,
-                                    group,
-                                    priority,
-                                    std::move(loadResult)});
-                        }
+                                std::move(result)));
                     }
                     requestState.completeTerrainRequest(cacheKey);
                 }
@@ -203,6 +177,28 @@ public:
     }
 
 private:
+    static void enqueueCompletedLoadResult(
+        TilePendingLoadQueue& pendingLoads,
+        TileLoadDomain domain,
+        const TileKey& key,
+        const std::string& cacheKey,
+        TileLoadPriorityGroup group,
+        double priority,
+        TileLoadResult loadResult) {
+        PendingTileLoad pending{
+            domain,
+            key,
+            cacheKey,
+            group,
+            priority,
+            std::move(loadResult)};
+        if (pending.result.shouldUpload()) {
+            pendingLoads.addUpload(std::move(pending));
+        } else {
+            pendingLoads.addTerminalResult(std::move(pending));
+        }
+    }
+
     static HttpRequestPriority toHttpPriority(TileLoadPriorityGroup group) {
         switch (group) {
             case TileLoadPriorityGroup::Preload:
