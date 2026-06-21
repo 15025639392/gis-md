@@ -169,3 +169,45 @@ TEST(TileFrameResourceBudgetPlannerTest, UsesProviderTransportLaneForRasterFanou
     EXPECT_EQ(config.maxTerrainContentNetworkInflight, 20u);
     EXPECT_EQ(config.maxRasterNetworkInflight, 11u);
 }
+
+TEST(TileFrameResourceBudgetPlannerTest, SmoothingConservesMainThreadWork) {
+    const FrameResourceBudgetConfig config =
+        TileFrameResourceBudgetPlanner::plan(
+            TileFrameResourceBudgetPlanInput::withTransportLimit(
+                9,
+                20,
+                2.5,
+                true,
+                true));
+
+    EXPECT_EQ(config.maxMainThreadFinalizesPerFrame, 1u);
+    EXPECT_EQ(config.maxTerminalStateTransitionsPerFrame, 4u);
+    EXPECT_EQ(config.maxRasterUploadsPerFrame, 4u);
+    EXPECT_DOUBLE_EQ(config.mainThreadTimeMs, 2.5);
+    EXPECT_TRUE(config.interactionActive);
+    EXPECT_TRUE(config.smoothingActive);
+
+    FrameResourceBudget budget;
+    budget.beginFrame(7, config);
+
+    EXPECT_TRUE(budget.tryFinalize(
+        FrameResourceLane::TerrainFinalize,
+        FrameResourcePriority::Urgent));
+    EXPECT_FALSE(budget.tryFinalize(
+        FrameResourceLane::ContentFinalize,
+        FrameResourcePriority::Urgent));
+    EXPECT_TRUE(budget.tryFinalize(
+        FrameResourceLane::TerminalState,
+        FrameResourcePriority::Urgent,
+        4));
+    EXPECT_FALSE(budget.tryFinalize(
+        FrameResourceLane::TerminalState,
+        FrameResourcePriority::Urgent));
+    EXPECT_TRUE(budget.tryFinalize(
+        FrameResourceLane::RasterTextureUpload,
+        FrameResourcePriority::Urgent,
+        4));
+    EXPECT_FALSE(budget.tryFinalize(
+        FrameResourceLane::RasterTextureUpload,
+        FrameResourcePriority::Urgent));
+}
