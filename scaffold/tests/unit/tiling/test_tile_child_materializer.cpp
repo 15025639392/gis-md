@@ -4,6 +4,9 @@
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/renderer/RenderDevice.h"
+#include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/Projection.h"
+#include "earth_engine/core/geodesy/WebMercatorProjection.h"
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
 #include "earth_engine/tiling/SurfaceTile.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
@@ -644,6 +647,96 @@ TEST(TileChildMaterializerTest,
         100.0,
         ensure));
     EXPECT_EQ(4u, parent.children.size());
+}
+
+TEST(TileChildMaterializerTest,
+     RasterUpsampledChildrenUseReadyOverlayProjectionCenterLikeCesiumNative) {
+    DebugImageryProvider imagery;
+    auto overlayScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *overlayScheme, nullptr);
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 2, 2, 1},
+        Rectangle::fromDegrees(-30.0, -20.0, 30.0, 20.0));
+    parent.geometricError = 80.0;
+    parent.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    parent.content.renderContent.setMeshReady(true);
+    parent.content.renderContent.setTerrainHeightRange(-20.0, 120.0);
+
+    const Rectangle tightRegion =
+        Rectangle::fromDegrees(-10.0, -10.0, 10.0, 10.0);
+    const Rectangle overlayRegion =
+        Rectangle::fromDegrees(-20.0, -5.0, 20.0, 15.0);
+    RasterOverlayDetails* details =
+        parent.content.renderContent.mutableRasterOverlayDetails();
+    details->rasterOverlayProjections = {
+        RasterOverlayProjection::Geographic,
+        RasterOverlayProjection::WebMercator};
+    details->rasterOverlayRectangles = {
+        tightRegion,
+        projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            overlayRegion)};
+    details->boundingRegion = {tightRegion, -20.0, 120.0};
+
+    auto& mapped = parent.rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missingProjections;
+    EXPECT_EQ(
+        RasterMappedToTilesetTile::MoreDetail::Unknown,
+        mapped.update(
+            parent.key,
+            parent.content.renderContent.rasterOverlayDetails(),
+            256.0,
+            256.0,
+            provider,
+            nullptr,
+            missingProjections));
+
+    RasterOverlayTile* loadingTile = mapped.getLoadingTile();
+    ASSERT_NE(nullptr, loadingTile);
+    loadingTile->setState(RasterOverlayTile::LoadState::Loaded);
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    EXPECT_EQ(
+        RasterMappedToTilesetTile::MoreDetail::Yes,
+        mapped.update(
+            parent.key,
+            parent.content.renderContent.rasterOverlayDetails(),
+            256.0,
+            256.0,
+            provider,
+            nullptr,
+            missingProjections));
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    ASSERT_TRUE(TileRasterUpsampledChildMaterializer::materialize(
+        parent,
+        80.0,
+        ensure));
+    ASSERT_EQ(4u, parent.children.size());
+
+    const double centerLng = overlayRegion.west() + overlayRegion.width() * 0.5;
+    const double centerLat =
+        overlayRegion.south() + overlayRegion.height() * 0.5;
+    EXPECT_NEAR(overlayRegion.west(), parent.children[0]->bounds.west(), 1e-9);
+    EXPECT_NEAR(overlayRegion.south(), parent.children[0]->bounds.south(), 1e-9);
+    EXPECT_NEAR(centerLng, parent.children[0]->bounds.east(), 1e-9);
+    EXPECT_NEAR(centerLat, parent.children[0]->bounds.north(), 1e-9);
+    EXPECT_NEAR(centerLng, parent.children[3]->bounds.west(), 1e-9);
+    EXPECT_NEAR(centerLat, parent.children[3]->bounds.south(), 1e-9);
+    EXPECT_NEAR(overlayRegion.east(), parent.children[3]->bounds.east(), 1e-9);
+    EXPECT_NEAR(overlayRegion.north(), parent.children[3]->bounds.north(), 1e-9);
 }
 
 TEST(TileChildMaterializerTest, CanRefineHonorsContentRulesBeforeTerrainSignals) {

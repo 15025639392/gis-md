@@ -4800,6 +4800,13 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
         Rectangle::fromDegrees(-10.0, -10.0, 0.0, 0.0),
         Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0),
         Rectangle::fromDegrees(-10.0, 0.0, 0.0, 10.0)};
+    auto rectangleNear = [](const Rectangle& a, const Rectangle& b) {
+        constexpr double epsilon = 1e-12;
+        return std::abs(a.west() - b.west()) < epsilon &&
+            std::abs(a.south() - b.south()) < epsilon &&
+            std::abs(a.east() - b.east()) < epsilon &&
+            std::abs(a.north() - b.north()) < epsilon;
+    };
     bool hasExpectedChildBounds = root->children.size() == 4;
     for (const Rectangle& expected : expectedChildBounds) {
         hasExpectedChildBounds =
@@ -4808,7 +4815,7 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
                 root->children.begin(),
                 root->children.end(),
                 [&](const TilesetTile* child) {
-                    return child && child->bounds == expected;
+                    return child && rectangleNear(child->bounds, expected);
                 });
     }
     check(hasExpectedChildBounds,
