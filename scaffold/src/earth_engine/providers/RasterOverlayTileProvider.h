@@ -283,7 +283,7 @@ private:
     std::unordered_set<std::string> inFlightRequests_;
     std::unordered_map<std::string, std::shared_ptr<RectangleSourceRequest>>
         activeRectangleRequests_;
-    uint32_t activeRasterSourceRequests_ = 0;
+    std::atomic<uint32_t> activeRasterSourceRequests_{0};
 
     /// Failed tiles (key → first fail timestamp, for retry logic).
     struct FailedRecord { double firstFailTime = 0.0; int retries = 0; };

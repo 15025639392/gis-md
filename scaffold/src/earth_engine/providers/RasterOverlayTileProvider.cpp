@@ -1382,17 +1382,37 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
             break;
         case RasterOverlayTile::LoadState::Loading: {
             const std::string ck = tile.getCacheKey();
-            auto it = activeRectangleRequests_.find(ck);
-            if (it == activeRectangleRequests_.end() || !it->second) {
+            std::shared_ptr<RectangleSourceRequest> request;
+            {
+                std::lock_guard<std::mutex> lock(pendingMutex_);
+                auto it = activeRectangleRequests_.find(ck);
+                if (it != activeRectangleRequests_.end()) {
+                    request = it->second;
+                }
+            }
+            if (!request) {
                 return true;
             }
-            it->second->issueMore(
+            request->issueMore(
                 budget,
-                [self = this]() { return self->activeRasterSourceRequests_; },
-                [self = this]() { ++self->activeRasterSourceRequests_; },
                 [self = this]() {
-                    if (self->activeRasterSourceRequests_ > 0) {
-                        --self->activeRasterSourceRequests_;
+                    return self->activeRasterSourceRequests_.load(
+                        std::memory_order_relaxed);
+                },
+                [self = this]() {
+                    self->activeRasterSourceRequests_.fetch_add(
+                        1,
+                        std::memory_order_relaxed);
+                },
+                [self = this]() {
+                    uint32_t current = self->activeRasterSourceRequests_.load(
+                        std::memory_order_relaxed);
+                    while (current > 0 &&
+                           !self->activeRasterSourceRequests_.compare_exchange_weak(
+                               current,
+                               current - 1,
+                               std::memory_order_relaxed,
+                               std::memory_order_relaxed)) {
                     }
                 });
             return true;
@@ -1406,7 +1426,10 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
 
     const std::string ck = tile.getCacheKey();
     if (ck.empty()) return false;
-    if (inFlightRequests_.count(ck)) return true;
+    {
+        std::lock_guard<std::mutex> lock(pendingMutex_);
+        if (inFlightRequests_.count(ck)) return true;
+    }
 
     std::optional<Rectangle> sourceBounds =
         tile.getRectangle().computeIntersection(coverageRectangle_);
@@ -1444,7 +1467,10 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
     }
 
     tile.setState(RasterOverlayTile::LoadState::Loading);
-    inFlightRequests_.insert(ck);
+    {
+        std::lock_guard<std::mutex> lock(pendingMutex_);
+        inFlightRequests_.insert(ck);
+    }
     logAndroidRasterPipeline(
         "start",
         ck,
@@ -1499,14 +1525,30 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
             fr.retries++;
             self->revision_.fetch_add(1, std::memory_order_relaxed);
         });
-    activeRectangleRequests_[ck] = request;
+    {
+        std::lock_guard<std::mutex> lock(pendingMutex_);
+        activeRectangleRequests_[ck] = request;
+    }
     request->issueMore(
         budget,
-        [self = this]() { return self->activeRasterSourceRequests_; },
-        [self = this]() { ++self->activeRasterSourceRequests_; },
         [self = this]() {
-            if (self->activeRasterSourceRequests_ > 0) {
-                --self->activeRasterSourceRequests_;
+            return self->activeRasterSourceRequests_.load(
+                std::memory_order_relaxed);
+        },
+        [self = this]() {
+            self->activeRasterSourceRequests_.fetch_add(
+                1,
+                std::memory_order_relaxed);
+        },
+        [self = this]() {
+            uint32_t current = self->activeRasterSourceRequests_.load(
+                std::memory_order_relaxed);
+            while (current > 0 &&
+                   !self->activeRasterSourceRequests_.compare_exchange_weak(
+                       current,
+                       current - 1,
+                       std::memory_order_relaxed,
+                       std::memory_order_relaxed)) {
             }
         });
 
