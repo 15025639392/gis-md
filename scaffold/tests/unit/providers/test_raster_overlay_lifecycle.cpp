@@ -4,6 +4,7 @@
 #include "earth_engine/providers/ImageryProvider.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/providers/RasterTextureUploader.h"
+#include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
 #include "earth_engine/renderer/IPrepareRendererResources.h"
@@ -491,6 +492,17 @@ TEST(RasterOverlayLifecycleTest, DirectTileCacheRetainsRecentAndMarkedTiles) {
     tile.reset();
     provider.trimUnusedTiles();
     EXPECT_EQ(0, provider.getCachedTileCount());
+}
+
+TEST(RasterOverlayLifecycleTest, DefaultMaximumLevelMatchesCesiumNativeUrlTemplate) {
+    XYZImageryProvider imagery("https://example.invalid/{z}/{x}/{y}.png");
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    EXPECT_EQ(25, scheme->maxZoom());
+    EXPECT_EQ(25, provider.getMaximumLevel());
+    EXPECT_NE(nullptr, provider.getTile(TileKey{scheme->id(), 25, 0, 0}));
+    EXPECT_EQ(nullptr, provider.getTile(TileKey{scheme->id(), 26, 0, 0}));
 }
 
 TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayMaximumTextureSize) {
