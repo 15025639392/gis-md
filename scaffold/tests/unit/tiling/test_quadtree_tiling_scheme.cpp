@@ -70,6 +70,20 @@ TEST(QuadtreeTilingSchemeTest, PositionToTileClampsPositiveEdgesToFinalTile) {
     EXPECT_EQ(7, tile->y);
 }
 
+TEST(QuadtreeTilingSchemeTest, PositionToTileAssignsInternalBoundariesToUpperTile) {
+    // Source-derived from cesium-native QuadtreeTilingScheme::positionToTile:
+    // tile coordinates are computed with integer truncation, so exact internal
+    // boundaries fall into the tile on the positive side of the boundary.
+    const QuadtreeTilingScheme scheme(Rectangle(0.0, 0.0, 4.0, 4.0), 1, 1);
+
+    const auto tile = scheme.positionToTile(2.0, 2.0, 1);
+
+    ASSERT_TRUE(tile.has_value());
+    EXPECT_EQ(1, tile->z);
+    EXPECT_EQ(1, tile->x);
+    EXPECT_EQ(1, tile->y);
+}
+
 TEST(QuadtreeTilingSchemeTest, PositionToTileIncludesNegativeEdgesInFirstTile) {
     const QuadtreeTilingScheme scheme(Rectangle(-180.0, -90.0, 180.0, 90.0),
                                       2,
