@@ -6,8 +6,10 @@
 #include "../platform/bridge/CurlMultiRequestScheduler.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <nlohmann/json.hpp>
 #include <set>
 #include <sstream>
@@ -119,6 +121,37 @@ bool startsWith(const std::string& value, const std::string& prefix) {
            value.compare(0, prefix.size(), prefix) == 0;
 }
 
+int safeIntOrDefault(const nlohmann::json& value, int defaultValue) {
+    if (value.is_number_integer()) {
+        const int64_t parsed = value.get<int64_t>();
+        if (parsed >= std::numeric_limits<int>::min() &&
+            parsed <= std::numeric_limits<int>::max()) {
+            return static_cast<int>(parsed);
+        }
+        return defaultValue;
+    }
+    if (value.is_number_unsigned()) {
+        const uint64_t parsed = value.get<uint64_t>();
+        if (parsed <= static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+            return static_cast<int>(parsed);
+        }
+        return defaultValue;
+    }
+    if (value.is_number_float()) {
+        const double parsed = value.get<double>();
+        if (!std::isfinite(parsed) ||
+            parsed < static_cast<double>(std::numeric_limits<int>::min()) ||
+            parsed > static_cast<double>(std::numeric_limits<int>::max())) {
+            return defaultValue;
+        }
+        const int narrowed = static_cast<int>(parsed);
+        return static_cast<double>(narrowed) == parsed
+            ? narrowed
+            : defaultValue;
+    }
+    return defaultValue;
+}
+
 } // namespace
 
 std::string googleMapTilesCreateSessionUrl(
@@ -205,8 +238,8 @@ GoogleMapTilesSessionParseResult parseGoogleMapTilesCreateSessionResponse(
     session.session = sessionIt->get<std::string>();
     session.apiBaseUrl = ensureTrailingSlash(requestOptions.apiBaseUrl);
     session.maximumLevel = 28;
-    session.tileWidth = tileWidthIt->get<int>();
-    session.tileHeight = tileHeightIt->get<int>();
+    session.tileWidth = safeIntOrDefault(*tileWidthIt, 256);
+    session.tileHeight = safeIntOrDefault(*tileHeightIt, 256);
     session.showLogo = true;
 
     return GoogleMapTilesSessionParseResult{

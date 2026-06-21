@@ -1261,6 +1261,23 @@ TEST(GoogleMapTilesImageryProviderTest, ParsesCreateSessionResponseLikeCesiumNat
     EXPECT_TRUE(result.session.showLogo);
 }
 
+TEST(GoogleMapTilesImageryProviderTest, CreateSessionTileSizeFallsBackWhenNarrowingFailsLikeCesiumNative) {
+    GoogleMapTilesNewSessionOptions request;
+
+    const GoogleMapTilesSessionParseResult result =
+        parseGoogleMapTilesCreateSessionResponse(
+            R"json({
+                "session": "session-token",
+                "tileWidth": 100000000000000000000,
+                "tileHeight": 512.5
+            })json",
+            request);
+
+    ASSERT_TRUE(result.valid) << result.error;
+    EXPECT_EQ(256, result.session.tileWidth);
+    EXPECT_EQ(256, result.session.tileHeight);
+}
+
 TEST(GoogleMapTilesImageryProviderTest, RejectsInvalidCreateSessionResponseLikeCesiumNative) {
     GoogleMapTilesNewSessionOptions request;
 
