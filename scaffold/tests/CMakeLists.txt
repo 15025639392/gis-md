@@ -364,6 +364,12 @@ add_executable(test_tileset_lifecycle
 target_link_libraries(test_tileset_lifecycle PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tileset_lifecycle COMMAND test_tileset_lifecycle)
 
+add_executable(test_tileset_selection_refinement
+    unit/tiling/test_tileset_selection_refinement.cpp
+)
+target_link_libraries(test_tileset_selection_refinement PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tileset_selection_refinement COMMAND test_tileset_selection_refinement)
+
 add_executable(test_tile_frame_resource_budget_planner
     unit/tiling/test_tile_frame_resource_budget_planner.cpp
 )
