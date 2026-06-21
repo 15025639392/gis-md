@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/core/math/MathUtils.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileChildMaterializer.h"
+#include "earth_engine/tiling/TileScheme.h"
 
 #include <memory>
 #include <string>
@@ -55,21 +57,25 @@ TEST(TileChildMaterializerTest, LinkContentChildrenWithoutDuplicates) {
 }
 
 TEST(TileChildMaterializerTest, AnyAvailableTerrainChildCreatesFullQuadLikeCesiumNative) {
+    auto scheme = TileScheme::createGeographicTMS();
     TilesetTile parent(
         TileKey{"Geographic-TMS", 0, 0, 0},
-        Rectangle{});
+        scheme->tileToRectangle(TileKey{"Geographic-TMS", 0, 0, 0}));
     parent.geometricError = 100.0;
     parent.refine = TileRefine::Add;
     parent.content.renderContent.setTerrainHeightRange(-10.0, 90.0);
 
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
-    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+    auto ensure = [&tiles, &scheme](const TileKey& key) -> TilesetTile* {
         const std::string cacheKey = cacheKeyFor(key);
         auto it = tiles.find(cacheKey);
         if (it == tiles.end()) {
             it = tiles.emplace(
                 cacheKey,
-                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+                std::make_unique<TilesetTile>(
+                    key,
+                    scheme->tileToRectangle(key)))
+                     .first;
         }
         return it->second.get();
     };
@@ -102,6 +108,18 @@ TEST(TileChildMaterializerTest, AnyAvailableTerrainChildCreatesFullQuadLikeCesiu
     EXPECT_DOUBLE_EQ(50.0, se->geometricError);
     EXPECT_EQ(TileRefine::Add, sw->refine);
     EXPECT_EQ(TileRefine::Add, se->refine);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 0}), sw->key);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 1, 0}), se->key);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 1}), nw->key);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 1, 1}), ne->key);
+    EXPECT_NEAR(-MathUtils::OnePi, sw->bounds.west(), 1e-9);
+    EXPECT_NEAR(-MathUtils::PiOverTwo, sw->bounds.south(), 1e-9);
+    EXPECT_NEAR(-MathUtils::PiOverTwo, sw->bounds.east(), 1e-9);
+    EXPECT_NEAR(0.0, sw->bounds.north(), 1e-9);
+    EXPECT_NEAR(-MathUtils::PiOverTwo, ne->bounds.west(), 1e-9);
+    EXPECT_NEAR(0.0, ne->bounds.south(), 1e-9);
+    EXPECT_NEAR(0.0, ne->bounds.east(), 1e-9);
+    EXPECT_NEAR(MathUtils::PiOverTwo, ne->bounds.north(), 1e-9);
     for (const TilesetTile* child : parent.children) {
         ASSERT_NE(nullptr, child);
         ASSERT_TRUE(child->content.renderContent.hasTerrainHeightRange());
