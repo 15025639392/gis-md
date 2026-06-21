@@ -46,14 +46,16 @@ uint16_t zigZagEncode16(int32_t value) {
 
 std::vector<uint8_t> makeQuantizedMeshBytes(
     const Vec3& boundingSphereCenterEcef,
-    const Vec3& tileCenterEcef) {
+    const Vec3& tileCenterEcef,
+    float minimumHeight = 0.0f,
+    float maximumHeight = 100.0f) {
     std::vector<uint8_t> bytes;
 
     appendPod<double>(bytes, tileCenterEcef.x());
     appendPod<double>(bytes, tileCenterEcef.y());
     appendPod<double>(bytes, tileCenterEcef.z());
-    appendPod<float>(bytes, 0.0f);
-    appendPod<float>(bytes, 100.0f);
+    appendPod<float>(bytes, minimumHeight);
+    appendPod<float>(bytes, maximumHeight);
     appendPod<double>(bytes, boundingSphereCenterEcef.x());
     appendPod<double>(bytes, boundingSphereCenterEcef.y());
     appendPod<double>(bytes, boundingSphereCenterEcef.z());
@@ -140,6 +142,43 @@ TEST(TilesetQuantizedMeshTest,
         boundingSphereCenter.z(),
         root->content.renderContent.renderLocalOrigin().z(),
         1e-12);
+}
+
+TEST(TilesetQuantizedMeshTest,
+     HeaderHeightRangeOverridesHeightmapFallbackLikeCesiumNative) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/{z}/{x}/{y}.terrain");
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+
+    constexpr float minimumHeight = -250.0f;
+    constexpr float maximumHeight = 1789.0f;
+    auto heightmap = makeFlatHeightmap(0.0f);
+    heightmap->rawData = makeQuantizedMeshBytes(
+        Vec3::zero(),
+        Vec3::zero(),
+        minimumHeight,
+        maximumHeight);
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        std::move(heightmap));
+
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+
+    EXPECT_TRUE(root->content.renderContent.hasTerrainHeightRange());
+    EXPECT_NEAR(
+        minimumHeight,
+        root->content.renderContent.terrainMinimumHeight(),
+        1e-6);
+    EXPECT_NEAR(
+        maximumHeight,
+        root->content.renderContent.terrainMaximumHeight(),
+        1e-6);
 }
 
 } // namespace

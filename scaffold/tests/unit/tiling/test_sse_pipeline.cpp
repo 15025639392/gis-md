@@ -3374,33 +3374,6 @@ void testTileResourceDirtyInvalidatesRevisionAndCacheOnly() {
           "Tileset: resource dirty preserves selection reuse for static loading");
 }
 
-void testTilesetUsesQuantizedMeshHeightRange() {
-    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
-        "https://example.invalid/{z}/{x}/{y}.terrain");
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    const float minimumHeight = -250.0f;
-    const float maximumHeight = 1789.0f;
-    auto heightmap = makeFlatHeightmap(0.0f);
-    heightmap->rawData = makeQuantizedMeshBytes(
-        "", false, false, Vec3::zero(), minimumHeight, maximumHeight);
-    TilesetTestAccess::putTerrainCache(tileset, rootKey, std::move(heightmap));
-
-    check(root != nullptr,
-          "Tileset: height-range root tile is created");
-    if (!root) return;
-
-    TilesetTestAccess::ensureTileMesh(tileset, *root);
-    check(root->content.renderContent.hasTerrainHeightRange(),
-          "Tileset: terrain tile stores quantized-mesh height range");
-    check(std::abs(root->content.renderContent.terrainMinimumHeight() - minimumHeight) < 1e-6 &&
-              std::abs(root->content.renderContent.terrainMaximumHeight() - maximumHeight) < 1e-6,
-          "Tileset: quantized-mesh header min/max overrides heightmap fallback range");
-}
-
 void testTilesetBoundsUseQuantizedMeshHeightRange() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey key{"Geographic-TMS", 5, 20, 12};
@@ -27217,7 +27190,6 @@ int main() {
     testRasterMappedTemporaryAncestorDoesNotReportMoreDetail();
     testRasterOverlayNativeTranslationAndRendererWindow();
     testHeightmapTerrainProviderExposesAttribution();
-    testTilesetUsesQuantizedMeshHeightRange();
     testTilesetBoundsUseQuantizedMeshHeightRange();
     testTilesetBoundingRegionDegenerateDistanceMatchesCesiumNative();
     testTileBoundsMetricsUsesCentralDefaultTerrainHeightRange();
