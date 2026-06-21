@@ -3,6 +3,7 @@
 #include "../core/geodesy/WebMercatorProjection.h"
 #include "../core/math/MathUtils.h"
 #include "../core/math/Rectangle.h"
+#include "../platform/bridge/CurlMultiRequestScheduler.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -346,6 +347,21 @@ GoogleMapTilesTileRange googleMapTilesCompleteAvailabilityRange(
         maxY};
 }
 
+std::string googleMapTilesViewportUrlForTile(
+    const GoogleMapTilesExistingSessionOptions& options,
+    const TileKey& key) {
+    const std::unique_ptr<TileScheme> scheme =
+        TileScheme::createXYZWebMercator();
+    const Rectangle rectangle = scheme->tileToRectangle(key);
+    return googleMapTilesViewportUrl(
+        options,
+        key.z,
+        rectangle.westDegrees(),
+        rectangle.southDegrees(),
+        rectangle.eastDegrees(),
+        rectangle.northDegrees());
+}
+
 GoogleMapTilesImageryProvider::GoogleMapTilesImageryProvider(
     GoogleMapTilesExistingSessionOptions options,
     std::string attribution)
@@ -391,6 +407,86 @@ std::string GoogleMapTilesImageryProvider::buildUrl(
     return withQuery(
         options_.apiBaseUrl + path,
         {{"session", options_.session}, {"key", options_.key}});
+}
+
+void GoogleMapTilesImageryProvider::requestTile(
+    const TileKey& key,
+    CancellationToken token,
+    TileCallback callback,
+    HttpRequestPriority priority) {
+    if (!XYZImageryProvider::supportsTile(key)) {
+        callback(key, nullptr);
+        return;
+    }
+    if (hasKnownAvailability()) {
+        if (!supportsTile(key)) {
+            callback(key, nullptr);
+            return;
+        }
+        XYZImageryProvider::requestTile(
+            key,
+            std::move(token),
+            std::move(callback),
+            priority);
+        return;
+    }
+
+    if (token.isCancelled()) {
+        callback(key, nullptr);
+        return;
+    }
+
+    const std::string viewportUrl =
+        googleMapTilesViewportUrlForTile(options_, key);
+    auto requestHandle =
+        std::make_shared<std::unique_ptr<HttpRequest>>();
+    auto callbackPtr =
+        std::make_shared<TileCallback>(std::move(callback));
+    auto tokenPtr =
+        std::make_shared<CancellationToken>(std::move(token));
+    auto onViewport =
+        [this,
+         key,
+         priority,
+         viewportUrl,
+         callbackPtr,
+         tokenPtr,
+         requestHandle](int statusCode, std::vector<uint8_t> body) mutable {
+            (void)requestHandle;
+            if (tokenPtr->isCancelled() ||
+                statusCode != 200 ||
+                body.empty()) {
+                (*callbackPtr)(key, nullptr);
+                return;
+            }
+
+            GoogleMapTilesViewportParseResult viewport =
+                parseGoogleMapTilesViewportResponse(
+                    std::string(body.begin(), body.end()));
+            applyViewportAvailability(viewport, key);
+            if (!viewport.valid || !supportsTile(key)) {
+                (*callbackPtr)(key, nullptr);
+                return;
+            }
+
+            XYZImageryProvider::requestTile(
+                key,
+                *tokenPtr,
+                std::move(*callbackPtr),
+                priority);
+        };
+
+    if (platformBridge()) {
+        *requestHandle = platformBridge()->get(
+            viewportUrl,
+            std::move(onViewport),
+            {priority});
+    } else {
+        *requestHandle = CurlMultiRequestScheduler::shared().get(
+            viewportUrl,
+            std::move(onViewport),
+            {priority});
+    }
 }
 
 void GoogleMapTilesImageryProvider::addAvailableTileRanges(

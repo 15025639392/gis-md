@@ -1,5 +1,9 @@
 #include <gtest/gtest.h>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
+#include <map>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <string>
 #include "earth_engine/providers/BingMapsImageryProvider.h"
@@ -22,6 +26,11 @@
 using namespace earth_engine;
 
 namespace {
+
+class NoopHttpRequest final : public HttpRequest {
+public:
+    void cancel() override {}
+};
 
 class MockImagePlatformBridge : public PlatformBridge {
 public:
@@ -59,6 +68,54 @@ public:
 
 private:
     std::vector<uint8_t> pixels_;
+};
+
+class QueuedGoogleMapTilesPlatformBridge : public PlatformBridge {
+public:
+    explicit QueuedGoogleMapTilesPlatformBridge(
+        std::map<std::string, std::vector<uint8_t>> responses)
+        : responses_(std::move(responses)) {}
+
+    void onMemoryPressure() override {}
+    void onEnterBackground() override {}
+    void onEnterForeground() override {}
+
+    std::unique_ptr<HttpRequest> get(
+        const std::string& url,
+        std::function<void(int, std::vector<uint8_t>)> callback,
+        HttpRequestOptions = {}) override {
+        requestedUrls.push_back(url);
+        auto it = responses_.find(url);
+        if (it == responses_.end()) {
+            callback(404, {});
+        } else {
+            callback(200, it->second);
+        }
+        return std::make_unique<NoopHttpRequest>();
+    }
+
+    std::string cacheDirectory() const override { return {}; }
+    std::string documentsDirectory() const override { return {}; }
+
+    std::unique_ptr<DecodedImage> decodeImage(
+        const uint8_t*,
+        size_t) override {
+        auto image = std::make_unique<DecodedImage>();
+        image->width = 1;
+        image->height = 1;
+        image->channels = 4;
+        image->pixels = {1, 2, 3, 255};
+        return image;
+    }
+
+    void log(LogLevel, const std::string&, const std::string&) override {}
+    DeviceInfo deviceInfo() const override { return {}; }
+    std::string getToken(const std::string&) const override { return {}; }
+
+    std::vector<std::string> requestedUrls;
+
+private:
+    std::map<std::string, std::vector<uint8_t>> responses_;
 };
 
 std::unique_ptr<DecodedHeightmap> makeFlatHeightmapForProviderTest(
@@ -1455,6 +1512,114 @@ TEST(GoogleMapTilesImageryProviderTest, IncompleteViewportDoesNotRejectUnknownTi
 
     EXPECT_TRUE(provider.supportsTile(TileKey{"XYZ-WebMercator", 2, 0, 0}));
     EXPECT_TRUE(provider.supportsTile(TileKey{"XYZ-WebMercator", 2, 1, 1}));
+}
+
+TEST(GoogleMapTilesImageryProviderTest, RequestTileLoadsViewportBeforeUnknownTileLikeCesiumNative) {
+    GoogleMapTilesExistingSessionOptions options;
+    options.apiBaseUrl = "https://tile.googleapis.com";
+    options.session = "session";
+    options.key = "key";
+    options.maximumLevel = 2;
+    GoogleMapTilesImageryProvider provider(options);
+
+    const TileKey key{"XYZ-WebMercator", 2, 0, 0};
+    const std::unique_ptr<TileScheme> scheme =
+        TileScheme::createXYZWebMercator();
+    const Rectangle rect = scheme->tileToRectangle(key);
+    const std::string viewportUrl = googleMapTilesViewportUrl(
+        options,
+        key.z,
+        rect.westDegrees(),
+        rect.southDegrees(),
+        rect.eastDegrees(),
+        rect.northDegrees());
+    const std::string tileUrl = provider.buildUrl(key);
+    const std::string viewportJson = R"json({
+        "maxZoomRects": [{
+            "maxZoom": 2,
+            "west": -180.0,
+            "south": 66.0,
+            "east": -135.0,
+            "north": 85.0
+        }]
+    })json";
+    QueuedGoogleMapTilesPlatformBridge bridge(
+        {{viewportUrl,
+          std::vector<uint8_t>(viewportJson.begin(), viewportJson.end())},
+         {tileUrl, std::vector<uint8_t>{1, 2, 3, 4}}});
+    provider.setPlatformBridge(&bridge);
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    bool loaded = false;
+    provider.requestTile(
+        key,
+        CancellationToken{},
+        [&](const TileKey&, std::unique_ptr<DecodedImage> image) {
+            std::lock_guard<std::mutex> lock(mutex);
+            loaded = image != nullptr;
+            done = true;
+            cv.notify_one();
+        });
+
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(lock, std::chrono::seconds(3), [&]() {
+            return done;
+        }));
+    }
+
+    ASSERT_EQ(2u, bridge.requestedUrls.size());
+    EXPECT_EQ(viewportUrl, bridge.requestedUrls[0]);
+    EXPECT_EQ(tileUrl, bridge.requestedUrls[1]);
+    EXPECT_TRUE(loaded);
+}
+
+TEST(GoogleMapTilesImageryProviderTest, RequestTileSkipsTileWhenCompleteViewportExcludesIt) {
+    GoogleMapTilesExistingSessionOptions options;
+    options.apiBaseUrl = "https://tile.googleapis.com";
+    options.session = "session";
+    options.key = "key";
+    options.maximumLevel = 2;
+    GoogleMapTilesImageryProvider provider(options);
+
+    const TileKey key{"XYZ-WebMercator", 2, 1, 1};
+    const std::unique_ptr<TileScheme> scheme =
+        TileScheme::createXYZWebMercator();
+    const Rectangle rect = scheme->tileToRectangle(key);
+    const std::string viewportUrl = googleMapTilesViewportUrl(
+        options,
+        key.z,
+        rect.westDegrees(),
+        rect.southDegrees(),
+        rect.eastDegrees(),
+        rect.northDegrees());
+    const std::string viewportJson = R"json({
+        "maxZoomRects": [{
+            "maxZoom": 2,
+            "west": -180.0,
+            "south": 66.0,
+            "east": -135.0,
+            "north": 85.0
+        }]
+    })json";
+    QueuedGoogleMapTilesPlatformBridge bridge(
+        {{viewportUrl,
+          std::vector<uint8_t>(viewportJson.begin(), viewportJson.end())}});
+    provider.setPlatformBridge(&bridge);
+
+    bool loaded = true;
+    provider.requestTile(
+        key,
+        CancellationToken{},
+        [&](const TileKey&, std::unique_ptr<DecodedImage> image) {
+            loaded = image != nullptr;
+        });
+
+    ASSERT_EQ(1u, bridge.requestedUrls.size());
+    EXPECT_EQ(viewportUrl, bridge.requestedUrls[0]);
+    EXPECT_FALSE(loaded);
 }
 
 TEST(TileMapServiceUrlTest, AppendsTileMapResourceXmlBeforeQueryLikeCesiumNative) {

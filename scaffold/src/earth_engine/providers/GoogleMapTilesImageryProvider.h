@@ -82,6 +82,11 @@ public:
     std::string type() const override { return "google-map-tiles-imagery"; }
     bool supportsTile(const TileKey& key) const override;
     std::string buildUrl(const TileKey& key) const override;
+    void requestTile(const TileKey& key,
+                     CancellationToken token,
+                     TileCallback callback,
+                     HttpRequestPriority priority =
+                         HttpRequestPriority::Normal) override;
     void addAvailableTileRanges(
         const std::vector<GoogleMapTilesTileRange>& ranges);
     void addCompleteAvailabilityRanges(

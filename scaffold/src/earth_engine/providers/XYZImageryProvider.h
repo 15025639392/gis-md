@@ -72,6 +72,9 @@ private:
     std::atomic<int> requestsCompleted_{0};
     std::atomic<int> activeWorkerBlockingRequests_{0};
     std::atomic<int> peakWorkerBlockingRequests_{0};
+
+protected:
+    PlatformBridge* platformBridge() const { return platformBridge_; }
 };
 
 } // namespace earth_engine
