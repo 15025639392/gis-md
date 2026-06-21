@@ -155,6 +155,30 @@ TEST(MathUtilsTest, ConvertLongitudeRangeMatchesCesiumNative) {
                      MathUtils::convertLongitudeRange(MathUtils::OnePi));
 }
 
+TEST(MathUtilsTest, ConvertLongitudeRangeCoversCesiumNativeWrapBranches) {
+    // Source-derived from cesium-native Math::convertLongitudeRange:
+    // values are first reduced with floor(angle / TwoPi), then normalized with
+    // distinct < -PI and >= PI branches.
+    EXPECT_DOUBLE_EQ(-MathUtils::OnePi,
+                     MathUtils::convertLongitudeRange(-MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(-MathUtils::OnePi,
+                     MathUtils::convertLongitudeRange(3.0 * MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(-MathUtils::OnePi,
+                     MathUtils::convertLongitudeRange(-3.0 * MathUtils::OnePi));
+
+    EXPECT_DOUBLE_EQ(0.0,
+                     MathUtils::convertLongitudeRange(2.0 * MathUtils::OnePi));
+    EXPECT_DOUBLE_EQ(0.0,
+                     MathUtils::convertLongitudeRange(-2.0 * MathUtils::OnePi));
+
+    EXPECT_DOUBLE_EQ(MathUtils::degreesToRadians(90.0),
+                     MathUtils::convertLongitudeRange(
+                         MathUtils::degreesToRadians(-270.0)));
+    EXPECT_DOUBLE_EQ(MathUtils::degreesToRadians(-90.0),
+                     MathUtils::convertLongitudeRange(
+                         MathUtils::degreesToRadians(630.0)));
+}
+
 TEST(MathUtilsTest, NegativePiToPiMatchesCesiumNative) {
     EXPECT_DOUBLE_EQ(0.0, MathUtils::negativePiToPi(0.0));
     EXPECT_DOUBLE_EQ(MathUtils::OnePi,
