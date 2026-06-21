@@ -97,3 +97,73 @@ TEST(
     EXPECT_EQ(stats.deferredEntries, 1);
     EXPECT_EQ(stats.missedDrawEntries, 1);
 }
+
+TEST(
+    TileRenderEntryCommandBuilderTest,
+    KeepsSelectedAndRenderTilesActiveForFallback) {
+    const TileKey selectedKey{"test", 1, 0, 0};
+    const TileKey renderKey{"test", 0, 0, 0};
+    TilesetTile selected(selectedKey, Rectangle{});
+    TilesetTile render(renderKey, Rectangle{});
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {TileCacheKey::forTile(selectedKey), &selected},
+        {TileCacheKey::forTile(renderKey), &render}};
+
+    TilePlan plan;
+    TileRenderEntry entry;
+    entry.selectedKey = selectedKey;
+    entry.renderKey = renderKey;
+    entry.usesAncestorFallback = true;
+    entry.surfaceClipEnabled = true;
+    entry.surfaceClipUv = {0.0f, 0.5f, 0.5f, 0.5f};
+    plan.renderEntries.push_back(entry);
+
+    std::vector<std::string> ineligibleKeys;
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    const TileRenderEntryCommandStats stats =
+        TileRenderEntryCommandBuilder::build(
+            plan,
+            TileRenderEntryPass::Selected,
+            11,
+            renderer,
+            commands,
+            [&tiles](const TileKey& key) {
+                return findTile(tiles, key);
+            },
+            [](const TileKey& key) {
+                return TileCacheKey::forTile(key);
+            },
+            [&ineligibleKeys](const std::string& key) {
+                ineligibleKeys.push_back(key);
+            },
+            [&renderKey](Renderer&,
+                         TilesetTile& tile,
+                         RenderCommandList& outCommands,
+                         float,
+                         bool,
+                         const std::optional<std::array<float, 4>>& clipUv) {
+                if (tile.key == renderKey && clipUv) {
+                    RenderCommand command;
+                    command.kind = RenderCommandKind::SurfaceTile;
+                    command.surfaceClipEnabled = 1.0f;
+                    command.surfaceClipUv = *clipUv;
+                    outCommands.push_back(std::move(command));
+                }
+            });
+
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(stats.plannedEntries, 1);
+    EXPECT_EQ(stats.drawAttempts, 1);
+    EXPECT_EQ(selected.lastUsedFrame(), 11u);
+    EXPECT_EQ(render.lastUsedFrame(), 11u);
+    EXPECT_EQ(selected.referenceCount(), 0);
+    EXPECT_EQ(render.referenceCount(), 1);
+    ASSERT_EQ(ineligibleKeys.size(), 2u);
+    EXPECT_EQ(ineligibleKeys[0], TileCacheKey::forTile(selectedKey));
+    EXPECT_EQ(ineligibleKeys[1], TileCacheKey::forTile(renderKey));
+    EXPECT_NE(
+        commands.front().stableKey.find(
+            "clip:" + TileCacheKey::forTile(selectedKey)),
+        std::string::npos);
+}
