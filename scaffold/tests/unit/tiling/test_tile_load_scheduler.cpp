@@ -3,8 +3,10 @@
 #include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
 #include "earth_engine/providers/TerrainProvider.h"
+#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileLoadLifecycle.h"
 #include "earth_engine/tiling/TileLoadScheduler.h"
+#include "earth_engine/tiling/TilesetTile.h"
 
 #include <mutex>
 #include <string>
@@ -331,5 +333,69 @@ TEST(TileLoadSchedulerTest, BlocksTerrainFanoutOverInflightCapacity) {
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.requestState().completeTerrainRequest("busy");
+    }
+}
+
+TEST(TileLoadSchedulerTest, QueuesUpsampledTerrainWhenNetworkInflightIsFull) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    CancellationToken token;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        ASSERT_TRUE(lifecycle.requestState().beginTerrainRequest(
+            "busy",
+            token));
+    }
+
+    const TileKey key{"test", 1, 0, 0};
+    TilesetTile tile(key, Rectangle{});
+    tile.content.upsampledFromParent = true;
+    bool prepared = false;
+    bool marked = false;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            cacheKeyForTile,
+            [&tile](
+                const TileKey&,
+                const std::string&,
+                TilesetTile*& tileState) {
+                tileState = &tile;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.hasTile = true;
+                snapshot.upsampledFromParent = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [&prepared](TilesetTile&, double) {
+                prepared = true;
+                return true;
+            },
+            [&marked](const TileKey&) { marked = true; });
+
+    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_TRUE(prepared);
+    EXPECT_TRUE(marked);
+    EXPECT_EQ(lifecycle.counts().terrainUploads, 1u);
+    EXPECT_EQ(lifecycle.pendingRequestCount(), 1u);
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().completeTerrainRequest("busy");
+        lifecycle.pendingLoads().clear();
     }
 }
