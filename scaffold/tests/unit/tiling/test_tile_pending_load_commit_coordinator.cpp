@@ -85,6 +85,71 @@ void expectTerrainTerminalClearsEmptyMarker(TileLoadStatus status) {
     EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
 }
 
+void expectTerrainTerminalIgnoresMetadata(TileLoadStatus status,
+                                          TileLoadState expectedLoadState) {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "terrain-terminal";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    TileLoadResult result = TileLoadResult::createTerminal(
+        status,
+        makeBoundingVolumeMetadata(
+            Rectangle(0.1, 0.2, 0.3, 0.4),
+            -10.0,
+            20.0));
+    PendingTileLoad pending{TileLoadDomain::Terrain,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        std::move(result)};
+    TileEmptyContentRegistry emptyContentRegistry;
+
+    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
+        pending,
+        emptyContentRegistry,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        []() {});
+
+    EXPECT_FALSE(tile.boundingVolume.has_value());
+    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
+    EXPECT_EQ(expectedLoadState, tile.content.loadState);
+}
+
+void expectContentTerminalIgnoresMetadata(TileLoadStatus status,
+                                          TileLoadState expectedLoadState) {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "content-terminal";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    TileLoadResult result = TileLoadResult::createTerminal(
+        status,
+        makeBoundingVolumeMetadata(
+            Rectangle(0.1, 0.2, 0.3, 0.4),
+            -10.0,
+            20.0));
+    PendingTileLoad pending{TileLoadDomain::Content,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        std::move(result)};
+    TileEmptyContentRegistry emptyContentRegistry;
+
+    TilePendingLoadCommitCoordinator::commitContentTerminalResult(
+        pending,
+        emptyContentRegistry,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](TilesetTile&) {},
+        []() {});
+
+    EXPECT_FALSE(tile.boundingVolume.has_value());
+    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
+    EXPECT_EQ(expectedLoadState, tile.content.loadState);
+}
+
 } // namespace
 
 TEST(TilePendingLoadCommitCoordinatorTest,
@@ -238,68 +303,87 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
 TEST(TilePendingLoadCommitCoordinatorTest,
      ContentFailedTerminalIgnoresTileLoadResultMetadata) {
-    const TileKey key{"test", 0, 0, 0};
-    const std::string cacheKey = "content-failed";
-    TilesetTile tile(key, Rectangle{});
-    tile.content.loadState = TileLoadState::ContentLoading;
-
-    TileLoadResult result = TileLoadResult::createTerminal(
-        TileLoadStatus::Failed);
-    result.content.metadata.updatedBoundingVolume =
-        TileBoundingVolume::fromRegion(
-            Rectangle(0.1, 0.2, 0.3, 0.4),
-            -10.0,
-            20.0);
-    PendingTileLoad pending{TileLoadDomain::Content,
-        key,
-        cacheKey,
-        TileLoadPriorityGroup::Normal,
-        0.0,
-        std::move(result)};
-    TileEmptyContentRegistry emptyContentRegistry;
-
-    TilePendingLoadCommitCoordinator::commitContentTerminalResult(
-        pending,
-        emptyContentRegistry,
-        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
-        [](TilesetTile&) {},
-        []() {});
-
-    EXPECT_FALSE(tile.boundingVolume.has_value());
-    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
-    EXPECT_EQ(TileLoadState::Failed, tile.content.loadState);
+    expectContentTerminalIgnoresMetadata(
+        TileLoadStatus::Failed,
+        TileLoadState::Failed);
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
      TerrainRetryLaterTerminalIgnoresTileLoadResultMetadata) {
-    const TileKey key{"test", 0, 0, 0};
-    const std::string cacheKey = "terrain-retry";
-    TilesetTile tile(key, Rectangle{});
-    tile.content.loadState = TileLoadState::ContentLoading;
-
-    TileLoadResult result = TileLoadResult::createTerminal(
+    expectTerrainTerminalIgnoresMetadata(
         TileLoadStatus::RetryLater,
-        makeBoundingVolumeMetadata(
+        TileLoadState::FailedTemporarily);
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     FailedRetryAndCancelledTerminalResultsDropMetadataLikeCesiumNative) {
+    for (TileLoadStatus status : {TileLoadStatus::RetryLater,
+                                  TileLoadStatus::Failed,
+                                  TileLoadStatus::Cancelled}) {
+        TileLoadResult result = TileLoadResult::createTerminal(
+            status,
+            makeBoundingVolumeMetadata(
+                Rectangle(0.1, 0.2, 0.3, 0.4),
+                -10.0,
+                20.0));
+        EXPECT_FALSE(result.content.metadata.updatedBoundingVolume.has_value());
+    }
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     FailedRetryAndCancelledProviderResultsDropMetadataLikeCesiumNative) {
+    for (TileLoadStatus status : {TileLoadStatus::RetryLater,
+                                  TileLoadStatus::Failed,
+                                  TileLoadStatus::Cancelled}) {
+        TerrainTileLoadResult terrainResult;
+        terrainResult.status = status;
+        terrainResult.metadata = makeBoundingVolumeMetadata(
             Rectangle(0.1, 0.2, 0.3, 0.4),
             -10.0,
-            20.0));
-    PendingTileLoad pending{TileLoadDomain::Terrain,
-        key,
-        cacheKey,
-        TileLoadPriorityGroup::Normal,
-        0.0,
-        std::move(result)};
-    TileEmptyContentRegistry emptyContentRegistry;
+            20.0);
+        terrainResult.quantizedMeshAvailabilityUpdates.push_back(
+            QuantizedMeshAvailabilityUpdate{});
+        TileLoadResult normalizedTerrain =
+            TileLoadResult::fromTerrainResult(std::move(terrainResult));
+        EXPECT_FALSE(
+            normalizedTerrain.content.metadata.updatedBoundingVolume
+                .has_value());
+        EXPECT_TRUE(
+            normalizedTerrain.content.quantizedMeshAvailabilityUpdates
+                .empty());
 
-    TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
-        pending,
-        emptyContentRegistry,
-        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
-        []() {});
+        TileContentLoadResult contentResult;
+        contentResult.status = status;
+        contentResult.metadata = makeBoundingVolumeMetadata(
+            Rectangle(0.1, 0.2, 0.3, 0.4),
+            -10.0,
+            20.0);
+        TileLoadResult normalizedContent =
+            TileLoadResult::fromContentResult(std::move(contentResult));
+        EXPECT_FALSE(
+            normalizedContent.content.metadata.updatedBoundingVolume
+                .has_value());
+    }
+}
 
-    EXPECT_FALSE(tile.boundingVolume.has_value());
-    EXPECT_FALSE(emptyContentRegistry.contains(cacheKey));
-    EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
+TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainFailedAndCancelledTerminalsIgnoreTileLoadResultMetadata) {
+    expectTerrainTerminalIgnoresMetadata(
+        TileLoadStatus::Failed,
+        TileLoadState::Failed);
+    expectTerrainTerminalIgnoresMetadata(
+        TileLoadStatus::Cancelled,
+        TileLoadState::FailedTemporarily);
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     ContentRetryLaterAndCancelledTerminalsIgnoreTileLoadResultMetadata) {
+    expectContentTerminalIgnoresMetadata(
+        TileLoadStatus::RetryLater,
+        TileLoadState::FailedTemporarily);
+    expectContentTerminalIgnoresMetadata(
+        TileLoadStatus::Cancelled,
+        TileLoadState::FailedTemporarily);
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,

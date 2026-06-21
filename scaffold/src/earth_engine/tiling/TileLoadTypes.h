@@ -67,7 +67,9 @@ struct TileLoadResult {
         TileLoadStatus status,
         TileLoadResultMetadata metadata) {
         TileLoadResult loadResult = createTerminal(status);
-        loadResult.content.metadata = std::move(metadata);
+        if (isSuccessfulTileLoadStatus(status)) {
+            loadResult.content.metadata = std::move(metadata);
+        }
         return loadResult;
     }
 
@@ -95,16 +97,20 @@ struct TileLoadResult {
     static TileLoadResult fromTerrainResult(TerrainTileLoadResult&& result) {
         TileLoadResult loadResult;
         loadResult.status = result.status;
-        loadResult.content = TileLoadedContent::fromTerrainResult(
-            std::move(result));
+        if (isSuccessfulTileLoadStatus(result.status)) {
+            loadResult.content = TileLoadedContent::fromTerrainResult(
+                std::move(result));
+        }
         return loadResult;
     }
 
     static TileLoadResult fromContentResult(TileContentLoadResult&& result) {
         TileLoadResult loadResult;
         loadResult.status = result.status;
-        loadResult.content = TileLoadedContent::fromContentResult(
-            std::move(result));
+        if (isSuccessfulTileLoadStatus(result.status)) {
+            loadResult.content = TileLoadedContent::fromContentResult(
+                std::move(result));
+        }
         return loadResult;
     }
 
@@ -118,8 +124,9 @@ struct TileLoadResult {
     }
 
     bool shouldApplyTerminalMetadata() const {
-        return status == TileLoadStatus::Empty ||
-               status == TileLoadStatus::External;
+        return isSuccessfulTileLoadStatus(status) &&
+               (status == TileLoadStatus::Empty ||
+                status == TileLoadStatus::External);
     }
 
     TileLoadStatus status = TileLoadStatus::Failed;

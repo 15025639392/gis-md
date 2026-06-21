@@ -14,4 +14,18 @@ enum class TileLoadStatus {
     Cancelled
 };
 
+inline constexpr bool isSuccessfulTileLoadStatus(TileLoadStatus status) {
+    switch (status) {
+        case TileLoadStatus::Renderable:
+        case TileLoadStatus::Empty:
+        case TileLoadStatus::External:
+            return true;
+        case TileLoadStatus::RetryLater:
+        case TileLoadStatus::Failed:
+        case TileLoadStatus::Cancelled:
+            return false;
+    }
+    return false;
+}
+
 } // namespace earth_engine
