@@ -25,3 +25,20 @@ TEST(TileLoadRequestPlannerTest, ClassifiesBasicRequestKinds) {
         TileLoadRequestKind::Skip,
         TileLoadRequestPlanner::classify(snapshot));
 }
+
+TEST(TileLoadRequestPlannerTest, ClassifiesUnloadedTilesAsRequestable) {
+    TileLoadRequestSnapshot snapshot;
+    snapshot.hasTile = true;
+    snapshot.loadState = TileLoadState::Unloaded;
+    snapshot.terrainProviderSupportsTile = true;
+
+    EXPECT_EQ(
+        TileLoadRequestKind::Terrain,
+        TileLoadRequestPlanner::classify(snapshot));
+
+    snapshot.contentProviderSupportsTile = true;
+
+    EXPECT_EQ(
+        TileLoadRequestKind::Content,
+        TileLoadRequestPlanner::classify(snapshot));
+}
