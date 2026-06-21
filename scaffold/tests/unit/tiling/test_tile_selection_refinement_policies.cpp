@@ -1,10 +1,14 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileSelectionKickPolicy.h"
+#include "earth_engine/tiling/TileSelectionPostTraversalCommitter.h"
 #include "earth_engine/tiling/TileSelectionPostTraversalPolicy.h"
 #include "earth_engine/tiling/TileSelectionPreTraversalPolicy.h"
 #include "earth_engine/tiling/TileSelectionRefineFlowPolicy.h"
 #include "earth_engine/tiling/TileSelectionRefinementPolicy.h"
+
+#include <vector>
 
 using namespace earth_engine;
 
@@ -227,6 +231,71 @@ TEST(
 
     EXPECT_FALSE(result.shouldKick);
     EXPECT_FALSE(result.preloadRefinedAncestor);
+}
+
+TEST(
+    TileSelectionPostTraversalCommitterTest,
+    KickTrimsDescendantsRestoresQueueAndReturnsParentDetails) {
+    TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
+    TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
+    parent.children.push_back(&child);
+
+    TilePlan tilePlan;
+    tilePlan.visibleTiles.push_back(parent.key);
+    tilePlan.visibleTiles.push_back(child.key);
+
+    TileLoadQueue loadQueue;
+    loadQueue.queue(child.key, TileLoadPriorityGroup::Normal, 2.0);
+
+    TileSelectionCounters counters;
+    TileSelectionPostTraversalCommitPlan plan;
+    plan.kickVisitedDescendants = true;
+    plan.trimRenderedDescendants = true;
+    plan.returnSingleTileDetails = true;
+    plan.restoreChildLoadQueue = true;
+    plan.queueParentNormal = true;
+    plan.wasReallyRenderedLastFrame = false;
+
+    bool kickedParent = false;
+    std::vector<TileLoadRequest> queuedRequests;
+    const TileSelectionPostTraversalCommitResult result =
+        TileSelectionPostTraversalCommitter::commit(
+            parent,
+            tilePlan,
+            loadQueue,
+            counters,
+            plan,
+            TileSelectionPostTraversalCommitContext{
+                1,
+                0,
+                4.0,
+                5.0,
+                false},
+            [&kickedParent](TilesetTile& kickedTile) {
+                kickedParent = kickedTile.key.z == 0;
+            },
+            [&queuedRequests](const TileKey& key,
+                              TileLoadPriorityGroup group,
+                              double priority) {
+                queuedRequests.push_back(
+                    TileLoadRequest{key, group, priority});
+            },
+            [](TilesetTile&, double, bool, double) {});
+
+    EXPECT_TRUE(kickedParent);
+    ASSERT_EQ(tilePlan.visibleTiles.size(), 1u);
+    EXPECT_EQ(tilePlan.visibleTiles.front(), parent.key);
+    EXPECT_TRUE(loadQueue.empty());
+    ASSERT_EQ(queuedRequests.size(), 1u);
+    EXPECT_EQ(queuedRequests.front().key, parent.key);
+    EXPECT_EQ(queuedRequests.front().group, TileLoadPriorityGroup::Normal);
+    EXPECT_EQ(queuedRequests.front().priority, 5.0);
+    EXPECT_EQ(counters.kicked, 1);
+
+    EXPECT_TRUE(result.returnedSingleTileDetails);
+    EXPECT_FALSE(result.details.allAreRenderable);
+    EXPECT_FALSE(result.details.anyWereRenderedLastFrame);
+    EXPECT_EQ(result.details.notYetRenderableCount, 1u);
 }
 
 TEST(
