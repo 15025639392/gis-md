@@ -191,21 +191,76 @@ TEST(ClipTriangleAtAxisAlignedThresholdTest, InterpolatedVertexEqualityUsesCesiu
 }
 
 TEST(ClipTriangleAtAxisAlignedThresholdTest, KeepsThresholdVertexAndSkipsCoincidentInterpolation) {
-    std::vector<TriangleClipVertex> actual;
+    // Source-derived from cesium-native
+    // clipTriangleAtAxisAlignedThreshold.cpp: when two vertices are behind,
+    // the remaining vertex is emitted only if it is not exactly on the
+    // threshold. Equality is therefore kept without a duplicate interpolation.
+    struct Case {
+        bool keepAbove;
+        double u0;
+        double u1;
+        double u2;
+        std::vector<TriangleClipVertex> expected;
+    };
 
-    clipTriangleAtAxisAlignedThreshold(0.5,
-                                       true,
-                                       0,
-                                       1,
-                                       2,
-                                       0.5,
-                                       0.4,
-                                       0.6,
-                                       actual);
+    const Case cases[] = {
+        {
+            true,
+            0.5,
+            0.4,
+            0.6,
+            {2, 0, InterpolatedVertex{1, 2, 0.5}}
+        },
+        {
+            false,
+            0.5,
+            0.6,
+            0.4,
+            {2, 0, InterpolatedVertex{1, 2, 0.5}}
+        },
+        {
+            true,
+            0.6,
+            0.5,
+            0.4,
+            {0, 1, InterpolatedVertex{2, 0, 0.5}}
+        },
+        {
+            false,
+            0.4,
+            0.5,
+            0.6,
+            {0, 1, InterpolatedVertex{2, 0, 0.5}}
+        },
+        {
+            true,
+            0.4,
+            0.6,
+            0.5,
+            {1, 2, InterpolatedVertex{0, 1, 0.5}}
+        },
+        {
+            false,
+            0.6,
+            0.4,
+            0.5,
+            {1, 2, InterpolatedVertex{0, 1, 0.5}}
+        }
+    };
 
-    const std::vector<TriangleClipVertex> expected{
-        2,
-        0,
-        InterpolatedVertex{1, 2, 0.5}};
-    EXPECT_EQ(expected, actual);
+    for (const Case& testCase : cases) {
+        std::vector<TriangleClipVertex> actual;
+
+        clipTriangleAtAxisAlignedThreshold(0.5,
+                                           testCase.keepAbove,
+                                           0,
+                                           1,
+                                           2,
+                                           testCase.u0,
+                                           testCase.u1,
+                                           testCase.u2,
+                                           actual);
+
+        EXPECT_EQ(testCase.expected, actual);
+    }
 }
