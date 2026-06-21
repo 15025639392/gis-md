@@ -889,6 +889,89 @@ TEST(SceneFrameStateTest, PresentationTraceExposesAdditiveSelectedEntries) {
     EXPECT_EQ(0, tilesetTrace.renderEntryAncestorFallbackCount);
 }
 
+TEST(SceneFrameStateTest, ClippedFallbackCommandsUseSelectedChildStableKeys) {
+    DummyRenderDevice device;
+    Scene scene;
+    ASSERT_TRUE(scene.setRenderDevice(&device));
+    scene.setViewport(800, 600, 1.0f);
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
+    scene.camera().lookAt(
+        target + Vec3(1000000.0, 0.0, 0.0),
+        target,
+        Vec3::unitZ());
+
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    auto terrainTileset = std::make_unique<Tileset>(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{&baseActivated},
+        &device,
+        TilesetOptions{});
+    Tileset* terrainRaw = terrainTileset.get();
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childAKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey childBKey{"Geographic-TMS", 1, 1, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
+    TilesetTile* childA =
+        TilesetTestAccess::ensureTile(*terrainRaw, childAKey);
+    TilesetTile* childB =
+        TilesetTestAccess::ensureTile(*terrainRaw, childBKey);
+    ASSERT_NE(nullptr, root);
+    ASSERT_NE(nullptr, childA);
+    ASSERT_NE(nullptr, childB);
+
+    TilesetTestAccess::putTerrainCache(
+        *terrainRaw,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(*terrainRaw, *root);
+    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
+    RasterMappedToTilesetTile* rootMapped =
+        root->rasterOverlayState.mappings().empty()
+            ? nullptr
+            : root->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* rootRaster =
+        rootMapped ? rootMapped->getLoadingTile() : nullptr;
+    ASSERT_NE(nullptr, rootRaster);
+    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
+    rootRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
+
+    scene.setTileset(std::move(terrainTileset));
+    scene.update(1.0 / 60.0);
+    TilesetTestAccess::setInteractionActiveForFrame(*terrainRaw, true);
+    TilesetTestAccess::beginTilePlan(*terrainRaw);
+    TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *childA);
+    TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *childB);
+    scene.render();
+
+    std::vector<std::string> clippedStableKeys;
+    for (const RenderCommand& command : device.submittedCommands) {
+        if (command.kind != RenderCommandKind::SurfaceTile ||
+            command.surfaceClipEnabled <= 0.5f) {
+            continue;
+        }
+        clippedStableKeys.push_back(command.stableKey);
+    }
+
+    ASSERT_EQ(2u, clippedStableKeys.size());
+    EXPECT_NE(clippedStableKeys[0], clippedStableKeys[1]);
+    EXPECT_NE(
+        std::string::npos,
+        clippedStableKeys[0].find("clip:Geographic-TMS/1/"));
+    EXPECT_NE(
+        std::string::npos,
+        clippedStableKeys[1].find("clip:Geographic-TMS/1/"));
+}
+
 TEST(SceneFrameStateTest, DiagnosticsExposeTerrainSynchronousPrepReasons) {
     DummyRenderDevice device;
     Scene scene;
