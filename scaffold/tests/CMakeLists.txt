@@ -340,6 +340,12 @@ add_executable(test_tile_selection_render_entry_policy
 target_link_libraries(test_tile_selection_render_entry_policy PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_selection_render_entry_policy COMMAND test_tile_selection_render_entry_policy)
 
+add_executable(test_tile_render_plan_finalizer
+    unit/tiling/test_tile_render_plan_finalizer.cpp
+)
+target_link_libraries(test_tile_render_plan_finalizer PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_render_plan_finalizer COMMAND test_tile_render_plan_finalizer)
+
 add_executable(test_tile_selection_root_policy
     unit/tiling/test_tile_selection_root_policy.cpp
 )
