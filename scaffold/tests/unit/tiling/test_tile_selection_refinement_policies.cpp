@@ -14,6 +14,51 @@ using namespace earth_engine;
 
 TEST(
     TileSelectionPreTraversalPolicyTest,
+    CannotRefineFinishesAsLoadQueuedSingleTile) {
+    TileSelectionRefineFlowResult refineFlow;
+    refineFlow.meetsScreenSpaceError = false;
+    refineFlow.ancestorMeetsSse = true;
+
+    const TileSelectionPreTraversalPlan plan =
+        TileSelectionPreTraversalPolicy::plan(
+            TileSelectionPreTraversalInput{
+                false,
+                TileRefine::Replace,
+                refineFlow});
+
+    EXPECT_TRUE(plan.finishAsSingleTile);
+    EXPECT_EQ(
+        plan.finishReason,
+        TileSelectionPreTraversalFinishReason::CannotRefine);
+    EXPECT_TRUE(plan.singleTileShouldQueueLoad);
+    EXPECT_FALSE(plan.visitChildren);
+}
+
+TEST(
+    TileSelectionPreTraversalPolicyTest,
+    SatisfiedSseFinishesWithoutDuplicateAncestorMeetLoad) {
+    TileSelectionRefineFlowResult refineFlow;
+    refineFlow.refine = false;
+    refineFlow.meetsScreenSpaceError = true;
+    refineFlow.ancestorMeetsSse = true;
+
+    const TileSelectionPreTraversalPlan plan =
+        TileSelectionPreTraversalPolicy::plan(
+            TileSelectionPreTraversalInput{
+                true,
+                TileRefine::Replace,
+                refineFlow});
+
+    EXPECT_TRUE(plan.finishAsSingleTile);
+    EXPECT_EQ(
+        plan.finishReason,
+        TileSelectionPreTraversalFinishReason::DoesNotRefine);
+    EXPECT_FALSE(plan.singleTileShouldQueueLoad);
+    EXPECT_FALSE(plan.visitChildren);
+}
+
+TEST(
+    TileSelectionPreTraversalPolicyTest,
     AddRefinementRendersParentBeforeVisitingChildren) {
     TileSelectionRefineFlowResult refineFlow;
     refineFlow.refine = true;
