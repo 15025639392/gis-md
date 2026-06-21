@@ -2,6 +2,10 @@
 
 #include "earth_engine/content/GltfModel.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/layers/ActivatedRasterOverlay.h"
+#include "earth_engine/layers/RasterOverlay.h"
+#include "earth_engine/providers/DebugImageryProvider.h"
+#include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/renderer/RenderCommand.h"
 #include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/scene/Camera.h"
@@ -11,10 +15,15 @@
 #include "earth_engine/scene/SceneFrameStateBuilder.h"
 #include "earth_engine/scene/Scene.h"
 #include "earth_engine/tiling/TileCacheKey.h"
+#include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
+#include "earth_engine/tiling/TileRenderPlanFrameRefresher.h"
+#include "earth_engine/tiling/TileSelectionPlanAppender.h"
+#include "earth_engine/tiling/TileSelectionRasterOverlayPreparer.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 
 #include <algorithm>
+#include <limits>
 #include <vector>
 
 using namespace earth_engine;
@@ -41,6 +50,50 @@ struct TilesetTestAccess {
         const Tileset& tileset,
         const TilesetTile& tile) {
         return tileset.checkOcclusion(tile);
+    }
+
+    static void ensureTileMesh(Tileset& tileset, TilesetTile& tile) {
+        tileset.meshPreparation_.ensureTileMesh(tile);
+    }
+
+    static void prefetchRasterOverlays(Tileset& tileset, TilesetTile& tile) {
+        const std::vector<size_t> overlayOrder =
+            TileSelectionRasterOverlayPreparer::processingOrder(
+                tileset.rasterOverlays_);
+        TileRasterOverlayPrefetcher::prefetch(
+            tile,
+            tileset.rasterOverlays_,
+            overlayOrder,
+            tileset.device_,
+            tileset.options_.maximumScreenSpaceError,
+            tileset.frameResourceBudget_);
+    }
+
+    static void setInteractionActiveForFrame(Tileset& tileset, bool active) {
+        tileset.interactionActiveForFrame_ = active;
+    }
+
+    static void beginTilePlan(Tileset& tileset) {
+        tileset.tilePlan_ = TilePlan{};
+    }
+
+    static void addTileToCurrentPlan(Tileset& tileset, TilesetTile& tile) {
+        TileSelectionPlanAppender::addTileToCurrentPlan(
+            tileset.tilePlan_,
+            tileset.loadQueue_,
+            tileset.options_.enableLodTransitionPeriod,
+            tile,
+            1.0,
+            true,
+            std::numeric_limits<double>::max());
+        TileRenderPlanFrameRefresher::refresh(
+            tileset.tilePlan_,
+            tileset.contentAccess_,
+            tileset.rasterOverlays_,
+            TileRenderPlanFrameRefreshOptions{
+                tileset.options_.enableLodTransitionPeriod,
+                tileset.interactionActiveForFrame_,
+                tileset.resourceSmoothingActiveForFrame_});
     }
 };
 } // namespace earth_engine
@@ -149,6 +202,18 @@ std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     heightmap->minHeight = heightMeters;
     heightmap->maxHeight = heightMeters;
     return heightmap;
+}
+
+RasterOverlay::Options makeRasterOverlayOptions() {
+    RasterOverlay::Options options{};
+    options.maximumSimultaneousTileLoads = 20;
+    options.maximumScreenSpaceError = 2.0;
+    options.minimumZoom = 0;
+    options.maximumZoom = 0;
+    options.visible = true;
+    options.opacity = 1.0f;
+    options.role = RasterOverlayRole::BaseImagery;
+    return options;
 }
 
 std::unique_ptr<GltfModel> makeTriangleGltfModel() {
@@ -488,4 +553,76 @@ TEST(SceneFrameStateTest, AdditionalTilesetRendersGltfContent) {
     EXPECT_GT(scene.diagnostics().contentVisibleTiles, 0);
     EXPECT_EQ(scene.tileset(), terrainRaw);
     EXPECT_NEAR(scene.tileset()->sampleHeight(0.0, 0.0), 123.0f, 1e-6f);
+}
+
+TEST(SceneFrameStateTest, DiagnosticsExposeTerrainRenderEntryFallbackReasons) {
+    DummyRenderDevice device;
+    Scene scene;
+    ASSERT_TRUE(scene.setRenderDevice(&device));
+    scene.setViewport(800, 600, 1.0f);
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
+    scene.camera().lookAt(
+        target + Vec3(1000000.0, 0.0, 0.0),
+        target,
+        Vec3::unitZ());
+
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    auto terrainTileset = std::make_unique<Tileset>(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{&baseActivated},
+        &device,
+        TilesetOptions{});
+    Tileset* terrainRaw = terrainTileset.get();
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
+    TilesetTile* child = TilesetTestAccess::ensureTile(*terrainRaw, childKey);
+    ASSERT_NE(root, nullptr);
+    ASSERT_NE(child, nullptr);
+
+    TilesetTestAccess::putTerrainCache(
+        *terrainRaw,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(*terrainRaw, *root);
+    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
+    RasterMappedToTilesetTile* rootMapped =
+        root->rasterOverlayState.mappings().empty()
+            ? nullptr
+            : root->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* rootRaster =
+        rootMapped ? rootMapped->getLoadingTile() : nullptr;
+    ASSERT_NE(rootRaster, nullptr);
+    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
+    rootRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
+
+    scene.setTileset(std::move(terrainTileset));
+    scene.update(1.0 / 60.0);
+    TilesetTestAccess::setInteractionActiveForFrame(*terrainRaw, true);
+    TilesetTestAccess::beginTilePlan(*terrainRaw);
+    TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *child);
+    scene.render();
+
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesPlanned, 1);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedPlanned, 1);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingPlanned, 0);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesAncestorFallback, 1);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSynchronousPrep, 0);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesDeferredPrep, 0);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesDrawn, 1);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesSelectedDrawn, 1);
+    EXPECT_EQ(scene.diagnostics().terrainRenderEntriesFadingDrawn, 0);
+    EXPECT_EQ(scene.diagnostics().terrainSurfaceCommandsSubmitted, 1);
+    EXPECT_EQ(scene.diagnostics().globeFallbackCommands, 0);
+    EXPECT_EQ(scene.diagnostics().globeFallbackMaskedTerrainEntries, 0);
 }
