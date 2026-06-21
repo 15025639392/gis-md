@@ -150,3 +150,28 @@ TEST(TilePendingRequestStateTest, DestroyMarkIsIdempotent) {
     EXPECT_FALSE(state.destroying());
     EXPECT_TRUE(state.empty());
 }
+
+TEST(TilePendingRequestStateTest, CancelIgnoresUnknownKeys) {
+    TilePendingRequestState state;
+    CancellationToken terrainToken;
+    CancellationToken contentToken;
+
+    EXPECT_TRUE(state.beginTerrainRequest("terrain", terrainToken));
+    EXPECT_TRUE(state.beginContentRequest("content", contentToken));
+
+    state.cancelAndErase("missing");
+
+    const PendingRequestCounts counts = state.counts();
+    EXPECT_FALSE(terrainToken.isCancelled());
+    EXPECT_FALSE(contentToken.isCancelled());
+    EXPECT_TRUE(state.contains("terrain"));
+    EXPECT_TRUE(state.contains("content"));
+    EXPECT_EQ(1u, counts.terrainRequests);
+    EXPECT_EQ(1u, counts.contentRequests);
+    EXPECT_EQ(2u, counts.totalRequests);
+
+    state.cancelAndErase("terrain");
+    state.cancelAndErase("content");
+
+    EXPECT_TRUE(state.empty());
+}
