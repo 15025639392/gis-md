@@ -1,5 +1,6 @@
 #pragma once
 
+#include "GltfModel.h"
 #include "../core/math/Rectangle.h"
 #include "../providers/TerrainProvider.h"
 #include "../tiling/TileBoundingVolume.h"
@@ -29,13 +30,14 @@ struct QuantizedMeshMetadataContent {
 struct QuantizedMeshContentLoadResult {
     QuantizedMeshContentLoadStatus status =
         QuantizedMeshContentLoadStatus::Failed;
+    std::unique_ptr<GltfModel> gltfModel;
     std::unique_ptr<SurfaceTileMesh> surfaceMesh;
     TileLoadResultMetadata metadata;
     std::vector<QuantizedMeshAvailabilityUpdate> availabilityUpdates;
 
     bool success() const {
         return status == QuantizedMeshContentLoadStatus::Success &&
-               surfaceMesh != nullptr;
+               gltfModel != nullptr;
     }
 };
 

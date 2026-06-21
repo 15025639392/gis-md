@@ -32,6 +32,7 @@ struct TileLoadedContent {
         TileLoadedContent content;
         content.heightmap = std::move(result.heightmap);
         content.surfaceMesh = std::move(result.surfaceMesh);
+        content.gltfModel = std::move(result.gltfModel);
         content.metadata = std::move(result.metadata);
         content.quantizedMeshAvailabilityUpdates =
             std::move(result.quantizedMeshAvailabilityUpdates);

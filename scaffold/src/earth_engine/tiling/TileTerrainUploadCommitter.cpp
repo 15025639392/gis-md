@@ -35,6 +35,23 @@ void TileTerrainUploadCommitter::prepareTerrainRenderContent(
     TileLoadedContent&& content,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
     RenderDevice* device) {
+    if (content.gltfModel) {
+        tile.content.renderContent.prepareGltfContent(
+            std::move(content.gltfModel),
+            content.contentTransform);
+        TileLoadResultMetadataApplicator::apply(
+            tile,
+            std::move(content.metadata));
+        TileRasterOverlayDetailsGenerator::
+            ensureProjectionDetailsFromActiveOverlays(
+                tile.content.renderContent,
+                tile.boundingVolume ? &*tile.boundingVolume : nullptr,
+                rasterOverlays,
+                device);
+        prepareTerrainRenderContent(tile);
+        return;
+    }
+
     if (content.surfaceMesh &&
         !tile.content.renderContent.hasSurfaceMesh()) {
         tile.content.renderContent.setSurfaceMesh(

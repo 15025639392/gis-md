@@ -71,6 +71,7 @@ public:
     template <typename EnsureTileFn,
               typename IngestAvailabilityFn,
               typename EnsureTileMeshFn,
+              typename EnsureGltfResourcesFn,
               typename MarkResourcesDirtyFn>
     static void commitTerrainUpload(
         PendingTileLoad& upload,
@@ -85,6 +86,7 @@ public:
         EnsureTileFn&& ensureTile,
         IngestAvailabilityFn&& ingestAvailability,
         EnsureTileMeshFn&& ensureTileMesh,
+        EnsureGltfResourcesFn&& ensureGltfResources,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         TileLoadedContent& content = upload.content();
         TileTerrainUploadCommitter::applyAvailabilityUpdates(
@@ -96,6 +98,7 @@ public:
             content,
             terrainCache,
             std::forward<IngestAvailabilityFn>(ingestAvailability));
+        const bool uploadsGltfTerrain = content.gltfModel != nullptr;
 
         if (TilesetTile* tile = ensureTile(upload.key)) {
             TileTerrainUploadCommitter::prepareTerrainRenderContent(
@@ -103,8 +106,10 @@ public:
                 std::move(content),
                 rasterOverlays,
                 device);
-            if (!resourceSmoothingActive &&
-                !tile->content.renderContent.hasSurfaceMesh()) {
+            if (uploadsGltfTerrain) {
+                ensureGltfResources(*tile);
+            } else if (!resourceSmoothingActive &&
+                       !tile->content.renderContent.hasSurfaceMesh()) {
                 ensureTileMesh(*tile);
             }
             const bool resourcesReady =
@@ -226,6 +231,7 @@ public:
                 std::forward<EnsureTileFn>(ensureTile),
                 std::forward<IngestAvailabilityFn>(ingestAvailability),
                 std::forward<EnsureTileMeshFn>(ensureTileMesh),
+                std::forward<EnsureGltfResourcesFn>(ensureGltfResources),
                 std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
         }
     }

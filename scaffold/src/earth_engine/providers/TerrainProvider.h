@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ProviderRequestDiagnostics.h"
+#include "../content/GltfModel.h"
 #include "../tiling/TileKey.h"
 #include "../tiling/TileBoundingVolume.h"
 #include "../tiling/TileLoadResultMetadata.h"
@@ -70,6 +71,7 @@ struct TerrainTileLoadResult {
     TileLoadStatus status = TileLoadStatus::Failed;
     std::unique_ptr<DecodedHeightmap> heightmap;
     std::unique_ptr<SurfaceTileMesh> surfaceMesh;
+    std::unique_ptr<GltfModel> gltfModel;
     TileLoadResultMetadata metadata;
     std::vector<QuantizedMeshAvailabilityUpdate>
         quantizedMeshAvailabilityUpdates;
@@ -94,6 +96,21 @@ struct TerrainTileLoadResult {
             result.metadata.rasterOverlayDetails = mesh->rasterOverlayDetails;
         }
         result.surfaceMesh = std::move(mesh);
+        return result;
+    }
+
+    static TerrainTileLoadResult successWithGltfModel(
+        std::unique_ptr<GltfModel> model,
+        TileLoadResultMetadata metadata = {}) {
+        TerrainTileLoadResult result;
+        result.status = model ? TileLoadStatus::Renderable
+                              : TileLoadStatus::Failed;
+        result.metadata = std::move(metadata);
+        if (model && !result.metadata.rasterOverlayDetails.has_value()) {
+            result.metadata.rasterOverlayDetails =
+                model->rasterOverlayDetails;
+        }
+        result.gltfModel = std::move(model);
         return result;
     }
 

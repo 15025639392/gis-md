@@ -81,7 +81,7 @@ Rectangle geographicRootWestRectangle() {
 } // namespace
 
 TEST(QuantizedMeshContentLoaderTest,
-     LoadsSurfaceMeshResultWithoutTerrainProvider) {
+     LoadsGltfTerrainModelWithoutTerrainProvider) {
     const std::vector<uint8_t> bytes =
         makeQuantizedMeshBytes(-10.0f, 150.0f);
 
@@ -94,7 +94,33 @@ TEST(QuantizedMeshContentLoaderTest,
             {});
 
     EXPECT_TRUE(result.success());
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    EXPECT_EQ(GltfPrimitiveMode::Triangles, primitive.primitiveMode);
+    EXPECT_FALSE(primitive.doubleSided);
+    EXPECT_NEAR(0.0f, primitive.metallicFactor, 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.roughnessFactor, 1e-6f);
+    EXPECT_FALSE(primitive.vertices.empty());
+    EXPECT_FALSE(primitive.indices.empty());
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    EXPECT_EQ(geographicRootWestRectangle(),
+              result.gltfModel->rasterOverlayDetails.boundingRegion
+                  .rectangle);
+    const Rectangle* modelRasterRectangle =
+        result.gltfModel->rasterOverlayDetails
+            .findRectangleForOverlayProjection(
+                RasterOverlayProjection::Geographic);
+    ASSERT_NE(nullptr, modelRasterRectangle);
+    EXPECT_EQ(geographicRootWestRectangle(), *modelRasterRectangle);
     ASSERT_NE(nullptr, result.surfaceMesh);
+    ASSERT_EQ(result.surfaceMesh->vertices.size(), primitive.vertices.size());
+    ASSERT_EQ(result.surfaceMesh->indices.size(), primitive.indices.size());
+    EXPECT_EQ(result.surfaceMesh->indices, primitive.indices);
+    EXPECT_EQ(result.surfaceMesh->vertices.front().uv,
+              primitive.vertexTexCoords[0].front());
+    EXPECT_EQ(result.surfaceMesh->vertices.back().uv,
+              primitive.vertexTexCoords[0].back());
     EXPECT_FALSE(result.surfaceMesh->vertices.empty());
     EXPECT_FALSE(result.surfaceMesh->indices.empty());
     EXPECT_TRUE(result.surfaceMesh->hasHeightRange);
@@ -203,6 +229,7 @@ TEST(QuantizedMeshContentLoaderTest, InvalidBodyFailsWithoutUpdates) {
 
     EXPECT_FALSE(result.success());
     EXPECT_EQ(QuantizedMeshContentLoadStatus::Failed, result.status);
+    EXPECT_EQ(nullptr, result.gltfModel);
     EXPECT_EQ(nullptr, result.surfaceMesh);
     EXPECT_FALSE(result.metadata.updatedBoundingVolume.has_value());
     EXPECT_FALSE(result.metadata.rasterOverlayDetails.has_value());
