@@ -248,6 +248,43 @@ TEST(QuantizedMeshTerrainProviderTest, LayerJsonSchemeIsIgnoredLikeCesiumNative)
     EXPECT_FALSE(provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 0, 0}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, UnknownProjectionRejectsAndPreservesStateLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.com/fallback/{z}/{x}/{y}.terrain");
+    const std::string validLayerJson = R"json({
+      "attribution": "stable terrain credit",
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["stable/{z}/{x}/{y}.terrain"],
+      "maxzoom": 4
+    })json";
+    const std::string unknownProjectionLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "foo",
+      "scheme": "tms",
+      "tiles": ["bad/{z}/{x}/{y}.terrain"],
+      "maxzoom": 9
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        validLayerJson,
+        "https://example.invalid/terrain/layer.json"));
+    const std::string stableUrl =
+        provider.buildUrl(TileKey{"Geographic-TMS", 1, 1, 0});
+
+    EXPECT_FALSE(provider.configureFromLayerJson(
+        unknownProjectionLayerJson,
+        "https://example.invalid/bad/layer.json"));
+
+    EXPECT_EQ("Geographic-TMS", provider.schemeId());
+    EXPECT_EQ(4, provider.maxZoom());
+    EXPECT_EQ("stable terrain credit", provider.attribution());
+    EXPECT_EQ(stableUrl,
+              provider.buildUrl(TileKey{"Geographic-TMS", 1, 1, 0}));
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 0}));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, WebMercatorMetadataAvailabilityStartsAtOneRootLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
