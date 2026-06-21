@@ -3168,41 +3168,24 @@ void testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches() {
           "RasterOverlayTileProvider: trimmed rectangle requests keep only overlapping source tiles");
 }
 
-void testRasterOverlayBaseRectangleSourceStretchesCoverageEdge() {
+void testRasterOverlayBaseRectangleSourceRejectsCoverageEdgeMiss() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
 
     const Rectangle coverageBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
-    const Rectangle southAdjacentBounds = imageryScheme->tileToRectangle(
-        TileKey{"XYZ-WebMercator", 3, 2, 4});
+    const Rectangle outsideCoverageBounds = imageryScheme->tileToRectangle(
+        TileKey{"XYZ-WebMercator", 3, 2, 5});
     provider.setCoverageRectangle(coverageBounds);
 
     RasterOverlayTileProvider::TilePtr rectangleTile =
-        provider.getTile(southAdjacentBounds, 512.0, 512.0);
+        provider.getTile(outsideCoverageBounds, 512.0, 512.0);
 
-    FrameResourceBudgetConfig config;
-    config.maxRasterNetworkRequestsPerFrame = 64;
-    config.maxRasterNetworkInflight = 64;
-    FrameResourceBudget budget;
-    budget.beginFrame(1, config);
-
-    check(rectangleTile &&
-              provider.loadTileThrottled(*rectangleTile, &budget) &&
-              !imagery.pendingRequests.empty(),
-          "RasterOverlayTileProvider: base imagery outside coverage requests nearest edge source like cesium-native");
-
-    bool allRequestsTouchCoverageSouthEdge = !imagery.pendingRequests.empty();
-    for (const auto& request : imagery.pendingRequests) {
-        const Rectangle requestBounds = imageryScheme->tileToRectangle(request.key);
-        allRequestsTouchCoverageSouthEdge =
-            allRequestsTouchCoverageSouthEdge &&
-            requestBounds.south() <= coverageBounds.south() &&
-            requestBounds.north() >= coverageBounds.south();
-    }
-    check(allRequestsTouchCoverageSouthEdge,
-          "RasterOverlayTileProvider: stretched base source range stays on the coverage edge");
+    check(!rectangleTile,
+          "RasterOverlayTileProvider: base imagery outside coverage is rejected at rectangle tile creation");
+    check(imagery.pendingRequests.empty() && provider.getCachedTileCount() == 0,
+          "RasterOverlayTileProvider: rejected coverage miss issues no requests and creates no cache tile");
 }
 
 void testRasterOverlayRectangleSourceFailureRequestsParentSource() {
@@ -3246,7 +3229,7 @@ void testRasterOverlayRectangleSourceFailureRequestsParentSource() {
           "RasterOverlayTileProvider: failed source tile requests parent source like cesium-native");
 }
 
-void testRasterOverlayRectangleCompositionStretchesEdgeTexels() {
+void testRasterOverlayRectangleCompositionRejectsNoCoverage() {
     auto imageryScheme = TileScheme::createXYZWebMercator();
     const TileKey sourceKey{"XYZ-WebMercator", 3, 2, 3};
     const Rectangle sourceBounds = imageryScheme->tileToRectangle(sourceKey);
@@ -3267,8 +3250,8 @@ void testRasterOverlayRectangleCompositionStretchesEdgeTexels() {
             std::move(sources),
             4096);
 
-    check(composed && composed->width > 0 && composed->height > 0,
-          "RasterOverlayTileProvider: base imagery composition stretches edge texels over outside coverage like cesium-native");
+    check(!composed,
+          "RasterOverlayTileProvider: composition rejects sources with no target coverage");
 }
 
 void testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize() {
@@ -17825,6 +17808,68 @@ void testTileRasterOverlayStateOwnsMappingsAndMissingProjections() {
           "TileRasterOverlayState: release-and-clear owns mapping lifetime");
 }
 
+void testTileRasterOverlayStateResizeReleasesRemovedMappings() {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setFrameNumber(1);
+
+    TilesetTile tile(TileKey{scheme->id(), 0, 0, 0},
+                     scheme->tileToRectangle(
+                         TileKey{scheme->id(), 0, 0, 0}));
+    tile.rasterOverlayState.ensureMappingSlots(2);
+
+    RasterOverlayDetails details;
+    details.setGeographicRectangle(tile.bounds);
+    std::vector<RasterOverlayProjection> missingProjections;
+    RecordingPrepareRendererResources prep;
+
+    RasterMappedToTilesetTile& removedMapping =
+        tile.rasterOverlayState.ensureMapping(1);
+    removedMapping.update(
+        tile.key,
+        details,
+        256.0,
+        256.0,
+        provider,
+        &prep,
+        missingProjections,
+        nullptr,
+        1);
+    RasterOverlayTile* removedTile = removedMapping.getLoadingTile();
+    check(removedTile != nullptr,
+          "TileRasterOverlayState: removed mapping starts a raster load");
+    removedTile->setTexture(std::make_unique<DummyTexture>(8, 4));
+    removedMapping.update(
+        tile.key,
+        details,
+        256.0,
+        256.0,
+        provider,
+        &prep,
+        missingProjections,
+        nullptr,
+        1);
+
+    check(removedMapping.getState() ==
+              RasterMappedToTilesetTile::State::Attached &&
+              prep.attachCount == 1,
+          "TileRasterOverlayState: setup mapping is attached before resize");
+    check(TileCacheMetrics::estimateTileBytes(tile) == 8 * 4 * 4,
+          "TileRasterOverlayState: setup mapping contributes raster cache bytes");
+
+    tile.rasterOverlayState.resizeMappingSlots(1, &prep);
+
+    check(tile.rasterOverlayState.mappingCount() == 1 &&
+              tile.rasterOverlayState.mappingAt(1) == nullptr,
+          "TileRasterOverlayState: resize drops slots beyond active overlays");
+    check(prep.detachCount == 1 &&
+              prep.lastDetachedOverlayIndex == 1,
+          "TileRasterOverlayState: resize detaches removed attached mappings like cesium-native erase");
+    check(TileCacheMetrics::estimateTileBytes(tile) == 0,
+          "TileRasterOverlayState: resize releases removed raster tile references");
+}
+
 void testTileUnloadPolicyDefersReferencedSubtreesAndExternalWork() {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
@@ -31187,9 +31232,9 @@ int main() {
     testRasterOverlayProviderRectangleTile();
     testRasterOverlayRectangleSourceRequestsAreBudgetedAcrossFrames();
     testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches();
-    testRasterOverlayBaseRectangleSourceStretchesCoverageEdge();
+    testRasterOverlayBaseRectangleSourceRejectsCoverageEdgeMiss();
     testRasterOverlayRectangleSourceFailureRequestsParentSource();
-    testRasterOverlayRectangleCompositionStretchesEdgeTexels();
+    testRasterOverlayRectangleCompositionRejectsNoCoverage();
     testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize();
     testRasterOverlayRectangleCompositionUsesProjectedWebMercatorHeight();
     testRasterOverlayRectangleCompositionKeepsTinyProjectedOverlap();
@@ -31466,6 +31511,7 @@ int main() {
     testTileUnloadPolicyClassifiesQueueEligibility();
     testTileRenderReferenceStateClampsAndClearsReferences();
     testTileRasterOverlayStateOwnsMappingsAndMissingProjections();
+    testTileRasterOverlayStateResizeReleasesRemovedMappings();
     testTileUnloadPolicyDefersReferencedSubtreesAndExternalWork();
     testTileUnloadPolicyProtectsUpsampledLoadingSources();
     testTileUpsampleSourcePreparerSkipsPermanentFailedAncestor();

@@ -24,7 +24,9 @@ SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
     FrameResourceBudget& frameResourceBudget) {
     SurfaceRasterOverlayUpdateAction action;
 
-    tile.rasterOverlayState.ensureMappingSlots(rasterOverlays.size());
+    tile.rasterOverlayState.resizeMappingSlots(
+        rasterOverlays.size(),
+        &renderer);
     tile.rasterOverlayState.clearMissingProjections();
     const RasterOverlayDetails& overlayDetails =
         tile.content.renderContent.rasterOverlayDetails();

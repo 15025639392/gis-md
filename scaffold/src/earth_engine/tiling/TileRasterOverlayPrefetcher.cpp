@@ -26,7 +26,7 @@ void TileRasterOverlayPrefetcher::prefetch(
         return;
     }
 
-    tile.rasterOverlayState.ensureMappingSlots(rasterOverlays.size());
+    tile.rasterOverlayState.resizeMappingSlots(rasterOverlays.size(), nullptr);
 
     const bool hasRenderContentDetails =
         tile.content.contentKind == TileContentKind::Render &&

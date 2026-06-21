@@ -33,6 +33,8 @@ public:
             mappings_.resize(count);
         }
     }
+    void resizeMappingSlots(size_t count,
+                            IPrepareRendererResources* pPrepRenderer);
     size_t mappingCount() const { return mappings_.size(); }
     RasterMappedToTilesetTile* mappingAt(size_t index);
     const RasterMappedToTilesetTile* mappingAt(size_t index) const;

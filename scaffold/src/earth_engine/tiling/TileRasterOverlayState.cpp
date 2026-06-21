@@ -28,6 +28,22 @@ RasterMappedToTilesetTile& TileRasterOverlayState::ensureMapping(
     return *mappings_[index];
 }
 
+void TileRasterOverlayState::resizeMappingSlots(
+    size_t count,
+    IPrepareRendererResources* pPrepRenderer) {
+    if (count >= mappings_.size()) {
+        ensureMappingSlots(count);
+        return;
+    }
+
+    for (size_t i = count; i < mappings_.size(); ++i) {
+        if (mappings_[i]) {
+            mappings_[i]->releaseTileReferences(pPrepRenderer);
+        }
+    }
+    mappings_.resize(count);
+}
+
 bool TileRasterOverlayState::hasReadyMapping(size_t index) const {
     const RasterMappedToTilesetTile* mapping = mappingAt(index);
     return mapping && mapping->getReadyTile() != nullptr;
