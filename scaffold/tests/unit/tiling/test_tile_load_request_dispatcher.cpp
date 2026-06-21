@@ -571,3 +571,39 @@ TEST(TileLoadRequestDispatcherTest, DropsCancelledTerrainTerminalCallback) {
 
     EXPECT_FALSE(lifecycle.hasPendingWork());
 }
+
+TEST(TileLoadRequestDispatcherTest, DropsCancelledContentRenderCallback) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+    DeferredContentProvider provider;
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::requestContent(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            provider,
+            key,
+            "cancel-content-render",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    ASSERT_EQ(TileLoadDispatchResult::Issued, result);
+    ASSERT_TRUE(issued);
+    ASSERT_TRUE(provider.contentCallback);
+
+    lifecycle.cancelAndEraseCacheKey("cancel-content-render");
+    provider.contentCallback(
+        key,
+        TileContentLoadResult::render(std::make_unique<GltfModel>()));
+
+    EXPECT_FALSE(lifecycle.hasPendingWork());
+}
