@@ -795,6 +795,46 @@ TEST(QuantizedMeshTerrainProviderTest, ExtensionQueryStaysBeforeFragmentLikeCesi
         provider.buildUrl(TileKey{"Geographic-TMS", 2, 3, 1}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, FabdemLayerJsonShapeConfigures) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "attribution": "FABDEM V1-2, University of Bristol, CC BY-NC-SA 4.0",
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}],
+        [], [], [], [], [], [], [], [], [], [], [],
+        [{"startX":6487,"startY":2685,"endX":6606,"endY":2784}]
+      ],
+      "bounds": [105.17, 28.1, 110.2, 32.25],
+      "format": "quantized-mesh-1.0",
+      "maxzoom": 12,
+      "minzoom": 0,
+      "name": "FABDEM Quantized Mesh",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tilejson": "2.1.0",
+      "tiles": ["./{z}/{x}/{y}.terrain"],
+      "version": "1.0.0"
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "http://192.168.1.8:8092/layer.json"));
+
+    EXPECT_EQ(12, provider.maxZoom());
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 0}));
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 1, 0}));
+    const TileKey sample{"Geographic-TMS", 12, 6487, 2685};
+    EXPECT_TRUE(provider.supportsTile(sample));
+    EXPECT_EQ("http://192.168.1.8:8092/12/6487/2685.terrain",
+              provider.buildUrl(sample));
+    EXPECT_FALSE(provider.supportsTile(
+        TileKey{"Geographic-TMS", 12, 6486, 2685}));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(
+                  TileKey{"Geographic-TMS", 13, 12974, 5370}));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, ParentLayerFillsTopLayerGapsLikeCesiumNative) {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
