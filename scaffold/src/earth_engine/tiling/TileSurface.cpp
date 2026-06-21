@@ -54,6 +54,39 @@ void setPosition(SurfaceVertex& vertex, const Vec3& positionEcef) {
     vertex.positionLowEcef = split.second;
 }
 
+RasterOverlayDetails deriveChildRasterOverlayDetails(
+    const RasterOverlayDetails& parentDetails,
+    const Rectangle& childBounds,
+    double minimumHeight,
+    double maximumHeight) {
+    RasterOverlayDetails childDetails;
+    if (parentDetails.empty()) {
+        childDetails.setGeographicRectangle(
+            childBounds,
+            minimumHeight,
+            maximumHeight);
+        return childDetails;
+    }
+
+    childDetails.rasterOverlayProjections =
+        parentDetails.rasterOverlayProjections;
+    childDetails.rasterOverlayRectangles.reserve(
+        parentDetails.rasterOverlayProjections.size());
+    for (size_t i = 0; i < parentDetails.rasterOverlayProjections.size(); ++i) {
+        if (i >= parentDetails.rasterOverlayRectangles.size() ||
+            parentDetails.rasterOverlayRectangles[i].isEmpty()) {
+            childDetails.rasterOverlayRectangles.push_back(Rectangle::EMPTY);
+            continue;
+        }
+        childDetails.rasterOverlayRectangles.push_back(childBounds);
+    }
+    childDetails.boundingRegion = {
+        childBounds,
+        minimumHeight,
+        maximumHeight};
+    return childDetails;
+}
+
 } // namespace
 
 TileSurfaceVertex TileSurface::vertexForUnitUv(const Rectangle& tileBounds,
@@ -541,7 +574,6 @@ std::optional<SurfaceTileMesh> TileSurface::upsampleChildMeshFromParent(
         parentMesh.waterMask.translationX + child.waterMask.scale * childX;
     child.waterMask.translationY =
         parentMesh.waterMask.translationY + child.waterMask.scale * childY;
-    child.rasterOverlayDetails.setGeographicRectangle(childBounds);
 
     uint32_t indexBegin = 0;
     uint32_t safeIndexEnd = static_cast<uint32_t>(parentMesh.indices.size());
@@ -638,7 +670,8 @@ std::optional<SurfaceTileMesh> TileSurface::upsampleChildMeshFromParent(
     child.hasHeightRange = true;
     child.minimumHeight = minHeight;
     child.maximumHeight = maxHeight;
-    child.rasterOverlayDetails.setGeographicRectangle(
+    child.rasterOverlayDetails = deriveChildRasterOverlayDetails(
+        parentMesh.rasterOverlayDetails,
         childBounds,
         minHeight,
         maxHeight);
