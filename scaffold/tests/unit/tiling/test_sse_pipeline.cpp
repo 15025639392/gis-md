@@ -6892,6 +6892,46 @@ void testTilesetBoundsUseQuantizedMeshHeightRange() {
           "Tileset: BoundingRegion center-position distance falls back to OBB like cesium-native");
 }
 
+void testTilesetBoundingRegionDegenerateDistanceMatchesCesiumNative() {
+    const Rectangle pointRegion(-1.03, 0.2292, -1.03, 0.2292);
+    TilesetTile tile(TileKey{"Geographic-TMS", 0, 0, 0}, pointRegion);
+    tile.boundingVolume = TileBoundingVolume::fromRegion(pointRegion, 0.0, 3.0);
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    auto distanceTo = [&](double longitude, double latitude, double height) {
+        const Vec3 position = ellipsoid.cartographicToCartesian(
+            Cartographic::fromRadians(longitude, latitude, height));
+        return TilesetTestAccess::approximateDistanceToTileBounds(
+            tile,
+            position);
+    };
+    auto expectedCartesianDistance = [&](double longitude,
+                                         double latitude,
+                                         double height) {
+        const Vec3 regionPosition = ellipsoid.cartographicToCartesian(
+            Cartographic::fromRadians(-1.03, 0.2292, height));
+        const Vec3 position = ellipsoid.cartographicToCartesian(
+            Cartographic::fromRadians(longitude, latitude, height));
+        return regionPosition.distanceTo(position);
+    };
+
+    check(std::abs(distanceTo(-1.03, 0.2292, 4.0) - 1.0) < 1e-6,
+          "Tileset: degenerate BoundingRegion distance above max height matches cesium-native");
+    check(distanceTo(-1.03, 0.2292, 3.0) < 1e-6,
+          "Tileset: degenerate BoundingRegion distance at max height is zero");
+    check(distanceTo(-1.03, 0.2292, 2.0) < 1e-6,
+          "Tileset: degenerate BoundingRegion distance inside height range is zero");
+
+    const double sideDistance = distanceTo(-1.02, 0.2291, 2.0);
+    const double expectedSideDistance =
+        expectedCartesianDistance(-1.02, 0.2291, 2.0);
+    check(MathUtils::equalsEpsilon(
+              sideDistance,
+              expectedSideDistance,
+              MathUtils::Epsilon6),
+          "Tileset: degenerate BoundingRegion lateral distance matches cesium-native");
+}
+
 void testTileBoundsMetricsUsesCentralDefaultTerrainHeightRange() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey key{"Geographic-TMS", 5, 20, 12};
@@ -31469,6 +31509,7 @@ int main() {
     testTilesetUsesQuantizedMeshRtcOrigin();
     testTilesetUsesQuantizedMeshHeightRange();
     testTilesetBoundsUseQuantizedMeshHeightRange();
+    testTilesetBoundingRegionDegenerateDistanceMatchesCesiumNative();
     testTileBoundsMetricsUsesCentralDefaultTerrainHeightRange();
     testTilesetBoundingRegionObbUsesQuantizedMeshHeightRange();
     testTilesetBoundingRegionObbHandlesLargeRectanglesLikeCesiumNative();
