@@ -7,6 +7,7 @@
 #include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
+#include "earth_engine/scene/SceneTilesetDiagnostics.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 
@@ -177,7 +178,12 @@ public:
         return TileContentLoadResult::failed();
     }
 
+    ProviderRequestDiagnostics requestDiagnostics() const override {
+        return diagnostics;
+    }
+
     std::vector<PendingRequest> pendingRequests;
+    ProviderRequestDiagnostics diagnostics;
 
 private:
     TileKey key_;
@@ -454,4 +460,70 @@ TEST(
             pendingKey,
             makeFlatHeightmap(0.0f)));
     }
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    LoadDiagnosticsExposeContentProviderRequestDiagnostics) {
+    const TileKey contentKey{"Geographic-TMS", 0, 0, 0};
+    auto contentProvider =
+        std::make_unique<ManualCompletionContentProvider>(contentKey);
+    contentProvider->diagnostics.requestsStarted = 1;
+    contentProvider->diagnostics.requestsCompleted = 0;
+    contentProvider->diagnostics.activeWorkerBlockingRequests = 0;
+    contentProvider->diagnostics.peakWorkerBlockingRequests = 0;
+    contentProvider->diagnostics.maximumTransportActiveRequests = 11;
+    ManualCompletionContentProvider* rawContentProvider =
+        contentProvider.get();
+
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    const TilesetLoadDiagnostics activeDiagnostics =
+        tileset.loadDiagnostics();
+    EXPECT_EQ(activeDiagnostics.contentProviderRequests.requestsStarted, 1);
+    EXPECT_EQ(activeDiagnostics.contentProviderRequests.requestsCompleted, 0);
+    EXPECT_EQ(
+        activeDiagnostics
+            .contentProviderRequests
+            .activeWorkerBlockingRequests,
+        0);
+    EXPECT_EQ(
+        activeDiagnostics
+            .contentProviderRequests
+            .peakWorkerBlockingRequests,
+        0);
+    EXPECT_EQ(
+        activeDiagnostics
+            .contentProviderRequests
+            .maximumTransportActiveRequests,
+        11);
+
+    Diagnostics sceneDiagnostics;
+    SceneTilesetDiagnostics::reset(sceneDiagnostics);
+    SceneTilesetDiagnostics::addTileset(sceneDiagnostics, tileset, false);
+    EXPECT_EQ(sceneDiagnostics.contentProviderRequestsStarted, 1);
+    EXPECT_EQ(sceneDiagnostics.contentProviderRequestsCompleted, 0);
+    EXPECT_EQ(sceneDiagnostics.contentProviderActiveWorkerBlockingRequests, 0);
+    EXPECT_EQ(sceneDiagnostics.contentProviderPeakWorkerBlockingRequests, 0);
+    EXPECT_EQ(sceneDiagnostics.contentTransportActiveRequestLimit, 11);
+
+    rawContentProvider->diagnostics.requestsCompleted = 1;
+    const TilesetLoadDiagnostics doneDiagnostics = tileset.loadDiagnostics();
+    EXPECT_EQ(doneDiagnostics.contentProviderRequests.requestsCompleted, 1);
+    EXPECT_EQ(
+        doneDiagnostics
+            .contentProviderRequests
+            .activeWorkerBlockingRequests,
+        0);
+    EXPECT_EQ(
+        doneDiagnostics
+            .contentProviderRequests
+            .peakWorkerBlockingRequests,
+        0);
 }
