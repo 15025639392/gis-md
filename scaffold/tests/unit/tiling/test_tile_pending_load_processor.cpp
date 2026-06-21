@@ -80,6 +80,55 @@ TEST(TilePendingLoadProcessorTest, DrainsTerminalThenBudgetedUploads) {
     EXPECT_EQ(0u, counts.contentUploads);
 }
 
+TEST(TilePendingLoadProcessorTest, FinalizeBudgetPreservesUploadPriority) {
+    TileLoadLifecycle lifecycle;
+    const TileKey lowPriorityKey{"test", 1, 0, 0};
+    const TileKey highPriorityKey{"test", 1, 1, 0};
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            lowPriorityKey,
+            "low-priority",
+            TileLoadPriorityGroup::Normal,
+            1.0,
+            nullptr});
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            highPriorityKey,
+            "high-priority",
+            TileLoadPriorityGroup::Urgent,
+            100.0,
+            nullptr});
+    }
+
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    std::vector<std::string> events;
+
+    const bool changed =
+        TilePendingLoadProcessor::processPendingLoads(
+            TilePendingLoadProcessorInput{
+                lifecycle,
+                budget,
+                false,
+                {}},
+            [](const PendingTerrainTerminalResult&) {},
+            [](const PendingContentTerminalResult&) {},
+            [&events](PendingTerrainUpload& upload) {
+                events.push_back(upload.cacheKey);
+            },
+            [](PendingContentUpload&) {});
+
+    ASSERT_TRUE(changed);
+    ASSERT_EQ(1u, events.size());
+    EXPECT_EQ("high-priority", events[0]);
+    EXPECT_EQ(1u, lifecycle.counts().terrainUploads);
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("low-priority"));
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("high-priority"));
+}
+
 TEST(TilePendingLoadProcessorTest, BudgetsTerminalResults) {
     TileLoadLifecycle lifecycle;
     const TileKey firstKey{"test", 1, 0, 0};
