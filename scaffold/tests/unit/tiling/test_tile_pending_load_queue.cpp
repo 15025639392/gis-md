@@ -112,3 +112,53 @@ TEST(TilePendingLoadQueueTest, KeepsUploadWhenFinalizeBudgetBlocks) {
     EXPECT_EQ("content", retry->contentUpload->cacheKey);
     EXPECT_EQ(0u, queue.contentUploadCount());
 }
+
+TEST(TilePendingLoadQueueTest, DeduplicatesUploadsByKind) {
+    TilePendingLoadQueue queue;
+    const TileKey firstKey{"test", 1, 0, 0};
+    const TileKey secondKey{"test", 1, 1, 0};
+
+    queue.addTerrainUpload(PendingTerrainUpload{
+        firstKey,
+        "terrain",
+        TileLoadPriorityGroup::Normal,
+        1.0,
+        nullptr});
+    queue.addTerrainUpload(PendingTerrainUpload{
+        secondKey,
+        "terrain",
+        TileLoadPriorityGroup::Urgent,
+        100.0,
+        nullptr});
+    queue.addContentUpload(PendingContentUpload{
+        firstKey,
+        "content",
+        TileLoadPriorityGroup::Normal,
+        1.0,
+        TileContentLoadResult::empty()});
+    queue.addContentUpload(PendingContentUpload{
+        secondKey,
+        "content",
+        TileLoadPriorityGroup::Urgent,
+        100.0,
+        TileContentLoadResult::empty()});
+
+    EXPECT_EQ(1u, queue.terrainUploadCount());
+    EXPECT_EQ(1u, queue.contentUploadCount());
+
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    std::optional<PendingLoadFinalize> first =
+        queue.takeHighestPriorityUpload(false, budget);
+    std::optional<PendingLoadFinalize> second =
+        queue.takeHighestPriorityUpload(false, budget);
+    std::optional<PendingLoadFinalize> third =
+        queue.takeHighestPriorityUpload(false, budget);
+
+    EXPECT_TRUE(first.has_value());
+    EXPECT_TRUE(second.has_value());
+    EXPECT_FALSE(third.has_value());
+}
