@@ -1308,6 +1308,8 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
 
     if (key.z < getMinimumLevel() || key.z > getMaximumLevel()) return nullptr;
     if (!provider_.supportsTile(key)) return nullptr;
+    Rectangle bounds = scheme_.tileToRectangle(key);
+    if (!bounds.computeIntersection(coverageRectangle_)) return nullptr;
 
     std::string ck = tileCacheKey(key);
     auto it = tiles_.find(ck);
@@ -1317,7 +1319,6 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
     }
 
     // Create new tile in Unloaded state
-    Rectangle bounds = scheme_.tileToRectangle(key);
     auto tile = std::make_shared<RasterOverlayTile>(*this, key, bounds, ck);
     tile->setMaxZoom(getMaximumLevel());
     tile->lastUsedFrame = frameNumber_;

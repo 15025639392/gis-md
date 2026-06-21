@@ -489,6 +489,24 @@ TEST(RasterOverlayLifecycleTest, DirectTileCreationRejectsUnsupportedOverlayLeve
     EXPECT_EQ(1, provider.getCachedTileCount());
 }
 
+TEST(RasterOverlayLifecycleTest, DirectTileCreationRejectsOutsideCoverageLikeCesiumNative) {
+    ConfigurableImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const TileKey coveredKey{scheme->id(), 2, 1, 1};
+    const TileKey outsideKey{scheme->id(), 2, 3, 3};
+    provider.setCoverageRectangle(scheme->tileToRectangle(coveredKey));
+
+    EXPECT_EQ(nullptr, provider.getTile(outsideKey));
+    EXPECT_EQ(0, provider.getCachedTileCount());
+
+    auto covered = provider.getTile(coveredKey);
+    ASSERT_NE(nullptr, covered);
+    EXPECT_EQ(coveredKey, covered->getTileID());
+    EXPECT_EQ(1, provider.getCachedTileCount());
+}
+
 TEST(RasterOverlayLifecycleTest, RectangleCoverageRejectsOutsideAndClipsSourcePlan) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
