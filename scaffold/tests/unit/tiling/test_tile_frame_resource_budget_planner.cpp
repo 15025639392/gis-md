@@ -151,3 +151,21 @@ TEST(TileFrameBudgetFallbackTest, KeepsUploadsAliveWhenWorkerLoadsDisabled) {
         FrameResourceLane::ContentFinalize,
         FrameResourcePriority::Normal));
 }
+
+TEST(TileFrameResourceBudgetPlannerTest, UsesProviderTransportLaneForRasterFanout) {
+    const FrameResourceBudgetConfig config =
+        TileFrameResourceBudgetPlanner::plan(
+            TileFrameResourceBudgetPlanInput::withTransportLimit(
+                20,
+                11,
+                0.0,
+                false,
+                false));
+
+    EXPECT_EQ(config.maxNetworkRequestsPerFrame, 20u);
+    EXPECT_EQ(config.maxTerrainContentNetworkRequestsPerFrame, 20u);
+    EXPECT_EQ(config.maxRasterNetworkRequestsPerFrame, 11u);
+    EXPECT_EQ(config.maxNetworkInflight, 20u);
+    EXPECT_EQ(config.maxTerrainContentNetworkInflight, 20u);
+    EXPECT_EQ(config.maxRasterNetworkInflight, 11u);
+}
