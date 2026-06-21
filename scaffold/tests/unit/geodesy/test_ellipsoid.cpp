@@ -330,6 +330,25 @@ TEST(EllipsoidTest, RayIntersectionIntervalMatchesCesiumNative) {
                      .has_value());
 }
 
+TEST(EllipsoidTest, RayIntersectionIntervalOnSurfaceInwardStartsAtZero) {
+    // Source-derived from cesium-native IntersectionTests::rayEllipsoid:
+    // q2 == 1 and qw < 0 returns {0, -qw / w2}, not the full chord length.
+    const Ellipsoid unitSphere(1.0, 1.0);
+
+    auto interval = unitSphere.rayIntersectionInterval(
+        Vec3(1.0, 0.0, 0.0),
+        Vec3(-1.0, 0.0, 0.0));
+
+    ASSERT_TRUE(interval.has_value());
+    EXPECT_DOUBLE_EQ(0.0, interval->entryDistance);
+    EXPECT_DOUBLE_EQ(1.0, interval->exitDistance);
+
+    auto hit = unitSphere.rayIntersection(Vec3(1.0, 0.0, 0.0),
+                                          Vec3(-1.0, 0.0, 0.0));
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ(Vec3(1.0, 0.0, 0.0), *hit);
+}
+
 TEST(EllipsoidTest, RayIntersectionIntervalMatchesCesiumNativeAxisCases) {
     // Ported from cesium-native CesiumGeometry/test/TestIntersectionTests.cpp:
     // IntersectionTests::rayEllipsoid outside intersections.
