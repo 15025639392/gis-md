@@ -1369,6 +1369,8 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
             TerrainTileLoadResult result =
                 TerrainTileLoadResult::successWithSurfaceMesh(
                     std::move(contentResult.surfaceMesh));
+            result.updatedBoundingVolume =
+                std::move(contentResult.updatedBoundingVolume);
             result.quantizedMeshAvailabilityUpdates =
                 std::move(contentResult.availabilityUpdates);
             (*callback)(key, std::move(result));

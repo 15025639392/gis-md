@@ -104,6 +104,9 @@ public:
         }
 
         if (TilesetTile* tile = ensureTile(upload.key)) {
+            if (upload.updatedBoundingVolume) {
+                tile->boundingVolume = std::move(upload.updatedBoundingVolume);
+            }
             if (upload.surfaceMesh &&
                 !tile->content.renderContent.hasSurfaceMesh()) {
                 tile->content.renderContent.setSurfaceMesh(

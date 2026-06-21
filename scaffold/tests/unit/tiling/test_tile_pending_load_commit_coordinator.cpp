@@ -246,6 +246,76 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainUploadAppliesUpdatedBoundingVolumeToTile) {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "test:0:0:0";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+    tile.boundingVolume =
+        TileBoundingVolume::fromRegion(Rectangle(0.0, 0.0, 1.0, 1.0),
+                                       -1000.0,
+                                       9000.0);
+
+    auto surfaceMesh = std::make_unique<SurfaceTileMesh>();
+    SurfaceVertex vertex;
+    vertex.positionEcef = Vec3(1.0, 0.0, 0.0);
+    surfaceMesh->vertices.push_back(vertex);
+
+    const Rectangle updatedRectangle(0.1, 0.2, 0.3, 0.4);
+    PendingTerrainUpload upload{
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        nullptr,
+        std::move(surfaceMesh),
+        {},
+        TileBoundingVolume::fromRegion(updatedRectangle, -25.0, 125.0)};
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            nullptr,
+            nullptr});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitTerrainUpload(
+        upload,
+        nullptr,
+        terrainCache,
+        lifecycle,
+        false,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](const TileKey&, const DecodedHeightmap*, const SurfaceTileMesh*) {},
+        [](TilesetTile&) {},
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    ASSERT_TRUE(tile.boundingVolume.has_value());
+    EXPECT_EQ(TileBoundingVolumeKind::Region, tile.boundingVolume->kind);
+    EXPECT_EQ(updatedRectangle, tile.boundingVolume->region);
+    EXPECT_DOUBLE_EQ(-25.0, tile.boundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(125.0, tile.boundingVolume->maximumHeight);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      MissingContentUploadPreservesTerrainCache) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;

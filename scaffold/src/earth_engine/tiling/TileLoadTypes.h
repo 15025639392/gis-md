@@ -7,6 +7,7 @@
 
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -32,13 +33,16 @@ struct PendingTerrainUpload {
                          std::unique_ptr<DecodedHeightmap> heightmap_,
                          std::unique_ptr<SurfaceTileMesh> surfaceMesh_ = nullptr,
                          std::vector<QuantizedMeshAvailabilityUpdate>
-                             availabilityUpdates_ = {})
+                             availabilityUpdates_ = {},
+                         std::optional<TileBoundingVolume>
+                             updatedBoundingVolume_ = std::nullopt)
         : key(std::move(key_)),
           cacheKey(std::move(cacheKey_)),
           group(group_),
           priority(priority_),
           heightmap(std::move(heightmap_)),
           surfaceMesh(std::move(surfaceMesh_)),
+          updatedBoundingVolume(std::move(updatedBoundingVolume_)),
           quantizedMeshAvailabilityUpdates(
               std::move(availabilityUpdates_)) {}
 
@@ -48,6 +52,7 @@ struct PendingTerrainUpload {
     double priority = 0.0;
     std::unique_ptr<DecodedHeightmap> heightmap;
     std::unique_ptr<SurfaceTileMesh> surfaceMesh;
+    std::optional<TileBoundingVolume> updatedBoundingVolume;
     std::vector<QuantizedMeshAvailabilityUpdate>
         quantizedMeshAvailabilityUpdates;
 };

@@ -485,6 +485,19 @@ TEST(QuantizedMeshTerrainProviderTest,
     EXPECT_TRUE(completed.surfaceMesh->hasHeightRange);
     EXPECT_NEAR(minimumHeight, completed.surfaceMesh->minimumHeight, 1e-6);
     EXPECT_NEAR(maximumHeight, completed.surfaceMesh->maximumHeight, 1e-6);
+    ASSERT_TRUE(completed.updatedBoundingVolume.has_value());
+    EXPECT_EQ(TileBoundingVolumeKind::Region,
+              completed.updatedBoundingVolume->kind);
+    const TileKey requestedKey{"Geographic-TMS", 0, 0, 0};
+    auto scheme = TileScheme::createGeographicTMS();
+    EXPECT_EQ(scheme->tileToRectangle(requestedKey),
+              completed.updatedBoundingVolume->region);
+    EXPECT_NEAR(minimumHeight,
+                completed.updatedBoundingVolume->minimumHeight,
+                1e-6);
+    EXPECT_NEAR(maximumHeight,
+                completed.updatedBoundingVolume->maximumHeight,
+                1e-6);
 }
 
 TEST(QuantizedMeshTerrainProviderTest, UsesAsyncBridgeWithoutWorkerBlockingWait) {

@@ -2,10 +2,12 @@
 
 #include "ProviderRequestDiagnostics.h"
 #include "../tiling/TileKey.h"
+#include "../tiling/TileBoundingVolume.h"
 #include "../tiling/SurfaceTile.h"
 #include "../platform/bridge/PlatformBridge.h"
 #include "../threading/CancellationToken.h"
 
+#include <optional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -74,6 +76,7 @@ struct TerrainTileLoadResult {
     TerrainTileLoadStatus status = TerrainTileLoadStatus::Failed;
     std::unique_ptr<DecodedHeightmap> heightmap;
     std::unique_ptr<SurfaceTileMesh> surfaceMesh;
+    std::optional<TileBoundingVolume> updatedBoundingVolume;
     std::vector<QuantizedMeshAvailabilityUpdate>
         quantizedMeshAvailabilityUpdates;
 

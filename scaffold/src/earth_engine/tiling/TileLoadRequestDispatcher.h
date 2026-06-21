@@ -179,7 +179,8 @@ public:
                                     std::move(result.surfaceMesh),
                                     std::move(
                                         result
-                                            .quantizedMeshAvailabilityUpdates)});
+                                            .quantizedMeshAvailabilityUpdates),
+                                    std::move(result.updatedBoundingVolume)});
                         } else {
                             pendingLoads.addTerrainTerminalResult(
                                 PendingTerrainTerminalResult{
