@@ -43,3 +43,20 @@ TEST(TilePendingRequestStateTest, CountsAndCompletesRequests) {
     EXPECT_EQ(0u, counts.terrainRequests);
     EXPECT_EQ(0u, counts.totalRequests);
 }
+
+TEST(TilePendingRequestStateTest, RejectsEmptyCacheKeys) {
+    TilePendingRequestState state;
+    CancellationToken terrainToken;
+    CancellationToken contentToken;
+
+    EXPECT_FALSE(state.beginTerrainRequest("", terrainToken));
+    EXPECT_FALSE(state.beginContentRequest("", contentToken));
+    EXPECT_FALSE(state.contains(""));
+    EXPECT_TRUE(state.empty());
+    EXPECT_EQ(0u, state.totalRequestCount());
+
+    const PendingRequestCounts counts = state.counts();
+    EXPECT_EQ(0u, counts.terrainRequests);
+    EXPECT_EQ(0u, counts.contentRequests);
+    EXPECT_EQ(0u, counts.totalRequests);
+}
