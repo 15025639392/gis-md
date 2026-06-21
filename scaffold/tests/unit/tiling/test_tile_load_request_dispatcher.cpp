@@ -845,3 +845,50 @@ TEST(TileLoadRequestDispatcherTest, DropsDestroyingContentTerminalCallback) {
         lifecycle.requestState().clearAfterCallbacksComplete();
     }
 }
+
+TEST(TileLoadRequestDispatcherTest, SkipsPendingTerrainTerminalResultKeys) {
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+    SyncTerminalTerrainProvider provider(issued);
+
+    TileLoadDispatchResult first =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            provider,
+            key,
+            "terrain-terminal",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+    TileLoadDispatchResult second =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            provider,
+            key,
+            "terrain-terminal",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            []() {});
+
+    EXPECT_EQ(TileLoadDispatchResult::Issued, first);
+    EXPECT_EQ(TileLoadDispatchResult::Skipped, second);
+    EXPECT_TRUE(provider.callbackSawIssued);
+    EXPECT_EQ(1u, pendingLoads.terrainTerminalResultCount());
+    EXPECT_EQ(1u, budget.networkRequestsIssued());
+}
