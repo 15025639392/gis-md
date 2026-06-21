@@ -168,6 +168,24 @@ public:
     bool callbackSawIssued = false;
 };
 
+class DeferredContentProvider final : public TilesetContentProvider {
+public:
+    std::string id() const override { return "dispatcher-deferred-content"; }
+    bool supportsTile(const TileKey&) const override { return true; }
+    void requestTileContent(
+        const TileKey&,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        contentCallback = std::move(callback);
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+
+    ContentCallback contentCallback;
+};
+
 class SyncRenderContentProvider final : public TilesetContentProvider {
 public:
     explicit SyncRenderContentProvider(bool& issuedBeforeCallback)
@@ -482,6 +500,40 @@ TEST(TileLoadRequestDispatcherTest, DropsCancelledTerrainUploadCallback) {
     provider.terrainCallback(
         key,
         TerrainTileLoadResult::success(std::make_unique<DecodedHeightmap>()));
+
+    EXPECT_FALSE(lifecycle.hasPendingWork());
+}
+
+TEST(TileLoadRequestDispatcherTest, DropsCancelledContentTerminalCallback) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+    DeferredContentProvider provider;
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::requestContent(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            provider,
+            key,
+            "cancel-content",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    ASSERT_EQ(TileLoadDispatchResult::Issued, result);
+    ASSERT_TRUE(issued);
+    ASSERT_TRUE(provider.contentCallback);
+
+    lifecycle.cancelAndEraseCacheKey("cancel-content");
+    provider.contentCallback(key, TileContentLoadResult::empty());
 
     EXPECT_FALSE(lifecycle.hasPendingWork());
 }
