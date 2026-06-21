@@ -126,3 +126,24 @@ TEST(TileSoftwareOcclusionTest, UsesExplicitRegionHeightForFallbackSamples) {
         TileSoftwareOcclusionPolicy::check(tile, cameraPosition),
         TileOcclusionState::NotOccluded);
 }
+
+TEST(
+    TileSoftwareOcclusionTest,
+    DoesNotInflateExplicitRegionToDefaultTerrainHeight) {
+    TilesetTile tile;
+    tile.key = TileKey{"Geographic-TMS", 4, 0, 0};
+    tile.bounds = Rectangle::fromDegrees(140.0, -1.0, 141.0, 1.0);
+    tile.boundingVolume =
+        TileBoundingVolume::fromRegion(
+            Rectangle::fromDegrees(30.35, -0.01, 30.45, 0.01),
+            0.0,
+            0.0);
+
+    const Vec3 cameraPosition =
+        Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic::fromRadians(0.0, 0.0, 1000000.0));
+
+    EXPECT_EQ(
+        TileSoftwareOcclusionPolicy::check(tile, cameraPosition),
+        TileOcclusionState::Occluded);
+}
