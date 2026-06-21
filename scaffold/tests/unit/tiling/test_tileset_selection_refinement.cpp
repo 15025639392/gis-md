@@ -35,6 +35,29 @@ struct TilesetTestAccess {
             tileset.rasterOverlays_);
     }
 
+    static bool loadQueueContainsNormal(
+        const Tileset& tileset,
+        const TileKey& key) {
+        for (const TileLoadRequest& request : tileset.loadQueue_) {
+            if (request.key == key &&
+                request.group == TileLoadPriorityGroup::Normal) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static bool loadQueueContainsAny(
+        const Tileset& tileset,
+        const TileKey& key) {
+        for (const TileLoadRequest& request : tileset.loadQueue_) {
+            if (request.key == key) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     static Vec3 tileBoundsCenter(const Rectangle& bounds) {
         return TileBoundsMetrics::tileBoundsCenter(bounds);
     }
@@ -196,6 +219,91 @@ TEST(
     }
     EXPECT_EQ(visibleChildCount, childKeys.size());
     EXPECT_EQ(tileset.tilePlan().selectionKickedCount, 0);
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
+    ReplaceRefinementStopsWhenParentMeetsSse) {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::vector<TileKey> childKeys = {
+        {"Geographic-TMS", 1, 0, 0},
+        {"Geographic-TMS", 1, 1, 0},
+        {"Geographic-TMS", 1, 0, 1},
+        {"Geographic-TMS", 1, 1, 1}};
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, childKeys}});
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Empty;
+    root->refine = TileRefine::Replace;
+    root->geometricError = 1.0;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_EQ(root->children.size(), childKeys.size());
+    for (TilesetTile* child : root->children) {
+        ASSERT_NE(child, nullptr);
+        child->content.loadState = TileLoadState::Unloaded;
+        child->content.contentKind = TileContentKind::Unknown;
+        child->geometricError = 0.0;
+    }
+
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    Camera camera;
+    camera.lookAt(
+        center + center.normalized() * 80000000.0,
+        center,
+        Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 145;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const auto& visibleTiles = tileset.tilePlan().visibleTiles;
+    const auto visibleEnd = visibleTiles.end();
+    EXPECT_NE(std::find(visibleTiles.begin(), visibleEnd, rootKey), visibleEnd);
+    EXPECT_EQ(
+        root->selectionFrameState.selectionState,
+        TileSelectionState::Rendered);
+
+    bool anyChildVisible = false;
+    bool anyChildQueued = false;
+    bool anyChildVisited = false;
+    for (const TileKey& childKey : childKeys) {
+        anyChildVisible |=
+            std::find(visibleTiles.begin(), visibleEnd, childKey) != visibleEnd;
+        anyChildQueued |= TilesetTestAccess::loadQueueContainsAny(
+            tileset,
+            childKey);
+        for (const TileSelectionRecord& record :
+             tileset.tilePlan().selectionRecords) {
+            anyChildVisited |= record.key == childKey;
+        }
+    }
+
+    EXPECT_FALSE(anyChildVisible);
+    EXPECT_FALSE(anyChildQueued);
+    EXPECT_FALSE(anyChildVisited);
+    EXPECT_TRUE(TilesetTestAccess::loadQueueContainsNormal(tileset, rootKey));
 }
 
 TEST(
