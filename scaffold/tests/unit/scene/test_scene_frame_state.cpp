@@ -7,10 +7,26 @@
 #include "earth_engine/scene/SceneFrameDiagnostics.h"
 #include "earth_engine/scene/SceneFrameStateBuilder.h"
 #include "earth_engine/scene/Scene.h"
+#include "earth_engine/tiling/TileScheme.h"
+#include "earth_engine/tiling/Tileset.h"
 
 #include <vector>
 
 using namespace earth_engine;
+
+namespace earth_engine {
+struct TilesetTestAccess {
+    static TilesetTile* ensureTile(Tileset& tileset, const TileKey& key) {
+        return tileset.contentAccess_.ensureTile(key);
+    }
+
+    static TileOcclusionState checkOcclusion(
+        const Tileset& tileset,
+        const TilesetTile& tile) {
+        return tileset.checkOcclusion(tile);
+    }
+};
+} // namespace earth_engine
 
 namespace {
 
@@ -195,4 +211,51 @@ TEST(SceneFrameStateTest, FrameStateBuilderPopulatesPerFrameState) {
         nullptr});
 
     EXPECT_TRUE(frameState.selectorViews.empty());
+}
+
+TEST(SceneFrameStateTest, OcclusionCallbackFeedsPrimaryAndAdditionalTilesets) {
+    Scene scene;
+    scene.setOcclusionCallback(
+        [](const TilesetTile&) { return TileOcclusionState::Occluded; });
+
+    auto makeTileset = []() {
+        return std::make_unique<Tileset>(
+            std::unique_ptr<TerrainProvider>{},
+            TileScheme::createGeographicTMS(),
+            std::vector<ActivatedRasterOverlay*>{},
+            nullptr,
+            TilesetOptions{});
+    };
+
+    auto primaryTileset = makeTileset();
+    Tileset* primaryRaw = primaryTileset.get();
+    scene.setTileset(std::move(primaryTileset));
+
+    auto additionalTileset = makeTileset();
+    Tileset* additionalRaw = additionalTileset.get();
+    scene.addTileset(std::move(additionalTileset));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* primaryRoot =
+        TilesetTestAccess::ensureTile(*primaryRaw, rootKey);
+    TilesetTile* additionalRoot =
+        TilesetTestAccess::ensureTile(*additionalRaw, rootKey);
+    ASSERT_NE(primaryRoot, nullptr);
+    ASSERT_NE(additionalRoot, nullptr);
+
+    EXPECT_EQ(
+        TilesetTestAccess::checkOcclusion(*primaryRaw, *primaryRoot),
+        TileOcclusionState::Occluded);
+    EXPECT_EQ(
+        TilesetTestAccess::checkOcclusion(*additionalRaw, *additionalRoot),
+        TileOcclusionState::Occluded);
+
+    scene.setOcclusionCallback(
+        [](const TilesetTile&) { return TileOcclusionState::NotOccluded; });
+    EXPECT_EQ(
+        TilesetTestAccess::checkOcclusion(*primaryRaw, *primaryRoot),
+        TileOcclusionState::NotOccluded);
+    EXPECT_EQ(
+        TilesetTestAccess::checkOcclusion(*additionalRaw, *additionalRoot),
+        TileOcclusionState::NotOccluded);
 }
