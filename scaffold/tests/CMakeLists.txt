@@ -334,6 +334,12 @@ add_executable(test_tile_frame_debug_log_formatter
 target_link_libraries(test_tile_frame_debug_log_formatter PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_frame_debug_log_formatter COMMAND test_tile_frame_debug_log_formatter)
 
+add_executable(test_tile_update_selection_work_runner
+    unit/tiling/test_tile_update_selection_work_runner.cpp
+)
+target_link_libraries(test_tile_update_selection_work_runner PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_update_selection_work_runner COMMAND test_tile_update_selection_work_runner)
+
 add_executable(test_tile_missing_request_scheduler
     unit/tiling/test_tile_missing_request_scheduler.cpp
 )
