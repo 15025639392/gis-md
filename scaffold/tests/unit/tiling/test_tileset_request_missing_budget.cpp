@@ -119,6 +119,10 @@ struct TilesetTestAccess {
             tileset.rasterOverlays_);
     }
 
+    static void clearChildrenRecursively(Tileset& tileset, TilesetTile& tile) {
+        tileset.cacheOwnership_.clearChildrenRecursively(&tile, nullptr);
+    }
+
     static void processPendingUploadsWithBudget(
         Tileset& tileset,
         FrameResourceBudget& budget) {
@@ -859,6 +863,42 @@ TEST(
     EXPECT_TRUE(upsampledChild->content.renderContent.isMeshReady());
     EXPECT_TRUE(upsampledChild->content.renderContent.hasSurfaceMesh());
     EXPECT_TRUE(TilesetTestAccess::isTileRenderable(tileset, *upsampledChild));
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    ClearChildrenErasesFlatMapDescendants) {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(1.0f));
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_EQ(root->children.size(), 4u);
+    ASSERT_NE(root->children[1], nullptr);
+
+    const TileKey childKey = root->children[1]->key;
+    TilesetTestAccess::clearChildrenRecursively(tileset, *root);
+
+    EXPECT_TRUE(root->children.empty());
+    EXPECT_EQ(TilesetTestAccess::findTile(tileset, childKey), nullptr);
+
+    TilesetTile* recreated = TilesetTestAccess::ensureTile(tileset, childKey);
+    ASSERT_NE(recreated, nullptr);
+    EXPECT_EQ(recreated->parent, root);
+    ASSERT_EQ(root->children.size(), 1u);
+    EXPECT_EQ(root->children.front(), recreated);
 }
 
 TEST(
