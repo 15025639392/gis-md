@@ -2,6 +2,7 @@
 
 #include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
+#include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileEmptyContentRegistry.h"
 #include "earth_engine/tiling/TileMissingRequestScheduler.h"
@@ -37,6 +38,32 @@ public:
     }
     TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
         return TileContentLoadResult::failed();
+    }
+
+    int requestCount = 0;
+};
+
+class RetryTerrainProvider final : public TerrainProvider {
+public:
+    std::string id() const override { return "missing-retry-terrain"; }
+    std::string schemeId() const override { return "test"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 1; }
+    int tileSize() const override { return 2; }
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://missing-retry-terrain";
+    }
+    void requestTile(
+        const TileKey& key,
+        CancellationToken,
+        HeightmapCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        ++requestCount;
+        callback(key, TerrainTileLoadResult::retryLater());
+    }
+    std::unique_ptr<DecodedHeightmap> decodeTile(const uint8_t*, size_t)
+        override {
+        return nullptr;
     }
 
     int requestCount = 0;
@@ -102,5 +129,66 @@ TEST(TileMissingRequestSchedulerTest, RetriesAfterEmptyMarkerCleared) {
     EXPECT_EQ(outcome.issued, 1u);
     EXPECT_EQ(provider.requestCount, 1);
     EXPECT_EQ(lifecycle.counts().contentTerminalResults, 1u);
+    EXPECT_EQ(tileRaw->content.loadState, TileLoadState::ContentLoading);
+}
+
+TEST(TileMissingRequestSchedulerTest, RetriesTerrainAfterEmptyMarkerCleared) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    RetryTerrainProvider provider;
+    TileEmptyContentRegistry emptyContentRegistry;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = cacheKeyForTile(key);
+    auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
+    tile->content.loadState = TileLoadState::FailedTemporarily;
+    TilesetTile* tileRaw = tile.get();
+    tiles[cacheKey] = std::move(tile);
+    emptyContentRegistry.insert(cacheKey);
+
+    auto requestOnce = [&]() {
+        return TileMissingRequestScheduler::request(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileMissingRequestSchedulerInput{
+                lifecycle,
+                budget,
+                &provider,
+                nullptr,
+                tiles,
+                terrainCache,
+                emptyContentRegistry},
+            cacheKeyForTile,
+            [](TilesetTile&, double) { return false; },
+            [&tiles](const TileKey& tileKey) -> TilesetTile* {
+                const std::string lookupKey = cacheKeyForTile(tileKey);
+                auto it = tiles.find(lookupKey);
+                return it == tiles.end() ? nullptr : it->second.get();
+            });
+    };
+
+    TileLoadRequestOutcome outcome = requestOnce();
+    EXPECT_EQ(outcome.issued, 0u);
+    EXPECT_EQ(provider.requestCount, 0);
+    EXPECT_EQ(tileRaw->content.loadState, TileLoadState::FailedTemporarily);
+
+    TileTerminalLoadCommitter::commitTerrainTerminalResult(
+        *tileRaw,
+        cacheKey,
+        TerrainTileLoadStatus::RetryLater,
+        emptyContentRegistry);
+    outcome = requestOnce();
+    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_EQ(provider.requestCount, 1);
+    EXPECT_EQ(lifecycle.counts().terrainTerminalResults, 1u);
     EXPECT_EQ(tileRaw->content.loadState, TileLoadState::ContentLoading);
 }
