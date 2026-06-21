@@ -175,3 +175,36 @@ TEST(TileLoadLifecycleTest, CancelIgnoresEmptyCacheKey) {
 
     EXPECT_FALSE(lifecycle.hasPendingWork());
 }
+
+TEST(TileLoadLifecycleTest, CancelErasesTerminalResults) {
+    TileLoadLifecycle lifecycle;
+    const TileKey terrainKey{"test", 0, 0, 0};
+    const TileKey contentKey{"test", 0, 1, 0};
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainTerminalResult(
+            PendingTerrainTerminalResult{
+                terrainKey,
+                "terrain-terminal",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TerrainTileLoadStatus::RetryLater});
+        lifecycle.pendingLoads().addContentTerminalResult(
+            PendingContentTerminalResult{
+                contentKey,
+                "content-terminal",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadStatus::RetryLater});
+    }
+
+    lifecycle.cancelAndEraseCacheKey("terrain-terminal");
+
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey("terrain-terminal"));
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("content-terminal"));
+
+    lifecycle.cancelAndEraseCacheKey("content-terminal");
+
+    EXPECT_FALSE(lifecycle.hasPendingWork());
+}
