@@ -113,7 +113,10 @@ public:
                 ensureTileMesh(*tile);
             }
             const bool resourcesReady =
-                resourceSmoothingActive || tile->content.renderContent.isMeshReady();
+                resourceSmoothingActive ||
+                (uploadsGltfTerrain
+                     ? tile->content.renderContent.hasGltfResources()
+                     : tile->content.renderContent.isMeshReady());
             const TileTerrainUploadCommitAction action =
                 TileTerrainUploadCommitter::finishMeshResourcePreparation(
                     *tile,

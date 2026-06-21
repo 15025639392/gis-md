@@ -9,6 +9,7 @@
 #include <array>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace earth_engine {
@@ -30,6 +31,7 @@ struct TileSurfaceContentState {
     bool hasTerrainHeightRange = false;
     double terrainMinimumHeight = 0.0;
     double terrainMaximumHeight = 0.0;
+    std::optional<Vec3> horizonOcclusionPoint;
     bool meshReady = false;
     bool surfaceDrawable = false;
     SurfaceDrawableSource surfaceSource = SurfaceDrawableSource::None;
@@ -141,6 +143,7 @@ public:
                surface_.surfaceSource != SurfaceDrawableSource::OwnTerrain;
     }
     void setSurfaceMesh(std::unique_ptr<SurfaceTileMesh> surfaceMesh) {
+        surface_.horizonOcclusionPoint.reset();
         surface_.mesh = std::move(surfaceMesh);
     }
     void setRetainedHeightmap(std::unique_ptr<DecodedHeightmap> decoded) {
@@ -163,8 +166,14 @@ public:
         surface_.terrainMinimumHeight = minimumHeight;
         surface_.terrainMaximumHeight = maximumHeight;
     }
+    void setHorizonOcclusionPoint(const Vec3& point) {
+        surface_.horizonOcclusionPoint = point;
+    }
     SurfaceTileMesh* mutableSurfaceMesh() { return surface_.mesh.get(); }
     const Vec3* horizonOcclusionPoint() const {
+        if (surface_.horizonOcclusionPoint) {
+            return &*surface_.horizonOcclusionPoint;
+        }
         return surface_.mesh && surface_.mesh->hasHorizonOcclusionPoint
             ? &surface_.mesh->horizonOcclusionPoint
             : nullptr;
@@ -348,6 +357,7 @@ public:
         surface_.gpuVertexBuffer.reset();
         surface_.gpuIndexBuffer.reset();
         surfaceWaterMaskTexture_.reset();
+        surface_.horizonOcclusionPoint.reset();
         surface_.meshReady = false;
         surface_.surfaceDrawable = false;
         surface_.surfaceSource = SurfaceDrawableSource::None;
@@ -365,6 +375,7 @@ public:
                             const Mat4& contentTransform) {
         surface_.heightmap.reset();
         surface_.mesh.reset();
+        surface_.horizonOcclusionPoint.reset();
         releaseGpuResources();
         gltfModel = std::move(model);
         gltfContentTransform = contentTransform;

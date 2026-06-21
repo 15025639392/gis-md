@@ -83,6 +83,13 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
             tileRectangle,
             surfaceMesh->minimumHeight,
             surfaceMesh->maximumHeight);
+        result.metadata.terrainHeightRange = {
+            surfaceMesh->minimumHeight,
+            surfaceMesh->maximumHeight};
+    }
+    if (surfaceMesh->hasHorizonOcclusionPoint) {
+        result.metadata.horizonOcclusionPoint =
+            surfaceMesh->horizonOcclusionPoint;
     }
     result.metadata.rasterOverlayDetails = surfaceMesh->rasterOverlayDetails;
     result.gltfModel = std::move(gltfModel);

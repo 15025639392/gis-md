@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/content/QuantizedMeshContentLoader.h"
+#include "earth_engine/core/math/Vec3.h"
 
 #include <cstdint>
 #include <string>
@@ -23,13 +24,17 @@ uint16_t zigZagEncode16(int32_t value) {
 
 std::vector<uint8_t> makeQuantizedMeshBytes(
     float minimumHeight = 0.0f,
-    float maximumHeight = 100.0f) {
+    float maximumHeight = 100.0f,
+    const Vec3& horizonOcclusionPoint = Vec3::zero()) {
     std::vector<uint8_t> bytes;
 
     for (int i = 0; i < 3; ++i) appendPod<double>(bytes, 0.0);
     appendPod<float>(bytes, minimumHeight);
     appendPod<float>(bytes, maximumHeight);
-    for (int i = 0; i < 7; ++i) appendPod<double>(bytes, 0.0);
+    for (int i = 0; i < 4; ++i) appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, horizonOcclusionPoint.x());
+    appendPod<double>(bytes, horizonOcclusionPoint.y());
+    appendPod<double>(bytes, horizonOcclusionPoint.z());
     appendPod<uint32_t>(bytes, 3);
 
     const uint16_t u[] = {
@@ -212,7 +217,42 @@ TEST(QuantizedMeshContentLoaderTest,
     EXPECT_NEAR(150.0,
                 result.metadata.updatedBoundingVolume->maximumHeight,
                 1e-6);
+    ASSERT_TRUE(result.metadata.terrainHeightRange.has_value());
+    EXPECT_NEAR(-10.0, result.metadata.terrainHeightRange->first, 1e-6);
+    EXPECT_NEAR(150.0, result.metadata.terrainHeightRange->second, 1e-6);
     EXPECT_TRUE(result.availabilityUpdates.empty());
+}
+
+TEST(QuantizedMeshContentLoaderTest,
+     CarriesTerrainSidecarMetadataWithoutSurfaceMeshDependency) {
+    const Vec3 horizonOcclusionPoint(0.25, -0.5, 0.75);
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes(-20.0f, 320.0f, horizonOcclusionPoint);
+
+    QuantizedMeshContentLoadResult result =
+        QuantizedMeshContentLoader::load(
+            bytes.data(),
+            bytes.size(),
+            geographicRootWestRectangle(),
+            false,
+            {});
+
+    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.metadata.updatedBoundingVolume.has_value());
+    EXPECT_NEAR(-20.0,
+                result.metadata.updatedBoundingVolume->minimumHeight,
+                1e-6);
+    EXPECT_NEAR(320.0,
+                result.metadata.updatedBoundingVolume->maximumHeight,
+                1e-6);
+    ASSERT_TRUE(result.metadata.terrainHeightRange.has_value());
+    EXPECT_NEAR(-20.0, result.metadata.terrainHeightRange->first, 1e-6);
+    EXPECT_NEAR(320.0, result.metadata.terrainHeightRange->second, 1e-6);
+    ASSERT_TRUE(result.metadata.horizonOcclusionPoint.has_value());
+    EXPECT_LT((*result.metadata.horizonOcclusionPoint -
+               horizonOcclusionPoint)
+                  .length(),
+              1e-12);
 }
 
 TEST(QuantizedMeshContentLoaderTest,
