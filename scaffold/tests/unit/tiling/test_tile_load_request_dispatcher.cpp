@@ -112,3 +112,66 @@ TEST(TileLoadRequestDispatcherTest, BlocksWhenBudgetIsExhausted) {
     EXPECT_FALSE(pendingLoads.hasWork());
     EXPECT_EQ(0u, contentBudget.networkRequestsIssued());
 }
+
+TEST(TileLoadRequestDispatcherTest, SkipsEmptyCacheKeys) {
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+
+    DispatcherBudgetTerrainProvider terrainProvider;
+    TileLoadDispatchResult terrainResult =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            terrainProvider,
+            key,
+            "",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    DispatcherBudgetContentProvider contentProvider;
+    TileLoadDispatchResult contentResult =
+        TileLoadRequestDispatcher::requestContent(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            contentProvider,
+            key,
+            "",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    TileLoadDispatchResult upsampleResult =
+        TileLoadRequestDispatcher::queueUpsampledTerrain(
+            mutex,
+            requestState,
+            pendingLoads,
+            key,
+            "",
+            TileLoadPriorityGroup::Normal,
+            0.0);
+
+    EXPECT_EQ(TileLoadDispatchResult::Skipped, terrainResult);
+    EXPECT_EQ(TileLoadDispatchResult::Skipped, contentResult);
+    EXPECT_EQ(TileLoadDispatchResult::Skipped, upsampleResult);
+    EXPECT_FALSE(issued);
+    EXPECT_EQ(0, terrainProvider.requestCount);
+    EXPECT_EQ(0, contentProvider.requestCount);
+    EXPECT_TRUE(requestState.empty());
+    EXPECT_FALSE(pendingLoads.hasWork());
+    EXPECT_EQ(0u, budget.networkRequestsIssued());
+}
