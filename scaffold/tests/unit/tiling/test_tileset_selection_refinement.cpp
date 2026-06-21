@@ -316,6 +316,83 @@ TEST(
 
 TEST(
     TilesetSelectionRefinementTest,
+    ExternalWrapperRefinesToChildSelection) {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey externalKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey renderKey{"Geographic-TMS", 2, 0, 0};
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, {externalKey}},
+            {externalKey, {renderKey}}});
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Empty;
+    root->refine = TileRefine::Replace;
+    root->geometricError = 40000.0;
+    root->boundingVolume = TileBoundingVolume::fromSphere(center, 1000000.0);
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    TilesetTile* external = TilesetTestAccess::findTile(tileset, externalKey);
+    ASSERT_NE(external, nullptr);
+    external->content.loadState = TileLoadState::Done;
+    external->content.contentKind = TileContentKind::External;
+    external->refine = TileRefine::Replace;
+    external->unconditionallyRefine = true;
+    external->geometricError = 0.0;
+    external->boundingVolume =
+        TileBoundingVolume::fromSphere(center, 1000000.0);
+
+    TilesetTestAccess::ensureTileChildren(tileset, *external);
+    TilesetTile* render = TilesetTestAccess::findTile(tileset, renderKey);
+    ASSERT_NE(render, nullptr);
+    render->content.loadState = TileLoadState::Done;
+    render->content.contentKind = TileContentKind::Empty;
+    render->geometricError = 0.0;
+    render->boundingVolume = TileBoundingVolume::fromSphere(center, 1000000.0);
+
+    Camera camera;
+    camera.lookAt(
+        center + center.normalized() * 1000000.0,
+        center,
+        Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 150;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const auto& visibleTiles = tileset.tilePlan().visibleTiles;
+    const auto visibleEnd = visibleTiles.end();
+    EXPECT_EQ(
+        std::find(visibleTiles.begin(), visibleEnd, externalKey),
+        visibleEnd);
+    EXPECT_NE(std::find(visibleTiles.begin(), visibleEnd, renderKey), visibleEnd);
+    EXPECT_EQ(
+        external->selectionFrameState.selectionState,
+        TileSelectionState::Refined);
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
     ReplaceRefinementStopsWhenParentMeetsSse) {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const std::vector<TileKey> childKeys = {
