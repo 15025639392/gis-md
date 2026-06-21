@@ -159,6 +159,24 @@ TEST(CullingVolumeTest, IdentityClipMatrixExtractsCesiumNativePlaneSigns) {
                           0.0));
 }
 
+TEST(CullingVolumeTest, ClipMatrixNormalizesRowCombinationLikeCesiumNative) {
+    glm::dmat4 clip(0.0);
+    clip[0][3] = 6.0;
+    clip[1][3] = 8.0;
+    clip[2][3] = 0.0;
+    clip[3][3] = 20.0;
+    clip[0][0] = 0.0;
+    clip[1][0] = 0.0;
+    clip[2][0] = 0.0;
+    clip[3][0] = 10.0;
+
+    const CullingVolume volume = CullingVolume::fromClipMatrix(Mat4(clip));
+
+    EXPECT_TRUE(planeNear(volume.leftPlane,
+                          Plane(Vec3(0.6, 0.8, 0.0), 3.0),
+                          0.0));
+}
+
 TEST(CullingVolumeTest, PerspectiveOffCenterMatchesCesiumNativeClipMatrix) {
     const Vec3 position(1234.0, -5678.0, 91011.0);
     const Vec3 direction(0.25, -0.4, 1.0);
