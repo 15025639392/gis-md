@@ -286,8 +286,6 @@ private:
 
     /// Tiles currently in-flight (requested but not yet responded).
     std::unordered_set<std::string> inFlightRequests_;
-    std::unordered_map<std::string, std::shared_ptr<RectangleSourceRequest>>
-        activeRectangleRequests_;
     std::atomic<uint32_t> activeRasterSourceRequests_{0};
 
     /// Failed tiles (key → first fail timestamp, for retry logic).

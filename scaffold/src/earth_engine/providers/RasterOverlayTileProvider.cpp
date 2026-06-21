@@ -207,22 +207,6 @@ bool tryIssueRasterRequestBudget(FrameResourceBudget* budget,
         estimatedFanout);
 }
 
-bool canIssueRasterRequestBudget(FrameResourceBudget* budget,
-                                 uint32_t currentInflight,
-                                 int estimatedFanout) {
-    if (!budget) {
-        return true;
-    }
-    return budget->hasNetworkInflightCapacity(
-               FrameResourceLane::RasterRequest,
-               currentInflight,
-               estimatedFanout) &&
-           budget->canIssue(
-               FrameResourceLane::RasterRequest,
-               FrameResourcePriority::Normal,
-               estimatedFanout);
-}
-
 bool isWebMercatorScheme(const TileScheme& scheme) {
     const std::string id = scheme.id();
     return id == "XYZ-WebMercator" ||
@@ -752,11 +736,8 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
         sources.reserve(sourcePlan.sourceKeys.size());
     }
 
-    bool issueMore(FrameResourceBudget* budget,
-                   const std::function<uint32_t()>& currentInflight,
-                   const std::function<void()>& onSourceIssued,
-                   const std::function<void()>& onSourceFinished) {
-        bool issuedAny = false;
+    void issueAll(const std::function<void()>& onSourceIssued,
+                  const std::function<void()>& onSourceFinished) {
         while (!isComplete()) {
             TileKey sourceKey;
             {
@@ -764,28 +745,11 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
                 if (nextSourceIndex >= sourcePlan.sourceKeys.size()) {
                     break;
                 }
-                sourceKey = sourcePlan.sourceKeys[nextSourceIndex];
-            }
-
-            if (!tryIssueRasterRequestBudget(
-                    budget,
-                    currentInflight(),
-                    1)) {
-                break;
-            }
-
-            {
-                std::lock_guard<std::mutex> lock(mutex);
-                if (nextSourceIndex >= sourcePlan.sourceKeys.size()) {
-                    break;
-                }
                 sourceKey = sourcePlan.sourceKeys[nextSourceIndex++];
             }
-            issuedAny = true;
             onSourceIssued();
             requestSource(sourceKey, sourceKey, false, true, onSourceFinished);
         }
-        return issuedAny;
     }
 
     bool isComplete() const {
@@ -1408,14 +1372,9 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
 
 bool RasterOverlayTileProvider::loadTileThrottled(RasterOverlayTile& tile,
                                                   FrameResourceBudget* budget) {
-    if (tile.isRectangleTile() &&
-        tile.getState() == RasterOverlayTile::LoadState::Loading) {
-        return loadRectangleTile(tile, budget);
-    }
-
-    // cesium-native: loadTileThrottled only starts Unloaded tiles. Rectangle
-    // tiles keep the Loading continuation above so source fanout can be issued
-    // across frames under the local request budget.
+    // cesium-native: loadTileThrottled only starts Unloaded tiles. Once a
+    // rectangle tile is Loading, its source dependencies are already attached
+    // to provider-level source tile assets and do not need per-frame pumping.
     if (tile.getState() != RasterOverlayTile::LoadState::Unloaded) {
         return true;
     }
@@ -1433,43 +1392,7 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
     switch (state) {
         case RasterOverlayTile::LoadState::Unloaded:
             break;
-        case RasterOverlayTile::LoadState::Loading: {
-            const std::string ck = tile.getCacheKey();
-            std::shared_ptr<RectangleSourceRequest> request;
-            {
-                std::lock_guard<std::mutex> lock(pendingMutex_);
-                auto it = activeRectangleRequests_.find(ck);
-                if (it != activeRectangleRequests_.end()) {
-                    request = it->second;
-                }
-            }
-            if (!request) {
-                return true;
-            }
-            request->issueMore(
-                budget,
-                [self = this]() {
-                    return self->activeRasterSourceRequests_.load(
-                        std::memory_order_relaxed);
-                },
-                [self = this]() {
-                    self->activeRasterSourceRequests_.fetch_add(
-                        1,
-                        std::memory_order_relaxed);
-                },
-                [self = this]() {
-                    uint32_t current = self->activeRasterSourceRequests_.load(
-                        std::memory_order_relaxed);
-                    while (current > 0 &&
-                           !self->activeRasterSourceRequests_.compare_exchange_weak(
-                               current,
-                               current - 1,
-                               std::memory_order_relaxed,
-                               std::memory_order_relaxed)) {
-                    }
-                });
-            return true;
-        }
+        case RasterOverlayTile::LoadState::Loading:
         case RasterOverlayTile::LoadState::Loaded:
         case RasterOverlayTile::LoadState::Done:
         case RasterOverlayTile::LoadState::Failed:
@@ -1512,7 +1435,7 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
         tile.setState(RasterOverlayTile::LoadState::Failed);
         return false;
     }
-    if (!canIssueRasterRequestBudget(
+    if (!tryIssueRasterRequestBudget(
             budget,
             activeRasterSourceRequests_,
             1)) {
@@ -1554,7 +1477,6 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
                    RasterOverlayTile::MoreDetailAvailable moreDetailAvailable) {
             std::lock_guard<std::mutex> providerLock(self->pendingMutex_);
             self->inFlightRequests_.erase(ck);
-            self->activeRectangleRequests_.erase(ck);
             logAndroidRasterPipeline("composed", ck, 0, 0);
             self->pendingUploads_.push_back(
                 {ck, std::move(composed), rectangle, moreDetailAvailable});
@@ -1562,7 +1484,6 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
         [self, ck]() {
             std::lock_guard<std::mutex> providerLock(self->pendingMutex_);
             self->inFlightRequests_.erase(ck);
-            self->activeRectangleRequests_.erase(ck);
             logAndroidRasterPipeline("compose-failed", ck, 0, 0);
             auto it = self->tiles_.find(ck);
             if (it != self->tiles_.end()) {
@@ -1578,16 +1499,8 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
             fr.retries++;
             self->revision_.fetch_add(1, std::memory_order_relaxed);
         });
-    {
-        std::lock_guard<std::mutex> lock(pendingMutex_);
-        activeRectangleRequests_[ck] = request;
-    }
-    request->issueMore(
-        budget,
-        [self = this]() {
-            return self->activeRasterSourceRequests_.load(
-                std::memory_order_relaxed);
-        },
+
+    request->issueAll(
         [self = this]() {
             self->activeRasterSourceRequests_.fetch_add(
                 1,

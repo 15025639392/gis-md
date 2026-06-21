@@ -2214,7 +2214,7 @@ std::unique_ptr<DecodedImage> makeDecodedRgbaImage(int width, int height) {
     return image;
 }
 
-void testRasterOverlayRectangleSourceRequestsAreBudgetedAcrossFrames() {
+void testRasterOverlayRectangleSourceRequestsStartAsOneBatch() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
@@ -2226,7 +2226,8 @@ void testRasterOverlayRectangleSourceRequestsAreBudgetedAcrossFrames() {
             1024.0);
 
     FrameResourceBudgetConfig config;
-    config.maxRasterNetworkRequestsPerFrame = 2;
+    config.maxNetworkRequestsPerFrame = 1;
+    config.maxRasterNetworkRequestsPerFrame = 1;
     config.maxRasterNetworkInflight = 32;
     FrameResourceBudget firstFrameBudget;
     firstFrameBudget.beginFrame(1, config);
@@ -2235,17 +2236,18 @@ void testRasterOverlayRectangleSourceRequestsAreBudgetedAcrossFrames() {
               provider.loadTileThrottled(*rectangleTile, &firstFrameBudget) &&
               rectangleTile->getState() ==
                   RasterOverlayTile::LoadState::Loading &&
-              imagery.pendingRequests.size() == 2 &&
-              firstFrameBudget.rasterNetworkRequestsIssued() == 2,
-          "RasterOverlayTileProvider: rectangle source requests respect the first-frame raster request budget");
+              imagery.pendingRequests.size() > 2 &&
+              firstFrameBudget.rasterNetworkRequestsIssued() == 1,
+          "RasterOverlayTileProvider: rectangle source batch starts as one raster request budget unit");
 
     FrameResourceBudget secondFrameBudget;
     secondFrameBudget.beginFrame(2, config);
+    const size_t firstBatchSize = imagery.pendingRequests.size();
     check(rectangleTile &&
               provider.loadTileThrottled(*rectangleTile, &secondFrameBudget) &&
-              imagery.pendingRequests.size() == 4 &&
-              secondFrameBudget.rasterNetworkRequestsIssued() == 2,
-          "RasterOverlayTileProvider: loading rectangle tiles continue issuing source requests on later frames");
+              imagery.pendingRequests.size() == firstBatchSize &&
+              secondFrameBudget.rasterNetworkRequestsIssued() == 0,
+          "RasterOverlayTileProvider: loading rectangle tiles do not pump source requests on later frames");
 }
 
 void testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches() {
@@ -4186,7 +4188,7 @@ void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {
     center->selectionFrameState.priority = 1.0;
 
     FrameResourceBudgetConfig config;
-    config.maxRasterNetworkRequestsPerFrame = 2;
+    config.maxRasterNetworkRequestsPerFrame = 1;
     config.maxRasterNetworkInflight = 8;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
@@ -4215,7 +4217,7 @@ void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {
     check(centerLoading &&
               centerLoading->getState() ==
                   RasterOverlayTile::LoadState::Loading &&
-              budget.rasterNetworkRequestsIssued() == 2,
+              budget.rasterNetworkRequestsIssued() == 1,
           "TileRasterOverlayFrameProcessor: raster prefetch starts the higher-priority tile first");
     check(!edgeMapping && !edgeLoading,
           "TileRasterOverlayFrameProcessor: exhausted raster budget stops lower-priority traversal-order prefetch");
@@ -26560,7 +26562,7 @@ int main() {
     testActivatedRasterOverlayEnsuresProvider();
     testRasterOverlayProviderRectangleTile();
     testRasterOverlayProviderDirectTileForExactProviderRectangle();
-    testRasterOverlayRectangleSourceRequestsAreBudgetedAcrossFrames();
+    testRasterOverlayRectangleSourceRequestsStartAsOneBatch();
     testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches();
     testRasterOverlayBaseRectangleSourceRejectsCoverageEdgeMiss();
     testRasterOverlayRectangleSourceFailureRequestsParentSource();
