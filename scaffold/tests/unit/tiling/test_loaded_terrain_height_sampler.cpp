@@ -65,3 +65,29 @@ TEST(LoadedTerrainHeightSamplerTest, UsesBestLoadedTerrainTile) {
             latitude),
         1e-6f);
 }
+
+TEST(LoadedTerrainHeightSamplerTest, FallsBackToLoadedAncestorTerrain) {
+    auto scheme = TileScheme::createGeographicTMS();
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    putTile(tiles, rootKey, scheme->tileToRectangle(rootKey));
+    putTile(tiles, childKey, scheme->tileToRectangle(childKey));
+    terrainCache.emplace(cacheKeyFor(rootKey), makeFlatHeightmap(123.0f));
+
+    const Rectangle childBounds = scheme->tileToRectangle(childKey);
+    const double longitude = (childBounds.west() + childBounds.east()) * 0.5;
+    const double latitude = (childBounds.south() + childBounds.north()) * 0.5;
+
+    EXPECT_NEAR(
+        123.0f,
+        LoadedTerrainHeightSampler::sampleHeight(
+            tiles,
+            terrainCache,
+            longitude,
+            latitude),
+        1e-6f);
+}
