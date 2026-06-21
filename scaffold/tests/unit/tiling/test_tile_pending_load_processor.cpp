@@ -350,3 +350,52 @@ TEST(TilePendingLoadProcessorTest, DrainsTerminalDuringInteraction) {
     EXPECT_EQ(1u, lifecycle.counts().terrainUploads);
     EXPECT_TRUE(lifecycle.containsWorkForCacheKey("upload"));
 }
+
+TEST(TilePendingLoadProcessorTest, ProcessesUrgentUploadDuringInteraction) {
+    TileLoadLifecycle lifecycle;
+    const TileKey normalKey{"test", 1, 0, 0};
+    const TileKey urgentKey{"test", 1, 1, 0};
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            normalKey,
+            "normal",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            nullptr});
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            urgentKey,
+            "urgent",
+            TileLoadPriorityGroup::Urgent,
+            100.0,
+            nullptr});
+    }
+
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    std::vector<std::string> events;
+
+    const bool changed =
+        TilePendingLoadProcessor::processPendingLoads(
+            TilePendingLoadProcessorInput{
+                lifecycle,
+                budget,
+                true,
+                {}},
+            [](const PendingTerrainTerminalResult&) {},
+            [](const PendingContentTerminalResult&) {},
+            [&events](PendingTerrainUpload& upload) {
+                events.push_back(upload.cacheKey);
+            },
+            [](PendingContentUpload&) {});
+
+    ASSERT_TRUE(changed);
+    ASSERT_EQ(1u, events.size());
+    EXPECT_EQ("urgent", events[0]);
+    EXPECT_EQ(1u, lifecycle.counts().terrainUploads);
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("normal"));
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("urgent"));
+}
