@@ -720,3 +720,44 @@ TEST(TileLoadRequestDispatcherTest, DropsDestroyingTerrainUploadCallback) {
         lifecycle.requestState().clearAfterCallbacksComplete();
     }
 }
+
+TEST(TileLoadRequestDispatcherTest, DropsDestroyingTerrainTerminalCallback) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    DeferredTerrainProvider provider;
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::requestTerrain(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            provider,
+            key,
+            "destroy-terrain-terminal",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            []() {});
+
+    ASSERT_EQ(TileLoadDispatchResult::Issued, result);
+    ASSERT_TRUE(provider.terrainCallback);
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().markDestroyingAndCancelRequests();
+    }
+
+    provider.terrainCallback(key, TerrainTileLoadResult::retryLater());
+
+    EXPECT_FALSE(lifecycle.hasPendingWork());
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().clearAfterCallbacksComplete();
+    }
+}
