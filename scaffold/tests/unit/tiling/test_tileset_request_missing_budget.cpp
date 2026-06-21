@@ -18,6 +18,8 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -209,6 +211,92 @@ struct TilesetTestAccess {
 } // namespace earth_engine
 
 namespace {
+
+template <typename T>
+void appendPod(std::vector<uint8_t>& bytes, T value) {
+    const auto* p = reinterpret_cast<const uint8_t*>(&value);
+    bytes.insert(bytes.end(), p, p + sizeof(T));
+}
+
+void writeBytes(const std::filesystem::path& path,
+                const std::vector<uint8_t>& bytes) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream out(path, std::ios::binary);
+    out.write(
+        reinterpret_cast<const char*>(bytes.data()),
+        static_cast<std::streamsize>(bytes.size()));
+}
+
+struct ExternalGltfBytes {
+    std::vector<uint8_t> jsonBytes;
+    std::vector<uint8_t> binBytes;
+};
+
+ExternalGltfBytes makeTriangleExternalGltfBytes() {
+    std::vector<uint8_t> bin;
+    const size_t positionsOffset = bin.size();
+    appendPod<float>(bin, 0.0f);
+    appendPod<float>(bin, 0.0f);
+    appendPod<float>(bin, 0.0f);
+    appendPod<float>(bin, 1.0f);
+    appendPod<float>(bin, 0.0f);
+    appendPod<float>(bin, 0.0f);
+    appendPod<float>(bin, 0.0f);
+    appendPod<float>(bin, 1.0f);
+    appendPod<float>(bin, 0.0f);
+
+    const size_t normalsOffset = bin.size();
+    for (int i = 0; i < 3; ++i) {
+        appendPod<float>(bin, 0.0f);
+        appendPod<float>(bin, 0.0f);
+        appendPod<float>(bin, 1.0f);
+    }
+
+    const size_t uvOffset = bin.size();
+    appendPod<float>(bin, 0.0f);
+    appendPod<float>(bin, 0.0f);
+    appendPod<float>(bin, 1.0f);
+    appendPod<float>(bin, 0.0f);
+    appendPod<float>(bin, 0.0f);
+    appendPod<float>(bin, 1.0f);
+
+    const size_t indicesOffset = bin.size();
+    appendPod<uint16_t>(bin, 0);
+    appendPod<uint16_t>(bin, 1);
+    appendPod<uint16_t>(bin, 2);
+    while ((bin.size() % 4u) != 0u) {
+        bin.push_back(0);
+    }
+
+    const std::string jsonText =
+        std::string("{") +
+        "\"asset\":{\"version\":\"2.0\"}," +
+        "\"scene\":0," +
+        "\"scenes\":[{\"nodes\":[0]}]," +
+        "\"nodes\":[{\"mesh\":0}]," +
+        "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},\"indices\":3,\"mode\":4}]}]," +
+        "\"buffers\":[{\"uri\":\"triangle.bin\",\"byteLength\":" +
+        std::to_string(bin.size()) + "}]," +
+        "\"bufferViews\":[" +
+        "{\"buffer\":0,\"byteOffset\":" +
+        std::to_string(positionsOffset) + ",\"byteLength\":36}," +
+        "{\"buffer\":0,\"byteOffset\":" +
+        std::to_string(normalsOffset) + ",\"byteLength\":36}," +
+        "{\"buffer\":0,\"byteOffset\":" +
+        std::to_string(uvOffset) + ",\"byteLength\":24}," +
+        "{\"buffer\":0,\"byteOffset\":" +
+        std::to_string(indicesOffset) + ",\"byteLength\":6}" +
+        "]," +
+        "\"accessors\":[" +
+        "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}," +
+        "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}," +
+        "{\"bufferView\":2,\"componentType\":5126,\"count\":3,\"type\":\"VEC2\"}," +
+        "{\"bufferView\":3,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}" +
+        "]}";
+    return ExternalGltfBytes{
+        std::vector<uint8_t>(jsonText.begin(), jsonText.end()),
+        std::move(bin)};
+}
 
 class BlockingHttpRequest final : public HttpRequest {
 public:
@@ -949,6 +1037,73 @@ TEST(
         doneDiagnostics
             .contentProviderRequests
             .peakWorkerBlockingRequests,
+        0);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    SceneDiagnosticsExposeContentExternalResourceDiagnostics) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth-md-content-external-diagnostics";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "models");
+    const ExternalGltfBytes externalGltf = makeTriangleExternalGltfBytes();
+    writeBytes(root / "models" / "triangle.gltf", externalGltf.jsonBytes);
+    writeBytes(root / "models" / "triangle.bin", externalGltf.binBytes);
+
+    DummyRenderDevice device;
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    auto contentProvider = std::make_unique<SingleGltfContentProvider>(
+        rootKey,
+        "file://" + (root / "models" / "triangle.gltf").generic_string(),
+        "external resource diagnostics fixture");
+
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        &device,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTestAccess::requestMissingTile(tileset, rootKey);
+
+    TilesetTile* tile = nullptr;
+    for (int i = 0; i < 200; ++i) {
+        TilesetTestAccess::processPendingUploads(tileset);
+        tile = TilesetTestAccess::findTile(tileset, rootKey);
+        const ProviderRequestDiagnostics& requests =
+            tileset.loadDiagnostics().contentProviderRequests;
+        if (tile &&
+            tile->content.loadState == TileLoadState::Done &&
+            tile->content.contentKind == TileContentKind::Render &&
+            requests.externalResourceRequestsCompleted == 1) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    const ProviderRequestDiagnostics& requests =
+        tileset.loadDiagnostics().contentProviderRequests;
+    ASSERT_NE(tile, nullptr);
+    EXPECT_EQ(tile->content.loadState, TileLoadState::Done);
+    EXPECT_EQ(tile->content.contentKind, TileContentKind::Render);
+    EXPECT_EQ(requests.externalResourceRequestsStarted, 1);
+    EXPECT_EQ(requests.externalResourceRequestsCompleted, 1);
+    EXPECT_EQ(requests.activeExternalResourceBlockingRequests, 0);
+    EXPECT_EQ(requests.peakExternalResourceBlockingRequests, 0);
+
+    Diagnostics diagnostics;
+    SceneTilesetDiagnostics::reset(diagnostics);
+    SceneTilesetDiagnostics::addTileset(diagnostics, tileset, false);
+    EXPECT_EQ(diagnostics.contentProviderExternalResourceRequestsStarted, 1);
+    EXPECT_EQ(diagnostics.contentProviderExternalResourceRequestsCompleted, 1);
+    EXPECT_EQ(
+        diagnostics.contentProviderActiveExternalResourceBlockingRequests,
+        0);
+    EXPECT_EQ(
+        diagnostics.contentProviderPeakExternalResourceBlockingRequests,
         0);
 }
 

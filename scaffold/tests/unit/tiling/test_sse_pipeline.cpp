@@ -21155,71 +21155,6 @@ void testProviderRequestDiagnosticsAggregatorCombinesCountsAndPeaks() {
           "ProviderRequestDiagnosticsAggregator: combines external resource counts and max lanes");
 }
 
-void testSceneTilesetDiagnosticsExposeContentExternalResourceDiagnostics() {
-    const std::filesystem::path root =
-        std::filesystem::temp_directory_path() /
-        "earth-md-content-external-diagnostics";
-    std::filesystem::remove_all(root);
-    std::filesystem::create_directories(root / "models");
-    const ExternalGltfBytes externalGltf = makeTriangleExternalGltfBytes();
-    writeBytes(root / "models" / "triangle.gltf", externalGltf.jsonBytes);
-    writeBytes(root / "models" / "triangle.bin", externalGltf.binBytes);
-
-    DummyRenderDevice device;
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    auto contentProvider = std::make_unique<SingleGltfContentProvider>(
-        rootKey,
-        "file://" + (root / "models" / "triangle.gltf").generic_string(),
-        "external resource diagnostics fixture");
-
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
-        std::move(scheme),
-        {},
-        &device,
-        TilesetOptions{},
-        std::move(contentProvider));
-
-    TilesetTestAccess::requestMissingTile(tileset, rootKey);
-
-    TilesetTile* tile = nullptr;
-    for (int i = 0; i < 200; ++i) {
-        TilesetTestAccess::processPendingUploads(tileset);
-        tile = TilesetTestAccess::findTile(tileset, rootKey);
-        const ProviderRequestDiagnostics& requests =
-            tileset.loadDiagnostics().contentProviderRequests;
-        if (tile &&
-            tile->content.loadState == TileLoadState::Done &&
-            tile->content.contentKind == TileContentKind::Render &&
-            requests.externalResourceRequestsCompleted == 1) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-
-    const ProviderRequestDiagnostics& requests =
-        tileset.loadDiagnostics().contentProviderRequests;
-    check(tile &&
-              tile->content.loadState == TileLoadState::Done &&
-              tile->content.contentKind == TileContentKind::Render,
-          "TilesetLoadDiagnostics: external glTF fixture reaches render content");
-    check(requests.externalResourceRequestsStarted == 1 &&
-              requests.externalResourceRequestsCompleted == 1 &&
-              requests.activeExternalResourceBlockingRequests == 0 &&
-              requests.peakExternalResourceBlockingRequests == 0,
-          "TilesetLoadDiagnostics: records glTF external buffer request diagnostics");
-
-    Diagnostics diagnostics;
-    SceneTilesetDiagnostics::reset(diagnostics);
-    SceneTilesetDiagnostics::addTileset(diagnostics, tileset, false);
-    check(diagnostics.contentProviderExternalResourceRequestsStarted == 1 &&
-              diagnostics.contentProviderExternalResourceRequestsCompleted == 1 &&
-              diagnostics.contentProviderActiveExternalResourceBlockingRequests == 0 &&
-              diagnostics.contentProviderPeakExternalResourceBlockingRequests == 0,
-          "SceneTilesetDiagnostics: exposes content external resource diagnostics");
-}
-
 void testSceneProviderRequestDiagnosticsSnapshotAggregatesProviderLanes() {
     ProviderRequestDiagnostics first;
     first.requestsStarted = 2;
@@ -26705,7 +26640,6 @@ int main() {
     testTileFrameBudgetFallbackKeepsUploadsAliveWhenWorkerLoadsDisabled();
     testTilesetFrameResourceBudgetUsesProviderTransportLane();
     testProviderRequestDiagnosticsAggregatorCombinesCountsAndPeaks();
-    testSceneTilesetDiagnosticsExposeContentExternalResourceDiagnostics();
     testSceneProviderRequestDiagnosticsSnapshotAggregatesProviderLanes();
     testSceneFrameResourceBudgetDiagnosticsSnapshotAggregatesBudgetLanes();
     testSceneFrameResourceBudgetDiagnosticsSnapshotSaturatesUnlimitedLimits();
