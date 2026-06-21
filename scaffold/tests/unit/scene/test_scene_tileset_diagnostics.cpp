@@ -3,6 +3,7 @@
 #include "earth_engine/scene/SceneTilesetDiagnostics.h"
 
 #include <cmath>
+#include <limits>
 
 using namespace earth_engine;
 
@@ -134,4 +135,31 @@ TEST(
     EXPECT_EQ(snapshot.mainThreadTimeLimitMs, 4.0);
     EXPECT_TRUE(snapshot.interactionActive);
     EXPECT_TRUE(snapshot.smoothingActive);
+}
+
+TEST(
+    SceneFrameResourceBudgetDiagnosticsSnapshotTest,
+    SaturatesUnlimitedLimits) {
+    FrameResourceBudgetConfig unlimitedConfig;
+    unlimitedConfig.maxMainThreadFinalizesPerFrame =
+        std::numeric_limits<uint32_t>::max();
+    FrameResourceBudget unlimitedBudget;
+    unlimitedBudget.beginFrame(12, unlimitedConfig);
+
+    SceneFrameResourceBudgetDiagnosticsSnapshot snapshot =
+        SceneFrameResourceBudgetDiagnosticsSnapshot::fromBudget(
+            unlimitedBudget.snapshot());
+    EXPECT_EQ(
+        snapshot.mainThreadFinalizesLimit,
+        std::numeric_limits<int>::max());
+
+    FrameResourceBudgetConfig finiteConfig;
+    finiteConfig.maxMainThreadFinalizesPerFrame = 8;
+    FrameResourceBudget finiteBudget;
+    finiteBudget.beginFrame(13, finiteConfig);
+    snapshot.add(SceneFrameResourceBudgetDiagnosticsSnapshot::fromBudget(
+        finiteBudget.snapshot()));
+    EXPECT_EQ(
+        snapshot.mainThreadFinalizesLimit,
+        std::numeric_limits<int>::max());
 }
