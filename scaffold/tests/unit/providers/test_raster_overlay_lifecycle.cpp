@@ -2114,6 +2114,46 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionKeepsTinyProjectedOverlap) 
     EXPECT_EQ(1, result->height);
 }
 
+TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesProjectedWebMercatorHeight) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    const TileKey sourceKey{scheme->id(), 2, 1, 0};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const double midLatitude =
+        (sourceBounds.south() + sourceBounds.north()) * 0.5;
+    const Rectangle target(
+        sourceBounds.west(),
+        midLatitude,
+        sourceBounds.east(),
+        sourceBounds.north());
+
+    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    sources.push_back({
+        sourceKey,
+        sourceBounds,
+        makeImage(64, 64, 50)});
+
+    auto result = RasterOverlayTileProvider::composeRectangleImages(
+        *scheme,
+        target,
+        sourceKey.z,
+        std::move(sources),
+        4096);
+
+    const double sourceProjectedHeight =
+        std::log(std::tan(sourceBounds.north() * 0.5 + M_PI * 0.25)) -
+        std::log(std::tan(sourceBounds.south() * 0.5 + M_PI * 0.25));
+    const double targetProjectedHeight =
+        std::log(std::tan(target.north() * 0.5 + M_PI * 0.25)) -
+        std::log(std::tan(target.south() * 0.5 + M_PI * 0.25));
+    const int expectedHeight = static_cast<int>(
+        std::ceil(targetProjectedHeight / (sourceProjectedHeight / 64.0)));
+
+    ASSERT_NE(nullptr, result);
+    EXPECT_EQ(64, result->width);
+    EXPECT_EQ(expectedHeight, result->height);
+    EXPECT_NE(32, expectedHeight);
+}
+
 TEST(RasterOverlayLifecycleTest, WebMercatorSourceSamplingUsesProjectedY) {
     auto scheme = TileScheme::createXYZWebMercator();
     Rectangle bounds = scheme->tileToRectangle(
