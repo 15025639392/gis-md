@@ -790,6 +790,55 @@ TEST(SceneFrameStateTest, PresentationTraceCopiesRenderEntryPassFailures) {
     EXPECT_EQ(3, tilesetTrace.renderEntryFadingCommandDeferredCount);
 }
 
+TEST(SceneFrameStateTest, PresentationTraceExposesFadingRenderEntry) {
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+    TilePlan& plan = TilesetTestAccess::mutableTilePlan(tileset);
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TileRenderEntry entry;
+    entry.selectedKey = rootKey;
+    entry.renderKey = rootKey;
+    entry.reason = TileRenderEntryReason::FadingOut;
+    entry.opacity = 0.75f;
+    entry.selectedThisFrame = false;
+    plan.renderEntries.push_back(entry);
+    plan.renderEntryPlannedCommandCount = 1;
+    plan.renderEntrySelectedPlannedCommandCount = 0;
+    plan.renderEntryFadingPlannedCommandCount = 1;
+    plan.renderEntryCommandDrawCount = 1;
+    plan.renderEntrySelectedCommandDrawCount = 0;
+    plan.renderEntryFadingCommandDrawCount = 1;
+
+    FrameState frameState;
+    frameState.frameId = 7;
+    RenderCommandList commands;
+    const PresentationTrace trace = ScenePresentationTraceBuilder::build(
+        ScenePresentationTraceInput{
+            frameState,
+            &tileset,
+            emptyContentTilesets(),
+            commands});
+
+    ASSERT_EQ(1u, trace.tilesets.size());
+    const PresentationTilesetTrace& tilesetTrace = trace.tilesets.front();
+    ASSERT_EQ(1u, tilesetTrace.renderEntries.size());
+    const PresentationRenderEntryTrace& entryTrace =
+        tilesetTrace.renderEntries.front();
+    EXPECT_FALSE(entryTrace.selectedThisFrame);
+    EXPECT_EQ(TileRenderEntryReason::FadingOut, entryTrace.reason);
+    EXPECT_NEAR(0.75f, entryTrace.opacity, 1e-6f);
+    EXPECT_EQ(1, tilesetTrace.renderEntryPlannedCommandCount);
+    EXPECT_EQ(0, tilesetTrace.renderEntrySelectedPlannedCommandCount);
+    EXPECT_EQ(1, tilesetTrace.renderEntryFadingPlannedCommandCount);
+    EXPECT_EQ(1, tilesetTrace.renderEntryCommandDrawCount);
+    EXPECT_EQ(0, tilesetTrace.renderEntrySelectedCommandDrawCount);
+    EXPECT_EQ(1, tilesetTrace.renderEntryFadingCommandDrawCount);
+}
+
 TEST(SceneFrameStateTest, DiagnosticsExposeTerrainSynchronousPrepReasons) {
     DummyRenderDevice device;
     Scene scene;
