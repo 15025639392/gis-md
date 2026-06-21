@@ -199,3 +199,36 @@ TEST(TileRenderPlanFinalizerTest, DefersFallbackPrepDuringInteraction) {
     EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 0);
     EXPECT_EQ(plan.renderEntryDeferredPrepCount, 1);
 }
+
+TEST(
+    TileRenderPlanFinalizerTest,
+    ReadsSelectionFrameFadeWhenLodTransitionEnabled) {
+    const TileKey rootKey{"test", 0, 0, 0};
+    TilesetTile root(rootKey, Rectangle{});
+    root.selectionFrameState.lodTransitionFadePercentage = 0.25f;
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(rootKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            true,
+            false,
+            0,
+            1},
+        [&root](const TileKey& key) -> TilesetTile* {
+            return key == root.key ? &root : nullptr;
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return tile.hasSurfaceDrawable();
+        });
+
+    ASSERT_EQ(plan.renderEntries.size(), 1u);
+    EXPECT_EQ(
+        plan.renderEntries.front().reason,
+        TileRenderEntryReason::SynchronousPrep);
+    EXPECT_NEAR(plan.renderEntries.front().opacity, 0.25f, 1e-6f);
+}
