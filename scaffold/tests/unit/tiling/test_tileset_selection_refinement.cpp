@@ -58,6 +58,10 @@ struct TilesetTestAccess {
             tileset.rasterOverlays_);
     }
 
+    static bool canRefine(Tileset& tileset, const TilesetTile& tile) {
+        return tileset.contentAccess_.canRefine(tile);
+    }
+
     static bool loadQueueContainsNormal(
         const Tileset& tileset,
         const TileKey& key) {
@@ -2179,4 +2183,48 @@ TEST(
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     EXPECT_EQ(4u, root->children.size());
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
+    ExplicitQuantizedMeshAvailabilityRefinesPastLayerMaxzoomLikeCesiumNative) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "minzoom": 0,
+      "maxzoom": 1,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}],
+        [{"startX":0,"startY":0,"endX":0,"endY":0}],
+        [{"startX":0,"startY":0,"endX":0,"endY":0}]
+      ]
+    })json";
+
+    ASSERT_TRUE(provider->configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+    EXPECT_TRUE(provider->supportsTile(TileKey{"Geographic-TMS", 2, 0, 0}));
+
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+    TilesetTile* parent =
+        TilesetTestAccess::ensureTile(
+            tileset,
+            TileKey{"Geographic-TMS", 1, 0, 0});
+    ASSERT_NE(parent, nullptr);
+
+    EXPECT_TRUE(TilesetTestAccess::canRefine(tileset, *parent));
+
+    TilesetTestAccess::ensureTileChildren(tileset, *parent);
+    ASSERT_FALSE(parent->children.empty());
+    ASSERT_NE(nullptr, parent->children[0]);
+    EXPECT_FALSE(parent->children[0]->content.upsampledFromParent);
 }
