@@ -2,8 +2,11 @@
 
 #include "earth_engine/tiling/TileLoadLifecycle.h"
 
+#include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
+#include <thread>
 
 using namespace earth_engine;
 
@@ -309,4 +312,54 @@ TEST(TileLoadLifecycleTest, DestroyClearsClaimedUploadKeys) {
 
     EXPECT_FALSE(lifecycle.hasPendingWork());
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey("content-upload"));
+}
+
+TEST(TileLoadLifecycleTest, DestroyCancelsAndWaitsForCallbacks) {
+    TileLoadLifecycle lifecycle;
+    CancellationToken token;
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        ASSERT_TRUE(lifecycle.requestState().beginTerrainRequest(
+            "terrain",
+            token));
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            TileKey{"test", 0, 0, 0},
+            "terrain-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            nullptr});
+        lifecycle.pendingLoads().addContentTerminalResult(
+            PendingContentTerminalResult{
+                TileKey{"test", 0, 1, 0},
+                "content-terminal",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadStatus::RetryLater});
+    }
+
+    std::atomic<bool> destroyReturned{false};
+    std::thread destroyThread([&]() {
+        lifecycle.markDestroyingCancelAndWait();
+        destroyReturned.store(true);
+    });
+
+    for (int i = 0; i < 200 && !token.isCancelled(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    EXPECT_TRUE(token.isCancelled());
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey("terrain-upload"));
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey("content-terminal"));
+    EXPECT_FALSE(destroyReturned.load());
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().completeTerrainRequest("terrain");
+    }
+    lifecycle.condition().notify_all();
+    destroyThread.join();
+
+    EXPECT_TRUE(destroyReturned.load());
+    EXPECT_FALSE(lifecycle.hasPendingWork());
 }
