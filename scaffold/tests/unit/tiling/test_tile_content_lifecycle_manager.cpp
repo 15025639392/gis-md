@@ -2,6 +2,7 @@
 
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileContentLifecycleManager.h"
+#include "earth_engine/tiling/TilePendingUploadCompletion.h"
 
 #include <atomic>
 #include <chrono>
@@ -47,5 +48,39 @@ TEST(TileContentLifecycleManagerTest, OwnsLifecycleState) {
 
     EXPECT_TRUE(shutdownReturned.load());
     EXPECT_EQ(0, manager.pendingRequests());
+    EXPECT_FALSE(manager.hasPendingWork());
+}
+
+TEST(TileContentLifecycleManagerTest, ExposesClaimedUploadWork) {
+    TileContentLifecycleManager manager;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    {
+        std::lock_guard<std::mutex> lock(manager.loadLifecycle().mutex());
+        manager.loadLifecycle().pendingLoads().addContentUpload(
+            PendingContentUpload{
+                TileKey{"test", 0, 0, 0},
+                "content-upload",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadResult::empty()});
+
+        EXPECT_TRUE(manager.loadLifecycle()
+                        .pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    EXPECT_TRUE(manager.hasPendingWork());
+    EXPECT_TRUE(manager.loadLifecycle().containsWorkForCacheKey(
+        "content-upload"));
+
+    TilePendingUploadCompletion::eraseContentUpload(
+        manager.loadLifecycle(),
+        "content-upload");
+
     EXPECT_FALSE(manager.hasPendingWork());
 }
