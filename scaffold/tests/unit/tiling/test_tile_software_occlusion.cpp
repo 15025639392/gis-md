@@ -234,3 +234,21 @@ TEST(TileSoftwareOcclusionTest, KeepsVisibleQuantizedMeshHorizonPoint) {
         TileSoftwareOcclusionPolicy::check(tile, cameraPosition),
         TileOcclusionState::NotOccluded);
 }
+
+TEST(TileSoftwareOcclusionTest, UsesZeroQuantizedMeshHorizonPoint) {
+    TilesetTile tile;
+    tile.key = TileKey{"Geographic-TMS", 4, 0, 0};
+    tile.bounds = Rectangle::fromDegrees(10.0, -0.01, 10.1, 0.01);
+    auto mesh = std::make_unique<SurfaceTileMesh>();
+    mesh->hasHorizonOcclusionPoint = true;
+    mesh->horizonOcclusionPoint = Vec3::zero();
+    tile.content.renderContent.setSurfaceMesh(std::move(mesh));
+
+    const Vec3 cameraPosition =
+        Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic::fromRadians(0.0, 0.0, 1000000.0));
+
+    EXPECT_EQ(
+        TileSoftwareOcclusionPolicy::check(tile, cameraPosition),
+        TileOcclusionState::Occluded);
+}
