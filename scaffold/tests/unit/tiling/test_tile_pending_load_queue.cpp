@@ -261,3 +261,59 @@ TEST(TilePendingLoadQueueTest, DeduplicatesTerminalResultsByKind) {
     EXPECT_TRUE(second.has_value());
     EXPECT_FALSE(third.has_value());
 }
+
+TEST(TilePendingLoadQueueTest, KeepsOneResultShapePerKind) {
+    TilePendingLoadQueue queue;
+    const TileKey terrainKey{"test", 1, 0, 0};
+    const TileKey contentKey{"test", 1, 1, 0};
+
+    queue.addTerrainUpload(PendingTerrainUpload{
+        terrainKey,
+        "terrain",
+        TileLoadPriorityGroup::Normal,
+        1.0,
+        nullptr});
+    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+        terrainKey,
+        "terrain",
+        TileLoadPriorityGroup::Urgent,
+        100.0,
+        TerrainTileLoadStatus::RetryLater});
+    queue.addContentTerminalResult(PendingContentTerminalResult{
+        contentKey,
+        "content",
+        TileLoadPriorityGroup::Normal,
+        1.0,
+        TileContentLoadStatus::RetryLater});
+    queue.addContentUpload(PendingContentUpload{
+        contentKey,
+        "content",
+        TileLoadPriorityGroup::Urgent,
+        100.0,
+        TileContentLoadResult::empty()});
+
+    EXPECT_EQ(1u, queue.terrainUploadCount());
+    EXPECT_EQ(0u, queue.terrainTerminalResultCount());
+    EXPECT_EQ(0u, queue.contentUploadCount());
+    EXPECT_EQ(1u, queue.contentTerminalResultCount());
+
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    config.maxTerminalStateTransitionsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    std::optional<PendingLoadFinalize> upload =
+        queue.takeHighestPriorityUpload(false, budget);
+    std::optional<PendingTerminalResult> terminal =
+        queue.takeHighestPriorityTerminalResult(budget);
+    std::optional<PendingLoadFinalize> extraUpload =
+        queue.takeHighestPriorityUpload(false, budget);
+    std::optional<PendingTerminalResult> extraTerminal =
+        queue.takeHighestPriorityTerminalResult(budget);
+
+    EXPECT_TRUE(upload.has_value());
+    EXPECT_TRUE(terminal.has_value());
+    EXPECT_FALSE(extraUpload.has_value());
+    EXPECT_FALSE(extraTerminal.has_value());
+}
