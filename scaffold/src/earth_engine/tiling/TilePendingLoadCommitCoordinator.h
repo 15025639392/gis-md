@@ -82,17 +82,25 @@ public:
         IngestAvailabilityFn&& ingestAvailability,
         EnsureTileMeshFn&& ensureTileMesh,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        if (upload.heightmap) {
+        if (!upload.quantizedMeshAvailabilityUpdates.empty()) {
             if (auto* qmProvider =
                     dynamic_cast<QuantizedMeshTerrainProvider*>(
                         terrainProvider)) {
-                qmProvider->applyAvailabilityUpdates(*upload.heightmap);
+                qmProvider->applyAvailabilityUpdates(
+                    upload.quantizedMeshAvailabilityUpdates);
             }
+        }
+        if (upload.heightmap) {
             ingestAvailability(
                 upload.key,
-                *upload.heightmap,
+                upload.heightmap.get(),
                 upload.surfaceMesh.get());
             terrainCache[upload.cacheKey] = std::move(upload.heightmap);
+        } else if (upload.surfaceMesh) {
+            ingestAvailability(
+                upload.key,
+                nullptr,
+                upload.surfaceMesh.get());
         }
 
         if (TilesetTile* tile = ensureTile(upload.key)) {

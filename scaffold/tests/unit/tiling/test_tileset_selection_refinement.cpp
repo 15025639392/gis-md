@@ -2132,7 +2132,7 @@ TEST(
     TileQuantizedMeshAvailabilityIngestor::ingest(
         providerPtr,
         rootKey,
-        loadedHeightmap,
+        &loadedHeightmap,
         root->content.renderContent.surfaceMesh());
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     EXPECT_EQ(4u, root->children.size());

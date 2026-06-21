@@ -117,7 +117,7 @@ public:
                     context.currentFrameTimeSeconds);
             },
             [&](const TileKey& key,
-                DecodedHeightmap& heightmap,
+                DecodedHeightmap* heightmap,
                 const SurfaceTileMesh* surfaceMesh) {
                 TileQuantizedMeshAvailabilityIngestor::ingest(
                     context.terrainProvider,

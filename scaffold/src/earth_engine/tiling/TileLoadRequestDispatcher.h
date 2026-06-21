@@ -168,7 +168,7 @@ public:
                     std::lock_guard<std::mutex> lock(mutex);
                     if (!requestState.destroying() && !token.isCancelled()) {
                         if (result.status == TerrainTileLoadStatus::Success &&
-                            result.heightmap) {
+                            (result.heightmap || result.surfaceMesh)) {
                             pendingLoads.addTerrainUpload(
                                 PendingTerrainUpload{
                                     key,
@@ -176,7 +176,10 @@ public:
                                     group,
                                     priority,
                                     std::move(result.heightmap),
-                                    std::move(result.surfaceMesh)});
+                                    std::move(result.surfaceMesh),
+                                    std::move(
+                                        result
+                                            .quantizedMeshAvailabilityUpdates)});
                         } else {
                             pendingLoads.addTerrainTerminalResult(
                                 PendingTerrainTerminalResult{

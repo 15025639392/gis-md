@@ -58,7 +58,7 @@ public:
         }
 
         if (ownHeightmap) {
-            ingestAvailability(tile.key, *ownHeightmap);
+            ingestAvailability(tile.key, ownHeightmap);
         }
 
         TileSurfaceMeshResolution resolution =

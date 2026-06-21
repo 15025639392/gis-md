@@ -12,7 +12,7 @@ class TileQuantizedMeshAvailabilityIngestor {
 public:
     static void ingest(TerrainProvider* terrainProvider,
                        const TileKey& key,
-                       DecodedHeightmap& heightmap,
+                       DecodedHeightmap* heightmap,
                        const SurfaceTileMesh* surfaceMesh);
 };
 

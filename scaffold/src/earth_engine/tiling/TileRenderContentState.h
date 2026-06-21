@@ -255,14 +255,6 @@ public:
         bytes += static_cast<int64_t>(
             heightmap.metadataAvailability.size() *
             sizeof(QuantizedMeshAvailabilityRange));
-        for (const auto& update : heightmap.quantizedMeshAvailabilityUpdates) {
-            bytes += static_cast<int64_t>(
-                sizeof(DecodedHeightmap::QuantizedMeshAvailabilityUpdate));
-            bytes += static_cast<int64_t>(update.subtreeKey.schemeId.size());
-            bytes += static_cast<int64_t>(
-                update.metadataAvailability.size() *
-                sizeof(QuantizedMeshAvailabilityRange));
-        }
         return bytes;
     }
 

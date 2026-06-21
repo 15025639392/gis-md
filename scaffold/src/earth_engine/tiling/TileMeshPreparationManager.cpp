@@ -37,7 +37,7 @@ void TileMeshPreparationManager::ensureTileMesh(TilesetTile& tile) {
         [](const TileKey& key) {
             return TileCacheKey::forTile(key);
         },
-        [this](const TileKey& key, DecodedHeightmap& heightmap) {
+        [this](const TileKey& key, DecodedHeightmap* heightmap) {
             TileQuantizedMeshAvailabilityIngestor::ingest(
                 terrainProvider_,
                 key,

@@ -30,13 +30,17 @@ struct PendingTerrainUpload {
                          TileLoadPriorityGroup group_,
                          double priority_,
                          std::unique_ptr<DecodedHeightmap> heightmap_,
-                         std::unique_ptr<SurfaceTileMesh> surfaceMesh_ = nullptr)
+                         std::unique_ptr<SurfaceTileMesh> surfaceMesh_ = nullptr,
+                         std::vector<QuantizedMeshAvailabilityUpdate>
+                             availabilityUpdates_ = {})
         : key(std::move(key_)),
           cacheKey(std::move(cacheKey_)),
           group(group_),
           priority(priority_),
           heightmap(std::move(heightmap_)),
-          surfaceMesh(std::move(surfaceMesh_)) {}
+          surfaceMesh(std::move(surfaceMesh_)),
+          quantizedMeshAvailabilityUpdates(
+              std::move(availabilityUpdates_)) {}
 
     TileKey key;
     std::string cacheKey;
@@ -44,6 +48,8 @@ struct PendingTerrainUpload {
     double priority = 0.0;
     std::unique_ptr<DecodedHeightmap> heightmap;
     std::unique_ptr<SurfaceTileMesh> surfaceMesh;
+    std::vector<QuantizedMeshAvailabilityUpdate>
+        quantizedMeshAvailabilityUpdates;
 };
 
 struct PendingTerrainTerminalResult {

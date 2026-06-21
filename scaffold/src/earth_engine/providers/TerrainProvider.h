@@ -30,6 +30,15 @@ enum class TerrainTileLoadStatus {
     Cancelled
 };
 
+/// cesium-native LayerJsonTerrainLoader: when loading a tile from an
+/// upper layer, availability metadata for matching underlying layers is
+/// loaded at the same time. These updates are applied on the main thread.
+struct QuantizedMeshAvailabilityUpdate {
+    int layerIndex = -1;
+    TileKey subtreeKey;
+    std::vector<QuantizedMeshAvailabilityRange> metadataAvailability;
+};
+
 /// 解码后的高度图数据。
 /// 高度为 WGS84 ellipsoid height（meter）。
 /// 网格为 tileSize×tileSize 的 regular grid。
@@ -59,29 +68,21 @@ struct DecodedHeightmap {
     /// Each entry: {levelOffset, startX, startY, endX, endY}
     std::vector<QuantizedMeshAvailabilityRange> metadataAvailability;
     bool metadataAvailabilityProcessed = false;
-
-    /// cesium-native LayerJsonTerrainLoader: when loading a tile from an
-    /// upper layer, availability metadata for matching underlying layers is
-    /// loaded at the same time. These updates are applied on the main thread.
-    struct QuantizedMeshAvailabilityUpdate {
-        int layerIndex = -1;
-        TileKey subtreeKey;
-        std::vector<QuantizedMeshAvailabilityRange> metadataAvailability;
-    };
-    std::vector<QuantizedMeshAvailabilityUpdate> quantizedMeshAvailabilityUpdates;
 };
 
 struct TerrainTileLoadResult {
     TerrainTileLoadStatus status = TerrainTileLoadStatus::Failed;
     std::unique_ptr<DecodedHeightmap> heightmap;
     std::unique_ptr<SurfaceTileMesh> surfaceMesh;
+    std::vector<QuantizedMeshAvailabilityUpdate>
+        quantizedMeshAvailabilityUpdates;
 
     static TerrainTileLoadResult success(
         std::unique_ptr<DecodedHeightmap> hm,
         std::unique_ptr<SurfaceTileMesh> mesh = nullptr) {
         TerrainTileLoadResult result;
-        result.status = hm ? TerrainTileLoadStatus::Success
-                           : TerrainTileLoadStatus::Failed;
+        result.status = (hm || mesh) ? TerrainTileLoadStatus::Success
+                                     : TerrainTileLoadStatus::Failed;
         result.heightmap = std::move(hm);
         result.surfaceMesh = std::move(mesh);
         return result;

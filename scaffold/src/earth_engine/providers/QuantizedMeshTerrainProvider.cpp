@@ -1349,15 +1349,11 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                 return;
             }
 
-            auto hm = std::make_unique<DecodedHeightmap>();
-            if (surfaceMesh->hasHeightRange) {
-                hm->minHeight = static_cast<float>(surfaceMesh->minimumHeight);
-                hm->maxHeight = static_cast<float>(surfaceMesh->maximumHeight);
-            }
+            std::vector<QuantizedMeshAvailabilityUpdate> availabilityUpdates;
             for (size_t i = 0; i < availabilityRequests->size(); ++i) {
                 const LayerAvailabilityRequest& request =
                     (*availabilityRequests)[i];
-                DecodedHeightmap::QuantizedMeshAvailabilityUpdate update;
+                QuantizedMeshAvailabilityUpdate update;
                 update.layerIndex = static_cast<int>(request.layerIndex);
                 update.subtreeKey = request.subtreeKey;
 
@@ -1369,14 +1365,13 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                             metadataBodies[i].size());
                 }
 
-                hm->quantizedMeshAvailabilityUpdates.push_back(
-                    std::move(update));
+                availabilityUpdates.push_back(std::move(update));
             }
-            (*callback)(
-                key,
-                TerrainTileLoadResult::success(
-                    std::move(hm),
-                    std::move(surfaceMesh)));
+            TerrainTileLoadResult result =
+                TerrainTileLoadResult::success(nullptr, std::move(surfaceMesh));
+            result.quantizedMeshAvailabilityUpdates =
+                std::move(availabilityUpdates);
+            (*callback)(key, std::move(result));
         });
 }
 
@@ -1517,12 +1512,12 @@ void QuantizedMeshTerrainProvider::markSubtreeLoadedForTile(
 }
 
 void QuantizedMeshTerrainProvider::applyAvailabilityUpdates(
-    const DecodedHeightmap& heightmap) {
-    if (heightmap.quantizedMeshAvailabilityUpdates.empty()) {
+    const std::vector<QuantizedMeshAvailabilityUpdate>& updates) {
+    if (updates.empty()) {
         return;
     }
 
-    for (const auto& update : heightmap.quantizedMeshAvailabilityUpdates) {
+    for (const auto& update : updates) {
         if (update.layerIndex < 0 ||
             static_cast<size_t>(update.layerIndex) >= layers_.size()) {
             continue;

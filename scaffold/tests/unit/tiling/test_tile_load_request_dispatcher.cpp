@@ -146,6 +146,49 @@ public:
     bool callbackSawIssued = false;
 };
 
+class SyncSurfaceUploadTerrainProvider final : public TerrainProvider {
+public:
+    explicit SyncSurfaceUploadTerrainProvider(bool& issuedBeforeCallback)
+        : issuedBeforeCallback_(issuedBeforeCallback) {}
+
+    std::string id() const override { return "dispatcher-terrain-surface-upload"; }
+    std::string schemeId() const override { return "test"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 1; }
+    int tileSize() const override { return 2; }
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://dispatcher-terrain-surface-upload";
+    }
+    void requestTile(
+        const TileKey& key,
+        CancellationToken,
+        HeightmapCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callbackSawIssued = issuedBeforeCallback_;
+        auto mesh = std::make_unique<SurfaceTileMesh>();
+        SurfaceVertex vertex;
+        vertex.positionEcef = Vec3(1.0, 0.0, 0.0);
+        mesh->vertices.push_back(vertex);
+
+        TerrainTileLoadResult result =
+            TerrainTileLoadResult::success(nullptr, std::move(mesh));
+        QuantizedMeshAvailabilityUpdate update;
+        update.layerIndex = 0;
+        update.subtreeKey = key;
+        update.metadataAvailability = {{0, 0, 0, 0, 0}};
+        result.quantizedMeshAvailabilityUpdates.push_back(update);
+        callback(key, std::move(result));
+    }
+    std::unique_ptr<DecodedHeightmap> decodeTile(
+        const uint8_t*,
+        size_t) override {
+        return nullptr;
+    }
+
+    bool& issuedBeforeCallback_;
+    bool callbackSawIssued = false;
+};
+
 class DeferredTerrainProvider final : public TerrainProvider {
 public:
     std::string id() const override { return "dispatcher-deferred-terrain"; }
@@ -570,6 +613,54 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_TRUE(requestState.empty());
     EXPECT_EQ(1u, pendingLoads.terrainUploadCount());
     EXPECT_EQ(0u, pendingLoads.terrainTerminalResultCount());
+}
+
+TEST(TileLoadRequestDispatcherTest, QueuesSurfaceOnlyTerrainUpload) {
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+    SyncSurfaceUploadTerrainProvider provider(issued);
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            provider,
+            key,
+            "terrain-surface-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    EXPECT_EQ(TileLoadDispatchResult::Issued, result);
+    EXPECT_TRUE(provider.callbackSawIssued);
+    EXPECT_TRUE(requestState.empty());
+    EXPECT_EQ(1u, pendingLoads.terrainUploadCount());
+    EXPECT_EQ(0u, pendingLoads.terrainTerminalResultCount());
+
+    auto upload = pendingLoads.takeHighestPriorityUpload(false, budget);
+    ASSERT_TRUE(upload.has_value());
+    ASSERT_EQ(PendingLoadFinalizeKind::Terrain, upload->kind);
+    ASSERT_TRUE(upload->terrainUpload.has_value());
+    EXPECT_EQ(nullptr, upload->terrainUpload->heightmap);
+    ASSERT_NE(nullptr, upload->terrainUpload->surfaceMesh);
+    EXPECT_EQ(1u, upload->terrainUpload->surfaceMesh->vertices.size());
+    ASSERT_EQ(
+        1u,
+        upload->terrainUpload->quantizedMeshAvailabilityUpdates.size());
+    EXPECT_EQ(
+        key,
+        upload->terrainUpload->quantizedMeshAvailabilityUpdates[0].subtreeKey);
 }
 
 TEST(TileLoadRequestDispatcherTest,

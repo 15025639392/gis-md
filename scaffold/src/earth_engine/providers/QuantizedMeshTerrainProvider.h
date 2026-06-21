@@ -67,7 +67,8 @@ public:
     void markSubtreeLoadedForTile(const TileKey& subtreeKey);
     int availabilityLevels() const { return availabilityLevels_; }
     bool isAvailabilityBoundaryLevel(int level) const;
-    void applyAvailabilityUpdates(const DecodedHeightmap& heightmap);
+    void applyAvailabilityUpdates(
+        const std::vector<QuantizedMeshAvailabilityUpdate>& updates);
 
     void requestTile(const TileKey& key,
                      CancellationToken token,

@@ -11750,7 +11750,7 @@ void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
         lifecycle,
         false,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
-        [](const TileKey&, const DecodedHeightmap&, const SurfaceTileMesh*) {},
+        [](const TileKey&, const DecodedHeightmap*, const SurfaceTileMesh*) {},
         [](TilesetTile&) {},
         [&resourcesDirty]() { resourcesDirty = true; });
     TilePendingLoadCommitCoordinator::commitContentUpload(

@@ -12,12 +12,14 @@ namespace earth_engine {
 void TileQuantizedMeshAvailabilityIngestor::ingest(
     TerrainProvider* terrainProvider,
     const TileKey& key,
-    DecodedHeightmap& heightmap,
+    DecodedHeightmap* heightmap,
     const SurfaceTileMesh* surfaceMesh) {
-    if (heightmap.metadataAvailabilityProcessed) {
+    if (heightmap && heightmap->metadataAvailabilityProcessed) {
         return;
     }
-    heightmap.metadataAvailabilityProcessed = true;
+    if (heightmap) {
+        heightmap->metadataAvailabilityProcessed = true;
+    }
 
     auto* qmProvider =
         dynamic_cast<QuantizedMeshTerrainProvider*>(terrainProvider);

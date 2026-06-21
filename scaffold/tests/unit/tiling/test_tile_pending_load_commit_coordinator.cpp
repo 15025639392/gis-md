@@ -166,7 +166,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         lifecycle,
         false,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
-        [](const TileKey&, const DecodedHeightmap&, const SurfaceTileMesh*) {},
+        [](const TileKey&, const DecodedHeightmap*, const SurfaceTileMesh*) {},
         [](TilesetTile&) {},
         [&resourcesDirty]() { resourcesDirty = true; });
     TilePendingLoadCommitCoordinator::commitContentUpload(
@@ -189,10 +189,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilesetTile tile(key, Rectangle{});
     tile.content.loadState = TileLoadState::ContentLoading;
 
-    auto heightmap = std::make_unique<DecodedHeightmap>();
-    heightmap->tileSize = 2;
-    heightmap->heights = {0.0f, 0.0f, 0.0f, 0.0f};
-
     auto surfaceMesh = std::make_unique<SurfaceTileMesh>();
     SurfaceVertex vertex;
     vertex.positionEcef = Vec3(1.0, 0.0, 0.0);
@@ -204,7 +200,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        std::move(heightmap),
+        nullptr,
         std::move(surfaceMesh)};
 
     TileLoadLifecycle lifecycle;
@@ -237,12 +233,13 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         lifecycle,
         false,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
-        [](const TileKey&, const DecodedHeightmap&, const SurfaceTileMesh*) {},
+        [](const TileKey&, const DecodedHeightmap*, const SurfaceTileMesh*) {},
         [&ensureMeshCalls](TilesetTile&) { ++ensureMeshCalls; },
         [&resourcesDirty]() { resourcesDirty = true; });
 
     ASSERT_TRUE(tile.content.renderContent.hasSurfaceMesh());
     EXPECT_EQ(rawSurfaceMesh, tile.content.renderContent.surfaceMesh());
+    EXPECT_TRUE(terrainCache.empty());
     EXPECT_EQ(0, ensureMeshCalls);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
@@ -327,11 +324,10 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     auto heightmap = std::make_unique<DecodedHeightmap>();
     heightmap->tileSize = 2;
     heightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
-    DecodedHeightmap::QuantizedMeshAvailabilityUpdate update;
+    QuantizedMeshAvailabilityUpdate update;
     update.layerIndex = 0;
     update.subtreeKey = terrainKey;
     update.metadataAvailability = {{0, 0, 0, 0, 0}};
-    heightmap->quantizedMeshAvailabilityUpdates.push_back(update);
 
     PendingTerrainUpload upload{
         terrainKey,
@@ -339,7 +335,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         TileLoadPriorityGroup::Normal,
         0.0,
         std::move(heightmap),
-        nullptr};
+        nullptr,
+        {update}};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
@@ -382,10 +379,11 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         false,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [&availabilityIngests, &terrainKey](const TileKey& key,
-                                            const DecodedHeightmap& hm,
+                                            const DecodedHeightmap* hm,
                                             const SurfaceTileMesh*) {
             EXPECT_EQ(terrainKey, key);
-            EXPECT_TRUE(hm.valid());
+            ASSERT_NE(nullptr, hm);
+            EXPECT_TRUE(hm->valid());
             ++availabilityIngests;
         },
         [&meshEnsured](TilesetTile&) { meshEnsured = true; },
