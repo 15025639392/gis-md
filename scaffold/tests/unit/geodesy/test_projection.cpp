@@ -27,6 +27,20 @@ TEST(GeographicProjectionTest, ProjectUsesCesiumNativeLinearRadiansScale) {
     EXPECT_DOUBLE_EQ(1234.5, projected.z());
 }
 
+TEST(GeographicProjectionTest, ProjectUsesEllipsoidMaximumRadiusLikeCesiumNative) {
+    // Source-derived from cesium-native GeographicProjection constructor:
+    // projected x/y scale is ellipsoid.getMaximumRadius().
+    const Ellipsoid ellipsoid(2.0, 5.0, 3.0);
+    const GeographicProjection projection(ellipsoid);
+
+    const Vec3 projected =
+        projection.project(Cartographic::fromRadians(1.0, -0.5, 7.0));
+
+    EXPECT_DOUBLE_EQ(5.0, projected.x());
+    EXPECT_DOUBLE_EQ(-2.5, projected.y());
+    EXPECT_DOUBLE_EQ(7.0, projected.z());
+}
+
 TEST(GeographicProjectionTest, UnprojectPreservesHeight) {
     const GeographicProjection projection(Ellipsoid::WGS84());
     const Vec3 projected(Ellipsoid::WGS84().maximumRadius(),
@@ -160,6 +174,20 @@ TEST(WebMercatorProjectionTest, ProjectAndUnprojectPreserveHeight) {
     EXPECT_NEAR(input.longitude(), roundtrip.longitude(), 1e-14);
     EXPECT_NEAR(input.latitude(), roundtrip.latitude(), 1e-14);
     EXPECT_DOUBLE_EQ(input.height(), roundtrip.height());
+}
+
+TEST(WebMercatorProjectionTest, ProjectUsesEllipsoidMaximumRadiusLikeCesiumNative) {
+    // Source-derived from cesium-native WebMercatorProjection constructor:
+    // projected x/y scale is ellipsoid.getMaximumRadius().
+    const Ellipsoid ellipsoid(2.0, 5.0, 3.0);
+    const WebMercatorProjection projection(ellipsoid);
+
+    const Vec3 projected =
+        projection.project(Cartographic::fromRadians(1.0, 0.0, 7.0));
+
+    EXPECT_DOUBLE_EQ(5.0, projected.x());
+    EXPECT_DOUBLE_EQ(0.0, projected.y());
+    EXPECT_DOUBLE_EQ(7.0, projected.z());
 }
 
 TEST(WebMercatorProjectionTest, Unproject2DSetsHeightToZeroLikeCesiumNative) {
