@@ -2085,6 +2085,35 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionReturnsCoveredRectangleLike
     EXPECT_EQ(30, result.image->pixels[0]);
 }
 
+TEST(RasterOverlayLifecycleTest, RectangleCompositionKeepsTinyProjectedOverlap) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    const TileKey sourceKey{scheme->id(), 2, 1, 0};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const double tinyHeight = sourceBounds.height() * 0.001;
+    const Rectangle target(
+        sourceBounds.west(),
+        sourceBounds.north() - tinyHeight,
+        sourceBounds.east(),
+        sourceBounds.north());
+
+    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    sources.push_back({
+        sourceKey,
+        sourceBounds,
+        makeImage(64, 64, 40)});
+
+    auto result = RasterOverlayTileProvider::composeRectangleImages(
+        *scheme,
+        target,
+        sourceKey.z,
+        std::move(sources),
+        4096);
+
+    ASSERT_NE(nullptr, result);
+    EXPECT_EQ(64, result->width);
+    EXPECT_EQ(1, result->height);
+}
+
 TEST(RasterOverlayLifecycleTest, WebMercatorSourceSamplingUsesProjectedY) {
     auto scheme = TileScheme::createXYZWebMercator();
     Rectangle bounds = scheme->tileToRectangle(
