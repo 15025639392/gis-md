@@ -1145,6 +1145,58 @@ TEST(
 
 TEST(
     TilesetRequestMissingBudgetTest,
+    UnloadRenderContentIgnoresIndependentChildLoading) {
+    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
+    ManualCompletionTerrainProvider* rawProvider = provider.get();
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+
+    auto rootHeightmap = makeFlatHeightmap(1.0f);
+    rootHeightmap->rawData.resize(96, 1);
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        std::move(rootHeightmap));
+    root->content.contentKind = TileContentKind::Render;
+    root->content.loadState = TileLoadState::Done;
+    root->content.renderContent.setMeshReady(true);
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_FALSE(root->children.empty());
+    ASSERT_NE(root->children.front(), nullptr);
+
+    const TileKey childKey = root->children.front()->key;
+    TilesetTestAccess::requestMissingTile(tileset, childKey);
+    ASSERT_EQ(rawProvider->pendingRequests.size(), 1u);
+
+    TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
+    TilesetTestAccess::updateTotalBytesUsed(tileset);
+    TilesetTestAccess::unloadCachedBytes(tileset, 0);
+
+    TilesetTile* rootAfter = TilesetTestAccess::findTile(tileset, rootKey);
+    TilesetTile* childAfter = TilesetTestAccess::findTile(tileset, childKey);
+    ASSERT_EQ(rootAfter, root);
+    EXPECT_EQ(rootAfter->content.loadState, TileLoadState::Unloaded);
+    EXPECT_EQ(rootAfter->content.contentKind, TileContentKind::Unknown);
+    ASSERT_NE(childAfter, nullptr);
+    EXPECT_EQ(childAfter->content.loadState, TileLoadState::ContentLoading);
+    EXPECT_EQ(rawProvider->pendingRequests.size(), 1u);
+
+    EXPECT_TRUE(rawProvider->completeWithHeightmap(
+        childKey,
+        makeFlatHeightmap(2.0f)));
+    TilesetTestAccess::processPendingUploads(tileset);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
     FrameResourceBudgetSeparatesRasterFanoutFromTerrainRequests) {
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 2;
