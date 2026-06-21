@@ -166,6 +166,40 @@ TEST(
 
 TEST(
     SceneTilesetDiagnosticsSnapshotTest,
+    AppliesResourceBudgetWithSaturatingIntegerCounters) {
+    SceneTilesetDiagnosticsSnapshot snapshot;
+    snapshot.resourceBudget.networkRequestsIssued = 20;
+    snapshot.resourceBudget.networkRequestsLimit = 30;
+    snapshot.resourceBudget.mainThreadElapsedMs = 1.5;
+    snapshot.resourceBudget.mainThreadTimeLimitMs = 4.0;
+    snapshot.resourceBudget.interactionActive = true;
+
+    Diagnostics diagnostics;
+    SceneTilesetDiagnostics::reset(diagnostics);
+    diagnostics.budgetNetworkRequestsIssued =
+        std::numeric_limits<int>::max() - 5;
+    diagnostics.budgetNetworkRequestsLimit =
+        std::numeric_limits<int>::max() - 7;
+    diagnostics.budgetMainThreadElapsedMs = 2.25;
+    diagnostics.budgetMainThreadTimeLimitMs = 3.0;
+    diagnostics.budgetSmoothingActive = true;
+
+    snapshot.applyTo(diagnostics);
+
+    EXPECT_EQ(
+        diagnostics.budgetNetworkRequestsIssued,
+        std::numeric_limits<int>::max());
+    EXPECT_EQ(
+        diagnostics.budgetNetworkRequestsLimit,
+        std::numeric_limits<int>::max());
+    EXPECT_DOUBLE_EQ(diagnostics.budgetMainThreadElapsedMs, 3.75);
+    EXPECT_DOUBLE_EQ(diagnostics.budgetMainThreadTimeLimitMs, 4.0);
+    EXPECT_TRUE(diagnostics.budgetInteractionActive);
+    EXPECT_TRUE(diagnostics.budgetSmoothingActive);
+}
+
+TEST(
+    SceneTilesetDiagnosticsSnapshotTest,
     AppliesProviderRequestLanesToDiagnostics) {
     SceneTilesetDiagnosticsSnapshot snapshot;
     snapshot.contentProviderRequests.requestsStarted = 3;
