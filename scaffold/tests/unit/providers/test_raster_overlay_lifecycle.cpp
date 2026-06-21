@@ -163,7 +163,7 @@ public:
 class ParentFallbackImageryProvider final : public ImageryProvider {
 public:
     std::string id() const override { return "parent-fallback"; }
-    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    std::string schemeId() const override { return schemeIdValue; }
     int minZoom() const override { return 0; }
     int maxZoom() const override { return 10; }
     int tileWidth() const override { return tileWidthValue; }
@@ -186,6 +186,7 @@ public:
     }
 
     TileKey failingKey{"XYZ-WebMercator", -1, -1, -1};
+    std::string schemeIdValue = "XYZ-WebMercator";
     int tileWidthValue = 256;
     int tileHeightValue = 256;
     std::vector<TileKey> requestedKeys;
@@ -457,6 +458,39 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceRangeTrimsTileEdgeTouchesLikeCes
     imagery.tileWidthValue = 64;
     imagery.tileHeightValue = 64;
     auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const Rectangle sourceAlignedBounds = scheme->tileToRectangle(
+        TileKey{scheme->id(), 3, 2, 3});
+    auto rectangleTile = provider.getTile(sourceAlignedBounds, 512.0, 512.0);
+    ASSERT_NE(nullptr, rectangleTile);
+    EXPECT_EQ(5, rectangleTile->getSourceZoom());
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    EXPECT_TRUE(provider.loadTileThrottled(*rectangleTile, &budget));
+    ASSERT_EQ(16u, imagery.requestedKeys.size());
+    EXPECT_EQ(16u, budget.rasterNetworkRequestsIssued());
+
+    for (const TileKey& requested : imagery.requestedKeys) {
+        EXPECT_EQ(5, requested.z);
+        EXPECT_GE(requested.x, 8);
+        EXPECT_LE(requested.x, 11);
+        EXPECT_GE(requested.y, 12);
+        EXPECT_LE(requested.y, 15);
+    }
+}
+
+TEST(RasterOverlayLifecycleTest, RectangleSourceRangeTrimsSouthUpTileEdgeTouchesLikeCesiumNative) {
+    ParentFallbackImageryProvider imagery;
+    imagery.schemeIdValue = "Geographic-TMS";
+    imagery.tileWidthValue = 64;
+    imagery.tileHeightValue = 64;
+    auto scheme = TileScheme::createGeographicTMS();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
 
     const Rectangle sourceAlignedBounds = scheme->tileToRectangle(
