@@ -141,6 +141,31 @@ public:
     bool callbackSawIssued = false;
 };
 
+class SyncRenderContentProvider final : public TilesetContentProvider {
+public:
+    explicit SyncRenderContentProvider(bool& issuedBeforeCallback)
+        : issuedBeforeCallback_(issuedBeforeCallback) {}
+
+    std::string id() const override { return "dispatcher-content-render"; }
+    bool supportsTile(const TileKey&) const override { return true; }
+    void requestTileContent(
+        const TileKey& key,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callbackSawIssued = issuedBeforeCallback_;
+        callback(
+            key,
+            TileContentLoadResult::render(std::make_unique<GltfModel>()));
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+
+    bool& issuedBeforeCallback_;
+    bool callbackSawIssued = false;
+};
+
 TEST(TileLoadRequestDispatcherTest, BlocksWhenBudgetIsExhausted) {
     std::mutex mutex;
     std::condition_variable condition;
@@ -362,4 +387,38 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_TRUE(requestState.empty());
     EXPECT_EQ(1u, pendingLoads.terrainUploadCount());
     EXPECT_EQ(0u, pendingLoads.terrainTerminalResultCount());
+}
+
+TEST(TileLoadRequestDispatcherTest,
+     RunsOnIssuedBeforeSynchronousContentUploadCallback) {
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+    SyncRenderContentProvider provider(issued);
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::requestContent(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            provider,
+            key,
+            "content-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    EXPECT_EQ(TileLoadDispatchResult::Issued, result);
+    EXPECT_TRUE(provider.callbackSawIssued);
+    EXPECT_TRUE(requestState.empty());
+    EXPECT_EQ(1u, pendingLoads.contentUploadCount());
+    EXPECT_EQ(0u, pendingLoads.contentTerminalResultCount());
 }
