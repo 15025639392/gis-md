@@ -462,6 +462,26 @@ TEST(QuantizedMeshTerrainProviderTest, MetadataAvailabilityLoadedSubtreeTableUse
     EXPECT_TRUE(provider.isSubtreeLoaded(2, 0));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, MissingMaxzoomDefaultsToThirtyLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "metadataAvailability": 10
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    EXPECT_EQ(30, provider.maxZoom());
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(TileKey{"Geographic-TMS", 31, 0, 0}));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, NonInt32MetadataAvailabilityIsIgnoredLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
