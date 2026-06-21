@@ -2,6 +2,7 @@
 
 #include "earth_engine/tiling/TileLoadLifecycle.h"
 
+#include <memory>
 #include <mutex>
 
 using namespace earth_engine;
@@ -65,6 +66,37 @@ TEST(TileLoadLifecycleTest, EmptyBatchQueryIsNoOp) {
     EXPECT_TRUE(lifecycle.containsWorkForCacheKey("content-upload"));
 
     lifecycle.cancelAndEraseCacheKey("terrain-request");
+    lifecycle.cancelAndEraseCacheKey("content-upload");
+
+    EXPECT_FALSE(lifecycle.hasPendingWork());
+}
+
+TEST(TileLoadLifecycleTest, CancelErasesPendingUploads) {
+    TileLoadLifecycle lifecycle;
+    const TileKey terrainKey{"test", 0, 0, 0};
+    const TileKey contentKey{"test", 0, 1, 0};
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            terrainKey,
+            "terrain-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            std::make_unique<DecodedHeightmap>()});
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            contentKey,
+            "content-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileContentLoadResult::empty()});
+    }
+
+    lifecycle.cancelAndEraseCacheKey("terrain-upload");
+
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey("terrain-upload"));
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("content-upload"));
+
     lifecycle.cancelAndEraseCacheKey("content-upload");
 
     EXPECT_FALSE(lifecycle.hasPendingWork());
