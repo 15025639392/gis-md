@@ -1268,6 +1268,63 @@ TEST(
 
 TEST(
     TilesetRequestMissingBudgetTest,
+    UnloadRenderContentPreservesLoadedChildren) {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+
+    auto rootHeightmap = makeFlatHeightmap(1.0f);
+    rootHeightmap->rawData.resize(96, 1);
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        std::move(rootHeightmap));
+    root->content.contentKind = TileContentKind::Render;
+    root->content.loadState = TileLoadState::Done;
+    root->content.renderContent.setMeshReady(true);
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_FALSE(root->children.empty());
+    ASSERT_NE(root->children.front(), nullptr);
+
+    TilesetTile* child = root->children.front();
+    const TileKey childKey = child->key;
+    auto childHeightmap = makeFlatHeightmap(2.0f);
+    childHeightmap->rawData.resize(96, 2);
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        childKey,
+        std::move(childHeightmap));
+    child->content.contentKind = TileContentKind::Render;
+    child->content.loadState = TileLoadState::Done;
+    child->content.renderContent.setMeshReady(true);
+
+    TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
+    TilesetTestAccess::updateTotalBytesUsed(tileset);
+    TilesetTestAccess::unloadCachedBytes(tileset, 0);
+
+    TilesetTile* rootAfter = TilesetTestAccess::findTile(tileset, rootKey);
+    TilesetTile* childAfter = TilesetTestAccess::findTile(tileset, childKey);
+    ASSERT_EQ(rootAfter, root);
+    EXPECT_EQ(rootAfter->content.loadState, TileLoadState::Unloaded);
+    EXPECT_EQ(rootAfter->content.contentKind, TileContentKind::Unknown);
+    EXPECT_FALSE(rootAfter->content.renderContent.isMeshReady());
+    ASSERT_EQ(childAfter, child);
+    EXPECT_EQ(childAfter->content.loadState, TileLoadState::Done);
+    EXPECT_EQ(childAfter->content.contentKind, TileContentKind::Render);
+    EXPECT_EQ(childAfter->parent, rootAfter);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
     FrameResourceBudgetSeparatesRasterFanoutFromTerrainRequests) {
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 2;
