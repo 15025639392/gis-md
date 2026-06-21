@@ -1035,3 +1035,62 @@ TEST(TileLoadSchedulerTest, SkipsInflightRequestBeforeSnapshot) {
         lifecycle.requestState().completeTerrainRequest(cacheKey);
     }
 }
+
+TEST(TileLoadSchedulerTest, StopsDuringDestroyBeforePlanning) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().markDestroyingAndCancelRequests();
+    }
+
+    bool cacheKeyRequested = false;
+    bool planned = false;
+    bool emptyChecked = false;
+    bool prepared = false;
+    bool marked = false;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                TileKey{"test", 0, 0, 0},
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            [&cacheKeyRequested](const TileKey&) {
+                cacheKeyRequested = true;
+                return std::string{"unexpected"};
+            },
+            [&planned](
+                const TileKey&,
+                const std::string&,
+                TilesetTile*& tileState) {
+                planned = true;
+                tileState = nullptr;
+                return TileLoadRequestSnapshot{};
+            },
+            [&emptyChecked](const std::string&) {
+                emptyChecked = true;
+                return false;
+            },
+            [&prepared](TilesetTile&, double) {
+                prepared = true;
+                return true;
+            },
+            [&marked](const TileKey&) { marked = true; });
+
+    EXPECT_EQ(outcome.issued, 0u);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_FALSE(cacheKeyRequested);
+    EXPECT_FALSE(planned);
+    EXPECT_FALSE(emptyChecked);
+    EXPECT_FALSE(prepared);
+    EXPECT_FALSE(marked);
+}
