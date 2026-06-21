@@ -1094,3 +1094,60 @@ TEST(TileLoadSchedulerTest, StopsDuringDestroyBeforePlanning) {
     EXPECT_FALSE(prepared);
     EXPECT_FALSE(marked);
 }
+
+TEST(TileLoadSchedulerTest, SkipsDispatcherDuplicateAfterPlanning) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = cacheKeyForTile(key);
+    CountingContentProvider provider;
+    bool planned = false;
+    bool marked = false;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                &provider},
+            cacheKeyForTile,
+            [&lifecycle, &planned, &key, &cacheKey](
+                const TileKey&,
+                const std::string&,
+                TilesetTile*& tileState) {
+                planned = true;
+                tileState = nullptr;
+                {
+                    std::lock_guard<std::mutex> lock(lifecycle.mutex());
+                    lifecycle.pendingLoads().addContentTerminalResult(
+                        PendingContentTerminalResult{
+                            key,
+                            cacheKey,
+                            TileLoadPriorityGroup::Normal,
+                            0.0,
+                            TileContentLoadStatus::RetryLater});
+                }
+                TileLoadRequestSnapshot snapshot;
+                snapshot.contentProviderSupportsTile = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [&marked](const TileKey&) { marked = true; });
+
+    EXPECT_EQ(outcome.issued, 0u);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_TRUE(planned);
+    EXPECT_FALSE(marked);
+    EXPECT_EQ(provider.requestCount, 0);
+    EXPECT_EQ(lifecycle.counts().contentTerminalResults, 1u);
+}
