@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/content/GltfModel.h"
+#include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/Transforms.h"
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
@@ -196,6 +198,35 @@ SelectorView makeSelectorView(
         view.projectionMatrix * camera.viewMatrix());
     view.viewportHeightPixels = viewportHeight;
     return view;
+}
+
+Camera makeCameraFromCenterPitchHeading(
+    double longitudeDegrees,
+    double latitudeDegrees,
+    double cameraHeightMeters,
+    double pitchRadians,
+    double headingRadians) {
+    const Cartographic targetCartographic =
+        Cartographic::fromDegrees(longitudeDegrees, latitudeDegrees, 0.0);
+    const Vec3 target =
+        Ellipsoid::WGS84().cartographicToCartesian(targetCartographic);
+    const Vec3 localUp =
+        Ellipsoid::WGS84().geodeticSurfaceNormal(targetCartographic);
+    const Vec3 east = Vec3(-target.y(), target.x(), 0.0).normalized();
+    const Vec3 north = localUp.cross(east).normalized();
+
+    const double horizontalScale = std::cos(pitchRadians);
+    const Vec3 direction =
+        (east * (std::sin(headingRadians) * horizontalScale) +
+         north * (std::cos(headingRadians) * horizontalScale) +
+         localUp * std::sin(pitchRadians)).normalized();
+    const Vec3 cameraUp =
+        (north * std::cos(headingRadians) -
+         east * std::sin(headingRadians)).normalized();
+
+    Camera camera;
+    camera.lookAt(target - direction * cameraHeightMeters, target, cameraUp);
+    return camera;
 }
 
 std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
@@ -436,6 +467,47 @@ TEST(SceneFrameStateTest, FrameStateBuilderPopulatesPerFrameState) {
         nullptr});
 
     EXPECT_TRUE(frameState.selectorViews.empty());
+}
+
+TEST(SceneFrameStateTest, PresentationTraceRecordsDeterministicCameraState) {
+    DummyRenderDevice device;
+    Scene scene;
+    ASSERT_TRUE(scene.setRenderDevice(&device));
+    scene.setViewport(1024, 768, 2.0f);
+
+    constexpr double kLongitudeDegrees = 116.3913;
+    constexpr double kLatitudeDegrees = 39.9075;
+    constexpr double kRangeMeters = 750000.0;
+    const double pitch = Transforms::toRadians(-65.0);
+    const double heading = Transforms::toRadians(35.0);
+    scene.camera() = makeCameraFromCenterPitchHeading(
+        kLongitudeDegrees,
+        kLatitudeDegrees,
+        kRangeMeters,
+        pitch,
+        heading);
+
+    scene.update(1.0 / 60.0);
+    scene.render();
+
+    const PresentationTrace& trace = scene.presentationTrace();
+    EXPECT_EQ(trace.camera.frameId, scene.frameState().frameId);
+    EXPECT_EQ(trace.camera.viewportWidthPixels, 1024);
+    EXPECT_EQ(trace.camera.viewportHeightPixels, 768);
+    EXPECT_NEAR(trace.camera.devicePixelRatio, 2.0f, 1e-6f);
+    EXPECT_NEAR(
+        trace.camera.targetLongitudeDegrees,
+        kLongitudeDegrees,
+        1e-8);
+    EXPECT_NEAR(
+        trace.camera.targetLatitudeDegrees,
+        kLatitudeDegrees,
+        1e-8);
+    EXPECT_NEAR(trace.camera.pitchRadians, pitch, 1e-10);
+    EXPECT_NEAR(trace.camera.headingRadians, heading, 1e-10);
+    ASSERT_EQ(trace.selectorViews.size(), 1u);
+    EXPECT_EQ(trace.selectorViews.front().viewportHeightPixels, 768);
+    EXPECT_FALSE(trace.commands.empty());
 }
 
 TEST(SceneFrameStateTest, OcclusionCallbackFeedsPrimaryAndAdditionalTilesets) {
