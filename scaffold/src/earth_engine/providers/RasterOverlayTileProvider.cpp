@@ -1354,9 +1354,7 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
         getMinimumLevel(),
         getMaximumLevel());
 
-    if (sourcePlan.sourceKeys.size() == 1 &&
-        (sourcePlan.sourceZoom == getMinimumLevel() ||
-         sourcePlan.sourceZoom == getMaximumLevel())) {
+    if (sourcePlan.sourceKeys.size() == 1) {
         const TileKey& sourceKey = sourcePlan.sourceKeys.front();
         const Rectangle sourceRectangle = scheme_.tileToRectangle(sourceKey);
         if (rectanglesEqualForDirectRasterTile(

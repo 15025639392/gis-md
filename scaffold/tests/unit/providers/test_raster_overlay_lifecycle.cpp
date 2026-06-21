@@ -384,8 +384,8 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomFollowsCesiumTargetScreenPix
 
     auto matchingTile = provider.getTile(z3Bounds, 512.0, 512.0);
     ASSERT_NE(nullptr, matchingTile);
-    EXPECT_TRUE(matchingTile->isRectangleTile());
-    EXPECT_EQ(3, matchingTile->getSourceZoom());
+    EXPECT_FALSE(matchingTile->isRectangleTile());
+    EXPECT_EQ((TileKey{scheme->id(), 3, 2, 3}), matchingTile->getTileID());
 
     auto widerTile = provider.getTile(z3Bounds, 1024.0, 256.0);
     ASSERT_NE(nullptr, widerTile);
@@ -554,7 +554,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCoverageMissCreatesNoTileOrRequest) {
     EXPECT_EQ(0, provider.getCachedTileCount());
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleAlignedSingleSourceUploadsWithoutResampling) {
+TEST(RasterOverlayLifecycleTest, DirectAlignedSingleSourceUploadsWithoutResampling) {
     RgbImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     auto uploader = std::make_unique<CountingRasterUploader>();
@@ -566,7 +566,7 @@ TEST(RasterOverlayLifecycleTest, RectangleAlignedSingleSourceUploadsWithoutResam
     auto rectangleMappedTile = provider.getTile(sourceBounds, 8.0, 8.0);
 
     ASSERT_NE(nullptr, rectangleMappedTile);
-    EXPECT_TRUE(rectangleMappedTile->isRectangleTile());
+    EXPECT_FALSE(rectangleMappedTile->isRectangleTile());
     EXPECT_EQ(sourceKey, rectangleMappedTile->getTileID());
     EXPECT_EQ(sourceBounds, rectangleMappedTile->getRectangle());
     EXPECT_EQ(1, provider.getCachedTileCount());
@@ -737,6 +737,28 @@ TEST(RasterOverlayLifecycleTest, ExactProviderRectangleUsesDirectQuadtreeTile) {
     EXPECT_FALSE(mappedTile->isRectangleTile());
     EXPECT_EQ(key, mappedTile->getTileID());
     EXPECT_EQ(bounds, mappedTile->getRectangle());
+    EXPECT_EQ(scheme->id() + "/3/4/2", mappedTile->getCacheKey());
+    EXPECT_EQ(1, provider.getCachedTileCount());
+
+    auto directTile = provider.getTile(key);
+    EXPECT_EQ(directTile, mappedTile);
+}
+
+TEST(RasterOverlayLifecycleTest, ExactIntermediateRectangleUsesDirectQuadtreeTileLikeCesiumNative) {
+    ConfigurableImageryProvider imagery;
+    imagery.tileWidthValue = 256;
+    imagery.tileHeightValue = 256;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setLevelRange(0, 5);
+
+    const TileKey key{scheme->id(), 3, 4, 2};
+    const Rectangle bounds = scheme->tileToRectangle(key);
+    auto mappedTile = provider.getTile(bounds, 512.0, 512.0);
+
+    ASSERT_NE(nullptr, mappedTile);
+    EXPECT_FALSE(mappedTile->isRectangleTile());
+    EXPECT_EQ(key, mappedTile->getTileID());
     EXPECT_EQ(scheme->id() + "/3/4/2", mappedTile->getCacheKey());
     EXPECT_EQ(1, provider.getCachedTileCount());
 
@@ -1176,7 +1198,7 @@ TEST(RasterOverlayLifecycleTest, ConcurrentSiblingFallbacksShareParentSourceInFl
     EXPECT_EQ(RasterOverlayTile::LoadState::Failed, eastTile->getState());
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleAncestorFallbackUsesParentTileLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest, DirectAncestorFallbackUsesParentTileLikeCesiumNative) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     auto uploader = std::make_unique<CountingRasterUploader>();
@@ -1188,18 +1210,19 @@ TEST(RasterOverlayLifecycleTest, RectangleAncestorFallbackUsesParentTileLikeCesi
     Rectangle bounds = scheme->tileToRectangle(key);
     imagery.failingKey = key;
 
-    auto rectangleTile = provider.getTile(bounds, 512.0, 512.0);
-    ASSERT_NE(nullptr, rectangleTile);
-    EXPECT_EQ(expectedSourceZoom, rectangleTile->getSourceZoom());
+    auto directTile = provider.getTile(bounds, 512.0, 512.0);
+    ASSERT_NE(nullptr, directTile);
+    EXPECT_FALSE(directTile->isRectangleTile());
+    EXPECT_EQ(key, directTile->getTileID());
 
-    ASSERT_TRUE(provider.loadTile(*rectangleTile));
+    ASSERT_TRUE(provider.loadTile(*directTile));
     EXPECT_EQ(0, provider.processPendingUploads(false));
 
     EXPECT_EQ(RasterOverlayTile::LoadState::Failed,
-              rectangleTile->getState());
+              directTile->getState());
     EXPECT_EQ(0, uploaderPtr->uploadCount);
     EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
-              rectangleTile->isMoreDetailAvailable());
+              directTile->isMoreDetailAvailable());
     EXPECT_TRUE(std::find(
         imagery.requestedKeys.begin(),
         imagery.requestedKeys.end(),
