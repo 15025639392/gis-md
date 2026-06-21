@@ -56,7 +56,7 @@ public:
     void requestTile(
         const TileKey& key,
         CancellationToken,
-        HeightmapCallback callback,
+        TerrainCallback callback,
         HttpRequestPriority = HttpRequestPriority::Normal) override {
         ++requestCount;
         callback(key, TerrainTileLoadResult::retryLater());

@@ -88,6 +88,15 @@ struct TerrainTileLoadResult {
         return result;
     }
 
+    static TerrainTileLoadResult successWithSurfaceMesh(
+        std::unique_ptr<SurfaceTileMesh> mesh) {
+        TerrainTileLoadResult result;
+        result.status = mesh ? TerrainTileLoadStatus::Success
+                             : TerrainTileLoadStatus::Failed;
+        result.surfaceMesh = std::move(mesh);
+        return result;
+    }
+
     static TerrainTileLoadResult empty() {
         TerrainTileLoadResult result;
         result.status = TerrainTileLoadStatus::Empty;
@@ -164,13 +173,13 @@ public:
     /// include those requests so frame budgets reflect real network pressure.
     virtual int estimatedRequestFanout(const TileKey&) const { return 1; }
 
-    using HeightmapCallback = std::function<void(
+    using TerrainCallback = std::function<void(
         const TileKey&, TerrainTileLoadResult)>;
 
-    /// 异步请求高度图瓦片
+    /// Asynchronously request terrain tile content.
     virtual void requestTile(const TileKey& key,
                              CancellationToken token,
-                             HeightmapCallback callback,
+                             TerrainCallback callback,
                              HttpRequestPriority priority =
                                  HttpRequestPriority::Normal) = 0;
 

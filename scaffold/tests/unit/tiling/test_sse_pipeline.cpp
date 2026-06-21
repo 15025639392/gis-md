@@ -3481,7 +3481,7 @@ public:
 
     void requestTile(const TileKey& key,
                      CancellationToken,
-                     HeightmapCallback callback,
+                     TerrainCallback callback,
                      HttpRequestPriority = HttpRequestPriority::Normal) override {
         ++requestCount;
         callback(key, TerrainTileLoadResult::retryLater());
@@ -3521,7 +3521,7 @@ public:
 
     void requestTile(const TileKey& key,
                      CancellationToken,
-                     HeightmapCallback callback,
+                     TerrainCallback callback,
                      HttpRequestPriority = HttpRequestPriority::Normal) override {
         ++requestCount;
         callback(key, TerrainTileLoadResult::retryLater());
@@ -3553,7 +3553,7 @@ public:
 
     void requestTile(const TileKey& key,
                      CancellationToken,
-                     HeightmapCallback callback,
+                     TerrainCallback callback,
                      HttpRequestPriority = HttpRequestPriority::Normal) override {
         ++requestCount;
         switch (status_) {
@@ -3597,7 +3597,7 @@ class ManualCompletionTerrainProvider final : public TerrainProvider {
 public:
     struct PendingRequest {
         TileKey key;
-        HeightmapCallback callback;
+        TerrainCallback callback;
     };
 
     std::string id() const override { return "manual-completion-terrain"; }
@@ -3612,7 +3612,7 @@ public:
 
     void requestTile(const TileKey& key,
                      CancellationToken,
-                     HeightmapCallback callback,
+                     TerrainCallback callback,
                      HttpRequestPriority = HttpRequestPriority::Normal) override {
         pendingRequests.push_back(PendingRequest{key, std::move(callback)});
     }
@@ -3637,7 +3637,7 @@ public:
             return false;
         }
 
-        HeightmapCallback callback = std::move(it->callback);
+        TerrainCallback callback = std::move(it->callback);
         pendingRequests.erase(it);
         callback(key, TerrainTileLoadResult::success(std::move(heightmap)));
         return true;
@@ -17586,7 +17586,7 @@ void testTileLoadRequestDispatcherBlocksWhenBudgetIsExhausted() {
         }
         void requestTile(const TileKey&,
                          CancellationToken,
-                         HeightmapCallback,
+                         TerrainCallback,
                          HttpRequestPriority = HttpRequestPriority::Normal) override {
             ++requestCount;
         }
@@ -17690,7 +17690,7 @@ void testTileLoadRequestDispatcherSkipsEmptyCacheKeys() {
         }
         void requestTile(const TileKey&,
                          CancellationToken,
-                         HeightmapCallback,
+                         TerrainCallback,
                          HttpRequestPriority = HttpRequestPriority::Normal) override {
             ++requestCount;
         }
@@ -17799,7 +17799,7 @@ void testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback() {
         }
         void requestTile(const TileKey& key,
                          CancellationToken,
-                         HeightmapCallback callback,
+                         TerrainCallback callback,
                          HttpRequestPriority = HttpRequestPriority::Normal) override {
             callbackSawIssued = issuedBeforeCallback_;
             callback(key, TerrainTileLoadResult::retryLater());
@@ -17853,7 +17853,7 @@ void testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback() {
         }
         void requestTile(const TileKey& key,
                          CancellationToken,
-                         HeightmapCallback callback,
+                         TerrainCallback callback,
                          HttpRequestPriority = HttpRequestPriority::Normal) override {
             callbackSawIssued = issuedBeforeCallback_;
             auto heightmap = std::make_unique<DecodedHeightmap>();
@@ -18026,7 +18026,7 @@ void testTileLoadRequestDispatcherDropsCancelledCallbacks() {
         }
         void requestTile(const TileKey&,
                          CancellationToken,
-                         HeightmapCallback callback,
+                         TerrainCallback callback,
                          HttpRequestPriority = HttpRequestPriority::Normal) override {
             terrainCallback = std::move(callback);
         }
@@ -18035,7 +18035,7 @@ void testTileLoadRequestDispatcherDropsCancelledCallbacks() {
             size_t) override {
             return nullptr;
         }
-        HeightmapCallback terrainCallback;
+        TerrainCallback terrainCallback;
     };
 
     class DeferredContentProvider final : public TilesetContentProvider {
@@ -18160,7 +18160,7 @@ void testTileLoadRequestDispatcherRejectsRequestsDuringDestroy() {
         }
         void requestTile(const TileKey&,
                          CancellationToken,
-                         HeightmapCallback,
+                         TerrainCallback,
                          HttpRequestPriority = HttpRequestPriority::Normal) override {
             ++requestCount;
         }
@@ -18270,7 +18270,7 @@ void testTileLoadRequestDispatcherDropsDestroyingCallbacks() {
         }
         void requestTile(const TileKey&,
                          CancellationToken,
-                         HeightmapCallback callback,
+                         TerrainCallback callback,
                          HttpRequestPriority = HttpRequestPriority::Normal) override {
             terrainCallback = std::move(callback);
         }
@@ -18279,7 +18279,7 @@ void testTileLoadRequestDispatcherDropsDestroyingCallbacks() {
             size_t) override {
             return nullptr;
         }
-        HeightmapCallback terrainCallback;
+        TerrainCallback terrainCallback;
     };
 
     class DeferredContentProvider final : public TilesetContentProvider {
@@ -18412,7 +18412,7 @@ void testTileLoadRequestDispatcherSkipsPendingTerminalResultKeys() {
         }
         void requestTile(const TileKey& key,
                          CancellationToken,
-                         HeightmapCallback callback,
+                         TerrainCallback callback,
                          HttpRequestPriority = HttpRequestPriority::Normal) override {
             ++requestCount;
             callback(key, TerrainTileLoadResult::retryLater());
@@ -18534,7 +18534,7 @@ void testTileLoadRequestDispatcherSkipsInflightRequestKeys() {
         }
         void requestTile(const TileKey&,
                          CancellationToken,
-                         HeightmapCallback,
+                         TerrainCallback,
                          HttpRequestPriority = HttpRequestPriority::Normal) override {
             ++requestCount;
         }
@@ -18646,7 +18646,7 @@ void testTileLoadRequestDispatcherSkipsPendingUploadKeys() {
         }
         void requestTile(const TileKey&,
                          CancellationToken,
-                         HeightmapCallback,
+                         TerrainCallback,
                          HttpRequestPriority = HttpRequestPriority::Normal) override {
             ++requestCount;
         }
@@ -18761,7 +18761,7 @@ void testTileLoadRequestDispatcherSkipsClaimedUploadKeys() {
         }
         void requestTile(const TileKey&,
                          CancellationToken,
-                         HeightmapCallback,
+                         TerrainCallback,
                          HttpRequestPriority = HttpRequestPriority::Normal) override {
             ++requestCount;
         }
@@ -18947,7 +18947,7 @@ void testTileLoadRequestDispatcherPassesNetworkPriority() {
         }
         void requestTile(const TileKey& key,
                          CancellationToken,
-                         HeightmapCallback callback,
+                         TerrainCallback callback,
                          HttpRequestPriority priority =
                              HttpRequestPriority::Normal) override {
             observedPriority = priority;
@@ -19350,7 +19350,7 @@ void testTileLoadSchedulerBlocksTerrainFanoutOverInflightCapacity() {
         }
         void requestTile(const TileKey&,
                          CancellationToken,
-                         HeightmapCallback,
+                         TerrainCallback,
                          HttpRequestPriority = HttpRequestPriority::Normal) override {
             ++requestCount;
         }
@@ -19611,7 +19611,7 @@ void testTileLoadSchedulerContinuesAfterUpsampleSourceWait() {
         }
         void requestTile(const TileKey&,
                          CancellationToken,
-                         HeightmapCallback,
+                         TerrainCallback,
                          HttpRequestPriority = HttpRequestPriority::Normal) override {
             ++requestCount;
         }
@@ -20247,7 +20247,7 @@ void testTileLoadSchedulerSkipsTerrainDispatcherDuplicateAfterPlanning() {
         }
         void requestTile(const TileKey&,
                          CancellationToken,
-                         HeightmapCallback,
+                         TerrainCallback,
                          HttpRequestPriority = HttpRequestPriority::Normal) override {
             ++requestCount;
         }
@@ -20408,7 +20408,7 @@ void testTileLoadSchedulerStopsAfterTerrainDispatchBudgetBlock() {
         }
         void requestTile(const TileKey&,
                          CancellationToken,
-                         HeightmapCallback,
+                         TerrainCallback,
                          HttpRequestPriority = HttpRequestPriority::Normal) override {
             ++requestCount;
         }
@@ -20516,7 +20516,7 @@ void testTileLoadSchedulerContentThenTerrainShareDispatchBudget() {
         }
         void requestTile(const TileKey&,
                          CancellationToken,
-                         HeightmapCallback,
+                         TerrainCallback,
                          HttpRequestPriority = HttpRequestPriority::Normal) override {
             ++requestCount;
         }
@@ -20636,7 +20636,7 @@ void testTileLoadSchedulerTerrainThenContentShareDispatchBudget() {
         }
         void requestTile(const TileKey&,
                          CancellationToken,
-                         HeightmapCallback,
+                         TerrainCallback,
                          HttpRequestPriority = HttpRequestPriority::Normal) override {
             ++requestCount;
         }
@@ -20816,7 +20816,7 @@ void testTileMissingRequestSchedulerRetriesTerrainAfterEmptyMarkerCleared() {
         }
         void requestTile(const TileKey& key,
                          CancellationToken,
-                         HeightmapCallback callback,
+                         TerrainCallback callback,
                          HttpRequestPriority = HttpRequestPriority::Normal) override {
             ++requestCount;
             callback(key, TerrainTileLoadResult::retryLater());

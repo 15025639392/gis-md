@@ -72,7 +72,7 @@ public:
 
     void requestTile(const TileKey& key,
                      CancellationToken token,
-                     HeightmapCallback callback,
+                     TerrainCallback callback,
                      HttpRequestPriority priority =
                          HttpRequestPriority::Normal) override;
 
@@ -137,7 +137,7 @@ private:
         const TileKey& key,
         std::vector<LayerAvailabilityRequest> availabilityRequests,
         CancellationToken token,
-        HeightmapCallback callback,
+        TerrainCallback callback,
         HttpRequestPriority priority,
         int statusCode,
         std::vector<uint8_t> body,
@@ -147,7 +147,7 @@ private:
         std::shared_ptr<std::vector<LayerAvailabilityRequest>>
             availabilityRequests,
         std::shared_ptr<CancellationToken> token,
-        std::shared_ptr<HeightmapCallback> callback,
+        std::shared_ptr<TerrainCallback> callback,
         std::shared_ptr<std::vector<uint8_t>> body,
         int statusCode,
         HttpRequestPriority priority,
@@ -157,7 +157,7 @@ private:
         std::shared_ptr<std::vector<LayerAvailabilityRequest>>
             availabilityRequests,
         std::shared_ptr<CancellationToken> token,
-        std::shared_ptr<HeightmapCallback> callback,
+        std::shared_ptr<TerrainCallback> callback,
         std::shared_ptr<std::vector<uint8_t>> body,
         int statusCode,
         std::vector<std::vector<uint8_t>> metadataBodies);

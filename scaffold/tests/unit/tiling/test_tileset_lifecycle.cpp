@@ -35,7 +35,7 @@ class ManualCompletionTerrainProvider final : public TerrainProvider {
 public:
     struct PendingRequest {
         TileKey key;
-        HeightmapCallback callback;
+        TerrainCallback callback;
     };
 
     std::string id() const override { return "manual-lifecycle-terrain"; }
@@ -51,7 +51,7 @@ public:
     void requestTile(
         const TileKey& key,
         CancellationToken,
-        HeightmapCallback callback,
+        TerrainCallback callback,
         HttpRequestPriority = HttpRequestPriority::Normal) override {
         pendingRequests.push_back(PendingRequest{key, std::move(callback)});
     }
@@ -69,7 +69,7 @@ public:
             return false;
         }
 
-        HeightmapCallback callback = std::move(it->callback);
+        TerrainCallback callback = std::move(it->callback);
         pendingRequests.erase(it);
         callback(key, TerrainTileLoadResult::success(std::move(heightmap)));
         return true;

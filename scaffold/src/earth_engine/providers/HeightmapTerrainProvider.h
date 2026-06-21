@@ -59,7 +59,7 @@ public:
 
     void requestTile(const TileKey& key,
                      CancellationToken token,
-                     HeightmapCallback callback,
+                     TerrainCallback callback,
                      HttpRequestPriority priority =
                          HttpRequestPriority::Normal) override;
 

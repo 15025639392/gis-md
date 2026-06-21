@@ -181,7 +181,7 @@ public:
 
     void requestTile(const TileKey&,
                      CancellationToken,
-                     HeightmapCallback callback,
+                     TerrainCallback callback,
                      HttpRequestPriority = HttpRequestPriority::Normal) override {
         callback(TileKey{}, TerrainTileLoadResult::retryLater());
     }

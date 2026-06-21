@@ -78,7 +78,7 @@ std::string HeightmapTerrainProvider::buildUrl(const TileKey& key) const {
 
 void HeightmapTerrainProvider::requestTile(const TileKey& key,
                                             CancellationToken token,
-                                            HeightmapCallback callback,
+                                            TerrainCallback callback,
                                             HttpRequestPriority priority) {
     std::string url = buildUrl(key);
     requestsStarted_.fetch_add(1, std::memory_order_relaxed);
@@ -191,7 +191,7 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
             auto tokenPtr =
                 std::make_shared<CancellationToken>(std::move(token));
             auto callbackPtr =
-                std::make_shared<HeightmapCallback>(std::move(callback));
+                std::make_shared<TerrainCallback>(std::move(callback));
             auto bodyPtr =
                 std::make_shared<std::vector<uint8_t>>(std::move(body));
             AsyncSystem::pool().enqueue(

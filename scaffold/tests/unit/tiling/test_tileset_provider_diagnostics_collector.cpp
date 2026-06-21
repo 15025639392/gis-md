@@ -127,7 +127,7 @@ public:
     void requestTile(
         const TileKey&,
         CancellationToken,
-        HeightmapCallback,
+        TerrainCallback,
         HttpRequestPriority = HttpRequestPriority::Normal) override {}
     std::unique_ptr<DecodedHeightmap> decodeTile(const uint8_t*, size_t)
         override {

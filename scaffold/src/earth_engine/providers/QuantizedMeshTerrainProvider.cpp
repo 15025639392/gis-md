@@ -1060,7 +1060,7 @@ std::string QuantizedMeshTerrainProvider::buildUrl(const TileKey& key) const {
 
 void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
                                                 CancellationToken token,
-                                                HeightmapCallback callback,
+                                                TerrainCallback callback,
                                                 HttpRequestPriority priority) {
     std::string url = buildUrl(key);
     std::vector<LayerAvailabilityRequest> availabilityRequests =
@@ -1168,7 +1168,7 @@ void QuantizedMeshTerrainProvider::handleAsyncTileBody(
     const TileKey& key,
     std::vector<LayerAvailabilityRequest> availabilityRequests,
     CancellationToken token,
-    HeightmapCallback callback,
+    TerrainCallback callback,
     HttpRequestPriority priority,
     int statusCode,
     std::vector<uint8_t> body,
@@ -1178,7 +1178,7 @@ void QuantizedMeshTerrainProvider::handleAsyncTileBody(
             std::move(availabilityRequests));
     auto tokenPtr = std::make_shared<CancellationToken>(std::move(token));
     auto callbackPtr =
-        std::make_shared<HeightmapCallback>(std::move(callback));
+        std::make_shared<TerrainCallback>(std::move(callback));
     auto bodyPtr =
         std::make_shared<std::vector<uint8_t>>(std::move(body));
 
@@ -1213,7 +1213,7 @@ void QuantizedMeshTerrainProvider::requestAsyncMetadataAndFinalize(
     std::shared_ptr<std::vector<LayerAvailabilityRequest>>
         availabilityRequests,
     std::shared_ptr<CancellationToken> token,
-    std::shared_ptr<HeightmapCallback> callback,
+    std::shared_ptr<TerrainCallback> callback,
     std::shared_ptr<std::vector<uint8_t>> body,
     int statusCode,
     HttpRequestPriority priority,
@@ -1305,7 +1305,7 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
     std::shared_ptr<std::vector<LayerAvailabilityRequest>>
         availabilityRequests,
     std::shared_ptr<CancellationToken> token,
-    std::shared_ptr<HeightmapCallback> callback,
+    std::shared_ptr<TerrainCallback> callback,
     std::shared_ptr<std::vector<uint8_t>> body,
     int statusCode,
     std::vector<std::vector<uint8_t>> metadataBodies) {
@@ -1368,7 +1368,7 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                 availabilityUpdates.push_back(std::move(update));
             }
             TerrainTileLoadResult result =
-                TerrainTileLoadResult::success(nullptr, std::move(surfaceMesh));
+                TerrainTileLoadResult::successWithSurfaceMesh(std::move(surfaceMesh));
             result.quantizedMeshAvailabilityUpdates =
                 std::move(availabilityUpdates);
             (*callback)(key, std::move(result));

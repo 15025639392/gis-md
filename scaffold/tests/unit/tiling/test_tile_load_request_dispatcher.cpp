@@ -23,7 +23,7 @@ public:
     void requestTile(
         const TileKey&,
         CancellationToken,
-        HeightmapCallback,
+        TerrainCallback,
         HttpRequestPriority = HttpRequestPriority::Normal) override {
         ++requestCount;
     }
@@ -50,7 +50,7 @@ public:
     void requestTile(
         const TileKey&,
         CancellationToken,
-        HeightmapCallback,
+        TerrainCallback,
         HttpRequestPriority = HttpRequestPriority::Normal) override {
         ++requestCount;
     }
@@ -97,7 +97,7 @@ public:
     void requestTile(
         const TileKey& key,
         CancellationToken,
-        HeightmapCallback callback,
+        TerrainCallback callback,
         HttpRequestPriority = HttpRequestPriority::Normal) override {
         callbackSawIssued = issuedBeforeCallback_;
         callback(key, TerrainTileLoadResult::retryLater());
@@ -128,7 +128,7 @@ public:
     void requestTile(
         const TileKey& key,
         CancellationToken,
-        HeightmapCallback callback,
+        TerrainCallback callback,
         HttpRequestPriority = HttpRequestPriority::Normal) override {
         callbackSawIssued = issuedBeforeCallback_;
         auto heightmap = std::make_unique<DecodedHeightmap>();
@@ -162,7 +162,7 @@ public:
     void requestTile(
         const TileKey& key,
         CancellationToken,
-        HeightmapCallback callback,
+        TerrainCallback callback,
         HttpRequestPriority = HttpRequestPriority::Normal) override {
         callbackSawIssued = issuedBeforeCallback_;
         auto mesh = std::make_unique<SurfaceTileMesh>();
@@ -171,7 +171,7 @@ public:
         mesh->vertices.push_back(vertex);
 
         TerrainTileLoadResult result =
-            TerrainTileLoadResult::success(nullptr, std::move(mesh));
+            TerrainTileLoadResult::successWithSurfaceMesh(std::move(mesh));
         QuantizedMeshAvailabilityUpdate update;
         update.layerIndex = 0;
         update.subtreeKey = key;
@@ -202,7 +202,7 @@ public:
     void requestTile(
         const TileKey&,
         CancellationToken,
-        HeightmapCallback callback,
+        TerrainCallback callback,
         HttpRequestPriority = HttpRequestPriority::Normal) override {
         terrainCallback = std::move(callback);
     }
@@ -212,7 +212,7 @@ public:
         return nullptr;
     }
 
-    HeightmapCallback terrainCallback;
+    TerrainCallback terrainCallback;
 };
 
 class RecordingPriorityTerrainProvider final : public TerrainProvider {
@@ -228,7 +228,7 @@ public:
     void requestTile(
         const TileKey& key,
         CancellationToken,
-        HeightmapCallback callback,
+        TerrainCallback callback,
         HttpRequestPriority priority = HttpRequestPriority::Normal) override {
         observedPriority = priority;
         callback(key, TerrainTileLoadResult::retryLater());
