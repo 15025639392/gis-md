@@ -68,3 +68,17 @@ TEST(TileTraversalDetailsPolicyTest, SummarizesSingleAndCulledTiles) {
     EXPECT_FALSE(forbidHolesCulled.anyWereRenderedLastFrame);
     EXPECT_EQ(forbidHolesCulled.notYetRenderableCount, 1u);
 }
+
+TEST(TileTraversalDetailsPolicyTest, AggregatesChildren) {
+    TileTraversalDetails aggregate;
+    TileTraversalDetailsPolicy::mergeChild(
+        aggregate,
+        TileTraversalDetailsPolicy::forSingleTile(true, true));
+    TileTraversalDetailsPolicy::mergeChild(
+        aggregate,
+        TileTraversalDetailsPolicy::forSingleTile(false, false));
+
+    EXPECT_FALSE(aggregate.allAreRenderable);
+    EXPECT_TRUE(aggregate.anyWereRenderedLastFrame);
+    EXPECT_EQ(aggregate.notYetRenderableCount, 1u);
+}
