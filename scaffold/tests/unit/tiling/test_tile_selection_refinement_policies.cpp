@@ -410,6 +410,38 @@ TEST(
 }
 
 TEST(
+    TileSelectionPostTraversalPolicyTest,
+    FadingAddKickAvoidsDuplicateParentLoad) {
+    const TileTraversalDetails ready =
+        TileTraversalDetailsPolicy::forSingleTile(true, true);
+
+    const TileSelectionPostTraversalResult result =
+        TileSelectionPostTraversalPolicy::evaluate(
+            TileSelectionPostTraversalInput{
+                ready,
+                true,
+                false,
+                TileSelectionState::Rendered,
+                true,
+                0.5f,
+                true,
+                false,
+                TileRefine::Add,
+                true},
+            TileSelectionPostTraversalOptions{
+                20,
+                true,
+                true,
+                true});
+
+    EXPECT_TRUE(result.shouldKick);
+    EXPECT_TRUE(result.wasReallyRenderedLastFrame);
+    EXPECT_FALSE(result.kickPlan.restoreChildLoadQueueAndLoadParent);
+    EXPECT_FALSE(result.kickPlan.addRenderableReplacementToPlan);
+    EXPECT_FALSE(result.kickPlan.preloadParent);
+}
+
+TEST(
     TileSelectionPostTraversalCommitterTest,
     KickTrimsDescendantsRestoresQueueAndReturnsParentDetails) {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
