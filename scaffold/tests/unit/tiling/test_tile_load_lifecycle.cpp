@@ -101,3 +101,48 @@ TEST(TileLoadLifecycleTest, CancelErasesPendingUploads) {
 
     EXPECT_FALSE(lifecycle.hasPendingWork());
 }
+
+TEST(TileLoadLifecycleTest, CancelErasesClaimedUploads) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 2;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey terrainKey{"test", 0, 0, 0};
+    const TileKey contentKey{"test", 0, 1, 0};
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            terrainKey,
+            "terrain-upload",
+            TileLoadPriorityGroup::Urgent,
+            100.0,
+            std::make_unique<DecodedHeightmap>()});
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            contentKey,
+            "content-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileContentLoadResult::empty()});
+
+        EXPECT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+        EXPECT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("terrain-upload"));
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("content-upload"));
+
+    lifecycle.cancelAndEraseCacheKey("terrain-upload");
+
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey("terrain-upload"));
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("content-upload"));
+
+    lifecycle.cancelAndEraseCacheKey("content-upload");
+
+    EXPECT_FALSE(lifecycle.hasPendingWork());
+}
