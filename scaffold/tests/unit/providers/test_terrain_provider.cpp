@@ -227,6 +227,14 @@ TEST(HeightmapTerrainProviderTest, ZoomRange) {
     EXPECT_EQ(10, provider.maxZoom());
 }
 
+TEST(HeightmapTerrainProviderTest, ExposesAttribution) {
+    HeightmapTerrainProvider provider(
+        "https://example.invalid/{z}/{x}/{y}.png",
+        "height source credit");
+
+    EXPECT_EQ("height source credit", provider.attribution());
+}
+
 TEST(QuantizedMeshTerrainProviderTest, ConfiguresFromCesiumLayerJson) {
     QuantizedMeshTerrainProvider provider("https://example.com/fallback/{z}/{x}/{y}.terrain");
     const std::string layerJson = R"json({
