@@ -166,3 +166,27 @@ TEST(TileSoftwareOcclusionTest, PreservesNegativeExplicitRegionHeight) {
         TileSoftwareOcclusionPolicy::check(tile, cameraPosition),
         TileOcclusionState::Occluded);
 }
+
+TEST(TileSoftwareOcclusionTest, PreservesNegativeExplicitS2Height) {
+    TilesetTile tile;
+    tile.key = TileKey{"Geographic-TMS", 4, 0, 0};
+    tile.bounds = Rectangle::fromDegrees(140.0, -1.0, 141.0, 1.0);
+    tile.boundingVolume = TileBoundingVolume::fromS2Cell(
+        S2CellBoundingVolume(
+            S2CellID::fromQuadtreeTileID(0, 4, 14, 7),
+            -1000.0,
+            -1000.0));
+
+    const std::optional<Rectangle> volumeRectangle =
+        tile.boundingVolume->estimateGlobeRectangle();
+    ASSERT_TRUE(volumeRectangle.has_value());
+    ASSERT_FALSE(volumeRectangle->contains(0.0, 0.0));
+
+    const Vec3 cameraPosition =
+        Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic::fromRadians(0.0, 0.0, 1000000.0));
+
+    EXPECT_EQ(
+        TileSoftwareOcclusionPolicy::check(tile, cameraPosition),
+        TileOcclusionState::Occluded);
+}
