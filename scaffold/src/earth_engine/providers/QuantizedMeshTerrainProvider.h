@@ -15,8 +15,10 @@ namespace earth_engine {
 class PlatformBridge;
 
 /// Terrain provider for the quantized-mesh-1.0 format.
-/// Parses binary tiles and rasterizes them into DecodedHeightmap grids
-/// for compatibility with the existing SurfaceTileMesh pipeline.
+/// Parses binary tiles into first-class SurfaceTileMesh load results.
+/// Synchronous heightmap decoding is intentionally unsupported for this
+/// provider; quantized-mesh content enters the tile lifecycle through
+/// requestTile, matching cesium-native's content-loader ownership model.
 ///
 /// Reference: CesiumQuantizedMeshTerrain/QuantizedMeshLoader
 class QuantizedMeshTerrainProvider : public TerrainProvider {

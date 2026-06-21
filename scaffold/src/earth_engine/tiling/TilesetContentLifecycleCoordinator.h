@@ -116,11 +116,14 @@ public:
                     context.device,
                     context.currentFrameTimeSeconds);
             },
-            [&](const TileKey& key, DecodedHeightmap& heightmap) {
+            [&](const TileKey& key,
+                DecodedHeightmap& heightmap,
+                const SurfaceTileMesh* surfaceMesh) {
                 TileQuantizedMeshAvailabilityIngestor::ingest(
                     context.terrainProvider,
                     key,
-                    heightmap);
+                    heightmap,
+                    surfaceMesh);
             },
             markResourcesDirty);
     }

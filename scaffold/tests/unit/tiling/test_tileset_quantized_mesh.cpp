@@ -10,6 +10,7 @@
 #include "earth_engine/tiling/TileBoundsMetrics.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
+#include "earth_engine/terrain/QuantizedMeshParser.h"
 
 #include <cmath>
 #include <cstdint>
@@ -132,13 +133,25 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
     return bytes;
 }
 
-std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
-    auto heightmap = std::make_unique<DecodedHeightmap>();
-    heightmap->tileSize = 2;
-    heightmap->heights.assign(4, heightMeters);
-    heightmap->minHeight = heightMeters;
-    heightmap->maxHeight = heightMeters;
-    return heightmap;
+void installQuantizedMeshSurface(TilesetTile& tile,
+                                 const std::vector<uint8_t>& bytes) {
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            tile.bounds);
+    ASSERT_NE(nullptr, mesh);
+    ASSERT_TRUE(mesh->hasHeightRange);
+    const double minimumHeight = mesh->minimumHeight;
+    const double maximumHeight = mesh->maximumHeight;
+    tile.content.renderContent.setSurfaceMesh(std::move(mesh));
+    tile.content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::OwnTerrain);
+    tile.content.renderContent.setTerrainHeightRange(
+        minimumHeight,
+        maximumHeight);
+    tile.content.contentKind = TileContentKind::Render;
+    tile.content.loadState = TileLoadState::Done;
 }
 
 class SparseTerrainProvider final : public TerrainProvider {
@@ -197,13 +210,9 @@ TEST(TilesetQuantizedMeshTest,
 
     const Vec3 boundingSphereCenter(3456.0, -7890.0, 12345.0);
     const Vec3 tileCenter(-3456.0, 7890.0, -12345.0);
-    auto heightmap = makeFlatHeightmap(0.0f);
-    heightmap->rawData =
-        makeQuantizedMeshBytes(boundingSphereCenter, tileCenter);
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        std::move(heightmap));
+    installQuantizedMeshSurface(
+        *root,
+        makeQuantizedMeshBytes(boundingSphereCenter, tileCenter));
 
     TilesetTestAccess::ensureTileMesh(tileset, *root);
 
@@ -234,16 +243,13 @@ TEST(TilesetQuantizedMeshTest,
 
     constexpr float minimumHeight = -250.0f;
     constexpr float maximumHeight = 1789.0f;
-    auto heightmap = makeFlatHeightmap(0.0f);
-    heightmap->rawData = makeQuantizedMeshBytes(
-        Vec3::zero(),
-        Vec3::zero(),
-        minimumHeight,
-        maximumHeight);
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        std::move(heightmap));
+    installQuantizedMeshSurface(
+        *root,
+        makeQuantizedMeshBytes(
+            Vec3::zero(),
+            Vec3::zero(),
+            minimumHeight,
+            maximumHeight));
 
     TilesetTestAccess::ensureTileMesh(tileset, *root);
 
@@ -393,16 +399,13 @@ TEST(TilesetQuantizedMeshTest,
 
     constexpr float minimumHeight = -320.0f;
     constexpr float maximumHeight = 2048.0f;
-    auto heightmap = makeFlatHeightmap(0.0f);
-    heightmap->rawData = makeQuantizedMeshBytes(
-        Vec3::zero(),
-        Vec3::zero(),
-        minimumHeight,
-        maximumHeight);
-    TilesetTestAccess::putTerrainCache(
-        tileset,
-        rootKey,
-        std::move(heightmap));
+    installQuantizedMeshSurface(
+        *root,
+        makeQuantizedMeshBytes(
+            Vec3::zero(),
+            Vec3::zero(),
+            minimumHeight,
+            maximumHeight));
 
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     TilesetTestAccess::ensureTileChildren(tileset, *root);

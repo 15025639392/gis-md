@@ -88,13 +88,22 @@ public:
                         terrainProvider)) {
                 qmProvider->applyAvailabilityUpdates(*upload.heightmap);
             }
-            ingestAvailability(upload.key, *upload.heightmap);
+            ingestAvailability(
+                upload.key,
+                *upload.heightmap,
+                upload.surfaceMesh.get());
             terrainCache[upload.cacheKey] = std::move(upload.heightmap);
         }
 
         if (TilesetTile* tile = ensureTile(upload.key)) {
+            if (upload.surfaceMesh &&
+                !tile->content.renderContent.hasSurfaceMesh()) {
+                tile->content.renderContent.setSurfaceMesh(
+                    std::move(upload.surfaceMesh));
+            }
             TileTerrainUploadCommitter::prepareTerrainRenderContent(*tile);
-            if (!resourceSmoothingActive) {
+            if (!resourceSmoothingActive &&
+                !tile->content.renderContent.hasSurfaceMesh()) {
                 ensureTileMesh(*tile);
             }
             const bool resourcesReady =

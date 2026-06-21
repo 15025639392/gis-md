@@ -441,26 +441,53 @@ TEST(QuantizedMeshTerrainProviderTest, InvalidBodyFailsTerminally) {
 }
 
 TEST(QuantizedMeshTerrainProviderTest,
-     DecodeTileRasterizesQuantizedMeshForHeightmapFallback) {
+     RequestTileProducesSurfaceMeshLoadResult) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/{z}/{x}/{y}.terrain");
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+
     constexpr float minimumHeight = -50.0f;
     constexpr float maximumHeight = 150.0f;
     const std::vector<uint8_t> bytes =
         makeQuantizedMeshBytes(minimumHeight, maximumHeight);
 
-    std::unique_ptr<DecodedHeightmap> heightmap =
-        provider.decodeTile(bytes.data(), bytes.size());
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool callbackCalled = false;
+    TerrainTileLoadResult completed;
 
-    ASSERT_NE(nullptr, heightmap);
-    EXPECT_EQ(65, heightmap->tileSize);
-    ASSERT_EQ(65u * 65u, heightmap->heights.size());
-    EXPECT_NEAR(minimumHeight, heightmap->minHeight, 1e-6f);
-    EXPECT_NEAR(maximumHeight, heightmap->maxHeight, 1e-6f);
-    EXPECT_NEAR(minimumHeight, heightmap->heights.front(), 1e-3f);
-    EXPECT_NEAR(minimumHeight, heightmap->heights[64], 1e-3f);
-    EXPECT_NEAR(minimumHeight, heightmap->heights[64u * 65u], 1e-3f);
-    EXPECT_EQ(bytes, heightmap->rawData);
+    provider.requestTile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        CancellationToken{},
+        [&](const TileKey&, TerrainTileLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                callbackCalled = true;
+            }
+            cv.notify_one();
+        });
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    ASSERT_TRUE(bridge.completeNext(200, bytes));
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return callbackCalled; }));
+    }
+
+    EXPECT_EQ(TerrainTileLoadStatus::Success, completed.status);
+    ASSERT_NE(nullptr, completed.surfaceMesh);
+    ASSERT_NE(nullptr, completed.heightmap);
+    EXPECT_FALSE(completed.heightmap->valid());
+    EXPECT_NEAR(minimumHeight, completed.heightmap->minHeight, 1e-6f);
+    EXPECT_NEAR(maximumHeight, completed.heightmap->maxHeight, 1e-6f);
+    EXPECT_TRUE(completed.surfaceMesh->hasHeightRange);
+    EXPECT_NEAR(minimumHeight, completed.surfaceMesh->minimumHeight, 1e-6);
+    EXPECT_NEAR(maximumHeight, completed.surfaceMesh->maximumHeight, 1e-6);
 }
 
 TEST(QuantizedMeshTerrainProviderTest, UsesAsyncBridgeWithoutWorkerBlockingWait) {
@@ -2192,16 +2219,15 @@ TEST(QuantizedMeshTerrainProviderTest, TileMetadataIgnoredWithoutMetadataAvailab
               provider.availabilityState(metadataChildKey));
 
     DecodedHeightmap heightmap;
-    heightmap.rawData = makeQuantizedMeshBytesWithMetadata(R"json({
-      "available": [
-        [{"startX":0,"startY":1,"endX":0,"endY":1}]
-      ]
-    })json");
+    SurfaceTileMesh surfaceMesh;
+    surfaceMesh.hasMetadataAvailability = true;
+    surfaceMesh.metadataAvailability = {{0, 0, 1, 0, 1}};
 
     TileQuantizedMeshAvailabilityIngestor::ingest(
         &provider,
         TileKey{"Geographic-TMS", 0, 0, 0},
-        heightmap);
+        heightmap,
+        &surfaceMesh);
 
     EXPECT_EQ(TileAvailabilityState::NotAvailable,
               provider.availabilityState(metadataChildKey));
@@ -2228,13 +2254,14 @@ TEST(QuantizedMeshTerrainProviderTest, EmptyTileMetadataMarksSubtreeLoadedLikeCe
               provider.availabilityState(childKey));
 
     DecodedHeightmap heightmap;
-    heightmap.rawData =
-        makeQuantizedMeshBytesWithMetadata(R"json({"available":[]})json");
+    SurfaceTileMesh surfaceMesh;
+    surfaceMesh.hasMetadataAvailability = true;
 
     TileQuantizedMeshAvailabilityIngestor::ingest(
         &provider,
         TileKey{"Geographic-TMS", 0, 0, 0},
-        heightmap);
+        heightmap,
+        &surfaceMesh);
 
     EXPECT_EQ(TileAvailabilityState::NotAvailable,
               provider.availabilityState(childKey));
@@ -2263,14 +2290,15 @@ TEST(QuantizedMeshTerrainProviderTest, IngestUsesWorkerPreparedSurfaceMeshMetada
               provider.availabilityState(childKey));
 
     DecodedHeightmap heightmap;
-    heightmap.rawData = {0xFF};
-    heightmap.surfaceMesh = std::make_unique<SurfaceTileMesh>();
-    heightmap.surfaceMesh->metadataAvailability = {{0, 0, 0, 0, 0}};
+    SurfaceTileMesh surfaceMesh;
+    surfaceMesh.hasMetadataAvailability = true;
+    surfaceMesh.metadataAvailability = {{0, 0, 0, 0, 0}};
 
     TileQuantizedMeshAvailabilityIngestor::ingest(
         &provider,
         subtreeKey,
-        heightmap);
+        heightmap,
+        &surfaceMesh);
 
     EXPECT_TRUE(heightmap.metadataAvailabilityProcessed);
     EXPECT_EQ(TileAvailabilityState::Available,

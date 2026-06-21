@@ -55,16 +55,6 @@ struct DecodedHeightmap {
     /// @param v 行归一化坐标 [0,1]（北→南）
     float sampleBilinear(float u, float v) const;
 
-    /// Raw binary data from the provider (e.g. QuantizedMesh bytes).
-    /// When non-empty, TileSurface::buildTerrainMesh may reconstruct
-    /// the optimized triangulation instead of using the regular grid.
-    std::vector<uint8_t> rawData;
-
-    /// Optional worker-prepared surface mesh. The main thread still owns GPU
-    /// resource creation, but it should not re-parse Quantized Mesh bytes when
-    /// the provider has already produced the CPU mesh.
-    std::unique_ptr<SurfaceTileMesh> surfaceMesh;
-
     /// cesium-native: availability rectangles from QM metadata (extension ID=4).
     /// Each entry: {levelOffset, startX, startY, endX, endY}
     std::vector<QuantizedMeshAvailabilityRange> metadataAvailability;
@@ -84,12 +74,16 @@ struct DecodedHeightmap {
 struct TerrainTileLoadResult {
     TerrainTileLoadStatus status = TerrainTileLoadStatus::Failed;
     std::unique_ptr<DecodedHeightmap> heightmap;
+    std::unique_ptr<SurfaceTileMesh> surfaceMesh;
 
-    static TerrainTileLoadResult success(std::unique_ptr<DecodedHeightmap> hm) {
+    static TerrainTileLoadResult success(
+        std::unique_ptr<DecodedHeightmap> hm,
+        std::unique_ptr<SurfaceTileMesh> mesh = nullptr) {
         TerrainTileLoadResult result;
         result.status = hm ? TerrainTileLoadStatus::Success
                            : TerrainTileLoadStatus::Failed;
         result.heightmap = std::move(hm);
+        result.surfaceMesh = std::move(mesh);
         return result;
     }
 

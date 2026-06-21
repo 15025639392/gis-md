@@ -36,8 +36,8 @@ float TerrainTile::sampleHeight(double lngRad, double latRad,
     double u = (lngRad - bounds_.west()) / bounds_.width();
     double v = (bounds_.north() - latRad) / bounds_.height();  // 北→南
 
-    // QM-rasterized grids cover the full tile without padding.
-    // No skirt-trim remapping is needed (unlike Mapbox RGB terrain).
+    // Regular heightmap grids cover the full tile without padding.
+    // No skirt-trim remapping is needed.
 
     // ECEF→cartographic round-trips can move exact tile-edge points a few
     // ulps outside the source rectangle; keep those on the owning tile.

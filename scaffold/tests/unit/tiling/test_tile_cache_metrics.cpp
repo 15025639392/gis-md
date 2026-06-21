@@ -34,13 +34,11 @@ TEST(TileCacheMetricsTest, EstimateTileBytesUsesActualMeshPayload) {
 
 TEST(TileCacheMetricsTest, CountsHeightmapAndRetainedTilePayloads) {
     DecodedHeightmap heightmap;
-    heightmap.rawData.resize(7);
     heightmap.heights.resize(3);
     heightmap.noDataValues.resize(2);
     heightmap.metadataAvailability.resize(4);
 
     const int64_t expectedHeightmapBytes =
-        7 +
         static_cast<int64_t>(3 * sizeof(float)) +
         static_cast<int64_t>(2 * sizeof(float)) +
         static_cast<int64_t>(
@@ -59,7 +57,6 @@ TEST(TileCacheMetricsTest, CountsHeightmapAndRetainedTilePayloads) {
     mesh->metadataAvailability.resize(1);
 
     auto retainedHeightmap = std::make_unique<DecodedHeightmap>();
-    retainedHeightmap->rawData.resize(7);
     retainedHeightmap->heights.resize(3);
     retainedHeightmap->noDataValues.resize(2);
     retainedHeightmap->metadataAvailability.resize(4);
@@ -89,8 +86,9 @@ TEST(TileCacheMetricsTest, TotalsTileAndTerrainCachePayloads) {
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     auto heightmap = std::make_unique<DecodedHeightmap>();
-    heightmap->rawData.resize(9);
-    const int64_t expectedHeightmapBytes = 9;
+    heightmap->metadataAvailability.resize(1);
+    const int64_t expectedHeightmapBytes =
+        static_cast<int64_t>(sizeof(QuantizedMeshAvailabilityRange));
     terrainCache["terrain"] = std::move(heightmap);
     terrainCache["null-terrain"] = nullptr;
 

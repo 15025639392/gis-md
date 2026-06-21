@@ -8,6 +8,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace earth_engine {
 
@@ -23,11 +24,26 @@ struct TileLoadRequestOutcome {
 };
 
 struct PendingTerrainUpload {
+    PendingTerrainUpload() = default;
+    PendingTerrainUpload(TileKey key_,
+                         std::string cacheKey_,
+                         TileLoadPriorityGroup group_,
+                         double priority_,
+                         std::unique_ptr<DecodedHeightmap> heightmap_,
+                         std::unique_ptr<SurfaceTileMesh> surfaceMesh_ = nullptr)
+        : key(std::move(key_)),
+          cacheKey(std::move(cacheKey_)),
+          group(group_),
+          priority(priority_),
+          heightmap(std::move(heightmap_)),
+          surfaceMesh(std::move(surfaceMesh_)) {}
+
     TileKey key;
     std::string cacheKey;
     TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;
     double priority = 0.0;
     std::unique_ptr<DecodedHeightmap> heightmap;
+    std::unique_ptr<SurfaceTileMesh> surfaceMesh;
 };
 
 struct PendingTerrainTerminalResult {

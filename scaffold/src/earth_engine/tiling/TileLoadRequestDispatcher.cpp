@@ -22,7 +22,7 @@ TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledTerrain(
         return TileLoadDispatchResult::Skipped;
     }
     pendingLoads.addTerrainUpload(
-        PendingTerrainUpload{key, cacheKey, group, priority, nullptr});
+        PendingTerrainUpload{key, cacheKey, group, priority, nullptr, nullptr});
     return TileLoadDispatchResult::Issued;
 }
 

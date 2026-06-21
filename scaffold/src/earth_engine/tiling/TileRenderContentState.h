@@ -248,7 +248,6 @@ public:
 
     static int64_t estimateHeightmapBytes(const DecodedHeightmap& heightmap) {
         int64_t bytes = 0;
-        bytes += static_cast<int64_t>(heightmap.rawData.size());
         bytes += static_cast<int64_t>(
             heightmap.heights.size() * sizeof(float));
         bytes += static_cast<int64_t>(
@@ -263,16 +262,6 @@ public:
             bytes += static_cast<int64_t>(
                 update.metadataAvailability.size() *
                 sizeof(QuantizedMeshAvailabilityRange));
-        }
-        if (heightmap.surfaceMesh) {
-            bytes += static_cast<int64_t>(
-                heightmap.surfaceMesh->vertices.size() *
-                sizeof(SurfaceVertex));
-            bytes += static_cast<int64_t>(
-                heightmap.surfaceMesh->indices.size() * sizeof(uint32_t));
-            bytes += static_cast<int64_t>(
-                heightmap.surfaceMesh->gpuVertices.size() *
-                sizeof(SurfaceGpuVertex));
         }
         return bytes;
     }

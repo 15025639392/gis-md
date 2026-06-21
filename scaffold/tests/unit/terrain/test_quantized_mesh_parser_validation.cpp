@@ -158,27 +158,22 @@ TEST(QuantizedMeshParserValidationTest,
                   bytes.data(),
                   bytes.size(),
                   rootRectangle()));
-    EXPECT_EQ(nullptr,
-              QuantizedMeshParser::parseAndRasterize(
-                  bytes.data(),
-                  bytes.size(),
-                  64));
 }
 
 TEST(QuantizedMeshParserValidationTest,
-     RasterizerAcceptsZeroTriangleMeshLikeCesiumNative) {
+     SurfaceMeshAcceptsZeroTriangleMeshLikeCesiumNative) {
     const std::vector<uint8_t> bytes = makeZeroTriangleQuantizedMeshBytes();
-    std::unique_ptr<DecodedHeightmap> heightmap =
-        QuantizedMeshParser::parseAndRasterize(
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
             bytes.data(),
             bytes.size(),
-            8);
+            rootRectangle());
 
-    ASSERT_NE(nullptr, heightmap);
-    EXPECT_EQ(9, heightmap->tileSize);
-    EXPECT_EQ(81u, heightmap->heights.size());
-    EXPECT_DOUBLE_EQ(0.0, heightmap->minHeight);
-    EXPECT_DOUBLE_EQ(100.0, heightmap->maxHeight);
+    ASSERT_NE(nullptr, mesh);
+    EXPECT_TRUE(mesh->indices.empty());
+    EXPECT_TRUE(mesh->hasHeightRange);
+    EXPECT_DOUBLE_EQ(0.0, mesh->minimumHeight);
+    EXPECT_DOUBLE_EQ(100.0, mesh->maximumHeight);
 }
 
 TEST(QuantizedMeshParserValidationTest,
@@ -200,11 +195,6 @@ TEST(QuantizedMeshParserValidationTest,
                   truncatedVertexData.data(),
                   truncatedVertexData.size(),
                   rootRectangle()));
-    EXPECT_EQ(nullptr,
-              QuantizedMeshParser::parseAndRasterize(
-                  truncatedVertexData.data(),
-                  truncatedVertexData.size(),
-                  64));
 
     constexpr size_t afterTriangleCount =
         92 + 3 * 3 * sizeof(uint16_t) + sizeof(uint32_t);
@@ -216,11 +206,6 @@ TEST(QuantizedMeshParserValidationTest,
                   truncatedIndices.data(),
                   truncatedIndices.size(),
                   rootRectangle()));
-    EXPECT_EQ(nullptr,
-              QuantizedMeshParser::parseAndRasterize(
-                  truncatedIndices.data(),
-                  truncatedIndices.size(),
-                  64));
 }
 
 TEST(QuantizedMeshParserValidationTest,
@@ -232,11 +217,6 @@ TEST(QuantizedMeshParserValidationTest,
                   bytes.data(),
                   bytes.size(),
                   rootRectangle()));
-    EXPECT_EQ(nullptr,
-              QuantizedMeshParser::parseAndRasterize(
-                  bytes.data(),
-                  bytes.size(),
-                  64));
     EXPECT_TRUE(QuantizedMeshParser::parseMetadataAvailability(
                     bytes.data(),
                     bytes.size())
@@ -244,15 +224,15 @@ TEST(QuantizedMeshParserValidationTest,
 }
 
 TEST(QuantizedMeshParserValidationTest,
-     RasterizerRejectsHeaderWithoutVertexCountLikeCesiumNative) {
+     SurfaceMeshRejectsHeaderWithoutVertexCountLikeCesiumNative) {
     for (const size_t byteCount : {size_t{88}, size_t{91}}) {
         std::vector<uint8_t> headerWithoutVertexCount(byteCount);
 
         EXPECT_EQ(nullptr,
-                  QuantizedMeshParser::parseAndRasterize(
+                  QuantizedMeshParser::parseToSurfaceTileMesh(
                       headerWithoutVertexCount.data(),
                       headerWithoutVertexCount.size(),
-                      64));
+                      rootRectangle()));
     }
 }
 
@@ -283,11 +263,6 @@ TEST(QuantizedMeshParserValidationTest,
                       truncatedBytes.data(),
                       truncatedBytes.size(),
                       rootRectangle()));
-        EXPECT_EQ(nullptr,
-                  QuantizedMeshParser::parseAndRasterize(
-                      truncatedBytes.data(),
-                      truncatedBytes.size(),
-                      64));
     }
 }
 
@@ -308,11 +283,6 @@ TEST(QuantizedMeshParserValidationTest,
                   bytes.data(),
                   bytes.size(),
                   rootRectangle()));
-    EXPECT_EQ(nullptr,
-              QuantizedMeshParser::parseAndRasterize(
-                  bytes.data(),
-                  bytes.size(),
-                  64));
 }
 
 TEST(QuantizedMeshParserValidationTest,
@@ -332,9 +302,4 @@ TEST(QuantizedMeshParserValidationTest,
                   bytes.data(),
                   bytes.size(),
                   rootRectangle()));
-    EXPECT_EQ(nullptr,
-              QuantizedMeshParser::parseAndRasterize(
-                  bytes.data(),
-                  bytes.size(),
-                  64));
 }

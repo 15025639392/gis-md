@@ -1,8 +1,8 @@
 #include "TileQuantizedMeshAvailabilityIngestor.h"
 
 #include "../providers/QuantizedMeshTerrainProvider.h"
-#include "../terrain/QuantizedMeshParser.h"
 #include "../terrain/TerrainTile.h"
+#include "SurfaceTile.h"
 
 #include <array>
 #include <vector>
@@ -12,7 +12,8 @@ namespace earth_engine {
 void TileQuantizedMeshAvailabilityIngestor::ingest(
     TerrainProvider* terrainProvider,
     const TileKey& key,
-    DecodedHeightmap& heightmap) {
+    DecodedHeightmap& heightmap,
+    const SurfaceTileMesh* surfaceMesh) {
     if (heightmap.metadataAvailabilityProcessed) {
         return;
     }
@@ -28,19 +29,11 @@ void TileQuantizedMeshAvailabilityIngestor::ingest(
         return;
     }
 
-    std::vector<QuantizedMeshAvailabilityRange> metadataAvailability;
-    if (heightmap.surfaceMesh &&
-        !heightmap.surfaceMesh->metadataAvailability.empty()) {
-        metadataAvailability = heightmap.surfaceMesh->metadataAvailability;
-    } else if (!heightmap.rawData.empty()) {
-        metadataAvailability = QuantizedMeshParser::parseMetadataAvailability(
-            heightmap.rawData.data(),
-            heightmap.rawData.size());
-    } else {
+    if (!surfaceMesh || !surfaceMesh->hasMetadataAvailability) {
         return;
     }
 
-    for (const auto& r : metadataAvailability) {
+    for (const auto& r : surfaceMesh->metadataAvailability) {
         int absLevel = key.z + 1 + static_cast<int>(r[0]);
         if (absLevel >= 0) {
             qmProvider->addAvailabilityRectsForTile(

@@ -1338,33 +1338,45 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                 body->size(),
                 token->isCancelled());
 #endif
-            auto hm = decodeTile(body->data(), body->size());
-            if (hm) {
-                hm->surfaceMesh = QuantizedMeshParser::parseToSurfaceTileMesh(
-                    body->data(),
-                    body->size(),
-                    geographicTmsRectangle(key),
-                    waterMaskEnabled_);
-                for (size_t i = 0; i < availabilityRequests->size(); ++i) {
-                    const LayerAvailabilityRequest& request =
-                        (*availabilityRequests)[i];
-                    DecodedHeightmap::QuantizedMeshAvailabilityUpdate update;
-                    update.layerIndex = static_cast<int>(request.layerIndex);
-                    update.subtreeKey = request.subtreeKey;
-
-                    if (i < metadataBodies.size() &&
-                        !metadataBodies[i].empty()) {
-                        update.metadataAvailability =
-                            QuantizedMeshParser::parseMetadataAvailability(
-                                metadataBodies[i].data(),
-                                metadataBodies[i].size());
-                    }
-
-                    hm->quantizedMeshAvailabilityUpdates.push_back(
-                        std::move(update));
-                }
+            std::unique_ptr<SurfaceTileMesh> surfaceMesh;
+            surfaceMesh = QuantizedMeshParser::parseToSurfaceTileMesh(
+                body->data(),
+                body->size(),
+                geographicTmsRectangle(key),
+                waterMaskEnabled_);
+            if (!surfaceMesh) {
+                (*callback)(key, TerrainTileLoadResult::failed());
+                return;
             }
-            (*callback)(key, TerrainTileLoadResult::success(std::move(hm)));
+
+            auto hm = std::make_unique<DecodedHeightmap>();
+            if (surfaceMesh->hasHeightRange) {
+                hm->minHeight = static_cast<float>(surfaceMesh->minimumHeight);
+                hm->maxHeight = static_cast<float>(surfaceMesh->maximumHeight);
+            }
+            for (size_t i = 0; i < availabilityRequests->size(); ++i) {
+                const LayerAvailabilityRequest& request =
+                    (*availabilityRequests)[i];
+                DecodedHeightmap::QuantizedMeshAvailabilityUpdate update;
+                update.layerIndex = static_cast<int>(request.layerIndex);
+                update.subtreeKey = request.subtreeKey;
+
+                if (i < metadataBodies.size() &&
+                    !metadataBodies[i].empty()) {
+                    update.metadataAvailability =
+                        QuantizedMeshParser::parseMetadataAvailability(
+                            metadataBodies[i].data(),
+                            metadataBodies[i].size());
+                }
+
+                hm->quantizedMeshAvailabilityUpdates.push_back(
+                    std::move(update));
+            }
+            (*callback)(
+                key,
+                TerrainTileLoadResult::success(
+                    std::move(hm),
+                    std::move(surfaceMesh)));
         });
 }
 
@@ -1551,14 +1563,8 @@ bool QuantizedMeshTerrainProvider::isAvailabilityBoundaryLevel(int level) const 
 }
 
 std::unique_ptr<DecodedHeightmap> QuantizedMeshTerrainProvider::decodeTile(
-    const uint8_t* data, size_t len) {
-    // Rasterize to regular heightmap grid for sampleHeight queries
-    auto hm = QuantizedMeshParser::parseAndRasterize(data, len, tileSize_ - 1);
-    if (!hm) return nullptr;
-
-    // Preserve raw binary for on-demand triangulated mesh reconstruction
-    hm->rawData.assign(data, data + len);
-    return hm;
+    const uint8_t*, size_t) {
+    return nullptr;
 }
 
 std::vector<uint8_t> QuantizedMeshTerrainProvider::httpGet(

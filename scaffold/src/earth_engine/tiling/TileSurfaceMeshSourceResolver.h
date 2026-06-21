@@ -7,7 +7,6 @@
 
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
-#include "../terrain/QuantizedMeshParser.h"
 #include "../terrain/TerrainTile.h"
 
 #include <memory>
@@ -38,8 +37,6 @@ public:
             findUpsampleSource,
             ensureAncestorMesh,
             resolution);
-        resolveOwnSurfaceMesh(tile, ownHeightmap, resolution);
-        resolveQuantizedMesh(tile, ownHeightmap, resolution);
         resolveEllipsoidFallback(tile, ownHeightmap, resolution);
 
         return resolution;
@@ -84,42 +81,6 @@ private:
         tile.content.renderContent.setSurfaceMesh(
             std::make_unique<SurfaceTileMesh>(std::move(*childMesh)));
         resolution.source = SurfaceDrawableSource::AncestorUpsample;
-    }
-
-    static void resolveOwnSurfaceMesh(
-        TilesetTile& tile,
-        DecodedHeightmap* ownHeightmap,
-        TileSurfaceMeshResolution& resolution) {
-        if (tile.content.renderContent.hasSurfaceMesh() || !ownHeightmap ||
-            !ownHeightmap->surfaceMesh) {
-            return;
-        }
-
-        tile.content.renderContent.setSurfaceMesh(
-            std::move(ownHeightmap->surfaceMesh));
-        resolution.source = SurfaceDrawableSource::OwnTerrain;
-    }
-
-    static void resolveQuantizedMesh(
-        TilesetTile& tile,
-        DecodedHeightmap* ownHeightmap,
-        TileSurfaceMeshResolution& resolution) {
-        if (tile.content.renderContent.hasSurfaceMesh() || !ownHeightmap ||
-            ownHeightmap->rawData.empty()) {
-            return;
-        }
-
-        std::unique_ptr<SurfaceTileMesh> parsedMesh =
-            QuantizedMeshParser::parseToSurfaceTileMesh(
-                ownHeightmap->rawData.data(),
-                ownHeightmap->rawData.size(),
-                tile.bounds);
-        if (!parsedMesh) {
-            return;
-        }
-
-        tile.content.renderContent.setSurfaceMesh(std::move(parsedMesh));
-        resolution.source = SurfaceDrawableSource::OwnTerrain;
     }
 
     static void resolveEllipsoidFallback(

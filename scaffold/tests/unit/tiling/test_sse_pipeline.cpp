@@ -8639,10 +8639,8 @@ void testTilesetTotalBytesIncludesDecodedHeightmapPayload() {
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     auto heightmap = makeFlatHeightmap(7.0f);
-    heightmap->rawData = {1, 2, 3};
     heightmap->noDataValues = {-32768.0f};
     const int64_t expected =
-        static_cast<int64_t>(heightmap->rawData.size()) +
         static_cast<int64_t>(heightmap->heights.size() * sizeof(float)) +
         static_cast<int64_t>(heightmap->noDataValues.size() * sizeof(float));
 
@@ -11752,7 +11750,7 @@ void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
         lifecycle,
         false,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
-        [](const TileKey&, const DecodedHeightmap&) {},
+        [](const TileKey&, const DecodedHeightmap&, const SurfaceTileMesh*) {},
         [](TilesetTile&) {},
         [&resourcesDirty]() { resourcesDirty = true; });
     TilePendingLoadCommitCoordinator::commitContentUpload(
@@ -26043,7 +26041,7 @@ void testTilesetUnloadKeepsParentWithReferencedDescendant() {
     if (!root) return;
 
     auto heightmap = makeFlatHeightmap(1.0f);
-    heightmap->rawData.resize(128, 7);
+    heightmap->metadataAvailability.resize(1);
     TilesetTestAccess::putTerrainCache(tileset, rootKey, std::move(heightmap));
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::Done;
@@ -26100,7 +26098,7 @@ void testTilesetUnloadRenderContentIgnoresIndependentChildLoading() {
     if (!root) return;
 
     auto rootHeightmap = makeFlatHeightmap(1.0f);
-    rootHeightmap->rawData.resize(96, 1);
+    rootHeightmap->metadataAvailability.resize(1);
     TilesetTestAccess::putTerrainCache(
         tileset, rootKey, std::move(rootHeightmap));
     root->content.contentKind = TileContentKind::Render;
@@ -26217,7 +26215,7 @@ void testTilesetUnloadRenderContentPreservesLoadedChildren() {
     if (!root) return;
 
     auto rootHeightmap = makeFlatHeightmap(1.0f);
-    rootHeightmap->rawData.resize(96, 1);
+    rootHeightmap->metadataAvailability.resize(1);
     TilesetTestAccess::putTerrainCache(
         tileset, rootKey, std::move(rootHeightmap));
     root->content.contentKind = TileContentKind::Render;
@@ -26232,7 +26230,7 @@ void testTilesetUnloadRenderContentPreservesLoadedChildren() {
     TilesetTile* child = root->children.front();
     const TileKey childKey = child->key;
     auto childHeightmap = makeFlatHeightmap(2.0f);
-    childHeightmap->rawData.resize(96, 2);
+    childHeightmap->metadataAvailability.resize(1);
     TilesetTestAccess::putTerrainCache(
         tileset, childKey, std::move(childHeightmap));
     child->content.contentKind = TileContentKind::Render;
@@ -26278,7 +26276,7 @@ void testTilesetUnloadExternalContentClearsChildren() {
 
     const TileKey childKey = root->children.front()->key;
     auto childHeightmap = makeFlatHeightmap(3.0f);
-    childHeightmap->rawData.resize(96, 3);
+    childHeightmap->metadataAvailability.resize(1);
     TilesetTestAccess::putTerrainCache(
         tileset, childKey, std::move(childHeightmap));
 
@@ -26317,7 +26315,7 @@ void testTilesetDirectExternalContentUnloadClearsChildren() {
 
     const TileKey childKey = root->children.front()->key;
     auto childHeightmap = makeFlatHeightmap(5.0f);
-    childHeightmap->rawData.resize(96, 5);
+    childHeightmap->metadataAvailability.resize(1);
     TilesetTestAccess::putTerrainCache(
         tileset, childKey, std::move(childHeightmap));
 

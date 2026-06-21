@@ -41,7 +41,8 @@ void TileMeshPreparationManager::ensureTileMesh(TilesetTile& tile) {
             TileQuantizedMeshAvailabilityIngestor::ingest(
                 terrainProvider_,
                 key,
-                heightmap);
+                heightmap,
+                nullptr);
         },
         [](const TilesetTile& sourceTile, bool allowUnloadingSource) {
             return TileUpsampleSourcePreparer::findSourceTile(

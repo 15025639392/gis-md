@@ -1457,7 +1457,7 @@ TEST(
     ASSERT_NE(root, nullptr);
 
     auto heightmap = makeFlatHeightmap(1.0f);
-    heightmap->rawData.resize(128, 7);
+    heightmap->metadataAvailability.resize(1);
     TilesetTestAccess::putTerrainCache(tileset, rootKey, std::move(heightmap));
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::Done;
@@ -1517,7 +1517,7 @@ TEST(
     ASSERT_NE(root, nullptr);
 
     auto rootHeightmap = makeFlatHeightmap(1.0f);
-    rootHeightmap->rawData.resize(96, 1);
+    rootHeightmap->metadataAvailability.resize(1);
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
@@ -1635,7 +1635,7 @@ TEST(
     ASSERT_NE(root, nullptr);
 
     auto rootHeightmap = makeFlatHeightmap(1.0f);
-    rootHeightmap->rawData.resize(96, 1);
+    rootHeightmap->metadataAvailability.resize(1);
     TilesetTestAccess::putTerrainCache(
         tileset,
         rootKey,
@@ -1651,7 +1651,7 @@ TEST(
     TilesetTile* child = root->children.front();
     const TileKey childKey = child->key;
     auto childHeightmap = makeFlatHeightmap(2.0f);
-    childHeightmap->rawData.resize(96, 2);
+    childHeightmap->metadataAvailability.resize(1);
     TilesetTestAccess::putTerrainCache(
         tileset,
         childKey,
@@ -1700,7 +1700,7 @@ TEST(
 
     const TileKey childKey = root->children.front()->key;
     auto childHeightmap = makeFlatHeightmap(3.0f);
-    childHeightmap->rawData.resize(96, 3);
+    childHeightmap->metadataAvailability.resize(1);
     TilesetTestAccess::putTerrainCache(
         tileset,
         childKey,
@@ -1742,7 +1742,7 @@ TEST(
 
     const TileKey childKey = root->children.front()->key;
     auto childHeightmap = makeFlatHeightmap(5.0f);
-    childHeightmap->rawData.resize(96, 5);
+    childHeightmap->metadataAvailability.resize(1);
     TilesetTestAccess::putTerrainCache(
         tileset,
         childKey,

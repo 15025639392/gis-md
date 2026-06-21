@@ -6,7 +6,6 @@
 #include "TileScheme.h"
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
-#include "../terrain/QuantizedMeshParser.h"
 #include "../terrain/TerrainTile.h"
 
 #include <algorithm>
@@ -154,37 +153,10 @@ SurfaceTileMesh TileSurface::buildTerrainMesh(const Rectangle& tileBounds,
                                               const TerrainTile* terrainTile,
                                               int gridSize,
                                               double skirtHeightMeters,
-                                              const TerrainTile* parentTile,
-                                              bool useRawQuantizedMesh) {
+                                              const TerrainTile* parentTile) {
     const int safeGrid = std::max(1, gridSize);
     const int n = safeGrid + 1;
     const auto& ellipsoid = Ellipsoid::WGS84();
-
-    // cesium-native path: reconstruct the optimized QuantizedMesh triangulation
-    // when raw binary is available. The irregular triangulation preserves mesh
-    // decimation quality and border topology better than a regular grid.
-    if (useRawQuantizedMesh && terrainTile && terrainTile->valid() &&
-        terrainTile->heightmap() && !terrainTile->heightmap()->rawData.empty()) {
-        auto qm = QuantizedMeshParser::parseToSurfaceTileMesh(
-            terrainTile->heightmap()->rawData.data(),
-            terrainTile->heightmap()->rawData.size(),
-            tileBounds);
-        if (qm) {
-#ifdef __ANDROID__
-            __android_log_print(ANDROID_LOG_INFO, "TileSurface",
-                "QM mesh: verts=%zu idx=%zu skirtVerts=%u",
-                qm->vertices.size(), qm->indices.size(),
-                qm->skirtMeta.noSkirtVerticesCount);
-#endif
-            return *qm;
-        }
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_ERROR, "TileSurface",
-            "QM parse failed: rawData=%zu bytes",
-            terrainTile->heightmap()->rawData.size());
-#endif
-        // Fall through to grid-based path on parse failure
-    }
 
     SurfaceTileMesh mesh;
     mesh.gridSize = safeGrid;

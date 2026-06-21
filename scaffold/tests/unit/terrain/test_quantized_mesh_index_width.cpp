@@ -162,22 +162,6 @@ TEST(QuantizedMeshParserIndexWidthTest,
 }
 
 TEST(QuantizedMeshParserIndexWidthTest,
-     RasterizerAcceptsUint32IndexPaddingLikeCesiumNative) {
-    const std::vector<uint8_t> bytes =
-        makeLargeQuantizedMeshBytesWithUint32EdgeIndex();
-
-    std::unique_ptr<DecodedHeightmap> heightmap =
-        QuantizedMeshParser::parseAndRasterize(
-            bytes.data(),
-            bytes.size(),
-            1);
-
-    ASSERT_NE(nullptr, heightmap);
-    EXPECT_EQ(2, heightmap->tileSize);
-    EXPECT_EQ(4u, heightmap->heights.size());
-}
-
-TEST(QuantizedMeshParserIndexWidthTest,
      MetadataOnlyPathAcceptsUint32IndexPaddingLikeCesiumNative) {
     const std::string metadata = R"json({
       "available": [
@@ -231,16 +215,4 @@ TEST(QuantizedMeshParserIndexWidthTest,
                   bytes.data(),
                   bytes.size(),
                   rootRectangle()));
-}
-
-TEST(QuantizedMeshParserIndexWidthTest,
-     RasterizerRejectsMissingUint32IndexPaddingLikeCesiumNative) {
-    const std::vector<uint8_t> bytes =
-        makeLargeQuantizedMeshBytesMissingUint32IndexPadding();
-
-    EXPECT_EQ(nullptr,
-              QuantizedMeshParser::parseAndRasterize(
-                  bytes.data(),
-                  bytes.size(),
-                  64));
 }

@@ -126,6 +126,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         "missing-terrain",
         TileLoadPriorityGroup::Normal,
         0.0,
+        nullptr,
         nullptr};
     PendingContentUpload contentUpload{
         TileKey{"test", 0, 1, 0},
@@ -140,6 +141,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             terrainUpload.cacheKey,
             terrainUpload.group,
             terrainUpload.priority,
+            nullptr,
             nullptr});
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
             contentUpload.key,
@@ -164,7 +166,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         lifecycle,
         false,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
-        [](const TileKey&, const DecodedHeightmap&) {},
+        [](const TileKey&, const DecodedHeightmap&, const SurfaceTileMesh*) {},
         [](TilesetTile&) {},
         [&resourcesDirty]() { resourcesDirty = true; });
     TilePendingLoadCommitCoordinator::commitContentUpload(
@@ -178,6 +180,72 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_FALSE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey("missing-terrain"));
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey("missing-content"));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainUploadConsumesSurfaceMeshAsLoadResultPayload) {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "test:0:0:0";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    auto heightmap = std::make_unique<DecodedHeightmap>();
+    heightmap->tileSize = 2;
+    heightmap->heights = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    auto surfaceMesh = std::make_unique<SurfaceTileMesh>();
+    SurfaceVertex vertex;
+    vertex.positionEcef = Vec3(1.0, 0.0, 0.0);
+    surfaceMesh->vertices.push_back(vertex);
+    SurfaceTileMesh* rawSurfaceMesh = surfaceMesh.get();
+
+    PendingTerrainUpload upload{
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        std::move(heightmap),
+        std::move(surfaceMesh)};
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            nullptr,
+            nullptr});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    int ensureMeshCalls = 0;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitTerrainUpload(
+        upload,
+        nullptr,
+        terrainCache,
+        lifecycle,
+        false,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](const TileKey&, const DecodedHeightmap&, const SurfaceTileMesh*) {},
+        [&ensureMeshCalls](TilesetTile&) { ++ensureMeshCalls; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    ASSERT_TRUE(tile.content.renderContent.hasSurfaceMesh());
+    EXPECT_EQ(rawSurfaceMesh, tile.content.renderContent.surfaceMesh());
+    EXPECT_EQ(0, ensureMeshCalls);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
@@ -270,7 +338,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        std::move(heightmap)};
+        std::move(heightmap),
+        nullptr};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
@@ -278,6 +347,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             upload.cacheKey,
             upload.group,
             upload.priority,
+            nullptr,
             nullptr});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
@@ -312,7 +382,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         false,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [&availabilityIngests, &terrainKey](const TileKey& key,
-                                            const DecodedHeightmap& hm) {
+                                            const DecodedHeightmap& hm,
+                                            const SurfaceTileMesh*) {
             EXPECT_EQ(terrainKey, key);
             EXPECT_TRUE(hm.valid());
             ++availabilityIngests;

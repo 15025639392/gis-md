@@ -175,7 +175,8 @@ public:
                                     cacheKey,
                                     group,
                                     priority,
-                                    std::move(result.heightmap)});
+                                    std::move(result.heightmap),
+                                    std::move(result.surfaceMesh)});
                         } else {
                             pendingLoads.addTerrainTerminalResult(
                                 PendingTerrainTerminalResult{

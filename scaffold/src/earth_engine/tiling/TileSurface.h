@@ -55,8 +55,7 @@ public:
                                             const TerrainTile* terrainTile,
                                             int gridSize,
                                             double skirtHeightMeters = 0.0,
-                                            const TerrainTile* parentTile = nullptr,
-                                            bool useRawQuantizedMesh = true);
+                                            const TerrainTile* parentTile = nullptr);
 
     /// cesium-native RasterOverlayUtilities::upsampleGltfForRasterOverlays
     /// equivalent for this engine's native SurfaceTileMesh content.

@@ -14,6 +14,7 @@ TEST(TilePendingLoadQueueTest, UsesSharedUploadPriorityOrder) {
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
+        nullptr,
         nullptr});
     queue.addContentUpload(PendingContentUpload{
         contentKey,
@@ -46,12 +47,14 @@ TEST(TilePendingLoadQueueTest, FiltersNonUrgentUploadsDuringInteraction) {
         "normal",
         TileLoadPriorityGroup::Normal,
         0.0,
+        nullptr,
         nullptr});
     queue.addTerrainUpload(PendingTerrainUpload{
         urgentKey,
         "urgent",
         TileLoadPriorityGroup::Urgent,
         100.0,
+        nullptr,
         nullptr});
 
     FrameResourceBudgetConfig config;
@@ -123,12 +126,14 @@ TEST(TilePendingLoadQueueTest, DeduplicatesUploadsByKind) {
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
+        nullptr,
         nullptr});
     queue.addTerrainUpload(PendingTerrainUpload{
         secondKey,
         "terrain",
         TileLoadPriorityGroup::Urgent,
         100.0,
+        nullptr,
         nullptr});
     queue.addContentUpload(PendingContentUpload{
         firstKey,
@@ -272,6 +277,7 @@ TEST(TilePendingLoadQueueTest, KeepsOneResultShapePerKind) {
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
+        nullptr,
         nullptr});
     queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
         terrainKey,
@@ -365,6 +371,7 @@ TEST(TilePendingLoadQueueTest, RejectsEmptyCacheKeys) {
         "",
         TileLoadPriorityGroup::Urgent,
         0.0,
+        nullptr,
         nullptr});
     queue.addContentUpload(PendingContentUpload{
         key,
@@ -405,6 +412,7 @@ TEST(TilePendingLoadQueueTest, EraseIgnoresUnknownKeys) {
         "terrain-upload",
         TileLoadPriorityGroup::Normal,
         0.0,
+        nullptr,
         nullptr});
     queue.addContentUpload(PendingContentUpload{
         contentUploadKey,

@@ -25,10 +25,6 @@ public:
         uint32_t vertexCount = 0;
     };
 
-    /// Rasterize the irregular triangulation onto a regular grid.
-    static std::unique_ptr<DecodedHeightmap> parseAndRasterize(
-        const uint8_t* data, size_t len, int outputGridSize);
-
     /// Directly convert to a SurfaceTileMesh (retains the optimized
     /// triangulation from QuantizedMesh). Returns nullptr on error.
     /// @param bounds geographic bounds of the tile in radians

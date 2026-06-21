@@ -144,6 +144,7 @@ struct SurfaceTileMesh {
     // levelOffset = sub-array index in the "available" JSON.
     // Actual absolute level = tileLevel + levelOffset
     // Aligned with cesium-native loadAvailabilityRectangles startingLevel + i.
+    bool hasMetadataAvailability = false;
     std::vector<QuantizedMeshAvailabilityRange> metadataAvailability;
     /// cesium-native TileRenderContent::getRasterOverlayDetails equivalent.
     RasterOverlayDetails rasterOverlayDetails;

@@ -1166,6 +1166,7 @@ TEST(TileLoadRequestDispatcherTest, SkipsPendingUploadKeys) {
             "terrain-upload-pending",
             TileLoadPriorityGroup::Normal,
             0.0,
+            nullptr,
             nullptr});
         pendingLoads.addContentUpload(PendingContentUpload{
             key,
@@ -1236,6 +1237,7 @@ TEST(TileLoadRequestDispatcherTest, SkipsClaimedUploadKeys) {
             "terrain-upload-claimed",
             TileLoadPriorityGroup::Normal,
             0.0,
+            nullptr,
             nullptr});
         pendingLoads.addContentUpload(PendingContentUpload{
             key,

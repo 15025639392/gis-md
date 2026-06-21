@@ -10,7 +10,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <limits>
 #include <optional>
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
@@ -19,28 +18,6 @@ namespace earth_engine {
 namespace {
 
 constexpr size_t kHeaderSize = 92;  // 11×8 + 4 = 92 (3d center + 2f height + 7d bounds + 1u vc)
-
-/// Barycentric point-in-triangle test with height interpolation.
-bool pointInTriangle(double px, double py,
-                     double ax, double ay, double bx, double by,
-                     double cx, double cy,
-                     double& outU, double& outV) {
-    double v0x = cx - ax, v0y = cy - ay;
-    double v1x = bx - ax, v1y = by - ay;
-    double v2x = px - ax, v2y = py - ay;
-
-    double dot00 = v0x * v0x + v0y * v0y;
-    double dot01 = v0x * v1x + v0y * v1y;
-    double dot02 = v0x * v2x + v0y * v2y;
-    double dot11 = v1x * v1x + v1y * v1y;
-    double dot12 = v1x * v2x + v1y * v2y;
-
-    double inv = 1.0 / (dot00 * dot11 - dot01 * dot01);
-    outU = (dot11 * dot02 - dot01 * dot12) * inv;
-    outV = (dot00 * dot12 - dot01 * dot02) * inv;
-
-    return (outU >= 0) && (outV >= 0) && (outU + outV <= 1.0);
-}
 
 uint32_t jsonUint32OrDefault(const nlohmann::json& object, const char* name) {
     auto it = object.find(name);
@@ -100,313 +77,6 @@ double calculateSkirtHeight(const Ellipsoid& ellipsoid,
 }
 
 } // namespace
-
-std::unique_ptr<DecodedHeightmap> QuantizedMeshParser::parseAndRasterize(
-    const uint8_t* data, size_t len, int outputGridSize) {
-
-    if (len < kHeaderSize || !data) {
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_ERROR, "QMParser", "fail: len=%zu < %zu", len, kHeaderSize);
-#endif
-        return nullptr;
-    }
-
-    // --- Parse header ---
-    size_t offset = 0;
-    Header hdr;
-    auto readD = [&]() -> double {
-        double v;
-        std::memcpy(&v, data + offset, 8);
-        offset += 8;
-        return v;
-    };
-    auto readF = [&]() -> float {
-        float v;
-        std::memcpy(&v, data + offset, 4);
-        offset += 4;
-        return v;
-    };
-    auto readU32 = [&]() -> uint32_t {
-        uint32_t v;
-        std::memcpy(&v, data + offset, 4);
-        offset += 4;
-        return v;
-    };
-
-    hdr.centerX = readD();
-    hdr.centerY = readD();
-    hdr.centerZ = readD();
-    hdr.minimumHeight = static_cast<double>(readF());
-    hdr.maximumHeight = static_cast<double>(readF());
-    hdr.boundingSphereX = readD();
-    hdr.boundingSphereY = readD();
-    hdr.boundingSphereZ = readD();
-    hdr.boundingSphereRadius = readD();
-    hdr.horizonOcclusionX = readD();
-    hdr.horizonOcclusionY = readD();
-    hdr.horizonOcclusionZ = readD();
-    hdr.vertexCount = readU32();
-    const uint32_t vertexCount = hdr.vertexCount;
-    if (vertexCount == 0 || vertexCount > 500000) {
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_ERROR, "QMParser", "fail: vc=%u", vertexCount);
-#endif
-        return nullptr;
-    }
-
-    // Detect header padding: some tilers produce 96-byte headers.
-    // Validate by checking if U-buffer bounds fit within file.
-    {
-        size_t stdEnd = offset + vertexCount * 6;  // U+V+H, 3×2 bytes each
-        if (stdEnd + 8 > len && offset + 4 + vertexCount * 6 + 8 <= len) {
-            // 92-byte header would overflow; 96-byte fits → skip padding
-            offset += 4;
-        }
-    }
-
-    // --- Parse U, V, Height buffers (zigzag delta encoded uint16_t arrays) ---
-    auto readU16s = [&](size_t count) -> std::vector<uint16_t> {
-        std::vector<uint16_t> out(count);
-        if (offset + count * 2 > len) {
-            out.clear();
-            return out;
-        }
-        for (size_t i = 0; i < count; ++i) {
-            uint16_t v;
-            std::memcpy(&v, data + offset, 2);
-            offset += 2;
-            out[i] = v;
-        }
-        return out;
-    };
-
-    auto uBuf = readU16s(vertexCount);
-    auto vBuf = readU16s(vertexCount);
-    auto hBuf = readU16s(vertexCount);
-    if (uBuf.empty() || vBuf.empty() || hBuf.empty()) {
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_ERROR, "QMParser", "fail: uBuf=%zu vBuf=%zu hBuf=%zu",
-            uBuf.size(), vBuf.size(), hBuf.size());
-#endif
-        return nullptr;
-    }
-
-    // Decode zigzag delta to get U/V/Height ratios
-    std::vector<double> uRatio(vertexCount), vRatio(vertexCount), heightRatio(vertexCount);
-    int32_t uAcc = 0, vAcc = 0, hAcc = 0;
-    for (uint32_t i = 0; i < vertexCount; ++i) {
-        uAcc += zigZagDecode(static_cast<int32_t>(uBuf[i]));
-        vAcc += zigZagDecode(static_cast<int32_t>(vBuf[i]));
-        hAcc += zigZagDecode(static_cast<int32_t>(hBuf[i]));
-        uRatio[i] = static_cast<double>(uAcc) / 32767.0;
-        vRatio[i] = static_cast<double>(vAcc) / 32767.0;
-        heightRatio[i] = static_cast<double>(hAcc) / 32767.0;
-    }
-
-    // --- Parse indices ---
-    // Some tilers add 2-byte alignment padding even when vertexCount ≤ 65536.
-    // Try unaligned first; if garbage, retry with alignment to 4-byte boundary. 
-    uint32_t triangleCount = 0;
-    bool use32BitIndices = (vertexCount > 65536);
-    size_t idxOffset = offset;
-
-    if (use32BitIndices && (offset % 4) != 0) offset += 2;
-    if (offset + 4 > len) return nullptr;
-    triangleCount = readU32();
-
-    if (triangleCount > vertexCount * 4) {
-        // Retry with 4-byte alignment (some tilers pad to 4-byte boundary)
-        offset = idxOffset;
-        if ((offset % 4) != 0) offset += 2;
-        if (offset + 4 > len) return nullptr;
-        triangleCount = readU32();
-#ifdef __ANDROID__
-        if (triangleCount > 0 && triangleCount <= vertexCount * 4)
-            __android_log_print(ANDROID_LOG_INFO, "QMParser", "aligned triCount=%u", triangleCount);
-#endif
-    }
-
-    const uint32_t indicesCount = triangleCount * 3;
-    size_t indexSize = use32BitIndices ? 4 : 2;
-    if (offset + indicesCount * indexSize > len || triangleCount > vertexCount * 4) {
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_ERROR, "QMParser", "fail: idx overflow off=%zu cnt=%u sz=%zu len=%zu",
-            offset, indicesCount, indexSize, len);
-#endif
-        return nullptr;
-    }
-
-    // Decode zigzag-delta indices
-    std::vector<uint32_t> indices(indicesCount);
-    if (use32BitIndices) {
-        uint32_t highest = 0;
-        for (uint32_t i = 0; i < indicesCount; ++i) {
-            uint32_t code;
-            std::memcpy(&code, data + offset, 4);
-            offset += 4;
-            uint32_t decoded = highest - code;
-            indices[i] = decoded;
-            if (code == 0) ++highest;
-        }
-    } else {
-        uint32_t highest = 0;
-        for (uint32_t i = 0; i < indicesCount; ++i) {
-            uint16_t code;
-            std::memcpy(&code, data + offset, 2);
-            offset += 2;
-            uint32_t decoded = highest - code;
-            indices[i] = decoded;
-            if (code == 0) ++highest;
-        }
-    }
-    if (std::any_of(indices.begin(), indices.end(), [&](uint32_t idx) {
-            return idx >= vertexCount;
-        })) {
-#ifdef __ANDROID__
-        __android_log_print(
-            ANDROID_LOG_ERROR,
-            "QMParser",
-            "fail: decoded raster index outside vertex range vc=%u tri=%u",
-            vertexCount,
-            triangleCount);
-#endif
-        return nullptr;
-    }
-
-    auto validateEdge = [&]() -> bool {
-        if (offset + sizeof(uint32_t) > len) {
-            return false;
-        }
-        const uint32_t edgeCount = readU32();
-        if (static_cast<size_t>(edgeCount) > (len - offset) / indexSize) {
-            return false;
-        }
-        for (uint32_t i = 0; i < edgeCount; ++i) {
-            uint32_t edgeIndex = 0;
-            if (use32BitIndices) {
-                std::memcpy(&edgeIndex, data + offset, sizeof(uint32_t));
-                offset += sizeof(uint32_t);
-            } else {
-                uint16_t value = 0;
-                std::memcpy(&value, data + offset, sizeof(uint16_t));
-                offset += sizeof(uint16_t);
-                edgeIndex = value;
-            }
-            if (edgeIndex >= vertexCount) {
-                return false;
-            }
-        }
-        return true;
-    };
-    if (!validateEdge() || !validateEdge() ||
-        !validateEdge() || !validateEdge()) {
-#ifdef __ANDROID__
-        __android_log_print(
-            ANDROID_LOG_ERROR,
-            "QMParser",
-            "fail: raster edge buffer invalid vc=%u tri=%u off=%zu len=%zu",
-            vertexCount,
-            triangleCount,
-            offset,
-            len);
-#endif
-        return nullptr;
-    }
-
-    // --- Rasterize triangles into a regular grid ---
-    const double heightRange = hdr.maximumHeight - hdr.minimumHeight;
-    const int n = outputGridSize + 1;  // vertices per side
-    auto hm = std::make_unique<DecodedHeightmap>();
-    hm->tileSize = n;
-    hm->heights.resize(static_cast<size_t>(n * n), 0.0f);
-    hm->minHeight = hdr.minimumHeight;
-    hm->maxHeight = hdr.maximumHeight;
-    hm->heightFactor = 1.0f;
-    hm->noDataValues = {};
-
-    // For each grid vertex, find the triangle that contains its (u,v) and
-    // barycentrically interpolate the height.
-    for (int y = 0; y < n; ++y) {
-        for (int x = 0; x < n; ++x) {
-            const double targetU = static_cast<double>(x) / static_cast<double>(outputGridSize);
-            const double targetV = static_cast<double>(y) / static_cast<double>(outputGridSize);
-
-            double bestH = hdr.minimumHeight;
-            bool found = false;
-
-            // Search all triangles for the one containing (targetU, targetV)
-            for (uint32_t t = 0; t < triangleCount; ++t) {
-                uint32_t i0 = indices[t * 3];
-                uint32_t i1 = indices[t * 3 + 1];
-                uint32_t i2 = indices[t * 3 + 2];
-
-                if (i0 >= vertexCount || i1 >= vertexCount || i2 >= vertexCount) continue;
-
-                double w1, w2;
-                if (pointInTriangle(targetU, targetV,
-                                    uRatio[i0], vRatio[i0],
-                                    uRatio[i1], vRatio[i1],
-                                    uRatio[i2], vRatio[i2], w1, w2)) {
-                    double w0 = 1.0 - w1 - w2;
-                    bestH = hdr.minimumHeight + heightRange *
-                        (w0 * heightRatio[i0] + w1 * heightRatio[i1] + w2 * heightRatio[i2]);
-                    found = true;
-                    break;
-                }
-            }
-
-            if (!found) {
-                // Point outside the mesh — find nearest vertex
-                double bestDist = std::numeric_limits<double>::max();
-                for (uint32_t i = 0; i < vertexCount; ++i) {
-                    double du = uRatio[i] - targetU;
-                    double dv = vRatio[i] - targetV;
-                    double dist = du * du + dv * dv;
-                    if (dist < bestDist) {
-                        bestDist = dist;
-                        bestH = hdr.minimumHeight + heightRange * heightRatio[i];
-                    }
-                }
-            }
-
-            size_t idx = static_cast<size_t>(y) * static_cast<size_t>(n) + static_cast<size_t>(x);
-            hm->heights[idx] = static_cast<float>(bestH);
-        }
-    }
-
-#ifdef __ANDROID__
-    auto edgeStats = [&](int rowStart, int rowStep, int count) {
-        int valid = 0;
-        float minH = std::numeric_limits<float>::max();
-        float maxH = std::numeric_limits<float>::lowest();
-        for (int i = 0; i < count; ++i) {
-            float h = hm->heights[rowStart + i * rowStep];
-            if (hm->isNoData(h)) continue;
-            ++valid;
-            minH = std::min(minH, h);
-            maxH = std::max(maxH, h);
-        }
-        if (valid == 0) {
-            minH = maxH = 0.0f;
-        }
-        return std::tuple<int, float, float>(valid, minH, maxH);
-    };
-    const auto [northValid, northMin, northMax] = edgeStats(0, 1, n);
-    const auto [southValid, southMin, southMax] = edgeStats((n - 1) * n, 1, n);
-    const auto [westValid, westMin, westMax] = edgeStats(0, n, n);
-    const auto [eastValid, eastMin, eastMax] = edgeStats(n - 1, n, n);
-    __android_log_print(
-        ANDROID_LOG_INFO,
-        "QMParser",
-        "parseAndRasterize OK: %dx%d heights, %u verts, %u tris edge N=%d[%.2f..%.2f] S=%d[%.2f..%.2f] W=%d[%.2f..%.2f] E=%d[%.2f..%.2f]",
-        n, n, vertexCount, triangleCount,
-        northValid, northMin, northMax,
-        southValid, southMin, southMax,
-        westValid, westMin, westMax,
-        eastValid, eastMin, eastMax);
-#endif
-    return hm;
-}
 
 std::vector<QuantizedMeshAvailabilityRange> QuantizedMeshParser::parseMetadataAvailability(
     const uint8_t* data, size_t len) {
@@ -570,7 +240,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     }
     uint32_t triCount = readU32();
     if (triCount > vc * 4) {
-        // Retry with 4-byte alignment like parseAndRasterize.
+        // Retry with 4-byte alignment used by some quantized-mesh encoders.
         offset = idxOffset;
         if ((offset % 4) != 0) offset += 2;
         if (offset + 4 > len) {
@@ -738,6 +408,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
             std::string metadataJson(
                 reinterpret_cast<const char*>(data + jsonOffset),
                 metadataJsonLength);
+            mesh->hasMetadataAvailability = true;
             mesh->metadataAvailability =
                 parseMetadataAvailabilityJson(metadataJson);
         }
