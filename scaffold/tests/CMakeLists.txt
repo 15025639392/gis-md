@@ -310,6 +310,12 @@ add_executable(test_tile_content_cache_manager
 target_link_libraries(test_tile_content_cache_manager PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_content_cache_manager COMMAND test_tile_content_cache_manager)
 
+add_executable(test_tile_subtree_tracking
+    unit/tiling/test_tile_subtree_tracking.cpp
+)
+target_link_libraries(test_tile_subtree_tracking PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_subtree_tracking COMMAND test_tile_subtree_tracking)
+
 add_executable(test_tile_load_request_dispatcher
     unit/tiling/test_tile_load_request_dispatcher.cpp
 )
