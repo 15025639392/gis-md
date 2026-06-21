@@ -3355,32 +3355,6 @@ void testHeightmapTerrainProviderExposesAttribution() {
           "HeightmapTerrainProvider: terrain attribution metadata is exposed");
 }
 
-void testTilesetUsesQuantizedMeshRtcOrigin() {
-    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
-        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    const Vec3 boundingSphereCenter(3456.0, -7890.0, 12345.0);
-    const Vec3 tileCenter(-3456.0, 7890.0, -12345.0);
-    auto heightmap = makeFlatHeightmap(0.0f);
-    heightmap->rawData = makeQuantizedMeshBytes(
-        "", false, false, boundingSphereCenter, 0.0f, 100.0f, tileCenter);
-    TilesetTestAccess::putTerrainCache(tileset, rootKey, std::move(heightmap));
-
-    check(root != nullptr,
-          "Tileset: RTC-origin root tile is created");
-    if (!root) return;
-
-    TilesetTestAccess::ensureTileMesh(tileset, *root);
-    const Vec3 originDelta =
-        TilesetTestAccess::localOrigin(*root) - boundingSphereCenter;
-    check(originDelta.length() < 1e-12,
-          "Tileset: quantized-mesh BoundingSphereCenter wins over centroid RTC origin");
-}
-
 void testTileResourceDirtyInvalidatesRevisionAndCacheOnly() {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/{z}/{x}/{y}.terrain");
@@ -27243,7 +27217,6 @@ int main() {
     testRasterMappedTemporaryAncestorDoesNotReportMoreDetail();
     testRasterOverlayNativeTranslationAndRendererWindow();
     testHeightmapTerrainProviderExposesAttribution();
-    testTilesetUsesQuantizedMeshRtcOrigin();
     testTilesetUsesQuantizedMeshHeightRange();
     testTilesetBoundsUseQuantizedMeshHeightRange();
     testTilesetBoundingRegionDegenerateDistanceMatchesCesiumNative();

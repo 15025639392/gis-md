@@ -574,6 +574,12 @@ add_executable(test_tileset_selection_refinement
 target_link_libraries(test_tileset_selection_refinement PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tileset_selection_refinement COMMAND test_tileset_selection_refinement)
 
+add_executable(test_tileset_quantized_mesh
+    unit/tiling/test_tileset_quantized_mesh.cpp
+)
+target_link_libraries(test_tileset_quantized_mesh PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tileset_quantized_mesh COMMAND test_tileset_quantized_mesh)
+
 add_executable(test_tile_visible_range_finalizer
     unit/tiling/test_tile_visible_range_finalizer.cpp
 )
