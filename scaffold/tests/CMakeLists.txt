@@ -322,6 +322,12 @@ add_executable(test_scene_tileset_diagnostics
 target_link_libraries(test_scene_tileset_diagnostics PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_scene_tileset_diagnostics COMMAND test_scene_tileset_diagnostics)
 
+add_executable(test_scene_render_diagnostics
+    unit/scene/test_scene_render_diagnostics.cpp
+)
+target_link_libraries(test_scene_render_diagnostics PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_scene_render_diagnostics COMMAND test_scene_render_diagnostics)
+
 add_executable(test_globe
     unit/globe/test_globe.cpp
 )
