@@ -7,6 +7,7 @@
 #include "earth_engine/scene/SceneFrameDiagnostics.h"
 #include "earth_engine/scene/SceneFrameStateBuilder.h"
 #include "earth_engine/scene/Scene.h"
+#include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 
@@ -18,6 +19,18 @@ namespace earth_engine {
 struct TilesetTestAccess {
     static TilesetTile* ensureTile(Tileset& tileset, const TileKey& key) {
         return tileset.contentAccess_.ensureTile(key);
+    }
+
+    static std::string terrainCacheKey(const TileKey& key) {
+        return TileCacheKey::forTile(key);
+    }
+
+    static void putTerrainCache(
+        Tileset& tileset,
+        const TileKey& key,
+        std::unique_ptr<DecodedHeightmap> heightmap) {
+        tileset.contentLifecycle_.terrainCache()[terrainCacheKey(key)] =
+            std::move(heightmap);
     }
 
     static TileOcclusionState checkOcclusion(
@@ -44,6 +57,19 @@ SelectorView makeSelectorView(
         view.projectionMatrix * camera.viewMatrix());
     view.viewportHeightPixels = viewportHeight;
     return view;
+}
+
+std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
+    auto heightmap = std::make_unique<DecodedHeightmap>();
+    heightmap->tileSize = 2;
+    heightmap->heights = {
+        heightMeters,
+        heightMeters,
+        heightMeters,
+        heightMeters};
+    heightmap->minHeight = heightMeters;
+    heightmap->maxHeight = heightMeters;
+    return heightmap;
 }
 
 } // namespace
@@ -258,4 +284,51 @@ TEST(SceneFrameStateTest, OcclusionCallbackFeedsPrimaryAndAdditionalTilesets) {
     EXPECT_EQ(
         TilesetTestAccess::checkOcclusion(*additionalRaw, *additionalRoot),
         TileOcclusionState::NotOccluded);
+}
+
+TEST(
+    SceneFrameStateTest,
+    AdditionalTilesetDoesNotReplacePrimaryTerrainSampling) {
+    Scene scene;
+    scene.setViewport(800, 600, 1.0f);
+
+    const TileKey westRoot{"Geographic-TMS", 0, 0, 0};
+    const TileKey eastRoot{"Geographic-TMS", 0, 1, 0};
+
+    auto terrainTileset = std::make_unique<Tileset>(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{},
+        nullptr,
+        TilesetOptions{});
+    Tileset* terrainRaw = terrainTileset.get();
+    TilesetTestAccess::ensureTile(*terrainRaw, westRoot);
+    TilesetTestAccess::ensureTile(*terrainRaw, eastRoot);
+    TilesetTestAccess::putTerrainCache(
+        *terrainRaw,
+        westRoot,
+        makeFlatHeightmap(123.0f));
+    TilesetTestAccess::putTerrainCache(
+        *terrainRaw,
+        eastRoot,
+        makeFlatHeightmap(123.0f));
+
+    scene.setTileset(std::move(terrainTileset));
+    ASSERT_EQ(scene.tileset(), terrainRaw);
+    EXPECT_NEAR(scene.tileset()->sampleHeight(0.0, 0.0), 123.0f, 1e-6f);
+
+    auto contentTileset = std::make_unique<Tileset>(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{},
+        nullptr,
+        TilesetOptions{});
+    TilesetTestAccess::ensureTile(*contentTileset, westRoot);
+    TilesetTestAccess::ensureTile(*contentTileset, eastRoot);
+
+    scene.addTileset(std::move(contentTileset));
+
+    EXPECT_EQ(scene.tileset(), terrainRaw);
+    EXPECT_EQ(scene.additionalTilesetCount(), 1u);
+    EXPECT_NEAR(scene.tileset()->sampleHeight(0.0, 0.0), 123.0f, 1e-6f);
 }
