@@ -230,6 +230,66 @@ TEST(TileChildMaterializerTest, NonRootUnavailableTerrainSiblingsBecomeUpsampled
     EXPECT_TRUE(parent.children[3]->content.upsampledFromParent);
 }
 
+TEST(TileChildMaterializerTest, NonRootGeographicTerrainChildrenPreserveBounds) {
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 1, 0, 1},
+        scheme->tileToRectangle(TileKey{"Geographic-TMS", 1, 0, 1}));
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles, &scheme](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(
+                    key,
+                    scheme->tileToRectangle(key)))
+                     .first;
+        }
+        return it->second.get();
+    };
+
+    const bool changed = TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        3,
+        [](const TileKey& key) {
+            return key.x == 0 && key.y == 2
+                ? TileAvailabilityState::Available
+                : TileAvailabilityState::NotAvailable;
+        },
+        ensure);
+
+    ASSERT_TRUE(changed);
+    ASSERT_EQ(4u, parent.children.size());
+
+    const TilesetTile* sw = parent.children[0];
+    const TilesetTile* se = parent.children[1];
+    const TilesetTile* nw = parent.children[2];
+    const TilesetTile* ne = parent.children[3];
+    ASSERT_NE(nullptr, sw);
+    ASSERT_NE(nullptr, se);
+    ASSERT_NE(nullptr, nw);
+    ASSERT_NE(nullptr, ne);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 2, 0, 2}), sw->key);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 2, 1, 2}), se->key);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 2, 0, 3}), nw->key);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 2, 1, 3}), ne->key);
+    EXPECT_NEAR(-MathUtils::OnePi, sw->bounds.west(), 1e-9);
+    EXPECT_NEAR(0.0, sw->bounds.south(), 1e-9);
+    EXPECT_NEAR(-MathUtils::OnePi * 0.75, sw->bounds.east(), 1e-9);
+    EXPECT_NEAR(MathUtils::PiOverTwo * 0.5, sw->bounds.north(), 1e-9);
+    EXPECT_NEAR(-MathUtils::OnePi * 0.75, ne->bounds.west(), 1e-9);
+    EXPECT_NEAR(MathUtils::PiOverTwo * 0.5, ne->bounds.south(), 1e-9);
+    EXPECT_NEAR(-MathUtils::PiOverTwo, ne->bounds.east(), 1e-9);
+    EXPECT_NEAR(MathUtils::PiOverTwo, ne->bounds.north(), 1e-9);
+    EXPECT_FALSE(sw->content.upsampledFromParent);
+    EXPECT_TRUE(se->content.upsampledFromParent);
+    EXPECT_TRUE(nw->content.upsampledFromParent);
+    EXPECT_TRUE(ne->content.upsampledFromParent);
+}
+
 TEST(TileChildMaterializerTest, RasterUpsampledChildrenSplitSubdivisionAndRemainStable) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 0, 0, 0},
