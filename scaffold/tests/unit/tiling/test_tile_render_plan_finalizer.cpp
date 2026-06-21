@@ -126,3 +126,35 @@ TEST(
     EXPECT_FALSE(entry.surfaceClipEnabled);
     EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 0);
 }
+
+TEST(TileRenderPlanFinalizerTest, CountsRootPrepOnceToAvoidBlankFrame) {
+    const TileKey rootKey{"test", 0, 0, 0};
+    TilesetTile root(rootKey, Rectangle{});
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(rootKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            true,
+            0,
+            1},
+        [&root](const TileKey& key) -> TilesetTile* {
+            return key == root.key ? &root : nullptr;
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return tile.hasSurfaceDrawable();
+        });
+
+    ASSERT_EQ(plan.renderEntries.size(), 1u);
+    const TileRenderEntry& entry = plan.renderEntries.front();
+    EXPECT_EQ(entry.renderKey, rootKey);
+    EXPECT_EQ(entry.reason, TileRenderEntryReason::SynchronousPrep);
+    EXPECT_TRUE(entry.allowSynchronousMeshPrep);
+    EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 1);
+    EXPECT_EQ(plan.renderEntryDeferredPrepCount, 0);
+}
