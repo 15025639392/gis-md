@@ -41,3 +41,31 @@ TEST(TileLoadLifecycleTest, CountsAndFindsPendingWork) {
 
     EXPECT_FALSE(lifecycle.hasPendingWork());
 }
+
+TEST(TileLoadLifecycleTest, EmptyBatchQueryIsNoOp) {
+    TileLoadLifecycle lifecycle;
+    CancellationToken token;
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        ASSERT_TRUE(lifecycle.requestState().beginTerrainRequest(
+            "terrain-request",
+            token));
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            TileKey{"test", 0, 0, 0},
+            "content-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileContentLoadResult::empty()});
+    }
+
+    EXPECT_FALSE(lifecycle.containsWorkForAnyCacheKey({}));
+    EXPECT_FALSE(token.isCancelled());
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("terrain-request"));
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("content-upload"));
+
+    lifecycle.cancelAndEraseCacheKey("terrain-request");
+    lifecycle.cancelAndEraseCacheKey("content-upload");
+
+    EXPECT_FALSE(lifecycle.hasPendingWork());
+}
