@@ -772,14 +772,32 @@ TEST(SceneFrameStateTest, DiagnosticsExposeTerrainRenderEntryFallbackReasons) {
 
     const PresentationTrace& trace = scene.presentationTrace();
     ASSERT_EQ(1u, trace.tilesets.size());
-    ASSERT_EQ(1u, trace.tilesets.front().renderEntries.size());
+    const PresentationTilesetTrace& tilesetTrace = trace.tilesets.front();
+    ASSERT_EQ(1u, tilesetTrace.renderEntries.size());
     const PresentationRenderEntryTrace& entryTrace =
-        trace.tilesets.front().renderEntries.front();
+        tilesetTrace.renderEntries.front();
     EXPECT_EQ(childKey, entryTrace.selectedKey);
     EXPECT_EQ(rootKey, entryTrace.renderKey);
     EXPECT_TRUE(entryTrace.usesAncestorFallback);
     EXPECT_TRUE(entryTrace.surfaceClipEnabled);
     EXPECT_EQ(command.surfaceClipUv, entryTrace.surfaceClipUv);
+    EXPECT_EQ(1, tilesetTrace.renderEntryAncestorFallbackCount);
+    EXPECT_EQ(0, tilesetTrace.renderEntrySynchronousPrepCount);
+    EXPECT_EQ(0, tilesetTrace.renderEntryDeferredPrepCount);
+    EXPECT_EQ(1, tilesetTrace.renderEntryPlannedCommandCount);
+    EXPECT_EQ(1, tilesetTrace.renderEntrySelectedPlannedCommandCount);
+    EXPECT_EQ(0, tilesetTrace.renderEntryFadingPlannedCommandCount);
+    EXPECT_EQ(1, tilesetTrace.renderEntryCommandDrawCount);
+    EXPECT_EQ(1, tilesetTrace.renderEntrySelectedCommandDrawCount);
+    EXPECT_EQ(0, tilesetTrace.renderEntryFadingCommandDrawCount);
+    EXPECT_EQ(0, tilesetTrace.renderEntryCommandMissedDrawCount);
+    EXPECT_EQ(0, tilesetTrace.renderEntrySelectedCommandMissedDrawCount);
+    EXPECT_EQ(0, tilesetTrace.renderEntryFadingCommandMissedDrawCount);
+    EXPECT_EQ(0, tilesetTrace.renderEntryCommandMissingSelectedCount);
+    EXPECT_EQ(0, tilesetTrace.renderEntryCommandMissingRenderCount);
+    EXPECT_EQ(0, tilesetTrace.renderEntryCommandDeferredCount);
+    EXPECT_EQ(0, tilesetTrace.renderEntrySelectedCommandDeferredCount);
+    EXPECT_EQ(0, tilesetTrace.renderEntryFadingCommandDeferredCount);
 
     const auto commandTraceIt = std::find_if(
         trace.commands.begin(),
