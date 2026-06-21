@@ -57,6 +57,21 @@ TEST(PlaneTest, ProjectPointOntoPlaneMatchesCesiumNative) {
               zxPlane.projectPointOntoPlane(Vec3(1.0, 1.0, 0.0)));
 }
 
+TEST(PlaneTest, ProjectPointOntoArbitraryPlaneUsesSignedDistanceAlongNormal) {
+    Vec3 normal(1.0, 2.0, 3.0);
+    normal = normal.normalized();
+    const Vec3 pointOnPlane(4.0, 5.0, 6.0);
+    const Plane plane(pointOnPlane, normal);
+    const Vec3 point = pointOnPlane + normal * 7.5 + Vec3(2.0, -1.0, 0.5);
+
+    const Vec3 projected = plane.projectPointOntoPlane(point);
+
+    EXPECT_NEAR(0.0, plane.getPointDistance(projected), 1e-14);
+    const Vec3 offset = point - projected;
+    EXPECT_NEAR(0.0, offset.cross(normal).length(), 1e-14);
+    EXPECT_NEAR(plane.getPointDistance(point), offset.dot(normal), 1e-14);
+}
+
 TEST(PlaneTest, OriginPlaneConstantsMatchCesiumNativeAxes) {
     EXPECT_EQ(Vec3::unitZ(), Plane::ORIGIN_XY.getNormal());
     EXPECT_DOUBLE_EQ(0.0, Plane::ORIGIN_XY.getDistance());
