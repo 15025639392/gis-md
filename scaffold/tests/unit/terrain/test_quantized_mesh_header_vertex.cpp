@@ -6,16 +6,9 @@
 #include "earth_engine/tiling/TileKey.h"
 #include "earth_engine/tiling/TileScheme.h"
 
-#include <array>
 #include <cmath>
-#include <cstddef>
 #include <cstdint>
-#include <cstring>
-#include <initializer_list>
-#include <limits>
 #include <memory>
-#include <string>
-#include <utility>
 #include <vector>
 
 using namespace earth_engine;
@@ -33,20 +26,7 @@ uint16_t zigZagEncode16(int32_t value) {
         value >= 0 ? value * 2 : (-value * 2) - 1);
 }
 
-void appendMetadataExtension(std::vector<uint8_t>& bytes,
-                             const std::string& metadataJson) {
-    appendPod<uint8_t>(bytes, 4);
-    appendPod<uint32_t>(
-        bytes,
-        static_cast<uint32_t>(sizeof(uint32_t) + metadataJson.size()));
-    appendPod<uint32_t>(bytes, static_cast<uint32_t>(metadataJson.size()));
-    bytes.insert(bytes.end(), metadataJson.begin(), metadataJson.end());
-}
-
 std::vector<uint8_t> makeQuantizedMeshBytes(
-    const std::string& metadataJson = "",
-    bool includeSkirtEdges = false,
-    bool includeOctNormals = false,
     const Vec3& boundingSphereCenterEcef = Vec3::zero(),
     float minimumHeight = 0.0f,
     float maximumHeight = 100.0f,
@@ -89,32 +69,7 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
 
     appendPod<uint32_t>(bytes, 1);
     for (int i = 0; i < 3; ++i) appendPod<uint16_t>(bytes, 0);
-    auto appendEdge = [&](std::initializer_list<uint16_t> indices) {
-        appendPod<uint32_t>(bytes, static_cast<uint32_t>(indices.size()));
-        for (uint16_t index : indices) appendPod<uint16_t>(bytes, index);
-    };
-    if (includeSkirtEdges) {
-        appendEdge({0, 2});
-        appendEdge({1, 0});
-        appendEdge({1, 2});
-        appendEdge({2, 1});
-    } else {
-        for (int i = 0; i < 4; ++i) appendPod<uint32_t>(bytes, 0);
-    }
-
-    if (!metadataJson.empty()) {
-        appendMetadataExtension(bytes, metadataJson);
-    }
-    if (includeOctNormals) {
-        appendPod<uint8_t>(bytes, 1);
-        appendPod<uint32_t>(bytes, 6);
-        const uint8_t normals[] = {
-            128, 128,
-            255, 128,
-            128, 255
-        };
-        bytes.insert(bytes.end(), normals, normals + sizeof(normals));
-    }
+    for (int i = 0; i < 4; ++i) appendPod<uint32_t>(bytes, 0);
     return bytes;
 }
 
@@ -132,9 +87,6 @@ TEST(QuantizedMeshParserHeaderTest,
     const Vec3 tileCenter(9999.0, 8888.0, 7777.0);
     const std::vector<uint8_t> bytes =
         makeQuantizedMeshBytes(
-            "",
-            false,
-            false,
             boundingSphereCenter,
             0.0f,
             100.0f,
@@ -164,9 +116,6 @@ TEST(QuantizedMeshParserHeaderTest,
     constexpr float maximumHeight = 456.25f;
     const std::vector<uint8_t> bytes =
         makeQuantizedMeshBytes(
-            "",
-            false,
-            false,
             Vec3::zero(),
             minimumHeight,
             maximumHeight);
@@ -188,9 +137,6 @@ TEST(QuantizedMeshParserHeaderTest,
     const Vec3 horizonOcclusionPoint(0.25, -0.5, 0.75);
     const std::vector<uint8_t> bytes =
         makeQuantizedMeshBytes(
-            "",
-            false,
-            false,
             Vec3::zero(),
             0.0f,
             100.0f,
@@ -213,9 +159,6 @@ TEST(QuantizedMeshParserHeaderTest,
      ZeroHorizonOcclusionPointIsStillExposedLikeCesiumNative) {
     const std::vector<uint8_t> bytes =
         makeQuantizedMeshBytes(
-            "",
-            false,
-            false,
             Vec3::zero(),
             0.0f,
             100.0f,
@@ -240,9 +183,6 @@ TEST(QuantizedMeshParserVertexDecodeTest,
     constexpr float maximumHeight = 150.0f;
     const std::vector<uint8_t> bytes =
         makeQuantizedMeshBytes(
-            "",
-            false,
-            false,
             Vec3::zero(),
             minimumHeight,
             maximumHeight);

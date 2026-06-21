@@ -226,11 +226,11 @@ add_executable(test_tile_availability
 target_link_libraries(test_tile_availability PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_availability COMMAND test_tile_availability)
 
-add_executable(test_quantized_mesh_parser
-    unit/terrain/test_quantized_mesh_parser.cpp
+add_executable(test_quantized_mesh_header_vertex
+    unit/terrain/test_quantized_mesh_header_vertex.cpp
 )
-target_link_libraries(test_quantized_mesh_parser PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_quantized_mesh_parser COMMAND test_quantized_mesh_parser)
+target_link_libraries(test_quantized_mesh_header_vertex PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_quantized_mesh_header_vertex COMMAND test_quantized_mesh_header_vertex)
 
 add_executable(test_quantized_mesh_metadata_availability
     unit/terrain/test_quantized_mesh_metadata_availability.cpp
