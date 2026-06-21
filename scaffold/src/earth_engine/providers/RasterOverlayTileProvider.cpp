@@ -551,6 +551,15 @@ RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
                        }),
         sources.end());
     if (sources.empty()) return {};
+    const bool haveAnyUsefulImageData =
+        std::any_of(sources.begin(),
+                    sources.end(),
+                    [](const LoadedSourceImage& source) {
+                        return source.image && !source.ancestorFallback;
+                    });
+    if (!haveAnyUsefulImageData) {
+        return {};
+    }
 
     double projectedWidthPerPixel = std::numeric_limits<double>::max();
     double projectedHeightPerPixel = std::numeric_limits<double>::max();
