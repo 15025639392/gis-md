@@ -1788,3 +1788,60 @@ TEST(
     EXPECT_EQ(tileset.tilePlan().maxVisibleZoom, 0);
     EXPECT_EQ(tileset.tilePlan().selectionOccludedCount, 1);
 }
+
+TEST(
+    TilesetSelectionRefinementTest,
+    OcclusionUnavailableDelaysNewRefinement) {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, {childKey}}});
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Empty;
+    root->refine = TileRefine::Replace;
+    root->geometricError = 40000.0;
+
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    root->boundingVolume = TileBoundingVolume::fromSphere(center, 1000000.0);
+    Camera camera;
+    camera.lookAt(
+        center + center.normalized() * 1000000.0,
+        center,
+        Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 151;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::setOcclusionState(
+        tileset,
+        TileOcclusionState::OcclusionUnavailable);
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const auto& visibleTiles = tileset.tilePlan().visibleTiles;
+    EXPECT_NE(
+        std::find(visibleTiles.begin(), visibleTiles.end(), rootKey),
+        visibleTiles.end());
+    EXPECT_TRUE(root->children.empty());
+    EXPECT_EQ(tileset.tilePlan().maxVisibleZoom, 0);
+    EXPECT_EQ(tileset.tilePlan().selectionWaitingForOcclusionResultsCount, 1);
+}
