@@ -298,6 +298,12 @@ add_executable(test_tile_frame_resource_budget_planner
 target_link_libraries(test_tile_frame_resource_budget_planner PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_frame_resource_budget_planner COMMAND test_tile_frame_resource_budget_planner)
 
+add_executable(test_tileset_provider_diagnostics_collector
+    unit/tiling/test_tileset_provider_diagnostics_collector.cpp
+)
+target_link_libraries(test_tileset_provider_diagnostics_collector PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tileset_provider_diagnostics_collector COMMAND test_tileset_provider_diagnostics_collector)
+
 add_executable(test_camera
     unit/scene/test_camera.cpp
 )
