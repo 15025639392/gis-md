@@ -619,3 +619,69 @@ TEST(TileLoadSchedulerTest, ContinuesAfterUpsampleSourceWait) {
     EXPECT_EQ(lifecycle.pendingRequestCount(), 1u);
     EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
 }
+
+TEST(TileLoadSchedulerTest, ContinuesAfterMissingUpsampleTileState) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey missingTileStateKey{"test", 2, 0, 0};
+    const TileKey readyUpsampleKey{"test", 2, 1, 0};
+    TilesetTile readyTile(readyUpsampleKey, Rectangle{});
+    readyTile.content.upsampledFromParent = true;
+    std::vector<int> plannedColumns;
+    std::vector<int> preparedColumns;
+    std::vector<int> markedColumns;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {
+                TileLoadRequest{
+                    readyUpsampleKey,
+                    TileLoadPriorityGroup::Normal,
+                    50.0},
+                TileLoadRequest{
+                    missingTileStateKey,
+                    TileLoadPriorityGroup::Urgent,
+                    100.0},
+            },
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                nullptr},
+            cacheKeyForTile,
+            [&missingTileStateKey, &readyTile, &plannedColumns](
+                const TileKey& key,
+                const std::string&,
+                TilesetTile*& tileState) {
+                plannedColumns.push_back(key.x);
+                TileLoadRequestSnapshot snapshot;
+                snapshot.hasTile = true;
+                snapshot.upsampledFromParent = true;
+                tileState = key == missingTileStateKey ? nullptr : &readyTile;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [&preparedColumns](TilesetTile& tile, double) {
+                preparedColumns.push_back(tile.key.x);
+                return true;
+            },
+            [&markedColumns](const TileKey& key) {
+                markedColumns.push_back(key.x);
+            });
+
+    ASSERT_EQ(plannedColumns.size(), 2u);
+    ASSERT_EQ(preparedColumns.size(), 1u);
+    ASSERT_EQ(markedColumns.size(), 1u);
+    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_EQ(plannedColumns[0], missingTileStateKey.x);
+    EXPECT_EQ(plannedColumns[1], readyUpsampleKey.x);
+    EXPECT_EQ(preparedColumns.front(), readyUpsampleKey.x);
+    EXPECT_EQ(markedColumns.front(), readyUpsampleKey.x);
+    EXPECT_EQ(lifecycle.counts().terrainUploads, 1u);
+}
