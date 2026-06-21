@@ -35,7 +35,9 @@ struct PendingTerrainUpload {
                          std::vector<QuantizedMeshAvailabilityUpdate>
                              availabilityUpdates_ = {},
                          std::optional<TileBoundingVolume>
-                             updatedBoundingVolume_ = std::nullopt)
+                             updatedBoundingVolume_ = std::nullopt,
+                         std::optional<RasterOverlayDetails>
+                             rasterOverlayDetails_ = std::nullopt)
         : key(std::move(key_)),
           cacheKey(std::move(cacheKey_)),
           group(group_),
@@ -43,6 +45,7 @@ struct PendingTerrainUpload {
           heightmap(std::move(heightmap_)),
           surfaceMesh(std::move(surfaceMesh_)),
           updatedBoundingVolume(std::move(updatedBoundingVolume_)),
+          rasterOverlayDetails(std::move(rasterOverlayDetails_)),
           quantizedMeshAvailabilityUpdates(
               std::move(availabilityUpdates_)) {}
 
@@ -53,6 +56,7 @@ struct PendingTerrainUpload {
     std::unique_ptr<DecodedHeightmap> heightmap;
     std::unique_ptr<SurfaceTileMesh> surfaceMesh;
     std::optional<TileBoundingVolume> updatedBoundingVolume;
+    std::optional<RasterOverlayDetails> rasterOverlayDetails;
     std::vector<QuantizedMeshAvailabilityUpdate>
         quantizedMeshAvailabilityUpdates;
 };

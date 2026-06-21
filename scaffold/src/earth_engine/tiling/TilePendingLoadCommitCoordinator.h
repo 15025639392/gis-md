@@ -112,6 +112,13 @@ public:
                 tile->content.renderContent.setSurfaceMesh(
                     std::move(upload.surfaceMesh));
             }
+            if (upload.rasterOverlayDetails) {
+                if (RasterOverlayDetails* details =
+                        tile->content.renderContent
+                            .mutableRasterOverlayDetails()) {
+                    *details = std::move(*upload.rasterOverlayDetails);
+                }
+            }
             TileTerrainUploadCommitter::prepareTerrainRenderContent(*tile);
             if (!resourceSmoothingActive &&
                 !tile->content.renderContent.hasSurfaceMesh()) {

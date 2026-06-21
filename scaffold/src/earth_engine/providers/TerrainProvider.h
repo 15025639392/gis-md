@@ -77,6 +77,7 @@ struct TerrainTileLoadResult {
     std::unique_ptr<DecodedHeightmap> heightmap;
     std::unique_ptr<SurfaceTileMesh> surfaceMesh;
     std::optional<TileBoundingVolume> updatedBoundingVolume;
+    std::optional<RasterOverlayDetails> rasterOverlayDetails;
     std::vector<QuantizedMeshAvailabilityUpdate>
         quantizedMeshAvailabilityUpdates;
 
@@ -96,6 +97,9 @@ struct TerrainTileLoadResult {
         TerrainTileLoadResult result;
         result.status = mesh ? TerrainTileLoadStatus::Success
                              : TerrainTileLoadStatus::Failed;
+        if (mesh) {
+            result.rasterOverlayDetails = mesh->rasterOverlayDetails;
+        }
         result.surfaceMesh = std::move(mesh);
         return result;
     }

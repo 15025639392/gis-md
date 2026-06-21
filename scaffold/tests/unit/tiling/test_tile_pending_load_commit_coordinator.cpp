@@ -316,6 +316,86 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainUploadAppliesRasterOverlayDetailsLikeTileLoadResult) {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "test:0:0:0";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    auto surfaceMesh = std::make_unique<SurfaceTileMesh>();
+    SurfaceVertex vertex;
+    vertex.positionEcef = Vec3(1.0, 0.0, 0.0);
+    surfaceMesh->vertices.push_back(vertex);
+
+    const Rectangle detailsRectangle =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    RasterOverlayDetails rasterOverlayDetails;
+    rasterOverlayDetails.setGeographicRectangle(
+        detailsRectangle,
+        -25.0,
+        125.0);
+
+    PendingTerrainUpload upload{
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        nullptr,
+        std::move(surfaceMesh),
+        {},
+        std::nullopt,
+        std::move(rasterOverlayDetails)};
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            nullptr,
+            nullptr});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitTerrainUpload(
+        upload,
+        nullptr,
+        terrainCache,
+        lifecycle,
+        false,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](const TileKey&, const DecodedHeightmap*, const SurfaceTileMesh*) {},
+        [](TilesetTile&) {},
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    ASSERT_TRUE(tile.content.renderContent.hasSurfaceMesh());
+    const RasterOverlayDetails& committedDetails =
+        tile.content.renderContent.rasterOverlayDetails();
+    const Rectangle* rectangle =
+        committedDetails.findRectangleForOverlayProjection(
+            RasterOverlayProjection::Geographic);
+    ASSERT_NE(nullptr, rectangle);
+    EXPECT_EQ(detailsRectangle, *rectangle);
+    EXPECT_EQ(detailsRectangle, committedDetails.boundingRegion.rectangle);
+    EXPECT_DOUBLE_EQ(-25.0, committedDetails.boundingRegion.minimumHeight);
+    EXPECT_DOUBLE_EQ(125.0, committedDetails.boundingRegion.maximumHeight);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      MissingContentUploadPreservesTerrainCache) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;

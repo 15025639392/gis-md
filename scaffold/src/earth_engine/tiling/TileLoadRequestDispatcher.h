@@ -180,7 +180,8 @@ public:
                                     std::move(
                                         result
                                             .quantizedMeshAvailabilityUpdates),
-                                    std::move(result.updatedBoundingVolume)});
+                                    std::move(result.updatedBoundingVolume),
+                                    std::move(result.rasterOverlayDetails)});
                         } else {
                             pendingLoads.addTerrainTerminalResult(
                                 PendingTerrainTerminalResult{
