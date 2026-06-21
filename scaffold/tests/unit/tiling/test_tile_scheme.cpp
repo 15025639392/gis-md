@@ -23,7 +23,9 @@ TEST_F(TileSchemeTest, IdAndCrsProfile) {
     EXPECT_EQ("EPSG:3857", scheme_->crsProfile());  // crs().id() returns EPSG code
     EXPECT_EQ(256, scheme_->tileSize());
     EXPECT_EQ(0, scheme_->minZoom());
-    EXPECT_EQ(22, scheme_->maxZoom());
+    // cesium-native QuadtreeTilingScheme has no max-level cap; gis-md keeps
+    // the WebMercator scheme cap aligned with provider defaults.
+    EXPECT_EQ(25, scheme_->maxZoom());
     EXPECT_EQ("down", scheme_->yDirection());
 }
 
