@@ -3,6 +3,7 @@
 #include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
+#include "earth_engine/platform/bridge/PlatformBridge.h"
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/scene/Camera.h"
@@ -15,10 +16,14 @@
 #include "earth_engine/tiling/Tileset.h"
 
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -204,6 +209,71 @@ struct TilesetTestAccess {
 } // namespace earth_engine
 
 namespace {
+
+class BlockingHttpRequest final : public HttpRequest {
+public:
+    void cancel() override {}
+};
+
+class BlockingPlatformBridge final : public PlatformBridge {
+public:
+    void onMemoryPressure() override {}
+    void onEnterBackground() override {}
+    void onEnterForeground() override {}
+
+    std::unique_ptr<HttpRequest> get(
+        const std::string&,
+        std::function<void(int, std::vector<uint8_t>)> callback,
+        HttpRequestOptions = {}) override {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            callback_ = std::move(callback);
+            entered_ = true;
+        }
+        cv_.notify_all();
+        return std::make_unique<BlockingHttpRequest>();
+    }
+
+    int maximumActiveRequests() const override { return 11; }
+
+    bool waitUntilEntered() {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return cv_.wait_for(
+            lock,
+            std::chrono::seconds(2),
+            [this]() { return entered_; });
+    }
+
+    bool complete(int statusCode, std::vector<uint8_t> body = {}) {
+        std::function<void(int, std::vector<uint8_t>)> callback;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            callback = std::move(callback_);
+        }
+        if (!callback) {
+            return false;
+        }
+        callback(statusCode, std::move(body));
+        return true;
+    }
+
+    std::string cacheDirectory() const override { return "/tmp"; }
+    std::string documentsDirectory() const override { return "/tmp"; }
+    std::unique_ptr<DecodedImage> decodeImage(
+        const uint8_t*,
+        size_t) override {
+        return nullptr;
+    }
+    void log(LogLevel, const std::string&, const std::string&) override {}
+    DeviceInfo deviceInfo() const override { return {}; }
+    std::string getToken(const std::string&) const override { return {}; }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::function<void(int, std::vector<uint8_t>)> callback_;
+    bool entered_ = false;
+};
 
 class ManualCompletionTerrainProvider final : public TerrainProvider {
 public:
@@ -788,6 +858,86 @@ TEST(
     EXPECT_EQ(sceneDiagnostics.contentTransportActiveRequestLimit, 11);
 
     rawContentProvider->diagnostics.requestsCompleted = 1;
+    const TilesetLoadDiagnostics doneDiagnostics = tileset.loadDiagnostics();
+    EXPECT_EQ(doneDiagnostics.contentProviderRequests.requestsCompleted, 1);
+    EXPECT_EQ(
+        doneDiagnostics
+            .contentProviderRequests
+            .activeWorkerBlockingRequests,
+        0);
+    EXPECT_EQ(
+        doneDiagnostics
+            .contentProviderRequests
+            .peakWorkerBlockingRequests,
+        0);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    LoadDiagnosticsExposeAsyncContentProviderRequestDiagnostics) {
+    BlockingPlatformBridge bridge;
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    auto contentProvider = std::make_unique<SingleGltfContentProvider>(
+        rootKey,
+        "https://example.invalid/content.glb",
+        "diagnostic content fixture");
+    contentProvider->setPlatformBridge(&bridge);
+
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTestAccess::requestMissingTile(tileset, rootKey);
+    ASSERT_TRUE(bridge.waitUntilEntered());
+
+    const TilesetLoadDiagnostics activeDiagnostics =
+        tileset.loadDiagnostics();
+    EXPECT_EQ(activeDiagnostics.contentProviderRequests.requestsStarted, 1);
+    EXPECT_EQ(activeDiagnostics.contentProviderRequests.requestsCompleted, 0);
+    EXPECT_EQ(
+        activeDiagnostics
+            .contentProviderRequests
+            .activeWorkerBlockingRequests,
+        0);
+    EXPECT_EQ(
+        activeDiagnostics
+            .contentProviderRequests
+            .peakWorkerBlockingRequests,
+        0);
+    EXPECT_EQ(
+        activeDiagnostics
+            .contentProviderRequests
+            .maximumTransportActiveRequests,
+        11);
+
+    Diagnostics sceneDiagnostics;
+    SceneTilesetDiagnostics::reset(sceneDiagnostics);
+    SceneTilesetDiagnostics::addTileset(sceneDiagnostics, tileset, false);
+    EXPECT_EQ(sceneDiagnostics.contentProviderRequestsStarted, 1);
+    EXPECT_EQ(sceneDiagnostics.contentProviderRequestsCompleted, 0);
+    EXPECT_EQ(sceneDiagnostics.contentProviderActiveWorkerBlockingRequests, 0);
+    EXPECT_EQ(sceneDiagnostics.contentProviderPeakWorkerBlockingRequests, 0);
+    EXPECT_EQ(sceneDiagnostics.contentProviderExternalResourceRequestsStarted, 0);
+    EXPECT_EQ(sceneDiagnostics.contentProviderExternalResourceRequestsCompleted, 0);
+    EXPECT_EQ(
+        sceneDiagnostics.contentProviderActiveExternalResourceBlockingRequests,
+        0);
+    EXPECT_EQ(
+        sceneDiagnostics.contentProviderPeakExternalResourceBlockingRequests,
+        0);
+    EXPECT_EQ(sceneDiagnostics.contentTransportActiveRequestLimit, 11);
+
+    ASSERT_TRUE(bridge.complete(404));
+    for (int i = 0; i < 200 &&
+                    tileset.loadDiagnostics()
+                            .contentProviderRequests.requestsCompleted == 0;
+         ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
     const TilesetLoadDiagnostics doneDiagnostics = tileset.loadDiagnostics();
     EXPECT_EQ(doneDiagnostics.contentProviderRequests.requestsCompleted, 1);
     EXPECT_EQ(

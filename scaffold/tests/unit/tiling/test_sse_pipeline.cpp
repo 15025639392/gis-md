@@ -21155,65 +21155,6 @@ void testProviderRequestDiagnosticsAggregatorCombinesCountsAndPeaks() {
           "ProviderRequestDiagnosticsAggregator: combines external resource counts and max lanes");
 }
 
-void testTilesetLoadDiagnosticsExposeContentProviderRequestDiagnostics() {
-    BlockingPlatformBridge bridge;
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    auto contentProvider = std::make_unique<SingleGltfContentProvider>(
-        rootKey,
-        "https://example.invalid/content.glb",
-        "diagnostic content fixture");
-    contentProvider->setPlatformBridge(&bridge);
-
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
-        std::move(scheme),
-        {},
-        nullptr,
-        TilesetOptions{},
-        std::move(contentProvider));
-
-    TilesetTestAccess::requestMissingTile(tileset, rootKey);
-    check(bridge.waitUntilEntered(),
-          "TilesetLoadDiagnostics: test bridge observes content provider HTTP entry");
-
-    const TilesetLoadDiagnostics activeDiag = tileset.loadDiagnostics();
-    check(activeDiag.contentProviderRequests.requestsStarted == 1 &&
-              activeDiag.contentProviderRequests.requestsCompleted == 0 &&
-              activeDiag.contentProviderRequests.activeWorkerBlockingRequests == 0 &&
-              activeDiag.contentProviderRequests.peakWorkerBlockingRequests == 0 &&
-              activeDiag.contentProviderRequests.maximumTransportActiveRequests == 11,
-          "TilesetLoadDiagnostics: exposes content provider async transport limit without worker blocking");
-
-    Diagnostics diagnostics;
-    SceneTilesetDiagnostics::reset(diagnostics);
-    SceneTilesetDiagnostics::addTileset(diagnostics, tileset, false);
-    check(diagnostics.contentProviderRequestsStarted == 1 &&
-              diagnostics.contentProviderRequestsCompleted == 0 &&
-              diagnostics.contentProviderActiveWorkerBlockingRequests == 0 &&
-              diagnostics.contentProviderPeakWorkerBlockingRequests == 0 &&
-              diagnostics.contentProviderExternalResourceRequestsStarted == 0 &&
-              diagnostics.contentProviderExternalResourceRequestsCompleted == 0 &&
-              diagnostics.contentProviderActiveExternalResourceBlockingRequests == 0 &&
-              diagnostics.contentProviderPeakExternalResourceBlockingRequests == 0 &&
-              diagnostics.contentTransportActiveRequestLimit == 11,
-          "SceneTilesetDiagnostics: exposes content provider request diagnostics");
-
-    check(bridge.complete(404),
-          "TilesetLoadDiagnostics: test bridge releases content provider request");
-    for (int i = 0; i < 200 &&
-                    tileset.loadDiagnostics()
-                            .contentProviderRequests.requestsCompleted == 0;
-         ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    const TilesetLoadDiagnostics doneDiag = tileset.loadDiagnostics();
-    check(doneDiag.contentProviderRequests.requestsCompleted == 1 &&
-              doneDiag.contentProviderRequests.activeWorkerBlockingRequests == 0 &&
-              doneDiag.contentProviderRequests.peakWorkerBlockingRequests == 0,
-          "TilesetLoadDiagnostics: content provider diagnostics complete async request");
-}
-
 void testSceneTilesetDiagnosticsExposeContentExternalResourceDiagnostics() {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
@@ -26764,7 +26705,6 @@ int main() {
     testTileFrameBudgetFallbackKeepsUploadsAliveWhenWorkerLoadsDisabled();
     testTilesetFrameResourceBudgetUsesProviderTransportLane();
     testProviderRequestDiagnosticsAggregatorCombinesCountsAndPeaks();
-    testTilesetLoadDiagnosticsExposeContentProviderRequestDiagnostics();
     testSceneTilesetDiagnosticsExposeContentExternalResourceDiagnostics();
     testSceneProviderRequestDiagnosticsSnapshotAggregatesProviderLanes();
     testSceneFrameResourceBudgetDiagnosticsSnapshotAggregatesBudgetLanes();
