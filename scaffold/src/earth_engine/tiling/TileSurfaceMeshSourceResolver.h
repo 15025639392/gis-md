@@ -28,7 +28,7 @@ public:
         TileSurfaceMeshResolution resolution =
             TileSurfaceMeshResolution::forContext(
                 hasOwnTerrain,
-                tile.content.upsampledFromParent,
+                tile.content.derivesTerrainFromParent(),
                 hasTerrainProvider);
 
         resolveAncestorUpsample(

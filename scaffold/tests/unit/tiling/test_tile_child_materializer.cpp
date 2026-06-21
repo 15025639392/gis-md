@@ -344,6 +344,50 @@ TEST(TileChildMaterializerTest,
     EXPECT_EQ(4u, parent.children.size());
 }
 
+TEST(TileChildMaterializerTest,
+     TerrainAvailabilityMaterializationReplacesRasterDetailUpsampleKind) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        Rectangle{});
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    TilesetTile* staleRasterChild =
+        ensure(TileKey{"Geographic-TMS", 2, 3, 0});
+    ASSERT_NE(nullptr, staleRasterChild);
+    staleRasterChild->content.markRasterDetailUpsample();
+    staleRasterChild->content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    staleRasterChild->content.renderContent.setMeshReady(true);
+
+    const bool changed = TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        3,
+        [](const TileKey& key) {
+            return key.x == 2 && key.y == 0
+                ? TileAvailabilityState::Available
+                : TileAvailabilityState::NotAvailable;
+        },
+        ensure);
+
+    EXPECT_TRUE(changed);
+    ASSERT_EQ(4u, parent.children.size());
+    EXPECT_TRUE(staleRasterChild->content.isTerrainAvailabilityUpsample());
+    EXPECT_FALSE(staleRasterChild->content.isRasterDetailUpsample());
+    EXPECT_FALSE(staleRasterChild->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(staleRasterChild->content.renderContent.isMeshReady());
+}
+
 TEST(TileChildMaterializerTest, NonRootGeographicTerrainChildrenPreserveBounds) {
     auto scheme = TileScheme::createGeographicTMS();
     TilesetTile parent(

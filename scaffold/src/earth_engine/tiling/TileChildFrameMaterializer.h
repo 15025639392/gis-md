@@ -33,8 +33,7 @@ public:
         if (input.tile.key.z >= input.maxZoom) {
             return;
         }
-        if (input.tile.content.upsampledFromParent &&
-            !input.tile.content.rasterUpsampledForMoreDetail) {
+        if (input.tile.content.isTerrainAvailabilityUpsample()) {
             return;
         }
         if (!input.hasTerrainProvider) {

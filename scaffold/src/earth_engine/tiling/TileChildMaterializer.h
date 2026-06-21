@@ -45,8 +45,7 @@ struct TileChildMaterializer {
         AvailabilityFn&& availabilityState,
         EnsureTileFn&& ensureTile) {
         if (parent.key.z >= maxZoom ||
-            (parent.content.upsampledFromParent &&
-             !parent.content.rasterUpsampledForMoreDetail)) {
+            parent.content.isTerrainAvailabilityUpsample()) {
             return false;
         }
 
@@ -115,13 +114,14 @@ struct TileChildMaterializer {
 
             const bool upsampled =
                 childInfo.state != TileAvailabilityState::Available;
-            if (child->content.upsampledFromParent != upsampled) {
+            if (child->content.isTerrainAvailabilityUpsample() != upsampled ||
+                child->content.isRasterDetailUpsample()) {
                 child->content.renderContent.clearSurfaceMeshResources();
-                child->content.upsampledFromParent = upsampled;
-                changed = true;
-            }
-            if (child->content.rasterUpsampledForMoreDetail) {
-                child->content.rasterUpsampledForMoreDetail = false;
+                if (upsampled) {
+                    child->content.markTerrainAvailabilityUpsample();
+                } else {
+                    child->content.clearUpsampleKind();
+                }
                 changed = true;
             }
             changed |= linkChild(parent, *child);
@@ -198,8 +198,7 @@ struct TileChildMaterializer {
             child->contentBoundingVolume = child->boundingVolume;
             child->geometricError = parent.geometricError * 0.5;
             child->refine = TileRefine::Replace;
-            child->content.upsampledFromParent = true;
-            child->content.rasterUpsampledForMoreDetail = true;
+            child->content.markRasterDetailUpsample();
             child->unconditionallyRefine = false;
             TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                 *child,
@@ -219,8 +218,7 @@ struct TileChildMaterializer {
         CacheKeyFn&& cacheKey,
         IsTerrainCachedFn&& isTerrainCached,
         AvailabilityStateFn&& availabilityState) {
-        if (tile.content.upsampledFromParent &&
-            !tile.content.rasterUpsampledForMoreDetail) {
+        if (tile.content.isTerrainAvailabilityUpsample()) {
             return false;
         }
 

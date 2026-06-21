@@ -78,7 +78,7 @@ private:
         snapshot.hasTile = outTileState != nullptr;
         snapshot.upsampledFromParent =
             outTileState != nullptr &&
-            outTileState->content.upsampledFromParent;
+            outTileState->content.derivesTerrainFromParent();
         snapshot.contentProviderSupportsTile =
             !snapshot.upsampledFromParent &&
             input.contentProvider &&

@@ -22,6 +22,33 @@ struct TileContentRuntimeState {
     /// raster imagery. It still derives terrain from its parent, but may keep
     /// refining while raster overlays report more detail.
     bool rasterUpsampledForMoreDetail = false;
+
+    bool derivesTerrainFromParent() const {
+        return upsampledFromParent;
+    }
+
+    bool isTerrainAvailabilityUpsample() const {
+        return upsampledFromParent && !rasterUpsampledForMoreDetail;
+    }
+
+    bool isRasterDetailUpsample() const {
+        return upsampledFromParent && rasterUpsampledForMoreDetail;
+    }
+
+    void markTerrainAvailabilityUpsample() {
+        upsampledFromParent = true;
+        rasterUpsampledForMoreDetail = false;
+    }
+
+    void markRasterDetailUpsample() {
+        upsampledFromParent = true;
+        rasterUpsampledForMoreDetail = true;
+    }
+
+    void clearUpsampleKind() {
+        upsampledFromParent = false;
+        rasterUpsampledForMoreDetail = false;
+    }
 };
 
 } // namespace earth_engine

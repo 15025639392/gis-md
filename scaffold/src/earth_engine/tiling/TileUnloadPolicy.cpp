@@ -31,7 +31,7 @@ bool TileUnloadPolicy::hasContentLoadingUpsampledDescendant(
     const TilesetTile& tile) {
     for (const TilesetTile* child : tile.children) {
         if (!child) continue;
-        if (child->content.upsampledFromParent &&
+        if (child->content.derivesTerrainFromParent() &&
             child->content.loadState == TileLoadState::ContentLoading) {
             return true;
         }
