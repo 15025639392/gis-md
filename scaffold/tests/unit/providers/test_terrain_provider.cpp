@@ -1242,6 +1242,102 @@ TEST(GoogleMapTilesImageryProviderTest, CreatesSourceFromExistingSessionLikeCesi
         source.provider->buildUrl(TileKey{"XYZ-WebMercator", 0, 0, 0}));
 }
 
+TEST(GoogleMapTilesImageryProviderTest, BuildsViewportUrlLikeCesiumNative) {
+    GoogleMapTilesExistingSessionOptions options;
+    options.apiBaseUrl = "https://tile.googleapis.com";
+    options.key = "api key";
+    options.session = "session-token";
+
+    EXPECT_EQ(
+        "https://tile.googleapis.com/tile/v1/viewport?session=session-token&key=api%20key&zoom=3&west=-180&south=-85.5&east=179.25&north=85.5",
+        googleMapTilesViewportUrl(
+            options,
+            3,
+            -180.0,
+            -85.5,
+            179.25,
+            85.5));
+}
+
+TEST(GoogleMapTilesImageryProviderTest, ParsesViewportResponseLikeCesiumNative) {
+    const GoogleMapTilesViewportParseResult result =
+        parseGoogleMapTilesViewportResponse(R"json({
+            "maxZoomRects": [
+                {
+                    "maxZoom": 12,
+                    "west": -180.0,
+                    "south": -85.0,
+                    "east": 0.0,
+                    "north": 85.0
+                },
+                {
+                    "maxZoom": -1,
+                    "west": 0.0,
+                    "south": 0.0,
+                    "east": 1.0,
+                    "north": 1.0
+                },
+                {
+                    "maxZoom": 3,
+                    "west": 0.0,
+                    "south": 0.0,
+                    "east": 1.0
+                },
+                "not-a-rect"
+            ]
+        })json");
+
+    ASSERT_TRUE(result.valid);
+    EXPECT_TRUE(result.complete);
+    ASSERT_EQ(1u, result.maxZoomRects.size());
+    EXPECT_EQ(12, result.maxZoomRects[0].maxZoom);
+    EXPECT_DOUBLE_EQ(-180.0, result.maxZoomRects[0].west);
+    EXPECT_DOUBLE_EQ(-85.0, result.maxZoomRects[0].south);
+    EXPECT_DOUBLE_EQ(0.0, result.maxZoomRects[0].east);
+    EXPECT_DOUBLE_EQ(85.0, result.maxZoomRects[0].north);
+}
+
+TEST(GoogleMapTilesImageryProviderTest, ViewportResponseWithOneHundredRectsIsIncompleteLikeCesiumNative) {
+    nlohmann::json response;
+    response["maxZoomRects"] = nlohmann::json::array();
+    for (int i = 0; i < 100; ++i) {
+        response["maxZoomRects"].push_back(nlohmann::json{
+            {"maxZoom", 1},
+            {"west", -180.0},
+            {"south", -85.0},
+            {"east", 180.0},
+            {"north", 85.0}});
+    }
+
+    const GoogleMapTilesViewportParseResult result =
+        parseGoogleMapTilesViewportResponse(response.dump());
+
+    ASSERT_TRUE(result.valid);
+    EXPECT_FALSE(result.complete);
+    EXPECT_EQ(100u, result.maxZoomRects.size());
+}
+
+TEST(GoogleMapTilesImageryProviderTest, RejectsInvalidViewportResponseLikeCesiumNative) {
+    GoogleMapTilesViewportParseResult result =
+        parseGoogleMapTilesViewportResponse("not-json");
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(
+        "Error when parsing Google Map Tiles API viewport service JSON.",
+        result.error);
+
+    result = parseGoogleMapTilesViewportResponse("[1,2]");
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(
+        "Google Map Tiles API viewport service JSON was not an object.",
+        result.error);
+
+    result = parseGoogleMapTilesViewportResponse("{}");
+    EXPECT_FALSE(result.valid);
+    EXPECT_EQ(
+        "Google Map Tiles API viewport service JSON is missing the `maxZoomRects` property.",
+        result.error);
+}
+
 TEST(TileMapServiceUrlTest, AppendsTileMapResourceXmlBeforeQueryLikeCesiumNative) {
     EXPECT_EQ(
         "https://example.com/tms/tilemapresource.xml",

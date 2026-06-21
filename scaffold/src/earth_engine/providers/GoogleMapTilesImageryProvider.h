@@ -44,6 +44,21 @@ struct GoogleMapTilesSessionParseResult {
     std::string error;
 };
 
+struct GoogleMapTilesViewportRect {
+    int maxZoom = -1;
+    double west = 0.0;
+    double south = 0.0;
+    double east = 0.0;
+    double north = 0.0;
+};
+
+struct GoogleMapTilesViewportParseResult {
+    bool valid = false;
+    std::vector<GoogleMapTilesViewportRect> maxZoomRects;
+    bool complete = false;
+    std::string error;
+};
+
 struct GoogleMapTilesImagerySource {
     std::unique_ptr<GoogleMapTilesImageryProvider> provider;
     std::unique_ptr<TileScheme> scheme;
@@ -77,6 +92,17 @@ std::string googleMapTilesCreateSessionPayload(
 GoogleMapTilesSessionParseResult parseGoogleMapTilesCreateSessionResponse(
     const std::string& responseJson,
     const GoogleMapTilesNewSessionOptions& requestOptions);
+
+std::string googleMapTilesViewportUrl(
+    const GoogleMapTilesExistingSessionOptions& options,
+    int zoom,
+    double west,
+    double south,
+    double east,
+    double north);
+
+GoogleMapTilesViewportParseResult parseGoogleMapTilesViewportResponse(
+    const std::string& responseJson);
 
 GoogleMapTilesImagerySource createGoogleMapTilesImagerySource(
     GoogleMapTilesExistingSessionOptions options,

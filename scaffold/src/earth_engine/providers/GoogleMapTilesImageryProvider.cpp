@@ -160,6 +160,94 @@ GoogleMapTilesSessionParseResult parseGoogleMapTilesCreateSessionResponse(
         std::string()};
 }
 
+std::string googleMapTilesViewportUrl(
+    const GoogleMapTilesExistingSessionOptions& options,
+    int zoom,
+    double west,
+    double south,
+    double east,
+    double north) {
+    std::ostringstream westString;
+    std::ostringstream southString;
+    std::ostringstream eastString;
+    std::ostringstream northString;
+    westString << west;
+    southString << south;
+    eastString << east;
+    northString << north;
+    return withQuery(
+        ensureTrailingSlash(options.apiBaseUrl) + "tile/v1/viewport",
+        {{"session", options.session},
+         {"key", options.key},
+         {"zoom", std::to_string(zoom)},
+         {"west", westString.str()},
+         {"south", southString.str()},
+         {"east", eastString.str()},
+         {"north", northString.str()}});
+}
+
+GoogleMapTilesViewportParseResult parseGoogleMapTilesViewportResponse(
+    const std::string& responseJson) {
+    nlohmann::json response =
+        nlohmann::json::parse(responseJson, nullptr, false);
+    if (response.is_discarded()) {
+        return GoogleMapTilesViewportParseResult{
+            false,
+            {},
+            false,
+            "Error when parsing Google Map Tiles API viewport service JSON."};
+    }
+    if (!response.is_object()) {
+        return GoogleMapTilesViewportParseResult{
+            false,
+            {},
+            false,
+            "Google Map Tiles API viewport service JSON was not an object."};
+    }
+
+    const auto rectsIt = response.find("maxZoomRects");
+    if (rectsIt == response.end() || !rectsIt->is_array()) {
+        return GoogleMapTilesViewportParseResult{
+            false,
+            {},
+            false,
+            "Google Map Tiles API viewport service JSON is missing the `maxZoomRects` property."};
+    }
+
+    GoogleMapTilesViewportParseResult result;
+    result.valid = true;
+    result.complete = rectsIt->size() < 100;
+    for (const nlohmann::json& rectJson : *rectsIt) {
+        if (!rectJson.is_object()) {
+            continue;
+        }
+        const auto maxZoomIt = rectJson.find("maxZoom");
+        const auto westIt = rectJson.find("west");
+        const auto southIt = rectJson.find("south");
+        const auto eastIt = rectJson.find("east");
+        const auto northIt = rectJson.find("north");
+        if (maxZoomIt == rectJson.end() || !maxZoomIt->is_number_integer() ||
+            westIt == rectJson.end() || !westIt->is_number() ||
+            southIt == rectJson.end() || !southIt->is_number() ||
+            eastIt == rectJson.end() || !eastIt->is_number() ||
+            northIt == rectJson.end() || !northIt->is_number()) {
+            continue;
+        }
+
+        const int maxZoom = maxZoomIt->get<int>();
+        if (maxZoom < 0) {
+            continue;
+        }
+        result.maxZoomRects.push_back(GoogleMapTilesViewportRect{
+            maxZoom,
+            westIt->get<double>(),
+            southIt->get<double>(),
+            eastIt->get<double>(),
+            northIt->get<double>()});
+    }
+    return result;
+}
+
 GoogleMapTilesImageryProvider::GoogleMapTilesImageryProvider(
     GoogleMapTilesExistingSessionOptions options,
     std::string attribution)
