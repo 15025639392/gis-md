@@ -674,6 +674,59 @@ TEST(RasterOverlayLifecycleTest, RectangleAncestorFallbackReportsNoMoreDetailLik
         imagery.requestedKeys.end());
 }
 
+TEST(RasterOverlayLifecycleTest, RectangleCompositionMixesSourceLevelsAfterFailureLikeCesiumNative) {
+    ParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const int expectedSourceZoom = 8;
+    const TileKey centerKey =
+        scheme->positionToTile(0.1, 0.2, expectedSourceZoom);
+    const Rectangle centerBounds = scheme->tileToRectangle(centerKey);
+    const Rectangle tileBounds(
+        centerBounds.west() - centerBounds.width() * 0.5,
+        centerBounds.south() - centerBounds.height() * 0.5,
+        centerBounds.east() + centerBounds.width() * 0.5,
+        centerBounds.north() + centerBounds.height() * 0.5);
+    const TileKey southeastKey =
+        scheme->positionToTile(tileBounds.east(), tileBounds.south(),
+                               expectedSourceZoom);
+    imagery.failingKey = southeastKey;
+
+    auto rectangleTile = provider.getTile(tileBounds, 1024.0, 1024.0);
+    ASSERT_NE(nullptr, rectangleTile);
+    EXPECT_EQ(expectedSourceZoom, rectangleTile->getSourceZoom());
+
+    ASSERT_TRUE(provider.loadTile(*rectangleTile));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+
+    ASSERT_EQ(RasterOverlayTile::LoadState::Loaded,
+              rectangleTile->getState());
+    ASSERT_EQ(1, uploaderPtr->uploadCount);
+    const DecodedImage& image = uploaderPtr->lastUpload;
+    ASSERT_GT(image.width, 0);
+    ASSERT_GT(image.height, 0);
+    ASSERT_GE(image.pixels.size(),
+              static_cast<size_t>(image.width) *
+                  static_cast<size_t>(image.height) * 4u);
+
+    bool hasParentLevelPixel = false;
+    bool hasSourceLevelPixel = false;
+    for (size_t i = 0; i + 3 < image.pixels.size(); i += 4) {
+        hasParentLevelPixel = hasParentLevelPixel ||
+                              image.pixels[i] == expectedSourceZoom - 1;
+        hasSourceLevelPixel = hasSourceLevelPixel ||
+                              image.pixels[i] == expectedSourceZoom;
+    }
+
+    EXPECT_TRUE(hasParentLevelPixel);
+    EXPECT_TRUE(hasSourceLevelPixel);
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::Yes,
+              rectangleTile->isMoreDetailAvailable());
+}
+
 TEST(RasterOverlayLifecycleTest, RectangleSourceFailureDoesNotFallbackBelowOverlayMinimumLevel) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
