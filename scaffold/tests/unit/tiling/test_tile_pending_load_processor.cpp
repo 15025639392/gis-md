@@ -297,3 +297,56 @@ TEST(TilePendingLoadProcessorTest, TerminalElapsedStopsUploads) {
     EXPECT_EQ(1u, lifecycle.counts().contentUploads);
     EXPECT_GE(budget.mainThreadElapsedMs(), 1.0);
 }
+
+TEST(TilePendingLoadProcessorTest, DrainsTerminalDuringInteraction) {
+    TileLoadLifecycle lifecycle;
+    const TileKey terminalKey{"test", 1, 0, 0};
+    const TileKey uploadKey{"test", 1, 1, 0};
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainTerminalResult(
+            PendingTerrainTerminalResult{
+                terminalKey,
+                "terminal",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TerrainTileLoadStatus::RetryLater});
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            uploadKey,
+            "upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            nullptr});
+    }
+
+    FrameResourceBudgetConfig config;
+    config.maxTerminalStateTransitionsPerFrame = 4;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    std::vector<std::string> events;
+
+    const bool changed =
+        TilePendingLoadProcessor::processPendingLoads(
+            TilePendingLoadProcessorInput{
+                lifecycle,
+                budget,
+                true,
+                {}},
+            [&events](const PendingTerrainTerminalResult& result) {
+                events.push_back(result.cacheKey);
+            },
+            [](const PendingContentTerminalResult&) {},
+            [&events](PendingTerrainUpload& upload) {
+                events.push_back(upload.cacheKey);
+            },
+            [](PendingContentUpload&) {});
+
+    ASSERT_TRUE(changed);
+    ASSERT_EQ(1u, events.size());
+    EXPECT_EQ("terminal", events[0]);
+    EXPECT_EQ(0u, lifecycle.counts().terrainTerminalResults);
+    EXPECT_EQ(1u, lifecycle.counts().terrainUploads);
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("upload"));
+}
