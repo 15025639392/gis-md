@@ -213,3 +213,35 @@ TEST(TileLodTransitionsTest, AdditiveRefinedTileFadesOutAfterLeavingSelection) {
     EXPECT_TRUE(childFadingOut);
     EXPECT_LT(std::abs(childOpacity - 0.75f), 1e-6f);
 }
+
+TEST(TileLodTransitionsTest, EmptyContentDoesNotCreateFakeFade) {
+    Tileset tileset = makeTransitionTileset();
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Empty;
+    root->content.renderContent.setMeshReady(false);
+
+    TilesetTestAccess::beginTilePlan(tileset);
+    root->selectionFrameState.previousSelectionState =
+        TileSelectionState::NotVisited;
+    TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
+    TilesetTestAccess::updateLodTransitions(tileset, 0.25);
+    EXPECT_TRUE(TilesetTestAccess::tilePlan(tileset).tileTransitions.empty());
+    EXPECT_EQ(TilesetTestAccess::tilePlan(tileset).fadingNodeCount, 0);
+    EXPECT_LT(
+        std::abs(
+            root->selectionFrameState.lodTransitionFadePercentage - 1.0f),
+        1e-6f);
+
+    TilesetTestAccess::beginTilePlan(tileset);
+    root->selectionFrameState.selectionState = TileSelectionState::NotVisited;
+    root->selectionFrameState.previousSelectionState =
+        TileSelectionState::Rendered;
+    TilesetTestAccess::updateLodTransitions(tileset, 0.25);
+    EXPECT_TRUE(TilesetTestAccess::tilePlan(tileset).tilesFadingOut.empty());
+    EXPECT_EQ(TilesetTestAccess::fadingOutSetSize(tileset), 0u);
+}
