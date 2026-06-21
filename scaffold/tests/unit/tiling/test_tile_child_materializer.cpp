@@ -4,6 +4,7 @@
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/renderer/RenderDevice.h"
+#include "earth_engine/tiling/SurfaceRasterBinding.h"
 #include "earth_engine/tiling/SurfaceTile.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileChildMaterializer.h"
@@ -572,7 +573,7 @@ TEST(TileChildMaterializerTest, RasterUpsampledTileCanContinueSubdividingForImag
 }
 
 TEST(TileChildMaterializerTest,
-     RasterUpsampledChildrenRequireDrawableReadyRaster) {
+     RasterUpsampledChildrenUseReadyRasterBeforeGpuTexture) {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createGeographicTMS();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
@@ -597,16 +598,9 @@ TEST(TileChildMaterializerTest,
     };
 
     EXPECT_TRUE(mapped.isMoreDetailAvailable());
-    EXPECT_FALSE(TileRasterUpsampledChildMaterializer::materialize(
-        parent,
-        100.0,
-        ensure));
-    EXPECT_TRUE(parent.children.empty());
-
-    RasterOverlayTile* readyTile = mapped.getReadyTile();
-    ASSERT_NE(nullptr, readyTile);
-    readyTile->setTexture(std::make_unique<DummyTexture>(4, 4));
-
+    EXPECT_EQ(
+        SurfaceRasterBindingKind::None,
+        chooseSurfaceRasterBinding(&mapped).kind);
     EXPECT_TRUE(TileRasterUpsampledChildMaterializer::materialize(
         parent,
         100.0,
@@ -618,6 +612,16 @@ TEST(TileChildMaterializerTest,
     EXPECT_EQ(
         Rectangle::fromDegrees(-10.0, 0.0, 0.0, 10.0),
         parent.children[3]->bounds);
+
+    RasterOverlayTile* readyTile = mapped.getReadyTile();
+    ASSERT_NE(nullptr, readyTile);
+    readyTile->setTexture(std::make_unique<DummyTexture>(4, 4));
+
+    EXPECT_FALSE(TileRasterUpsampledChildMaterializer::materialize(
+        parent,
+        100.0,
+        ensure));
+    EXPECT_EQ(4u, parent.children.size());
 }
 
 TEST(TileChildMaterializerTest, CanRefineHonorsContentRulesBeforeTerrainSignals) {

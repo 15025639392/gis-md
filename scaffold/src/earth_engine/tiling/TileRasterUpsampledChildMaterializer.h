@@ -1,9 +1,11 @@
 #pragma once
 
 #include "RasterMappedToTilesetTile.h"
-#include "SurfaceRasterBinding.h"
 #include "TileChildMaterializer.h"
 #include "TilesetTile.h"
+
+#include "../providers/RasterOverlayTile.h"
+#include "../providers/RasterOverlayTileProvider.h"
 
 #include <vector>
 
@@ -29,14 +31,12 @@ public:
                 !mapped->isMoreDetailAvailable()) {
                 return;
             }
-            const SurfaceRasterBinding binding =
-                chooseSurfaceRasterBinding(mapped);
-            if (binding.kind == SurfaceRasterBindingKind::None ||
-                !binding.tile) {
+            const RasterOverlayTile* readyTile = mapped->getReadyTile();
+            if (!readyTile) {
                 return;
             }
             subdivisionRectangle = details.findRectangleForOverlayProjection(
-                binding.tile->getTileProvider().getProjection());
+                readyTile->getTileProvider().getProjection());
         });
 
         if (!subdivisionRectangle) {

@@ -13632,7 +13632,7 @@ void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
           "SurfaceRasterOverlayStateUpdater: invisible overlay releases raster tile references");
 }
 
-void testSurfaceRasterUpdaterRequiresDrawableRasterForUpsampleAction() {
+void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -13692,8 +13692,8 @@ void testSurfaceRasterUpdaterRequiresDrawableRasterForUpsampleAction() {
           "SurfaceRasterOverlayStateUpdater: no-texture more-detail raster is cover-ready");
     check(!tile.rasterOverlayState.hasDrawableReadyMapping(0),
           "SurfaceRasterOverlayStateUpdater: no-texture more-detail raster is not drawable");
-    check(!noTextureAction.createRasterOverlayUpsampledChildren,
-          "SurfaceRasterOverlayStateUpdater: no-texture raster does not request upsample children");
+    check(noTextureAction.createRasterOverlayUpsampledChildren,
+          "SurfaceRasterOverlayStateUpdater: ready more-detail raster requests upsample children before GPU texture");
 
     loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
     const SurfaceRasterOverlayUpdateAction drawableAction =
@@ -26990,7 +26990,7 @@ int main() {
     testTilesetUnloadRenderContentPreservesLoadedChildren();
     testTilesetUnloadExternalContentClearsChildren();
     testTilesetDirectExternalContentUnloadClearsChildren();
-    testSurfaceRasterUpdaterRequiresDrawableRasterForUpsampleAction();
+    testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction();
 
     std::cout << "\n=== " << gFailures << " failures ===\n";
     return gFailures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
