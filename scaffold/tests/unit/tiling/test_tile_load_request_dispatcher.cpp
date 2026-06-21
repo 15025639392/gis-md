@@ -36,6 +36,33 @@ public:
     int requestCount = 0;
 };
 
+class FanoutTerrainProvider final : public TerrainProvider {
+public:
+    std::string id() const override { return "fanout-terrain"; }
+    std::string schemeId() const override { return "test"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 1; }
+    int tileSize() const override { return 2; }
+    int estimatedRequestFanout(const TileKey&) const override { return 2; }
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://fanout-terrain";
+    }
+    void requestTile(
+        const TileKey&,
+        CancellationToken,
+        HeightmapCallback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        ++requestCount;
+    }
+    std::unique_ptr<DecodedHeightmap> decodeTile(
+        const uint8_t*,
+        size_t) override {
+        return nullptr;
+    }
+
+    int requestCount = 0;
+};
+
 class DispatcherBudgetContentProvider final : public TilesetContentProvider {
 public:
     std::string id() const override { return "dispatcher-budget-content"; }
@@ -315,6 +342,71 @@ TEST(TileLoadRequestDispatcherTest, BlocksWhenBudgetIsExhausted) {
     EXPECT_TRUE(requestState.empty());
     EXPECT_FALSE(pendingLoads.hasWork());
     EXPECT_EQ(0u, contentBudget.networkRequestsIssued());
+}
+
+TEST(TileLoadRequestDispatcherTest, TerrainFanoutConsumesRequestBudget) {
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    const TileKey key{"test", 0, 0, 0};
+
+    FrameResourceBudgetConfig blockedConfig;
+    blockedConfig.maxNetworkRequestsPerFrame = 1;
+    blockedConfig.maxTerrainContentNetworkRequestsPerFrame = 1;
+    FrameResourceBudget blockedBudget;
+    blockedBudget.beginFrame(1, blockedConfig);
+    FanoutTerrainProvider blockedProvider;
+    bool blockedIssued = false;
+
+    TileLoadDispatchResult blockedResult =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            blockedBudget,
+            blockedProvider,
+            key,
+            "fanout-blocked",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&blockedIssued]() { blockedIssued = true; });
+
+    EXPECT_EQ(TileLoadDispatchResult::Blocked, blockedResult);
+    EXPECT_FALSE(blockedIssued);
+    EXPECT_EQ(0, blockedProvider.requestCount);
+    EXPECT_EQ(0u, blockedBudget.networkRequestsIssued());
+    EXPECT_TRUE(requestState.empty());
+
+    FrameResourceBudgetConfig issuedConfig;
+    issuedConfig.maxNetworkRequestsPerFrame = 2;
+    issuedConfig.maxTerrainContentNetworkRequestsPerFrame = 2;
+    FrameResourceBudget issuedBudget;
+    issuedBudget.beginFrame(2, issuedConfig);
+    FanoutTerrainProvider issuedProvider;
+    bool issued = false;
+
+    TileLoadDispatchResult issuedResult =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            issuedBudget,
+            issuedProvider,
+            key,
+            "fanout-issued",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    EXPECT_EQ(TileLoadDispatchResult::Issued, issuedResult);
+    EXPECT_TRUE(issued);
+    EXPECT_EQ(1, issuedProvider.requestCount);
+    EXPECT_EQ(2u, issuedBudget.terrainContentNetworkRequestsIssued());
+    EXPECT_EQ(2u, issuedBudget.networkRequestsIssued());
+    EXPECT_TRUE(requestState.contains("fanout-issued"));
 }
 
 TEST(TileLoadRequestDispatcherTest, SkipsEmptyCacheKeys) {
