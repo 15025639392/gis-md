@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
 #include "earth_engine/tiling/TileEmptyContentRegistry.h"
 #include "earth_engine/tiling/TilePendingLoadCommitCoordinator.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
@@ -97,6 +98,94 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     ASSERT_NE(terrainCache.find(cacheKey), terrainCache.end());
     EXPECT_TRUE(terrainCache.at(cacheKey)->valid());
     EXPECT_FALSE(gltfEnsured);
+    EXPECT_FALSE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     MissingTerrainUploadCachesAndIngestsAvailability) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey terrainKey{"Geographic-TMS", 2, 0, 0};
+    const TileKey availableChildKey{"Geographic-TMS", 3, 0, 0};
+    const TileKey unavailableSiblingKey{"Geographic-TMS", 3, 1, 0};
+    const std::string cacheKey = "missing-terrain-with-heightmap";
+    auto heightmap = std::make_unique<DecodedHeightmap>();
+    heightmap->tileSize = 2;
+    heightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
+    DecodedHeightmap::QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = terrainKey;
+    update.metadataAvailability = {{0, 0, 0, 0, 0}};
+    heightmap->quantizedMeshAvailabilityUpdates.push_back(update);
+
+    PendingTerrainUpload upload{
+        terrainKey,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        std::move(heightmap)};
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
+            upload.key,
+            upload.cacheKey,
+            upload.group,
+            upload.priority,
+            nullptr});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "metadataAvailability": 2
+    })json";
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+    EXPECT_EQ(TileAvailabilityState::Unknown,
+              provider.availabilityState(availableChildKey));
+
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache;
+    int availabilityIngests = 0;
+    bool meshEnsured = false;
+    bool resourcesDirty = false;
+    TilePendingLoadCommitCoordinator::commitTerrainUpload(
+        upload,
+        &provider,
+        terrainCache,
+        lifecycle,
+        false,
+        [](const TileKey&) -> TilesetTile* { return nullptr; },
+        [&availabilityIngests, &terrainKey](const TileKey& key,
+                                            const DecodedHeightmap& hm) {
+            EXPECT_EQ(terrainKey, key);
+            EXPECT_TRUE(hm.valid());
+            ++availabilityIngests;
+        },
+        [&meshEnsured](TilesetTile&) { meshEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_EQ(1, availabilityIngests);
+    ASSERT_NE(terrainCache.find(cacheKey), terrainCache.end());
+    EXPECT_TRUE(terrainCache.at(cacheKey)->valid());
+    EXPECT_EQ(TileAvailabilityState::Available,
+              provider.availabilityState(availableChildKey));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(unavailableSiblingKey));
+    EXPECT_FALSE(meshEnsured);
     EXPECT_FALSE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }
