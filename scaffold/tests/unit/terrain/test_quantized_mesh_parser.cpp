@@ -46,13 +46,26 @@ void appendMetadataExtension(std::vector<uint8_t>& bytes,
 std::vector<uint8_t> makeQuantizedMeshBytes(
     const std::string& metadataJson = "",
     bool includeSkirtEdges = false,
-    bool includeOctNormals = false) {
+    bool includeOctNormals = false,
+    const Vec3& boundingSphereCenterEcef = Vec3::zero(),
+    float minimumHeight = 0.0f,
+    float maximumHeight = 100.0f,
+    const Vec3& tileCenterEcef = Vec3::zero(),
+    const Vec3& horizonOcclusionPoint = Vec3::zero()) {
     std::vector<uint8_t> bytes;
 
-    for (int i = 0; i < 3; ++i) appendPod<double>(bytes, 0.0);
-    appendPod<float>(bytes, 0.0f);
-    appendPod<float>(bytes, 100.0f);
-    for (int i = 0; i < 7; ++i) appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, tileCenterEcef.x());
+    appendPod<double>(bytes, tileCenterEcef.y());
+    appendPod<double>(bytes, tileCenterEcef.z());
+    appendPod<float>(bytes, minimumHeight);
+    appendPod<float>(bytes, maximumHeight);
+    appendPod<double>(bytes, boundingSphereCenterEcef.x());
+    appendPod<double>(bytes, boundingSphereCenterEcef.y());
+    appendPod<double>(bytes, boundingSphereCenterEcef.z());
+    appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, horizonOcclusionPoint.x());
+    appendPod<double>(bytes, horizonOcclusionPoint.y());
+    appendPod<double>(bytes, horizonOcclusionPoint.z());
     appendPod<uint32_t>(bytes, 3);
 
     const uint16_t u[] = {
@@ -1230,6 +1243,114 @@ TEST(QuantizedMeshParserOctNormalTest,
     EXPECT_GT(mesh->vertices[0].normalEcef.x(), 0.9999);
     EXPECT_LT(std::abs(mesh->vertices[0].normalEcef.y()), 0.004);
     EXPECT_LT(std::abs(mesh->vertices[0].normalEcef.z()), 0.004);
+}
+
+TEST(QuantizedMeshParserHeaderTest,
+     RtcOriginComesFromBoundingSphereCenterLikeCesiumNative) {
+    const Rectangle bounds = rootRectangle();
+    const Vec3 boundingSphereCenter(1234.0, -5678.0, 9012.0);
+    const Vec3 tileCenter(9999.0, 8888.0, 7777.0);
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes(
+            "",
+            false,
+            false,
+            boundingSphereCenter,
+            0.0f,
+            100.0f,
+            tileCenter);
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            bounds);
+
+    ASSERT_NE(nullptr, mesh);
+    EXPECT_TRUE(mesh->hasLocalOriginEcef);
+    EXPECT_LT((mesh->localOriginEcef - boundingSphereCenter).length(), 1e-12);
+
+    const Vec3 expectedFirstVertex =
+        Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic::fromRadians(bounds.west(), bounds.south(), 0.0));
+    ASSERT_FALSE(mesh->vertices.empty());
+    EXPECT_LT((mesh->vertices[0].positionEcef - expectedFirstVertex).length(),
+              1e-6);
+}
+
+TEST(QuantizedMeshParserHeaderTest,
+     HeaderHeightRangeIsExposedLikeCesiumNative) {
+    constexpr float minimumHeight = -123.5f;
+    constexpr float maximumHeight = 456.25f;
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes(
+            "",
+            false,
+            false,
+            Vec3::zero(),
+            minimumHeight,
+            maximumHeight);
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            rootRectangle());
+
+    ASSERT_NE(nullptr, mesh);
+    EXPECT_TRUE(mesh->hasHeightRange);
+    EXPECT_LT(std::abs(mesh->minimumHeight - minimumHeight), 1e-6);
+    EXPECT_LT(std::abs(mesh->maximumHeight - maximumHeight), 1e-6);
+}
+
+TEST(QuantizedMeshParserHeaderTest,
+     NonzeroHorizonOcclusionPointIsPreservedLikeCesiumNative) {
+    const Vec3 horizonOcclusionPoint(0.25, -0.5, 0.75);
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes(
+            "",
+            false,
+            false,
+            Vec3::zero(),
+            0.0f,
+            100.0f,
+            Vec3::zero(),
+            horizonOcclusionPoint);
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            rootRectangle());
+
+    ASSERT_NE(nullptr, mesh);
+    EXPECT_TRUE(mesh->hasHorizonOcclusionPoint);
+    EXPECT_LT((mesh->horizonOcclusionPoint - horizonOcclusionPoint).length(),
+              1e-12);
+}
+
+TEST(QuantizedMeshParserHeaderTest,
+     ZeroHorizonOcclusionPointIsStillExposedLikeCesiumNative) {
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes(
+            "",
+            false,
+            false,
+            Vec3::zero(),
+            0.0f,
+            100.0f,
+            Vec3::zero(),
+            Vec3::zero());
+
+    std::unique_ptr<SurfaceTileMesh> mesh =
+        QuantizedMeshParser::parseToSurfaceTileMesh(
+            bytes.data(),
+            bytes.size(),
+            rootRectangle());
+
+    ASSERT_NE(nullptr, mesh);
+    EXPECT_TRUE(mesh->hasHorizonOcclusionPoint);
+    EXPECT_EQ(Vec3::zero(), mesh->horizonOcclusionPoint);
 }
 
 TEST(QuantizedMeshParserValidationTest,

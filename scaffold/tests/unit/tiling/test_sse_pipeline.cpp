@@ -3364,114 +3364,6 @@ void testHeightmapTerrainProviderExposesAttribution() {
           "HeightmapTerrainProvider: terrain attribution metadata is exposed");
 }
 
-void testQuantizedMeshRtcOriginFromBoundingSphereCenter() {
-    auto scheme = TileScheme::createGeographicTMS();
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const Rectangle bounds = scheme->tileToRectangle(rootKey);
-    const Vec3 boundingSphereCenter(1234.0, -5678.0, 9012.0);
-    const Vec3 tileCenter(9999.0, 8888.0, 7777.0);
-    const std::vector<uint8_t> bytes =
-        makeQuantizedMeshBytes(
-            "", false, false, boundingSphereCenter, 0.0f, 100.0f, tileCenter);
-
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            bounds);
-
-    check(mesh != nullptr,
-          "QuantizedMeshParser: RTC-origin test mesh parses");
-    check(mesh && mesh->hasLocalOriginEcef,
-          "QuantizedMeshParser: quantized-mesh mesh center is exposed as RTC origin");
-    const Vec3 originDelta =
-        mesh ? (mesh->localOriginEcef - boundingSphereCenter) : Vec3::zero();
-    check(originDelta.length() < 1e-12,
-          "QuantizedMeshParser: RTC origin equals BoundingSphereCenter like cesium-native");
-
-    const Vec3 expectedFirstVertex =
-        Ellipsoid::WGS84().cartographicToCartesian(
-            Cartographic::fromRadians(bounds.west(), bounds.south(), 0.0));
-    const Vec3 vertexDelta =
-        mesh ? (mesh->vertices[0].positionEcef - expectedFirstVertex)
-             : Vec3::zero();
-    check(vertexDelta.length() < 1e-6,
-          "QuantizedMeshParser: mesh vertices stay absolute ECEF before upload");
-}
-
-void testQuantizedMeshHeaderHeightRangeIsExposed() {
-    auto scheme = TileScheme::createGeographicTMS();
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const Rectangle bounds = scheme->tileToRectangle(rootKey);
-    const float minimumHeight = -123.5f;
-    const float maximumHeight = 456.25f;
-    const std::vector<uint8_t> bytes = makeQuantizedMeshBytes(
-        "", false, false, Vec3::zero(), minimumHeight, maximumHeight);
-
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            bounds);
-
-    check(mesh != nullptr,
-          "QuantizedMeshParser: height range test mesh parses");
-    check(mesh && mesh->hasHeightRange,
-          "QuantizedMeshParser: quantized-mesh header height range is exposed");
-    check(mesh &&
-              std::abs(mesh->minimumHeight - minimumHeight) < 1e-6 &&
-              std::abs(mesh->maximumHeight - maximumHeight) < 1e-6,
-          "QuantizedMeshParser: header min/max heights match cesium-native bounding region inputs");
-}
-
-void testQuantizedMeshHeaderHorizonOcclusionPointIsExposed() {
-    auto scheme = TileScheme::createGeographicTMS();
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const Rectangle bounds = scheme->tileToRectangle(rootKey);
-    const Vec3 horizonOcclusionPoint(0.25, -0.5, 0.75);
-    const std::vector<uint8_t> bytes = makeQuantizedMeshBytes(
-        "", false, false, Vec3::zero(), 0.0f, 100.0f, Vec3::zero(),
-        horizonOcclusionPoint);
-
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            bounds);
-
-    check(mesh != nullptr,
-          "QuantizedMeshParser: horizon-occlusion header test mesh parses");
-    check(mesh && mesh->hasHorizonOcclusionPoint,
-          "QuantizedMeshParser: nonzero horizon occlusion point is marked present");
-    const Vec3 delta = mesh
-        ? mesh->horizonOcclusionPoint - horizonOcclusionPoint
-        : Vec3::zero();
-    check(delta.length() < 1e-12,
-          "QuantizedMeshParser: horizon occlusion point is preserved from quantized-mesh header like cesium-native");
-}
-
-void testQuantizedMeshHeaderZeroHorizonOcclusionPointIsStillExposed() {
-    auto scheme = TileScheme::createGeographicTMS();
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    const Rectangle bounds = scheme->tileToRectangle(rootKey);
-    const std::vector<uint8_t> bytes = makeQuantizedMeshBytes(
-        "", false, false, Vec3::zero(), 0.0f, 100.0f, Vec3::zero(),
-        Vec3::zero());
-
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            bounds);
-
-    check(mesh != nullptr,
-          "QuantizedMeshParser: zero horizon-occlusion header test mesh parses");
-    check(mesh && mesh->hasHorizonOcclusionPoint,
-          "QuantizedMeshParser: zero horizon occlusion point is still present in the quantized-mesh header like cesium-native");
-    check(mesh && mesh->horizonOcclusionPoint == Vec3::zero(),
-          "QuantizedMeshParser: zero horizon occlusion point is preserved without value-based filtering");
-}
-
 void testQuantizedMeshVertexUvAndHeightGolden() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
@@ -27911,10 +27803,6 @@ int main() {
     testRasterMappedTemporaryAncestorDoesNotReportMoreDetail();
     testRasterOverlayNativeTranslationAndRendererWindow();
     testHeightmapTerrainProviderExposesAttribution();
-    testQuantizedMeshRtcOriginFromBoundingSphereCenter();
-    testQuantizedMeshHeaderHeightRangeIsExposed();
-    testQuantizedMeshHeaderHorizonOcclusionPointIsExposed();
-    testQuantizedMeshHeaderZeroHorizonOcclusionPointIsStillExposed();
     testQuantizedMeshVertexUvAndHeightGolden();
     testQuantizedMeshWaterMaskExtensions();
     testQuantizedMeshProviderRasterizesCesiumHeightmapGrid();
