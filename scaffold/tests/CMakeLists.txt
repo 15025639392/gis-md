@@ -310,6 +310,12 @@ add_executable(test_tile_selection_traversal_counters
 target_link_libraries(test_tile_selection_traversal_counters PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_selection_traversal_counters COMMAND test_tile_selection_traversal_counters)
 
+add_executable(test_tile_selection_visit_preparation
+    unit/tiling/test_tile_selection_visit_preparation.cpp
+)
+target_link_libraries(test_tile_selection_visit_preparation PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_selection_visit_preparation COMMAND test_tile_selection_visit_preparation)
+
 add_executable(test_tile_missing_request_scheduler
     unit/tiling/test_tile_missing_request_scheduler.cpp
 )
