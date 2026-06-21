@@ -93,6 +93,31 @@ void writeBytes(const std::filesystem::path& path,
               static_cast<std::streamsize>(bytes.size()));
 }
 
+class ZoomRangeTerrainProvider final : public TerrainProvider {
+public:
+    std::string id() const override { return "zoom-range-terrain"; }
+    std::string schemeId() const override { return "Geographic-TMS"; }
+    int minZoom() const override { return 1; }
+    int maxZoom() const override { return 2; }
+    int tileSize() const override { return 2; }
+
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://zoom-range";
+    }
+
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     HeightmapCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callback(key, TerrainTileLoadResult::retryLater());
+    }
+
+    std::unique_ptr<DecodedHeightmap> decodeTile(
+        const uint8_t*, size_t) override {
+        return nullptr;
+    }
+};
+
 class NoopHttpRequest final : public HttpRequest {
 public:
     void cancel() override {}
@@ -233,6 +258,25 @@ TEST(HeightmapTerrainProviderTest, ExposesAttribution) {
         "height source credit");
 
     EXPECT_EQ("height source credit", provider.attribution());
+}
+
+TEST(TerrainProviderTest, DefaultAvailabilityHonorsZoomRange) {
+    ZoomRangeTerrainProvider provider;
+
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(
+                  TileKey{"Geographic-TMS", 0, 0, 0}));
+    EXPECT_EQ(TileAvailabilityState::Available,
+              provider.availabilityState(
+                  TileKey{"Geographic-TMS", 1, 0, 0}));
+    EXPECT_EQ(TileAvailabilityState::Available,
+              provider.availabilityState(
+                  TileKey{"Geographic-TMS", 2, 0, 0}));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(
+                  TileKey{"Geographic-TMS", 3, 0, 0}));
+    EXPECT_FALSE(provider.supportsTile(
+        TileKey{"XYZ-WebMercator", 1, 0, 0}));
 }
 
 TEST(QuantizedMeshTerrainProviderTest, ConfiguresFromCesiumLayerJson) {
