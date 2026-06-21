@@ -1490,7 +1490,7 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
     if (!tryIssueRasterRequestBudget(
             budget,
             activeRasterSourceRequests_,
-            1)) {
+            sourcePlan.budgetUnits())) {
         return false;
     }
 

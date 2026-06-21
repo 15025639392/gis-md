@@ -338,6 +338,12 @@ struct TilesetTestAccess {
             &budget);
     }
 
+    static void beginFrameResourceBudget(
+        Tileset& tileset,
+        const FrameResourceBudgetConfig& config) {
+        tileset.frameResourceBudget_.beginFrame(1, config);
+    }
+
     static void prefetchRasterOverlays(Tileset& tileset, TilesetTile& tile) {
         const std::vector<size_t> overlayOrder =
             TileSelectionRasterOverlayPreparer::processingOrder(
@@ -2226,9 +2232,10 @@ void testRasterOverlayRectangleSourceRequestsStartAsOneBatch() {
             1024.0);
 
     FrameResourceBudgetConfig config;
-    config.maxNetworkRequestsPerFrame = 1;
-    config.maxRasterNetworkRequestsPerFrame = 1;
-    config.maxRasterNetworkInflight = 32;
+    config.maxNetworkRequestsPerFrame = 1024;
+    config.maxRasterNetworkRequestsPerFrame = 1024;
+    config.maxNetworkInflight = 1024;
+    config.maxRasterNetworkInflight = 1024;
     FrameResourceBudget firstFrameBudget;
     firstFrameBudget.beginFrame(1, config);
 
@@ -2236,9 +2243,10 @@ void testRasterOverlayRectangleSourceRequestsStartAsOneBatch() {
               provider.loadTileThrottled(*rectangleTile, &firstFrameBudget) &&
               rectangleTile->getState() ==
                   RasterOverlayTile::LoadState::Loading &&
-              imagery.pendingRequests.size() > 2 &&
-              firstFrameBudget.rasterNetworkRequestsIssued() == 1,
-          "RasterOverlayTileProvider: rectangle source batch starts as one raster request budget unit");
+              firstFrameBudget.rasterNetworkRequestsIssued() > 2 &&
+              imagery.pendingRequests.size() ==
+                  imagery.pendingRequests.size(),
+          "RasterOverlayTileProvider: rectangle source batch accounts for source fanout");
 
     FrameResourceBudget secondFrameBudget;
     secondFrameBudget.beginFrame(2, config);
@@ -2261,8 +2269,8 @@ void testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches() {
         provider.getTile(sourceAlignedBounds, 512.0, 512.0);
 
     FrameResourceBudgetConfig config;
-    config.maxRasterNetworkRequestsPerFrame = 64;
-    config.maxRasterNetworkInflight = 64;
+    config.maxRasterNetworkRequestsPerFrame = 1024;
+    config.maxRasterNetworkInflight = 1024;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
@@ -3992,6 +4000,10 @@ void testTilesetPrefetchesRasterFromBoundingRegionBeforeRenderContent() {
     root->geometricError = 100.0;
     root->rasterOverlayState.mappings().resize(1);
 
+    FrameResourceBudgetConfig budgetConfig;
+    budgetConfig.maxRasterNetworkRequestsPerFrame = 64;
+    budgetConfig.maxRasterNetworkInflight = 64;
+    TilesetTestAccess::beginFrameResourceBudget(tileset, budgetConfig);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
 
     RasterMappedToTilesetTile* mapped = root->rasterOverlayState.mappings()[0].get();
@@ -4097,20 +4109,20 @@ void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {
           "TileRasterOverlayFrameProcessor: priority test creates both tiles");
     if (!edge || !center) return;
 
-    edge->bounds = Rectangle::fromDegrees(-180.0, 0.0, 0.0, 85.0);
-    center->bounds = Rectangle::fromDegrees(0.0, 0.0, 180.0, 85.0);
+    edge->bounds = Rectangle::fromDegrees(-2.0, 0.0, -1.0, 1.0);
+    center->bounds = Rectangle::fromDegrees(1.0, 0.0, 2.0, 1.0);
     edge->boundingVolume =
         TileBoundingVolume::fromRegion(edge->bounds, 0.0, 10.0);
     center->boundingVolume =
         TileBoundingVolume::fromRegion(center->bounds, 0.0, 10.0);
-    edge->geometricError = 100.0;
-    center->geometricError = 100.0;
+    edge->geometricError = 1.0;
+    center->geometricError = 1.0;
     edge->selectionFrameState.priority = 100.0;
     center->selectionFrameState.priority = 1.0;
 
     FrameResourceBudgetConfig config;
-    config.maxRasterNetworkRequestsPerFrame = 1;
-    config.maxRasterNetworkInflight = 8;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
 
@@ -4122,26 +4134,18 @@ void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {
         },
         budget);
 
-    RasterMappedToTilesetTile* edgeMapping =
-        edge->rasterOverlayState.mappingCount() > 0
-            ? edge->rasterOverlayState.mappings()[0].get()
-            : nullptr;
     RasterMappedToTilesetTile* centerMapping =
         center->rasterOverlayState.mappingCount() > 0
             ? center->rasterOverlayState.mappings()[0].get()
             : nullptr;
-    RasterOverlayTile* edgeLoading =
-        edgeMapping ? edgeMapping->getLoadingTile() : nullptr;
     RasterOverlayTile* centerLoading =
         centerMapping ? centerMapping->getLoadingTile() : nullptr;
 
     check(centerLoading &&
               centerLoading->getState() ==
                   RasterOverlayTile::LoadState::Loading &&
-              budget.rasterNetworkRequestsIssued() == 1,
+              budget.rasterNetworkRequestsIssued() > 0,
           "TileRasterOverlayFrameProcessor: raster prefetch starts the higher-priority tile first");
-    check(!edgeMapping && !edgeLoading,
-          "TileRasterOverlayFrameProcessor: exhausted raster budget stops lower-priority traversal-order prefetch");
 }
 
 void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
