@@ -8,10 +8,12 @@
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
 #include "earth_engine/scene/SceneTilesetDiagnostics.h"
+#include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 
 #include <algorithm>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -49,6 +51,27 @@ struct TilesetTestAccess {
             TileLoadRequest{
                 key,
                 TileLoadPriorityGroup::Normal}});
+    }
+
+    static std::string terrainCacheKey(Tileset&, const TileKey& key) {
+        return TileCacheKey::forTile(key);
+    }
+
+    static void queueLoad(
+        Tileset& tileset,
+        const TileKey& key,
+        TileLoadPriorityGroup group) {
+        tileset.loadQueue_.queue(
+            key,
+            group,
+            std::numeric_limits<double>::max());
+    }
+
+    static void markEligibleForUnloading(
+        Tileset& tileset,
+        const TileKey& key) {
+        tileset.cacheOwnership_.markEligibleForUnloading(
+            terrainCacheKey(tileset, key));
     }
 
     static void requestMissingTilesWithPriorities(
@@ -595,6 +618,106 @@ TEST(
             .contentProviderRequests
             .peakWorkerBlockingRequests,
         0);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    LoadDiagnosticsExposeNativeLifecycleStates) {
+    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+
+    const std::vector<TileKey> keys = {
+        {"Geographic-TMS", 3, 0, 0},
+        {"Geographic-TMS", 3, 1, 0},
+        {"Geographic-TMS", 3, 2, 0},
+        {"Geographic-TMS", 3, 3, 0},
+        {"Geographic-TMS", 3, 4, 0},
+        {"Geographic-TMS", 3, 5, 0},
+        {"Geographic-TMS", 3, 6, 0}};
+
+    std::vector<TilesetTile*> tiles;
+    tiles.reserve(keys.size());
+    for (const TileKey& key : keys) {
+        tiles.push_back(TilesetTestAccess::ensureTile(tileset, key));
+    }
+    ASSERT_EQ(tiles.size(), keys.size());
+    ASSERT_TRUE(std::all_of(
+        tiles.begin(),
+        tiles.end(),
+        [](const TilesetTile* tile) { return tile != nullptr; }));
+
+    const TilesetLoadDiagnostics baseline = tileset.loadDiagnostics();
+
+    tiles[0]->content.loadState = TileLoadState::Unloading;
+    tiles[0]->content.contentKind = TileContentKind::Unknown;
+    tiles[1]->content.loadState = TileLoadState::FailedTemporarily;
+    tiles[1]->content.contentKind = TileContentKind::Empty;
+    tiles[2]->content.loadState = TileLoadState::Unloaded;
+    tiles[2]->content.contentKind = TileContentKind::External;
+    tiles[3]->content.loadState = TileLoadState::ContentLoading;
+    tiles[3]->content.contentKind = TileContentKind::Render;
+    tiles[4]->content.loadState = TileLoadState::ContentLoaded;
+    tiles[4]->content.contentKind = TileContentKind::Unknown;
+    tiles[5]->content.loadState = TileLoadState::Done;
+    tiles[5]->content.contentKind = TileContentKind::Render;
+    tiles[6]->content.loadState = TileLoadState::Failed;
+    tiles[6]->content.contentKind = TileContentKind::Unknown;
+    tiles[6]->rasterOverlayState.missingProjections().push_back(
+        RasterOverlayProjection::Geographic);
+
+    TilesetTestAccess::queueLoad(
+        tileset,
+        keys[0],
+        TileLoadPriorityGroup::Preload);
+    TilesetTestAccess::queueLoad(
+        tileset,
+        keys[1],
+        TileLoadPriorityGroup::Normal);
+    TilesetTestAccess::queueLoad(
+        tileset,
+        keys[2],
+        TileLoadPriorityGroup::Urgent);
+    TilesetTestAccess::markEligibleForUnloading(tileset, keys[5]);
+
+    const TilesetLoadDiagnostics diagnostics = tileset.loadDiagnostics();
+    EXPECT_EQ(diagnostics.loadQueuePreloadRequests, 1);
+    EXPECT_EQ(diagnostics.loadQueueNormalRequests, 1);
+    EXPECT_EQ(diagnostics.loadQueueUrgentRequests, 1);
+    EXPECT_EQ(diagnostics.loadQueueTotal(), 3);
+    EXPECT_EQ(
+        diagnostics.loadUnloadingTiles,
+        baseline.loadUnloadingTiles + 1);
+    EXPECT_EQ(
+        diagnostics.loadFailedTemporarilyTiles,
+        baseline.loadFailedTemporarilyTiles + 1);
+    EXPECT_EQ(
+        diagnostics.loadUnloadedTiles,
+        baseline.loadUnloadedTiles - 6);
+    EXPECT_EQ(
+        diagnostics.loadContentLoadingTiles,
+        baseline.loadContentLoadingTiles + 1);
+    EXPECT_EQ(
+        diagnostics.loadContentLoadedTiles,
+        baseline.loadContentLoadedTiles + 1);
+    EXPECT_EQ(diagnostics.loadDoneTiles, baseline.loadDoneTiles + 1);
+    EXPECT_EQ(diagnostics.loadFailedTiles, baseline.loadFailedTiles + 1);
+    EXPECT_EQ(
+        diagnostics.contentUnknownTiles,
+        baseline.contentUnknownTiles - 4);
+    EXPECT_EQ(diagnostics.contentEmptyTiles, baseline.contentEmptyTiles + 1);
+    EXPECT_EQ(
+        diagnostics.contentExternalTiles,
+        baseline.contentExternalTiles + 1);
+    EXPECT_EQ(diagnostics.contentRenderTiles, baseline.contentRenderTiles + 2);
+    EXPECT_EQ(diagnostics.unloadQueueTiles, 1);
+    EXPECT_EQ(
+        diagnostics.missingRasterOverlayProjections,
+        baseline.missingRasterOverlayProjections + 1);
 }
 
 TEST(
