@@ -881,6 +881,62 @@ TEST(QuantizedMeshTerrainProviderTest, NonStringParentUrlIsIgnoredLikeCesiumNati
               provider.availabilityState(TileKey{"Geographic-TMS", 1, 2, 0}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, RejectsOutOfRangeGeographicTilesLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "minzoom": 0,
+      "maxzoom": 4
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 0}));
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 1, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 0, -1, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 2, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, -1}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 1}));
+
+    QuantizedMeshTerrainProvider metadataProvider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string metadataLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "minzoom": 0,
+      "maxzoom": 4,
+      "metadataAvailability": 2
+    })json";
+
+    ASSERT_TRUE(metadataProvider.configureFromLayerJson(
+        metadataLayerJson,
+        "https://example.invalid/layer.json"));
+
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              metadataProvider.availabilityState(
+                  TileKey{"Geographic-TMS", 1, 4, 0}));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              metadataProvider.availabilityState(
+                  TileKey{"Geographic-TMS", 1, 0, 2}));
+
+    QuantizedMeshTerrainProvider legacyProvider(
+        "https://example.invalid/{z}/{x}/{y}.terrain");
+    legacyProvider.setZoomRange(0, 2);
+
+    EXPECT_FALSE(
+        legacyProvider.supportsTile(TileKey{"Geographic-TMS", 0, 2, 0}));
+    EXPECT_FALSE(
+        legacyProvider.supportsTile(TileKey{"Geographic-TMS", 1, 0, 2}));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, ParentLayerUsesPrimaryProjectionLikeCesiumNative) {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() /
