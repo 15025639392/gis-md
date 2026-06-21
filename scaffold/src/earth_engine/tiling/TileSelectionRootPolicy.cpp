@@ -14,7 +14,7 @@ bool TileSelectionRootPolicy::isVirtualTerrainRoot(const TileKey& key) {
 
 bool TileSelectionRootPolicy::usesVirtualTerrainRoot(
     const std::string& schemeId) {
-    return schemeId == "Geographic-TMS";
+    return schemeId == "Geographic-TMS" || schemeId == "XYZ-WebMercator";
 }
 
 std::vector<TileKey> TileSelectionRootPolicy::levelZeroTerrainRoots(

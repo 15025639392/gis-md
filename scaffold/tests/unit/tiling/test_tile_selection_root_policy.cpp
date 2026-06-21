@@ -26,6 +26,19 @@ struct GeographicRootFixture {
         2};
 };
 
+struct WebMercatorRootFixture {
+    TilesetTileRegistry registry;
+    std::unique_ptr<TileScheme> scheme = TileScheme::createXYZWebMercator();
+    TileContentLifecycleManager lifecycle;
+    TileContentAccess contentAccess{
+        registry,
+        *scheme,
+        nullptr,
+        nullptr,
+        lifecycle,
+        1};
+};
+
 } // namespace
 
 TEST(TileSelectionRootPolicyTest, ExplicitContentRootsTakePriority) {
@@ -71,9 +84,20 @@ TEST(TileSelectionRootPolicyTest, GeographicTmsLevelZeroDataRootsStayExplicit) {
     EXPECT_EQ(roots[1], (TileKey{"Geographic-TMS", 0, 1, 0}));
 }
 
-TEST(TileSelectionRootPolicyTest, NonGeographicSchemesUseDefaultDataRoot) {
+TEST(TileSelectionRootPolicyTest, WebMercatorUsesVirtualTerrainRoot) {
     const std::vector<TileKey> roots =
         TileSelectionRootPolicy::chooseRoots("XYZ-WebMercator", {}, true);
+
+    ASSERT_EQ(roots.size(), 1u);
+    EXPECT_EQ(
+        roots[0],
+        TileSelectionRootPolicy::virtualTerrainRootKey("XYZ-WebMercator"));
+    EXPECT_TRUE(TileSelectionRootPolicy::isVirtualTerrainRoot(roots[0]));
+}
+
+TEST(TileSelectionRootPolicyTest, WebMercatorWithoutTerrainDomainUsesDataRoot) {
+    const std::vector<TileKey> roots =
+        TileSelectionRootPolicy::chooseRoots("XYZ-WebMercator", {}, false);
 
     ASSERT_EQ(roots.size(), 1u);
     EXPECT_EQ(roots[0], (TileKey{"XYZ-WebMercator", 0, 0, 0}));
@@ -137,4 +161,21 @@ TEST(TileSelectionRootPolicyTest, VirtualGeographicRootLinksLevelZeroDataTiles) 
     EXPECT_FALSE(root->children[1]->unconditionallyRefine);
     EXPECT_GT(root->children[0]->geometricError, 0.0);
     EXPECT_GT(root->children[1]->geometricError, 0.0);
+}
+
+TEST(TileSelectionRootPolicyTest, VirtualWebMercatorRootLinksLevelZeroDataTile) {
+    WebMercatorRootFixture fixture;
+    TilesetTile* root = fixture.contentAccess.ensureTile(
+        TileSelectionRootPolicy::virtualTerrainRootKey("XYZ-WebMercator"));
+
+    fixture.contentAccess.ensureTileChildren(*root);
+    fixture.contentAccess.ensureTileChildren(*root);
+
+    ASSERT_EQ(root->children.size(), 1u);
+    EXPECT_EQ(root->children[0]->key, (TileKey{"XYZ-WebMercator", 0, 0, 0}));
+    EXPECT_EQ(root->children[0]->parent, root);
+    EXPECT_EQ(root->children[0]->content.loadState, TileLoadState::Unloaded);
+    EXPECT_FALSE(root->children[0]->unconditionallyRefine);
+    EXPECT_GT(root->children[0]->geometricError, 0.0);
+    EXPECT_EQ(root->rasterOverlayState.mappings().size(), 1u);
 }

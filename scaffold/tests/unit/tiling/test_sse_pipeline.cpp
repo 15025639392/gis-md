@@ -10948,6 +10948,20 @@ void testTileSelectionRootPolicyChoosesTraversalRoots() {
               TileSelectionRootPolicy::isVirtualTerrainRoot(roots[0]),
           "TileSelectionRootPolicy: Geographic-TMS uses virtual terrain root");
 
+    roots = TileSelectionRootPolicy::chooseRoots("XYZ-WebMercator", {}, true);
+    check(roots.size() == 1 &&
+              roots[0] ==
+                  TileSelectionRootPolicy::virtualTerrainRootKey(
+                      "XYZ-WebMercator") &&
+              TileSelectionRootPolicy::isVirtualTerrainRoot(roots[0]),
+          "TileSelectionRootPolicy: WebMercator uses virtual terrain root");
+
+    roots = TileSelectionRootPolicy::chooseRoots("XYZ-WebMercator", {});
+    check(roots.size() == 1 &&
+              roots[0] == TileKey{"XYZ-WebMercator", 0, 0, 0} &&
+              !TileSelectionRootPolicy::isVirtualTerrainRoot(roots[0]),
+          "TileSelectionRootPolicy: WebMercator non-terrain domain uses data root");
+
     roots = TileSelectionRootPolicy::levelZeroTerrainRoots("Geographic-TMS");
     check(roots.size() == 2 &&
               roots[0] == TileKey{"Geographic-TMS", 0, 0, 0} &&
