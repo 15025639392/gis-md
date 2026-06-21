@@ -322,6 +322,12 @@ add_executable(test_tile_selection_visibility_sampler
 target_link_libraries(test_tile_selection_visibility_sampler PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_selection_visibility_sampler COMMAND test_tile_selection_visibility_sampler)
 
+add_executable(test_tile_selection_reuse_policy
+    unit/tiling/test_tile_selection_reuse_policy.cpp
+)
+target_link_libraries(test_tile_selection_reuse_policy PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_selection_reuse_policy COMMAND test_tile_selection_reuse_policy)
+
 add_executable(test_tile_missing_request_scheduler
     unit/tiling/test_tile_missing_request_scheduler.cpp
 )
