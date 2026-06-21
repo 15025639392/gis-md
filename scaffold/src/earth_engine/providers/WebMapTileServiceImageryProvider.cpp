@@ -78,10 +78,10 @@ std::string tileMatrixLabel(const WebMapTileServiceImageryOptions& options,
 }
 
 int invertedY(int level, int y) {
-    if (level < 0 || level >= 30) {
+    if (level < 0 || level > 30) {
         return y;
     }
-    return (1 << level) - 1 - y;
+    return static_cast<int>((int64_t{1} << level) - 1 - y);
 }
 
 void addDimensions(std::map<std::string, std::string>& replacements,

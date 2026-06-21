@@ -881,6 +881,22 @@ TEST(WebMapTileServiceImageryProviderTest, BuildsKvpUrlLikeCesiumNative) {
         provider.buildUrl(TileKey{"XYZ-WebMercator", 2, 1, 2}));
 }
 
+TEST(WebMapTileServiceImageryProviderTest, InvertsYAtCesiumNativeMaximumLevel) {
+    WebMapTileServiceImageryOptions options;
+    options.layer = "imagery";
+    options.style = "default";
+    options.tileMatrixSetId = "GoogleMapsCompatible";
+    options.maximumLevel = 30;
+
+    WebMapTileServiceImageryProvider provider(
+        "https://example.com/wmts",
+        options);
+
+    EXPECT_EQ(
+        "https://example.com/wmts?request=GetTile&version=1.0.0&service=WMTS&format=image%2Fjpeg&layer=imagery&style=default&tilematrixset=GoogleMapsCompatible&tilematrix=30&tilerow=1073741823&tilecol=0",
+        provider.buildUrl(TileKey{"XYZ-WebMercator", 30, 0, 0}));
+}
+
 TEST(WebMapTileServiceImageryProviderTest, BuildsRestTemplateUrlLikeCesiumNative) {
     WebMapTileServiceImageryOptions options;
     options.layer = "base layer";
