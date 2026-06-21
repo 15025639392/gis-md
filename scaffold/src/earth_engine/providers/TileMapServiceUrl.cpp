@@ -439,23 +439,25 @@ std::string tileMapServiceXmlUrl(const std::string& url) {
         return url;
     }
 
-    std::string path = prefix;
-    if (endsWith(path, ".xml")) {
-        const size_t slash = path.find_last_of('/');
-        if (slash == std::string::npos) {
-            path = kResource;
+    std::string updatedPrefix = prefix;
+    const size_t schemePos = prefix.find("://");
+    const size_t pathStart = schemePos == std::string::npos
+        ? 0
+        : prefix.find('/', schemePos + 3);
+    std::string path = pathStart == std::string::npos
+        ? std::string()
+        : prefix.substr(pathStart);
+
+    if (path.size() >= 4 && !endsWith(path, ".xml") && path.back() != '/') {
+        path.push_back('/');
+        if (pathStart == std::string::npos) {
+            updatedPrefix += '/';
         } else {
-            path.erase(slash + 1);
-            path += kResource;
+            updatedPrefix = prefix.substr(0, pathStart) + path;
         }
-        return path + suffix;
     }
 
-    if (!path.empty() && path.back() != '/') {
-        path += '/';
-    }
-    path += kResource;
-    return path + suffix;
+    return resolveRelativeUrl(updatedPrefix, kResource) + suffix;
 }
 
 std::string tileMapServiceTileUrl(const std::string& baseUrl,
