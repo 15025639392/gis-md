@@ -1688,6 +1688,61 @@ TEST(QuantizedMeshTerrainProviderTest, LoadedUnderlyingMetadataSubtreeSkipsDupli
     std::filesystem::remove_all(root);
 }
 
+TEST(QuantizedMeshTerrainProviderTest, UnknownMetadataTileDoesNotRequestContentLikeCesiumNative) {
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["tiles/{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "metadataAvailability": 1
+    })json";
+
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    const TileKey unknownChild{"Geographic-TMS", 1, 0, 0};
+    EXPECT_EQ(TileAvailabilityState::Unknown,
+              provider.availabilityState(unknownChild));
+    EXPECT_FALSE(provider.supportsTile(unknownChild));
+
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    TerrainTileLoadResult completed = TerrainTileLoadResult::retryLater();
+
+    provider.requestTile(
+        unknownChild,
+        CancellationToken{},
+        [&](const TileKey&, TerrainTileLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                done = true;
+            }
+            cv.notify_one();
+        });
+
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return done; }));
+    }
+
+    EXPECT_EQ(TileLoadStatus::Failed, completed.status);
+    EXPECT_EQ(0u, bridge.pendingCount());
+    EXPECT_EQ(1, provider.requestDiagnostics().requestsStarted);
+    EXPECT_EQ(1, provider.requestDiagnostics().requestsCompleted);
+}
+
 TEST(QuantizedMeshTerrainProviderTest,
      LoadedCurrentAndUnderlyingMetadataSubtreesSkipDuplicateRequestsLikeCesiumNative) {
     const std::filesystem::path root =

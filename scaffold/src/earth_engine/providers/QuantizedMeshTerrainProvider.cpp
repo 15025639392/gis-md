@@ -1083,6 +1083,12 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
         : buildUrl(key);
     std::vector<LayerAvailabilityRequest> availabilityRequests =
         collectUnderlyingLayerAvailabilityRequests(key);
+    if (!layers_.empty() && !contentLayer) {
+        requestsStarted_.fetch_add(1, std::memory_order_relaxed);
+        requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
+        callback(key, TerrainTileLoadResult::failed());
+        return;
+    }
     if (platformBridge_) {
         requestsStarted_.fetch_add(1, std::memory_order_relaxed);
         if (token.isCancelled()) {
