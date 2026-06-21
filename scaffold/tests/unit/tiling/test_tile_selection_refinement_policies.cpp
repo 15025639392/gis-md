@@ -130,6 +130,46 @@ TEST(
 
 TEST(
     TileSelectionKickPolicyTest,
+    DoesNotKickUnrenderableParentWithinLoadingDescendantLimit) {
+    TileTraversalDetails oneMissing;
+    oneMissing.allAreRenderable = false;
+    oneMissing.anyWereRenderedLastFrame = false;
+    oneMissing.notYetRenderableCount = 1;
+
+    EXPECT_FALSE(TileSelectionKickPolicy::shouldKickDescendants(
+        oneMissing,
+        false,
+        false,
+        1,
+        false,
+        false,
+        TileSelectionState::NotVisited,
+        false,
+        1.0f));
+}
+
+TEST(
+    TileSelectionKickPolicyTest,
+    KicksUnrenderableParentAfterLoadingDescendantLimit) {
+    TileTraversalDetails manyMissing;
+    manyMissing.allAreRenderable = false;
+    manyMissing.anyWereRenderedLastFrame = false;
+    manyMissing.notYetRenderableCount = 2;
+
+    EXPECT_TRUE(TileSelectionKickPolicy::shouldKickDescendants(
+        manyMissing,
+        false,
+        false,
+        1,
+        false,
+        false,
+        TileSelectionState::NotVisited,
+        false,
+        1.0f));
+}
+
+TEST(
+    TileSelectionKickPolicyTest,
     ReplaceRefinementAddsRenderableParentReplacementAfterKick) {
     TileTraversalDetails manyMissing;
     manyMissing.allAreRenderable = false;
