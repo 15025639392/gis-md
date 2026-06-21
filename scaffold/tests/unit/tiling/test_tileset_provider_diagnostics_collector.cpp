@@ -2,6 +2,7 @@
 
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
 #include "earth_engine/layers/RasterOverlay.h"
+#include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/providers/ImageryProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -80,6 +81,29 @@ public:
 
 private:
     std::string providerId_;
+    ProviderRequestDiagnostics diagnostics_;
+};
+
+class DiagnosticContentProvider final : public TilesetContentProvider {
+public:
+    explicit DiagnosticContentProvider(ProviderRequestDiagnostics diagnostics)
+        : diagnostics_(diagnostics) {}
+
+    std::string id() const override { return "diagnostic-content"; }
+    bool supportsTile(const TileKey&) const override { return true; }
+    void requestTileContent(
+        const TileKey&,
+        CancellationToken,
+        ContentCallback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {}
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+    ProviderRequestDiagnostics requestDiagnostics() const override {
+        return diagnostics_;
+    }
+
+private:
     ProviderRequestDiagnostics diagnostics_;
 };
 
@@ -196,4 +220,38 @@ TEST(
     EXPECT_EQ(requests.externalResourceRequestsCompleted, 5);
     EXPECT_EQ(requests.activeExternalResourceBlockingRequests, 3);
     EXPECT_EQ(requests.peakExternalResourceBlockingRequests, 5);
+}
+
+TEST(
+    TilesetProviderDiagnosticsCollectorTest,
+    AppliesContentProviderRequestDiagnosticsToLoadDiagnostics) {
+    ProviderRequestDiagnostics providerDiagnostics;
+    providerDiagnostics.requestsStarted = 1;
+    providerDiagnostics.requestsCompleted = 0;
+    providerDiagnostics.activeWorkerBlockingRequests = 0;
+    providerDiagnostics.peakWorkerBlockingRequests = 0;
+    providerDiagnostics.maximumTransportActiveRequests = 11;
+    DiagnosticContentProvider contentProvider(providerDiagnostics);
+
+    const TilesetProviderDiagnosticsSnapshot snapshot =
+        TilesetProviderDiagnosticsCollector::collect(
+            nullptr,
+            &contentProvider,
+            {});
+    TilesetLoadDiagnostics loadDiagnostics;
+    snapshot.applyTo(loadDiagnostics);
+
+    EXPECT_EQ(loadDiagnostics.contentProviderRequests.requestsStarted, 1);
+    EXPECT_EQ(loadDiagnostics.contentProviderRequests.requestsCompleted, 0);
+    EXPECT_EQ(
+        loadDiagnostics.contentProviderRequests.activeWorkerBlockingRequests,
+        0);
+    EXPECT_EQ(
+        loadDiagnostics.contentProviderRequests.peakWorkerBlockingRequests,
+        0);
+    EXPECT_EQ(
+        loadDiagnostics
+            .contentProviderRequests
+            .maximumTransportActiveRequests,
+        11);
 }
