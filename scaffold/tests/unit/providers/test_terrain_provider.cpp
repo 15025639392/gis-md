@@ -8,6 +8,7 @@
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <thread>
 #include "earth_engine/providers/BingMapsImageryProvider.h"
 #include "earth_engine/providers/GoogleMapTilesImageryProvider.h"
 #include "earth_engine/providers/HeightmapTerrainProvider.h"
@@ -82,6 +83,14 @@ std::vector<uint8_t> makeQuantizedMeshBytesWithMetadata(
     appendPod<uint32_t>(bytes, static_cast<uint32_t>(metadataJson.size()));
     bytes.insert(bytes.end(), metadataJson.begin(), metadataJson.end());
     return bytes;
+}
+
+void writeBytes(const std::filesystem::path& path,
+                const std::vector<uint8_t>& bytes) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream out(path, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
 }
 
 class NoopHttpRequest final : public HttpRequest {
@@ -895,6 +904,116 @@ TEST(QuantizedMeshTerrainProviderTest, ParentLayerUsesPrimaryProjectionLikeCesiu
     EXPECT_TRUE(provider.supportsTile(parentTile));
     EXPECT_EQ(parentBase + "/parentTiles/1/2/0.terrain",
               provider.buildUrl(parentTile));
+
+    std::filesystem::remove_all(root);
+}
+
+TEST(QuantizedMeshTerrainProviderTest, LoadsUnderlyingLayerAvailabilityWithTileLikeCesiumNative) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth_md_qm_underlying_availability_test";
+    std::filesystem::remove_all(root);
+
+    const std::string parentLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["parentTiles/{z}/{x}/{y}.terrain"],
+      "minzoom": 0,
+      "maxzoom": 4,
+      "metadataAvailability": 1,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+    {
+        std::filesystem::create_directories(root / "parent");
+        std::ofstream out(root / "parent" / "layer.json");
+        out << parentLayerJson;
+    }
+
+    const std::string childLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["childTiles/{z}/{x}/{y}.terrain"],
+      "parentUrl": "../parent",
+      "minzoom": 0,
+      "maxzoom": 4,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+
+    const std::string parentMetadata = R"json({
+      "available": [
+        [{"startX":2,"startY":0,"endX":2,"endY":0}]
+      ]
+    })json";
+
+    writeBytes(
+        root / "child" / "childTiles" / "0" / "0" / "0.terrain",
+        makeQuantizedMeshBytesWithMetadata(""));
+    writeBytes(
+        root / "parent" / "parentTiles" / "0" / "0" / "0.terrain",
+        makeQuantizedMeshBytesWithMetadata(parentMetadata));
+
+    const std::string childLayerUrl =
+        "file://" + (root / "child" / "layer.json").generic_string();
+    const std::string parentBase =
+        "file://" + (root / "parent").generic_string();
+
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    ASSERT_TRUE(provider.configureFromLayerJson(childLayerJson, childLayerUrl));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey parentOnlyChild{"Geographic-TMS", 1, 2, 0};
+    EXPECT_EQ(TileAvailabilityState::Unknown,
+              provider.availabilityState(parentOnlyChild));
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    std::unique_ptr<DecodedHeightmap> heightmap;
+    provider.requestTile(
+        rootKey,
+        CancellationToken{},
+        [&](const TileKey&, TerrainTileLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                heightmap = std::move(result.heightmap);
+                done = true;
+            }
+            cv.notify_one();
+        });
+
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return done; }));
+    }
+
+    ASSERT_NE(nullptr, heightmap);
+    for (int i = 0;
+         i < 200 && provider.requestDiagnostics().requestsCompleted == 0;
+         ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    const ProviderRequestDiagnostics requestDiag =
+        provider.requestDiagnostics();
+    EXPECT_EQ(1, requestDiag.requestsStarted);
+    EXPECT_EQ(1, requestDiag.requestsCompleted);
+    EXPECT_EQ(0, requestDiag.activeWorkerBlockingRequests);
+    EXPECT_EQ(0, requestDiag.peakWorkerBlockingRequests);
+
+    provider.applyAvailabilityUpdates(*heightmap);
+
+    EXPECT_TRUE(provider.supportsTile(parentOnlyChild));
+    EXPECT_EQ(parentBase + "/parentTiles/1/2/0.terrain",
+              provider.buildUrl(parentOnlyChild));
 
     std::filesystem::remove_all(root);
 }
