@@ -158,3 +158,44 @@ TEST(TileRenderPlanFinalizerTest, CountsRootPrepOnceToAvoidBlankFrame) {
     EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 1);
     EXPECT_EQ(plan.renderEntryDeferredPrepCount, 0);
 }
+
+TEST(TileRenderPlanFinalizerTest, DefersFallbackPrepDuringInteraction) {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
+    TilesetTile child(childKey, Rectangle{0.0, 1.0, 1.0, 2.0}, &parent);
+
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {TileCacheKey::forTile(parentKey), &parent},
+        {TileCacheKey::forTile(childKey), &child}};
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(childKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            true,
+            0,
+            1},
+        [&tiles](const TileKey& key) {
+            return findTile(tiles, key);
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [&parent](const TilesetTile& tile) {
+            return tile.key == parent.key;
+        });
+
+    ASSERT_EQ(plan.renderEntries.size(), 1u);
+    const TileRenderEntry& entry = plan.renderEntries.front();
+    EXPECT_EQ(entry.selectedKey, childKey);
+    EXPECT_EQ(entry.renderKey, parentKey);
+    EXPECT_EQ(entry.reason, TileRenderEntryReason::AncestorFallback);
+    EXPECT_TRUE(entry.usesAncestorFallback);
+    EXPECT_FALSE(entry.allowSynchronousMeshPrep);
+    EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 1);
+    EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 0);
+    EXPECT_EQ(plan.renderEntryDeferredPrepCount, 1);
+}
