@@ -339,6 +339,25 @@ TEST(TransformsTest, InfinitePerspectiveMatrixMatchesCesiumNativeReverseZ) {
     EXPECT_DOUBLE_EQ(2.0, matrix(2, 3));
 }
 
+TEST(TransformsTest, InfinitePerspectiveFovMatrixMatchesCesiumNativeReverseZ) {
+    // Source-derived from cesium-native Transforms::createPerspectiveMatrix:
+    // the fov overload has the same explicit infinite-far branch as the
+    // frustum overload.
+    const double horizontalFov = MathUtils::degreesToRadians(60.0);
+    const double verticalFov = MathUtils::degreesToRadians(45.0);
+    const Mat4 matrix = Transforms::createPerspectiveMatrix(
+        horizontalFov,
+        verticalFov,
+        2.0,
+        std::numeric_limits<double>::infinity());
+
+    EXPECT_DOUBLE_EQ(1.0 / std::tan(horizontalFov * 0.5), matrix(0, 0));
+    EXPECT_DOUBLE_EQ(-1.0 / std::tan(verticalFov * 0.5), matrix(1, 1));
+    EXPECT_DOUBLE_EQ(0.0, matrix(2, 2));
+    EXPECT_DOUBLE_EQ(-1.0, matrix(3, 2));
+    EXPECT_DOUBLE_EQ(2.0, matrix(2, 3));
+}
+
 TEST(TransformsTest, OrthographicMatrixMatchesCesiumNativeReverseZ) {
     const Mat4 finite =
         Transforms::createOrthographicMatrix(-2.0, 4.0, -3.0, 5.0, 1.0, 11.0);
