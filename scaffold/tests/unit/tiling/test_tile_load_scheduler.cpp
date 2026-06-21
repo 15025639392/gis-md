@@ -1208,3 +1208,66 @@ TEST(TileLoadSchedulerTest, SkipsTerrainDispatcherDuplicateAfterPlanning) {
     EXPECT_EQ(provider.requestCount, 0);
     EXPECT_EQ(lifecycle.counts().terrainTerminalResults, 1u);
 }
+
+TEST(TileLoadSchedulerTest, StopsAfterDispatchBudgetBlock) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 1;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey firstKey{"test", 0, 0, 0};
+    const TileKey blockedKey{"test", 0, 1, 0};
+    const TileKey skippedKey{"test", 0, 2, 0};
+    CountingContentProvider provider;
+    std::vector<int> plannedKeys;
+    std::vector<int> markedKeys;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {
+                TileLoadRequest{
+                    skippedKey,
+                    TileLoadPriorityGroup::Preload,
+                    10.0},
+                TileLoadRequest{
+                    blockedKey,
+                    TileLoadPriorityGroup::Normal,
+                    50.0},
+                TileLoadRequest{
+                    firstKey,
+                    TileLoadPriorityGroup::Urgent,
+                    100.0},
+            },
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                &provider},
+            cacheKeyForTile,
+            [&plannedKeys](
+                const TileKey& key,
+                const std::string&,
+                TilesetTile*& tileState) {
+                plannedKeys.push_back(key.x);
+                tileState = nullptr;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.contentProviderSupportsTile = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [&markedKeys](const TileKey& key) {
+                markedKeys.push_back(key.x);
+            });
+
+    ASSERT_EQ(plannedKeys.size(), 2u);
+    ASSERT_EQ(markedKeys.size(), 1u);
+    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_EQ(provider.requestCount, 1);
+    EXPECT_EQ(plannedKeys[0], firstKey.x);
+    EXPECT_EQ(plannedKeys[1], blockedKey.x);
+    EXPECT_EQ(markedKeys[0], firstKey.x);
+}
