@@ -250,6 +250,12 @@ add_executable(test_quantized_mesh_index_width
 target_link_libraries(test_quantized_mesh_index_width PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_quantized_mesh_index_width COMMAND test_quantized_mesh_index_width)
 
+add_executable(test_quantized_mesh_skirts_normals
+    unit/terrain/test_quantized_mesh_skirts_normals.cpp
+)
+target_link_libraries(test_quantized_mesh_skirts_normals PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_quantized_mesh_skirts_normals COMMAND test_quantized_mesh_skirts_normals)
+
 add_executable(test_quantized_mesh_parser_validation
     unit/terrain/test_quantized_mesh_parser_validation.cpp
 )
