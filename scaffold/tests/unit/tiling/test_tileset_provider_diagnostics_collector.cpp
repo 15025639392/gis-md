@@ -1,7 +1,13 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/layers/ActivatedRasterOverlay.h"
+#include "earth_engine/layers/RasterOverlay.h"
+#include "earth_engine/providers/ImageryProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
+#include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/TilesetProviderDiagnosticsCollector.h"
+
+#include <memory>
 
 using namespace earth_engine;
 
@@ -39,6 +45,41 @@ public:
     }
 
 private:
+    ProviderRequestDiagnostics diagnostics_;
+};
+
+class DiagnosticImageryProvider final : public ImageryProvider {
+public:
+    DiagnosticImageryProvider(
+        std::string providerId,
+        ProviderRequestDiagnostics diagnostics)
+        : providerId_(std::move(providerId)),
+          diagnostics_(diagnostics) {}
+
+    std::string id() const override { return providerId_; }
+    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 2; }
+    int tileWidth() const override { return 256; }
+    int tileHeight() const override { return 256; }
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://diagnostic-imagery";
+    }
+    void requestTile(
+        const TileKey&,
+        CancellationToken,
+        TileCallback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {}
+    std::unique_ptr<DecodedImage> decodeTile(const uint8_t*, size_t)
+        override {
+        return nullptr;
+    }
+    ProviderRequestDiagnostics requestDiagnostics() const override {
+        return diagnostics_;
+    }
+
+private:
+    std::string providerId_;
     ProviderRequestDiagnostics diagnostics_;
 };
 
@@ -94,4 +135,65 @@ TEST(
             .terrainProviderRequests
             .maximumTransportActiveRequests,
         11);
+}
+
+TEST(
+    TilesetProviderDiagnosticsCollectorTest,
+    AggregatesRasterProviderRequestPeaks) {
+    ProviderRequestDiagnostics firstDiagnostics;
+    firstDiagnostics.requestsStarted = 2;
+    firstDiagnostics.requestsCompleted = 1;
+    firstDiagnostics.activeWorkerBlockingRequests = 1;
+    firstDiagnostics.peakWorkerBlockingRequests = 3;
+    firstDiagnostics.externalResourceRequestsStarted = 4;
+    firstDiagnostics.externalResourceRequestsCompleted = 2;
+    firstDiagnostics.activeExternalResourceBlockingRequests = 1;
+    firstDiagnostics.peakExternalResourceBlockingRequests = 5;
+    firstDiagnostics.maximumTransportActiveRequests = 8;
+
+    ProviderRequestDiagnostics secondDiagnostics;
+    secondDiagnostics.requestsStarted = 5;
+    secondDiagnostics.requestsCompleted = 4;
+    secondDiagnostics.activeWorkerBlockingRequests = 2;
+    secondDiagnostics.peakWorkerBlockingRequests = 2;
+    secondDiagnostics.externalResourceRequestsStarted = 3;
+    secondDiagnostics.externalResourceRequestsCompleted = 3;
+    secondDiagnostics.activeExternalResourceBlockingRequests = 2;
+    secondDiagnostics.peakExternalResourceBlockingRequests = 4;
+    secondDiagnostics.maximumTransportActiveRequests = 11;
+
+    auto firstOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DiagnosticImageryProvider>(
+            "diag-raster-a",
+            firstDiagnostics),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    auto secondOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DiagnosticImageryProvider>(
+            "diag-raster-b",
+            secondDiagnostics),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay firstActivated(*firstOverlay);
+    ActivatedRasterOverlay secondActivated(*secondOverlay);
+    firstActivated.ensureTileProvider(nullptr);
+    secondActivated.ensureTileProvider(nullptr);
+
+    const TilesetProviderDiagnosticsSnapshot snapshot =
+        TilesetProviderDiagnosticsCollector::collect(
+            nullptr,
+            nullptr,
+            {&firstActivated, &secondActivated});
+    const ProviderRequestDiagnostics& requests =
+        snapshot.rasterProviderRequests;
+
+    EXPECT_EQ(requests.requestsStarted, 7);
+    EXPECT_EQ(requests.requestsCompleted, 5);
+    EXPECT_EQ(requests.activeWorkerBlockingRequests, 3);
+    EXPECT_EQ(requests.peakWorkerBlockingRequests, 3);
+    EXPECT_EQ(requests.maximumTransportActiveRequests, 11);
+    EXPECT_EQ(requests.externalResourceRequestsStarted, 7);
+    EXPECT_EQ(requests.externalResourceRequestsCompleted, 5);
+    EXPECT_EQ(requests.activeExternalResourceBlockingRequests, 3);
+    EXPECT_EQ(requests.peakExternalResourceBlockingRequests, 5);
 }
