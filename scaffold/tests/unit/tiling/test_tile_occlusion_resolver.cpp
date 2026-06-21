@@ -115,3 +115,30 @@ TEST(TileOcclusionResolverTest, TerminalParentStateSkipsChildren) {
     checkTerminalState(TileOcclusionState::Occluded);
     checkTerminalState(TileOcclusionState::OcclusionUnavailable);
 }
+
+TEST(TileOcclusionResolverTest, UnconditionalChildSkipsAggregation) {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+
+    TilesetTile root;
+    TilesetTile child;
+    setTileKey(root, rootKey);
+    setTileKey(child, childKey);
+    child.unconditionallyRefine = true;
+    root.children.push_back(&child);
+
+    std::unordered_map<TileKey, TileOcclusionState> states;
+    states[rootKey] = TileOcclusionState::NotOccluded;
+    states[childKey] = TileOcclusionState::Occluded;
+
+    const TileOcclusionState result = TileOcclusionResolver::check(
+        root,
+        [&states](const TilesetTile& tile) {
+            auto it = states.find(tile.key);
+            return it == states.end()
+                ? TileOcclusionState::NotOccluded
+                : it->second;
+        });
+
+    EXPECT_EQ(result, TileOcclusionState::NotOccluded);
+}
