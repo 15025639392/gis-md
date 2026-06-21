@@ -3,7 +3,9 @@
 #include "TileCacheKey.h"
 #include "TileCreationPolicy.h"
 #include "TilePlan.h"
+#include "TileSelectionRootPolicy.h"
 #include "TileScheme.h"
+#include "TileTerrainHeightRangePolicy.h"
 #include "RasterMappedToTilesetTile.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/QuadtreeGeometricError.h"
@@ -12,6 +14,33 @@
 #include <optional>
 
 namespace earth_engine {
+
+namespace {
+
+void initializeVirtualTerrainRoot(TilesetTile& tile,
+                                  size_t rasterOverlayCount) {
+    constexpr double kLooseMinimumHeight = -1000.0;
+    constexpr double kLooseMaximumHeight = 9000.0;
+
+    tile.bounds = Rectangle::MAXIMUM;
+    tile.geometricError =
+        calcLayerJsonTerrainGeometricError(Ellipsoid::WGS84(), tile.bounds);
+    tile.refine = TileRefine::Replace;
+    tile.unconditionallyRefine = true;
+    tile.boundingVolume = TileBoundingVolume::fromRegion(
+        tile.bounds,
+        kLooseMinimumHeight,
+        kLooseMaximumHeight);
+    tile.contentBoundingVolume = tile.boundingVolume;
+    tile.rasterOverlayState.ensureMappingSlots(rasterOverlayCount);
+    TileTerrainHeightRangePolicy::setTerrainHeightRange(
+        tile,
+        kLooseMinimumHeight,
+        kLooseMaximumHeight);
+    tile.markEmptyContentDone();
+}
+
+} // namespace
 
 TilesetTile* TilesetTileRegistry::ensureTile(
     const TileKey& key,
@@ -29,6 +58,14 @@ TilesetTile* TilesetTileRegistry::ensureTile(
                 *contentMetadata);
         }
         return it->second.get();
+    }
+
+    if (TileSelectionRootPolicy::isVirtualTerrainRoot(key)) {
+        auto tile = std::make_unique<TilesetTile>(key, Rectangle::MAXIMUM);
+        initializeVirtualTerrainRoot(*tile, rasterOverlayCount);
+        TilesetTile* raw = tile.get();
+        tiles_[ck] = std::move(tile);
+        return raw;
     }
 
     TilesetTile* parent = nullptr;

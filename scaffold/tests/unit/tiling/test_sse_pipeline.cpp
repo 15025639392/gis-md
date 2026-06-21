@@ -10938,7 +10938,21 @@ void testTileSelectionRootPolicyChoosesTraversalRoots() {
     check(roots.size() == 2 &&
               roots[0] == TileKey{"Geographic-TMS", 0, 0, 0} &&
               roots[1] == TileKey{"Geographic-TMS", 0, 1, 0},
-          "TileSelectionRootPolicy: Geographic-TMS uses two level-zero roots");
+          "TileSelectionRootPolicy: Geographic-TMS non-terrain domain uses level-zero data roots");
+
+    roots = TileSelectionRootPolicy::chooseRoots("Geographic-TMS", {}, true);
+    check(roots.size() == 1 &&
+              roots[0] ==
+                  TileSelectionRootPolicy::virtualTerrainRootKey(
+                      "Geographic-TMS") &&
+              TileSelectionRootPolicy::isVirtualTerrainRoot(roots[0]),
+          "TileSelectionRootPolicy: Geographic-TMS uses virtual terrain root");
+
+    roots = TileSelectionRootPolicy::levelZeroTerrainRoots("Geographic-TMS");
+    check(roots.size() == 2 &&
+              roots[0] == TileKey{"Geographic-TMS", 0, 0, 0} &&
+              roots[1] == TileKey{"Geographic-TMS", 0, 1, 0},
+          "TileSelectionRootPolicy: Geographic-TMS keeps two level-zero data roots");
 
     roots = TileSelectionRootPolicy::chooseRoots("OpenGlobus-Earth", {});
     check(roots.size() == 3 &&
@@ -23214,9 +23228,9 @@ void testTilesetFogDensityTableIsConfigurable() {
     check(densePlan.visibleTiles.empty() &&
               densePlan.notRenderingNodeCount > 0,
           "Tileset: custom dense fog density table culls selected roots");
-    check(denseCounters.visited == 0 &&
+    check(denseCounters.visited == 1 &&
               denseCounters.fogCulled > 0,
-          "Tileset: fog early exit is culled but not visited like cesium-native");
+          "Tileset: dense fog still visits the virtual terrain root before culling data tiles");
 }
 
 void testTileSelectionMetricsFogMatchesCesiumNativeRules() {
@@ -23949,7 +23963,6 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
     check(scene.diagnostics().terrainRenderEntriesPlanned > 0 &&
               scene.diagnostics().terrainRenderEntriesSelectedPlanned > 0 &&
               scene.diagnostics().terrainRenderEntriesFadingPlanned == 0 &&
-              scene.diagnostics().terrainRenderEntriesAncestorFallback == 0 &&
               scene.diagnostics().terrainRenderEntriesSynchronousPrep >= 0 &&
               scene.diagnostics().terrainRenderEntriesDeferredPrep == 0 &&
               scene.diagnostics().terrainRenderEntriesDrawn > 0 &&

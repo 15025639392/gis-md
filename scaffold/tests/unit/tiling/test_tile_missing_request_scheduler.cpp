@@ -6,6 +6,7 @@
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileEmptyContentRegistry.h"
 #include "earth_engine/tiling/TileMissingRequestScheduler.h"
+#include "earth_engine/tiling/TileSelectionRootPolicy.h"
 #include "earth_engine/tiling/TileTerminalLoadCommitter.h"
 #include "earth_engine/tiling/TilesetTile.h"
 
@@ -46,10 +47,13 @@ public:
 class RetryTerrainProvider final : public TerrainProvider {
 public:
     std::string id() const override { return "missing-retry-terrain"; }
-    std::string schemeId() const override { return "test"; }
+    std::string schemeId() const override { return scheme; }
     int minZoom() const override { return 0; }
     int maxZoom() const override { return 1; }
     int tileSize() const override { return 2; }
+    bool supportsTile(const TileKey& key) const override {
+        return key.schemeId == scheme;
+    }
     std::string buildUrl(const TileKey&) const override {
         return "memory://missing-retry-terrain";
     }
@@ -67,6 +71,7 @@ public:
     }
 
     int requestCount = 0;
+    std::string scheme = "test";
 };
 
 } // namespace
@@ -244,4 +249,53 @@ TEST(TileMissingRequestSchedulerTest, UpsampledTileUsesLocalPathBeforeContentPro
     EXPECT_EQ(provider.requestCount, 0);
     EXPECT_EQ(lifecycle.counts().terrainUploads, 1u);
     EXPECT_EQ(tileRaw->content.loadState, TileLoadState::ContentLoading);
+}
+
+TEST(TileMissingRequestSchedulerTest, VirtualTerrainRootNeverRequestsProvider) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    RetryTerrainProvider provider;
+    provider.scheme = "Geographic-TMS";
+    TileEmptyContentRegistry emptyContentRegistry;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+
+    const TileKey key =
+        TileSelectionRootPolicy::virtualTerrainRootKey("Geographic-TMS");
+    const std::string cacheKey = cacheKeyForTile(key);
+    auto tile = std::make_unique<TilesetTile>(key, Rectangle::MAXIMUM);
+    tile->markEmptyContentDone();
+    tile->unconditionallyRefine = true;
+    tiles[cacheKey] = std::move(tile);
+
+    const TileLoadRequestOutcome outcome =
+        TileMissingRequestScheduler::request(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileMissingRequestSchedulerInput{
+                lifecycle,
+                budget,
+                &provider,
+                nullptr,
+                tiles,
+                terrainCache,
+                emptyContentRegistry},
+            cacheKeyForTile,
+            [](TilesetTile&, double) { return false; },
+            [&tiles](const TileKey& tileKey) -> TilesetTile* {
+                const std::string lookupKey = cacheKeyForTile(tileKey);
+                auto it = tiles.find(lookupKey);
+                return it == tiles.end() ? nullptr : it->second.get();
+            });
+
+    EXPECT_EQ(outcome.issued, 0u);
+    EXPECT_EQ(provider.requestCount, 0);
+    EXPECT_EQ(lifecycle.counts().terrainTerminalResults, 0u);
 }

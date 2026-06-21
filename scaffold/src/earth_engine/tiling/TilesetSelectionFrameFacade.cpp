@@ -26,7 +26,8 @@ void TilesetSelectionFrameFacade::selectTiles(
             tileset.options_.fogDensityTable,
             tileset.tileScheme_->id(),
             tileset.contentProvider_ ? tileset.contentProvider_->rootTiles()
-                                     : std::vector<TileKey>{}},
+                                     : std::vector<TileKey>{},
+            tileset.terrainProvider_ != nullptr},
         [&tileset]() {
             TileSelectionStateResetter::reset(
                 tileset.tileRegistry_,

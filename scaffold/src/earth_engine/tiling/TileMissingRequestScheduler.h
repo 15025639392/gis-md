@@ -3,6 +3,7 @@
 #include "TileEmptyContentRegistry.h"
 #include "TileLoadLifecycle.h"
 #include "TileLoadScheduler.h"
+#include "TileSelectionRootPolicy.h"
 #include "TilesetTile.h"
 #include "../core/resources/FrameResourceBudget.h"
 #include "../content/GltfContentProvider.h"
@@ -83,6 +84,7 @@ private:
             input.contentProvider &&
             input.contentProvider->supportsTile(key);
         snapshot.terrainProviderSupportsTile =
+            !TileSelectionRootPolicy::isVirtualTerrainRoot(key) &&
             input.terrainProvider &&
             input.terrainProvider->supportsTile(key);
         snapshot.terrainAlreadyCached =

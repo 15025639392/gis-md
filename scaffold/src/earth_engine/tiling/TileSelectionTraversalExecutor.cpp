@@ -10,6 +10,7 @@
 #include "TileSelectionPreTraversalPolicy.h"
 #include "TileSelectionRasterOverlayPreparer.h"
 #include "TileSelectionRefineFlowPolicy.h"
+#include "TileSelectionRootPolicy.h"
 #include "TileSelectionTraversalCounterPolicy.h"
 #include "TileSelectionVisibilitySampler.h"
 #include "TileSelectionVisitPreparation.h"
@@ -125,9 +126,11 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
         context.options.maximumScreenSpaceError,
         context.frameResourceBudget);
     const TileSelectionFrameState& selection = tile.selectionFrameState;
-    const bool renderable = TileSelectionRasterOverlayPreparer::isRenderable(
-        tile,
-        context.rasterOverlays);
+    const bool renderable =
+        !TileSelectionRootPolicy::isVirtualTerrainRoot(tile.key) &&
+        TileSelectionRasterOverlayPreparer::isRenderable(
+            tile,
+            context.rasterOverlays);
     tile.updateTraversalRenderability(renderable);
 
     const bool tileCanRefine = context.canRefine(tile);

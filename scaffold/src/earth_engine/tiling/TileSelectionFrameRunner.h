@@ -25,6 +25,7 @@ struct TileSelectionFrameRunInput {
     const std::vector<FogDensityAtHeight>& fogDensityTable;
     std::string tileSchemeId;
     std::vector<TileKey> explicitRoots;
+    bool useVirtualTerrainRoot = false;
 };
 
 class TileSelectionFrameRunner {
@@ -68,7 +69,8 @@ public:
         const std::vector<TileKey> roots =
             TileSelectionRootPolicy::chooseRoots(
                 input.tileSchemeId,
-                input.explicitRoots);
+                input.explicitRoots,
+                input.useVirtualTerrainRoot);
         for (const TileKey& key : roots) {
             TilesetTile* root = ensureTile(key);
             if (root) {
