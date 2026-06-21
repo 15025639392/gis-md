@@ -2,6 +2,7 @@
 
 #include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
+#include "earth_engine/tiling/TileLoadLifecycle.h"
 #include "earth_engine/tiling/TileLoadRequestDispatcher.h"
 
 #include <condition_variable>
@@ -116,6 +117,32 @@ public:
 
     bool& issuedBeforeCallback_;
     bool callbackSawIssued = false;
+};
+
+class DeferredTerrainProvider final : public TerrainProvider {
+public:
+    std::string id() const override { return "dispatcher-deferred-terrain"; }
+    std::string schemeId() const override { return "test"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 1; }
+    int tileSize() const override { return 2; }
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://dispatcher-deferred-terrain";
+    }
+    void requestTile(
+        const TileKey&,
+        CancellationToken,
+        HeightmapCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        terrainCallback = std::move(callback);
+    }
+    std::unique_ptr<DecodedHeightmap> decodeTile(
+        const uint8_t*,
+        size_t) override {
+        return nullptr;
+    }
+
+    HeightmapCallback terrainCallback;
 };
 
 class SyncTerminalContentProvider final : public TilesetContentProvider {
@@ -421,4 +448,40 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_TRUE(requestState.empty());
     EXPECT_EQ(1u, pendingLoads.contentUploadCount());
     EXPECT_EQ(0u, pendingLoads.contentTerminalResultCount());
+}
+
+TEST(TileLoadRequestDispatcherTest, DropsCancelledTerrainUploadCallback) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+    DeferredTerrainProvider provider;
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::requestTerrain(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            provider,
+            key,
+            "cancel-terrain",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    ASSERT_EQ(TileLoadDispatchResult::Issued, result);
+    ASSERT_TRUE(issued);
+    ASSERT_TRUE(provider.terrainCallback);
+
+    lifecycle.cancelAndEraseCacheKey("cancel-terrain");
+    provider.terrainCallback(
+        key,
+        TerrainTileLoadResult::success(std::make_unique<DecodedHeightmap>()));
+
+    EXPECT_FALSE(lifecycle.hasPendingWork());
 }
