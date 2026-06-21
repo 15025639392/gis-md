@@ -412,6 +412,25 @@ TEST(QuantizedMeshTerrainProviderTest, InvalidTilesRejectAndPreserveStateLikeCes
     }
 }
 
+TEST(QuantizedMeshTerrainProviderTest, LayerJsonTilesIgnoreNonStringsLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": [1234, "valid/{z}/{x}/{y}.terrain"],
+      "maxzoom": 4
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    EXPECT_EQ("https://example.invalid/valid/1/1/0.terrain",
+              provider.buildUrl(TileKey{"Geographic-TMS", 1, 1, 0}));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, WebMercatorMetadataAvailabilityStartsAtOneRootLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
