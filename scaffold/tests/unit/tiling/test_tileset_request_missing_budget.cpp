@@ -68,6 +68,12 @@ struct TilesetTestAccess {
     static void processPendingUploads(Tileset& tileset) {
         tileset.processPendingContentUploads(false, false);
     }
+
+    static void processPendingUploadsWithBudget(
+        Tileset& tileset,
+        FrameResourceBudget& budget) {
+        tileset.processPendingContentUploads(false, false, &budget);
+    }
 };
 } // namespace earth_engine
 
@@ -347,6 +353,62 @@ TEST(TilesetRequestMissingBudgetTest,
     EXPECT_TRUE(rawProvider->completeWithHeightmap(
         highPriorityKey,
         makeFlatHeightmap(2.0f)));
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    FrameResourceBudgetLimitsMainThreadFinalizesByPriority) {
+    TilesetOptions options;
+    options.maximumSimultaneousTileLoads = 2;
+    options.mainThreadLoadingTimeLimit = 0.0;
+
+    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
+    ManualCompletionTerrainProvider* rawProvider = provider.get();
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        options);
+
+    const TileKey lowPriorityKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey highPriorityKey{"Geographic-TMS", 1, 1, 0};
+    TilesetTestAccess::ensureTile(tileset, lowPriorityKey);
+    TilesetTestAccess::ensureTile(tileset, highPriorityKey);
+    TilesetTestAccess::requestMissingTilesWithPriorities(
+        tileset,
+        lowPriorityKey,
+        100.0,
+        highPriorityKey,
+        1.0);
+
+    ASSERT_EQ(rawProvider->pendingRequests.size(), 2u);
+    EXPECT_TRUE(rawProvider->completeWithHeightmap(
+        lowPriorityKey,
+        makeFlatHeightmap(1.0f)));
+    EXPECT_TRUE(rawProvider->completeWithHeightmap(
+        highPriorityKey,
+        makeFlatHeightmap(2.0f)));
+
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    TilesetTestAccess::processPendingUploadsWithBudget(tileset, budget);
+
+    TilesetTile* lowPriorityTile =
+        TilesetTestAccess::findTile(tileset, lowPriorityKey);
+    TilesetTile* highPriorityTile =
+        TilesetTestAccess::findTile(tileset, highPriorityKey);
+    const TilesetLoadDiagnostics diagnostics = tileset.loadDiagnostics();
+    ASSERT_NE(highPriorityTile, nullptr);
+    EXPECT_EQ(highPriorityTile->content.loadState, TileLoadState::Done);
+    EXPECT_EQ(highPriorityTile->content.contentKind, TileContentKind::Render);
+    ASSERT_NE(lowPriorityTile, nullptr);
+    EXPECT_EQ(
+        lowPriorityTile->content.loadState,
+        TileLoadState::ContentLoading);
+    EXPECT_EQ(diagnostics.pendingTerrainUploads, 1);
 }
 
 TEST(TilesetRequestMissingBudgetTest,
