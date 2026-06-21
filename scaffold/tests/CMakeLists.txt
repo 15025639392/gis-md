@@ -328,6 +328,12 @@ add_executable(test_tile_selection_frame_builder
 target_link_libraries(test_tile_selection_frame_builder PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_selection_frame_builder COMMAND test_tile_selection_frame_builder)
 
+add_executable(test_tile_selection_frame_finalizer
+    unit/tiling/test_tile_selection_frame_finalizer.cpp
+)
+target_link_libraries(test_tile_selection_frame_finalizer PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_selection_frame_finalizer COMMAND test_tile_selection_frame_finalizer)
+
 add_executable(test_tile_selection_render_entry_policy
     unit/tiling/test_tile_selection_render_entry_policy.cpp
 )
