@@ -1338,6 +1338,51 @@ TEST(GoogleMapTilesImageryProviderTest, RejectsInvalidViewportResponseLikeCesium
         result.error);
 }
 
+TEST(GoogleMapTilesImageryProviderTest, ConvertsViewportRectsToTileRangesLikeCesiumNative) {
+    GoogleMapTilesViewportParseResult viewport;
+    viewport.valid = true;
+    viewport.complete = true;
+    viewport.maxZoomRects.push_back(
+        GoogleMapTilesViewportRect{2, -180.0, -85.0, 0.0, 85.0});
+
+    const std::vector<GoogleMapTilesTileRange> ranges =
+        googleMapTilesViewportTileRanges(viewport);
+
+    ASSERT_EQ(3u, ranges.size());
+    EXPECT_EQ(2, ranges[0].level);
+    EXPECT_EQ(0, ranges[0].minimumX);
+    EXPECT_EQ(0, ranges[0].minimumY);
+    EXPECT_EQ(2, ranges[0].maximumX);
+    EXPECT_EQ(3, ranges[0].maximumY);
+    EXPECT_EQ(1, ranges[1].level);
+    EXPECT_EQ(0, ranges[1].minimumX);
+    EXPECT_EQ(0, ranges[1].minimumY);
+    EXPECT_EQ(1, ranges[1].maximumX);
+    EXPECT_EQ(1, ranges[1].maximumY);
+    EXPECT_EQ(0, ranges[2].level);
+    EXPECT_EQ(0, ranges[2].minimumX);
+    EXPECT_EQ(0, ranges[2].minimumY);
+    EXPECT_EQ(0, ranges[2].maximumX);
+    EXPECT_EQ(0, ranges[2].maximumY);
+}
+
+TEST(GoogleMapTilesImageryProviderTest, ViewportTileRangesClampWebMercatorLatitudeLikeCesiumNative) {
+    GoogleMapTilesViewportParseResult viewport;
+    viewport.valid = true;
+    viewport.maxZoomRects.push_back(
+        GoogleMapTilesViewportRect{1, -180.0, -90.0, 180.0, 90.0});
+
+    const std::vector<GoogleMapTilesTileRange> ranges =
+        googleMapTilesViewportTileRanges(viewport);
+
+    ASSERT_EQ(2u, ranges.size());
+    EXPECT_EQ(1, ranges[0].level);
+    EXPECT_EQ(0, ranges[0].minimumX);
+    EXPECT_EQ(0, ranges[0].minimumY);
+    EXPECT_EQ(1, ranges[0].maximumX);
+    EXPECT_EQ(1, ranges[0].maximumY);
+}
+
 TEST(TileMapServiceUrlTest, AppendsTileMapResourceXmlBeforeQueryLikeCesiumNative) {
     EXPECT_EQ(
         "https://example.com/tms/tilemapresource.xml",

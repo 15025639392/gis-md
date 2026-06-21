@@ -1,5 +1,10 @@
 #include "GoogleMapTilesImageryProvider.h"
 
+#include "../core/geodesy/WebMercatorProjection.h"
+#include "../core/math/MathUtils.h"
+#include "../core/math/Rectangle.h"
+
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <nlohmann/json.hpp>
@@ -246,6 +251,59 @@ GoogleMapTilesViewportParseResult parseGoogleMapTilesViewportResponse(
             northIt->get<double>()});
     }
     return result;
+}
+
+std::vector<GoogleMapTilesTileRange> googleMapTilesViewportTileRanges(
+    const GoogleMapTilesViewportParseResult& viewport) {
+    if (!viewport.valid) {
+        return {};
+    }
+
+    std::vector<GoogleMapTilesTileRange> ranges;
+    const std::unique_ptr<TileScheme> scheme =
+        TileScheme::createXYZWebMercator();
+    for (const GoogleMapTilesViewportRect& rect : viewport.maxZoomRects) {
+        if (rect.maxZoom < 0 || rect.maxZoom > 30) {
+            continue;
+        }
+
+        const double maxLatitudeDegrees =
+            MathUtils::radiansToDegrees(
+                WebMercatorProjection::maximumLatitude());
+        const double south =
+            std::clamp(rect.south, -maxLatitudeDegrees, maxLatitudeDegrees);
+        const double north =
+            std::clamp(rect.north, -maxLatitudeDegrees, maxLatitudeDegrees);
+        if (south > north) {
+            continue;
+        }
+
+        int minX = 0;
+        int minY = 0;
+        int maxX = 0;
+        int maxY = 0;
+        scheme->tileRange(
+            Rectangle::fromDegrees(rect.west, south, rect.east, north),
+            rect.maxZoom,
+            minX,
+            minY,
+            maxX,
+            maxY);
+
+        for (int level = rect.maxZoom; level >= 0; --level) {
+            ranges.push_back(GoogleMapTilesTileRange{
+                level,
+                minX,
+                minY,
+                maxX,
+                maxY});
+            minX >>= 1;
+            minY >>= 1;
+            maxX >>= 1;
+            maxY >>= 1;
+        }
+    }
+    return ranges;
 }
 
 GoogleMapTilesImageryProvider::GoogleMapTilesImageryProvider(

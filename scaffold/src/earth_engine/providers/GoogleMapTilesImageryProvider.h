@@ -59,6 +59,14 @@ struct GoogleMapTilesViewportParseResult {
     std::string error;
 };
 
+struct GoogleMapTilesTileRange {
+    int level = 0;
+    int minimumX = 0;
+    int minimumY = 0;
+    int maximumX = 0;
+    int maximumY = 0;
+};
+
 struct GoogleMapTilesImagerySource {
     std::unique_ptr<GoogleMapTilesImageryProvider> provider;
     std::unique_ptr<TileScheme> scheme;
@@ -103,6 +111,9 @@ std::string googleMapTilesViewportUrl(
 
 GoogleMapTilesViewportParseResult parseGoogleMapTilesViewportResponse(
     const std::string& responseJson);
+
+std::vector<GoogleMapTilesTileRange> googleMapTilesViewportTileRanges(
+    const GoogleMapTilesViewportParseResult& viewport);
 
 GoogleMapTilesImagerySource createGoogleMapTilesImagerySource(
     GoogleMapTilesExistingSessionOptions options,
