@@ -2,6 +2,8 @@
 
 #include "earth_engine/tiling/TileFrameResourceBudgetPlanner.h"
 
+#include <limits>
+
 using namespace earth_engine;
 
 TEST(TileFrameResourceBudgetPlannerTest, AlignsRasterBudgetWithTransportLane) {
@@ -62,4 +64,32 @@ TEST(TileFrameResourceBudgetPlannerTest, AlignsRasterBudgetWithTransportLane) {
                 false));
     EXPECT_EQ(wideTransportConfig.maxRasterNetworkRequestsPerFrame, 32u);
     EXPECT_EQ(wideTransportConfig.maxRasterNetworkInflight, 32u);
+}
+
+TEST(
+    TileFrameResourceBudgetPlannerTest,
+    KeepsMainThreadFinalizesWhenWorkerLoadsDisabled) {
+    const FrameResourceBudgetConfig config =
+        TileFrameResourceBudgetPlanner::plan(
+            TileFrameResourceBudgetPlanInput::withTransportLimit(
+                0,
+                20,
+                0.0,
+                false,
+                false));
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    EXPECT_FALSE(budget.tryIssue(
+        FrameResourceLane::TerrainRequest,
+        FrameResourcePriority::Normal));
+    EXPECT_EQ(
+        config.maxMainThreadFinalizesPerFrame,
+        std::numeric_limits<uint32_t>::max());
+    EXPECT_TRUE(budget.tryFinalize(
+        FrameResourceLane::TerrainFinalize,
+        FrameResourcePriority::Normal));
+    EXPECT_TRUE(budget.tryFinalize(
+        FrameResourceLane::ContentFinalize,
+        FrameResourcePriority::Normal));
 }
