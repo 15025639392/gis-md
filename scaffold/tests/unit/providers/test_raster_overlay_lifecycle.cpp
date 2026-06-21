@@ -505,6 +505,25 @@ TEST(RasterOverlayLifecycleTest, DefaultMaximumLevelMatchesCesiumNativeUrlTempla
     EXPECT_EQ(nullptr, provider.getTile(TileKey{scheme->id(), 26, 0, 0}));
 }
 
+TEST(RasterOverlayLifecycleTest, RectangleTileKeepsGeometryBoundsAndTargetPixels) {
+    DebugImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto geometryScheme = TileScheme::createGeographicTMS();
+    RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
+
+    TileKey geometryKey{geometryScheme->id(), 2, 4, 2};
+    Rectangle geometryBounds = geometryScheme->tileToRectangle(geometryKey);
+    auto rectangleTile = provider.getTile(geometryBounds, 512.0, 512.0);
+
+    ASSERT_NE(nullptr, rectangleTile);
+    EXPECT_TRUE(rectangleTile->isRectangleTile());
+    EXPECT_EQ(geometryBounds, rectangleTile->getRectangle());
+    EXPECT_EQ(0u, rectangleTile->getCacheKey().find("rectangle/"));
+    EXPECT_EQ(3, rectangleTile->getSourceZoom());
+    EXPECT_EQ(512.0, rectangleTile->getTargetScreenPixelsX());
+    EXPECT_EQ(512.0, rectangleTile->getTargetScreenPixelsY());
+}
+
 TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayMaximumTextureSize) {
     ConfigurableImageryProvider imagery;
     imagery.tileWidthValue = 256;
