@@ -558,7 +558,6 @@ std::optional<SurfaceTileMesh> TileSurface::upsampleChildMeshFromParent(
     child.winding = parentMesh.winding;
     child.sampling = parentMesh.sampling;
     child.waterMask = parentMesh.waterMask;
-    child.metadataAvailability = parentMesh.metadataAvailability;
     child.rasterOverlayDetails.setGeographicRectangle(childBounds);
 
     uint32_t indexBegin = 0;

@@ -415,6 +415,7 @@ TEST(TileSurfaceTest, UpsampledChildMeshIsClippedFromParentRenderMesh) {
 
     SurfaceTileMesh parentMesh = TileSurface::buildEllipsoidMesh(parentBounds, 1);
     ASSERT_EQ(4u, parentMesh.vertices.size());
+    parentMesh.metadataAvailability = {{1, 0, 0, 1, 1}};
 
     const auto& ellipsoid = Ellipsoid::WGS84();
     Cartographic raised = ellipsoid.cartesianToCartographic(
@@ -434,8 +435,17 @@ TEST(TileSurfaceTest, UpsampledChildMeshIsClippedFromParentRenderMesh) {
     ASSERT_TRUE(childMesh.has_value());
     EXPECT_GT(childMesh->vertices.size(), 0u);
     EXPECT_GT(childMesh->indices.size(), 0u);
+    EXPECT_TRUE(childMesh->metadataAvailability.empty());
     EXPECT_TRUE(childMesh->hasHeightRange);
     EXPECT_GT(childMesh->maximumHeight, 900.0);
+    const Rectangle* overlayRectangle =
+        childMesh->rasterOverlayDetails.findRectangleForOverlayProjection(
+            RasterOverlayProjection::Geographic);
+    ASSERT_NE(nullptr, overlayRectangle);
+    EXPECT_DOUBLE_EQ(childBounds.west(), overlayRectangle->west());
+    EXPECT_DOUBLE_EQ(childBounds.south(), overlayRectangle->south());
+    EXPECT_DOUBLE_EQ(childBounds.east(), overlayRectangle->east());
+    EXPECT_DOUBLE_EQ(childBounds.north(), overlayRectangle->north());
 
     for (const SurfaceVertex& vertex : childMesh->vertices) {
         EXPECT_GE(vertex.uv[0], 0.0f);
