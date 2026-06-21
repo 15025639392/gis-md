@@ -460,6 +460,12 @@ add_executable(test_tileset_selection_refinement
 target_link_libraries(test_tileset_selection_refinement PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tileset_selection_refinement COMMAND test_tileset_selection_refinement)
 
+add_executable(test_tile_visible_range_finalizer
+    unit/tiling/test_tile_visible_range_finalizer.cpp
+)
+target_link_libraries(test_tile_visible_range_finalizer PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_visible_range_finalizer COMMAND test_tile_visible_range_finalizer)
+
 add_executable(test_tile_lod_transitions
     unit/tiling/test_tile_lod_transitions.cpp
 )
