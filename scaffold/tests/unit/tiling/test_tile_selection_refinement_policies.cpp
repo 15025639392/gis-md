@@ -104,6 +104,31 @@ TEST(
 }
 
 TEST(
+    TileSelectionPreTraversalPolicyTest,
+    ReplaceRefinementPreservesDescendantLoadState) {
+    TileSelectionRefineFlowResult refineFlow;
+    refineFlow.refine = true;
+    refineFlow.queueUrgentLoad = true;
+    refineFlow.queuedForLoad = true;
+    refineFlow.ancestorMeetsSse = true;
+
+    const TileSelectionPreTraversalPlan plan =
+        TileSelectionPreTraversalPolicy::plan(
+            TileSelectionPreTraversalInput{
+                true,
+                TileRefine::Replace,
+                refineFlow});
+
+    EXPECT_FALSE(plan.finishAsSingleTile);
+    EXPECT_TRUE(plan.visitChildren);
+    EXPECT_TRUE(plan.queueUrgentLoad);
+    EXPECT_TRUE(plan.queuedForLoadAfterPreTraversal);
+    EXPECT_TRUE(plan.ancestorMeetsSseAfterPreTraversal);
+    EXPECT_FALSE(plan.addAdditiveParentToPlan);
+    EXPECT_FALSE(plan.additiveParentShouldQueueLoad);
+}
+
+TEST(
     TileSelectionKickPolicyTest,
     AddRefinementDoesNotReaddParentAsReplacementAfterKick) {
     TileTraversalDetails manyMissing;
