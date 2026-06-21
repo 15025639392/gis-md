@@ -601,6 +601,35 @@ TEST(QuantizedMeshTerrainProviderTest, AvailabilitySkipsNonArrayLevelsWithoutAdv
               provider.availabilityState(TileKey{"Geographic-TMS", 1, 0, 0}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, AvailabilitySkipsNonObjectRangesLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "available": [
+        [
+          "not-a-range-object",
+          {"startX":0,"startY":0,"endX":1,"endY":0}
+        ],
+        [
+          17,
+          {"startX":0,"startY":0,"endX":0,"endY":0}
+        ]
+      ]
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 1, 0, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 1, 1, 0}));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, NonInt32MetadataAvailabilityIsIgnoredLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
