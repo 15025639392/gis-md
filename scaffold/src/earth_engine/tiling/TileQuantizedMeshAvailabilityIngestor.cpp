@@ -13,7 +13,7 @@ void TileQuantizedMeshAvailabilityIngestor::ingest(
     TerrainProvider* terrainProvider,
     const TileKey& key,
     DecodedHeightmap& heightmap) {
-    if (heightmap.metadataAvailabilityProcessed || heightmap.rawData.empty()) {
+    if (heightmap.metadataAvailabilityProcessed) {
         return;
     }
     heightmap.metadataAvailabilityProcessed = true;
@@ -28,10 +28,17 @@ void TileQuantizedMeshAvailabilityIngestor::ingest(
         return;
     }
 
-    const std::vector<QuantizedMeshAvailabilityRange> metadataAvailability =
-        QuantizedMeshParser::parseMetadataAvailability(
+    std::vector<QuantizedMeshAvailabilityRange> metadataAvailability;
+    if (heightmap.surfaceMesh &&
+        !heightmap.surfaceMesh->metadataAvailability.empty()) {
+        metadataAvailability = heightmap.surfaceMesh->metadataAvailability;
+    } else if (!heightmap.rawData.empty()) {
+        metadataAvailability = QuantizedMeshParser::parseMetadataAvailability(
             heightmap.rawData.data(),
             heightmap.rawData.size());
+    } else {
+        return;
+    }
 
     for (const auto& r : metadataAvailability) {
         int absLevel = key.z + 1 + static_cast<int>(r[0]);
