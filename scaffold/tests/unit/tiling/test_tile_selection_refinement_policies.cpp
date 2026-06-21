@@ -161,3 +161,68 @@ TEST(
     EXPECT_TRUE(plan.restoreChildLoadQueue);
     EXPECT_FALSE(plan.queueParentNormal);
 }
+
+TEST(
+    TileSelectionPostTraversalPolicyTest,
+    RefinedAncestorPreloadsWhenEnabledAndNotAlreadyQueued) {
+    const TileTraversalDetails ready =
+        TileTraversalDetailsPolicy::forSingleTile(true, false);
+
+    const TileSelectionPostTraversalResult result =
+        TileSelectionPostTraversalPolicy::evaluate(
+            TileSelectionPostTraversalInput{
+                ready,
+                true,
+                false,
+                TileSelectionState::NotVisited,
+                false,
+                1.0f,
+                false,
+                false,
+                TileRefine::Replace,
+                false},
+            TileSelectionPostTraversalOptions{
+                2,
+                false,
+                false,
+                true});
+
+    EXPECT_FALSE(result.shouldKick);
+    EXPECT_TRUE(result.preloadRefinedAncestor);
+
+    const TileSelectionPostTraversalCommitPlan plan =
+        TileSelectionPostTraversalPolicy::commitPlan(result, false);
+
+    EXPECT_TRUE(plan.markTileRefined);
+    EXPECT_TRUE(plan.queueParentPreload);
+    EXPECT_FALSE(plan.returnSingleTileDetails);
+}
+
+TEST(
+    TileSelectionPostTraversalPolicyTest,
+    QueuedRefinedAncestorSkipsPreloadDuplicate) {
+    const TileTraversalDetails ready =
+        TileTraversalDetailsPolicy::forSingleTile(true, false);
+
+    const TileSelectionPostTraversalResult result =
+        TileSelectionPostTraversalPolicy::evaluate(
+            TileSelectionPostTraversalInput{
+                ready,
+                true,
+                false,
+                TileSelectionState::NotVisited,
+                false,
+                1.0f,
+                false,
+                false,
+                TileRefine::Replace,
+                true},
+            TileSelectionPostTraversalOptions{
+                2,
+                false,
+                false,
+                true});
+
+    EXPECT_FALSE(result.shouldKick);
+    EXPECT_FALSE(result.preloadRefinedAncestor);
+}
