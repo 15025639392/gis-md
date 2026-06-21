@@ -322,6 +322,30 @@ std::vector<GoogleMapTilesTileRange> googleMapTilesViewportTileRanges(
     return ranges;
 }
 
+GoogleMapTilesTileRange googleMapTilesCompleteAvailabilityRange(
+    const TileKey& requestedKey,
+    int maximumLevel) {
+    const std::unique_ptr<TileScheme> scheme =
+        TileScheme::createXYZWebMercator();
+    int minX = 0;
+    int minY = 0;
+    int maxX = 0;
+    int maxY = 0;
+    scheme->tileRange(
+        scheme->tileToRectangle(requestedKey),
+        maximumLevel,
+        minX,
+        minY,
+        maxX,
+        maxY);
+    return GoogleMapTilesTileRange{
+        maximumLevel,
+        minX,
+        minY,
+        maxX,
+        maxY};
+}
+
 GoogleMapTilesImageryProvider::GoogleMapTilesImageryProvider(
     GoogleMapTilesExistingSessionOptions options,
     std::string attribution)
@@ -383,6 +407,21 @@ void GoogleMapTilesImageryProvider::addCompleteAvailabilityRanges(
         completeAvailabilityRanges_.end(),
         ranges.begin(),
         ranges.end());
+}
+
+void GoogleMapTilesImageryProvider::applyViewportAvailability(
+    const GoogleMapTilesViewportParseResult& viewport,
+    const TileKey& requestedKey) {
+    if (!viewport.valid) {
+        return;
+    }
+    addAvailableTileRanges(googleMapTilesViewportTileRanges(viewport));
+    if (viewport.complete && requestedKey.schemeId == schemeId()) {
+        addCompleteAvailabilityRanges(
+            {googleMapTilesCompleteAvailabilityRange(
+                requestedKey,
+                maxZoom())});
+    }
 }
 
 bool GoogleMapTilesImageryProvider::hasKnownAvailability() const {

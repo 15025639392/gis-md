@@ -1414,6 +1414,49 @@ TEST(GoogleMapTilesImageryProviderTest, ViewportTileRangesClampWebMercatorLatitu
     EXPECT_EQ(1, ranges[0].maximumY);
 }
 
+TEST(GoogleMapTilesImageryProviderTest, AppliesCompleteViewportAvailabilityLikeCesiumNative) {
+    GoogleMapTilesExistingSessionOptions options;
+    options.session = "session";
+    options.key = "key";
+    options.maximumLevel = 2;
+    GoogleMapTilesImageryProvider provider(options);
+
+    GoogleMapTilesViewportParseResult viewport;
+    viewport.valid = true;
+    viewport.complete = true;
+    viewport.maxZoomRects.push_back(
+        GoogleMapTilesViewportRect{2, -180.0, 66.0, -135.0, 85.0});
+
+    provider.applyViewportAvailability(
+        viewport,
+        TileKey{"XYZ-WebMercator", 1, 0, 0});
+
+    EXPECT_TRUE(provider.supportsTile(TileKey{"XYZ-WebMercator", 2, 0, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"XYZ-WebMercator", 2, 1, 1}));
+    EXPECT_TRUE(provider.supportsTile(TileKey{"XYZ-WebMercator", 2, 3, 3}));
+}
+
+TEST(GoogleMapTilesImageryProviderTest, IncompleteViewportDoesNotRejectUnknownTiles) {
+    GoogleMapTilesExistingSessionOptions options;
+    options.session = "session";
+    options.key = "key";
+    options.maximumLevel = 2;
+    GoogleMapTilesImageryProvider provider(options);
+
+    GoogleMapTilesViewportParseResult viewport;
+    viewport.valid = true;
+    viewport.complete = false;
+    viewport.maxZoomRects.push_back(
+        GoogleMapTilesViewportRect{2, -180.0, 66.0, -135.0, 85.0});
+
+    provider.applyViewportAvailability(
+        viewport,
+        TileKey{"XYZ-WebMercator", 1, 0, 0});
+
+    EXPECT_TRUE(provider.supportsTile(TileKey{"XYZ-WebMercator", 2, 0, 0}));
+    EXPECT_TRUE(provider.supportsTile(TileKey{"XYZ-WebMercator", 2, 1, 1}));
+}
+
 TEST(TileMapServiceUrlTest, AppendsTileMapResourceXmlBeforeQueryLikeCesiumNative) {
     EXPECT_EQ(
         "https://example.com/tms/tilemapresource.xml",

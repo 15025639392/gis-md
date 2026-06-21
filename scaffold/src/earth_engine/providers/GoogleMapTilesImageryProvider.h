@@ -86,6 +86,9 @@ public:
         const std::vector<GoogleMapTilesTileRange>& ranges);
     void addCompleteAvailabilityRanges(
         const std::vector<GoogleMapTilesTileRange>& ranges);
+    void applyViewportAvailability(
+        const GoogleMapTilesViewportParseResult& viewport,
+        const TileKey& requestedKey);
     bool hasKnownAvailability() const;
     bool isTileKnownAvailable(const TileKey& key) const;
     bool isTileInCompleteAvailabilityRange(const TileKey& key) const;
