@@ -729,6 +729,33 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayMaximumTextur
     EXPECT_EQ(0, ownerTile->getSourceZoom());
 }
 
+TEST(RasterOverlayLifecycleTest, LargeRectangleUsesRootTileLikeCesiumNative) {
+    RgbImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey rootKey{scheme->id(), 0, 0, 0};
+    const Rectangle rootBounds = scheme->tileToRectangle(rootKey);
+    auto tile = provider.getTile(rootBounds, 8.0, 8.0);
+    ASSERT_NE(nullptr, tile);
+    EXPECT_TRUE(tile->isRectangleTile());
+    EXPECT_EQ(0, tile->getSourceZoom());
+
+    ASSERT_TRUE(provider.loadTile(*tile));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+
+    ASSERT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(rootKey, imagery.requestedKeys.front());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, tile->getState());
+    ASSERT_FALSE(uploaderPtr->lastUpload.pixels.empty());
+    EXPECT_TRUE(std::all_of(
+        uploaderPtr->lastUpload.pixels.begin(),
+        uploaderPtr->lastUpload.pixels.end(),
+        [](uint8_t value) { return value == 0; }));
+}
+
 TEST(RasterOverlayLifecycleTest, RectangleSourceFailureFallsBackToParentTile) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
