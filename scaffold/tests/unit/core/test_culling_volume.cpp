@@ -108,6 +108,29 @@ TEST(CullingVolumeTest, PerspectiveFieldOfViewDoesNotCrashAtOrigin) {
         glm::half_pi<double>()));
 }
 
+TEST(CullingVolumeTest, PerspectiveFieldOfViewAtOriginUsesUnitNearPlaneLikeCesiumNative) {
+    // Source-derived from cesium-native createCullingVolume: nearPlane is
+    // max(1.0, nextafter(length(position)) - length(position)).
+    const Vec3 position = Vec3::zero();
+    const Vec3 direction(0.0, 0.0, 1.0);
+    const Vec3 up(0.0, 1.0, 0.0);
+
+    const CullingVolume fromFov =
+        CullingVolume::fromPerspectiveFieldOfView(position,
+                                                  direction,
+                                                  up,
+                                                  glm::half_pi<double>(),
+                                                  glm::half_pi<double>());
+    const CullingVolume fromClip = CullingVolume::fromClipMatrix(
+        cesiumPerspectiveMatrix(glm::half_pi<double>(),
+                                glm::half_pi<double>(),
+                                1.0,
+                                200000.0) *
+        cesiumViewMatrix(position, direction, up));
+
+    expectCullingVolumeNear(fromFov, fromClip, 1e-10);
+}
+
 TEST(CullingVolumeTest, DefaultPlanesMatchCesiumNative) {
     const CullingVolume volume;
     const Plane defaultPlane(Vec3::unitZ(), 0.0);
