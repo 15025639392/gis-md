@@ -8,10 +8,13 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace earth_engine {
 
 class TerrainProvider;
+class ActivatedRasterOverlay;
+class RenderDevice;
 struct DecodedHeightmap;
 struct TileKey;
 struct TilesetTile;
@@ -20,6 +23,8 @@ struct TilePendingUploadFrameProcessorInput {
     TileLoadLifecycle& loadLifecycle;
     FrameResourceBudget& budget;
     TerrainProvider* terrainProvider = nullptr;
+    RenderDevice* device = nullptr;
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
         terrainCache;
     TileEmptyContentRegistry& emptyContentRegistry;
@@ -56,6 +61,8 @@ public:
             TilePendingLoadCommitCoordinator::commitUpload(
                 upload,
                 input.terrainProvider,
+                input.device,
+                input.rasterOverlays,
                 input.terrainCache,
                 input.loadLifecycle,
                 input.resourceSmoothingActive,

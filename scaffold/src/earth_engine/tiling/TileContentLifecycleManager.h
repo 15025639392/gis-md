@@ -13,6 +13,8 @@
 
 namespace earth_engine {
 
+class ActivatedRasterOverlay;
+
 class TileContentLifecycleManager {
 public:
     TileContentLifecycleManager() = default;
@@ -47,6 +49,7 @@ public:
         TerrainProvider* terrainProvider,
         TilesetContentProvider* contentProvider,
         RenderDevice* device,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>&
             tiles,
         uint64_t frameNumber,
@@ -63,6 +66,7 @@ public:
                 terrainProvider,
                 contentProvider,
                 device,
+                rasterOverlays,
                 tiles,
                 frameNumber,
                 maximumSimultaneousTileLoads,
@@ -83,6 +87,7 @@ public:
         TerrainProvider* terrainProvider,
         TilesetContentProvider* contentProvider,
         RenderDevice* device,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>&
             tiles,
         uint64_t frameNumber,
@@ -102,6 +107,7 @@ public:
                 terrainProvider,
                 contentProvider,
                 device,
+                rasterOverlays,
                 tiles,
                 frameNumber,
                 maximumSimultaneousTileLoads,
@@ -122,6 +128,7 @@ private:
         TerrainProvider* terrainProvider,
         TilesetContentProvider* contentProvider,
         RenderDevice* device,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>&
             tiles,
         uint64_t frameNumber,
@@ -134,6 +141,7 @@ private:
             terrainProvider,
             contentProvider,
             device,
+            rasterOverlays,
             tiles,
             terrainCache_,
             emptyContentRegistry_,

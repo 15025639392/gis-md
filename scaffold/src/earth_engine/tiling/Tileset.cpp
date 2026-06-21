@@ -143,16 +143,20 @@ TilesetLoadDiagnostics Tileset::loadDiagnostics() const {
 }
 
 TileContentRuntimeFrame Tileset::makeContentRuntimeFrame() const {
-    return TileContentRuntimeFrame{
-        terrainProvider_.get(),
-        contentProvider_.get(),
-        device_,
-        tileRegistry_.tiles(),
-        frameNumber_,
-        options_.maximumSimultaneousTileLoads,
-        options_.mainThreadLoadingTimeLimit,
-        currentFrameTimeSeconds_,
-        static_cast<uint32_t>(kSmoothedMainThreadUploadLimit)};
+    TileContentRuntimeFrame frame{
+        rasterOverlays_,
+        tileRegistry_.tiles()};
+    frame.terrainProvider = terrainProvider_.get();
+    frame.contentProvider = contentProvider_.get();
+    frame.device = device_;
+    frame.frameNumber = frameNumber_;
+    frame.maximumSimultaneousTileLoads =
+        options_.maximumSimultaneousTileLoads;
+    frame.mainThreadLoadingTimeLimit = options_.mainThreadLoadingTimeLimit;
+    frame.currentFrameTimeSeconds = currentFrameTimeSeconds_;
+    frame.smoothedMainThreadUploadLimit =
+        static_cast<uint32_t>(kSmoothedMainThreadUploadLimit);
+    return frame;
 }
 
 TileLoadRequestOutcome Tileset::requestMissingContent(

@@ -4,6 +4,7 @@
 
 #include "RasterMappedToTilesetTile.h"
 #include "TileLoadResultMetadataApplicator.h"
+#include "TileRasterOverlayDetailsGenerator.h"
 #include "TileTerrainUploadPolicy.h"
 #include "TileLoadTypes.h"
 #include "TilesetTile.h"
@@ -31,7 +32,9 @@ void TileTerrainUploadCommitter::applyAvailabilityUpdates(
 
 void TileTerrainUploadCommitter::prepareTerrainRenderContent(
     TilesetTile& tile,
-    TileLoadedContent&& content) {
+    TileLoadedContent&& content,
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+    RenderDevice* device) {
     if (content.surfaceMesh &&
         !tile.content.renderContent.hasSurfaceMesh()) {
         tile.content.renderContent.setSurfaceMesh(
@@ -40,6 +43,12 @@ void TileTerrainUploadCommitter::prepareTerrainRenderContent(
     TileLoadResultMetadataApplicator::apply(
         tile,
         std::move(content.metadata));
+    TileRasterOverlayDetailsGenerator::
+        ensureProjectionDetailsFromActiveOverlays(
+            tile.content.renderContent,
+            tile.boundingVolume ? &*tile.boundingVolume : nullptr,
+            rasterOverlays,
+            device);
     prepareTerrainRenderContent(tile);
 }
 

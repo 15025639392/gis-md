@@ -22,11 +22,14 @@
 
 namespace earth_engine {
 
+class ActivatedRasterOverlay;
+
 struct TilesetContentLifecycleContext {
     TileLoadLifecycle& loadLifecycle;
     TerrainProvider* terrainProvider = nullptr;
     TilesetContentProvider* contentProvider = nullptr;
     RenderDevice* device = nullptr;
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
         terrainCache;
@@ -103,6 +106,8 @@ public:
                 context.loadLifecycle,
                 *budget,
                 context.terrainProvider,
+                context.device,
+                context.rasterOverlays,
                 context.terrainCache,
                 context.emptyContentRegistry,
                 interactionActive,

@@ -11,6 +11,7 @@
 namespace earth_engine {
 
 class FrameResourceBudget;
+class ActivatedRasterOverlay;
 class RenderDevice;
 class TerrainProvider;
 class TileContentAccess;
@@ -21,11 +22,12 @@ class TilesetContentProvider;
 struct TilesetTile;
 
 struct TileContentRuntimeFrame {
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
+    const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>&
+        tiles;
     TerrainProvider* terrainProvider = nullptr;
     TilesetContentProvider* contentProvider = nullptr;
     RenderDevice* device = nullptr;
-    const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>&
-        tiles;
     uint64_t frameNumber = 0;
     uint32_t maximumSimultaneousTileLoads = 0;
     double mainThreadLoadingTimeLimit = 0.0;

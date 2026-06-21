@@ -2,8 +2,12 @@
 
 #include "SurfaceTile.h"
 
+#include <vector>
+
 namespace earth_engine {
 
+class ActivatedRasterOverlay;
+class RenderDevice;
 class TileRenderContentState;
 struct TileBoundingVolume;
 
@@ -13,6 +17,12 @@ public:
         TileRenderContentState& renderContent,
         const TileBoundingVolume& boundingVolume,
         RasterOverlayProjection projection);
+
+    static int ensureProjectionDetailsFromActiveOverlays(
+        TileRenderContentState& renderContent,
+        const TileBoundingVolume* boundingVolume,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        RenderDevice* device);
 };
 
 } // namespace earth_engine

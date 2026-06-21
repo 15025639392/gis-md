@@ -6,9 +6,12 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace earth_engine {
 
+class ActivatedRasterOverlay;
+class RenderDevice;
 struct DecodedHeightmap;
 struct SurfaceTileMesh;
 struct TileKey;
@@ -48,7 +51,9 @@ struct TileTerrainUploadCommitter {
 
     static void prepareTerrainRenderContent(
         TilesetTile& tile,
-        TileLoadedContent&& content);
+        TileLoadedContent&& content,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        RenderDevice* device);
     static void prepareTerrainRenderContent(TilesetTile& tile);
     static TileTerrainUploadCommitAction finishMeshResourcePreparation(
         TilesetTile& tile,

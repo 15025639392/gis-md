@@ -13,8 +13,12 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace earth_engine {
+
+class ActivatedRasterOverlay;
+class RenderDevice;
 
 class TilePendingLoadCommitCoordinator {
 public:
@@ -71,6 +75,8 @@ public:
     static void commitTerrainUpload(
         PendingTileLoad& upload,
         TerrainProvider* terrainProvider,
+        RenderDevice* device,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         std::unordered_map<
             std::string,
             std::unique_ptr<DecodedHeightmap>>& terrainCache,
@@ -94,7 +100,9 @@ public:
         if (TilesetTile* tile = ensureTile(upload.key)) {
             TileTerrainUploadCommitter::prepareTerrainRenderContent(
                 *tile,
-                std::move(content));
+                std::move(content),
+                rasterOverlays,
+                device);
             if (!resourceSmoothingActive &&
                 !tile->content.renderContent.hasSurfaceMesh()) {
                 ensureTileMesh(*tile);
@@ -186,6 +194,8 @@ public:
     static void commitUpload(
         PendingTileLoad& upload,
         TerrainProvider* terrainProvider,
+        RenderDevice* device,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         std::unordered_map<
             std::string,
             std::unique_ptr<DecodedHeightmap>>& terrainCache,
@@ -208,6 +218,8 @@ public:
             commitTerrainUpload(
                 upload,
                 terrainProvider,
+                device,
+                rasterOverlays,
                 terrainCache,
                 lifecycle,
                 resourceSmoothingActive,

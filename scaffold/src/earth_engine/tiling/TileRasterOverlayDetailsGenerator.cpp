@@ -5,6 +5,8 @@
 
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/Projection.h"
+#include "../layers/ActivatedRasterOverlay.h"
+#include "../providers/RasterOverlayTileProvider.h"
 
 namespace earth_engine {
 namespace {
@@ -53,6 +55,36 @@ bool TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
         boundingVolume.maximumHeight};
     details->merge(generated);
     return true;
+}
+
+int TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromActiveOverlays(
+    TileRenderContentState& renderContent,
+    const TileBoundingVolume* boundingVolume,
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+    RenderDevice* device) {
+    if (!boundingVolume ||
+        boundingVolume->kind != TileBoundingVolumeKind::Region) {
+        return 0;
+    }
+
+    int generated = 0;
+    for (ActivatedRasterOverlay* activeOverlay : rasterOverlays) {
+        if (!activeOverlay || !activeOverlay->visible()) {
+            continue;
+        }
+        RasterOverlayTileProvider* provider =
+            activeOverlay->ensureTileProvider(device);
+        if (!provider || !provider->isReady()) {
+            continue;
+        }
+        if (ensureProjectionDetailsFromRegion(
+                renderContent,
+                *boundingVolume,
+                provider->getProjection())) {
+            ++generated;
+        }
+    }
+    return generated;
 }
 
 } // namespace earth_engine
