@@ -256,6 +256,10 @@ uniform sampler2D u_clearcoatRoughnessTexture;
 uniform sampler2D u_clearcoatNormalTexture;
 uniform sampler2D u_sheenColorTexture;
 uniform sampler2D u_sheenRoughnessTexture;
+uniform sampler2D u_mappedRasterTexture0;
+uniform sampler2D u_mappedRasterTexture1;
+uniform sampler2D u_mappedRasterTexture2;
+uniform sampler2D u_mappedRasterTexture3;
 uniform float u_hasBaseColorTexture;
 uniform vec4 u_materialFactors;       // metallic, roughness, normal scale, occlusion strength
 uniform float u_dielectricSpecularF0;
@@ -318,6 +322,19 @@ uniform float u_specularGlossinessTexCoordSet;
 uniform float u_transmissionTexCoordSet;
 uniform vec3 u_clearcoatTexCoordSets; // clearcoat, roughness, normal
 uniform vec2 u_sheenTexCoordSets;     // color, roughness
+uniform float u_mappedRasterTextureCount;
+uniform vec4 u_mappedRasterTileUV0;
+uniform vec4 u_mappedRasterTileUV1;
+uniform vec4 u_mappedRasterTileUV2;
+uniform vec4 u_mappedRasterTileUV3;
+uniform float u_mappedRasterOpacity0;
+uniform float u_mappedRasterOpacity1;
+uniform float u_mappedRasterOpacity2;
+uniform float u_mappedRasterOpacity3;
+uniform float u_mappedRasterTexCoordSet0;
+uniform float u_mappedRasterTexCoordSet1;
+uniform float u_mappedRasterTexCoordSet2;
+uniform float u_mappedRasterTexCoordSet3;
 
 out vec4 fragColor;
 
@@ -338,6 +355,23 @@ vec2 transformUv(vec2 uv, vec4 offsetScale, vec2 sinCos) {
     return vec2(
         scaled.x * sinCos.y + scaled.y * sinCos.x,
         scaled.y * sinCos.y - scaled.x * sinCos.x) + offsetScale.xy;
+}
+
+vec4 alphaOver(vec4 base, vec4 overlay, float opacity) {
+    overlay.a *= clamp(opacity, 0.0, 1.0);
+    base.rgb = mix(base.rgb, overlay.rgb, overlay.a);
+    base.a = max(base.a, overlay.a);
+    return base;
+}
+
+vec4 applyMappedRaster(
+    vec4 base,
+    sampler2D rasterTexture,
+    float texCoordSet,
+    vec4 tileUV,
+    float opacity) {
+    vec2 overlayUv = tileUV.xy + uvFromSet(texCoordSet) * tileUV.zw;
+    return alphaOver(base, texture(rasterTexture, overlayUv), opacity);
 }
 
 vec3 applyTbn(vec3 tangent, vec3 bitangent, vec3 n, vec3 mapNormal) {
@@ -492,6 +526,38 @@ void main() {
     vec4 base = u_baseColor * v_color;
     if (u_hasBaseColorTexture > 0.5) {
         base *= texture(u_baseColorTexture, baseColorUv);
+    }
+    if (u_mappedRasterTextureCount > 0.5) {
+        base = applyMappedRaster(
+            base,
+            u_mappedRasterTexture0,
+            u_mappedRasterTexCoordSet0,
+            u_mappedRasterTileUV0,
+            u_mappedRasterOpacity0);
+    }
+    if (u_mappedRasterTextureCount > 1.5) {
+        base = applyMappedRaster(
+            base,
+            u_mappedRasterTexture1,
+            u_mappedRasterTexCoordSet1,
+            u_mappedRasterTileUV1,
+            u_mappedRasterOpacity1);
+    }
+    if (u_mappedRasterTextureCount > 2.5) {
+        base = applyMappedRaster(
+            base,
+            u_mappedRasterTexture2,
+            u_mappedRasterTexCoordSet2,
+            u_mappedRasterTileUV2,
+            u_mappedRasterOpacity2);
+    }
+    if (u_mappedRasterTextureCount > 3.5) {
+        base = applyMappedRaster(
+            base,
+            u_mappedRasterTexture3,
+            u_mappedRasterTexCoordSet3,
+            u_mappedRasterTileUV3,
+            u_mappedRasterOpacity3);
     }
     if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
         discard;
@@ -1112,6 +1178,28 @@ float2 gltfTransformUv(float2 uv, float4 offsetScale, float2 sinCos) {
         scaled.y * sinCos.y - scaled.x * sinCos.x) + offsetScale.xy;
 }
 
+float4 gltfAlphaOver(float4 base, float4 overlay, float opacity) {
+    overlay.a *= clamp(opacity, 0.0, 1.0);
+    base.rgb = mix(base.rgb, overlay.rgb, overlay.a);
+    base.a = max(base.a, overlay.a);
+    return base;
+}
+
+float4 gltfApplyMappedRaster(float4 base,
+                             GltfVertexOut in,
+                             texture2d<float> rasterTexture,
+                             sampler rasterSampler,
+                             float texCoordSet,
+                             float4 tileUV,
+                             float opacity) {
+    float2 overlayUv =
+        tileUV.xy + gltfUvFromSet(in, texCoordSet) * tileUV.zw;
+    return gltfAlphaOver(
+        base,
+        rasterTexture.sample(rasterSampler, overlayUv),
+        opacity);
+}
+
 float2 gltfUvFromSet(GltfVertexOut in, float texCoordSet) {
     int setIndex = int(floor(texCoordSet + 0.5));
     if (setIndex == 1) return in.texcoord01.zw;
@@ -1334,6 +1422,19 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              constant float4& u_transmissionTexOffsetScale [[buffer(65)]],
                              constant float2& u_transmissionTexRotationSinCos [[buffer(66)]],
                              constant float& u_transmissionTexCoordSet [[buffer(67)]],
+                             constant float& u_mappedRasterTextureCount [[buffer(68)]],
+                             constant float4& u_mappedRasterTileUV0 [[buffer(69)]],
+                             constant float4& u_mappedRasterTileUV1 [[buffer(70)]],
+                             constant float4& u_mappedRasterTileUV2 [[buffer(71)]],
+                             constant float4& u_mappedRasterTileUV3 [[buffer(72)]],
+                             constant float& u_mappedRasterOpacity0 [[buffer(73)]],
+                             constant float& u_mappedRasterOpacity1 [[buffer(74)]],
+                             constant float& u_mappedRasterOpacity2 [[buffer(75)]],
+                             constant float& u_mappedRasterOpacity3 [[buffer(76)]],
+                             constant float& u_mappedRasterTexCoordSet0 [[buffer(77)]],
+                             constant float& u_mappedRasterTexCoordSet1 [[buffer(78)]],
+                             constant float& u_mappedRasterTexCoordSet2 [[buffer(79)]],
+                             constant float& u_mappedRasterTexCoordSet3 [[buffer(80)]],
                              texture2d<float> u_baseColorTexture [[texture(0)]],
                              texture2d<float> u_metallicRoughnessTexture [[texture(1)]],
                              texture2d<float> u_normalTexture [[texture(2)]],
@@ -1349,6 +1450,10 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              texture2d<float> u_anisotropyTexture [[texture(12)]],
                              texture2d<float> u_specularGlossinessTexture [[texture(13)]],
                              texture2d<float> u_transmissionTexture [[texture(14)]],
+                             texture2d<float> u_mappedRasterTexture0 [[texture(15)]],
+                             texture2d<float> u_mappedRasterTexture1 [[texture(16)]],
+                             texture2d<float> u_mappedRasterTexture2 [[texture(17)]],
+                             texture2d<float> u_mappedRasterTexture3 [[texture(18)]],
                              sampler u_baseColorSampler [[sampler(0)]],
                              sampler u_metallicRoughnessSampler [[sampler(1)]],
                              sampler u_normalSampler [[sampler(2)]],
@@ -1363,7 +1468,11 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              sampler u_sheenRoughnessSampler [[sampler(11)]],
                              sampler u_anisotropySampler [[sampler(12)]],
                              sampler u_specularGlossinessSampler [[sampler(13)]],
-                             sampler u_transmissionSampler [[sampler(14)]]) {
+                             sampler u_transmissionSampler [[sampler(14)]],
+                             sampler u_mappedRasterSampler0 [[sampler(15)]],
+                             sampler u_mappedRasterSampler1 [[sampler(16)]],
+                             sampler u_mappedRasterSampler2 [[sampler(17)]],
+                             sampler u_mappedRasterSampler3 [[sampler(18)]]) {
     float faceSign = frontFacing ? 1.0 : -1.0;
     float3 n = normalize(in.normal) * faceSign;
     float3 geometryN = n;
@@ -1375,6 +1484,46 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
     float4 base = u_baseColor * in.color;
     if (u_hasBaseColorTexture > 0.5) {
         base *= u_baseColorTexture.sample(u_baseColorSampler, baseColorUv);
+    }
+    if (u_mappedRasterTextureCount > 0.5) {
+        base = gltfApplyMappedRaster(
+            base,
+            in,
+            u_mappedRasterTexture0,
+            u_mappedRasterSampler0,
+            u_mappedRasterTexCoordSet0,
+            u_mappedRasterTileUV0,
+            u_mappedRasterOpacity0);
+    }
+    if (u_mappedRasterTextureCount > 1.5) {
+        base = gltfApplyMappedRaster(
+            base,
+            in,
+            u_mappedRasterTexture1,
+            u_mappedRasterSampler1,
+            u_mappedRasterTexCoordSet1,
+            u_mappedRasterTileUV1,
+            u_mappedRasterOpacity1);
+    }
+    if (u_mappedRasterTextureCount > 2.5) {
+        base = gltfApplyMappedRaster(
+            base,
+            in,
+            u_mappedRasterTexture2,
+            u_mappedRasterSampler2,
+            u_mappedRasterTexCoordSet2,
+            u_mappedRasterTileUV2,
+            u_mappedRasterOpacity2);
+    }
+    if (u_mappedRasterTextureCount > 3.5) {
+        base = gltfApplyMappedRaster(
+            base,
+            in,
+            u_mappedRasterTexture3,
+            u_mappedRasterSampler3,
+            u_mappedRasterTexCoordSet3,
+            u_mappedRasterTileUV3,
+            u_mappedRasterOpacity3);
     }
     if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
         discard_fragment();
@@ -2088,6 +2237,17 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
     cmd.uniforms["u_alphaCutoff"] = {0.5f};
     cmd.uniforms["u_renderOpacity"] = {1.0f};
     cmd.uniforms["u_unlit"] = {0.0f};
+    cmd.uniforms["u_mappedRasterTextureCount"] = {0.0f};
+    for (int i = 0; i < kMaxGltfRasterOverlays; ++i) {
+        cmd.uniforms["u_mappedRasterTileUV" + std::to_string(i)] = {
+            0.0f,
+            0.0f,
+            1.0f,
+            1.0f};
+        cmd.uniforms["u_mappedRasterOpacity" + std::to_string(i)] = {1.0f};
+        cmd.uniforms["u_mappedRasterTexCoordSet" + std::to_string(i)] = {
+            0.0f};
+    }
     auto setTextureTransformDefaults = [&cmd](
         const char* offsetScaleName,
         const char* rotationName) {

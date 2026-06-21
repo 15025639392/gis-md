@@ -7,6 +7,8 @@
 
 namespace earth_engine {
 
+class ActivatedRasterOverlay;
+
 enum class SurfaceRasterBindingKind {
     None,
     RealTile,
@@ -33,5 +35,10 @@ SurfaceRasterBinding chooseSurfaceRasterBinding(
     const RasterMappedToTilesetTile* mapped);
 
 bool isLegalSurfaceRasterTile(const RasterOverlayTile* tile);
+
+bool rasterOverlayBindingAllowedByPolicy(
+    const ActivatedRasterOverlay* activeOverlay,
+    const RasterMappedToTilesetTile* mapped,
+    const SurfaceRasterBinding& binding);
 
 } // namespace earth_engine

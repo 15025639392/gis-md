@@ -1,4 +1,6 @@
 #include "SurfaceRasterBinding.h"
+#include "../layers/ActivatedRasterOverlay.h"
+#include "../layers/RasterOverlay.h"
 
 namespace earth_engine {
 
@@ -34,6 +36,26 @@ SurfaceRasterBinding chooseSurfaceRasterBinding(
         ? SurfaceRasterBindingKind::AncestorTile
         : SurfaceRasterBindingKind::RealTile;
     return binding;
+}
+
+bool rasterOverlayBindingAllowedByPolicy(
+    const ActivatedRasterOverlay* activeOverlay,
+    const RasterMappedToTilesetTile* mapped,
+    const SurfaceRasterBinding& binding) {
+    if (!activeOverlay || !activeOverlay->visible() ||
+        !mapped || binding.kind == SurfaceRasterBindingKind::None ||
+        !binding.tile || !binding.tile->getTexture()) {
+        return false;
+    }
+    if (activeOverlay->getOverlay().role() ==
+            RasterOverlayRole::BaseImagery) {
+        return true;
+    }
+    if (activeOverlay->getOverlay().fallbackPolicy() ==
+        RasterOverlayFallbackPolicy::SkipUntilReady) {
+        return mapped->getLoadingTile() == nullptr;
+    }
+    return true;
 }
 
 } // namespace earth_engine

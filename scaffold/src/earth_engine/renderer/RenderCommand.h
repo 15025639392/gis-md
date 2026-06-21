@@ -12,6 +12,8 @@
 namespace earth_engine {
 
 static constexpr int kMaxSurfaceImageryOverlays = 4;
+static constexpr int kGltfRasterOverlayTextureBase = 15;
+static constexpr int kMaxGltfRasterOverlays = 4;
 static constexpr int kGltfInstanceMatrixStride = 100;
 
 enum class RenderCommandKind {
@@ -116,6 +118,14 @@ struct RenderCommand {
     int surfaceSkirtIndexCount = 0;
     int surfaceBaseRasterState = 0;
     int surfaceBaseIsRectangleTile = 0;
+
+    // glTF raster overlays use _CESIUMOVERLAY_n attributes and separate
+    // material texture slots, so they cannot reuse surface overlay samplers.
+    std::array<std::array<float, 4>, kMaxGltfRasterOverlays>
+        gltfRasterOverlayTileUvs{};
+    std::array<float, kMaxGltfRasterOverlays> gltfRasterOverlayOpacities{};
+    std::array<float, kMaxGltfRasterOverlays> gltfRasterOverlayTexCoordSets{};
+    int gltfRasterOverlayTextureCount = 0;
 };
 
 /// 渲染命令列表（每帧一帧）

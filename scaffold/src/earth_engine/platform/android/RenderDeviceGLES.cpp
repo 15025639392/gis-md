@@ -384,7 +384,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     GLuint currentProgram = 0;
     GLuint currentArrayBuffer = 0;
     GLuint currentElementArrayBuffer = 0;
-    std::array<GLuint, 16> currentTextures{};
+    std::array<GLuint, 19> currentTextures{};
     bool attrib0Enabled = false;
     bool attrib1Enabled = false;
     bool attrib2Enabled = false;
@@ -710,6 +710,13 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             setSampler("u_anisotropyTexture", 12);
             setSampler("u_specularGlossinessTexture", 13);
             setSampler("u_transmissionTexture", 14);
+            for (int i = 0; i < kMaxGltfRasterOverlays; ++i) {
+                std::string name =
+                    "u_mappedRasterTexture" + std::to_string(i);
+                setSampler(
+                    name.c_str(),
+                    kGltfRasterOverlayTextureBase + i);
+            }
         }
         for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
             std::string name = "u_overlayTexture" + std::to_string(i);

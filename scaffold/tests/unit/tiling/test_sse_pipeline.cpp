@@ -4978,6 +4978,112 @@ void testTilesetGltfRenderContentBuildsPrimitiveCommands() {
           "Tileset: glTF draw command carries primitive world center for transparent sorting");
 }
 
+void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
+    auto overlayOptions = makeRasterOverlayOptions();
+    overlayOptions.opacity = 0.42f;
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        overlayOptions);
+    ActivatedRasterOverlay activated(*overlay);
+
+    DummyRenderDevice device;
+    device.allowTextureCreation = true;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {&activated},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: glTF mapped raster root tile is created");
+    if (!root) return;
+
+    const Rectangle geometryRectangle =
+        Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0);
+    auto model = makeTexturedTriangleGltfModel();
+    model->rasterOverlayDetails.rasterOverlayProjections = {
+        RasterOverlayProjection::Geographic,
+        RasterOverlayProjection::WebMercator};
+    model->rasterOverlayDetails.rasterOverlayRectangles = {
+        Rectangle{},
+        projectForProvider(*activated.ensureTileProvider(&device),
+                           geometryRectangle)};
+    model->rasterOverlayDetails.boundingRegion = {
+        geometryRectangle,
+        0.0,
+        0.0};
+    root->content.renderContent.prepareGltfContent(
+        std::move(model),
+        Mat4::identity());
+    root->bounds = geometryRectangle;
+    root->geometricError = 100.0;
+    root->content.contentKind = TileContentKind::Render;
+    root->content.loadState = TileLoadState::ContentLoaded;
+    root->rasterOverlayState.mappings().resize(1);
+
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    RasterMappedToTilesetTile* mapped =
+        root->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* loading = mapped ? mapped->getLoadingTile() : nullptr;
+    check(mapped != nullptr && loading != nullptr,
+          "Tileset: glTF mapped raster creates a loading mapping");
+    if (!mapped || !loading) return;
+
+    loading->setTexture(std::make_unique<DummyTexture>(4, 4));
+    loading->setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 1,
+          "Tileset: glTF mapped raster emits one primitive command");
+    if (commands.empty()) return;
+    const RenderCommand& cmd = commands.front();
+    check(cmd.kind == RenderCommandKind::GltfPrimitive &&
+              cmd.gltfRasterOverlayTextureCount == 1 &&
+              cmd.textures.size() >
+                  static_cast<size_t>(kGltfRasterOverlayTextureBase) &&
+              cmd.textures[0] != nullptr &&
+              cmd.textures[kGltfRasterOverlayTextureBase] ==
+                  loading->getTexture(),
+          "Tileset: glTF mapped raster uses texture slot 15 without replacing material slot 0");
+    check(cmd.gltfRasterOverlayTexCoordSets[0] == 1.0f &&
+              cmd.uniforms.count("u_mappedRasterTexCoordSet0") &&
+              cmd.uniforms.at("u_mappedRasterTexCoordSet0").front() == 1.0f,
+          "Tileset: glTF mapped raster uses the matching _CESIUMOVERLAY texture coordinate ID");
+    check(std::abs(cmd.gltfRasterOverlayTileUvs[0][0] -
+                   mapped->getTranslationU()) < 1e-6f &&
+              std::abs(cmd.gltfRasterOverlayTileUvs[0][1] -
+                       mapped->getTranslationV()) < 1e-6f &&
+              std::abs(cmd.gltfRasterOverlayTileUvs[0][2] -
+                       mapped->getScaleU()) < 1e-6f &&
+              std::abs(cmd.gltfRasterOverlayTileUvs[0][3] -
+                       mapped->getScaleV()) < 1e-6f &&
+              cmd.uniforms.count("u_mappedRasterTileUV0") &&
+              cmd.uniforms.at("u_mappedRasterTileUV0").size() == 4,
+          "Tileset: glTF mapped raster uploads translation and scale");
+    check(std::abs(cmd.gltfRasterOverlayOpacities[0] - overlayOptions.opacity) <
+              1e-6f &&
+              cmd.uniforms.count("u_mappedRasterOpacity0") &&
+              std::abs(cmd.uniforms.at("u_mappedRasterOpacity0").front() -
+                       overlayOptions.opacity) < 1e-6f,
+          "Tileset: glTF mapped raster preserves overlay opacity");
+    check(!cmd.resourceKeepAlive.empty(),
+          "Tileset: glTF mapped raster command retains raster tile resources");
+}
+
 void testTilesetGltfTangentsUseModelLinearTransform() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
@@ -26740,6 +26846,7 @@ int main() {
     testTilesetSurfaceOverlaysCompositeIntoSingleCommand();
     testTilesetRasterMoreDetailCreatesUpsampledChildren();
     testTilesetGltfRenderContentBuildsPrimitiveCommands();
+    testTilesetGltfDrawCommandBindsMappedRasterOverlays();
     testTilesetGltfTangentsUseModelLinearTransform();
     testTilesetGltfMaskMaterialStaysOpaqueCommand();
     testTilesetGltfUnlitMaterialUploadsUniform();

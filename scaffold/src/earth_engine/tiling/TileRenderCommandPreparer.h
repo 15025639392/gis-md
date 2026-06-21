@@ -56,6 +56,7 @@ public:
             GltfDrawCommandBuilder::build(
                 renderer,
                 tile,
+                rasterOverlays,
                 commands,
                 GltfDrawCommandBuildContext{
                     context.frameNumber,

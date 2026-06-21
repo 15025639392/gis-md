@@ -729,9 +729,22 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
         setFragmentUniform("u_transmissionTexOffsetScale", 65);
         setFragmentUniform("u_transmissionTexRotationSinCos", 66);
         setFragmentUniform("u_transmissionTexCoordSet", 67);
+        setFragmentUniform("u_mappedRasterTextureCount", 68);
+        setFragmentUniform("u_mappedRasterTileUV0", 69);
+        setFragmentUniform("u_mappedRasterTileUV1", 70);
+        setFragmentUniform("u_mappedRasterTileUV2", 71);
+        setFragmentUniform("u_mappedRasterTileUV3", 72);
+        setFragmentUniform("u_mappedRasterOpacity0", 73);
+        setFragmentUniform("u_mappedRasterOpacity1", 74);
+        setFragmentUniform("u_mappedRasterOpacity2", 75);
+        setFragmentUniform("u_mappedRasterOpacity3", 76);
+        setFragmentUniform("u_mappedRasterTexCoordSet0", 77);
+        setFragmentUniform("u_mappedRasterTexCoordSet1", 78);
+        setFragmentUniform("u_mappedRasterTexCoordSet2", 79);
+        setFragmentUniform("u_mappedRasterTexCoordSet3", 80);
 
         // 纹理绑定
-        const NSUInteger maxMaterialTextures = 15;
+        const NSUInteger maxMaterialTextures = 19;
         const NSUInteger materialTextureCount =
             std::min<NSUInteger>(cmd.textures.size(), maxMaterialTextures);
         for (NSUInteger textureIndex = 0;

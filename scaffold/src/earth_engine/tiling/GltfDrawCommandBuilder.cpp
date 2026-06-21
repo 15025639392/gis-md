@@ -1,7 +1,9 @@
 #include "GltfDrawCommandBuilder.h"
 
 #include "RasterMappedToTilesetTile.h"
+#include "SurfaceRasterBinding.h"
 #include "TilesetTile.h"
+#include "../layers/ActivatedRasterOverlay.h"
 #include "../renderer/Renderer.h"
 
 #include <utility>
@@ -40,6 +42,7 @@ RenderCommand::PrimitiveType renderPrimitiveType(GltfPrimitiveMode mode) {
 void GltfDrawCommandBuilder::build(
     Renderer& renderer,
     TilesetTile& tile,
+    const std::vector<ActivatedRasterOverlay*>& overlays,
     RenderCommandList& commands,
     const GltfDrawCommandBuildContext& context) {
     if (!tile.content.renderContent.hasGltfResources()) {
@@ -264,6 +267,72 @@ void GltfDrawCommandBuilder::build(
         cmd.textures[12] = primitive.anisotropyTexture.texture;
         cmd.textures[13] = primitive.specularGlossinessTexture.texture;
         cmd.textures[14] = primitive.transmissionTexture.texture;
+        int rasterOverlayTextureCount = 0;
+        for (size_t i = 0;
+             i < overlays.size() && i < tile.rasterOverlayState.mappingCount();
+             ++i) {
+            if (rasterOverlayTextureCount >= kMaxGltfRasterOverlays) {
+                break;
+            }
+            ActivatedRasterOverlay* activeOverlay = overlays[i];
+            const RasterMappedToTilesetTile* mapped =
+                tile.rasterOverlayState.mappingAt(i);
+            const SurfaceRasterBinding binding =
+                chooseSurfaceRasterBinding(mapped);
+            if (!rasterOverlayBindingAllowedByPolicy(
+                    activeOverlay,
+                    mapped,
+                    binding)) {
+                continue;
+            }
+            const int32_t textureCoordinateID =
+                mapped ? mapped->getTextureCoordinateID() : -1;
+            if (textureCoordinateID < 0 ||
+                textureCoordinateID >= static_cast<int32_t>(kGltfMaxTexCoordSets)) {
+                continue;
+            }
+            Texture* texture = binding.tile->getTexture();
+            if (!texture) {
+                continue;
+            }
+            const size_t textureSlot =
+                static_cast<size_t>(kGltfRasterOverlayTextureBase +
+                                    rasterOverlayTextureCount);
+            if (cmd.textures.size() <= textureSlot) {
+                cmd.textures.resize(textureSlot + 1u, nullptr);
+            }
+            cmd.textures[textureSlot] = texture;
+            if (binding.tileHandle) {
+                cmd.resourceKeepAlive.push_back(binding.tileHandle);
+            }
+            cmd.gltfRasterOverlayTileUvs[rasterOverlayTextureCount] = {
+                binding.offsetU,
+                binding.offsetV,
+                binding.scaleU,
+                binding.scaleV};
+            cmd.gltfRasterOverlayOpacities[rasterOverlayTextureCount] =
+                activeOverlay ? activeOverlay->opacity() : 1.0f;
+            cmd.gltfRasterOverlayTexCoordSets[rasterOverlayTextureCount] =
+                static_cast<float>(textureCoordinateID);
+            ++rasterOverlayTextureCount;
+        }
+        cmd.gltfRasterOverlayTextureCount = rasterOverlayTextureCount;
+        cmd.uniforms["u_mappedRasterTextureCount"] = {
+            static_cast<float>(rasterOverlayTextureCount)};
+        for (int i = 0; i < kMaxGltfRasterOverlays; ++i) {
+            cmd.uniforms[
+                "u_mappedRasterTileUV" + std::to_string(i)] = {
+                    cmd.gltfRasterOverlayTileUvs[i][0],
+                    cmd.gltfRasterOverlayTileUvs[i][1],
+                    cmd.gltfRasterOverlayTileUvs[i][2],
+                    cmd.gltfRasterOverlayTileUvs[i][3]};
+            cmd.uniforms[
+                "u_mappedRasterOpacity" + std::to_string(i)] = {
+                    cmd.gltfRasterOverlayOpacities[i]};
+            cmd.uniforms[
+                "u_mappedRasterTexCoordSet" + std::to_string(i)] = {
+                    cmd.gltfRasterOverlayTexCoordSets[i]};
+        }
         cmd.cullFace = !primitive.doubleSided;
         if (context.transitionOpacity < 0.999f ||
             primitive.alphaMode == GltfAlphaMode::Blend ||

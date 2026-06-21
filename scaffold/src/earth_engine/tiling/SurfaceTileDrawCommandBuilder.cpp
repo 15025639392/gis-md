@@ -25,20 +25,10 @@ bool overlayBindingAllowedByPolicy(
     const ActivatedRasterOverlay* activeOverlay,
     const RasterMappedToTilesetTile* mapped,
     const SurfaceRasterBinding& binding) {
-    if (!activeOverlay || !activeOverlay->visible() ||
-        !mapped || binding.kind == SurfaceRasterBindingKind::None ||
-        !binding.tile || !binding.tile->getTexture()) {
-        return false;
-    }
-    if (activeOverlay->getOverlay().role() ==
-            RasterOverlayRole::BaseImagery) {
-        return true;
-    }
-    if (activeOverlay->getOverlay().fallbackPolicy() ==
-        RasterOverlayFallbackPolicy::SkipUntilReady) {
-        return mapped->getLoadingTile() == nullptr;
-    }
-    return true;
+    return rasterOverlayBindingAllowedByPolicy(
+        activeOverlay,
+        mapped,
+        binding);
 }
 
 } // namespace
