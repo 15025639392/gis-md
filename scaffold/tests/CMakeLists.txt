@@ -232,6 +232,12 @@ add_executable(test_tile_child_materializer
 target_link_libraries(test_tile_child_materializer PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_child_materializer COMMAND test_tile_child_materializer)
 
+add_executable(test_tile_pending_load_queue
+    unit/tiling/test_tile_pending_load_queue.cpp
+)
+target_link_libraries(test_tile_pending_load_queue PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_pending_load_queue COMMAND test_tile_pending_load_queue)
+
 add_executable(test_camera
     unit/scene/test_camera.cpp
 )
