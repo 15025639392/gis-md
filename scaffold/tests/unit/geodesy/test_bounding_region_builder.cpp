@@ -3,6 +3,7 @@
 #include "earth_engine/core/math/MathUtils.h"
 
 #include <gtest/gtest.h>
+#include <limits>
 
 using earth_engine::BoundingRegionBuilder;
 using earth_engine::Cartographic;
@@ -136,6 +137,20 @@ TEST(BoundingRegionBuilderTest, ExpandsSimpleRectangleFirstLikeCesiumNative) {
     EXPECT_FALSE(builder.expandToIncludeRectangle(
         Rectangle(0.15, 0.25, 0.25, 0.35)));
     expectRectangleNear(builder.toRectangle(), Rectangle(0.1, 0.2, 0.3, 0.4));
+}
+
+TEST(BoundingRegionBuilderTest, RectangleOnlyExpansionLeavesHeightSentinelsLikeCesiumNative) {
+    // Source-derived from cesium-native BoundingRegionBuilder:
+    // expandToIncludeGlobeRectangle only updates the rectangle state; heights
+    // remain at their constructor sentinels until a position or region is added.
+    BoundingRegionBuilder builder;
+
+    ASSERT_TRUE(builder.expandToIncludeRectangle(Rectangle(0.1, 0.2, 0.3, 0.4)));
+    const auto region = builder.toRegion();
+
+    expectRectangleNear(region.rectangle, Rectangle(0.1, 0.2, 0.3, 0.4));
+    EXPECT_DOUBLE_EQ(std::numeric_limits<double>::max(), region.minimumHeight);
+    EXPECT_DOUBLE_EQ(std::numeric_limits<double>::lowest(), region.maximumHeight);
 }
 
 TEST(BoundingRegionBuilderTest, ExpandsAntimeridianRectangleFirstLikeCesiumNative) {
