@@ -355,3 +355,40 @@ TEST(TilePendingLoadQueueTest, KeepsTerminalResultWhenBudgetBlocks) {
     EXPECT_EQ("terminal", retry->terrainResult->cacheKey);
     EXPECT_EQ(0u, queue.terrainTerminalResultCount());
 }
+
+TEST(TilePendingLoadQueueTest, RejectsEmptyCacheKeys) {
+    TilePendingLoadQueue queue;
+    const TileKey key{"test", 1, 0, 0};
+
+    queue.addTerrainUpload(PendingTerrainUpload{
+        key,
+        "",
+        TileLoadPriorityGroup::Urgent,
+        0.0,
+        nullptr});
+    queue.addContentUpload(PendingContentUpload{
+        key,
+        "",
+        TileLoadPriorityGroup::Urgent,
+        0.0,
+        TileContentLoadResult::failed()});
+    queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
+        key,
+        "",
+        TileLoadPriorityGroup::Urgent,
+        0.0,
+        TerrainTileLoadStatus::Failed});
+    queue.addContentTerminalResult(PendingContentTerminalResult{
+        key,
+        "",
+        TileLoadPriorityGroup::Urgent,
+        0.0,
+        TileContentLoadStatus::Failed});
+
+    EXPECT_FALSE(queue.hasWork());
+    EXPECT_EQ(0u, queue.terrainUploadCount());
+    EXPECT_EQ(0u, queue.contentUploadCount());
+    EXPECT_EQ(0u, queue.terrainTerminalResultCount());
+    EXPECT_EQ(0u, queue.contentTerminalResultCount());
+    EXPECT_FALSE(queue.containsCacheKey(""));
+}
