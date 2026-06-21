@@ -245,6 +245,46 @@ TEST(
 }
 
 TEST(
+    TileSelectionKickPolicyTest,
+    RestoresChildQueueOnlyWhenParentShouldReplaceDescendantLoads) {
+    TileTraversalDetails tooManyMissing;
+    tooManyMissing.allAreRenderable = false;
+    tooManyMissing.anyWereRenderedLastFrame = false;
+    tooManyMissing.notYetRenderableCount = 3;
+
+    EXPECT_TRUE(TileSelectionKickPolicy::shouldRestoreChildLoadQueueAndLoadParent(
+        tooManyMissing,
+        false,
+        2,
+        false,
+        false));
+    EXPECT_FALSE(TileSelectionKickPolicy::shouldRestoreChildLoadQueueAndLoadParent(
+        tooManyMissing,
+        true,
+        2,
+        false,
+        false));
+    EXPECT_FALSE(TileSelectionKickPolicy::shouldRestoreChildLoadQueueAndLoadParent(
+        tooManyMissing,
+        false,
+        3,
+        false,
+        false));
+    EXPECT_FALSE(TileSelectionKickPolicy::shouldRestoreChildLoadQueueAndLoadParent(
+        tooManyMissing,
+        false,
+        2,
+        true,
+        false));
+    EXPECT_FALSE(TileSelectionKickPolicy::shouldRestoreChildLoadQueueAndLoadParent(
+        tooManyMissing,
+        false,
+        2,
+        false,
+        true));
+}
+
+TEST(
     TileSelectionPostTraversalPolicyTest,
     ReplaceKickRestoresChildrenAndQueuesRenderableParent) {
     TileTraversalDetails manyMissing;
