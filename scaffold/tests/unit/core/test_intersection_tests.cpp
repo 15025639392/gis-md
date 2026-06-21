@@ -550,6 +550,20 @@ TEST(IntersectionTestsTest, RaySphereRejectsZeroDistanceTangent) {
     EXPECT_FALSE(IntersectionTests::raySphere(ray, sphere).has_value());
 }
 
+TEST(IntersectionTestsTest, RaySphereAcceptsNonZeroRepeatedTangentRoot) {
+    // Source-derived from cesium-native solveQuadratic: repeated roots are
+    // valid unless the tangent is exactly at the ray origin.
+    const Ray ray(Vec3(1.0, 0.0, -2.0), Vec3::unitZ());
+    const BoundingSphere sphere(Vec3::zero(), 1.0);
+
+    const auto t = IntersectionTests::raySphereParametric(ray, sphere);
+
+    ASSERT_TRUE(t.has_value());
+    EXPECT_DOUBLE_EQ(2.0, *t);
+    EXPECT_EQ(Vec3(1.0, 0.0, 0.0),
+              IntersectionTests::raySphere(ray, sphere));
+}
+
 TEST(IntersectionTestsTest, RaySphereReturnsPointFromCesiumNativeParametricHit) {
     // Source-derived from cesium-native IntersectionTests::raySphere: the
     // wrapper converts the accepted parametric distance back through the ray.
