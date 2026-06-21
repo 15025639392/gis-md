@@ -2,6 +2,7 @@
 
 namespace earth_engine {
 
+struct TileLoadedContent;
 struct TilesetTile;
 
 struct TileTerrainUploadCommitAction {
@@ -9,6 +10,9 @@ struct TileTerrainUploadCommitAction {
 };
 
 struct TileTerrainUploadCommitter {
+    static void prepareTerrainRenderContent(
+        TilesetTile& tile,
+        TileLoadedContent&& content);
     static void prepareTerrainRenderContent(TilesetTile& tile);
     static TileTerrainUploadCommitAction finishMeshResourcePreparation(
         TilesetTile& tile,

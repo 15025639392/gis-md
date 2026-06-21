@@ -3,7 +3,6 @@
 #include "TileContentUploadCommitter.h"
 #include "TileEmptyContentRegistry.h"
 #include "TileLoadLifecycle.h"
-#include "TileLoadResultMetadataApplicator.h"
 #include "TileLoadTypes.h"
 #include "TilePendingUploadCompletion.h"
 #include "TileTerminalLoadCommitter.h"
@@ -34,8 +33,8 @@ public:
             TileTerminalLoadCommitter::commitTerrainTerminalResult(
                 *tile,
                 result.cacheKey,
-              std::move(result.result),
-              emptyContentRegistry);
+                std::move(result.result),
+                emptyContentRegistry);
         if (action.resourcesDirty) {
             markResourcesDirty();
         }
@@ -106,15 +105,9 @@ public:
         }
 
         if (TilesetTile* tile = ensureTile(upload.key)) {
-            if (content.surfaceMesh &&
-                !tile->content.renderContent.hasSurfaceMesh()) {
-                tile->content.renderContent.setSurfaceMesh(
-                    std::move(content.surfaceMesh));
-            }
-            TileLoadResultMetadataApplicator::apply(
+            TileTerrainUploadCommitter::prepareTerrainRenderContent(
                 *tile,
-                std::move(content.metadata));
-            TileTerrainUploadCommitter::prepareTerrainRenderContent(*tile);
+                std::move(content));
             if (!resourceSmoothingActive &&
                 !tile->content.renderContent.hasSurfaceMesh()) {
                 ensureTileMesh(*tile);
