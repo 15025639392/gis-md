@@ -607,3 +607,70 @@ TEST(TileLoadRequestDispatcherTest, DropsCancelledContentRenderCallback) {
 
     EXPECT_FALSE(lifecycle.hasPendingWork());
 }
+
+TEST(TileLoadRequestDispatcherTest, RejectsRequestsDuringDestroy) {
+    TileLoadLifecycle lifecycle;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().markDestroyingAndCancelRequests();
+    }
+
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+    DispatcherBudgetTerrainProvider terrainProvider;
+    DispatcherBudgetContentProvider contentProvider;
+
+    TileLoadDispatchResult terrainResult =
+        TileLoadRequestDispatcher::requestTerrain(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            terrainProvider,
+            key,
+            "destroy-terrain",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+    TileLoadDispatchResult contentResult =
+        TileLoadRequestDispatcher::requestContent(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            budget,
+            contentProvider,
+            key,
+            "destroy-content",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+    TileLoadDispatchResult upsampleResult =
+        TileLoadRequestDispatcher::queueUpsampledTerrain(
+            lifecycle.mutex(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            key,
+            "destroy-upsample",
+            TileLoadPriorityGroup::Normal,
+            0.0);
+
+    EXPECT_EQ(TileLoadDispatchResult::Destroying, terrainResult);
+    EXPECT_EQ(TileLoadDispatchResult::Destroying, contentResult);
+    EXPECT_EQ(TileLoadDispatchResult::Destroying, upsampleResult);
+    EXPECT_FALSE(issued);
+    EXPECT_EQ(0, terrainProvider.requestCount);
+    EXPECT_EQ(0, contentProvider.requestCount);
+    EXPECT_FALSE(lifecycle.hasPendingWork());
+    EXPECT_EQ(0u, budget.networkRequestsIssued());
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().clearAfterCallbacksComplete();
+    }
+}
