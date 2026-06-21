@@ -79,3 +79,53 @@ TEST(TilePendingLoadProcessorTest, DrainsTerminalThenBudgetedUploads) {
     EXPECT_EQ(1u, counts.terrainUploads);
     EXPECT_EQ(0u, counts.contentUploads);
 }
+
+TEST(TilePendingLoadProcessorTest, BudgetsTerminalResults) {
+    TileLoadLifecycle lifecycle;
+    const TileKey firstKey{"test", 1, 0, 0};
+    const TileKey secondKey{"test", 1, 1, 0};
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainTerminalResult(
+            PendingTerrainTerminalResult{
+                firstKey,
+                "first-terminal",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TerrainTileLoadStatus::RetryLater});
+        lifecycle.pendingLoads().addTerrainTerminalResult(
+            PendingTerrainTerminalResult{
+                secondKey,
+                "second-terminal",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TerrainTileLoadStatus::RetryLater});
+    }
+
+    FrameResourceBudgetConfig config;
+    config.maxTerminalStateTransitionsPerFrame = 1;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    std::vector<std::string> events;
+
+    const bool changed =
+        TilePendingLoadProcessor::processPendingLoads(
+            TilePendingLoadProcessorInput{
+                lifecycle,
+                budget,
+                false,
+                {}},
+            [&events](const PendingTerrainTerminalResult& result) {
+                events.push_back(result.cacheKey);
+            },
+            [](const PendingContentTerminalResult&) {},
+            [](PendingTerrainUpload&) {},
+            [](PendingContentUpload&) {});
+
+    ASSERT_TRUE(changed);
+    ASSERT_EQ(1u, events.size());
+    EXPECT_EQ("first-terminal", events[0]);
+    EXPECT_EQ(1u, lifecycle.counts().terrainTerminalResults);
+}
