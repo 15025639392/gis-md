@@ -52,6 +52,18 @@ struct TilesetTestAccess {
         return false;
     }
 
+    static bool loadQueueContainsUrgent(
+        const Tileset& tileset,
+        const TileKey& key) {
+        for (const TileLoadRequest& request : tileset.loadQueue_) {
+            if (request.key == key &&
+                request.group == TileLoadPriorityGroup::Urgent) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     static bool loadQueueContainsAny(
         const Tileset& tileset,
         const TileKey& key) {
@@ -934,6 +946,93 @@ TEST(
 
     EXPECT_TRUE(descendantRecorded);
     EXPECT_GT(tileset.tilePlan().selectionAncestorMeetsSseCount, 0);
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
+    PreviouslyRefinedUnrenderableParentKeepsDescendants) {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const std::vector<TileKey> childKeys = {
+        {"Geographic-TMS", 1, 0, 0},
+        {"Geographic-TMS", 1, 1, 0},
+        {"Geographic-TMS", 1, 0, 1},
+        {"Geographic-TMS", 1, 1, 1}};
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, childKeys}});
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    root->content.loadState = TileLoadState::ContentLoaded;
+    root->content.contentKind = TileContentKind::Render;
+    root->content.renderContent.setMeshReady(false);
+    root->content.renderContent.setSurfaceMesh(nullptr);
+    root->refine = TileRefine::Replace;
+    root->geometricError = 1.0;
+    root->selectionFrameState.selectionState = TileSelectionState::Refined;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_EQ(root->children.size(), childKeys.size());
+    for (TilesetTile* child : root->children) {
+        ASSERT_NE(child, nullptr);
+        child->content.loadState = TileLoadState::Done;
+        child->content.contentKind = TileContentKind::Empty;
+        child->geometricError = 0.0;
+    }
+
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    Camera camera;
+    camera.lookAt(
+        center + center.normalized() * 80000000.0,
+        center,
+        Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 159;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const auto& visibleTiles = tileset.tilePlan().visibleTiles;
+    const auto visibleEnd = visibleTiles.end();
+    EXPECT_EQ(std::find(visibleTiles.begin(), visibleEnd, rootKey), visibleEnd);
+    EXPECT_EQ(
+        root->selectionFrameState.selectionState,
+        TileSelectionState::Refined);
+
+    size_t visibleChildCount = 0;
+    bool everyVisibleChildRecordsAncestorMeetsSse = true;
+    for (const TileSelectionRecord& record :
+         tileset.tilePlan().selectionRecords) {
+        if (std::find(childKeys.begin(), childKeys.end(), record.key) ==
+            childKeys.end()) {
+            continue;
+        }
+        if (record.state == TileSelectionState::Rendered) {
+            ++visibleChildCount;
+            everyVisibleChildRecordsAncestorMeetsSse &=
+                record.ancestorMeetsSse;
+        }
+    }
+
+    EXPECT_EQ(visibleChildCount, childKeys.size());
+    EXPECT_TRUE(everyVisibleChildRecordsAncestorMeetsSse);
+    EXPECT_TRUE(TilesetTestAccess::loadQueueContainsUrgent(tileset, rootKey));
 }
 
 TEST(
