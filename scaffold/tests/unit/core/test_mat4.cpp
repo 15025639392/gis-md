@@ -30,6 +30,38 @@ TEST(Mat4Test, RowColumnAccessorMatchesGlmColumnMajorStorage) {
     EXPECT_DOUBLE_EQ(16.0, matrix(3, 3));
 }
 
+TEST(Mat4Test, DataExposesGlmColumnMajorStorage) {
+    // Source-derived from cesium-native's direct GLM matrix usage: raw matrix
+    // data is contiguous by columns for graphics API uploads.
+    const Mat4 matrix(glm::dmat4(
+        glm::dvec4(1.0, 2.0, 3.0, 4.0),
+        glm::dvec4(5.0, 6.0, 7.0, 8.0),
+        glm::dvec4(9.0, 10.0, 11.0, 12.0),
+        glm::dvec4(13.0, 14.0, 15.0, 16.0)));
+
+    const double* data = matrix.data();
+
+    for (int i = 0; i < 16; ++i) {
+        EXPECT_DOUBLE_EQ(static_cast<double>(i + 1), data[i]);
+    }
+}
+
+TEST(Mat4Test, TransposeMatchesGlmColumnRowSwapSemantics) {
+    const Mat4 matrix(glm::dmat4(
+        glm::dvec4(1.0, 2.0, 3.0, 4.0),
+        glm::dvec4(5.0, 6.0, 7.0, 8.0),
+        glm::dvec4(9.0, 10.0, 11.0, 12.0),
+        glm::dvec4(13.0, 14.0, 15.0, 16.0)));
+
+    const Mat4 transposed = matrix.transpose();
+
+    for (int row = 0; row < 4; ++row) {
+        for (int col = 0; col < 4; ++col) {
+            EXPECT_DOUBLE_EQ(matrix(row, col), transposed(col, row));
+        }
+    }
+}
+
 TEST(Mat4Test, TransformPointUsesCesiumNativeWOneSemantics) {
     const Mat4 transform =
         Mat4::translation(Vec3(10.0, 20.0, 30.0)) *
