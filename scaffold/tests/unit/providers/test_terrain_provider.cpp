@@ -431,6 +431,46 @@ TEST(QuantizedMeshTerrainProviderTest, LayerJsonTilesIgnoreNonStringsLikeCesiumN
               provider.buildUrl(TileKey{"Geographic-TMS", 1, 1, 0}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, LayerJsonFormatIsOptionalAndIgnoredLikeCesiumNative) {
+    QuantizedMeshTerrainProvider missingFormatProvider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string missingFormatLayerJson = R"json({
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "minzoom": 0,
+      "maxzoom": 4
+    })json";
+
+    ASSERT_TRUE(missingFormatProvider.configureFromLayerJson(
+        missingFormatLayerJson,
+        "https://example.invalid/layer.json"));
+    EXPECT_TRUE(missingFormatProvider.supportsTile(
+        TileKey{"Geographic-TMS", 0, 0, 0}));
+    EXPECT_EQ("https://example.invalid/0/0/0.terrain",
+              missingFormatProvider.buildUrl(
+                  TileKey{"Geographic-TMS", 0, 0, 0}));
+
+    QuantizedMeshTerrainProvider unknownFormatProvider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string unknownFormatLayerJson = R"json({
+      "format": "unexpected-format",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 4
+    })json";
+
+    ASSERT_TRUE(unknownFormatProvider.configureFromLayerJson(
+        unknownFormatLayerJson,
+        "https://example.invalid/layer.json"));
+    EXPECT_TRUE(unknownFormatProvider.supportsTile(
+        TileKey{"Geographic-TMS", 0, 0, 0}));
+    EXPECT_EQ("https://example.invalid/0/0/0.terrain",
+              unknownFormatProvider.buildUrl(
+                  TileKey{"Geographic-TMS", 0, 0, 0}));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, WebMercatorMetadataAvailabilityStartsAtOneRootLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
