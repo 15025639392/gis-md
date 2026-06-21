@@ -74,3 +74,73 @@ TEST(SceneRenderCommandDiagnosticsSnapshotTest, CountsRenderCommandLanes) {
     EXPECT_EQ(diagnostics.imageryMissingTiles, 1);
     EXPECT_EQ(diagnostics.imageryAttachments, 0);
 }
+
+TEST(
+    SceneSurfaceCommandGenerationDiagnosticsSnapshotTest,
+    TracksSurfaceGenerations) {
+    RenderCommand currentSurface;
+    currentSurface.kind = RenderCommandKind::SurfaceTile;
+    currentSurface.frameId = 12;
+    currentSurface.generation = 5;
+
+    RenderCommand staleSurface;
+    staleSurface.kind = RenderCommandKind::SurfaceTile;
+    staleSurface.frameId = 11;
+    staleSurface.generation = 9;
+
+    RenderCommand missingGenerationSurface;
+    missingGenerationSurface.kind = RenderCommandKind::SurfaceTile;
+    missingGenerationSurface.frameId = 12;
+    missingGenerationSurface.generation = 0;
+
+    RenderCommand gltfPrimitive;
+    gltfPrimitive.kind = RenderCommandKind::GltfPrimitive;
+    gltfPrimitive.frameId = 10;
+    gltfPrimitive.generation = 2;
+
+    const RenderCommandList commands = {
+        currentSurface,
+        staleSurface,
+        missingGenerationSurface,
+        gltfPrimitive};
+
+    const SceneSurfaceCommandGenerationDiagnosticsSnapshot snapshot =
+        SceneSurfaceCommandGenerationDiagnosticsSnapshot::fromCommands(
+            commands,
+            12);
+    EXPECT_EQ(snapshot.staleSurfaceCommands, 1);
+    EXPECT_EQ(snapshot.missingGenerationSurfaceCommands, 1);
+    EXPECT_EQ(snapshot.minSurfaceGeneration, 5u);
+    EXPECT_EQ(snapshot.maxSurfaceGeneration, 9u);
+
+    Diagnostics diagnostics;
+    diagnostics.staleSurfaceCommands = 7;
+    diagnostics.missingGenerationSurfaceCommands = 8;
+    diagnostics.minSurfaceGeneration = 99;
+    diagnostics.maxSurfaceGeneration = 100;
+    SceneRenderDiagnostics::updateSurfaceCommandGeneration(
+        commands,
+        12,
+        diagnostics);
+    EXPECT_EQ(
+        diagnostics.staleSurfaceCommands,
+        snapshot.staleSurfaceCommands);
+    EXPECT_EQ(
+        diagnostics.missingGenerationSurfaceCommands,
+        snapshot.missingGenerationSurfaceCommands);
+    EXPECT_EQ(
+        diagnostics.minSurfaceGeneration,
+        snapshot.minSurfaceGeneration);
+    EXPECT_EQ(
+        diagnostics.maxSurfaceGeneration,
+        snapshot.maxSurfaceGeneration);
+
+    SceneRenderDiagnostics::updateSurfaceCommandGeneration(
+        RenderCommandList{},
+        12,
+        diagnostics);
+    EXPECT_EQ(diagnostics.staleSurfaceCommands, 0);
+    EXPECT_EQ(diagnostics.missingGenerationSurfaceCommands, 0);
+    EXPECT_EQ(diagnostics.minSurfaceGeneration, 0u);
+    EXPECT_EQ(diagnostics.maxSurfaceGeneration, 0u);
+}
