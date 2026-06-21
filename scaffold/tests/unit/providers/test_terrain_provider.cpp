@@ -1906,6 +1906,42 @@ TEST(TileMapServiceUrlTest, ParsesTileSetsDefaultsLikeCesiumNative) {
     EXPECT_EQ(0u, metadata.tileSets[0].level);
 }
 
+TEST(TileMapServiceUrlTest, IgnoresNestedMetadataElementsLikeCesiumNative) {
+    const TileMapServiceMetadata metadata =
+        parseTileMapServiceMetadata(R"xml(
+          <TileMap>
+            <Metadata>
+              <BoundingBox minx="-1000" miny="-1000" maxx="1000" maxy="1000" />
+              <TileFormat width="16" height="16" extension="bad" />
+              <TileSets profile="global-mercator">
+                <TileSet href="nested" order="9" />
+              </TileSets>
+            </Metadata>
+            <BoundingBox minx="-10" miny="-20" maxx="30" maxy="40" />
+            <TileFormat width="128" height="64" extension="jpg" />
+            <TileSets profile="global-geodetic">
+              <TileSet href="direct" order="2" />
+            </TileSets>
+          </TileMap>
+        )xml");
+
+    EXPECT_EQ("Geographic-TMS", metadata.schemeId);
+    EXPECT_EQ("jpg", metadata.fileExtension);
+    EXPECT_EQ(128u, metadata.tileWidth);
+    EXPECT_EQ(64u, metadata.tileHeight);
+    EXPECT_EQ(2u, metadata.minimumLevel);
+    EXPECT_EQ(2u, metadata.maximumLevel);
+    ASSERT_EQ(1u, metadata.tileSets.size());
+    EXPECT_EQ("direct", metadata.tileSets[0].url);
+    EXPECT_EQ(2u, metadata.tileSets[0].level);
+    ASSERT_TRUE(metadata.projectedCoverageRectangle.has_value());
+    EXPECT_TRUE(metadata.projectedCoverageRectangle->equalsEpsilon(
+        projectRectangleSimple(
+            GeographicProjection(Ellipsoid::WGS84()),
+            Rectangle::fromDegrees(-10.0, -20.0, 30.0, 40.0)),
+        1e-12));
+}
+
 TEST(TileMapServiceUrlTest, DefaultsLevelsWhenNoTileSetsLikeCesiumNative) {
     const TileMapServiceMetadata metadata =
         parseTileMapServiceMetadata("<TileMap></TileMap>");

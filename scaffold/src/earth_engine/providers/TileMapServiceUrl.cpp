@@ -205,41 +205,6 @@ std::optional<double> attributeDouble(std::string_view tag,
     return parsed;
 }
 
-std::optional<std::string_view> firstTag(std::string_view xml,
-                                         std::string_view tagName) {
-    const std::string needle = "<" + std::string(tagName);
-    size_t start = xml.find(needle);
-    while (start != std::string_view::npos) {
-        const size_t nameEnd = start + needle.size();
-        if (nameEnd < xml.size() && !isXmlNameCharacter(xml[nameEnd])) {
-            const size_t end = xml.find('>', nameEnd);
-            if (end == std::string_view::npos) {
-                return std::nullopt;
-            }
-            return xml.substr(start, end - start + 1);
-        }
-        start = xml.find(needle, nameEnd);
-    }
-
-    return std::nullopt;
-}
-
-std::optional<std::string> firstElementText(std::string_view xml,
-                                            std::string_view tagName) {
-    const std::optional<std::string_view> tag = firstTag(xml, tagName);
-    if (!tag) {
-        return std::nullopt;
-    }
-
-    const size_t start = tag->data() - xml.data() + tag->size();
-    const std::string close = "</" + std::string(tagName) + ">";
-    const size_t end = xml.find(close, start);
-    if (end == std::string_view::npos) {
-        return std::nullopt;
-    }
-    return std::string(xml.substr(start, end - start));
-}
-
 std::optional<std::string_view> rootContent(std::string_view xml) {
     size_t rootStart = xml.find('<');
     while (rootStart != std::string_view::npos) {
@@ -358,10 +323,43 @@ std::optional<std::string> directChildElementText(std::string_view xml,
     return std::string(xml.substr(start, end - start));
 }
 
+std::optional<std::string_view> directChildElementContent(
+    std::string_view xml,
+    std::string_view tagName) {
+    const std::optional<std::string_view> tag = directChildTag(xml, tagName);
+    if (!tag) {
+        return std::nullopt;
+    }
+
+    const size_t start = tag->data() - xml.data() + tag->size();
+    const std::string close = "</" + std::string(tagName) + ">";
+    const size_t end = xml.find(close, start);
+    if (end == std::string_view::npos) {
+        return std::string_view();
+    }
+    return xml.substr(start, end - start);
+}
+
+std::vector<std::string_view> directChildTags(std::string_view xml,
+                                              std::string_view tagName) {
+    std::vector<std::string_view> result;
+    size_t index = 0;
+    while (index < xml.size()) {
+        const std::optional<std::string_view> tag =
+            directChildTag(xml.substr(index), tagName);
+        if (!tag) {
+            break;
+        }
+        result.push_back(*tag);
+        index = static_cast<size_t>(tag->data() - xml.data()) + tag->size();
+    }
+    return result;
+}
+
 void parseProfileAndSrs(std::string_view xml, TileMapServiceMetadata& metadata) {
     std::string profile = "mercator";
     if (const std::optional<std::string_view> tileSets =
-            firstTag(xml, "TileSets")) {
+            directChildTag(xml, "TileSets")) {
         profile = attributeValue(*tileSets, "profile").value_or("mercator");
     }
 
@@ -378,7 +376,7 @@ void parseProfileAndSrs(std::string_view xml, TileMapServiceMetadata& metadata) 
         return;
     }
 
-    const std::optional<std::string> srs = firstElementText(xml, "SRS");
+    const std::optional<std::string> srs = directChildElementText(xml, "SRS");
     if (!srs) {
         return;
     }
@@ -402,7 +400,7 @@ Projection projectionForSchemeId(const std::string& schemeId) {
 
 void parseBoundingBox(std::string_view xml, TileMapServiceMetadata& metadata) {
     const std::optional<std::string_view> boundingBox =
-        firstTag(xml, "BoundingBox");
+        directChildTag(xml, "BoundingBox");
     if (!boundingBox) {
         return;
     }
@@ -552,12 +550,13 @@ bool tileMapServiceXmlIsLoadable(const std::string& xml) {
 TileMapServiceMetadata parseTileMapServiceMetadata(const std::string& xml) {
     TileMapServiceMetadata metadata;
     const std::string_view view(xml);
+    const std::string_view root = rootContent(view).value_or(view);
 
-    parseProfileAndSrs(view, metadata);
-    parseBoundingBox(view, metadata);
+    parseProfileAndSrs(root, metadata);
+    parseBoundingBox(root, metadata);
 
     if (const std::optional<std::string_view> tileFormat =
-            firstTag(view, "TileFormat")) {
+            directChildTag(root, "TileFormat")) {
         metadata.fileExtension =
             attributeValue(*tileFormat, "extension").value_or("png");
         metadata.tileWidth =
@@ -569,21 +568,11 @@ TileMapServiceMetadata parseTileMapServiceMetadata(const std::string& xml) {
     uint32_t minimumLevel = std::numeric_limits<uint32_t>::max();
     uint32_t maximumLevel = 0;
 
-    const std::string_view tileSetNeedle = "<TileSet";
-    size_t start = view.find(tileSetNeedle);
-    while (start != std::string_view::npos) {
-        const size_t nameEnd = start + tileSetNeedle.size();
-        if (nameEnd < view.size() && isXmlNameCharacter(view[nameEnd])) {
-            start = view.find(tileSetNeedle, nameEnd);
-            continue;
-        }
-
-        const size_t end = view.find('>', nameEnd);
-        if (end == std::string_view::npos) {
-            break;
-        }
-
-        const std::string_view tag = view.substr(start, end - start + 1);
+    const std::optional<std::string_view> tileSets =
+        directChildElementContent(root, "TileSets");
+    for (const std::string_view tag :
+         tileSets ? directChildTags(*tileSets, "TileSet")
+                  : std::vector<std::string_view>()) {
         TileMapServiceTileSet tileSet;
         tileSet.level = attributeUint32(tag, "order").value_or(0);
         tileSet.url =
@@ -592,7 +581,6 @@ TileMapServiceMetadata parseTileMapServiceMetadata(const std::string& xml) {
 
         minimumLevel = std::min(minimumLevel, tileSet.level);
         maximumLevel = std::max(maximumLevel, tileSet.level);
-        start = view.find(tileSetNeedle, end + 1);
     }
 
     if (maximumLevel < minimumLevel && maximumLevel == 0) {
