@@ -2847,6 +2847,66 @@ TEST(GltfParserTest, ParsesKhrMeshQuantizationAttributesWhenDeclared) {
     EXPECT_NEAR(1.0f, primitive.vertexTangents[0][3], 1e-6f);
 }
 
+TEST(GltfParserTest, ParsesCesiumOverlayAttributeAsTextureCoordinateSlot) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker = "\"TEXCOORD_0\":2";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.insert(
+        markerPos + marker.size(),
+        ",\"_CESIUMOVERLAY_1\":2");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives[0];
+    ASSERT_EQ(3u, primitive.vertexTexCoords[1].size());
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[1][0][0], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[1][0][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[1][1][0], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[1][1][1], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[1][2][0], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[1][2][1], 1e-6f);
+}
+
+TEST(GltfParserTest, RejectsMalformedCesiumOverlayAttributeSemantic) {
+    const std::array<const char*, 5> semantics = {
+        "_CESIUMOVERLAY",
+        "_CESIUMOVERLAY_",
+        "_CESIUMOVERLAY_01",
+        "_CESIUMOVERLAY_8",
+        "_CESIUMOVERLAY_0_EXTRA"};
+
+    for (const char* semantic : semantics) {
+        ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+        const std::string marker = "\"TEXCOORD_0\":2";
+        const size_t markerPos = fixture.jsonText.find(marker);
+        ASSERT_NE(std::string::npos, markerPos);
+        fixture.jsonText.insert(
+            markerPos + marker.size(),
+            std::string(",\"") + semantic + "\":2");
+
+        std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+        EXPECT_EQ(nullptr, model) << semantic;
+    }
+}
+
+TEST(GltfParserTest, RejectsDuplicateCesiumOverlayTextureCoordinateSlot) {
+    ExternalGltfFixture fixture = makeExternalBufferTriangleGltf();
+    const std::string marker = "\"TEXCOORD_0\":2";
+    const size_t markerPos = fixture.jsonText.find(marker);
+    ASSERT_NE(std::string::npos, markerPos);
+    fixture.jsonText.insert(
+        markerPos + marker.size(),
+        ",\"TEXCOORD_1\":2,\"_CESIUMOVERLAY_1\":2");
+
+    std::unique_ptr<GltfModel> model = parseExternalFixture(fixture);
+
+    EXPECT_EQ(nullptr, model);
+}
+
 TEST(GltfParserTest, RejectsQuantizedMeshAttributesWithoutExtension) {
     const std::vector<uint8_t> glb = makeQuantizedTriangleGlb(false);
     std::unique_ptr<GltfModel> model = GltfParser::parse(glb.data(), glb.size());

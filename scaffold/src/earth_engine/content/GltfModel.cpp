@@ -29,7 +29,6 @@ using json = nlohmann::json;
 constexpr uint32_t kGlbMagic = 0x46546C67u;
 constexpr uint32_t kGlbJsonChunk = 0x4E4F534Au;
 constexpr uint32_t kGlbBinChunk = 0x004E4942u;
-constexpr size_t kGltfMaxFeatureIdSets = 8u;
 
 struct StructuralMetadataPropertyTable {
     std::vector<std::map<std::string, GltfFeaturePropertyValue>> rows;
@@ -73,8 +72,8 @@ bool validTexCoordSetIndex(int texCoord) {
 }
 
 std::optional<size_t> texCoordSetIndexFromSemantic(
-    const std::string& semantic) {
-    constexpr const char* prefix = "TEXCOORD_";
+    const std::string& semantic,
+    const char* prefix = "TEXCOORD_") {
     const size_t prefixLength = std::strlen(prefix);
     if (semantic.rfind(prefix, 0) != 0 ||
         semantic.size() == prefixLength) {
@@ -91,11 +90,24 @@ std::optional<size_t> texCoordSetIndexFromSemantic(
             return std::nullopt;
         }
         value = value * 10u + static_cast<size_t>(c - '0');
-        if (value >= kGltfMaxFeatureIdSets) {
+        if (value >= kGltfMaxTexCoordSets) {
             return std::nullopt;
         }
     }
     return value;
+}
+
+std::optional<size_t> rasterOverlayTexCoordSetIndexFromSemantic(
+    const std::string& semantic) {
+    return texCoordSetIndexFromSemantic(semantic, "_CESIUMOVERLAY_");
+}
+
+bool semanticStartsWithRasterOverlayTexCoord(const std::string& semantic) {
+    return semantic.rfind("_CESIUMOVERLAY_", 0) == 0;
+}
+
+bool semanticStartsWithRasterOverlayBase(const std::string& semantic) {
+    return semantic.rfind("_CESIUMOVERLAY", 0) == 0;
 }
 
 std::optional<size_t> featureIdSetIndexFromSemantic(
@@ -5665,6 +5677,10 @@ bool primitiveAttributeSemanticSupported(const std::string& semantic,
         return texCoordSetIndexFromSemantic(semantic).has_value();
     }
 
+    if (semanticStartsWithRasterOverlayBase(semantic)) {
+        return rasterOverlayTexCoordSetIndexFromSemantic(semantic).has_value();
+    }
+
     if (attributeSemanticStartsWith(semantic, "_FEATURE_ID")) {
         return allowFeatureIdAttributes &&
                featureIdSetIndexFromSemantic(semantic).has_value();
@@ -5769,7 +5785,9 @@ bool validatePrimitiveAccessorSemantics(
                 return false;
             }
             tangents = *span;
-        } else if (attributeSemanticStartsWith(semantic, "TEXCOORD_")) {
+        } else if (
+            attributeSemanticStartsWith(semantic, "TEXCOORD_") ||
+            semanticStartsWithRasterOverlayTexCoord(semantic)) {
             if (!validTexCoordAccessor(*span, meshQuantizationEnabled)) {
                 return false;
             }
@@ -7116,12 +7134,19 @@ std::optional<GltfPrimitive> parsePrimitive(
     std::array<std::optional<AccessorSpan>, kGltfMaxTexCoordSets>
         texCoordSpans;
     for (auto it = attrs.begin(); it != attrs.end(); ++it) {
-        if (it.key().rfind("TEXCOORD_", 0) != 0) {
+        std::optional<size_t> setIndex;
+        if (it.key().rfind("TEXCOORD_", 0) == 0) {
+            setIndex = texCoordSetIndexFromSemantic(it.key());
+        } else if (semanticStartsWithRasterOverlayTexCoord(it.key())) {
+            setIndex = rasterOverlayTexCoordSetIndexFromSemantic(it.key());
+        } else {
             continue;
         }
-        const std::optional<size_t> setIndex =
-            texCoordSetIndexFromSemantic(it.key());
         if (!setIndex || !it->is_number_integer()) {
+            strictFailure = true;
+            return std::nullopt;
+        }
+        if (texCoordSpans[*setIndex]) {
             strictFailure = true;
             return std::nullopt;
         }
