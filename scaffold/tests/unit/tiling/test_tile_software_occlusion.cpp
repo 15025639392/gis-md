@@ -7,6 +7,8 @@
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 
+#include <optional>
+
 using namespace earth_engine;
 
 namespace earth_engine {
@@ -70,6 +72,36 @@ TEST(TileSoftwareOcclusionTest, KeepsNonBoxVolumeUnderCameraVisible) {
     const Vec3 cameraPosition =
         Ellipsoid::WGS84().cartographicToCartesian(
             Cartographic::fromRadians(0.0, 0.0, 1000000.0));
+
+    EXPECT_EQ(
+        TileSoftwareOcclusionPolicy::check(tile, cameraPosition),
+        TileOcclusionState::NotOccluded);
+}
+
+TEST(TileSoftwareOcclusionTest, UsesExplicitVolumeRectangleForUnderCamera) {
+    TilesetTile tile;
+    tile.key = TileKey{"Geographic-TMS", 4, 0, 0};
+    tile.bounds = Rectangle::fromDegrees(170.0, -10.0, 179.0, 10.0);
+    tile.boundingVolume = TileBoundingVolume::fromS2Cell(
+        S2CellBoundingVolume(S2CellID::fromToken("1"), 0.0, 100000.0));
+
+    const std::optional<Rectangle> volumeRectangle =
+        tile.boundingVolume->estimateGlobeRectangle();
+    ASSERT_TRUE(volumeRectangle.has_value());
+
+    const double cameraLongitude =
+        (volumeRectangle->west() + volumeRectangle->east()) * 0.5;
+    const double cameraLatitude =
+        (volumeRectangle->south() + volumeRectangle->north()) * 0.5;
+    ASSERT_TRUE(volumeRectangle->contains(cameraLongitude, cameraLatitude));
+    ASSERT_FALSE(tile.bounds.contains(cameraLongitude, cameraLatitude));
+
+    const Vec3 cameraPosition =
+        Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic::fromRadians(
+                cameraLongitude,
+                cameraLatitude,
+                1000000.0));
 
     EXPECT_EQ(
         TileSoftwareOcclusionPolicy::check(tile, cameraPosition),
