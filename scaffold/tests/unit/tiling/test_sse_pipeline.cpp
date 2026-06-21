@@ -3238,26 +3238,6 @@ void testTilesetMaximumCachedBytesMatchesCesiumNativeDefault() {
           "Tileset: maximumCachedBytes default matches cesium-native");
 }
 
-void testTilesetByteEstimateUsesActualMeshPayload() {
-    TilesetTile tile;
-    tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    SurfaceTileMesh* mesh = tile.content.renderContent.mutableSurfaceMesh();
-    mesh->vertices.resize(3);
-    mesh->indices.resize(6);
-    mesh->waterMask.data.resize(8);
-    mesh->metadataAvailability.resize(2);
-
-    const int64_t expected =
-        static_cast<int64_t>(mesh->vertices.size() * sizeof(SurfaceVertex)) +
-        static_cast<int64_t>(mesh->indices.size() * sizeof(uint32_t)) +
-        static_cast<int64_t>(mesh->waterMask.data.size()) +
-        static_cast<int64_t>(
-            mesh->metadataAvailability.size() * sizeof(QuantizedMeshAvailabilityRange));
-
-    check(TilesetTestAccess::estimateTileBytes(tile) == expected,
-          "Tileset: byte estimate uses actual mesh payload");
-}
-
 void testHeightmapTerrainProviderExposesAttribution() {
     HeightmapTerrainProvider provider(
         "https://example.invalid/{z}/{x}/{y}.png",
@@ -26822,7 +26802,6 @@ int main() {
     testOrientedBoundingBoxDegenerateAxesMatchCesiumNative();
     testBoundingSpherePlaneBoundaryMatchesCesiumNative();
     testTilesetMaximumCachedBytesMatchesCesiumNativeDefault();
-    testTilesetByteEstimateUsesActualMeshPayload();
     testRasterOverlayProviderRetention();
     testXYZImageryProviderUsesAsyncBridgeWithoutWorkerBlockingWait();
     testXYZImageryProviderBridgeCompletionDoesNotRunDecodeInline();
