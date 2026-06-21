@@ -4,6 +4,7 @@
 #include "earth_engine/core/math/Vec3.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
+#include "earth_engine/tiling/TileBoundingVolume.h"
 #include "earth_engine/tiling/TileBoundsMetrics.h"
 #include "earth_engine/tiling/TileSelectionRasterOverlayPreparer.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -23,6 +24,10 @@ namespace earth_engine {
 struct TilesetTestAccess {
     static TilesetTile* ensureTile(Tileset& tileset, const TileKey& key) {
         return tileset.contentAccess_.ensureTile(key);
+    }
+
+    static TilesetTile* findTile(Tileset& tileset, const TileKey& key) {
+        return tileset.tileRegistry_.findTile(key);
     }
 
     static void ensureTileChildren(Tileset& tileset, TilesetTile& tile) {
@@ -148,6 +153,84 @@ SelectorView makeSelectorView(
     return view;
 }
 
+void runUnconditionallyRefinedChildIsNotSelected(TilesetOptions options) {
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey grandchildKey{"Geographic-TMS", 2, 0, 0};
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{
+            {rootKey, {childKey}},
+            {childKey, {grandchildKey}}});
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        options,
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Empty;
+    root->refine = TileRefine::Replace;
+    root->geometricError = 40000.0;
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(root->bounds);
+    root->boundingVolume = TileBoundingVolume::fromSphere(center, 1000000.0);
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    TilesetTile* child = TilesetTestAccess::findTile(tileset, childKey);
+    ASSERT_NE(child, nullptr);
+    child->content.loadState = TileLoadState::Done;
+    child->content.contentKind = TileContentKind::Empty;
+    child->refine = TileRefine::Replace;
+    child->unconditionallyRefine = true;
+    child->geometricError = 0.0;
+    child->boundingVolume = TileBoundingVolume::fromSphere(center, 1000000.0);
+
+    TilesetTestAccess::ensureTileChildren(tileset, *child);
+    TilesetTile* grandchild =
+        TilesetTestAccess::findTile(tileset, grandchildKey);
+    ASSERT_NE(grandchild, nullptr);
+    grandchild->content.loadState = TileLoadState::Unloaded;
+    grandchild->content.contentKind = TileContentKind::Unknown;
+    grandchild->geometricError = 0.0;
+    grandchild->boundingVolume =
+        TileBoundingVolume::fromSphere(center, 1000000.0);
+
+    Camera camera;
+    camera.lookAt(
+        center + center.normalized() * 1000000.0,
+        center,
+        Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 149;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        camera.position(),
+        camera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    const auto& visibleTiles = tileset.tilePlan().visibleTiles;
+    const auto visibleEnd = visibleTiles.end();
+    EXPECT_NE(std::find(visibleTiles.begin(), visibleEnd, rootKey), visibleEnd);
+    EXPECT_EQ(
+        std::find(visibleTiles.begin(), visibleEnd, childKey),
+        visibleEnd);
+    EXPECT_EQ(
+        std::find(visibleTiles.begin(), visibleEnd, grandchildKey),
+        visibleEnd);
+    EXPECT_TRUE(
+        TilesetTestAccess::loadQueueContainsAny(tileset, grandchildKey));
+}
+
 } // namespace
 
 TEST(
@@ -219,6 +302,16 @@ TEST(
     }
     EXPECT_EQ(visibleChildCount, childKeys.size());
     EXPECT_EQ(tileset.tilePlan().selectionKickedCount, 0);
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
+    UnconditionallyRefinedChildIsNotSelected) {
+    runUnconditionallyRefinedChildIsNotSelected(TilesetOptions{});
+
+    TilesetOptions forbidHolesOptions;
+    forbidHolesOptions.forbidHoles = true;
+    runUnconditionallyRefinedChildIsNotSelected(forbidHolesOptions);
 }
 
 TEST(
