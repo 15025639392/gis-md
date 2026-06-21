@@ -370,6 +370,12 @@ add_executable(test_tileset_selection_refinement
 target_link_libraries(test_tileset_selection_refinement PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tileset_selection_refinement COMMAND test_tileset_selection_refinement)
 
+add_executable(test_tile_lod_transitions
+    unit/tiling/test_tile_lod_transitions.cpp
+)
+target_link_libraries(test_tile_lod_transitions PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_lod_transitions COMMAND test_tile_lod_transitions)
+
 add_executable(test_tile_frame_resource_budget_planner
     unit/tiling/test_tile_frame_resource_budget_planner.cpp
 )
