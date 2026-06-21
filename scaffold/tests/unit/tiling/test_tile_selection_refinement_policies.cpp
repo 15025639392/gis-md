@@ -3,6 +3,7 @@
 #include "earth_engine/tiling/TileSelectionKickPolicy.h"
 #include "earth_engine/tiling/TileSelectionPostTraversalPolicy.h"
 #include "earth_engine/tiling/TileSelectionPreTraversalPolicy.h"
+#include "earth_engine/tiling/TileSelectionRefinementPolicy.h"
 
 using namespace earth_engine;
 
@@ -225,4 +226,96 @@ TEST(
 
     EXPECT_FALSE(result.shouldKick);
     EXPECT_FALSE(result.preloadRefinedAncestor);
+}
+
+TEST(
+    TileSelectionRefinementPolicyTest,
+    InitialDecisionRefinesOnlyWhenSseRequiresIt) {
+    TileSelectionRefineDecision decision =
+        TileSelectionRefinementPolicy::initialRefineDecision(
+            false,
+            false,
+            false);
+    EXPECT_TRUE(decision.refine);
+    EXPECT_FALSE(decision.meetsSse);
+
+    decision = TileSelectionRefinementPolicy::initialRefineDecision(
+        false,
+        true,
+        false);
+    EXPECT_FALSE(decision.refine);
+    EXPECT_TRUE(decision.meetsSse);
+
+    decision = TileSelectionRefinementPolicy::initialRefineDecision(
+        false,
+        false,
+        true);
+    EXPECT_FALSE(decision.refine);
+    EXPECT_FALSE(decision.meetsSse);
+}
+
+TEST(
+    TileSelectionRefinementPolicyTest,
+    UnconditionalRefineOverridesSatisfiedSse) {
+    const TileSelectionRefineDecision decision =
+        TileSelectionRefinementPolicy::initialRefineDecision(
+            true,
+            true,
+            false);
+
+    EXPECT_TRUE(decision.refine);
+    EXPECT_TRUE(decision.meetsSse);
+}
+
+TEST(
+    TileSelectionRefinementPolicyTest,
+    PreviousUnrenderableRefinementContinuesDeeperUrgently) {
+    TileSelectionContinueDeeperDecision decision =
+        TileSelectionRefinementPolicy::continueDeeperDecision(
+            false,
+            TileSelectionState::Refined,
+            false,
+            false);
+
+    EXPECT_TRUE(decision.shouldContinue);
+    EXPECT_TRUE(decision.ancestorMeetsSse);
+    EXPECT_TRUE(decision.queueUrgent);
+
+    decision = TileSelectionRefinementPolicy::continueDeeperDecision(
+        false,
+        TileSelectionState::Refined,
+        false,
+        true);
+
+    EXPECT_TRUE(decision.shouldContinue);
+    EXPECT_TRUE(decision.ancestorMeetsSse);
+    EXPECT_FALSE(decision.queueUrgent);
+}
+
+TEST(
+    TileSelectionRefinementPolicyTest,
+    ContinueDeeperRequiresPreviousRefinedAndUnrenderableTile) {
+    TileSelectionContinueDeeperDecision decision =
+        TileSelectionRefinementPolicy::continueDeeperDecision(
+            false,
+            TileSelectionState::Rendered,
+            false,
+            false);
+    EXPECT_FALSE(decision.shouldContinue);
+
+    decision = TileSelectionRefinementPolicy::continueDeeperDecision(
+        false,
+        TileSelectionState::Refined,
+        true,
+        false);
+    EXPECT_FALSE(decision.shouldContinue);
+
+    decision = TileSelectionRefinementPolicy::continueDeeperDecision(
+        false,
+        TileSelectionState::RefinedAndKicked,
+        false,
+        false);
+    EXPECT_TRUE(decision.shouldContinue);
+    EXPECT_TRUE(decision.ancestorMeetsSse);
+    EXPECT_TRUE(decision.queueUrgent);
 }
