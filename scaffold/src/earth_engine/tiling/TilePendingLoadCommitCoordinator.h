@@ -9,8 +9,6 @@
 #include "TileTerrainUploadCommitter.h"
 #include "TilesetTile.h"
 
-#include "../providers/QuantizedMeshTerrainProvider.h"
-
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -83,26 +81,15 @@ public:
         EnsureTileMeshFn&& ensureTileMesh,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         TileLoadedContent& content = upload.content();
-        if (!content.quantizedMeshAvailabilityUpdates.empty()) {
-            if (auto* qmProvider =
-                    dynamic_cast<QuantizedMeshTerrainProvider*>(
-                        terrainProvider)) {
-                qmProvider->applyAvailabilityUpdates(
-                    content.quantizedMeshAvailabilityUpdates);
-            }
-        }
-        if (content.heightmap) {
-            ingestAvailability(
-                upload.key,
-                content.heightmap.get(),
-                content.surfaceMesh.get());
-            terrainCache[upload.cacheKey] = std::move(content.heightmap);
-        } else if (content.surfaceMesh) {
-            ingestAvailability(
-                upload.key,
-                nullptr,
-                content.surfaceMesh.get());
-        }
+        TileTerrainUploadCommitter::applyAvailabilityUpdates(
+            terrainProvider,
+            content);
+        TileTerrainUploadCommitter::ingestTerrainPayload(
+            upload.key,
+            upload.cacheKey,
+            content,
+            terrainCache,
+            std::forward<IngestAvailabilityFn>(ingestAvailability));
 
         if (TilesetTile* tile = ensureTile(upload.key)) {
             TileTerrainUploadCommitter::prepareTerrainRenderContent(

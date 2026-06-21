@@ -370,6 +370,91 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainUploadCommitterOwnsHeightmapCacheAndAvailabilityIngest) {
+    const TileKey key{"test", 1, 2, 3};
+    const std::string cacheKey = "terrain-payload";
+    auto heightmap = std::make_unique<DecodedHeightmap>();
+    heightmap->tileSize = 2;
+    heightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
+
+    auto surfaceMesh = std::make_unique<SurfaceTileMesh>();
+    SurfaceVertex vertex;
+    vertex.positionEcef = Vec3(1.0, 2.0, 3.0);
+    surfaceMesh->vertices.push_back(vertex);
+    SurfaceTileMesh* rawSurfaceMesh = surfaceMesh.get();
+
+    TileLoadedContent content;
+    content.heightmap = std::move(heightmap);
+    content.surfaceMesh = std::move(surfaceMesh);
+
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    int availabilityIngests = 0;
+
+    TileTerrainUploadCommitter::ingestTerrainPayload(
+        key,
+        cacheKey,
+        content,
+        terrainCache,
+        [&availabilityIngests, &key, rawSurfaceMesh](
+            const TileKey& ingestedKey,
+            const DecodedHeightmap* hm,
+            const SurfaceTileMesh* mesh) {
+            EXPECT_EQ(key, ingestedKey);
+            ASSERT_NE(nullptr, hm);
+            EXPECT_TRUE(hm->valid());
+            EXPECT_EQ(rawSurfaceMesh, mesh);
+            ++availabilityIngests;
+        });
+
+    EXPECT_EQ(1, availabilityIngests);
+    EXPECT_EQ(nullptr, content.heightmap);
+    EXPECT_EQ(rawSurfaceMesh, content.surfaceMesh.get());
+    ASSERT_NE(terrainCache.find(cacheKey), terrainCache.end());
+    EXPECT_TRUE(terrainCache.at(cacheKey)->valid());
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainUploadCommitterAppliesQuantizedMeshAvailabilityUpdates) {
+    const TileKey subtreeKey{"Geographic-TMS", 2, 0, 0};
+    const TileKey availableChildKey{"Geographic-TMS", 3, 0, 0};
+    const TileKey unavailableSiblingKey{"Geographic-TMS", 3, 1, 0};
+
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "metadataAvailability": 2
+    })json";
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+    EXPECT_EQ(TileAvailabilityState::Unknown,
+              provider.availabilityState(availableChildKey));
+
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = subtreeKey;
+    update.metadataAvailability = {{0, 0, 0, 0, 0}};
+
+    TileLoadedContent content;
+    content.quantizedMeshAvailabilityUpdates.push_back(update);
+
+    TileTerrainUploadCommitter::applyAvailabilityUpdates(
+        &provider,
+        content);
+
+    EXPECT_EQ(TileAvailabilityState::Available,
+              provider.availabilityState(availableChildKey));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(unavailableSiblingKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      TerrainUploadConsumesSurfaceMeshAsLoadResultPayload) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:0:0:0";
