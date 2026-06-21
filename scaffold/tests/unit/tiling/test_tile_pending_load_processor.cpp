@@ -129,3 +129,57 @@ TEST(TilePendingLoadProcessorTest, BudgetsTerminalResults) {
     EXPECT_EQ("first-terminal", events[0]);
     EXPECT_EQ(1u, lifecycle.counts().terrainTerminalResults);
 }
+
+TEST(TilePendingLoadProcessorTest, ReportsUnchangedWhenBudgetBlocksAllWork) {
+    TileLoadLifecycle lifecycle;
+    const TileKey terminalKey{"test", 1, 0, 0};
+    const TileKey uploadKey{"test", 1, 1, 0};
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addTerrainTerminalResult(
+            PendingTerrainTerminalResult{
+                terminalKey,
+                "terminal",
+                TileLoadPriorityGroup::Urgent,
+                0.0,
+                TerrainTileLoadStatus::RetryLater});
+        lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
+            uploadKey,
+            "upload",
+            TileLoadPriorityGroup::Urgent,
+            0.0,
+            TileContentLoadResult::failed()});
+    }
+
+    FrameResourceBudgetConfig config;
+    config.maxTerminalStateTransitionsPerFrame = 0;
+    config.maxMainThreadFinalizesPerFrame = 0;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    std::vector<std::string> events;
+
+    const bool changed =
+        TilePendingLoadProcessor::processPendingLoads(
+            TilePendingLoadProcessorInput{
+                lifecycle,
+                budget,
+                false,
+                {}},
+            [&events](const PendingTerrainTerminalResult&) {
+                events.push_back("terminal");
+            },
+            [](const PendingContentTerminalResult&) {},
+            [](PendingTerrainUpload&) {},
+            [&events](PendingContentUpload&) {
+                events.push_back("upload");
+            });
+
+    const TileLoadLifecycleCounts counts = lifecycle.counts();
+    EXPECT_FALSE(changed);
+    EXPECT_TRUE(events.empty());
+    EXPECT_EQ(1u, counts.terrainTerminalResults);
+    EXPECT_EQ(1u, counts.contentUploads);
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("terminal"));
+    EXPECT_TRUE(lifecycle.containsWorkForCacheKey("upload"));
+}
