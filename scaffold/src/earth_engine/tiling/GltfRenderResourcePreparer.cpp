@@ -48,7 +48,14 @@ std::unique_ptr<Texture> createGltfGpuTexture(RenderDevice* device,
     std::vector<uint8_t> rgbaPixels;
     const uint8_t* texturePixels = texture.image.pixels.data();
     size_t texturePixelBytes = texture.image.pixels.size();
-    if (texture.image.channels == 3) {
+    TextureDesc::Format textureFormat = TextureDesc::Format::RGBA8;
+    if (texture.image.channels == 1) {
+        if (texture.image.pixels.size() < pixelCount) {
+            return nullptr;
+        }
+        texturePixelBytes = pixelCount;
+        textureFormat = TextureDesc::Format::R8;
+    } else if (texture.image.channels == 3) {
         if (texture.image.pixels.size() < pixelCount * 3u) {
             return nullptr;
         }
@@ -72,7 +79,7 @@ std::unique_ptr<Texture> createGltfGpuTexture(RenderDevice* device,
     TextureDesc textureDesc;
     textureDesc.width = texture.image.width;
     textureDesc.height = texture.image.height;
-    textureDesc.format = TextureDesc::Format::RGBA8;
+    textureDesc.format = textureFormat;
     textureDesc.data = texturePixels;
     textureDesc.dataSize = texturePixelBytes;
     textureDesc.mipmap = texture.sampler.mipmap;

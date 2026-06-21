@@ -384,7 +384,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     GLuint currentProgram = 0;
     GLuint currentArrayBuffer = 0;
     GLuint currentElementArrayBuffer = 0;
-    std::array<GLuint, 19> currentTextures{};
+    std::array<GLuint, kGltfWaterMaskTextureSlot + 1> currentTextures{};
     bool attrib0Enabled = false;
     bool attrib1Enabled = false;
     bool attrib2Enabled = false;
@@ -717,6 +717,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                     name.c_str(),
                     kGltfRasterOverlayTextureBase + i);
             }
+            setSampler("u_gltfWaterMaskTexture", kGltfWaterMaskTextureSlot);
         }
         for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
             std::string name = "u_overlayTexture" + std::to_string(i);

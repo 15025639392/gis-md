@@ -260,6 +260,7 @@ uniform sampler2D u_mappedRasterTexture0;
 uniform sampler2D u_mappedRasterTexture1;
 uniform sampler2D u_mappedRasterTexture2;
 uniform sampler2D u_mappedRasterTexture3;
+uniform sampler2D u_gltfWaterMaskTexture;
 uniform float u_hasBaseColorTexture;
 uniform vec4 u_materialFactors;       // metallic, roughness, normal scale, occlusion strength
 uniform float u_dielectricSpecularF0;
@@ -335,6 +336,9 @@ uniform float u_mappedRasterTexCoordSet0;
 uniform float u_mappedRasterTexCoordSet1;
 uniform float u_mappedRasterTexCoordSet2;
 uniform float u_mappedRasterTexCoordSet3;
+uniform float u_gltfHasWaterMask;
+uniform vec4 u_gltfWaterMaskTranslationScale;
+uniform vec4 u_gltfWaterMaskState;
 
 out vec4 fragColor;
 
@@ -372,6 +376,19 @@ vec4 applyMappedRaster(
     float opacity) {
     vec2 overlayUv = tileUV.xy + uvFromSet(texCoordSet) * tileUV.zw;
     return alphaOver(base, texture(rasterTexture, overlayUv), opacity);
+}
+
+vec4 applyGltfWaterMask(vec4 base) {
+    if (u_gltfHasWaterMask < 0.5 || u_gltfWaterMaskState.x > 0.5) {
+        return base;
+    }
+    float water = u_gltfWaterMaskState.y;
+    if (u_gltfWaterMaskState.z > 0.5) {
+        vec2 waterUv = u_gltfWaterMaskTranslationScale.xy +
+            uvFromSet(0.0) * u_gltfWaterMaskTranslationScale.z;
+        water = texture(u_gltfWaterMaskTexture, waterUv).r;
+    }
+    return vec4(mix(base.rgb, base.rgb, clamp(water, 0.0, 1.0)), base.a);
 }
 
 vec3 applyTbn(vec3 tangent, vec3 bitangent, vec3 n, vec3 mapNormal) {
@@ -559,6 +576,7 @@ void main() {
             u_mappedRasterTileUV3,
             u_mappedRasterOpacity3);
     }
+    base = applyGltfWaterMask(base);
     if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
         discard;
     }
@@ -1212,6 +1230,25 @@ float2 gltfUvFromSet(GltfVertexOut in, float texCoordSet) {
     return in.texcoord01.xy;
 }
 
+float4 gltfApplyWaterMask(float4 base,
+                          GltfVertexOut in,
+                          texture2d<float> waterMaskTexture,
+                          sampler waterMaskSampler,
+                          float hasWaterMask,
+                          float4 translationScale,
+                          float4 state) {
+    if (hasWaterMask < 0.5 || state.x > 0.5) {
+        return base;
+    }
+    float water = state.y;
+    if (state.z > 0.5) {
+        float2 waterUv =
+            translationScale.xy + gltfUvFromSet(in, 0.0) * translationScale.z;
+        water = waterMaskTexture.sample(waterMaskSampler, waterUv).r;
+    }
+    return float4(mix(base.rgb, base.rgb, clamp(water, 0.0, 1.0)), base.a);
+}
+
 float3 gltfApplyTbn(float3 tangent,
                     float3 bitangent,
                     float3 n,
@@ -1435,6 +1472,9 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              constant float& u_mappedRasterTexCoordSet1 [[buffer(78)]],
                              constant float& u_mappedRasterTexCoordSet2 [[buffer(79)]],
                              constant float& u_mappedRasterTexCoordSet3 [[buffer(80)]],
+                             constant float& u_gltfHasWaterMask [[buffer(81)]],
+                             constant float4& u_gltfWaterMaskTranslationScale [[buffer(82)]],
+                             constant float4& u_gltfWaterMaskState [[buffer(83)]],
                              texture2d<float> u_baseColorTexture [[texture(0)]],
                              texture2d<float> u_metallicRoughnessTexture [[texture(1)]],
                              texture2d<float> u_normalTexture [[texture(2)]],
@@ -1454,6 +1494,7 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              texture2d<float> u_mappedRasterTexture1 [[texture(16)]],
                              texture2d<float> u_mappedRasterTexture2 [[texture(17)]],
                              texture2d<float> u_mappedRasterTexture3 [[texture(18)]],
+                             texture2d<float> u_gltfWaterMaskTexture [[texture(19)]],
                              sampler u_baseColorSampler [[sampler(0)]],
                              sampler u_metallicRoughnessSampler [[sampler(1)]],
                              sampler u_normalSampler [[sampler(2)]],
@@ -1472,7 +1513,8 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              sampler u_mappedRasterSampler0 [[sampler(15)]],
                              sampler u_mappedRasterSampler1 [[sampler(16)]],
                              sampler u_mappedRasterSampler2 [[sampler(17)]],
-                             sampler u_mappedRasterSampler3 [[sampler(18)]]) {
+                             sampler u_mappedRasterSampler3 [[sampler(18)]],
+                             sampler u_gltfWaterMaskSampler [[sampler(19)]]) {
     float faceSign = frontFacing ? 1.0 : -1.0;
     float3 n = normalize(in.normal) * faceSign;
     float3 geometryN = n;
@@ -1525,6 +1567,14 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
             u_mappedRasterTileUV3,
             u_mappedRasterOpacity3);
     }
+    base = gltfApplyWaterMask(
+        base,
+        in,
+        u_gltfWaterMaskTexture,
+        u_gltfWaterMaskSampler,
+        u_gltfHasWaterMask,
+        u_gltfWaterMaskTranslationScale,
+        u_gltfWaterMaskState);
     if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
         discard_fragment();
     }
@@ -2238,6 +2288,13 @@ RenderCommand Renderer::makeGltfPrimitiveCommand(Buffer* vertexBuffer,
     cmd.uniforms["u_renderOpacity"] = {1.0f};
     cmd.uniforms["u_unlit"] = {0.0f};
     cmd.uniforms["u_mappedRasterTextureCount"] = {0.0f};
+    cmd.uniforms["u_gltfHasWaterMask"] = {0.0f};
+    cmd.uniforms["u_gltfWaterMaskTranslationScale"] = {
+        0.0f,
+        0.0f,
+        1.0f,
+        0.0f};
+    cmd.uniforms["u_gltfWaterMaskState"] = {1.0f, 0.0f, 0.0f, 0.0f};
     for (int i = 0; i < kMaxGltfRasterOverlays; ++i) {
         cmd.uniforms["u_mappedRasterTileUV" + std::to_string(i)] = {
             0.0f,

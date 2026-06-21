@@ -14,6 +14,8 @@ namespace earth_engine {
 static constexpr int kMaxSurfaceImageryOverlays = 4;
 static constexpr int kGltfRasterOverlayTextureBase = 15;
 static constexpr int kMaxGltfRasterOverlays = 4;
+static constexpr int kGltfWaterMaskTextureSlot =
+    kGltfRasterOverlayTextureBase + kMaxGltfRasterOverlays;
 static constexpr int kGltfInstanceMatrixStride = 100;
 
 enum class RenderCommandKind {
@@ -126,6 +128,13 @@ struct RenderCommand {
     std::array<float, kMaxGltfRasterOverlays> gltfRasterOverlayOpacities{};
     std::array<float, kMaxGltfRasterOverlays> gltfRasterOverlayTexCoordSets{};
     int gltfRasterOverlayTextureCount = 0;
+    float gltfHasWaterMask = 0.0f;
+    std::array<float, 4> gltfWaterMaskTranslationScale{
+        0.0f,
+        0.0f,
+        1.0f,
+        0.0f};
+    std::array<float, 4> gltfWaterMaskState{1.0f, 0.0f, 0.0f, 0.0f};
 };
 
 /// 渲染命令列表（每帧一帧）

@@ -73,12 +73,60 @@ std::vector<uint8_t> makeQuantizedMeshBytesWithMetadata(
     return bytes;
 }
 
+std::vector<uint8_t> makeQuantizedMeshBytesWithWaterMask(
+    const std::vector<uint8_t>& waterMask,
+    float minimumHeight = 0.0f,
+    float maximumHeight = 100.0f) {
+    std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes(minimumHeight, maximumHeight);
+
+    appendPod<uint8_t>(bytes, 2);
+    appendPod<uint32_t>(bytes, static_cast<uint32_t>(waterMask.size()));
+    bytes.insert(bytes.end(), waterMask.begin(), waterMask.end());
+    return bytes;
+}
+
 Rectangle geographicRootWestRectangle() {
     constexpr double kPi = 3.14159265358979323846264338327950288;
     return Rectangle(-kPi, -0.5 * kPi, 0.0, 0.5 * kPi);
 }
 
 } // namespace
+
+TEST(QuantizedMeshContentLoaderTest,
+     CarriesMixedWaterMaskIntoGltfTerrainModel) {
+    std::vector<uint8_t> waterMask(256u * 256u, 0u);
+    waterMask[0] = 7u;
+    waterMask[12345] = 255u;
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytesWithWaterMask(waterMask, -10.0f, 150.0f);
+
+    QuantizedMeshContentLoadResult result =
+        QuantizedMeshContentLoader::load(
+            bytes.data(),
+            bytes.size(),
+            geographicRootWestRectangle(),
+            true,
+            {});
+
+    ASSERT_TRUE(result.success());
+    ASSERT_NE(nullptr, result.gltfModel);
+    EXPECT_FALSE(result.gltfModel->terrainWaterMask.allLand);
+    EXPECT_FALSE(result.gltfModel->terrainWaterMask.allWater);
+    EXPECT_TRUE(result.gltfModel->terrainWaterMask.valid());
+    ASSERT_TRUE(result.gltfModel->terrainWaterMaskTextureIndex.has_value());
+    ASSERT_EQ(1u, result.gltfModel->textures.size());
+    const GltfTexture& texture = result.gltfModel->textures.front();
+    EXPECT_EQ(256, texture.image.width);
+    EXPECT_EQ(256, texture.image.height);
+    EXPECT_EQ(1, texture.image.channels);
+    ASSERT_EQ(256u * 256u, texture.image.pixels.size());
+    EXPECT_EQ(7u, texture.image.pixels[0]);
+    EXPECT_EQ(255u, texture.image.pixels[12345u]);
+    EXPECT_EQ(GltfTextureWrap::ClampToEdge, texture.sampler.wrapS);
+    EXPECT_EQ(GltfTextureWrap::ClampToEdge, texture.sampler.wrapT);
+    EXPECT_FALSE(texture.sampler.mipmap);
+}
 
 TEST(QuantizedMeshContentLoaderTest,
      LoadsGltfTerrainModelWithoutTerrainProvider) {

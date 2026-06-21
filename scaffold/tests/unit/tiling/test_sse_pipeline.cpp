@@ -5084,6 +5084,125 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
           "Tileset: glTF mapped raster command retains raster tile resources");
 }
 
+void testTilesetGltfDrawCommandBindsTerrainWaterMask() {
+    auto overlayOptions = makeRasterOverlayOptions();
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        overlayOptions);
+    ActivatedRasterOverlay activated(*overlay);
+
+    DummyRenderDevice device;
+    device.allowTextureCreation = true;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {&activated},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: glTF terrain water mask root tile is created");
+    if (!root) return;
+
+    const Rectangle geometryRectangle =
+        Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0);
+    auto model = makeTexturedTriangleGltfModel();
+    model->rasterOverlayDetails.rasterOverlayProjections = {
+        RasterOverlayProjection::Geographic,
+        RasterOverlayProjection::WebMercator};
+    model->rasterOverlayDetails.rasterOverlayRectangles = {
+        Rectangle{},
+        projectForProvider(*activated.ensureTileProvider(&device),
+                           geometryRectangle)};
+    model->rasterOverlayDetails.boundingRegion = {
+        geometryRectangle,
+        0.0,
+        0.0};
+    WaterMask waterMask;
+    waterMask.allLand = false;
+    waterMask.allWater = false;
+    waterMask.data.assign(256u * 256u * 4u, 127u);
+    waterMask.translationX = 0.25;
+    waterMask.translationY = 0.5;
+    waterMask.scale = 0.5;
+    GltfTexture waterMaskTexture;
+    waterMaskTexture.image.width = 256;
+    waterMaskTexture.image.height = 256;
+    waterMaskTexture.image.channels = 1;
+    waterMaskTexture.image.pixels.assign(256u * 256u, 127u);
+    waterMaskTexture.sampler.wrapS = GltfTextureWrap::ClampToEdge;
+    waterMaskTexture.sampler.wrapT = GltfTextureWrap::ClampToEdge;
+    waterMaskTexture.sampler.mipmap = false;
+    model->terrainWaterMask = waterMask;
+    model->terrainWaterMaskTextureIndex = model->textures.size();
+    model->textures.push_back(std::move(waterMaskTexture));
+
+    root->content.renderContent.prepareGltfContent(
+        std::move(model),
+        Mat4::identity());
+    root->bounds = geometryRectangle;
+    root->geometricError = 100.0;
+    root->content.contentKind = TileContentKind::Render;
+    root->content.loadState = TileLoadState::ContentLoaded;
+    root->rasterOverlayState.mappings().resize(1);
+
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    RasterMappedToTilesetTile* mapped =
+        root->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* loading = mapped ? mapped->getLoadingTile() : nullptr;
+    check(mapped != nullptr && loading != nullptr,
+          "Tileset: glTF terrain water mask creates mapped raster");
+    if (!mapped || !loading) return;
+
+    loading->setTexture(std::make_unique<DummyTexture>(4, 4));
+    loading->setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
+
+    check(commands.size() == 1,
+          "Tileset: glTF terrain water mask emits one primitive command");
+    if (commands.empty()) return;
+    const RenderCommand& cmd = commands.front();
+    check(cmd.kind == RenderCommandKind::GltfPrimitive &&
+              cmd.textures.size() >
+                  static_cast<size_t>(kGltfWaterMaskTextureSlot) &&
+              cmd.textures[0] != nullptr &&
+              cmd.textures[kGltfRasterOverlayTextureBase] ==
+                  loading->getTexture() &&
+              cmd.textures[kGltfWaterMaskTextureSlot] != nullptr,
+          "Tileset: glTF terrain water mask uses slot 19 without replacing material or raster overlays");
+    check(cmd.gltfHasWaterMask == 1.0f &&
+              cmd.gltfWaterMaskState[0] == 0.0f &&
+              cmd.gltfWaterMaskState[1] == 0.0f &&
+              cmd.gltfWaterMaskState[2] == 1.0f &&
+              std::abs(cmd.gltfWaterMaskTranslationScale[0] - 0.25f) <
+                  1e-6f &&
+              std::abs(cmd.gltfWaterMaskTranslationScale[1] - 0.5f) <
+                  1e-6f &&
+              std::abs(cmd.gltfWaterMaskTranslationScale[2] - 0.5f) <
+                  1e-6f,
+          "Tileset: glTF terrain water mask command preserves Cesium water mask state");
+    check(cmd.uniforms.count("u_gltfHasWaterMask") &&
+              cmd.uniforms.at("u_gltfHasWaterMask").front() == 1.0f &&
+              cmd.uniforms.count("u_gltfWaterMaskTranslationScale") &&
+              cmd.uniforms.at("u_gltfWaterMaskTranslationScale").size() == 4 &&
+              cmd.uniforms.count("u_gltfWaterMaskState") &&
+              cmd.uniforms.at("u_gltfWaterMaskState").size() == 4,
+          "Tileset: glTF terrain water mask uploads shader uniforms");
+}
+
 void testTilesetGltfTangentsUseModelLinearTransform() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
@@ -26938,6 +27057,7 @@ int main() {
     testTilesetRasterMoreDetailCreatesUpsampledChildren();
     testTilesetGltfRenderContentBuildsPrimitiveCommands();
     testTilesetGltfDrawCommandBindsMappedRasterOverlays();
+    testTilesetGltfDrawCommandBindsTerrainWaterMask();
     testTilesetGltfTangentsUseModelLinearTransform();
     testTilesetGltfMaskMaterialStaysOpaqueCommand();
     testTilesetGltfUnlitMaterialUploadsUniform();

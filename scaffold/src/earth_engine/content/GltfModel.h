@@ -231,6 +231,8 @@ struct GltfModel {
     std::vector<GltfSkinRuntime> skins;
     std::vector<GltfAnimationRuntime> animations;
     RasterOverlayDetails rasterOverlayDetails;
+    WaterMask terrainWaterMask;
+    std::optional<size_t> terrainWaterMaskTextureIndex;
     int activeAnimationIndex = 0;
     bool animationLooping = true;
     bool animationPaused = false;

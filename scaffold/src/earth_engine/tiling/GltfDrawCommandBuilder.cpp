@@ -48,6 +48,20 @@ void GltfDrawCommandBuilder::build(
     if (!tile.content.renderContent.hasGltfResources()) {
         return;
     }
+    const GltfModel* model = tile.content.renderContent.gltfModelForRead();
+    const WaterMask* terrainWaterMask = model
+        ? &model->terrainWaterMask
+        : nullptr;
+    Texture* terrainWaterMaskTexture = nullptr;
+    if (model &&
+        model->terrainWaterMaskTextureIndex &&
+        *model->terrainWaterMaskTextureIndex <
+            tile.content.renderContent.gltfTextureResourcesForBinding().size()) {
+        terrainWaterMaskTexture =
+            tile.content.renderContent.gltfTextureResourcesForBinding()
+                [*model->terrainWaterMaskTextureIndex]
+                    .get();
+    }
 
     for (const GltfPrimitiveRenderResources& primitive :
          tile.content.renderContent.gltfPrimitiveResourcesForDraw()) {
@@ -267,6 +281,38 @@ void GltfDrawCommandBuilder::build(
         cmd.textures[12] = primitive.anisotropyTexture.texture;
         cmd.textures[13] = primitive.specularGlossinessTexture.texture;
         cmd.textures[14] = primitive.transmissionTexture.texture;
+        if (terrainWaterMask && terrainWaterMask->valid()) {
+            if (cmd.textures.size() <=
+                static_cast<size_t>(kGltfWaterMaskTextureSlot)) {
+                cmd.textures.resize(
+                    static_cast<size_t>(kGltfWaterMaskTextureSlot) + 1u,
+                    nullptr);
+            }
+            cmd.textures[kGltfWaterMaskTextureSlot] =
+                terrainWaterMaskTexture;
+            cmd.gltfHasWaterMask = 1.0f;
+            cmd.gltfWaterMaskTranslationScale = {
+                static_cast<float>(terrainWaterMask->translationX),
+                static_cast<float>(terrainWaterMask->translationY),
+                static_cast<float>(terrainWaterMask->scale),
+                0.0f};
+            cmd.gltfWaterMaskState = {
+                terrainWaterMask->allLand ? 1.0f : 0.0f,
+                terrainWaterMask->allWater ? 1.0f : 0.0f,
+                terrainWaterMaskTexture ? 1.0f : 0.0f,
+                0.0f};
+        }
+        cmd.uniforms["u_gltfHasWaterMask"] = {cmd.gltfHasWaterMask};
+        cmd.uniforms["u_gltfWaterMaskTranslationScale"] = {
+            cmd.gltfWaterMaskTranslationScale[0],
+            cmd.gltfWaterMaskTranslationScale[1],
+            cmd.gltfWaterMaskTranslationScale[2],
+            cmd.gltfWaterMaskTranslationScale[3]};
+        cmd.uniforms["u_gltfWaterMaskState"] = {
+            cmd.gltfWaterMaskState[0],
+            cmd.gltfWaterMaskState[1],
+            cmd.gltfWaterMaskState[2],
+            cmd.gltfWaterMaskState[3]};
         int rasterOverlayTextureCount = 0;
         for (size_t i = 0;
              i < overlays.size() && i < tile.rasterOverlayState.mappingCount();

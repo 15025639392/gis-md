@@ -10,6 +10,27 @@ std::unique_ptr<GltfModel> makeQuantizedMeshGltfModel(
     const SurfaceTileMesh& surfaceMesh) {
     auto model = std::make_unique<GltfModel>();
     model->rasterOverlayDetails = surfaceMesh.rasterOverlayDetails;
+    model->terrainWaterMask = surfaceMesh.waterMask;
+    if (!surfaceMesh.waterMask.allLand &&
+        !surfaceMesh.waterMask.allWater &&
+        !surfaceMesh.waterMask.data.empty()) {
+        GltfTexture waterMaskTexture;
+        waterMaskTexture.image.width = 256;
+        waterMaskTexture.image.height = 256;
+        waterMaskTexture.image.channels = 1;
+        waterMaskTexture.image.pixels.reserve(256u * 256u);
+        for (size_t i = 0; i < 256u * 256u; ++i) {
+            waterMaskTexture.image.pixels.push_back(
+                surfaceMesh.waterMask.data[i * 4u + 3u]);
+        }
+        waterMaskTexture.sampler.minFilter = GltfTextureFilter::Linear;
+        waterMaskTexture.sampler.magFilter = GltfTextureFilter::Linear;
+        waterMaskTexture.sampler.mipmap = false;
+        waterMaskTexture.sampler.wrapS = GltfTextureWrap::ClampToEdge;
+        waterMaskTexture.sampler.wrapT = GltfTextureWrap::ClampToEdge;
+        model->terrainWaterMaskTextureIndex = model->textures.size();
+        model->textures.push_back(std::move(waterMaskTexture));
+    }
 
     GltfPrimitive primitive;
     primitive.vertices = surfaceMesh.vertices;

@@ -742,9 +742,12 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
         setFragmentUniform("u_mappedRasterTexCoordSet1", 78);
         setFragmentUniform("u_mappedRasterTexCoordSet2", 79);
         setFragmentUniform("u_mappedRasterTexCoordSet3", 80);
+        setFragmentUniform("u_gltfHasWaterMask", 81);
+        setFragmentUniform("u_gltfWaterMaskTranslationScale", 82);
+        setFragmentUniform("u_gltfWaterMaskState", 83);
 
         // 纹理绑定
-        const NSUInteger maxMaterialTextures = 19;
+        const NSUInteger maxMaterialTextures = kGltfWaterMaskTextureSlot + 1;
         const NSUInteger materialTextureCount =
             std::min<NSUInteger>(cmd.textures.size(), maxMaterialTextures);
         for (NSUInteger textureIndex = 0;
