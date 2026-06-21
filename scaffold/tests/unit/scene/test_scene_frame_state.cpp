@@ -1115,6 +1115,84 @@ TEST(SceneFrameStateTest, SurfaceCommandSkipsExplicitMeshMissingIndexBuffer) {
     EXPECT_FALSE(submittedSurfaceTile);
 }
 
+TEST(SceneFrameStateTest, SurfaceCommandIgnoresOverflowingNoSkirtRange) {
+    DummyRenderDevice device;
+    Scene scene;
+    ASSERT_TRUE(scene.setRenderDevice(&device));
+    scene.setViewport(800, 600, 1.0f);
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
+    scene.camera().lookAt(
+        target + Vec3(1000000.0, 0.0, 0.0),
+        target,
+        Vec3::unitZ());
+
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    auto terrainTileset = std::make_unique<Tileset>(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{&baseActivated},
+        &device,
+        TilesetOptions{});
+    Tileset* terrainRaw = terrainTileset.get();
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
+    ASSERT_NE(nullptr, root);
+
+    TilesetTestAccess::putTerrainCache(
+        *terrainRaw,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(*terrainRaw, *root);
+    SurfaceTileMesh* mesh = root->content.renderContent.mutableSurfaceMesh();
+    ASSERT_NE(nullptr, mesh);
+    ASSERT_FALSE(mesh->indices.empty());
+    mesh->skirtMeta.noSkirtIndicesBegin =
+        std::numeric_limits<uint32_t>::max();
+    mesh->skirtMeta.noSkirtIndicesCount = 2;
+
+    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
+    RasterMappedToTilesetTile* rootMapped =
+        root->rasterOverlayState.mappings().empty()
+            ? nullptr
+            : root->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* rootRaster =
+        rootMapped ? rootMapped->getLoadingTile() : nullptr;
+    ASSERT_NE(nullptr, rootRaster);
+    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
+    rootRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
+
+    scene.setTileset(std::move(terrainTileset));
+    scene.update(1.0 / 60.0);
+    TilesetTestAccess::setInteractionActiveForFrame(*terrainRaw, true);
+    TilesetTestAccess::beginTilePlan(*terrainRaw);
+    TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *root);
+    scene.render();
+
+    const auto surfaceCommandIt = std::find_if(
+        device.submittedCommands.begin(),
+        device.submittedCommands.end(),
+        [](const RenderCommand& command) {
+            return command.kind == RenderCommandKind::SurfaceTile;
+        });
+    ASSERT_NE(device.submittedCommands.end(), surfaceCommandIt);
+    const RenderCommand& command = *surfaceCommandIt;
+    EXPECT_EQ(0, command.indexOffset);
+    EXPECT_EQ(static_cast<int>(mesh->indices.size()), command.indexCount);
+    EXPECT_EQ(
+        static_cast<int>(mesh->indices.size()),
+        command.surfaceNoSkirtIndexCount);
+    EXPECT_EQ(0, command.surfaceSkirtIndexCount);
+}
+
 TEST(SceneFrameStateTest, DiagnosticsExposeTerrainSynchronousPrepReasons) {
     DummyRenderDevice device;
     Scene scene;
