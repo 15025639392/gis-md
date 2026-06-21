@@ -3,6 +3,8 @@
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/S2CellID.h"
+#include "earth_engine/core/math/MathUtils.h"
+#include "earth_engine/tiling/SurfaceTile.h"
 #include "earth_engine/tiling/TileSoftwareOcclusionPolicy.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
@@ -181,6 +183,27 @@ TEST(TileSoftwareOcclusionTest, PreservesNegativeExplicitS2Height) {
         tile.boundingVolume->estimateGlobeRectangle();
     ASSERT_TRUE(volumeRectangle.has_value());
     ASSERT_FALSE(volumeRectangle->contains(0.0, 0.0));
+
+    const Vec3 cameraPosition =
+        Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic::fromRadians(0.0, 0.0, 1000000.0));
+
+    EXPECT_EQ(
+        TileSoftwareOcclusionPolicy::check(tile, cameraPosition),
+        TileOcclusionState::Occluded);
+}
+
+TEST(TileSoftwareOcclusionTest, UsesQuantizedMeshHorizonPoint) {
+    TilesetTile tile;
+    tile.key = TileKey{"Geographic-TMS", 4, 0, 0};
+    tile.bounds = Rectangle::fromDegrees(10.0, -0.01, 10.1, 0.01);
+    auto mesh = std::make_unique<SurfaceTileMesh>();
+    mesh->hasHorizonOcclusionPoint = true;
+    mesh->horizonOcclusionPoint =
+        Vec3(std::cos(MathUtils::degreesToRadians(60.0)),
+             std::sin(MathUtils::degreesToRadians(60.0)),
+             0.0);
+    tile.content.renderContent.setSurfaceMesh(std::move(mesh));
 
     const Vec3 cameraPosition =
         Ellipsoid::WGS84().cartographicToCartesian(
