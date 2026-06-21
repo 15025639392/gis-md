@@ -482,6 +482,45 @@ TEST(QuantizedMeshTerrainProviderTest, LayerJsonFormatIsOptionalAndIgnoredLikeCe
                   TileKey{"Geographic-TMS", 0, 0, 0}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, LayerJsonAttributionReplacesFallbackLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain",
+        "fallback credit");
+    const std::string layerJson = R"json({
+      "attribution": "This amazing data is courtesy The Amazing Data Source!",
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"]
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    EXPECT_EQ("This amazing data is courtesy The Amazing Data Source!",
+              provider.attribution());
+}
+
+TEST(QuantizedMeshTerrainProviderTest, NonStringAttributionIsIgnoredLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain",
+        "fallback credit");
+    const std::string layerJson = R"json({
+      "attribution": 1234,
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"]
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    EXPECT_TRUE(provider.attribution().empty());
+}
+
 TEST(QuantizedMeshTerrainProviderTest, MissingLayerVersionSubstitutesEmptyStringLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
