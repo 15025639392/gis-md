@@ -1,9 +1,12 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/content/GltfContentProvider.h"
+#include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/renderer/RenderDevice.h"
+#include "earth_engine/scene/Camera.h"
+#include "earth_engine/scene/FrameState.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 
@@ -94,6 +97,13 @@ public:
         pendingRequests.push_back(PendingRequest{key, std::move(callback)});
     }
 
+    ProviderRequestDiagnostics requestDiagnostics() const override {
+        ProviderRequestDiagnostics diagnostics;
+        diagnostics.maximumTransportActiveRequests =
+            maximumTransportActiveRequests;
+        return diagnostics;
+    }
+
     bool completeWithHeightmap(
         const TileKey& key,
         std::unique_ptr<DecodedHeightmap> heightmap) {
@@ -119,6 +129,7 @@ public:
     }
 
     std::vector<PendingRequest> pendingRequests;
+    int maximumTransportActiveRequests = -1;
 };
 
 class ManualCompletionContentProvider final : public TilesetContentProvider {
@@ -271,6 +282,22 @@ std::unique_ptr<GltfModel> makeTriangleGltfModel() {
     return model;
 }
 
+SelectorView makeSelectorView(
+    const Camera& camera,
+    int viewportWidth,
+    int viewportHeight) {
+    SelectorView view;
+    view.position = camera.position();
+    view.direction = camera.direction();
+    const double width = static_cast<double>(viewportWidth);
+    const double height = static_cast<double>(viewportHeight);
+    view.projectionMatrix = camera.projectionMatrix(width, height);
+    view.frustum = Frustum::fromViewProjection(
+        view.projectionMatrix * camera.viewMatrix());
+    view.viewportHeightPixels = viewportHeight;
+    return view;
+}
+
 } // namespace
 
 TEST(TilesetRequestMissingBudgetTest,
@@ -378,4 +405,53 @@ TEST(TilesetRequestMissingBudgetTest,
     EXPECT_EQ(terrainTile->content.loadState, TileLoadState::ContentLoading);
     EXPECT_EQ(diagnostics.pendingTerrainUploads, 1);
     EXPECT_EQ(diagnostics.pendingContentUploads, 0);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    UpdateFrameUsesProviderTransportLaneForRasterBudget) {
+    TilesetOptions options;
+    options.maximumSimultaneousTileLoads = 20;
+
+    auto provider = std::make_unique<ManualCompletionTerrainProvider>();
+    provider->maximumTransportActiveRequests = 11;
+    ManualCompletionTerrainProvider* rawProvider = provider.get();
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        options);
+
+    Camera camera;
+    camera.lookAt(
+        Vec3(Ellipsoid::WGS84().semiMajorAxis() * 2.0, 0.0, 0.0),
+        Vec3(Ellipsoid::WGS84().semiMajorAxis(), 0.0, 0.0),
+        Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 401;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+
+    tileset.update(frameState);
+
+    const TilesetLoadDiagnostics diagnostics = tileset.loadDiagnostics();
+    EXPECT_EQ(diagnostics.resourceBudget.maxRasterNetworkRequestsPerFrame, 11u);
+    EXPECT_EQ(diagnostics.resourceBudget.maxNetworkRequestsPerFrame, 20u);
+    EXPECT_EQ(
+        diagnostics.resourceBudget.maxTerrainContentNetworkRequestsPerFrame,
+        20u);
+    EXPECT_EQ(
+        diagnostics.terrainProviderRequests.maximumTransportActiveRequests,
+        11);
+
+    while (!rawProvider->pendingRequests.empty()) {
+        const TileKey pendingKey = rawProvider->pendingRequests.front().key;
+        EXPECT_TRUE(rawProvider->completeWithHeightmap(
+            pendingKey,
+            makeFlatHeightmap(0.0f)));
+    }
 }
