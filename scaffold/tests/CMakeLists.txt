@@ -382,6 +382,12 @@ add_executable(test_tile_occlusion_resolver
 target_link_libraries(test_tile_occlusion_resolver PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_occlusion_resolver COMMAND test_tile_occlusion_resolver)
 
+add_executable(test_tile_software_occlusion
+    unit/tiling/test_tile_software_occlusion.cpp
+)
+target_link_libraries(test_tile_software_occlusion PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_software_occlusion COMMAND test_tile_software_occlusion)
+
 add_executable(test_tile_frame_resource_budget_planner
     unit/tiling/test_tile_frame_resource_budget_planner.cpp
 )
