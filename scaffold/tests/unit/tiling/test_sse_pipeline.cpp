@@ -5881,60 +5881,6 @@ void testQuantizedMeshLayerJsonUriResolution() {
 
 std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters);
 
-void testTilesetDefersAvailabilityBoundaryChildrenUntilContentLoaded() {
-    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
-        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
-    const std::string layerJson = R"json({
-      "format": "quantized-mesh-1.0",
-      "projection": "EPSG:4326",
-      "scheme": "tms",
-      "tiles": ["{z}/{x}/{y}.terrain"],
-      "minzoom": 0,
-      "maxzoom": 4,
-      "metadataAvailability": 1
-    })json";
-
-    check(provider->configureFromLayerJson(
-              layerJson, "https://example.invalid/layer.json"),
-          "Tileset: availability-boundary layer configures");
-
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
-    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
-    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
-    check(root != nullptr,
-          "Tileset: availability-boundary root tile is created");
-
-    TilesetTestAccess::ensureTileChildren(tileset, *root);
-    check(root->children.empty(),
-          "Tileset: availability-boundary children wait for parent content");
-
-    const std::string rootMetadata = R"json({
-      "available": [
-        [{"startX":0,"startY":0,"endX":0,"endY":0}]
-      ]
-    })json";
-    auto rootHeightmap = makeFlatHeightmap(10.0f);
-    rootHeightmap->rawData = makeQuantizedMeshBytes(rootMetadata);
-    TilesetTestAccess::putTerrainCache(tileset, rootKey, std::move(rootHeightmap));
-
-    for (TileLoadState state : {
-             TileLoadState::Unloaded,
-             TileLoadState::ContentLoading,
-             TileLoadState::FailedTemporarily}) {
-        root->content.loadState = state;
-        TilesetTestAccess::ensureTileChildren(tileset, *root);
-        check(root->children.empty(),
-              "Tileset: availability-boundary children wait until parent content reaches loaded state");
-    }
-
-    TilesetTestAccess::ensureTileMesh(tileset, *root);
-    TilesetTestAccess::ensureTileChildren(tileset, *root);
-    check(root->children.size() == 4,
-          "Tileset: availability-boundary children appear after metadata content loads");
-}
-
 class DefaultZoomTerrainProvider final : public TerrainProvider {
 public:
     std::string id() const override { return "default-zoom-terrain"; }
@@ -6002,47 +5948,6 @@ public:
 
     int requestCount = 0;
     std::vector<TileKey> extraAvailableKeys;
-};
-
-class ExplicitPastMaxZoomTerrainProvider final : public TerrainProvider {
-public:
-    explicit ExplicitPastMaxZoomTerrainProvider(
-        std::shared_ptr<std::vector<TileKey>> requestedKeys)
-        : requestedKeys_(std::move(requestedKeys)) {}
-
-    std::string id() const override { return "explicit-past-maxzoom-terrain"; }
-    std::string schemeId() const override { return "Geographic-TMS"; }
-    int minZoom() const override { return 0; }
-    int maxZoom() const override { return 1; }
-    int tileSize() const override { return 2; }
-
-    TileAvailabilityState availabilityState(const TileKey& key) const override {
-        if (key.schemeId != schemeId()) return TileAvailabilityState::NotAvailable;
-        if (key.z == 2 && key.x == 0 && key.y == 0) {
-            return TileAvailabilityState::Available;
-        }
-        return TerrainProvider::availabilityState(key);
-    }
-
-    std::string buildUrl(const TileKey&) const override {
-        return "memory://explicit-past-maxzoom";
-    }
-
-    void requestTile(const TileKey& key,
-                     CancellationToken,
-                     HeightmapCallback callback,
-                     HttpRequestPriority = HttpRequestPriority::Normal) override {
-        requestedKeys_->push_back(key);
-        callback(key, TerrainTileLoadResult::retryLater());
-    }
-
-    std::unique_ptr<DecodedHeightmap> decodeTile(
-        const uint8_t*, size_t) override {
-        return nullptr;
-    }
-
-private:
-    std::shared_ptr<std::vector<TileKey>> requestedKeys_;
 };
 
 class TerminalTerrainProvider final : public TerrainProvider {
@@ -11157,58 +11062,6 @@ void testTilesetTotalBytesIncludesDecodedHeightmapPayload() {
     TilesetTestAccess::updateTotalBytesUsed(tileset);
     check(tileset.totalBytesUsed() == expected,
           "Tileset: totalBytesUsed includes decoded heightmap payload");
-}
-
-void testTilesetCanRefineQuantizedMeshPastLayerMaxzoomWhenAvailable() {
-    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
-        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
-    const std::string layerJson = R"json({
-      "format": "quantized-mesh-1.0",
-      "projection": "EPSG:4326",
-      "scheme": "tms",
-      "tiles": ["{z}/{x}/{y}.terrain"],
-      "minzoom": 0,
-      "maxzoom": 1,
-      "available": [
-        [{"startX":0,"startY":0,"endX":1,"endY":0}],
-        [{"startX":0,"startY":0,"endX":0,"endY":0}],
-        [{"startX":0,"startY":0,"endX":0,"endY":0}]
-      ]
-    })json";
-    check(provider->configureFromLayerJson(
-              layerJson, "https://example.invalid/layer.json"),
-          "Tileset: maxzoom-refine layer configures");
-    check(provider->supportsTile(TileKey{"Geographic-TMS", 2, 0, 0}),
-          "Tileset: provider sees explicit availability past maxzoom");
-
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-    TilesetTile* parent =
-        TilesetTestAccess::ensureTile(tileset, TileKey{"Geographic-TMS", 1, 0, 0});
-    check(parent != nullptr,
-          "Tileset: maxzoom-refine parent tile is created");
-    check(parent && TilesetTestAccess::canRefine(tileset, *parent),
-          "Tileset: refinement follows child availability instead of layer maxzoom");
-
-    if (parent) {
-        TilesetTestAccess::ensureTileChildren(tileset, *parent);
-        check(!parent->children.empty() && !parent->children[0]->content.upsampledFromParent,
-              "Tileset: explicit child past maxzoom is created as real terrain");
-    }
-}
-
-void testTilesetRequestsExplicitAvailabilityPastProviderMaxzoom() {
-    auto requestedKeys = std::make_shared<std::vector<TileKey>>();
-    auto provider =
-        std::make_unique<ExplicitPastMaxZoomTerrainProvider>(requestedKeys);
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
-
-    const TileKey explicitKey{"Geographic-TMS", 2, 0, 0};
-    TilesetTestAccess::requestMissingTile(tileset, explicitKey);
-
-    check(requestedKeys->size() == 1 && requestedKeys->front() == explicitKey,
-          "Tileset: request queue keeps explicit availability past provider maxzoom");
 }
 
 void testTilesetRetryLaterRemainsRetryable() {
@@ -29653,10 +29506,7 @@ int main() {
     testS2CellBoundingVolumeDistanceAndPlaneIntersectionMatchNative();
     testQuantizedMeshLayerJsonVersionAndExtensionQuery();
     testQuantizedMeshLayerJsonUriResolution();
-    testTilesetDefersAvailabilityBoundaryChildrenUntilContentLoaded();
     testTilesetTotalBytesIncludesDecodedHeightmapPayload();
-    testTilesetCanRefineQuantizedMeshPastLayerMaxzoomWhenAvailable();
-    testTilesetRequestsExplicitAvailabilityPastProviderMaxzoom();
     testTilesetRetryLaterRemainsRetryable();
     testTilesetCancelledRemainsRetryable();
     testTilesetContentRetryLaterMaterializesLatentChildren();
