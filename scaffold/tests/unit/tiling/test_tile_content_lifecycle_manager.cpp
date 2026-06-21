@@ -66,7 +66,8 @@ TEST(TileContentLifecycleManagerTest, ExposesClaimedUploadWork) {
                 "content-upload",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadResult::empty()});
+                TileLoadResult::fromContentResult(
+                    TileContentLoadResult::empty())});
 
         EXPECT_TRUE(manager.loadLifecycle()
                         .pendingLoads()
@@ -100,7 +101,7 @@ TEST(TileContentLifecycleManagerTest, ShutdownClearsClaimedUploadWork) {
                 "terrain-upload",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                nullptr});
+                TileLoadResult::createRenderableTerrain()});
 
         EXPECT_TRUE(manager.loadLifecycle()
                         .pendingLoads()

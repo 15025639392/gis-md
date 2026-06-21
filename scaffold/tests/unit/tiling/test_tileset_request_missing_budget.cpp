@@ -109,7 +109,7 @@ struct TilesetTestAccess {
                 cacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         return tileset.contentLifecycle_
             .loadLifecycle()
             .pendingLoads()

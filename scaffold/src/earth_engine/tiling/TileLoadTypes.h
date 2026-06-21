@@ -27,6 +27,17 @@ struct TileLoadRequestOutcome {
 };
 
 struct TileLoadedContent {
+    static TileLoadedContent fromTerrainResult(
+        TerrainTileLoadResult&& result) {
+        TileLoadedContent content;
+        content.heightmap = std::move(result.heightmap);
+        content.surfaceMesh = std::move(result.surfaceMesh);
+        content.metadata = std::move(result.metadata);
+        content.quantizedMeshAvailabilityUpdates =
+            std::move(result.quantizedMeshAvailabilityUpdates);
+        return content;
+    }
+
     static TileLoadedContent fromContentResult(
         TileContentLoadResult&& result) {
         TileLoadedContent content;
@@ -45,26 +56,69 @@ struct TileLoadedContent {
         quantizedMeshAvailabilityUpdates;
 };
 
+struct TileLoadResult {
+    static TileLoadResult createRenderable() {
+        TileLoadResult loadResult;
+        loadResult.status = TileLoadStatus::Renderable;
+        return loadResult;
+    }
+
+    static TileLoadResult createRenderableTerrain(
+        std::unique_ptr<DecodedHeightmap> heightmap = nullptr,
+        std::unique_ptr<SurfaceTileMesh> surfaceMesh = nullptr,
+        std::vector<QuantizedMeshAvailabilityUpdate> availabilityUpdates = {},
+        TileLoadResultMetadata metadata = {}) {
+        TileLoadResult loadResult;
+        loadResult.status = TileLoadStatus::Renderable;
+        loadResult.content.heightmap = std::move(heightmap);
+        loadResult.content.surfaceMesh = std::move(surfaceMesh);
+        loadResult.content.quantizedMeshAvailabilityUpdates =
+            std::move(availabilityUpdates);
+        loadResult.content.metadata = std::move(metadata);
+        return loadResult;
+    }
+
+    static TileLoadResult fromTerrainResult(TerrainTileLoadResult&& result) {
+        TileLoadResult loadResult;
+        loadResult.status = result.status;
+        loadResult.content = TileLoadedContent::fromTerrainResult(
+            std::move(result));
+        return loadResult;
+    }
+
+    static TileLoadResult fromContentResult(TileContentLoadResult&& result) {
+        TileLoadResult loadResult;
+        loadResult.status = result.status;
+        loadResult.content = TileLoadedContent::fromContentResult(
+            std::move(result));
+        return loadResult;
+    }
+
+    bool hasRenderableContent() const {
+        return content.heightmap || content.surfaceMesh || content.gltfModel;
+    }
+
+    bool shouldUpload() const {
+        return status == TileLoadStatus::Renderable &&
+               hasRenderableContent();
+    }
+
+    TileLoadStatus status = TileLoadStatus::Failed;
+    TileLoadedContent content;
+};
+
 struct PendingTerrainUpload {
     PendingTerrainUpload() = default;
     PendingTerrainUpload(TileKey key_,
                          std::string cacheKey_,
                          TileLoadPriorityGroup group_,
                          double priority_,
-                         std::unique_ptr<DecodedHeightmap> heightmap_,
-                         std::unique_ptr<SurfaceTileMesh> surfaceMesh_ = nullptr,
-                         std::vector<QuantizedMeshAvailabilityUpdate>
-                             availabilityUpdates_ = {},
-                         TileLoadResultMetadata metadata_ = {})
+                         TileLoadResult result)
         : key(std::move(key_)),
           cacheKey(std::move(cacheKey_)),
           group(group_),
           priority(priority_) {
-        content.heightmap = std::move(heightmap_);
-        content.surfaceMesh = std::move(surfaceMesh_);
-        content.metadata = std::move(metadata_);
-        content.quantizedMeshAvailabilityUpdates =
-            std::move(availabilityUpdates_);
+        content = std::move(result.content);
     }
 
     TileKey key;
@@ -88,12 +142,12 @@ struct PendingContentUpload {
                          std::string cacheKey_,
                          TileLoadPriorityGroup group_,
                          double priority_,
-                         TileContentLoadResult result_)
+                         TileLoadResult result_)
         : key(std::move(key_)),
           cacheKey(std::move(cacheKey_)),
           group(group_),
           priority(priority_) {
-        content = TileLoadedContent::fromContentResult(std::move(result_));
+        content = std::move(result_.content);
     }
 
     TileKey key;

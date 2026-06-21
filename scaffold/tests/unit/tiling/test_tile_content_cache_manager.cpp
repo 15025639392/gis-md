@@ -59,7 +59,7 @@ struct ExternalSubtreeFixture {
                 childCacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
     }
 
     void claimChildUploadWork() {
@@ -74,7 +74,7 @@ struct ExternalSubtreeFixture {
                 childCacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         ASSERT_TRUE(lifecycle.loadLifecycle()
                         .pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
@@ -206,7 +206,7 @@ TEST(
                 cacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         ASSERT_TRUE(lifecycle.loadLifecycle()
                         .pendingLoads()
                         .takeHighestPriorityUpload(false, budget)

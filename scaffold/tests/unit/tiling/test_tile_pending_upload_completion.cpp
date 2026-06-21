@@ -22,7 +22,7 @@ TEST(TilePendingUploadCompletionTest, ClaimedUploadCountsAsWork) {
             "terrain",
             TileLoadPriorityGroup::Normal,
             1.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         std::optional<PendingLoadFinalize> upload =
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
 
@@ -53,13 +53,13 @@ TEST(TilePendingUploadCompletionTest, ErasesUploadKeys) {
             "terrain",
             TileLoadPriorityGroup::Normal,
             1.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
             TileKey{"test", 1, 1, 0},
             "content",
             TileLoadPriorityGroup::Normal,
             2.0,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
 
         std::optional<PendingLoadFinalize> first =
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
@@ -98,13 +98,13 @@ TEST(TilePendingUploadCompletionTest, RejectsDuplicateUploadKeyAcrossKinds) {
             "shared",
             TileLoadPriorityGroup::Normal,
             1.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
             TileKey{"test", 1, 0, 0},
             "shared",
             TileLoadPriorityGroup::Normal,
             2.0,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
 
         std::optional<PendingLoadFinalize> first =
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);

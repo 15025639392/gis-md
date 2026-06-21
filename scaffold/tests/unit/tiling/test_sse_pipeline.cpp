@@ -188,7 +188,7 @@ struct TilesetTestAccess {
                 cacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         return tileset.contentLifecycle_
             .loadLifecycle()
             .pendingLoads()
@@ -9964,13 +9964,13 @@ void testTileIndexStateErasesCacheKeyAcrossQueuesAndCaches() {
         erasedCacheKey,
         TileLoadPriorityGroup::Normal,
         10.0,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
     lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
         keptKey,
         keptCacheKey,
         TileLoadPriorityGroup::Normal,
         1.0,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
     {
         FrameResourceBudgetConfig config;
         config.maxMainThreadFinalizesPerFrame = 1;
@@ -10128,7 +10128,7 @@ void testTileContentCacheManagerEraseIndexClearsClaimedUploadWork() {
                 cacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         check(lifecycle.loadLifecycle()
                   .pendingLoads()
                   .takeHighestPriorityUpload(false, budget)
@@ -10238,7 +10238,7 @@ void testTileContentCacheManagerDefersExternalSubtreeWithActiveWork() {
                 childCacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
     }
     tiles[rootCacheKey] = std::move(root);
     tiles[childCacheKey] = std::move(child);
@@ -10295,7 +10295,7 @@ void testTileContentCacheManagerDefersExternalSubtreeWithClaimedUpload() {
                 childCacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         check(lifecycle.loadLifecycle()
                   .pendingLoads()
                   .takeHighestPriorityUpload(false, budget)
@@ -10358,7 +10358,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterClaimedUploadComplete
                 childCacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         check(lifecycle.loadLifecycle()
                   .pendingLoads()
                   .takeHighestPriorityUpload(false, budget)
@@ -10440,7 +10440,7 @@ void testTileContentCacheManagerRetriesExternalSubtreeAfterWorkCompletes() {
                 childCacheKey,
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
     }
     tiles[rootCacheKey] = std::move(root);
     tiles[childCacheKey] = std::move(child);
@@ -11180,13 +11180,13 @@ void testTileLoadDiagnosticsCollectorCountsQueuesLifecycleAndTiles() {
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
             TileKey{"test", 1, 1, 0},
             "content-upload",
             TileLoadPriorityGroup::Urgent,
             0.0,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
     }
 
     TileUnloadQueue unloadQueue;
@@ -11929,13 +11929,13 @@ void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
         "missing-terrain",
         TileLoadPriorityGroup::Normal,
         0.0,
-        nullptr};
+        TileLoadResult::createRenderableTerrain()};
     PendingContentUpload contentUpload{
         TileKey{"test", 0, 1, 0},
         "missing-content",
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileContentLoadResult::empty()};
+        TileLoadResult::fromContentResult(TileContentLoadResult::empty())};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
@@ -11943,13 +11943,13 @@ void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
             terrainUpload.cacheKey,
             terrainUpload.group,
             terrainUpload.priority,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
             contentUpload.key,
             contentUpload.cacheKey,
             contentUpload.group,
             contentUpload.priority,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         check(lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget) &&
                   lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget),
               "TilePendingLoadCommitCoordinator: test dequeues missing tile uploads before commit");
@@ -11995,7 +11995,7 @@ void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentU
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileContentLoadResult::empty()};
+        TileLoadResult::fromContentResult(TileContentLoadResult::empty())};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
@@ -12003,7 +12003,7 @@ void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentU
             upload.cacheKey,
             upload.group,
             upload.priority,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         check(lifecycle.pendingLoads()
                   .takeHighestPriorityUpload(false, budget)
                   .has_value(),
@@ -14082,7 +14082,7 @@ void testTileSubtreeWorkTrackerFindsActiveLifecycleWork() {
             childCacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
     }
     check(TileSubtreeWorkTracker::hasActiveContentWork(
               root,
@@ -14102,7 +14102,7 @@ void testTileSubtreeWorkTrackerFindsActiveLifecycleWork() {
             childCacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         check(lifecycle.pendingLoads()
                   .takeHighestPriorityUpload(false, budget)
                   .has_value(),
@@ -16185,13 +16185,13 @@ void testTilePendingLoadQueueUsesSharedPriorityOrder() {
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
     queue.addContentUpload(PendingContentUpload{
         contentKey,
         "content",
         TileLoadPriorityGroup::Urgent,
         100.0,
-        TileContentLoadResult::failed()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
 
     std::optional<PendingLoadFinalize> first =
         queue.takeHighestPriorityUpload(false, budget);
@@ -16215,13 +16215,13 @@ void testTilePendingLoadQueueFiltersNonUrgentDuringInteraction() {
         "normal",
         TileLoadPriorityGroup::Normal,
         0.0,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
     queue.addTerrainUpload(PendingTerrainUpload{
         urgentKey,
         "urgent",
         TileLoadPriorityGroup::Urgent,
         100.0,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
 
     std::optional<PendingLoadFinalize> first =
         queue.takeHighestPriorityUpload(true, budget);
@@ -16251,7 +16251,7 @@ void testTilePendingLoadQueueKeepsUploadWhenFinalizeBudgetBlocks() {
         "content",
         TileLoadPriorityGroup::Urgent,
         0.0,
-        TileContentLoadResult::failed()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
 
     std::optional<PendingLoadFinalize> blocked =
         queue.takeHighestPriorityUpload(false, blockedBudget);
@@ -16285,25 +16285,25 @@ void testTilePendingLoadQueueDeduplicatesUploadsByKind() {
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
     queue.addTerrainUpload(PendingTerrainUpload{
         secondKey,
         "terrain",
         TileLoadPriorityGroup::Urgent,
         100.0,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
     queue.addContentUpload(PendingContentUpload{
         firstKey,
         "content",
         TileLoadPriorityGroup::Normal,
         1.0,
-        TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
     queue.addContentUpload(PendingContentUpload{
         secondKey,
         "content",
         TileLoadPriorityGroup::Urgent,
         100.0,
-        TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
 
     check(queue.terrainUploadCount() == 1 &&
               queue.contentUploadCount() == 1,
@@ -16430,7 +16430,7 @@ void testTilePendingLoadQueueKeepsOneResultShapePerKind() {
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
     queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
         terrainKey,
         "terrain",
@@ -16448,7 +16448,7 @@ void testTilePendingLoadQueueKeepsOneResultShapePerKind() {
         "content",
         TileLoadPriorityGroup::Urgent,
         100.0,
-        TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
 
     check(queue.terrainUploadCount() == 1 &&
               queue.terrainTerminalResultCount() == 0 &&
@@ -16511,13 +16511,13 @@ void testTilePendingLoadQueueRejectsEmptyCacheKeys() {
         "",
         TileLoadPriorityGroup::Urgent,
         0.0,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
     queue.addContentUpload(PendingContentUpload{
         key,
         "",
         TileLoadPriorityGroup::Urgent,
         0.0,
-        TileContentLoadResult::failed()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
     queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
         key,
         "",
@@ -16553,13 +16553,13 @@ void testTilePendingLoadQueueEraseIgnoresUnknownKeys() {
         "terrain-upload",
         TileLoadPriorityGroup::Normal,
         0.0,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
     queue.addContentUpload(PendingContentUpload{
         contentUploadKey,
         "content-upload",
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileContentLoadResult::failed()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
     queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
         terrainTerminalKey,
         "terrain-terminal",
@@ -16617,13 +16617,13 @@ void testTilePendingLoadProcessorDrainsTerminalThenBudgetedUploads() {
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
             contentKey,
             "content-upload",
             TileLoadPriorityGroup::Urgent,
             0.0,
-            TileContentLoadResult::failed()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
     }
 
     const bool changed =
@@ -16734,7 +16734,7 @@ void testTilePendingLoadProcessorReportsUnchangedWhenBudgetBlocksAllWork() {
             "upload",
             TileLoadPriorityGroup::Urgent,
             0.0,
-            TileContentLoadResult::failed()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
     }
 
     const bool changed =
@@ -16847,7 +16847,7 @@ void testTilePendingLoadProcessorTerminalElapsedStopsUploads() {
             "upload",
             TileLoadPriorityGroup::Urgent,
             100.0,
-            TileContentLoadResult::failed()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
     }
 
     const bool changed =
@@ -16902,7 +16902,7 @@ void testTilePendingLoadProcessorDrainsTerminalDuringInteraction() {
             "upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
     }
 
     const bool changed =
@@ -16946,13 +16946,13 @@ void testTilePendingLoadProcessorProcessesUrgentUploadDuringInteraction() {
             "normal",
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
             urgentKey,
             "urgent",
             TileLoadPriorityGroup::Urgent,
             100.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
     }
 
     const bool changed =
@@ -16990,13 +16990,13 @@ void testTilePendingUploadCompletionErasesUploadKeys() {
             "terrain",
             TileLoadPriorityGroup::Normal,
             1.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
             TileKey{"test", 1, 1, 0},
             "content",
             TileLoadPriorityGroup::Normal,
             2.0,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         std::optional<PendingLoadFinalize> first =
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
         std::optional<PendingLoadFinalize> second =
@@ -17032,13 +17032,13 @@ void testTilePendingUploadCompletionRejectsDuplicateUploadKeyAcrossKinds() {
             "shared",
             TileLoadPriorityGroup::Normal,
             1.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
             TileKey{"test", 1, 0, 0},
             "shared",
             TileLoadPriorityGroup::Normal,
             2.0,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         std::optional<PendingLoadFinalize> first =
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
         std::optional<PendingLoadFinalize> second =
@@ -17068,7 +17068,7 @@ void testTilePendingUploadCompletionClaimedUploadCountsAsWork() {
             "terrain",
             TileLoadPriorityGroup::Normal,
             1.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         std::optional<PendingLoadFinalize> upload =
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
         check(upload && upload->kind == PendingLoadFinalizeKind::Terrain,
@@ -17149,13 +17149,13 @@ void testPendingLoadStateRejectsEmptyCacheKeys() {
         "",
         TileLoadPriorityGroup::Normal,
         0.0,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
     pendingLoads.addContentUpload(PendingContentUpload{
         key,
         "",
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileContentLoadResult::failed()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
     pendingLoads.addTerrainTerminalResult(PendingTerrainTerminalResult{
         key,
         "",
@@ -17307,7 +17307,7 @@ void testTileLoadLifecycleCountsAndFindsPendingWork() {
             "content-upload",
             TileLoadPriorityGroup::Urgent,
             0.0,
-            TileContentLoadResult::failed()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
     }
 
     const TileLoadLifecycleCounts counts = lifecycle.counts();
@@ -17345,7 +17345,7 @@ void testTileLoadLifecycleEmptyBatchQueryIsNoOp() {
             "content-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
     }
 
     check(!lifecycle.containsWorkForAnyCacheKey({}),
@@ -17372,13 +17372,13 @@ void testTileLoadLifecycleCancelErasesPendingUploads() {
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            std::make_unique<DecodedHeightmap>()});
+            TileLoadResult::createRenderableTerrain(std::make_unique<DecodedHeightmap>())});
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
             contentKey,
             "content-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
     }
 
     lifecycle.cancelAndEraseCacheKey("terrain-upload");
@@ -17406,13 +17406,13 @@ void testTileLoadLifecycleCancelErasesClaimedUploads() {
             "terrain-upload",
             TileLoadPriorityGroup::Urgent,
             100.0,
-            std::make_unique<DecodedHeightmap>()});
+            TileLoadResult::createRenderableTerrain(std::make_unique<DecodedHeightmap>())});
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
             contentKey,
             "content-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         check(lifecycle.pendingLoads()
                   .takeHighestPriorityUpload(false, budget)
                   .has_value(),
@@ -17450,7 +17450,7 @@ void testTileLoadLifecycleCancelIgnoresEmptyCacheKey() {
             "content-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
     }
 
     lifecycle.cancelAndEraseCacheKey("");
@@ -17551,7 +17551,7 @@ void testTileLoadLifecycleDestroyCancelsAndWaitsForCallbacks() {
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         lifecycle.pendingLoads().addContentTerminalResult(
             PendingContentTerminalResult{
                 TileKey{"test", 0, 1, 0},
@@ -17597,7 +17597,7 @@ void testTileLoadLifecycleDestroyWithoutRequestsReturnsImmediately() {
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         lifecycle.pendingLoads().addContentTerminalResult(
             PendingContentTerminalResult{
                 TileKey{"test", 0, 1, 0},
@@ -17632,7 +17632,7 @@ void testTileLoadLifecycleDestroyClearsClaimedUploadKeys() {
             "content-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         std::optional<PendingLoadFinalize> upload =
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget);
         check(upload && upload->kind == PendingLoadFinalizeKind::Content,
@@ -17703,7 +17703,7 @@ void testTileContentLifecycleManagerExposesClaimedUploadWork() {
                 "content-upload",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         check(manager.loadLifecycle()
                   .pendingLoads()
                   .takeHighestPriorityUpload(false, budget)
@@ -17738,7 +17738,7 @@ void testTileContentLifecycleManagerShutdownClearsClaimedUploadWork() {
                 "terrain-upload",
                 TileLoadPriorityGroup::Normal,
                 0.0,
-                nullptr});
+            TileLoadResult::createRenderableTerrain()});
         check(manager.loadLifecycle()
                   .pendingLoads()
                   .takeHighestPriorityUpload(false, budget)
@@ -18878,13 +18878,13 @@ void testTileLoadRequestDispatcherSkipsPendingUploadKeys() {
             "terrain-upload-pending",
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         pendingLoads.addContentUpload(PendingContentUpload{
             key,
             "content-upload-pending",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileContentLoadResult::render(std::make_unique<GltfModel>())});
+            TileLoadResult::fromContentResult(TileContentLoadResult::render(std::make_unique<GltfModel>()))});
     }
 
     bool issued = false;
@@ -18996,13 +18996,13 @@ void testTileLoadRequestDispatcherSkipsClaimedUploadKeys() {
             "terrain-upload-claimed",
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         pendingLoads.addContentUpload(PendingContentUpload{
             key,
             "content-upload-claimed",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileContentLoadResult::render(std::make_unique<GltfModel>())});
+            TileLoadResult::fromContentResult(TileContentLoadResult::render(std::make_unique<GltfModel>()))});
         check(pendingLoads.takeHighestPriorityUpload(false, budget) &&
                   pendingLoads.takeHighestPriorityUpload(false, budget),
               "TileLoadRequestDispatcher: claimed upload test dequeues upload payloads");
@@ -20079,7 +20079,7 @@ void testTileLoadSchedulerSkipsPendingUploadBeforeSnapshot() {
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
     }
 
     bool planned = false;
@@ -20130,7 +20130,7 @@ void testTileLoadSchedulerSkipsClaimedUploadBeforeSnapshot() {
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         check(lifecycle.pendingLoads()
                   .takeHighestPriorityUpload(false, budget)
                   .has_value(),

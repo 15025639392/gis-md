@@ -34,13 +34,13 @@ TEST(TilePendingLoadProcessorTest, DrainsTerminalThenBudgetedUploads) {
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
             contentKey,
             "content-upload",
             TileLoadPriorityGroup::Urgent,
             0.0,
-            TileContentLoadResult::failed()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
     }
 
     FrameResourceBudgetConfig config;
@@ -92,13 +92,13 @@ TEST(TilePendingLoadProcessorTest, FinalizeBudgetPreservesUploadPriority) {
             "low-priority",
             TileLoadPriorityGroup::Normal,
             1.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
             highPriorityKey,
             "high-priority",
             TileLoadPriorityGroup::Urgent,
             100.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
     }
 
     FrameResourceBudgetConfig config;
@@ -198,7 +198,7 @@ TEST(TilePendingLoadProcessorTest, ReportsUnchangedWhenBudgetBlocksAllWork) {
             "upload",
             TileLoadPriorityGroup::Urgent,
             0.0,
-            TileContentLoadResult::failed()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
     }
 
     FrameResourceBudgetConfig config;
@@ -309,7 +309,7 @@ TEST(TilePendingLoadProcessorTest, TerminalElapsedStopsUploads) {
             "upload",
             TileLoadPriorityGroup::Urgent,
             100.0,
-            TileContentLoadResult::failed()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
     }
 
     FrameResourceBudgetConfig config;
@@ -366,7 +366,7 @@ TEST(TilePendingLoadProcessorTest, DrainsTerminalDuringInteraction) {
             "upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
     }
 
     FrameResourceBudgetConfig config;
@@ -412,13 +412,13 @@ TEST(TilePendingLoadProcessorTest, ProcessesUrgentUploadDuringInteraction) {
             "normal",
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
             urgentKey,
             "urgent",
             TileLoadPriorityGroup::Urgent,
             100.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
     }
 
     FrameResourceBudgetConfig config;

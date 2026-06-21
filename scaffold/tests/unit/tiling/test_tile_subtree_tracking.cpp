@@ -122,7 +122,7 @@ TEST(TileSubtreeWorkTracker, FindsPendingAndClaimedContentUploadWork) {
             childCacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
     }
     EXPECT_TRUE(TileSubtreeWorkTracker::hasActiveContentWork(
         root,
@@ -142,7 +142,7 @@ TEST(TileSubtreeWorkTracker, FindsPendingAndClaimedContentUploadWork) {
             childCacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());

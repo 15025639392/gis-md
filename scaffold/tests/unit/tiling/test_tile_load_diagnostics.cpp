@@ -65,7 +65,7 @@ TEST(
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         lifecycle.pendingLoads().addTerrainTerminalResult(
             PendingTerrainTerminalResult{
                 TileKey{"test", 1, 0, 1},
@@ -78,7 +78,7 @@ TEST(
             "content-upload",
             TileLoadPriorityGroup::Urgent,
             0.0,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         lifecycle.pendingLoads().addContentTerminalResult(
             PendingContentTerminalResult{
                 TileKey{"test", 1, 1, 1},

@@ -1258,14 +1258,15 @@ TEST(TileLoadRequestDispatcherTest, SkipsPendingUploadKeys) {
             "terrain-upload-pending",
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr,
-            nullptr});
+            TileLoadResult::createRenderable()});
         pendingLoads.addContentUpload(PendingContentUpload{
             key,
             "content-upload-pending",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileContentLoadResult::render(std::make_unique<GltfModel>())});
+            TileLoadResult::fromContentResult(
+                TileContentLoadResult::render(
+                    std::make_unique<GltfModel>()))});
     }
 
     bool issued = false;
@@ -1329,14 +1330,15 @@ TEST(TileLoadRequestDispatcherTest, SkipsClaimedUploadKeys) {
             "terrain-upload-claimed",
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr,
-            nullptr});
+            TileLoadResult::createRenderable()});
         pendingLoads.addContentUpload(PendingContentUpload{
             key,
             "content-upload-claimed",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileContentLoadResult::render(std::make_unique<GltfModel>())});
+            TileLoadResult::fromContentResult(
+                TileContentLoadResult::render(
+                    std::make_unique<GltfModel>()))});
 
         EXPECT_TRUE(
             pendingLoads.takeHighestPriorityUpload(false, budget)

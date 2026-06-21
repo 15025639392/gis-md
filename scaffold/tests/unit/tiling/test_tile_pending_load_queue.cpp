@@ -14,14 +14,13 @@ TEST(TilePendingLoadQueueTest, UsesSharedUploadPriorityOrder) {
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
-        nullptr,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
     queue.addContentUpload(PendingContentUpload{
         contentKey,
         "content",
         TileLoadPriorityGroup::Urgent,
         100.0,
-        TileContentLoadResult::failed()});
+        TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
 
     FrameResourceBudgetConfig config;
     config.maxMainThreadFinalizesPerFrame = 4;
@@ -47,15 +46,13 @@ TEST(TilePendingLoadQueueTest, FiltersNonUrgentUploadsDuringInteraction) {
         "normal",
         TileLoadPriorityGroup::Normal,
         0.0,
-        nullptr,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
     queue.addTerrainUpload(PendingTerrainUpload{
         urgentKey,
         "urgent",
         TileLoadPriorityGroup::Urgent,
         100.0,
-        nullptr,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
 
     FrameResourceBudgetConfig config;
     config.maxMainThreadFinalizesPerFrame = 4;
@@ -87,7 +84,7 @@ TEST(TilePendingLoadQueueTest, KeepsUploadWhenFinalizeBudgetBlocks) {
         "content",
         TileLoadPriorityGroup::Urgent,
         0.0,
-        TileContentLoadResult::failed()});
+        TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
 
     FrameResourceBudgetConfig blockedConfig;
     blockedConfig.maxMainThreadFinalizesPerFrame = 0;
@@ -126,27 +123,25 @@ TEST(TilePendingLoadQueueTest, DeduplicatesUploadsByKind) {
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
-        nullptr,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
     queue.addTerrainUpload(PendingTerrainUpload{
         secondKey,
         "terrain",
         TileLoadPriorityGroup::Urgent,
         100.0,
-        nullptr,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
     queue.addContentUpload(PendingContentUpload{
         firstKey,
         "content",
         TileLoadPriorityGroup::Normal,
         1.0,
-        TileContentLoadResult::empty()});
+        TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
     queue.addContentUpload(PendingContentUpload{
         secondKey,
         "content",
         TileLoadPriorityGroup::Urgent,
         100.0,
-        TileContentLoadResult::empty()});
+        TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
 
     EXPECT_EQ(1u, queue.terrainUploadCount());
     EXPECT_EQ(1u, queue.contentUploadCount());
@@ -277,8 +272,7 @@ TEST(TilePendingLoadQueueTest, KeepsOneResultShapePerKind) {
         "terrain",
         TileLoadPriorityGroup::Normal,
         1.0,
-        nullptr,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
     queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
         terrainKey,
         "terrain",
@@ -296,7 +290,7 @@ TEST(TilePendingLoadQueueTest, KeepsOneResultShapePerKind) {
         "content",
         TileLoadPriorityGroup::Urgent,
         100.0,
-        TileContentLoadResult::empty()});
+        TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
 
     EXPECT_EQ(1u, queue.terrainUploadCount());
     EXPECT_EQ(0u, queue.terrainTerminalResultCount());
@@ -371,14 +365,13 @@ TEST(TilePendingLoadQueueTest, RejectsEmptyCacheKeys) {
         "",
         TileLoadPriorityGroup::Urgent,
         0.0,
-        nullptr,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
     queue.addContentUpload(PendingContentUpload{
         key,
         "",
         TileLoadPriorityGroup::Urgent,
         0.0,
-        TileContentLoadResult::failed()});
+        TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
     queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
         key,
         "",
@@ -412,14 +405,13 @@ TEST(TilePendingLoadQueueTest, EraseIgnoresUnknownKeys) {
         "terrain-upload",
         TileLoadPriorityGroup::Normal,
         0.0,
-        nullptr,
-        nullptr});
+            TileLoadResult::createRenderableTerrain()});
     queue.addContentUpload(PendingContentUpload{
         contentUploadKey,
         "content-upload",
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileContentLoadResult::failed()});
+        TileLoadResult::fromContentResult(TileContentLoadResult::failed())});
     queue.addTerrainTerminalResult(PendingTerrainTerminalResult{
         terrainTerminalKey,
         "terrain-terminal",

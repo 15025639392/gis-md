@@ -379,13 +379,13 @@ TEST(TileLoadSchedulerTest, PendingUploadsDoNotConsumeNetworkInflightSlots) {
             cacheKeyForTile(firstUploadKey),
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
             secondUploadKey,
             cacheKeyForTile(secondUploadKey),
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
     }
 
     DeferredTerrainProvider provider;
@@ -876,7 +876,7 @@ TEST(TileLoadSchedulerTest, SkipsPendingUploadBeforeSnapshot) {
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
     }
 
     bool planned = false;
@@ -930,7 +930,7 @@ TEST(TileLoadSchedulerTest, SkipsClaimedUploadBeforeSnapshot) {
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());

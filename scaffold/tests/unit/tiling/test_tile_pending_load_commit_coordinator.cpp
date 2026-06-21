@@ -126,14 +126,13 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         "missing-terrain",
         TileLoadPriorityGroup::Normal,
         0.0,
-        nullptr,
-        nullptr};
+        TileLoadResult::createRenderableTerrain()};
     PendingContentUpload contentUpload{
         TileKey{"test", 0, 1, 0},
         "missing-content",
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileContentLoadResult::empty()};
+        TileLoadResult::fromContentResult(TileContentLoadResult::empty())};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
@@ -141,14 +140,13 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             terrainUpload.cacheKey,
             terrainUpload.group,
             terrainUpload.priority,
-            nullptr,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
             contentUpload.key,
             contentUpload.cacheKey,
             contentUpload.group,
             contentUpload.priority,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         EXPECT_TRUE(
             lifecycle.pendingLoads().takeHighestPriorityUpload(false, budget)
                 .has_value());
@@ -200,8 +198,9 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        nullptr,
-        std::move(surfaceMesh)};
+        TileLoadResult::createRenderableTerrain(
+            nullptr,
+            std::move(surfaceMesh))};
 
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -215,8 +214,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());
@@ -273,10 +271,11 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        nullptr,
-        std::move(surfaceMesh),
-        {},
-        std::move(metadata)};
+        TileLoadResult::createRenderableTerrain(
+            nullptr,
+            std::move(surfaceMesh),
+            {},
+            std::move(metadata))};
 
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -290,8 +289,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());
@@ -353,10 +351,11 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        nullptr,
-        std::move(surfaceMesh),
-        {},
-        std::move(metadata)};
+        TileLoadResult::createRenderableTerrain(
+            nullptr,
+            std::move(surfaceMesh),
+            {},
+            std::move(metadata))};
 
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -370,8 +369,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             cacheKey,
             TileLoadPriorityGroup::Normal,
             0.0,
-            nullptr,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());
@@ -422,7 +420,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileContentLoadResult::empty()};
+        TileLoadResult::fromContentResult(TileContentLoadResult::empty())};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addContentUpload(PendingContentUpload{
@@ -430,7 +428,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             upload.cacheKey,
             upload.group,
             upload.priority,
-            TileContentLoadResult::empty()});
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());
@@ -496,9 +494,10 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        std::move(heightmap),
-        nullptr,
-        {update}};
+        TileLoadResult::createRenderableTerrain(
+            std::move(heightmap),
+            nullptr,
+            {update})};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addTerrainUpload(PendingTerrainUpload{
@@ -506,8 +505,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
             upload.cacheKey,
             upload.group,
             upload.priority,
-            nullptr,
-            nullptr});
+            TileLoadResult::createRenderableTerrain()});
         ASSERT_TRUE(lifecycle.pendingLoads()
                         .takeHighestPriorityUpload(false, budget)
                         .has_value());

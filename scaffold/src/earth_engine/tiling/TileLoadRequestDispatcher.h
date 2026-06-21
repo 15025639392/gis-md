@@ -86,15 +86,17 @@ public:
                 {
                     std::lock_guard<std::mutex> lock(mutex);
                     if (!requestState.destroying() && !token.isCancelled()) {
-                        if (result.status == TileLoadStatus::Renderable &&
-                            result.gltfModel) {
+                        TileLoadResult loadResult =
+                            TileLoadResult::fromContentResult(
+                                std::move(result));
+                        if (loadResult.shouldUpload()) {
                             pendingLoads.addContentUpload(
                                 PendingContentUpload{
                                     key,
                                     cacheKey,
                                     group,
                                     priority,
-                                    std::move(result)});
+                                    std::move(loadResult)});
                         } else {
                             pendingLoads.addContentTerminalResult(
                                 PendingContentTerminalResult{
@@ -102,7 +104,7 @@ public:
                                     cacheKey,
                                     group,
                                     priority,
-                                    result.status});
+                                    loadResult.status});
                         }
                     }
                     requestState.completeContentRequest(cacheKey);
@@ -167,20 +169,17 @@ public:
                 {
                     std::lock_guard<std::mutex> lock(mutex);
                     if (!requestState.destroying() && !token.isCancelled()) {
-                        if (result.status == TileLoadStatus::Renderable &&
-                            (result.heightmap || result.surfaceMesh)) {
+                        TileLoadResult loadResult =
+                            TileLoadResult::fromTerrainResult(
+                                std::move(result));
+                        if (loadResult.shouldUpload()) {
                             pendingLoads.addTerrainUpload(
                                 PendingTerrainUpload{
                                     key,
                                     cacheKey,
                                     group,
                                     priority,
-                                    std::move(result.heightmap),
-                                    std::move(result.surfaceMesh),
-                                    std::move(
-                                        result
-                                            .quantizedMeshAvailabilityUpdates),
-                                    std::move(result.metadata)});
+                                    std::move(loadResult)});
                         } else {
                             pendingLoads.addTerrainTerminalResult(
                                 PendingTerrainTerminalResult{
@@ -188,7 +187,7 @@ public:
                                     cacheKey,
                                     group,
                                     priority,
-                                    result.status});
+                                    loadResult.status});
                         }
                     }
                     requestState.completeTerrainRequest(cacheKey);
