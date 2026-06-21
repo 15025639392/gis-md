@@ -274,6 +274,12 @@ add_executable(test_tile_load_request_dispatcher
 target_link_libraries(test_tile_load_request_dispatcher PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_load_request_dispatcher COMMAND test_tile_load_request_dispatcher)
 
+add_executable(test_tile_load_request_planner
+    unit/tiling/test_tile_load_request_planner.cpp
+)
+target_link_libraries(test_tile_load_request_planner PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_load_request_planner COMMAND test_tile_load_request_planner)
+
 add_executable(test_camera
     unit/scene/test_camera.cpp
 )

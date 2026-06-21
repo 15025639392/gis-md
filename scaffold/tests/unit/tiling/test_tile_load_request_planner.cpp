@@ -1,0 +1,27 @@
+#include <gtest/gtest.h>
+
+#include "earth_engine/tiling/TileLoadRequestPlanner.h"
+
+using namespace earth_engine;
+
+TEST(TileLoadRequestPlannerTest, ClassifiesBasicRequestKinds) {
+    TileLoadRequestSnapshot snapshot;
+    snapshot.terrainProviderSupportsTile = true;
+
+    EXPECT_EQ(
+        TileLoadRequestKind::Terrain,
+        TileLoadRequestPlanner::classify(snapshot));
+
+    snapshot.contentProviderSupportsTile = true;
+
+    EXPECT_EQ(
+        TileLoadRequestKind::Content,
+        TileLoadRequestPlanner::classify(snapshot));
+
+    snapshot.hasTile = true;
+    snapshot.hasRenderContent = true;
+
+    EXPECT_EQ(
+        TileLoadRequestKind::Skip,
+        TileLoadRequestPlanner::classify(snapshot));
+}
