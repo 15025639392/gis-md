@@ -4,6 +4,7 @@
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileContentCacheManager.h"
+#include "earth_engine/tiling/TileLoadQueue.h"
 
 #include <memory>
 #include <string>
@@ -98,4 +99,53 @@ TEST(
     EXPECT_FALSE(lifecycle.emptyContentRegistry().contains(cacheKey));
     EXPECT_EQ(tiles[cacheKey]->content.loadState, TileLoadState::Unloaded);
     EXPECT_EQ(tiles[cacheKey]->content.contentKind, TileContentKind::Unknown);
+}
+
+TEST(
+    TileContentCacheManagerTest,
+    EraseIndexStateClearsClaimedUploadWork) {
+    TileContentCacheManager manager;
+    TileContentLifecycleManager lifecycle;
+    TileLoadQueue loadQueue;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = TileCacheKey::forTile(key);
+    auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
+    tile->content.loadState = TileLoadState::Done;
+    tile->content.contentKind = TileContentKind::Render;
+    tiles[cacheKey] = std::move(tile);
+    lifecycle.terrainCache()[cacheKey] = makeFlatHeightmap(2.0f);
+    lifecycle.emptyContentRegistry().insert(cacheKey);
+    loadQueue.queue(key, TileLoadPriorityGroup::Normal, 0.0);
+    manager.markEligibleForUnloading(tiles, cacheKey);
+
+    {
+        FrameResourceBudgetConfig config;
+        config.maxMainThreadFinalizesPerFrame = 1;
+        FrameResourceBudget budget;
+        budget.beginFrame(1, config);
+        std::lock_guard<std::mutex> lock(lifecycle.loadLifecycle().mutex());
+        lifecycle.loadLifecycle().pendingLoads().addContentUpload(
+            PendingContentUpload{
+                key,
+                cacheKey,
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileContentLoadResult::empty()});
+        ASSERT_TRUE(lifecycle.loadLifecycle()
+                        .pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    manager.eraseTileIndexState(cacheKey, lifecycle, loadQueue);
+
+    EXPECT_FALSE(manager.unloadQueue().contains(cacheKey));
+    EXPECT_EQ(lifecycle.terrainCache().find(cacheKey),
+              lifecycle.terrainCache().end());
+    EXPECT_FALSE(lifecycle.emptyContentRegistry().contains(cacheKey));
+    EXPECT_TRUE(loadQueue.empty());
+    EXPECT_FALSE(lifecycle.loadLifecycle().containsWorkForCacheKey(cacheKey));
+    EXPECT_FALSE(lifecycle.loadLifecycle().hasPendingWork());
 }
