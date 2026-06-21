@@ -1056,6 +1056,65 @@ TEST(SceneFrameStateTest, SurfaceCommandUsesNoSkirtTerrainIndexRange) {
     EXPECT_EQ(6, command.surfaceSkirtIndexCount);
 }
 
+TEST(SceneFrameStateTest, SurfaceCommandSkipsExplicitMeshMissingIndexBuffer) {
+    DummyRenderDevice device;
+    Scene scene;
+    ASSERT_TRUE(scene.setRenderDevice(&device));
+    scene.setViewport(800, 600, 1.0f);
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
+    scene.camera().lookAt(
+        target + Vec3(1000000.0, 0.0, 0.0),
+        target,
+        Vec3::unitZ());
+
+    auto terrainTileset = std::make_unique<Tileset>(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{},
+        &device,
+        TilesetOptions{});
+    Tileset* terrainRaw = terrainTileset.get();
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
+    ASSERT_NE(nullptr, root);
+
+    TilesetTestAccess::putTerrainCache(
+        *terrainRaw,
+        rootKey,
+        makeFlatHeightmap(0.0f));
+    TilesetTestAccess::ensureTileMesh(*terrainRaw, *root);
+    SurfaceTileMesh* mesh = root->content.renderContent.mutableSurfaceMesh();
+    ASSERT_NE(nullptr, mesh);
+    ASSERT_FALSE(mesh->vertices.empty());
+    ASSERT_FALSE(mesh->indices.empty());
+
+    BufferDesc vertexBufferDesc;
+    vertexBufferDesc.size = mesh->vertices.size() * sizeof(SurfaceVertex);
+    vertexBufferDesc.data = mesh->vertices.data();
+    vertexBufferDesc.type = BufferDesc::Type::Vertex;
+    root->content.renderContent.setSurfaceGpuBuffers(
+        device.createBuffer(vertexBufferDesc),
+        nullptr);
+
+    scene.setTileset(std::move(terrainTileset));
+    scene.update(1.0 / 60.0);
+    TilesetTestAccess::setInteractionActiveForFrame(*terrainRaw, true);
+    TilesetTestAccess::beginTilePlan(*terrainRaw);
+    TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *root);
+    scene.render();
+
+    const bool submittedSurfaceTile = std::any_of(
+        device.submittedCommands.begin(),
+        device.submittedCommands.end(),
+        [](const RenderCommand& command) {
+            return command.kind == RenderCommandKind::SurfaceTile;
+        });
+    EXPECT_FALSE(submittedSurfaceTile);
+}
+
 TEST(SceneFrameStateTest, DiagnosticsExposeTerrainSynchronousPrepReasons) {
     DummyRenderDevice device;
     Scene scene;
