@@ -22,8 +22,11 @@
 #include "../scene/Camera.h"
 #include "../tiling/Tileset.h"
 
+#include <chrono>
+#include <condition_variable>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
@@ -62,6 +65,49 @@ void logInfo(PlatformBridge& platformBridge, const std::string& message) {
 
 void logError(PlatformBridge& platformBridge, const std::string& message) {
     platformBridge.log(LogLevel::Error, "EarthEngineSdk", message);
+}
+
+std::vector<uint8_t> postBlocking(
+    PlatformBridge& platformBridge,
+    const std::string& url,
+    const std::string& body,
+    const std::string& contentType,
+    std::chrono::milliseconds timeout = std::chrono::seconds(20)) {
+    struct State {
+        std::vector<uint8_t> result;
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool done = false;
+    };
+    auto state = std::make_shared<State>();
+    std::vector<uint8_t> bytes(body.begin(), body.end());
+    auto request = platformBridge.post(
+        url,
+        std::move(bytes),
+        contentType,
+        [state](int code, std::vector<uint8_t> response) {
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                if (code >= 200 && code < 300) {
+                    state->result = std::move(response);
+                }
+                state->done = true;
+            }
+            state->cv.notify_one();
+        },
+        {HttpRequestPriority::High});
+
+    bool done = false;
+    {
+        std::unique_lock<std::mutex> lock(state->mutex);
+        done = state->cv.wait_for(lock, timeout, [&]() {
+            return state->done;
+        });
+    }
+    if (!done && request) {
+        request->cancel();
+    }
+    return done ? std::move(state->result) : std::vector<uint8_t>{};
 }
 
 template <typename Provider>
@@ -344,18 +390,66 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
 
         if (overlayConfig.imageryKind == ImagerySourceKind::GoogleMapTiles) {
             GoogleMapTilesExistingSessionOptions googleOptions;
-            googleOptions.apiBaseUrl = overlayConfig.googleMapTilesApiBaseUrl;
-            googleOptions.key = overlayConfig.googleMapTilesKey;
-            googleOptions.session = overlayConfig.googleMapTilesSession;
+            if (overlayConfig.googleMapTilesSession.empty()) {
+                GoogleMapTilesNewSessionOptions requestOptions;
+                requestOptions.apiBaseUrl =
+                    overlayConfig.googleMapTilesApiBaseUrl;
+                requestOptions.key = overlayConfig.googleMapTilesKey;
+                requestOptions.mapType = overlayConfig.googleMapTilesMapType;
+                requestOptions.language =
+                    overlayConfig.googleMapTilesLanguage;
+                requestOptions.region = overlayConfig.googleMapTilesRegion;
+                requestOptions.imageFormat =
+                    overlayConfig.googleMapTilesImageFormat;
+                requestOptions.scale = overlayConfig.googleMapTilesScale;
+                requestOptions.highDpi = overlayConfig.googleMapTilesHighDpi;
+                requestOptions.layerTypes =
+                    overlayConfig.googleMapTilesLayerTypes;
+                requestOptions.styles = overlayConfig.googleMapTilesStyles;
+                requestOptions.overlay = overlayConfig.googleMapTilesOverlay;
+
+                const std::string createSessionUrl =
+                    googleMapTilesCreateSessionUrl(requestOptions);
+                const std::string payload =
+                    googleMapTilesCreateSessionPayload(requestOptions);
+                const std::vector<uint8_t> bytes = postBlocking(
+                    platformBridge_,
+                    createSessionUrl,
+                    payload,
+                    "application/json");
+                if (bytes.empty()) {
+                    logError(platformBridge_,
+                             "Google Map Tiles createSession load failed: " +
+                                 createSessionUrl);
+                    continue;
+                }
+
+                GoogleMapTilesSessionParseResult session =
+                    parseGoogleMapTilesCreateSessionResponse(
+                        std::string(bytes.begin(), bytes.end()),
+                        requestOptions);
+                if (!session.valid) {
+                    logError(platformBridge_,
+                             "Google Map Tiles createSession validation failed: " +
+                                 session.error);
+                    continue;
+                }
+                googleOptions = std::move(session.session);
+            } else {
+                googleOptions.apiBaseUrl =
+                    overlayConfig.googleMapTilesApiBaseUrl;
+                googleOptions.key = overlayConfig.googleMapTilesKey;
+                googleOptions.session = overlayConfig.googleMapTilesSession;
+                if (overlayConfig.imageryTileWidth > 0) {
+                    googleOptions.tileWidth = overlayConfig.imageryTileWidth;
+                }
+                if (overlayConfig.imageryTileHeight > 0) {
+                    googleOptions.tileHeight = overlayConfig.imageryTileHeight;
+                }
+            }
             googleOptions.showLogo = overlayConfig.googleMapTilesShowLogo;
             googleOptions.maximumLevel =
                 overlayConfig.maximumZoom > 0 ? overlayConfig.maximumZoom : 28;
-            if (overlayConfig.imageryTileWidth > 0) {
-                googleOptions.tileWidth = overlayConfig.imageryTileWidth;
-            }
-            if (overlayConfig.imageryTileHeight > 0) {
-                googleOptions.tileHeight = overlayConfig.imageryTileHeight;
-            }
 
             GoogleMapTilesImagerySource source =
                 createGoogleMapTilesImagerySource(

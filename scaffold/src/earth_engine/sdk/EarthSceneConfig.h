@@ -3,6 +3,8 @@
 #include "../layers/RasterOverlay.h"
 
 #include <map>
+#include <nlohmann/json.hpp>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -86,6 +88,15 @@ struct RasterOverlaySourceConfig {
     std::string googleMapTilesKey;
     std::string googleMapTilesSession;
     bool googleMapTilesShowLogo = true;
+    std::string googleMapTilesMapType = "satellite";
+    std::string googleMapTilesLanguage = "en-US";
+    std::string googleMapTilesRegion = "US";
+    std::optional<std::string> googleMapTilesImageFormat;
+    std::optional<std::string> googleMapTilesScale;
+    std::optional<bool> googleMapTilesHighDpi;
+    std::optional<std::vector<std::string>> googleMapTilesLayerTypes;
+    std::optional<nlohmann::json> googleMapTilesStyles;
+    std::optional<bool> googleMapTilesOverlay;
 };
 
 struct GltfSourceConfig {

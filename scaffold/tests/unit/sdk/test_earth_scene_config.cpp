@@ -1,6 +1,7 @@
 #include "earth_engine/sdk/EarthSceneConfig.h"
 
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
 using namespace earth_engine;
 
@@ -188,6 +189,17 @@ TEST(EarthSceneConfig, StoresGoogleMapTilesImagerySourceDefinitions) {
     overlay.googleMapTilesKey = "google-key";
     overlay.googleMapTilesSession = "session-token";
     overlay.googleMapTilesShowLogo = false;
+    overlay.googleMapTilesMapType = "roadmap";
+    overlay.googleMapTilesLanguage = "zh-CN";
+    overlay.googleMapTilesRegion = "CN";
+    overlay.googleMapTilesImageFormat = "png";
+    overlay.googleMapTilesScale = "scaleFactor2x";
+    overlay.googleMapTilesHighDpi = true;
+    overlay.googleMapTilesLayerTypes =
+        std::vector<std::string>{"layerRoadmap", "layerTraffic"};
+    overlay.googleMapTilesStyles = nlohmann::json::array(
+        {nlohmann::json{{"featureType", "road"}}});
+    overlay.googleMapTilesOverlay = false;
     overlay.attribution = "google attribution";
     overlay.maximumZoom = 28;
     overlay.imageryTileWidth = 512;
@@ -202,6 +214,22 @@ TEST(EarthSceneConfig, StoresGoogleMapTilesImagerySourceDefinitions) {
     EXPECT_EQ("google-key", copied.googleMapTilesKey);
     EXPECT_EQ("session-token", copied.googleMapTilesSession);
     EXPECT_FALSE(copied.googleMapTilesShowLogo);
+    EXPECT_EQ("roadmap", copied.googleMapTilesMapType);
+    EXPECT_EQ("zh-CN", copied.googleMapTilesLanguage);
+    EXPECT_EQ("CN", copied.googleMapTilesRegion);
+    ASSERT_TRUE(copied.googleMapTilesImageFormat);
+    EXPECT_EQ("png", *copied.googleMapTilesImageFormat);
+    ASSERT_TRUE(copied.googleMapTilesScale);
+    EXPECT_EQ("scaleFactor2x", *copied.googleMapTilesScale);
+    ASSERT_TRUE(copied.googleMapTilesHighDpi);
+    EXPECT_TRUE(*copied.googleMapTilesHighDpi);
+    ASSERT_TRUE(copied.googleMapTilesLayerTypes);
+    EXPECT_EQ((std::vector<std::string>{"layerRoadmap", "layerTraffic"}),
+              *copied.googleMapTilesLayerTypes);
+    ASSERT_TRUE(copied.googleMapTilesStyles);
+    EXPECT_EQ("road", (*copied.googleMapTilesStyles)[0]["featureType"]);
+    ASSERT_TRUE(copied.googleMapTilesOverlay);
+    EXPECT_FALSE(*copied.googleMapTilesOverlay);
     EXPECT_EQ("google attribution", copied.attribution);
     EXPECT_EQ(28, copied.maximumZoom);
     EXPECT_EQ(512, copied.imageryTileWidth);
