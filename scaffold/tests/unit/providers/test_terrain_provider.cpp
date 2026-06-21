@@ -19,6 +19,7 @@
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/platform/bridge/PlatformBridge.h"
+#include "earth_engine/terrain/QuantizedMeshParser.h"
 #include "earth_engine/terrain/TerrainTile.h"
 #include "earth_engine/tiling/TileKey.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -648,6 +649,51 @@ TEST(QuantizedMeshTerrainProviderTest, EmptyTileMetadataMarksSubtreeLoadedLikeCe
 
     EXPECT_EQ(TileAvailabilityState::NotAvailable,
               provider.availabilityState(childKey));
+}
+
+TEST(QuantizedMeshTerrainProviderTest, MetadataUpdateSkipsNonArrayLevelsWithoutAdvancingLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "metadataAvailability": 2
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    const TileKey subtreeKey{"Geographic-TMS", 2, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 3, 0, 0};
+    const TileKey siblingKey{"Geographic-TMS", 3, 1, 0};
+    EXPECT_EQ(TileAvailabilityState::Unknown,
+              provider.availabilityState(childKey));
+
+    const std::vector<uint8_t> bytes = makeQuantizedMeshBytesWithMetadata(R"json({
+      "available": [
+        "not-a-level-array",
+        [{"startX":0,"startY":0,"endX":0,"endY":0}]
+      ]
+    })json");
+
+    DecodedHeightmap heightmap;
+    DecodedHeightmap::QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = subtreeKey;
+    update.metadataAvailability =
+        QuantizedMeshParser::parseMetadataAvailability(bytes.data(), bytes.size());
+    heightmap.quantizedMeshAvailabilityUpdates.push_back(update);
+
+    provider.applyAvailabilityUpdates(heightmap);
+
+    EXPECT_EQ(TileAvailabilityState::Available,
+              provider.availabilityState(childKey));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(siblingKey));
 }
 
 TEST(QuantizedMeshTerrainProviderTest, InvalidMetadataAvailabilityUpdateLayerDoesNotMutateState) {
