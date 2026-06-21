@@ -493,6 +493,38 @@ TEST(QuantizedMeshTerrainProviderTest, MetadataAvailabilityUpdateStartsBelowSubt
               provider.availabilityState(siblingKey));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, EmptyMetadataAvailabilityUpdateMarksSubtreeLoadedLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "metadataAvailability": 10
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    const TileKey childKey{"Geographic-TMS", 1, 0, 0};
+    EXPECT_EQ(TileAvailabilityState::Unknown,
+              provider.availabilityState(childKey));
+
+    DecodedHeightmap heightmap;
+    DecodedHeightmap::QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = TileKey{"Geographic-TMS", 0, 0, 0};
+    heightmap.quantizedMeshAvailabilityUpdates.push_back(update);
+
+    provider.applyAvailabilityUpdates(heightmap);
+
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(childKey));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, InvalidMetadataAvailabilityUpdateLayerDoesNotMutateState) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
