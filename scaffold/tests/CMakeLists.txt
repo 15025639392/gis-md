@@ -262,6 +262,12 @@ add_executable(test_tile_load_lifecycle
 target_link_libraries(test_tile_load_lifecycle PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tile_load_lifecycle COMMAND test_tile_load_lifecycle)
 
+add_executable(test_tile_content_lifecycle_manager
+    unit/tiling/test_tile_content_lifecycle_manager.cpp
+)
+target_link_libraries(test_tile_content_lifecycle_manager PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_tile_content_lifecycle_manager COMMAND test_tile_content_lifecycle_manager)
+
 add_executable(test_camera
     unit/scene/test_camera.cpp
 )
