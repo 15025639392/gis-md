@@ -218,3 +218,30 @@ TEST(
     EXPECT_EQ(diagnostics.rasterSourceRequestsInFlight, 1);
     EXPECT_EQ(diagnostics.rasterPendingUploads, 3);
 }
+
+TEST(
+    SceneTilesetDiagnosticsSnapshotTest,
+    UnknownProviderTransportLimitsPreserveDiagnosticsLimits) {
+    SceneTilesetDiagnosticsSnapshot snapshot;
+    snapshot.terrainProviderRequests.requestsStarted = 2;
+    snapshot.terrainProviderRequests.transportActiveRequestLimit = -1;
+    snapshot.contentProviderRequests.requestsStarted = 3;
+    snapshot.contentProviderRequests.transportActiveRequestLimit = -1;
+    snapshot.rasterProviderRequests.requestsStarted = 5;
+    snapshot.rasterProviderRequests.transportActiveRequestLimit = -1;
+
+    Diagnostics diagnostics;
+    SceneTilesetDiagnostics::reset(diagnostics);
+    diagnostics.terrainTransportActiveRequestLimit = 7;
+    diagnostics.contentTransportActiveRequestLimit = 11;
+    diagnostics.rasterTransportActiveRequestLimit = 13;
+
+    snapshot.applyTo(diagnostics);
+
+    EXPECT_EQ(diagnostics.terrainProviderRequestsStarted, 2);
+    EXPECT_EQ(diagnostics.contentProviderRequestsStarted, 3);
+    EXPECT_EQ(diagnostics.rasterProviderRequestsStarted, 5);
+    EXPECT_EQ(diagnostics.terrainTransportActiveRequestLimit, 7);
+    EXPECT_EQ(diagnostics.contentTransportActiveRequestLimit, 11);
+    EXPECT_EQ(diagnostics.rasterTransportActiveRequestLimit, 13);
+}
