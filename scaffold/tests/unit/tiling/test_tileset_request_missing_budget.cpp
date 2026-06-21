@@ -1,8 +1,9 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
 #include "earth_engine/providers/TerrainProvider.h"
-#include "earth_engine/tiling/TileCacheKey.h"
+#include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 
@@ -37,6 +38,31 @@ struct TilesetTestAccess {
                     1.0},
             },
             &budget);
+    }
+
+    static void requestMissingTilesWithPriorities(
+        Tileset& tileset,
+        const TileKey& firstKey,
+        double firstPriority,
+        const TileKey& secondKey,
+        double secondPriority) {
+        tileset.requestMissingContent({
+            TileLoadRequest{
+                firstKey,
+                TileLoadPriorityGroup::Normal,
+                firstPriority},
+            TileLoadRequest{
+                secondKey,
+                TileLoadPriorityGroup::Normal,
+                secondPriority}});
+    }
+
+    static TilesetTile* findTile(Tileset& tileset, const TileKey& key) {
+        return tileset.tileRegistry_.findTile(key);
+    }
+
+    static void processPendingUploads(Tileset& tileset) {
+        tileset.processPendingContentUploads(false, false);
     }
 };
 } // namespace earth_engine
@@ -95,6 +121,129 @@ public:
     std::vector<PendingRequest> pendingRequests;
 };
 
+class ManualCompletionContentProvider final : public TilesetContentProvider {
+public:
+    struct PendingRequest {
+        TileKey key;
+        ContentCallback callback;
+    };
+
+    explicit ManualCompletionContentProvider(TileKey key)
+        : key_(std::move(key)) {}
+
+    std::string id() const override { return "manual-completion-content"; }
+    bool supportsTile(const TileKey& key) const override { return key == key_; }
+    std::vector<TileKey> rootTiles() const override { return {key_}; }
+
+    void requestTileContent(
+        const TileKey& key,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        pendingRequests.push_back(PendingRequest{key, std::move(callback)});
+    }
+
+    bool completeWithModel(
+        const TileKey& key,
+        std::unique_ptr<GltfModel> model) {
+        auto it = std::find_if(
+            pendingRequests.begin(),
+            pendingRequests.end(),
+            [&key](const PendingRequest& request) {
+                return request.key == key;
+            });
+        if (it == pendingRequests.end()) {
+            return false;
+        }
+
+        ContentCallback callback = std::move(it->callback);
+        pendingRequests.erase(it);
+        callback(key, TileContentLoadResult::render(std::move(model)));
+        return true;
+    }
+
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+
+    std::vector<PendingRequest> pendingRequests;
+
+private:
+    TileKey key_;
+};
+
+class DummyBuffer final : public Buffer {
+public:
+    explicit DummyBuffer(size_t byteSize) : byteSize_(byteSize) {}
+    DummyBuffer(size_t byteSize, const void*) : byteSize_(byteSize) {}
+    size_t size() const override { return byteSize_; }
+
+private:
+    size_t byteSize_ = 0;
+};
+
+class DummyShaderProgram final : public ShaderProgram {};
+
+class DummyTexture final : public Texture {
+public:
+    DummyTexture(int width, int height) : width_(width), height_(height) {}
+    int width() const override { return width_; }
+    int height() const override { return height_; }
+
+private:
+    int width_ = 0;
+    int height_ = 0;
+};
+
+class DummyRenderDevice final : public RenderDevice {
+public:
+    Backend backendType() const override { return Backend::OpenGLES; }
+    int maxTextureSize() const override { return 4096; }
+    int maxDrawBuffers() const override { return 4; }
+    bool supportsFloatTextures() const override { return true; }
+    bool supportsInstancing() const override { return true; }
+    std::string rendererString() const override { return "DummyRenderDevice"; }
+
+    std::unique_ptr<Texture> createTexture(const TextureDesc& desc) override {
+        return std::make_unique<DummyTexture>(desc.width, desc.height);
+    }
+
+    bool updateTextureRegion(
+        Texture*,
+        int,
+        int,
+        int,
+        int,
+        const uint8_t*,
+        size_t) override {
+        return false;
+    }
+
+    std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) override {
+        return std::make_unique<DummyBuffer>(desc.size, desc.data);
+    }
+
+    bool updateBuffer(Buffer*, size_t, const void*, size_t) override {
+        return false;
+    }
+
+    std::unique_ptr<ShaderProgram> createShader(const ShaderDesc&) override {
+        return std::make_unique<DummyShaderProgram>();
+    }
+
+    std::unique_ptr<Framebuffer> createFramebuffer(
+        const FramebufferDesc&) override {
+        return nullptr;
+    }
+
+    void beginFrame() override {}
+    void submit(const RenderCommandList&) override {}
+    void endFrame() override {}
+    void onSurfaceCreated() override {}
+    void onSurfaceChanged(int, int) override {}
+    void onSurfaceDestroyed() override {}
+};
+
 std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     auto heightmap = std::make_unique<DecodedHeightmap>();
     heightmap->tileSize = 2;
@@ -102,6 +251,24 @@ std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     heightmap->minHeight = heightMeters;
     heightmap->maxHeight = heightMeters;
     return heightmap;
+}
+
+std::unique_ptr<GltfModel> makeTriangleGltfModel() {
+    auto model = std::make_unique<GltfModel>();
+    GltfPrimitive primitive;
+    primitive.vertices.resize(3);
+    primitive.vertices[0].positionEcef = Vec3(0.0, 0.0, 0.0);
+    primitive.vertices[1].positionEcef = Vec3(1.0, 0.0, 0.0);
+    primitive.vertices[2].positionEcef = Vec3(0.0, 1.0, 0.0);
+    primitive.vertices[0].normalEcef = Vec3::unitZ();
+    primitive.vertices[1].normalEcef = Vec3::unitZ();
+    primitive.vertices[2].normalEcef = Vec3::unitZ();
+    primitive.vertices[0].uv = {0.0f, 0.0f};
+    primitive.vertices[1].uv = {1.0f, 0.0f};
+    primitive.vertices[2].uv = {0.0f, 1.0f};
+    primitive.indices = {0, 1, 2};
+    model->primitives.push_back(std::move(primitive));
+    return model;
 }
 
 } // namespace
@@ -147,4 +314,68 @@ TEST(TilesetRequestMissingBudgetTest,
     EXPECT_TRUE(rawProvider->completeWithHeightmap(
         highPriorityKey,
         makeFlatHeightmap(2.0f)));
+}
+
+TEST(TilesetRequestMissingBudgetTest,
+     MainThreadUploadBudgetIsGlobalAcrossContentKinds) {
+    TilesetOptions options;
+    options.maximumSimultaneousTileLoads = 2;
+    options.mainThreadLoadingTimeLimit = 1.0e-12;
+
+    const TileKey terrainKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey contentKey{"Geographic-TMS", 1, 1, 0};
+
+    auto terrainProvider = std::make_unique<ManualCompletionTerrainProvider>();
+    ManualCompletionTerrainProvider* rawTerrainProvider =
+        terrainProvider.get();
+    auto contentProvider =
+        std::make_unique<ManualCompletionContentProvider>(contentKey);
+    ManualCompletionContentProvider* rawContentProvider =
+        contentProvider.get();
+    DummyRenderDevice device;
+    Tileset tileset(
+        std::move(terrainProvider),
+        TileScheme::createGeographicTMS(),
+        {},
+        &device,
+        options,
+        std::move(contentProvider));
+
+    TilesetTestAccess::ensureTile(tileset, terrainKey);
+    TilesetTestAccess::ensureTile(tileset, contentKey);
+    TilesetTestAccess::requestMissingTilesWithPriorities(
+        tileset,
+        terrainKey,
+        100.0,
+        contentKey,
+        1.0);
+
+    ASSERT_EQ(rawTerrainProvider->pendingRequests.size(), 1u);
+    ASSERT_EQ(rawContentProvider->pendingRequests.size(), 1u);
+    EXPECT_TRUE(rawTerrainProvider->completeWithHeightmap(
+        terrainKey,
+        makeFlatHeightmap(1.0f)));
+    EXPECT_TRUE(rawContentProvider->completeWithModel(
+        contentKey,
+        makeTriangleGltfModel()));
+    EXPECT_EQ(tileset.loadDiagnostics().pendingTerrainUploads, 1);
+    EXPECT_EQ(tileset.loadDiagnostics().pendingContentUploads, 1);
+
+    TilesetTestAccess::processPendingUploads(tileset);
+
+    TilesetTile* terrainTile =
+        TilesetTestAccess::findTile(tileset, terrainKey);
+    TilesetTile* contentTile =
+        TilesetTestAccess::findTile(tileset, contentKey);
+    ASSERT_NE(contentTile, nullptr);
+    EXPECT_EQ(contentTile->content.loadState, TileLoadState::Done);
+    EXPECT_EQ(contentTile->content.contentKind, TileContentKind::Render);
+    EXPECT_TRUE(contentTile->content.renderContent.hasGltfModel());
+    EXPECT_TRUE(contentTile->content.renderContent.hasGltfPrimitiveResources());
+
+    const TilesetLoadDiagnostics diagnostics = tileset.loadDiagnostics();
+    ASSERT_NE(terrainTile, nullptr);
+    EXPECT_EQ(terrainTile->content.loadState, TileLoadState::ContentLoading);
+    EXPECT_EQ(diagnostics.pendingTerrainUploads, 1);
+    EXPECT_EQ(diagnostics.pendingContentUploads, 0);
 }
