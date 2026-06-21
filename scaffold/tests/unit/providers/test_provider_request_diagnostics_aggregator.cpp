@@ -51,3 +51,17 @@ TEST(ProviderRequestDiagnosticsAggregatorTest, CombinesCountsAndPeaks) {
     EXPECT_EQ(total.activeExternalResourceBlockingRequests, 11);
     EXPECT_EQ(total.peakExternalResourceBlockingRequests, 9);
 }
+
+TEST(ProviderRequestDiagnosticsAggregatorTest, UnknownTransportLimitDoesNotReplaceKnownLimit) {
+    ProviderRequestDiagnostics total;
+    total.maximumTransportActiveRequests = 7;
+
+    ProviderRequestDiagnostics unknown;
+    unknown.requestsStarted = 3;
+    unknown.maximumTransportActiveRequests = -1;
+
+    ProviderRequestDiagnosticsAggregator::add(total, unknown);
+
+    EXPECT_EQ(total.requestsStarted, 3);
+    EXPECT_EQ(total.maximumTransportActiveRequests, 7);
+}
