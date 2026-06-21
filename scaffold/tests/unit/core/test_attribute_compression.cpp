@@ -66,6 +66,29 @@ TEST(AttributeCompressionTest, OctDecodeMatchesCesiumNative) {
     }
 }
 
+TEST(AttributeCompressionTest, OctDecodeInRangeSupportsNonByteSnormRanges) {
+    // Source-derived from cesium-native AttributeCompression::octDecodeInRange:
+    // the same oct normal decode is templated for unsigned SNORM ranges beyond
+    // the uint8_t range used by octDecode.
+    const glm::dvec3 positiveZ = AttributeCompression::octDecodeInRange<uint16_t>(
+        682u,
+        341u,
+        1023u);
+    EXPECT_TRUE(equalsEpsilon(
+        positiveZ,
+        glm::normalize(glm::dvec3(1.0, -1.0, 1.0)),
+        MathUtils::Epsilon3));
+
+    const glm::dvec3 negativeZ = AttributeCompression::octDecodeInRange<uint16_t>(
+        1023u,
+        0u,
+        1023u);
+    EXPECT_TRUE(equalsEpsilon(
+        negativeZ,
+        glm::dvec3(0.0, 0.0, -1.0),
+        MathUtils::Epsilon3));
+}
+
 TEST(AttributeCompressionTest, DecodeRGB565MatchesCesiumNative) {
     const std::array<uint16_t, 4> input{{
         0u,
