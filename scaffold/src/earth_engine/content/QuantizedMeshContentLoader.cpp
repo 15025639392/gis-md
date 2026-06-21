@@ -23,6 +23,12 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
     }
 
     result.status = QuantizedMeshContentLoadStatus::Success;
+    if (surfaceMesh->hasHeightRange) {
+        result.updatedBoundingVolume = TileBoundingVolume::fromRegion(
+            tileRectangle,
+            surfaceMesh->minimumHeight,
+            surfaceMesh->maximumHeight);
+    }
     result.surfaceMesh = std::move(surfaceMesh);
     result.availabilityUpdates.reserve(metadata.size());
     for (const QuantizedMeshMetadataContent& item : metadata) {

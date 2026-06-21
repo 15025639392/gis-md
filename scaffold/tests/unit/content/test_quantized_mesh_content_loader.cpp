@@ -100,6 +100,13 @@ TEST(QuantizedMeshContentLoaderTest,
     EXPECT_TRUE(result.surfaceMesh->hasHeightRange);
     EXPECT_NEAR(-10.0, result.surfaceMesh->minimumHeight, 1e-6);
     EXPECT_NEAR(150.0, result.surfaceMesh->maximumHeight, 1e-6);
+    ASSERT_TRUE(result.updatedBoundingVolume.has_value());
+    EXPECT_EQ(TileBoundingVolumeKind::Region,
+              result.updatedBoundingVolume->kind);
+    EXPECT_EQ(geographicRootWestRectangle(),
+              result.updatedBoundingVolume->region);
+    EXPECT_NEAR(-10.0, result.updatedBoundingVolume->minimumHeight, 1e-6);
+    EXPECT_NEAR(150.0, result.updatedBoundingVolume->maximumHeight, 1e-6);
     EXPECT_TRUE(result.availabilityUpdates.empty());
 }
 
@@ -166,5 +173,6 @@ TEST(QuantizedMeshContentLoaderTest, InvalidBodyFailsWithoutUpdates) {
     EXPECT_FALSE(result.success());
     EXPECT_EQ(QuantizedMeshContentLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.surfaceMesh);
+    EXPECT_FALSE(result.updatedBoundingVolume.has_value());
     EXPECT_TRUE(result.availabilityUpdates.empty());
 }

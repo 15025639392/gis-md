@@ -2,11 +2,13 @@
 
 #include "../core/math/Rectangle.h"
 #include "../providers/TerrainProvider.h"
+#include "../tiling/TileBoundingVolume.h"
 #include "../tiling/TileKey.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace earth_engine {
@@ -27,6 +29,7 @@ struct QuantizedMeshContentLoadResult {
     QuantizedMeshContentLoadStatus status =
         QuantizedMeshContentLoadStatus::Failed;
     std::unique_ptr<SurfaceTileMesh> surfaceMesh;
+    std::optional<TileBoundingVolume> updatedBoundingVolume;
     std::vector<QuantizedMeshAvailabilityUpdate> availabilityUpdates;
 
     bool success() const {
