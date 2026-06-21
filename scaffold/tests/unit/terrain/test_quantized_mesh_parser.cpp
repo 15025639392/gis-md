@@ -7,6 +7,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <utility>
@@ -39,7 +40,8 @@ void appendMetadataExtension(std::vector<uint8_t>& bytes,
 
 std::vector<uint8_t> makeQuantizedMeshBytes(
     const std::string& metadataJson = "",
-    bool includeSkirtEdges = false) {
+    bool includeSkirtEdges = false,
+    bool includeOctNormals = false) {
     std::vector<uint8_t> bytes;
 
     for (int i = 0; i < 3; ++i) appendPod<double>(bytes, 0.0);
@@ -84,6 +86,16 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
 
     if (!metadataJson.empty()) {
         appendMetadataExtension(bytes, metadataJson);
+    }
+    if (includeOctNormals) {
+        appendPod<uint8_t>(bytes, 1);
+        appendPod<uint32_t>(bytes, 6);
+        const uint8_t normals[] = {
+            128, 128,
+            255, 128,
+            128, 255
+        };
+        bytes.insert(bytes.end(), normals, normals + sizeof(normals));
     }
     return bytes;
 }
@@ -598,4 +610,54 @@ TEST(QuantizedMeshParserValidationTest,
                       truncatedBytes.size(),
                       64));
     }
+}
+
+TEST(QuantizedMeshParserValidationTest,
+     RejectsDecodedTriangleIndicesOutsideVertexRange) {
+    std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes("", false, true);
+    constexpr size_t thirdTriangleIndexOffset =
+        92 + 3 * 3 * sizeof(uint16_t) + sizeof(uint32_t) +
+        2 * sizeof(uint16_t);
+    const uint16_t invalidHighWaterMarkCode = 0xffffu;
+    std::memcpy(
+        bytes.data() + thirdTriangleIndexOffset,
+        &invalidHighWaterMarkCode,
+        sizeof(invalidHighWaterMarkCode));
+
+    EXPECT_EQ(nullptr,
+              QuantizedMeshParser::parseToSurfaceTileMesh(
+                  bytes.data(),
+                  bytes.size(),
+                  rootRectangle()));
+    EXPECT_EQ(nullptr,
+              QuantizedMeshParser::parseAndRasterize(
+                  bytes.data(),
+                  bytes.size(),
+                  64));
+}
+
+TEST(QuantizedMeshParserValidationTest,
+     RejectsEdgeIndicesOutsideVertexRange) {
+    std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes("", true, true);
+    constexpr size_t firstWestEdgeIndexOffset =
+        92 + 3 * 3 * sizeof(uint16_t) + sizeof(uint32_t) +
+        3 * sizeof(uint16_t) + sizeof(uint32_t);
+    const uint16_t invalidEdgeIndex = 99u;
+    std::memcpy(
+        bytes.data() + firstWestEdgeIndexOffset,
+        &invalidEdgeIndex,
+        sizeof(invalidEdgeIndex));
+
+    EXPECT_EQ(nullptr,
+              QuantizedMeshParser::parseToSurfaceTileMesh(
+                  bytes.data(),
+                  bytes.size(),
+                  rootRectangle()));
+    EXPECT_EQ(nullptr,
+              QuantizedMeshParser::parseAndRasterize(
+                  bytes.data(),
+                  bytes.size(),
+                  64));
 }
