@@ -22,10 +22,64 @@
 #include "earth_engine/terrain/TerrainTile.h"
 #include "earth_engine/tiling/TileKey.h"
 #include "earth_engine/tiling/TileScheme.h"
+#include "earth_engine/tiling/TileQuantizedMeshAvailabilityIngestor.h"
 
 using namespace earth_engine;
 
 namespace {
+
+template <typename T>
+void appendPod(std::vector<uint8_t>& bytes, T value) {
+    const auto* p = reinterpret_cast<const uint8_t*>(&value);
+    bytes.insert(bytes.end(), p, p + sizeof(T));
+}
+
+uint16_t zigZagEncode16(int32_t value) {
+    return static_cast<uint16_t>(
+        value >= 0 ? value * 2 : (-value * 2) - 1);
+}
+
+std::vector<uint8_t> makeQuantizedMeshBytesWithMetadata(
+    const std::string& metadataJson) {
+    std::vector<uint8_t> bytes;
+
+    for (int i = 0; i < 3; ++i) appendPod<double>(bytes, 0.0);
+    appendPod<float>(bytes, 0.0f);
+    appendPod<float>(bytes, 100.0f);
+    for (int i = 0; i < 7; ++i) appendPod<double>(bytes, 0.0);
+    appendPod<uint32_t>(bytes, 3);
+
+    const uint16_t u[] = {
+        zigZagEncode16(0),
+        zigZagEncode16(32767),
+        zigZagEncode16(-32767)
+    };
+    const uint16_t v[] = {
+        zigZagEncode16(0),
+        zigZagEncode16(0),
+        zigZagEncode16(32767)
+    };
+    const uint16_t h[] = {
+        zigZagEncode16(0),
+        zigZagEncode16(0),
+        zigZagEncode16(0)
+    };
+    for (uint16_t value : u) appendPod<uint16_t>(bytes, value);
+    for (uint16_t value : v) appendPod<uint16_t>(bytes, value);
+    for (uint16_t value : h) appendPod<uint16_t>(bytes, value);
+
+    appendPod<uint32_t>(bytes, 1);
+    for (int i = 0; i < 3; ++i) appendPod<uint16_t>(bytes, 0);
+    for (int i = 0; i < 4; ++i) appendPod<uint32_t>(bytes, 0);
+
+    appendPod<uint8_t>(bytes, 4);
+    appendPod<uint32_t>(
+        bytes,
+        static_cast<uint32_t>(sizeof(uint32_t) + metadataJson.size()));
+    appendPod<uint32_t>(bytes, static_cast<uint32_t>(metadataJson.size()));
+    bytes.insert(bytes.end(), metadataJson.begin(), metadataJson.end());
+    return bytes;
+}
 
 class NoopHttpRequest final : public HttpRequest {
 public:
@@ -523,6 +577,44 @@ TEST(QuantizedMeshTerrainProviderTest, EmptyMetadataAvailabilityUpdateMarksSubtr
 
     EXPECT_EQ(TileAvailabilityState::NotAvailable,
               provider.availabilityState(childKey));
+}
+
+TEST(QuantizedMeshTerrainProviderTest, TileMetadataIgnoredWithoutMetadataAvailabilityLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    const TileKey metadataChildKey{"Geographic-TMS", 1, 0, 1};
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(metadataChildKey));
+
+    DecodedHeightmap heightmap;
+    heightmap.rawData = makeQuantizedMeshBytesWithMetadata(R"json({
+      "available": [
+        [{"startX":0,"startY":1,"endX":0,"endY":1}]
+      ]
+    })json");
+
+    TileQuantizedMeshAvailabilityIngestor::ingest(
+        &provider,
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        heightmap);
+
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(metadataChildKey));
 }
 
 TEST(QuantizedMeshTerrainProviderTest, InvalidMetadataAvailabilityUpdateLayerDoesNotMutateState) {
