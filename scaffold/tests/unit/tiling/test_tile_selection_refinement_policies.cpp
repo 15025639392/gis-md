@@ -319,3 +319,86 @@ TEST(
     EXPECT_TRUE(decision.ancestorMeetsSse);
     EXPECT_TRUE(decision.queueUrgent);
 }
+
+TEST(
+    TileSelectionRefinementPolicyTest,
+    OcclusionGateMatchesNativeRefinementCases) {
+    EXPECT_TRUE(TileSelectionRefinementPolicy::shouldCheckOcclusion(
+        true,
+        true,
+        false,
+        TileSelectionState::Rendered,
+        false));
+    EXPECT_FALSE(TileSelectionRefinementPolicy::shouldCheckOcclusion(
+        true,
+        true,
+        true,
+        TileSelectionState::Rendered,
+        false));
+    EXPECT_FALSE(TileSelectionRefinementPolicy::shouldCheckOcclusion(
+        true,
+        true,
+        false,
+        TileSelectionState::Refined,
+        true));
+    EXPECT_TRUE(TileSelectionRefinementPolicy::shouldCheckOcclusion(
+        true,
+        true,
+        false,
+        TileSelectionState::Refined,
+        false));
+    EXPECT_TRUE(TileSelectionRefinementPolicy::shouldCheckOcclusion(
+        true,
+        true,
+        false,
+        TileSelectionState::RefinedAndKicked,
+        true));
+    EXPECT_FALSE(TileSelectionRefinementPolicy::shouldCheckOcclusion(
+        false,
+        true,
+        false,
+        TileSelectionState::Rendered,
+        false));
+}
+
+TEST(
+    TileSelectionRefinementPolicyTest,
+    OcclusionActionStopsOrDelaysRefinement) {
+    EXPECT_EQ(
+        TileSelectionRefinementPolicy::occlusionAction(
+            TileOcclusionState::Occluded,
+            false,
+            TileSelectionState::Refined),
+        TileSelectionOcclusionAction::StopForOccluded);
+    EXPECT_EQ(
+        TileSelectionRefinementPolicy::occlusionAction(
+            TileOcclusionState::OcclusionUnavailable,
+            true,
+            TileSelectionState::Rendered),
+        TileSelectionOcclusionAction::StopForUnavailable);
+    EXPECT_EQ(
+        TileSelectionRefinementPolicy::occlusionAction(
+            TileOcclusionState::OcclusionUnavailable,
+            true,
+            TileSelectionState::Refined),
+        TileSelectionOcclusionAction::None);
+    EXPECT_EQ(
+        TileSelectionRefinementPolicy::occlusionAction(
+            TileOcclusionState::OcclusionUnavailable,
+            false,
+            TileSelectionState::Rendered),
+        TileSelectionOcclusionAction::None);
+    EXPECT_EQ(
+        TileSelectionRefinementPolicy::occlusionAction(
+            TileOcclusionState::NotOccluded,
+            true,
+            TileSelectionState::Rendered),
+        TileSelectionOcclusionAction::None);
+
+    const TileSelectionRefineDecision stopped =
+        TileSelectionRefinementPolicy::applyOcclusionAction(
+            TileSelectionRefineDecision{true, false},
+            TileSelectionOcclusionAction::StopForOccluded);
+    EXPECT_FALSE(stopped.refine);
+    EXPECT_TRUE(stopped.meetsSse);
+}
