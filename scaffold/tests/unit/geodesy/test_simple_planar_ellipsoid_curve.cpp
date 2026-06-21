@@ -105,13 +105,19 @@ TEST(SimplePlanarEllipsoidCurveTest, MidpointIsCoplanarWithEndpointsAndEarthCent
 }
 
 TEST(SimplePlanarEllipsoidCurveTest, RejectsCenterEcefCoordinates) {
-    const std::optional<SimplePlanarEllipsoidCurve> curve =
+    const std::optional<SimplePlanarEllipsoidCurve> destinationCenter =
         SimplePlanarEllipsoidCurve::fromEarthCenteredEarthFixedCoordinates(
             Ellipsoid::WGS84(),
             kPhiladelphiaEcef,
             Vec3::zero());
+    const std::optional<SimplePlanarEllipsoidCurve> sourceCenter =
+        SimplePlanarEllipsoidCurve::fromEarthCenteredEarthFixedCoordinates(
+            Ellipsoid::WGS84(),
+            Vec3::zero(),
+            kPhiladelphiaEcef);
 
-    EXPECT_FALSE(curve.has_value());
+    EXPECT_FALSE(destinationCenter.has_value());
+    EXPECT_FALSE(sourceCenter.has_value());
 }
 
 TEST(SimplePlanarEllipsoidCurveTest, SameStartAndEndPointStaysFixed) {
