@@ -1383,6 +1383,20 @@ TEST(GoogleMapTilesImageryProviderTest, ParsesViewportResponseLikeCesiumNative) 
                     "north": 1.0
                 },
                 {
+                    "maxZoom": 100000000000000000000,
+                    "west": 0.0,
+                    "south": 0.0,
+                    "east": 1.0,
+                    "north": 1.0
+                },
+                {
+                    "maxZoom": 3.5,
+                    "west": 0.0,
+                    "south": 0.0,
+                    "east": 1.0,
+                    "north": 1.0
+                },
+                {
                     "maxZoom": 3,
                     "west": 0.0,
                     "south": 0.0,

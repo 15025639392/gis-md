@@ -314,7 +314,7 @@ GoogleMapTilesViewportParseResult parseGoogleMapTilesViewportResponse(
         const auto southIt = rectJson.find("south");
         const auto eastIt = rectJson.find("east");
         const auto northIt = rectJson.find("north");
-        if (maxZoomIt == rectJson.end() || !maxZoomIt->is_number_integer() ||
+        if (maxZoomIt == rectJson.end() || !maxZoomIt->is_number() ||
             westIt == rectJson.end() || !westIt->is_number() ||
             southIt == rectJson.end() || !southIt->is_number() ||
             eastIt == rectJson.end() || !eastIt->is_number() ||
@@ -322,7 +322,7 @@ GoogleMapTilesViewportParseResult parseGoogleMapTilesViewportResponse(
             continue;
         }
 
-        const int maxZoom = maxZoomIt->get<int>();
+        const int maxZoom = safeIntOrDefault(*maxZoomIt, -1);
         if (maxZoom < 0) {
             continue;
         }
