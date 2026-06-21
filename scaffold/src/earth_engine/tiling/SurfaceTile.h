@@ -23,7 +23,8 @@ enum class SurfaceTileSampling {
 };
 
 enum class RasterOverlayProjection {
-    Geographic = 0
+    Geographic = 0,
+    WebMercator = 1
 };
 
 struct SurfaceVertex {

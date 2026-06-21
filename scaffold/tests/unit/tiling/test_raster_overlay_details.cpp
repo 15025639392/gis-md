@@ -2,6 +2,8 @@
 
 #include <memory>
 
+#include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/math/Rectangle.h"
 #include "earth_engine/tiling/SurfaceTile.h"
 #include "earth_engine/tiling/TileBoundingVolume.h"
@@ -115,4 +117,38 @@ TEST(RasterOverlayDetailsGeneratorTest,
                      RasterOverlayProjection::Geographic));
     EXPECT_DOUBLE_EQ(10.0, details.boundingRegion.minimumHeight);
     EXPECT_DOUBLE_EQ(20.0, details.boundingRegion.maximumHeight);
+}
+
+TEST(RasterOverlayDetailsGeneratorTest,
+     RegionGenerationProjectsWebMercatorRectangleLikeCesiumNative) {
+    TileRenderContentState renderContent;
+    renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+
+    const Rectangle region = Rectangle::fromDegrees(-90.0, -45.0, 45.0, 60.0);
+    const TileBoundingVolume boundingRegion =
+        TileBoundingVolume::fromRegion(region, -15.0, 250.0);
+    const Rectangle projected = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        region);
+
+    const bool generated =
+        TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
+            renderContent,
+            boundingRegion,
+            RasterOverlayProjection::WebMercator);
+
+    EXPECT_TRUE(generated);
+    const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
+    ASSERT_EQ(1u, details.rasterOverlayProjections.size());
+    ASSERT_EQ(1u, details.rasterOverlayRectangles.size());
+    EXPECT_EQ(RasterOverlayProjection::WebMercator,
+              details.rasterOverlayProjections[0]);
+    EXPECT_EQ(projected, details.rasterOverlayRectangles[0]);
+    EXPECT_EQ(0, details.textureCoordinateIDForProjection(
+                     RasterOverlayProjection::WebMercator));
+    EXPECT_EQ(nullptr, details.findRectangleForOverlayProjection(
+                           RasterOverlayProjection::Geographic));
+    EXPECT_EQ(region, details.boundingRegion.rectangle);
+    EXPECT_DOUBLE_EQ(-15.0, details.boundingRegion.minimumHeight);
+    EXPECT_DOUBLE_EQ(250.0, details.boundingRegion.maximumHeight);
 }

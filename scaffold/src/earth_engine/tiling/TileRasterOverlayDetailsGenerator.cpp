@@ -3,7 +3,26 @@
 #include "TileBoundingVolume.h"
 #include "TileRenderContentState.h"
 
+#include "../core/geodesy/Ellipsoid.h"
+#include "../core/geodesy/Projection.h"
+
 namespace earth_engine {
+namespace {
+
+Rectangle projectRegionRectangle(const Rectangle& rectangle,
+                                 RasterOverlayProjection projection) {
+    switch (projection) {
+        case RasterOverlayProjection::Geographic:
+            return rectangle;
+        case RasterOverlayProjection::WebMercator:
+            return projectRectangleSimple(
+                WebMercatorProjection(Ellipsoid::WGS84()),
+                rectangle);
+    }
+    return rectangle;
+}
+
+} // namespace
 
 bool TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
     TileRenderContentState& renderContent,
@@ -20,10 +39,13 @@ bool TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
     }
 
     RasterOverlayDetails generated;
-    generated.setGeographicRectangle(
+    generated.rasterOverlayProjections = {projection};
+    generated.rasterOverlayRectangles = {
+        projectRegionRectangle(boundingVolume.region, projection)};
+    generated.boundingRegion = {
         boundingVolume.region,
         boundingVolume.minimumHeight,
-        boundingVolume.maximumHeight);
+        boundingVolume.maximumHeight};
     details->merge(generated);
     return true;
 }
