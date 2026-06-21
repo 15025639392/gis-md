@@ -4,10 +4,7 @@
 #include "../renderer/IPrepareRendererResources.h"
 #include "../tiling/TileSurface.h"
 #include "TilesetTile.h"
-#include "TileBoundingVolume.h"
 #include "TileKey.h"
-#include "../core/geodesy/Ellipsoid.h"
-#include "../core/geodesy/Projection.h"
 
 #include <algorithm>
 #include <cmath>
@@ -91,25 +88,6 @@ const Rectangle* findRectangleForProjection(
     return nullptr;
 }
 
-std::optional<Rectangle> preciseRectangleFromBoundingVolume(
-    RasterOverlayProjection projection,
-    const TileBoundingVolume* boundingVolume) {
-    if (!boundingVolume ||
-        boundingVolume->kind != TileBoundingVolumeKind::Region) {
-        return std::nullopt;
-    }
-
-    switch (projection) {
-        case RasterOverlayProjection::Geographic:
-            return boundingVolume->region;
-        case RasterOverlayProjection::WebMercator:
-            return projectRectangleSimple(
-                WebMercatorProjection(Ellipsoid::WGS84()),
-                boundingVolume->region);
-    }
-    return boundingVolume->region;
-}
-
 } // namespace
 
 RasterMappedToTilesetTile::RasterMappedToTilesetTile() = default;
@@ -125,7 +103,6 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
     std::vector<RasterOverlayProjection>& missingProjections,
     const TilesetTile* parentTile,
     size_t overlayIndex,
-    const TileBoundingVolume* boundingVolume,
     bool hasRenderContentDetails) {
 
     // cesium-native: store geometry key + overlay slot for attach/detach.
@@ -188,14 +165,6 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
               projection,
               &readyTextureCoordinateID)
         : nullptr;
-    std::optional<Rectangle> boundingVolumeRectangle;
-    if (!geometryRectangle && !hasRenderContentDetails) {
-        boundingVolumeRectangle =
-            preciseRectangleFromBoundingVolume(projection, boundingVolume);
-        if (boundingVolumeRectangle) {
-            geometryRectangle = &*boundingVolumeRectangle;
-        }
-    }
 
     // cesium-native RasterOverlayCollection::updateTileOverlays:
     // placeholder mappings are retried once the provider is ready.
@@ -242,18 +211,13 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
             _pLoadingTile = tileProvider.getPlaceholderTile();
             loadingTileSource_ = ReadyTileSource::None;
         } else {
+            // No render-content raster details exist yet. Cesium-native waits
+            // for content-manager generated overlay details instead of
+            // synthesizing a geometry rectangle from the tile bounding region.
             textureCoordinateID_ =
                 addProjectionToList(missingProjections, projection);
-            if (geometryRectangle) {
-                _pLoadingTile = tileProvider.getTile(
-                    *geometryRectangle,
-                    targetScreenPixelsX,
-                    targetScreenPixelsY);
-                loadingTileSource_ = ReadyTileSource::Real;
-            } else {
-                _pLoadingTile = tileProvider.getPlaceholderTile();
-                loadingTileSource_ = ReadyTileSource::None;
-            }
+            _pLoadingTile = tileProvider.getPlaceholderTile();
+            loadingTileSource_ = ReadyTileSource::None;
         }
     }
 

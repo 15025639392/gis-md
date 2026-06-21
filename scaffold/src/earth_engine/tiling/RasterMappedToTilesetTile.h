@@ -82,7 +82,6 @@ public:
                       std::vector<RasterOverlayProjection>& missingProjections,
                       const TilesetTile* parentTile = nullptr,
                       size_t overlayIndex = 0,
-                      const TileBoundingVolume* boundingVolume = nullptr,
                       bool hasRenderContentDetails = true);
 
     /// cesium-native: check if a higher-resolution tile could be loaded.

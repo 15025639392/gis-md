@@ -5,35 +5,14 @@
 #include "TilesetTile.h"
 
 #include "../core/resources/FrameResourceBudget.h"
-#include "../core/geodesy/Ellipsoid.h"
-#include "../core/geodesy/Projection.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../providers/RasterOverlayTile.h"
 #include "../providers/RasterOverlayTileProvider.h"
 
 #include <memory>
-#include <optional>
 #include <vector>
 
 namespace earth_engine {
-namespace {
-
-std::optional<Rectangle> projectBoundingRegion(
-    const TilesetTile& tile,
-    RasterOverlayProjection projection) {
-    if (!tile.boundingVolume ||
-        tile.boundingVolume->kind != TileBoundingVolumeKind::Region) {
-        return std::nullopt;
-    }
-    if (projection == RasterOverlayProjection::WebMercator) {
-        return projectRectangleSimple(
-            WebMercatorProjection(Ellipsoid::WGS84()),
-            tile.boundingVolume->region);
-    }
-    return tile.boundingVolume->region;
-}
-
-} // namespace
 
 void TileRasterOverlayPrefetcher::prefetch(
     TilesetTile& tile,
@@ -82,11 +61,9 @@ void TileRasterOverlayPrefetcher::prefetch(
         const Rectangle* geometryRectangle = renderDetails
             ? renderDetails->findRectangleForOverlayProjection(projection)
             : nullptr;
-        std::optional<Rectangle> boundingRegionRectangle =
-            projectBoundingRegion(tile, projection);
         const Rectangle& rasterTargetRectangle = geometryRectangle
             ? *geometryRectangle
-            : (boundingRegionRectangle ? *boundingRegionRectangle : tile.bounds);
+            : tile.bounds;
         const RasterTargetScreenPixels rasterScreenPixels =
             RasterOverlayScreenSpaceMetrics::computeDesiredScreenPixels(
                 rasterTargetRectangle,
@@ -124,7 +101,6 @@ void TileRasterOverlayPrefetcher::prefetch(
             ignoredMissingProjections,
             tile.parent,
             i,
-            tile.boundingVolume ? &*tile.boundingVolume : nullptr,
             hasRenderContentDetails);
         mapped.loadThrottled(*activeProvider, &frameResourceBudget);
     }

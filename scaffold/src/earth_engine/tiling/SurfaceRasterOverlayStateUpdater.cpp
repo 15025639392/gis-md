@@ -5,8 +5,6 @@
 #include "TilesetTile.h"
 
 #include "../core/resources/FrameResourceBudget.h"
-#include "../core/geodesy/Ellipsoid.h"
-#include "../core/geodesy/Projection.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../providers/RasterOverlayTileProvider.h"
 #include "../renderer/Renderer.h"
@@ -14,24 +12,6 @@
 #include <optional>
 
 namespace earth_engine {
-namespace {
-
-std::optional<Rectangle> projectBoundingRegion(
-    const TilesetTile& tile,
-    RasterOverlayProjection projection) {
-    if (!tile.boundingVolume ||
-        tile.boundingVolume->kind != TileBoundingVolumeKind::Region) {
-        return std::nullopt;
-    }
-    if (projection == RasterOverlayProjection::WebMercator) {
-        return projectRectangleSimple(
-            WebMercatorProjection(Ellipsoid::WGS84()),
-            tile.boundingVolume->region);
-    }
-    return tile.boundingVolume->region;
-}
-
-} // namespace
 
 SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
     Renderer& renderer,
@@ -77,11 +57,9 @@ SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
         const Rectangle* geometryRectangle = hasRenderContentDetails
             ? overlayDetails.findRectangleForOverlayProjection(projection)
             : nullptr;
-        std::optional<Rectangle> boundingRegionRectangle =
-            projectBoundingRegion(tile, projection);
         const Rectangle& rasterTargetRectangle = geometryRectangle
             ? *geometryRectangle
-            : (boundingRegionRectangle ? *boundingRegionRectangle : tile.bounds);
+            : tile.bounds;
         const RasterTargetScreenPixels rasterScreenPixels =
             RasterOverlayScreenSpaceMetrics::computeDesiredScreenPixels(
                 rasterTargetRectangle,
@@ -99,7 +77,6 @@ SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
                 tile.rasterOverlayState.missingProjections(),
                 tile.parent,
                 i,
-                tile.boundingVolume ? &*tile.boundingVolume : nullptr,
                 hasRenderContentDetails);
         if (tile.rasterOverlayState.hasMissingProjections()) {
             action.unloadTileContent = true;
