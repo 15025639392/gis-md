@@ -1,12 +1,19 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/core/geodesy/Cartographic.h"
+#include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/Transforms.h"
 #include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
+#include "earth_engine/scene/Camera.h"
 #include "earth_engine/tiling/TileCacheKey.h"
+#include "earth_engine/tiling/TileBoundsMetrics.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 
+#include <cmath>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 using namespace earth_engine;
@@ -27,6 +34,33 @@ struct TilesetTestAccess {
         std::unique_ptr<DecodedHeightmap> heightmap) {
         tileset.contentLifecycle_.terrainCache()[TileCacheKey::forTile(key)] =
             std::move(heightmap);
+    }
+
+    static Vec3 tileBoundsCenter(const Rectangle& bounds) {
+        return TileBoundsMetrics::tileBoundsCenter(bounds);
+    }
+
+    static double tileBoundsRadius(const TilesetTile& tile,
+                                   const Vec3& center) {
+        return TileBoundsMetrics::tileBoundsRadius(tile, center);
+    }
+
+    static std::optional<OrientedBoundingBox> tileBoundingRegionObb(
+        const TilesetTile& tile) {
+        return TileBoundsMetrics::tileBoundingRegionObb(tile);
+    }
+
+    static bool tileIntersectsFrustum(const TilesetTile& tile,
+                                      const Frustum& frustum) {
+        return TileBoundsMetrics::tileIntersectsFrustum(tile, frustum);
+    }
+
+    static double approximateDistanceToTileBounds(
+        const TilesetTile& tile,
+        const Vec3& cameraPosition) {
+        return TileBoundsMetrics::approximateDistanceToTileBounds(
+            tile,
+            cameraPosition);
     }
 };
 } // namespace earth_engine
@@ -179,6 +213,129 @@ TEST(TilesetQuantizedMeshTest,
         maximumHeight,
         root->content.renderContent.terrainMaximumHeight(),
         1e-6);
+}
+
+TEST(TilesetQuantizedMeshTest,
+     BoundsUseHeaderHeightRangeLikeCesiumNative) {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey key{"Geographic-TMS", 5, 20, 12};
+    const Rectangle bounds = scheme->tileToRectangle(key);
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(bounds);
+
+    TilesetTile looseTile(key, bounds);
+    looseTile.content.renderContent.setTerrainHeightRange(-1000.0, 9000.0);
+
+    TilesetTile exactTile(key, bounds);
+    exactTile.content.renderContent.setTerrainHeightRange(-50.0, 1234.0);
+
+    const double looseRadius =
+        TilesetTestAccess::tileBoundsRadius(looseTile, center);
+    const double exactRadius =
+        TilesetTestAccess::tileBoundsRadius(exactTile, center);
+    EXPECT_NEAR(9000.0 - 1234.0, looseRadius - exactRadius, 1e-6);
+
+    const double centerLng = (bounds.west() + bounds.east()) * 0.5;
+    const double centerLat = (bounds.south() + bounds.north()) * 0.5;
+    const auto& ellipsoid = Ellipsoid::WGS84();
+
+    const Vec3 insideCamera = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(centerLng, centerLat, 100.0));
+    EXPECT_LT(
+        TilesetTestAccess::approximateDistanceToTileBounds(
+            exactTile,
+            insideCamera),
+        1e-6);
+
+    const Vec3 camera = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(centerLng, centerLat, 13000.0));
+    const double looseDistance =
+        TilesetTestAccess::approximateDistanceToTileBounds(
+            looseTile,
+            camera);
+    const double exactDistance =
+        TilesetTestAccess::approximateDistanceToTileBounds(
+            exactTile,
+            camera);
+    EXPECT_NEAR(9000.0 - 1234.0, exactDistance - looseDistance, 1e-6);
+
+    const Vec3 outsideCamera = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(bounds.east() + bounds.width() * 0.25,
+                                  centerLat,
+                                  100.0));
+    const double outsideDistance =
+        TilesetTestAccess::approximateDistanceToTileBounds(
+            exactTile,
+            outsideCamera);
+    EXPECT_GT(outsideDistance, 1000.0);
+
+    const auto exactObb = TilesetTestAccess::tileBoundingRegionObb(exactTile);
+    ASSERT_TRUE(exactObb.has_value());
+    EXPECT_GE(
+        outsideDistance * outsideDistance + 1e-3,
+        exactObb->computeDistanceSquaredToPosition(outsideCamera));
+
+    const double centerFallbackDistance =
+        TilesetTestAccess::approximateDistanceToTileBounds(
+            exactTile,
+            Vec3::zero());
+    const double centerObbDistance =
+        std::sqrt(exactObb->computeDistanceSquaredToPosition(Vec3::zero()));
+    EXPECT_NEAR(centerObbDistance, centerFallbackDistance, 1e-6);
+}
+
+TEST(TilesetQuantizedMeshTest,
+     BoundingRegionObbUsesHeaderHeightRangeLikeCesiumNative) {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey key{"Geographic-TMS", 6, 40, 24};
+    const Rectangle bounds = scheme->tileToRectangle(key);
+
+    TilesetTile looseTile(key, bounds);
+    looseTile.content.renderContent.setTerrainHeightRange(-1000.0, 9000.0);
+
+    TilesetTile exactTile(key, bounds);
+    exactTile.content.renderContent.setTerrainHeightRange(-50.0, 1234.0);
+
+    const auto looseObb =
+        TilesetTestAccess::tileBoundingRegionObb(looseTile);
+    const auto exactObb =
+        TilesetTestAccess::tileBoundingRegionObb(exactTile);
+    ASSERT_TRUE(looseObb.has_value());
+    ASSERT_TRUE(exactObb.has_value());
+
+    EXPECT_LT(exactObb->getHalfAxis(2).length(),
+              looseObb->getHalfAxis(2).length());
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const double centerLng = bounds.west() + bounds.width() * 0.5;
+    const double centerLat = (bounds.south() + bounds.north()) * 0.5;
+    const Vec3 tangentPoint = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(centerLng, centerLat, 0.0));
+    const Vec3 origin = ellipsoid.scaleToGeodeticSurface(tangentPoint);
+    const Mat4 tangentFrame =
+        Transforms::eastNorthUpToFixedFrame(origin, ellipsoid);
+    const Vec3 expectedEast(tangentFrame(0, 0),
+                            tangentFrame(1, 0),
+                            tangentFrame(2, 0));
+    const Vec3 expectedNorth(tangentFrame(0, 1),
+                             tangentFrame(1, 1),
+                             tangentFrame(2, 1));
+    const Vec3 expectedUp(tangentFrame(0, 2),
+                          tangentFrame(1, 2),
+                          tangentFrame(2, 2));
+    EXPECT_GT(exactObb->getHalfAxis(0).normalized().dot(expectedEast),
+              1.0 - 1e-12);
+    EXPECT_GT(exactObb->getHalfAxis(1).normalized().dot(expectedNorth),
+              1.0 - 1e-12);
+    EXPECT_GT(exactObb->getHalfAxis(2).normalized().dot(expectedUp),
+              1.0 - 1e-12);
+
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(bounds);
+    Camera camera;
+    camera.lookAt(center + center.normalized() * 200000.0,
+                  center,
+                  Vec3::unitZ());
+    const Frustum frustum = camera.frustum(800.0, 800.0);
+    EXPECT_TRUE(TilesetTestAccess::tileIntersectsFrustum(exactTile, frustum));
 }
 
 } // namespace

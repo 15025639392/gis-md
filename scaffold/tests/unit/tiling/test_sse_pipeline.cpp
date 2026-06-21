@@ -3374,81 +3374,6 @@ void testTileResourceDirtyInvalidatesRevisionAndCacheOnly() {
           "Tileset: resource dirty preserves selection reuse for static loading");
 }
 
-void testTilesetBoundsUseQuantizedMeshHeightRange() {
-    auto scheme = TileScheme::createGeographicTMS();
-    const TileKey key{"Geographic-TMS", 5, 20, 12};
-    const Rectangle bounds = scheme->tileToRectangle(key);
-    const Vec3 center = TilesetTestAccess::tileBoundsCenter(bounds);
-
-    TilesetTile looseTile(key, bounds);
-    looseTile.content.renderContent.setTerrainHeightRange(-1000.0, 9000.0);
-
-    TilesetTile exactTile(key, bounds);
-    exactTile.content.renderContent.setTerrainHeightRange(-50.0, 1234.0);
-
-    const double looseRadius =
-        TilesetTestAccess::tileBoundsRadius(looseTile, center);
-    const double exactRadius =
-        TilesetTestAccess::tileBoundsRadius(exactTile, center);
-    check(std::abs((looseRadius - exactRadius) - (9000.0 - 1234.0)) < 1e-6,
-          "Tileset: terrain bounds radius uses exact QM height range instead of loose earth range");
-
-    const double centerLng = (bounds.west() + bounds.east()) * 0.5;
-    const double centerLat = (bounds.south() + bounds.north()) * 0.5;
-    const auto& ellipsoid = Ellipsoid::WGS84();
-
-    const Vec3 insideCamera = ellipsoid.cartographicToCartesian(
-        Cartographic::fromRadians(centerLng, centerLat, 100.0));
-    const double insideDistance =
-        TilesetTestAccess::approximateDistanceToTileBounds(
-            exactTile,
-            insideCamera);
-    check(insideDistance < 1e-6,
-          "Tileset: BoundingRegion distance is zero inside rectangle and height range");
-
-    const Vec3 camera = ellipsoid.cartographicToCartesian(
-        Cartographic::fromRadians(centerLng, centerLat, 13000.0));
-    const double looseDistance =
-        TilesetTestAccess::approximateDistanceToTileBounds(
-            looseTile,
-            camera);
-    const double exactDistance =
-        TilesetTestAccess::approximateDistanceToTileBounds(
-            exactTile,
-            camera);
-    check(std::abs((exactDistance - looseDistance) -
-                   (9000.0 - 1234.0)) < 1e-6,
-          "Tileset: fog/SSE distance uses BoundingRegion max-height range");
-
-    const Vec3 outsideCamera = ellipsoid.cartographicToCartesian(
-        Cartographic::fromRadians(bounds.east() + bounds.width() * 0.25,
-                                  centerLat,
-                                  100.0));
-    const double outsideDistance =
-        TilesetTestAccess::approximateDistanceToTileBounds(
-            exactTile,
-            outsideCamera);
-    check(outsideDistance > 1000.0,
-          "Tileset: BoundingRegion distance includes horizontal rectangle-plane distance");
-
-    const auto exactObb = TilesetTestAccess::tileBoundingRegionObb(exactTile);
-    check(exactObb &&
-              outsideDistance * outsideDistance + 1e-3 >=
-                  exactObb->computeDistanceSquaredToPosition(outsideCamera),
-          "Tileset: BoundingRegion distance is at least OBB distance like cesium-native");
-
-    const double centerFallbackDistance =
-        TilesetTestAccess::approximateDistanceToTileBounds(
-            exactTile,
-            Vec3::zero());
-    const double centerObbDistance = exactObb
-        ? std::sqrt(exactObb->computeDistanceSquaredToPosition(Vec3::zero()))
-        : -1.0;
-    check(exactObb &&
-              std::abs(centerFallbackDistance - centerObbDistance) < 1e-6,
-          "Tileset: BoundingRegion center-position distance falls back to OBB like cesium-native");
-}
-
 void testTilesetBoundingRegionDegenerateDistanceMatchesCesiumNative() {
     const Rectangle pointRegion(-1.03, 0.2292, -1.03, 0.2292);
     TilesetTile tile(TileKey{"Geographic-TMS", 0, 0, 0}, pointRegion);
@@ -3509,64 +3434,6 @@ void testTileBoundsMetricsUsesCentralDefaultTerrainHeightRange() {
 
     check(std::abs(defaultRadius - explicitDefaultRadius) < 1e-6,
           "TileBoundsMetrics: missing terrain height range uses the central default range");
-}
-
-void testTilesetBoundingRegionObbUsesQuantizedMeshHeightRange() {
-    auto scheme = TileScheme::createGeographicTMS();
-    const TileKey key{"Geographic-TMS", 6, 40, 24};
-    const Rectangle bounds = scheme->tileToRectangle(key);
-
-    TilesetTile looseTile(key, bounds);
-    looseTile.content.renderContent.setTerrainHeightRange(-1000.0, 9000.0);
-
-    TilesetTile exactTile(key, bounds);
-    exactTile.content.renderContent.setTerrainHeightRange(-50.0, 1234.0);
-
-    const auto looseObb =
-        TilesetTestAccess::tileBoundingRegionObb(looseTile);
-    const auto exactObb =
-        TilesetTestAccess::tileBoundingRegionObb(exactTile);
-    check(looseObb.has_value() && exactObb.has_value(),
-          "Tileset: BoundingRegion OBB builds for quadtree terrain tile");
-    if (!looseObb || !exactObb) return;
-
-    const double looseVerticalHalfAxis =
-        looseObb->getHalfAxis(2).length();
-    const double exactVerticalHalfAxis =
-        exactObb->getHalfAxis(2).length();
-    check(exactVerticalHalfAxis < looseVerticalHalfAxis,
-          "Tileset: BoundingRegion OBB vertical extent uses exact QM height range");
-
-    const auto& ellipsoid = Ellipsoid::WGS84();
-    const double centerLng = bounds.west() + bounds.width() * 0.5;
-    const double centerLat = (bounds.south() + bounds.north()) * 0.5;
-    const Vec3 tangentPoint = ellipsoid.cartographicToCartesian(
-        Cartographic::fromRadians(centerLng, centerLat, 0.0));
-    const Vec3 origin = ellipsoid.scaleToGeodeticSurface(tangentPoint);
-    const Mat4 tangentFrame =
-        Transforms::eastNorthUpToFixedFrame(origin, ellipsoid);
-    const Vec3 expectedEast(tangentFrame(0, 0),
-                            tangentFrame(1, 0),
-                            tangentFrame(2, 0));
-    const Vec3 expectedNorth(tangentFrame(0, 1),
-                             tangentFrame(1, 1),
-                             tangentFrame(2, 1));
-    const Vec3 expectedUp(tangentFrame(0, 2),
-                          tangentFrame(1, 2),
-                          tangentFrame(2, 2));
-    check(exactObb->getHalfAxis(0).normalized().dot(expectedEast) > 1.0 - 1e-12 &&
-              exactObb->getHalfAxis(1).normalized().dot(expectedNorth) > 1.0 - 1e-12 &&
-              exactObb->getHalfAxis(2).normalized().dot(expectedUp) > 1.0 - 1e-12,
-          "Tileset: BoundingRegion OBB axes use cesium-native ENU tangent frame");
-
-    const Vec3 center = TilesetTestAccess::tileBoundsCenter(bounds);
-    Camera camera;
-    camera.lookAt(center + center.normalized() * 200000.0,
-                  center,
-                  Vec3::unitZ());
-    const Frustum frustum = camera.frustum(800.0, 800.0);
-    check(TilesetTestAccess::tileIntersectsFrustum(exactTile, frustum),
-          "Tileset: BoundingRegion OBB participates in frustum visibility");
 }
 
 void testTilesetBoundingRegionObbHandlesLargeRectanglesLikeCesiumNative() {
@@ -27190,10 +27057,8 @@ int main() {
     testRasterMappedTemporaryAncestorDoesNotReportMoreDetail();
     testRasterOverlayNativeTranslationAndRendererWindow();
     testHeightmapTerrainProviderExposesAttribution();
-    testTilesetBoundsUseQuantizedMeshHeightRange();
     testTilesetBoundingRegionDegenerateDistanceMatchesCesiumNative();
     testTileBoundsMetricsUsesCentralDefaultTerrainHeightRange();
-    testTilesetBoundingRegionObbUsesQuantizedMeshHeightRange();
     testTilesetBoundingRegionObbHandlesLargeRectanglesLikeCesiumNative();
     testS2CellBoundingVolumeDistanceAndPlaneIntersectionMatchNative();
     testTilesetTotalBytesIncludesDecodedHeightmapPayload();
