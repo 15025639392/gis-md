@@ -316,6 +316,12 @@ add_executable(test_frustum
 target_link_libraries(test_frustum PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_frustum COMMAND test_frustum)
 
+add_executable(test_scene_tileset_diagnostics
+    unit/scene/test_scene_tileset_diagnostics.cpp
+)
+target_link_libraries(test_scene_tileset_diagnostics PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_scene_tileset_diagnostics COMMAND test_scene_tileset_diagnostics)
+
 add_executable(test_globe
     unit/globe/test_globe.cpp
 )
