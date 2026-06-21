@@ -21105,51 +21105,6 @@ void testTilesetFrameResourceBudgetUsesProviderTransportLane() {
     }
 }
 
-void testTilesetLoadDiagnosticsExposeTerrainProviderRequestDiagnostics() {
-    BlockingPlatformBridge bridge;
-    TilesetOptions options;
-    options.maximumSimultaneousTileLoads = 2;
-
-    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
-        "https://example.invalid/{z}/{x}/{y}.terrain");
-    provider->setPlatformBridge(&bridge);
-    auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, options);
-
-    const TileKey key{"Geographic-TMS", 1, 0, 0};
-    TilesetTestAccess::ensureTile(tileset, key);
-    TilesetTestAccess::requestMissingTile(tileset, key);
-
-    check(bridge.waitUntilEntered(),
-          "TilesetLoadDiagnostics: test bridge observes terrain provider HTTP entry");
-    const TilesetLoadDiagnostics diag = tileset.loadDiagnostics();
-    check(diag.terrainProviderRequests.requestsStarted == 1 &&
-              diag.terrainProviderRequests.requestsCompleted == 0 &&
-              diag.terrainProviderRequests.activeWorkerBlockingRequests == 0 &&
-              diag.terrainProviderRequests.peakWorkerBlockingRequests == 0 &&
-              diag.terrainProviderRequests.maximumTransportActiveRequests == 11,
-          "TilesetLoadDiagnostics: exposes terrain provider async bridge transport limit without worker blocking");
-    Diagnostics sceneDiagnostics;
-    SceneTilesetDiagnostics::reset(sceneDiagnostics);
-    SceneTilesetDiagnostics::addTileset(sceneDiagnostics, tileset, true);
-    check(sceneDiagnostics.terrainProviderRequestsStarted == 1 &&
-              sceneDiagnostics.terrainProviderRequestsCompleted == 0 &&
-              sceneDiagnostics.terrainProviderActiveWorkerBlockingRequests == 0 &&
-              sceneDiagnostics.terrainProviderPeakWorkerBlockingRequests == 0 &&
-              sceneDiagnostics.terrainTransportActiveRequestLimit == 11,
-          "SceneTilesetDiagnostics: exposes terrain provider request diagnostics");
-    check(bridge.complete(404),
-          "TilesetLoadDiagnostics: test bridge completes terrain provider request");
-    for (int i = 0; i < 200 &&
-                    tileset.loadDiagnostics()
-                            .terrainProviderRequests.requestsCompleted == 0;
-         ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    check(tileset.loadDiagnostics().terrainProviderRequests.requestsCompleted == 1,
-          "TilesetLoadDiagnostics: completed async terrain provider request drains before teardown");
-}
-
 void testTilesetLoadDiagnosticsExposeRasterProviderRequestDiagnostics() {
     BlockingPlatformBridge bridge;
     auto imageryProvider =
@@ -26990,7 +26945,6 @@ int main() {
     testTileFrameResourceBudgetPlannerKeepsTerminalTransitionsWhenWorkerLoadsDisabled();
     testTileFrameBudgetFallbackKeepsUploadsAliveWhenWorkerLoadsDisabled();
     testTilesetFrameResourceBudgetUsesProviderTransportLane();
-    testTilesetLoadDiagnosticsExposeTerrainProviderRequestDiagnostics();
     testTilesetLoadDiagnosticsExposeRasterProviderRequestDiagnostics();
     testTilesetLoadDiagnosticsAggregatesRasterProviderRequestPeaks();
     testProviderRequestDiagnosticsAggregatorCombinesCountsAndPeaks();

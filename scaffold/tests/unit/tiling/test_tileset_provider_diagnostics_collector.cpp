@@ -4,15 +4,105 @@
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/providers/ImageryProvider.h"
+#include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
+#include "earth_engine/platform/bridge/PlatformBridge.h"
+#include "earth_engine/scene/SceneTilesetDiagnostics.h"
 #include "earth_engine/tiling/TileScheme.h"
+#include "earth_engine/tiling/Tileset.h"
 #include "earth_engine/tiling/TilesetProviderDiagnosticsCollector.h"
 
+#include <chrono>
+#include <condition_variable>
+#include <functional>
 #include <memory>
+#include <mutex>
+#include <thread>
+#include <vector>
 
 using namespace earth_engine;
 
+namespace earth_engine {
+struct TilesetTestAccess {
+    static TilesetTile* ensureTile(Tileset& tileset, const TileKey& key) {
+        return tileset.contentAccess_.ensureTile(key);
+    }
+
+    static void requestMissingTile(Tileset& tileset, const TileKey& key) {
+        tileset.requestMissingContent({
+            TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Normal}});
+    }
+};
+} // namespace earth_engine
+
 namespace {
+
+class BlockingHttpRequest final : public HttpRequest {
+public:
+    void cancel() override {}
+};
+
+class BlockingPlatformBridge final : public PlatformBridge {
+public:
+    void onMemoryPressure() override {}
+    void onEnterBackground() override {}
+    void onEnterForeground() override {}
+
+    std::unique_ptr<HttpRequest> get(
+        const std::string&,
+        std::function<void(int, std::vector<uint8_t>)> callback,
+        HttpRequestOptions = {}) override {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            callback_ = std::move(callback);
+            entered_ = true;
+        }
+        cv_.notify_all();
+        return std::make_unique<BlockingHttpRequest>();
+    }
+
+    int maximumActiveRequests() const override { return 11; }
+
+    bool waitUntilEntered() {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return cv_.wait_for(
+            lock,
+            std::chrono::seconds(2),
+            [this]() { return entered_; });
+    }
+
+    bool complete(int statusCode, std::vector<uint8_t> body = {}) {
+        std::function<void(int, std::vector<uint8_t>)> callback;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            callback = std::move(callback_);
+        }
+        if (!callback) {
+            return false;
+        }
+        callback(statusCode, std::move(body));
+        return true;
+    }
+
+    std::string cacheDirectory() const override { return "/tmp"; }
+    std::string documentsDirectory() const override { return "/tmp"; }
+    std::unique_ptr<DecodedImage> decodeImage(
+        const uint8_t*,
+        size_t) override {
+        return nullptr;
+    }
+    void log(LogLevel, const std::string&, const std::string&) override {}
+    DeviceInfo deviceInfo() const override { return {}; }
+    std::string getToken(const std::string&) const override { return {}; }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::function<void(int, std::vector<uint8_t>)> callback_;
+    bool entered_ = false;
+};
 
 class DiagnosticTerrainProvider final : public TerrainProvider {
 public:
@@ -159,6 +249,58 @@ TEST(
             .terrainProviderRequests
             .maximumTransportActiveRequests,
         11);
+}
+
+TEST(
+    TilesetProviderDiagnosticsCollectorTest,
+    ExposesQuantizedMeshTerrainProviderRequestDiagnosticsThroughTilesetAndScene) {
+    BlockingPlatformBridge bridge;
+    TilesetOptions options;
+    options.maximumSimultaneousTileLoads = 2;
+
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/{z}/{x}/{y}.terrain");
+    provider->setPlatformBridge(&bridge);
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, options);
+
+    const TileKey key{"Geographic-TMS", 1, 0, 0};
+    TilesetTestAccess::ensureTile(tileset, key);
+    TilesetTestAccess::requestMissingTile(tileset, key);
+
+    ASSERT_TRUE(bridge.waitUntilEntered());
+    const TilesetLoadDiagnostics diag = tileset.loadDiagnostics();
+    EXPECT_EQ(diag.terrainProviderRequests.requestsStarted, 1);
+    EXPECT_EQ(diag.terrainProviderRequests.requestsCompleted, 0);
+    EXPECT_EQ(
+        diag.terrainProviderRequests.activeWorkerBlockingRequests,
+        0);
+    EXPECT_EQ(diag.terrainProviderRequests.peakWorkerBlockingRequests, 0);
+    EXPECT_EQ(
+        diag.terrainProviderRequests.maximumTransportActiveRequests,
+        11);
+
+    Diagnostics sceneDiagnostics;
+    SceneTilesetDiagnostics::reset(sceneDiagnostics);
+    SceneTilesetDiagnostics::addTileset(sceneDiagnostics, tileset, true);
+    EXPECT_EQ(sceneDiagnostics.terrainProviderRequestsStarted, 1);
+    EXPECT_EQ(sceneDiagnostics.terrainProviderRequestsCompleted, 0);
+    EXPECT_EQ(
+        sceneDiagnostics.terrainProviderActiveWorkerBlockingRequests,
+        0);
+    EXPECT_EQ(sceneDiagnostics.terrainProviderPeakWorkerBlockingRequests, 0);
+    EXPECT_EQ(sceneDiagnostics.terrainTransportActiveRequestLimit, 11);
+
+    ASSERT_TRUE(bridge.complete(404));
+    for (int i = 0; i < 200 &&
+                    tileset.loadDiagnostics()
+                            .terrainProviderRequests.requestsCompleted == 0;
+         ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_EQ(
+        tileset.loadDiagnostics().terrainProviderRequests.requestsCompleted,
+        1);
 }
 
 TEST(
