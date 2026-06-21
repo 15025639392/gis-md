@@ -1772,6 +1772,22 @@ TEST(TileMapServiceUrlTest, ResolvesShortNonXmlPathBesideEndpointLikeCesiumNativ
         tileMapServiceXmlUrl("https://example.com/ab?some=parameter"));
 }
 
+TEST(TileMapServiceUrlTest, BuildsTileBaseFromOriginalEndpointLikeCesiumNative) {
+    EXPECT_EQ(
+        "https://example.com/tms/",
+        tileMapServiceTileBaseUrl("https://example.com/tms"));
+    EXPECT_EQ(
+        "https://example.com/tms/?some=parameter",
+        tileMapServiceTileBaseUrl("https://example.com/tms?some=parameter"));
+    EXPECT_EQ(
+        "https://example.com/tms/tilemapresource.xml?some=parameter",
+        tileMapServiceTileBaseUrl(
+            "https://example.com/tms/tilemapresource.xml?some=parameter"));
+    EXPECT_EQ(
+        "https://example.com/ab?some=parameter",
+        tileMapServiceTileBaseUrl("https://example.com/ab?some=parameter"));
+}
+
 TEST(TileMapServiceUrlTest, DoesNotAddSlashAfterExistingXmlWithQueryLikeCesiumNative) {
     EXPECT_EQ(
         "https://example.com/tms/tilemapresource.xml?some=parameter",

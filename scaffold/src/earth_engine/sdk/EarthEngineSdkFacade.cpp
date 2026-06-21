@@ -198,7 +198,8 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
 
             TileMapServiceImagerySource source =
                 createTileMapServiceImagerySource(
-                    xmlUrl,
+                    tileMapServiceTileBaseUrl(
+                        overlayConfig.tileMapResourceUrl),
                     std::string(bytes.begin(), bytes.end()),
                     overlayConfig.attribution);
             if (!source.provider || !source.scheme) {

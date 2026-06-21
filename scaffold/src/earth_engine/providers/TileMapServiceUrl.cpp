@@ -460,6 +460,32 @@ std::string tileMapServiceXmlUrl(const std::string& url) {
     return resolveRelativeUrl(updatedPrefix, kResource) + suffix;
 }
 
+std::string tileMapServiceTileBaseUrl(const std::string& url) {
+    const size_t suffixStart = url.find_first_of("?#");
+    const std::string prefix =
+        suffixStart == std::string::npos ? url : url.substr(0, suffixStart);
+    const std::string suffix =
+        suffixStart == std::string::npos ? std::string() : url.substr(suffixStart);
+
+    const size_t schemePos = prefix.find("://");
+    const size_t pathStart = schemePos == std::string::npos
+        ? 0
+        : prefix.find('/', schemePos + 3);
+    std::string path = pathStart == std::string::npos
+        ? std::string()
+        : prefix.substr(pathStart);
+
+    if (path.size() >= 4 && !endsWith(path, ".xml") && path.back() != '/') {
+        path.push_back('/');
+        if (pathStart == std::string::npos) {
+            return prefix + "/" + suffix;
+        }
+        return prefix.substr(0, pathStart) + path + suffix;
+    }
+
+    return url;
+}
+
 std::string tileMapServiceTileUrl(const std::string& baseUrl,
                                   const std::string& tileSetUrl,
                                   int x,
