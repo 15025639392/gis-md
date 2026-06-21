@@ -467,6 +467,32 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceRangeTrimsTileEdgeTouchesLikeCes
     }
 }
 
+TEST(RasterOverlayLifecycleTest, DirectTileCacheRetainsRecentAndMarkedTiles) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    TileKey key{scheme->id(), 3, 4, 2};
+
+    provider.setFrameNumber(1);
+    auto tile = provider.getTile(key);
+    ASSERT_NE(nullptr, tile);
+    EXPECT_EQ(1, provider.getCachedTileCount());
+
+    provider.setFrameNumber(2);
+    provider.trimUnusedTiles();
+    EXPECT_EQ(1, provider.getCachedTileCount());
+
+    provider.setFrameNumber(122);
+    provider.markUsed(key);
+    provider.trimUnusedTiles();
+    EXPECT_EQ(1, provider.getCachedTileCount());
+
+    provider.setFrameNumber(243);
+    tile.reset();
+    provider.trimUnusedTiles();
+    EXPECT_EQ(0, provider.getCachedTileCount());
+}
+
 TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayMaximumTextureSize) {
     ConfigurableImageryProvider imagery;
     imagery.tileWidthValue = 256;
