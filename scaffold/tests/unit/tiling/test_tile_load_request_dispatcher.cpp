@@ -1078,3 +1078,81 @@ TEST(TileLoadRequestDispatcherTest, SkipsPendingUploadKeys) {
     EXPECT_EQ(1u, pendingLoads.contentUploadCount());
     EXPECT_EQ(0u, budget.networkRequestsIssued());
 }
+
+TEST(TileLoadRequestDispatcherTest, SkipsClaimedUploadKeys) {
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxMainThreadFinalizesPerFrame = 2;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        pendingLoads.addTerrainUpload(PendingTerrainUpload{
+            key,
+            "terrain-upload-claimed",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            nullptr});
+        pendingLoads.addContentUpload(PendingContentUpload{
+            key,
+            "content-upload-claimed",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileContentLoadResult::render(std::make_unique<GltfModel>())});
+
+        EXPECT_TRUE(
+            pendingLoads.takeHighestPriorityUpload(false, budget)
+                .has_value());
+        EXPECT_TRUE(
+            pendingLoads.takeHighestPriorityUpload(false, budget)
+                .has_value());
+    }
+
+    bool issued = false;
+    DispatcherBudgetTerrainProvider terrainProvider;
+    DispatcherBudgetContentProvider contentProvider;
+
+    TileLoadDispatchResult terrainResult =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            terrainProvider,
+            key,
+            "terrain-upload-claimed",
+            TileLoadPriorityGroup::Urgent,
+            100.0,
+            [&issued]() { issued = true; });
+    TileLoadDispatchResult contentResult =
+        TileLoadRequestDispatcher::requestContent(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            contentProvider,
+            key,
+            "content-upload-claimed",
+            TileLoadPriorityGroup::Urgent,
+            100.0,
+            [&issued]() { issued = true; });
+
+    EXPECT_EQ(TileLoadDispatchResult::Skipped, terrainResult);
+    EXPECT_EQ(TileLoadDispatchResult::Skipped, contentResult);
+    EXPECT_FALSE(issued);
+    EXPECT_EQ(0, terrainProvider.requestCount);
+    EXPECT_EQ(0, contentProvider.requestCount);
+    EXPECT_TRUE(requestState.empty());
+    EXPECT_EQ(0u, pendingLoads.terrainUploadCount());
+    EXPECT_EQ(0u, pendingLoads.contentUploadCount());
+    EXPECT_TRUE(pendingLoads.hasWork());
+    EXPECT_EQ(0u, budget.networkRequestsIssued());
+}
