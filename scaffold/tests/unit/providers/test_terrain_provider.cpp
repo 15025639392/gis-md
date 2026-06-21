@@ -417,6 +417,54 @@ TEST(QuantizedMeshTerrainProviderTest, InvalidBodyFailsTerminally) {
     EXPECT_EQ(1, provider.requestDiagnostics().requestsCompleted);
 }
 
+TEST(QuantizedMeshTerrainProviderTest, UsesAsyncBridgeWithoutWorkerBlockingWait) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/{z}/{x}/{y}.terrain");
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+    CancellationToken token;
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool callbackCalled = false;
+    TerrainTileLoadStatus completedStatus = TerrainTileLoadStatus::Success;
+
+    provider.requestTile(
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        token,
+        [&](const TileKey&, TerrainTileLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completedStatus = result.status;
+                callbackCalled = true;
+            }
+            cv.notify_one();
+        });
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    ProviderRequestDiagnostics activeDiag = provider.requestDiagnostics();
+    EXPECT_EQ(1, activeDiag.requestsStarted);
+    EXPECT_EQ(0, activeDiag.requestsCompleted);
+    EXPECT_EQ(0, activeDiag.activeWorkerBlockingRequests);
+    EXPECT_EQ(0, activeDiag.peakWorkerBlockingRequests);
+
+    token.cancel();
+    ASSERT_TRUE(bridge.completeNext(200, {1, 2, 3}));
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return callbackCalled; }));
+    }
+
+    ProviderRequestDiagnostics doneDiag = provider.requestDiagnostics();
+    EXPECT_EQ(TerrainTileLoadStatus::Cancelled, completedStatus);
+    EXPECT_EQ(1, doneDiag.requestsStarted);
+    EXPECT_EQ(1, doneDiag.requestsCompleted);
+    EXPECT_EQ(0, doneDiag.activeWorkerBlockingRequests);
+    EXPECT_EQ(0, doneDiag.peakWorkerBlockingRequests);
+}
+
 TEST(QuantizedMeshTerrainProviderTest, LayerJsonUrlConfigUsesSeparateFetcher) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
