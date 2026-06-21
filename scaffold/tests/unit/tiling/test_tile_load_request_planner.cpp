@@ -82,3 +82,26 @@ TEST(TileLoadRequestPlannerTest, SkipsNonRetryableLoadStates) {
         TileLoadRequestKind::Skip,
         TileLoadRequestPlanner::classify(snapshot));
 }
+
+TEST(TileLoadRequestPlannerTest, ClassifiesTemporarilyFailedTilesAsRetryable) {
+    TileLoadRequestSnapshot snapshot;
+    snapshot.hasTile = true;
+    snapshot.loadState = TileLoadState::FailedTemporarily;
+    snapshot.terrainProviderSupportsTile = true;
+
+    EXPECT_EQ(
+        TileLoadRequestKind::Terrain,
+        TileLoadRequestPlanner::classify(snapshot));
+
+    snapshot.contentProviderSupportsTile = true;
+
+    EXPECT_EQ(
+        TileLoadRequestKind::Content,
+        TileLoadRequestPlanner::classify(snapshot));
+
+    snapshot.loadState = TileLoadState::Failed;
+
+    EXPECT_EQ(
+        TileLoadRequestKind::Skip,
+        TileLoadRequestPlanner::classify(snapshot));
+}
