@@ -111,27 +111,33 @@ TEST(QuantizedMeshContentLoaderTest,
                 result.surfaceMesh->rasterOverlayDetails.boundingRegion
                     .maximumHeight,
                 1e-6);
-    ASSERT_TRUE(result.rasterOverlayDetails.has_value());
+    ASSERT_TRUE(result.metadata.rasterOverlayDetails.has_value());
     const Rectangle* rasterRectangle =
-        result.rasterOverlayDetails->findRectangleForOverlayProjection(
+        result.metadata.rasterOverlayDetails->findRectangleForOverlayProjection(
             RasterOverlayProjection::Geographic);
     ASSERT_NE(nullptr, rasterRectangle);
     EXPECT_EQ(geographicRootWestRectangle(), *rasterRectangle);
     EXPECT_EQ(geographicRootWestRectangle(),
-              result.rasterOverlayDetails->boundingRegion.rectangle);
+              result.metadata.rasterOverlayDetails->boundingRegion.rectangle);
     EXPECT_NEAR(-10.0,
-                result.rasterOverlayDetails->boundingRegion.minimumHeight,
+                result.metadata.rasterOverlayDetails->boundingRegion
+                    .minimumHeight,
                 1e-6);
     EXPECT_NEAR(150.0,
-                result.rasterOverlayDetails->boundingRegion.maximumHeight,
+                result.metadata.rasterOverlayDetails->boundingRegion
+                    .maximumHeight,
                 1e-6);
-    ASSERT_TRUE(result.updatedBoundingVolume.has_value());
+    ASSERT_TRUE(result.metadata.updatedBoundingVolume.has_value());
     EXPECT_EQ(TileBoundingVolumeKind::Region,
-              result.updatedBoundingVolume->kind);
+              result.metadata.updatedBoundingVolume->kind);
     EXPECT_EQ(geographicRootWestRectangle(),
-              result.updatedBoundingVolume->region);
-    EXPECT_NEAR(-10.0, result.updatedBoundingVolume->minimumHeight, 1e-6);
-    EXPECT_NEAR(150.0, result.updatedBoundingVolume->maximumHeight, 1e-6);
+              result.metadata.updatedBoundingVolume->region);
+    EXPECT_NEAR(-10.0,
+                result.metadata.updatedBoundingVolume->minimumHeight,
+                1e-6);
+    EXPECT_NEAR(150.0,
+                result.metadata.updatedBoundingVolume->maximumHeight,
+                1e-6);
     EXPECT_TRUE(result.availabilityUpdates.empty());
 }
 
@@ -198,7 +204,7 @@ TEST(QuantizedMeshContentLoaderTest, InvalidBodyFailsWithoutUpdates) {
     EXPECT_FALSE(result.success());
     EXPECT_EQ(QuantizedMeshContentLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.surfaceMesh);
-    EXPECT_FALSE(result.updatedBoundingVolume.has_value());
-    EXPECT_FALSE(result.rasterOverlayDetails.has_value());
+    EXPECT_FALSE(result.metadata.updatedBoundingVolume.has_value());
+    EXPECT_FALSE(result.metadata.rasterOverlayDetails.has_value());
     EXPECT_TRUE(result.availabilityUpdates.empty());
 }

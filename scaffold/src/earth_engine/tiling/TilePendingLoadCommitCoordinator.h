@@ -3,6 +3,7 @@
 #include "TileContentUploadCommitter.h"
 #include "TileEmptyContentRegistry.h"
 #include "TileLoadLifecycle.h"
+#include "TileLoadResultMetadataApplicator.h"
 #include "TileLoadTypes.h"
 #include "TilePendingUploadCompletion.h"
 #include "TileTerminalLoadCommitter.h"
@@ -104,21 +105,14 @@ public:
         }
 
         if (TilesetTile* tile = ensureTile(upload.key)) {
-            if (upload.updatedBoundingVolume) {
-                tile->boundingVolume = std::move(upload.updatedBoundingVolume);
-            }
             if (upload.surfaceMesh &&
                 !tile->content.renderContent.hasSurfaceMesh()) {
                 tile->content.renderContent.setSurfaceMesh(
                     std::move(upload.surfaceMesh));
             }
-            if (upload.rasterOverlayDetails) {
-                if (RasterOverlayDetails* details =
-                        tile->content.renderContent
-                            .mutableRasterOverlayDetails()) {
-                    *details = std::move(*upload.rasterOverlayDetails);
-                }
-            }
+            TileLoadResultMetadataApplicator::apply(
+                *tile,
+                std::move(upload.metadata));
             TileTerrainUploadCommitter::prepareTerrainRenderContent(*tile);
             if (!resourceSmoothingActive &&
                 !tile->content.renderContent.hasSurfaceMesh()) {

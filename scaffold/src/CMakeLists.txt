@@ -366,6 +366,9 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileRenderContentState.h
     earth_engine/tiling/TileRenderReferenceState.h
     earth_engine/tiling/TileRenderReferenceReleaser.h
+    earth_engine/tiling/TileLoadResultMetadata.h
+    earth_engine/tiling/TileLoadResultMetadataApplicator.h
+    earth_engine/tiling/TileLoadResultMetadataApplicator.cpp
     earth_engine/tiling/TileLoadTypes.h
     earth_engine/tiling/TileOcclusionState.h
     earth_engine/tiling/TileOcclusionCallback.h

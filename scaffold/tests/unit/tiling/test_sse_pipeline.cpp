@@ -11764,6 +11764,56 @@ void testGltfRenderContentProvidesRasterOverlayDetails() {
           "TileRenderContentState: glTF content carries raster overlay details like cesium-native TileLoadResult");
 }
 
+void testTileContentUploadPolicyAppliesTileLoadResultFields() {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.boundingVolume =
+        TileBoundingVolume::fromRegion(Rectangle{0.0, 0.0, 1.0, 1.0},
+                                       0.0,
+                                       1.0);
+
+    auto model = std::make_unique<GltfModel>();
+    model->rasterOverlayDetails.setGeographicRectangle(
+        Rectangle{1.0, 1.0, 2.0, 2.0});
+    TileContentLoadResult result = TileContentLoadResult::render(
+        std::move(model));
+    const Rectangle updatedRectangle{2.0, 3.0, 4.0, 5.0};
+    const Rectangle updatedContentRectangle{6.0, 7.0, 8.0, 9.0};
+    const Rectangle resultRasterRectangle{10.0, 11.0, 12.0, 13.0};
+    result.metadata.updatedBoundingVolume =
+        TileBoundingVolume::fromRegion(updatedRectangle, -25.0, 125.0);
+    result.metadata.updatedContentBoundingVolume =
+        TileBoundingVolume::fromRegion(updatedContentRectangle, -5.0, 15.0);
+    RasterOverlayDetails resultDetails;
+    resultDetails.setGeographicRectangle(resultRasterRectangle, -9.0, 19.0);
+    result.metadata.rasterOverlayDetails = std::move(resultDetails);
+
+    TileContentUploadPolicy::prepareGltfRenderContent(
+        tile,
+        std::move(result));
+
+    const RasterOverlayDetails& committedDetails =
+        tile.content.renderContent.rasterOverlayDetails();
+    const Rectangle* committedRaster =
+        committedDetails.findRectangleForOverlayProjection(
+            RasterOverlayProjection::Geographic);
+    check(tile.boundingVolume &&
+              tile.boundingVolume->kind == TileBoundingVolumeKind::Region &&
+              tile.boundingVolume->region == updatedRectangle &&
+              tile.boundingVolume->minimumHeight == -25.0 &&
+              tile.boundingVolume->maximumHeight == 125.0 &&
+              tile.contentBoundingVolume &&
+              tile.contentBoundingVolume->kind ==
+                  TileBoundingVolumeKind::Region &&
+              tile.contentBoundingVolume->region == updatedContentRectangle &&
+              committedRaster &&
+              *committedRaster == resultRasterRectangle &&
+              committedDetails.boundingRegion.rectangle ==
+                  resultRasterRectangle &&
+              committedDetails.boundingRegion.minimumHeight == -9.0 &&
+              committedDetails.boundingRegion.maximumHeight == 19.0,
+          "TileContentUploadPolicy: glTF upload applies TileLoadResult-like bounds and raster details");
+}
+
 void testTileContentUploadPolicyMarksGltfRenderResourceFailure() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.renderContent.setGltfContent(std::make_unique<GltfModel>());
@@ -26677,6 +26727,7 @@ int main() {
     testTileTerminalLoadCommitterWritesEmptyRegistryActions();
     testTileContentUploadPolicyPreparesGltfRenderContent();
     testGltfRenderContentProvidesRasterOverlayDetails();
+    testTileContentUploadPolicyAppliesTileLoadResultFields();
     testTileContentUploadPolicyMarksGltfRenderResourceFailure();
     testTileContentUploadCommitterAppliesRenderResourceOutcome();
     testTileTerrainUploadPolicyMarksTerrainRenderContentStates();

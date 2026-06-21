@@ -262,6 +262,12 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     surfaceMesh->vertices.push_back(vertex);
 
     const Rectangle updatedRectangle(0.1, 0.2, 0.3, 0.4);
+    const Rectangle updatedContentRectangle(0.5, 0.6, 0.7, 0.8);
+    TileLoadResultMetadata metadata;
+    metadata.updatedBoundingVolume =
+        TileBoundingVolume::fromRegion(updatedRectangle, -25.0, 125.0);
+    metadata.updatedContentBoundingVolume =
+        TileBoundingVolume::fromRegion(updatedContentRectangle, -5.0, 15.0);
     PendingTerrainUpload upload{
         key,
         cacheKey,
@@ -270,7 +276,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         std::move(surfaceMesh),
         {},
-        TileBoundingVolume::fromRegion(updatedRectangle, -25.0, 125.0)};
+        std::move(metadata)};
 
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -311,6 +317,11 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_EQ(updatedRectangle, tile.boundingVolume->region);
     EXPECT_DOUBLE_EQ(-25.0, tile.boundingVolume->minimumHeight);
     EXPECT_DOUBLE_EQ(125.0, tile.boundingVolume->maximumHeight);
+    ASSERT_TRUE(tile.contentBoundingVolume.has_value());
+    EXPECT_EQ(TileBoundingVolumeKind::Region, tile.contentBoundingVolume->kind);
+    EXPECT_EQ(updatedContentRectangle, tile.contentBoundingVolume->region);
+    EXPECT_DOUBLE_EQ(-5.0, tile.contentBoundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(15.0, tile.contentBoundingVolume->maximumHeight);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }
@@ -334,6 +345,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         detailsRectangle,
         -25.0,
         125.0);
+    TileLoadResultMetadata metadata;
+    metadata.rasterOverlayDetails = std::move(rasterOverlayDetails);
 
     PendingTerrainUpload upload{
         key,
@@ -343,8 +356,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         std::move(surfaceMesh),
         {},
-        std::nullopt,
-        std::move(rasterOverlayDetails)};
+        std::move(metadata)};
 
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;

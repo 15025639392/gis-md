@@ -7,6 +7,7 @@
 #include "../threading/CancellationToken.h"
 #include "../tiling/TileKey.h"
 #include "../tiling/TileBoundingVolume.h"
+#include "../tiling/TileLoadResultMetadata.h"
 #include "../tiling/TileRefine.h"
 
 #include <cstddef>
@@ -50,11 +51,15 @@ struct TileContentLoadResult {
     TileContentLoadStatus status = TileContentLoadStatus::Failed;
     std::unique_ptr<GltfModel> gltfModel;
     Mat4 contentTransform = Mat4::identity();
+    TileLoadResultMetadata metadata;
 
     static TileContentLoadResult render(std::unique_ptr<GltfModel> model) {
         TileContentLoadResult result;
         result.status = model ? TileContentLoadStatus::Render
                               : TileContentLoadStatus::Failed;
+        if (model) {
+            result.metadata.rasterOverlayDetails = model->rasterOverlayDetails;
+        }
         result.gltfModel = std::move(model);
         return result;
     }

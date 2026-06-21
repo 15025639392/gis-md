@@ -3,6 +3,7 @@
 #include "ProviderRequestDiagnostics.h"
 #include "../tiling/TileKey.h"
 #include "../tiling/TileBoundingVolume.h"
+#include "../tiling/TileLoadResultMetadata.h"
 #include "../tiling/SurfaceTile.h"
 #include "../platform/bridge/PlatformBridge.h"
 #include "../threading/CancellationToken.h"
@@ -76,8 +77,7 @@ struct TerrainTileLoadResult {
     TerrainTileLoadStatus status = TerrainTileLoadStatus::Failed;
     std::unique_ptr<DecodedHeightmap> heightmap;
     std::unique_ptr<SurfaceTileMesh> surfaceMesh;
-    std::optional<TileBoundingVolume> updatedBoundingVolume;
-    std::optional<RasterOverlayDetails> rasterOverlayDetails;
+    TileLoadResultMetadata metadata;
     std::vector<QuantizedMeshAvailabilityUpdate>
         quantizedMeshAvailabilityUpdates;
 
@@ -98,7 +98,7 @@ struct TerrainTileLoadResult {
         result.status = mesh ? TerrainTileLoadStatus::Success
                              : TerrainTileLoadStatus::Failed;
         if (mesh) {
-            result.rasterOverlayDetails = mesh->rasterOverlayDetails;
+            result.metadata.rasterOverlayDetails = mesh->rasterOverlayDetails;
         }
         result.surfaceMesh = std::move(mesh);
         return result;

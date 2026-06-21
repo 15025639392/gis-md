@@ -4,6 +4,7 @@
 #include "../providers/TerrainProvider.h"
 #include "../tiling/TileBoundingVolume.h"
 #include "../tiling/TileKey.h"
+#include "../tiling/TileLoadResultMetadata.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -29,8 +30,7 @@ struct QuantizedMeshContentLoadResult {
     QuantizedMeshContentLoadStatus status =
         QuantizedMeshContentLoadStatus::Failed;
     std::unique_ptr<SurfaceTileMesh> surfaceMesh;
-    std::optional<TileBoundingVolume> updatedBoundingVolume;
-    std::optional<RasterOverlayDetails> rasterOverlayDetails;
+    TileLoadResultMetadata metadata;
     std::vector<QuantizedMeshAvailabilityUpdate> availabilityUpdates;
 
     bool success() const {

@@ -1,5 +1,6 @@
 #include "TileContentUploadPolicy.h"
 
+#include "TileLoadResultMetadataApplicator.h"
 #include "RasterMappedToTilesetTile.h"
 #include "TilesetTile.h"
 
@@ -11,6 +12,9 @@ void TileContentUploadPolicy::prepareGltfRenderContent(
     tile.content.renderContent.prepareGltfContent(
         std::move(result.gltfModel),
         result.contentTransform);
+    TileLoadResultMetadataApplicator::apply(
+        tile,
+        std::move(result.metadata));
     tile.markRenderContentLoaded();
 }
 
