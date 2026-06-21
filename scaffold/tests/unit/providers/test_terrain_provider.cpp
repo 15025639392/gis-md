@@ -920,6 +920,51 @@ TEST(QuantizedMeshTerrainProviderTest, WaterMaskOptionGatesExtensionQueryLikeCes
         provider.buildUrl(TileKey{"Geographic-TMS", 2, 3, 1}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, WaterMaskOnlyLayerJsonDoesNotImplyMetadataLikeCesiumNative) {
+    QuantizedMeshTerrainProvider enabledProvider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    enabledProvider.setWaterMaskEnabled(true);
+    const std::string waterMaskOnlyLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "version": "1.0.0",
+      "tiles": ["{z}/{x}/{y}.terrain?v={version}"],
+      "extensions": ["octvertexnormals", "watermask"],
+      "minzoom": 0,
+      "maxzoom": 4
+    })json";
+
+    ASSERT_TRUE(enabledProvider.configureFromLayerJson(
+        waterMaskOnlyLayerJson,
+        "https://example.invalid/terrain/layer.json"));
+
+    EXPECT_EQ(
+        "https://example.invalid/terrain/2/3/1.terrain?v=1.0.0&extensions=octvertexnormals-watermask",
+        enabledProvider.buildUrl(TileKey{"Geographic-TMS", 2, 3, 1}));
+
+    QuantizedMeshTerrainProvider disabledProvider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string onlyWaterMaskLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "version": "1.0.0",
+      "tiles": ["{z}/{x}/{y}.terrain?v={version}"],
+      "extensions": ["watermask"],
+      "minzoom": 0,
+      "maxzoom": 4
+    })json";
+
+    ASSERT_TRUE(disabledProvider.configureFromLayerJson(
+        onlyWaterMaskLayerJson,
+        "https://example.invalid/terrain/layer.json"));
+
+    EXPECT_EQ(
+        "https://example.invalid/terrain/2/3/1.terrain?v=1.0.0",
+        disabledProvider.buildUrl(TileKey{"Geographic-TMS", 2, 3, 1}));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, ExtensionQueryReplacesExistingExactKeyLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
