@@ -2121,6 +2121,11 @@ TEST(
         root->content.renderContent.surfaceMesh());
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     EXPECT_EQ(4u, root->children.size());
+
+    root->children.clear();
+    root->content.loadState = TileLoadState::Done;
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    EXPECT_EQ(4u, root->children.size());
 }
 
 TEST(

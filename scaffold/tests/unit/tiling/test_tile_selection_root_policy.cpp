@@ -1,5 +1,9 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/QuadtreeGeometricError.h"
+#include "earth_engine/core/geodesy/WebMercatorProjection.h"
+#include "earth_engine/core/math/MathUtils.h"
 #include "earth_engine/tiling/TileContentAccess.h"
 #include "earth_engine/tiling/TileContentLifecycleManager.h"
 #include "earth_engine/tiling/TileLoadState.h"
@@ -135,8 +139,23 @@ TEST(TileSelectionRootPolicyTest, VirtualTerrainRootIsEmptyDoneRefineNode) {
     EXPECT_EQ(root->content.loadState, TileLoadState::Done);
     EXPECT_EQ(root->content.contentKind, TileContentKind::Empty);
     EXPECT_TRUE(root->unconditionallyRefine);
+    EXPECT_EQ(root->refine, TileRefine::Replace);
+    EXPECT_NEAR(root->bounds.west(), -MathUtils::OnePi, 1e-12);
+    EXPECT_NEAR(root->bounds.south(), -MathUtils::PiOverTwo, 1e-12);
+    EXPECT_NEAR(root->bounds.east(), MathUtils::OnePi, 1e-12);
+    EXPECT_NEAR(root->bounds.north(), MathUtils::PiOverTwo, 1e-12);
     ASSERT_TRUE(root->boundingVolume.has_value());
     EXPECT_EQ(root->boundingVolume->kind, TileBoundingVolumeKind::Region);
+    EXPECT_NEAR(root->boundingVolume->region.west(), -MathUtils::OnePi, 1e-12);
+    EXPECT_NEAR(
+        root->boundingVolume->region.south(),
+        -MathUtils::PiOverTwo,
+        1e-12);
+    EXPECT_NEAR(root->boundingVolume->region.east(), MathUtils::OnePi, 1e-12);
+    EXPECT_NEAR(
+        root->boundingVolume->region.north(),
+        MathUtils::PiOverTwo,
+        1e-12);
     EXPECT_DOUBLE_EQ(root->boundingVolume->minimumHeight, -1000.0);
     EXPECT_DOUBLE_EQ(root->boundingVolume->maximumHeight, 9000.0);
     EXPECT_EQ(root->rasterOverlayState.mappings().size(), 2u);
@@ -159,8 +178,32 @@ TEST(TileSelectionRootPolicyTest, VirtualGeographicRootLinksLevelZeroDataTiles) 
     EXPECT_EQ(root->children[1]->content.loadState, TileLoadState::Unloaded);
     EXPECT_FALSE(root->children[0]->unconditionallyRefine);
     EXPECT_FALSE(root->children[1]->unconditionallyRefine);
-    EXPECT_GT(root->children[0]->geometricError, 0.0);
-    EXPECT_GT(root->children[1]->geometricError, 0.0);
+
+    const TilesetTile& west = *root->children[0];
+    const TilesetTile& east = *root->children[1];
+    EXPECT_NEAR(616538.71824, west.geometricError, 1e-5);
+    EXPECT_NEAR(616538.71824, east.geometricError, 1e-5);
+    EXPECT_NEAR(west.bounds.west(), -MathUtils::OnePi, 1e-12);
+    EXPECT_NEAR(west.bounds.south(), -MathUtils::PiOverTwo, 1e-12);
+    EXPECT_NEAR(west.bounds.east(), 0.0, 1e-12);
+    EXPECT_NEAR(west.bounds.north(), MathUtils::PiOverTwo, 1e-12);
+    EXPECT_NEAR(east.bounds.west(), 0.0, 1e-12);
+    EXPECT_NEAR(east.bounds.south(), -MathUtils::PiOverTwo, 1e-12);
+    EXPECT_NEAR(east.bounds.east(), MathUtils::OnePi, 1e-12);
+    EXPECT_NEAR(east.bounds.north(), MathUtils::PiOverTwo, 1e-12);
+    for (const TilesetTile* child : root->children) {
+        ASSERT_TRUE(child->boundingVolume.has_value());
+        EXPECT_EQ(child->boundingVolume->kind, TileBoundingVolumeKind::Region);
+        EXPECT_DOUBLE_EQ(child->boundingVolume->minimumHeight, -1000.0);
+        EXPECT_DOUBLE_EQ(child->boundingVolume->maximumHeight, 9000.0);
+        EXPECT_TRUE(child->content.renderContent.hasTerrainHeightRange());
+        EXPECT_DOUBLE_EQ(
+            child->content.renderContent.terrainMinimumHeight(),
+            -1000.0);
+        EXPECT_DOUBLE_EQ(
+            child->content.renderContent.terrainMaximumHeight(),
+            9000.0);
+    }
 }
 
 TEST(TileSelectionRootPolicyTest, VirtualWebMercatorRootLinksLevelZeroDataTile) {
@@ -176,6 +219,27 @@ TEST(TileSelectionRootPolicyTest, VirtualWebMercatorRootLinksLevelZeroDataTile) 
     EXPECT_EQ(root->children[0]->parent, root);
     EXPECT_EQ(root->children[0]->content.loadState, TileLoadState::Unloaded);
     EXPECT_FALSE(root->children[0]->unconditionallyRefine);
-    EXPECT_GT(root->children[0]->geometricError, 0.0);
+    const Rectangle expectedBounds =
+        WebMercatorProjection::maximumGlobeRectangle();
+    EXPECT_NEAR(
+        calcLayerJsonTerrainGeometricError(Ellipsoid::WGS84(), expectedBounds),
+        root->children[0]->geometricError,
+        1e-5);
+    EXPECT_NEAR(root->children[0]->bounds.west(), expectedBounds.west(), 1e-12);
+    EXPECT_NEAR(
+        root->children[0]->bounds.south(),
+        expectedBounds.south(),
+        1e-12);
+    EXPECT_NEAR(root->children[0]->bounds.east(), expectedBounds.east(), 1e-12);
+    EXPECT_NEAR(
+        root->children[0]->bounds.north(),
+        expectedBounds.north(),
+        1e-12);
+    ASSERT_TRUE(root->children[0]->boundingVolume.has_value());
+    EXPECT_EQ(
+        root->children[0]->boundingVolume->kind,
+        TileBoundingVolumeKind::Region);
+    EXPECT_DOUBLE_EQ(root->children[0]->boundingVolume->minimumHeight, -1000.0);
+    EXPECT_DOUBLE_EQ(root->children[0]->boundingVolume->maximumHeight, 9000.0);
     EXPECT_EQ(root->rasterOverlayState.mappings().size(), 1u);
 }

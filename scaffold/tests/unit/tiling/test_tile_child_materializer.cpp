@@ -223,6 +223,28 @@ TEST(TileChildMaterializerTest, NoAvailableTerrainChildrenCreatesNoneLikeCesiumN
     EXPECT_TRUE(parent.children.empty());
 }
 
+TEST(TileChildMaterializerTest, UnknownTerrainChildrenDoNotCreateUpsampledQuadLikeCesiumNative) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle{});
+
+    int ensureCalls = 0;
+    const bool changed = TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        2,
+        [](const TileKey&) {
+            return TileAvailabilityState::Unknown;
+        },
+        [&ensureCalls](const TileKey&) -> TilesetTile* {
+            ++ensureCalls;
+            return nullptr;
+        });
+
+    EXPECT_FALSE(changed);
+    EXPECT_EQ(0, ensureCalls);
+    EXPECT_TRUE(parent.children.empty());
+}
+
 TEST(TileChildMaterializerTest, MaterializeTerrainChildrenSkipsOutOfRangeGeographicTmsChildren) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 0, 2, 0},
