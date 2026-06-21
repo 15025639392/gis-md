@@ -123,6 +123,16 @@ struct TilesetTestAccess {
             terrainCacheKey(tileset, key));
     }
 
+    static void updateTotalBytesUsed(Tileset& tileset) {
+        tileset.cacheOwnership_.updateTotalBytesUsed();
+    }
+
+    static void unloadCachedBytes(
+        Tileset& tileset,
+        int64_t maximumCachedBytes) {
+        tileset.cacheOwnership_.unloadCachedBytes(maximumCachedBytes, nullptr);
+    }
+
     static void requestMissingTilesWithPriorities(
         Tileset& tileset,
         const TileKey& firstKey,
@@ -1072,6 +1082,41 @@ TEST(
     const TilesetLoadDiagnostics diagnostics = tileset.loadDiagnostics();
     EXPECT_EQ(diagnostics.pendingTerrainTotal(), 0);
     EXPECT_EQ(diagnostics.pendingContentTotal(), 0);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    UnloadKeepsParentWithReferencedDescendant) {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+
+    auto heightmap = makeFlatHeightmap(1.0f);
+    heightmap->rawData.resize(128, 7);
+    TilesetTestAccess::putTerrainCache(tileset, rootKey, std::move(heightmap));
+    root->content.contentKind = TileContentKind::Render;
+    root->content.loadState = TileLoadState::Done;
+    root->content.renderContent.setMeshReady(true);
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_FALSE(root->children.empty());
+    ASSERT_NE(root->children.front(), nullptr);
+
+    const TileKey childKey = root->children.front()->key;
+    root->children.front()->addReference();
+    TilesetTestAccess::markEligibleForUnloading(tileset, rootKey);
+    TilesetTestAccess::updateTotalBytesUsed(tileset);
+    TilesetTestAccess::unloadCachedBytes(tileset, 0);
+
+    EXPECT_EQ(TilesetTestAccess::findTile(tileset, rootKey), root);
+    EXPECT_NE(TilesetTestAccess::findTile(tileset, childKey), nullptr);
 }
 
 TEST(
