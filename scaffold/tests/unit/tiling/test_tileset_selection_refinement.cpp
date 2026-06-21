@@ -1270,6 +1270,64 @@ TEST(
 
 TEST(
     TilesetSelectionRefinementTest,
+    FogUsesEachSelectorViewDensity) {
+    TilesetOptions options;
+    options.fogDensityTable = {
+        {0.0, 1.0},
+        {1000000.0, 1.0},
+        {10000000.0, 0.0}};
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    auto schemeForCenter = TileScheme::createGeographicTMS();
+    const Rectangle rootBounds = schemeForCenter->tileToRectangle(rootKey);
+    const Vec3 center = TilesetTestAccess::tileBoundsCenter(rootBounds);
+
+    Camera lowFogCamera;
+    lowFogCamera.lookAt(
+        center + center.normalized() * 100000.0,
+        center,
+        Vec3::unitZ());
+    Camera highClearCamera;
+    highClearCamera.lookAt(
+        center + center.normalized() * 80000000.0,
+        center,
+        Vec3::unitZ());
+
+    auto contentProvider = std::make_unique<SelectionTreeContentProvider>(
+        std::vector<TileKey>{rootKey},
+        std::vector<std::pair<TileKey, std::vector<TileKey>>>{});
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        options,
+        std::move(contentProvider));
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Empty;
+
+    FrameState frameState;
+    frameState.frameId = 163;
+    frameState.camera = &lowFogCamera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews = {
+        makeSelectorView(lowFogCamera, 800, 800),
+        makeSelectorView(highClearCamera, 800, 800)};
+    TilesetTestAccess::setLastCamera(
+        tileset,
+        lowFogCamera.position(),
+        lowFogCamera.direction());
+    TilesetTestAccess::selectTiles(tileset, frameState);
+
+    EXPECT_FALSE(tileset.tilePlan().visibleTiles.empty());
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
     ReplaceRefinementStopsWhenParentMeetsSse) {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const std::vector<TileKey> childKeys = {
