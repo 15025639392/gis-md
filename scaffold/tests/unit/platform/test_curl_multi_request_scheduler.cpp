@@ -400,6 +400,47 @@ TEST(CurlMultiRequestScheduler, PostsBodyWithContentType) {
     scheduler.shutdown();
 }
 
+TEST(CurlMultiRequestScheduler, SendsConfiguredRequestHeaders) {
+    LocalHttpServer server;
+    CurlMultiRequestScheduler scheduler(1);
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool callbackReturned = false;
+
+    auto handle = scheduler.get(
+        server.url("/headers"),
+        [&](int, std::vector<uint8_t>) {
+            std::lock_guard<std::mutex> lock(mutex);
+            callbackReturned = true;
+            cv.notify_one();
+        },
+        {HttpRequestPriority::Normal,
+         {{"Authorization", "Bearer test-token-123"},
+          {"X-Custom-Header", "custom-value"}}});
+
+    ASSERT_TRUE(server.waitForPath("/headers", 3s));
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(lock, 3s, [&]() {
+            return callbackReturned;
+        }));
+    }
+
+    const std::vector<LocalHttpServer::SeenRequest> seen =
+        server.seenRequests();
+    ASSERT_EQ(1u, seen.size());
+    EXPECT_NE(
+        std::string::npos,
+        seen[0].headers.find("Authorization: Bearer test-token-123"));
+    EXPECT_NE(
+        std::string::npos,
+        seen[0].headers.find("X-Custom-Header: custom-value"));
+
+    handle.reset();
+    scheduler.shutdown();
+}
+
 TEST(CurlMultiRequestScheduler, UsesConfiguredMaximumActiveRequests) {
     LocalHttpServer server;
     CurlMultiRequestScheduler scheduler(2);

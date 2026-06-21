@@ -181,10 +181,13 @@ public:
     std::unique_ptr<HttpRequest> get(
         const std::string& url,
         std::function<void(int, std::vector<uint8_t>)> callback,
-        HttpRequestOptions = {}) override {
+        HttpRequestOptions options = {}) override {
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            pending_.push_back(PendingRequest{url, std::move(callback)});
+            pending_.push_back(PendingRequest{
+                url,
+                std::move(options.headers),
+                std::move(callback)});
         }
         cv_.notify_all();
         return std::make_unique<NoopHttpRequest>();
@@ -242,12 +245,56 @@ public:
 private:
     struct PendingRequest {
         std::string url;
+        std::vector<HttpRequestOptions::Header> headers;
         std::function<void(int, std::vector<uint8_t>)> callback;
     };
 
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::vector<PendingRequest> pending_;
+};
+
+class HeaderTrackingPlatformBridge : public PlatformBridge {
+public:
+    explicit HeaderTrackingPlatformBridge(
+        std::map<std::string, std::vector<uint8_t>> responses)
+        : responses_(std::move(responses)) {}
+
+    void onMemoryPressure() override {}
+    void onEnterBackground() override {}
+    void onEnterForeground() override {}
+
+    std::unique_ptr<HttpRequest> get(
+        const std::string& url,
+        std::function<void(int, std::vector<uint8_t>)> callback,
+        HttpRequestOptions options = {}) override {
+        seenHeaders[url] = std::move(options.headers);
+        auto it = responses_.find(url);
+        if (it == responses_.end()) {
+            callback(404, {});
+        } else {
+            callback(200, it->second);
+        }
+        return std::make_unique<NoopHttpRequest>();
+    }
+
+    std::string cacheDirectory() const override { return {}; }
+    std::string documentsDirectory() const override { return {}; }
+
+    std::unique_ptr<DecodedImage> decodeImage(
+        const uint8_t*,
+        size_t) override {
+        return nullptr;
+    }
+
+    void log(LogLevel, const std::string&, const std::string&) override {}
+    DeviceInfo deviceInfo() const override { return {}; }
+    std::string getToken(const std::string&) const override { return {}; }
+
+    std::map<std::string, std::vector<HttpRequestOptions::Header>> seenHeaders;
+
+private:
+    std::map<std::string, std::vector<uint8_t>> responses_;
 };
 
 class QueuedGoogleMapTilesPlatformBridge : public PlatformBridge {
@@ -1890,6 +1937,97 @@ TEST(QuantizedMeshTerrainProviderTest,
     EXPECT_EQ(0u, bridge.pendingCount());
 
     std::filesystem::remove_all(root);
+}
+
+TEST(QuantizedMeshTerrainProviderTest,
+     RequestHeadersPropagateToLayerParentTileAndMetadataLikeCesiumNative) {
+    const std::string mainLayerUrl = "https://terrain.example/layer.json";
+    const std::string parentLayerUrl =
+        "https://terrain.example/Parent/layer.json";
+    const std::string childTileUrl =
+        "https://terrain.example/childTiles/0/0/0.terrain";
+    const std::string parentTileUrl =
+        "https://terrain.example/Parent/parentTiles/0/0/0.terrain";
+
+    const std::string parentLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["parentTiles/{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "metadataAvailability": 1
+    })json";
+    const std::string childLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["childTiles/{z}/{x}/{y}.terrain"],
+      "parentUrl": "Parent",
+      "maxzoom": 4,
+      "metadataAvailability": 1
+    })json";
+    const std::string childMetadata = R"json({
+      "available": [
+        [{"startX":0,"startY":0,"endX":0,"endY":0}]
+      ]
+    })json";
+    const std::string parentMetadata = R"json({
+      "available": [
+        [{"startX":2,"startY":0,"endX":2,"endY":0}]
+      ]
+    })json";
+
+    auto bytesFor = [](const std::string& text) {
+        return std::vector<uint8_t>(text.begin(), text.end());
+    };
+    HeaderTrackingPlatformBridge bridge({
+        {mainLayerUrl, bytesFor(childLayerJson)},
+        {parentLayerUrl, bytesFor(parentLayerJson)},
+        {childTileUrl, makeQuantizedMeshBytesWithMetadata(childMetadata)},
+        {parentTileUrl, makeQuantizedMeshBytesWithMetadata(parentMetadata)}});
+
+    const std::vector<HttpRequestOptions::Header> headers = {
+        {"Authorization", "Bearer test-token-123"},
+        {"X-Custom-Header", "custom-value"},
+        {"User-Agent", "earth-md-test/1.0"}};
+
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    provider.setPlatformBridge(&bridge);
+    provider.setRequestHeaders(headers);
+    ASSERT_TRUE(provider.configureFromLayerJsonUrl(mainLayerUrl));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool done = false;
+    TerrainTileLoadResult completed = TerrainTileLoadResult::retryLater();
+    provider.requestTile(
+        rootKey,
+        CancellationToken{},
+        [&](const TileKey&, TerrainTileLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                done = true;
+            }
+            cv.notify_one();
+        });
+
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return done; }));
+    }
+
+    EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
+    ASSERT_EQ(2u, completed.quantizedMeshAvailabilityUpdates.size());
+    EXPECT_EQ(headers, bridge.seenHeaders[mainLayerUrl]);
+    EXPECT_EQ(headers, bridge.seenHeaders[parentLayerUrl]);
+    EXPECT_EQ(headers, bridge.seenHeaders[childTileUrl]);
+    EXPECT_EQ(headers, bridge.seenHeaders[parentTileUrl]);
 }
 
 TEST(QuantizedMeshTerrainProviderTest,

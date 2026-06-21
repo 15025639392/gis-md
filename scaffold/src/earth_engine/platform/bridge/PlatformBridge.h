@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <vector>
+#include <utility>
 
 namespace earth_engine {
 
@@ -40,7 +41,14 @@ enum class HttpRequestPriority {
 };
 
 struct HttpRequestOptions {
+    using Header = std::pair<std::string, std::string>;
+    HttpRequestOptions() = default;
+    HttpRequestOptions(HttpRequestPriority requestPriority,
+                       std::vector<Header> requestHeaders = {})
+        : priority(requestPriority), headers(std::move(requestHeaders)) {}
+
     HttpRequestPriority priority = HttpRequestPriority::Normal;
+    std::vector<Header> headers;
 };
 
 /// 平台桥接抽象接口。

@@ -18,6 +18,23 @@ bool isCesiumSuccessfulHttpStatus(int statusCode) {
     return statusCode == 0 || (statusCode >= 200 && statusCode < 300);
 }
 
+std::string cacheKeyFor(
+    const std::string& url,
+    const std::vector<HttpRequestOptions::Header>& headers) {
+    if (headers.empty()) {
+        return url;
+    }
+    std::string key = url;
+    key += "\nheaders:";
+    for (const auto& header : headers) {
+        key += "\n";
+        key += header.first;
+        key += ":";
+        key += header.second;
+    }
+    return key;
+}
+
 } // namespace
 
 QuantizedMeshLayerJsonFetcher::QuantizedMeshLayerJsonFetcher(
@@ -27,8 +44,10 @@ QuantizedMeshLayerJsonFetcher::QuantizedMeshLayerJsonFetcher(
 std::vector<uint8_t> QuantizedMeshLayerJsonFetcher::fetchBlocking(
     const std::string& url,
     HttpRequestPriority priority,
+    const std::vector<HttpRequestOptions::Header>& headers,
     CancelPredicate shouldCancel) const {
-    auto cached = HttpCache::shared().get(url);
+    const std::string cacheKey = cacheKeyFor(url, headers);
+    auto cached = HttpCache::shared().get(cacheKey);
     if (!cached.empty()) return cached;
 
     constexpr const char* kFilePrefix = "file://";
@@ -38,7 +57,7 @@ std::vector<uint8_t> QuantizedMeshLayerJsonFetcher::fetchBlocking(
         std::vector<uint8_t> data{
             std::istreambuf_iterator<char>(in),
             std::istreambuf_iterator<char>()};
-        HttpCache::shared().put(url, data);
+        HttpCache::shared().put(cacheKey, data);
         return data;
     }
 
@@ -62,7 +81,7 @@ std::vector<uint8_t> QuantizedMeshLayerJsonFetcher::fetchBlocking(
                 }
                 state->cv.notify_one();
             },
-            {priority});
+            {priority, headers});
 
         bool done = false;
         {
@@ -82,7 +101,7 @@ std::vector<uint8_t> QuantizedMeshLayerJsonFetcher::fetchBlocking(
             request->cancel();
         }
         if (done && !state->result.empty()) {
-            HttpCache::shared().put(url, state->result);
+            HttpCache::shared().put(cacheKey, state->result);
         }
         return done ? std::move(state->result) : std::vector<uint8_t>{};
     }
@@ -90,10 +109,10 @@ std::vector<uint8_t> QuantizedMeshLayerJsonFetcher::fetchBlocking(
     std::vector<uint8_t> result =
         CurlMultiRequestScheduler::shared().getBlocking(
             url,
-            {priority},
+            {priority, headers},
             std::chrono::seconds(20),
             std::move(shouldCancel));
-    if (!result.empty()) HttpCache::shared().put(url, result);
+    if (!result.empty()) HttpCache::shared().put(cacheKey, result);
     return result;
 }
 

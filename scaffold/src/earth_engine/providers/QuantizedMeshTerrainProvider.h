@@ -43,6 +43,7 @@ public:
     void setZoomRange(int minZ, int maxZ);
     void setTileSize(int ts) { tileSize_ = ts; }
     void setPlatformBridge(PlatformBridge* bridge);
+    void setRequestHeaders(std::vector<HttpRequestOptions::Header> headers);
     void setFlipYForUrl(bool flip) { flipYForUrl_ = flip; }
     void setWaterMaskEnabled(bool enabled) { waterMaskEnabled_ = enabled; }
     bool configureFromLayerJsonUrl(const std::string& layerJsonUrl);
@@ -188,6 +189,7 @@ private:
     bool flipYForUrl_ = false;
     bool waterMaskEnabled_ = false;
     PlatformBridge* platformBridge_ = nullptr;
+    std::vector<HttpRequestOptions::Header> requestHeaders_;
     std::atomic<int> requestsStarted_{0};
     std::atomic<int> requestsCompleted_{0};
     std::atomic<int> activeWorkerBlockingRequests_{0};

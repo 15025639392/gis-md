@@ -19,6 +19,7 @@ public:
     std::vector<uint8_t> fetchBlocking(
         const std::string& url,
         HttpRequestPriority priority = HttpRequestPriority::Normal,
+        const std::vector<HttpRequestOptions::Header>& headers = {},
         CancelPredicate shouldCancel = {}) const;
 
 private:

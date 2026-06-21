@@ -62,6 +62,7 @@ struct CurlMultiRequestScheduler::Impl {
         std::string method = "GET";
         std::vector<uint8_t> uploadBody;
         std::string contentType;
+        std::vector<HttpRequestOptions::Header> requestHeaders;
         std::function<void(int, std::vector<uint8_t>)> callback;
         HttpRequestPriority priority = HttpRequestPriority::Normal;
         std::vector<uint8_t> body;
@@ -144,6 +145,7 @@ struct CurlMultiRequestScheduler::Impl {
         state->url = url;
         state->uploadBody = std::move(uploadBody);
         state->contentType = std::move(contentType);
+        state->requestHeaders = std::move(options.headers);
         state->callback = std::move(callback);
         state->priority = options.priority;
         state->notifyCallbackOnShutdown = notifyCallbackOnShutdown;
@@ -399,6 +401,11 @@ private:
         curl_easy_setopt(easy, CURLOPT_PRIVATE, request.get());
         curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
         curl_easy_setopt(easy, CURLOPT_ERRORBUFFER, request->errorBuffer.data());
+        for (const auto& header : request->requestHeaders) {
+            const std::string value = header.first + ": " + header.second;
+            request->headers =
+                curl_slist_append(request->headers, value.c_str());
+        }
         if (request->method == "POST") {
             curl_easy_setopt(easy, CURLOPT_POST, 1L);
             curl_easy_setopt(
@@ -417,8 +424,10 @@ private:
                     "Content-Type: " + request->contentType;
                 request->headers =
                     curl_slist_append(request->headers, header.c_str());
-                curl_easy_setopt(easy, CURLOPT_HTTPHEADER, request->headers);
             }
+        }
+        if (request->headers) {
+            curl_easy_setopt(easy, CURLOPT_HTTPHEADER, request->headers);
         }
 
         if (curl_multi_add_handle(multi, easy) != CURLM_OK) {

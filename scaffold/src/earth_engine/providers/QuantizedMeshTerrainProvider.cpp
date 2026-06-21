@@ -43,6 +43,23 @@ bool isFileUrl(const std::string& url) {
     return url.rfind(kFileUrlPrefix, 0) == 0;
 }
 
+std::string cacheKeyFor(
+    const std::string& url,
+    const std::vector<HttpRequestOptions::Header>& headers) {
+    if (headers.empty()) {
+        return url;
+    }
+    std::string key = url;
+    key += "\nheaders:";
+    for (const auto& header : headers) {
+        key += "\n";
+        key += header.first;
+        key += ":";
+        key += header.second;
+    }
+    return key;
+}
+
 std::vector<uint8_t> readFileUrl(const std::string& url) {
     if (!isFileUrl(url)) {
         return {};
@@ -73,6 +90,11 @@ QuantizedMeshTerrainProvider::~QuantizedMeshTerrainProvider() = default;
 
 void QuantizedMeshTerrainProvider::setPlatformBridge(PlatformBridge* bridge) {
     platformBridge_ = bridge;
+}
+
+void QuantizedMeshTerrainProvider::setRequestHeaders(
+    std::vector<HttpRequestOptions::Header> headers) {
+    requestHeaders_ = std::move(headers);
 }
 
 void QuantizedMeshTerrainProvider::setZoomRange(int minZ, int maxZ) {
@@ -585,7 +607,10 @@ void setQueryParameter(std::string& url,
 bool QuantizedMeshTerrainProvider::configureFromLayerJsonUrl(
     const std::string& layerJsonUrl) {
     QuantizedMeshLayerJsonFetcher fetcher(platformBridge_);
-    auto bytes = fetcher.fetchBlocking(layerJsonUrl);
+    auto bytes = fetcher.fetchBlocking(
+        layerJsonUrl,
+        HttpRequestPriority::Normal,
+        requestHeaders_);
     if (bytes.empty()) return false;
     std::string body(bytes.begin(), bytes.end());
     return configureFromLayerJson(body, layerJsonUrl);
@@ -750,7 +775,10 @@ bool QuantizedMeshTerrainProvider::appendParentLayers(
 
     std::string resolvedUrl = resolveParentLayerJsonUrl(layerJsonUrl, parentUrl);
     QuantizedMeshLayerJsonFetcher fetcher(platformBridge_);
-    auto bytes = fetcher.fetchBlocking(resolvedUrl);
+    auto bytes = fetcher.fetchBlocking(
+        resolvedUrl,
+        HttpRequestPriority::Normal,
+        requestHeaders_);
     if (bytes.empty()) {
         return false;
     }
@@ -1123,7 +1151,7 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
                     std::move(body),
                     true);
             },
-            {priority});
+            {priority, requestHeaders_});
         return;
     }
 
@@ -1197,7 +1225,7 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
                 std::move(body),
                 false);
         },
-        {priority});
+        {priority, requestHeaders_});
 }
 
 void QuantizedMeshTerrainProvider::handleAsyncTileBody(
@@ -1337,13 +1365,13 @@ void QuantizedMeshTerrainProvider::requestAsyncMetadataAndFinalize(
             metadataState->handles[i] = platformBridge_->get(
                 metadataUrl,
                 std::move(metadataCallback),
-                {priority});
+                {priority, requestHeaders_});
         } else {
             metadataState->handles[i] =
                 CurlMultiRequestScheduler::shared().get(
                     metadataUrl,
                     std::move(metadataCallback),
-                    {priority});
+                    {priority, requestHeaders_});
         }
     }
 }
@@ -1633,7 +1661,8 @@ std::vector<uint8_t> QuantizedMeshTerrainProvider::httpGet(
     __android_log_print(ANDROID_LOG_INFO, "QMTerrain", "httpGet ENTER: %s", url.c_str());
 #endif
     // Check shared LRU cache
-    auto cached = HttpCache::shared().get(url);
+    const std::string cacheKey = cacheKeyFor(url, requestHeaders_);
+    auto cached = HttpCache::shared().get(cacheKey);
 #ifdef __ANDROID__
     if (!cached.empty())
         __android_log_print(ANDROID_LOG_INFO, "QMTerrain",
@@ -1660,7 +1689,7 @@ std::vector<uint8_t> QuantizedMeshTerrainProvider::httpGet(
                 state->done = true;
             }
             state->cv.notify_one();
-        }, {priority});
+        }, {priority, requestHeaders_});
         bool done = false;
         {
             const auto deadline = std::chrono::steady_clock::now() +
@@ -1678,7 +1707,9 @@ std::vector<uint8_t> QuantizedMeshTerrainProvider::httpGet(
         if ((!done || (shouldCancel && shouldCancel())) && request) {
             request->cancel();
         }
-        if (done && !state->result.empty()) HttpCache::shared().put(url, state->result);
+        if (done && !state->result.empty()) {
+            HttpCache::shared().put(cacheKey, state->result);
+        }
 #ifdef __ANDROID__
         __android_log_print(ANDROID_LOG_INFO, "QMTerrain",
             "httpGet bridge: %zu bytes", state->result.size());
@@ -1689,10 +1720,10 @@ std::vector<uint8_t> QuantizedMeshTerrainProvider::httpGet(
     std::vector<uint8_t> result =
         CurlMultiRequestScheduler::shared().getBlocking(
             url,
-            {priority},
+            {priority, requestHeaders_},
             std::chrono::seconds(20),
             std::move(shouldCancel));
-    if (!result.empty()) HttpCache::shared().put(url, result);
+    if (!result.empty()) HttpCache::shared().put(cacheKey, result);
     return result;
 }
 
