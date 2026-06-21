@@ -93,3 +93,31 @@ TEST(
         FrameResourceLane::ContentFinalize,
         FrameResourcePriority::Normal));
 }
+
+TEST(
+    TileFrameResourceBudgetPlannerTest,
+    KeepsTerminalTransitionsWhenWorkerLoadsDisabled) {
+    const FrameResourceBudgetConfig config =
+        TileFrameResourceBudgetPlanner::plan(
+            TileFrameResourceBudgetPlanInput::withTransportLimit(
+                0,
+                20,
+                0.0,
+                false,
+                false));
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    EXPECT_FALSE(budget.tryIssue(
+        FrameResourceLane::ContentRequest,
+        FrameResourcePriority::Normal));
+    EXPECT_EQ(
+        config.maxTerminalStateTransitionsPerFrame,
+        std::numeric_limits<uint32_t>::max());
+    EXPECT_TRUE(budget.tryFinalize(
+        FrameResourceLane::TerminalState,
+        FrameResourcePriority::Normal));
+    EXPECT_TRUE(budget.tryFinalize(
+        FrameResourceLane::TerminalState,
+        FrameResourcePriority::Normal));
+}
