@@ -354,7 +354,8 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomFollowsCesiumTargetScreenPix
     RasterOverlayTileProvider maxClampedProvider(imagery, *scheme, nullptr);
     auto maxClampedTile = maxClampedProvider.getTile(z3Bounds, 1024.0, 256.0);
     ASSERT_NE(nullptr, maxClampedTile);
-    EXPECT_EQ(3, maxClampedTile->getSourceZoom());
+    EXPECT_FALSE(maxClampedTile->isRectangleTile());
+    EXPECT_EQ((TileKey{scheme->id(), 3, 2, 3}), maxClampedTile->getTileID());
 }
 
 TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayLevelRange) {
@@ -393,7 +394,8 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayLevelRange) {
     maxProvider.setOwner(&maxOverlay);
     auto maxTile = maxProvider.getTile(z3Bounds, 1024.0, 256.0);
     ASSERT_NE(nullptr, maxTile);
-    EXPECT_EQ(3, maxTile->getSourceZoom());
+    EXPECT_FALSE(maxTile->isRectangleTile());
+    EXPECT_EQ((TileKey{scheme->id(), 3, 2, 3}), maxTile->getTileID());
 }
 
 TEST(RasterOverlayLifecycleTest, DirectTileCreationRejectsUnsupportedProviderTiles) {
@@ -652,6 +654,27 @@ TEST(RasterOverlayLifecycleTest, RectangleTileKeepsGeometryBoundsAndTargetPixels
     EXPECT_EQ(3, rectangleTile->getSourceZoom());
     EXPECT_EQ(512.0, rectangleTile->getTargetScreenPixelsX());
     EXPECT_EQ(512.0, rectangleTile->getTargetScreenPixelsY());
+}
+
+TEST(RasterOverlayLifecycleTest, ExactProviderRectangleUsesDirectQuadtreeTile) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setLevelRange(0, 3);
+
+    const TileKey key{scheme->id(), 3, 4, 2};
+    const Rectangle bounds = scheme->tileToRectangle(key);
+    auto mappedTile = provider.getTile(bounds, 512.0, 512.0);
+
+    ASSERT_NE(nullptr, mappedTile);
+    EXPECT_FALSE(mappedTile->isRectangleTile());
+    EXPECT_EQ(key, mappedTile->getTileID());
+    EXPECT_EQ(bounds, mappedTile->getRectangle());
+    EXPECT_EQ(scheme->id() + "/3/4/2", mappedTile->getCacheKey());
+    EXPECT_EQ(1, provider.getCachedTileCount());
+
+    auto directTile = provider.getTile(key);
+    EXPECT_EQ(directTile, mappedTile);
 }
 
 TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayMaximumTextureSize) {
@@ -1049,18 +1072,19 @@ TEST(RasterOverlayLifecycleTest, RectangleAtMaximumSourceZoomReportsNoMoreDetail
     TileKey key = scheme->positionToTile(0.1, 0.2, expectedSourceZoom);
     Rectangle bounds = scheme->tileToRectangle(key);
 
-    auto rectangleTile = provider.getTile(bounds, 512.0, 512.0);
-    ASSERT_NE(nullptr, rectangleTile);
-    EXPECT_EQ(expectedSourceZoom, rectangleTile->getSourceZoom());
+    auto tile = provider.getTile(bounds, 512.0, 512.0);
+    ASSERT_NE(nullptr, tile);
+    EXPECT_FALSE(tile->isRectangleTile());
+    EXPECT_EQ(key, tile->getTileID());
 
-    ASSERT_TRUE(provider.loadTile(*rectangleTile));
+    ASSERT_TRUE(provider.loadTile(*tile));
     EXPECT_EQ(1, provider.processPendingUploads(false));
 
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
-              rectangleTile->getState());
+              tile->getState());
     EXPECT_EQ(1, uploaderPtr->uploadCount);
     EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
-              rectangleTile->isMoreDetailAvailable());
+              tile->isMoreDetailAvailable());
 }
 
 TEST(RasterOverlayLifecycleTest, FailedRasterTilesAreTerminalLikeCesiumNative) {

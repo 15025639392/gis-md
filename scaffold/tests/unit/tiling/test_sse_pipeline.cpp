@@ -2130,6 +2130,31 @@ void testRasterOverlayProviderRectangleTile() {
           "RasterOverlayTileProvider: markUsed(tile) retains rectangle tile");
 }
 
+void testRasterOverlayProviderDirectTileForExactProviderRectangle() {
+    DebugImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
+    provider.setLevelRange(0, 3);
+
+    TileKey key{"XYZ-WebMercator", 3, 4, 2};
+    Rectangle bounds = imageryScheme->tileToRectangle(key);
+
+    provider.setFrameNumber(1);
+    auto mappedTile = provider.getTile(bounds, 512.0, 512.0);
+    check(mappedTile != nullptr,
+          "RasterOverlayTileProvider: exact provider rectangle creates raster tile");
+    check(mappedTile && !mappedTile->isRectangleTile(),
+          "RasterOverlayTileProvider: exact provider rectangle uses direct quadtree tile");
+    check(mappedTile && mappedTile->getTileID() == key,
+          "RasterOverlayTileProvider: direct rectangle tile preserves quadtree key");
+    check(mappedTile && mappedTile->getCacheKey() == "XYZ-WebMercator/3/4/2",
+          "RasterOverlayTileProvider: direct rectangle tile uses quadtree cache key");
+    check(provider.getCachedTileCount() == 1,
+          "RasterOverlayTileProvider: direct rectangle path creates one cache tile");
+    check(provider.getTile(key) == mappedTile,
+          "RasterOverlayTileProvider: direct rectangle path shares keyed tile");
+}
+
 class PendingRectangleImageryProvider final : public ImageryProvider {
 public:
     struct PendingRequest {
@@ -26368,6 +26393,7 @@ int main() {
     testActivatedRasterOverlayExposesPlaceholderBeforeProvider();
     testActivatedRasterOverlayEnsuresProvider();
     testRasterOverlayProviderRectangleTile();
+    testRasterOverlayProviderDirectTileForExactProviderRectangle();
     testRasterOverlayRectangleSourceRequestsAreBudgetedAcrossFrames();
     testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches();
     testRasterOverlayBaseRectangleSourceRejectsCoverageEdgeMiss();
