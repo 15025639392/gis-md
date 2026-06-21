@@ -49,6 +49,7 @@ void TileRasterOverlayPrefetcher::prefetch(
 
         ActivatedRasterOverlay* activeOverlay = rasterOverlays[i];
         if (!activeOverlay || !activeOverlay->visible()) {
+            tile.rasterOverlayState.releaseMapping(i, nullptr);
             continue;
         }
 

@@ -113,6 +113,7 @@
 #include "earth_engine/tiling/TileUpsampleSourcePreparer.h"
 #include "earth_engine/tiling/Tileset.h"
 #include "earth_engine/tiling/TilesetSelectionFrameFacade.h"
+#include "earth_engine/tiling/SurfaceRasterOverlayStateUpdater.h"
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
 
 #include <atomic>
@@ -17870,6 +17871,78 @@ void testTileRasterOverlayStateResizeReleasesRemovedMappings() {
           "TileRasterOverlayState: resize releases removed raster tile references");
 }
 
+void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    TilesetTile tile(TileKey{scheme->id(), 0, 0, 0},
+                     scheme->tileToRectangle(
+                         TileKey{scheme->id(), 0, 0, 0}));
+    tile.content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    tile.content.renderContent.mutableSurfaceMesh()
+        ->rasterOverlayDetails.setGeographicRectangle(tile.bounds);
+    tile.content.renderContent.setMeshReady(true);
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.contentKind = TileContentKind::Render;
+
+    Renderer renderer(nullptr);
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    const std::vector<size_t> order{0};
+    SurfaceRasterOverlayStateUpdater::update(
+        renderer,
+        tile,
+        overlays,
+        order,
+        nullptr,
+        16.0,
+        budget);
+    RasterMappedToTilesetTile* mapped =
+        tile.rasterOverlayState.mappingAt(0);
+    RasterOverlayTile* loadingTile =
+        mapped ? mapped->getLoadingTile() : nullptr;
+    check(loadingTile != nullptr,
+          "SurfaceRasterOverlayStateUpdater: visible overlay creates mapping");
+    loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
+    SurfaceRasterOverlayStateUpdater::update(
+        renderer,
+        tile,
+        overlays,
+        order,
+        nullptr,
+        16.0,
+        budget);
+    mapped = tile.rasterOverlayState.mappingAt(0);
+    check(mapped && mapped->getReadyTile() == loadingTile,
+          "SurfaceRasterOverlayStateUpdater: visible overlay promotes ready mapping");
+    check(TileCacheMetrics::estimateTileBytes(tile) == 8 * 4 * 4,
+          "SurfaceRasterOverlayStateUpdater: visible mapping contributes retained bytes");
+
+    overlay->setVisible(false);
+    SurfaceRasterOverlayStateUpdater::update(
+        renderer,
+        tile,
+        overlays,
+        order,
+        nullptr,
+        16.0,
+        budget);
+
+    check(tile.rasterOverlayState.mappingAt(0) == nullptr,
+          "SurfaceRasterOverlayStateUpdater: invisible overlay releases stale mapping");
+    check(TileCacheMetrics::estimateTileBytes(tile) == 0,
+          "SurfaceRasterOverlayStateUpdater: invisible overlay releases raster tile references");
+}
+
 void testTileUnloadPolicyDefersReferencedSubtreesAndExternalWork() {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
@@ -31512,6 +31585,7 @@ int main() {
     testTileRenderReferenceStateClampsAndClearsReferences();
     testTileRasterOverlayStateOwnsMappingsAndMissingProjections();
     testTileRasterOverlayStateResizeReleasesRemovedMappings();
+    testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping();
     testTileUnloadPolicyDefersReferencedSubtreesAndExternalWork();
     testTileUnloadPolicyProtectsUpsampledLoadingSources();
     testTileUpsampleSourcePreparerSkipsPermanentFailedAncestor();

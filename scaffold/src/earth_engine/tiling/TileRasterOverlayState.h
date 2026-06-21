@@ -39,6 +39,8 @@ public:
     RasterMappedToTilesetTile* mappingAt(size_t index);
     const RasterMappedToTilesetTile* mappingAt(size_t index) const;
     RasterMappedToTilesetTile& ensureMapping(size_t index);
+    void releaseMapping(size_t index,
+                        IPrepareRendererResources* pPrepRenderer);
     bool hasReadyMapping(size_t index) const;
     template <typename Fn>
     void forEachMapping(Fn&& fn) const {

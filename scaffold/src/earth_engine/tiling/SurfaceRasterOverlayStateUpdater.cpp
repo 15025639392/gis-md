@@ -39,6 +39,7 @@ SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
         }
         auto* activeOverlay = rasterOverlays[i];
         if (!activeOverlay || !activeOverlay->visible()) {
+            tile.rasterOverlayState.releaseMapping(i, &renderer);
             continue;
         }
         RasterOverlayTileProvider* activeProvider =
