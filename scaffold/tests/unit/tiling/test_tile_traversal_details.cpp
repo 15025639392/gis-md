@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/TileSelectionTraversalDetailsBuilder.h"
 #include "earth_engine/tiling/TileTraversalDetails.h"
+#include "earth_engine/tiling/TilesetTile.h"
 
 using namespace earth_engine;
 
@@ -81,4 +84,47 @@ TEST(TileTraversalDetailsPolicyTest, AggregatesChildren) {
     EXPECT_FALSE(aggregate.allAreRenderable);
     EXPECT_TRUE(aggregate.anyWereRenderedLastFrame);
     EXPECT_EQ(aggregate.notYetRenderableCount, 1u);
+}
+
+TEST(
+    TileSelectionTraversalDetailsBuilderTest,
+    ReplaceTileInheritsRenderedDescendantHistory) {
+    TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
+    TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
+    parent.children.push_back(&child);
+    parent.refine = TileRefine::Replace;
+    parent.content.loadState = TileLoadState::Done;
+    parent.content.contentKind = TileContentKind::Empty;
+    parent.selectionFrameState.previousSelectionState =
+        TileSelectionState::Refined;
+    child.selectionFrameState.previousSelectionState =
+        TileSelectionState::Rendered;
+
+    const TileTraversalDetails details =
+        TileSelectionTraversalDetailsBuilder::forSingleTile(parent, {});
+
+    EXPECT_TRUE(details.allAreRenderable);
+    EXPECT_TRUE(details.anyWereRenderedLastFrame);
+    EXPECT_EQ(details.notYetRenderableCount, 0u);
+}
+
+TEST(
+    TileSelectionTraversalDetailsBuilderTest,
+    ForbidHolesCulledReplaceTileBlocksTraversalWhenMissing) {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    tile.refine = TileRefine::Replace;
+    tile.content.loadState = TileLoadState::Unloaded;
+    tile.content.contentKind = TileContentKind::Unknown;
+    tile.selectionFrameState.previousSelectionState =
+        TileSelectionState::Rendered;
+
+    const TileTraversalDetails details =
+        TileSelectionTraversalDetailsBuilder::forCulledTile(
+            tile,
+            {},
+            true);
+
+    EXPECT_FALSE(details.allAreRenderable);
+    EXPECT_FALSE(details.anyWereRenderedLastFrame);
+    EXPECT_EQ(details.notYetRenderableCount, 1u);
 }
