@@ -806,6 +806,47 @@ TEST(QuantizedMeshTerrainProviderTest, ParentLayerFillsTopLayerGapsLikeCesiumNat
     std::filesystem::remove_all(root);
 }
 
+TEST(QuantizedMeshTerrainProviderTest, MissingParentLayerKeepsChildLayerLikeCesiumNative) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth_md_qm_missing_parent_layer_test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "child");
+
+    const std::string childLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["childTiles/{z}/{x}/{y}.terrain"],
+      "parentUrl": "../missing-parent",
+      "maxzoom": 4,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}],
+        [{"startX":0,"startY":0,"endX":0,"endY":0}]
+      ]
+    })json";
+
+    const std::string childLayerUrl =
+        "file://" + (root / "child" / "layer.json").generic_string();
+    const std::string childBase =
+        "file://" + (root / "child").generic_string();
+
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    ASSERT_TRUE(provider.configureFromLayerJson(childLayerJson, childLayerUrl));
+
+    const TileKey childTile{"Geographic-TMS", 1, 0, 0};
+    const TileKey parentOnlyTile{"Geographic-TMS", 1, 2, 0};
+
+    EXPECT_TRUE(provider.supportsTile(childTile));
+    EXPECT_EQ(childBase + "/childTiles/1/0/0.terrain",
+              provider.buildUrl(childTile));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(parentOnlyTile));
+
+    std::filesystem::remove_all(root);
+}
+
 TEST(QuantizedMeshTerrainProviderTest, WebMercatorMetadataAvailabilityStartsAtOneRootLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
