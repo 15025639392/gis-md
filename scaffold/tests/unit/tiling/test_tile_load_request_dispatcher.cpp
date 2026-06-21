@@ -1156,3 +1156,36 @@ TEST(TileLoadRequestDispatcherTest, SkipsClaimedUploadKeys) {
     EXPECT_TRUE(pendingLoads.hasWork());
     EXPECT_EQ(0u, budget.networkRequestsIssued());
 }
+
+TEST(TileLoadRequestDispatcherTest,
+     SkipsUpsampledTerrainWhenCacheKeyPending) {
+    std::mutex mutex;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    const TileKey key{"test", 0, 0, 0};
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        pendingLoads.addTerrainTerminalResult(
+            PendingTerrainTerminalResult{
+                key,
+                "shared-cache-key",
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TerrainTileLoadStatus::RetryLater});
+    }
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::queueUpsampledTerrain(
+            mutex,
+            requestState,
+            pendingLoads,
+            key,
+            "shared-cache-key",
+            TileLoadPriorityGroup::Normal,
+            0.0);
+
+    EXPECT_EQ(TileLoadDispatchResult::Skipped, result);
+    EXPECT_EQ(0u, pendingLoads.terrainUploadCount());
+    EXPECT_EQ(1u, pendingLoads.terrainTerminalResultCount());
+}
