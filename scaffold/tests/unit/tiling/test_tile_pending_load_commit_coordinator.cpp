@@ -489,13 +489,11 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitTerrainUpload(
         terrainUpload,
         nullptr,
-        nullptr,
         {},
         terrainCache,
         lifecycle,
         false,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
-        [](TilesetTile&) {},
         [](TilesetTile&) {},
         [&resourcesDirty]() { resourcesDirty = true; });
     TilePendingLoadCommitCoordinator::commitContentUpload(
@@ -536,48 +534,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_EQ(nullptr, content.heightmap);
     ASSERT_NE(terrainCache.find(cacheKey), terrainCache.end());
     EXPECT_TRUE(terrainCache.at(cacheKey)->valid());
-}
-
-TEST(TilePendingLoadCommitCoordinatorTest,
-     TerrainUploadCommitterAppliesQuantizedMeshAvailabilityUpdates) {
-    const TileKey subtreeKey{"Geographic-TMS", 2, 0, 0};
-    const TileKey availableChildKey{"Geographic-TMS", 3, 0, 0};
-    const TileKey unavailableSiblingKey{"Geographic-TMS", 3, 1, 0};
-
-    QuantizedMeshTerrainProvider provider(
-        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
-    const std::string layerJson = R"json({
-      "format": "quantized-mesh-1.0",
-      "projection": "EPSG:4326",
-      "scheme": "tms",
-      "tiles": ["{z}/{x}/{y}.terrain"],
-      "maxzoom": 10,
-      "metadataAvailability": 2
-    })json";
-    ASSERT_TRUE(provider.configureFromLayerJson(
-        layerJson,
-        "https://example.invalid/layer.json"));
-    EXPECT_EQ(TileAvailabilityState::Unknown,
-              provider.availabilityState(availableChildKey));
-
-    QuantizedMeshAvailabilityUpdate update;
-    update.layerIndex = 0;
-    update.subtreeKey = subtreeKey;
-    update.metadataAvailability = {{0, 0, 0, 0, 0}};
-
-    TileLoadedContent content;
-    content.terrainRenderContent = true;
-    content.gltfModel = std::make_unique<GltfModel>();
-    content.quantizedMeshAvailabilityUpdates.push_back(update);
-
-    TileTerrainUploadCommitter::applyAvailabilityUpdates(
-        &provider,
-        content);
-
-    EXPECT_EQ(TileAvailabilityState::Available,
-              provider.availabilityState(availableChildKey));
-    EXPECT_EQ(TileAvailabilityState::NotAvailable,
-              provider.availabilityState(unavailableSiblingKey));
 }
 
 TEST(
@@ -706,7 +662,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentOwnedTerrainRejectsTerrainDomainGltfPayload) {
+     TerrainUploadRejectsGltfTerrainPayload) {
     RecordingTerrainContentProvider provider;
 
     QuantizedMeshAvailabilityUpdate update;
@@ -785,7 +741,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     TerrainUploadAppliesUpdatedBoundingVolumeToTile) {
+     ContentUploadAppliesGltfTerrainUpdatedBoundingVolumeToTile) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:0:0:0";
     TilesetTile tile(key, Rectangle{});
@@ -805,7 +761,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         TileBoundingVolume::fromRegion(updatedRectangle, -25.0, 125.0);
     metadata.updatedContentBoundingVolume =
         TileBoundingVolume::fromRegion(updatedContentRectangle, -5.0, 15.0);
-    PendingTileLoad upload{TileLoadDomain::Terrain,
+    PendingTileLoad upload{TileLoadDomain::Content,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -821,7 +777,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     budget.beginFrame(1, config);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -837,7 +793,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     bool resourcesDirty = false;
     int ensureGltfCalls = 0;
 
-    TilePendingLoadCommitCoordinator::commitTerrainUpload(
+    TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
         nullptr,
@@ -873,7 +829,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     TerrainUploadAppliesRasterOverlayDetailsLikeTileLoadResult) {
+     ContentUploadAppliesGltfTerrainRasterOverlayDetailsLikeTileLoadResult) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:0:0:0";
     TilesetTile tile(key, Rectangle{});
@@ -892,7 +848,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TileLoadResultMetadata metadata;
     metadata.rasterOverlayDetails = std::move(rasterOverlayDetails);
 
-    PendingTileLoad upload{TileLoadDomain::Terrain,
+    PendingTileLoad upload{TileLoadDomain::Content,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -908,7 +864,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     budget.beginFrame(1, config);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -924,7 +880,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     bool resourcesDirty = false;
     int ensureGltfCalls = 0;
 
-    TilePendingLoadCommitCoordinator::commitTerrainUpload(
+    TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
         nullptr,
@@ -960,7 +916,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     TerrainUploadCompletesWithGltfResourcesWithoutSurfaceMesh) {
+     ContentUploadCompletesGltfTerrainResourcesWithoutSurfaceMesh) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:gltf-terrain";
     TilesetTile tile(key, Rectangle{});
@@ -974,7 +930,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         TileBoundingVolume::fromRegion(updatedRectangle, -30.0, 240.0);
     metadata.horizonOcclusionPoint = Vec3(1.0, 2.0, 3.0);
 
-    PendingTileLoad upload{TileLoadDomain::Terrain,
+    PendingTileLoad upload{TileLoadDomain::Content,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -990,7 +946,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     budget.beginFrame(1, config);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -1007,7 +963,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     int ensureGltfCalls = 0;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitTerrainUpload(
+    TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
         nullptr,
@@ -1049,14 +1005,14 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     TerrainUploadRejectsIncompleteGltfRenderResources) {
+     ContentUploadRejectsIncompleteGltfTerrainRenderResources) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:incomplete-gltf-terrain";
     TilesetTile tile(key, Rectangle{});
     tile.content.loadState = TileLoadState::ContentLoading;
 
     auto model = std::make_unique<GltfModel>();
-    PendingTileLoad upload{TileLoadDomain::Terrain,
+    PendingTileLoad upload{TileLoadDomain::Content,
         key,
         cacheKey,
         TileLoadPriorityGroup::Normal,
@@ -1070,7 +1026,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     budget.beginFrame(1, config);
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
-        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             key,
             cacheKey,
             TileLoadPriorityGroup::Normal,
@@ -1087,7 +1043,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     int ensureGltfCalls = 0;
     bool resourcesDirty = false;
 
-    TilePendingLoadCommitCoordinator::commitTerrainUpload(
+    TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         nullptr,
         nullptr,
@@ -1149,12 +1105,10 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     int ensureMeshCalls = 0;
-    int ensureGltfCalls = 0;
     bool resourcesDirty = false;
 
     TilePendingLoadCommitCoordinator::commitTerrainUpload(
         upload,
-        nullptr,
         nullptr,
         {},
         terrainCache,
@@ -1162,7 +1116,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         false,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&ensureMeshCalls](TilesetTile&) { ++ensureMeshCalls; },
-        [&ensureGltfCalls](TilesetTile&) { ++ensureGltfCalls; },
         [&resourcesDirty]() { resourcesDirty = true; });
 
     EXPECT_FALSE(tile.content.renderContent.hasGltfModel());
@@ -1171,7 +1124,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
     EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
     EXPECT_EQ(0, ensureMeshCalls);
-    EXPECT_EQ(0, ensureGltfCalls);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_TRUE(terrainCache.empty());
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
@@ -1436,7 +1388,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     bool resourcesDirty = false;
     TilePendingLoadCommitCoordinator::commitTerrainUpload(
         upload,
-        &provider,
         nullptr,
         {},
         terrainCache,
@@ -1444,7 +1395,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         false,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [&meshEnsured](TilesetTile&) { meshEnsured = true; },
-        [](TilesetTile&) {},
         [&resourcesDirty]() { resourcesDirty = true; });
 
     ASSERT_NE(terrainCache.find(cacheKey), terrainCache.end());

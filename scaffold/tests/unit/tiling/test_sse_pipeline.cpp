@@ -12617,7 +12617,7 @@ void testTileContentUploadPolicyPreparesGltfRenderContent() {
           "TileContentUploadPolicy: glTF upload replaces terrain and old render resources");
 }
 
-void testTerrainUploadGeneratesActiveRasterOverlayProjectionDetails() {
+void testContentUploadGeneratesGltfTerrainActiveRasterOverlayProjectionDetails() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -12644,7 +12644,7 @@ void testTerrainUploadGeneratesActiveRasterOverlayProjectionDetails() {
     content.metadata.updatedBoundingVolume =
         TileBoundingVolume::fromRegion(tileRectangle, -25.0, 125.0);
 
-    TileTerrainUploadCommitter::prepareTerrainRenderContent(
+    TileContentUploadCommitter::prepareRenderContent(
         tile,
         std::move(content),
         overlays,
@@ -12673,7 +12673,7 @@ void testTerrainUploadGeneratesActiveRasterOverlayProjectionDetails() {
               !tile.content.renderContent.hasSurfaceMesh() &&
               tile.content.contentKind == TileContentKind::Render &&
               tile.content.loadState == TileLoadState::ContentLoaded,
-          "TileTerrainUploadCommitter: glTF terrain upload generates active raster overlay projection details like cesium-native reload");
+          "TileContentUploadCommitter: glTF terrain upload generates active raster overlay projection details like cesium-native reload");
 }
 
 void testContentUploadGeneratesTerrainRasterOverlayProjectionDetails() {
@@ -12827,7 +12827,7 @@ void testContentUploadUsesContentBoundingVolumeForRasterOverlayDetails() {
           "TileContentUploadCommitter: raster overlay details use effective content bounding volume like cesium-native");
 }
 
-void testTerrainUploadPreparesGltfRenderContent() {
+void testContentUploadPreparesGltfTerrainRenderContent() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -12859,7 +12859,7 @@ void testTerrainUploadPreparesGltfRenderContent() {
     loaded.metadata.updatedBoundingVolume =
         TileBoundingVolume::fromRegion(tileRectangle, -15.0, 85.0);
 
-    TileTerrainUploadCommitter::prepareTerrainRenderContent(
+    TileContentUploadCommitter::prepareRenderContent(
         tile,
         std::move(loaded),
         overlays,
@@ -12886,7 +12886,7 @@ void testTerrainUploadPreparesGltfRenderContent() {
                   RasterOverlayProjection::WebMercator) == 1 &&
               tile.content.contentKind == TileContentKind::Render &&
               tile.content.loadState == TileLoadState::ContentLoaded,
-          "TileTerrainUploadCommitter: content-domain glTF terrain upload uses unified render content and overlay details");
+          "TileContentUploadCommitter: content-domain glTF terrain upload uses unified render content and overlay details");
 }
 
 void testContentTileLoadResultCarriesGltfTerrainModel() {
@@ -13266,13 +13266,11 @@ void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
     TilePendingLoadCommitCoordinator::commitTerrainUpload(
         terrainUpload,
         nullptr,
-        nullptr,
         rasterOverlays,
         terrainCache,
         lifecycle,
         false,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
-        [](TilesetTile&) {},
         [](TilesetTile&) {},
         [&resourcesDirty]() { resourcesDirty = true; });
     TilePendingLoadCommitCoordinator::commitContentUpload(
@@ -28768,11 +28766,11 @@ int main() {
     testTileTerminalLoadPolicyClearsRasterMappingsForNonRenderTerminalStates();
     testTileTerminalLoadCommitterWritesEmptyRegistryActions();
     testTileContentUploadPolicyPreparesGltfRenderContent();
-    testTerrainUploadGeneratesActiveRasterOverlayProjectionDetails();
+    testContentUploadGeneratesGltfTerrainActiveRasterOverlayProjectionDetails();
     testContentUploadGeneratesTerrainRasterOverlayProjectionDetails();
     testContentUploadGeneratesRasterOverlayProjectionDetailsForGltf();
     testContentUploadUsesContentBoundingVolumeForRasterOverlayDetails();
-    testTerrainUploadPreparesGltfRenderContent();
+    testContentUploadPreparesGltfTerrainRenderContent();
     testContentTileLoadResultCarriesGltfTerrainModel();
     testGltfRenderContentProvidesRasterOverlayDetails();
     testTileContentUploadPolicyAppliesTileLoadResultFields();

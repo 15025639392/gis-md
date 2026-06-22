@@ -23,10 +23,6 @@ struct TileTerrainUploadCommitAction {
 };
 
 struct TileTerrainUploadCommitter {
-    static void applyAvailabilityUpdates(
-        TilesetContentProvider* contentProvider,
-        const TileLoadedContent& content);
-
     static void cacheTerrainPayload(
         const std::string& cacheKey,
         TileLoadedContent& content,

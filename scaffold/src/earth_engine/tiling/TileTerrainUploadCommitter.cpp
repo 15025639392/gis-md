@@ -12,42 +12,11 @@
 
 namespace earth_engine {
 
-void TileTerrainUploadCommitter::applyAvailabilityUpdates(
-    TilesetContentProvider* contentProvider,
-    const TileLoadedContent& content) {
-    if (!content.hasGltfTerrainPayload() ||
-        content.quantizedMeshAvailabilityUpdates.empty()) {
-        return;
-    }
-
-    if (contentProvider && contentProvider->providesTerrainQuadtree()) {
-        contentProvider->applyTerrainAvailabilityUpdates(
-            content.quantizedMeshAvailabilityUpdates);
-    }
-}
-
 void TileTerrainUploadCommitter::prepareTerrainRenderContent(
     TilesetTile& tile,
     TileLoadedContent&& content,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
     RenderDevice* device) {
-    if (content.hasGltfTerrainPayload()) {
-        tile.content.renderContent.prepareGltfContent(
-            std::move(content.gltfModel),
-            content.contentTransform);
-        tile.content.renderContent.setTerrainRenderContent(true);
-        TileLoadResultMetadataApplicator::apply(
-            tile,
-            std::move(content.metadata));
-        TileRasterOverlayDetailsGenerator::
-            ensureProjectionDetailsFromActiveOverlays(
-                tile,
-                rasterOverlays,
-                device);
-        prepareTerrainRenderContent(tile);
-        return;
-    }
-
     tile.content.renderContent.setTerrainRenderContent(true);
     TileLoadResultMetadataApplicator::apply(
         tile,

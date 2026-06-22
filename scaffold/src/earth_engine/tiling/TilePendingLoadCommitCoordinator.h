@@ -84,11 +84,9 @@ public:
 
     template <typename EnsureTileFn,
               typename EnsureTileMeshFn,
-              typename EnsureGltfResourcesFn,
               typename MarkResourcesDirtyFn>
     static void commitTerrainUpload(
         PendingTileLoad& upload,
-        TilesetContentProvider* contentProvider,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         std::unordered_map<
@@ -98,11 +96,8 @@ public:
         bool resourceSmoothingActive,
         EnsureTileFn&& ensureTile,
         EnsureTileMeshFn&& ensureTileMesh,
-        EnsureGltfResourcesFn&& ensureGltfResources,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         TileLoadedContent& content = upload.content();
-        const bool contentProviderOwnsTerrainQuadtree =
-            contentProvider && contentProvider->providesTerrainQuadtree();
         const bool hadHeightmapTerrainPayload =
             content.terrainPayloadKind == TerrainTilePayloadKind::Heightmap &&
             content.heightmap != nullptr;
@@ -118,7 +113,7 @@ public:
                 content);
             uploadsGltfTerrain = content.hasGltfTerrainPayload();
             captureInitialBoundingVolumes(*tile, content.metadata);
-            if (contentProviderOwnsTerrainQuadtree && uploadsGltfTerrain) {
+            if (uploadsGltfTerrain) {
                 const TileTerrainUploadCommitAction action =
                     TileTerrainUploadCommitter::
                         finishTerrainResourcePreparation(*tile, false);
@@ -130,9 +125,6 @@ public:
                     upload.cacheKey);
                 return;
             }
-            TileTerrainUploadCommitter::applyAvailabilityUpdates(
-                contentProvider,
-                content);
             const bool uploadsHeightmapTerrain =
                 !uploadsGltfTerrain &&
                 content.terrainPayloadKind ==
@@ -143,7 +135,6 @@ public:
                 !uploadsHeightmapTerrain &&
                 tile->content.derivesTerrainFromParent();
             const bool uploadsTerrainPayload =
-                uploadsGltfTerrain ||
                 uploadsHeightmapTerrain ||
                 uploadsParentUpsampledTerrain;
             if (uploadsTerrainPayload) {
@@ -153,12 +144,10 @@ public:
                     rasterOverlays,
                     device);
             }
-            if (uploadsGltfTerrain) {
-                ensureGltfResources(*tile);
-            } else if ((uploadsHeightmapTerrain ||
-                        uploadsParentUpsampledTerrain) &&
-                       !resourceSmoothingActive &&
-                       !tile->content.renderContent.hasSurfaceMesh()) {
+            if ((uploadsHeightmapTerrain ||
+                 uploadsParentUpsampledTerrain) &&
+                !resourceSmoothingActive &&
+                !tile->content.renderContent.hasSurfaceMesh()) {
                 ensureTileMesh(*tile);
             }
             const bool resourcesReady = uploadsTerrainPayload &&
@@ -282,7 +271,6 @@ public:
         } else {
             commitTerrainUpload(
                 upload,
-                contentProvider,
                 device,
                 rasterOverlays,
                 terrainCache,
@@ -290,7 +278,6 @@ public:
                 resourceSmoothingActive,
                 std::forward<EnsureTileFn>(ensureTile),
                 std::forward<EnsureTileMeshFn>(ensureTileMesh),
-                std::forward<EnsureGltfResourcesFn>(ensureGltfResources),
                 std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
         }
     }
