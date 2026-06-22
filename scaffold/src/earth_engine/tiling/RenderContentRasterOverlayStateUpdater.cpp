@@ -3,6 +3,7 @@
 #include "RasterMappedToTilesetTile.h"
 #include "RasterOverlayScreenSpaceMetrics.h"
 #include "TileRasterOverlayDetailsGenerator.h"
+#include "TileRasterOverlaySignature.h"
 #include "TilesetTile.h"
 
 #include "../core/resources/FrameResourceBudget.h"
@@ -35,6 +36,9 @@ RenderContentRasterOverlayStateUpdater::update(
     FrameResourceBudget& frameResourceBudget) {
     RenderContentRasterOverlayUpdateAction action;
 
+    tile.rasterOverlayState.synchronizeMappingIdentity(
+        TileRasterOverlaySignature::mappingIdentity(rasterOverlays),
+        &renderer);
     tile.rasterOverlayState.resizeMappingSlots(
         rasterOverlays.size(),
         &renderer);

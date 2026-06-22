@@ -3,6 +3,7 @@
 #include "RasterMappedToTilesetTile.h"
 #include "RasterOverlayScreenSpaceMetrics.h"
 #include "TileRasterOverlayDetailsGenerator.h"
+#include "TileRasterOverlaySignature.h"
 #include "TilesetTile.h"
 
 #include "../core/resources/FrameResourceBudget.h"
@@ -33,6 +34,9 @@ void TileRasterOverlayPrefetcher::prefetch(
     RenderDevice* device,
     double maximumScreenSpaceError,
     FrameResourceBudget& frameResourceBudget) {
+    tile.rasterOverlayState.synchronizeMappingIdentity(
+        TileRasterOverlaySignature::mappingIdentity(rasterOverlays),
+        nullptr);
     tile.rasterOverlayState.resizeMappingSlots(rasterOverlays.size(), nullptr);
     tile.rasterOverlayState.clearMissingProjections();
 

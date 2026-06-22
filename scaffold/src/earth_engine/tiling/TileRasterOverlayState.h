@@ -3,6 +3,7 @@
 #include "SurfaceTile.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -59,6 +60,8 @@ public:
     int missingProjectionCount() const {
         return static_cast<int>(missingProjections_.size());
     }
+    void synchronizeMappingIdentity(uint64_t mappingIdentity,
+                                    IPrepareRendererResources* pPrepRenderer);
 
     void releaseReferences(IPrepareRendererResources* pPrepRenderer);
     void releaseAndClearReferences(IPrepareRendererResources* pPrepRenderer);
@@ -66,6 +69,8 @@ public:
 private:
     std::vector<std::unique_ptr<RasterMappedToTilesetTile>> mappings_;
     std::vector<RasterOverlayProjection> missingProjections_;
+    bool hasMappingIdentity_ = false;
+    uint64_t mappingIdentity_ = 0;
 };
 
 } // namespace earth_engine

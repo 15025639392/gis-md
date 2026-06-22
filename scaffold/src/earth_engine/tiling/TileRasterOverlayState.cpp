@@ -64,6 +64,23 @@ bool TileRasterOverlayState::hasDrawableReadyMapping(size_t index) const {
            SurfaceRasterBindingKind::None;
 }
 
+void TileRasterOverlayState::synchronizeMappingIdentity(
+    uint64_t mappingIdentity,
+    IPrepareRendererResources* pPrepRenderer) {
+    if (!hasMappingIdentity_) {
+        hasMappingIdentity_ = true;
+        mappingIdentity_ = mappingIdentity;
+        return;
+    }
+    if (mappingIdentity_ == mappingIdentity) {
+        return;
+    }
+
+    releaseAndClearReferences(pPrepRenderer);
+    hasMappingIdentity_ = true;
+    mappingIdentity_ = mappingIdentity;
+}
+
 void TileRasterOverlayState::releaseReferences(
     IPrepareRendererResources* pPrepRenderer) {
     for (auto& overlay : mappings_) {
@@ -78,6 +95,8 @@ void TileRasterOverlayState::releaseAndClearReferences(
     releaseReferences(pPrepRenderer);
     mappings_.clear();
     missingProjections_.clear();
+    hasMappingIdentity_ = false;
+    mappingIdentity_ = 0;
 }
 
 } // namespace earth_engine

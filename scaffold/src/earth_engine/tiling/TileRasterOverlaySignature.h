@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstddef>
 #include <vector>
 
 namespace earth_engine {
@@ -56,6 +57,16 @@ public:
             } else {
                 mix(signature, 0);
             }
+        }
+        return signature;
+    }
+
+    static uint64_t mappingIdentity(
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+        uint64_t signature = kFnvOffset;
+        mix(signature, static_cast<uint64_t>(rasterOverlays.size()));
+        for (const auto* activeOverlay : rasterOverlays) {
+            mix(signature, reinterpret_cast<uintptr_t>(activeOverlay));
         }
         return signature;
     }
