@@ -157,7 +157,9 @@ public:
     /// Current number of tiles in Loading state.
     int getThrottledTilesCurrentlyLoading() const;
     int getActiveRasterSourceRequests() const {
-        return static_cast<int>(activeRasterSourceRequests_);
+        return static_cast<int>(
+            asyncState_->activeRasterSourceRequests.load(
+                std::memory_order_relaxed));
     }
     int getPendingUploadCount() const;
 
@@ -172,7 +174,10 @@ public:
     void setMaximumTextureSize(int maximumTextureSize) {
         maximumTextureSize_ = maximumTextureSize > 0 ? maximumTextureSize : 2048;
     }
-    int64_t getSubTileCacheBytes() const { return subTileCacheBytes_; }
+    int64_t getSubTileCacheBytes() const {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        return asyncState_->subTileCacheBytes;
+    }
     void setSubTileCacheBytes(int64_t subTileCacheBytes);
     int getMinimumLevel() const;
     int getMaximumLevel() const;
@@ -192,7 +197,9 @@ public:
     /// Monotonic state revision. Increments when raster tile load state or GPU
     /// texture readiness changes, so diagnostics and cache users can observe
     /// provider-side progress without walking every mapped tile.
-    uint64_t revision() const { return revision_.load(std::memory_order_relaxed); }
+    uint64_t revision() const {
+        return asyncState_->revision.load(std::memory_order_relaxed);
+    }
 
     // ── Texture cache ──
 
@@ -254,8 +261,6 @@ private:
         RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::Unknown;
     };
-    std::deque<PendingUpload> pendingUploads_;
-    mutable std::mutex pendingMutex_;
 
     /// Provider-level source imagery depot, matching cesium-native
     /// SharedAssetDepot ownership. Rectangle geometry requests may compose
@@ -275,23 +280,34 @@ private:
     struct InFlightSourceTileAsset {
         std::vector<std::function<void(const SourceTileAsset*)>> waiters;
     };
-    std::unordered_map<std::string, SourceTileAsset>
-        sourceTileDepotCache_;
-    std::unordered_map<std::string, InFlightSourceTileAsset>
-        sourceTileDepotInFlight_;
-    std::deque<std::pair<std::string, uint64_t>> sourceTileDepotCacheLru_;
-    int64_t sourceTileDepotCacheBytes_ = 0;
-    int64_t subTileCacheBytes_ = 16 * 1024 * 1024;
-    uint64_t sourceTileDepotGeneration_ = 0;
-
-    /// Tiles currently in-flight (requested but not yet responded).
-    std::unordered_set<std::string> inFlightRequests_;
-    std::atomic<uint32_t> activeRasterSourceRequests_{0};
 
     /// Failed tiles (key → first fail timestamp, for retry logic).
     struct FailedRecord { double firstFailTime = 0.0; int retries = 0; };
-    std::unordered_map<std::string, FailedRecord> failedTiles_;
-    std::atomic<uint64_t> revision_{0};
+
+    /// Shared runtime state touched by async raster callbacks. It intentionally
+    /// outlives RasterOverlayTileProvider when a source request completes
+    /// after overlay/provider destruction, matching cesium-native's depot
+    /// lifetime model without letting callbacks dereference a dead provider.
+    struct ProviderAsyncState {
+        std::deque<PendingUpload> pendingUploads;
+        mutable std::mutex mutex;
+        std::unordered_map<std::string, SourceTileAsset>
+            sourceTileDepotCache;
+        std::unordered_map<std::string, InFlightSourceTileAsset>
+            sourceTileDepotInFlight;
+        std::deque<std::pair<std::string, uint64_t>>
+            sourceTileDepotCacheLru;
+        int64_t sourceTileDepotCacheBytes = 0;
+        int64_t subTileCacheBytes = 16 * 1024 * 1024;
+        uint64_t sourceTileDepotGeneration = 0;
+        std::unordered_set<std::string> inFlightRequests;
+        std::atomic<uint32_t> activeRasterSourceRequests{0};
+        std::unordered_map<std::string, FailedRecord> failedTiles;
+        std::atomic<uint64_t> revision{0};
+        std::atomic<bool> alive{true};
+    };
+    std::shared_ptr<ProviderAsyncState> asyncState_ =
+        std::make_shared<ProviderAsyncState>();
 
     /// Monotonic frame counter, updated by trimUnusedTiles.
     /// Used to stamp lastUsedFrame on tiles in getTile().

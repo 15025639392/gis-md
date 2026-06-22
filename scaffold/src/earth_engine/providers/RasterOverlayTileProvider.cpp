@@ -827,15 +827,7 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
     : public std::enable_shared_from_this<RectangleSourceRequest> {
     RectangleSourceRequest(ImageryProvider& imageryProvider,
                            const TileScheme& tileScheme,
-                           std::unordered_map<std::string,
-                                              SourceTileAsset>& sourceCache,
-                           std::deque<std::pair<std::string, uint64_t>>& sourceCacheLru,
-                           int64_t& sourceCacheBytes,
-                           uint64_t& sourceCacheGeneration,
-                           std::unordered_map<std::string,
-                                              InFlightSourceTileAsset>& sourceInFlight,
-                           int64_t sourceCacheBudgetBytes,
-                           std::mutex& sourceCacheMutex,
+                           std::shared_ptr<ProviderAsyncState> asyncState,
                            RectangleSourcePlan plan,
                            Rectangle bounds,
                            Rectangle outputRectangle,
@@ -846,13 +838,14 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
                            RectangleRequestFailure failure)
         : provider(imageryProvider)
         , scheme(tileScheme)
-        , cache(sourceCache)
-        , cacheLru(sourceCacheLru)
-        , cacheBytes(sourceCacheBytes)
-        , cacheGeneration(sourceCacheGeneration)
-        , inFlight(sourceInFlight)
-        , cacheBudgetBytes(sourceCacheBudgetBytes)
-        , cacheMutex(sourceCacheMutex)
+        , state(std::move(asyncState))
+        , cache(state->sourceTileDepotCache)
+        , cacheLru(state->sourceTileDepotCacheLru)
+        , cacheBytes(state->sourceTileDepotCacheBytes)
+        , cacheGeneration(state->sourceTileDepotGeneration)
+        , inFlight(state->sourceTileDepotInFlight)
+        , cacheBudgetBytes(state->subTileCacheBytes)
+        , cacheMutex(state->mutex)
         , sourcePlan(std::move(plan))
         , targetBounds(bounds)
         , outputBounds(outputRectangle)
@@ -1195,6 +1188,7 @@ private:
 
     ImageryProvider& provider;
     const TileScheme& scheme;
+    std::shared_ptr<ProviderAsyncState> state;
     std::unordered_map<std::string, SourceTileAsset>& cache;
     std::deque<std::pair<std::string, uint64_t>>& cacheLru;
     int64_t& cacheBytes;
@@ -1275,7 +1269,9 @@ RasterOverlayTileProvider::RasterOverlayTileProvider(ImageryProvider& provider,
     , projection_(projectionForScheme(scheme))
     , textureUploader_(std::move(textureUploader)) {}
 
-RasterOverlayTileProvider::~RasterOverlayTileProvider() = default;
+RasterOverlayTileProvider::~RasterOverlayTileProvider() {
+    asyncState_->alive.store(false, std::memory_order_release);
+}
 
 void RasterOverlayTileProvider::setOwner(RasterOverlay* owner) {
     owner_ = owner;
@@ -1289,26 +1285,29 @@ void RasterOverlayTileProvider::setOwner(RasterOverlay* owner) {
 }
 
 void RasterOverlayTileProvider::setSubTileCacheBytes(int64_t subTileCacheBytes) {
-    std::lock_guard<std::mutex> lock(pendingMutex_);
-    subTileCacheBytes_ = std::max<int64_t>(0, subTileCacheBytes);
-    while (sourceTileDepotCacheBytes_ > subTileCacheBytes_ &&
-           !sourceTileDepotCacheLru_.empty()) {
-        auto [key, generation] = sourceTileDepotCacheLru_.front();
-        sourceTileDepotCacheLru_.pop_front();
-        auto it = sourceTileDepotCache_.find(key);
-        if (it == sourceTileDepotCache_.end() ||
+    std::lock_guard<std::mutex> lock(asyncState_->mutex);
+    asyncState_->subTileCacheBytes = std::max<int64_t>(0, subTileCacheBytes);
+    while (asyncState_->sourceTileDepotCacheBytes >
+               asyncState_->subTileCacheBytes &&
+           !asyncState_->sourceTileDepotCacheLru.empty()) {
+        auto [key, generation] =
+            asyncState_->sourceTileDepotCacheLru.front();
+        asyncState_->sourceTileDepotCacheLru.pop_front();
+        auto it = asyncState_->sourceTileDepotCache.find(key);
+        if (it == asyncState_->sourceTileDepotCache.end() ||
             it->second.generation != generation) {
             continue;
         }
-        sourceTileDepotCacheBytes_ -= it->second.sizeBytes;
-        sourceTileDepotCache_.erase(it);
+        asyncState_->sourceTileDepotCacheBytes -= it->second.sizeBytes;
+        asyncState_->sourceTileDepotCache.erase(it);
     }
-    if (subTileCacheBytes_ == 0 || sourceTileDepotCacheBytes_ < 0) {
-        if (subTileCacheBytes_ == 0) {
-            sourceTileDepotCache_.clear();
-            sourceTileDepotCacheLru_.clear();
+    if (asyncState_->subTileCacheBytes == 0 ||
+        asyncState_->sourceTileDepotCacheBytes < 0) {
+        if (asyncState_->subTileCacheBytes == 0) {
+            asyncState_->sourceTileDepotCache.clear();
+            asyncState_->sourceTileDepotCacheLru.clear();
         }
-        sourceTileDepotCacheBytes_ = 0;
+        asyncState_->sourceTileDepotCacheBytes = 0;
     }
 }
 
@@ -1478,8 +1477,8 @@ int RasterOverlayTileProvider::getThrottledTilesCurrentlyLoading() const {
 }
 
 int RasterOverlayTileProvider::getPendingUploadCount() const {
-    std::lock_guard<std::mutex> lock(pendingMutex_);
-    return static_cast<int>(pendingUploads_.size());
+    std::lock_guard<std::mutex> lock(asyncState_->mutex);
+    return static_cast<int>(asyncState_->pendingUploads.size());
 }
 
 bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
@@ -1491,8 +1490,8 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
     // cesium-native ActivatedRasterOverlay::doLoad: only Unloaded tiles start
     // a load. Loading/Loaded/Done/Failed/Placeholder are terminal or already
     // in progress from this entry point.
-    auto state = tile.getState();
-    switch (state) {
+    auto loadState = tile.getState();
+    switch (loadState) {
         case RasterOverlayTile::LoadState::Unloaded:
             break;  // OK to load
         case RasterOverlayTile::LoadState::Loading:
@@ -1507,23 +1506,31 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
     std::string ck = tileCacheKey(key);
 
     // Check if already in-flight
-    if (inFlightRequests_.count(ck)) {
-        return true;
+    {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        if (asyncState_->inFlightRequests.count(ck)) {
+            return true;
+        }
     }
     if (!tryIssueRasterRequestBudget(
             budget,
-            activeRasterSourceRequests_,
+            asyncState_->activeRasterSourceRequests,
             1)) {
         return false;
     }
 
     tile.setState(RasterOverlayTile::LoadState::Loading);
     {
-        std::lock_guard<std::mutex> lock(pendingMutex_);
-        inFlightRequests_.insert(ck);
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        asyncState_->inFlightRequests.insert(ck);
     }
 
-    auto* self = this;
+    std::shared_ptr<ProviderAsyncState> state = asyncState_;
+    std::weak_ptr<RasterOverlayTile> tileWeak;
+    auto tileIt = tiles_.find(ck);
+    if (tileIt != tiles_.end()) {
+        tileWeak = tileIt->second;
+    }
     RectangleSourcePlan sourcePlan;
     sourcePlan.sourceZoom = key.z;
     sourcePlan.range = TileRange{key.x, key.y, key.x, key.y};
@@ -1534,72 +1541,67 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
     auto request = std::make_shared<RectangleSourceRequest>(
         provider_,
         scheme_,
-        sourceTileDepotCache_,
-        sourceTileDepotCacheLru_,
-        sourceTileDepotCacheBytes_,
-        sourceTileDepotGeneration_,
-        sourceTileDepotInFlight_,
-        subTileCacheBytes_,
-        pendingMutex_,
+        state,
         std::move(sourcePlan),
         targetBounds,
         outputBounds,
         maximumCombinedTextureSize(textureUploader_.get(), maximumTextureSize_),
         getMinimumLevel(),
         getMaximumLevel(),
-        [self, ck](std::unique_ptr<DecodedImage> image,
-                   Rectangle rectangle,
-                   RasterOverlayTile::MoreDetailAvailable moreDetailAvailable) {
-            std::lock_guard<std::mutex> lock(self->pendingMutex_);
-            self->inFlightRequests_.erase(ck);
+        [state, ck, tileWeak](std::unique_ptr<DecodedImage> image,
+                              Rectangle rectangle,
+                              RasterOverlayTile::MoreDetailAvailable moreDetailAvailable) {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->inFlightRequests.erase(ck);
             if (image) {
-                self->pendingUploads_.push_back(
+                if (!state->alive.load(std::memory_order_acquire)) {
+                    return;
+                }
+                state->pendingUploads.push_back(
                     {ck, std::move(image), rectangle, moreDetailAvailable});
             } else {
-                auto it = self->tiles_.find(ck);
-                if (it != self->tiles_.end()) {
-                    it->second->setMoreDetailAvailable(
+                if (auto tile = tileWeak.lock()) {
+                    tile->setMoreDetailAvailable(
                         RasterOverlayTile::MoreDetailAvailable::No);
-                    it->second->setState(RasterOverlayTile::LoadState::Failed);
+                    tile->setState(RasterOverlayTile::LoadState::Failed);
                 }
-                auto& fr = self->failedTiles_[ck];
+                auto& fr = state->failedTiles[ck];
                 if (fr.firstFailTime == 0.0) {
                     fr.firstFailTime = std::chrono::duration<double>(
                         std::chrono::steady_clock::now().time_since_epoch()).count();
                 }
                 fr.retries++;
-                self->revision_.fetch_add(1, std::memory_order_relaxed);
+                state->revision.fetch_add(1, std::memory_order_relaxed);
             }
         },
-        [self, ck]() {
-            std::lock_guard<std::mutex> lock(self->pendingMutex_);
-            self->inFlightRequests_.erase(ck);
-            auto it = self->tiles_.find(ck);
-            if (it != self->tiles_.end()) {
-                it->second->setMoreDetailAvailable(
+        [state, ck, tileWeak]() {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->inFlightRequests.erase(ck);
+            if (auto tile = tileWeak.lock()) {
+                tile->setMoreDetailAvailable(
                     RasterOverlayTile::MoreDetailAvailable::No);
-                it->second->setState(RasterOverlayTile::LoadState::Failed);
+                tile->setState(RasterOverlayTile::LoadState::Failed);
             }
-            auto& fr = self->failedTiles_[ck];
+            auto& fr = state->failedTiles[ck];
             if (fr.firstFailTime == 0.0) {
                 fr.firstFailTime = std::chrono::duration<double>(
                     std::chrono::steady_clock::now().time_since_epoch()).count();
             }
             fr.retries++;
-            self->revision_.fetch_add(1, std::memory_order_relaxed);
+            state->revision.fetch_add(1, std::memory_order_relaxed);
         });
 
     request->issueAll(
-        [self = this]() {
-            self->activeRasterSourceRequests_.fetch_add(
+        [state]() {
+            state->activeRasterSourceRequests.fetch_add(
                 1,
                 std::memory_order_relaxed);
         },
-        [self = this]() {
-            uint32_t current = self->activeRasterSourceRequests_.load(
+        [state]() {
+            uint32_t current = state->activeRasterSourceRequests.load(
                 std::memory_order_relaxed);
             while (current > 0 &&
-                   !self->activeRasterSourceRequests_.compare_exchange_weak(
+                   !state->activeRasterSourceRequests.compare_exchange_weak(
                        current,
                        current - 1,
                        std::memory_order_relaxed)) {}
@@ -1626,8 +1628,8 @@ bool RasterOverlayTileProvider::loadTileThrottled(RasterOverlayTile& tile,
 
 bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
                                                   FrameResourceBudget* budget) {
-    auto state = tile.getState();
-    switch (state) {
+    auto loadState = tile.getState();
+    switch (loadState) {
         case RasterOverlayTile::LoadState::Unloaded:
             break;
         case RasterOverlayTile::LoadState::Loading:
@@ -1641,8 +1643,8 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
     const std::string ck = tile.getCacheKey();
     if (ck.empty()) return false;
     {
-        std::lock_guard<std::mutex> lock(pendingMutex_);
-        if (inFlightRequests_.count(ck)) return true;
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        if (asyncState_->inFlightRequests.count(ck)) return true;
     }
 
     const Rectangle outputBounds = tile.getRectangle();
@@ -1678,15 +1680,15 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
     }
     if (!tryIssueRasterRequestBudget(
             budget,
-            activeRasterSourceRequests_,
+            asyncState_->activeRasterSourceRequests,
             sourcePlan.budgetUnits())) {
         return false;
     }
 
     tile.setState(RasterOverlayTile::LoadState::Loading);
     {
-        std::lock_guard<std::mutex> lock(pendingMutex_);
-        inFlightRequests_.insert(ck);
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        asyncState_->inFlightRequests.insert(ck);
     }
     logAndroidRasterPipeline(
         "start",
@@ -1694,64 +1696,65 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
         static_cast<int>(sourcePlan.sourceKeys.size()),
         sourcePlan.sourceZoom);
 
-    auto* self = this;
+    std::shared_ptr<ProviderAsyncState> state = asyncState_;
+    std::weak_ptr<RasterOverlayTile> tileWeak;
+    auto tileIt = tiles_.find(ck);
+    if (tileIt != tiles_.end()) {
+        tileWeak = tileIt->second;
+    }
     const int maxTextureSize =
         maximumCombinedTextureSize(textureUploader_.get(), maximumTextureSize_);
     auto request = std::make_shared<RectangleSourceRequest>(
         provider_,
         scheme_,
-        sourceTileDepotCache_,
-        sourceTileDepotCacheLru_,
-        sourceTileDepotCacheBytes_,
-        sourceTileDepotGeneration_,
-        sourceTileDepotInFlight_,
-        subTileCacheBytes_,
-        pendingMutex_,
+        state,
         sourcePlan,
         targetBounds,
         outputBounds,
         maxTextureSize,
         getMinimumLevel(),
         getMaximumLevel(),
-        [self, ck](std::unique_ptr<DecodedImage> composed,
-                   Rectangle rectangle,
-                   RasterOverlayTile::MoreDetailAvailable moreDetailAvailable) {
-            std::lock_guard<std::mutex> providerLock(self->pendingMutex_);
-            self->inFlightRequests_.erase(ck);
+        [state, ck](std::unique_ptr<DecodedImage> composed,
+                    Rectangle rectangle,
+                    RasterOverlayTile::MoreDetailAvailable moreDetailAvailable) {
+            std::lock_guard<std::mutex> providerLock(state->mutex);
+            state->inFlightRequests.erase(ck);
+            if (!state->alive.load(std::memory_order_acquire)) {
+                return;
+            }
             logAndroidRasterPipeline("composed", ck, 0, 0);
-            self->pendingUploads_.push_back(
+            state->pendingUploads.push_back(
                 {ck, std::move(composed), rectangle, moreDetailAvailable});
         },
-        [self, ck]() {
-            std::lock_guard<std::mutex> providerLock(self->pendingMutex_);
-            self->inFlightRequests_.erase(ck);
+        [state, ck, tileWeak]() {
+            std::lock_guard<std::mutex> providerLock(state->mutex);
+            state->inFlightRequests.erase(ck);
             logAndroidRasterPipeline("compose-failed", ck, 0, 0);
-            auto it = self->tiles_.find(ck);
-            if (it != self->tiles_.end()) {
-                it->second->setMoreDetailAvailable(
+            if (auto tile = tileWeak.lock()) {
+                tile->setMoreDetailAvailable(
                     RasterOverlayTile::MoreDetailAvailable::No);
-                it->second->setState(RasterOverlayTile::LoadState::Failed);
+                tile->setState(RasterOverlayTile::LoadState::Failed);
             }
-            auto& fr = self->failedTiles_[ck];
+            auto& fr = state->failedTiles[ck];
             if (fr.firstFailTime == 0.0) {
                 fr.firstFailTime = std::chrono::duration<double>(
                     std::chrono::steady_clock::now().time_since_epoch()).count();
             }
             fr.retries++;
-            self->revision_.fetch_add(1, std::memory_order_relaxed);
+            state->revision.fetch_add(1, std::memory_order_relaxed);
         });
 
     request->issueAll(
-        [self = this]() {
-            self->activeRasterSourceRequests_.fetch_add(
+        [state]() {
+            state->activeRasterSourceRequests.fetch_add(
                 1,
                 std::memory_order_relaxed);
         },
-        [self = this]() {
-            uint32_t current = self->activeRasterSourceRequests_.load(
+        [state]() {
+            uint32_t current = state->activeRasterSourceRequests.load(
                 std::memory_order_relaxed);
             while (current > 0 &&
-                   !self->activeRasterSourceRequests_.compare_exchange_weak(
+                   !state->activeRasterSourceRequests.compare_exchange_weak(
                        current,
                        current - 1,
                        std::memory_order_relaxed,
@@ -1782,33 +1785,33 @@ int RasterOverlayTileProvider::processPendingUploads(
     while (true) {
         PendingUpload upload;
         {
-            std::lock_guard<std::mutex> lock(pendingMutex_);
+            std::lock_guard<std::mutex> lock(asyncState_->mutex);
             // Rectangle raster tiles can be 512x512+ and state finalization
             // runs on the main thread. Take one upload at a time so elapsed
             // upload cost can stop the next item in the same frame.
-            if (pendingUploads_.empty()) {
+            if (asyncState_->pendingUploads.empty()) {
                 break;
             }
             if (!budget->tryFinalize(FrameResourceLane::RasterTextureUpload,
                                      FrameResourcePriority::Normal)) {
                 break;
             }
-            auto selected = pendingUploads_.begin();
+            auto selected = asyncState_->pendingUploads.begin();
             if (interactionActive) {
                 selected = std::find_if(
-                    pendingUploads_.begin(),
-                    pendingUploads_.end(),
+                    asyncState_->pendingUploads.begin(),
+                    asyncState_->pendingUploads.end(),
                     [](const PendingUpload& candidate) {
                         return uploadAllowedDuringInteraction(
                             candidate.cacheKey,
                             candidate.image.get());
                     });
-                if (selected == pendingUploads_.end()) {
+                if (selected == asyncState_->pendingUploads.end()) {
                     break;
                 }
             }
             upload = std::move(*selected);
-            pendingUploads_.erase(selected);
+            asyncState_->pendingUploads.erase(selected);
         }
 
         auto it = tiles_.find(upload.cacheKey);
@@ -1818,7 +1821,7 @@ int RasterOverlayTileProvider::processPendingUploads(
         if (!upload.image || !isDecodedImageUploadable(*upload.image)) {
             tile.setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
             tile.setState(RasterOverlayTile::LoadState::Failed);
-            revision_.fetch_add(1, std::memory_order_relaxed);
+            asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
             ++processed;
             continue;
         }
@@ -1854,7 +1857,7 @@ int RasterOverlayTileProvider::processPendingUploads(
             // cesium-native: transfer texture ownership to the tile.
             // The tile owns its texture; no external cache needed.
             tile.setTexture(std::move(tex));
-            revision_.fetch_add(1, std::memory_order_relaxed);
+            asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
             ++processed;
 #ifdef __ANDROID__
             __android_log_print(ANDROID_LOG_INFO, "RasterOverlayTileProvider",
@@ -1876,7 +1879,7 @@ int RasterOverlayTileProvider::processPendingUploads(
         } else {
             tile.setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
             tile.setState(RasterOverlayTile::LoadState::Failed);
-            revision_.fetch_add(1, std::memory_order_relaxed);
+            asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
             ++processed;
         }
     }
@@ -1884,8 +1887,9 @@ int RasterOverlayTileProvider::processPendingUploads(
 }
 
 bool RasterOverlayTileProvider::hasPendingWork() const {
-    std::lock_guard<std::mutex> lock(pendingMutex_);
-    return !pendingUploads_.empty() || !inFlightRequests_.empty();
+    std::lock_guard<std::mutex> lock(asyncState_->mutex);
+    return !asyncState_->pendingUploads.empty() ||
+           !asyncState_->inFlightRequests.empty();
 }
 
 void RasterOverlayTileProvider::markUsed(const std::string& cacheKey) {
@@ -1917,7 +1921,11 @@ void RasterOverlayTileProvider::trimUnusedTiles() {
         const uint64_t age = frameNumber_ > tile.lastUsedFrame
             ? frameNumber_ - tile.lastUsedFrame
             : 0;
-        const bool inFlight = inFlightRequests_.count(it->first) > 0;
+        bool inFlight = false;
+        {
+            std::lock_guard<std::mutex> lock(asyncState_->mutex);
+            inFlight = asyncState_->inFlightRequests.count(it->first) > 0;
+        }
         const bool retainedOutsideProvider = it->second.use_count() > 1;
         if (age > kRetainedUnusedFrames && !inFlight &&
             !retainedOutsideProvider) {

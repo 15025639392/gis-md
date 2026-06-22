@@ -1038,6 +1038,56 @@ TEST(RasterOverlayLifecycleTest, DirectAndRectangleTilesShareProviderSourceTileA
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, rectangleTile->getState());
 }
 
+TEST(RasterOverlayLifecycleTest, DirectTileCallbackAfterProviderDestructionIsIgnored) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    auto provider = std::make_unique<RasterOverlayTileProvider>(
+        imagery,
+        *scheme,
+        std::move(uploader));
+
+    TileKey key{scheme->id(), 1, 0, 0};
+    auto tile = provider->getTile(key);
+    ASSERT_NE(nullptr, tile);
+    ASSERT_TRUE(provider->loadTile(*tile));
+    ASSERT_EQ(1u, imagery.pending.size());
+    provider.reset();
+
+    imagery.completeNext();
+    SUCCEED();
+}
+
+TEST(RasterOverlayLifecycleTest, RectangleTileCallbackAfterProviderDestructionIsIgnored) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    auto provider = std::make_unique<RasterOverlayTileProvider>(
+        imagery,
+        *scheme,
+        std::move(uploader));
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+
+    auto tile = provider->getTile(
+        projectForProvider(*provider, westHalf),
+        256.0,
+        512.0);
+    ASSERT_NE(nullptr, tile);
+    ASSERT_TRUE(provider->loadTile(*tile));
+    ASSERT_EQ(1u, imagery.pending.size());
+    provider.reset();
+
+    imagery.completeNext();
+    SUCCEED();
+}
+
 TEST(RasterOverlayLifecycleTest, SourceTileDepotHonorsSubTileCacheByteBudget) {
     auto ownedImagery = std::make_unique<ParentFallbackImageryProvider>();
     ParentFallbackImageryProvider* imagery = ownedImagery.get();
