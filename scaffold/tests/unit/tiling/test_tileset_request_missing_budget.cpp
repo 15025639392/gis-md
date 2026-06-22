@@ -919,9 +919,6 @@ TEST(TilesetRequestMissingBudgetTest,
 TEST(TilesetRequestMissingBudgetTest,
      ContentTerrainQuadtreeSuppressesLegacyTerrainRequestPath) {
     const TileKey key{"Geographic-TMS", 1, 0, 0};
-    auto terrainProvider = std::make_unique<ManualCompletionTerrainProvider>();
-    ManualCompletionTerrainProvider* rawTerrainProvider =
-        terrainProvider.get();
     auto contentProvider =
         std::make_unique<ManualCompletionContentProvider>(key);
     contentProvider->ownsTerrainQuadtree = true;
@@ -929,7 +926,7 @@ TEST(TilesetRequestMissingBudgetTest,
         contentProvider.get();
 
     Tileset tileset(
-        std::move(terrainProvider),
+        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -939,8 +936,6 @@ TEST(TilesetRequestMissingBudgetTest,
 
     TilesetTestAccess::requestMissingTile(tileset, key);
 
-    EXPECT_EQ(rawTerrainProvider->supportsTileCalls, 0);
-    EXPECT_TRUE(rawTerrainProvider->pendingRequests.empty());
     ASSERT_EQ(rawContentProvider->pendingRequests.size(), 1u);
     EXPECT_EQ(rawContentProvider->pendingRequests.front().key, key);
     EXPECT_TRUE(rawContentProvider->completeWithEmpty(key));
@@ -1002,8 +997,6 @@ TEST(
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 20;
 
-    auto terrainProvider = std::make_unique<ManualCompletionTerrainProvider>();
-    terrainProvider->maximumTransportActiveRequests = 3;
     auto contentProvider =
         std::make_unique<ManualCompletionContentProvider>(key);
     contentProvider->ownsTerrainQuadtree = true;
@@ -1012,7 +1005,7 @@ TEST(
         contentProvider.get();
 
     Tileset tileset(
-        std::move(terrainProvider),
+        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,

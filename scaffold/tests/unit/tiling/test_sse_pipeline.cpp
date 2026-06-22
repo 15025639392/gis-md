@@ -11496,6 +11496,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             fallbackTile,
             nullptr,
             false,
+            true,
             [](const TilesetTile&, bool) -> const TilesetTile* {
                 return nullptr;
             },
@@ -11514,15 +11515,16 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             contentTerrainFallbackTile,
             nullptr,
             true,
+            false,
             [](const TilesetTile&, bool) -> const TilesetTile* {
                 return nullptr;
             },
             [](TilesetTile&) {});
-    check(contentTerrainFallbackTile.content.renderContent.hasSurfaceMesh() &&
-              contentTerrainFallbackResolution.resolvedSource() ==
-                  SurfaceDrawableSource::EllipsoidFallback &&
+    check(!contentTerrainFallbackTile.content.renderContent.hasSurfaceMesh() &&
+              contentTerrainFallbackResolution.source ==
+                  SurfaceDrawableSource::None &&
               !contentTerrainFallbackResolution.markDone,
-          "TileSurfaceMeshSourceResolver: content terrain quadtree fallback stays pending like terrain provider");
+          "TileSurfaceMeshSourceResolver: content terrain quadtree waits for content instead of creating an ellipsoid fallback");
 
     TilesetTile upsampleParent(
         TileKey{"Geographic-TMS", 0, 0, 0},
@@ -11540,6 +11542,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             upsampleChild,
             nullptr,
             true,
+            false,
             [&upsampleParent](const TilesetTile&, bool)
                 -> const TilesetTile* {
                 return &upsampleParent;
@@ -11573,6 +11576,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             gltfChild,
             nullptr,
             true,
+            false,
             [](const TilesetTile&, bool) -> const TilesetTile* {
                 return nullptr;
             },

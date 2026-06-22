@@ -15,6 +15,7 @@ struct TileSurfaceMeshEnsureInput {
     DecodedHeightmap* ownHeightmap = nullptr;
     RenderDevice* device = nullptr;
     bool hasTerrainQuadtree = false;
+    bool allowEllipsoidFallbackWithoutTerrain = true;
 };
 
 struct TileSurfaceMeshEnsureResult {
@@ -77,8 +78,12 @@ public:
                 tile,
                 ownHeightmap,
                 input.hasTerrainQuadtree,
+                input.allowEllipsoidFallbackWithoutTerrain,
                 findUpsampleSource,
                 ensureAncestorMesh);
+        if (!tile.content.renderContent.hasSurfaceMesh()) {
+            return TileSurfaceMeshEnsureResult{};
+        }
 
         TileSurfaceRenderContentCoordinator::commitSurface(
             tile,

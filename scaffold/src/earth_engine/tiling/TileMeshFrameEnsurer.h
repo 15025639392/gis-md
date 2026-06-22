@@ -56,7 +56,9 @@ public:
                     input.tile,
                     ownHeightmap,
                     input.device,
-                    input.hasTerrainQuadtree},
+                    input.hasTerrainQuadtree,
+                    !input.hasTerrainQuadtree ||
+                        input.useLegacyHeightmapTerrainCache},
                 ingestAvailability,
                 findUpsampleSource,
                 ensureAncestorMesh,

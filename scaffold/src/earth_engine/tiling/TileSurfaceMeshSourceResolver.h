@@ -23,6 +23,7 @@ public:
         TilesetTile& tile,
         DecodedHeightmap* ownHeightmap,
         bool hasTerrainQuadtree,
+        bool allowEllipsoidFallbackWithoutTerrain,
         FindUpsampleSourceFn&& findUpsampleSource,
         EnsureAncestorMeshFn&& ensureAncestorMesh) {
         const bool hasOwnTerrain = ownHeightmap != nullptr;
@@ -43,7 +44,11 @@ public:
             findUpsampleSource,
             ensureAncestorMesh,
             resolution);
-        resolveEllipsoidFallback(tile, ownHeightmap, resolution);
+        resolveEllipsoidFallback(
+            tile,
+            ownHeightmap,
+            allowEllipsoidFallbackWithoutTerrain,
+            resolution);
 
         return resolution;
     }
@@ -100,8 +105,12 @@ private:
     static void resolveEllipsoidFallback(
         TilesetTile& tile,
         DecodedHeightmap* ownHeightmap,
+        bool allowEllipsoidFallbackWithoutTerrain,
         TileSurfaceMeshResolution& resolution) {
         if (tile.content.renderContent.hasSurfaceMesh()) {
+            return;
+        }
+        if (!ownHeightmap && !allowEllipsoidFallbackWithoutTerrain) {
             return;
         }
 

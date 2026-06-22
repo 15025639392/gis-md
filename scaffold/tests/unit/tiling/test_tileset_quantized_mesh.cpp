@@ -285,7 +285,7 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
-     ContentTerrainMeshPreparationIgnoresLegacyHeightmapCache) {
+     ContentTerrainMeshPreparationWaitsForContentInsteadOfLegacyFallback) {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
     auto scheme = TileScheme::createGeographicTMS();
@@ -307,10 +307,8 @@ TEST(TilesetQuantizedMeshTest,
 
     TilesetTestAccess::ensureTileMesh(tileset, *root);
 
-    EXPECT_TRUE(root->content.renderContent.hasSurfaceMesh());
-    EXPECT_FALSE(
-        root->content.renderContent.isSurfaceSource(
-            SurfaceDrawableSource::OwnTerrain));
+    EXPECT_FALSE(root->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(root->content.renderContent.isTerrainRenderContent());
     EXPECT_FALSE(root->content.renderContent.hasRetainedHeightmap());
     EXPECT_NE(root->content.loadState, TileLoadState::Done);
 }
