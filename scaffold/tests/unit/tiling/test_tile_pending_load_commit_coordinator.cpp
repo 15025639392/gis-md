@@ -472,6 +472,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TileLoadedContent content;
     content.heightmap = std::move(heightmap);
     content.surfaceMesh = std::move(surfaceMesh);
+    content.terrainPayloadKind = TerrainTilePayloadKind::Heightmap;
 
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
@@ -847,16 +848,15 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
 TEST(TilePendingLoadCommitCoordinatorTest,
      TerrainGltfLoadResultDropsSurfacePayloadLikeCesiumNativeContentKind) {
-    TerrainTileLoadResult terrainResult;
-    terrainResult.status = TileLoadStatus::Renderable;
+    auto model = std::make_unique<GltfModel>();
+    GltfModel* rawModel = model.get();
+    TerrainTileLoadResult terrainResult =
+        TerrainTileLoadResult::successWithGltfModel(std::move(model));
     auto heightmap = std::make_unique<DecodedHeightmap>();
     heightmap->tileSize = 1;
     heightmap->heights = {1.0f};
     terrainResult.heightmap = std::move(heightmap);
     terrainResult.surfaceMesh = std::make_unique<SurfaceTileMesh>();
-    auto model = std::make_unique<GltfModel>();
-    GltfModel* rawModel = model.get();
-    terrainResult.gltfModel = std::move(model);
 
     TileLoadResult loadResult =
         TileLoadResult::fromTerrainResult(std::move(terrainResult));

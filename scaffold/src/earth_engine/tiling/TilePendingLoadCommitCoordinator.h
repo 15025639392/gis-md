@@ -95,13 +95,13 @@ public:
             upload.cacheKey,
             content,
             terrainCache);
-        bool uploadsGltfTerrain = content.gltfModel != nullptr;
+        bool uploadsGltfTerrain = content.hasGltfTerrainPayload();
 
         if (TilesetTile* tile = ensureTile(upload.key)) {
             TileGltfTerrainUpsampledChildMaterializer::materialize(
                 *tile,
                 content);
-            uploadsGltfTerrain = content.gltfModel != nullptr;
+            uploadsGltfTerrain = content.hasGltfTerrainPayload();
             TileTerrainUploadCommitter::prepareTerrainRenderContent(
                 *tile,
                 std::move(content),

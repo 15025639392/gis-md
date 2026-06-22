@@ -30,6 +30,7 @@ struct TileLoadedContent {
     static TileLoadedContent fromTerrainResult(
         TerrainTileLoadResult&& result) {
         TileLoadedContent content;
+        content.terrainPayloadKind = result.payloadKind;
         switch (result.payloadKind) {
             case TerrainTilePayloadKind::Heightmap:
                 content.heightmap = std::move(result.heightmap);
@@ -63,10 +64,20 @@ struct TileLoadedContent {
     std::unique_ptr<DecodedHeightmap> heightmap;
     std::unique_ptr<SurfaceTileMesh> surfaceMesh;
     std::unique_ptr<GltfModel> gltfModel;
+    TerrainTilePayloadKind terrainPayloadKind = TerrainTilePayloadKind::None;
     Mat4 contentTransform = Mat4::identity();
     TileLoadResultMetadata metadata;
     std::vector<QuantizedMeshAvailabilityUpdate>
         quantizedMeshAvailabilityUpdates;
+
+    bool hasTerrainPayload() const {
+        return terrainPayloadKind != TerrainTilePayloadKind::None;
+    }
+
+    bool hasGltfTerrainPayload() const {
+        return terrainPayloadKind == TerrainTilePayloadKind::GltfModel &&
+               gltfModel != nullptr;
+    }
 };
 
 struct TileLoadResult {
@@ -100,6 +111,13 @@ struct TileLoadResult {
         loadResult.status = TileLoadStatus::Renderable;
         loadResult.content.heightmap = std::move(heightmap);
         loadResult.content.surfaceMesh = std::move(surfaceMesh);
+        if (loadResult.content.heightmap) {
+            loadResult.content.terrainPayloadKind =
+                TerrainTilePayloadKind::Heightmap;
+        } else if (loadResult.content.surfaceMesh) {
+            loadResult.content.terrainPayloadKind =
+                TerrainTilePayloadKind::SurfaceMesh;
+        }
         loadResult.content.metadata = std::move(metadata);
         return loadResult;
     }

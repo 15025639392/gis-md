@@ -12044,6 +12044,7 @@ void testTerrainUploadGeneratesActiveRasterOverlayProjectionDetails() {
 
     TileLoadedContent content;
     content.surfaceMesh = std::make_unique<SurfaceTileMesh>();
+    content.terrainPayloadKind = TerrainTilePayloadKind::SurfaceMesh;
     content.surfaceMesh->rasterOverlayDetails.setGeographicRectangle(
         tileRectangle,
         -25.0,
@@ -12107,6 +12108,7 @@ void testTerrainUploadPreparesGltfRenderContent() {
 
     TileLoadedContent loaded;
     loaded.gltfModel = std::move(model);
+    loaded.terrainPayloadKind = TerrainTilePayloadKind::GltfModel;
     loaded.metadata.updatedBoundingVolume =
         TileBoundingVolume::fromRegion(tileRectangle, -15.0, 85.0);
 

@@ -15,9 +15,7 @@ public:
     static bool materialize(TilesetTile& tile,
                             TileLoadedContent& content) {
         if (!tile.content.derivesTerrainFromParent() ||
-            content.heightmap ||
-            content.surfaceMesh ||
-            content.gltfModel) {
+            content.hasTerrainPayload()) {
             return false;
         }
 
@@ -54,6 +52,7 @@ public:
             source->bounds,
             tile.bounds);
         content.gltfModel = std::move(childModel);
+        content.terrainPayloadKind = TerrainTilePayloadKind::GltfModel;
         content.metadata.rasterOverlayDetails =
             content.gltfModel->rasterOverlayDetails;
         return true;
