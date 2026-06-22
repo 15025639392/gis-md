@@ -951,19 +951,15 @@ RasterOverlayTileProvider::buildQuadtreeSourcePlan(
     return plan;
 }
 
-struct RasterOverlayTileProvider::QuadtreeSourceRequest
-    : public std::enable_shared_from_this<QuadtreeSourceRequest> {
-    QuadtreeSourceRequest(ImageryProvider& imageryProvider,
-                          const TileScheme& tileScheme,
-                          std::shared_ptr<ProviderAsyncState> asyncState,
-                          QuadtreeSourcePlan plan,
-                          Rectangle bounds,
-                          Rectangle outputRectangle,
-                          int textureSize,
-                          int minimumSourceLevel,
-                          int maximumSourceLevel,
-                          CompositeRequestSuccess success,
-                          CompositeRequestFailure failure)
+struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
+    : public std::enable_shared_from_this<QuadtreeSourceAssetDepot> {
+    using SourceReady = std::function<void(LoadedSourceImage&&)>;
+
+    QuadtreeSourceAssetDepot(ImageryProvider& imageryProvider,
+                             const TileScheme& tileScheme,
+                             std::shared_ptr<ProviderAsyncState> asyncState,
+                             int minimumSourceLevel,
+                             int maximumSourceLevel)
         : provider(imageryProvider)
         , scheme(tileScheme)
         , state(std::move(asyncState))
@@ -974,44 +970,9 @@ struct RasterOverlayTileProvider::QuadtreeSourceRequest
         , inFlight(state->sourceTileDepotInFlight)
         , cacheBudgetBytes(state->subTileCacheBytes)
         , cacheMutex(state->mutex)
-        , sourcePlan(std::move(plan))
-        , targetBounds(bounds)
-        , outputBounds(outputRectangle)
-        , maximumTextureSize(textureSize)
         , minimumLevel(minimumSourceLevel)
-        , maximumLevel(maximumSourceLevel)
-        , onSuccess(std::move(success))
-        , onFailure(std::move(failure))
-        , remaining(sourcePlan.budgetUnits()) {
-        sources.reserve(sourcePlan.sourceKeys.size());
-    }
+        , maximumLevel(maximumSourceLevel) {}
 
-    void issueAll(const std::function<void()>& onSourceIssued,
-                  const std::function<void()>& onSourceFinished) {
-        while (!isComplete()) {
-            TileKey sourceKey;
-            {
-                std::lock_guard<std::mutex> lock(mutex);
-                if (nextSourceIndex >= sourcePlan.sourceKeys.size()) {
-                    break;
-                }
-                sourceKey = sourcePlan.sourceKeys[nextSourceIndex++];
-            }
-            requestSource(sourceKey,
-                          sourceKey,
-                          false,
-                          true,
-                          onSourceIssued,
-                          onSourceFinished);
-        }
-    }
-
-    bool isComplete() const {
-        std::lock_guard<std::mutex> lock(mutex);
-        return completed;
-    }
-
-private:
     void requestSource(
         const TileKey& requestedKey,
         const TileKey& originalKey,
@@ -1019,6 +980,7 @@ private:
         bool shareInFlight,
         const std::function<void()>& onSourceIssued,
         const std::function<void()>& onSourceFinished,
+        SourceReady onReady,
         std::vector<TileKey> fallbackInFlightKeys = {}) {
         std::optional<LoadedSourceImage> cachedSource;
         {
@@ -1043,7 +1005,7 @@ private:
             }
         }
         if (cachedSource) {
-            finishOneSource(std::move(*cachedSource));
+            onReady(std::move(*cachedSource));
             return;
         }
 
@@ -1051,23 +1013,12 @@ private:
         if (shareInFlight) {
             const std::string inFlightKey = sourceCacheKey(originalKey);
             auto waiter =
-                [self, originalKey, ancestorFallback](
-                    InFlightSourceTileAsset::Result cached) {
-                    if (cached && cached->image) {
-                        LoadedSourceImage source;
-                        source.key = cached->key;
-                        source.bounds = cached->bounds;
-                        source.image = cached->image;
-                        source.sourceSubset = ancestorFallback
-                            ? std::optional<Rectangle>(
-                                  self->scheme.tileToRectangle(originalKey))
-                            : cached->sourceSubset;
-                        source.moreDetailAvailable =
-                            cached->moreDetailAvailable;
-                        self->finishOneSource(std::move(source));
-                    } else {
-                        self->finishOneSource(LoadedSourceImage{});
-                    }
+                [self, originalKey, ancestorFallback, onReady](
+                    InFlightSourceTileAsset::Result cached) mutable {
+                    onReady(self->loadedSourceFromAsset(
+                        cached,
+                        originalKey,
+                        ancestorFallback));
                 };
             {
                 std::lock_guard<std::mutex> lock(cacheMutex);
@@ -1083,23 +1034,12 @@ private:
         if (ancestorFallback) {
             const std::string fallbackInFlightKey = sourceCacheKey(requestedKey);
             auto waiter =
-                [self, originalKey, ancestorFallback](
-                    InFlightSourceTileAsset::Result cached) {
-                    if (cached && cached->image) {
-                        LoadedSourceImage source;
-                        source.key = cached->key;
-                        source.bounds = cached->bounds;
-                        source.image = cached->image;
-                        source.sourceSubset = ancestorFallback
-                            ? std::optional<Rectangle>(
-                                  self->scheme.tileToRectangle(originalKey))
-                            : cached->sourceSubset;
-                        source.moreDetailAvailable =
-                            cached->moreDetailAvailable;
-                        self->finishOneSource(std::move(source));
-                    } else {
-                        self->finishOneSource(LoadedSourceImage{});
-                    }
+                [self, originalKey, ancestorFallback, onReady](
+                    InFlightSourceTileAsset::Result cached) mutable {
+                    onReady(self->loadedSourceFromAsset(
+                        cached,
+                        originalKey,
+                        ancestorFallback));
                 };
             {
                 std::lock_guard<std::mutex> lock(cacheMutex);
@@ -1126,6 +1066,7 @@ private:
              ancestorFallback,
              onSourceIssued,
              onSourceFinished,
+             onReady,
              fallbackInFlightKeys = std::move(fallbackInFlightKeys)](
                 const TileKey& loadedKey,
                 std::unique_ptr<DecodedImage> image) mutable {
@@ -1168,9 +1109,6 @@ private:
                     return;
                 }
 
-                // cesium-native QuadtreeRasterOverlayTileProvider:
-                // failed sub-tiles try their parent before reporting an empty
-                // contribution to the combined geometry image.
                 if (requestedKey.z > self->minimumLevel) {
                     const TileKey parentKey = parentTileKey(requestedKey);
                     if (self->provider.supportsTile(parentKey)) {
@@ -1182,6 +1120,7 @@ private:
                             false,
                             onSourceIssued,
                             onSourceFinished,
+                            std::move(onReady),
                             std::move(fallbackInFlightKeys));
                         return;
                     }
@@ -1193,6 +1132,25 @@ private:
                     self->finishInFlightSource(key, nullptr);
                 }
             });
+    }
+
+private:
+    LoadedSourceImage loadedSourceFromAsset(
+        const InFlightSourceTileAsset::Result& cached,
+        const TileKey& originalKey,
+        bool ancestorFallback) const {
+        if (!cached || !cached->image) {
+            return LoadedSourceImage{};
+        }
+        LoadedSourceImage source;
+        source.key = cached->key;
+        source.bounds = cached->bounds;
+        source.image = cached->image;
+        source.sourceSubset = ancestorFallback
+            ? std::optional<Rectangle>(scheme.tileToRectangle(originalKey))
+            : cached->sourceSubset;
+        source.moreDetailAvailable = cached->moreDetailAvailable;
+        return source;
     }
 
     SourceTileAsset cachedSourceFromLoaded(
@@ -1236,13 +1194,7 @@ private:
             cacheBytes = 0;
             return;
         }
-        SourceTileAsset cached;
-        cached.key = source.key;
-        cached.bounds = source.bounds;
-        cached.image = source.image;
-        cached.sourceSubset = source.sourceSubset;
-        cached.moreDetailAvailable = source.moreDetailAvailable;
-        cached.sizeBytes = decodedImageSizeBytes(*source.image);
+        SourceTileAsset cached = cachedSourceFromLoaded(source);
         std::lock_guard<std::mutex> lock(cacheMutex);
         const std::string key = sourceCacheKey(requestedKey);
         auto existing = cache.find(key);
@@ -1277,6 +1229,84 @@ private:
         }
     }
 
+    ImageryProvider& provider;
+    const TileScheme& scheme;
+    std::shared_ptr<ProviderAsyncState> state;
+    std::unordered_map<std::string, SourceTileAsset>& cache;
+    std::deque<std::pair<std::string, uint64_t>>& cacheLru;
+    int64_t& cacheBytes;
+    uint64_t& cacheGeneration;
+    std::unordered_map<std::string, InFlightSourceTileAsset>& inFlight;
+    int64_t cacheBudgetBytes = 0;
+    std::mutex& cacheMutex;
+    int minimumLevel = 0;
+    int maximumLevel = 0;
+};
+
+struct RasterOverlayTileProvider::QuadtreeSourceRequest
+    : public std::enable_shared_from_this<QuadtreeSourceRequest> {
+    QuadtreeSourceRequest(ImageryProvider& imageryProvider,
+                          const TileScheme& tileScheme,
+                          std::shared_ptr<ProviderAsyncState> asyncState,
+                          QuadtreeSourcePlan plan,
+                          Rectangle bounds,
+                          Rectangle outputRectangle,
+                          int textureSize,
+                          int minimumSourceLevel,
+                          int maximumSourceLevel,
+                          CompositeRequestSuccess success,
+                          CompositeRequestFailure failure)
+        : provider(imageryProvider)
+        , scheme(tileScheme)
+        , state(std::move(asyncState))
+        , depot(std::make_shared<QuadtreeSourceAssetDepot>(
+              provider,
+              scheme,
+              state,
+              minimumSourceLevel,
+              maximumSourceLevel))
+        , sourcePlan(std::move(plan))
+        , targetBounds(bounds)
+        , outputBounds(outputRectangle)
+        , maximumTextureSize(textureSize)
+        , maximumLevel(maximumSourceLevel)
+        , onSuccess(std::move(success))
+        , onFailure(std::move(failure))
+        , remaining(sourcePlan.budgetUnits()) {
+        sources.reserve(sourcePlan.sourceKeys.size());
+    }
+
+    void issueAll(const std::function<void()>& onSourceIssued,
+                  const std::function<void()>& onSourceFinished) {
+        while (!isComplete()) {
+            TileKey sourceKey;
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                if (nextSourceIndex >= sourcePlan.sourceKeys.size()) {
+                    break;
+                }
+                sourceKey = sourcePlan.sourceKeys[nextSourceIndex++];
+            }
+            auto self = shared_from_this();
+            depot->requestSource(
+                sourceKey,
+                sourceKey,
+                false,
+                true,
+                onSourceIssued,
+                onSourceFinished,
+                [self](LoadedSourceImage&& source) {
+                    self->finishOneSource(std::move(source));
+                });
+        }
+    }
+
+    bool isComplete() const {
+        std::lock_guard<std::mutex> lock(mutex);
+        return completed;
+    }
+
+private:
     void finishOneSource(LoadedSourceImage&& source) {
         bool finished = false;
         {
@@ -1340,18 +1370,11 @@ private:
     ImageryProvider& provider;
     const TileScheme& scheme;
     std::shared_ptr<ProviderAsyncState> state;
-    std::unordered_map<std::string, SourceTileAsset>& cache;
-    std::deque<std::pair<std::string, uint64_t>>& cacheLru;
-    int64_t& cacheBytes;
-    uint64_t& cacheGeneration;
-    std::unordered_map<std::string, InFlightSourceTileAsset>& inFlight;
-    int64_t cacheBudgetBytes = 0;
-    std::mutex& cacheMutex;
+    std::shared_ptr<QuadtreeSourceAssetDepot> depot;
     QuadtreeSourcePlan sourcePlan;
     Rectangle targetBounds;
     Rectangle outputBounds;
     int maximumTextureSize = 0;
-    int minimumLevel = 0;
     int maximumLevel = 0;
     CompositeRequestSuccess onSuccess;
     CompositeRequestFailure onFailure;

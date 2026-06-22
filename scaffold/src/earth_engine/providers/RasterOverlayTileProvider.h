@@ -245,6 +245,7 @@ private:
     };
 
     struct QuadtreeSourceRequest;
+    struct QuadtreeSourceAssetDepot;
 
     static QuadtreeSourcePlan buildQuadtreeSourcePlan(
         const TileScheme& scheme,
