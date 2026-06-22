@@ -121,6 +121,7 @@ public:
     /// cesium-native: returns the owner RasterOverlay.
     class RasterOverlay* getOwner() const { return owner_; }
     void setOwner(RasterOverlay* owner);
+    void applyOwnerOptions();
     const Rectangle& getCoverageRectangle() const { return coverageRectangle_; }
     void setCoverageRectangle(const Rectangle& coverageRectangle);
 
@@ -356,6 +357,13 @@ private:
     int maximumTextureSize_ = 2048;
     int minimumLevel_ = 0;
     int maximumLevel_ = 0;
+    bool hasAppliedOwnerOptions_ = false;
+    Rectangle appliedOwnerCoverageRectangle_ = Rectangle::MAXIMUM;
+    double appliedOwnerMaximumScreenSpaceError_ = 2.0;
+    int appliedOwnerMaximumTextureSize_ = 2048;
+    int64_t appliedOwnerSubTileCacheBytes_ = -1;
+    int appliedOwnerMinimumLevel_ = 0;
+    int appliedOwnerMaximumLevel_ = 0;
 
 };
 

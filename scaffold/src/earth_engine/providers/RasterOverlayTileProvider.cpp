@@ -1597,15 +1597,44 @@ RasterOverlayTileProvider::~RasterOverlayTileProvider() {
 
 void RasterOverlayTileProvider::setOwner(RasterOverlay* owner) {
     owner_ = owner;
-    if (owner_) {
-        setCoverageRectangle(owner_->getOptions().coverageRectangle);
-        setMaximumScreenSpaceError(
-            owner_->getOptions().maximumScreenSpaceError);
-        setMaximumTextureSize(owner_->getOptions().maximumTextureSize);
-        setSubTileCacheBytes(owner_->getOptions().subTileCacheBytes);
-        setLevelRange(owner_->getOptions().minimumZoom,
-                      owner_->getOptions().maximumZoom);
+    applyOwnerOptions();
+}
+
+void RasterOverlayTileProvider::applyOwnerOptions() {
+    if (!owner_) {
+        return;
     }
+    const RasterOverlay::Options& options = owner_->getOptions();
+    if (!hasAppliedOwnerOptions_ ||
+        appliedOwnerCoverageRectangle_ != options.coverageRectangle) {
+        setCoverageRectangle(options.coverageRectangle);
+        appliedOwnerCoverageRectangle_ = options.coverageRectangle;
+    }
+    if (!hasAppliedOwnerOptions_ ||
+        appliedOwnerMaximumScreenSpaceError_ !=
+            options.maximumScreenSpaceError) {
+        setMaximumScreenSpaceError(options.maximumScreenSpaceError);
+        appliedOwnerMaximumScreenSpaceError_ =
+            options.maximumScreenSpaceError;
+    }
+    if (!hasAppliedOwnerOptions_ ||
+        appliedOwnerMaximumTextureSize_ != options.maximumTextureSize) {
+        setMaximumTextureSize(options.maximumTextureSize);
+        appliedOwnerMaximumTextureSize_ = options.maximumTextureSize;
+    }
+    if (!hasAppliedOwnerOptions_ ||
+        appliedOwnerSubTileCacheBytes_ != options.subTileCacheBytes) {
+        setSubTileCacheBytes(options.subTileCacheBytes);
+        appliedOwnerSubTileCacheBytes_ = options.subTileCacheBytes;
+    }
+    if (!hasAppliedOwnerOptions_ ||
+        appliedOwnerMinimumLevel_ != options.minimumZoom ||
+        appliedOwnerMaximumLevel_ != options.maximumZoom) {
+        setLevelRange(options.minimumZoom, options.maximumZoom);
+        appliedOwnerMinimumLevel_ = options.minimumZoom;
+        appliedOwnerMaximumLevel_ = options.maximumZoom;
+    }
+    hasAppliedOwnerOptions_ = true;
 }
 
 void RasterOverlayTileProvider::setCoverageRectangle(

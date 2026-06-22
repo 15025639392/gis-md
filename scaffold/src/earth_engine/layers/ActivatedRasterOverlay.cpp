@@ -39,10 +39,12 @@ RasterOverlayTileProvider* ActivatedRasterOverlay::ensureTileProvider(
         tileProvider_->setMaximumScreenSpaceError(
             overlay_.getOptions().maximumScreenSpaceError);
     }
+    syncProviderOptionsFromOverlay();
     return tileProvider_.get();
 }
 
 RasterOverlayTile* ActivatedRasterOverlay::getPlaceholderTile() {
+    syncProviderOptionsFromOverlay();
     RasterOverlayTileProvider* provider =
         placeholderProvider_ ? placeholderProvider_.get() : tileProvider_.get();
     if (!provider) return nullptr;
@@ -52,6 +54,7 @@ RasterOverlayTile* ActivatedRasterOverlay::getPlaceholderTile() {
 int ActivatedRasterOverlay::processPendingUploads(
     bool interactionActive,
     FrameResourceBudget* budget) {
+    syncProviderOptionsFromOverlay();
     if (tileProvider_) {
         return tileProvider_->processPendingUploads(interactionActive, budget);
     }
@@ -67,12 +70,14 @@ uint64_t ActivatedRasterOverlay::revision() const {
 }
 
 void ActivatedRasterOverlay::setFrameNumber(uint64_t frameNumber) {
+    syncProviderOptionsFromOverlay();
     if (tileProvider_) {
         tileProvider_->setFrameNumber(frameNumber);
     }
 }
 
 void ActivatedRasterOverlay::trimUnusedTiles() {
+    syncProviderOptionsFromOverlay();
     if (tileProvider_) {
         tileProvider_->trimUnusedTiles();
     }
@@ -105,6 +110,23 @@ bool ActivatedRasterOverlay::visible() const {
 
 float ActivatedRasterOverlay::opacity() const {
     return overlay_.opacity();
+}
+
+void ActivatedRasterOverlay::syncProviderOptionsFromOverlay() {
+    maximumSimultaneousTileLoads_ =
+        overlay_.getOptions().maximumSimultaneousTileLoads > 0
+            ? overlay_.getOptions().maximumSimultaneousTileLoads
+            : 20;
+    if (placeholderProvider_) {
+        placeholderProvider_->maximumSimultaneousTileLoads =
+            maximumSimultaneousTileLoads_;
+        placeholderProvider_->applyOwnerOptions();
+    }
+    if (tileProvider_) {
+        tileProvider_->maximumSimultaneousTileLoads =
+            maximumSimultaneousTileLoads_;
+        tileProvider_->applyOwnerOptions();
+    }
 }
 
 } // namespace earth_engine

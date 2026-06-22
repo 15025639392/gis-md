@@ -62,6 +62,8 @@ public:
     const RasterOverlay& getOverlay() const { return overlay_; }
 
 private:
+    void syncProviderOptionsFromOverlay();
+
     RasterOverlay& overlay_;
     std::unique_ptr<RasterOverlayTileProvider> placeholderProvider_;
     std::unique_ptr<RasterOverlayTileProvider> tileProvider_;

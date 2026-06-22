@@ -558,6 +558,81 @@ TEST(RasterOverlayLifecycleTest, QuadtreeSourceZoomRespectsOverlayLevelRange) {
     EXPECT_EQ((TileKey{scheme->id(), 3, 2, 3}), maxTile->getTileID());
 }
 
+TEST(RasterOverlayLifecycleTest,
+     ActivatedOverlayAppliesRuntimeOptionsAndInvalidatesMappings) {
+    auto imagery = std::make_unique<ConfigurableImageryProvider>();
+    auto scheme = TileScheme::createXYZWebMercator();
+    const TileKey firstKey{scheme->id(), 2, 1, 1};
+    const TileKey secondKey{scheme->id(), 2, 3, 3};
+    const Rectangle firstBounds = scheme->tileToRectangle(firstKey);
+    const Rectangle secondBounds = scheme->tileToRectangle(secondKey);
+
+    RasterOverlay::Options options;
+    options.coverageRectangle = firstBounds;
+    options.maximumSimultaneousTileLoads = 3;
+    options.maximumScreenSpaceError = 2.0;
+    options.maximumTextureSize = 2048;
+    options.subTileCacheBytes = 4096;
+    options.role = RasterOverlayRole::AnnotationOverlay;
+    RasterOverlay overlay(
+        std::move(imagery),
+        TileScheme::createXYZWebMercator(),
+        options);
+    ActivatedRasterOverlay activated(overlay);
+
+    RasterOverlayTileProvider* provider = activated.ensureTileProvider(nullptr);
+    ASSERT_NE(nullptr, provider);
+    EXPECT_EQ(firstBounds, provider->getCoverageRectangle());
+    EXPECT_EQ(3, provider->maximumSimultaneousTileLoads);
+    EXPECT_DOUBLE_EQ(2.0, provider->getMaximumScreenSpaceError());
+    EXPECT_EQ(2048, provider->getMaximumTextureSize());
+    EXPECT_EQ(4096, provider->getSubTileCacheBytes());
+
+    RasterOverlayTileProvider::RasterTileMapping firstMapping =
+        provider->mapRasterTilesToGeometryTile(
+            projectForProvider(*provider, firstBounds),
+            1024.0,
+            1024.0);
+    ASSERT_NE(nullptr, firstMapping.tile);
+    EXPECT_NE(nullptr, provider->getTile(firstKey));
+
+    overlay.getOptions().coverageRectangle = secondBounds;
+    overlay.getOptions().maximumSimultaneousTileLoads = 7;
+    overlay.getOptions().maximumScreenSpaceError = 4.0;
+    overlay.getOptions().maximumTextureSize = 64;
+    overlay.getOptions().subTileCacheBytes = 0;
+    overlay.getOptions().minimumZoom = 3;
+    overlay.getOptions().maximumZoom = 3;
+
+    provider = activated.ensureTileProvider(nullptr);
+    ASSERT_NE(nullptr, provider);
+    EXPECT_EQ(secondBounds, provider->getCoverageRectangle());
+    EXPECT_EQ(7, provider->maximumSimultaneousTileLoads);
+    EXPECT_DOUBLE_EQ(4.0, provider->getMaximumScreenSpaceError());
+    EXPECT_EQ(64, provider->getMaximumTextureSize());
+    EXPECT_EQ(0, provider->getSubTileCacheBytes());
+    EXPECT_EQ(3, provider->getMinimumLevel());
+    EXPECT_EQ(3, provider->getMaximumLevel());
+
+    EXPECT_EQ(nullptr, provider->getTile(firstKey));
+    EXPECT_EQ(nullptr,
+              provider->mapRasterTilesToGeometryTile(
+                  projectForProvider(*provider, firstBounds),
+                  1024.0,
+                  1024.0)
+                  .tile);
+
+    RasterOverlayTileProvider::RasterTileMapping secondMapping =
+        provider->mapRasterTilesToGeometryTile(
+            projectForProvider(*provider, secondBounds),
+            1024.0,
+            1024.0);
+    ASSERT_NE(nullptr, secondMapping.tile);
+    EXPECT_EQ(3, secondMapping.tile->isCompositeTile()
+                     ? secondMapping.tile->getSourceZoom()
+                     : secondMapping.tile->getTileID().z);
+}
+
 TEST(RasterOverlayLifecycleTest, DirectTileCreationRejectsUnsupportedProviderTiles) {
     ConfigurableImageryProvider imagery;
     imagery.minZoomValue = 2;
