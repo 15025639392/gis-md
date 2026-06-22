@@ -137,6 +137,46 @@ struct TilesetTestAccess {
 
 namespace {
 
+std::unique_ptr<GltfModel> makeLoadedTerrainGltfModel(
+    const Rectangle& rectangle) {
+    auto model = std::make_unique<GltfModel>();
+    GltfPrimitive primitive;
+    primitive.vertices.resize(3);
+    primitive.vertices[0].positionEcef = Vec3(0.0, 0.0, 0.0);
+    primitive.vertices[1].positionEcef = Vec3(1.0, 0.0, 0.0);
+    primitive.vertices[2].positionEcef = Vec3(0.0, 1.0, 0.0);
+    for (SurfaceVertex& vertex : primitive.vertices) {
+        vertex.normalEcef = Vec3::unitZ();
+    }
+    primitive.vertices[0].uv = {0.0f, 0.0f};
+    primitive.vertices[1].uv = {1.0f, 0.0f};
+    primitive.vertices[2].uv = {0.0f, 1.0f};
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 1.0f}};
+    primitive.indices = {0, 1, 2};
+    primitive.runtime.nodeIndex = 0;
+    primitive.runtime.baseVertices = primitive.vertices;
+    primitive.runtime.hasNormals = true;
+
+    GltfNodeRuntime rootNode;
+    rootNode.mesh = 0;
+    model->nodes.push_back(rootNode);
+    model->sceneRootNodes.push_back(0);
+    model->primitives.push_back(std::move(primitive));
+    model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    return model;
+}
+
+void setLoadedTerrainGltfContent(TilesetTile& tile) {
+    tile.content.renderContent.prepareGltfContent(
+        makeLoadedTerrainGltfModel(tile.bounds),
+        Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    tile.markRenderContentDone();
+}
+
 class SelectionTreeContentProvider final : public TilesetContentProvider {
 public:
     SelectionTreeContentProvider(
@@ -2100,8 +2140,7 @@ TEST(
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     EXPECT_TRUE(root->children.empty());
 
-    root->content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
+    setLoadedTerrainGltfContent(*root);
 
     for (TileLoadState state : {
              TileLoadState::Unloaded,
@@ -2178,8 +2217,7 @@ TEST(
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     ASSERT_NE(root, nullptr);
-    root->content.renderContent.setSurfaceMesh(
-        std::make_unique<SurfaceTileMesh>());
+    setLoadedTerrainGltfContent(*root);
 
     for (TileLoadState state : {
              TileLoadState::Unloaded,
