@@ -643,6 +643,35 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(1, provider.getCachedTileCount());
 }
 
+TEST(RasterOverlayLifecycleTest,
+     CoverageChangePrunesUncoveredSharedSourceAssetsLikeCesiumNativeDepotScope) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const TileKey firstKey{scheme->id(), 2, 1, 1};
+    const TileKey secondKey{scheme->id(), 2, 3, 3};
+    provider.setCoverageRectangle(scheme->tileToRectangle(firstKey));
+
+    auto firstTile = provider.getTile(firstKey);
+    ASSERT_NE(nullptr, firstTile);
+    ASSERT_TRUE(provider.loadTile(*firstTile));
+    ASSERT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_GT(provider.getCachedSourceTileBytes(), 0);
+
+    provider.setCoverageRectangle(scheme->tileToRectangle(secondKey));
+
+    EXPECT_EQ(0, provider.getCachedSourceTileBytes());
+    EXPECT_EQ(nullptr, provider.getTile(firstKey));
+
+    auto secondTile = provider.getTile(secondKey);
+    ASSERT_NE(nullptr, secondTile);
+    ASSERT_TRUE(provider.loadTile(*secondTile));
+    ASSERT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_GT(provider.getCachedSourceTileBytes(), 0);
+    EXPECT_EQ(2, imagery.requestCount);
+}
+
 TEST(RasterOverlayLifecycleTest, RectangleCoverageClampsOutsideAndClipsSourcePlan) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
