@@ -12160,13 +12160,16 @@ void testTerrainUploadGeneratesActiveRasterOverlayProjectionDetails() {
     tile.boundingVolume =
         TileBoundingVolume::fromRegion(tileRectangle, -25.0, 125.0);
 
-    TileLoadedContent content;
-    content.surfaceMesh = std::make_unique<SurfaceTileMesh>();
-    content.terrainPayloadKind = TerrainTilePayloadKind::SurfaceMesh;
-    content.surfaceMesh->rasterOverlayDetails.setGeographicRectangle(
+    auto model = makeTriangleGltfModel();
+    model->rasterOverlayDetails.setGeographicRectangle(
         tileRectangle,
         -25.0,
         125.0);
+    TileLoadedContent content;
+    content.gltfModel = std::move(model);
+    content.terrainPayloadKind = TerrainTilePayloadKind::GltfModel;
+    content.metadata.updatedBoundingVolume =
+        TileBoundingVolume::fromRegion(tileRectangle, -25.0, 125.0);
 
     TileTerrainUploadCommitter::prepareTerrainRenderContent(
         tile,
@@ -12193,9 +12196,11 @@ void testTerrainUploadGeneratesActiveRasterOverlayProjectionDetails() {
                   RasterOverlayProjection::Geographic) == 0 &&
               details.textureCoordinateIDForProjection(
                   RasterOverlayProjection::WebMercator) == 1 &&
+              tile.content.renderContent.hasGltfModel() &&
+              !tile.content.renderContent.hasSurfaceMesh() &&
               tile.content.contentKind == TileContentKind::Render &&
               tile.content.loadState == TileLoadState::ContentLoaded,
-          "TileTerrainUploadCommitter: terrain upload generates active raster overlay projection details like cesium-native reload");
+          "TileTerrainUploadCommitter: glTF terrain upload generates active raster overlay projection details like cesium-native reload");
 }
 
 void testTerrainUploadPreparesGltfRenderContent() {
