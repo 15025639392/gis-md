@@ -78,6 +78,20 @@ struct TileLoadedContent {
         return terrainPayloadKind == TerrainTilePayloadKind::GltfModel &&
                gltfModel != nullptr;
     }
+
+    bool hasRenderablePayload() const {
+        switch (terrainPayloadKind) {
+            case TerrainTilePayloadKind::Heightmap:
+                return heightmap != nullptr;
+            case TerrainTilePayloadKind::SurfaceMesh:
+                return surfaceMesh != nullptr;
+            case TerrainTilePayloadKind::GltfModel:
+                return gltfModel != nullptr;
+            case TerrainTilePayloadKind::None:
+                return gltfModel != nullptr;
+        }
+        return false;
+    }
 };
 
 struct TileLoadResult {
@@ -158,7 +172,7 @@ struct TileLoadResult {
     }
 
     bool hasRenderableContent() const {
-        return content.heightmap || content.surfaceMesh || content.gltfModel;
+        return content.hasRenderablePayload();
     }
 
     bool shouldUpload() const {

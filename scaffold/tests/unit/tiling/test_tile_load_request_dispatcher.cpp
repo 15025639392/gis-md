@@ -901,6 +901,7 @@ TEST(TileLoadRequestDispatcherTest,
         TileLoadResult::fromTerrainResult(std::move(gltfResult));
 
     EXPECT_EQ(TileLoadStatus::Renderable, normalizedGltf.status);
+    EXPECT_TRUE(normalizedGltf.shouldUpload());
     EXPECT_EQ(nullptr, normalizedGltf.content.heightmap);
     EXPECT_EQ(nullptr, normalizedGltf.content.surfaceMesh);
     EXPECT_EQ(rawGltfModel, normalizedGltf.content.gltfModel.get());
@@ -921,11 +922,20 @@ TEST(TileLoadRequestDispatcherTest,
         TileLoadResult::fromTerrainResult(std::move(heightmapResult));
 
     EXPECT_EQ(TileLoadStatus::Renderable, normalizedHeightmap.status);
+    EXPECT_TRUE(normalizedHeightmap.shouldUpload());
     EXPECT_EQ(rawHeightmap, normalizedHeightmap.content.heightmap.get());
     EXPECT_EQ(nullptr, normalizedHeightmap.content.surfaceMesh);
     EXPECT_EQ(nullptr, normalizedHeightmap.content.gltfModel);
     EXPECT_TRUE(
         normalizedHeightmap.content.quantizedMeshAvailabilityUpdates.empty());
+
+    TileLoadResult untypedTerrain = TileLoadResult::createRenderableTerrain();
+    untypedTerrain.content.surfaceMesh = std::make_unique<SurfaceTileMesh>();
+    EXPECT_FALSE(untypedTerrain.shouldUpload());
+
+    TileLoadResult contentGltf = TileLoadResult::fromContentResult(
+        TileContentLoadResult::render(std::make_unique<GltfModel>()));
+    EXPECT_TRUE(contentGltf.shouldUpload());
 }
 
 TEST(TileLoadRequestDispatcherTest,
