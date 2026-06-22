@@ -340,6 +340,8 @@ private:
         uint64_t sourceTileDepotEpoch = 0;
         std::unordered_set<std::string> inFlightRequests;
         std::atomic<uint32_t> activeRasterSourceRequests{0};
+        std::atomic<int> rasterSourceRequestsStarted{0};
+        std::atomic<int> rasterSourceRequestsCompleted{0};
         std::unordered_map<std::string, FailedRecord> failedTiles;
         std::atomic<uint64_t> revision{0};
         std::atomic<bool> alive{true};

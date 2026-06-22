@@ -2360,6 +2360,14 @@ void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
               imagery.pendingRequests.size() ==
                   imagery.pendingRequests.size(),
           "RasterOverlayTileProvider: quadtree source batch accounts for source fanout");
+    const ProviderRequestDiagnostics activeSourceDiag =
+        provider.requestDiagnostics();
+    check(activeSourceDiag.externalResourceRequestsStarted ==
+                  static_cast<int>(imagery.pendingRequests.size()) &&
+              activeSourceDiag.externalResourceRequestsCompleted == 0 &&
+              activeSourceDiag.activeExternalResourceBlockingRequests ==
+                  static_cast<int>(imagery.pendingRequests.size()),
+          "RasterOverlayTileProvider: diagnostics expose quadtree source fanout");
 
     FrameResourceBudget secondFrameBudget;
     secondFrameBudget.beginFrame(2, config);
@@ -2369,6 +2377,19 @@ void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
               imagery.pendingRequests.size() == firstBatchSize &&
               secondFrameBudget.rasterNetworkRequestsIssued() == 0,
           "RasterOverlayTileProvider: loading composite tiles do not pump source requests on later frames");
+
+    const auto pendingRequests = imagery.pendingRequests;
+    for (const auto& request : pendingRequests) {
+        request.callback(request.key, makeDecodedRgbaImage(64, 64));
+    }
+    const ProviderRequestDiagnostics completedSourceDiag =
+        provider.requestDiagnostics();
+    check(completedSourceDiag.externalResourceRequestsStarted ==
+                  static_cast<int>(firstBatchSize) &&
+              completedSourceDiag.externalResourceRequestsCompleted ==
+                  static_cast<int>(firstBatchSize) &&
+              completedSourceDiag.activeExternalResourceBlockingRequests == 0,
+          "RasterOverlayTileProvider: diagnostics complete quadtree source fanout");
 }
 
 void testRasterOverlayQuadtreeSourceRangeTrimsTileEdgeTouches() {

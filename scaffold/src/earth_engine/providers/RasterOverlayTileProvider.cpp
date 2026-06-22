@@ -1684,7 +1684,21 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::resolveTile(
 
 ProviderRequestDiagnostics
 RasterOverlayTileProvider::requestDiagnostics() const {
-    return provider_.requestDiagnostics();
+    ProviderRequestDiagnostics diag = provider_.requestDiagnostics();
+    diag.externalResourceRequestsStarted +=
+        asyncState_->rasterSourceRequestsStarted.load(
+            std::memory_order_relaxed);
+    diag.externalResourceRequestsCompleted +=
+        asyncState_->rasterSourceRequestsCompleted.load(
+            std::memory_order_relaxed);
+    diag.activeExternalResourceBlockingRequests +=
+        static_cast<int>(
+            asyncState_->activeRasterSourceRequests.load(
+                std::memory_order_relaxed));
+    diag.peakExternalResourceBlockingRequests =
+        std::max(diag.peakExternalResourceBlockingRequests,
+                 diag.activeExternalResourceBlockingRequests);
+    return diag;
 }
 
 Texture* RasterOverlayTileProvider::getTexture(const TileKey& key) const {
@@ -1928,11 +1942,17 @@ bool RasterOverlayTileProvider::loadMappedTile(
 
     request->issueAll(
         [state]() {
+            state->rasterSourceRequestsStarted.fetch_add(
+                1,
+                std::memory_order_relaxed);
             state->activeRasterSourceRequests.fetch_add(
                 1,
                 std::memory_order_relaxed);
         },
         [state]() {
+            state->rasterSourceRequestsCompleted.fetch_add(
+                1,
+                std::memory_order_relaxed);
             uint32_t current = state->activeRasterSourceRequests.load(
                 std::memory_order_relaxed);
             while (current > 0 &&
