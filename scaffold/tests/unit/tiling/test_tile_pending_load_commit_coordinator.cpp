@@ -523,6 +523,107 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     ContentDomainGltfTerrainAppliesAvailabilityAndKeepsTerrainMarker) {
+    const TileKey subtreeKey{"Geographic-TMS", 2, 0, 0};
+    const TileKey availableChildKey{"Geographic-TMS", 3, 0, 0};
+    const TileKey unavailableSiblingKey{"Geographic-TMS", 3, 1, 0};
+
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 10,
+      "metadataAvailability": 2
+    })json";
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+    EXPECT_EQ(TileAvailabilityState::Unknown,
+              provider.availabilityState(availableChildKey));
+
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = subtreeKey;
+    update.metadataAvailability = {{0, 0, 0, 0, 0}};
+
+    auto model = std::make_unique<GltfModel>();
+    GltfModel* rawModel = model.get();
+    TerrainTileLoadResult terrainResult =
+        TerrainTileLoadResult::successWithGltfModel(std::move(model));
+    terrainResult.quantizedMeshAvailabilityUpdates.push_back(update);
+
+    const TileKey key{"Geographic-TMS", 2, 0, 0};
+    const std::string cacheKey = "terrain-gltf-content-domain";
+    PendingTileLoad upload{
+        TileLoadDomain::Content,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadResult::fromTerrainResult(std::move(terrainResult))};
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{
+            TileLoadDomain::Content,
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadResult::createRenderable()});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    int ensureMeshCalls = 0;
+    int ensureGltfCalls = 0;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitUpload(
+        upload,
+        &provider,
+        nullptr,
+        {},
+        terrainCache,
+        lifecycle,
+        false,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&ensureMeshCalls](TilesetTile&) { ++ensureMeshCalls; },
+        [&ensureGltfCalls](TilesetTile& committedTile) {
+            committedTile.content.renderContent.addGltfPrimitiveResource(
+                GltfPrimitiveRenderResources{});
+            committedTile.markRenderContentDone();
+            ++ensureGltfCalls;
+        },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_EQ(TileAvailabilityState::Available,
+              provider.availabilityState(availableChildKey));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(unavailableSiblingKey));
+    EXPECT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
+    EXPECT_TRUE(tile.content.renderContent.isTerrainRenderContent());
+    EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
+    EXPECT_EQ(0, ensureMeshCalls);
+    EXPECT_EQ(1, ensureGltfCalls);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      TerrainUploadAppliesUpdatedBoundingVolumeToTile) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:0:0:0";

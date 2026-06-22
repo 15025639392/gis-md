@@ -234,6 +234,9 @@ public:
         EnsureGltfResourcesFn&& ensureGltfResources,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         if (upload.domain == TileLoadDomain::Content) {
+            TileTerrainUploadCommitter::applyAvailabilityUpdates(
+                terrainProvider,
+                upload.content());
             commitContentUpload(
                 upload,
                 terrainCache,

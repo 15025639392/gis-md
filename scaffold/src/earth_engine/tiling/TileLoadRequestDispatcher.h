@@ -158,15 +158,21 @@ public:
                 {
                     std::lock_guard<std::mutex> lock(mutex);
                     if (!requestState.destroying() && !token.isCancelled()) {
+                        TileLoadResult loadResult =
+                            TileLoadResult::fromTerrainResult(
+                                std::move(result));
+                        const TileLoadDomain domain =
+                            loadResult.content.hasGltfTerrainPayload()
+                                ? TileLoadDomain::Content
+                                : TileLoadDomain::Terrain;
                         enqueueCompletedLoadResult(
                             pendingLoads,
-                            TileLoadDomain::Terrain,
+                            domain,
                             key,
                             cacheKey,
                             group,
                             priority,
-                            TileLoadResult::fromTerrainResult(
-                                std::move(result)));
+                            std::move(loadResult));
                     }
                     requestState.completeTerrainRequest(cacheKey);
                 }

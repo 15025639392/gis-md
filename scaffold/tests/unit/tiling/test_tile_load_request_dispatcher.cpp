@@ -786,6 +786,7 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_TRUE(provider.callbackSawIssued);
     EXPECT_TRUE(requestState.empty());
     EXPECT_EQ(1u, pendingLoads.terrainUploadCount());
+    EXPECT_EQ(0u, pendingLoads.contentUploadCount());
     EXPECT_EQ(0u, pendingLoads.terrainTerminalResultCount());
 }
 
@@ -819,12 +820,13 @@ TEST(TileLoadRequestDispatcherTest, QueuesGltfTerrainUpload) {
     EXPECT_EQ(TileLoadDispatchResult::Issued, result);
     EXPECT_TRUE(provider.callbackSawIssued);
     EXPECT_TRUE(requestState.empty());
-    EXPECT_EQ(1u, pendingLoads.terrainUploadCount());
+    EXPECT_EQ(0u, pendingLoads.terrainUploadCount());
+    EXPECT_EQ(1u, pendingLoads.contentUploadCount());
     EXPECT_EQ(0u, pendingLoads.terrainTerminalResultCount());
 
     auto upload = pendingLoads.takeHighestPriorityUpload(false, budget);
     ASSERT_TRUE(upload.has_value());
-    ASSERT_EQ(TileLoadDomain::Terrain, upload->domain);
+    ASSERT_EQ(TileLoadDomain::Content, upload->domain);
     const TileLoadedContent& content = upload->content();
     EXPECT_EQ(nullptr, content.heightmap);
     EXPECT_NE(nullptr, content.gltfModel);
@@ -862,12 +864,13 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_EQ(TileLoadDispatchResult::Issued, result);
     EXPECT_TRUE(provider.callbackSawIssued);
     EXPECT_TRUE(requestState.empty());
-    EXPECT_EQ(1u, pendingLoads.terrainUploadCount());
+    EXPECT_EQ(0u, pendingLoads.terrainUploadCount());
+    EXPECT_EQ(1u, pendingLoads.contentUploadCount());
     EXPECT_EQ(0u, pendingLoads.terrainTerminalResultCount());
 
     auto upload = pendingLoads.takeHighestPriorityUpload(false, budget);
     ASSERT_TRUE(upload.has_value());
-    ASSERT_EQ(TileLoadDomain::Terrain, upload->domain);
+    ASSERT_EQ(TileLoadDomain::Content, upload->domain);
     const TileLoadedContent& content = upload->content();
     EXPECT_EQ(nullptr, content.heightmap);
     ASSERT_NE(nullptr, content.gltfModel);
