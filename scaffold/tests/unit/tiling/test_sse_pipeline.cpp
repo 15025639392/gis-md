@@ -27643,10 +27643,14 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
     auto parentModel = makeQuadTerrainGltfModel(root->bounds);
     const Rectangle parentOverlayRectangle =
         Rectangle::fromDegrees(10.0, 20.0, 18.0, 28.0);
-    parentModel->rasterOverlayDetails.setGeographicRectangle(
-        parentOverlayRectangle,
+    parentModel->rasterOverlayDetails.rasterOverlayProjections = {
+        RasterOverlayProjection::Geographic};
+    parentModel->rasterOverlayDetails.rasterOverlayRectangles = {
+        parentOverlayRectangle};
+    parentModel->rasterOverlayDetails.boundingRegion = {
+        root->bounds,
         -5.0,
-        25.0);
+        25.0};
     root->content.renderContent.prepareGltfContent(
         std::move(parentModel),
         Mat4::identity());
@@ -27911,6 +27915,57 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
                            .maximumHeight -
                        45.0) < 1e-12,
           "Tileset: WebMercator glTF-parent derives child projection overlay details from parent");
+}
+
+void testGltfTerrainUpsampleDerivesDetailsFromParentModelRegion() {
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 1, 0};
+    TilesetTile parent(
+        parentKey,
+        Rectangle::fromDegrees(-30.0, -30.0, 30.0, 30.0));
+    TilesetTile child(
+        childKey,
+        Rectangle::fromDegrees(0.0, -10.0, 10.0, 0.0),
+        &parent);
+    child.content.markRasterDetailUpsample();
+
+    const Rectangle tightContent =
+        Rectangle::fromDegrees(-10.0, -10.0, 10.0, 10.0);
+    auto parentModel = makeQuadTerrainGltfModel(parent.bounds);
+    parentModel->rasterOverlayDetails.setGeographicRectangle(
+        tightContent,
+        -3.0,
+        33.0);
+    parent.content.renderContent.prepareGltfContent(
+        std::move(parentModel),
+        Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.markRenderContentDone();
+
+    TileLoadedContent content;
+    const bool materialized =
+        TileGltfTerrainUpsampledChildMaterializer::materialize(
+            child,
+            content);
+    const GltfModel* childModel = content.gltfModel.get();
+    const Rectangle* childOverlay = childModel
+        ? childModel->rasterOverlayDetails.findRectangleForOverlayProjection(
+              RasterOverlayProjection::Geographic)
+        : nullptr;
+
+    check(materialized &&
+              childModel != nullptr &&
+              childOverlay != nullptr &&
+              childOverlay->equalsEpsilon(child.bounds, 1e-12) &&
+              childModel->rasterOverlayDetails.boundingRegion.rectangle ==
+                  child.bounds &&
+              std::abs(childModel->rasterOverlayDetails.boundingRegion
+                           .minimumHeight -
+                       -3.0) < 1e-12 &&
+              std::abs(childModel->rasterOverlayDetails.boundingRegion
+                           .maximumHeight -
+                       33.0) < 1e-12,
+          "Tileset: glTF terrain upsample derives raster details from parent model region");
 }
 
 void testGltfTerrainUpsampleRejectsOrdinaryGltfContentParent() {
@@ -28887,6 +28942,7 @@ int main() {
     testTilesetUpsampledChildFinalizesContentLoadedParent();
     testTilesetUpsampledChildBuildsGltfFromGltfParent();
     testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord();
+    testGltfTerrainUpsampleDerivesDetailsFromParentModelRegion();
     testGltfTerrainUpsampleRejectsOrdinaryGltfContentParent();
     testGltfTerrainUpsampleRequiresRasterOverlayProjectionDetails();
     testTilesetClearChildrenErasesFlatMapDescendants();

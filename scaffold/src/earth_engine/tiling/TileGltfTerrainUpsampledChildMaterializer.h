@@ -68,10 +68,14 @@ public:
             parentModel->rasterOverlayDetails.boundingRegion.minimumHeight;
         const double maximumHeight =
             parentModel->rasterOverlayDetails.boundingRegion.maximumHeight;
+        const Rectangle parentRasterBounds =
+            parentModel->rasterOverlayDetails.boundingRegion.rectangle.isEmpty()
+            ? source->bounds
+            : parentModel->rasterOverlayDetails.boundingRegion.rectangle;
         childModel->rasterOverlayDetails =
             TileRasterOverlayDetailsDeriver::deriveChildFromParent(
             parentModel->rasterOverlayDetails,
-            source->bounds,
+            parentRasterBounds,
             tile.bounds,
             minimumHeight,
             maximumHeight);
