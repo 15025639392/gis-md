@@ -27,6 +27,9 @@ class CountingContentProvider final : public TilesetContentProvider {
 public:
     std::string id() const override { return "scheduler-content-inflight"; }
     bool supportsTile(const TileKey&) const override { return true; }
+    int estimatedRequestFanout(const TileKey&) const override {
+        return estimatedFanout;
+    }
     void requestTileContent(
         const TileKey&,
         CancellationToken,
@@ -39,6 +42,55 @@ public:
     }
 
     int requestCount = 0;
+    int estimatedFanout = 1;
+};
+
+class ContentViewTerrainProvider final : public TerrainProvider,
+                                         public TilesetContentProvider {
+public:
+    std::string id() const override { return "scheduler-content-terrain"; }
+    std::string schemeId() const override { return "test"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 2; }
+    int tileSize() const override { return 2; }
+    bool supportsTile(const TileKey& key) const override {
+        return TerrainProvider::supportsTile(key);
+    }
+    TilesetContentProvider* contentProviderView() override { return this; }
+    const TilesetContentProvider* contentProviderView() const override {
+        return this;
+    }
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://scheduler-content-terrain";
+    }
+    int estimatedRequestFanout(const TileKey&) const override {
+        return estimatedFanout;
+    }
+    void requestTile(
+        const TileKey&,
+        CancellationToken,
+        TerrainCallback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        ++terrainRequestCount;
+    }
+    void requestTileContent(
+        const TileKey&,
+        CancellationToken,
+        ContentCallback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        ++contentRequestCount;
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+    std::unique_ptr<DecodedHeightmap> decodeTile(const uint8_t*, size_t)
+        override {
+        return nullptr;
+    }
+
+    int terrainRequestCount = 0;
+    int contentRequestCount = 0;
+    int estimatedFanout = 1;
 };
 
 class FanoutTerrainProvider final : public TerrainProvider {
@@ -359,6 +411,104 @@ TEST(TileLoadSchedulerTest, BlocksTerrainFanoutOverInflightCapacity) {
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.requestState().completeTerrainRequest("busy");
+    }
+}
+
+TEST(TileLoadSchedulerTest, TerrainContentProviderViewUsesContentRequestPath) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey key{"test", 0, 0, 0};
+    ContentViewTerrainProvider provider;
+    bool marked = false;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Normal,
+                0.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                &provider,
+                provider.contentProviderView()},
+            cacheKeyForTile,
+            [](const TileKey&,
+               const std::string&,
+               TilesetTile*& tileState) {
+                tileState = nullptr;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.contentProviderSupportsTile = true;
+                snapshot.terrainProviderSupportsTile = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [&marked](const TileKey&) { marked = true; });
+
+    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_EQ(provider.contentRequestCount, 1);
+    EXPECT_EQ(provider.terrainRequestCount, 0);
+    EXPECT_TRUE(marked);
+}
+
+TEST(TileLoadSchedulerTest, BlocksContentFanoutOverInflightCapacity) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkInflight = 2;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    CancellationToken token;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        ASSERT_TRUE(lifecycle.requestState().beginContentRequest(
+            "busy",
+            token));
+    }
+
+    const TileKey key{"test", 0, 0, 0};
+    CountingContentProvider provider;
+    provider.estimatedFanout = 2;
+    bool marked = false;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                &provider},
+            cacheKeyForTile,
+            [](const TileKey&,
+               const std::string&,
+               TilesetTile*& tileState) {
+                tileState = nullptr;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.contentProviderSupportsTile = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [](TilesetTile&, double) { return false; },
+            [&marked](const TileKey&) { marked = true; });
+
+    EXPECT_EQ(outcome.issued, 0u);
+    EXPECT_TRUE(outcome.blockedByInflight);
+    EXPECT_EQ(provider.requestCount, 0);
+    EXPECT_FALSE(marked);
+    EXPECT_EQ(lifecycle.pendingRequestCount(), 1u);
+
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.requestState().completeContentRequest("busy");
     }
 }
 

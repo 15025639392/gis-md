@@ -1609,6 +1609,31 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
         {priority, requestHeaders_});
 }
 
+void QuantizedMeshTerrainProvider::requestTileContent(
+    const TileKey& key,
+    CancellationToken token,
+    ContentCallback callback,
+    HttpRequestPriority priority) {
+    requestTile(
+        key,
+        std::move(token),
+        [callback = std::move(callback)](
+            const TileKey& loadedKey,
+            TerrainTileLoadResult terrainResult) mutable {
+            TileContentLoadResult contentResult;
+            contentResult.status = terrainResult.status;
+            contentResult.gltfModel = std::move(terrainResult.gltfModel);
+            contentResult.metadata = std::move(terrainResult.metadata);
+            contentResult.terrainRenderContent =
+                terrainResult.terrainRenderContent &&
+                contentResult.gltfModel != nullptr;
+            contentResult.quantizedMeshAvailabilityUpdates =
+                std::move(terrainResult.quantizedMeshAvailabilityUpdates);
+            callback(loadedKey, std::move(contentResult));
+        },
+        priority);
+}
+
 void QuantizedMeshTerrainProvider::handleAsyncTileBody(
     const TileKey& key,
     int contentLayerIndex,
@@ -2040,6 +2065,11 @@ bool QuantizedMeshTerrainProvider::isAvailabilityBoundaryLevel(int level) const 
 std::unique_ptr<DecodedHeightmap> QuantizedMeshTerrainProvider::decodeTile(
     const uint8_t*, size_t) {
     return nullptr;
+}
+
+TileContentLoadResult QuantizedMeshTerrainProvider::decodeContent(
+    const uint8_t*, size_t) {
+    return TileContentLoadResult::failed();
 }
 
 } // namespace earth_engine

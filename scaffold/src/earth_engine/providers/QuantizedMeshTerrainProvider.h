@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TerrainProvider.h"
+#include "../content/GltfContentProvider.h"
 #include <nlohmann/json.hpp>
 #include <array>
 #include <atomic>
@@ -21,7 +22,8 @@ class PlatformBridge;
 /// requestTile, matching cesium-native's content-loader ownership model.
 ///
 /// Reference: CesiumQuantizedMeshTerrain/QuantizedMeshLoader
-class QuantizedMeshTerrainProvider : public TerrainProvider {
+class QuantizedMeshTerrainProvider : public TerrainProvider,
+                                      public TilesetContentProvider {
 public:
     /// @param urlTemplate URL with {z}/{x}/{y} placeholders
     /// @param attribution display credit
@@ -32,6 +34,10 @@ public:
 
     std::string id() const override;
     std::string type() const override { return "quantized-mesh-terrain"; }
+    TilesetContentProvider* contentProviderView() override { return this; }
+    const TilesetContentProvider* contentProviderView() const override {
+        return this;
+    }
 
     std::string schemeId() const override { return schemeId_; }
 
@@ -75,6 +81,13 @@ public:
                      TerrainCallback callback,
                      HttpRequestPriority priority =
                          HttpRequestPriority::Normal) override;
+    void requestTileContent(const TileKey& key,
+                            CancellationToken token,
+                            ContentCallback callback,
+                            HttpRequestPriority priority =
+                                HttpRequestPriority::Normal) override;
+    TileContentLoadResult decodeContent(const uint8_t* data,
+                                        size_t size) override;
 
     ProviderRequestDiagnostics requestDiagnostics() const override;
 

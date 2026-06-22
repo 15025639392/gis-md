@@ -2,6 +2,7 @@
 
 #include "ProviderRequestDiagnostics.h"
 #include "../content/GltfModel.h"
+#include "../terrain/QuantizedMeshAvailability.h"
 #include "../tiling/TileKey.h"
 #include "../tiling/TileBoundingVolume.h"
 #include "../tiling/TileLoadResultMetadata.h"
@@ -21,19 +22,12 @@
 
 namespace earth_engine {
 
+class TilesetContentProvider;
+
 enum class TileAvailabilityState {
     NotAvailable,
     Available,
     Unknown
-};
-
-/// cesium-native LayerJsonTerrainLoader: when loading a tile from an
-/// upper layer, availability metadata for matching underlying layers is
-/// loaded at the same time. These updates are applied on the main thread.
-struct QuantizedMeshAvailabilityUpdate {
-    int layerIndex = -1;
-    TileKey subtreeKey;
-    std::vector<QuantizedMeshAvailabilityRange> metadataAvailability;
 };
 
 /// 解码后的高度图数据。
@@ -147,6 +141,13 @@ public:
 
     /// Provider 类型
     virtual std::string type() const { return "terrain"; }
+
+    /// cesium-native terrain loaders are content loaders. Providers that can
+    /// produce TileContentLoadResult directly expose that view here.
+    virtual TilesetContentProvider* contentProviderView() { return nullptr; }
+    virtual const TilesetContentProvider* contentProviderView() const {
+        return nullptr;
+    }
 
     /// 瓦片体系 ID
     virtual std::string schemeId() const = 0;

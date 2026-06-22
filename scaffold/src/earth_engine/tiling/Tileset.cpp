@@ -54,7 +54,11 @@ Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
           tileRegistry_,
           *tileScheme_,
           terrainProvider_.get(),
-          contentProvider_.get(),
+          contentProvider_
+              ? contentProvider_.get()
+              : (terrainProvider_
+                     ? terrainProvider_->contentProviderView()
+                     : nullptr),
           contentLifecycle_,
           rasterOverlays_.size()),
       resourceInvalidator_(
@@ -147,7 +151,11 @@ TileContentRuntimeFrame Tileset::makeContentRuntimeFrame() const {
         rasterOverlays_,
         tileRegistry_.tiles()};
     frame.terrainProvider = terrainProvider_.get();
-    frame.contentProvider = contentProvider_.get();
+    frame.contentProvider = contentProvider_
+        ? contentProvider_.get()
+        : (terrainProvider_
+               ? terrainProvider_->contentProviderView()
+               : nullptr);
     frame.device = device_;
     frame.frameNumber = frameNumber_;
     frame.maximumSimultaneousTileLoads =

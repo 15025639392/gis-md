@@ -54,6 +54,9 @@ struct TileLoadedContent {
         content.gltfModel = std::move(result.gltfModel);
         content.contentTransform = result.contentTransform;
         content.metadata = std::move(result.metadata);
+        content.terrainRenderContent = result.terrainRenderContent;
+        content.quantizedMeshAvailabilityUpdates =
+            std::move(result.quantizedMeshAvailabilityUpdates);
         return content;
     }
 

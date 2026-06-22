@@ -4,6 +4,7 @@
 #include "../core/math/Mat4.h"
 #include "../platform/bridge/PlatformBridge.h"
 #include "../providers/ProviderRequestDiagnostics.h"
+#include "../terrain/QuantizedMeshAvailability.h"
 #include "../threading/CancellationToken.h"
 #include "../tiling/TileKey.h"
 #include "../tiling/TileBoundingVolume.h"
@@ -44,6 +45,9 @@ struct TileContentLoadResult {
     std::unique_ptr<GltfModel> gltfModel;
     Mat4 contentTransform = Mat4::identity();
     TileLoadResultMetadata metadata;
+    bool terrainRenderContent = false;
+    std::vector<QuantizedMeshAvailabilityUpdate>
+        quantizedMeshAvailabilityUpdates;
 
     static TileContentLoadResult render(std::unique_ptr<GltfModel> model) {
         TileContentLoadResult result;
@@ -101,6 +105,7 @@ public:
     virtual std::vector<TileKey> childTiles(const TileKey&) const {
         return {};
     }
+    virtual int estimatedRequestFanout(const TileKey&) const { return 1; }
 
     using ContentCallback = std::function<void(
         const TileKey&, TileContentLoadResult)>;

@@ -2,7 +2,7 @@
 
 #include "GltfModel.h"
 #include "../core/math/Rectangle.h"
-#include "../providers/TerrainProvider.h"
+#include "../terrain/QuantizedMeshAvailability.h"
 #include "../tiling/TileBoundingVolume.h"
 #include "../tiling/TileKey.h"
 #include "../tiling/TileLoadResultMetadata.h"

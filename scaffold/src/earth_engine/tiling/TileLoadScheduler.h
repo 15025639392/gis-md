@@ -108,6 +108,8 @@ public:
                 if (!input.contentProvider) {
                     continue;
                 }
+                const int estimatedFanout =
+                    input.contentProvider->estimatedRequestFanout(requestKey);
                 {
                     std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
                     if (!input.budget.hasNetworkInflightCapacity(
@@ -115,7 +117,8 @@ public:
                             static_cast<uint32_t>(
                                 input.lifecycle
                                     .requestState()
-                                    .totalRequestCount()))) {
+                                    .totalRequestCount()),
+                            estimatedFanout)) {
                         outcome.blockedByInflight = true;
                         break;
                     }
