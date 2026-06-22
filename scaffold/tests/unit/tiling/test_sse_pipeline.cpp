@@ -12290,9 +12290,8 @@ void testTerrainTileLoadResultCarriesGltfModel() {
     check(loadResult.status == TileLoadStatus::Renderable &&
               loadResult.shouldUpload() &&
               loadResult.content.gltfModel.get() == rawModel &&
-              loadResult.content.surfaceMesh == nullptr &&
               geographic && *geographic == contentRectangle,
-          "TileLoadResult: terrain-domain glTF model carries TileLoadResult metadata without surface mesh");
+          "TileLoadResult: terrain-domain glTF model carries TileLoadResult metadata");
 }
 
 void testGltfRenderContentProvidesRasterOverlayDetails() {

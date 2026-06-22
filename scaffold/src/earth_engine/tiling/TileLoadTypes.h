@@ -35,9 +35,6 @@ struct TileLoadedContent {
             case TerrainTilePayloadKind::Heightmap:
                 content.heightmap = std::move(result.heightmap);
                 break;
-            case TerrainTilePayloadKind::SurfaceMesh:
-                content.surfaceMesh = std::move(result.surfaceMesh);
-                break;
             case TerrainTilePayloadKind::GltfModel:
                 content.gltfModel = std::move(result.gltfModel);
                 if (content.gltfModel) {
@@ -62,7 +59,6 @@ struct TileLoadedContent {
     }
 
     std::unique_ptr<DecodedHeightmap> heightmap;
-    std::unique_ptr<SurfaceTileMesh> surfaceMesh;
     std::unique_ptr<GltfModel> gltfModel;
     TerrainTilePayloadKind terrainPayloadKind = TerrainTilePayloadKind::None;
     Mat4 contentTransform = Mat4::identity();
@@ -83,8 +79,6 @@ struct TileLoadedContent {
         switch (terrainPayloadKind) {
             case TerrainTilePayloadKind::Heightmap:
                 return heightmap != nullptr;
-            case TerrainTilePayloadKind::SurfaceMesh:
-                return surfaceMesh != nullptr;
             case TerrainTilePayloadKind::GltfModel:
                 return gltfModel != nullptr;
             case TerrainTilePayloadKind::None:
@@ -134,19 +128,6 @@ struct TileLoadResult {
         if (loadResult.content.heightmap) {
             loadResult.content.terrainPayloadKind =
                 TerrainTilePayloadKind::Heightmap;
-        }
-        return loadResult;
-    }
-
-    static TileLoadResult createRenderableSurfaceTerrain(
-        std::unique_ptr<SurfaceTileMesh> surfaceMesh,
-        TileLoadResultMetadata metadata = {}) {
-        TileLoadResult loadResult = createRenderableTerrain(
-            std::move(metadata));
-        loadResult.content.surfaceMesh = std::move(surfaceMesh);
-        if (loadResult.content.surfaceMesh) {
-            loadResult.content.terrainPayloadKind =
-                TerrainTilePayloadKind::SurfaceMesh;
         }
         return loadResult;
     }

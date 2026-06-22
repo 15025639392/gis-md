@@ -46,12 +46,6 @@ void TileTerrainUploadCommitter::prepareTerrainRenderContent(
         return;
     }
 
-    if (content.terrainPayloadKind == TerrainTilePayloadKind::SurfaceMesh &&
-        content.surfaceMesh &&
-        !tile.content.renderContent.hasSurfaceMesh()) {
-        tile.content.renderContent.setSurfaceMesh(
-            std::move(content.surfaceMesh));
-    }
     tile.content.renderContent.setTerrainRenderContent(true);
     TileLoadResultMetadataApplicator::apply(
         tile,

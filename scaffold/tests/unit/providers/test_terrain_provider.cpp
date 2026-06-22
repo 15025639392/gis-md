@@ -527,7 +527,6 @@ TEST(QuantizedMeshTerrainProviderTest,
 
     EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
     ASSERT_NE(nullptr, completed.gltfModel);
-    EXPECT_EQ(nullptr, completed.surfaceMesh);
     EXPECT_EQ(nullptr, completed.heightmap);
     ASSERT_FALSE(completed.gltfModel->primitives.empty());
     ASSERT_TRUE(completed.metadata.updatedBoundingVolume.has_value());
@@ -1753,7 +1752,6 @@ TEST(QuantizedMeshTerrainProviderTest, LoadsUnderlyingLayerAvailabilityWithTileL
 
     EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
     ASSERT_NE(nullptr, completed.gltfModel);
-    EXPECT_EQ(nullptr, completed.surfaceMesh);
     EXPECT_EQ(nullptr, completed.heightmap);
     for (int i = 0;
          i < 200 && provider.requestDiagnostics().requestsCompleted == 0;
@@ -1863,7 +1861,6 @@ TEST(QuantizedMeshTerrainProviderTest, LoadedUnderlyingMetadataSubtreeSkipsDupli
 
     EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
     ASSERT_NE(nullptr, completed.gltfModel);
-    EXPECT_EQ(nullptr, completed.surfaceMesh);
     EXPECT_EQ(nullptr, completed.heightmap);
     EXPECT_TRUE(completed.quantizedMeshAvailabilityUpdates.empty());
     EXPECT_EQ(0u, bridge.pendingCount());
@@ -2481,7 +2478,6 @@ TEST(QuantizedMeshTerrainProviderTest, FetchesUnderlyingMetadataViaAsyncBridge) 
     ProviderRequestDiagnostics doneDiag = provider.requestDiagnostics();
     EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
     ASSERT_NE(nullptr, completed.gltfModel);
-    EXPECT_EQ(nullptr, completed.surfaceMesh);
     EXPECT_EQ(nullptr, completed.heightmap);
     ASSERT_EQ(1u, completed.quantizedMeshAvailabilityUpdates.size());
     EXPECT_EQ(
