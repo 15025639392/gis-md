@@ -68,13 +68,24 @@ bool writeGltfOverlayTexCoords(TileRenderContentState& renderContent,
 
     const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
     for (GltfPrimitive& primitive : model->primitives) {
+        const Mat4* nodeTransform = nullptr;
+        if (primitive.runtime.nodeIndex >= 0 &&
+            static_cast<size_t>(primitive.runtime.nodeIndex) <
+                model->nodes.size()) {
+            nodeTransform =
+                &model->nodes[static_cast<size_t>(primitive.runtime.nodeIndex)]
+                     .globalTransform;
+        }
         std::vector<std::array<float, 2>>& texCoords =
             primitive.vertexTexCoords[textureCoordinateIndex];
         texCoords.clear();
         texCoords.reserve(primitive.vertices.size());
         for (const SurfaceVertex& vertex : primitive.vertices) {
+            const Vec3 worldPosition = nodeTransform
+                ? nodeTransform->transformPoint(vertex.positionEcef)
+                : vertex.positionEcef;
             const std::optional<Cartographic> cartographic =
-                ellipsoid.tryCartesianToCartographic(vertex.positionEcef);
+                ellipsoid.tryCartesianToCartographic(worldPosition);
             if (!cartographic) {
                 texCoords.push_back({0.0f, 0.0f});
                 continue;
