@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../content/GltfTerrainUpsampler.h"
+#include "RasterMappedToTilesetTile.h"
 #include "TileRasterOverlayDetailsDeriver.h"
 #include "TileLoadTypes.h"
 #include "TilesetTile.h"
@@ -48,7 +49,7 @@ public:
         }
 
         const int textureCoordinateIndex =
-            chooseUpsampleTextureCoordinate(*parentModel);
+            chooseUpsampleTextureCoordinate(*parentModel, *source);
         if (textureCoordinateIndex < 0) {
             return false;
         }
@@ -99,7 +100,18 @@ private:
         return false;
     }
 
-    static int chooseUpsampleTextureCoordinate(const GltfModel& model) {
+    static int chooseUpsampleTextureCoordinate(const GltfModel& model,
+                                               const TilesetTile& source) {
+        for (const auto& mapping : source.rasterOverlayState.mappings()) {
+            if (!mapping || !mapping->isMoreDetailAvailable()) {
+                continue;
+            }
+            const int candidate = mapping->getTextureCoordinateID();
+            if (modelHasTextureCoordinate(model, candidate)) {
+                return candidate;
+            }
+        }
+
         const int geographic =
             model.rasterOverlayDetails.textureCoordinateIDForProjection(
                 RasterOverlayProjection::Geographic);

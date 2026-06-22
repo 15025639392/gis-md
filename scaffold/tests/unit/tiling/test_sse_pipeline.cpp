@@ -27749,12 +27749,16 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
 
     auto parentModel = makeWebMercatorQuadTerrainGltfModel(root->bounds);
     const Rectangle parentWebMercatorOverlay(100.0, 200.0, 180.0, 280.0);
+    parentModel->rasterOverlayDetails.rasterOverlayRectangles[0] =
+        root->bounds;
     parentModel->rasterOverlayDetails.rasterOverlayRectangles[1] =
         parentWebMercatorOverlay;
     parentModel->rasterOverlayDetails.boundingRegion = {
         root->bounds,
         -8.0,
         45.0};
+    RasterOverlayDetails parentOverlayDetails =
+        parentModel->rasterOverlayDetails;
     root->content.renderContent.prepareGltfContent(
         std::move(parentModel),
         Mat4::identity());
@@ -27767,6 +27771,44 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
     check(root->children.size() == 4,
           "Tileset: WebMercator glTF-parent upsample setup creates children");
     if (root->children.size() < 3 || !root->children[2]) return;
+
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    DebugImageryProvider imagery;
+    RasterOverlayTileProvider rasterProvider(
+        imagery,
+        *imageryScheme,
+        nullptr);
+    RasterMappedToTilesetTile& mapped =
+        root->rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missingProjections;
+    mapped.update(
+        root->key,
+        parentOverlayDetails,
+        512.0,
+        512.0,
+        rasterProvider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+    RasterOverlayTile* loadingTile = mapped.getLoadingTile();
+    if (!loadingTile) return;
+    loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    mapped.update(
+        root->key,
+        parentOverlayDetails,
+        512.0,
+        512.0,
+        rasterProvider,
+        nullptr,
+        missingProjections,
+        nullptr,
+        0);
+    check(mapped.isMoreDetailAvailable() &&
+              mapped.getTextureCoordinateID() == 1,
+          "Tileset: WebMercator glTF-parent source mapping marks projection texcoord as more-detail");
 
     TilesetTile* child = root->children[2];
     TilesetTestAccess::requestMissingTile(tileset, child->key);
