@@ -311,9 +311,7 @@ TEST(TilesetQuantizedMeshTest,
     EXPECT_FALSE(
         root->content.renderContent.isSurfaceSource(
             SurfaceDrawableSource::OwnTerrain));
-    EXPECT_TRUE(
-        root->content.renderContent.isSurfaceSource(
-            SurfaceDrawableSource::EllipsoidFallback));
+    EXPECT_FALSE(root->content.renderContent.hasRetainedHeightmap());
     EXPECT_NE(root->content.loadState, TileLoadState::Done);
 }
 

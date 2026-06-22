@@ -7,8 +7,10 @@
 #include "../core/cache/HttpCache.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/Projection.h"
+#include "../core/geodesy/QuadtreeGeometricError.h"
 #include "../core/geodesy/WebMercatorProjection.h"
 #include "../content/QuantizedMeshContentLoader.h"
+#include "../tiling/TileSelectionRootPolicy.h"
 #include "../platform/bridge/CurlMultiRequestScheduler.h"
 #include "../platform/bridge/PlatformBridge.h"
 #include <nlohmann/json.hpp>
@@ -48,6 +50,8 @@ struct RequestCompletionGuard {
 };
 
 constexpr const char* kFileUrlPrefix = "file://";
+constexpr double kLooseTerrainMinimumHeight = -1000.0;
+constexpr double kLooseTerrainMaximumHeight = 9000.0;
 
 bool isFileUrl(const std::string& url) {
     return url.rfind(kFileUrlPrefix, 0) == 0;
@@ -628,6 +632,23 @@ bool isTileInLayerRange(const TileKey& key, const std::string& schemeId) {
 
 bool isCesiumSuccessfulHttpStatus(int statusCode) {
     return statusCode == 0 || (statusCode >= 200 && statusCode < 300);
+}
+
+std::vector<TileKey> quadtreeChildren(const TileKey& key) {
+    const int childZ = key.z + 1;
+    const int childX = key.x * 2;
+    const int childY = key.y * 2;
+    std::vector<TileKey> children;
+    children.reserve(4);
+    for (int dy = 0; dy < 2; ++dy) {
+        for (int dx = 0; dx < 2; ++dx) {
+            TileKey childKey{key.schemeId, childZ, childX + dx, childY + dy};
+            if (isTileInLayerRange(childKey, key.schemeId)) {
+                children.push_back(childKey);
+            }
+        }
+    }
+    return children;
 }
 
 } // namespace
@@ -1266,6 +1287,72 @@ void QuantizedMeshTerrainProvider::syncLegacyFieldsFromPrimaryLayer() {
 
 bool QuantizedMeshTerrainProvider::supportsTile(const TileKey& key) const {
     return availabilityState(key) == TileAvailabilityState::Available;
+}
+
+std::vector<TileKey> QuantizedMeshTerrainProvider::rootTiles() const {
+    return {
+        TileSelectionRootPolicy::virtualTerrainRootKey(schemeId_)
+    };
+}
+
+std::optional<TilesetContentTileMetadata>
+QuantizedMeshTerrainProvider::tileMetadata(const TileKey& key) const {
+    if (TileSelectionRootPolicy::isVirtualTerrainRoot(key) &&
+        key.schemeId == schemeId_) {
+        TilesetContentTileMetadata metadata;
+        metadata.key = key;
+        metadata.bounds = Rectangle::MAXIMUM;
+        metadata.hasExplicitBounds = true;
+        metadata.boundingVolume = TileBoundingVolume::fromRegion(
+            metadata.bounds,
+            kLooseTerrainMinimumHeight,
+            kLooseTerrainMaximumHeight);
+        metadata.contentBoundingVolume = metadata.boundingVolume;
+        metadata.geometricError = calcLayerJsonTerrainGeometricError(
+            Ellipsoid::WGS84(),
+            metadata.bounds);
+        metadata.refine = TileRefine::Replace;
+        metadata.unconditionallyRefine = true;
+        return metadata;
+    }
+
+    if (!isTileInLayerRange(key, schemeId_)) {
+        return std::nullopt;
+    }
+
+    TilesetContentTileMetadata metadata;
+    metadata.key = key;
+    if (key.z == 0) {
+        metadata.parentKey =
+            TileSelectionRootPolicy::virtualTerrainRootKey(schemeId_);
+    } else {
+        metadata.parentKey =
+            TileKey{schemeId_, key.z - 1, key.x / 2, key.y / 2};
+    }
+    metadata.bounds = terrainContentRectangle(key, schemeId_);
+    metadata.hasExplicitBounds = true;
+    metadata.boundingVolume = TileBoundingVolume::fromRegion(
+        metadata.bounds,
+        kLooseTerrainMinimumHeight,
+        kLooseTerrainMaximumHeight);
+    metadata.geometricError = calcLayerJsonTerrainGeometricError(
+        Ellipsoid::WGS84(),
+        metadata.bounds);
+    metadata.refine = TileRefine::Replace;
+    metadata.unconditionallyRefine = false;
+    return metadata;
+}
+
+std::vector<TileKey>
+QuantizedMeshTerrainProvider::childTiles(const TileKey& key) const {
+    if (TileSelectionRootPolicy::isVirtualTerrainRoot(key) &&
+        key.schemeId == schemeId_) {
+        return TileSelectionRootPolicy::levelZeroTerrainRoots(schemeId_);
+    }
+    if (!isTileInLayerRange(key, schemeId_) || key.z >= maxZoom_) {
+        return {};
+    }
+    return quadtreeChildren(key);
 }
 
 void QuantizedMeshTerrainProvider::resetFallbackLayerFromFields() {

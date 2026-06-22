@@ -33,6 +33,10 @@ public:
     std::string id() const override;
     std::string type() const { return "quantized-mesh-terrain"; }
     bool providesTerrainQuadtree() const override { return true; }
+    std::vector<TileKey> rootTiles() const override;
+    std::optional<TilesetContentTileMetadata> tileMetadata(
+        const TileKey& key) const override;
+    std::vector<TileKey> childTiles(const TileKey& key) const override;
 
     std::string schemeId() const { return schemeId_; }
 

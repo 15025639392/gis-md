@@ -881,6 +881,110 @@ TEST(QuantizedMeshTerrainProviderTest, WebMercatorLayerJsonUsesOneByOneRootLikeC
     EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 0}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest,
+     ExposesLayerJsonTerrainTreeMetadataLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "tiles": ["tiles/{z}/{x}/{y}.terrain"],
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}],
+        [{"startX":1,"startY":0,"endX":1,"endY":0}]
+      ],
+      "maxzoom": 8
+    })json";
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/terrain/layer.json"));
+
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    EXPECT_EQ((TileKey{"Geographic-TMS", -1, 0, 0}), roots.front());
+
+    const auto rootMetadata = provider.tileMetadata(roots.front());
+    ASSERT_TRUE(rootMetadata.has_value());
+    EXPECT_TRUE(rootMetadata->unconditionallyRefine);
+    EXPECT_EQ(TileRefine::Replace, rootMetadata->refine);
+    ASSERT_TRUE(rootMetadata->boundingVolume.has_value());
+    EXPECT_EQ(Rectangle::MAXIMUM, rootMetadata->bounds);
+    EXPECT_EQ(TileBoundingVolumeKind::Region,
+              rootMetadata->boundingVolume->kind);
+    EXPECT_DOUBLE_EQ(-1000.0,
+                     rootMetadata->boundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(9000.0,
+                     rootMetadata->boundingVolume->maximumHeight);
+
+    const std::vector<TileKey> levelZeroChildren =
+        provider.childTiles(roots.front());
+    ASSERT_EQ(2u, levelZeroChildren.size());
+    EXPECT_EQ((TileKey{"Geographic-TMS", 0, 0, 0}), levelZeroChildren[0]);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 0, 1, 0}), levelZeroChildren[1]);
+
+    const TileKey westRoot{"Geographic-TMS", 0, 0, 0};
+    const auto westMetadata = provider.tileMetadata(westRoot);
+    ASSERT_TRUE(westMetadata.has_value());
+    ASSERT_TRUE(westMetadata->parentKey.has_value());
+    EXPECT_EQ(roots.front(), *westMetadata->parentKey);
+    EXPECT_FALSE(westMetadata->unconditionallyRefine);
+    EXPECT_EQ(TileRefine::Replace, westMetadata->refine);
+    EXPECT_EQ(TileScheme::createGeographicTMS()->tileToRectangle(westRoot),
+              westMetadata->bounds);
+    ASSERT_TRUE(westMetadata->boundingVolume.has_value());
+    EXPECT_EQ(westMetadata->bounds, westMetadata->boundingVolume->region);
+    EXPECT_FALSE(westMetadata->contentBoundingVolume.has_value());
+    EXPECT_GT(westMetadata->geometricError, 0.0);
+
+    const std::vector<TileKey> rootChildren =
+        provider.childTiles(westRoot);
+    ASSERT_EQ(4u, rootChildren.size());
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 0}), rootChildren[0]);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 1, 0}), rootChildren[1]);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 1}), rootChildren[2]);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 1, 1}), rootChildren[3]);
+
+    const auto availableChild = provider.tileMetadata(rootChildren[1]);
+    ASSERT_TRUE(availableChild.has_value());
+    ASSERT_TRUE(availableChild->parentKey.has_value());
+    EXPECT_EQ(westRoot, *availableChild->parentKey);
+    EXPECT_LT(availableChild->geometricError,
+              westMetadata->geometricError);
+}
+
+TEST(QuantizedMeshTerrainProviderTest,
+     WebMercatorTreeMetadataUsesCesiumNativeSingleRoot) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:3857",
+      "tiles": ["tiles/{z}/{x}/{y}.terrain"],
+      "maxzoom": 8
+    })json";
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/terrain/layer.json"));
+
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    EXPECT_EQ((TileKey{"XYZ-WebMercator", -1, 0, 0}), roots.front());
+
+    const std::vector<TileKey> levelZeroChildren =
+        provider.childTiles(roots.front());
+    ASSERT_EQ(1u, levelZeroChildren.size());
+    EXPECT_EQ((TileKey{"XYZ-WebMercator", 0, 0, 0}),
+              levelZeroChildren.front());
+
+    const auto rootMetadata = provider.tileMetadata(levelZeroChildren.front());
+    ASSERT_TRUE(rootMetadata.has_value());
+    ASSERT_TRUE(rootMetadata->parentKey.has_value());
+    EXPECT_EQ(roots.front(), *rootMetadata->parentKey);
+    EXPECT_EQ(TileScheme::createXYZWebMercator()->tileToRectangle(
+                  levelZeroChildren.front()),
+              rootMetadata->bounds);
+}
+
 TEST(QuantizedMeshTerrainProviderTest, WebMercatorPartialAvailabilityUsesOneByOneRoot) {
     QuantizedMeshTerrainProvider provider(
         "https://example.com/fallback/{z}/{x}/{y}.terrain");
