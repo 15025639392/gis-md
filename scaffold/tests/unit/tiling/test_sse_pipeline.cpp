@@ -26595,6 +26595,9 @@ void testPresentationTraceExposesAdditiveSelectedRenderEntries() {
                 : tile.rasterOverlayState.mappings()[0].get();
         RasterOverlayTile* raster =
             mapped ? mapped->getLoadingTile() : nullptr;
+        if (!raster && tile.hasSurfaceDrawable()) {
+            return true;
+        }
         if (!raster) {
             return false;
         }

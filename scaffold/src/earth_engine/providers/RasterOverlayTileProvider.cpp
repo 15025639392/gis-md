@@ -934,18 +934,29 @@ RasterOverlayTileProvider::buildQuadtreeSourcePlan(
             }
         }
     }
-    if (plan.sourceKeys.empty() &&
-        sourceBounds.width() > 0.0 &&
-        sourceBounds.height() > 0.0) {
-        const auto center = sourceBounds.center();
-        TileKey sourceKey =
-            scheme.positionToTile(center.first, center.second, plan.sourceZoom);
-        if (provider.supportsTile(sourceKey)) {
-            plan.minX = sourceKey.x;
-            plan.minY = sourceKey.y;
-            plan.maxX = sourceKey.x;
-            plan.maxY = sourceKey.y;
-            plan.sourceKeys.push_back(sourceKey);
+    if (plan.sourceKeys.empty() && range.count() > 0) {
+        const int maxTileX = scheme.tileCountX(plan.sourceZoom) - 1;
+        const int maxTileY = scheme.tileCountY(plan.sourceZoom) - 1;
+        const int minX = std::max(0, range.minX - 1);
+        const int maxX = std::min(maxTileX, range.maxX + 1);
+        const int minY = std::max(0, range.minY - 1);
+        const int maxY = std::min(maxTileY, range.maxY + 1);
+        for (int y = minY; y <= maxY; ++y) {
+            for (int x = minX; x <= maxX; ++x) {
+                TileKey sourceKey{scheme.id(), plan.sourceZoom, x, y};
+                if (provider.supportsTile(sourceKey) &&
+                    rectanglesOverlapWithArea(
+                        scheme.tileToRectangle(sourceKey),
+                        sourceBounds)) {
+                    plan.sourceKeys.push_back(sourceKey);
+                }
+            }
+        }
+        if (!plan.sourceKeys.empty()) {
+            plan.minX = minX;
+            plan.minY = minY;
+            plan.maxX = maxX;
+            plan.maxY = maxY;
         }
     }
     return plan;
@@ -1554,6 +1565,10 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
         maximumTextureSize_,
         getMinimumLevel(),
         getMaximumLevel());
+
+    if (sourcePlan.empty()) {
+        return {getPlaceholderTile(), false};
+    }
 
     if (sourcePlan.sourceKeys.size() == 1) {
         const TileKey& sourceKey = sourcePlan.sourceKeys.front();

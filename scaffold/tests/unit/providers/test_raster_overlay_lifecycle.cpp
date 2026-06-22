@@ -2818,7 +2818,7 @@ TEST(RasterOverlayLifecycleTest,
         std::vector<ActivatedRasterOverlay*>{&activated}));
 }
 
-TEST(RasterOverlayLifecycleTest, SurfaceRasterBindingClassifiesAncestorWhileChildLoads) {
+TEST(RasterOverlayLifecycleTest, SurfaceRasterBindingClassifiesSharedReadyTileAsRealTile) {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createGeographicTMS();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
@@ -2861,8 +2861,8 @@ TEST(RasterOverlayLifecycleTest, SurfaceRasterBindingClassifiesAncestorWhileChil
     childMapped.update(
         childKey,
         childDetails,
-        256.0,
-        256.0,
+        4096.0,
+        4096.0,
         provider,
         nullptr,
         missing,
@@ -2870,7 +2870,7 @@ TEST(RasterOverlayLifecycleTest, SurfaceRasterBindingClassifiesAncestorWhileChil
         0);
 
     SurfaceRasterBinding binding = chooseSurfaceRasterBinding(&childMapped);
-    EXPECT_EQ(SurfaceRasterBindingKind::AncestorTile, binding.kind);
+    EXPECT_EQ(SurfaceRasterBindingKind::RealTile, binding.kind);
     EXPECT_EQ(binding.tile, parentRaster);
 }
 
