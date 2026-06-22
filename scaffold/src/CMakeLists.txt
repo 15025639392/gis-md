@@ -106,6 +106,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/content/GltfModel.cpp
     earth_engine/content/GltfContentProvider.h
     earth_engine/content/GltfContentProvider.cpp
+    earth_engine/content/GltfTerrainUpsampler.h
+    earth_engine/content/GltfTerrainUpsampler.cpp
     earth_engine/content/QuantizedMeshContentLoader.h
     earth_engine/content/QuantizedMeshContentLoader.cpp
 )

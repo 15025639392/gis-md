@@ -268,6 +268,12 @@ add_executable(test_quantized_mesh_content_loader
 target_link_libraries(test_quantized_mesh_content_loader PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_quantized_mesh_content_loader COMMAND test_quantized_mesh_content_loader)
 
+add_executable(test_gltf_terrain_upsampler
+    unit/content/test_gltf_terrain_upsampler.cpp
+)
+target_link_libraries(test_gltf_terrain_upsampler PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_gltf_terrain_upsampler COMMAND test_gltf_terrain_upsampler)
+
 add_executable(test_tile_bounding_volume
     unit/tiling/test_tile_bounding_volume.cpp
 )
