@@ -43,6 +43,7 @@
 #include "earth_engine/tiling/TileFrameState.h"
 #include "earth_engine/tiling/TileFrameWorkCoordinator.h"
 #include "earth_engine/tiling/TileFrameDebugLogFormatter.h"
+#include "earth_engine/tiling/TileGltfTerrainUpsampledChildMaterializer.h"
 #include "earth_engine/tiling/TileIndexState.h"
 #include "earth_engine/tiling/TileLoadDiagnostics.h"
 #include "earth_engine/tiling/TileLoadLifecycle.h"
@@ -26924,9 +26925,10 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
     root->content.renderContent.prepareGltfContent(
         makeQuadTerrainGltfModel(root->bounds),
         Mat4::identity());
-    root->content.renderContent.addGltfPrimitiveResource(
-        GltfPrimitiveRenderResources{});
+    root->content.renderContent.setTerrainRenderContent(true);
     root->markRenderContentDone();
+    check(!root->content.renderContent.hasGltfResources(),
+          "Tileset: glTF-parent source does not need renderer resources before upsample");
 
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
@@ -26997,9 +26999,10 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
     root->content.renderContent.prepareGltfContent(
         makeWebMercatorQuadTerrainGltfModel(root->bounds),
         Mat4::identity());
-    root->content.renderContent.addGltfPrimitiveResource(
-        GltfPrimitiveRenderResources{});
+    root->content.renderContent.setTerrainRenderContent(true);
     root->markRenderContentDone();
+    check(!root->content.renderContent.hasGltfResources(),
+          "Tileset: WebMercator glTF-parent source does not need renderer resources before upsample");
 
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
@@ -27051,6 +27054,34 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
               std::abs(childOverlay->north() - expectedChildOverlay.north()) <
                   1e-12,
           "Tileset: WebMercator glTF-parent carries child projection overlay details");
+}
+
+void testGltfTerrainUpsampleRejectsOrdinaryGltfContentParent() {
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 1, 0};
+    TilesetTile parent(
+        parentKey,
+        Rectangle{-MathUtils::OnePi, -MathUtils::PiOverTwo, 0.0, 0.0});
+    TilesetTile child(
+        childKey,
+        Rectangle{-MathUtils::PiOverTwo, -MathUtils::PiOverTwo, 0.0, 0.0},
+        &parent);
+    child.content.markTerrainAvailabilityUpsample();
+
+    parent.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(parent.bounds),
+        Mat4::identity());
+    parent.markRenderContentDone();
+
+    TileLoadedContent content;
+    const bool materialized =
+        TileGltfTerrainUpsampledChildMaterializer::materialize(
+            child,
+            content);
+    check(!materialized &&
+              !content.hasGltfTerrainPayload() &&
+              content.gltfModel == nullptr,
+          "Tileset: ordinary glTF content parent is not a terrain upsample source");
 }
 
 void testTilesetClearChildrenErasesFlatMapDescendants() {
@@ -27962,6 +27993,7 @@ int main() {
     testTilesetUpsampledChildFinalizesContentLoadedParent();
     testTilesetUpsampledChildBuildsGltfFromGltfParent();
     testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord();
+    testGltfTerrainUpsampleRejectsOrdinaryGltfContentParent();
     testTilesetClearChildrenErasesFlatMapDescendants();
     testTilesetClearChildrenErasesClaimedUploadDescendantWork();
     testTilesetClearChildrenIgnoresStaleTerrainCallback();

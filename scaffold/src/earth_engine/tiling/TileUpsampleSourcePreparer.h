@@ -24,7 +24,8 @@ public:
                 ((ancestor->content.renderContent.hasTerrainMesh() &&
                   ancestor->content.renderContent.isSurfaceMeshReady()) ||
                  (allowGltfTerrainSource &&
-                  ancestor->content.renderContent.isGltfRenderReady()))) {
+                  ancestor->content.renderContent.isTerrainRenderContent() &&
+                  ancestor->content.renderContent.hasGltfContent()))) {
                 return ancestor;
             }
             ancestor = ancestor->parent;
