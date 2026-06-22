@@ -57,7 +57,7 @@ public:
     RasterOverlayTileProvider(const RasterOverlayTileProvider&) = delete;
     RasterOverlayTileProvider& operator=(const RasterOverlayTileProvider&) = delete;
 
-    struct RectangleSourceImage {
+    struct QuadtreeSourceImage {
         TileKey key;
         Rectangle bounds;
         std::unique_ptr<DecodedImage> image;
@@ -66,7 +66,7 @@ public:
             RasterOverlayTile::MoreDetailAvailable::Unknown;
     };
 
-    struct RectangleCompositionResult {
+    struct CompositeImageResult {
         std::unique_ptr<DecodedImage> image;
         Rectangle rectangle;
         RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
@@ -78,11 +78,11 @@ public:
         bool directTile = false;
     };
 
-    static RectangleCompositionResult composeRectangleImagesWithDetails(
+    static CompositeImageResult composeQuadtreeSourceImagesWithDetails(
         const TileScheme& scheme,
         const Rectangle& targetBounds,
         int sourceZoom,
-        std::vector<RectangleSourceImage>&& sources,
+        std::vector<QuadtreeSourceImage>&& sources,
         int maximumSourceZoom,
         int maximumTextureSize);
 
@@ -229,7 +229,7 @@ public:
     // via unique_ptr<Texture>. No external callback needed.
 
 private:
-    struct RectangleSourceRequest;
+    struct QuadtreeSourceRequest;
 
     /// Internal: load a composite raster tile by combining the provider's
     /// quadtree imagery tiles that overlap its geometry rectangle.

@@ -213,7 +213,7 @@ TileRange trimCesiumNativeBoundarySlop(const TileScheme& scheme,
     return range;
 }
 
-struct RectangleSourcePlan {
+struct QuadtreeSourcePlan {
     int sourceZoom = 0;
     TileRange range;
     std::vector<TileKey> sourceKeys;
@@ -495,7 +495,7 @@ int computeLevelFromTargetScreenPixels(const TileScheme& scheme,
     return std::clamp(rounded, minZoom, maxZoom);
 }
 
-int chooseRectangleSourceZoom(const TileScheme& scheme,
+int chooseQuadtreeSourceZoom(const TileScheme& scheme,
                         const ImageryProvider& provider,
                         const RasterTextureUploader* uploader,
                         const Rectangle& geometryBounds,
@@ -552,7 +552,7 @@ int chooseRectangleSourceZoom(const TileScheme& scheme,
     return zoom;
 }
 
-RectangleSourcePlan buildRectangleSourcePlan(
+QuadtreeSourcePlan buildQuadtreeSourcePlan(
     const TileScheme& scheme,
     const ImageryProvider& provider,
     const RasterTextureUploader* uploader,
@@ -564,8 +564,8 @@ RectangleSourcePlan buildRectangleSourcePlan(
     int maximumTextureSize,
     int minimumLevel,
     int maximumLevel) {
-    RectangleSourcePlan plan;
-    plan.sourceZoom = chooseRectangleSourceZoom(
+    QuadtreeSourcePlan plan;
+    plan.sourceZoom = chooseQuadtreeSourceZoom(
         scheme,
         provider,
         uploader,
@@ -849,7 +849,7 @@ void blitImage(DecodedImage& target,
     }
 }
 
-RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
+RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
     const TileScheme& scheme,
     const Rectangle& targetBounds,
     int sourceZoom,
@@ -874,7 +874,7 @@ RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
                                !source.sourceSubset.has_value();
                     });
     if (!haveAnyUsefulImageData) {
-        RasterOverlayTileProvider::RectangleCompositionResult result;
+        RasterOverlayTileProvider::CompositeImageResult result;
         result.image = std::make_unique<DecodedImage>();
         result.rectangle = Rectangle();
         result.moreDetailAvailable =
@@ -926,7 +926,7 @@ RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
                   scheme);
     }
 
-    RasterOverlayTileProvider::RectangleCompositionResult result;
+    RasterOverlayTileProvider::CompositeImageResult result;
     result.image = std::move(output);
     result.rectangle = measurements.rectangle;
     const bool moreDetailAvailable = std::any_of(
@@ -950,27 +950,27 @@ RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
     return result;
 }
 
-using RectangleRequestSuccess =
+using CompositeRequestSuccess =
     std::function<void(std::unique_ptr<DecodedImage>,
                        Rectangle,
                        RasterOverlayTile::MoreDetailAvailable)>;
-using RectangleRequestFailure = std::function<void()>;
+using CompositeRequestFailure = std::function<void()>;
 
 } // namespace
 
-struct RasterOverlayTileProvider::RectangleSourceRequest
-    : public std::enable_shared_from_this<RectangleSourceRequest> {
-    RectangleSourceRequest(ImageryProvider& imageryProvider,
-                           const TileScheme& tileScheme,
-                           std::shared_ptr<ProviderAsyncState> asyncState,
-                           RectangleSourcePlan plan,
-                           Rectangle bounds,
-                           Rectangle outputRectangle,
-                           int textureSize,
-                           int minimumSourceLevel,
-                           int maximumSourceLevel,
-                           RectangleRequestSuccess success,
-                           RectangleRequestFailure failure)
+struct RasterOverlayTileProvider::QuadtreeSourceRequest
+    : public std::enable_shared_from_this<QuadtreeSourceRequest> {
+    QuadtreeSourceRequest(ImageryProvider& imageryProvider,
+                          const TileScheme& tileScheme,
+                          std::shared_ptr<ProviderAsyncState> asyncState,
+                          QuadtreeSourcePlan plan,
+                          Rectangle bounds,
+                          Rectangle outputRectangle,
+                          int textureSize,
+                          int minimumSourceLevel,
+                          int maximumSourceLevel,
+                          CompositeRequestSuccess success,
+                          CompositeRequestFailure failure)
         : provider(imageryProvider)
         , scheme(tileScheme)
         , state(std::move(asyncState))
@@ -1326,8 +1326,8 @@ private:
             return;
         }
 
-        RectangleCompositionResult composed =
-            combineRectangleImages(
+        CompositeImageResult composed =
+            combineQuadtreeSourceImages(
                 scheme,
                 targetBounds,
                 sourcePlan.sourceZoom,
@@ -1354,14 +1354,14 @@ private:
     std::unordered_map<std::string, InFlightSourceTileAsset>& inFlight;
     int64_t cacheBudgetBytes = 0;
     std::mutex& cacheMutex;
-    RectangleSourcePlan sourcePlan;
+    QuadtreeSourcePlan sourcePlan;
     Rectangle targetBounds;
     Rectangle outputBounds;
     int maximumTextureSize = 0;
     int minimumLevel = 0;
     int maximumLevel = 0;
-    RectangleRequestSuccess onSuccess;
-    RectangleRequestFailure onFailure;
+    CompositeRequestSuccess onSuccess;
+    CompositeRequestFailure onFailure;
     mutable std::mutex mutex;
     size_t nextSourceIndex = 0;
     int remaining = 0;
@@ -1369,12 +1369,12 @@ private:
     std::vector<LoadedSourceImage> sources;
 };
 
-RasterOverlayTileProvider::RectangleCompositionResult
-RasterOverlayTileProvider::composeRectangleImagesWithDetails(
+RasterOverlayTileProvider::CompositeImageResult
+RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
     const TileScheme& scheme,
     const Rectangle& targetBounds,
     int sourceZoom,
-    std::vector<RectangleSourceImage>&& publicSources,
+    std::vector<QuadtreeSourceImage>&& publicSources,
     int maximumSourceZoom,
     int maximumTextureSize) {
     std::vector<LoadedSourceImage> sources;
@@ -1387,7 +1387,7 @@ RasterOverlayTileProvider::composeRectangleImagesWithDetails(
             source.sourceSubset,
             source.moreDetailAvailable});
     }
-    return combineRectangleImages(
+    return combineQuadtreeSourceImages(
         scheme,
         targetBounds,
         sourceZoom,
@@ -1521,7 +1521,7 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
     const Rectangle sourceBounds =
         mapGeometryBoundsToImageryCoverage(geometryBounds, coverageRectangle_);
 
-    RectangleSourcePlan sourcePlan = buildRectangleSourcePlan(
+    QuadtreeSourcePlan sourcePlan = buildQuadtreeSourcePlan(
         scheme_,
         provider_,
         textureUploader_.get(),
@@ -1652,7 +1652,7 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
             return true;
         }
     }
-    RectangleSourcePlan sourcePlan;
+    QuadtreeSourcePlan sourcePlan;
     sourcePlan.sourceZoom = key.z;
     sourcePlan.range = TileRange{key.x, key.y, key.x, key.y};
     sourcePlan.sourceKeys.push_back(key);
@@ -1697,7 +1697,7 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
     const Rectangle outputBounds = tile.getRectangle();
     const Rectangle targetBounds =
         unprojectProviderToGeographic(outputBounds, projection_);
-    auto request = std::make_shared<RectangleSourceRequest>(
+    auto request = std::make_shared<QuadtreeSourceRequest>(
         provider_,
         scheme_,
         state,
@@ -1812,7 +1812,7 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
     const Rectangle sourceBounds =
         mapGeometryBoundsToImageryCoverage(targetBounds, coverageRectangle_);
 
-    RectangleSourcePlan sourcePlan = buildRectangleSourcePlan(
+    QuadtreeSourcePlan sourcePlan = buildQuadtreeSourcePlan(
         scheme_,
         provider_,
         textureUploader_.get(),
@@ -1876,7 +1876,7 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
     }
     const int maxTextureSize =
         maximumCombinedTextureSize(textureUploader_.get(), maximumTextureSize_);
-    auto request = std::make_shared<RectangleSourceRequest>(
+    auto request = std::make_shared<QuadtreeSourceRequest>(
         provider_,
         scheme_,
         state,

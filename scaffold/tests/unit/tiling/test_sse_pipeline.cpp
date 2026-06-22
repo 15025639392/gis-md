@@ -2333,7 +2333,7 @@ std::unique_ptr<DecodedImage> makeDecodedRgbaImage(int width, int height) {
     return image;
 }
 
-void testRasterOverlayRectangleSourceRequestsStartAsOneBatch() {
+void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
@@ -2359,7 +2359,7 @@ void testRasterOverlayRectangleSourceRequestsStartAsOneBatch() {
               firstFrameBudget.rasterNetworkRequestsIssued() > 2 &&
               imagery.pendingRequests.size() ==
                   imagery.pendingRequests.size(),
-          "RasterOverlayTileProvider: rectangle source batch accounts for source fanout");
+          "RasterOverlayTileProvider: quadtree source batch accounts for source fanout");
 
     FrameResourceBudget secondFrameBudget;
     secondFrameBudget.beginFrame(2, config);
@@ -2371,7 +2371,7 @@ void testRasterOverlayRectangleSourceRequestsStartAsOneBatch() {
           "RasterOverlayTileProvider: loading composite tiles do not pump source requests on later frames");
 }
 
-void testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches() {
+void testRasterOverlayQuadtreeSourceRangeTrimsTileEdgeTouches() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
@@ -2391,7 +2391,7 @@ void testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches() {
               compositeTile->getSourceZoom() == 5 &&
               provider.loadTileThrottled(*compositeTile, &budget) &&
               imagery.pendingRequests.size() == 16,
-          "RasterOverlayTileProvider: rectangle source range trims Cesium-native tile-edge touches");
+          "RasterOverlayTileProvider: quadtree source range trims Cesium-native tile-edge touches");
 
     bool allInsideTrimmedRange = true;
     for (const auto& request : imagery.pendingRequests) {
@@ -2405,7 +2405,7 @@ void testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches() {
           "RasterOverlayTileProvider: trimmed rectangle requests keep only overlapping source tiles");
 }
 
-void testRasterOverlayBaseRectangleSourceClampsCoverageEdgeMiss() {
+void testRasterOverlayBaseQuadtreeSourceClampsCoverageEdgeMiss() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
@@ -2443,7 +2443,7 @@ void testRasterOverlayBaseRectangleSourceClampsCoverageEdgeMiss() {
           "RasterOverlayTileProvider: clamped coverage miss samples the nearest coverage edge");
 }
 
-void testRasterOverlayRectangleSourceFailureRequestsParentSource() {
+void testRasterOverlayQuadtreeSourceFailureRequestsParentSource() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
@@ -2549,7 +2549,7 @@ void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
           "RasterOverlayTileProvider: direct parent waiter keeps a valid rectangle");
 }
 
-void testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize() {
+void testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
@@ -2560,7 +2560,7 @@ void testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize() {
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, rootBounds), 131072.0, 131072.0).tile;
 
     check(compositeTile && compositeTile->getSourceZoom() == 5,
-          "RasterOverlayTileProvider: rectangle source zoom is reduced until combined texture fits like cesium-native");
+          "RasterOverlayTileProvider: quadtree source zoom is reduced until combined texture fits like cesium-native");
 }
 
 void testRasterOverlayUploadsStopAfterElapsedBudgetExpires() {
@@ -27676,12 +27676,12 @@ int main() {
     testActivatedRasterOverlayEnsuresProvider();
     testRasterOverlayProviderCompositeTile();
     testRasterOverlayProviderDirectTileForExactProviderRectangle();
-    testRasterOverlayRectangleSourceRequestsStartAsOneBatch();
-    testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches();
-    testRasterOverlayBaseRectangleSourceClampsCoverageEdgeMiss();
-    testRasterOverlayRectangleSourceFailureRequestsParentSource();
+    testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch();
+    testRasterOverlayQuadtreeSourceRangeTrimsTileEdgeTouches();
+    testRasterOverlayBaseQuadtreeSourceClampsCoverageEdgeMiss();
+    testRasterOverlayQuadtreeSourceFailureRequestsParentSource();
     testRasterOverlayFallbackParentInFlightSharesDirectAsset();
-    testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize();
+    testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize();
     testRasterOverlayUploadsStopAfterElapsedBudgetExpires();
     testRasterMappedUsesRenderContentDetailsRectangle();
     testRasterMappedMissingProjectionUsesPlaceholder();

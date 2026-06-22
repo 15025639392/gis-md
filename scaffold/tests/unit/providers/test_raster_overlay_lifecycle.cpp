@@ -406,7 +406,7 @@ RasterOverlayDetails makeProviderDetails(const TileScheme& scheme,
 
 } // namespace
 
-TEST(RasterOverlayLifecycleTest, RectangleSourceZoomFollowsCesiumTargetScreenPixels) {
+TEST(RasterOverlayLifecycleTest, QuadtreeSourceZoomFollowsCesiumTargetScreenPixels) {
     ConfigurableImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
@@ -439,7 +439,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomFollowsCesiumTargetScreenPix
     EXPECT_EQ((TileKey{scheme->id(), 3, 2, 3}), maxClampedTile->getTileID());
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayLevelRange) {
+TEST(RasterOverlayLifecycleTest, QuadtreeSourceZoomRespectsOverlayLevelRange) {
     ConfigurableImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     Rectangle z3Bounds =
@@ -718,7 +718,7 @@ TEST(RasterOverlayLifecycleTest, DirectFastPathDoesNotRunForPartialRectangle) {
     EXPECT_EQ(sourceKey.z, compositeTile->getSourceZoom());
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleSourceRangeTrimsTileEdgeTouchesLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest, QuadtreeSourceRangeTrimsTileEdgeTouchesLikeCesiumNative) {
     ParentFallbackImageryProvider imagery;
     imagery.tileWidthValue = 64;
     imagery.tileHeightValue = 64;
@@ -750,7 +750,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceRangeTrimsTileEdgeTouchesLikeCes
     }
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleSourceRangeTrimsSouthUpTileEdgeTouchesLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest, QuadtreeSourceRangeTrimsSouthUpTileEdgeTouchesLikeCesiumNative) {
     ParentFallbackImageryProvider imagery;
     imagery.schemeIdValue = "Geographic-TMS";
     imagery.tileWidthValue = 64;
@@ -888,7 +888,7 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_FALSE(directTile->isCompositeTile());
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayMaximumTextureSize) {
+TEST(RasterOverlayLifecycleTest, QuadtreeSourceZoomRespectsOverlayMaximumTextureSize) {
     ConfigurableImageryProvider imagery;
     imagery.tileWidthValue = 256;
     imagery.tileHeightValue = 256;
@@ -971,7 +971,7 @@ TEST(RasterOverlayLifecycleTest,
         [](uint8_t value) { return value == 0; }));
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleSourceFailureFallsBackToParentTile) {
+TEST(RasterOverlayLifecycleTest, QuadtreeSourceFailureFallsBackToParentTile) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     auto uploader = std::make_unique<CountingRasterUploader>();
@@ -1292,7 +1292,7 @@ TEST(RasterOverlayLifecycleTest, SourceTileDepotHonorsSubTileCacheByteBudget) {
     EXPECT_EQ(sourceKey, imagery->requestedKeys[1]);
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleSourceFallbacksAreCachedByRequestedTileLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest, QuadtreeSourceFallbacksAreCachedByRequestedTileLikeCesiumNative) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     auto uploader = std::make_unique<CountingRasterUploader>();
@@ -1478,7 +1478,7 @@ TEST(RasterOverlayLifecycleTest, DirectAncestorFallbackUsesParentTileLikeCesiumN
         imagery.requestedKeys.end());
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleCompositionMixesSourceLevelsAfterFailureLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest, CompositeImageMixesSourceLevelsAfterFailureLikeCesiumNative) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     auto uploader = std::make_unique<CountingRasterUploader>();
@@ -1531,7 +1531,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionMixesSourceLevelsAfterFailu
               compositeTile->isMoreDetailAvailable());
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleSourceFailureDoesNotFallbackBelowOverlayMinimumLevel) {
+TEST(RasterOverlayLifecycleTest, QuadtreeSourceFailureDoesNotFallbackBelowOverlayMinimumLevel) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
@@ -1674,13 +1674,13 @@ TEST(RasterOverlayLifecycleTest, FailedRasterTilesAreTerminalLikeCesiumNative) {
     EXPECT_TRUE(provider.loadTileThrottled(*compositeTile, nullptr));
     EXPECT_EQ(RasterOverlayTile::LoadState::Failed,
               compositeTile->getState());
-    const int failedRectangleRequests = imagery.requestCount;
+    const int failedCompositeRequests = imagery.requestCount;
 
     EXPECT_TRUE(provider.loadTileThrottled(*compositeTile, nullptr));
     EXPECT_TRUE(provider.loadTile(*compositeTile));
     EXPECT_EQ(RasterOverlayTile::LoadState::Failed,
               compositeTile->getState());
-    EXPECT_EQ(failedRectangleRequests, imagery.requestCount);
+    EXPECT_EQ(failedCompositeRequests, imagery.requestCount);
 }
 
 TEST(RasterOverlayLifecycleTest, RectangleLoadClampsCoverageChangedAfterTileCreation) {
@@ -2790,7 +2790,7 @@ TEST(RasterOverlayLifecycleTest, SurfaceRasterBindingClassifiesAncestorWhileChil
     EXPECT_EQ(binding.tile, parentRaster);
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsNoCoverageAndAcceptsFullCoverage) {
+TEST(RasterOverlayLifecycleTest, CompositeImageRejectsNoCoverageAndAcceptsFullCoverage) {
     auto scheme = TileScheme::createXYZWebMercator();
     Rectangle target = scheme->tileToRectangle(
         TileKey{scheme->id(), 1, 0, 0});
@@ -2800,7 +2800,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsNoCoverageAndAccepts
         target.east() + target.width() * 0.5,
         target.north());
 
-    std::vector<RasterOverlayTileProvider::RectangleSourceImage> noCoverage;
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> noCoverage;
     noCoverage.push_back({
         TileKey{scheme->id(), 2, 0, 0},
         outside,
@@ -2808,7 +2808,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsNoCoverageAndAccepts
         std::nullopt,
         RasterOverlayTile::MoreDetailAvailable::Unknown});
     auto noCoverageResult =
-        RasterOverlayTileProvider::composeRectangleImagesWithDetails(
+        RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
             *scheme,
             target,
             2,
@@ -2817,7 +2817,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsNoCoverageAndAccepts
             8);
     EXPECT_EQ(nullptr, noCoverageResult.image);
 
-    std::vector<RasterOverlayTileProvider::RectangleSourceImage> full;
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> full;
     full.push_back({
         TileKey{scheme->id(), 1, 0, 0},
         target,
@@ -2825,7 +2825,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsNoCoverageAndAccepts
         std::nullopt,
         RasterOverlayTile::MoreDetailAvailable::Unknown});
     auto fullResult =
-        RasterOverlayTileProvider::composeRectangleImagesWithDetails(
+        RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
             *scheme,
             target,
             1,
@@ -2838,7 +2838,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsNoCoverageAndAccepts
     EXPECT_EQ(20, fullResult.image->pixels[0]);
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsMalformedSourceImages) {
+TEST(RasterOverlayLifecycleTest, CompositeImageRejectsMalformedSourceImages) {
     auto scheme = TileScheme::createXYZWebMercator();
     Rectangle target = scheme->tileToRectangle(
         TileKey{scheme->id(), 1, 0, 0});
@@ -2849,7 +2849,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsMalformedSourceImage
     malformed->channels = 4;
     malformed->pixels.resize(4);
 
-    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> sources;
     sources.push_back({
         TileKey{scheme->id(), 1, 0, 0},
         target,
@@ -2857,7 +2857,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsMalformedSourceImage
         std::nullopt,
         RasterOverlayTile::MoreDetailAvailable::Unknown});
     auto result =
-        RasterOverlayTileProvider::composeRectangleImagesWithDetails(
+        RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
             *scheme,
             target,
             1,
@@ -2867,12 +2867,12 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsMalformedSourceImage
     EXPECT_EQ(nullptr, result.image);
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesSourceMoreDetailFlagLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest, CompositeImageUsesSourceMoreDetailFlagLikeCesiumNative) {
     auto scheme = TileScheme::createXYZWebMercator();
     Rectangle target = scheme->tileToRectangle(
         TileKey{scheme->id(), 1, 0, 0});
 
-    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> sources;
     sources.push_back({
         TileKey{scheme->id(), 1, 0, 0},
         target,
@@ -2880,7 +2880,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesSourceMoreDetailFlagLik
         std::nullopt,
         RasterOverlayTile::MoreDetailAvailable::No});
 
-    auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
+    auto result = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
         *scheme,
         target,
         1,
@@ -2893,12 +2893,12 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesSourceMoreDetailFlagLik
               result.moreDetailAvailable);
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleCompositionReturnsEmptyImageForOnlyAncestorFallbackLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest, CompositeImageReturnsEmptyImageForOnlyAncestorFallbackLikeCesiumNative) {
     auto scheme = TileScheme::createXYZWebMercator();
     Rectangle target = scheme->tileToRectangle(
         TileKey{scheme->id(), 1, 0, 0});
 
-    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> sources;
     sources.push_back({
         TileKey{scheme->id(), 0, 0, 0},
         target,
@@ -2906,7 +2906,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionReturnsEmptyImageForOnlyAnc
         target,
         RasterOverlayTile::MoreDetailAvailable::Yes});
 
-    auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
+    auto result = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
         *scheme,
         target,
         1,
@@ -2923,7 +2923,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionReturnsEmptyImageForOnlyAnc
               result.moreDetailAvailable);
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleCompositionReturnsCoveredRectangleLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest, CompositeImageReturnsCoveredRectangleLikeCesiumNative) {
     auto scheme = TileScheme::createXYZWebMercator();
     Rectangle target = scheme->tileToRectangle(
         TileKey{scheme->id(), 1, 0, 0});
@@ -2933,7 +2933,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionReturnsCoveredRectangleLike
         target.west() + target.width() * 0.5,
         target.north());
 
-    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> sources;
     sources.push_back({
         TileKey{scheme->id(), 2, 0, 0},
         covered,
@@ -2941,7 +2941,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionReturnsCoveredRectangleLike
         std::nullopt,
         RasterOverlayTile::MoreDetailAvailable::No});
 
-    auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
+    auto result = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
         *scheme,
         target,
         2,
@@ -2956,7 +2956,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionReturnsCoveredRectangleLike
     EXPECT_EQ(30, result.image->pixels[0]);
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleCompositionBlitsSourcePixelBlocksLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest, CompositeImageBlitsSourcePixelBlocksLikeCesiumNative) {
     auto scheme = TileScheme::createXYZWebMercator();
     const TileKey westKey{scheme->id(), 2, 0, 1};
     const TileKey eastKey{scheme->id(), 2, 1, 1};
@@ -2983,7 +2983,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionBlitsSourcePixelBlocksLikeC
         20, 0, 0, 255, 21, 0, 0, 255,
         22, 0, 0, 255, 23, 0, 0, 255};
 
-    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> sources;
     sources.push_back({
         westKey,
         westBounds,
@@ -2997,7 +2997,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionBlitsSourcePixelBlocksLikeC
         std::nullopt,
         RasterOverlayTile::MoreDetailAvailable::Unknown});
 
-    auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
+    auto result = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
         *scheme,
         target,
         westKey.z,
@@ -3018,7 +3018,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionBlitsSourcePixelBlocksLikeC
     EXPECT_EQ(23, result.image->pixels[28]);
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesAncestorSubsetLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest, CompositeImageUsesAncestorSubsetLikeCesiumNative) {
     auto scheme = TileScheme::createXYZWebMercator();
     const TileKey westKey{scheme->id(), 2, 0, 1};
     const TileKey eastKey{scheme->id(), 2, 1, 1};
@@ -3033,7 +3033,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesAncestorSubsetLikeCesiu
     auto eastImage = makeImage(2, 2, 20);
     auto ancestorImage = makeImage(4, 2, 10);
 
-    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> sources;
     sources.push_back({
         eastKey,
         eastBounds,
@@ -3047,7 +3047,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesAncestorSubsetLikeCesiu
         westBounds,
         RasterOverlayTile::MoreDetailAvailable::Yes});
 
-    auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
+    auto result = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
         *scheme,
         target,
         westKey.z,
@@ -3066,7 +3066,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesAncestorSubsetLikeCesiu
               result.moreDetailAvailable);
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleCompositionKeepsTinyProjectedOverlap) {
+TEST(RasterOverlayLifecycleTest, CompositeImageKeepsTinyProjectedOverlap) {
     auto scheme = TileScheme::createXYZWebMercator();
     const TileKey sourceKey{scheme->id(), 2, 1, 0};
     const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
@@ -3077,7 +3077,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionKeepsTinyProjectedOverlap) 
         sourceBounds.east(),
         sourceBounds.north());
 
-    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> sources;
     sources.push_back({
         sourceKey,
         sourceBounds,
@@ -3085,7 +3085,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionKeepsTinyProjectedOverlap) 
         std::nullopt,
         RasterOverlayTile::MoreDetailAvailable::Unknown});
 
-    auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
+    auto result = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
         *scheme,
         target,
         sourceKey.z,
@@ -3098,7 +3098,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionKeepsTinyProjectedOverlap) 
     EXPECT_EQ(1, result.image->height);
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesProjectedWebMercatorHeight) {
+TEST(RasterOverlayLifecycleTest, CompositeImageUsesProjectedWebMercatorHeight) {
     auto scheme = TileScheme::createXYZWebMercator();
     const TileKey sourceKey{scheme->id(), 2, 1, 0};
     const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
@@ -3110,7 +3110,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesProjectedWebMercatorHei
         sourceBounds.east(),
         sourceBounds.north());
 
-    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> sources;
     sources.push_back({
         sourceKey,
         sourceBounds,
@@ -3118,7 +3118,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesProjectedWebMercatorHei
         std::nullopt,
         RasterOverlayTile::MoreDetailAvailable::Unknown});
 
-    auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
+    auto result = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
         *scheme,
         target,
         sourceKey.z,
