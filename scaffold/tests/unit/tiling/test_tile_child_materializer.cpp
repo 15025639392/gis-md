@@ -349,6 +349,63 @@ TEST(TileChildMaterializerTest, UnknownTerrainChildrenDoNotCreateUpsampledQuadLi
     EXPECT_TRUE(parent.children.empty());
 }
 
+TEST(TileChildMaterializerTest,
+     TerrainAvailabilityUpsampledTileDoesNotMaterializeChildrenLikeCesiumNative) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        Rectangle{});
+    parent.content.markTerrainAvailabilityUpsample();
+
+    int availabilityChecks = 0;
+    int ensureCalls = 0;
+    const bool changed = TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        4,
+        [&availabilityChecks](const TileKey&) {
+            ++availabilityChecks;
+            return TileAvailabilityState::Available;
+        },
+        [&ensureCalls](const TileKey&) -> TilesetTile* {
+            ++ensureCalls;
+            return nullptr;
+        });
+
+    EXPECT_FALSE(changed);
+    EXPECT_EQ(0, availabilityChecks);
+    EXPECT_EQ(0, ensureCalls);
+    EXPECT_TRUE(parent.children.empty());
+}
+
+TEST(TileChildMaterializerTest,
+     TerrainAvailabilityUpsampledTileFrameEnsureDoesNotCreateChildrenLikeCesiumNative) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        Rectangle{});
+    parent.content.markTerrainAvailabilityUpsample();
+
+    int availabilityChecks = 0;
+    int ensureCalls = 0;
+    TileChildFrameMaterializer::ensureChildren(
+        TileChildFrameMaterializeInput{
+            parent,
+            {},
+            4,
+            true,
+            false},
+        [&ensureCalls](const TileKey&) -> TilesetTile* {
+            ++ensureCalls;
+            return nullptr;
+        },
+        [&availabilityChecks](const TileKey&) {
+            ++availabilityChecks;
+            return TileAvailabilityState::Available;
+        });
+
+    EXPECT_EQ(0, availabilityChecks);
+    EXPECT_EQ(0, ensureCalls);
+    EXPECT_TRUE(parent.children.empty());
+}
+
 TEST(TileChildMaterializerTest, MaterializeTerrainChildrenSkipsOutOfRangeGeographicTmsChildren) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 0, 2, 0},
