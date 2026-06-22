@@ -625,6 +625,72 @@ TEST(QuantizedMeshTerrainProviderTest,
                       RasterOverlayProjection::Geographic));
 }
 
+TEST(QuantizedMeshTerrainProviderTest,
+     DecodeContentIncludesRasterOverlayDetailsForTerrainTileLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/terrain/{z}/{x}/{y}.terrain");
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+
+    const TileKey key{"Geographic-TMS", 1, 1, 0};
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool callbackCalled = false;
+    TileContentLoadResult completed;
+
+    provider.requestTileContent(
+        key,
+        CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                callbackCalled = true;
+            }
+            cv.notify_one();
+        });
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    ASSERT_TRUE(bridge.completeNext(200, makeQuantizedMeshBytes()));
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return callbackCalled; }));
+    }
+
+    ASSERT_EQ(TileLoadStatus::Renderable, completed.status);
+    ASSERT_NE(nullptr, completed.gltfModel);
+    ASSERT_TRUE(completed.metadata.rasterOverlayDetails.has_value());
+
+    auto scheme = TileScheme::createGeographicTMS();
+    const Rectangle expected = scheme->tileToRectangle(key);
+    const RasterOverlayDetails& modelDetails =
+        completed.gltfModel->rasterOverlayDetails;
+    const RasterOverlayDetails& metadataDetails =
+        *completed.metadata.rasterOverlayDetails;
+
+    EXPECT_EQ(expected, modelDetails.boundingRegion.rectangle);
+    EXPECT_EQ(expected, metadataDetails.boundingRegion.rectangle);
+    ASSERT_EQ(1u, modelDetails.rasterOverlayProjections.size());
+    ASSERT_EQ(1u, metadataDetails.rasterOverlayProjections.size());
+    EXPECT_EQ(RasterOverlayProjection::Geographic,
+              modelDetails.rasterOverlayProjections[0]);
+    EXPECT_EQ(RasterOverlayProjection::Geographic,
+              metadataDetails.rasterOverlayProjections[0]);
+    const Rectangle* modelRectangle =
+        modelDetails.findRectangleForOverlayProjection(
+            RasterOverlayProjection::Geographic);
+    const Rectangle* metadataRectangle =
+        metadataDetails.findRectangleForOverlayProjection(
+            RasterOverlayProjection::Geographic);
+    ASSERT_NE(nullptr, modelRectangle);
+    ASSERT_NE(nullptr, metadataRectangle);
+    EXPECT_EQ(expected, *modelRectangle);
+    EXPECT_EQ(expected, *metadataRectangle);
+}
+
 TEST(QuantizedMeshTerrainProviderTest, UsesAsyncBridgeWithoutWorkerBlockingWait) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/{z}/{x}/{y}.terrain");
