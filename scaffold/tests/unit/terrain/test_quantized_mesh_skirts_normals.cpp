@@ -3,7 +3,6 @@
 #include "earth_engine/content/QuantizedMeshContentLoader.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
-#include "earth_engine/terrain/QuantizedMeshParser.h"
 #include "earth_engine/tiling/TileKey.h"
 #include "earth_engine/tiling/TileScheme.h"
 
@@ -276,39 +275,38 @@ TEST(QuantizedMeshContentLoaderSkirtTest,
     EXPECT_EQ(expectedSkirtIndices, actualSkirtIndices);
 }
 
-TEST(QuantizedMeshParserSkirtTest,
+TEST(QuantizedMeshContentLoaderSkirtTest,
      SkirtVerticesExpandOutsideTileEdgesLikeCesiumNative) {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey interiorKey{"Geographic-TMS", 2, 1, 1};
     const Rectangle bounds = scheme->tileToRectangle(interiorKey);
     const std::vector<uint8_t> bytes = makeQuantizedMeshBytes(true, false);
 
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            bounds);
+    QuantizedMeshContentLoadResult result =
+        loadQuantizedMeshContent(bytes, bounds);
 
-    ASSERT_NE(nullptr, mesh);
-    ASSERT_GE(mesh->vertices.size(), 11u);
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    ASSERT_GE(primitive.vertices.size(), 11u);
 
     const auto& ellipsoid = Ellipsoid::WGS84();
     const Cartographic west =
-        ellipsoid.cartesianToCartographic(mesh->vertices[3].positionEcef);
+        ellipsoid.cartesianToCartographic(primitive.vertices[3].positionEcef);
     const Cartographic westTop =
-        ellipsoid.cartesianToCartographic(mesh->vertices[0].positionEcef);
+        ellipsoid.cartesianToCartographic(primitive.vertices[0].positionEcef);
     const Cartographic south =
-        ellipsoid.cartesianToCartographic(mesh->vertices[5].positionEcef);
+        ellipsoid.cartesianToCartographic(primitive.vertices[5].positionEcef);
     const Cartographic southTop =
-        ellipsoid.cartesianToCartographic(mesh->vertices[1].positionEcef);
+        ellipsoid.cartesianToCartographic(primitive.vertices[1].positionEcef);
     const Cartographic east =
-        ellipsoid.cartesianToCartographic(mesh->vertices[7].positionEcef);
+        ellipsoid.cartesianToCartographic(primitive.vertices[7].positionEcef);
     const Cartographic eastTop =
-        ellipsoid.cartesianToCartographic(mesh->vertices[2].positionEcef);
+        ellipsoid.cartesianToCartographic(primitive.vertices[2].positionEcef);
     const Cartographic north =
-        ellipsoid.cartesianToCartographic(mesh->vertices[9].positionEcef);
+        ellipsoid.cartesianToCartographic(primitive.vertices[9].positionEcef);
     const Cartographic northTop =
-        ellipsoid.cartesianToCartographic(mesh->vertices[2].positionEcef);
+        ellipsoid.cartesianToCartographic(primitive.vertices[2].positionEcef);
     const double westLongitudeOffset =
         (bounds.west() - bounds.east()) * 0.0001;
     const double eastLongitudeOffset =
@@ -335,102 +333,102 @@ TEST(QuantizedMeshParserSkirtTest,
     EXPECT_LT(std::abs(north.longitude() - northTop.longitude()), 1e-8);
 }
 
-TEST(QuantizedMeshParserSkirtTest,
+TEST(QuantizedMeshContentLoaderSkirtTest,
      SkirtHeightMatchesCesiumNativeGeometricErrorFormula) {
     const Rectangle bounds = rootRectangle();
     const std::vector<uint8_t> bytes = makeQuantizedMeshBytes(true, true);
 
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            bounds);
+    QuantizedMeshContentLoadResult result =
+        loadQuantizedMeshContent(bytes, bounds);
 
-    ASSERT_NE(nullptr, mesh);
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    ASSERT_TRUE(result.gltfModel->preferredLocalOriginEcef.has_value());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    ASSERT_TRUE(primitive.skirtMetadata.has_value());
     const uint32_t firstSkirtVertex =
-        mesh->skirtMeta.noSkirtVerticesBegin +
-        mesh->skirtMeta.noSkirtVerticesCount;
-    ASSERT_LT(firstSkirtVertex, mesh->vertices.size());
+        primitive.skirtMetadata->noSkirtVerticesBegin +
+        primitive.skirtMetadata->noSkirtVerticesCount;
+    ASSERT_LT(firstSkirtVertex, primitive.vertices.size());
 
     const auto& ellipsoid = Ellipsoid::WGS84();
     const Cartographic top =
-        ellipsoid.cartesianToCartographic(mesh->vertices[0].positionEcef);
+        ellipsoid.cartesianToCartographic(primitive.vertices[0].positionEcef);
     const Cartographic skirt =
         ellipsoid.cartesianToCartographic(
-            mesh->vertices[firstSkirtVertex].positionEcef);
+            primitive.vertices[firstSkirtVertex].positionEcef);
     const double expectedSkirtHeight =
         ellipsoid.semiMajorAxis() * 0.25 / 65.0 * bounds.width() * 5.0;
     EXPECT_LT(std::abs((top.height() - skirt.height()) - expectedSkirtHeight),
               1e-6);
-    EXPECT_EQ(mesh->localOriginEcef, mesh->skirtMeta.meshCenter);
+    EXPECT_EQ(*result.gltfModel->preferredLocalOriginEcef,
+              primitive.skirtMetadata->meshCenter);
     EXPECT_NEAR(expectedSkirtHeight,
-                mesh->skirtMeta.skirtWestHeight,
+                primitive.skirtMetadata->skirtWestHeight,
                 1e-6);
     EXPECT_NEAR(expectedSkirtHeight,
-                mesh->skirtMeta.skirtSouthHeight,
+                primitive.skirtMetadata->skirtSouthHeight,
                 1e-6);
     EXPECT_NEAR(expectedSkirtHeight,
-                mesh->skirtMeta.skirtEastHeight,
+                primitive.skirtMetadata->skirtEastHeight,
                 1e-6);
     EXPECT_NEAR(expectedSkirtHeight,
-                mesh->skirtMeta.skirtNorthHeight,
+                primitive.skirtMetadata->skirtNorthHeight,
                 1e-6);
 }
 
-TEST(QuantizedMeshParserSkirtTest,
+TEST(QuantizedMeshContentLoaderSkirtTest,
      Uint16SourceIndicesPromoteWhenSkirtsExceedUint16VertexRange) {
     const std::vector<uint8_t> bytes =
         makeLargeUint16QuantizedMeshBytesWithSkirts();
 
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            rootRectangle());
+    QuantizedMeshContentLoadResult result = loadQuantizedMeshContent(bytes);
 
-    ASSERT_NE(nullptr, mesh);
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    ASSERT_TRUE(primitive.skirtMetadata.has_value());
     const auto maxIndexIt =
-        std::max_element(mesh->indices.begin(), mesh->indices.end());
-    ASSERT_NE(mesh->indices.end(), maxIndexIt);
-    EXPECT_EQ(65535u, mesh->skirtMeta.noSkirtVerticesCount);
-    EXPECT_GT(mesh->vertices.size(), 65535u);
+        std::max_element(primitive.indices.begin(), primitive.indices.end());
+    ASSERT_NE(primitive.indices.end(), maxIndexIt);
+    EXPECT_EQ(65535u, primitive.skirtMetadata->noSkirtVerticesCount);
+    EXPECT_GT(primitive.vertices.size(), 65535u);
     EXPECT_GT(*maxIndexIt,
               static_cast<uint32_t>(std::numeric_limits<uint16_t>::max()));
 }
 
-TEST(QuantizedMeshParserOctNormalTest,
+TEST(QuantizedMeshContentLoaderOctNormalTest,
      DecodesAxisAlignedOctEncodedNormalsLikeCesiumNative) {
     const std::vector<uint8_t> bytes = makeQuantizedMeshBytes(true, true);
 
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            rootRectangle());
+    QuantizedMeshContentLoadResult result = loadQuantizedMeshContent(bytes);
 
-    ASSERT_NE(nullptr, mesh);
-    ASSERT_GT(mesh->vertices.size(), 3u);
-    EXPECT_GT(mesh->vertices[0].normalEcef.z(), 0.9999);
-    EXPECT_LT(std::abs(mesh->vertices[0].normalEcef.x()), 0.004);
-    EXPECT_LT(std::abs(mesh->vertices[0].normalEcef.y()), 0.004);
-    EXPECT_GT(mesh->vertices[1].normalEcef.x(), 0.9999);
-    EXPECT_LT(std::abs(mesh->vertices[1].normalEcef.y()), 0.004);
-    EXPECT_LT(std::abs(mesh->vertices[1].normalEcef.z()), 0.004);
-    EXPECT_GT(mesh->vertices[2].normalEcef.y(), 0.9999);
-    EXPECT_LT(std::abs(mesh->vertices[2].normalEcef.x()), 0.004);
-    EXPECT_LT(std::abs(mesh->vertices[2].normalEcef.z()), 0.004);
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    ASSERT_TRUE(primitive.skirtMetadata.has_value());
+    ASSERT_GT(primitive.vertices.size(), 3u);
+    EXPECT_GT(primitive.vertices[0].normalEcef.z(), 0.9999);
+    EXPECT_LT(std::abs(primitive.vertices[0].normalEcef.x()), 0.004);
+    EXPECT_LT(std::abs(primitive.vertices[0].normalEcef.y()), 0.004);
+    EXPECT_GT(primitive.vertices[1].normalEcef.x(), 0.9999);
+    EXPECT_LT(std::abs(primitive.vertices[1].normalEcef.y()), 0.004);
+    EXPECT_LT(std::abs(primitive.vertices[1].normalEcef.z()), 0.004);
+    EXPECT_GT(primitive.vertices[2].normalEcef.y(), 0.9999);
+    EXPECT_LT(std::abs(primitive.vertices[2].normalEcef.x()), 0.004);
+    EXPECT_LT(std::abs(primitive.vertices[2].normalEcef.z()), 0.004);
 
     const uint32_t firstSkirtVertex =
-        mesh->skirtMeta.noSkirtVerticesBegin +
-        mesh->skirtMeta.noSkirtVerticesCount;
-    ASSERT_LT(firstSkirtVertex, mesh->vertices.size());
-    EXPECT_LT((mesh->vertices[firstSkirtVertex].normalEcef -
-               mesh->vertices[0].normalEcef)
+        primitive.skirtMetadata->noSkirtVerticesBegin +
+        primitive.skirtMetadata->noSkirtVerticesCount;
+    ASSERT_LT(firstSkirtVertex, primitive.vertices.size());
+    EXPECT_LT((primitive.vertices[firstSkirtVertex].normalEcef -
+               primitive.vertices[0].normalEcef)
                   .length(),
               1e-12);
 }
 
-TEST(QuantizedMeshParserOctNormalTest,
+TEST(QuantizedMeshContentLoaderOctNormalTest,
      PreservesArbitraryOctEncodedDirectionLikeCesiumNative) {
     std::vector<uint8_t> bytes = makeQuantizedMeshBytes(true, false);
 
@@ -445,23 +443,21 @@ TEST(QuantizedMeshParserOctNormalTest,
                  encodedNormal,
                  encodedNormal + sizeof(encodedNormal));
 
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            rootRectangle());
+    QuantizedMeshContentLoadResult result = loadQuantizedMeshContent(bytes);
 
     const Vec3 expected(0.13834289277321496,
                         0.9684002494125046,
                         0.20751433915982243);
-    ASSERT_NE(nullptr, mesh);
-    ASSERT_FALSE(mesh->vertices.empty());
-    for (const SurfaceVertex& vertex : mesh->vertices) {
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    ASSERT_FALSE(primitive.vertices.empty());
+    for (const SurfaceVertex& vertex : primitive.vertices) {
         EXPECT_LT((vertex.normalEcef - expected).length(), 0.006);
     }
 }
 
-TEST(QuantizedMeshParserOctNormalTest,
+TEST(QuantizedMeshContentLoaderOctNormalTest,
      IgnoresTrailingOctNormalExtensionBytesLikeCesiumNative) {
     std::vector<uint8_t> bytes = makeQuantizedMeshBytes(true, false);
 
@@ -475,20 +471,18 @@ TEST(QuantizedMeshParserOctNormalTest,
     };
     bytes.insert(bytes.end(), normals, normals + sizeof(normals));
 
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            rootRectangle());
+    QuantizedMeshContentLoadResult result = loadQuantizedMeshContent(bytes);
 
-    ASSERT_NE(nullptr, mesh);
-    ASSERT_GE(mesh->vertices.size(), 3u);
-    EXPECT_GT(mesh->vertices[0].normalEcef.y(), 0.9999);
-    EXPECT_LT(std::abs(mesh->vertices[0].normalEcef.x()), 0.004);
-    EXPECT_LT(std::abs(mesh->vertices[0].normalEcef.z()), 0.004);
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    ASSERT_GE(primitive.vertices.size(), 3u);
+    EXPECT_GT(primitive.vertices[0].normalEcef.y(), 0.9999);
+    EXPECT_LT(std::abs(primitive.vertices[0].normalEcef.x()), 0.004);
+    EXPECT_LT(std::abs(primitive.vertices[0].normalEcef.z()), 0.004);
 }
 
-TEST(QuantizedMeshParserOctNormalTest,
+TEST(QuantizedMeshContentLoaderOctNormalTest,
      LaterOctNormalExtensionReplacesEarlierLikeCesiumNative) {
     std::vector<uint8_t> bytes = makeQuantizedMeshBytes(true, false);
 
@@ -514,15 +508,13 @@ TEST(QuantizedMeshParserOctNormalTest,
                  secondNormals,
                  secondNormals + sizeof(secondNormals));
 
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            rootRectangle());
+    QuantizedMeshContentLoadResult result = loadQuantizedMeshContent(bytes);
 
-    ASSERT_NE(nullptr, mesh);
-    ASSERT_FALSE(mesh->vertices.empty());
-    EXPECT_GT(mesh->vertices[0].normalEcef.x(), 0.9999);
-    EXPECT_LT(std::abs(mesh->vertices[0].normalEcef.y()), 0.004);
-    EXPECT_LT(std::abs(mesh->vertices[0].normalEcef.z()), 0.004);
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    ASSERT_FALSE(primitive.vertices.empty());
+    EXPECT_GT(primitive.vertices[0].normalEcef.x(), 0.9999);
+    EXPECT_LT(std::abs(primitive.vertices[0].normalEcef.y()), 0.004);
+    EXPECT_LT(std::abs(primitive.vertices[0].normalEcef.z()), 0.004);
 }
