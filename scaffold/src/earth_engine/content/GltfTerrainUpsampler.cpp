@@ -158,11 +158,104 @@ void appendPolygon(GltfPrimitive& output,
     }
 }
 
+void appendPoint(GltfPrimitive& output,
+                 const GltfPrimitive& parent,
+                 uint32_t index) {
+    const uint32_t outputIndex = static_cast<uint32_t>(output.vertices.size());
+    output.vertices.push_back(parent.vertices[index]);
+    for (size_t set = 0; set < kGltfMaxTexCoordSets; ++set) {
+        if (parent.vertexTexCoords[set].size() == parent.vertices.size()) {
+            output.vertexTexCoords[set].push_back(
+                parent.vertexTexCoords[set][index]);
+        }
+    }
+    if (parent.vertexColors.size() == parent.vertices.size()) {
+        output.vertexColors.push_back(parent.vertexColors[index]);
+    }
+    if (parent.vertexTangents.size() == parent.vertices.size()) {
+        output.vertexTangents.push_back(parent.vertexTangents[index]);
+    }
+    if (parent.featureIds.size() == parent.vertices.size()) {
+        output.featureIds.push_back(parent.featureIds[index]);
+    }
+    if (parent.featureProperties.size() == parent.vertices.size()) {
+        output.featureProperties.push_back(parent.featureProperties[index]);
+    }
+    output.indices.push_back(outputIndex);
+}
+
+bool upsamplePointsPrimitive(const GltfPrimitive& parent,
+                             GltfPrimitive& output,
+                             const UpsampledQuadtreeNode& childID,
+                             int textureCoordinateIndex,
+                             bool hasInvertedVCoordinate) {
+    if (textureCoordinateIndex < 0 ||
+        textureCoordinateIndex >= static_cast<int>(kGltfMaxTexCoordSets) ||
+        parent.vertices.empty() ||
+        parent.vertexTexCoords[textureCoordinateIndex].size() !=
+            parent.vertices.size()) {
+        return false;
+    }
+
+    output = parent;
+    output.vertices.clear();
+    output.indices.clear();
+    for (auto& texCoords : output.vertexTexCoords) {
+        texCoords.clear();
+    }
+    output.vertexColors.clear();
+    output.vertexTangents.clear();
+    output.featureIds.clear();
+    output.featureProperties.clear();
+    output.instances.clear();
+    output.runtime.baseVertices.clear();
+    output.runtime.baseTangents.clear();
+    output.runtime.skinning.clear();
+    output.runtime.morphTargets.clear();
+
+    const bool keepEast = childKeepsEast(childID);
+    const bool keepNorth = childKeepsNorth(childID);
+    const bool keepGreaterV =
+        hasInvertedVCoordinate ? !keepNorth : keepNorth;
+    const bool hasExplicitIndices = !parent.indices.empty();
+    const uint32_t sourceIndexCount = hasExplicitIndices
+        ? static_cast<uint32_t>(parent.indices.size())
+        : static_cast<uint32_t>(parent.vertices.size());
+
+    for (uint32_t i = 0; i < sourceIndexCount; ++i) {
+        const uint32_t index = hasExplicitIndices ? parent.indices[i] : i;
+        if (index >= parent.vertices.size()) {
+            continue;
+        }
+        const auto& uv = parent.vertexTexCoords[textureCoordinateIndex][index];
+        const bool insideU = keepEast ? uv[0] >= 0.5f : uv[0] <= 0.5f;
+        const bool insideV = keepGreaterV ? uv[1] >= 0.5f : uv[1] <= 0.5f;
+        if (insideU && insideV) {
+            appendPoint(output, parent, index);
+        }
+    }
+
+    if (output.vertices.empty() || output.indices.empty()) {
+        return false;
+    }
+    output.runtime.baseVertices = output.vertices;
+    return true;
+}
+
 bool upsamplePrimitive(const GltfPrimitive& parent,
                        GltfPrimitive& output,
                        const UpsampledQuadtreeNode& childID,
                        int textureCoordinateIndex,
                        bool hasInvertedVCoordinate) {
+    if (parent.primitiveMode == GltfPrimitiveMode::Points) {
+        return upsamplePointsPrimitive(
+            parent,
+            output,
+            childID,
+            textureCoordinateIndex,
+            hasInvertedVCoordinate);
+    }
+
     if (parent.primitiveMode != GltfPrimitiveMode::Triangles ||
         textureCoordinateIndex < 0 ||
         textureCoordinateIndex >= static_cast<int>(kGltfMaxTexCoordSets) ||
