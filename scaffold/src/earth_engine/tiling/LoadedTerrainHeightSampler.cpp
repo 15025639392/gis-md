@@ -82,9 +82,6 @@ std::optional<float> sampleGltfTerrainHeight(
     double longitudeRadians,
     double latitudeRadians) {
     for (const GltfPrimitive& primitive : model.primitives) {
-        if (primitive.primitiveMode != GltfPrimitiveMode::Triangles) {
-            continue;
-        }
         const std::vector<SurfaceVertex>& vertices = primitive.vertices;
         if (vertices.empty()) {
             continue;
@@ -116,6 +113,29 @@ std::optional<float> sampleGltfTerrainHeight(
                 latitudeRadians);
         };
 
+        auto sourceIndex = [&](size_t i) -> std::optional<uint32_t> {
+            const uint32_t index = primitive.indices.empty()
+                ? static_cast<uint32_t>(i)
+                : primitive.indices[i];
+            return index < vertices.size()
+                ? std::optional<uint32_t>(index)
+                : std::nullopt;
+        };
+
+        auto samplePrimitiveTriangle =
+            [&](size_t a,
+                size_t b,
+                size_t c,
+                const Mat4& transform) -> std::optional<float> {
+            std::optional<uint32_t> ia = sourceIndex(a);
+            std::optional<uint32_t> ib = sourceIndex(b);
+            std::optional<uint32_t> ic = sourceIndex(c);
+            if (!ia || !ib || !ic) {
+                return std::nullopt;
+            }
+            return sampleIndexedTriangle(*ia, *ib, *ic, transform);
+        };
+
         std::vector<Mat4> transforms;
         if (primitive.instances.empty()) {
             transforms.push_back(contentTransform);
@@ -126,30 +146,39 @@ std::optional<float> sampleGltfTerrainHeight(
             }
         }
 
-        if (!primitive.indices.empty()) {
-            for (const Mat4& transform : transforms) {
-                for (size_t i = 0; i + 2 < primitive.indices.size(); i += 3) {
-                    std::optional<float> height = sampleIndexedTriangle(
-                        primitive.indices[i],
-                        primitive.indices[i + 1],
-                        primitive.indices[i + 2],
-                        transform);
-                    if (height) {
-                        return height;
-                    }
+        const size_t indexCount =
+            primitive.indices.empty() ? vertices.size()
+                                      : primitive.indices.size();
+        for (const Mat4& transform : transforms) {
+            if (primitive.primitiveMode == GltfPrimitiveMode::Triangles) {
+                for (size_t i = 0; i + 2 < indexCount; i += 3) {
+                    std::optional<float> height =
+                        samplePrimitiveTriangle(i, i + 1, i + 2, transform);
+                    if (height) return height;
                 }
-            }
-        } else {
-            for (const Mat4& transform : transforms) {
-                for (size_t i = 0; i + 2 < vertices.size(); i += 3) {
-                    std::optional<float> height = sampleIndexedTriangle(
-                        static_cast<uint32_t>(i),
-                        static_cast<uint32_t>(i + 1),
-                        static_cast<uint32_t>(i + 2),
-                        transform);
-                    if (height) {
-                        return height;
-                    }
+            } else if (primitive.primitiveMode ==
+                       GltfPrimitiveMode::TriangleStrip) {
+                for (size_t i = 0; i + 2 < indexCount; ++i) {
+                    const bool odd = (i % 2u) == 1u;
+                    std::optional<float> height = odd
+                        ? samplePrimitiveTriangle(
+                              i + 1,
+                              i,
+                              i + 2,
+                              transform)
+                        : samplePrimitiveTriangle(
+                              i,
+                              i + 1,
+                              i + 2,
+                              transform);
+                    if (height) return height;
+                }
+            } else if (primitive.primitiveMode ==
+                       GltfPrimitiveMode::TriangleFan) {
+                for (size_t i = 1; i + 1 < indexCount; ++i) {
+                    std::optional<float> height =
+                        samplePrimitiveTriangle(0, i, i + 1, transform);
+                    if (height) return height;
                 }
             }
         }

@@ -12,6 +12,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 using namespace earth_engine;
 
@@ -59,6 +60,32 @@ std::unique_ptr<GltfModel> makeTerrainGltfTriangle(
             northwestHeight));
     primitive.indices = {0, 1, 2};
     primitive.primitiveMode = GltfPrimitiveMode::Triangles;
+    primitive.runtime.nodeIndex = 0;
+    primitive.runtime.baseVertices = primitive.vertices;
+    model->primitives.push_back(std::move(primitive));
+    model->rasterOverlayDetails.setGeographicRectangle(bounds);
+    return model;
+}
+
+std::unique_ptr<GltfModel> makeFlatTerrainGltfQuad(
+    const Rectangle& bounds,
+    double height,
+    GltfPrimitiveMode primitiveMode,
+    std::vector<uint32_t> indices) {
+    auto model = std::make_unique<GltfModel>();
+    GltfPrimitive primitive;
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    primitive.vertices.resize(4);
+    primitive.vertices[0].positionEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(bounds.west(), bounds.south(), height));
+    primitive.vertices[1].positionEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(bounds.east(), bounds.south(), height));
+    primitive.vertices[2].positionEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(bounds.west(), bounds.north(), height));
+    primitive.vertices[3].positionEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(bounds.east(), bounds.north(), height));
+    primitive.indices = std::move(indices);
+    primitive.primitiveMode = primitiveMode;
     primitive.runtime.nodeIndex = 0;
     primitive.runtime.baseVertices = primitive.vertices;
     model->primitives.push_back(std::move(primitive));
@@ -182,6 +209,70 @@ TEST(LoadedTerrainHeightSamplerTest, SamplesLoadedGltfTerrainTile) {
 
     EXPECT_NEAR(
         17.5f,
+        LoadedTerrainHeightSampler::sampleHeight(
+            tiles,
+            terrainCache,
+            longitude,
+            latitude),
+        1e-4f);
+}
+
+TEST(LoadedTerrainHeightSamplerTest,
+     SamplesLoadedGltfTerrainTriangleStripLikeCesiumNative) {
+    auto scheme = TileScheme::createGeographicTMS();
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(rootKey);
+    putLoadedGltfTerrainTile(
+        tiles,
+        rootKey,
+        bounds,
+        makeFlatTerrainGltfQuad(
+            bounds,
+            42.0,
+            GltfPrimitiveMode::TriangleStrip,
+            {0, 1, 2, 3}));
+
+    const double longitude = bounds.west() + bounds.width() * 0.25;
+    const double latitude = bounds.south() + bounds.height() * 0.25;
+
+    EXPECT_NEAR(
+        42.0f,
+        LoadedTerrainHeightSampler::sampleHeight(
+            tiles,
+            terrainCache,
+            longitude,
+            latitude),
+        1e-4f);
+}
+
+TEST(LoadedTerrainHeightSamplerTest,
+     SamplesLoadedGltfTerrainTriangleFanLikeCesiumNative) {
+    auto scheme = TileScheme::createGeographicTMS();
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(rootKey);
+    putLoadedGltfTerrainTile(
+        tiles,
+        rootKey,
+        bounds,
+        makeFlatTerrainGltfQuad(
+            bounds,
+            24.0,
+            GltfPrimitiveMode::TriangleFan,
+            {0, 1, 3, 2}));
+
+    const double longitude = bounds.west() + bounds.width() * 0.25;
+    const double latitude = bounds.south() + bounds.height() * 0.25;
+
+    EXPECT_NEAR(
+        24.0f,
         LoadedTerrainHeightSampler::sampleHeight(
             tiles,
             terrainCache,
