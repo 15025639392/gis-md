@@ -1,9 +1,14 @@
 #include "QuantizedMeshContentLoader.h"
 
 #include "GltfModel.h"
+#include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/Projection.h"
 #include "../terrain/QuantizedMeshParser.h"
+
+#include <array>
+#include <cmath>
+#include <optional>
 
 namespace earth_engine {
 namespace {
@@ -97,6 +102,52 @@ RasterOverlayDetails makeRasterOverlayDetails(
     return details;
 }
 
+void rewriteTerrainProjectionTexCoords(GltfModel& model,
+                                        RasterOverlayProjection projection) {
+    if (projection != RasterOverlayProjection::WebMercator) {
+        return;
+    }
+
+    const Rectangle* projectedRectangle =
+        model.rasterOverlayDetails.findRectangleForOverlayProjection(
+            projection);
+    if (!projectedRectangle || projectedRectangle->isEmpty()) {
+        return;
+    }
+
+    const double width = projectedRectangle->width();
+    const double height = projectedRectangle->height();
+    if (std::abs(width) <= 0.0 || std::abs(height) <= 0.0) {
+        return;
+    }
+
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    const WebMercatorProjection webMercator(ellipsoid);
+    for (GltfPrimitive& primitive : model.primitives) {
+        std::vector<std::array<float, 2>>& texCoords =
+            primitive.vertexTexCoords[0];
+        if (texCoords.size() != primitive.vertices.size()) {
+            texCoords.resize(primitive.vertices.size());
+        }
+        for (size_t i = 0; i < primitive.vertices.size(); ++i) {
+            const std::optional<Cartographic> cartographic =
+                ellipsoid.tryCartesianToCartographic(
+                    primitive.vertices[i].positionEcef);
+            if (!cartographic) {
+                texCoords[i] = primitive.vertices[i].uv;
+                continue;
+            }
+            const Vec3 projected =
+                projectPosition(webMercator, *cartographic);
+            texCoords[i] = {
+                static_cast<float>(
+                    (projected.x() - projectedRectangle->west()) / width),
+                static_cast<float>(
+                    (projectedRectangle->north() - projected.y()) / height)};
+        }
+    }
+}
+
 } // namespace
 
 QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
@@ -130,6 +181,7 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
         decodedTile->maximumHeight,
         terrainProjection);
     gltfModel->rasterOverlayDetails = rasterOverlayDetails;
+    rewriteTerrainProjectionTexCoords(*gltfModel, terrainProjection);
 
     result.status = QuantizedMeshContentLoadStatus::Success;
     result.metadata.updatedBoundingVolume = TileBoundingVolume::fromRegion(
