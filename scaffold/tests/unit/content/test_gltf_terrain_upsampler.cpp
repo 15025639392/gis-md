@@ -197,6 +197,56 @@ TEST(GltfTerrainUpsamplerTest,
 }
 
 TEST(GltfTerrainUpsamplerTest,
+     ScalesWaterMaskFromEachPrimitiveExtrasLikeCesiumNative) {
+    GltfModel parent = makeParentModel();
+    GltfPrimitive mixed = parent.primitives.front();
+
+    parent.primitives.front().terrainOnlyWater = true;
+    parent.primitives.front().terrainOnlyLand = false;
+    parent.primitives.front().terrainWaterMaskTextureIndex = 0;
+    parent.primitives.front().terrainWaterMaskTranslationX = 0.0;
+    parent.primitives.front().terrainWaterMaskTranslationY = 0.0;
+    parent.primitives.front().terrainWaterMaskScale = 1.0;
+
+    mixed.terrainOnlyWater = false;
+    mixed.terrainOnlyLand = false;
+    mixed.terrainWaterMaskTextureIndex = 0;
+    mixed.terrainWaterMaskTranslationX = 0.2;
+    mixed.terrainWaterMaskTranslationY = 0.4;
+    mixed.terrainWaterMaskScale = 0.25;
+    parent.primitives.push_back(std::move(mixed));
+
+    parent.terrainWaterMask.translationX = 0.75;
+    parent.terrainWaterMask.translationY = 0.75;
+    parent.terrainWaterMask.scale = 0.125;
+
+    const UpsampledQuadtreeNode child{TileKey{"Geographic-TMS", 1, 1, 0}};
+
+    std::unique_ptr<GltfModel> upsampled =
+        GltfTerrainUpsampler::upsampleForRasterOverlay(parent, child, 0, false);
+
+    ASSERT_NE(nullptr, upsampled);
+    ASSERT_EQ(2u, upsampled->primitives.size());
+
+    const GltfPrimitive& onlyWater = upsampled->primitives[0];
+    EXPECT_TRUE(onlyWater.terrainOnlyWater);
+    EXPECT_FALSE(onlyWater.terrainOnlyLand);
+    EXPECT_FALSE(onlyWater.terrainWaterMaskTextureIndex.has_value());
+    EXPECT_DOUBLE_EQ(0.5, onlyWater.terrainWaterMaskTranslationX);
+    EXPECT_DOUBLE_EQ(0.0, onlyWater.terrainWaterMaskTranslationY);
+    EXPECT_DOUBLE_EQ(0.5, onlyWater.terrainWaterMaskScale);
+
+    const GltfPrimitive& mixedChild = upsampled->primitives[1];
+    EXPECT_FALSE(mixedChild.terrainOnlyWater);
+    EXPECT_FALSE(mixedChild.terrainOnlyLand);
+    ASSERT_TRUE(mixedChild.terrainWaterMaskTextureIndex.has_value());
+    EXPECT_EQ(0u, *mixedChild.terrainWaterMaskTextureIndex);
+    EXPECT_DOUBLE_EQ(0.325, mixedChild.terrainWaterMaskTranslationX);
+    EXPECT_DOUBLE_EQ(0.4, mixedChild.terrainWaterMaskTranslationY);
+    EXPECT_DOUBLE_EQ(0.125, mixedChild.terrainWaterMaskScale);
+}
+
+TEST(GltfTerrainUpsamplerTest,
      ClipsNonIndexedTrianglesLikeCesiumNative) {
     GltfModel parent = makeParentModel();
     GltfPrimitive& parentPrimitive = parent.primitives.front();

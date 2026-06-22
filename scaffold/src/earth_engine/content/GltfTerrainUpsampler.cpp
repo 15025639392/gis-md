@@ -693,15 +693,24 @@ void scaleWaterMask(WaterMask& waterMask, const UpsampledQuadtreeNode& childID) 
     waterMask.translationY += waterMask.scale * (childKeepsNorth(childID) ? 1.0 : 0.0);
 }
 
-void applyWaterMaskToPrimitive(GltfPrimitive& primitive,
-                               const WaterMask& waterMask,
-                               std::optional<size_t> textureIndex) {
-    primitive.terrainOnlyWater = waterMask.allWater;
-    primitive.terrainOnlyLand = waterMask.allLand;
-    primitive.terrainWaterMaskTextureIndex = textureIndex;
-    primitive.terrainWaterMaskTranslationX = waterMask.translationX;
-    primitive.terrainWaterMaskTranslationY = waterMask.translationY;
-    primitive.terrainWaterMaskScale = waterMask.scale;
+void scalePrimitiveWaterMask(GltfPrimitive& primitive,
+                             const GltfPrimitive& parent,
+                             const UpsampledQuadtreeNode& childID) {
+    primitive.terrainOnlyWater = parent.terrainOnlyWater;
+    primitive.terrainOnlyLand = parent.terrainOnlyLand;
+    primitive.terrainWaterMaskTextureIndex =
+        (!parent.terrainOnlyWater && !parent.terrainOnlyLand)
+            ? parent.terrainWaterMaskTextureIndex
+            : std::optional<size_t>{};
+    primitive.terrainWaterMaskScale = 0.5 * parent.terrainWaterMaskScale;
+    primitive.terrainWaterMaskTranslationX =
+        parent.terrainWaterMaskTranslationX +
+        primitive.terrainWaterMaskScale *
+            (childKeepsEast(childID) ? 1.0 : 0.0);
+    primitive.terrainWaterMaskTranslationY =
+        parent.terrainWaterMaskTranslationY +
+        primitive.terrainWaterMaskScale *
+            (childKeepsNorth(childID) ? 1.0 : 0.0);
 }
 
 void rebuildRuntimeBaseVerticesForNode(GltfPrimitive& primitive,
@@ -746,10 +755,7 @@ std::unique_ptr<GltfModel> GltfTerrainUpsampler::upsampleForRasterOverlay(
                 childID,
                 textureCoordinateIndex,
                 hasInvertedVCoordinate)) {
-            applyWaterMaskToPrimitive(
-                upsampled,
-                result->terrainWaterMask,
-                result->terrainWaterMaskTextureIndex);
+            scalePrimitiveWaterMask(upsampled, primitive, childID);
             rebuildRuntimeBaseVerticesForNode(upsampled, *result);
             result->primitives.push_back(std::move(upsampled));
         }
