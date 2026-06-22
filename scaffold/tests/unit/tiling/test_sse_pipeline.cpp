@@ -28323,6 +28323,84 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
           "Tileset: WebMercator glTF-parent derives child projection overlay details from parent");
 }
 
+void testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail() {
+    const TileKey parentKey{"TMS-WebMercator", 0, 0, 0};
+    const TileKey childKey{"TMS-WebMercator", 1, 0, 1};
+    auto scheme = TileScheme::createTMS();
+    const Rectangle parentBounds = scheme->tileToRectangle(parentKey);
+    const Rectangle childBounds = scheme->tileToRectangle(childKey);
+    TilesetTile parent(parentKey, parentBounds);
+    TilesetTile child(childKey, childBounds, &parent);
+    child.content.markTerrainAvailabilityUpsample();
+
+    auto parentModel = makeWebMercatorQuadTerrainGltfModel(parent.bounds);
+    const Rectangle parentWebMercatorOverlay =
+        projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            parent.bounds);
+    parentModel->rasterOverlayDetails.rasterOverlayRectangles[0] =
+        parent.bounds;
+    parentModel->rasterOverlayDetails.rasterOverlayRectangles[1] =
+        parentWebMercatorOverlay;
+    parentModel->rasterOverlayDetails.boundingRegion = {
+        parent.bounds,
+        -6.0,
+        42.0};
+    parent.content.renderContent.prepareGltfContent(
+        std::move(parentModel),
+        Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.markRenderContentDone();
+
+    TileLoadedContent content;
+    const bool materialized =
+        TileGltfTerrainUpsampledChildMaterializer::materialize(
+            child,
+            content);
+    const GltfModel* childModel = content.gltfModel.get();
+    const Rectangle* childWebMercator = childModel
+        ? childModel->rasterOverlayDetails.findRectangleForOverlayProjection(
+              RasterOverlayProjection::WebMercator)
+        : nullptr;
+
+    bool clippedWithWebMercatorTexcoord = true;
+    if (childModel && !childModel->primitives.empty()) {
+        const GltfPrimitive& primitive = childModel->primitives.front();
+        clippedWithWebMercatorTexcoord =
+            !primitive.vertexTexCoords[1].empty();
+        for (const auto& texCoord : primitive.vertexTexCoords[1]) {
+            clippedWithWebMercatorTexcoord =
+                clippedWithWebMercatorTexcoord &&
+                texCoord[0] <= 0.5f &&
+                texCoord[1] >= 0.5f;
+        }
+    } else {
+        clippedWithWebMercatorTexcoord = false;
+    }
+
+    const Rectangle expectedChildWebMercator =
+        projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            child.bounds);
+    check(materialized &&
+              childModel != nullptr &&
+              content.terrainRenderContent &&
+              clippedWithWebMercatorTexcoord &&
+              childWebMercator != nullptr &&
+              childWebMercator->equalsEpsilon(
+                  expectedChildWebMercator,
+                  1e-12) &&
+              childModel->rasterOverlayDetails.boundingRegion.rectangle ==
+                  child.bounds &&
+              std::abs(childModel->rasterOverlayDetails.boundingRegion
+                           .minimumHeight -
+                       -6.0) < 1e-12 &&
+              std::abs(childModel->rasterOverlayDetails.boundingRegion
+                           .maximumHeight -
+                       42.0) < 1e-12,
+          "Tileset: WebMercator terrain availability upsample uses terrain projection like cesium-native");
+}
+
 void testGltfTerrainUpsampleDerivesDetailsFromParentModelRegion() {
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
     const TileKey childKey{"Geographic-TMS", 1, 1, 0};
@@ -29352,6 +29430,7 @@ int main() {
     testTilesetUpsampledChildFinalizesContentLoadedParent();
     testTilesetUpsampledChildBuildsGltfFromGltfParent();
     testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord();
+    testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail();
     testGltfTerrainUpsampleDerivesDetailsFromParentModelRegion();
     testGltfTerrainUpsampleRejectsOrdinaryGltfContentParent();
     testGltfTerrainUpsampleRequiresRasterOverlayProjectionDetails();

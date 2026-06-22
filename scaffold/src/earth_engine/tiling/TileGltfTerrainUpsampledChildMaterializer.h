@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <optional>
+#include <string>
 
 namespace earth_engine {
 
@@ -50,7 +51,7 @@ public:
         }
 
         const int textureCoordinateIndex =
-            chooseUpsampleTextureCoordinate(*parentModel, *source);
+            chooseUpsampleTextureCoordinate(*parentModel, *source, tile);
         if (textureCoordinateIndex < 0) {
             return false;
         }
@@ -124,7 +125,8 @@ private:
     }
 
     static int chooseUpsampleTextureCoordinate(const GltfModel& model,
-                                               const TilesetTile& source) {
+                                               const TilesetTile& source,
+                                               const TilesetTile& tile) {
         for (const auto& mapping : source.rasterOverlayState.mappings()) {
             if (!mapping || !mapping->isMoreDetailAvailable()) {
                 continue;
@@ -133,6 +135,14 @@ private:
             if (modelHasTextureCoordinate(model, candidate)) {
                 return candidate;
             }
+        }
+
+        if (tile.content.isTerrainAvailabilityUpsample()) {
+            const int candidate =
+                model.rasterOverlayDetails.textureCoordinateIDForProjection(
+                    terrainProjectionForTileKey(tile.key));
+            return modelHasTextureCoordinate(model, candidate) ? candidate
+                                                               : -1;
         }
 
         const int geographic =
@@ -153,6 +163,13 @@ private:
         }
 
         return -1;
+    }
+
+    static RasterOverlayProjection terrainProjectionForTileKey(
+        const TileKey& key) {
+        return key.schemeId.find("WebMercator") != std::string::npos
+            ? RasterOverlayProjection::WebMercator
+            : RasterOverlayProjection::Geographic;
     }
 };
 
