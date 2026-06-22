@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
@@ -57,6 +58,33 @@ Tileset makeHeightSamplingTileset() {
         TilesetOptions{});
 }
 
+class ContentTerrainQuadtreeProvider final : public TilesetContentProvider {
+public:
+    std::string id() const override { return "content-terrain"; }
+    bool supportsTile(const TileKey&) const override { return false; }
+    bool providesTerrainQuadtree() const override { return true; }
+    void requestTileContent(
+        const TileKey& key,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callback(key, TileContentLoadResult::retryLater());
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+};
+
+Tileset makeContentTerrainSamplingTileset() {
+    return Tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::make_unique<ContentTerrainQuadtreeProvider>());
+}
+
 } // namespace
 
 TEST(TilesetSampleHeightTest, UsesMostDetailedLoadedTerrainTile) {
@@ -97,4 +125,21 @@ TEST(TilesetSampleHeightTest, FallsBackToLoadedAncestorTerrain) {
         tileCenter(tileset.tileScheme(), childKey);
 
     EXPECT_NEAR(tileset.sampleHeight(longitude, latitude), 123.0f, 1e-6f);
+}
+
+TEST(TilesetSampleHeightTest,
+     ContentTerrainQuadtreeIgnoresLegacyHeightmapCache) {
+    Tileset tileset = makeContentTerrainSamplingTileset();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+
+    TilesetTestAccess::ensureTile(tileset, rootKey);
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(321.0f));
+
+    const auto [longitude, latitude] =
+        tileCenter(tileset.tileScheme(), rootKey);
+
+    EXPECT_NEAR(tileset.sampleHeight(longitude, latitude), 0.0f, 1e-6f);
 }
