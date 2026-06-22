@@ -917,6 +917,7 @@ TEST(QuantizedMeshTerrainProviderTest,
                      rootMetadata->boundingVolume->minimumHeight);
     EXPECT_DOUBLE_EQ(9000.0,
                      rootMetadata->boundingVolume->maximumHeight);
+    EXPECT_FALSE(rootMetadata->contentBoundingVolume.has_value());
 
     const std::vector<TileKey> levelZeroChildren =
         provider.childTiles(roots.front());

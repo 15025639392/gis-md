@@ -31,7 +31,7 @@ void initializeVirtualTerrainRoot(TilesetTile& tile,
         tile.bounds,
         kLooseMinimumHeight,
         kLooseMaximumHeight);
-    tile.contentBoundingVolume = tile.boundingVolume;
+    tile.contentBoundingVolume.reset();
     tile.rasterOverlayState.ensureMappingSlots(rasterOverlayCount);
     TileTerrainHeightRangePolicy::setTerrainHeightRange(
         tile,

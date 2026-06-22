@@ -1307,7 +1307,6 @@ QuantizedMeshTerrainProvider::tileMetadata(const TileKey& key) const {
             metadata.bounds,
             kLooseTerrainMinimumHeight,
             kLooseTerrainMaximumHeight);
-        metadata.contentBoundingVolume = metadata.boundingVolume;
         metadata.geometricError = calcLayerJsonTerrainGeometricError(
             Ellipsoid::WGS84(),
             metadata.bounds);

@@ -67,7 +67,6 @@ void TileContentAccess::ensureTileChildren(TilesetTile& tile) {
                     child->bounds,
                     TileBoundsMetrics::terrainMinimumHeight(tile),
                     TileBoundsMetrics::terrainMaximumHeight(tile));
-                child->contentBoundingVolume = child->boundingVolume;
             }
             TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                 *child,
