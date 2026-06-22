@@ -2833,6 +2833,32 @@ TEST(RasterOverlayLifecycleTest, PrefetchRecordsMissingProjectionForContentReloa
     EXPECT_EQ(0, activated.getCachedTileCount());
 }
 
+TEST(RasterOverlayLifecycleTest, EmptyPrefetchClearsRasterOverlayStateLikeCesiumNativeRemove) {
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 2, 1, 1},
+        Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0));
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.contentKind = TileContentKind::Render;
+    tile.rasterOverlayState.ensureMapping(0);
+    tile.rasterOverlayState.missingProjections().push_back(
+        RasterOverlayProjection::WebMercator);
+
+    FrameResourceBudgetConfig config;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        {},
+        {},
+        nullptr,
+        16.0,
+        budget);
+
+    EXPECT_TRUE(tile.rasterOverlayState.mappings().empty());
+    EXPECT_TRUE(tile.rasterOverlayState.missingProjections().empty());
+}
+
 TEST(RasterOverlayLifecycleTest, MissingPreciseRectangleWithoutRenderDetailsUsesPlaceholder) {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

@@ -33,12 +33,12 @@ void TileRasterOverlayPrefetcher::prefetch(
     RenderDevice* device,
     double maximumScreenSpaceError,
     FrameResourceBudget& frameResourceBudget) {
+    tile.rasterOverlayState.resizeMappingSlots(rasterOverlays.size(), nullptr);
+    tile.rasterOverlayState.clearMissingProjections();
+
     if (rasterOverlays.empty()) {
         return;
     }
-
-    tile.rasterOverlayState.resizeMappingSlots(rasterOverlays.size(), nullptr);
-    tile.rasterOverlayState.clearMissingProjections();
 
     const bool hasRenderContentDetails =
         tile.content.contentKind == TileContentKind::Render &&
