@@ -81,9 +81,7 @@ public:
     std::unique_ptr<DecodedHeightmap> decodeTile(
         const uint8_t* data, size_t len) override;
 
-    // Cesium-native shaped layer.json availability store. Public only so the
-    // .cpp-local helper algorithms can name the type; provider API does not
-    // expose values of this type.
+private:
     struct TileRectangleAvailability {
         struct RectangleWithLevel {
             uint32_t level = 0;
@@ -121,9 +119,38 @@ public:
         std::string schemeId;
         int maximumLevel = 0;
         std::vector<std::unique_ptr<Node>> rootNodes;
+
+        static int rootTileCountX(const std::string& schemeId);
+        static int rootTileCountY(const std::string& schemeId);
+        static int tileCountXAtLevel(const std::string& schemeId, int level);
+        static int tileCountYAtLevel(const std::string& schemeId, int level);
+        static Rectangle availabilityTileRectangle(
+            const std::string& schemeId,
+            int level,
+            uint32_t x,
+            uint32_t y);
+        static bool rectangleFullyContains(
+            const Rectangle& outer,
+            const Rectangle& inner);
+        static void reparentNodeChildren(Node& node);
+        static std::unique_ptr<Node> cloneNode(
+            const Node& node,
+            Node* parent);
+        static void createNodeChildrenIfNecessary(
+            Node& node,
+            const std::string& schemeId);
+        static void putRectangleInQuadtree(
+            Node& node,
+            const std::string& schemeId,
+            int maximumLevel,
+            const RectangleWithLevel& rectangle);
+        static uint32_t findMaxLevelFromNode(
+            Node* stopNode,
+            Node& node,
+            double x,
+            double y);
     };
 
-private:
     struct LayerConfig {
         std::string urlTemplate;
         std::string layerJsonUrl;
