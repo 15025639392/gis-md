@@ -760,6 +760,34 @@ TEST(QuantizedMeshTerrainProviderTest, EmptyAvailabilityKeepsOnlyRootsLikeCesium
               provider.availabilityState(TileKey{"Geographic-TMS", 1, 0, 0}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, PartialAvailabilityMatchesCesiumNativeLayerJson) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "tilejson": "2.1.0",
+      "format": "heightmap-1.0",
+      "version": "1.0.0",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain?v={version}"],
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}],
+        [{"startX":0,"startY":0,"endX":3,"endY":1}],
+        [{"startX":1,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 2, 1, 0}));
+    EXPECT_EQ(TileAvailabilityState::Available,
+              provider.availabilityState(TileKey{"Geographic-TMS", 2, 1, 0}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 2, 0, 0}));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(TileKey{"Geographic-TMS", 2, 0, 0}));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, WebMercatorLayerJsonUsesOneByOneRootLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.com/fallback/{z}/{x}/{y}.terrain");
@@ -780,6 +808,32 @@ TEST(QuantizedMeshTerrainProviderTest, WebMercatorLayerJsonUsesOneByOneRootLikeC
     EXPECT_TRUE(provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 0, 0}));
     EXPECT_FALSE(provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 1, 0}));
     EXPECT_FALSE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 0}));
+}
+
+TEST(QuantizedMeshTerrainProviderTest, WebMercatorPartialAvailabilityUsesOneByOneRoot) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.com/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:3857",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "available": [
+        [{"startX":0,"startY":0,"endX":0,"endY":0}],
+        [{"startX":1,"startY":1,"endX":1,"endY":1}]
+      ]
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/terrain/layer.json"));
+
+    EXPECT_TRUE(provider.supportsTile(TileKey{"XYZ-WebMercator", 0, 0, 0}));
+    EXPECT_TRUE(provider.supportsTile(TileKey{"XYZ-WebMercator", 1, 1, 1}));
+    EXPECT_EQ(TileAvailabilityState::Available,
+              provider.availabilityState(TileKey{"XYZ-WebMercator", 1, 1, 1}));
+    EXPECT_FALSE(provider.supportsTile(TileKey{"XYZ-WebMercator", 1, 0, 0}));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(TileKey{"XYZ-WebMercator", 1, 0, 0}));
 }
 
 TEST(QuantizedMeshTerrainProviderTest, NonStringProjectionDefaultsToGeographicLikeCesiumNative) {
