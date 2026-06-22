@@ -77,11 +77,14 @@ void TileContentAccess::ensureTileChildren(TilesetTile& tile) {
         return;
     }
 
+    const bool contentProviderOwnsTerrainQuadtree =
+        contentProvider_ && contentProvider_->providesTerrainQuadtree();
     TileChildFrameMaterializer::ensureChildren(
         TileChildFrameMaterializeInput{
             tile,
-            contentProvider_ ? contentProvider_->childTiles(tile.key)
-                             : std::vector<TileKey>{},
+            contentProvider_ && !contentProviderOwnsTerrainQuadtree
+                ? contentProvider_->childTiles(tile.key)
+                : std::vector<TileKey>{},
             tileScheme_.maxZoom(),
             hasTerrainQuadtree(),
             isAvailabilityBoundaryTile(tile) &&

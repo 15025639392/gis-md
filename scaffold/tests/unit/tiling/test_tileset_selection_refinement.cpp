@@ -242,6 +242,15 @@ public:
 
     bool providesTerrainQuadtree() const override { return true; }
 
+    std::vector<TileKey> childTiles(const TileKey& key) const override {
+        for (const auto& entry : legacyChildTiles) {
+            if (entry.first == key) {
+                return entry.second;
+            }
+        }
+        return {};
+    }
+
     TileAvailabilityState terrainAvailabilityState(
         const TileKey& key) const override {
         for (const auto& entry : availability) {
@@ -269,6 +278,7 @@ public:
     }
 
     std::vector<std::pair<TileKey, TileAvailabilityState>> availability;
+    std::vector<std::pair<TileKey, std::vector<TileKey>>> legacyChildTiles;
     int boundaryLevel = -1;
 };
 
@@ -2341,6 +2351,9 @@ TEST(
     contentProvider->availability.push_back(
         {TileKey{"Geographic-TMS", 1, 0, 0},
          TileAvailabilityState::Available});
+    contentProvider->legacyChildTiles.push_back(
+        {TileKey{"Geographic-TMS", 0, 0, 0},
+         {TileKey{"Geographic-TMS", 1, 1, 1}}});
 
     Tileset tileset(
         std::unique_ptr<TerrainProvider>{},
@@ -2366,6 +2379,9 @@ TEST(
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     ASSERT_EQ(4u, root->children.size());
     EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 0}), root->children[0]->key);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 1, 0}), root->children[1]->key);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 1}), root->children[2]->key);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 1, 1}), root->children[3]->key);
     EXPECT_FALSE(root->children[0]->content.isTerrainAvailabilityUpsample());
     EXPECT_TRUE(root->children[1]->content.isTerrainAvailabilityUpsample());
     EXPECT_TRUE(root->children[2]->content.isTerrainAvailabilityUpsample());

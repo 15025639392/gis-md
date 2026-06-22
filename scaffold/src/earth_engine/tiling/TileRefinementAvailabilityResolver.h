@@ -32,11 +32,12 @@ public:
         CacheKeyFn&& cacheKey,
         IsAvailabilityBoundaryFn&& isAvailabilityBoundary,
         HasLoadedTerrainContentFn&& hasLoadedTerrainContent) {
-        const std::vector<TileKey> contentChildren =
-            contentProvider ? contentProvider->childTiles(tile.key)
-                            : std::vector<TileKey>{};
         const bool contentProviderOwnsTerrainQuadtree =
             contentProvider && contentProvider->providesTerrainQuadtree();
+        const std::vector<TileKey> contentChildren =
+            contentProvider && !contentProviderOwnsTerrainQuadtree
+                ? contentProvider->childTiles(tile.key)
+                : std::vector<TileKey>{};
 
         return TileChildMaterializer::canRefine(
             tile,
