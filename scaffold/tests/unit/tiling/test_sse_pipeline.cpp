@@ -2549,6 +2549,68 @@ void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
           "RasterOverlayTileProvider: direct parent waiter keeps a valid rectangle");
 }
 
+void testRasterOverlayDirectTileJoinsCompositeSourceInFlight() {
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<SlowRasterTextureUploader>();
+    RasterOverlayTileProvider provider(
+        imagery,
+        *imageryScheme,
+        std::move(uploader));
+
+    Rectangle broadBounds =
+        Rectangle::fromDegrees(-170.0, -70.0, 170.0, 70.0);
+    RasterOverlayTileProvider::TilePtr compositeTile =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, broadBounds),
+            1024.0,
+            1024.0).tile;
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 1024;
+    config.maxRasterNetworkInflight = 1024;
+    config.maxRasterUploadsPerFrame = 1024;
+    FrameResourceBudget compositeBudget;
+    compositeBudget.beginFrame(1, config);
+
+    check(compositeTile &&
+              provider.loadTileThrottled(*compositeTile, &compositeBudget) &&
+              !imagery.pendingRequests.empty(),
+          "RasterOverlayTileProvider: composite source sharing fixture starts source requests");
+    if (imagery.pendingRequests.empty()) return;
+
+    const TileKey sharedSourceKey = imagery.pendingRequests.front().key;
+    RasterOverlayTileProvider::TilePtr directTile =
+        provider.getTile(sharedSourceKey);
+    FrameResourceBudget directBudget;
+    directBudget.beginFrame(2, config);
+    check(directTile &&
+              provider.loadTileThrottled(*directTile, &directBudget),
+          "RasterOverlayTileProvider: direct tile joins composite source in-flight");
+
+    const int matchingRequests =
+        static_cast<int>(std::count_if(
+            imagery.pendingRequests.begin(),
+            imagery.pendingRequests.end(),
+            [&](const PendingRectangleImageryProvider::PendingRequest& request) {
+                return request.key == sharedSourceKey;
+            }));
+    check(matchingRequests == 1,
+          "RasterOverlayTileProvider: composite and direct tile share one imagery request like cesium-native SharedAssetDepot");
+
+    imagery.pendingRequests.front().callback(
+        sharedSourceKey,
+        makeDecodedRgbaImage(64, 64));
+    FrameResourceBudget uploadBudget;
+    uploadBudget.beginFrame(3, config);
+    provider.processPendingUploads(false, &uploadBudget);
+
+    check(directTile->getState() == RasterOverlayTile::LoadState::Loaded,
+          "RasterOverlayTileProvider: direct tile loads from shared composite source");
+    check(directTile->getTexture() != nullptr,
+          "RasterOverlayTileProvider: direct tile receives texture from shared source upload");
+}
+
 void testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -27833,6 +27895,7 @@ int main() {
     testRasterOverlayBaseQuadtreeSourceClampsCoverageEdgeMiss();
     testRasterOverlayQuadtreeSourceFailureRequestsParentSource();
     testRasterOverlayFallbackParentInFlightSharesDirectAsset();
+    testRasterOverlayDirectTileJoinsCompositeSourceInFlight();
     testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize();
     testRasterOverlayUploadsStopAfterElapsedBudgetExpires();
     testRasterMappedUsesRenderContentDetailsRectangle();
