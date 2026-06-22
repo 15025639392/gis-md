@@ -1562,12 +1562,6 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
 
     const std::string ck = rectangleTileCacheKey(
         scheme_, providerGeometryBounds, sourcePlan.sourceZoom);
-    auto it = tiles_.find(ck);
-    if (it != tiles_.end()) {
-        it->second->lastUsedFrame = frameNumber_;
-        return it->second;
-    }
-
     const double centerLng =
         geometryBounds.west() + geometryBounds.width() * 0.5;
     const double centerLat =
@@ -1582,6 +1576,7 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
     tile->setTargetScreenPixels(targetScreenPixelsX, targetScreenPixelsY);
     tile->lastUsedFrame = frameNumber_;
     tiles_[ck] = tile;
+    rectangleTiles_[ck].push_back(tile);
     return tile;
 }
 
@@ -2001,48 +1996,92 @@ int RasterOverlayTileProvider::processPendingUploads(
             asyncState_->pendingUploads.erase(selected);
         }
 
-        auto it = tiles_.find(upload.cacheKey);
-        if (it == tiles_.end()) continue;
+        std::vector<TilePtr> targetTiles;
+        if (auto it = tiles_.find(upload.cacheKey); it != tiles_.end()) {
+            targetTiles.push_back(it->second);
+        }
+        auto rectangleIt = rectangleTiles_.find(upload.cacheKey);
+        if (rectangleIt != rectangleTiles_.end()) {
+            auto& weakTiles = rectangleIt->second;
+            for (auto weakIt = weakTiles.begin();
+                 weakIt != weakTiles.end();) {
+                if (auto tile = weakIt->lock()) {
+                    const bool alreadyIncluded = std::any_of(
+                        targetTiles.begin(),
+                        targetTiles.end(),
+                        [&](const TilePtr& existing) {
+                            return existing.get() == tile.get();
+                        });
+                    if (!alreadyIncluded) {
+                        targetTiles.push_back(std::move(tile));
+                    }
+                    ++weakIt;
+                } else {
+                    weakIt = weakTiles.erase(weakIt);
+                }
+            }
+            if (weakTiles.empty()) {
+                rectangleTiles_.erase(rectangleIt);
+            }
+        }
+        if (targetTiles.empty()) continue;
 
-        RasterOverlayTile& tile = *it->second;
-        if (upload.image &&
+        const bool emptyImage =
+            upload.image &&
             upload.image->width == 0 &&
             upload.image->height == 0 &&
             upload.image->channels == 0 &&
-            upload.image->pixels.empty()) {
-            tile.setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
-            tile.setRectangle(upload.rectangle);
-            tile.markLoadedWithoutTexture();
+            upload.image->pixels.empty();
+        if (emptyImage) {
+            for (const TilePtr& target : targetTiles) {
+                target->setMoreDetailAvailable(
+                    RasterOverlayTile::MoreDetailAvailable::No);
+                target->setRectangle(upload.rectangle);
+                target->markLoadedWithoutTexture();
+            }
             asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
             ++processed;
             continue;
         }
 
         if (!upload.image || !isDecodedImageUploadable(*upload.image)) {
-            tile.setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
-            tile.setState(RasterOverlayTile::LoadState::Failed);
+            for (const TilePtr& target : targetTiles) {
+                target->setMoreDetailAvailable(
+                    RasterOverlayTile::MoreDetailAvailable::No);
+                target->setState(RasterOverlayTile::LoadState::Failed);
+            }
             asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
             ++processed;
             continue;
         }
 
-        // Resource-prep upload (main-thread safe). Rectangle images are
-        // already combined at the selector's target screen-pixel density; on
-        // mobile, generating mipmaps for every rectangle image is expensive
-        // main-thread work without improving the current selected tile.
-        const bool generateMipmaps = !tile.isRectangleTile();
         const double uploadStartMs = perf::nowMs();
-        RasterTextureUploadOptions uploadOptions;
-        uploadOptions.generateMipmaps = generateMipmaps;
-        auto tex = textureUploader_
-            ? textureUploader_->uploadRasterTexture(*upload.image, uploadOptions)
-            : nullptr;
-        const double uploadMs = perf::nowMs() - uploadStartMs;
-        budget->recordElapsed(FrameResourceLane::RasterTextureUpload, uploadMs);
+        double uploadMs = 0.0;
+        for (const TilePtr& target : targetTiles) {
+            RasterOverlayTile& tile = *target;
+            // Resource-prep upload (main-thread safe). Rectangle images are
+            // already combined at the selector's target screen-pixel density;
+            // on mobile, generating mipmaps for every rectangle image is
+            // expensive main-thread work without improving the current
+            // selected tile.
+            const bool generateMipmaps = !tile.isRectangleTile();
+            RasterTextureUploadOptions uploadOptions;
+            uploadOptions.generateMipmaps = generateMipmaps;
+            auto tex = textureUploader_
+                ? textureUploader_->uploadRasterTexture(
+                      *upload.image,
+                      uploadOptions)
+                : nullptr;
+            uploadMs = perf::nowMs() - uploadStartMs;
+            if (!tex) {
+                tile.setMoreDetailAvailable(
+                    RasterOverlayTile::MoreDetailAvailable::No);
+                tile.setState(RasterOverlayTile::LoadState::Failed);
+                continue;
+            }
 #ifndef __ANDROID__
-        (void)uploadMs;
+            (void)uploadMs;
 #endif
-        if (tex) {
             const int sourceLevel =
                 tile.isRectangleTile() ? tile.getSourceZoom() : tile.getTileID().z;
             const RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
@@ -2057,8 +2096,6 @@ int RasterOverlayTileProvider::processPendingUploads(
             // cesium-native: transfer texture ownership to the tile.
             // The tile owns its texture; no external cache needed.
             tile.setTexture(std::move(tex));
-            asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
-            ++processed;
 #ifdef __ANDROID__
             __android_log_print(ANDROID_LOG_INFO, "RasterOverlayTileProvider",
                 "Tile loaded: %d/%d/%d", tile.getTileID().z,
@@ -2076,12 +2113,10 @@ int RasterOverlayTileProvider::processPendingUploads(
                     tile.getCacheKey().c_str());
             }
 #endif
-        } else {
-            tile.setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
-            tile.setState(RasterOverlayTile::LoadState::Failed);
-            asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
-            ++processed;
         }
+        budget->recordElapsed(FrameResourceLane::RasterTextureUpload, uploadMs);
+        asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
+        ++processed;
     }
     return processed;
 }

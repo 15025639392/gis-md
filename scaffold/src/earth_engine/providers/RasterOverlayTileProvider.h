@@ -250,6 +250,14 @@ private:
     /// All cached tiles retained by this provider (key → shared_ptr).
     std::unordered_map<std::string, TilePtr> tiles_;
 
+    /// Rectangle mapping tiles are per geometry mapping, like
+    /// cesium-native ActivatedRasterOverlay::getTile(rectangle). The provider
+    /// keeps weak views grouped by rectangle cache key so one completed source
+    /// composition can update all live mapping tiles without making the
+    /// mapping object itself the shared source asset.
+    std::unordered_map<std::string, std::vector<std::weak_ptr<RasterOverlayTile>>>
+        rectangleTiles_;
+
     /// cesium-native: shared placeholder tile returned when provider is not ready.
     TilePtr placeholderTile_;
     bool ready_ = true;

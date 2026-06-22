@@ -178,8 +178,11 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
         }
     }
 
-    // If no loading tile yet, create one via the Provider or placeholder.
-    if (_pLoadingTile == nullptr) {
+    // If this mapping already owns a ready tile, keep that geometry-to-raster
+    // identity stable. Rectangle provider calls create per-mapping tiles, so a
+    // ready-but-unattached mapping must not ask the provider for a fresh tile
+    // on the next update.
+    if (_pLoadingTile == nullptr && _pReadyTile == nullptr) {
         if (!tileProvider.isReady()) {
             // cesium-native mapOverlayToTile: provider not created/ready yet,
             // so use the overlay placeholder and do not invent a projection.

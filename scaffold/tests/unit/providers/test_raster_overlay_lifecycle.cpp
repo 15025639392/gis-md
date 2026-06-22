@@ -1019,6 +1019,51 @@ TEST(RasterOverlayLifecycleTest, SourceTileDepotCachesTilesByTileKeyLikeCesiumNa
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, eastTile->getState());
 }
 
+TEST(RasterOverlayLifecycleTest,
+     RectangleMappingsAreDistinctButShareSourceAssetLikeCesiumNative) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+
+    auto first = provider.getTile(
+        projectForProvider(provider, westHalf),
+        256.0,
+        512.0);
+    auto second = provider.getTile(
+        projectForProvider(provider, westHalf),
+        256.0,
+        512.0);
+    ASSERT_NE(nullptr, first);
+    ASSERT_NE(nullptr, second);
+    EXPECT_NE(first.get(), second.get());
+    EXPECT_TRUE(first->isRectangleTile());
+    EXPECT_TRUE(second->isRectangleTile());
+    EXPECT_EQ(first->getCacheKey(), second->getCacheKey());
+
+    ASSERT_TRUE(provider.loadTile(*first));
+    ASSERT_TRUE(provider.loadTile(*second));
+    EXPECT_EQ(1, static_cast<int>(imagery.requestedKeys.size()));
+    ASSERT_EQ(1, static_cast<int>(imagery.pending.size()));
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
+
+    imagery.completeNext();
+
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, first->getState());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, second->getState());
+    EXPECT_EQ(2, uploaderPtr->uploadCount);
+}
+
 TEST(RasterOverlayLifecycleTest, ConcurrentRectangleTilesShareProviderSourceTileAssetLikeCesiumNative) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
