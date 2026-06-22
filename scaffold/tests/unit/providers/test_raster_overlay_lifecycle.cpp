@@ -235,6 +235,42 @@ public:
     std::vector<TileKey> requestedKeys;
 };
 
+class UnsupportedParentFallbackImageryProvider final : public ImageryProvider {
+public:
+    std::string id() const override { return "unsupported-parent-fallback"; }
+    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 10; }
+    int tileWidth() const override { return 256; }
+    int tileHeight() const override { return 256; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+    bool supportsTile(const TileKey& key) const override {
+        return key.schemeId == schemeId() &&
+               key.z >= minZoom() &&
+               key.z <= maxZoom() &&
+               key != unsupportedParentKey;
+    }
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     TileCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
+        requestedKeys.push_back(key);
+        callback(
+            key,
+            key == failingChildKey
+                ? nullptr
+                : makeImage(256, 256, static_cast<uint8_t>(key.z)));
+    }
+    std::unique_ptr<DecodedImage> decodeTile(
+        const uint8_t*, size_t) override {
+        return nullptr;
+    }
+
+    TileKey failingChildKey{"XYZ-WebMercator", -1, -1, -1};
+    TileKey unsupportedParentKey{"XYZ-WebMercator", -1, -1, -1};
+    std::vector<TileKey> requestedKeys;
+};
+
 class DeferredImageryProvider final : public ImageryProvider {
 public:
     std::string id() const override { return "deferred"; }
@@ -1162,7 +1198,40 @@ TEST(RasterOverlayLifecycleTest, QuadtreeSourceFailureFallsBackToParentTile) {
         imagery.requestedKeys.begin(),
         imagery.requestedKeys.end(),
         TileKey{scheme->id(), 7, imagery.failingKey.x / 2,
-                imagery.failingKey.y / 2}) != imagery.requestedKeys.end());
+              imagery.failingKey.y / 2}) != imagery.requestedKeys.end());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     SourceTileFallbackIgnoresSupportsTileForParentLikeCesiumNative) {
+    UnsupportedParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    imagery.failingChildKey = TileKey{scheme->id(), 3, 2, 3};
+    imagery.unsupportedParentKey =
+        TileKey{scheme->id(), 2, 1, 1};
+
+    RasterOverlayTileProvider::TilePtr tile =
+        provider.getTile(imagery.failingChildKey);
+    ASSERT_NE(nullptr, tile);
+    ASSERT_TRUE(provider.loadTile(*tile));
+
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, tile->getState());
+    EXPECT_EQ(nullptr, tile->getTexture());
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
+              tile->isMoreDetailAvailable());
+    EXPECT_EQ(0, uploaderPtr->uploadCount);
+    EXPECT_TRUE(std::find(
+        imagery.requestedKeys.begin(),
+        imagery.requestedKeys.end(),
+        imagery.failingChildKey) != imagery.requestedKeys.end());
+    EXPECT_TRUE(std::find(
+        imagery.requestedKeys.begin(),
+        imagery.requestedKeys.end(),
+        imagery.unsupportedParentKey) != imagery.requestedKeys.end());
 }
 
 TEST(RasterOverlayLifecycleTest, SourceTileDepotCachesTilesByTileKeyLikeCesiumNative) {

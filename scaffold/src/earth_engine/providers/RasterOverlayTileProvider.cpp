@@ -1197,19 +1197,17 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
 
                 if (requestedKey.z > self->minimumLevel) {
                     const TileKey parentKey = parentTileKey(requestedKey);
-                    if (self->provider.supportsTile(parentKey)) {
-                        onSourceFinished();
-                        self->requestSource(
-                            parentKey,
-                            originalKey,
-                            true,
-                            false,
-                            onSourceIssued,
-                            onSourceFinished,
-                            std::move(onReady),
-                            std::move(fallbackInFlightKeys));
-                        return;
-                    }
+                    onSourceFinished();
+                    self->requestSource(
+                        parentKey,
+                        originalKey,
+                        true,
+                        false,
+                        onSourceIssued,
+                        onSourceFinished,
+                        std::move(onReady),
+                        std::move(fallbackInFlightKeys));
+                    return;
                 }
 
                 onSourceFinished();
