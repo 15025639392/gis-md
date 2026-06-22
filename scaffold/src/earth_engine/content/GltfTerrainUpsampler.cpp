@@ -253,7 +253,8 @@ void appendPolygon(GltfPrimitive& output,
 
 void appendPoint(GltfPrimitive& output,
                  const GltfPrimitive& parent,
-                 uint32_t index) {
+                 uint32_t index,
+                 bool emitIndex) {
     const uint32_t outputIndex = static_cast<uint32_t>(output.vertices.size());
     output.vertices.push_back(parent.vertices[index]);
     for (size_t set = 0; set < kGltfMaxTexCoordSets; ++set) {
@@ -274,7 +275,9 @@ void appendPoint(GltfPrimitive& output,
     if (parent.featureProperties.size() == parent.vertices.size()) {
         output.featureProperties.push_back(parent.featureProperties[index]);
     }
-    output.indices.push_back(outputIndex);
+    if (emitIndex) {
+        output.indices.push_back(outputIndex);
+    }
 }
 
 struct EdgeVertex {
@@ -573,11 +576,12 @@ bool upsamplePointsPrimitive(const GltfPrimitive& parent,
         const bool insideU = keepEast ? uv[0] >= 0.5f : uv[0] <= 0.5f;
         const bool insideV = keepGreaterV ? uv[1] >= 0.5f : uv[1] <= 0.5f;
         if (insideU && insideV) {
-            appendPoint(output, parent, index);
+            appendPoint(output, parent, index, hasExplicitIndices);
         }
     }
 
-    if (output.vertices.empty() || output.indices.empty()) {
+    if (output.vertices.empty() ||
+        (hasExplicitIndices && output.indices.empty())) {
         return false;
     }
     return true;

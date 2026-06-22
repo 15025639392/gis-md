@@ -363,6 +363,50 @@ TEST(GltfTerrainUpsamplerTest,
 }
 
 TEST(GltfTerrainUpsamplerTest,
+     PreservesNonIndexedPointPrimitiveLikeCesiumNative) {
+    GltfModel parent;
+    GltfPrimitive primitive;
+    primitive.primitiveMode = GltfPrimitiveMode::Points;
+    primitive.vertices = {
+        vertex(0.0, 0.0, 0.0, 0.0),
+        vertex(0.0, 2.0, 0.0, 1.0),
+        vertex(2.0, 0.0, 1.0, 0.0),
+        vertex(2.0, 2.0, 1.0, 1.0)};
+    primitive.vertexTexCoords[0] = {
+        {0.0f, 0.0f},
+        {0.0f, 1.0f},
+        {1.0f, 0.0f},
+        {1.0f, 1.0f}};
+    primitive.vertexColors = {
+        {0.5f, 0.1f, 0.2f, 1.0f},
+        {0.1f, 0.2f, 0.3f, 1.0f},
+        {0.3f, 0.4f, 0.5f, 1.0f},
+        {0.6f, 0.7f, 0.8f, 1.0f}};
+    primitive.featureIds = {10, 11, 12, 13};
+    primitive.runtime.baseVertices = primitive.vertices;
+    parent.primitives.push_back(std::move(primitive));
+
+    const UpsampledQuadtreeNode child{TileKey{"Geographic-TMS", 1, 0, 0}};
+
+    std::unique_ptr<GltfModel> upsampled =
+        GltfTerrainUpsampler::upsampleForRasterOverlay(parent, child, 0, false);
+
+    ASSERT_NE(nullptr, upsampled);
+    ASSERT_EQ(1u, upsampled->primitives.size());
+    const GltfPrimitive& out = upsampled->primitives.front();
+    EXPECT_EQ(GltfPrimitiveMode::Points, out.primitiveMode);
+    ASSERT_EQ(1u, out.vertices.size());
+    EXPECT_TRUE(out.indices.empty());
+    EXPECT_EQ(parent.primitives.front().vertices[0].positionEcef,
+              out.vertices.front().positionEcef);
+    ASSERT_EQ(1u, out.vertexColors.size());
+    EXPECT_EQ(parent.primitives.front().vertexColors[0],
+              out.vertexColors.front());
+    ASSERT_EQ(1u, out.featureIds.size());
+    EXPECT_EQ(10u, out.featureIds.front());
+}
+
+TEST(GltfTerrainUpsamplerTest,
      ClipsLowerLeftChildWithInvertedVCoordinateLikeCesiumNative) {
     GltfModel parent = makeParentModel();
     for (GltfPrimitive& primitive : parent.primitives) {
