@@ -573,8 +573,8 @@ bool upsamplePointsPrimitive(const GltfPrimitive& parent,
             continue;
         }
         const auto& uv = parent.vertexTexCoords[textureCoordinateIndex][index];
-        const bool insideU = keepEast ? uv[0] >= 0.5f : uv[0] <= 0.5f;
-        const bool insideV = keepGreaterV ? uv[1] >= 0.5f : uv[1] <= 0.5f;
+        const bool insideU = keepEast ? uv[0] > 0.5f : uv[0] < 0.5f;
+        const bool insideV = keepGreaterV ? uv[1] > 0.5f : uv[1] < 0.5f;
         if (insideU && insideV) {
             appendPoint(output, parent, index, hasExplicitIndices);
         }

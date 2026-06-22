@@ -407,6 +407,40 @@ TEST(GltfTerrainUpsamplerTest,
 }
 
 TEST(GltfTerrainUpsamplerTest,
+     DropsPointPrimitiveBoundarySamplesLikeCesiumNative) {
+    GltfModel parent;
+    GltfPrimitive primitive;
+    primitive.primitiveMode = GltfPrimitiveMode::Points;
+    primitive.vertices = {
+        vertex(0.0, 0.0, 0.25, 0.25),
+        vertex(1.0, 0.0, 0.5, 0.25),
+        vertex(0.0, 1.0, 0.25, 0.5),
+        vertex(1.0, 1.0, 0.5, 0.5)};
+    primitive.vertexTexCoords[0] = {
+        {0.25f, 0.25f},
+        {0.5f, 0.25f},
+        {0.25f, 0.5f},
+        {0.5f, 0.5f}};
+    primitive.featureIds = {7, 8, 9, 10};
+    primitive.runtime.baseVertices = primitive.vertices;
+    parent.primitives.push_back(std::move(primitive));
+
+    const UpsampledQuadtreeNode child{TileKey{"Geographic-TMS", 1, 0, 0}};
+
+    std::unique_ptr<GltfModel> upsampled =
+        GltfTerrainUpsampler::upsampleForRasterOverlay(parent, child, 0, false);
+
+    ASSERT_NE(nullptr, upsampled);
+    ASSERT_EQ(1u, upsampled->primitives.size());
+    const GltfPrimitive& out = upsampled->primitives.front();
+    ASSERT_EQ(1u, out.vertices.size());
+    EXPECT_EQ(parent.primitives.front().vertices[0].positionEcef,
+              out.vertices.front().positionEcef);
+    ASSERT_EQ(1u, out.featureIds.size());
+    EXPECT_EQ(7u, out.featureIds.front());
+}
+
+TEST(GltfTerrainUpsamplerTest,
      ClipsLowerLeftChildWithInvertedVCoordinateLikeCesiumNative) {
     GltfModel parent = makeParentModel();
     for (GltfPrimitive& primitive : parent.primitives) {
