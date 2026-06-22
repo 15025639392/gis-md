@@ -153,7 +153,18 @@ struct TileChildMaterializer {
         double defaultGeometricError,
         EnsureTileFn&& ensureTile) {
         if (parent.children.size() >= 4) {
-            return false;
+            const bool canRefreshRasterUpsampledChildren =
+                parent.children.size() == 4 &&
+                std::all_of(
+                    parent.children.begin(),
+                    parent.children.end(),
+                    [](const TilesetTile* child) {
+                        return child &&
+                               child->content.isRasterDetailUpsample();
+                    });
+            if (!canRefreshRasterUpsampledChildren) {
+                return false;
+            }
         }
 
         const double centerLng = subdivisionCenter.first;
@@ -204,6 +215,13 @@ struct TileChildMaterializer {
                 continue;
             }
 
+            const double childGeometricError = parent.geometricError * 0.5;
+            const bool wasRasterDetailUpsample =
+                child->content.isRasterDetailUpsample();
+            const bool childGeometryChanged =
+                child->bounds != childBounds[i] ||
+                child->geometricError != childGeometricError;
+
             child->parent = &parent;
             child->bounds = childBounds[i];
             child->boundingVolume = TileBoundingVolume::fromRegion(
@@ -211,9 +229,9 @@ struct TileChildMaterializer {
                 TileBoundsMetrics::terrainMinimumHeight(parent),
                 TileBoundsMetrics::terrainMaximumHeight(parent));
             child->contentBoundingVolume = child->boundingVolume;
-            child->geometricError = parent.geometricError * 0.5;
+            child->geometricError = childGeometricError;
             child->refine = TileRefine::Replace;
-            if (!child->content.isRasterDetailUpsample()) {
+            if (!wasRasterDetailUpsample || childGeometryChanged) {
                 child->content.renderContent.clearRenderContent();
             }
             child->content.markRasterDetailUpsample();
@@ -222,6 +240,7 @@ struct TileChildMaterializer {
                 *child,
                 parent);
 
+            changed |= childGeometryChanged;
             changed |= linkChild(parent, *child);
         }
         return changed;

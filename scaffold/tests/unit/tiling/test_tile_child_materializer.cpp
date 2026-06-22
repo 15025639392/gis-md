@@ -787,6 +787,64 @@ TEST(TileChildMaterializerTest, RasterUpsampledChildrenSplitSubdivisionAndRemain
     }
 }
 
+TEST(TileChildMaterializerTest,
+     RasterUpsampledChildrenRefreshWhenSubdivisionChanges) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
+    parent.geometricError = 100.0;
+    parent.content.renderContent.setTerrainHeightRange(-5.0, 25.0);
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    ASSERT_TRUE(TileChildMaterializer::materializeRasterUpsampledChildren(
+        parent,
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0),
+        200.0,
+        ensure));
+    ASSERT_EQ(4u, parent.children.size());
+    TilesetTile* sw = parent.children[0];
+    ASSERT_NE(nullptr, sw);
+    sw->content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    sw->content.renderContent.setMeshReady(true);
+    sw->content.renderContent.markRenderContentReady();
+    ASSERT_TRUE(sw->content.renderContent.hasSurfaceMesh());
+
+    const Rectangle tighterSubdivision =
+        Rectangle::fromDegrees(-16.0, -8.0, -2.0, 8.0);
+    ASSERT_TRUE(TileChildMaterializer::materializeRasterUpsampledChildren(
+        parent,
+        tighterSubdivision,
+        200.0,
+        ensure));
+
+    ASSERT_EQ(4u, parent.children.size());
+    EXPECT_EQ(sw, parent.children[0]);
+    EXPECT_EQ(
+        Rectangle::fromDegrees(-16.0, -8.0, -9.0, 0.0),
+        sw->bounds);
+    EXPECT_FALSE(sw->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(sw->content.renderContent.isMeshReady());
+    EXPECT_FALSE(sw->content.renderContent.isRenderContentReady());
+    EXPECT_TRUE(sw->content.renderContent.hasTerrainHeightRange());
+    EXPECT_DOUBLE_EQ(-5.0, sw->content.renderContent.terrainMinimumHeight());
+    EXPECT_DOUBLE_EQ(25.0, sw->content.renderContent.terrainMaximumHeight());
+    EXPECT_EQ(
+        Rectangle::fromDegrees(-9.0, 0.0, -2.0, 8.0),
+        parent.children[3]->bounds);
+}
+
 TEST(TileChildMaterializerTest, RasterUpsampledTileCanContinueSubdividingForImageryDetail) {
     TilesetTile parent(
         TileKey{"Geographic-TMS", 10, 512, 512},
