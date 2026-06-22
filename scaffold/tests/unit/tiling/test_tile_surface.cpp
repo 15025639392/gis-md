@@ -682,6 +682,51 @@ TEST(TileSurfaceTest,
         childMesh->rasterOverlayDetails.boundingRegion.rectangle);
 }
 
+TEST(TileSurfaceTest,
+     UpsampledChildMeshDerivesAntimeridianRasterRectangleWithoutCrossingZero) {
+    Rectangle parentBounds =
+        Rectangle::fromDegrees(170.0, -10.0, -170.0, 10.0);
+    Rectangle childBounds =
+        Rectangle::fromDegrees(175.0, -10.0, -170.0, 0.0);
+    Rectangle parentOverlayRectangle =
+        Rectangle::fromDegrees(170.0, -10.0, -170.0, 10.0);
+
+    SurfaceTileMesh parentMesh =
+        TileSurface::buildEllipsoidMesh(parentBounds, 1);
+    parentMesh.rasterOverlayDetails.setGeographicRectangle(
+        parentOverlayRectangle,
+        -5.0,
+        25.0);
+
+    std::optional<SurfaceTileMesh> childMesh =
+        TileSurface::upsampleChildMeshFromParent(
+            parentMesh,
+            parentBounds,
+            childBounds);
+
+    ASSERT_TRUE(childMesh.has_value());
+    const Rectangle* childOverlayRectangle =
+        childMesh->rasterOverlayDetails.findRectangleForOverlayProjection(
+            RasterOverlayProjection::Geographic);
+    ASSERT_NE(nullptr, childOverlayRectangle);
+
+    const Rectangle expected =
+        Rectangle::fromDegrees(175.0, -10.0, -170.0, 0.0);
+    EXPECT_NEAR(
+        expected.west(),
+        childOverlayRectangle->west(),
+        1e-12);
+    EXPECT_NEAR(
+        expected.east(),
+        childOverlayRectangle->east(),
+        1e-12);
+    EXPECT_TRUE(childOverlayRectangle->crossesAntimeridian());
+    EXPECT_FALSE(childOverlayRectangle->contains(0.0, 0.0));
+    EXPECT_EQ(
+        childBounds,
+        childMesh->rasterOverlayDetails.boundingRegion.rectangle);
+}
+
 TEST(TileSurfaceTest, UpsampledChildMeshIgnoresInvalidNoSkirtIndexRange) {
     Rectangle parentBounds = Rectangle::fromDegrees(0.0, 0.0, 2.0, 2.0);
     Rectangle childBounds = Rectangle::fromDegrees(1.0, 1.0, 2.0, 2.0);

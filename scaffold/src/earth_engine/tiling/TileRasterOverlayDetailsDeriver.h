@@ -63,9 +63,9 @@ public:
                 projectedParentBounds,
                 projectedChildBounds.north());
             childDetails.rasterOverlayRectangles.push_back(Rectangle(
-                mix(parentOverlay.west(), parentOverlay.east(), childWestT),
+                mixHorizontal(parentOverlay, projection, childWestT),
                 mix(parentOverlay.south(), parentOverlay.north(), childSouthT),
-                mix(parentOverlay.west(), parentOverlay.east(), childEastT),
+                mixHorizontal(parentOverlay, projection, childEastT),
                 mix(parentOverlay.south(), parentOverlay.north(), childNorthT)));
         }
 
@@ -107,6 +107,19 @@ private:
 
     static double mix(double a, double b, double t) {
         return a + (b - a) * t;
+    }
+
+    static double mixHorizontal(const Rectangle& rectangle,
+                                RasterOverlayProjection projection,
+                                double t) {
+        double east = rectangle.east();
+        if (projection == RasterOverlayProjection::Geographic &&
+            rectangle.crossesAntimeridian()) {
+            east += MathUtils::TwoPi;
+            return MathUtils::convertLongitudeRange(
+                mix(rectangle.west(), east, t));
+        }
+        return mix(rectangle.west(), east, t);
     }
 };
 
