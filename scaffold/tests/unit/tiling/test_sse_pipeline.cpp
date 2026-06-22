@@ -24733,10 +24733,22 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
         [](const RenderCommand& cmd) {
             return cmd.kind == RenderCommandKind::GltfPrimitive;
         });
+    const bool submittedTerrainGltf = std::any_of(
+        device.submittedCommands.begin(),
+        device.submittedCommands.end(),
+        [](const RenderCommand& cmd) {
+            return cmd.kind == RenderCommandKind::GltfPrimitive &&
+                   cmd.terrainRenderContent;
+        });
     check(submittedGltf,
           "Scene: additional glTF tileset contributes GltfPrimitive commands");
+    check(!submittedTerrainGltf,
+          "Scene: additional glTF tileset is not counted as terrain render content");
     check(scene.diagnostics().renderGltfPrimitives > 0,
           "Scene: diagnostics expose rendered glTF primitive count");
+    check(scene.diagnostics().terrainRenderContentCommands ==
+              scene.diagnostics().terrainSurfaceMeshes,
+          "Scene: terrain render content diagnostics exclude ordinary glTF content tilesets");
     check(scene.diagnostics().contentTilesets == 1 &&
               scene.diagnostics().contentVisibleTiles > 0,
           "Scene: diagnostics expose additional content tileset visibility");
@@ -24761,6 +24773,59 @@ void testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain() {
     check(std::abs(scene.tileset()->sampleHeight(0.0, 0.0) - 123.0f) <
               1e-6f,
           "Scene: terrain sampling is still owned by primary tileset after render");
+}
+
+void testSceneGltfTerrainCountsAsTerrainRenderContent() {
+    DummyRenderDevice device;
+    Scene scene;
+    check(scene.setRenderDevice(&device),
+          "Scene: glTF terrain diagnostics initialize renderer");
+    scene.setViewport(800, 600, 1.0f);
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
+    scene.camera().lookAt(
+        target + Vec3(1000000.0, 0.0, 0.0),
+        target,
+        Vec3::unitZ());
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    auto terrainTileset = std::make_unique<Tileset>(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{},
+        &device,
+        TilesetOptions{});
+    TilesetTile* root = TilesetTestAccess::ensureTile(
+        *terrainTileset,
+        rootKey);
+    check(root != nullptr,
+          "Scene: glTF terrain root tile is created");
+    if (!root) return;
+
+    root->content.renderContent.setGltfContent(makeTriangleGltfModel());
+    root->content.renderContent.setTerrainRenderContent(true);
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Render;
+    scene.setTileset(std::move(terrainTileset));
+
+    scene.update(1.0 / 60.0);
+    scene.render();
+
+    const int terrainGltfCommands = static_cast<int>(std::count_if(
+        device.submittedCommands.begin(),
+        device.submittedCommands.end(),
+        [](const RenderCommand& cmd) {
+            return cmd.kind == RenderCommandKind::GltfPrimitive &&
+                   cmd.terrainRenderContent;
+        }));
+    check(terrainGltfCommands > 0,
+          "Scene: glTF terrain contributes terrain render commands");
+    check(scene.diagnostics().renderGltfPrimitives == terrainGltfCommands &&
+              scene.diagnostics().terrainRenderContentCommands ==
+                  terrainGltfCommands +
+                      scene.diagnostics().terrainSurfaceCommandsSubmitted,
+          "Scene: glTF terrain diagnostics count glTF and surface terrain render content");
 }
 
 void testSceneDiagnosticsExposeTerrainRenderEntryReasons() {
@@ -27852,6 +27917,7 @@ int main() {
     testSceneFrameStateBuilderPopulatesPerFrameState();
     testSceneOcclusionCallbackFeedsPrimaryAndAdditionalTilesets();
     testSceneAdditionalTilesetRendersGltfWithoutReplacingTerrain();
+    testSceneGltfTerrainCountsAsTerrainRenderContent();
     testSceneDiagnosticsExposeTerrainRenderEntryReasons();
     testSceneDiagnosticsExposeTerrainSynchronousPrepReason();
     testSceneDiagnosticsRejectImageryOnlyAncestorFallback();

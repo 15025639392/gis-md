@@ -656,8 +656,18 @@ TEST(SceneFrameStateTest, AdditionalTilesetRendersGltfContent) {
         [](const RenderCommand& cmd) {
             return cmd.kind == RenderCommandKind::GltfPrimitive;
         });
+    const bool submittedTerrainGltf = std::any_of(
+        device.submittedCommands.begin(),
+        device.submittedCommands.end(),
+        [](const RenderCommand& cmd) {
+            return cmd.kind == RenderCommandKind::GltfPrimitive &&
+                   cmd.terrainRenderContent;
+        });
     EXPECT_TRUE(submittedGltf);
+    EXPECT_FALSE(submittedTerrainGltf);
     EXPECT_GT(scene.diagnostics().renderGltfPrimitives, 0);
+    EXPECT_EQ(scene.diagnostics().terrainSurfaceMeshes, 3);
+    EXPECT_EQ(scene.diagnostics().terrainRenderContentCommands, 3);
     EXPECT_EQ(scene.diagnostics().contentTilesets, 1);
     EXPECT_GT(scene.diagnostics().contentVisibleTiles, 0);
     EXPECT_GT(scene.diagnostics().terrainRenderEntriesPlanned, 0);
@@ -680,6 +690,53 @@ TEST(SceneFrameStateTest, AdditionalTilesetRendersGltfContent) {
     EXPECT_EQ(scene.diagnostics().globeFallbackMaskedTerrainEntries, 0);
     EXPECT_EQ(scene.tileset(), terrainRaw);
     EXPECT_NEAR(scene.tileset()->sampleHeight(0.0, 0.0), 123.0f, 1e-6f);
+}
+
+TEST(SceneFrameStateTest, GltfTerrainCountsAsTerrainRenderContent) {
+    DummyRenderDevice device;
+    Scene scene;
+    ASSERT_TRUE(scene.setRenderDevice(&device));
+    scene.setViewport(800, 600, 1.0f);
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
+    scene.camera().lookAt(
+        target + Vec3(1000000.0, 0.0, 0.0),
+        target,
+        Vec3::unitZ());
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    auto terrainTileset = std::make_unique<Tileset>(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{},
+        &device,
+        TilesetOptions{});
+    TilesetTile* root =
+        TilesetTestAccess::ensureTile(*terrainTileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    root->content.renderContent.setGltfContent(makeTriangleGltfModel());
+    root->content.renderContent.setTerrainRenderContent(true);
+    root->content.loadState = TileLoadState::Done;
+    root->content.contentKind = TileContentKind::Render;
+    scene.setTileset(std::move(terrainTileset));
+
+    scene.update(1.0 / 60.0);
+    scene.render();
+
+    const int terrainGltfCommands = static_cast<int>(std::count_if(
+        device.submittedCommands.begin(),
+        device.submittedCommands.end(),
+        [](const RenderCommand& cmd) {
+            return cmd.kind == RenderCommandKind::GltfPrimitive &&
+                   cmd.terrainRenderContent;
+        }));
+    EXPECT_GT(terrainGltfCommands, 0);
+    EXPECT_EQ(scene.diagnostics().renderGltfPrimitives, terrainGltfCommands);
+    EXPECT_EQ(
+        scene.diagnostics().terrainRenderContentCommands,
+        terrainGltfCommands +
+            scene.diagnostics().terrainSurfaceCommandsSubmitted);
 }
 
 TEST(SceneFrameStateTest, DiagnosticsExposeTerrainRenderEntryFallbackReasons) {
