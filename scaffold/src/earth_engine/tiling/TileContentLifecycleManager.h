@@ -43,6 +43,8 @@ public:
     int pendingRequests() const;
     bool hasPendingWork() const;
     void shutdown();
+    void discardLegacyTerrainCacheIfOwnedByContentProvider(
+        const TilesetContentProvider* contentProvider);
 
     template <typename PrepareUpsampleSourceTileFn, typename EnsureTileFn>
     TileLoadRequestOutcome requestMissingTiles(
@@ -61,6 +63,7 @@ public:
         FrameResourceBudget* budget,
         PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
         EnsureTileFn&& ensureTile) {
+        discardLegacyTerrainCacheIfOwnedByContentProvider(contentProvider);
         return TilesetContentLifecycleCoordinator::requestMissingTiles(
             loadRequests,
             makeContext(
@@ -101,6 +104,7 @@ public:
         EnsureTileChildrenFn&& ensureTileChildren,
         EnsureTileMeshFn&& ensureTileMesh,
         MarkResourcesDirtyFn&& markResourcesDirty) {
+        discardLegacyTerrainCacheIfOwnedByContentProvider(contentProvider);
         return TilesetContentLifecycleCoordinator::processPendingUploads(
             makeUploadContext(
                 contentProvider,

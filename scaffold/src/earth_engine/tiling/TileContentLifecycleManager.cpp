@@ -15,6 +15,14 @@ bool TileContentLifecycleManager::hasPendingWork() const {
     return loadLifecycle_.hasPendingWork();
 }
 
+void TileContentLifecycleManager::
+    discardLegacyTerrainCacheIfOwnedByContentProvider(
+        const TilesetContentProvider* contentProvider) {
+    if (contentProvider && contentProvider->providesTerrainQuadtree()) {
+        terrainCache_.clear();
+    }
+}
+
 void TileContentLifecycleManager::shutdown() {
     loadLifecycle_.markDestroyingCancelAndWait();
 }

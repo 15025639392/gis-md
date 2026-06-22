@@ -45,6 +45,12 @@ struct TilesetTestAccess {
             std::move(heightmap);
     }
 
+    static bool hasTerrainCache(Tileset& tileset, const TileKey& key) {
+        return tileset.contentLifecycle_.terrainCache().find(
+                   TileCacheKey::forTile(key)) !=
+            tileset.contentLifecycle_.terrainCache().end();
+    }
+
     static Vec3 tileBoundsCenter(const Rectangle& bounds) {
         return TileBoundsMetrics::tileBoundsCenter(bounds);
     }
@@ -223,6 +229,22 @@ std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     return heightmap;
 }
 
+SelectorView makeSelectorView(
+    const Camera& camera,
+    int viewportWidth,
+    int viewportHeight) {
+    SelectorView view;
+    view.position = camera.position();
+    view.direction = camera.direction();
+    const double width = static_cast<double>(viewportWidth);
+    const double height = static_cast<double>(viewportHeight);
+    view.projectionMatrix = camera.projectionMatrix(width, height);
+    view.frustum = Frustum::fromViewProjection(
+        view.projectionMatrix * camera.viewMatrix());
+    view.viewportHeightPixels = viewportHeight;
+    return view;
+}
+
 TEST(TilesetQuantizedMeshTest,
      ManualAvailabilityUsesConfiguredMaximumZoomBeyondDefaultLayerLimit) {
     QuantizedMeshTerrainProvider provider(
@@ -323,6 +345,48 @@ TEST(TilesetQuantizedMeshTest,
     EXPECT_FALSE(root->content.renderContent.isTerrainRenderContent());
     EXPECT_FALSE(root->content.renderContent.hasRetainedHeightmap());
     EXPECT_NE(root->content.loadState, TileLoadState::Done);
+}
+
+TEST(TilesetQuantizedMeshTest,
+     ContentTerrainProviderDiscardsLegacyTerrainCacheDuringFrameRuntime) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(4321.0f));
+    ASSERT_TRUE(TilesetTestAccess::hasTerrainCache(tileset, rootKey));
+
+    Camera camera;
+    camera.lookAt(
+        Vec3(Ellipsoid::WGS84().semiMajorAxis() * 2.0, 0.0, 0.0),
+        Vec3(Ellipsoid::WGS84().semiMajorAxis(), 0.0, 0.0),
+        Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 17;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+
+    tileset.update(frameState);
+
+    EXPECT_FALSE(TilesetTestAccess::hasTerrainCache(tileset, rootKey));
+    EXPECT_FALSE(root->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(root->content.renderContent.isTerrainRenderContent());
 }
 
 TEST(TilesetQuantizedMeshTest,
