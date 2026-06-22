@@ -12194,7 +12194,7 @@ void testTerrainUploadGeneratesActiveRasterOverlayProjectionDetails() {
         125.0);
     TileLoadedContent content;
     content.gltfModel = std::move(model);
-    content.terrainPayloadKind = TerrainTilePayloadKind::GltfModel;
+    content.terrainRenderContent = true;
     content.metadata.updatedBoundingVolume =
         TileBoundingVolume::fromRegion(tileRectangle, -25.0, 125.0);
 
@@ -12258,7 +12258,7 @@ void testTerrainUploadPreparesGltfRenderContent() {
 
     TileLoadedContent loaded;
     loaded.gltfModel = std::move(model);
-    loaded.terrainPayloadKind = TerrainTilePayloadKind::GltfModel;
+    loaded.terrainRenderContent = true;
     loaded.metadata.updatedBoundingVolume =
         TileBoundingVolume::fromRegion(tileRectangle, -15.0, 85.0);
 

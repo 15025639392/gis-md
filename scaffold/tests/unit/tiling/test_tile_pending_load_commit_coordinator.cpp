@@ -508,7 +508,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     update.metadataAvailability = {{0, 0, 0, 0, 0}};
 
     TileLoadedContent content;
-    content.terrainPayloadKind = TerrainTilePayloadKind::GltfModel;
+    content.terrainRenderContent = true;
     content.gltfModel = std::make_unique<GltfModel>();
     content.quantizedMeshAvailabilityUpdates.push_back(update);
 

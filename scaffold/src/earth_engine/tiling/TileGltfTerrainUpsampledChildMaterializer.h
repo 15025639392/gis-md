@@ -68,7 +68,7 @@ public:
             parentModel->rasterOverlayDetails,
             tile.bounds);
         content.gltfModel = std::move(childModel);
-        content.terrainPayloadKind = TerrainTilePayloadKind::GltfModel;
+        content.terrainRenderContent = true;
         content.metadata.rasterOverlayDetails =
             content.gltfModel->rasterOverlayDetails;
         return true;

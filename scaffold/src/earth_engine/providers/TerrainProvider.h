@@ -69,13 +69,13 @@ struct DecodedHeightmap {
 
 enum class TerrainTilePayloadKind {
     None,
-    Heightmap,
-    GltfModel
+    Heightmap
 };
 
 struct TerrainTileLoadResult {
     TileLoadStatus status = TileLoadStatus::Failed;
     TerrainTilePayloadKind payloadKind = TerrainTilePayloadKind::None;
+    bool terrainRenderContent = false;
     std::unique_ptr<DecodedHeightmap> heightmap;
     std::unique_ptr<GltfModel> gltfModel;
     TileLoadResultMetadata metadata;
@@ -89,6 +89,7 @@ struct TerrainTileLoadResult {
                            : TileLoadStatus::Failed;
         result.payloadKind = hm ? TerrainTilePayloadKind::Heightmap
                                 : TerrainTilePayloadKind::None;
+        result.terrainRenderContent = hm != nullptr;
         result.heightmap = std::move(hm);
         return result;
     }
@@ -99,8 +100,8 @@ struct TerrainTileLoadResult {
         TerrainTileLoadResult result;
         result.status = model ? TileLoadStatus::Renderable
                               : TileLoadStatus::Failed;
-        result.payloadKind = model ? TerrainTilePayloadKind::GltfModel
-                                   : TerrainTilePayloadKind::None;
+        result.payloadKind = TerrainTilePayloadKind::None;
+        result.terrainRenderContent = model != nullptr;
         result.metadata = std::move(metadata);
         if (model && !result.metadata.rasterOverlayDetails.has_value()) {
             result.metadata.rasterOverlayDetails =

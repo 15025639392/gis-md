@@ -880,7 +880,7 @@ TEST(TileLoadRequestDispatcherTest,
 }
 
 TEST(TileLoadRequestDispatcherTest,
-     TerrainPayloadKindSelectsExactlyOneContentPath) {
+     TerrainGltfContentUsesContentModelWithTerrainMarker) {
     auto gltfModel = std::make_unique<GltfModel>();
     GltfModel* rawGltfModel = gltfModel.get();
     TerrainTileLoadResult gltfResult =
@@ -894,6 +894,9 @@ TEST(TileLoadRequestDispatcherTest,
 
     EXPECT_EQ(TileLoadStatus::Renderable, normalizedGltf.status);
     EXPECT_TRUE(normalizedGltf.shouldUpload());
+    EXPECT_EQ(TerrainTilePayloadKind::None,
+              normalizedGltf.content.terrainPayloadKind);
+    EXPECT_TRUE(normalizedGltf.content.terrainRenderContent);
     EXPECT_EQ(nullptr, normalizedGltf.content.heightmap);
     EXPECT_EQ(rawGltfModel, normalizedGltf.content.gltfModel.get());
     EXPECT_EQ(
@@ -913,8 +916,12 @@ TEST(TileLoadRequestDispatcherTest,
 
     EXPECT_EQ(TileLoadStatus::Renderable, normalizedHeightmap.status);
     EXPECT_TRUE(normalizedHeightmap.shouldUpload());
+    EXPECT_EQ(TerrainTilePayloadKind::Heightmap,
+              normalizedHeightmap.content.terrainPayloadKind);
+    EXPECT_TRUE(normalizedHeightmap.content.terrainRenderContent);
     EXPECT_EQ(rawHeightmap, normalizedHeightmap.content.heightmap.get());
     EXPECT_EQ(nullptr, normalizedHeightmap.content.gltfModel);
+    EXPECT_FALSE(normalizedHeightmap.content.hasGltfTerrainPayload());
     EXPECT_TRUE(
         normalizedHeightmap.content.quantizedMeshAvailabilityUpdates.empty());
 

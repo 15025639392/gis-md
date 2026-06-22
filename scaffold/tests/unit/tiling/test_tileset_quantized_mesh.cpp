@@ -147,7 +147,7 @@ void installQuantizedMeshTerrainContent(TilesetTile& tile,
 
     TileLoadedContent content;
     content.gltfModel = std::move(loadResult.gltfModel);
-    content.terrainPayloadKind = TerrainTilePayloadKind::GltfModel;
+    content.terrainRenderContent = true;
     content.metadata = std::move(loadResult.metadata);
     content.quantizedMeshAvailabilityUpdates =
         std::move(loadResult.availabilityUpdates);

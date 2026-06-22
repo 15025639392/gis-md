@@ -30,20 +30,19 @@ struct TileLoadedContent {
     static TileLoadedContent fromTerrainResult(
         TerrainTileLoadResult&& result) {
         TileLoadedContent content;
+        content.terrainRenderContent = result.terrainRenderContent;
         content.terrainPayloadKind = result.payloadKind;
         switch (result.payloadKind) {
             case TerrainTilePayloadKind::Heightmap:
                 content.heightmap = std::move(result.heightmap);
                 break;
-            case TerrainTilePayloadKind::GltfModel:
-                content.gltfModel = std::move(result.gltfModel);
-                if (content.gltfModel) {
-                    content.quantizedMeshAvailabilityUpdates =
-                        std::move(result.quantizedMeshAvailabilityUpdates);
-                }
-                break;
             case TerrainTilePayloadKind::None:
+                content.gltfModel = std::move(result.gltfModel);
                 break;
+        }
+        if (content.gltfModel && content.terrainRenderContent) {
+            content.quantizedMeshAvailabilityUpdates =
+                std::move(result.quantizedMeshAvailabilityUpdates);
         }
         content.metadata = std::move(result.metadata);
         return content;
@@ -61,26 +60,25 @@ struct TileLoadedContent {
     std::unique_ptr<DecodedHeightmap> heightmap;
     std::unique_ptr<GltfModel> gltfModel;
     TerrainTilePayloadKind terrainPayloadKind = TerrainTilePayloadKind::None;
+    bool terrainRenderContent = false;
     Mat4 contentTransform = Mat4::identity();
     TileLoadResultMetadata metadata;
     std::vector<QuantizedMeshAvailabilityUpdate>
         quantizedMeshAvailabilityUpdates;
 
     bool hasTerrainPayload() const {
-        return terrainPayloadKind != TerrainTilePayloadKind::None;
+        return terrainPayloadKind != TerrainTilePayloadKind::None ||
+               terrainRenderContent;
     }
 
     bool hasGltfTerrainPayload() const {
-        return terrainPayloadKind == TerrainTilePayloadKind::GltfModel &&
-               gltfModel != nullptr;
+        return terrainRenderContent && gltfModel != nullptr;
     }
 
     bool hasRenderablePayload() const {
         switch (terrainPayloadKind) {
             case TerrainTilePayloadKind::Heightmap:
                 return heightmap != nullptr;
-            case TerrainTilePayloadKind::GltfModel:
-                return gltfModel != nullptr;
             case TerrainTilePayloadKind::None:
                 return gltfModel != nullptr;
         }
