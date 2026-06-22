@@ -1457,9 +1457,9 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
             }
 
             TerrainTileLoadResult result =
-                TerrainTileLoadResult::successWithSurfaceMesh(
-                    std::move(contentResult.surfaceMesh));
-            result.metadata = std::move(contentResult.metadata);
+                TerrainTileLoadResult::successWithGltfModel(
+                    std::move(contentResult.gltfModel),
+                    std::move(contentResult.metadata));
             result.quantizedMeshAvailabilityUpdates =
                 std::move(contentResult.availabilityUpdates);
             (*callback)(key, std::move(result));

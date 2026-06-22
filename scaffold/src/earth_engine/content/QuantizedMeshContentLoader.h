@@ -31,7 +31,6 @@ struct QuantizedMeshContentLoadResult {
     QuantizedMeshContentLoadStatus status =
         QuantizedMeshContentLoadStatus::Failed;
     std::unique_ptr<GltfModel> gltfModel;
-    std::unique_ptr<SurfaceTileMesh> surfaceMesh;
     TileLoadResultMetadata metadata;
     std::vector<QuantizedMeshAvailabilityUpdate> availabilityUpdates;
 

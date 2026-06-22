@@ -166,25 +166,19 @@ TEST(QuantizedMeshContentLoaderTest,
                 RasterOverlayProjection::Geographic);
     ASSERT_NE(nullptr, modelRasterRectangle);
     EXPECT_EQ(geographicRootWestRectangle(), *modelRasterRectangle);
-    ASSERT_NE(nullptr, result.surfaceMesh);
-    ASSERT_EQ(result.surfaceMesh->vertices.size(), primitive.vertices.size());
-    ASSERT_EQ(result.surfaceMesh->indices.size(), primitive.indices.size());
-    EXPECT_EQ(result.surfaceMesh->indices, primitive.indices);
-    EXPECT_EQ(result.surfaceMesh->vertices.front().uv,
+    EXPECT_FALSE(primitive.vertices.empty());
+    EXPECT_FALSE(primitive.indices.empty());
+    EXPECT_EQ(primitive.vertices.front().uv,
               primitive.vertexTexCoords[0].front());
-    EXPECT_EQ(result.surfaceMesh->vertices.back().uv,
+    EXPECT_EQ(primitive.vertices.back().uv,
               primitive.vertexTexCoords[0].back());
     ASSERT_TRUE(primitive.skirtMetadata.has_value());
-    EXPECT_EQ(result.surfaceMesh->skirtMeta.noSkirtIndicesBegin,
-              primitive.skirtMetadata->noSkirtIndicesBegin);
-    EXPECT_EQ(result.surfaceMesh->skirtMeta.noSkirtIndicesCount,
+    EXPECT_EQ(0u, primitive.skirtMetadata->noSkirtIndicesBegin);
+    EXPECT_EQ(primitive.indices.size(),
               primitive.skirtMetadata->noSkirtIndicesCount);
-    EXPECT_EQ(result.surfaceMesh->skirtMeta.noSkirtVerticesBegin,
-              primitive.skirtMetadata->noSkirtVerticesBegin);
-    EXPECT_EQ(result.surfaceMesh->skirtMeta.noSkirtVerticesCount,
+    EXPECT_EQ(0u, primitive.skirtMetadata->noSkirtVerticesBegin);
+    EXPECT_EQ(primitive.vertices.size(),
               primitive.skirtMetadata->noSkirtVerticesCount);
-    EXPECT_EQ(result.surfaceMesh->skirtMeta.meshCenter,
-              primitive.skirtMetadata->meshCenter);
     EXPECT_GT(primitive.skirtMetadata->skirtWestHeight, 0.0);
     EXPECT_DOUBLE_EQ(primitive.skirtMetadata->skirtWestHeight,
                      primitive.skirtMetadata->skirtSouthHeight);
@@ -192,22 +186,6 @@ TEST(QuantizedMeshContentLoaderTest,
                      primitive.skirtMetadata->skirtEastHeight);
     EXPECT_DOUBLE_EQ(primitive.skirtMetadata->skirtWestHeight,
                      primitive.skirtMetadata->skirtNorthHeight);
-    EXPECT_FALSE(result.surfaceMesh->vertices.empty());
-    EXPECT_FALSE(result.surfaceMesh->indices.empty());
-    EXPECT_TRUE(result.surfaceMesh->hasHeightRange);
-    EXPECT_NEAR(-10.0, result.surfaceMesh->minimumHeight, 1e-6);
-    EXPECT_NEAR(150.0, result.surfaceMesh->maximumHeight, 1e-6);
-    EXPECT_EQ(geographicRootWestRectangle(),
-              result.surfaceMesh->rasterOverlayDetails.boundingRegion
-                  .rectangle);
-    EXPECT_NEAR(-10.0,
-                result.surfaceMesh->rasterOverlayDetails.boundingRegion
-                    .minimumHeight,
-                1e-6);
-    EXPECT_NEAR(150.0,
-                result.surfaceMesh->rasterOverlayDetails.boundingRegion
-                    .maximumHeight,
-                1e-6);
     ASSERT_TRUE(result.metadata.rasterOverlayDetails.has_value());
     const Rectangle* rasterRectangle =
         result.metadata.rasterOverlayDetails->findRectangleForOverlayProjection(
@@ -336,7 +314,6 @@ TEST(QuantizedMeshContentLoaderTest, InvalidBodyFailsWithoutUpdates) {
     EXPECT_FALSE(result.success());
     EXPECT_EQ(QuantizedMeshContentLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
-    EXPECT_EQ(nullptr, result.surfaceMesh);
     EXPECT_FALSE(result.metadata.updatedBoundingVolume.has_value());
     EXPECT_FALSE(result.metadata.rasterOverlayDetails.has_value());
     EXPECT_TRUE(result.availabilityUpdates.empty());

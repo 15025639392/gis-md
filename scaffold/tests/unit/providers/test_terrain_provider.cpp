@@ -488,7 +488,7 @@ TEST(QuantizedMeshTerrainProviderTest, InvalidBodyFailsTerminally) {
 }
 
 TEST(QuantizedMeshTerrainProviderTest,
-     RequestTileProducesSurfaceMeshLoadResult) {
+     RequestTileProducesGltfTerrainLoadResult) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/{z}/{x}/{y}.terrain");
     QueuedStatusPlatformBridge bridge;
@@ -527,11 +527,10 @@ TEST(QuantizedMeshTerrainProviderTest,
     }
 
     EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
-    ASSERT_NE(nullptr, completed.surfaceMesh);
+    ASSERT_NE(nullptr, completed.gltfModel);
+    EXPECT_EQ(nullptr, completed.surfaceMesh);
     EXPECT_EQ(nullptr, completed.heightmap);
-    EXPECT_TRUE(completed.surfaceMesh->hasHeightRange);
-    EXPECT_NEAR(minimumHeight, completed.surfaceMesh->minimumHeight, 1e-6);
-    EXPECT_NEAR(maximumHeight, completed.surfaceMesh->maximumHeight, 1e-6);
+    ASSERT_FALSE(completed.gltfModel->primitives.empty());
     ASSERT_TRUE(completed.metadata.updatedBoundingVolume.has_value());
     EXPECT_EQ(TileBoundingVolumeKind::Region,
               completed.metadata.updatedBoundingVolume->kind);
@@ -545,6 +544,15 @@ TEST(QuantizedMeshTerrainProviderTest,
     EXPECT_NEAR(maximumHeight,
                 completed.metadata.updatedBoundingVolume->maximumHeight,
                 1e-6);
+    ASSERT_TRUE(completed.metadata.terrainHeightRange.has_value());
+    EXPECT_NEAR(
+        minimumHeight,
+        completed.metadata.terrainHeightRange->first,
+        1e-6);
+    EXPECT_NEAR(
+        maximumHeight,
+        completed.metadata.terrainHeightRange->second,
+        1e-6);
 }
 
 TEST(QuantizedMeshTerrainProviderTest, UsesAsyncBridgeWithoutWorkerBlockingWait) {
@@ -1618,7 +1626,8 @@ TEST(QuantizedMeshTerrainProviderTest, LoadsUnderlyingLayerAvailabilityWithTileL
     }
 
     EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
-    ASSERT_NE(nullptr, completed.surfaceMesh);
+    ASSERT_NE(nullptr, completed.gltfModel);
+    EXPECT_EQ(nullptr, completed.surfaceMesh);
     EXPECT_EQ(nullptr, completed.heightmap);
     for (int i = 0;
          i < 200 && provider.requestDiagnostics().requestsCompleted == 0;
@@ -1727,7 +1736,8 @@ TEST(QuantizedMeshTerrainProviderTest, LoadedUnderlyingMetadataSubtreeSkipsDupli
     }
 
     EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
-    ASSERT_NE(nullptr, completed.surfaceMesh);
+    ASSERT_NE(nullptr, completed.gltfModel);
+    EXPECT_EQ(nullptr, completed.surfaceMesh);
     EXPECT_EQ(nullptr, completed.heightmap);
     EXPECT_TRUE(completed.quantizedMeshAvailabilityUpdates.empty());
     EXPECT_EQ(0u, bridge.pendingCount());
@@ -2344,7 +2354,8 @@ TEST(QuantizedMeshTerrainProviderTest, FetchesUnderlyingMetadataViaAsyncBridge) 
 
     ProviderRequestDiagnostics doneDiag = provider.requestDiagnostics();
     EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
-    ASSERT_NE(nullptr, completed.surfaceMesh);
+    ASSERT_NE(nullptr, completed.gltfModel);
+    EXPECT_EQ(nullptr, completed.surfaceMesh);
     EXPECT_EQ(nullptr, completed.heightmap);
     ASSERT_EQ(1u, completed.quantizedMeshAvailabilityUpdates.size());
     EXPECT_EQ(

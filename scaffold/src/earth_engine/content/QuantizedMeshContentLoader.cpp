@@ -94,7 +94,6 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
     }
     result.metadata.rasterOverlayDetails = surfaceMesh->rasterOverlayDetails;
     result.gltfModel = std::move(gltfModel);
-    result.surfaceMesh = std::move(surfaceMesh);
     result.availabilityUpdates.reserve(metadata.size());
     for (const QuantizedMeshMetadataContent& item : metadata) {
         QuantizedMeshAvailabilityUpdate update;
