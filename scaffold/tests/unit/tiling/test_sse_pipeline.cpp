@@ -2353,7 +2353,7 @@ void testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches() {
           "RasterOverlayTileProvider: trimmed rectangle requests keep only overlapping source tiles");
 }
 
-void testRasterOverlayBaseRectangleSourceRejectsCoverageEdgeMiss() {
+void testRasterOverlayBaseRectangleSourceClampsCoverageEdgeMiss() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
@@ -2367,10 +2367,28 @@ void testRasterOverlayBaseRectangleSourceRejectsCoverageEdgeMiss() {
     RasterOverlayTileProvider::TilePtr rectangleTile =
         provider.getTile(projectForProvider(provider, outsideCoverageBounds), 512.0, 512.0);
 
-    check(!rectangleTile,
-          "RasterOverlayTileProvider: base imagery outside coverage is rejected at rectangle tile creation");
-    check(imagery.pendingRequests.empty() && provider.getCachedTileCount() == 0,
-          "RasterOverlayTileProvider: rejected coverage miss issues no requests and creates no cache tile");
+    check(rectangleTile && rectangleTile->isRectangleTile(),
+          "RasterOverlayTileProvider: base imagery outside coverage creates a clamped rectangle tile like cesium-native");
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 1024;
+    config.maxRasterNetworkInflight = 1024;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    check(rectangleTile &&
+              provider.loadTileThrottled(*rectangleTile, &budget) &&
+              !imagery.pendingRequests.empty(),
+          "RasterOverlayTileProvider: clamped coverage miss issues edge source requests");
+
+    bool allRequestsTouchCoverage = true;
+    for (const auto& request : imagery.pendingRequests) {
+        allRequestsTouchCoverage =
+            allRequestsTouchCoverage &&
+            imageryScheme->tileToRectangle(request.key).intersects(coverageBounds);
+    }
+    check(allRequestsTouchCoverage,
+          "RasterOverlayTileProvider: clamped coverage miss samples the nearest coverage edge");
 }
 
 void testRasterOverlayRectangleSourceFailureRequestsParentSource() {
@@ -27133,7 +27151,7 @@ int main() {
     testRasterOverlayProviderDirectTileForExactProviderRectangle();
     testRasterOverlayRectangleSourceRequestsStartAsOneBatch();
     testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches();
-    testRasterOverlayBaseRectangleSourceRejectsCoverageEdgeMiss();
+    testRasterOverlayBaseRectangleSourceClampsCoverageEdgeMiss();
     testRasterOverlayRectangleSourceFailureRequestsParentSource();
     testRasterOverlayRectangleCompositionRejectsNoCoverage();
     testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize();

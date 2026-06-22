@@ -538,7 +538,7 @@ TEST(RasterOverlayLifecycleTest, DirectTileCreationRejectsOutsideCoverageLikeCes
     EXPECT_EQ(1, provider.getCachedTileCount());
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleCoverageRejectsOutsideAndClipsSourcePlan) {
+TEST(RasterOverlayLifecycleTest, RectangleCoverageClampsOutsideAndClipsSourcePlan) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
@@ -549,21 +549,39 @@ TEST(RasterOverlayLifecycleTest, RectangleCoverageRejectsOutsideAndClipsSourcePl
 
     Rectangle outside =
         scheme->tileToRectangle(TileKey{scheme->id(), 1, 1, 1});
-    EXPECT_EQ(nullptr, provider.getTile(projectForProvider(provider, outside), 512.0, 512.0));
-    EXPECT_EQ(0, provider.getCachedTileCount());
+    auto outsideTile =
+        provider.getTile(projectForProvider(provider, outside), 512.0, 512.0);
+    ASSERT_NE(nullptr, outsideTile);
+    EXPECT_TRUE(outsideTile->isRectangleTile());
+    EXPECT_TRUE(provider.loadTileThrottled(*outsideTile, nullptr));
 
+    ASSERT_FALSE(imagery.requestedKeys.empty());
+    for (const TileKey& requested : imagery.requestedKeys) {
+        Rectangle requestedBounds = scheme->tileToRectangle(requested);
+        EXPECT_TRUE(requestedBounds.intersects(options.coverageRectangle));
+    }
+
+    ParentFallbackImageryProvider overlappingImagery;
+    RasterOverlayTileProvider overlappingProvider(
+        overlappingImagery,
+        *scheme,
+        nullptr);
+    overlappingProvider.setCoverageRectangle(options.coverageRectangle);
     Rectangle overlapping(
         options.coverageRectangle.east() - options.coverageRectangle.width() * 0.5,
         options.coverageRectangle.south(),
         options.coverageRectangle.east() + options.coverageRectangle.width() * 0.5,
         options.coverageRectangle.north());
-    auto tile = provider.getTile(projectForProvider(provider, overlapping), 512.0, 512.0);
+    auto tile = overlappingProvider.getTile(
+        projectForProvider(overlappingProvider, overlapping),
+        512.0,
+        512.0);
     ASSERT_NE(nullptr, tile);
     EXPECT_TRUE(tile->isRectangleTile());
-    EXPECT_TRUE(provider.loadTileThrottled(*tile, nullptr));
+    EXPECT_TRUE(overlappingProvider.loadTileThrottled(*tile, nullptr));
 
-    ASSERT_FALSE(imagery.requestedKeys.empty());
-    for (const TileKey& requested : imagery.requestedKeys) {
+    ASSERT_FALSE(overlappingImagery.requestedKeys.empty());
+    for (const TileKey& requested : overlappingImagery.requestedKeys) {
         Rectangle requestedBounds = scheme->tileToRectangle(requested);
         EXPECT_TRUE(requestedBounds.intersects(options.coverageRectangle));
     }
@@ -594,7 +612,7 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(coveredKey, imagery.requestedKeys.front());
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleCoverageMissCreatesNoTileOrRequest) {
+TEST(RasterOverlayLifecycleTest, RectangleCoverageMissClampsToNearestCoverageEdge) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
@@ -605,9 +623,15 @@ TEST(RasterOverlayLifecycleTest, RectangleCoverageMissCreatesNoTileOrRequest) {
         TileKey{scheme->id(), 3, 2, 5});
     provider.setCoverageRectangle(coverage);
 
-    EXPECT_EQ(nullptr, provider.getTile(projectForProvider(provider, outsideCoverage), 512.0, 512.0));
-    EXPECT_TRUE(imagery.requestedKeys.empty());
-    EXPECT_EQ(0, provider.getCachedTileCount());
+    auto tile =
+        provider.getTile(projectForProvider(provider, outsideCoverage), 512.0, 512.0);
+    ASSERT_NE(nullptr, tile);
+    EXPECT_TRUE(tile->isRectangleTile());
+    EXPECT_TRUE(provider.loadTile(*tile));
+    ASSERT_FALSE(imagery.requestedKeys.empty());
+    for (const TileKey& requested : imagery.requestedKeys) {
+        EXPECT_TRUE(scheme->tileToRectangle(requested).intersects(coverage));
+    }
 }
 
 TEST(RasterOverlayLifecycleTest, DirectAlignedSingleSourceUploadsWithoutResampling) {
@@ -1550,7 +1574,7 @@ TEST(RasterOverlayLifecycleTest, FailedRasterTilesAreTerminalLikeCesiumNative) {
     EXPECT_EQ(failedRectangleRequests, imagery.requestCount);
 }
 
-TEST(RasterOverlayLifecycleTest, RectangleLoadRejectsCoverageLostAfterTileCreation) {
+TEST(RasterOverlayLifecycleTest, RectangleLoadClampsCoverageChangedAfterTileCreation) {
     ImmediateImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
@@ -1564,11 +1588,11 @@ TEST(RasterOverlayLifecycleTest, RectangleLoadRejectsCoverageLostAfterTileCreati
     provider.setCoverageRectangle(
         scheme->tileToRectangle(TileKey{scheme->id(), 2, 3, 3}));
 
-    EXPECT_FALSE(provider.loadTile(*rectangleTile));
-    EXPECT_EQ(0, imagery.requestCount);
-    EXPECT_EQ(RasterOverlayTile::LoadState::Failed,
+    EXPECT_TRUE(provider.loadTile(*rectangleTile));
+    EXPECT_EQ(1, imagery.requestCount);
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loading,
               rectangleTile->getState());
-    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::Unknown,
               rectangleTile->isMoreDetailAvailable());
 }
 

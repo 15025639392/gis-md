@@ -260,6 +260,96 @@ bool rectanglesOverlapWithArea(const Rectangle& a, const Rectangle& b) {
            intersection->height() > 1e-15;
 }
 
+double inwardSampleEpsilon(double span) {
+    return std::max(1e-12, std::abs(span) * 1e-9);
+}
+
+Rectangle expandClampedLineIntoCoverage(const Rectangle& bounds,
+                                        const Rectangle& coverage) {
+    double west = bounds.west();
+    double east = bounds.east();
+    double south = bounds.south();
+    double north = bounds.north();
+
+    if (east <= west) {
+        const double epsilon =
+            std::min(inwardSampleEpsilon(coverage.width()),
+                     std::max(1e-12, coverage.width()));
+        if (west >= coverage.east()) {
+            west = coverage.east() - epsilon;
+            east = coverage.east();
+        } else if (east <= coverage.west()) {
+            west = coverage.west();
+            east = coverage.west() + epsilon;
+        } else {
+            west = std::max(coverage.west(), west - epsilon * 0.5);
+            east = std::min(coverage.east(), east + epsilon * 0.5);
+            if (east <= west) {
+                east = std::min(coverage.east(), west + epsilon);
+            }
+        }
+    }
+
+    if (north <= south) {
+        const double epsilon =
+            std::min(inwardSampleEpsilon(coverage.height()),
+                     std::max(1e-12, coverage.height()));
+        if (south >= coverage.north()) {
+            south = coverage.north() - epsilon;
+            north = coverage.north();
+        } else if (north <= coverage.south()) {
+            south = coverage.south();
+            north = coverage.south() + epsilon;
+        } else {
+            south = std::max(coverage.south(), south - epsilon * 0.5);
+            north = std::min(coverage.north(), north + epsilon * 0.5);
+            if (north <= south) {
+                north = std::min(coverage.north(), south + epsilon);
+            }
+        }
+    }
+
+    return Rectangle(west, south, east, north);
+}
+
+Rectangle mapGeometryBoundsToImageryCoverage(const Rectangle& geometryBounds,
+                                             const Rectangle& coverage) {
+    std::optional<Rectangle> intersection =
+        geometryBounds.computeIntersection(coverage);
+    if (intersection) {
+        return *intersection;
+    }
+
+    // cesium-native QuadtreeRasterOverlayTileProvider maps base imagery with
+    // no geometry/provider overlap to the nearest coverage edge, allowing edge
+    // texels to stretch rather than dropping the raster tile entirely.
+    double west = 0.0;
+    double east = 0.0;
+    if (geometryBounds.west() >= coverage.east()) {
+        west = east = coverage.east();
+    } else if (geometryBounds.east() <= coverage.west()) {
+        west = east = coverage.west();
+    } else {
+        west = std::max(geometryBounds.west(), coverage.west());
+        east = std::min(geometryBounds.east(), coverage.east());
+    }
+
+    double south = 0.0;
+    double north = 0.0;
+    if (geometryBounds.south() >= coverage.north()) {
+        south = north = coverage.north();
+    } else if (geometryBounds.north() <= coverage.south()) {
+        south = north = coverage.south();
+    } else {
+        south = std::max(geometryBounds.south(), coverage.south());
+        north = std::min(geometryBounds.north(), coverage.north());
+    }
+
+    return expandClampedLineIntoCoverage(
+        Rectangle(west, south, east, north),
+        coverage);
+}
+
 bool isDecodedImageUploadable(const DecodedImage& image) {
     if (image.width <= 0 || image.height <= 0 || image.channels <= 0) {
         return false;
@@ -499,6 +589,21 @@ RectangleSourcePlan buildRectangleSourcePlan(
                     sourceBounds)) {
                 plan.sourceKeys.push_back(sourceKey);
             }
+        }
+    }
+    if (plan.sourceKeys.empty() &&
+        sourceBounds.width() > 0.0 &&
+        sourceBounds.height() > 0.0) {
+        const auto center = sourceBounds.center();
+        TileKey sourceKey =
+            scheme.positionToTile(center.first, center.second, plan.sourceZoom);
+        if (provider.supportsTile(sourceKey)) {
+            plan.range = TileRange{
+                sourceKey.x,
+                sourceKey.y,
+                sourceKey.x,
+                sourceKey.y};
+            plan.sourceKeys.push_back(sourceKey);
         }
     }
     return plan;
@@ -1408,18 +1513,15 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
 
     const Rectangle geometryBounds =
         unprojectProviderToGeographic(providerGeometryBounds, projection_);
-    std::optional<Rectangle> sourceBounds =
-        geometryBounds.computeIntersection(coverageRectangle_);
-    if (!sourceBounds) {
-        return nullptr;
-    }
+    const Rectangle sourceBounds =
+        mapGeometryBoundsToImageryCoverage(geometryBounds, coverageRectangle_);
 
     RectangleSourcePlan sourcePlan = buildRectangleSourcePlan(
         scheme_,
         provider_,
         textureUploader_.get(),
         geometryBounds,
-        *sourceBounds,
+        sourceBounds,
         targetScreenPixelsX,
         targetScreenPixelsY,
         maximumScreenSpaceError_,
@@ -1701,21 +1803,15 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
     const Rectangle outputBounds = tile.getRectangle();
     const Rectangle targetBounds =
         unprojectProviderToGeographic(outputBounds, projection_);
-    std::optional<Rectangle> sourceBounds =
-        targetBounds.computeIntersection(coverageRectangle_);
-    if (!sourceBounds) {
-        tile.setMoreDetailAvailable(
-            RasterOverlayTile::MoreDetailAvailable::No);
-        tile.setState(RasterOverlayTile::LoadState::Failed);
-        return false;
-    }
+    const Rectangle sourceBounds =
+        mapGeometryBoundsToImageryCoverage(targetBounds, coverageRectangle_);
 
     RectangleSourcePlan sourcePlan = buildRectangleSourcePlan(
         scheme_,
         provider_,
         textureUploader_.get(),
         targetBounds,
-        *sourceBounds,
+        sourceBounds,
         tile.getTargetScreenPixelsX(),
         tile.getTargetScreenPixelsY(),
         maximumScreenSpaceError_,
@@ -1779,7 +1875,7 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
         scheme_,
         state,
         sourcePlan,
-        targetBounds,
+        sourceBounds,
         outputBounds,
         maxTextureSize,
         getMinimumLevel(),
