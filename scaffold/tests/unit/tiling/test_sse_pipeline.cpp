@@ -13598,6 +13598,7 @@ void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
         contentUpload,
         nullptr,
         nullptr,
+        nullptr,
         rasterOverlays,
         terrainCache,
         lifecycle,
@@ -13650,6 +13651,7 @@ void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentU
 
     TilePendingLoadCommitCoordinator::commitContentUpload(
         upload,
+        nullptr,
         nullptr,
         nullptr,
         {},

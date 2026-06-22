@@ -50,12 +50,13 @@ void TileContentUploadCommitter::prepareRenderContent(
     TilesetTile& tile,
     TileLoadedContent&& content,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
-    RenderDevice* device) {
+    RenderDevice* device,
+    IPrepareRendererResources* pPrepRenderer) {
     const std::optional<TileBoundingVolume> effectiveContentBoundingVolume =
         effectiveContentBoundingVolumeForLoad(tile, content);
     // cesium-native RasterOverlayCollection::addTileOverlays clears old
     // mappings before a new render-content generation maps overlays.
-    tile.rasterOverlayState.releaseAndClearReferences(nullptr);
+    tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
     TileContentUploadPolicy::prepareGltfRenderContent(
         tile,
         std::move(content));

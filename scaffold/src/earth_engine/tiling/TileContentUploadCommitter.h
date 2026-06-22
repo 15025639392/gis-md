@@ -7,6 +7,7 @@
 namespace earth_engine {
 
 class ActivatedRasterOverlay;
+class IPrepareRendererResources;
 class RenderDevice;
 class TilesetContentProvider;
 struct TilesetTile;
@@ -23,7 +24,8 @@ struct TileContentUploadCommitter {
         TilesetTile& tile,
         TileLoadedContent&& content,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays = {},
-        RenderDevice* device = nullptr);
+        RenderDevice* device = nullptr,
+        IPrepareRendererResources* pPrepRenderer = nullptr);
     static TileContentUploadCommitAction finishRenderResourcePreparation(
         TilesetTile& tile,
         bool resourcesReady);

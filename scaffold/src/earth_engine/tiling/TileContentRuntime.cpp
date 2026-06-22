@@ -53,6 +53,7 @@ bool TileContentRuntime::processPendingUploads(
     return lifecycle_.processPendingUploads(
         frame.contentProvider,
         frame.device,
+        frame.pPrepRenderer,
         frame.rasterOverlays,
         frame.frameNumber,
         frame.maximumSimultaneousTileLoads,

@@ -18,6 +18,7 @@
 namespace earth_engine {
 
 class ActivatedRasterOverlay;
+class IPrepareRendererResources;
 class RenderDevice;
 
 class TilePendingLoadCommitCoordinator {
@@ -154,6 +155,7 @@ public:
         PendingTileLoad& upload,
         TilesetContentProvider* contentProvider,
         RenderDevice* device,
+        IPrepareRendererResources* pPrepRenderer,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         std::unordered_map<
             std::string,
@@ -183,7 +185,8 @@ public:
             *tile,
             std::move(upload.content()),
             rasterOverlays,
-            device);
+            device,
+            pPrepRenderer);
         ensureGltfResources(*tile);
         const TileContentUploadCommitAction action =
             TileContentUploadCommitter::finishRenderResourcePreparation(
@@ -231,6 +234,7 @@ public:
         PendingTileLoad& upload,
         TilesetContentProvider* contentProvider,
         RenderDevice* device,
+        IPrepareRendererResources* pPrepRenderer,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         std::unordered_map<
             std::string,
@@ -256,6 +260,7 @@ public:
                 upload,
                 contentProvider,
                 device,
+                pPrepRenderer,
                 rasterOverlays,
                 terrainCache,
                 lifecycle,

@@ -12,6 +12,7 @@ namespace earth_engine {
 
 class FrameResourceBudget;
 class ActivatedRasterOverlay;
+class IPrepareRendererResources;
 class RenderDevice;
 class TerrainProvider;
 class TileContentAccess;
@@ -39,6 +40,7 @@ struct TileContentRuntimeUploadFrame {
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     TilesetContentProvider* contentProvider = nullptr;
     RenderDevice* device = nullptr;
+    IPrepareRendererResources* pPrepRenderer = nullptr;
     uint64_t frameNumber = 0;
     uint32_t maximumSimultaneousTileLoads = 0;
     double mainThreadLoadingTimeLimit = 0.0;

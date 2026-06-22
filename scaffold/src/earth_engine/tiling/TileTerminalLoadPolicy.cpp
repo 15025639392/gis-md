@@ -8,12 +8,12 @@ namespace earth_engine {
 namespace {
 
 void markUnknownTemporaryFailure(TilesetTile& tile) {
-    tile.rasterOverlayState.mappings().clear();
+    tile.rasterOverlayState.releaseAndClearReferences(nullptr);
     tile.markContentFailedTemporarily();
 }
 
 void markUnknownPermanentFailure(TilesetTile& tile) {
-    tile.rasterOverlayState.mappings().clear();
+    tile.rasterOverlayState.releaseAndClearReferences(nullptr);
     tile.markContentFailedPermanently();
 }
 
@@ -42,7 +42,7 @@ TileTerminalLoadPolicy::applyTerrainTerminalResult(
     switch (status) {
         case TileLoadStatus::Empty: {
             action.markEmptyCacheKey = true;
-            tile.rasterOverlayState.mappings().clear();
+            tile.rasterOverlayState.releaseAndClearReferences(nullptr);
             tile.markEmptyContentLoaded();
             applyNativeEmptyContentRefinement(tile);
             tile.markEmptyContentDone();
@@ -74,13 +74,13 @@ TileTerminalLoadPolicy::applyContentTerminalResult(
     switch (status) {
         case TileLoadStatus::Empty:
             action.markEmptyCacheKey = true;
-            tile.rasterOverlayState.mappings().clear();
+            tile.rasterOverlayState.releaseAndClearReferences(nullptr);
             applyNativeEmptyContentRefinement(tile);
             tile.markEmptyContentDone();
             action.resourcesDirty = true;
             break;
         case TileLoadStatus::External:
-            tile.rasterOverlayState.mappings().clear();
+            tile.rasterOverlayState.releaseAndClearReferences(nullptr);
             tile.markExternalContentDone();
             action.ensureChildren = true;
             action.resourcesDirty = true;

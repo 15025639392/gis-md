@@ -14,6 +14,7 @@
 namespace earth_engine {
 
 class ActivatedRasterOverlay;
+class IPrepareRendererResources;
 
 class TileContentLifecycleManager {
 public:
@@ -86,6 +87,7 @@ public:
     bool processPendingUploads(
         TilesetContentProvider* contentProvider,
         RenderDevice* device,
+        IPrepareRendererResources* pPrepRenderer,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         uint64_t frameNumber,
         uint32_t maximumSimultaneousTileLoads,
@@ -103,6 +105,7 @@ public:
             makeUploadContext(
                 contentProvider,
                 device,
+                pPrepRenderer,
                 rasterOverlays,
                 frameNumber,
                 maximumSimultaneousTileLoads,
@@ -150,6 +153,7 @@ private:
     TilesetContentUploadContext makeUploadContext(
         TilesetContentProvider* contentProvider,
         RenderDevice* device,
+        IPrepareRendererResources* pPrepRenderer,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         uint64_t frameNumber,
         uint32_t maximumSimultaneousTileLoads,
@@ -160,6 +164,7 @@ private:
             loadLifecycle_,
             contentProvider,
             device,
+            pPrepRenderer,
             rasterOverlays,
             terrainCache_,
             emptyContentRegistry_,

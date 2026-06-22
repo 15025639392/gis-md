@@ -15,6 +15,7 @@
 #include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
+#include "earth_engine/tiling/TileContentUploadCommitter.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileSurface.h"
 #include "earth_engine/tiling/SurfaceTileDrawCommandBuilder.h"
@@ -3237,6 +3238,78 @@ TEST(RasterOverlayLifecycleTest,
     ASSERT_NE(nullptr, mappedB->getLoadingTile());
     EXPECT_EQ(activatedB.getTileProvider(),
               &mappedB->getLoadingTile()->getTileProvider());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     RenderContentCommitDetachesAttachedRasterBeforeClearingMappingsLikeCesiumNativeAddTileOverlays) {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activated(*overlay);
+
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 2, 1, 1},
+        Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0));
+    auto existingModel = std::make_unique<GltfModel>();
+    existingModel->rasterOverlayDetails.rasterOverlayProjections.push_back(
+        RasterOverlayProjection::WebMercator);
+    existingModel->rasterOverlayDetails.rasterOverlayRectangles.push_back(
+        projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            tile.bounds));
+    tile.content.renderContent.prepareGltfContent(
+        std::move(existingModel),
+        Mat4::identity());
+    tile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.contentKind = TileContentKind::Render;
+
+    RasterOverlayTileProvider* provider = activated.ensureTileProvider(nullptr);
+    ASSERT_NE(nullptr, provider);
+    RasterMappedToTilesetTile& mapped =
+        tile.rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missing;
+    ASSERT_EQ(
+        RasterMappedToTilesetTile::MoreDetail::Unknown,
+        mapped.update(
+            tile.key,
+            tile.content.renderContent.rasterOverlayDetails(),
+            512.0,
+            512.0,
+            *provider,
+            nullptr,
+            missing));
+    ASSERT_NE(nullptr, mapped.getLoadingTile());
+    mapped.getLoadingTile()->setTexture(std::make_unique<TestTexture>(4, 4));
+
+    RecordingPrepareRendererResources recorder;
+    mapped.update(
+        tile.key,
+        tile.content.renderContent.rasterOverlayDetails(),
+        512.0,
+        512.0,
+        *provider,
+        &recorder,
+        missing);
+    ASSERT_EQ(RasterMappedToTilesetTile::State::Attached,
+              mapped.getState());
+    ASSERT_EQ(1, recorder.attachCount);
+    ASSERT_EQ(0, recorder.detachCount);
+
+    TileContentLoadResult replacementResult =
+        TileContentLoadResult::render(std::make_unique<GltfModel>());
+    TileContentUploadCommitter::prepareRenderContent(
+        tile,
+        TileLoadedContent::fromContentResult(std::move(replacementResult)),
+        {},
+        nullptr,
+        &recorder);
+
+    EXPECT_EQ(1, recorder.detachCount);
+    EXPECT_EQ(0u, tile.rasterOverlayState.mappingCount());
+    EXPECT_TRUE(tile.content.renderContent.hasGltfModel());
 }
 
 TEST(RasterOverlayLifecycleTest, MissingPreciseRectangleWithoutRenderDetailsUsesPlaceholder) {
