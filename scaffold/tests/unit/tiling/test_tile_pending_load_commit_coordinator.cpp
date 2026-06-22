@@ -623,7 +623,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         TileLoadResult::createRenderableTerrain(
             nullptr,
             std::move(surfaceMesh),
-            {},
             std::move(metadata))};
 
     TileLoadLifecycle lifecycle;
@@ -705,7 +704,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         TileLoadResult::createRenderableTerrain(
             nullptr,
             std::move(surfaceMesh),
-            {},
             std::move(metadata))};
 
     TileLoadLifecycle lifecycle;
@@ -935,7 +933,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     MissingTerrainUploadCachesHeightmapAndAppliesAvailabilityUpdates) {
+     LegacyHeightmapTerrainUploadDoesNotApplyQuantizedMeshAvailabilityUpdates) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxMainThreadFinalizesPerFrame = 4;
@@ -949,20 +947,13 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     auto heightmap = std::make_unique<DecodedHeightmap>();
     heightmap->tileSize = 2;
     heightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
-    QuantizedMeshAvailabilityUpdate update;
-    update.layerIndex = 0;
-    update.subtreeKey = terrainKey;
-    update.metadataAvailability = {{0, 0, 0, 0, 0}};
 
     PendingTileLoad upload{TileLoadDomain::Terrain,
         terrainKey,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileLoadResult::createRenderableTerrain(
-            std::move(heightmap),
-            nullptr,
-            {update})};
+        TileLoadResult::createRenderableTerrain(std::move(heightmap))};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
@@ -1010,9 +1001,9 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     ASSERT_NE(terrainCache.find(cacheKey), terrainCache.end());
     EXPECT_TRUE(terrainCache.at(cacheKey)->valid());
-    EXPECT_EQ(TileAvailabilityState::Available,
+    EXPECT_EQ(TileAvailabilityState::Unknown,
               provider.availabilityState(availableChildKey));
-    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+    EXPECT_EQ(TileAvailabilityState::Unknown,
               provider.availabilityState(unavailableSiblingKey));
     EXPECT_FALSE(meshEnsured);
     EXPECT_FALSE(resourcesDirty);

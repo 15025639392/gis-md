@@ -31,13 +31,14 @@ struct TileLoadedContent {
         TerrainTileLoadResult&& result) {
         TileLoadedContent content;
         content.gltfModel = std::move(result.gltfModel);
-        if (!content.gltfModel) {
+        if (content.gltfModel) {
+            content.quantizedMeshAvailabilityUpdates =
+                std::move(result.quantizedMeshAvailabilityUpdates);
+        } else {
             content.heightmap = std::move(result.heightmap);
             content.surfaceMesh = std::move(result.surfaceMesh);
         }
         content.metadata = std::move(result.metadata);
-        content.quantizedMeshAvailabilityUpdates =
-            std::move(result.quantizedMeshAvailabilityUpdates);
         return content;
     }
 
@@ -85,14 +86,11 @@ struct TileLoadResult {
     static TileLoadResult createRenderableTerrain(
         std::unique_ptr<DecodedHeightmap> heightmap = nullptr,
         std::unique_ptr<SurfaceTileMesh> surfaceMesh = nullptr,
-        std::vector<QuantizedMeshAvailabilityUpdate> availabilityUpdates = {},
         TileLoadResultMetadata metadata = {}) {
         TileLoadResult loadResult;
         loadResult.status = TileLoadStatus::Renderable;
         loadResult.content.heightmap = std::move(heightmap);
         loadResult.content.surfaceMesh = std::move(surfaceMesh);
-        loadResult.content.quantizedMeshAvailabilityUpdates =
-            std::move(availabilityUpdates);
         loadResult.content.metadata = std::move(metadata);
         return loadResult;
     }

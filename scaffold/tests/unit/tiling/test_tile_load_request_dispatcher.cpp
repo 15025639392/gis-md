@@ -204,10 +204,44 @@ public:
 
         TerrainTileLoadResult result =
             TerrainTileLoadResult::successWithSurfaceMesh(std::move(mesh));
+        callback(key, std::move(result));
+    }
+    std::unique_ptr<DecodedHeightmap> decodeTile(
+        const uint8_t*,
+        size_t) override {
+        return nullptr;
+    }
+
+    bool& issuedBeforeCallback_;
+    bool callbackSawIssued = false;
+};
+
+class SyncGltfTerrainUploadProvider final : public TerrainProvider {
+public:
+    explicit SyncGltfTerrainUploadProvider(bool& issuedBeforeCallback)
+        : issuedBeforeCallback_(issuedBeforeCallback) {}
+
+    std::string id() const override { return "dispatcher-terrain-gltf-upload"; }
+    std::string schemeId() const override { return "test"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 1; }
+    int tileSize() const override { return 2; }
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://dispatcher-terrain-gltf-upload";
+    }
+    void requestTile(
+        const TileKey& key,
+        CancellationToken,
+        TerrainCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callbackSawIssued = issuedBeforeCallback_;
+        auto model = std::make_unique<GltfModel>();
         QuantizedMeshAvailabilityUpdate update;
         update.layerIndex = 0;
         update.subtreeKey = key;
         update.metadataAvailability = {{0, 0, 0, 0, 0}};
+        TerrainTileLoadResult result =
+            TerrainTileLoadResult::successWithGltfModel(std::move(model));
         result.quantizedMeshAvailabilityUpdates.push_back(update);
         callback(key, std::move(result));
     }
@@ -799,6 +833,51 @@ TEST(TileLoadRequestDispatcherTest, QueuesSurfaceOnlyTerrainUpload) {
     EXPECT_EQ(nullptr, content.heightmap);
     ASSERT_NE(nullptr, content.surfaceMesh);
     EXPECT_EQ(1u, content.surfaceMesh->vertices.size());
+    EXPECT_EQ(nullptr, content.gltfModel);
+    EXPECT_TRUE(content.quantizedMeshAvailabilityUpdates.empty());
+}
+
+TEST(TileLoadRequestDispatcherTest,
+     QueuesGltfTerrainUploadWithQuantizedMeshAvailability) {
+    std::mutex mutex;
+    std::condition_variable condition;
+    TilePendingRequestState requestState;
+    TilePendingLoadQueue pendingLoads;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+    SyncGltfTerrainUploadProvider provider(issued);
+
+    TileLoadDispatchResult result =
+        TileLoadRequestDispatcher::requestTerrain(
+            mutex,
+            condition,
+            requestState,
+            pendingLoads,
+            budget,
+            provider,
+            key,
+            "terrain-gltf-upload",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            [&issued]() { issued = true; });
+
+    EXPECT_EQ(TileLoadDispatchResult::Issued, result);
+    EXPECT_TRUE(provider.callbackSawIssued);
+    EXPECT_TRUE(requestState.empty());
+    EXPECT_EQ(1u, pendingLoads.terrainUploadCount());
+    EXPECT_EQ(0u, pendingLoads.terrainTerminalResultCount());
+
+    auto upload = pendingLoads.takeHighestPriorityUpload(false, budget);
+    ASSERT_TRUE(upload.has_value());
+    ASSERT_EQ(TileLoadDomain::Terrain, upload->domain);
+    const TileLoadedContent& content = upload->content();
+    EXPECT_EQ(nullptr, content.heightmap);
+    EXPECT_EQ(nullptr, content.surfaceMesh);
+    ASSERT_NE(nullptr, content.gltfModel);
     ASSERT_EQ(
         1u,
         content.quantizedMeshAvailabilityUpdates.size());
