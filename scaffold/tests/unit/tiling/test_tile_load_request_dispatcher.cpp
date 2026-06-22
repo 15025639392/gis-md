@@ -887,6 +887,48 @@ TEST(TileLoadRequestDispatcherTest,
 }
 
 TEST(TileLoadRequestDispatcherTest,
+     TerrainPayloadKindSelectsExactlyOneContentPath) {
+    auto gltfModel = std::make_unique<GltfModel>();
+    GltfModel* rawGltfModel = gltfModel.get();
+    TerrainTileLoadResult gltfResult =
+        TerrainTileLoadResult::successWithGltfModel(std::move(gltfModel));
+    gltfResult.heightmap = std::make_unique<DecodedHeightmap>();
+    gltfResult.surfaceMesh = std::make_unique<SurfaceTileMesh>();
+    gltfResult.quantizedMeshAvailabilityUpdates.push_back(
+        QuantizedMeshAvailabilityUpdate{});
+
+    TileLoadResult normalizedGltf =
+        TileLoadResult::fromTerrainResult(std::move(gltfResult));
+
+    EXPECT_EQ(TileLoadStatus::Renderable, normalizedGltf.status);
+    EXPECT_EQ(nullptr, normalizedGltf.content.heightmap);
+    EXPECT_EQ(nullptr, normalizedGltf.content.surfaceMesh);
+    EXPECT_EQ(rawGltfModel, normalizedGltf.content.gltfModel.get());
+    EXPECT_EQ(
+        1u,
+        normalizedGltf.content.quantizedMeshAvailabilityUpdates.size());
+
+    auto heightmap = std::make_unique<DecodedHeightmap>();
+    DecodedHeightmap* rawHeightmap = heightmap.get();
+    TerrainTileLoadResult heightmapResult =
+        TerrainTileLoadResult::successWithHeightmap(std::move(heightmap));
+    heightmapResult.gltfModel = std::make_unique<GltfModel>();
+    heightmapResult.surfaceMesh = std::make_unique<SurfaceTileMesh>();
+    heightmapResult.quantizedMeshAvailabilityUpdates.push_back(
+        QuantizedMeshAvailabilityUpdate{});
+
+    TileLoadResult normalizedHeightmap =
+        TileLoadResult::fromTerrainResult(std::move(heightmapResult));
+
+    EXPECT_EQ(TileLoadStatus::Renderable, normalizedHeightmap.status);
+    EXPECT_EQ(rawHeightmap, normalizedHeightmap.content.heightmap.get());
+    EXPECT_EQ(nullptr, normalizedHeightmap.content.surfaceMesh);
+    EXPECT_EQ(nullptr, normalizedHeightmap.content.gltfModel);
+    EXPECT_TRUE(
+        normalizedHeightmap.content.quantizedMeshAvailabilityUpdates.empty());
+}
+
+TEST(TileLoadRequestDispatcherTest,
      RunsOnIssuedBeforeSynchronousContentUploadCallback) {
     std::mutex mutex;
     std::condition_variable condition;
