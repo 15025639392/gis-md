@@ -10,6 +10,7 @@
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileBoundsMetrics.h"
 #include "earth_engine/tiling/TileContentUploadCommitter.h"
+#include "earth_engine/tiling/TileGltfTerrainUpsampledChildMaterializer.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
 
@@ -136,14 +137,17 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
 }
 
 void installQuantizedMeshTerrainContent(TilesetTile& tile,
-                                        const std::vector<uint8_t>& bytes) {
+                                        const std::vector<uint8_t>& bytes,
+                                        RasterOverlayProjection projection =
+                                            RasterOverlayProjection::Geographic) {
     QuantizedMeshContentLoadResult loadResult =
         QuantizedMeshContentLoader::load(
             bytes.data(),
             bytes.size(),
             tile.bounds,
             false,
-            {});
+            {},
+            projection);
     ASSERT_TRUE(loadResult.success());
 
     TileLoadedContent content;
@@ -157,13 +161,18 @@ void installQuantizedMeshTerrainContent(TilesetTile& tile,
         std::move(content),
         {},
         nullptr);
+    tile.content.contentKind = TileContentKind::Render;
     tile.content.loadState = TileLoadState::Done;
 }
 
 class SparseTerrainProvider final : public TerrainProvider {
 public:
+    explicit SparseTerrainProvider(
+        std::string scheme = "Geographic-TMS")
+        : schemeId_(std::move(scheme)) {}
+
     std::string id() const override { return "sparse-terrain"; }
-    std::string schemeId() const override { return "Geographic-TMS"; }
+    std::string schemeId() const override { return schemeId_; }
     int minZoom() const override { return 0; }
     int maxZoom() const override { return 4; }
     int tileSize() const override { return 2; }
@@ -196,6 +205,9 @@ public:
         const uint8_t*, size_t) override {
         return nullptr;
     }
+
+private:
+    std::string schemeId_;
 };
 
 std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
@@ -523,6 +535,76 @@ TEST(TilesetQuantizedMeshTest,
 
         EXPECT_FALSE(child->contentBoundingVolume.has_value());
     }
+}
+
+TEST(TilesetQuantizedMeshTest,
+     ContentTerrainAvailabilityUpsamplePreservesRasterOverlayProjectionUvLikeCesiumNative) {
+    auto provider = std::make_unique<SparseTerrainProvider>(
+        "XYZ-WebMercator");
+    auto scheme = TileScheme::createXYZWebMercator();
+    Tileset tileset(std::move(provider),
+                    std::move(scheme),
+                    {},
+                    nullptr,
+                    TilesetOptions{});
+
+    const TileKey rootKey{"XYZ-WebMercator", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+
+    installQuantizedMeshTerrainContent(
+        *root,
+        makeQuantizedMeshBytes(Vec3::zero(), Vec3::zero()),
+        RasterOverlayProjection::WebMercator);
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+
+    ASSERT_EQ(4u, root->children.size());
+    TilesetTile* upsampledChild = root->children[1];
+    ASSERT_NE(nullptr, upsampledChild);
+    ASSERT_EQ((TileKey{"XYZ-WebMercator", 1, 1, 0}), upsampledChild->key);
+    ASSERT_TRUE(upsampledChild->content.isTerrainAvailabilityUpsample());
+
+    std::optional<TileLoadResult> childLoad =
+        TileGltfTerrainUpsampledChildMaterializer::createLoadResult(
+            *upsampledChild);
+    ASSERT_TRUE(childLoad.has_value());
+    ASSERT_EQ(TileLoadStatus::Renderable, childLoad->status);
+    ASSERT_NE(nullptr, childLoad->content.gltfModel);
+
+    const GltfModel& childModel = *childLoad->content.gltfModel;
+    const int webMercatorTexCoord =
+        childModel.rasterOverlayDetails.textureCoordinateIDForProjection(
+            RasterOverlayProjection::WebMercator);
+    ASSERT_GE(webMercatorTexCoord, 0);
+    ASSERT_LT(webMercatorTexCoord,
+              static_cast<int>(kGltfMaxTexCoordSets));
+    ASSERT_FALSE(childModel.primitives.empty());
+
+    bool sawNonDegenerateTexCoords = false;
+    for (const GltfPrimitive& primitive : childModel.primitives) {
+        ASSERT_LT(static_cast<size_t>(webMercatorTexCoord),
+                  primitive.vertexTexCoords.size());
+        const auto& texCoords =
+            primitive.vertexTexCoords[static_cast<size_t>(
+                webMercatorTexCoord)];
+        ASSERT_EQ(primitive.vertices.size(), texCoords.size());
+        for (const auto& uv : texCoords) {
+            EXPECT_GE(uv[0], 0.5f - 1e-6f);
+            EXPECT_LE(uv[0], 1.0f + 1e-6f);
+            EXPECT_GE(uv[1], 0.0f - 1e-6f);
+            EXPECT_LE(uv[1], 0.5f + 1e-6f);
+            sawNonDegenerateTexCoords |=
+                std::abs(uv[0]) > 1e-6f || std::abs(uv[1]) > 1e-6f;
+        }
+    }
+    EXPECT_TRUE(sawNonDegenerateTexCoords);
+
+    ASSERT_TRUE(childLoad->content.metadata.rasterOverlayDetails.has_value());
+    EXPECT_EQ(
+        webMercatorTexCoord,
+        childLoad->content.metadata.rasterOverlayDetails
+            ->textureCoordinateIDForProjection(
+                RasterOverlayProjection::WebMercator));
 }
 
 } // namespace
