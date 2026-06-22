@@ -647,7 +647,7 @@ std::string sourceCacheKey(const TileKey& key) {
 struct LoadedSourceImage {
     TileKey key;
     Rectangle bounds;
-    std::unique_ptr<DecodedImage> image;
+    std::shared_ptr<const DecodedImage> image;
     bool ancestorFallback = false;
     RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
         RasterOverlayTile::MoreDetailAvailable::Unknown;
@@ -1034,7 +1034,7 @@ private:
                 LoadedSourceImage source;
                 source.key = it->second.key;
                 source.bounds = it->second.bounds;
-                source.image = cloneDecodedImage(*it->second.image);
+                source.image = it->second.image;
                 source.ancestorFallback =
                     ancestorFallback || it->second.ancestorFallback;
                 source.moreDetailAvailable = it->second.moreDetailAvailable;
@@ -1056,7 +1056,7 @@ private:
                         LoadedSourceImage source;
                         source.key = cached->key;
                         source.bounds = cached->bounds;
-                        source.image = cloneDecodedImage(*cached->image);
+                        source.image = cached->image;
                         source.ancestorFallback =
                             ancestorFallback || cached->ancestorFallback;
                         source.moreDetailAvailable =
@@ -1086,7 +1086,7 @@ private:
                         LoadedSourceImage source;
                         source.key = cached->key;
                         source.bounds = cached->bounds;
-                        source.image = cloneDecodedImage(*cached->image);
+                        source.image = cached->image;
                         source.ancestorFallback =
                             ancestorFallback || cached->ancestorFallback;
                         source.moreDetailAvailable =
@@ -1129,7 +1129,8 @@ private:
                     LoadedSourceImage source;
                     source.key = loadedKey;
                     source.bounds = self->scheme.tileToRectangle(loadedKey);
-                    source.image = std::move(image);
+                    source.image =
+                        std::shared_ptr<const DecodedImage>(std::move(image));
                     source.ancestorFallback = ancestorFallback;
                     source.moreDetailAvailable =
                         loadedKey.z < self->maximumLevel
@@ -1142,7 +1143,7 @@ private:
                         LoadedSourceImage directSource;
                         directSource.key = loadedKey;
                         directSource.bounds = source.bounds;
-                        directSource.image = cloneDecodedImage(*source.image);
+                        directSource.image = source.image;
                         directSource.ancestorFallback = false;
                         directSource.moreDetailAvailable =
                             source.moreDetailAvailable;
@@ -1188,7 +1189,7 @@ private:
         cached.key = source.key;
         cached.bounds = source.bounds;
         if (source.image) {
-            cached.image = std::make_shared<DecodedImage>(*source.image);
+            cached.image = source.image;
             cached.sizeBytes = decodedImageSizeBytes(*source.image);
         }
         cached.ancestorFallback = source.ancestorFallback;
@@ -1225,7 +1226,7 @@ private:
         SourceTileAsset cached;
         cached.key = source.key;
         cached.bounds = source.bounds;
-        cached.image = std::make_shared<DecodedImage>(*source.image);
+        cached.image = source.image;
         cached.ancestorFallback = source.ancestorFallback;
         cached.moreDetailAvailable = source.moreDetailAvailable;
         cached.sizeBytes = decodedImageSizeBytes(*source.image);
@@ -1299,7 +1300,7 @@ private:
                            ? RasterOverlayTile::MoreDetailAvailable::Yes
                            : RasterOverlayTile::MoreDetailAvailable::No);
             onSuccess(
-                std::move(source.image),
+                cloneDecodedImage(*source.image),
                 outputBounds,
                 moreDetailAvailable);
             return;
@@ -1378,7 +1379,7 @@ RasterOverlayTileProvider::composeRectangleImagesWithDetails(
         sources.push_back(LoadedSourceImage{
             source.key,
             source.bounds,
-            std::move(source.image),
+            std::shared_ptr<const DecodedImage>(std::move(source.image)),
             source.ancestorFallback,
             source.moreDetailAvailable});
     }
