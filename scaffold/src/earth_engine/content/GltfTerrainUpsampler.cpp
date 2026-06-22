@@ -167,7 +167,6 @@ bool upsamplePrimitive(const GltfPrimitive& parent,
         textureCoordinateIndex < 0 ||
         textureCoordinateIndex >= static_cast<int>(kGltfMaxTexCoordSets) ||
         parent.vertices.empty() ||
-        parent.indices.size() < 3 ||
         parent.vertexTexCoords[textureCoordinateIndex].size() !=
             parent.vertices.size()) {
         return false;
@@ -194,22 +193,31 @@ bool upsamplePrimitive(const GltfPrimitive& parent,
     const bool keepGreaterV =
         hasInvertedVCoordinate ? !keepNorth : keepNorth;
 
+    const bool hasExplicitIndices = !parent.indices.empty();
+    const uint32_t implicitIndexCount =
+        static_cast<uint32_t>(parent.vertices.size());
+    const uint32_t sourceIndexCount = hasExplicitIndices
+        ? static_cast<uint32_t>(parent.indices.size())
+        : implicitIndexCount;
     const uint32_t indexBegin = parent.skirtMetadata
-        ? parent.skirtMetadata->noSkirtIndicesBegin
+        ? (hasExplicitIndices ? parent.skirtMetadata->noSkirtIndicesBegin
+                              : parent.skirtMetadata->noSkirtVerticesBegin)
         : 0u;
     const uint32_t indexCount = parent.skirtMetadata
-        ? parent.skirtMetadata->noSkirtIndicesCount
-        : static_cast<uint32_t>(parent.indices.size());
-    if (indexBegin >= parent.indices.size() ||
-        indexCount > parent.indices.size() - indexBegin) {
+        ? (hasExplicitIndices ? parent.skirtMetadata->noSkirtIndicesCount
+                              : parent.skirtMetadata->noSkirtVerticesCount)
+        : sourceIndexCount;
+    if (sourceIndexCount < 3 ||
+        indexBegin >= sourceIndexCount ||
+        indexCount > sourceIndexCount - indexBegin) {
         return false;
     }
     const uint32_t indexEnd = indexBegin + indexCount;
 
     for (uint32_t i = indexBegin; i + 2 < indexEnd; i += 3) {
-        const uint32_t ia = parent.indices[i];
-        const uint32_t ib = parent.indices[i + 1];
-        const uint32_t ic = parent.indices[i + 2];
+        const uint32_t ia = hasExplicitIndices ? parent.indices[i] : i;
+        const uint32_t ib = hasExplicitIndices ? parent.indices[i + 1] : i + 1;
+        const uint32_t ic = hasExplicitIndices ? parent.indices[i + 2] : i + 2;
         if (ia >= parent.vertices.size() ||
             ib >= parent.vertices.size() ||
             ic >= parent.vertices.size()) {

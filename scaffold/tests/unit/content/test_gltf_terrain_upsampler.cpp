@@ -106,6 +106,49 @@ TEST(GltfTerrainUpsamplerTest,
 }
 
 TEST(GltfTerrainUpsamplerTest,
+     ClipsNonIndexedTrianglesLikeCesiumNative) {
+    GltfModel parent = makeParentModel();
+    GltfPrimitive& parentPrimitive = parent.primitives.front();
+    parentPrimitive.indices.clear();
+    parentPrimitive.skirtMetadata.reset();
+    parentPrimitive.vertices = {
+        vertex(0.0, 0.0, 0.0, 0.0),
+        vertex(2.0, 0.0, 1.0, 0.0),
+        vertex(0.0, 2.0, 0.0, 1.0),
+        vertex(0.0, 2.0, 0.0, 1.0),
+        vertex(2.0, 0.0, 1.0, 0.0),
+        vertex(2.0, 2.0, 1.0, 1.0)};
+    parentPrimitive.vertexTexCoords[0] = {
+        {0.0f, 0.0f},
+        {1.0f, 0.0f},
+        {0.0f, 1.0f},
+        {0.0f, 1.0f},
+        {1.0f, 0.0f},
+        {1.0f, 1.0f}};
+    parentPrimitive.runtime.baseVertices = parentPrimitive.vertices;
+
+    const UpsampledQuadtreeNode child{TileKey{"Geographic-TMS", 1, 0, 0}};
+
+    std::unique_ptr<GltfModel> upsampled =
+        GltfTerrainUpsampler::upsampleForRasterOverlay(parent, child, 0, false);
+
+    ASSERT_NE(nullptr, upsampled);
+    ASSERT_EQ(1u, upsampled->primitives.size());
+    const GltfPrimitive& primitive = upsampled->primitives.front();
+    EXPECT_EQ(GltfPrimitiveMode::Triangles, primitive.primitiveMode);
+    ASSERT_FALSE(primitive.vertices.empty());
+    ASSERT_FALSE(primitive.indices.empty());
+    EXPECT_EQ(0u, primitive.indices.size() % 3u);
+    for (uint32_t index : primitive.indices) {
+        EXPECT_LT(index, primitive.vertices.size());
+    }
+    for (const SurfaceVertex& vertex : primitive.vertices) {
+        EXPECT_LE(vertex.uv[0], 0.5f);
+        EXPECT_LE(vertex.uv[1], 0.5f);
+    }
+}
+
+TEST(GltfTerrainUpsamplerTest,
      ClipsLowerLeftChildWithInvertedVCoordinateLikeCesiumNative) {
     GltfModel parent = makeParentModel();
     for (GltfPrimitive& primitive : parent.primitives) {
