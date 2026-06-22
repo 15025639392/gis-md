@@ -35,6 +35,8 @@ public:
         const std::vector<TileKey> contentChildren =
             contentProvider ? contentProvider->childTiles(tile.key)
                             : std::vector<TileKey>{};
+        const bool contentProviderOwnsTerrainQuadtree =
+            contentProvider && contentProvider->providesTerrainQuadtree();
 
         return TileChildMaterializer::canRefine(
             tile,
@@ -45,9 +47,9 @@ public:
                     !contentProvider->providesTerrainQuadtree() &&
                     contentProvider->supportsTile(tile.key),
                 isAvailabilityBoundary(tile) && !hasLoadedTerrainContent(tile),
-                (contentProvider &&
-                 contentProvider->providesTerrainQuadtree()) ||
+                contentProviderOwnsTerrainQuadtree ||
                     terrainProvider != nullptr,
+                !contentProviderOwnsTerrainQuadtree,
                 tileScheme.maxZoom()},
             cacheKey,
             [&terrainCache](const std::string& key) {

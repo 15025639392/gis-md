@@ -2371,3 +2371,34 @@ TEST(
     EXPECT_TRUE(root->children[2]->content.isTerrainAvailabilityUpsample());
     EXPECT_TRUE(root->children[3]->content.isTerrainAvailabilityUpsample());
 }
+
+TEST(
+    TilesetSelectionRefinementTest,
+    ContentTerrainQuadtreeIgnoresLegacyHeightmapCacheForRefinement) {
+    auto contentProvider = std::make_unique<TerrainQuadtreeContentProvider>();
+
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey cachedLegacyChildKey{"Geographic-TMS", 1, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    root->geometricError = 100.0;
+    root->refine = TileRefine::Replace;
+    setLoadedTerrainGltfContent(*root);
+
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        cachedLegacyChildKey,
+        std::make_unique<DecodedHeightmap>());
+
+    EXPECT_FALSE(TilesetTestAccess::canRefine(tileset, *root));
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    EXPECT_TRUE(root->children.empty());
+}

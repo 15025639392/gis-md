@@ -20,6 +20,7 @@ struct TileRefinementAvailabilityOptions {
     bool contentProviderSupportsTile = false;
     bool isAvailabilityBoundaryWaitingForContent = false;
     bool hasTerrainQuadtree = false;
+    bool cachedHeightmapCanRefine = true;
     int maxZoom = 0;
 };
 
@@ -259,7 +260,8 @@ struct TileChildMaterializer {
                         continue;
                     }
                 }
-                if (isTerrainCached(cacheKey(childKey))) {
+                if (options.cachedHeightmapCanRefine &&
+                    isTerrainCached(cacheKey(childKey))) {
                     return true;
                 }
                 if (options.hasTerrainQuadtree &&
