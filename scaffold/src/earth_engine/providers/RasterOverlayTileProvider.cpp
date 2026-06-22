@@ -1696,6 +1696,12 @@ RasterOverlayTileProvider::requestDiagnostics() const {
             asyncState_->activeRasterSourceRequests.load(
                 std::memory_order_relaxed));
     diag.peakExternalResourceBlockingRequests =
+        std::max(
+            diag.peakExternalResourceBlockingRequests,
+            static_cast<int>(
+                asyncState_->peakRasterSourceRequests.load(
+                    std::memory_order_relaxed)));
+    diag.peakExternalResourceBlockingRequests =
         std::max(diag.peakExternalResourceBlockingRequests,
                  diag.activeExternalResourceBlockingRequests);
     return diag;
@@ -1945,9 +1951,20 @@ bool RasterOverlayTileProvider::loadMappedTile(
             state->rasterSourceRequestsStarted.fetch_add(
                 1,
                 std::memory_order_relaxed);
-            state->activeRasterSourceRequests.fetch_add(
-                1,
+            const uint32_t active =
+                state->activeRasterSourceRequests.fetch_add(
+                    1,
+                    std::memory_order_relaxed) +
+                1;
+            uint32_t peak = state->peakRasterSourceRequests.load(
                 std::memory_order_relaxed);
+            while (active > peak &&
+                   !state->peakRasterSourceRequests.compare_exchange_weak(
+                       peak,
+                       active,
+                       std::memory_order_relaxed,
+                       std::memory_order_relaxed)) {
+            }
         },
         [state]() {
             state->rasterSourceRequestsCompleted.fetch_add(

@@ -2358,7 +2358,7 @@ void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
                   RasterOverlayTile::LoadState::Loading &&
               firstFrameBudget.rasterNetworkRequestsIssued() > 2 &&
               imagery.pendingRequests.size() ==
-                  imagery.pendingRequests.size(),
+                  firstFrameBudget.rasterNetworkRequestsIssued(),
           "RasterOverlayTileProvider: quadtree source batch accounts for source fanout");
     const ProviderRequestDiagnostics activeSourceDiag =
         provider.requestDiagnostics();
@@ -2366,6 +2366,8 @@ void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
                   static_cast<int>(imagery.pendingRequests.size()) &&
               activeSourceDiag.externalResourceRequestsCompleted == 0 &&
               activeSourceDiag.activeExternalResourceBlockingRequests ==
+                  static_cast<int>(imagery.pendingRequests.size()) &&
+              activeSourceDiag.peakExternalResourceBlockingRequests ==
                   static_cast<int>(imagery.pendingRequests.size()),
           "RasterOverlayTileProvider: diagnostics expose quadtree source fanout");
 
@@ -2388,7 +2390,9 @@ void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
                   static_cast<int>(firstBatchSize) &&
               completedSourceDiag.externalResourceRequestsCompleted ==
                   static_cast<int>(firstBatchSize) &&
-              completedSourceDiag.activeExternalResourceBlockingRequests == 0,
+              completedSourceDiag.activeExternalResourceBlockingRequests == 0 &&
+              completedSourceDiag.peakExternalResourceBlockingRequests ==
+                  static_cast<int>(firstBatchSize),
           "RasterOverlayTileProvider: diagnostics complete quadtree source fanout");
 }
 
@@ -2630,6 +2634,85 @@ void testRasterOverlayDirectTileJoinsCompositeSourceInFlight() {
           "RasterOverlayTileProvider: direct tile loads from shared composite source");
     check(directTile->getTexture() != nullptr,
           "RasterOverlayTileProvider: direct tile receives texture from shared source upload");
+}
+
+void testRasterOverlayCompositeTilesShareSourceInFlight() {
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<SlowRasterTextureUploader>();
+    RasterOverlayTileProvider provider(
+        imagery,
+        *imageryScheme,
+        std::move(uploader));
+
+    const Rectangle sharedSourceBounds = imageryScheme->tileToRectangle(
+        TileKey{imageryScheme->id(), 3, 2, 3});
+    const Rectangle westHalf =
+        Rectangle(
+            sharedSourceBounds.west(),
+            sharedSourceBounds.south(),
+            sharedSourceBounds.west() + sharedSourceBounds.width() * 0.75,
+            sharedSourceBounds.north());
+    const Rectangle eastHalf =
+        Rectangle(
+            sharedSourceBounds.west() + sharedSourceBounds.width() * 0.25,
+            sharedSourceBounds.south(),
+            sharedSourceBounds.east(),
+            sharedSourceBounds.north());
+    RasterOverlayTileProvider::TilePtr westComposite =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, westHalf),
+            512.0,
+            512.0).tile;
+    RasterOverlayTileProvider::TilePtr eastComposite =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, eastHalf),
+            512.0,
+            512.0).tile;
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    config.maxRasterUploadsPerFrame = 64;
+    FrameResourceBudget westBudget;
+    westBudget.beginFrame(1, config);
+    FrameResourceBudget eastBudget;
+    eastBudget.beginFrame(2, config);
+
+    check(westComposite && westComposite->isCompositeTile() &&
+              eastComposite && eastComposite->isCompositeTile() &&
+              provider.loadTileThrottled(*westComposite, &westBudget) &&
+              provider.loadTileThrottled(*eastComposite, &eastBudget),
+          "RasterOverlayTileProvider: overlapping composite fixtures start loading");
+    if (!westComposite || !eastComposite || imagery.pendingRequests.empty()) {
+        return;
+    }
+
+    check(westComposite->getSourceZoom() == eastComposite->getSourceZoom() &&
+              westBudget.rasterNetworkRequestsIssued() == 12 &&
+              eastBudget.rasterNetworkRequestsIssued() == 4 &&
+              imagery.pendingRequests.size() == 16,
+          "RasterOverlayTileProvider: composite geometry tiles share one source imagery request");
+    check(provider.requestDiagnostics().externalResourceRequestsStarted ==
+              static_cast<int>(imagery.pendingRequests.size()),
+          "RasterOverlayTileProvider: diagnostics count shared composite source requests once");
+    check(provider.requestDiagnostics().peakExternalResourceBlockingRequests ==
+              static_cast<int>(imagery.pendingRequests.size()),
+          "RasterOverlayTileProvider: diagnostics keep composite source fanout peak");
+
+    const auto pendingRequests = imagery.pendingRequests;
+    for (const auto& request : pendingRequests) {
+        request.callback(request.key, makeDecodedRgbaImage(64, 64));
+    }
+
+    FrameResourceBudget uploadBudget;
+    uploadBudget.beginFrame(3, config);
+    provider.processPendingUploads(false, &uploadBudget);
+    provider.processPendingUploads(false, &uploadBudget);
+
+    check(westComposite->getState() == RasterOverlayTile::LoadState::Loaded &&
+              eastComposite->getState() == RasterOverlayTile::LoadState::Loaded,
+          "RasterOverlayTileProvider: both composite tiles resolve from shared source assets");
 }
 
 void testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize() {
@@ -28011,6 +28094,7 @@ int main() {
     testRasterOverlayQuadtreeSourceFailureRequestsParentSource();
     testRasterOverlayFallbackParentInFlightSharesDirectAsset();
     testRasterOverlayDirectTileJoinsCompositeSourceInFlight();
+    testRasterOverlayCompositeTilesShareSourceInFlight();
     testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize();
     testRasterOverlayUploadsStopAfterElapsedBudgetExpires();
     testRasterMappedUsesRenderContentDetailsRectangle();
