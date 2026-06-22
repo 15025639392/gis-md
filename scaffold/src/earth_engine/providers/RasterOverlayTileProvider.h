@@ -73,7 +73,7 @@ public:
             RasterOverlayTile::MoreDetailAvailable::No;
     };
 
-    struct RectangleTileMapping {
+    struct RasterTileMapping {
         TilePtr tile;
         bool directTile = false;
     };
@@ -97,12 +97,16 @@ public:
     /// Returns the shared placeholder tile if the provider is not yet ready.
     TilePtr getTile(const TileKey& key);
 
-    /// Map a geometry rectangle to the provider's raster tile cache. Exact
-    /// single-source mappings return a direct quadtree tile; other mappings
-    /// return a rectangle tile while reusing the same source plan.
-    RectangleTileMapping mapTileForRectangle(const Rectangle& rectangle,
-                                             double targetScreenPixelsX,
-                                             double targetScreenPixelsY);
+    /// cesium-native QuadtreeRasterOverlayTileProvider::
+    /// mapRasterTilesToGeometryTile equivalent. Maps the geometry tile's
+    /// projected rectangle to this provider's quadtree raster cache. Exact
+    /// single-source mappings return the direct quadtree tile; multi-source
+    /// mappings return a composed implementation tile backed by the same
+    /// source-tile plan.
+    RasterTileMapping mapRasterTilesToGeometryTile(
+        const Rectangle& geometryRectangle,
+        double targetScreenPixelsX,
+        double targetScreenPixelsY);
 
     /// cesium-native: returns whether the provider is ready to serve tiles.
     bool isReady() const { return ready_; }

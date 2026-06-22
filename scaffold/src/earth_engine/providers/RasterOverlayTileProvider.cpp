@@ -1507,8 +1507,8 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
     return tile;
 }
 
-RasterOverlayTileProvider::RectangleTileMapping
-RasterOverlayTileProvider::mapTileForRectangle(
+RasterOverlayTileProvider::RasterTileMapping
+RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
     const Rectangle& providerGeometryBounds,
     double targetScreenPixelsX,
     double targetScreenPixelsY) {

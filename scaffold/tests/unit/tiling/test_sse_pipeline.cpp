@@ -2221,7 +2221,7 @@ void testRasterOverlayProviderRectangleTile() {
     Rectangle geometryBounds = geometryScheme->tileToRectangle(geometryKey);
 
     provider.setFrameNumber(1);
-    auto rectangleTile = provider.mapTileForRectangle(
+    auto rectangleTile = provider.mapRasterTilesToGeometryTile(
         projectForProvider(provider, geometryBounds), 512.0, 512.0).tile;
     check(rectangleTile != nullptr,
           "RasterOverlayTileProvider: rectangle tile is created");
@@ -2257,7 +2257,7 @@ void testRasterOverlayProviderDirectTileForExactProviderRectangle() {
     Rectangle bounds = imageryScheme->tileToRectangle(key);
 
     provider.setFrameNumber(1);
-    auto mappedTile = provider.mapTileForRectangle(projectForProvider(provider, bounds), 512.0, 512.0).tile;
+    auto mappedTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, bounds), 512.0, 512.0).tile;
     check(mappedTile != nullptr,
           "RasterOverlayTileProvider: exact provider rectangle creates a tile");
     check(mappedTile && !mappedTile->isRectangleTile(),
@@ -2339,7 +2339,7 @@ void testRasterOverlayRectangleSourceRequestsStartAsOneBatch() {
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
 
     RasterOverlayTileProvider::TilePtr rectangleTile =
-        provider.mapTileForRectangle(
+        provider.mapRasterTilesToGeometryTile(
             Rectangle::fromDegrees(-170.0, -70.0, 170.0, 70.0),
             1024.0,
             1024.0).tile;
@@ -2379,7 +2379,7 @@ void testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches() {
     Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
     RasterOverlayTileProvider::TilePtr rectangleTile =
-        provider.mapTileForRectangle(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
+        provider.mapRasterTilesToGeometryTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
 
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 1024;
@@ -2417,7 +2417,7 @@ void testRasterOverlayBaseRectangleSourceClampsCoverageEdgeMiss() {
     provider.setCoverageRectangle(coverageBounds);
 
     RasterOverlayTileProvider::TilePtr rectangleTile =
-        provider.mapTileForRectangle(projectForProvider(provider, outsideCoverageBounds), 512.0, 512.0).tile;
+        provider.mapRasterTilesToGeometryTile(projectForProvider(provider, outsideCoverageBounds), 512.0, 512.0).tile;
 
     check(rectangleTile && rectangleTile->isRectangleTile(),
           "RasterOverlayTileProvider: base imagery outside coverage creates a clamped rectangle tile like cesium-native");
@@ -2451,7 +2451,7 @@ void testRasterOverlayRectangleSourceFailureRequestsParentSource() {
     Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
     RasterOverlayTileProvider::TilePtr rectangleTile =
-        provider.mapTileForRectangle(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
+        provider.mapRasterTilesToGeometryTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
 
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
@@ -2496,7 +2496,7 @@ void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
     Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
     RasterOverlayTileProvider::TilePtr rectangleTile =
-        provider.mapTileForRectangle(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
+        provider.mapRasterTilesToGeometryTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
 
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
@@ -2557,7 +2557,7 @@ void testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize() {
     const Rectangle rootBounds = imageryScheme->tileToRectangle(
         TileKey{imageryScheme->id(), 0, 0, 0});
     RasterOverlayTileProvider::TilePtr rectangleTile =
-        provider.mapTileForRectangle(projectForProvider(provider, rootBounds), 131072.0, 131072.0).tile;
+        provider.mapRasterTilesToGeometryTile(projectForProvider(provider, rootBounds), 131072.0, 131072.0).tile;
 
     check(rectangleTile && rectangleTile->getSourceZoom() == 5,
           "RasterOverlayTileProvider: rectangle source zoom is reduced until combined texture fits like cesium-native");

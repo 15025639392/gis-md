@@ -192,10 +192,10 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
             loadingTileSource_ = ReadyTileSource::None;
         } else if (hasRenderContentDetails && geometryRectangle) {
             // cesium-native mapOverlayToTile:
-            // RasterOverlayTileProvider::getTile(rectangle, screenPixels) receives
-            // the geometry rectangle from TileRenderContent raster details.
+            // mapRasterTilesToGeometryTile receives the geometry rectangle
+            // from TileRenderContent raster details.
             textureCoordinateID_ = readyTextureCoordinateID;
-            _pLoadingTile = tileProvider.mapTileForRectangle(
+            _pLoadingTile = tileProvider.mapRasterTilesToGeometryTile(
                                 *geometryRectangle,
                                 targetScreenPixelsX,
                                 targetScreenPixelsY).tile;
@@ -219,7 +219,7 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                 addProjectionToList(missingProjections, projection);
             if (boundingVolumeRectangle &&
                 !boundingVolumeRectangle->isEmpty()) {
-                _pLoadingTile = tileProvider.mapTileForRectangle(
+                _pLoadingTile = tileProvider.mapRasterTilesToGeometryTile(
                                     *boundingVolumeRectangle,
                                     targetScreenPixelsX,
                                     targetScreenPixelsY).tile;
