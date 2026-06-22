@@ -29,11 +29,10 @@ void TileContentUploadCommitter::prepareRenderContent(
     TileLoadedContent&& content,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
     RenderDevice* device) {
-    const bool terrainRenderContent = content.terrainRenderContent;
     TileContentUploadPolicy::prepareGltfRenderContent(
         tile,
         std::move(content));
-    if (terrainRenderContent) {
+    if (tile.content.renderContent.hasGltfModel()) {
         TileRasterOverlayDetailsGenerator::
             ensureProjectionDetailsFromActiveOverlays(
                 tile.content.renderContent,
