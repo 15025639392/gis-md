@@ -117,6 +117,8 @@ TEST(QuantizedMeshContentLoaderWaterMaskTest,
     EXPECT_FALSE(allWater.gltfModel->terrainWaterMask.allLand);
     EXPECT_TRUE(allWater.gltfModel->terrainWaterMask.data.empty());
     ASSERT_EQ(1u, allWater.gltfModel->primitives.size());
+    EXPECT_TRUE(
+        allWater.gltfModel->primitives.front().hasTerrainWaterMaskMetadata);
     EXPECT_TRUE(allWater.gltfModel->primitives.front().terrainOnlyWater);
     EXPECT_FALSE(allWater.gltfModel->primitives.front().terrainOnlyLand);
     EXPECT_FALSE(
@@ -133,6 +135,8 @@ TEST(QuantizedMeshContentLoaderWaterMaskTest,
     EXPECT_FALSE(allLand.gltfModel->terrainWaterMask.allWater);
     EXPECT_TRUE(allLand.gltfModel->terrainWaterMask.data.empty());
     ASSERT_EQ(1u, allLand.gltfModel->primitives.size());
+    EXPECT_TRUE(
+        allLand.gltfModel->primitives.front().hasTerrainWaterMaskMetadata);
     EXPECT_FALSE(allLand.gltfModel->primitives.front().terrainOnlyWater);
     EXPECT_TRUE(allLand.gltfModel->primitives.front().terrainOnlyLand);
     EXPECT_FALSE(
@@ -166,6 +170,7 @@ TEST(QuantizedMeshContentLoaderWaterMaskTest,
               result.gltfModel->textures.size());
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    EXPECT_TRUE(primitive.hasTerrainWaterMaskMetadata);
     EXPECT_FALSE(primitive.terrainOnlyWater);
     EXPECT_FALSE(primitive.terrainOnlyLand);
     ASSERT_TRUE(primitive.terrainWaterMaskTextureIndex.has_value());

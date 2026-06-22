@@ -5615,6 +5615,7 @@ void testTilesetGltfDrawCommandBindsTerrainWaterMask() {
     waterMaskTexture.sampler.mipmap = false;
     model->terrainWaterMaskTextureIndex = model->textures.size();
     model->textures.push_back(std::move(waterMaskTexture));
+    model->primitives.front().hasTerrainWaterMaskMetadata = true;
     model->primitives.front().terrainOnlyLand = false;
     model->primitives.front().terrainOnlyWater = false;
     model->primitives.front().terrainWaterMaskTextureIndex =

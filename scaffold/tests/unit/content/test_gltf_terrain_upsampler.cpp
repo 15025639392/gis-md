@@ -32,6 +32,7 @@ GltfModel makeParentModel() {
         {1.0f, 1.0f}};
     primitive.runtime.baseVertices = primitive.vertices;
     primitive.runtime.hasNormals = true;
+    primitive.hasTerrainWaterMaskMetadata = true;
     primitive.terrainOnlyWater = false;
     primitive.terrainOnlyLand = false;
     primitive.terrainWaterMaskTextureIndex = 0;
@@ -201,6 +202,7 @@ TEST(GltfTerrainUpsamplerTest,
     GltfModel parent = makeParentModel();
     GltfPrimitive mixed = parent.primitives.front();
 
+    parent.primitives.front().hasTerrainWaterMaskMetadata = true;
     parent.primitives.front().terrainOnlyWater = true;
     parent.primitives.front().terrainOnlyLand = false;
     parent.primitives.front().terrainWaterMaskTextureIndex = 0;
@@ -208,6 +210,7 @@ TEST(GltfTerrainUpsamplerTest,
     parent.primitives.front().terrainWaterMaskTranslationY = 0.0;
     parent.primitives.front().terrainWaterMaskScale = 1.0;
 
+    mixed.hasTerrainWaterMaskMetadata = true;
     mixed.terrainOnlyWater = false;
     mixed.terrainOnlyLand = false;
     mixed.terrainWaterMaskTextureIndex = 0;
@@ -229,6 +232,7 @@ TEST(GltfTerrainUpsamplerTest,
     ASSERT_EQ(2u, upsampled->primitives.size());
 
     const GltfPrimitive& onlyWater = upsampled->primitives[0];
+    EXPECT_TRUE(onlyWater.hasTerrainWaterMaskMetadata);
     EXPECT_TRUE(onlyWater.terrainOnlyWater);
     EXPECT_FALSE(onlyWater.terrainOnlyLand);
     EXPECT_FALSE(onlyWater.terrainWaterMaskTextureIndex.has_value());
@@ -237,6 +241,7 @@ TEST(GltfTerrainUpsamplerTest,
     EXPECT_DOUBLE_EQ(0.5, onlyWater.terrainWaterMaskScale);
 
     const GltfPrimitive& mixedChild = upsampled->primitives[1];
+    EXPECT_TRUE(mixedChild.hasTerrainWaterMaskMetadata);
     EXPECT_FALSE(mixedChild.terrainOnlyWater);
     EXPECT_FALSE(mixedChild.terrainOnlyLand);
     ASSERT_TRUE(mixedChild.terrainWaterMaskTextureIndex.has_value());
@@ -244,6 +249,35 @@ TEST(GltfTerrainUpsamplerTest,
     EXPECT_DOUBLE_EQ(0.325, mixedChild.terrainWaterMaskTranslationX);
     EXPECT_DOUBLE_EQ(0.4, mixedChild.terrainWaterMaskTranslationY);
     EXPECT_DOUBLE_EQ(0.125, mixedChild.terrainWaterMaskScale);
+}
+
+TEST(GltfTerrainUpsamplerTest,
+     MissingWaterMaskExtrasUpsamplesToCesiumNativeDefaultOnlyLand) {
+    GltfModel parent = makeParentModel();
+    GltfPrimitive& primitive = parent.primitives.front();
+    primitive.hasTerrainWaterMaskMetadata = false;
+    primitive.terrainOnlyWater = false;
+    primitive.terrainOnlyLand = true;
+    primitive.terrainWaterMaskTextureIndex.reset();
+    primitive.terrainWaterMaskTranslationX = 0.0;
+    primitive.terrainWaterMaskTranslationY = 0.0;
+    primitive.terrainWaterMaskScale = 1.0;
+
+    const UpsampledQuadtreeNode child{TileKey{"Geographic-TMS", 1, 1, 1}};
+
+    std::unique_ptr<GltfModel> upsampled =
+        GltfTerrainUpsampler::upsampleForRasterOverlay(parent, child, 0, false);
+
+    ASSERT_NE(nullptr, upsampled);
+    ASSERT_EQ(1u, upsampled->primitives.size());
+    const GltfPrimitive& out = upsampled->primitives.front();
+    EXPECT_TRUE(out.hasTerrainWaterMaskMetadata);
+    EXPECT_FALSE(out.terrainOnlyWater);
+    EXPECT_TRUE(out.terrainOnlyLand);
+    EXPECT_FALSE(out.terrainWaterMaskTextureIndex.has_value());
+    EXPECT_DOUBLE_EQ(0.0, out.terrainWaterMaskTranslationX);
+    EXPECT_DOUBLE_EQ(0.0, out.terrainWaterMaskTranslationY);
+    EXPECT_DOUBLE_EQ(0.0, out.terrainWaterMaskScale);
 }
 
 TEST(GltfTerrainUpsamplerTest,

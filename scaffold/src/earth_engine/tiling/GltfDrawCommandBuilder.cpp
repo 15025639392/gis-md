@@ -269,6 +269,7 @@ void GltfDrawCommandBuilder::build(
         cmd.textures[13] = primitive.specularGlossinessTexture.texture;
         cmd.textures[14] = primitive.transmissionTexture.texture;
         const bool primitiveHasWaterMask =
+            primitive.hasTerrainWaterMaskMetadata &&
             !primitive.terrainOnlyLand &&
             (primitive.terrainOnlyWater ||
              primitive.terrainWaterMaskTexture != nullptr);

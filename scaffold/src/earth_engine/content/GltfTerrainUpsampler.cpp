@@ -696,13 +696,19 @@ void scaleWaterMask(WaterMask& waterMask, const UpsampledQuadtreeNode& childID) 
 void scalePrimitiveWaterMask(GltfPrimitive& primitive,
                              const GltfPrimitive& parent,
                              const UpsampledQuadtreeNode& childID) {
+    primitive.hasTerrainWaterMaskMetadata = true;
     primitive.terrainOnlyWater = parent.terrainOnlyWater;
     primitive.terrainOnlyLand = parent.terrainOnlyLand;
     primitive.terrainWaterMaskTextureIndex =
-        (!parent.terrainOnlyWater && !parent.terrainOnlyLand)
+        (parent.hasTerrainWaterMaskMetadata &&
+         !parent.terrainOnlyWater &&
+         !parent.terrainOnlyLand)
             ? parent.terrainWaterMaskTextureIndex
             : std::optional<size_t>{};
-    primitive.terrainWaterMaskScale = 0.5 * parent.terrainWaterMaskScale;
+    const double parentScale = parent.hasTerrainWaterMaskMetadata
+        ? parent.terrainWaterMaskScale
+        : 0.0;
+    primitive.terrainWaterMaskScale = 0.5 * parentScale;
     primitive.terrainWaterMaskTranslationX =
         parent.terrainWaterMaskTranslationX +
         primitive.terrainWaterMaskScale *

@@ -222,6 +222,9 @@ TEST(QuantizedMeshContentLoaderTest,
     EXPECT_FALSE(result.gltfModel->terrainWaterMask.allWater);
     EXPECT_TRUE(result.gltfModel->terrainWaterMask.valid());
     ASSERT_TRUE(result.gltfModel->terrainWaterMaskTextureIndex.has_value());
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    EXPECT_TRUE(
+        result.gltfModel->primitives.front().hasTerrainWaterMaskMetadata);
     ASSERT_EQ(1u, result.gltfModel->textures.size());
     const GltfTexture& texture = result.gltfModel->textures.front();
     EXPECT_EQ(256, texture.image.width);

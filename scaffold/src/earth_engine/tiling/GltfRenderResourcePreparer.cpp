@@ -291,6 +291,8 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
                 resources.dynamicVertices = animated;
                 resources.animationRevision =
                     model->currentAnimationRevision();
+                resources.hasTerrainWaterMaskMetadata =
+                    primitive.hasTerrainWaterMaskMetadata;
                 resources.terrainOnlyWater = primitive.terrainOnlyWater;
                 resources.terrainOnlyLand = primitive.terrainOnlyLand;
                 resources.terrainWaterMaskTranslationScale = {

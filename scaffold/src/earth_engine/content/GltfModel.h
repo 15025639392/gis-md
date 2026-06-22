@@ -120,6 +120,7 @@ struct GltfPrimitive {
     std::vector<GltfInstance> instances;
     GltfPrimitiveRuntime runtime;
     std::optional<SkirtMetadata> skirtMetadata;
+    bool hasTerrainWaterMaskMetadata = false;
     bool terrainOnlyWater = false;
     bool terrainOnlyLand = true;
     std::optional<size_t> terrainWaterMaskTextureIndex;
