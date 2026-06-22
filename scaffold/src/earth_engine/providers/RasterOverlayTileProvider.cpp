@@ -968,7 +968,6 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
         , cacheBytes(state->sourceTileDepotCacheBytes)
         , cacheGeneration(state->sourceTileDepotGeneration)
         , inFlight(state->sourceTileDepotInFlight)
-        , cacheBudgetBytes(state->subTileCacheBytes)
         , cacheMutex(state->mutex)
         , minimumLevel(minimumSourceLevel)
         , maximumLevel(maximumSourceLevel) {}
@@ -1187,15 +1186,15 @@ private:
     void cacheSource(const TileKey& requestedKey,
                      const LoadedSourceImage& source) {
         if (!source.image) return;
+        SourceTileAsset cached = cachedSourceFromLoaded(source);
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        const int64_t cacheBudgetBytes = state->subTileCacheBytes;
         if (cacheBudgetBytes <= 0) {
-            std::lock_guard<std::mutex> lock(cacheMutex);
             cache.clear();
             cacheLru.clear();
             cacheBytes = 0;
             return;
         }
-        SourceTileAsset cached = cachedSourceFromLoaded(source);
-        std::lock_guard<std::mutex> lock(cacheMutex);
         const std::string key = sourceCacheKey(requestedKey);
         auto existing = cache.find(key);
         if (existing != cache.end()) {
@@ -1205,7 +1204,7 @@ private:
         cacheBytes += cached.sizeBytes;
         cacheLru.emplace_back(key, cached.generation);
         cache[key] = std::move(cached);
-        pruneCacheToBudget();
+        pruneCacheToBudget(cacheBudgetBytes);
     }
 
     void touchCachedSource(const std::string& key, SourceTileAsset& source) {
@@ -1213,7 +1212,7 @@ private:
         cacheLru.emplace_back(key, source.generation);
     }
 
-    void pruneCacheToBudget() {
+    void pruneCacheToBudget(int64_t cacheBudgetBytes) {
         while (cacheBytes > cacheBudgetBytes && !cacheLru.empty()) {
             auto [key, generation] = cacheLru.front();
             cacheLru.pop_front();
@@ -1237,7 +1236,6 @@ private:
     int64_t& cacheBytes;
     uint64_t& cacheGeneration;
     std::unordered_map<std::string, InFlightSourceTileAsset>& inFlight;
-    int64_t cacheBudgetBytes = 0;
     std::mutex& cacheMutex;
     int minimumLevel = 0;
     int maximumLevel = 0;
