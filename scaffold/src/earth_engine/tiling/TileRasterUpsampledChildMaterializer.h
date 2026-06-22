@@ -30,6 +30,10 @@ public:
 
         const RasterOverlayDetails& details =
             tile.content.renderContent.rasterOverlayDetails();
+        if (details.boundingRegion.maximumHeight <
+            details.boundingRegion.minimumHeight) {
+            return false;
+        }
         Rectangle subdivisionRectangle = tile.bounds;
         if (details.boundingRegion.minimumHeight <=
                 details.boundingRegion.maximumHeight &&

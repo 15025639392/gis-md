@@ -852,6 +852,72 @@ TEST(TileChildMaterializerTest,
 }
 
 TEST(TileChildMaterializerTest,
+     RasterUpsampledChildrenRequireValidBoundingRegionHeightLikeCesiumNative) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createGeographicTMS();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
+    parent.geometricError = 100.0;
+    parent.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    parent.content.renderContent.setMeshReady(true);
+    parent.content.renderContent.setTerrainHeightRange(-5.0, 25.0);
+    RasterOverlayDetails* details =
+        parent.content.renderContent.mutableRasterOverlayDetails();
+    details->rasterOverlayProjections = {RasterOverlayProjection::Geographic};
+    details->rasterOverlayRectangles = {parent.bounds};
+    details->boundingRegion = {parent.bounds, 25.0, -5.0};
+
+    auto& mapped = parent.rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missingProjections;
+    mapped.update(
+        parent.key,
+        parent.content.renderContent.rasterOverlayDetails(),
+        256.0,
+        256.0,
+        provider,
+        nullptr,
+        missingProjections);
+    RasterOverlayTile* loadingTile = mapped.getLoadingTile();
+    ASSERT_NE(nullptr, loadingTile);
+    loadingTile->setState(RasterOverlayTile::LoadState::Loaded);
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    EXPECT_EQ(
+        RasterMappedToTilesetTile::MoreDetail::Yes,
+        mapped.update(
+            parent.key,
+            parent.content.renderContent.rasterOverlayDetails(),
+            256.0,
+            256.0,
+            provider,
+            nullptr,
+            missingProjections));
+    EXPECT_TRUE(mapped.isMoreDetailAvailable());
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    EXPECT_FALSE(TileRasterUpsampledChildMaterializer::materialize(
+        parent,
+        100.0,
+        ensure));
+    EXPECT_TRUE(parent.children.empty());
+    EXPECT_TRUE(tiles.empty());
+}
+
+TEST(TileChildMaterializerTest,
      RasterUpsampledChildrenUseOverlayCenterWithinContentUnionLikeCesiumNative) {
     DebugImageryProvider imagery;
     auto overlayScheme = TileScheme::createXYZWebMercator();
