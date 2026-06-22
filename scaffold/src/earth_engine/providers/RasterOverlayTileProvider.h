@@ -83,8 +83,7 @@ public:
         const Rectangle& targetBounds,
         int sourceZoom,
         std::vector<QuadtreeSourceImage>&& sources,
-        int maximumSourceZoom,
-        int maximumTextureSize);
+        int maximumSourceZoom);
 
     static double projectedVForLatitude(
         const TileScheme& scheme,

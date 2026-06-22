@@ -735,8 +735,7 @@ CombinedImageMeasurements measureCombinedImage(
     const Rectangle& targetBounds,
     const std::vector<LoadedSourceImage>& sources,
     double projectedWidthPerPixel,
-    double projectedHeightPerPixel,
-    int maximumTextureSize) {
+    double projectedHeightPerPixel) {
     std::optional<Rectangle> combinedBounds;
     int channels = 0;
     for (const LoadedSourceImage& source : sources) {
@@ -809,8 +808,8 @@ CombinedImageMeasurements measureCombinedImage(
     int height = static_cast<int>(MathUtils::roundUp(
         projectedHeight(scheme, *combinedBounds) / projectedHeightPerPixel,
         kPixelTolerance));
-    width = std::clamp(width, 1, maximumTextureSize);
-    height = std::clamp(height, 1, maximumTextureSize);
+    width = std::max(1, width);
+    height = std::max(1, height);
     return CombinedImageMeasurements{*combinedBounds, width, height, channels};
 }
 
@@ -887,8 +886,7 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
     const Rectangle& targetBounds,
     int sourceZoom,
     std::vector<LoadedSourceImage>&& sources,
-    int maximumSourceZoom,
-    int maximumTextureSize) {
+    int maximumSourceZoom) {
     (void)sourceZoom;
     sources.erase(
         std::remove_if(sources.begin(), sources.end(),
@@ -920,8 +918,7 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
         targetBounds,
         sources,
         projectedWidthPerPixel,
-        projectedHeightPerPixel,
-        maximumTextureSize);
+        projectedHeightPerPixel);
     if (measurements.width <= 0 || measurements.height <= 0) {
         return {};
     }
@@ -1397,7 +1394,6 @@ struct RasterOverlayTileProvider::QuadtreeSourceRequest
                           QuadtreeSourcePlan plan,
                           Rectangle bounds,
                           Rectangle outputRectangle,
-                          int textureSize,
                           int maximumSourceLevel,
                           bool emptyWhenOnlyAncestorFallback,
                           CompositeRequestSuccess success,
@@ -1407,7 +1403,6 @@ struct RasterOverlayTileProvider::QuadtreeSourceRequest
         , sourcePlan(std::move(plan))
         , targetBounds(bounds)
         , outputBounds(outputRectangle)
-        , maximumTextureSize(textureSize)
         , maximumLevel(maximumSourceLevel)
         , returnEmptyForAncestorOnly(emptyWhenOnlyAncestorFallback)
         , onSuccess(std::move(success))
@@ -1518,8 +1513,7 @@ private:
                 targetBounds,
                 sourcePlan.sourceZoom,
                 std::move(completedSources),
-                maximumLevel,
-                maximumTextureSize);
+                maximumLevel);
         if (composed.image) {
             onSuccess(
                 std::move(composed.image),
@@ -1536,7 +1530,6 @@ private:
     QuadtreeSourcePlan sourcePlan;
     Rectangle targetBounds;
     Rectangle outputBounds;
-    int maximumTextureSize = 0;
     int maximumLevel = 0;
     bool returnEmptyForAncestorOnly = false;
     CompositeRequestSuccess onSuccess;
@@ -1554,8 +1547,7 @@ RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
     const Rectangle& targetBounds,
     int sourceZoom,
     std::vector<QuadtreeSourceImage>&& publicSources,
-    int maximumSourceZoom,
-    int maximumTextureSize) {
+    int maximumSourceZoom) {
     std::vector<LoadedSourceImage> sources;
     sources.reserve(publicSources.size());
     bool haveAnyUsefulImageData = false;
@@ -1579,8 +1571,7 @@ RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
         targetBounds,
         sourceZoom,
         std::move(sources),
-        maximumSourceZoom,
-        maximumTextureSize);
+        maximumSourceZoom);
 }
 
 double RasterOverlayTileProvider::projectedVForLatitude(
@@ -2100,8 +2091,6 @@ bool RasterOverlayTileProvider::loadMappedTile(
     if (tileIt != tiles_.end()) {
         tileWeak = tileIt->second;
     }
-    const int maxTextureSize =
-        maximumCombinedTextureSize(textureUploader_.get(), maximumTextureSize_);
     if (!sourceAssetDepot_) {
         refreshSourceAssetDepot();
     }
@@ -2112,7 +2101,6 @@ bool RasterOverlayTileProvider::loadMappedTile(
         sourcePlan,
         targetBounds,
         outputBounds,
-        maxTextureSize,
         getMaximumLevel(),
         returnEmptyForAncestorOnly,
         [state, cacheKey](std::unique_ptr<DecodedImage> composed,
