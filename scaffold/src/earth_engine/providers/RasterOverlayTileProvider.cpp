@@ -684,6 +684,7 @@ struct CombinedImageMeasurements {
     Rectangle rectangle;
     int width = 0;
     int height = 0;
+    int channels = 0;
 };
 
 PixelRectangle computePixelRectangle(
@@ -731,7 +732,11 @@ CombinedImageMeasurements measureCombinedImage(
     double projectedHeightPerPixel,
     int maximumTextureSize) {
     std::optional<Rectangle> combinedBounds;
+    int channels = 0;
     for (const LoadedSourceImage& source : sources) {
+        if (source.image) {
+            channels = std::max(channels, source.image->channels);
+        }
         const Rectangle sourceSubset =
             source.sourceSubset.value_or(source.bounds);
         std::optional<Rectangle> intersection =
@@ -800,7 +805,7 @@ CombinedImageMeasurements measureCombinedImage(
         kPixelTolerance));
     width = std::clamp(width, 1, maximumTextureSize);
     height = std::clamp(height, 1, maximumTextureSize);
-    return CombinedImageMeasurements{*combinedBounds, width, height};
+    return CombinedImageMeasurements{*combinedBounds, width, height, channels};
 }
 
 void blitImage(DecodedImage& target,
@@ -855,7 +860,7 @@ void blitImage(DecodedImage& target,
                 (static_cast<size_t>(dy) *
                      static_cast<size_t>(target.width) +
                  static_cast<size_t>(dx)) *
-                4u;
+                static_cast<size_t>(target.channels);
             target.pixels[dstIndex + 0] = source.pixels[srcIndex + 0];
             target.pixels[dstIndex + 1] =
                 source.channels > 1 ? source.pixels[srcIndex + 1]
@@ -863,8 +868,10 @@ void blitImage(DecodedImage& target,
             target.pixels[dstIndex + 2] =
                 source.channels > 2 ? source.pixels[srcIndex + 2]
                                     : source.pixels[srcIndex + 0];
-            target.pixels[dstIndex + 3] =
-                source.channels >= 4 ? source.pixels[srcIndex + 3] : 255;
+            if (target.channels >= 4) {
+                target.pixels[dstIndex + 3] =
+                    source.channels >= 4 ? source.pixels[srcIndex + 3] : 255;
+            }
         }
     }
 }
@@ -913,13 +920,18 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
     if (measurements.width <= 0 || measurements.height <= 0) {
         return {};
     }
+    if (measurements.channels < 3) {
+        return {};
+    }
 
     auto output = std::make_unique<DecodedImage>();
     output->width = measurements.width;
     output->height = measurements.height;
-    output->channels = 4;
+    output->channels = measurements.channels;
     output->pixels.resize(static_cast<size_t>(output->width) *
-                          static_cast<size_t>(output->height) * 4u, 0);
+                          static_cast<size_t>(output->height) *
+                          static_cast<size_t>(output->channels),
+                          0);
 
     for (const LoadedSourceImage& source : sources) {
         blitImage(*output,

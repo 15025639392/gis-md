@@ -66,6 +66,25 @@ std::unique_ptr<DecodedImage> makeImage(int width,
     return image;
 }
 
+std::unique_ptr<DecodedImage> makeRgbImage(int width,
+                                           int height,
+                                           uint8_t r,
+                                           uint8_t g,
+                                           uint8_t b) {
+    auto image = std::make_unique<DecodedImage>();
+    image->width = width;
+    image->height = height;
+    image->channels = 3;
+    image->pixels.resize(static_cast<size_t>(width) *
+                         static_cast<size_t>(height) * 3u);
+    for (size_t i = 0; i < image->pixels.size(); i += 3) {
+        image->pixels[i + 0] = r;
+        image->pixels[i + 1] = g;
+        image->pixels[i + 2] = b;
+    }
+    return image;
+}
+
 class NullImageryProvider final : public ImageryProvider {
 public:
     std::string id() const override { return "null"; }
@@ -3750,6 +3769,86 @@ TEST(RasterOverlayLifecycleTest, CompositeImageUsesSourceMoreDetailFlagLikeCesiu
     ASSERT_NE(nullptr, result.image);
     EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
               result.moreDetailAvailable);
+}
+
+TEST(RasterOverlayLifecycleTest, CompositeImagePreservesRgbSourceChannelsLikeCesiumNative) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    Rectangle target = scheme->tileToRectangle(
+        TileKey{scheme->id(), 1, 0, 0});
+
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> sources;
+    sources.push_back({
+        TileKey{scheme->id(), 1, 0, 0},
+        target,
+        makeRgbImage(2, 2, 20, 30, 40),
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::No});
+
+    auto result = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
+        *scheme,
+        target,
+        1,
+        std::move(sources),
+        1,
+        8);
+
+    ASSERT_NE(nullptr, result.image);
+    EXPECT_EQ(3, result.image->channels);
+    ASSERT_GE(result.image->pixels.size(), 3u);
+    EXPECT_EQ(20, result.image->pixels[0]);
+    EXPECT_EQ(30, result.image->pixels[1]);
+    EXPECT_EQ(40, result.image->pixels[2]);
+    EXPECT_EQ(
+        static_cast<size_t>(result.image->width) *
+            static_cast<size_t>(result.image->height) * 3u,
+        result.image->pixels.size());
+}
+
+TEST(RasterOverlayLifecycleTest, CompositeImageUsesLargestSourceChannelCountLikeCesiumNative) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    const TileKey westKey{scheme->id(), 2, 0, 1};
+    const TileKey eastKey{scheme->id(), 2, 1, 1};
+    const Rectangle westBounds = scheme->tileToRectangle(westKey);
+    const Rectangle eastBounds = scheme->tileToRectangle(eastKey);
+    const Rectangle target(
+        westBounds.west(),
+        westBounds.south(),
+        eastBounds.east(),
+        westBounds.north());
+
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> sources;
+    sources.push_back({
+        westKey,
+        westBounds,
+        makeRgbImage(1, 1, 10, 11, 12),
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::No});
+    sources.push_back({
+        eastKey,
+        eastBounds,
+        makeImage(1, 1, 20, 21, 22, 23),
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::No});
+
+    auto result = RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
+        *scheme,
+        target,
+        2,
+        std::move(sources),
+        2,
+        8);
+
+    ASSERT_NE(nullptr, result.image);
+    EXPECT_EQ(4, result.image->channels);
+    ASSERT_GE(result.image->pixels.size(), 8u);
+    EXPECT_EQ(10, result.image->pixels[0]);
+    EXPECT_EQ(11, result.image->pixels[1]);
+    EXPECT_EQ(12, result.image->pixels[2]);
+    EXPECT_EQ(255, result.image->pixels[3]);
+    EXPECT_EQ(20, result.image->pixels[4]);
+    EXPECT_EQ(21, result.image->pixels[5]);
+    EXPECT_EQ(22, result.image->pixels[6]);
+    EXPECT_EQ(23, result.image->pixels[7]);
 }
 
 TEST(RasterOverlayLifecycleTest, CompositeImageBlitsOnlyAncestorFallbackLikeCesiumNative) {
