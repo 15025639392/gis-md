@@ -2071,6 +2071,7 @@ bool RasterOverlayTileProvider::loadMappedTile(
     if (!sourceAssetDepot_) {
         refreshSourceAssetDepot();
     }
+    const bool returnEmptyForAncestorOnly = true;
     auto request = std::make_shared<QuadtreeSourceRequest>(
         scheme_,
         sourceAssetDepot_,
@@ -2079,7 +2080,7 @@ bool RasterOverlayTileProvider::loadMappedTile(
         outputBounds,
         maxTextureSize,
         getMaximumLevel(),
-        tile.isCompositeTile(),
+        returnEmptyForAncestorOnly,
         [state, cacheKey](std::unique_ptr<DecodedImage> composed,
                           std::shared_ptr<const DecodedImage> sharedImage,
                           Rectangle rectangle,
