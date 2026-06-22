@@ -299,6 +299,11 @@ TEST(QuantizedMeshContentLoaderTest,
                 boundingSphereCenter))
                   .length(),
               1e-9);
+    EXPECT_LT((primitive.vertices.front().positionEcef -
+               (node.globalTransform *
+                primitive.runtime.baseVertices.front().positionEcef))
+                  .length(),
+              1e-9);
     EXPECT_EQ(primitive.vertices.front().normalEcef,
               primitive.runtime.baseVertices.front().normalEcef);
     ASSERT_TRUE(primitive.skirtMetadata.has_value());

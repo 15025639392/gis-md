@@ -253,6 +253,7 @@ struct GltfModel {
     bool isAnimationPaused() const;
     void setAnimationPaused(bool paused);
     uint64_t currentAnimationRevision() const;
+    bool rebuildRuntime();
     bool updateAnimation(double timeSeconds);
 };
 

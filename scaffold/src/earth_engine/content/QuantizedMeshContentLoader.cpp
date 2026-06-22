@@ -10,9 +10,31 @@
 #include <array>
 #include <cmath>
 #include <optional>
+#include <utility>
 
 namespace earth_engine {
 namespace {
+
+std::pair<Vec3, Vec3> splitHighLow(const Vec3& value) {
+    constexpr double kSplit = 65536.0;
+    const auto split = [](double v) {
+        const double high = std::floor(v / kSplit) * kSplit;
+        return std::pair<double, double>{high, v - high};
+    };
+    const auto sx = split(value.x());
+    const auto sy = split(value.y());
+    const auto sz = split(value.z());
+    return {
+        Vec3(sx.first, sy.first, sz.first),
+        Vec3(sx.second, sy.second, sz.second)};
+}
+
+void setLocalPosition(SurfaceVertex& vertex, const Vec3& localPosition) {
+    vertex.positionEcef = localPosition;
+    const auto split = splitHighLow(localPosition);
+    vertex.positionHighEcef = split.first;
+    vertex.positionLowEcef = split.second;
+}
 
 std::unique_ptr<GltfModel> makeQuantizedMeshGltfModel(
     const QuantizedMeshParser::DecodedTile& decodedTile) {
@@ -72,12 +94,17 @@ std::unique_ptr<GltfModel> makeQuantizedMeshGltfModel(
     primitive.runtime.nodeIndex = 0;
     primitive.runtime.baseVertices = primitive.vertices;
     for (SurfaceVertex& vertex : primitive.runtime.baseVertices) {
-        vertex.positionEcef =
-            vertex.positionEcef - decodedTile.localOriginEcef;
+        setLocalPosition(
+            vertex,
+            vertex.positionEcef - decodedTile.localOriginEcef);
     }
+    primitive.vertices = primitive.runtime.baseVertices;
     primitive.runtime.hasNormals = true;
 
     model->primitives.push_back(std::move(primitive));
+    if (!model->rebuildRuntime()) {
+        return nullptr;
+    }
     return model;
 }
 

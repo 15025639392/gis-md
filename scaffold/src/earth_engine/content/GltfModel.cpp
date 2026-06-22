@@ -8606,6 +8606,10 @@ uint64_t GltfModel::currentAnimationRevision() const {
     return animationRevision;
 }
 
+bool GltfModel::rebuildRuntime() {
+    return rebuildRuntimeModel(*this);
+}
+
 bool GltfModel::updateAnimation(double timeSeconds) {
     if (animations.empty() ||
         animationPaused ||
@@ -8710,7 +8714,7 @@ bool GltfModel::updateAnimation(double timeSeconds) {
         }
     }
 
-    if (!rebuildRuntimeModel(*this)) {
+    if (!rebuildRuntime()) {
         return false;
     }
     lastAnimationTimeSeconds = localTime;
@@ -8894,7 +8898,7 @@ std::unique_ptr<GltfModel> GltfParser::parse(
     model->skins = toRuntimeSkins(skins);
     model->animations = std::move(*animations);
     resetRuntimeNodes(*model);
-    if (!rebuildRuntimeModel(*model)) {
+    if (!model->rebuildRuntime()) {
         return nullptr;
     }
     return model;
