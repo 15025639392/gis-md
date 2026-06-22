@@ -7,6 +7,7 @@ namespace earth_engine {
 
 class ActivatedRasterOverlay;
 class FrameResourceBudget;
+class IPrepareRendererResources;
 class RenderDevice;
 struct TilesetTile;
 
@@ -18,7 +19,8 @@ public:
         const std::vector<size_t>& overlayProcessingOrder,
         RenderDevice* device,
         double maximumScreenSpaceError,
-        FrameResourceBudget& frameResourceBudget);
+        FrameResourceBudget& frameResourceBudget,
+        IPrepareRendererResources* pPrepRenderer = nullptr);
 };
 
 } // namespace earth_engine

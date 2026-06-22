@@ -3150,6 +3150,95 @@ TEST(RasterOverlayLifecycleTest, PrefetchClearsStaleMappingWhenOverlaySlotIdenti
               &mappedB->getLoadingTile()->getTileProvider());
 }
 
+TEST(RasterOverlayLifecycleTest,
+     PrefetchDetachesAttachedRasterWhenOverlaySlotIdentityChangesLikeCesiumNativeRemove) {
+    auto overlayA = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    auto overlayB = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activatedA(*overlayA);
+    ActivatedRasterOverlay activatedB(*overlayB);
+
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 2, 1, 1},
+        Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0));
+    auto model = std::make_unique<GltfModel>();
+    model->rasterOverlayDetails.rasterOverlayProjections.push_back(
+        RasterOverlayProjection::WebMercator);
+    model->rasterOverlayDetails.rasterOverlayRectangles.push_back(
+        projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            tile.bounds));
+    tile.content.renderContent.prepareGltfContent(
+        std::move(model),
+        Mat4::identity());
+    tile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.contentKind = TileContentKind::Render;
+    tile.geometricError = 100.0;
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    std::vector<ActivatedRasterOverlay*> overlays{&activatedA};
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        overlays,
+        {0},
+        nullptr,
+        16.0,
+        budget);
+    RasterMappedToTilesetTile* mappedA = tile.rasterOverlayState.mappingAt(0);
+    ASSERT_NE(nullptr, mappedA);
+    RasterOverlayTile* loadingA = mappedA->getLoadingTile();
+    ASSERT_NE(nullptr, loadingA);
+    loadingA->setTexture(std::make_unique<TestTexture>(4, 4));
+
+    RecordingPrepareRendererResources recorder;
+    std::vector<RasterOverlayProjection> missing;
+    mappedA->update(
+        tile.key,
+        tile.content.renderContent.rasterOverlayDetails(),
+        512.0,
+        512.0,
+        *activatedA.getTileProvider(),
+        &recorder,
+        missing,
+        tile.parent,
+        0,
+        true);
+    ASSERT_EQ(RasterMappedToTilesetTile::State::Attached,
+              mappedA->getState());
+    ASSERT_EQ(1, recorder.attachCount);
+    ASSERT_EQ(0, recorder.detachCount);
+
+    overlays[0] = &activatedB;
+    budget.beginFrame(2, config);
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        overlays,
+        {0},
+        nullptr,
+        16.0,
+        budget,
+        &recorder);
+
+    EXPECT_EQ(1, recorder.detachCount);
+    RasterMappedToTilesetTile* mappedB = tile.rasterOverlayState.mappingAt(0);
+    ASSERT_NE(nullptr, mappedB);
+    ASSERT_NE(nullptr, mappedB->getLoadingTile());
+    EXPECT_EQ(activatedB.getTileProvider(),
+              &mappedB->getLoadingTile()->getTileProvider());
+}
+
 TEST(RasterOverlayLifecycleTest, MissingPreciseRectangleWithoutRenderDetailsUsesPlaceholder) {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

@@ -16,6 +16,8 @@
 
 namespace earth_engine {
 
+class IPrepareRendererResources;
+
 struct TileRasterOverlayUploadResult {
     int processedUploads = 0;
     bool resourcesDirty = false;
@@ -49,7 +51,8 @@ public:
         RenderDevice* device,
         double maximumScreenSpaceError,
         FrameResourceBudget& frameResourceBudget,
-        EnsureTileFn&& ensureTile) {
+        EnsureTileFn&& ensureTile,
+        IPrepareRendererResources* pPrepRenderer = nullptr) {
         struct PrefetchTile {
             TileKey key;
             TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal;
@@ -82,7 +85,8 @@ public:
                     overlayProcessingOrder,
                     device,
                     maximumScreenSpaceError,
-                    frameResourceBudget);
+                    frameResourceBudget,
+                    pPrepRenderer);
             }
         }
         std::vector<TileLoadRequest> sortedLoadRequests = loadRequests;
@@ -107,7 +111,8 @@ public:
                     overlayProcessingOrder,
                     device,
                     maximumScreenSpaceError,
-                    frameResourceBudget);
+                    frameResourceBudget,
+                    pPrepRenderer);
             }
         }
     }

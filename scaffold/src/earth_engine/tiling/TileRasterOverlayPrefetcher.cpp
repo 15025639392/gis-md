@@ -33,11 +33,14 @@ void TileRasterOverlayPrefetcher::prefetch(
     const std::vector<size_t>& overlayProcessingOrder,
     RenderDevice* device,
     double maximumScreenSpaceError,
-    FrameResourceBudget& frameResourceBudget) {
+    FrameResourceBudget& frameResourceBudget,
+    IPrepareRendererResources* pPrepRenderer) {
     tile.rasterOverlayState.synchronizeMappingIdentity(
         TileRasterOverlaySignature::mappingIdentity(rasterOverlays),
-        nullptr);
-    tile.rasterOverlayState.resizeMappingSlots(rasterOverlays.size(), nullptr);
+        pPrepRenderer);
+    tile.rasterOverlayState.resizeMappingSlots(
+        rasterOverlays.size(),
+        pPrepRenderer);
     tile.rasterOverlayState.clearMissingProjections();
 
     if (rasterOverlays.empty()) {
@@ -62,7 +65,7 @@ void TileRasterOverlayPrefetcher::prefetch(
 
         ActivatedRasterOverlay* activeOverlay = rasterOverlays[i];
         if (!activeOverlay || !activeOverlay->visible()) {
-            tile.rasterOverlayState.releaseMapping(i, nullptr);
+            tile.rasterOverlayState.releaseMapping(i, pPrepRenderer);
             continue;
         }
 
