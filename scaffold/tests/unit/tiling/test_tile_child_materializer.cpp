@@ -11,6 +11,7 @@
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
 #include "earth_engine/tiling/SurfaceTile.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/TileChildFrameMaterializer.h"
 #include "earth_engine/tiling/TileChildMaterializer.h"
 #include "earth_engine/tiling/TileRasterUpsampledChildMaterializer.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -203,6 +204,93 @@ TEST(TileChildMaterializerTest, AnyAvailableTerrainChildCreatesFullQuadLikeCesiu
         EXPECT_DOUBLE_EQ(-10.0, child->contentBoundingVolume->minimumHeight);
         EXPECT_DOUBLE_EQ(90.0, child->contentBoundingVolume->maximumHeight);
     }
+}
+
+TEST(TileChildMaterializerTest,
+     AvailabilityBoundaryWaitsForContentBeforeCreatingChildrenLikeCesiumNative) {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile parent(parentKey, scheme->tileToRectangle(parentKey));
+    parent.geometricError = 100.0;
+    parent.refine = TileRefine::Replace;
+
+    auto availability = [](const TileKey& key) {
+        return key.z == 1 && key.x == 0 && key.y == 0
+            ? TileAvailabilityState::Available
+            : TileAvailabilityState::NotAvailable;
+    };
+
+    for (TileLoadState waitingState : {
+             TileLoadState::FailedTemporarily,
+             TileLoadState::Unloaded,
+             TileLoadState::ContentLoading}) {
+        parent.children.clear();
+        parent.content.loadState = waitingState;
+        std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+        int ensureCalls = 0;
+        auto ensure = [&tiles, &scheme, &ensureCalls](
+                          const TileKey& key) -> TilesetTile* {
+            ++ensureCalls;
+            const std::string cacheKey = cacheKeyFor(key);
+            auto it = tiles.find(cacheKey);
+            if (it == tiles.end()) {
+                it = tiles.emplace(
+                    cacheKey,
+                    std::make_unique<TilesetTile>(
+                        key,
+                        scheme->tileToRectangle(key)))
+                         .first;
+            }
+            return it->second.get();
+        };
+
+        TileChildFrameMaterializer::ensureChildren(
+            TileChildFrameMaterializeInput{
+                parent,
+                {},
+                2,
+                true,
+                true},
+            ensure,
+            availability);
+
+        EXPECT_EQ(0, ensureCalls);
+        EXPECT_TRUE(parent.children.empty());
+    }
+
+    parent.content.loadState = TileLoadState::ContentLoaded;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles, &scheme](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(
+                    key,
+                    scheme->tileToRectangle(key)))
+                     .first;
+        }
+        return it->second.get();
+    };
+
+    TileChildFrameMaterializer::ensureChildren(
+        TileChildFrameMaterializeInput{
+            parent,
+            {},
+            2,
+            true,
+            false},
+        ensure,
+        availability);
+
+    ASSERT_EQ(4u, parent.children.size());
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 0}),
+              parent.children[0]->key);
+    EXPECT_FALSE(parent.children[0]->content.upsampledFromParent);
+    EXPECT_TRUE(parent.children[1]->content.upsampledFromParent);
+    EXPECT_TRUE(parent.children[2]->content.upsampledFromParent);
+    EXPECT_TRUE(parent.children[3]->content.upsampledFromParent);
 }
 
 TEST(TileChildMaterializerTest, NoAvailableTerrainChildrenCreatesNoneLikeCesiumNative) {
