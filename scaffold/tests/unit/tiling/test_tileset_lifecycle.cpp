@@ -71,7 +71,7 @@ public:
 
         TerrainCallback callback = std::move(it->callback);
         pendingRequests.erase(it);
-        callback(key, TerrainTileLoadResult::success(std::move(heightmap)));
+        callback(key, TerrainTileLoadResult::successWithHeightmap(std::move(heightmap)));
         return true;
     }
 

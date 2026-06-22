@@ -166,7 +166,7 @@ public:
         auto heightmap = std::make_unique<DecodedHeightmap>();
         heightmap->tileSize = 2;
         heightmap->heights = {0.0f, 0.0f, 0.0f, 0.0f};
-        callback(key, TerrainTileLoadResult::success(std::move(heightmap)));
+        callback(key, TerrainTileLoadResult::successWithHeightmap(std::move(heightmap)));
     }
     std::unique_ptr<DecodedHeightmap> decodeTile(
         const uint8_t*,
@@ -951,7 +951,7 @@ TEST(TileLoadRequestDispatcherTest, DropsCancelledTerrainUploadCallback) {
     lifecycle.cancelAndEraseCacheKey("cancel-terrain");
     provider.terrainCallback(
         key,
-        TerrainTileLoadResult::success(std::make_unique<DecodedHeightmap>()));
+        TerrainTileLoadResult::successWithHeightmap(std::make_unique<DecodedHeightmap>()));
 
     EXPECT_FALSE(lifecycle.hasPendingWork());
 }
@@ -1163,7 +1163,7 @@ TEST(TileLoadRequestDispatcherTest, DropsDestroyingTerrainUploadCallback) {
     heightmap->heights = {1.0f, 1.0f, 1.0f, 1.0f};
     provider.terrainCallback(
         key,
-        TerrainTileLoadResult::success(std::move(heightmap)));
+        TerrainTileLoadResult::successWithHeightmap(std::move(heightmap)));
 
     EXPECT_FALSE(lifecycle.hasPendingWork());
 

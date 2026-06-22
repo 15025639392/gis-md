@@ -3613,7 +3613,7 @@ public:
         ++requestCount;
         switch (status_) {
             case TileLoadStatus::Renderable:
-                callback(key, TerrainTileLoadResult::success(makeHeightmap()));
+                callback(key, TerrainTileLoadResult::successWithHeightmap(makeHeightmap()));
                 break;
             case TileLoadStatus::Empty:
                 callback(key, TerrainTileLoadResult::empty());
@@ -3695,7 +3695,7 @@ public:
 
         TerrainCallback callback = std::move(it->callback);
         pendingRequests.erase(it);
-        callback(key, TerrainTileLoadResult::success(std::move(heightmap)));
+        callback(key, TerrainTileLoadResult::successWithHeightmap(std::move(heightmap)));
         return true;
     }
 
@@ -18527,7 +18527,7 @@ void testTileLoadRequestDispatcherRunsOnIssuedBeforeSynchronousCallback() {
             auto heightmap = std::make_unique<DecodedHeightmap>();
             heightmap->tileSize = 2;
             heightmap->heights = {0.0f, 0.0f, 0.0f, 0.0f};
-            callback(key, TerrainTileLoadResult::success(std::move(heightmap)));
+            callback(key, TerrainTileLoadResult::successWithHeightmap(std::move(heightmap)));
         }
         std::unique_ptr<DecodedHeightmap> decodeTile(
             const uint8_t*,
@@ -18802,7 +18802,7 @@ void testTileLoadRequestDispatcherDropsCancelledCallbacks() {
     lifecycle.cancelAndEraseCacheKey("cancel-content-render");
     terrainProvider.terrainCallback(
         key,
-        TerrainTileLoadResult::success(std::make_unique<DecodedHeightmap>()));
+        TerrainTileLoadResult::successWithHeightmap(std::make_unique<DecodedHeightmap>()));
     contentProvider.contentCallback(key, TileContentLoadResult::empty());
     terminalTerrainProvider.terrainCallback(
         key,
@@ -19048,7 +19048,7 @@ void testTileLoadRequestDispatcherDropsDestroyingCallbacks() {
     heightmap->heights = {1.0f, 1.0f, 1.0f, 1.0f};
     uploadTerrainProvider.terrainCallback(
         key,
-        TerrainTileLoadResult::success(std::move(heightmap)));
+        TerrainTileLoadResult::successWithHeightmap(std::move(heightmap)));
     terminalTerrainProvider.terrainCallback(
         key,
         TerrainTileLoadResult::retryLater());

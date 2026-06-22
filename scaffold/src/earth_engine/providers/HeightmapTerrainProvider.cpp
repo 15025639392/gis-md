@@ -97,7 +97,7 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
                 return;
             }
             auto hm = decodeTile(cached.data(), cached.size());
-            callback(key, TerrainTileLoadResult::success(std::move(hm)));
+            callback(key, TerrainTileLoadResult::successWithHeightmap(std::move(hm)));
             return;
         }
 
@@ -123,7 +123,7 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
                 }
                 HttpCache::shared().put(url, body);
                 auto hm = decodeTile(body.data(), body.size());
-                callback(key, TerrainTileLoadResult::success(std::move(hm)));
+                callback(key, TerrainTileLoadResult::successWithHeightmap(std::move(hm)));
             },
             {priority});
         return;
@@ -143,7 +143,7 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
                     return;
                 }
                 auto hm = decodeTile(body.data(), body.size());
-                callback(key, TerrainTileLoadResult::success(std::move(hm)));
+                callback(key, TerrainTileLoadResult::successWithHeightmap(std::move(hm)));
             });
         return;
     }
@@ -172,7 +172,7 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
                     return;
                 }
                 auto hm = decodeTile(body.data(), body.size());
-                callback(key, TerrainTileLoadResult::success(std::move(hm)));
+                callback(key, TerrainTileLoadResult::successWithHeightmap(std::move(hm)));
             });
         return;
     }
@@ -219,7 +219,7 @@ void HeightmapTerrainProvider::requestTile(const TileKey& key,
                     auto hm = decodeTile(bodyPtr->data(), bodyPtr->size());
                     (*callbackPtr)(
                         key,
-                        TerrainTileLoadResult::success(std::move(hm)));
+                        TerrainTileLoadResult::successWithHeightmap(std::move(hm)));
                 });
         },
         {priority});

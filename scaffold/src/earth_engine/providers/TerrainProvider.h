@@ -76,14 +76,12 @@ struct TerrainTileLoadResult {
     std::vector<QuantizedMeshAvailabilityUpdate>
         quantizedMeshAvailabilityUpdates;
 
-    static TerrainTileLoadResult success(
-        std::unique_ptr<DecodedHeightmap> hm,
-        std::unique_ptr<SurfaceTileMesh> mesh = nullptr) {
+    static TerrainTileLoadResult successWithHeightmap(
+        std::unique_ptr<DecodedHeightmap> hm) {
         TerrainTileLoadResult result;
-        result.status = (hm || mesh) ? TileLoadStatus::Renderable
-                                     : TileLoadStatus::Failed;
+        result.status = hm ? TileLoadStatus::Renderable
+                           : TileLoadStatus::Failed;
         result.heightmap = std::move(hm);
-        result.surfaceMesh = std::move(mesh);
         return result;
     }
 
