@@ -21,7 +21,8 @@ public:
         TilesetTile& tile,
         double defaultGeometricError,
         EnsureTileFn&& ensureTile) {
-        if (!tile.content.renderContent.hasSurfaceMesh() || tile.children.size() >= 4) {
+        if (!tile.content.renderContent.hasRenderableTerrainContent() ||
+            tile.children.size() >= 4) {
             return false;
         }
 

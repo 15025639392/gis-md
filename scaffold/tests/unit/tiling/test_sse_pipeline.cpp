@@ -102,6 +102,7 @@
 #include "earth_engine/tiling/TileViewerRequestVolumePolicy.h"
 #include "earth_engine/tiling/TileSubtreeTraversal.h"
 #include "earth_engine/tiling/TileSubtreeWorkTracker.h"
+#include "earth_engine/tiling/TileRasterUpsampledChildMaterializer.h"
 #include "earth_engine/tiling/TileSurface.h"
 #include "earth_engine/tiling/TileSurfaceMeshEnsurer.h"
 #include "earth_engine/tiling/TileSurfaceMeshResolutionPolicy.h"
@@ -14299,6 +14300,104 @@ void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
           "SurfaceRasterOverlayStateUpdater: drawable more-detail raster requests upsample children");
 }
 
+void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+    DummyRenderDevice device;
+
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {&activated},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "TileRasterUpsampledChildMaterializer: glTF root tile is created");
+    if (!root) return;
+
+    RasterOverlayTileProvider* provider = activated.ensureTileProvider(&device);
+    if (!provider) return;
+    auto model = makeWebMercatorQuadTerrainGltfModel(root->bounds);
+    model->rasterOverlayDetails.rasterOverlayRectangles[1] =
+        projectForProvider(*provider, root->bounds);
+    model->rasterOverlayDetails.boundingRegion = {root->bounds, 0.0, 0.0};
+    root->content.renderContent.prepareGltfContent(
+        std::move(model),
+        Mat4::identity());
+    root->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root->markRenderContentDone();
+    root->geometricError = 100.0;
+
+    Renderer renderer(nullptr);
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    const std::vector<size_t> order{0};
+    SurfaceRasterOverlayStateUpdater::update(
+        renderer,
+        *root,
+        overlays,
+        order,
+        &device,
+        16.0,
+        budget);
+    RasterMappedToTilesetTile* mapped =
+        root->rasterOverlayState.mappingAt(0);
+    RasterOverlayTile* loadingTile =
+        mapped ? mapped->getLoadingTile() : nullptr;
+    check(loadingTile != nullptr,
+          "TileRasterUpsampledChildMaterializer: glTF raster mapping starts loading");
+    if (!mapped || !loadingTile) return;
+
+    loadingTile->setState(RasterOverlayTile::LoadState::Loaded);
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
+    const SurfaceRasterOverlayUpdateAction action =
+        SurfaceRasterOverlayStateUpdater::update(
+            renderer,
+            *root,
+            overlays,
+            order,
+            &device,
+            16.0,
+            budget);
+
+    check(action.createRasterOverlayUpsampledChildren,
+          "TileRasterUpsampledChildMaterializer: glTF more-detail raster requests children");
+
+    TileRasterUpsampledChildMaterializer::materialize(
+        *root,
+        64.0,
+        [&tileset](const TileKey& key) {
+            return TilesetTestAccess::ensureTile(tileset, key);
+        });
+    check(root->children.size() == 4,
+          "TileRasterUpsampledChildMaterializer: glTF render content creates raster upsample children");
+    if (root->children.size() != 4) return;
+
+    TilesetTile* child = root->children[1];
+    check(child &&
+              child->content.isRasterDetailUpsample() &&
+              !child->bounds.isEmpty() &&
+              root->bounds.contains(
+                  child->bounds.center().first,
+                  child->bounds.center().second),
+          "TileRasterUpsampledChildMaterializer: glTF child uses overlay subdivision bounds");
+}
+
 void testTileUnloadPolicyDefersReferencedSubtreesAndExternalWork() {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile child(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
@@ -27735,6 +27834,7 @@ int main() {
     testTilesetUnloadExternalContentClearsChildren();
     testTilesetDirectExternalContentUnloadClearsChildren();
     testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction();
+    testRasterUpsampledChildrenMaterializeFromGltfRenderContent();
 
     std::cout << "\n=== " << gFailures << " failures ===\n";
     return gFailures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
