@@ -140,6 +140,20 @@ Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
     }
 }
 
+Tileset::Tileset(
+    std::unique_ptr<TileScheme> tileScheme,
+    std::vector<ActivatedRasterOverlay*> rasterOverlays,
+    RenderDevice* device,
+    TilesetOptions options,
+    std::unique_ptr<TilesetContentProvider> contentProvider)
+    : Tileset(
+          std::unique_ptr<TerrainProvider>{},
+          std::move(tileScheme),
+          std::move(rasterOverlays),
+          device,
+          std::move(options),
+          std::move(contentProvider)) {}
+
 bool Tileset::hasTerrainQuadtree() const {
     return providerHasTerrainQuadtree(
         terrainProvider_.get(),

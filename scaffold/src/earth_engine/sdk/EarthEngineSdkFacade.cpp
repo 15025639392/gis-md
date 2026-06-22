@@ -130,7 +130,6 @@ std::unique_ptr<TileScheme> createTileSchemeForId(
 }
 
 struct SceneTerrainRuntimeSources {
-    std::unique_ptr<TerrainProvider> terrainProvider;
     std::unique_ptr<TilesetContentProvider> contentProvider;
     std::unique_ptr<TileScheme> tileScheme =
         TileScheme::createGeographicTMS();
@@ -500,7 +499,6 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
     SceneTerrainRuntimeSources terrainSources =
         createTerrainRuntimeSources(config_.terrain, platformBridge_);
     auto tileset = std::make_unique<Tileset>(
-        std::move(terrainSources.terrainProvider),
         std::move(terrainSources.tileScheme),
         std::move(rasterOverlays),
         &renderDevice_,
@@ -527,7 +525,6 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
             config_.gltf.uniformScale);
 
         auto gltfTileset = std::make_unique<Tileset>(
-            std::unique_ptr<TerrainProvider>{},
             TileScheme::createGeographicTMS(),
             std::vector<ActivatedRasterOverlay*>{},
             &renderDevice_,

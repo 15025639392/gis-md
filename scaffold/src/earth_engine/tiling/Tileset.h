@@ -96,6 +96,11 @@ public:
             RenderDevice* device,
             TilesetOptions options,
             std::unique_ptr<TilesetContentProvider> contentProvider = nullptr);
+    Tileset(std::unique_ptr<TileScheme> tileScheme,
+            std::vector<ActivatedRasterOverlay*> rasterOverlays,
+            RenderDevice* device,
+            TilesetOptions options,
+            std::unique_ptr<TilesetContentProvider> contentProvider);
     ~Tileset();
 
     void update(const FrameState& frameState,
