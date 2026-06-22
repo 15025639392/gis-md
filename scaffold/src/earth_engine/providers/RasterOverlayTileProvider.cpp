@@ -1361,6 +1361,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceRequest
                           Rectangle outputRectangle,
                           int textureSize,
                           int maximumSourceLevel,
+                          bool emptyWhenOnlyAncestorFallback,
                           CompositeRequestSuccess success,
                           CompositeRequestFailure failure)
         : scheme(tileScheme)
@@ -1370,6 +1371,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceRequest
         , outputBounds(outputRectangle)
         , maximumTextureSize(textureSize)
         , maximumLevel(maximumSourceLevel)
+        , returnEmptyForAncestorOnly(emptyWhenOnlyAncestorFallback)
         , onSuccess(std::move(success))
         , onFailure(std::move(failure))
         , remaining(sourcePlan.budgetUnits()) {
@@ -1450,6 +1452,28 @@ private:
             return;
         }
 
+        if (completedSources.empty()) {
+            onFailure();
+            return;
+        }
+
+        const bool haveAnyUsefulImageData =
+            !returnEmptyForAncestorOnly ||
+            std::any_of(
+                completedSources.begin(),
+                completedSources.end(),
+                [](const LoadedSourceImage& source) {
+                    return source.image && !source.sourceSubset.has_value();
+                });
+        if (!haveAnyUsefulImageData) {
+            onSuccess(
+                std::make_unique<DecodedImage>(),
+                nullptr,
+                Rectangle(),
+                RasterOverlayTile::MoreDetailAvailable::No);
+            return;
+        }
+
         CompositeImageResult composed =
             combineQuadtreeSourceImages(
                 scheme,
@@ -1476,6 +1500,7 @@ private:
     Rectangle outputBounds;
     int maximumTextureSize = 0;
     int maximumLevel = 0;
+    bool returnEmptyForAncestorOnly = false;
     CompositeRequestSuccess onSuccess;
     CompositeRequestFailure onFailure;
     mutable std::mutex mutex;
@@ -1976,6 +2001,7 @@ bool RasterOverlayTileProvider::loadMappedTile(
         outputBounds,
         maxTextureSize,
         getMaximumLevel(),
+        tile.isCompositeTile(),
         [state, cacheKey](std::unique_ptr<DecodedImage> composed,
                           std::shared_ptr<const DecodedImage> sharedImage,
                           Rectangle rectangle,
