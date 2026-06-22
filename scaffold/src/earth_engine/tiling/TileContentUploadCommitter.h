@@ -2,8 +2,12 @@
 
 #include "TileLoadTypes.h"
 
+#include <vector>
+
 namespace earth_engine {
 
+class ActivatedRasterOverlay;
+class RenderDevice;
 struct TilesetTile;
 
 struct TileContentUploadCommitAction {
@@ -13,7 +17,9 @@ struct TileContentUploadCommitAction {
 struct TileContentUploadCommitter {
     static void prepareRenderContent(
         TilesetTile& tile,
-        TileLoadedContent&& content);
+        TileLoadedContent&& content,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays = {},
+        RenderDevice* device = nullptr);
     static TileContentUploadCommitAction finishRenderResourcePreparation(
         TilesetTile& tile,
         bool resourcesReady);

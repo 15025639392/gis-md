@@ -157,6 +157,8 @@ public:
               typename MarkResourcesDirtyFn>
     static void commitContentUpload(
         PendingTileLoad& upload,
+        RenderDevice* device,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         TileLoadLifecycle& lifecycle,
         EnsureTileFn&& ensureTile,
         EnsureGltfResourcesFn&& ensureGltfResources,
@@ -171,7 +173,9 @@ public:
 
         TileContentUploadCommitter::prepareRenderContent(
             *tile,
-            std::move(upload.content()));
+            std::move(upload.content()),
+            rasterOverlays,
+            device);
         ensureGltfResources(*tile);
         const TileContentUploadCommitAction action =
             TileContentUploadCommitter::finishRenderResourcePreparation(
@@ -235,6 +239,8 @@ public:
                 upload.content());
             commitContentUpload(
                 upload,
+                device,
+                rasterOverlays,
                 lifecycle,
                 std::forward<EnsureTileFn>(ensureTile),
                 std::forward<EnsureGltfResourcesFn>(ensureGltfResources),

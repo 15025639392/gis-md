@@ -499,6 +499,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         [&resourcesDirty]() { resourcesDirty = true; });
     TilePendingLoadCommitCoordinator::commitContentUpload(
         contentUpload,
+        nullptr,
+        {},
         lifecycle,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [](TilesetTile&) {},
@@ -1133,6 +1135,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     TilePendingLoadCommitCoordinator::commitContentUpload(
         upload,
+        nullptr,
+        {},
         lifecycle,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [&gltfEnsured](TilesetTile&) { gltfEnsured = true; },
