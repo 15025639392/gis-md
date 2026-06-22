@@ -1189,6 +1189,30 @@ std::unique_ptr<GltfModel> makeTriangleGltfModel() {
     return model;
 }
 
+bool rasterDetailsUseTightTriangleBounds(const RasterOverlayDetails& details) {
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    const std::optional<Cartographic> east =
+        ellipsoid.tryCartesianToCartographic(Vec3(1.0, 0.0, 0.0));
+    const std::optional<Cartographic> north =
+        ellipsoid.tryCartesianToCartographic(Vec3(0.0, 1.0, 0.0));
+    if (!east || !north) {
+        return false;
+    }
+
+    const Rectangle expectedRectangle(
+        std::min(east->longitude(), north->longitude()),
+        std::min(east->latitude(), north->latitude()),
+        std::max(east->longitude(), north->longitude()),
+        std::max(east->latitude(), north->latitude()));
+    return details.boundingRegion.rectangle.equalsEpsilon(
+               expectedRectangle,
+               1e-12) &&
+           std::abs(details.boundingRegion.minimumHeight -
+                    std::min(east->height(), north->height())) < 1e-6 &&
+           std::abs(details.boundingRegion.maximumHeight -
+                    std::max(east->height(), north->height())) < 1e-6;
+}
+
 std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
     const Rectangle& rectangle) {
     auto model = std::make_unique<GltfModel>();
@@ -13071,9 +13095,7 @@ void testContentUploadGeneratesRasterOverlayProjectionDetailsForGltf() {
               details.rasterOverlayProjections.size() == 1 &&
               details.textureCoordinateIDForProjection(
                   RasterOverlayProjection::WebMercator) == 0 &&
-              details.boundingRegion.rectangle == tileRectangle &&
-              details.boundingRegion.minimumHeight == -10.0 &&
-              details.boundingRegion.maximumHeight == 120.0 &&
+              rasterDetailsUseTightTriangleBounds(details) &&
               tile.content.renderContent.hasGltfModel() &&
               !tile.content.renderContent.isTerrainRenderContent(),
           "TileContentUploadCommitter: ordinary glTF upload generates active raster overlay projection details like cesium-native");
@@ -13122,9 +13144,7 @@ void testContentUploadUsesContentBoundingVolumeForRasterOverlayDetails() {
 
     check(webMercator && *webMercator == expectedContentWebMercator &&
               *webMercator != tileWebMercator &&
-              details.boundingRegion.rectangle == contentRectangle &&
-              details.boundingRegion.minimumHeight == -10.0 &&
-              details.boundingRegion.maximumHeight == 120.0,
+              rasterDetailsUseTightTriangleBounds(details),
           "TileContentUploadCommitter: raster overlay details use effective content bounding volume like cesium-native");
 }
 

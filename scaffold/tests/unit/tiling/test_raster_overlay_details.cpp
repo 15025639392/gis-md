@@ -81,6 +81,15 @@ void prepareTerrainQuadRenderContent(TileRenderContentState& renderContent,
     renderContent.setTerrainRenderContent(true);
 }
 
+void expectRectangleNear(const Rectangle& expected,
+                         const Rectangle& actual,
+                         double epsilon = 1e-12) {
+    EXPECT_NEAR(expected.west(), actual.west(), epsilon);
+    EXPECT_NEAR(expected.south(), actual.south(), epsilon);
+    EXPECT_NEAR(expected.east(), actual.east(), epsilon);
+    EXPECT_NEAR(expected.north(), actual.north(), epsilon);
+}
+
 } // namespace
 
 TEST(RasterOverlayDetailsTest, MergeAppendsProjectionRectanglesLikeCesiumNative) {
@@ -194,9 +203,9 @@ TEST(RasterOverlayDetailsGeneratorTest,
     EXPECT_EQ(projected, details.rasterOverlayRectangles[1]);
     EXPECT_EQ(1, details.textureCoordinateIDForProjection(
                      RasterOverlayProjection::WebMercator));
-    EXPECT_EQ(region, details.boundingRegion.rectangle);
-    EXPECT_DOUBLE_EQ(-25.0, details.boundingRegion.minimumHeight);
-    EXPECT_DOUBLE_EQ(125.0, details.boundingRegion.maximumHeight);
+    expectRectangleNear(region, details.boundingRegion.rectangle);
+    EXPECT_NEAR(0.0, details.boundingRegion.minimumHeight, 1e-6);
+    EXPECT_NEAR(0.0, details.boundingRegion.maximumHeight, 1e-6);
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
@@ -258,9 +267,9 @@ TEST(RasterOverlayDetailsGeneratorTest,
                      RasterOverlayProjection::WebMercator));
     EXPECT_EQ(nullptr, details.findRectangleForOverlayProjection(
                            RasterOverlayProjection::Geographic));
-    EXPECT_EQ(region, details.boundingRegion.rectangle);
-    EXPECT_DOUBLE_EQ(-15.0, details.boundingRegion.minimumHeight);
-    EXPECT_DOUBLE_EQ(250.0, details.boundingRegion.maximumHeight);
+    expectRectangleNear(region, details.boundingRegion.rectangle);
+    EXPECT_NEAR(0.0, details.boundingRegion.minimumHeight, 1e-6);
+    EXPECT_NEAR(0.0, details.boundingRegion.maximumHeight, 1e-6);
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
@@ -341,4 +350,60 @@ TEST(RasterOverlayDetailsGeneratorTest,
         (localOnlyProjected.y() - projectedRegion.south()) /
         projectedRegion.height();
     EXPECT_GT(std::abs(wrongV - primitive.vertexTexCoords[0][2][1]), 1e-3);
+}
+
+TEST(RasterOverlayDetailsGeneratorTest,
+     RegionGenerationUsesLooseRectangleForUvButTightModelBoundingRegion) {
+    TileRenderContentState renderContent;
+    const Rectangle modelRegion =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    const Rectangle looseRegion =
+        Rectangle::fromDegrees(-20.0, -10.0, 10.0, 20.0);
+    prepareTerrainQuadRenderContent(renderContent, modelRegion);
+
+    const TileBoundingVolume looseBoundingRegion =
+        TileBoundingVolume::fromRegion(looseRegion, -25.0, 125.0);
+
+    const bool generated =
+        TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
+            renderContent,
+            looseBoundingRegion,
+            RasterOverlayProjection::Geographic);
+
+    ASSERT_TRUE(generated);
+    const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
+    ASSERT_EQ(1u, details.rasterOverlayRectangles.size());
+    EXPECT_EQ(looseRegion, details.rasterOverlayRectangles[0]);
+    expectRectangleNear(modelRegion, details.boundingRegion.rectangle);
+    EXPECT_NEAR(0.0, details.boundingRegion.minimumHeight, 1e-6);
+    EXPECT_NEAR(0.0, details.boundingRegion.maximumHeight, 1e-6);
+
+    const GltfModel* model = renderContent.gltfModelForRead();
+    ASSERT_NE(nullptr, model);
+    const GltfPrimitive& primitive = model->primitives.front();
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    EXPECT_NEAR(
+        static_cast<float>(
+            (modelRegion.west() - looseRegion.west()) /
+            looseRegion.width()),
+        primitive.vertexTexCoords[0][0][0],
+        1e-6f);
+    EXPECT_NEAR(
+        static_cast<float>(
+            (modelRegion.south() - looseRegion.south()) /
+            looseRegion.height()),
+        primitive.vertexTexCoords[0][0][1],
+        1e-6f);
+    EXPECT_NEAR(
+        static_cast<float>(
+            (modelRegion.east() - looseRegion.west()) /
+            looseRegion.width()),
+        primitive.vertexTexCoords[0][1][0],
+        1e-6f);
+    EXPECT_NEAR(
+        static_cast<float>(
+            (modelRegion.north() - looseRegion.south()) /
+            looseRegion.height()),
+        primitive.vertexTexCoords[0][2][1],
+        1e-6f);
 }

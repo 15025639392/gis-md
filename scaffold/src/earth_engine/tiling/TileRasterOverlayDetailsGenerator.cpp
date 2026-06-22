@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <optional>
 
 namespace earth_engine {
 namespace {
@@ -109,6 +110,64 @@ bool writeGltfOverlayTexCoords(TileRenderContentState& renderContent,
     return true;
 }
 
+std::optional<BoundingRegionBuilder::BoundingRegion>
+computeTightModelBoundingRegion(const TileRenderContentState& renderContent) {
+    const GltfModel* model = renderContent.gltfModelForRead();
+    if (!model) {
+        return std::nullopt;
+    }
+
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    bool hasPosition = false;
+    double west = 0.0;
+    double south = 0.0;
+    double east = 0.0;
+    double north = 0.0;
+    double minimumHeight = 0.0;
+    double maximumHeight = 0.0;
+    for (const GltfPrimitive& primitive : model->primitives) {
+        const Mat4* nodeTransform = nullptr;
+        if (primitive.runtime.nodeIndex >= 0 &&
+            static_cast<size_t>(primitive.runtime.nodeIndex) <
+                model->nodes.size()) {
+            nodeTransform =
+                &model->nodes[static_cast<size_t>(primitive.runtime.nodeIndex)]
+                     .globalTransform;
+        }
+        for (const SurfaceVertex& vertex : primitive.vertices) {
+            const Vec3 worldPosition = nodeTransform
+                ? nodeTransform->transformPoint(vertex.positionEcef)
+                : vertex.positionEcef;
+            const std::optional<Cartographic> cartographic =
+                ellipsoid.tryCartesianToCartographic(worldPosition);
+            if (!cartographic) {
+                continue;
+            }
+            if (!hasPosition) {
+                west = east = cartographic->longitude();
+                south = north = cartographic->latitude();
+                minimumHeight = maximumHeight = cartographic->height();
+                hasPosition = true;
+                continue;
+            }
+            west = std::min(west, cartographic->longitude());
+            south = std::min(south, cartographic->latitude());
+            east = std::max(east, cartographic->longitude());
+            north = std::max(north, cartographic->latitude());
+            minimumHeight = std::min(minimumHeight, cartographic->height());
+            maximumHeight = std::max(maximumHeight, cartographic->height());
+        }
+    }
+
+    if (!hasPosition) {
+        return std::nullopt;
+    }
+    return BoundingRegionBuilder::BoundingRegion{
+        Rectangle(west, south, east, north),
+        minimumHeight,
+        maximumHeight};
+}
+
 } // namespace
 
 Rectangle TileRasterOverlayDetailsGenerator::projectRegionRectangle(
@@ -173,10 +232,12 @@ bool TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
     RasterOverlayDetails generated;
     generated.rasterOverlayProjections = {projection};
     generated.rasterOverlayRectangles = {projectedRectangle};
-    generated.boundingRegion = {
-        boundingVolume.region,
-        boundingVolume.minimumHeight,
-        boundingVolume.maximumHeight};
+    generated.boundingRegion =
+        computeTightModelBoundingRegion(renderContent)
+            .value_or(BoundingRegionBuilder::BoundingRegion{
+                boundingVolume.region,
+                boundingVolume.minimumHeight,
+                boundingVolume.maximumHeight});
     details->merge(generated);
     return true;
 }
