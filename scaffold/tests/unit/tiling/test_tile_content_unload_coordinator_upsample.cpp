@@ -96,3 +96,28 @@ TEST(
     EXPECT_EQ(fixture.terrainCache.find(fixture.cacheKey),
               fixture.terrainCache.end());
 }
+
+TEST(
+    TileContentUnloadCoordinatorUpsampleTest,
+    NestedProtectedUpsampleSourceKeepsAncestorContent) {
+    ProtectedSourceFixture fixture;
+    TilesetTile grandchild{
+        TileKey{"test", 2, 0, 0},
+        Rectangle{},
+        &fixture.child};
+    fixture.child.children.push_back(&grandchild);
+    fixture.child.content.upsampledFromParent = false;
+    fixture.child.content.loadState = TileLoadState::Done;
+    grandchild.content.upsampledFromParent = true;
+    grandchild.content.loadState = TileLoadState::ContentLoading;
+
+    const TileCacheUnloadContentResult result = fixture.unloadParent();
+
+    EXPECT_EQ(result, TileCacheUnloadContentResult::Keep);
+    EXPECT_EQ(fixture.parent.content.contentKind, TileContentKind::Render);
+    EXPECT_EQ(fixture.parent.content.loadState, TileLoadState::Unloading);
+    EXPECT_TRUE(fixture.parent.content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(fixture.parent.content.renderContent.isSurfaceDrawable());
+    EXPECT_NE(fixture.terrainCache.find(fixture.cacheKey),
+              fixture.terrainCache.end());
+}
