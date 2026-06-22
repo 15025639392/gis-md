@@ -54,7 +54,7 @@ void TileLoadResultMetadataApplicator::apply(
     if (metadata.rasterOverlayDetails) {
         if (RasterOverlayDetails* details =
                 tile.content.renderContent.mutableRasterOverlayDetails()) {
-            *details = std::move(*metadata.rasterOverlayDetails);
+            details->merge(*metadata.rasterOverlayDetails);
         }
     }
     if (metadata.terrainHeightRange) {

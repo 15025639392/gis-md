@@ -12670,8 +12670,8 @@ void testTileContentUploadPolicyAppliesTileLoadResultFields() {
                                        1.0);
 
     auto model = std::make_unique<GltfModel>();
-    model->rasterOverlayDetails.setGeographicRectangle(
-        Rectangle{1.0, 1.0, 2.0, 2.0});
+    const Rectangle modelRasterRectangle{1.0, 1.0, 2.0, 2.0};
+    model->rasterOverlayDetails.setGeographicRectangle(modelRasterRectangle);
     TileContentLoadResult result = TileContentLoadResult::render(
         std::move(model));
     const Rectangle updatedRectangle{2.0, 3.0, 4.0, 5.0};
@@ -12682,7 +12682,10 @@ void testTileContentUploadPolicyAppliesTileLoadResultFields() {
     result.metadata.updatedContentBoundingVolume =
         TileBoundingVolume::fromRegion(updatedContentRectangle, -5.0, 15.0);
     RasterOverlayDetails resultDetails;
-    resultDetails.setGeographicRectangle(resultRasterRectangle, -9.0, 19.0);
+    resultDetails.rasterOverlayProjections = {
+        RasterOverlayProjection::WebMercator};
+    resultDetails.rasterOverlayRectangles = {resultRasterRectangle};
+    resultDetails.boundingRegion = {resultRasterRectangle, -9.0, 19.0};
     result.metadata.rasterOverlayDetails = std::move(resultDetails);
 
     TileContentUploadPolicy::prepareGltfRenderContent(
@@ -12691,9 +12694,12 @@ void testTileContentUploadPolicyAppliesTileLoadResultFields() {
 
     const RasterOverlayDetails& committedDetails =
         tile.content.renderContent.rasterOverlayDetails();
-    const Rectangle* committedRaster =
+    const Rectangle* committedGeographic =
         committedDetails.findRectangleForOverlayProjection(
             RasterOverlayProjection::Geographic);
+    const Rectangle* committedWebMercator =
+        committedDetails.findRectangleForOverlayProjection(
+            RasterOverlayProjection::WebMercator);
     check(tile.boundingVolume &&
               tile.boundingVolume->kind == TileBoundingVolumeKind::Region &&
               tile.boundingVolume->region == updatedRectangle &&
@@ -12703,14 +12709,20 @@ void testTileContentUploadPolicyAppliesTileLoadResultFields() {
               tile.contentBoundingVolume->kind ==
                   TileBoundingVolumeKind::Region &&
               tile.contentBoundingVolume->region == updatedContentRectangle &&
-              committedRaster &&
-              *committedRaster == resultRasterRectangle &&
+              committedGeographic &&
+              *committedGeographic == modelRasterRectangle &&
+              committedWebMercator &&
+              *committedWebMercator == resultRasterRectangle &&
+              committedDetails.textureCoordinateIDForProjection(
+                  RasterOverlayProjection::Geographic) == 0 &&
+              committedDetails.textureCoordinateIDForProjection(
+                  RasterOverlayProjection::WebMercator) == 1 &&
               committedDetails.boundingRegion.rectangle ==
-                  resultRasterRectangle &&
+                  modelRasterRectangle.computeUnion(resultRasterRectangle) &&
               committedDetails.boundingRegion.minimumHeight == -9.0 &&
               committedDetails.boundingRegion.maximumHeight == 19.0 &&
               !tile.content.renderContent.isTerrainRenderContent(),
-          "TileContentUploadPolicy: glTF upload applies TileLoadResult-like bounds and raster details");
+          "TileContentUploadPolicy: glTF upload merges TileLoadResult raster details like cesium-native");
 
     TilesetTile looseTile(
         TileKey{"test", 0, 1, 0},
