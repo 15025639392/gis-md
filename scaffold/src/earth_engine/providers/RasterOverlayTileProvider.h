@@ -134,7 +134,7 @@ public:
     /// Returns the tile scheme.
     const TileScheme& getTileScheme() const { return scheme_; }
 
-    /// Projection used by rectangle overlay tiles.
+    /// Projection used when mapping geometry rectangles to raster tiles.
     RasterOverlayProjection getProjection() const {
         return projection_;
     }
@@ -231,9 +231,9 @@ public:
 private:
     struct RectangleSourceRequest;
 
-    /// Internal: load a rectangle raster tile by combining the provider's
-    /// quadtree imagery tiles that overlap its rectangle.
-    bool loadRectangleTile(RasterOverlayTile& tile,
+    /// Internal: load a composite raster tile by combining the provider's
+    /// quadtree imagery tiles that overlap its geometry rectangle.
+    bool loadCompositeTile(RasterOverlayTile& tile,
                            FrameResourceBudget* budget = nullptr);
 
     /// Tile cache key from TileKey.
@@ -263,10 +263,9 @@ private:
     };
 
     /// Provider-level source imagery depot, matching cesium-native
-    /// SharedAssetDepot ownership. Rectangle geometry requests may compose
-    /// different output tiles, but the underlying quadtree source tile is
-    /// shared by TileKey here rather than owned by an individual rectangle
-    /// request.
+    /// SharedAssetDepot ownership. Geometry requests may compose different
+    /// output tiles, but the underlying quadtree source tile is shared by
+    /// TileKey here rather than owned by an individual composite request.
     struct SourceTileAsset {
         TileKey key;
         Rectangle bounds;

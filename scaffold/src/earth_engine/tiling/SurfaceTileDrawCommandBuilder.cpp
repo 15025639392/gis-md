@@ -18,7 +18,7 @@ namespace {
 
 int rasterTextureSourceZoom(const RasterOverlayTile* tile) {
     if (!tile) return -1;
-    return tile->isRectangleTile() ? tile->getSourceZoom() : tile->getTileID().z;
+    return tile->isCompositeTile() ? tile->getSourceZoom() : tile->getTileID().z;
 }
 
 bool overlayBindingAllowedByPolicy(
@@ -140,8 +140,8 @@ void SurfaceTileDrawCommandBuilder::build(
         }
         surfaceCommand.surfaceBaseRasterState =
             static_cast<int>(baseBinding.tile->getState());
-        surfaceCommand.surfaceBaseIsRectangleTile =
-            baseBinding.tile->isRectangleTile() ? 1 : 0;
+        surfaceCommand.surfaceBaseIsCompositeTile =
+            baseBinding.tile->isCompositeTile() ? 1 : 0;
     }
     surfaceCommand.surfaceTileUv = baseBinding.tile
         ? std::array<float, 4>{

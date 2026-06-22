@@ -65,8 +65,8 @@ public:
     /// The tile's quadtree key.
     const TileKey& getTileID() const { return key_; }
 
-    /// Provider cache key. Real quadtree tiles use scheme/z/x/y. Rectangle
-    /// tiles use a key derived from rectangle bounds and selected source level.
+    /// Provider cache key. Real quadtree tiles use scheme/z/x/y. Composite
+    /// tiles use a key derived from geometry bounds and selected source level.
     const std::string& getCacheKey() const { return cacheKey_; }
 
     /// The geographic rectangle covered by this tile.
@@ -119,13 +119,13 @@ public:
     int getMaxZoom() const { return maxZoom_; }
     void setMaxZoom(int maxZoom) { maxZoom_ = maxZoom; }
 
-    /// cesium-native mapOverlayToTile rectangle path: this tile is not a
-    /// provider quadtree tile. It represents a raster image for an arbitrary
-    /// geometry rectangle.
-    bool isRectangleTile() const { return rectangleTile_; }
+    /// Provider-internal composite tile: this tile is not one source quadtree
+    /// tile. It represents the image produced by mapping a geometry rectangle
+    /// to one or more provider quadtree source tiles.
+    bool isCompositeTile() const { return compositeTile_; }
     int getSourceZoom() const { return sourceZoom_; }
-    void setRectangleTileLevel(int sourceZoom) {
-        rectangleTile_ = true;
+    void setCompositeTileSourceLevel(int sourceZoom) {
+        compositeTile_ = true;
         sourceZoom_ = sourceZoom;
     }
 
@@ -149,7 +149,7 @@ private:
     void* rendererResources_ = nullptr;
     int maxZoom_ = 22;
     MoreDetailAvailable moreDetailAvailable_ = MoreDetailAvailable::Unknown;
-    bool rectangleTile_ = false;
+    bool compositeTile_ = false;
     int sourceZoom_ = 0;
     double targetScreenPixelsX_ = 256.0;
     double targetScreenPixelsY_ = 256.0;

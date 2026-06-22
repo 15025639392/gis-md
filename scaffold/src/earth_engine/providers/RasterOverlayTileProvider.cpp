@@ -71,7 +71,7 @@ bool uploadAllowedDuringInteraction(
     if (!image) {
         return true;
     }
-    if (cacheKey.rfind("rectangle/", 0) == 0) {
+    if (cacheKey.rfind("composite/", 0) == 0) {
         return false;
     }
     if (image->width > kInteractionRasterUploadMaxDimension ||
@@ -609,7 +609,7 @@ RectangleSourcePlan buildRectangleSourcePlan(
     return plan;
 }
 
-std::string rectangleTileCacheKey(const TileScheme& scheme,
+std::string compositeTileCacheKey(const TileScheme& scheme,
                                   const Rectangle& rectangle,
                                   int sourceZoom) {
     char bounds[256];
@@ -620,7 +620,7 @@ std::string rectangleTileCacheKey(const TileScheme& scheme,
                   rectangle.south(),
                   rectangle.east(),
                   rectangle.north());
-    return "rectangle/" + scheme.id() + "/srcz/" +
+    return "composite/" + scheme.id() + "/srcz/" +
            std::to_string(sourceZoom) + "/" + bounds;
 }
 
@@ -1545,7 +1545,7 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
         }
     }
 
-    const std::string ck = rectangleTileCacheKey(
+    const std::string ck = compositeTileCacheKey(
         scheme_, providerGeometryBounds, sourcePlan.sourceZoom);
     auto existing = tiles_.find(ck);
     if (existing != tiles_.end()) {
@@ -1563,7 +1563,7 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
     auto tile = std::make_shared<RasterOverlayTile>(
         *this, representativeKey, providerGeometryBounds, ck);
     tile->setMaxZoom(getMaximumLevel());
-    tile->setRectangleTileLevel(sourcePlan.sourceZoom);
+    tile->setCompositeTileSourceLevel(sourcePlan.sourceZoom);
     tile->setTargetScreenPixels(targetScreenPixelsX, targetScreenPixelsY);
     tile->lastUsedFrame = frameNumber_;
     tiles_[ck] = tile;
@@ -1623,8 +1623,8 @@ int RasterOverlayTileProvider::getPendingUploadCount() const {
 
 bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
                                          FrameResourceBudget* budget) {
-    if (tile.isRectangleTile()) {
-        return loadRectangleTile(tile, budget);
+    if (tile.isCompositeTile()) {
+        return loadCompositeTile(tile, budget);
     }
 
     // cesium-native ActivatedRasterOverlay::doLoad: only Unloaded tiles start
@@ -1772,7 +1772,7 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
 bool RasterOverlayTileProvider::loadTileThrottled(RasterOverlayTile& tile,
                                                   FrameResourceBudget* budget) {
     // cesium-native: loadTileThrottled only starts Unloaded tiles. Once a
-    // rectangle tile is Loading, its source dependencies are already attached
+    // composite tile is Loading, its source dependencies are already attached
     // to provider-level source tile assets and do not need per-frame pumping.
     if (tile.getState() != RasterOverlayTile::LoadState::Unloaded) {
         return true;
@@ -1785,7 +1785,7 @@ bool RasterOverlayTileProvider::loadTileThrottled(RasterOverlayTile& tile,
     return loadTile(tile, budget);
 }
 
-bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
+bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
                                                   FrameResourceBudget* budget) {
     auto loadState = tile.getState();
     switch (loadState) {
@@ -1958,7 +1958,7 @@ int RasterOverlayTileProvider::processPendingUploads(
         PendingUpload upload;
         {
             std::lock_guard<std::mutex> lock(asyncState_->mutex);
-            // Rectangle raster tiles can be 512x512+ and state finalization
+            // Composite raster tiles can be 512x512+ and state finalization
             // runs on the main thread. Take one upload at a time so elapsed
             // upload cost can stop the next item in the same frame.
             if (asyncState_->pendingUploads.empty()) {
@@ -2025,12 +2025,12 @@ int RasterOverlayTileProvider::processPendingUploads(
         double uploadMs = 0.0;
         for (const TilePtr& target : targetTiles) {
             RasterOverlayTile& tile = *target;
-            // Resource-prep upload (main-thread safe). Rectangle images are
+            // Resource-prep upload (main-thread safe). Composite images are
             // already combined at the selector's target screen-pixel density;
-            // on mobile, generating mipmaps for every rectangle image is
+            // on mobile, generating mipmaps for every composite image is
             // expensive main-thread work without improving the current
             // selected tile.
-            const bool generateMipmaps = !tile.isRectangleTile();
+            const bool generateMipmaps = !tile.isCompositeTile();
             RasterTextureUploadOptions uploadOptions;
             uploadOptions.generateMipmaps = generateMipmaps;
             auto tex = textureUploader_
@@ -2049,7 +2049,7 @@ int RasterOverlayTileProvider::processPendingUploads(
             (void)uploadMs;
 #endif
             const int sourceLevel =
-                tile.isRectangleTile() ? tile.getSourceZoom() : tile.getTileID().z;
+                tile.isCompositeTile() ? tile.getSourceZoom() : tile.getTileID().z;
             const RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
                 upload.moreDetailAvailable !=
                         RasterOverlayTile::MoreDetailAvailable::Unknown
@@ -2070,11 +2070,11 @@ int RasterOverlayTileProvider::processPendingUploads(
                 upload.image->width > 1024 ||
                 upload.image->height > 1024) {
                 __android_log_print(ANDROID_LOG_INFO, "RasterOverlayTileProvider",
-                    "upload %.2fms size=%dx%d rectangle=%d mipmap=%d cache=%s",
+                    "upload %.2fms size=%dx%d composite=%d mipmap=%d cache=%s",
                     uploadMs,
                     upload.image->width,
                     upload.image->height,
-                    tile.isRectangleTile() ? 1 : 0,
+                    tile.isCompositeTile() ? 1 : 0,
                     generateMipmaps ? 1 : 0,
                     tile.getCacheKey().c_str());
             }
