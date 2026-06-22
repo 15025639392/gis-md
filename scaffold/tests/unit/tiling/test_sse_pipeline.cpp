@@ -105,6 +105,7 @@
 #include "earth_engine/tiling/TileSubtreeWorkTracker.h"
 #include "earth_engine/tiling/TileRasterUpsampledChildMaterializer.h"
 #include "earth_engine/tiling/TileSurface.h"
+#include "earth_engine/tiling/TileMeshFrameEnsurer.h"
 #include "earth_engine/tiling/TileSurfaceMeshEnsurer.h"
 #include "earth_engine/tiling/TileSurfaceMeshResolutionPolicy.h"
 #include "earth_engine/tiling/TileSurfaceMeshSourceResolver.h"
@@ -11268,6 +11269,51 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               !gltfEnsureAncestorEnsured &&
               !gltfEnsureCompletenessChecked,
           "TileSurfaceMeshEnsurer: glTF terrain upsample source bypasses SurfaceMesh commit path");
+
+    TilesetTile gltfFrameTile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    gltfFrameTile.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(gltfFrameTile.bounds),
+        Mat4::identity());
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        frameTerrainCache;
+    bool frameCacheKeyComputed = false;
+    bool frameSurfacePathTouched = false;
+    bool frameResourcesDirty = false;
+    TileMeshFrameEnsurer::ensure(
+        TileMeshFrameEnsureInput{
+            gltfFrameTile,
+            frameTerrainCache,
+            nullptr,
+            true},
+        [&frameCacheKeyComputed](const TileKey&) {
+            frameCacheKeyComputed = true;
+            return std::string("unexpected-gltf-terrain-cache-key");
+        },
+        [&frameSurfacePathTouched](const TileKey&, DecodedHeightmap*) {
+            frameSurfacePathTouched = true;
+        },
+        [&frameSurfacePathTouched](const TilesetTile&, bool)
+            -> const TilesetTile* {
+            frameSurfacePathTouched = true;
+            return nullptr;
+        },
+        [&frameSurfacePathTouched](TilesetTile&) {
+            frameSurfacePathTouched = true;
+        },
+        [&frameSurfacePathTouched](const TilesetTile&) {
+            frameSurfacePathTouched = true;
+            return false;
+        },
+        [&frameResourcesDirty]() {
+            frameResourcesDirty = true;
+        });
+    check(!frameCacheKeyComputed &&
+              !frameSurfacePathTouched &&
+              !frameResourcesDirty &&
+              !gltfFrameTile.content.renderContent.hasSurfaceMesh(),
+          "TileMeshFrameEnsurer: glTF terrain render content skips terrain cache and SurfaceMesh frame path");
 }
 
 void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {

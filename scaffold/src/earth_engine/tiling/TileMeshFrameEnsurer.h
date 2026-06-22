@@ -37,6 +37,10 @@ public:
         EnsureAncestorMeshFn&& ensureAncestorMesh,
         IsCompleteRenderableFn&& isCompleteRenderable,
         MarkResourcesDirtyFn&& markResourcesDirty) {
+        if (input.tile.content.renderContent.hasGltfContent()) {
+            return;
+        }
+
         auto it = input.terrainCache.find(terrainCacheKey(input.tile.key));
         const bool hasOwnTerrain =
             it != input.terrainCache.end() && it->second;
