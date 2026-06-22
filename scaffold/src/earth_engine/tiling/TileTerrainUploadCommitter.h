@@ -25,7 +25,6 @@ struct TileTerrainUploadCommitAction {
 struct TileTerrainUploadCommitter {
     static void applyAvailabilityUpdates(
         TilesetContentProvider* contentProvider,
-        TerrainProvider* terrainProvider,
         const TileLoadedContent& content);
 
     static void cacheTerrainPayload(

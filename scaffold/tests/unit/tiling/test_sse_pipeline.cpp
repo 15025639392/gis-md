@@ -12628,7 +12628,6 @@ void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
         terrainUpload,
         nullptr,
         nullptr,
-        nullptr,
         rasterOverlays,
         terrainCache,
         lifecycle,

@@ -14,7 +14,6 @@ namespace earth_engine {
 
 void TileTerrainUploadCommitter::applyAvailabilityUpdates(
     TilesetContentProvider* contentProvider,
-    TerrainProvider* terrainProvider,
     const TileLoadedContent& content) {
     if (!content.hasGltfTerrainPayload() ||
         content.quantizedMeshAvailabilityUpdates.empty()) {
@@ -23,12 +22,6 @@ void TileTerrainUploadCommitter::applyAvailabilityUpdates(
 
     if (contentProvider && contentProvider->providesTerrainQuadtree()) {
         contentProvider->applyTerrainAvailabilityUpdates(
-            content.quantizedMeshAvailabilityUpdates);
-        return;
-    }
-
-    if (terrainProvider) {
-        terrainProvider->applyAvailabilityUpdates(
             content.quantizedMeshAvailabilityUpdates);
     }
 }

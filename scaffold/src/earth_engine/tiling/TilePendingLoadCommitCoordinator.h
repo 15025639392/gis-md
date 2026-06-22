@@ -76,7 +76,6 @@ public:
     static void commitTerrainUpload(
         PendingTileLoad& upload,
         TilesetContentProvider* contentProvider,
-        TerrainProvider* terrainProvider,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         std::unordered_map<
@@ -91,7 +90,6 @@ public:
         TileLoadedContent& content = upload.content();
         TileTerrainUploadCommitter::applyAvailabilityUpdates(
             contentProvider,
-            terrainProvider,
             content);
         const bool hadHeightmapTerrainPayload =
             content.terrainPayloadKind == TerrainTilePayloadKind::Heightmap &&
@@ -224,7 +222,6 @@ public:
     static void commitUpload(
         PendingTileLoad& upload,
         TilesetContentProvider* contentProvider,
-        TerrainProvider* terrainProvider,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         std::unordered_map<
@@ -239,7 +236,6 @@ public:
         if (upload.domain == TileLoadDomain::Content) {
             TileTerrainUploadCommitter::applyAvailabilityUpdates(
                 contentProvider,
-                terrainProvider,
                 upload.content());
             commitContentUpload(
                 upload,
@@ -252,7 +248,6 @@ public:
             commitTerrainUpload(
                 upload,
                 contentProvider,
-                terrainProvider,
                 device,
                 rasterOverlays,
                 terrainCache,

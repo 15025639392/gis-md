@@ -57,20 +57,10 @@ public:
         HttpRequestPriority = HttpRequestPriority::Normal) override {
         callback(key, TerrainTileLoadResult::retryLater());
     }
-    void applyAvailabilityUpdates(
-        const std::vector<QuantizedMeshAvailabilityUpdate>& updates)
-        override {
-        appliedUpdates.insert(
-            appliedUpdates.end(),
-            updates.begin(),
-            updates.end());
-    }
     std::unique_ptr<DecodedHeightmap> decodeTile(const uint8_t*, size_t)
         override {
         return nullptr;
     }
-
-    std::vector<QuantizedMeshAvailabilityUpdate> appliedUpdates;
 };
 
 TileLoadResultMetadata makeBoundingVolumeMetadata(
@@ -499,7 +489,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         terrainUpload,
         nullptr,
         nullptr,
-        nullptr,
         {},
         terrainCache,
         lifecycle,
@@ -580,7 +569,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     TileTerrainUploadCommitter::applyAvailabilityUpdates(
         &provider,
-        nullptr,
         content);
 
     EXPECT_EQ(TileAvailabilityState::Available,
@@ -591,9 +579,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
 TEST(
     TilePendingLoadCommitCoordinatorTest,
-    TerrainUploadCommitterAppliesAvailabilityToContentProviderFirst) {
+    TerrainUploadCommitterAppliesAvailabilityToContentProviderOnly) {
     RecordingTerrainContentProvider contentProvider;
-    RecordingTerrainProvider terrainProvider;
 
     QuantizedMeshAvailabilityUpdate update;
     update.layerIndex = 3;
@@ -607,12 +594,10 @@ TEST(
 
     TileTerrainUploadCommitter::applyAvailabilityUpdates(
         &contentProvider,
-        &terrainProvider,
         content);
 
     ASSERT_EQ(1u, contentProvider.appliedUpdates.size());
     EXPECT_EQ(3, contentProvider.appliedUpdates[0].layerIndex);
-    EXPECT_TRUE(terrainProvider.appliedUpdates.empty());
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
@@ -689,7 +674,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         &provider,
-        nullptr,
         nullptr,
         {},
         terrainCache,
@@ -773,7 +757,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     TilePendingLoadCommitCoordinator::commitTerrainUpload(
         upload,
-        nullptr,
         nullptr,
         nullptr,
         {},
@@ -863,7 +846,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         upload,
         nullptr,
         nullptr,
-        nullptr,
         {},
         terrainCache,
         lifecycle,
@@ -947,7 +929,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         upload,
         nullptr,
         nullptr,
-        nullptr,
         {},
         terrainCache,
         lifecycle,
@@ -1028,7 +1009,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         upload,
         nullptr,
         nullptr,
-        nullptr,
         {},
         terrainCache,
         lifecycle,
@@ -1092,7 +1072,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     TilePendingLoadCommitCoordinator::commitTerrainUpload(
         upload,
-        nullptr,
         nullptr,
         nullptr,
         {},
@@ -1237,7 +1216,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitTerrainUpload(
         upload,
         &provider,
-        nullptr,
         nullptr,
         {},
         terrainCache,

@@ -12,7 +12,6 @@
 
 namespace earth_engine {
 
-class TerrainProvider;
 class TilesetContentProvider;
 class ActivatedRasterOverlay;
 class RenderDevice;
@@ -23,7 +22,6 @@ struct TilesetTile;
 struct TilePendingUploadFrameProcessorInput {
     TileLoadLifecycle& loadLifecycle;
     FrameResourceBudget& budget;
-    TerrainProvider* terrainProvider = nullptr;
     TilesetContentProvider* contentProvider = nullptr;
     RenderDevice* device = nullptr;
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
@@ -61,7 +59,6 @@ public:
             TilePendingLoadCommitCoordinator::commitUpload(
                 upload,
                 input.contentProvider,
-                input.terrainProvider,
                 input.device,
                 input.rasterOverlays,
                 input.terrainCache,

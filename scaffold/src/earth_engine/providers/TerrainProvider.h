@@ -154,12 +154,6 @@ public:
     /// children so sparse terrain does not issue blind descendant requests.
     virtual bool isAvailabilityBoundaryLevel(int) const { return false; }
 
-    /// Apply availability discovered while loading terrain content. Quantized
-    /// mesh providers use this for metadata extension updates; providers that
-    /// do not expose sparse availability ignore it.
-    virtual void applyAvailabilityUpdates(
-        const std::vector<QuantizedMeshAvailabilityUpdate>&) {}
-
     using TerrainCallback = std::function<void(
         const TileKey&, TerrainTileLoadResult)>;
 

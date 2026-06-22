@@ -104,7 +104,6 @@ public:
             TilePendingUploadFrameProcessorInput{
                 context.loadLifecycle,
                 *budget,
-                context.terrainProvider,
                 context.contentProvider,
                 context.device,
                 context.rasterOverlays,
