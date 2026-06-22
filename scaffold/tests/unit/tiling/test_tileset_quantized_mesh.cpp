@@ -556,7 +556,12 @@ TEST(TilesetQuantizedMeshTest,
      ChildrenInheritParentHeaderHeightRangeLikeCesiumNative) {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset(std::move(provider),
+                    std::move(scheme),
+                    {},
+                    nullptr,
+                    TilesetOptions{},
+                    nullptr);
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -610,7 +615,8 @@ TEST(TilesetQuantizedMeshTest,
                     std::move(scheme),
                     {},
                     nullptr,
-                    TilesetOptions{});
+                    TilesetOptions{},
+                    nullptr);
 
     const TileKey rootKey{"XYZ-WebMercator", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);

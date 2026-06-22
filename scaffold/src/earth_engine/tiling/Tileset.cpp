@@ -70,6 +70,19 @@ Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
                  std::unique_ptr<TileScheme> tileScheme,
                  std::vector<ActivatedRasterOverlay*> rasterOverlays,
                  RenderDevice* device,
+                 TilesetOptions options)
+    : Tileset(
+          std::move(terrainProvider),
+          std::move(tileScheme),
+          std::move(rasterOverlays),
+          device,
+          std::move(options),
+          nullptr) {}
+
+Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
+                 std::unique_ptr<TileScheme> tileScheme,
+                 std::vector<ActivatedRasterOverlay*> rasterOverlays,
+                 RenderDevice* device,
                  TilesetOptions options,
                  std::unique_ptr<TilesetContentProvider> contentProvider)
     : terrainProvider_(validateTerrainProviderOwnership(
