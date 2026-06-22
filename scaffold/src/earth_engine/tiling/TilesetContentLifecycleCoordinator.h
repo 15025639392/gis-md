@@ -40,6 +40,21 @@ struct TilesetContentLifecycleContext {
     uint32_t smoothedMainThreadUploadLimit = 1;
 };
 
+struct TilesetContentUploadContext {
+    TileLoadLifecycle& loadLifecycle;
+    TilesetContentProvider* contentProvider = nullptr;
+    RenderDevice* device = nullptr;
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
+        terrainCache;
+    TileEmptyContentRegistry& emptyContentRegistry;
+    uint64_t frameNumber = 0;
+    uint32_t maximumSimultaneousTileLoads = 20;
+    double mainThreadLoadingTimeLimit = 0.0;
+    double currentFrameTimeSeconds = 0.0;
+    uint32_t smoothedMainThreadUploadLimit = 1;
+};
+
 class TilesetContentLifecycleCoordinator {
 public:
     template <typename PrepareUpsampleSourceTileFn, typename EnsureTileFn>
@@ -80,7 +95,7 @@ public:
               typename EnsureTileMeshFn,
               typename MarkResourcesDirtyFn>
     static bool processPendingUploads(
-        TilesetContentLifecycleContext context,
+        TilesetContentUploadContext context,
         bool interactionActive,
         bool resourceSmoothingActive,
         FrameResourceBudget* budget,

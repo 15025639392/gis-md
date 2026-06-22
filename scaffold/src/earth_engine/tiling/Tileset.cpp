@@ -156,11 +156,26 @@ TilesetLoadDiagnostics Tileset::loadDiagnostics() const {
     return diagnostics;
 }
 
-TileContentRuntimeFrame Tileset::makeContentRuntimeFrame() const {
-    TileContentRuntimeFrame frame{
+TileContentRuntimeRequestFrame
+Tileset::makeContentRuntimeRequestFrame() const {
+    TileContentRuntimeRequestFrame frame{
         rasterOverlays_,
         tileRegistry_.tiles()};
     frame.terrainProvider = terrainProvider_.get();
+    frame.contentProvider = contentProvider_.get();
+    frame.device = device_;
+    frame.frameNumber = frameNumber_;
+    frame.maximumSimultaneousTileLoads =
+        options_.maximumSimultaneousTileLoads;
+    frame.mainThreadLoadingTimeLimit = options_.mainThreadLoadingTimeLimit;
+    frame.currentFrameTimeSeconds = currentFrameTimeSeconds_;
+    frame.smoothedMainThreadUploadLimit =
+        static_cast<uint32_t>(kSmoothedMainThreadUploadLimit);
+    return frame;
+}
+
+TileContentRuntimeUploadFrame Tileset::makeContentRuntimeUploadFrame() const {
+    TileContentRuntimeUploadFrame frame{rasterOverlays_};
     frame.contentProvider = contentProvider_.get();
     frame.device = device_;
     frame.frameNumber = frameNumber_;
@@ -178,7 +193,7 @@ TileLoadRequestOutcome Tileset::requestMissingContent(
     FrameResourceBudget* budget) {
     return contentRuntime_.requestMissingTiles(
         loadRequests,
-        makeContentRuntimeFrame(),
+        makeContentRuntimeRequestFrame(),
         budget);
 }
 
@@ -187,7 +202,7 @@ bool Tileset::processPendingLoads(
     bool resourceSmoothingActive,
     FrameResourceBudget* budget) {
     return contentRuntime_.processPendingUploads(
-        makeContentRuntimeFrame(),
+        makeContentRuntimeUploadFrame(),
         interactionActive,
         resourceSmoothingActive,
         budget);

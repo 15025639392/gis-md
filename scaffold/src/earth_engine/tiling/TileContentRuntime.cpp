@@ -20,7 +20,7 @@ TileContentRuntime::TileContentRuntime(
 
 TileLoadRequestOutcome TileContentRuntime::requestMissingTiles(
     const std::vector<TileLoadRequest>& loadRequests,
-    const TileContentRuntimeFrame& frame,
+    const TileContentRuntimeRequestFrame& frame,
     FrameResourceBudget* budget) {
     return lifecycle_.requestMissingTiles(
         loadRequests,
@@ -46,16 +46,14 @@ TileLoadRequestOutcome TileContentRuntime::requestMissingTiles(
 }
 
 bool TileContentRuntime::processPendingUploads(
-    const TileContentRuntimeFrame& frame,
+    const TileContentRuntimeUploadFrame& frame,
     bool interactionActive,
     bool resourceSmoothingActive,
     FrameResourceBudget* budget) {
     return lifecycle_.processPendingUploads(
-        frame.terrainProvider,
         frame.contentProvider,
         frame.device,
         frame.rasterOverlays,
-        frame.tiles,
         frame.frameNumber,
         frame.maximumSimultaneousTileLoads,
         frame.mainThreadLoadingTimeLimit,

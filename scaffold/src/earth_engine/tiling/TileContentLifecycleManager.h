@@ -84,12 +84,9 @@ public:
               typename EnsureTileMeshFn,
               typename MarkResourcesDirtyFn>
     bool processPendingUploads(
-        TerrainProvider* terrainProvider,
         TilesetContentProvider* contentProvider,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
-        const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>&
-            tiles,
         uint64_t frameNumber,
         uint32_t maximumSimultaneousTileLoads,
         double mainThreadLoadingTimeLimit,
@@ -103,12 +100,10 @@ public:
         EnsureTileMeshFn&& ensureTileMesh,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         return TilesetContentLifecycleCoordinator::processPendingUploads(
-            makeContext(
-                terrainProvider,
+            makeUploadContext(
                 contentProvider,
                 device,
                 rasterOverlays,
-                tiles,
                 frameNumber,
                 maximumSimultaneousTileLoads,
                 mainThreadLoadingTimeLimit,
@@ -143,6 +138,29 @@ private:
             device,
             rasterOverlays,
             tiles,
+            terrainCache_,
+            emptyContentRegistry_,
+            frameNumber,
+            maximumSimultaneousTileLoads,
+            mainThreadLoadingTimeLimit,
+            currentFrameTimeSeconds,
+            smoothedMainThreadUploadLimit};
+    }
+
+    TilesetContentUploadContext makeUploadContext(
+        TilesetContentProvider* contentProvider,
+        RenderDevice* device,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        uint64_t frameNumber,
+        uint32_t maximumSimultaneousTileLoads,
+        double mainThreadLoadingTimeLimit,
+        double currentFrameTimeSeconds,
+        uint32_t smoothedMainThreadUploadLimit) {
+        return TilesetContentUploadContext{
+            loadLifecycle_,
+            contentProvider,
+            device,
+            rasterOverlays,
             terrainCache_,
             emptyContentRegistry_,
             frameNumber,

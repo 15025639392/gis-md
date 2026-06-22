@@ -129,7 +129,8 @@ private:
     friend class TilesetSelectionFrameFacade;
     friend class TilesetUpdateFrameRuntime;
 
-    TileContentRuntimeFrame makeContentRuntimeFrame() const;
+    TileContentRuntimeRequestFrame makeContentRuntimeRequestFrame() const;
+    TileContentRuntimeUploadFrame makeContentRuntimeUploadFrame() const;
     bool hasTerrainQuadtree() const;
     TileLoadRequestOutcome requestMissingContent(
         const std::vector<TileLoadRequest>& loadRequests,

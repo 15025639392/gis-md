@@ -21,11 +21,22 @@ class TileMeshPreparationManager;
 class TilesetContentProvider;
 struct TilesetTile;
 
-struct TileContentRuntimeFrame {
+struct TileContentRuntimeRequestFrame {
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>&
         tiles;
     TerrainProvider* terrainProvider = nullptr;
+    TilesetContentProvider* contentProvider = nullptr;
+    RenderDevice* device = nullptr;
+    uint64_t frameNumber = 0;
+    uint32_t maximumSimultaneousTileLoads = 0;
+    double mainThreadLoadingTimeLimit = 0.0;
+    double currentFrameTimeSeconds = 0.0;
+    uint32_t smoothedMainThreadUploadLimit = 0;
+};
+
+struct TileContentRuntimeUploadFrame {
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     TilesetContentProvider* contentProvider = nullptr;
     RenderDevice* device = nullptr;
     uint64_t frameNumber = 0;
@@ -45,10 +56,10 @@ public:
 
     TileLoadRequestOutcome requestMissingTiles(
         const std::vector<TileLoadRequest>& loadRequests,
-        const TileContentRuntimeFrame& frame,
+        const TileContentRuntimeRequestFrame& frame,
         FrameResourceBudget* budget);
     bool processPendingUploads(
-        const TileContentRuntimeFrame& frame,
+        const TileContentRuntimeUploadFrame& frame,
         bool interactionActive,
         bool resourceSmoothingActive,
         FrameResourceBudget* budget);

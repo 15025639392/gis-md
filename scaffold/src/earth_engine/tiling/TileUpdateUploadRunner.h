@@ -62,7 +62,7 @@ public:
               typename MarkResourcesDirtyFn>
     static TileUpdateUploadRunResult runContentLifecycle(
         TileUpdateUploadRunInput input,
-        TilesetContentLifecycleContext contentContext,
+        TilesetContentUploadContext contentContext,
         EnsureTileFn&& ensureTile,
         EnsureTileChildrenFn&& ensureTileChildren,
         EnsureTileMeshFn&& ensureTileMesh,
