@@ -2,7 +2,7 @@
 
 #include "GltfDrawCommandBuilder.h"
 #include "GltfRenderResourcePreparer.h"
-#include "SurfaceRasterOverlayStateUpdater.h"
+#include "RenderContentRasterOverlayStateUpdater.h"
 #include "SurfaceTileDrawCommandBuilder.h"
 #include "TileSelectionRasterOverlayPreparer.h"
 #include "TilesetTile.h"
@@ -52,8 +52,8 @@ public:
             const std::vector<size_t> overlayOrder =
                 TileSelectionRasterOverlayPreparer::processingOrder(
                     rasterOverlays);
-            const SurfaceRasterOverlayUpdateAction overlayAction =
-                SurfaceRasterOverlayStateUpdater::update(
+            const RenderContentRasterOverlayUpdateAction overlayAction =
+                RenderContentRasterOverlayStateUpdater::update(
                     renderer,
                     tile,
                     rasterOverlays,
@@ -104,8 +104,8 @@ public:
         const std::vector<size_t> overlayOrder =
             TileSelectionRasterOverlayPreparer::processingOrder(
                 rasterOverlays);
-        const SurfaceRasterOverlayUpdateAction overlayAction =
-            SurfaceRasterOverlayStateUpdater::update(
+        const RenderContentRasterOverlayUpdateAction overlayAction =
+            RenderContentRasterOverlayStateUpdater::update(
                 renderer,
                 tile,
                 rasterOverlays,

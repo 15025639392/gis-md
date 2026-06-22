@@ -114,7 +114,7 @@
 #include "earth_engine/tiling/TileUpsampleSourcePreparer.h"
 #include "earth_engine/tiling/Tileset.h"
 #include "earth_engine/tiling/TilesetSelectionFrameFacade.h"
-#include "earth_engine/tiling/SurfaceRasterOverlayStateUpdater.h"
+#include "earth_engine/tiling/RenderContentRasterOverlayStateUpdater.h"
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
 
 #include <atomic>
@@ -14178,7 +14178,7 @@ void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
 
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
     const std::vector<size_t> order{0};
-    SurfaceRasterOverlayStateUpdater::update(
+    RenderContentRasterOverlayStateUpdater::update(
         renderer,
         tile,
         overlays,
@@ -14191,9 +14191,9 @@ void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
     RasterOverlayTile* loadingTile =
         mapped ? mapped->getLoadingTile() : nullptr;
     check(loadingTile != nullptr,
-          "SurfaceRasterOverlayStateUpdater: visible overlay creates mapping");
+          "RenderContentRasterOverlayStateUpdater: visible overlay creates mapping");
     loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
-    SurfaceRasterOverlayStateUpdater::update(
+    RenderContentRasterOverlayStateUpdater::update(
         renderer,
         tile,
         overlays,
@@ -14203,12 +14203,12 @@ void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
         budget);
     mapped = tile.rasterOverlayState.mappingAt(0);
     check(mapped && mapped->getReadyTile() == loadingTile,
-          "SurfaceRasterOverlayStateUpdater: visible overlay promotes ready mapping");
+          "RenderContentRasterOverlayStateUpdater: visible overlay promotes ready mapping");
     check(TileCacheMetrics::estimateTileBytes(tile) == 8 * 4 * 4,
-          "SurfaceRasterOverlayStateUpdater: visible mapping contributes retained bytes");
+          "RenderContentRasterOverlayStateUpdater: visible mapping contributes retained bytes");
 
     overlay->setVisible(false);
-    SurfaceRasterOverlayStateUpdater::update(
+    RenderContentRasterOverlayStateUpdater::update(
         renderer,
         tile,
         overlays,
@@ -14218,9 +14218,9 @@ void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
         budget);
 
     check(tile.rasterOverlayState.mappingAt(0) == nullptr,
-          "SurfaceRasterOverlayStateUpdater: invisible overlay releases stale mapping");
+          "RenderContentRasterOverlayStateUpdater: invisible overlay releases stale mapping");
     check(TileCacheMetrics::estimateTileBytes(tile) == 0,
-          "SurfaceRasterOverlayStateUpdater: invisible overlay releases raster tile references");
+          "RenderContentRasterOverlayStateUpdater: invisible overlay releases raster tile references");
 }
 
 void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
@@ -14250,7 +14250,7 @@ void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
 
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
     const std::vector<size_t> order{0};
-    SurfaceRasterOverlayStateUpdater::update(
+    RenderContentRasterOverlayStateUpdater::update(
         renderer,
         tile,
         overlays,
@@ -14263,14 +14263,14 @@ void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
     RasterOverlayTile* loadingTile =
         mapped ? mapped->getLoadingTile() : nullptr;
     check(loadingTile != nullptr,
-          "SurfaceRasterOverlayStateUpdater: drawable-gated upsample maps loading raster");
+          "RenderContentRasterOverlayStateUpdater: drawable-gated upsample maps loading raster");
     if (!mapped || !loadingTile) return;
 
     loadingTile->setState(RasterOverlayTile::LoadState::Loaded);
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
-    const SurfaceRasterOverlayUpdateAction noTextureAction =
-        SurfaceRasterOverlayStateUpdater::update(
+    const RenderContentRasterOverlayUpdateAction noTextureAction =
+        RenderContentRasterOverlayStateUpdater::update(
             renderer,
             tile,
             overlays,
@@ -14280,15 +14280,15 @@ void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
             budget);
 
     check(mapped->getReadyTile() == loadingTile,
-          "SurfaceRasterOverlayStateUpdater: no-texture more-detail raster is cover-ready");
+          "RenderContentRasterOverlayStateUpdater: no-texture more-detail raster is cover-ready");
     check(!tile.rasterOverlayState.hasDrawableReadyMapping(0),
-          "SurfaceRasterOverlayStateUpdater: no-texture more-detail raster is not drawable");
+          "RenderContentRasterOverlayStateUpdater: no-texture more-detail raster is not drawable");
     check(noTextureAction.createRasterOverlayUpsampledChildren,
-          "SurfaceRasterOverlayStateUpdater: ready more-detail raster requests upsample children before GPU texture");
+          "RenderContentRasterOverlayStateUpdater: ready more-detail raster requests upsample children before GPU texture");
 
     loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
-    const SurfaceRasterOverlayUpdateAction drawableAction =
-        SurfaceRasterOverlayStateUpdater::update(
+    const RenderContentRasterOverlayUpdateAction drawableAction =
+        RenderContentRasterOverlayStateUpdater::update(
             renderer,
             tile,
             overlays,
@@ -14298,9 +14298,9 @@ void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
             budget);
 
     check(tile.rasterOverlayState.hasDrawableReadyMapping(0),
-          "SurfaceRasterOverlayStateUpdater: textured more-detail raster is drawable");
+          "RenderContentRasterOverlayStateUpdater: textured more-detail raster is drawable");
     check(drawableAction.createRasterOverlayUpsampledChildren,
-          "SurfaceRasterOverlayStateUpdater: drawable more-detail raster requests upsample children");
+          "RenderContentRasterOverlayStateUpdater: drawable more-detail raster requests upsample children");
 }
 
 void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
@@ -14348,7 +14348,7 @@ void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
 
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
     const std::vector<size_t> order{0};
-    SurfaceRasterOverlayStateUpdater::update(
+    RenderContentRasterOverlayStateUpdater::update(
         renderer,
         *root,
         overlays,
@@ -14368,8 +14368,8 @@ void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
     loadingTile->setTexture(std::make_unique<DummyTexture>(8, 4));
-    const SurfaceRasterOverlayUpdateAction action =
-        SurfaceRasterOverlayStateUpdater::update(
+    const RenderContentRasterOverlayUpdateAction action =
+        RenderContentRasterOverlayStateUpdater::update(
             renderer,
             *root,
             overlays,

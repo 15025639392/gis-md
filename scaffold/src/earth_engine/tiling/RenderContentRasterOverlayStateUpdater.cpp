@@ -1,4 +1,4 @@
-#include "SurfaceRasterOverlayStateUpdater.h"
+#include "RenderContentRasterOverlayStateUpdater.h"
 
 #include "RasterMappedToTilesetTile.h"
 #include "RasterOverlayScreenSpaceMetrics.h"
@@ -14,7 +14,8 @@
 
 namespace earth_engine {
 
-SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
+RenderContentRasterOverlayUpdateAction
+RenderContentRasterOverlayStateUpdater::update(
     Renderer& renderer,
     TilesetTile& tile,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
@@ -22,7 +23,7 @@ SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
     RenderDevice* device,
     double maximumScreenSpaceError,
     FrameResourceBudget& frameResourceBudget) {
-    SurfaceRasterOverlayUpdateAction action;
+    RenderContentRasterOverlayUpdateAction action;
 
     tile.rasterOverlayState.resizeMappingSlots(
         rasterOverlays.size(),
@@ -30,8 +31,7 @@ SurfaceRasterOverlayUpdateAction SurfaceRasterOverlayStateUpdater::update(
     tile.rasterOverlayState.clearMissingProjections();
     const bool hasRenderContentDetails =
         tile.content.contentKind == TileContentKind::Render &&
-        (tile.content.renderContent.hasSurfaceMesh() ||
-         tile.content.renderContent.hasGltfModel());
+        tile.content.renderContent.hasRenderableTerrainContent();
     if (hasRenderContentDetails) {
         TileRasterOverlayDetailsGenerator::
             ensureProjectionDetailsFromActiveOverlays(

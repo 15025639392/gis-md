@@ -11,14 +11,14 @@ class RenderDevice;
 class Renderer;
 struct TilesetTile;
 
-struct SurfaceRasterOverlayUpdateAction {
+struct RenderContentRasterOverlayUpdateAction {
     bool unloadTileContent = false;
     bool createRasterOverlayUpsampledChildren = false;
 };
 
-class SurfaceRasterOverlayStateUpdater {
+class RenderContentRasterOverlayStateUpdater {
 public:
-    static SurfaceRasterOverlayUpdateAction update(
+    static RenderContentRasterOverlayUpdateAction update(
         Renderer& renderer,
         TilesetTile& tile,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
