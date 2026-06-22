@@ -2,7 +2,6 @@
 
 #include "../content/GltfContentProvider.h"
 #include "RasterMappedToTilesetTile.h"
-#include "TileContentUploadPolicy.h"
 #include "TileLoadResultMetadataApplicator.h"
 #include "TileRasterOverlayDetailsGenerator.h"
 #include "TileTerrainUploadPolicy.h"
@@ -18,18 +17,6 @@ void TileTerrainUploadCommitter::prepareTerrainRenderContent(
     TileLoadedContent&& content,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
     RenderDevice* device) {
-    if (content.hasGltfTerrainPayload()) {
-        TileContentUploadPolicy::prepareGltfRenderContent(
-            tile,
-            std::move(content));
-        TileRasterOverlayDetailsGenerator::
-            ensureProjectionDetailsFromActiveOverlays(
-                tile,
-                rasterOverlays,
-                device);
-        return;
-    }
-
     tile.content.renderContent.setTerrainRenderContent(true);
     TileLoadResultMetadataApplicator::apply(
         tile,

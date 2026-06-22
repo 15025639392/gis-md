@@ -9,8 +9,8 @@
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileBoundsMetrics.h"
+#include "earth_engine/tiling/TileContentUploadCommitter.h"
 #include "earth_engine/tiling/TileScheme.h"
-#include "earth_engine/tiling/TileTerrainUploadCommitter.h"
 #include "earth_engine/tiling/Tileset.h"
 
 #include <cmath>
@@ -152,7 +152,7 @@ void installQuantizedMeshTerrainContent(TilesetTile& tile,
     content.metadata = std::move(loadResult.metadata);
     content.quantizedMeshAvailabilityUpdates =
         std::move(loadResult.availabilityUpdates);
-    TileTerrainUploadCommitter::prepareTerrainRenderContent(
+    TileContentUploadCommitter::prepareRenderContent(
         tile,
         std::move(content),
         {},
