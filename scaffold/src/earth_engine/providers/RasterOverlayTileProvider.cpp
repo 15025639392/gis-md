@@ -213,18 +213,6 @@ TileRange trimCesiumNativeBoundarySlop(const TileScheme& scheme,
     return range;
 }
 
-struct QuadtreeSourcePlan {
-    int sourceZoom = 0;
-    TileRange range;
-    std::vector<TileKey> sourceKeys;
-
-    int budgetUnits() const {
-        return static_cast<int>(sourceKeys.size());
-    }
-
-    bool empty() const { return sourceKeys.empty(); }
-};
-
 bool tryIssueRasterRequestBudget(FrameResourceBudget* budget,
                                  uint32_t currentInflight,
                                  int estimatedFanout) {
@@ -550,63 +538,6 @@ int chooseQuadtreeSourceZoom(const TileScheme& scheme,
 
     if (outRange) *outRange = range;
     return zoom;
-}
-
-QuadtreeSourcePlan buildQuadtreeSourcePlan(
-    const TileScheme& scheme,
-    const ImageryProvider& provider,
-    const RasterTextureUploader* uploader,
-    const Rectangle& geometryBounds,
-    const Rectangle& sourceBounds,
-    double targetScreenPixelsX,
-    double targetScreenPixelsY,
-    double maximumScreenSpaceError,
-    int maximumTextureSize,
-    int minimumLevel,
-    int maximumLevel) {
-    QuadtreeSourcePlan plan;
-    plan.sourceZoom = chooseQuadtreeSourceZoom(
-        scheme,
-        provider,
-        uploader,
-        geometryBounds,
-        sourceBounds,
-        targetScreenPixelsX,
-        targetScreenPixelsY,
-        maximumScreenSpaceError,
-        maximumTextureSize,
-        minimumLevel,
-        maximumLevel,
-        &plan.range);
-    plan.sourceKeys.reserve(
-        static_cast<size_t>(std::max(0, plan.range.count())));
-    for (int y = plan.range.minY; y <= plan.range.maxY; ++y) {
-        for (int x = plan.range.minX; x <= plan.range.maxX; ++x) {
-            TileKey sourceKey{scheme.id(), plan.sourceZoom, x, y};
-            if (provider.supportsTile(sourceKey) &&
-                rectanglesOverlapWithArea(
-                    scheme.tileToRectangle(sourceKey),
-                    sourceBounds)) {
-                plan.sourceKeys.push_back(sourceKey);
-            }
-        }
-    }
-    if (plan.sourceKeys.empty() &&
-        sourceBounds.width() > 0.0 &&
-        sourceBounds.height() > 0.0) {
-        const auto center = sourceBounds.center();
-        TileKey sourceKey =
-            scheme.positionToTile(center.first, center.second, plan.sourceZoom);
-        if (provider.supportsTile(sourceKey)) {
-            plan.range = TileRange{
-                sourceKey.x,
-                sourceKey.y,
-                sourceKey.x,
-                sourceKey.y};
-            plan.sourceKeys.push_back(sourceKey);
-        }
-    }
-    return plan;
 }
 
 std::string compositeTileCacheKey(const TileScheme& scheme,
@@ -957,6 +888,68 @@ using CompositeRequestSuccess =
 using CompositeRequestFailure = std::function<void()>;
 
 } // namespace
+
+RasterOverlayTileProvider::QuadtreeSourcePlan
+RasterOverlayTileProvider::buildQuadtreeSourcePlan(
+    const TileScheme& scheme,
+    const ImageryProvider& provider,
+    const RasterTextureUploader* uploader,
+    const Rectangle& geometryBounds,
+    const Rectangle& sourceBounds,
+    double targetScreenPixelsX,
+    double targetScreenPixelsY,
+    double maximumScreenSpaceError,
+    int maximumTextureSize,
+    int minimumLevel,
+    int maximumLevel) {
+    QuadtreeSourcePlan plan;
+    TileRange range;
+    plan.sourceZoom = chooseQuadtreeSourceZoom(
+        scheme,
+        provider,
+        uploader,
+        geometryBounds,
+        sourceBounds,
+        targetScreenPixelsX,
+        targetScreenPixelsY,
+        maximumScreenSpaceError,
+        maximumTextureSize,
+        minimumLevel,
+        maximumLevel,
+        &range);
+    plan.minX = range.minX;
+    plan.minY = range.minY;
+    plan.maxX = range.maxX;
+    plan.maxY = range.maxY;
+    plan.sourceKeys.reserve(
+        static_cast<size_t>(std::max(0, range.count())));
+    for (int y = range.minY; y <= range.maxY; ++y) {
+        for (int x = range.minX; x <= range.maxX; ++x) {
+            TileKey sourceKey{scheme.id(), plan.sourceZoom, x, y};
+            if (provider.supportsTile(sourceKey) &&
+                rectanglesOverlapWithArea(
+                    scheme.tileToRectangle(sourceKey),
+                    sourceBounds)) {
+                plan.sourceKeys.push_back(sourceKey);
+            }
+        }
+    }
+    if (plan.sourceKeys.empty() &&
+        sourceBounds.width() > 0.0 &&
+        sourceBounds.height() > 0.0) {
+        const auto center = sourceBounds.center();
+        TileKey sourceKey =
+            scheme.positionToTile(center.first, center.second, plan.sourceZoom);
+        if (provider.supportsTile(sourceKey)) {
+            plan.minX = sourceKey.x;
+            plan.minY = sourceKey.y;
+            plan.maxX = sourceKey.x;
+            plan.maxY = sourceKey.y;
+            plan.sourceKeys.push_back(sourceKey);
+        }
+    }
+    return plan;
+}
 
 struct RasterOverlayTileProvider::QuadtreeSourceRequest
     : public std::enable_shared_from_this<QuadtreeSourceRequest> {
@@ -1643,130 +1636,23 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
     }
 
     const TileKey& key = tile.getTileID();
-    std::string ck = tileCacheKey(key);
-
-    // Check if already in-flight
-    {
-        std::lock_guard<std::mutex> lock(asyncState_->mutex);
-        if (asyncState_->inFlightRequests.count(ck)) {
-            return true;
-        }
-    }
     QuadtreeSourcePlan sourcePlan;
     sourcePlan.sourceZoom = key.z;
-    sourcePlan.range = TileRange{key.x, key.y, key.x, key.y};
+    sourcePlan.minX = key.x;
+    sourcePlan.minY = key.y;
+    sourcePlan.maxX = key.x;
+    sourcePlan.maxY = key.y;
     sourcePlan.sourceKeys.push_back(key);
-    auto estimateNewSourceRequests = [&]() {
-        int estimated = 0;
-        std::lock_guard<std::mutex> lock(asyncState_->mutex);
-        for (const TileKey& sourceKey : sourcePlan.sourceKeys) {
-            const std::string sourceKeyString = sourceCacheKey(sourceKey);
-            auto cached =
-                asyncState_->sourceTileDepotCache.find(sourceKeyString);
-            if (cached != asyncState_->sourceTileDepotCache.end() &&
-                cached->second.image) {
-                continue;
-            }
-            if (asyncState_->sourceTileDepotInFlight.count(sourceKeyString) >
-                0) {
-                continue;
-            }
-            ++estimated;
-        }
-        return estimated;
-    };
-    if (!tryIssueRasterRequestBudget(
-            budget,
-            asyncState_->activeRasterSourceRequests,
-            estimateNewSourceRequests())) {
-        return false;
-    }
-
-    tile.setState(RasterOverlayTile::LoadState::Loading);
-    {
-        std::lock_guard<std::mutex> lock(asyncState_->mutex);
-        asyncState_->inFlightRequests.insert(ck);
-    }
-
-    std::shared_ptr<ProviderAsyncState> state = asyncState_;
-    std::weak_ptr<RasterOverlayTile> tileWeak;
-    auto tileIt = tiles_.find(ck);
-    if (tileIt != tiles_.end()) {
-        tileWeak = tileIt->second;
-    }
     const Rectangle outputBounds = tile.getRectangle();
     const Rectangle targetBounds =
         unprojectProviderToGeographic(outputBounds, projection_);
-    auto request = std::make_shared<QuadtreeSourceRequest>(
-        provider_,
-        scheme_,
-        state,
+    return loadMappedTile(
+        tile,
         std::move(sourcePlan),
         targetBounds,
         outputBounds,
-        maximumCombinedTextureSize(textureUploader_.get(), maximumTextureSize_),
-        getMinimumLevel(),
-        getMaximumLevel(),
-        [state, ck, tileWeak](std::unique_ptr<DecodedImage> image,
-                              Rectangle rectangle,
-                              RasterOverlayTile::MoreDetailAvailable moreDetailAvailable) {
-            std::lock_guard<std::mutex> lock(state->mutex);
-            state->inFlightRequests.erase(ck);
-            if (image) {
-                if (!state->alive.load(std::memory_order_acquire)) {
-                    return;
-                }
-                state->pendingUploads.push_back(
-                    {ck, std::move(image), rectangle, moreDetailAvailable});
-            } else {
-                if (auto tile = tileWeak.lock()) {
-                    tile->setMoreDetailAvailable(
-                        RasterOverlayTile::MoreDetailAvailable::No);
-                    tile->setState(RasterOverlayTile::LoadState::Failed);
-                }
-                auto& fr = state->failedTiles[ck];
-                if (fr.firstFailTime == 0.0) {
-                    fr.firstFailTime = std::chrono::duration<double>(
-                        std::chrono::steady_clock::now().time_since_epoch()).count();
-                }
-                fr.retries++;
-                state->revision.fetch_add(1, std::memory_order_relaxed);
-            }
-        },
-        [state, ck, tileWeak]() {
-            std::lock_guard<std::mutex> lock(state->mutex);
-            state->inFlightRequests.erase(ck);
-            if (auto tile = tileWeak.lock()) {
-                tile->setMoreDetailAvailable(
-                    RasterOverlayTile::MoreDetailAvailable::No);
-                tile->setState(RasterOverlayTile::LoadState::Failed);
-            }
-            auto& fr = state->failedTiles[ck];
-            if (fr.firstFailTime == 0.0) {
-                fr.firstFailTime = std::chrono::duration<double>(
-                    std::chrono::steady_clock::now().time_since_epoch()).count();
-            }
-            fr.retries++;
-            state->revision.fetch_add(1, std::memory_order_relaxed);
-        });
-
-    request->issueAll(
-        [state]() {
-            state->activeRasterSourceRequests.fetch_add(
-                1,
-                std::memory_order_relaxed);
-        },
-        [state]() {
-            uint32_t current = state->activeRasterSourceRequests.load(
-                std::memory_order_relaxed);
-            while (current > 0 &&
-                   !state->activeRasterSourceRequests.compare_exchange_weak(
-                       current,
-                       current - 1,
-                       std::memory_order_relaxed)) {}
-        });
-
-    return true;
+        tileCacheKey(key),
+        budget);
 }
 
 bool RasterOverlayTileProvider::loadTileThrottled(RasterOverlayTile& tile,
@@ -1801,10 +1687,6 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
 
     const std::string ck = tile.getCacheKey();
     if (ck.empty()) return false;
-    {
-        std::lock_guard<std::mutex> lock(asyncState_->mutex);
-        if (asyncState_->inFlightRequests.count(ck)) return true;
-    }
 
     const Rectangle outputBounds = tile.getRectangle();
     const Rectangle targetBounds =
@@ -1831,6 +1713,33 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
         tile.setState(RasterOverlayTile::LoadState::Failed);
         return false;
     }
+    logAndroidRasterPipeline(
+        "start",
+        ck,
+        static_cast<int>(sourcePlan.sourceKeys.size()),
+        sourcePlan.sourceZoom);
+    return loadMappedTile(
+        tile,
+        std::move(sourcePlan),
+        sourceBounds,
+        outputBounds,
+        ck,
+        budget);
+}
+
+bool RasterOverlayTileProvider::loadMappedTile(
+    RasterOverlayTile& tile,
+    QuadtreeSourcePlan sourcePlan,
+    const Rectangle& targetBounds,
+    const Rectangle& outputBounds,
+    const std::string& cacheKey,
+    FrameResourceBudget* budget) {
+    if (cacheKey.empty()) return false;
+    {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        if (asyncState_->inFlightRequests.count(cacheKey)) return true;
+    }
+
     auto estimateNewSourceRequests = [&]() {
         int estimated = 0;
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
@@ -1860,17 +1769,12 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
     tile.setState(RasterOverlayTile::LoadState::Loading);
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
-        asyncState_->inFlightRequests.insert(ck);
+        asyncState_->inFlightRequests.insert(cacheKey);
     }
-    logAndroidRasterPipeline(
-        "start",
-        ck,
-        static_cast<int>(sourcePlan.sourceKeys.size()),
-        sourcePlan.sourceZoom);
 
     std::shared_ptr<ProviderAsyncState> state = asyncState_;
     std::weak_ptr<RasterOverlayTile> tileWeak;
-    auto tileIt = tiles_.find(ck);
+    auto tileIt = tiles_.find(cacheKey);
     if (tileIt != tiles_.end()) {
         tileWeak = tileIt->second;
     }
@@ -1881,33 +1785,33 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
         scheme_,
         state,
         sourcePlan,
-        sourceBounds,
+        targetBounds,
         outputBounds,
         maxTextureSize,
         getMinimumLevel(),
         getMaximumLevel(),
-        [state, ck](std::unique_ptr<DecodedImage> composed,
-                    Rectangle rectangle,
-                    RasterOverlayTile::MoreDetailAvailable moreDetailAvailable) {
+        [state, cacheKey](std::unique_ptr<DecodedImage> composed,
+                          Rectangle rectangle,
+                          RasterOverlayTile::MoreDetailAvailable moreDetailAvailable) {
             std::lock_guard<std::mutex> providerLock(state->mutex);
-            state->inFlightRequests.erase(ck);
+            state->inFlightRequests.erase(cacheKey);
             if (!state->alive.load(std::memory_order_acquire)) {
                 return;
             }
-            logAndroidRasterPipeline("composed", ck, 0, 0);
+            logAndroidRasterPipeline("composed", cacheKey, 0, 0);
             state->pendingUploads.push_back(
-                {ck, std::move(composed), rectangle, moreDetailAvailable});
+                {cacheKey, std::move(composed), rectangle, moreDetailAvailable});
         },
-        [state, ck, tileWeak]() {
+        [state, cacheKey, tileWeak]() {
             std::lock_guard<std::mutex> providerLock(state->mutex);
-            state->inFlightRequests.erase(ck);
-            logAndroidRasterPipeline("compose-failed", ck, 0, 0);
+            state->inFlightRequests.erase(cacheKey);
+            logAndroidRasterPipeline("compose-failed", cacheKey, 0, 0);
             if (auto tile = tileWeak.lock()) {
                 tile->setMoreDetailAvailable(
                     RasterOverlayTile::MoreDetailAvailable::No);
                 tile->setState(RasterOverlayTile::LoadState::Failed);
             }
-            auto& fr = state->failedTiles[ck];
+            auto& fr = state->failedTiles[cacheKey];
             if (fr.firstFailTime == 0.0) {
                 fr.firstFailTime = std::chrono::duration<double>(
                     std::chrono::steady_clock::now().time_since_epoch()).count();

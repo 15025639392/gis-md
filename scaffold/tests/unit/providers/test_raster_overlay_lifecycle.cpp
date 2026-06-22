@@ -1837,6 +1837,31 @@ TEST(RasterOverlayLifecycleTest, FrameBudgetLimitsRasterWorkerRequests) {
               secondTile->getState());
 }
 
+TEST(RasterOverlayLifecycleTest, DirectTileLoadConsumesRasterSourceBudget) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    auto tile = provider.getTile(TileKey{scheme->id(), 1, 0, 0});
+    ASSERT_NE(nullptr, tile);
+    ASSERT_FALSE(tile->isCompositeTile());
+
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 1;
+    config.maxNetworkInflight = 1;
+    config.maxRasterNetworkRequestsPerFrame = 1;
+    config.maxRasterNetworkInflight = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    EXPECT_TRUE(provider.loadTileThrottled(*tile, &budget));
+    EXPECT_EQ(1, imagery.requestCount);
+    EXPECT_EQ(1u, budget.networkRequestsIssued());
+    EXPECT_EQ(1u, budget.rasterNetworkRequestsIssued());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loading,
+              tile->getState());
+}
+
 TEST(RasterOverlayLifecycleTest, NonUnloadedRasterTilesDoNotConsumeRequestBudgetLikeCesiumNative) {
     ImmediateImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

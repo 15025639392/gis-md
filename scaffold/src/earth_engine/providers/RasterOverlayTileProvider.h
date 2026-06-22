@@ -229,7 +229,42 @@ public:
     // via unique_ptr<Texture>. No external callback needed.
 
 private:
+    struct QuadtreeSourcePlan {
+        int sourceZoom = 0;
+        int minX = 0;
+        int minY = 0;
+        int maxX = 0;
+        int maxY = 0;
+        std::vector<TileKey> sourceKeys;
+
+        int budgetUnits() const {
+            return static_cast<int>(sourceKeys.size());
+        }
+
+        bool empty() const { return sourceKeys.empty(); }
+    };
+
     struct QuadtreeSourceRequest;
+
+    static QuadtreeSourcePlan buildQuadtreeSourcePlan(
+        const TileScheme& scheme,
+        const ImageryProvider& provider,
+        const RasterTextureUploader* uploader,
+        const Rectangle& geometryBounds,
+        const Rectangle& sourceBounds,
+        double targetScreenPixelsX,
+        double targetScreenPixelsY,
+        double maximumScreenSpaceError,
+        int maximumTextureSize,
+        int minimumLevel,
+        int maximumLevel);
+
+    bool loadMappedTile(RasterOverlayTile& tile,
+                        QuadtreeSourcePlan sourcePlan,
+                        const Rectangle& targetBounds,
+                        const Rectangle& outputBounds,
+                        const std::string& cacheKey,
+                        FrameResourceBudget* budget);
 
     /// Internal: load a composite raster tile by combining the provider's
     /// quadtree imagery tiles that overlap its geometry rectangle.
