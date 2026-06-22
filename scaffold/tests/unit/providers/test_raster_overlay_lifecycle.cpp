@@ -2965,7 +2965,7 @@ TEST(RasterOverlayLifecycleTest, TemporaryAncestorDoesNotReportMoreDetailLikeCes
 }
 
 TEST(RasterOverlayLifecycleTest,
-     TemporaryAncestorFallbackSkipsNoTextureParentForDrawableGrandparent) {
+     TemporaryAncestorFallbackAcceptsNoTextureParentBeforeDrawableGrandparent) {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -3082,13 +3082,15 @@ TEST(RasterOverlayLifecycleTest,
             0);
 
     EXPECT_EQ(RasterMappedToTilesetTile::MoreDetail::Unknown, fallback);
-    EXPECT_EQ(grandparentReady, childMapping.getReadyTile());
-    EXPECT_NE(parentReady, childMapping.getReadyTile());
-    EXPECT_EQ(RasterMappedToTilesetTile::State::TemporarilyAttached,
+    EXPECT_EQ(parentReady, childMapping.getReadyTile());
+    EXPECT_NE(grandparentReady, childMapping.getReadyTile());
+    EXPECT_EQ(RasterMappedToTilesetTile::State::Unattached,
               childMapping.getState());
-    EXPECT_EQ(1, recorder.attachCount);
-    EXPECT_EQ(grandparentReady, recorder.lastRasterTile.get());
-    EXPECT_EQ(grandparentReady->getTexture(), recorder.lastTexture);
+    EXPECT_EQ(0, recorder.attachCount);
+    EXPECT_EQ(nullptr, recorder.lastRasterTile.get());
+    EXPECT_EQ(nullptr, recorder.lastTexture);
+    EXPECT_EQ(SurfaceRasterBindingKind::None,
+              chooseSurfaceRasterBinding(&childMapping).kind);
 }
 
 TEST(RasterOverlayLifecycleTest,

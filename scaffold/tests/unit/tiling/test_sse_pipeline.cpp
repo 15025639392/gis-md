@@ -3713,6 +3713,30 @@ void testRasterMappedFailedChildFollowsParentLoadingTile() {
           "RasterMappedToTilesetTile: failed child still draws closest available ancestor raster");
     check(!childMapped.isMoreDetailAvailable(),
           "RasterMappedToTilesetTile: original failed child does not trigger raster upsample children");
+
+    parentLoading->setTexture(std::make_unique<DummyTexture>(4, 4));
+    parentLoading->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    const auto promotedParentUpdate = childMapped.update(
+        child.key,
+        childDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        childMissing,
+        &parent,
+        0);
+    const SurfaceRasterBinding promotedBinding =
+        chooseSurfaceRasterBinding(&childMapped);
+    check(promotedParentUpdate == RasterMappedToTilesetTile::MoreDetail::No,
+          "RasterMappedToTilesetTile: promoted parent raster keeps original failure terminal");
+    check(childMapped.getReadyTile() == parentLoading &&
+              childMapped.getLoadingTile() == nullptr,
+          "RasterMappedToTilesetTile: failed child promotes loaded parent raster");
+    check(promotedBinding.kind == SurfaceRasterBindingKind::AncestorTile &&
+              promotedBinding.tile == parentLoading,
+          "RasterMappedToTilesetTile: promoted parent loading raster remains an ancestor binding");
 }
 
 void testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload() {

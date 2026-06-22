@@ -171,9 +171,7 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                 _pLoadingTile->getTileProvider());
         if (overlayTile) {
             _pLoadingTile = overlayTile;
-            loadingTileSource_ =
-                overlayTile->getTexture() ? ReadyTileSource::Ancestor
-                                          : ReadyTileSource::Real;
+            loadingTileSource_ = ReadyTileSource::Ancestor;
             if (_pLoadingTile->getState() != RasterOverlayTile::LoadState::Placeholder) {
                 tileProvider.markUsed(*_pLoadingTile);
             }
