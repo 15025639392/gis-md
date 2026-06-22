@@ -237,6 +237,15 @@ public:
         EnsureTileMeshFn&& ensureTileMesh,
         EnsureGltfResourcesFn&& ensureGltfResources,
         MarkResourcesDirtyFn&& markResourcesDirty) {
+        if (upload.domain == TileLoadDomain::Terrain &&
+            !upload.content().hasGltfTerrainPayload() &&
+            contentProvider &&
+            contentProvider->providesTerrainQuadtree()) {
+            TilePendingUploadCompletion::eraseUpload(
+                lifecycle,
+                upload.cacheKey);
+            return;
+        }
         if (upload.domain == TileLoadDomain::Content ||
             upload.content().hasGltfTerrainPayload()) {
             commitContentUpload(
