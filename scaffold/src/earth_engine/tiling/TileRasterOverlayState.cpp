@@ -77,6 +77,7 @@ void TileRasterOverlayState::releaseAndClearReferences(
     IPrepareRendererResources* pPrepRenderer) {
     releaseReferences(pPrepRenderer);
     mappings_.clear();
+    missingProjections_.clear();
 }
 
 } // namespace earth_engine

@@ -184,6 +184,35 @@ TEST(
 
 TEST(
     TileContentCacheManagerTest,
+    RenderContentUnloadClearsRasterOverlayMissingProjectionsLikeCesiumNative) {
+    TileContentCacheManager manager;
+    TileContentLifecycleManager lifecycle;
+
+    const TileKey key{"test", 0, 0, 0};
+    auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
+    tile->content.loadState = TileLoadState::Done;
+    tile->content.contentKind = TileContentKind::Render;
+    tile->rasterOverlayState.ensureMappingSlots(1);
+    tile->rasterOverlayState.missingProjections().push_back(
+        RasterOverlayProjection::WebMercator);
+    TilesetTile* tileRaw = tile.get();
+
+    const TileCacheUnloadContentResult result =
+        manager.unloadTileContent(
+            *tile,
+            lifecycle,
+            nullptr,
+            true);
+
+    EXPECT_EQ(TileCacheUnloadContentResult::Remove, result);
+    EXPECT_EQ(TileLoadState::Unloaded, tileRaw->content.loadState);
+    EXPECT_EQ(TileContentKind::Unknown, tileRaw->content.contentKind);
+    EXPECT_TRUE(tileRaw->rasterOverlayState.mappings().empty());
+    EXPECT_TRUE(tileRaw->rasterOverlayState.missingProjections().empty());
+}
+
+TEST(
+    TileContentCacheManagerTest,
     ClearsStaleEmptyMarkerWhenUnknownContentUnloads) {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;

@@ -4475,8 +4475,8 @@ void testTilesetMissingRasterProjectionRequestsReload() {
                   RasterOverlayTile::LoadState::Placeholder ||
               loadingTile->getRectangle() != expectedWebMercator,
           "Tileset: missing raster projection does not create a real raster tile before reload");
-    check(root->rasterOverlayState.hasMissingProjections(),
-          "Tileset: missing raster projection records reload projection like cesium-native");
+    check(!root->rasterOverlayState.hasMissingProjections(),
+          "Tileset: missing raster projection unload clears transient reload projection state like cesium-native");
 }
 
 void testTilesetRasterTargetPixelsUseRenderContentRectangle() {
@@ -15216,8 +15216,9 @@ void testTileRasterOverlayStateOwnsMappingsAndMissingProjections() {
           "TileRasterOverlayState: clears missing projection state");
 
     tile.rasterOverlayState.releaseAndClearReferences(nullptr);
-    check(tile.rasterOverlayState.mappings().empty(),
-          "TileRasterOverlayState: release-and-clear owns mapping lifetime");
+    check(tile.rasterOverlayState.mappings().empty() &&
+              tile.rasterOverlayState.missingProjections().empty(),
+          "TileRasterOverlayState: release-and-clear owns transient overlay state lifetime");
 }
 
 void testTileRasterOverlayStateResizeReleasesRemovedMappings() {
