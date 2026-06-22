@@ -105,33 +105,14 @@ public:
             upload.cacheKey,
             content,
             terrainCache);
-        bool uploadsGltfTerrain = content.hasGltfTerrainPayload();
 
         if (TilesetTile* tile = ensureTile(upload.key)) {
-            TileGltfTerrainUpsampledChildMaterializer::materialize(
-                *tile,
-                content);
-            uploadsGltfTerrain = content.hasGltfTerrainPayload();
             captureInitialBoundingVolumes(*tile, content.metadata);
-            if (uploadsGltfTerrain) {
-                const TileTerrainUploadCommitAction action =
-                    TileTerrainUploadCommitter::
-                        finishTerrainResourcePreparation(*tile, false);
-                if (action.resourcesDirty) {
-                    markResourcesDirty();
-                }
-                TilePendingUploadCompletion::eraseUpload(
-                    lifecycle,
-                    upload.cacheKey);
-                return;
-            }
             const bool uploadsHeightmapTerrain =
-                !uploadsGltfTerrain &&
                 content.terrainPayloadKind ==
                     TerrainTilePayloadKind::Heightmap &&
                 hadHeightmapTerrainPayload;
             const bool uploadsParentUpsampledTerrain =
-                !uploadsGltfTerrain &&
                 !uploadsHeightmapTerrain &&
                 tile->content.derivesTerrainFromParent();
             const bool uploadsTerrainPayload =
@@ -152,9 +133,7 @@ public:
             }
             const bool resourcesReady = uploadsTerrainPayload &&
                 (resourceSmoothingActive ||
-                 (uploadsGltfTerrain
-                      ? tile->content.renderContent.isRenderContentReady()
-                      : tile->content.renderContent.hasSurfaceMesh()));
+                 tile->content.renderContent.hasSurfaceMesh());
             const TileTerrainUploadCommitAction action =
                 TileTerrainUploadCommitter::finishTerrainResourcePreparation(
                     *tile,
