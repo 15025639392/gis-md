@@ -51,16 +51,6 @@ public:
         const Rectangle& bounds,
         bool enableWaterMask = false);
 
-    /// Directly convert to a SurfaceTileMesh (retains the optimized
-    /// triangulation from QuantizedMesh). This is a wrapper over
-    /// parseToDecodedTile for native surface fallbacks and parser tests.
-    /// Returns nullptr on error.
-    /// @param bounds geographic bounds of the tile in radians
-    static std::unique_ptr<SurfaceTileMesh> parseToSurfaceTileMesh(
-        const uint8_t* data, size_t len,
-        const Rectangle& bounds,
-        bool enableWaterMask = false);
-
     /// cesium-native QuantizedMeshLoader::loadMetadata equivalent.
     /// Parses only Quantized Mesh extension ID=4 availability rectangles.
     /// Each entry: {levelOffset, startX, startY, endX, endY}.
