@@ -8,6 +8,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <string>
 
 namespace earth_engine {
 
@@ -40,7 +41,13 @@ public:
         WaterMask waterMask;
         bool hasMetadataAvailability = false;
         std::vector<QuantizedMeshAvailabilityRange> metadataAvailability;
+        std::vector<std::string> diagnostics;
         RasterOverlayDetails rasterOverlayDetails;
+    };
+
+    struct MetadataAvailabilityParseResult {
+        std::vector<QuantizedMeshAvailabilityRange> availability;
+        std::vector<std::string> diagnostics;
     };
 
     /// Decode Quantized-Mesh-1.0 terrain without selecting a renderer-facing
@@ -54,6 +61,9 @@ public:
     /// Parses only Quantized Mesh extension ID=4 availability rectangles.
     /// Each entry: {levelOffset, startX, startY, endX, endY}.
     static std::vector<QuantizedMeshAvailabilityRange> parseMetadataAvailability(
+        const uint8_t* data, size_t len);
+
+    static MetadataAvailabilityParseResult parseMetadataAvailabilityWithDiagnostics(
         const uint8_t* data, size_t len);
 
 private:

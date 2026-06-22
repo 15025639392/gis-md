@@ -673,6 +673,66 @@ TEST(QuantizedMeshContentLoaderTest,
               update.metadataAvailability[1]);
 }
 
+TEST(QuantizedMeshContentLoaderTest,
+     MalformedCurrentTileMetadataKeepsContentRenderableWithDiagnostic) {
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytesWithMetadata("{");
+    const TileKey subtreeKey{"Geographic-TMS", 3, 2, 1};
+    QuantizedMeshAvailabilityUpdate currentTileUpdate;
+    currentTileUpdate.layerIndex = 5;
+    currentTileUpdate.subtreeKey = subtreeKey;
+
+    QuantizedMeshContentLoadResult result =
+        QuantizedMeshContentLoader::load(
+            bytes.data(),
+            bytes.size(),
+            geographicRootWestRectangle(),
+            false,
+            {},
+            RasterOverlayProjection::Geographic,
+            currentTileUpdate);
+
+    EXPECT_TRUE(result.success());
+    ASSERT_EQ(1u, result.availabilityUpdates.size());
+    EXPECT_TRUE(
+        result.availabilityUpdates.front().metadataAvailability.empty());
+    ASSERT_EQ(1u, result.diagnostics.size());
+    EXPECT_NE(std::string::npos,
+              result.diagnostics.front().find("Error when parsing metadata"));
+}
+
+TEST(QuantizedMeshContentLoaderTest,
+     MalformedExternalMetadataKeepsContentRenderableWithDiagnostic) {
+    const std::vector<uint8_t> bytes = makeQuantizedMeshBytes();
+    const std::vector<uint8_t> malformedMetadata =
+        makeQuantizedMeshBytesWithMetadata("{");
+    const TileKey subtreeKey{"Geographic-TMS", 2, 1, 1};
+    std::vector<QuantizedMeshMetadataContent> metadata;
+    metadata.push_back(QuantizedMeshMetadataContent{
+        3,
+        subtreeKey,
+        malformedMetadata.data(),
+        malformedMetadata.size()});
+
+    QuantizedMeshContentLoadResult result =
+        QuantizedMeshContentLoader::load(
+            bytes.data(),
+            bytes.size(),
+            geographicRootWestRectangle(),
+            false,
+            metadata);
+
+    EXPECT_TRUE(result.success());
+    ASSERT_EQ(1u, result.availabilityUpdates.size());
+    EXPECT_EQ(3, result.availabilityUpdates.front().layerIndex);
+    EXPECT_EQ(subtreeKey, result.availabilityUpdates.front().subtreeKey);
+    EXPECT_TRUE(
+        result.availabilityUpdates.front().metadataAvailability.empty());
+    ASSERT_EQ(1u, result.diagnostics.size());
+    EXPECT_NE(std::string::npos,
+              result.diagnostics.front().find("Error when parsing metadata"));
+}
+
 TEST(QuantizedMeshContentLoaderTest, InvalidBodyFailsWithoutUpdates) {
     const uint8_t invalid[] = {0, 1, 2, 3};
 

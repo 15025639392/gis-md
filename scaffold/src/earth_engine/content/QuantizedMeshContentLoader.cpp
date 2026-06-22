@@ -243,6 +243,7 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
     rewriteTerrainProjectionTexCoords(*gltfModel, terrainProjection);
 
     result.status = QuantizedMeshContentLoadStatus::Success;
+    result.diagnostics = decodedTile->diagnostics;
     result.metadata.updatedBoundingVolume = TileBoundingVolume::fromRegion(
         tileRectangle,
         decodedTile->minimumHeight,
@@ -269,10 +270,15 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
         update.layerIndex = item.layerIndex;
         update.subtreeKey = item.subtreeKey;
         if (item.data && item.size > 0) {
-            update.metadataAvailability =
-                QuantizedMeshParser::parseMetadataAvailability(
+            QuantizedMeshParser::MetadataAvailabilityParseResult metadataResult =
+                QuantizedMeshParser::parseMetadataAvailabilityWithDiagnostics(
                     item.data,
                     item.size);
+            update.metadataAvailability = std::move(metadataResult.availability);
+            result.diagnostics.insert(
+                result.diagnostics.end(),
+                metadataResult.diagnostics.begin(),
+                metadataResult.diagnostics.end());
         }
         result.availabilityUpdates.push_back(std::move(update));
     }

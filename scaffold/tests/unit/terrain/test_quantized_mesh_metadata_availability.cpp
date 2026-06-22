@@ -435,3 +435,18 @@ TEST(QuantizedMeshParserMetadataTest,
                     emptyMetadataBytes.size())
                     .empty());
 }
+
+TEST(QuantizedMeshParserMetadataTest,
+     MalformedMetadataReportsDiagnosticLikeCesiumNative) {
+    const std::vector<uint8_t> bytes = makeQuantizedMeshBytes("{");
+
+    QuantizedMeshParser::MetadataAvailabilityParseResult result =
+        QuantizedMeshParser::parseMetadataAvailabilityWithDiagnostics(
+            bytes.data(),
+            bytes.size());
+
+    EXPECT_TRUE(result.availability.empty());
+    ASSERT_EQ(1u, result.diagnostics.size());
+    EXPECT_NE(std::string::npos,
+              result.diagnostics.front().find("Error when parsing metadata"));
+}

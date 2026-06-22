@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstring>
 #include <optional>
+#include <utility>
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
 
@@ -39,14 +40,20 @@ uint32_t jsonUint32OrDefault(const nlohmann::json& object, const char* name) {
     return static_cast<uint32_t>(value);
 }
 
-std::vector<QuantizedMeshAvailabilityRange> parseMetadataAvailabilityJson(
+QuantizedMeshParser::MetadataAvailabilityParseResult parseMetadataAvailabilityJson(
     const std::string& metadataJson) {
-    std::vector<QuantizedMeshAvailabilityRange> availability;
-    auto j = nlohmann::json::parse(metadataJson, nullptr, false);
-    if (j.is_discarded() ||
-        !j.contains("available") ||
-        !j["available"].is_array()) {
-        return availability;
+    QuantizedMeshParser::MetadataAvailabilityParseResult result;
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::parse(metadataJson);
+    } catch (const nlohmann::json::parse_error& e) {
+        result.diagnostics.push_back(
+            "Error when parsing metadata at byte offset " +
+            std::to_string(e.byte) + ": " + e.what());
+        return result;
+    }
+    if (!j.contains("available") || !j["available"].is_array()) {
+        return result;
     }
 
     int subArrayIndex = 0;
@@ -57,7 +64,7 @@ std::vector<QuantizedMeshAvailabilityRange> parseMetadataAvailabilityJson(
 
         for (const auto& range : levelRanges) {
             if (!range.is_object()) continue;
-            availability.push_back({
+            result.availability.push_back({
                 static_cast<uint32_t>(subArrayIndex),
                 jsonUint32OrDefault(range, "startX"),
                 jsonUint32OrDefault(range, "startY"),
@@ -68,7 +75,7 @@ std::vector<QuantizedMeshAvailabilityRange> parseMetadataAvailabilityJson(
         ++subArrayIndex;
     }
 
-    return availability;
+    return result;
 }
 
 double calculateSkirtHeight(const Ellipsoid& ellipsoid,
@@ -80,6 +87,12 @@ double calculateSkirtHeight(const Ellipsoid& ellipsoid,
 
 std::vector<QuantizedMeshAvailabilityRange> QuantizedMeshParser::parseMetadataAvailability(
     const uint8_t* data, size_t len) {
+    return parseMetadataAvailabilityWithDiagnostics(data, len).availability;
+}
+
+QuantizedMeshParser::MetadataAvailabilityParseResult
+QuantizedMeshParser::parseMetadataAvailabilityWithDiagnostics(
+    const uint8_t* data, size_t len) {
     if (len < kHeaderSize || !data) return {};
 
     uint32_t vertexCount = 0;
@@ -87,7 +100,7 @@ std::vector<QuantizedMeshAvailabilityRange> QuantizedMeshParser::parseMetadataAv
     if (vertexCount == 0 || vertexCount > 500000) return {};
 
     auto parseFromPayloadOffset =
-        [&](size_t payloadOffset) -> std::optional<std::vector<QuantizedMeshAvailabilityRange>> {
+        [&](size_t payloadOffset) -> std::optional<MetadataAvailabilityParseResult> {
         size_t offset = payloadOffset;
         const size_t vertexAttributeBytes =
             static_cast<size_t>(vertexCount) * 3u * sizeof(uint16_t);
@@ -119,7 +132,7 @@ std::vector<QuantizedMeshAvailabilityRange> QuantizedMeshParser::parseMetadataAv
         }
 
         constexpr size_t kExtHeaderSize = 5;
-        std::optional<std::vector<QuantizedMeshAvailabilityRange>> latestMetadata;
+        std::optional<MetadataAvailabilityParseResult> latestMetadata;
         while (offset + kExtHeaderSize <= len) {
             const uint8_t extId = data[offset];
             offset += sizeof(uint8_t);
@@ -150,12 +163,12 @@ std::vector<QuantizedMeshAvailabilityRange> QuantizedMeshParser::parseMetadataAv
         return latestMetadata;
     };
 
-    std::optional<std::vector<QuantizedMeshAvailabilityRange>> availability =
+    std::optional<MetadataAvailabilityParseResult> availability =
         parseFromPayloadOffset(kHeaderSize);
     if (availability) return *availability;
 
     availability = parseFromPayloadOffset(kHeaderSize + sizeof(uint32_t));
-    return availability.value_or(std::vector<QuantizedMeshAvailabilityRange>{});
+    return availability.value_or(MetadataAvailabilityParseResult{});
 }
 
 std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDecodedTile(
@@ -409,8 +422,13 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
                 reinterpret_cast<const char*>(data + jsonOffset),
                 metadataJsonLength);
             decoded->hasMetadataAvailability = true;
-            decoded->metadataAvailability =
+            MetadataAvailabilityParseResult metadata =
                 parseMetadataAvailabilityJson(metadataJson);
+            decoded->metadataAvailability = std::move(metadata.availability);
+            decoded->diagnostics.insert(
+                decoded->diagnostics.end(),
+                metadata.diagnostics.begin(),
+                metadata.diagnostics.end());
         }
         if (extLen > len - offset) break;
         offset += extLen;

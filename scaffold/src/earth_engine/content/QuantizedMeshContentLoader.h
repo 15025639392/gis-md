@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace earth_engine {
@@ -33,6 +34,7 @@ struct QuantizedMeshContentLoadResult {
     std::unique_ptr<GltfModel> gltfModel;
     TileLoadResultMetadata metadata;
     std::vector<QuantizedMeshAvailabilityUpdate> availabilityUpdates;
+    std::vector<std::string> diagnostics;
 
     bool success() const {
         return status == QuantizedMeshContentLoadStatus::Success &&
