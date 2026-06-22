@@ -12501,6 +12501,36 @@ void testTileContentUploadPolicyAppliesTileLoadResultFields() {
               committedDetails.boundingRegion.maximumHeight == 19.0 &&
               !tile.content.renderContent.isTerrainRenderContent(),
           "TileContentUploadPolicy: glTF upload applies TileLoadResult-like bounds and raster details");
+
+    TilesetTile looseTile(
+        TileKey{"test", 0, 1, 0},
+        Rectangle{0.0, 0.0, 1.0, 1.0});
+    looseTile.boundingVolume =
+        TileBoundingVolume::fromRegion(Rectangle{0.0, 0.0, 1.0, 1.0},
+                                       -1000.0,
+                                       9000.0);
+    auto looseModel = std::make_unique<GltfModel>();
+    TileContentLoadResult looseResult = TileContentLoadResult::render(
+        std::move(looseModel));
+    const Rectangle tightRasterRectangle{0.25, 0.3, 0.75, 0.8};
+    RasterOverlayDetails tightDetails;
+    tightDetails.setGeographicRectangle(tightRasterRectangle, -12.0, 34.0);
+    looseResult.metadata.rasterOverlayDetails = std::move(tightDetails);
+
+    TileContentUploadPolicy::prepareGltfRenderContent(
+        looseTile,
+        TileLoadedContent::fromContentResult(std::move(looseResult)));
+
+    check(looseTile.boundingVolume &&
+              looseTile.boundingVolume->kind ==
+                  TileBoundingVolumeKind::Region &&
+              looseTile.boundingVolume->region == tightRasterRectangle &&
+              looseTile.boundingVolume->minimumHeight == -12.0 &&
+              looseTile.boundingVolume->maximumHeight == 34.0 &&
+              looseTile.content.renderContent.hasTerrainHeightRange() &&
+              looseTile.content.renderContent.terrainMinimumHeight() == -12.0 &&
+              looseTile.content.renderContent.terrainMaximumHeight() == 34.0,
+          "TileContentUploadPolicy: raster overlay details tighten loose bounding region like cesium-native");
 }
 
 void testTileContentUploadPolicyMarksGltfRenderResourceFailure() {

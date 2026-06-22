@@ -5,10 +5,40 @@
 #include "TilesetTile.h"
 
 namespace earth_engine {
+namespace {
+
+constexpr double kLooseMinimumHeight = -1000.0;
+constexpr double kLooseMaximumHeight = 9000.0;
+
+bool isDefaultLooseRegion(const TilesetTile& tile) {
+    return tile.boundingVolume &&
+           tile.boundingVolume->kind == TileBoundingVolumeKind::Region &&
+           tile.boundingVolume->minimumHeight == kLooseMinimumHeight &&
+           tile.boundingVolume->maximumHeight == kLooseMaximumHeight;
+}
+
+bool hasValidBoundingRegion(const RasterOverlayDetails& details) {
+    return !details.boundingRegion.rectangle.isEmpty() &&
+           details.boundingRegion.minimumHeight <=
+               details.boundingRegion.maximumHeight;
+}
+
+} // namespace
 
 void TileLoadResultMetadataApplicator::apply(
     TilesetTile& tile,
     TileLoadResultMetadata&& metadata) {
+    if (!metadata.updatedBoundingVolume &&
+        metadata.rasterOverlayDetails &&
+        isDefaultLooseRegion(tile) &&
+        hasValidBoundingRegion(*metadata.rasterOverlayDetails)) {
+        const auto& region = metadata.rasterOverlayDetails->boundingRegion;
+        metadata.updatedBoundingVolume = TileBoundingVolume::fromRegion(
+            region.rectangle,
+            region.minimumHeight,
+            region.maximumHeight);
+    }
+
     if (metadata.updatedBoundingVolume) {
         tile.boundingVolume = std::move(metadata.updatedBoundingVolume);
         if (!metadata.terrainHeightRange) {
