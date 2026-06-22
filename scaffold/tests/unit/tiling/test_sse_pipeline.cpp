@@ -27091,8 +27091,15 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
           "Tileset: glTF-parent upsample root tile is created");
     if (!root) return;
 
+    auto parentModel = makeQuadTerrainGltfModel(root->bounds);
+    const Rectangle parentOverlayRectangle =
+        Rectangle::fromDegrees(10.0, 20.0, 18.0, 28.0);
+    parentModel->rasterOverlayDetails.setGeographicRectangle(
+        parentOverlayRectangle,
+        -5.0,
+        25.0);
     root->content.renderContent.prepareGltfContent(
-        makeQuadTerrainGltfModel(root->bounds),
+        std::move(parentModel),
         Mat4::identity());
     root->content.renderContent.setTerrainRenderContent(true);
     root->markRenderContentDone();
@@ -27165,12 +27172,43 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
     const Rectangle* childOverlay =
         childModel->rasterOverlayDetails.findRectangleForOverlayProjection(
             RasterOverlayProjection::Geographic);
+    const auto interpolateOverlay = [](const Rectangle& parentBounds,
+                                       const Rectangle& childBounds,
+                                       const Rectangle& parentOverlay) {
+        const auto mix = [](double a, double b, double t) {
+            return a + (b - a) * t;
+        };
+        const double westT =
+            (childBounds.west() - parentBounds.west()) /
+            parentBounds.width();
+        const double eastT =
+            (childBounds.east() - parentBounds.west()) /
+            parentBounds.width();
+        const double southT =
+            (childBounds.south() - parentBounds.south()) /
+            parentBounds.height();
+        const double northT =
+            (childBounds.north() - parentBounds.south()) /
+            parentBounds.height();
+        return Rectangle(
+            mix(parentOverlay.west(), parentOverlay.east(), westT),
+            mix(parentOverlay.south(), parentOverlay.north(), southT),
+            mix(parentOverlay.west(), parentOverlay.east(), eastT),
+            mix(parentOverlay.south(), parentOverlay.north(), northT));
+    };
+    const Rectangle expectedChildOverlay =
+        interpolateOverlay(root->bounds, child->bounds, parentOverlayRectangle);
     check(childOverlay &&
-              std::abs(childOverlay->west() - child->bounds.west()) < 1e-12 &&
-              std::abs(childOverlay->south() - child->bounds.south()) < 1e-12 &&
-              std::abs(childOverlay->east() - child->bounds.east()) < 1e-12 &&
-              std::abs(childOverlay->north() - child->bounds.north()) < 1e-12,
-          "Tileset: glTF-parent upsampled child carries child raster overlay details");
+              childOverlay->equalsEpsilon(expectedChildOverlay, 1e-12) &&
+              childModel->rasterOverlayDetails.boundingRegion.rectangle ==
+                  child->bounds &&
+              std::abs(childModel->rasterOverlayDetails.boundingRegion
+                           .minimumHeight -
+                       -5.0) < 1e-12 &&
+              std::abs(childModel->rasterOverlayDetails.boundingRegion
+                           .maximumHeight -
+                       25.0) < 1e-12,
+          "Tileset: glTF-parent upsampled child derives raster overlay details from parent content");
 }
 
 void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
@@ -27191,8 +27229,16 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
           "Tileset: WebMercator glTF-parent upsample root tile is created");
     if (!root) return;
 
+    auto parentModel = makeWebMercatorQuadTerrainGltfModel(root->bounds);
+    const Rectangle parentWebMercatorOverlay(100.0, 200.0, 180.0, 280.0);
+    parentModel->rasterOverlayDetails.rasterOverlayRectangles[1] =
+        parentWebMercatorOverlay;
+    parentModel->rasterOverlayDetails.boundingRegion = {
+        root->bounds,
+        -8.0,
+        45.0};
     root->content.renderContent.prepareGltfContent(
-        makeWebMercatorQuadTerrainGltfModel(root->bounds),
+        std::move(parentModel),
         Mat4::identity());
     root->content.renderContent.setTerrainRenderContent(true);
     root->markRenderContentDone();
@@ -27235,20 +27281,35 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
     const Rectangle* childOverlay =
         childModel->rasterOverlayDetails.findRectangleForOverlayProjection(
             RasterOverlayProjection::WebMercator);
-    const Rectangle expectedChildOverlay =
-        projectRectangleSimple(
-            WebMercatorProjection(Ellipsoid::WGS84()),
-            child->bounds);
+    const auto mix = [](double a, double b, double t) {
+        return a + (b - a) * t;
+    };
+    const double westT =
+        (child->bounds.west() - root->bounds.west()) / root->bounds.width();
+    const double eastT =
+        (child->bounds.east() - root->bounds.west()) / root->bounds.width();
+    const double southT =
+        (child->bounds.south() - root->bounds.south()) /
+        root->bounds.height();
+    const double northT =
+        (child->bounds.north() - root->bounds.south()) /
+        root->bounds.height();
+    const Rectangle expectedChildOverlay(
+        mix(parentWebMercatorOverlay.west(), parentWebMercatorOverlay.east(), westT),
+        mix(parentWebMercatorOverlay.south(), parentWebMercatorOverlay.north(), southT),
+        mix(parentWebMercatorOverlay.west(), parentWebMercatorOverlay.east(), eastT),
+        mix(parentWebMercatorOverlay.south(), parentWebMercatorOverlay.north(), northT));
     check(childOverlay &&
-              std::abs(childOverlay->west() - expectedChildOverlay.west()) <
-                  1e-12 &&
-              std::abs(childOverlay->south() - expectedChildOverlay.south()) <
-                  1e-12 &&
-              std::abs(childOverlay->east() - expectedChildOverlay.east()) <
-                  1e-12 &&
-              std::abs(childOverlay->north() - expectedChildOverlay.north()) <
-                  1e-12,
-          "Tileset: WebMercator glTF-parent carries child projection overlay details");
+              childOverlay->equalsEpsilon(expectedChildOverlay, 1e-12) &&
+              childModel->rasterOverlayDetails.boundingRegion.rectangle ==
+                  child->bounds &&
+              std::abs(childModel->rasterOverlayDetails.boundingRegion
+                           .minimumHeight -
+                       -8.0) < 1e-12 &&
+              std::abs(childModel->rasterOverlayDetails.boundingRegion
+                           .maximumHeight -
+                       45.0) < 1e-12,
+          "Tileset: WebMercator glTF-parent derives child projection overlay details from parent");
 }
 
 void testGltfTerrainUpsampleRejectsOrdinaryGltfContentParent() {

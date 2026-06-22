@@ -1,8 +1,7 @@
 #pragma once
 
 #include "../content/GltfTerrainUpsampler.h"
-#include "../core/geodesy/Ellipsoid.h"
-#include "../core/geodesy/Projection.h"
+#include "TileRasterOverlayDetailsDeriver.h"
 #include "TileLoadTypes.h"
 #include "TilesetTile.h"
 
@@ -64,9 +63,17 @@ public:
             return false;
         }
 
-        childModel->rasterOverlayDetails = deriveChildRasterOverlayDetails(
+        const double minimumHeight =
+            parentModel->rasterOverlayDetails.boundingRegion.minimumHeight;
+        const double maximumHeight =
+            parentModel->rasterOverlayDetails.boundingRegion.maximumHeight;
+        childModel->rasterOverlayDetails =
+            TileRasterOverlayDetailsDeriver::deriveChildFromParent(
             parentModel->rasterOverlayDetails,
-            tile.bounds);
+            source->bounds,
+            tile.bounds,
+            minimumHeight,
+            maximumHeight);
         content.gltfModel = std::move(childModel);
         content.terrainRenderContent = true;
         content.metadata.rasterOverlayDetails =
@@ -75,51 +82,6 @@ public:
     }
 
 private:
-    static RasterOverlayDetails deriveChildRasterOverlayDetails(
-        const RasterOverlayDetails& parentDetails,
-        const Rectangle& childBounds) {
-        RasterOverlayDetails childDetails;
-        if (parentDetails.empty()) {
-            childDetails.setGeographicRectangle(childBounds);
-            return childDetails;
-        }
-
-        childDetails.rasterOverlayProjections =
-            parentDetails.rasterOverlayProjections;
-        childDetails.rasterOverlayRectangles.reserve(
-            parentDetails.rasterOverlayProjections.size());
-
-        for (size_t i = 0;
-             i < parentDetails.rasterOverlayProjections.size();
-             ++i) {
-            if (i >= parentDetails.rasterOverlayRectangles.size() ||
-                parentDetails.rasterOverlayRectangles[i].isEmpty()) {
-                childDetails.rasterOverlayRectangles.push_back(
-                    Rectangle::EMPTY);
-                continue;
-            }
-            childDetails.rasterOverlayRectangles.push_back(
-                projectChildRectangle(
-                    parentDetails.rasterOverlayProjections[i],
-                    childBounds));
-        }
-        childDetails.boundingRegion = {childBounds, 0.0, 0.0};
-        return childDetails;
-    }
-
-    static Rectangle projectChildRectangle(RasterOverlayProjection projection,
-                                           const Rectangle& childBounds) {
-        switch (projection) {
-            case RasterOverlayProjection::Geographic:
-                return childBounds;
-            case RasterOverlayProjection::WebMercator:
-                return projectRectangleSimple(
-                    WebMercatorProjection(Ellipsoid::WGS84()),
-                    childBounds);
-        }
-        return childBounds;
-    }
-
     static bool modelHasTextureCoordinate(const GltfModel& model,
                                           int textureCoordinateIndex) {
         if (textureCoordinateIndex < 0 ||

@@ -3,6 +3,7 @@
 #ifdef __ANDROID__
 #include <android/log.h>
 #endif
+#include "TileRasterOverlayDetailsDeriver.h"
 #include "TileScheme.h"
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
@@ -10,7 +11,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <glm/gtc/constants.hpp>
 #include <limits>
 #include <vector>
 
@@ -52,69 +52,6 @@ void setPosition(SurfaceVertex& vertex, const Vec3& positionEcef) {
     auto split = splitHighLow(positionEcef);
     vertex.positionHighEcef = split.first;
     vertex.positionLowEcef = split.second;
-}
-
-RasterOverlayDetails deriveChildRasterOverlayDetails(
-    const RasterOverlayDetails& parentDetails,
-    const Rectangle& parentBounds,
-    const Rectangle& childBounds,
-    double minimumHeight,
-    double maximumHeight) {
-    RasterOverlayDetails childDetails;
-    if (parentDetails.empty()) {
-        childDetails.setGeographicRectangle(
-            childBounds,
-            minimumHeight,
-            maximumHeight);
-        return childDetails;
-    }
-
-    childDetails.rasterOverlayProjections =
-        parentDetails.rasterOverlayProjections;
-    childDetails.rasterOverlayRectangles.reserve(
-        parentDetails.rasterOverlayProjections.size());
-
-    const double parentWidth = parentBounds.width();
-    const double parentHeight = parentBounds.height();
-    const auto relativeLongitude = [&](double longitude) {
-        double offset = longitude - parentBounds.west();
-        if (parentBounds.crossesAntimeridian() && offset < 0.0) {
-            offset += glm::two_pi<double>();
-        }
-        return std::clamp(offset / parentWidth, 0.0, 1.0);
-    };
-    const double childWestT = relativeLongitude(childBounds.west());
-    const double childEastT = relativeLongitude(childBounds.east());
-    const double childSouthT =
-        std::clamp((childBounds.south() - parentBounds.south()) /
-                       parentHeight,
-                   0.0,
-                   1.0);
-    const double childNorthT =
-        std::clamp((childBounds.north() - parentBounds.south()) /
-                       parentHeight,
-                   0.0,
-                   1.0);
-
-    for (size_t i = 0; i < parentDetails.rasterOverlayProjections.size(); ++i) {
-        if (i >= parentDetails.rasterOverlayRectangles.size() ||
-            parentDetails.rasterOverlayRectangles[i].isEmpty()) {
-            childDetails.rasterOverlayRectangles.push_back(Rectangle::EMPTY);
-            continue;
-        }
-        const Rectangle& parentOverlay =
-            parentDetails.rasterOverlayRectangles[i];
-        childDetails.rasterOverlayRectangles.push_back(Rectangle(
-            mix(parentOverlay.west(), parentOverlay.east(), childWestT),
-            mix(parentOverlay.south(), parentOverlay.north(), childSouthT),
-            mix(parentOverlay.west(), parentOverlay.east(), childEastT),
-            mix(parentOverlay.south(), parentOverlay.north(), childNorthT)));
-    }
-    childDetails.boundingRegion = {
-        childBounds,
-        minimumHeight,
-        maximumHeight};
-    return childDetails;
 }
 
 } // namespace
@@ -505,7 +442,7 @@ std::optional<SurfaceTileMesh> TileSurface::upsampleChildMeshFromParent(
     auto longitudeOffset = [&](double longitude) {
         double offset = longitude - parentBounds.west();
         if (parentBounds.crossesAntimeridian() && offset < 0.0) {
-            offset += glm::two_pi<double>();
+            offset += MathUtils::TwoPi;
         }
         return offset;
     };
@@ -710,7 +647,8 @@ std::optional<SurfaceTileMesh> TileSurface::upsampleChildMeshFromParent(
     child.hasHeightRange = true;
     child.minimumHeight = minHeight;
     child.maximumHeight = maxHeight;
-    child.rasterOverlayDetails = deriveChildRasterOverlayDetails(
+    child.rasterOverlayDetails =
+        TileRasterOverlayDetailsDeriver::deriveChildFromParent(
         parentMesh.rasterOverlayDetails,
         parentBounds,
         childBounds,
