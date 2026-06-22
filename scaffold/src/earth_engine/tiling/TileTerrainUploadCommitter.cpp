@@ -35,7 +35,7 @@ void TileTerrainUploadCommitter::prepareTerrainRenderContent(
     TileLoadedContent&& content,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
     RenderDevice* device) {
-    if (content.gltfModel) {
+    if (content.hasGltfTerrainPayload()) {
         tile.content.renderContent.prepareGltfContent(
             std::move(content.gltfModel),
             content.contentTransform);
@@ -52,7 +52,8 @@ void TileTerrainUploadCommitter::prepareTerrainRenderContent(
         return;
     }
 
-    if (content.surfaceMesh &&
+    if (content.terrainPayloadKind == TerrainTilePayloadKind::SurfaceMesh &&
+        content.surfaceMesh &&
         !tile.content.renderContent.hasSurfaceMesh()) {
         tile.content.renderContent.setSurfaceMesh(
             std::move(content.surfaceMesh));

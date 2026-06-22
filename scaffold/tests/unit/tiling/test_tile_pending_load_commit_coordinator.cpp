@@ -1006,3 +1006,72 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_FALSE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     HeightmapTerrainUploadIgnoresStraySurfaceMeshPayload) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey terrainKey{"Geographic-TMS", 2, 0, 0};
+    const std::string cacheKey = "heightmap-with-stray-surface";
+    TilesetTile tile(terrainKey, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    auto heightmap = std::make_unique<DecodedHeightmap>();
+    heightmap->tileSize = 2;
+    heightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
+    auto surfaceMesh = std::make_unique<SurfaceTileMesh>();
+    SurfaceVertex vertex;
+    vertex.positionEcef = Vec3(1.0, 2.0, 3.0);
+    surfaceMesh->vertices.push_back(vertex);
+
+    TileLoadResult loadResult =
+        TileLoadResult::createRenderableHeightmapTerrain(std::move(heightmap));
+    loadResult.content.surfaceMesh = std::move(surfaceMesh);
+
+    PendingTileLoad upload{TileLoadDomain::Terrain,
+        terrainKey,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        std::move(loadResult)};
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+            upload.key,
+            upload.cacheKey,
+            upload.group,
+            upload.priority,
+            TileLoadResult::createRenderableTerrain()});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    int meshEnsured = 0;
+    bool resourcesDirty = false;
+    TilePendingLoadCommitCoordinator::commitTerrainUpload(
+        upload,
+        nullptr,
+        nullptr,
+        {},
+        terrainCache,
+        lifecycle,
+        false,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&meshEnsured](TilesetTile&) { ++meshEnsured; },
+        [](TilesetTile&) {},
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    ASSERT_NE(terrainCache.find(cacheKey), terrainCache.end());
+    EXPECT_TRUE(terrainCache.at(cacheKey)->valid());
+    EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
+    EXPECT_EQ(1, meshEnsured);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
