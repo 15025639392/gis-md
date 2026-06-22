@@ -1330,6 +1330,8 @@ TileAvailabilityState QuantizedMeshTerrainProvider::availabilityState(
         legacy.version = version_;
         legacy.extensionsToRequest = extensionsToRequest_;
         legacy.availabilityRanges = availabilityRanges_;
+        legacy.minZoom = minZoom_;
+        legacy.maxZoom = maxZoom_;
         legacy.contentAvailability.reset(legacy.schemeId, legacy.maxZoom);
         for (size_t level = 0; level < legacy.availabilityRanges.size();
              ++level) {
@@ -1343,8 +1345,6 @@ TileAvailabilityState QuantizedMeshTerrainProvider::availabilityState(
         legacy.loadedSubtrees = loadedSubtrees_;
         legacy.hasAvailability = hasAvailability_;
         legacy.availabilityLevels = availabilityLevels_;
-        legacy.minZoom = minZoom_;
-        legacy.maxZoom = maxZoom_;
         return availabilityStateInLayer(legacy, key);
     }
 

@@ -211,6 +211,23 @@ std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
 }
 
 TEST(TilesetQuantizedMeshTest,
+     ManualAvailabilityUsesConfiguredMaximumZoomBeyondDefaultLayerLimit) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    provider.setZoomRange(0, 20);
+    provider.addAvailabilityRects(16, {{0, 0, 0, 0}});
+
+    const TileKey availableDeepTile{"Geographic-TMS", 16, 0, 0};
+    const TileKey unavailableSibling{"Geographic-TMS", 16, 1, 0};
+
+    EXPECT_EQ(TileAvailabilityState::Available,
+              provider.availabilityState(availableDeepTile));
+    EXPECT_TRUE(provider.supportsTile(availableDeepTile));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(unavailableSibling));
+}
+
+TEST(TilesetQuantizedMeshTest,
      RtcOriginComesFromBoundingSphereCenterLikeCesiumNative) {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
