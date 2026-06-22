@@ -52,6 +52,28 @@ GltfModel makeParentModel() {
     return model;
 }
 
+GltfModel makeParentModelWithNodeRuntime(const Vec3& origin) {
+    GltfModel model = makeParentModel();
+    GltfNodeRuntime rootNode;
+    rootNode.baseLocalTransform = Mat4::translation(origin);
+    rootNode.localTransform = rootNode.baseLocalTransform;
+    rootNode.globalTransform = rootNode.baseLocalTransform;
+    rootNode.baseTranslation = {origin.x(), origin.y(), origin.z()};
+    rootNode.translation = rootNode.baseTranslation;
+    rootNode.mesh = 0;
+    model.nodes.push_back(rootNode);
+    model.sceneRootNodes.push_back(0);
+    model.preferredLocalOriginEcef = origin;
+
+    GltfPrimitive& primitive = model.primitives.front();
+    primitive.runtime.nodeIndex = 0;
+    primitive.runtime.baseVertices = primitive.vertices;
+    for (SurfaceVertex& baseVertex : primitive.runtime.baseVertices) {
+        baseVertex.positionEcef = baseVertex.positionEcef - origin;
+    }
+    return model;
+}
+
 void expectArrayNear(const std::array<float, 4>& actual,
                      const std::array<float, 4>& expected) {
     for (size_t i = 0; i < actual.size(); ++i) {
@@ -60,6 +82,36 @@ void expectArrayNear(const std::array<float, 4>& actual,
 }
 
 } // namespace
+
+TEST(GltfTerrainUpsamplerTest,
+     PreservesNodeLocalRuntimeVerticesLikeCesiumNative) {
+    const Vec3 origin(10.0, 20.0, 30.0);
+    GltfModel parent = makeParentModelWithNodeRuntime(origin);
+    const UpsampledQuadtreeNode child{TileKey{"Geographic-TMS", 1, 0, 0}};
+
+    std::unique_ptr<GltfModel> upsampled =
+        GltfTerrainUpsampler::upsampleForRasterOverlay(parent, child, 0, false);
+
+    ASSERT_NE(nullptr, upsampled);
+    ASSERT_EQ(1u, upsampled->nodes.size());
+    ASSERT_EQ(1u, upsampled->sceneRootNodes.size());
+    EXPECT_EQ(0, upsampled->sceneRootNodes.front());
+    EXPECT_EQ(Mat4::translation(origin),
+              upsampled->nodes.front().globalTransform);
+    ASSERT_EQ(1u, upsampled->primitives.size());
+    const GltfPrimitive& primitive = upsampled->primitives.front();
+    EXPECT_EQ(0, primitive.runtime.nodeIndex);
+    ASSERT_FALSE(primitive.vertices.empty());
+    ASSERT_EQ(primitive.vertices.size(), primitive.runtime.baseVertices.size());
+    for (size_t i = 0; i < primitive.vertices.size(); ++i) {
+        EXPECT_LT((primitive.runtime.baseVertices[i].positionEcef -
+                   (primitive.vertices[i].positionEcef - origin))
+                      .length(),
+                  1e-9);
+        EXPECT_EQ(primitive.vertices[i].normalEcef,
+                  primitive.runtime.baseVertices[i].normalEcef);
+    }
+}
 
 TEST(GltfTerrainUpsamplerTest,
      ClipsLowerLeftTriangleAtRasterOverlayMidlinesLikeCesiumNative) {

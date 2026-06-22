@@ -270,7 +270,6 @@ bool upsamplePointsPrimitive(const GltfPrimitive& parent,
     if (output.vertices.empty() || output.indices.empty()) {
         return false;
     }
-    output.runtime.baseVertices = output.vertices;
     return true;
 }
 
@@ -378,7 +377,6 @@ bool upsamplePrimitive(const GltfPrimitive& parent,
         output.skirtMetadata->noSkirtIndicesCount =
             static_cast<uint32_t>(output.indices.size());
     }
-    output.runtime.baseVertices = output.vertices;
     return true;
 }
 
@@ -386,6 +384,28 @@ void scaleWaterMask(WaterMask& waterMask, const UpsampledQuadtreeNode& childID) 
     waterMask.scale *= 0.5;
     waterMask.translationX += waterMask.scale * (childKeepsEast(childID) ? 1.0 : 0.0);
     waterMask.translationY += waterMask.scale * (childKeepsNorth(childID) ? 1.0 : 0.0);
+}
+
+void rebuildRuntimeBaseVerticesForNode(GltfPrimitive& primitive,
+                                       const GltfModel& model) {
+    primitive.runtime.baseVertices = primitive.vertices;
+    const int nodeIndex = primitive.runtime.nodeIndex;
+    if (nodeIndex < 0 ||
+        static_cast<size_t>(nodeIndex) >= model.nodes.size()) {
+        return;
+    }
+
+    const Mat4 inverseNodeTransform =
+        model.nodes[static_cast<size_t>(nodeIndex)].globalTransform.inverse();
+    for (SurfaceVertex& vertex : primitive.runtime.baseVertices) {
+        vertex.positionEcef =
+            inverseNodeTransform.transformPoint(vertex.positionEcef);
+        if (vertex.normalEcef.lengthSquared() > 0.0) {
+            vertex.normalEcef =
+                inverseNodeTransform.transformVector(vertex.normalEcef)
+                    .normalized();
+        }
+    }
 }
 
 } // namespace
@@ -408,6 +428,7 @@ std::unique_ptr<GltfModel> GltfTerrainUpsampler::upsampleForRasterOverlay(
                 childID,
                 textureCoordinateIndex,
                 hasInvertedVCoordinate)) {
+            rebuildRuntimeBaseVerticesForNode(upsampled, *result);
             result->primitives.push_back(std::move(upsampled));
         }
     }
