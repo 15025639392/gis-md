@@ -121,17 +121,32 @@ void applyConfiguredZoomRange(Provider& provider,
                           maximumZoom > 0 ? maximumZoom : provider.maxZoom());
 }
 
-std::unique_ptr<TerrainProvider> createTerrainProvider(
+std::unique_ptr<TileScheme> createTileSchemeForId(
+    const std::string& schemeId) {
+    if (schemeId == "XYZ-WebMercator") {
+        return TileScheme::createXYZWebMercator();
+    }
+    return TileScheme::createGeographicTMS();
+}
+
+struct SceneTerrainRuntimeSources {
+    std::unique_ptr<TerrainProvider> terrainProvider;
+    std::unique_ptr<TilesetContentProvider> contentProvider;
+    std::unique_ptr<TileScheme> tileScheme =
+        TileScheme::createGeographicTMS();
+};
+
+SceneTerrainRuntimeSources createTerrainRuntimeSources(
     const TerrainSourceConfig& config,
     PlatformBridge& platformBridge) {
+    SceneTerrainRuntimeSources sources;
     if (config.kind == TerrainSourceKind::None) {
-        return {};
+        return sources;
     }
 
     if (config.kind == TerrainSourceKind::QuantizedMesh) {
         auto qm = std::make_unique<QuantizedMeshTerrainProvider>(
             config.urlTemplate, config.attribution);
-        applyConfiguredZoomRange(*qm, config.minimumZoom, config.maximumZoom);
         qm->setTileSize(config.tileSize);
         qm->setWaterMaskEnabled(config.enableWaterMask);
         qm->setPlatformBridge(&platformBridge);
@@ -140,11 +155,14 @@ std::unique_ptr<TerrainProvider> createTerrainProvider(
                      "QuantizedMesh layer.json load failed: " +
                          config.layerJsonUrl);
         }
-        return qm;
+        applyConfiguredZoomRange(*qm, config.minimumZoom, config.maximumZoom);
+        sources.tileScheme = createTileSchemeForId(qm->schemeId());
+        sources.contentProvider = std::move(qm);
+        return sources;
     }
 
     logError(platformBridge, "Unsupported terrain source kind");
-    return {};
+    return sources;
 }
 
 } // namespace
@@ -479,12 +497,15 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
 
     const TilesetOptions tilesetOptions =
         makeSceneTilesetOptions(config_.tileset);
+    SceneTerrainRuntimeSources terrainSources =
+        createTerrainRuntimeSources(config_.terrain, platformBridge_);
     auto tileset = std::make_unique<Tileset>(
-        createTerrainProvider(config_.terrain, platformBridge_),
-        TileScheme::createGeographicTMS(),
+        std::move(terrainSources.terrainProvider),
+        std::move(terrainSources.tileScheme),
         std::move(rasterOverlays),
         &renderDevice_,
-        tilesetOptions);
+        tilesetOptions,
+        std::move(terrainSources.contentProvider));
     engine_.setTileset(std::move(tileset));
     logInfo(platformBridge_, "Unified Tileset created");
 
