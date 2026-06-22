@@ -13885,10 +13885,23 @@ void testTileTerrainHeightRangePolicyAppliesMeshOrHeightmapRanges() {
 void testTileTerrainHeightRangePolicyInheritsOnlyUnreadyChildren() {
     TilesetTile parent(TileKey{"test", 0, 0, 0}, Rectangle{});
     TilesetTile loadingChild(TileKey{"test", 1, 0, 0}, Rectangle{}, &parent);
-    TilesetTile readyChild(TileKey{"test", 1, 1, 0}, Rectangle{}, &parent);
-    parent.children = {&loadingChild, &readyChild};
-    readyChild.content.renderContent.setMeshReady(true);
-    TileTerrainHeightRangePolicy::setTerrainHeightRange(readyChild, 1.0, 2.0);
+    TilesetTile readySurfaceChild(TileKey{"test", 1, 1, 0}, Rectangle{}, &parent);
+    TilesetTile readyGltfChild(TileKey{"test", 1, 2, 0}, Rectangle{}, &parent);
+    parent.children = {&loadingChild, &readySurfaceChild, &readyGltfChild};
+    readySurfaceChild.content.renderContent.setMeshReady(true);
+    TileTerrainHeightRangePolicy::setTerrainHeightRange(
+        readySurfaceChild,
+        1.0,
+        2.0);
+    readyGltfChild.content.renderContent.setGltfContent(
+        std::make_unique<GltfModel>());
+    readyGltfChild.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    readyGltfChild.content.renderContent.markRenderContentReady();
+    TileTerrainHeightRangePolicy::setTerrainHeightRange(
+        readyGltfChild,
+        3.0,
+        4.0);
 
     TileTerrainHeightRangePolicy::setTerrainHeightRange(parent, -100.0, 200.0);
     TileTerrainHeightRangePolicy::inheritHeightRangeForUnreadyChildren(parent);
@@ -13896,9 +13909,11 @@ void testTileTerrainHeightRangePolicyInheritsOnlyUnreadyChildren() {
     check(loadingChild.content.renderContent.hasTerrainHeightRange() &&
               std::abs(loadingChild.content.renderContent.terrainMinimumHeight() + 100.0) < 1e-9 &&
               std::abs(loadingChild.content.renderContent.terrainMaximumHeight() - 200.0) < 1e-9 &&
-              readyChild.content.renderContent.terrainMinimumHeight() == 1.0 &&
-              readyChild.content.renderContent.terrainMaximumHeight() == 2.0,
-          "TileTerrainHeightRangePolicy: only children without ready render resources inherit parent height range");
+              readySurfaceChild.content.renderContent.terrainMinimumHeight() == 1.0 &&
+              readySurfaceChild.content.renderContent.terrainMaximumHeight() == 2.0 &&
+              readyGltfChild.content.renderContent.terrainMinimumHeight() == 3.0 &&
+              readyGltfChild.content.renderContent.terrainMaximumHeight() == 4.0,
+          "TileTerrainHeightRangePolicy: only children without ready render content inherit parent height range");
 }
 
 GltfPrimitive makeBuilderTestPrimitive() {
