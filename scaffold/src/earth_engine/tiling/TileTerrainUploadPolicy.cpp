@@ -12,6 +12,7 @@ void TileTerrainUploadPolicy::markTerrainRenderContentLoaded(
 
 void TileTerrainUploadPolicy::markTerrainRenderContentFailedTemporarily(
     TilesetTile& tile) {
+    tile.content.renderContent.clearRenderContent();
     tile.markRenderContentFailedTemporarily();
 }
 

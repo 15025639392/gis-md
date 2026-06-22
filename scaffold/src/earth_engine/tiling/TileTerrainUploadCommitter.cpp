@@ -69,7 +69,7 @@ void TileTerrainUploadCommitter::prepareTerrainRenderContent(
 }
 
 TileTerrainUploadCommitAction
-TileTerrainUploadCommitter::finishMeshResourcePreparation(
+TileTerrainUploadCommitter::finishTerrainResourcePreparation(
     TilesetTile& tile,
     bool resourcesReady) {
     if (!resourcesReady) {

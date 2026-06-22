@@ -844,6 +844,73 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainUploadRejectsIncompleteGltfRenderResources) {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "test:incomplete-gltf-terrain";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    auto model = std::make_unique<GltfModel>();
+    PendingTileLoad upload{TileLoadDomain::Terrain,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadResult::fromTerrainResult(
+            TerrainTileLoadResult::successWithGltfModel(std::move(model)))};
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadResult::createRenderableTerrain()});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    int ensureMeshCalls = 0;
+    int ensureGltfCalls = 0;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitTerrainUpload(
+        upload,
+        nullptr,
+        nullptr,
+        {},
+        terrainCache,
+        lifecycle,
+        false,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&ensureMeshCalls](TilesetTile&) { ++ensureMeshCalls; },
+        [&ensureGltfCalls](TilesetTile& committedTile) {
+            committedTile.content.renderContent.addGltfPrimitiveResource(
+                GltfPrimitiveRenderResources{});
+            ++ensureGltfCalls;
+        },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_FALSE(tile.content.renderContent.hasGltfModel());
+    EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
+    EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
+    EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
+    EXPECT_EQ(0, ensureMeshCalls);
+    EXPECT_EQ(1, ensureGltfCalls);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      TerrainGltfLoadResultDropsSurfacePayloadLikeCesiumNativeContentKind) {
     auto model = std::make_unique<GltfModel>();
     GltfModel* rawModel = model.get();

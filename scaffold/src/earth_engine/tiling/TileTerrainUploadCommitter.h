@@ -44,7 +44,7 @@ struct TileTerrainUploadCommitter {
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         RenderDevice* device);
     static void prepareTerrainRenderContent(TilesetTile& tile);
-    static TileTerrainUploadCommitAction finishMeshResourcePreparation(
+    static TileTerrainUploadCommitAction finishTerrainResourcePreparation(
         TilesetTile& tile,
         bool resourcesReady);
 };

@@ -10977,11 +10977,11 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     check(tile.canPrepareRasterOverlays(),
           "TilesetTile: ready terrain render content can prepare raster overlays");
     check(!tile.hasSurfaceDrawable(),
-          "TilesetTile: ready mesh without GPU buffer is not surface drawable");
+          "TilesetTile: ready render resources without GPU buffer is not surface drawable");
 
     tile.content.renderContent.setMeshReady(false);
     check(!tile.canPrepareRasterOverlays(),
-          "TilesetTile: raster overlay preparation waits for ready mesh");
+          "TilesetTile: raster overlay preparation waits for ready render resources");
 
     tile.content.renderContent.setMeshReady(true);
     tile.content.renderContent.setSurfaceMesh(nullptr);
@@ -12418,39 +12418,44 @@ void testTileTerrainUploadPolicyMarksTerrainRenderContentStates() {
               tile.content.loadState == TileLoadState::ContentLoaded,
           "TileTerrainUploadPolicy: terrain upload enters render content loaded state");
 
+    tile.content.renderContent.setGltfContent(std::make_unique<GltfModel>());
+    tile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
     TileTerrainUploadPolicy::markTerrainRenderContentFailedTemporarily(tile);
-    check(tile.content.contentKind == TileContentKind::Unknown &&
+    check(!tile.content.renderContent.hasGltfModel() &&
+              !tile.content.renderContent.hasGltfPrimitiveResources() &&
+              tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::FailedTemporarily,
-          "TileTerrainUploadPolicy: failed terrain mesh preparation rolls back to temporary failure");
+          "TileTerrainUploadPolicy: failed terrain render-resource preparation rolls back render content");
 }
 
-void testTileTerrainUploadCommitterAppliesMeshResourceOutcome() {
+void testTileTerrainUploadCommitterAppliesRenderResourceOutcome() {
     TilesetTile readyTile(TileKey{"test", 0, 0, 0}, Rectangle{});
     readyTile.content.contentKind = TileContentKind::Unknown;
     readyTile.content.loadState = TileLoadState::Unloaded;
 
     TileTerrainUploadCommitter::prepareTerrainRenderContent(readyTile);
     TileTerrainUploadCommitAction action =
-        TileTerrainUploadCommitter::finishMeshResourcePreparation(
+        TileTerrainUploadCommitter::finishTerrainResourcePreparation(
             readyTile,
             true);
     check(action.resourcesDirty &&
               readyTile.content.contentKind == TileContentKind::Render &&
               readyTile.content.loadState == TileLoadState::ContentLoaded,
-          "TileTerrainUploadCommitter: ready mesh keeps terrain render content state and requests dirty resources");
+          "TileTerrainUploadCommitter: ready render resources keep terrain render content state and request dirty resources");
 
     TilesetTile failedTile(TileKey{"test", 0, 1, 0}, Rectangle{});
     failedTile.content.contentKind = TileContentKind::Unknown;
     failedTile.content.loadState = TileLoadState::Unloaded;
 
     TileTerrainUploadCommitter::prepareTerrainRenderContent(failedTile);
-    action = TileTerrainUploadCommitter::finishMeshResourcePreparation(
+    action = TileTerrainUploadCommitter::finishTerrainResourcePreparation(
         failedTile,
         false);
     check(action.resourcesDirty &&
               failedTile.content.contentKind == TileContentKind::Unknown &&
               failedTile.content.loadState == TileLoadState::FailedTemporarily,
-          "TileTerrainUploadCommitter: failed mesh preparation rolls back terrain render content and requests dirty resources");
+          "TileTerrainUploadCommitter: failed render-resource preparation rolls back terrain render content and requests dirty resources");
 }
 
 void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
@@ -13893,7 +13898,7 @@ void testTileTerrainHeightRangePolicyInheritsOnlyUnreadyChildren() {
               std::abs(loadingChild.content.renderContent.terrainMaximumHeight() - 200.0) < 1e-9 &&
               readyChild.content.renderContent.terrainMinimumHeight() == 1.0 &&
               readyChild.content.renderContent.terrainMaximumHeight() == 2.0,
-          "TileTerrainHeightRangePolicy: only children without ready meshes inherit parent height range");
+          "TileTerrainHeightRangePolicy: only children without ready render resources inherit parent height range");
 }
 
 GltfPrimitive makeBuilderTestPrimitive() {
@@ -27600,7 +27605,7 @@ int main() {
     testTileContentUploadPolicyMarksGltfRenderResourceFailure();
     testTileContentUploadCommitterAppliesRenderResourceOutcome();
     testTileTerrainUploadPolicyMarksTerrainRenderContentStates();
-    testTileTerrainUploadCommitterAppliesMeshResourceOutcome();
+    testTileTerrainUploadCommitterAppliesRenderResourceOutcome();
     testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys();
     testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentUpload();
     testTilePendingLoadCommitCoordinatorSkipsMissingTileTerminalResults();
