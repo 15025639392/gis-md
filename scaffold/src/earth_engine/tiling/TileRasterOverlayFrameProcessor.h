@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <limits>
+#include <unordered_set>
 #include <vector>
 
 namespace earth_engine {
@@ -56,6 +57,7 @@ public:
             TilesetTile* tile = nullptr;
         };
 
+        std::unordered_set<TileKey> prefetchedTiles;
         std::vector<PrefetchTile> visibleTiles;
         visibleTiles.reserve(tilePlan.visibleTiles.size());
         for (const TileKey& key : tilePlan.visibleTiles) {
@@ -71,6 +73,9 @@ public:
         TileLoadPriorityPolicy::sortByPriority(visibleTiles);
         for (const PrefetchTile& item : visibleTiles) {
             if (item.tile) {
+                if (!prefetchedTiles.insert(item.key).second) {
+                    continue;
+                }
                 TileRasterOverlayPrefetcher::prefetch(
                     *item.tile,
                     rasterOverlays,
@@ -89,7 +94,13 @@ public:
                         request.group))) {
                 break;
             }
+            if (prefetchedTiles.count(request.key) > 0) {
+                continue;
+            }
             if (TilesetTile* tile = ensureTile(request.key)) {
+                if (!prefetchedTiles.insert(request.key).second) {
+                    continue;
+                }
                 TileRasterOverlayPrefetcher::prefetch(
                     *tile,
                     rasterOverlays,

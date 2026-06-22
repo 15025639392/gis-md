@@ -4275,6 +4275,41 @@ void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {
           "TileRasterOverlayFrameProcessor: raster prefetch starts the higher-priority tile first");
 }
 
+void testTileRasterOverlayFrameProcessorSkipsDuplicateFramePrefetch() {
+    const TileKey key{"Geographic-TMS", 1, 0, 0};
+    TilesetTile tile(key, Rectangle::fromDegrees(-2.0, 0.0, -1.0, 1.0));
+    TilePlan plan;
+    plan.visibleTiles.push_back(key);
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    std::vector<ActivatedRasterOverlay*> overlays;
+    std::vector<size_t> overlayOrder;
+    int ensureCalls = 0;
+    TileRasterOverlayFrameProcessor::prefetchSelection(
+        plan,
+        {TileLoadRequest{key, TileLoadPriorityGroup::Normal, 1.0}},
+        overlays,
+        overlayOrder,
+        nullptr,
+        16.0,
+        budget,
+        [&](const TileKey& requested) -> TilesetTile* {
+            if (requested == key) {
+                ++ensureCalls;
+                return &tile;
+            }
+            return nullptr;
+        });
+
+    check(ensureCalls == 1,
+          "TileRasterOverlayFrameProcessor: duplicate visible/load request prefetch is skipped in the same frame");
+}
+
 void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -27696,6 +27731,7 @@ int main() {
     testTilesetPrefetchWaitsForRenderDetailsBeforeRequestingRaster();
     testTilesetPrefetchGeneratesRenderContentDetailsFromRegion();
     testTileRasterOverlayFrameProcessorPrefetchesByPriority();
+    testTileRasterOverlayFrameProcessorSkipsDuplicateFramePrefetch();
     testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach();
     testRasterSelectionPrefetchSkipHonorsMoreDetail();
     testTilesetBlockingBaseImageryDrawsPlaceholderSurface();
