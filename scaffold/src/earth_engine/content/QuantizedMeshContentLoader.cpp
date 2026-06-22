@@ -14,6 +14,21 @@ std::unique_ptr<GltfModel> makeQuantizedMeshGltfModel(
     model->rasterOverlayDetails = decodedTile.rasterOverlayDetails;
     model->terrainWaterMask = decodedTile.waterMask;
     model->preferredLocalOriginEcef = decodedTile.localOriginEcef;
+
+    GltfNodeRuntime rootNode;
+    rootNode.baseLocalTransform = Mat4::translation(decodedTile.localOriginEcef);
+    rootNode.localTransform = rootNode.baseLocalTransform;
+    rootNode.globalTransform = rootNode.baseLocalTransform;
+    rootNode.baseTranslation = {
+        decodedTile.localOriginEcef.x(),
+        decodedTile.localOriginEcef.y(),
+        decodedTile.localOriginEcef.z()};
+    rootNode.translation = rootNode.baseTranslation;
+    rootNode.mesh = 0;
+    rootNode.hasMatrix = false;
+    model->nodes.push_back(rootNode);
+    model->sceneRootNodes.push_back(0);
+
     if (!decodedTile.waterMask.allLand &&
         !decodedTile.waterMask.allWater &&
         !decodedTile.waterMask.data.empty()) {
@@ -48,7 +63,12 @@ std::unique_ptr<GltfModel> makeQuantizedMeshGltfModel(
     for (const SurfaceVertex& vertex : decodedTile.vertices) {
         primitive.vertexTexCoords[0].push_back(vertex.uv);
     }
+    primitive.runtime.nodeIndex = 0;
     primitive.runtime.baseVertices = primitive.vertices;
+    for (SurfaceVertex& vertex : primitive.runtime.baseVertices) {
+        vertex.positionEcef =
+            vertex.positionEcef - decodedTile.localOriginEcef;
+    }
     primitive.runtime.hasNormals = true;
 
     model->primitives.push_back(std::move(primitive));

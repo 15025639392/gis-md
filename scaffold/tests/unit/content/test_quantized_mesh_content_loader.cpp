@@ -210,8 +210,19 @@ TEST(QuantizedMeshContentLoaderTest,
     ASSERT_TRUE(result.gltfModel->preferredLocalOriginEcef.has_value());
     EXPECT_EQ(boundingSphereCenter,
               *result.gltfModel->preferredLocalOriginEcef);
+    ASSERT_EQ(1u, result.gltfModel->nodes.size());
+    ASSERT_EQ(1u, result.gltfModel->sceneRootNodes.size());
+    EXPECT_EQ(0, result.gltfModel->sceneRootNodes.front());
+    const GltfNodeRuntime& node = result.gltfModel->nodes.front();
+    EXPECT_EQ(0, node.mesh);
+    EXPECT_EQ(-1, node.parent);
+    EXPECT_TRUE(node.children.empty());
+    EXPECT_EQ(Mat4::translation(boundingSphereCenter), node.baseLocalTransform);
+    EXPECT_EQ(Mat4::translation(boundingSphereCenter), node.localTransform);
+    EXPECT_EQ(Mat4::translation(boundingSphereCenter), node.globalTransform);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    EXPECT_EQ(0, primitive.runtime.nodeIndex);
     EXPECT_EQ(GltfPrimitiveMode::Triangles, primitive.primitiveMode);
     EXPECT_FALSE(primitive.doubleSided);
     EXPECT_NEAR(0.0f, primitive.metallicFactor, 1e-6f);
@@ -234,6 +245,14 @@ TEST(QuantizedMeshContentLoaderTest,
               primitive.vertexTexCoords[0].front());
     EXPECT_EQ(primitive.vertices.back().uv,
               primitive.vertexTexCoords[0].back());
+    ASSERT_EQ(primitive.vertices.size(), primitive.runtime.baseVertices.size());
+    EXPECT_LT((primitive.runtime.baseVertices.front().positionEcef -
+               (primitive.vertices.front().positionEcef -
+                boundingSphereCenter))
+                  .length(),
+              1e-9);
+    EXPECT_EQ(primitive.vertices.front().normalEcef,
+              primitive.runtime.baseVertices.front().normalEcef);
     ASSERT_TRUE(primitive.skirtMetadata.has_value());
     EXPECT_EQ(0u, primitive.skirtMetadata->noSkirtIndicesBegin);
     EXPECT_EQ(primitive.indices.size(),
