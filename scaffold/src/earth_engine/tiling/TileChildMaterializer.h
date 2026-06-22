@@ -223,6 +223,10 @@ struct TileChildMaterializer {
             return false;
         }
 
+        if (options.isAvailabilityBoundaryWaitingForContent) {
+            return false;
+        }
+
         if (options.hasExistingChildren) {
             return true;
         }
@@ -231,10 +235,6 @@ struct TileChildMaterializer {
             return true;
         }
         if (options.contentProviderSupportsTile) {
-            return false;
-        }
-
-        if (options.isAvailabilityBoundaryWaitingForContent) {
             return false;
         }
 

@@ -1060,11 +1060,13 @@ TEST(TileChildMaterializerTest, CanRefineSkipsOutOfRangeGeographicTmsChildren) {
 
 TEST(TileChildMaterializerTest, CanRefineBlocksAvailabilityBoundaryAndTerrainUpsampledTiles) {
     TilesetTile tile(TileKey{"Geographic-TMS", 0, 0, 0}, Rectangle{});
+    TilesetTile existingChild(TileKey{"Geographic-TMS", 1, 0, 0}, Rectangle{});
+    tile.children.push_back(&existingChild);
 
     EXPECT_FALSE(TileChildMaterializer::canRefine(
         tile,
         TileRefinementAvailabilityOptions{
-            false,
+            true,
             false,
             false,
             true,
