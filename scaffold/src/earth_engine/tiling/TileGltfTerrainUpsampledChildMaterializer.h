@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <optional>
 
 namespace earth_engine {
 
@@ -84,6 +85,24 @@ public:
         content.metadata.rasterOverlayDetails =
             content.gltfModel->rasterOverlayDetails;
         return true;
+    }
+
+    static std::optional<TileLoadResult> createLoadResult(
+        TilesetTile& tile) {
+        TileLoadedContent content;
+        if (!materialize(tile, content)) {
+            return std::nullopt;
+        }
+
+        TileLoadResult result =
+            TileLoadResult::createRenderableTerrain(
+                std::move(content.metadata));
+        result.content.gltfModel = std::move(content.gltfModel);
+        result.content.terrainRenderContent = content.terrainRenderContent;
+        result.content.contentTransform = content.contentTransform;
+        result.content.quantizedMeshAvailabilityUpdates =
+            std::move(content.quantizedMeshAvailabilityUpdates);
+        return result;
     }
 
 private:

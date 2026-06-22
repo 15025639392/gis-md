@@ -172,9 +172,11 @@ public:
         }
 
         terrainCache.erase(upload.cacheKey);
-        TileGltfTerrainUpsampledChildMaterializer::materialize(
-            *tile,
-            upload.content());
+        if (!upload.content().hasGltfTerrainPayload()) {
+            TileGltfTerrainUpsampledChildMaterializer::materialize(
+                *tile,
+                upload.content());
+        }
         captureInitialBoundingVolumes(*tile, upload.content().metadata);
         TileContentUploadCommitter::applyAvailabilityUpdates(
             contentProvider,

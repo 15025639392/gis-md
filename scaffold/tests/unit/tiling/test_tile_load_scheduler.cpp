@@ -8,8 +8,12 @@
 #include "earth_engine/tiling/TileLoadScheduler.h"
 #include "earth_engine/tiling/TilesetTile.h"
 
+#include <array>
+#include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace earth_engine;
@@ -21,6 +25,33 @@ std::string cacheKeyForTile(const TileKey& key) {
            std::to_string(key.z) + ":" +
            std::to_string(key.x) + ":" +
            std::to_string(key.y);
+}
+
+std::unique_ptr<GltfModel> makeSchedulerQuadTerrainGltfModel(
+    const Rectangle& rectangle) {
+    auto model = std::make_unique<GltfModel>();
+    GltfPrimitive primitive;
+    primitive.vertices.resize(4);
+    primitive.vertices[0].positionEcef = Vec3(0.0, 0.0, 0.0);
+    primitive.vertices[1].positionEcef = Vec3(1.0, 0.0, 0.0);
+    primitive.vertices[2].positionEcef = Vec3(0.0, 1.0, 0.0);
+    primitive.vertices[3].positionEcef = Vec3(1.0, 1.0, 0.0);
+    for (SurfaceVertex& vertex : primitive.vertices) {
+        vertex.normalEcef = Vec3::unitZ();
+    }
+    primitive.vertices[0].uv = {0.0f, 0.0f};
+    primitive.vertices[1].uv = {1.0f, 0.0f};
+    primitive.vertices[2].uv = {0.0f, 1.0f};
+    primitive.vertices[3].uv = {1.0f, 1.0f};
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 1.0f},
+        std::array<float, 2>{1.0f, 1.0f}};
+    primitive.indices = {0, 1, 2, 1, 3, 2};
+    model->primitives.push_back(std::move(primitive));
+    model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    return model;
 }
 
 class CountingContentProvider final : public TilesetContentProvider {
@@ -710,6 +741,99 @@ TEST(TileLoadSchedulerTest,
     EXPECT_EQ(lifecycle.counts().contentUploads, 0u);
     EXPECT_EQ(lifecycle.pendingRequestCount(), 0u);
     EXPECT_EQ(provider.requestCount, 0);
+}
+
+TEST(TileLoadSchedulerTest,
+     ContentTerrainUpsampleQueuesGltfLoadResultBeforeCommit) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    const Rectangle parentBounds{-1.0, -0.5, 1.0, 0.5};
+    const Rectangle childBounds{-1.0, -0.5, 0.0, 0.0};
+    TilesetTile parent(parentKey, parentBounds);
+    TilesetTile child(childKey, childBounds, &parent);
+    child.content.upsampledFromParent = true;
+    parent.content.renderContent.setGltfContent(
+        makeSchedulerQuadTerrainGltfModel(parentBounds));
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.markRenderContentDone();
+
+    TerrainQuadtreeContentProvider provider;
+    bool prepared = false;
+    bool marked = false;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                childKey,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                &provider},
+            cacheKeyForTile,
+            [&child](
+                const TileKey&,
+                const std::string&,
+                TilesetTile*& tileState) {
+                tileState = &child;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.hasTile = true;
+                snapshot.upsampledFromParent = true;
+                snapshot.contentProviderOwnsTerrainQuadtree = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [&prepared](TilesetTile&, double) {
+                prepared = true;
+                return true;
+            },
+            [&marked](const TileKey&) { marked = true; });
+
+    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_TRUE(prepared);
+    EXPECT_TRUE(marked);
+    EXPECT_EQ(provider.requestCount, 0);
+    EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
+    EXPECT_EQ(lifecycle.counts().contentUploads, 1u);
+
+    PendingLoadFinalizeContext finalizeContext{false, budget};
+    std::optional<PendingTileLoad> pending;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        pending =
+            lifecycle.pendingLoads().takeHighestPriorityUpload(
+                finalizeContext);
+    }
+    ASSERT_TRUE(pending.has_value());
+    EXPECT_EQ(pending->domain, TileLoadDomain::Content);
+    EXPECT_EQ(pending->result.status, TileLoadStatus::Renderable);
+    EXPECT_TRUE(pending->content().hasGltfTerrainPayload());
+    ASSERT_NE(pending->content().gltfModel, nullptr);
+    EXPECT_FALSE(pending->content().heightmap);
+    ASSERT_TRUE(pending->content().metadata.rasterOverlayDetails.has_value());
+    const RasterOverlayDetails& details =
+        *pending->content().metadata.rasterOverlayDetails;
+    EXPECT_EQ(
+        details.textureCoordinateIDForProjection(
+            RasterOverlayProjection::Geographic),
+        0);
+    ASSERT_NE(
+        details.findRectangleForOverlayProjection(
+            RasterOverlayProjection::Geographic),
+        nullptr);
+    EXPECT_EQ(
+        details.boundingRegion.rectangle,
+        childBounds);
 }
 
 TEST(TileLoadSchedulerTest, SkipsCachedTerrainWhenNetworkInflightIsFull) {

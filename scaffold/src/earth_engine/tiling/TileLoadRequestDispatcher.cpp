@@ -1,5 +1,7 @@
 #include "TileLoadRequestDispatcher.h"
 
+#include <utility>
+
 namespace earth_engine {
 
 TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledTerrain(
@@ -10,7 +12,8 @@ TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledTerrain(
     const std::string& cacheKey,
     TileLoadPriorityGroup group,
     double priority,
-    TileLoadDomain domain) {
+    TileLoadDomain domain,
+    TileLoadResult result) {
     std::lock_guard<std::mutex> lock(mutex);
     if (requestState.destroying()) {
         return TileLoadDispatchResult::Destroying;
@@ -29,7 +32,7 @@ TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledTerrain(
             cacheKey,
             group,
             priority,
-            TileLoadResult::createRenderable()});
+            std::move(result)});
     return TileLoadDispatchResult::Issued;
 }
 

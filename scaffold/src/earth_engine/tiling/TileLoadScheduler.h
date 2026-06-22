@@ -12,7 +12,9 @@
 
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace earth_engine {
@@ -95,6 +97,17 @@ public:
                 const TileLoadDomain upsampleDomain = hasGltfTerrainSource
                     ? TileLoadDomain::Content
                     : TileLoadDomain::Terrain;
+                TileLoadResult upsampleResult =
+                    TileLoadResult::createRenderable();
+                if (hasGltfTerrainSource) {
+                    std::optional<TileLoadResult> gltfUpsample =
+                        TileGltfTerrainUpsampledChildMaterializer::
+                            createLoadResult(*tileState);
+                    if (!gltfUpsample) {
+                        continue;
+                    }
+                    upsampleResult = std::move(*gltfUpsample);
+                }
                 const TileLoadDispatchResult dispatchResult =
                     TileLoadRequestDispatcher::queueUpsampledTerrain(
                         input.lifecycle.mutex(),
@@ -104,7 +117,8 @@ public:
                         cacheKey,
                         request.group,
                         request.priority,
-                        upsampleDomain);
+                        upsampleDomain,
+                        std::move(upsampleResult));
                 if (shouldStopAfterDispatch(dispatchResult)) {
                     break;
                 }
