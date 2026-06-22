@@ -254,6 +254,56 @@ TEST(GltfTerrainUpsamplerTest,
 }
 
 TEST(GltfTerrainUpsamplerTest,
+     PreservesTriangleFeatureMetadataWhenClippingLikeCesiumNative) {
+    GltfModel parent = makeParentModel();
+    GltfPrimitive& parentPrimitive = parent.primitives.front();
+    parentPrimitive.skirtMetadata.reset();
+    parentPrimitive.featureIds = {42, 42, 42, 42};
+    parentPrimitive.featureProperties.resize(4);
+    for (auto& properties : parentPrimitive.featureProperties) {
+        properties["name"] = std::string("terrain-feature");
+        properties["height"] = uint64_t(123);
+    }
+
+    const UpsampledQuadtreeNode child{TileKey{"Geographic-TMS", 1, 0, 0}};
+
+    std::unique_ptr<GltfModel> upsampled =
+        GltfTerrainUpsampler::upsampleForRasterOverlay(parent, child, 0, false);
+
+    ASSERT_NE(nullptr, upsampled);
+    ASSERT_EQ(1u, upsampled->primitives.size());
+    const GltfPrimitive& primitive = upsampled->primitives.front();
+    ASSERT_GT(primitive.vertices.size(), parentPrimitive.vertices.size());
+    ASSERT_EQ(primitive.vertices.size(), primitive.featureIds.size());
+    ASSERT_EQ(primitive.vertices.size(), primitive.featureProperties.size());
+    for (size_t i = 0; i < primitive.vertices.size(); ++i) {
+        EXPECT_EQ(42u, primitive.featureIds[i]);
+        ASSERT_NE(
+            primitive.featureProperties[i].end(),
+            primitive.featureProperties[i].find("name"));
+        ASSERT_NE(
+            primitive.featureProperties[i].end(),
+            primitive.featureProperties[i].find("height"));
+        ASSERT_NE(
+            nullptr,
+            std::get_if<std::string>(
+                &primitive.featureProperties[i].at("name")));
+        EXPECT_EQ(
+            "terrain-feature",
+            *std::get_if<std::string>(
+                &primitive.featureProperties[i].at("name")));
+        ASSERT_NE(
+            nullptr,
+            std::get_if<uint64_t>(
+                &primitive.featureProperties[i].at("height")));
+        EXPECT_EQ(
+            123u,
+            *std::get_if<uint64_t>(
+                &primitive.featureProperties[i].at("height")));
+    }
+}
+
+TEST(GltfTerrainUpsamplerTest,
      FiltersPointPrimitiveByRasterOverlayQuadrantLikeCesiumNative) {
     GltfModel parent;
     GltfPrimitive primitive;

@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <vector>
 
 namespace earth_engine {
@@ -17,6 +18,10 @@ struct ClipVertex {
     bool hasColor = false;
     std::array<float, 4> tangent{};
     bool hasTangent = false;
+    uint32_t featureId = 0;
+    bool hasFeatureId = false;
+    std::map<std::string, GltfFeaturePropertyValue> featureProperties;
+    bool hasFeatureProperties = false;
 };
 
 bool childKeepsEast(const UpsampledQuadtreeNode& childID) {
@@ -81,6 +86,25 @@ ClipVertex interpolate(const ClipVertex& a,
         for (size_t i = 0; i < out.tangent.size(); ++i) {
             out.tangent[i] = static_cast<float>(
                 a.tangent[i] + (b.tangent[i] - a.tangent[i]) * t);
+        }
+    }
+    out.hasFeatureId = a.hasFeatureId && b.hasFeatureId;
+    if (out.hasFeatureId) {
+        if (a.featureId == b.featureId) {
+            out.featureId = a.featureId;
+        } else {
+            out.featureId = t < 0.5 ? a.featureId : b.featureId;
+        }
+    }
+    out.hasFeatureProperties =
+        a.hasFeatureProperties && b.hasFeatureProperties;
+    if (out.hasFeatureProperties) {
+        if (a.hasFeatureId && b.hasFeatureId && a.featureId == b.featureId) {
+            out.featureProperties = a.featureProperties;
+        } else if (t < 0.5) {
+            out.featureProperties = a.featureProperties;
+        } else {
+            out.featureProperties = b.featureProperties;
         }
     }
     return out;
@@ -150,6 +174,14 @@ std::vector<ClipVertex> makeTriangle(const GltfPrimitive& primitive,
             vertex.hasTangent = true;
             vertex.tangent = primitive.vertexTangents[index];
         }
+        if (primitive.featureIds.size() == primitive.vertices.size()) {
+            vertex.hasFeatureId = true;
+            vertex.featureId = primitive.featureIds[index];
+        }
+        if (primitive.featureProperties.size() == primitive.vertices.size()) {
+            vertex.hasFeatureProperties = true;
+            vertex.featureProperties = primitive.featureProperties[index];
+        }
         triangle.push_back(vertex);
     }
     return triangle;
@@ -181,6 +213,12 @@ void appendPolygon(GltfPrimitive& output,
         }
         if (vertex.hasTangent) {
             output.vertexTangents.push_back(vertex.tangent);
+        }
+        if (vertex.hasFeatureId) {
+            output.featureIds.push_back(vertex.featureId);
+        }
+        if (vertex.hasFeatureProperties) {
+            output.featureProperties.push_back(vertex.featureProperties);
         }
     }
     for (uint32_t i = 1; i + 1 < polygon.size(); ++i) {
