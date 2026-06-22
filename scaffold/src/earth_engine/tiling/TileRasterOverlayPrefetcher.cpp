@@ -47,14 +47,6 @@ void TileRasterOverlayPrefetcher::prefetch(
     const bool hasRenderContentDetails =
         tile.content.contentKind == TileContentKind::Render &&
         tile.content.renderContent.hasRenderableTerrainContent();
-    if (hasRenderContentDetails) {
-        TileRasterOverlayDetailsGenerator::
-            ensureProjectionDetailsFromActiveOverlays(
-                tile.content.renderContent,
-                tile.boundingVolume ? &*tile.boundingVolume : nullptr,
-                rasterOverlays,
-                device);
-    }
     const RasterOverlayDetails* renderDetails = hasRenderContentDetails
         ? &tile.content.renderContent.rasterOverlayDetails()
         : nullptr;

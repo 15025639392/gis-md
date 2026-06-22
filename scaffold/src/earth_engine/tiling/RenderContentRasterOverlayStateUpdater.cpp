@@ -47,14 +47,6 @@ RenderContentRasterOverlayStateUpdater::update(
     const bool hasRenderContentDetails =
         tile.content.contentKind == TileContentKind::Render &&
         tile.content.renderContent.hasRenderableTerrainContent();
-    if (hasRenderContentDetails) {
-        TileRasterOverlayDetailsGenerator::
-            ensureProjectionDetailsFromActiveOverlays(
-                tile.content.renderContent,
-                tile.boundingVolume ? &*tile.boundingVolume : nullptr,
-                rasterOverlays,
-                device);
-    }
     static const RasterOverlayDetails emptyOverlayDetails;
     const RasterOverlayDetails& overlayDetails = hasRenderContentDetails
         ? tile.content.renderContent.rasterOverlayDetails()

@@ -3,12 +3,92 @@
 #include "TileBoundingVolume.h"
 #include "TileRenderContentState.h"
 
+#include "../content/GltfModel.h"
+#include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/Projection.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../providers/RasterOverlayTileProvider.h"
 
+#include <array>
+#include <cmath>
+
 namespace earth_engine {
+namespace {
+
+bool hasProjection(const RasterOverlayDetails& details,
+                   RasterOverlayProjection projection) {
+    for (RasterOverlayProjection existingProjection :
+         details.rasterOverlayProjections) {
+        if (existingProjection == projection) {
+            return true;
+        }
+    }
+    return false;
+}
+
+Vec3 projectPositionForOverlay(const Cartographic& cartographic,
+                               RasterOverlayProjection projection) {
+    switch (projection) {
+        case RasterOverlayProjection::Geographic:
+            return Vec3(
+                cartographic.longitude(),
+                cartographic.latitude(),
+                cartographic.height());
+        case RasterOverlayProjection::WebMercator:
+            return projectPosition(
+                WebMercatorProjection(Ellipsoid::WGS84()),
+                cartographic);
+    }
+    return Vec3(
+        cartographic.longitude(),
+        cartographic.latitude(),
+        cartographic.height());
+}
+
+bool writeGltfOverlayTexCoords(TileRenderContentState& renderContent,
+                               RasterOverlayProjection projection,
+                               const Rectangle& projectedRectangle,
+                               size_t textureCoordinateIndex) {
+    GltfModel* model = renderContent.gltfContent();
+    if (!model ||
+        textureCoordinateIndex >= kGltfMaxTexCoordSets ||
+        projectedRectangle.isEmpty()) {
+        return false;
+    }
+
+    const double width = projectedRectangle.width();
+    const double height = projectedRectangle.height();
+    if (std::abs(width) <= 0.0 || std::abs(height) <= 0.0) {
+        return false;
+    }
+
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    for (GltfPrimitive& primitive : model->primitives) {
+        std::vector<std::array<float, 2>>& texCoords =
+            primitive.vertexTexCoords[textureCoordinateIndex];
+        texCoords.clear();
+        texCoords.reserve(primitive.vertices.size());
+        for (const SurfaceVertex& vertex : primitive.vertices) {
+            const std::optional<Cartographic> cartographic =
+                ellipsoid.tryCartesianToCartographic(vertex.positionEcef);
+            if (!cartographic) {
+                texCoords.push_back({0.0f, 0.0f});
+                continue;
+            }
+            const Vec3 projected =
+                projectPositionForOverlay(*cartographic, projection);
+            texCoords.push_back({
+                static_cast<float>(
+                    (projected.x() - projectedRectangle.west()) / width),
+                static_cast<float>(
+                    (projected.y() - projectedRectangle.south()) / height)});
+        }
+    }
+    return true;
+}
+
+} // namespace
 
 Rectangle TileRasterOverlayDetailsGenerator::projectRegionRectangle(
     const Rectangle& rectangle,
@@ -33,20 +113,28 @@ bool TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
     if (!details) {
         return false;
     }
-    for (RasterOverlayProjection existingProjection :
-         details->rasterOverlayProjections) {
-        if (existingProjection == projection) {
-            return false;
-        }
+    const size_t textureCoordinateIndex =
+        details->rasterOverlayProjections.size();
+    if (hasProjection(*details, projection)) {
+        return false;
     }
     if (boundingVolume.kind != TileBoundingVolumeKind::Region) {
         return false;
     }
 
+    const Rectangle projectedRectangle =
+        projectRegionRectangle(boundingVolume.region, projection);
+    if (!writeGltfOverlayTexCoords(
+            renderContent,
+            projection,
+            projectedRectangle,
+            textureCoordinateIndex)) {
+        return false;
+    }
+
     RasterOverlayDetails generated;
     generated.rasterOverlayProjections = {projection};
-    generated.rasterOverlayRectangles = {
-        projectRegionRectangle(boundingVolume.region, projection)};
+    generated.rasterOverlayRectangles = {projectedRectangle};
     generated.boundingRegion = {
         boundingVolume.region,
         boundingVolume.minimumHeight,
