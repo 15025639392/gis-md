@@ -2835,6 +2835,33 @@ TEST(QuantizedMeshTerrainProviderTest, ZeroMetadataAvailabilityShadowsLayerAvail
               provider.availabilityState(TileKey{"Geographic-TMS", 1, 0, 0}));
 }
 
+TEST(QuantizedMeshTerrainProviderTest, NegativeMetadataAvailabilityShadowsLayerAvailabilityLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "metadataAvailability": -1,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}],
+        [{"startX":0,"startY":0,"endX":0,"endY":0}]
+      ]
+    })json";
+
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/layer.json"));
+
+    EXPECT_EQ(-1, provider.availabilityLevels());
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 0}));
+    EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 1, 0}));
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              provider.availabilityState(TileKey{"Geographic-TMS", 1, 0, 0}));
+}
+
 TEST(QuantizedMeshTerrainProviderTest, MetadataAvailabilityUpdateStartsBelowSubtreeTileLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
