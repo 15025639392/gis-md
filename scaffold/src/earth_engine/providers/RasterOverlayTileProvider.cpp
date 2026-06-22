@@ -1523,18 +1523,6 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
     return tile;
 }
 
-RasterOverlayTileProvider::TilePtr
-RasterOverlayTileProvider::getDirectTileForRectangle(
-    const Rectangle& providerGeometryBounds,
-    double targetScreenPixelsX,
-    double targetScreenPixelsY) {
-    RectangleTileMapping mapping = mapTileForRectangle(
-        providerGeometryBounds,
-        targetScreenPixelsX,
-        targetScreenPixelsY);
-    return mapping.directTile ? mapping.tile : nullptr;
-}
-
 RasterOverlayTileProvider::RectangleTileMapping
 RasterOverlayTileProvider::mapTileForRectangle(
     const Rectangle& providerGeometryBounds,
