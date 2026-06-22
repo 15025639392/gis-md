@@ -566,6 +566,10 @@ std::string sourceCacheKey(const TileKey& key) {
            std::to_string(key.x) + "/" + std::to_string(key.y);
 }
 
+std::string sourceCacheKey(uint64_t epoch, const TileKey& key) {
+    return "epoch/" + std::to_string(epoch) + "/" + sourceCacheKey(key);
+}
+
 struct LoadedSourceImage {
     TileKey key;
     Rectangle bounds;
@@ -970,6 +974,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
         , cacheLru(state->sourceTileDepotCacheLru)
         , cacheBytes(state->sourceTileDepotCacheBytes)
         , cacheGeneration(state->sourceTileDepotGeneration)
+        , depotEpoch(state->sourceTileDepotEpoch)
         , inFlight(state->sourceTileDepotInFlight)
         , cacheMutex(state->mutex)
         , minimumLevel(minimumSourceLevel)
@@ -987,10 +992,10 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
         std::optional<LoadedSourceImage> cachedSource;
         {
             std::lock_guard<std::mutex> lock(cacheMutex);
-            const std::string originalCacheKey = sourceCacheKey(originalKey);
+            const std::string originalCacheKey = depotCacheKey(originalKey);
             auto it = cache.find(originalCacheKey);
             if (it == cache.end() && ancestorFallback) {
-                it = cache.find(sourceCacheKey(requestedKey));
+                it = cache.find(depotCacheKey(requestedKey));
             }
             if (it != cache.end() &&
                 (it->second.image || it->second.terminalFailure)) {
@@ -1014,7 +1019,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
 
         auto self = shared_from_this();
         if (shareInFlight) {
-            const std::string inFlightKey = sourceCacheKey(originalKey);
+            const std::string inFlightKey = depotCacheKey(originalKey);
             auto waiter =
                 [self, originalKey, ancestorFallback, onReady](
                     InFlightSourceTileAsset::Result cached) mutable {
@@ -1035,7 +1040,8 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
         }
 
         if (ancestorFallback) {
-            const std::string fallbackInFlightKey = sourceCacheKey(requestedKey);
+            const std::string fallbackInFlightKey =
+                depotCacheKey(requestedKey);
             auto waiter =
                 [self, originalKey, ancestorFallback, onReady](
                     InFlightSourceTileAsset::Result cached) mutable {
@@ -1189,7 +1195,7 @@ private:
             cacheBytes = 0;
             return cached;
         }
-        const std::string key = sourceCacheKey(requestedKey);
+        const std::string key = depotCacheKey(requestedKey);
         auto existing = cache.find(key);
         if (existing != cache.end()) {
             cacheBytes -= existing->second.sizeBytes;
@@ -1207,7 +1213,7 @@ private:
             waiters;
         {
             std::lock_guard<std::mutex> lock(cacheMutex);
-            auto it = inFlight.find(sourceCacheKey(originalKey));
+            auto it = inFlight.find(depotCacheKey(originalKey));
             if (it != inFlight.end()) {
                 waiters = std::move(it->second.waiters);
                 inFlight.erase(it);
@@ -1230,7 +1236,7 @@ private:
             cacheBytes = 0;
             return;
         }
-        const std::string key = sourceCacheKey(requestedKey);
+        const std::string key = depotCacheKey(requestedKey);
         auto existing = cache.find(key);
         if (existing != cache.end()) {
             cacheBytes -= existing->second.sizeBytes;
@@ -1270,10 +1276,15 @@ private:
     std::deque<std::pair<std::string, uint64_t>>& cacheLru;
     int64_t& cacheBytes;
     uint64_t& cacheGeneration;
+    uint64_t depotEpoch = 0;
     std::unordered_map<std::string, InFlightSourceTileAsset>& inFlight;
     std::mutex& cacheMutex;
     int minimumLevel = 0;
     int maximumLevel = 0;
+
+    std::string depotCacheKey(const TileKey& key) const {
+        return sourceCacheKey(depotEpoch, key);
+    }
 };
 
 struct RasterOverlayTileProvider::QuadtreeSourceRequest
@@ -1524,8 +1535,8 @@ void RasterOverlayTileProvider::refreshSourceAssetDepot() {
 void RasterOverlayTileProvider::invalidateSourceAssetDepotCache() {
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        ++asyncState_->sourceTileDepotEpoch;
         asyncState_->sourceTileDepotCache.clear();
-        asyncState_->sourceTileDepotInFlight.clear();
         asyncState_->sourceTileDepotCacheLru.clear();
         asyncState_->sourceTileDepotCacheBytes = 0;
     }
@@ -1830,7 +1841,10 @@ bool RasterOverlayTileProvider::loadMappedTile(
         int estimated = 0;
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         for (const TileKey& sourceKey : sourcePlan.sourceKeys) {
-            const std::string sourceKeyString = sourceCacheKey(sourceKey);
+            const std::string sourceKeyString =
+                sourceCacheKey(
+                    asyncState_->sourceTileDepotEpoch,
+                    sourceKey);
             auto cached =
                 asyncState_->sourceTileDepotCache.find(sourceKeyString);
             if (cached != asyncState_->sourceTileDepotCache.end() &&

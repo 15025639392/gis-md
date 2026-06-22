@@ -337,6 +337,7 @@ private:
         int64_t sourceTileDepotCacheBytes = 0;
         int64_t subTileCacheBytes = 16 * 1024 * 1024;
         uint64_t sourceTileDepotGeneration = 0;
+        uint64_t sourceTileDepotEpoch = 0;
         std::unordered_set<std::string> inFlightRequests;
         std::atomic<uint32_t> activeRasterSourceRequests{0};
         std::unordered_map<std::string, FailedRecord> failedTiles;

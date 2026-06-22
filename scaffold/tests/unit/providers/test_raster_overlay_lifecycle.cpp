@@ -1119,10 +1119,6 @@ TEST(RasterOverlayLifecycleTest, LevelRangeChangeInvalidatesSourceDepotLikeCesiu
     ASSERT_TRUE(provider.loadTile(*firstTile));
     ASSERT_EQ(1u, imagery.requestedKeys.size());
     EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
-    imagery.completeNext();
-    ASSERT_EQ(1, provider.processPendingUploads(false));
-    ASSERT_EQ(RasterOverlayTile::LoadState::Loaded,
-              firstTile->getState());
 
     provider.setLevelRange(3, 4);
 
@@ -1138,6 +1134,19 @@ TEST(RasterOverlayLifecycleTest, LevelRangeChangeInvalidatesSourceDepotLikeCesiu
     ASSERT_TRUE(provider.loadTile(*secondTile));
     ASSERT_EQ(2u, imagery.requestedKeys.size());
     EXPECT_EQ(sourceKey, imagery.requestedKeys.back());
+    ASSERT_EQ(2u, imagery.pending.size());
+
+    imagery.completeNext();
+    ASSERT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              firstTile->getState());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loading,
+              secondTile->getState());
+
+    imagery.completeNext();
+    ASSERT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              secondTile->getState());
 }
 
 TEST(RasterOverlayLifecycleTest,
