@@ -8,7 +8,6 @@
 #include "TileLoadTypes.h"
 #include "TileMissingRequestScheduler.h"
 #include "TilePendingUploadFrameProcessor.h"
-#include "TileQuantizedMeshAvailabilityIngestor.h"
 
 #include "../content/GltfContentProvider.h"
 #include "../core/resources/FrameResourceBudget.h"
@@ -120,15 +119,6 @@ public:
                     tile,
                     context.device,
                     context.currentFrameTimeSeconds);
-            },
-            [&](const TileKey& key,
-                DecodedHeightmap* heightmap,
-                const SurfaceTileMesh* surfaceMesh) {
-                TileQuantizedMeshAvailabilityIngestor::ingest(
-                    context.terrainProvider,
-                    key,
-                    heightmap,
-                    surfaceMesh);
             },
             markResourcesDirty);
     }

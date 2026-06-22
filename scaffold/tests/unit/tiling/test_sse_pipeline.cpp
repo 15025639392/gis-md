@@ -62,7 +62,6 @@
 #include "earth_engine/tiling/TilePendingRequestState.h"
 #include "earth_engine/tiling/TilePlan.h"
 #include "earth_engine/tiling/TilePriorityMetrics.h"
-#include "earth_engine/tiling/TileQuantizedMeshAvailabilityIngestor.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileRasterOverlayFrameProcessor.h"
 #include "earth_engine/tiling/TileRenderablePolicy.h"
@@ -12402,7 +12401,6 @@ void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
         lifecycle,
         false,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
-        [](const TileKey&, const DecodedHeightmap*, const SurfaceTileMesh*) {},
         [](TilesetTile&) {},
         [](TilesetTile&) {},
         [&resourcesDirty]() { resourcesDirty = true; });

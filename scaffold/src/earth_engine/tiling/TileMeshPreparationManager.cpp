@@ -9,7 +9,6 @@
 #include "TileSelectionRasterOverlayPreparer.h"
 #include "TileUpsampleSourcePreparer.h"
 #include "TilesetTile.h"
-#include "../providers/QuantizedMeshTerrainProvider.h"
 
 namespace earth_engine {
 
@@ -37,13 +36,7 @@ void TileMeshPreparationManager::ensureTileMesh(TilesetTile& tile) {
         [](const TileKey& key) {
             return TileCacheKey::forTile(key);
         },
-        [this](const TileKey& key, DecodedHeightmap* heightmap) {
-            TileQuantizedMeshAvailabilityIngestor::ingest(
-                terrainProvider_,
-                key,
-                heightmap,
-                nullptr);
-        },
+        [](const TileKey&, DecodedHeightmap*) {},
         [](const TilesetTile& sourceTile, bool allowUnloadingSource) {
             return TileUpsampleSourcePreparer::findSourceTile(
                 sourceTile,

@@ -439,7 +439,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         lifecycle,
         false,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
-        [](const TileKey&, const DecodedHeightmap*, const SurfaceTileMesh*) {},
         [](TilesetTile&) {},
         [](TilesetTile&) {},
         [&resourcesDirty]() { resourcesDirty = true; });
@@ -457,7 +456,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     TerrainUploadCommitterOwnsHeightmapCacheAndAvailabilityIngest) {
+     TerrainUploadCommitterCachesHeightmapWithoutAvailabilitySideEffect) {
     const TileKey key{"test", 1, 2, 3};
     const std::string cacheKey = "terrain-payload";
     auto heightmap = std::make_unique<DecodedHeightmap>();
@@ -476,25 +475,12 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
-    int availabilityIngests = 0;
 
-    TileTerrainUploadCommitter::ingestTerrainPayload(
-        key,
+    TileTerrainUploadCommitter::cacheTerrainPayload(
         cacheKey,
         content,
-        terrainCache,
-        [&availabilityIngests, &key, rawSurfaceMesh](
-            const TileKey& ingestedKey,
-            const DecodedHeightmap* hm,
-            const SurfaceTileMesh* mesh) {
-            EXPECT_EQ(key, ingestedKey);
-            ASSERT_NE(nullptr, hm);
-            EXPECT_TRUE(hm->valid());
-            EXPECT_EQ(rawSurfaceMesh, mesh);
-            ++availabilityIngests;
-        });
+        terrainCache);
 
-    EXPECT_EQ(1, availabilityIngests);
     EXPECT_EQ(nullptr, content.heightmap);
     EXPECT_EQ(rawSurfaceMesh, content.surfaceMesh.get());
     ASSERT_NE(terrainCache.find(cacheKey), terrainCache.end());
@@ -594,7 +580,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         lifecycle,
         false,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
-        [](const TileKey&, const DecodedHeightmap*, const SurfaceTileMesh*) {},
         [&ensureMeshCalls](TilesetTile&) { ++ensureMeshCalls; },
         [](TilesetTile&) {},
         [&resourcesDirty]() { resourcesDirty = true; });
@@ -672,7 +657,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         lifecycle,
         false,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
-        [](const TileKey&, const DecodedHeightmap*, const SurfaceTileMesh*) {},
         [](TilesetTile&) {},
         [](TilesetTile&) {},
         [&resourcesDirty]() { resourcesDirty = true; });
@@ -755,7 +739,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         lifecycle,
         false,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
-        [](const TileKey&, const DecodedHeightmap*, const SurfaceTileMesh*) {},
         [](TilesetTile&) {},
         [](TilesetTile&) {},
         [&resourcesDirty]() { resourcesDirty = true; });
@@ -833,7 +816,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         lifecycle,
         false,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
-        [](const TileKey&, const DecodedHeightmap*, const SurfaceTileMesh*) {},
         [&ensureMeshCalls](TilesetTile&) { ++ensureMeshCalls; },
         [&ensureGltfCalls](TilesetTile& committedTile) {
             committedTile.content.renderContent.addGltfPrimitiveResource(
@@ -927,7 +909,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     MissingTerrainUploadCachesAndIngestsAvailability) {
+     MissingTerrainUploadCachesHeightmapAndAppliesAvailabilityUpdates) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxMainThreadFinalizesPerFrame = 4;
@@ -985,7 +967,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
               provider.availabilityState(availableChildKey));
 
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>> terrainCache;
-    int availabilityIngests = 0;
     bool meshEnsured = false;
     bool resourcesDirty = false;
     TilePendingLoadCommitCoordinator::commitTerrainUpload(
@@ -997,19 +978,10 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         lifecycle,
         false,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
-        [&availabilityIngests, &terrainKey](const TileKey& key,
-                                            const DecodedHeightmap* hm,
-                                            const SurfaceTileMesh*) {
-            EXPECT_EQ(terrainKey, key);
-            ASSERT_NE(nullptr, hm);
-            EXPECT_TRUE(hm->valid());
-            ++availabilityIngests;
-        },
         [&meshEnsured](TilesetTile&) { meshEnsured = true; },
         [](TilesetTile&) {},
         [&resourcesDirty]() { resourcesDirty = true; });
 
-    EXPECT_EQ(1, availabilityIngests);
     ASSERT_NE(terrainCache.find(cacheKey), terrainCache.end());
     EXPECT_TRUE(terrainCache.at(cacheKey)->valid());
     EXPECT_EQ(TileAvailabilityState::Available,

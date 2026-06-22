@@ -27,7 +27,6 @@
 #include "earth_engine/terrain/TerrainTile.h"
 #include "earth_engine/tiling/TileKey.h"
 #include "earth_engine/tiling/TileScheme.h"
-#include "earth_engine/tiling/TileQuantizedMeshAvailabilityIngestor.h"
 
 using namespace earth_engine;
 
@@ -2800,16 +2799,11 @@ TEST(QuantizedMeshTerrainProviderTest, TileMetadataIgnoredWithoutMetadataAvailab
     EXPECT_EQ(TileAvailabilityState::NotAvailable,
               provider.availabilityState(metadataChildKey));
 
-    DecodedHeightmap heightmap;
-    SurfaceTileMesh surfaceMesh;
-    surfaceMesh.hasMetadataAvailability = true;
-    surfaceMesh.metadataAvailability = {{0, 0, 1, 0, 1}};
-
-    TileQuantizedMeshAvailabilityIngestor::ingest(
-        &provider,
-        TileKey{"Geographic-TMS", 0, 0, 0},
-        &heightmap,
-        &surfaceMesh);
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = TileKey{"Geographic-TMS", 0, 0, 0};
+    update.metadataAvailability = {{0, 0, 1, 0, 1}};
+    provider.applyAvailabilityUpdates({update});
 
     EXPECT_EQ(TileAvailabilityState::NotAvailable,
               provider.availabilityState(metadataChildKey));
@@ -2835,21 +2829,16 @@ TEST(QuantizedMeshTerrainProviderTest, EmptyTileMetadataMarksSubtreeLoadedLikeCe
     EXPECT_EQ(TileAvailabilityState::Unknown,
               provider.availabilityState(childKey));
 
-    DecodedHeightmap heightmap;
-    SurfaceTileMesh surfaceMesh;
-    surfaceMesh.hasMetadataAvailability = true;
-
-    TileQuantizedMeshAvailabilityIngestor::ingest(
-        &provider,
-        TileKey{"Geographic-TMS", 0, 0, 0},
-        &heightmap,
-        &surfaceMesh);
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = TileKey{"Geographic-TMS", 0, 0, 0};
+    provider.applyAvailabilityUpdates({update});
 
     EXPECT_EQ(TileAvailabilityState::NotAvailable,
               provider.availabilityState(childKey));
 }
 
-TEST(QuantizedMeshTerrainProviderTest, IngestUsesWorkerPreparedSurfaceMeshMetadataLikeCesiumNative) {
+TEST(QuantizedMeshTerrainProviderTest, AppliesWorkerPreparedAvailabilityUpdatesLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
     const std::string layerJson = R"json({
@@ -2871,18 +2860,12 @@ TEST(QuantizedMeshTerrainProviderTest, IngestUsesWorkerPreparedSurfaceMeshMetada
     EXPECT_EQ(TileAvailabilityState::Unknown,
               provider.availabilityState(childKey));
 
-    DecodedHeightmap heightmap;
-    SurfaceTileMesh surfaceMesh;
-    surfaceMesh.hasMetadataAvailability = true;
-    surfaceMesh.metadataAvailability = {{0, 0, 0, 0, 0}};
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = subtreeKey;
+    update.metadataAvailability = {{0, 0, 0, 0, 0}};
+    provider.applyAvailabilityUpdates({update});
 
-    TileQuantizedMeshAvailabilityIngestor::ingest(
-        &provider,
-        subtreeKey,
-        &heightmap,
-        &surfaceMesh);
-
-    EXPECT_TRUE(heightmap.metadataAvailabilityProcessed);
     EXPECT_EQ(TileAvailabilityState::Available,
               provider.availabilityState(childKey));
     EXPECT_EQ(TileAvailabilityState::NotAvailable,

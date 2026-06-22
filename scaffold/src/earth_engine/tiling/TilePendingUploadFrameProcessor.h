@@ -38,7 +38,6 @@ public:
               typename EnsureTileChildrenFn,
               typename EnsureTileMeshFn,
               typename EnsureGltfResourcesFn,
-              typename IngestAvailabilityFn,
               typename MarkResourcesDirtyFn>
     static bool process(
         TilePendingUploadFrameProcessorInput input,
@@ -46,7 +45,6 @@ public:
         EnsureTileChildrenFn&& ensureTileChildren,
         EnsureTileMeshFn&& ensureTileMesh,
         EnsureGltfResourcesFn&& ensureGltfResources,
-        IngestAvailabilityFn&& ingestAvailability,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         auto processTerminalResult = [&](PendingTileLoad& result) {
             TilePendingLoadCommitCoordinator::commitTerminalResult(
@@ -67,7 +65,6 @@ public:
                 input.loadLifecycle,
                 input.resourceSmoothingActive,
                 ensureTile,
-                ingestAvailability,
                 ensureTileMesh,
                 ensureGltfResources,
                 markResourcesDirty);

@@ -1615,6 +1615,9 @@ void QuantizedMeshTerrainProvider::applyAvailabilityUpdates(
         }
 
         LayerConfig& layer = layers_[static_cast<size_t>(update.layerIndex)];
+        if (layer.availabilityLevels <= 0) {
+            continue;
+        }
         for (const auto& r : update.metadataAvailability) {
             const int absLevel =
                 update.subtreeKey.z + 1 + static_cast<int>(r[0]);
@@ -1624,13 +1627,11 @@ void QuantizedMeshTerrainProvider::applyAvailabilityUpdates(
             }
         }
 
-        if (layer.availabilityLevels > 0) {
-            markSubtreeLoadedInLayer(
-                layer,
-                update.subtreeKey.z / layer.availabilityLevels,
-                mortonEncode2D(static_cast<uint32_t>(update.subtreeKey.x),
-                               static_cast<uint32_t>(update.subtreeKey.y)));
-        }
+        markSubtreeLoadedInLayer(
+            layer,
+            update.subtreeKey.z / layer.availabilityLevels,
+            mortonEncode2D(static_cast<uint32_t>(update.subtreeKey.x),
+                           static_cast<uint32_t>(update.subtreeKey.y)));
     }
     syncLegacyFieldsFromPrimaryLayer();
 }

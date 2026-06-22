@@ -12,7 +12,6 @@
 #include "earth_engine/tiling/TileBoundsMetrics.h"
 #include "earth_engine/tiling/TileSelectionRasterOverlayPreparer.h"
 #include "earth_engine/tiling/TileScheme.h"
-#include "earth_engine/tiling/TileQuantizedMeshAvailabilityIngestor.h"
 #include "earth_engine/tiling/Tileset.h"
 #include "earth_engine/tiling/TilesetSelectionFrameFacade.h"
 
@@ -2099,10 +2098,8 @@ TEST(
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     EXPECT_TRUE(root->children.empty());
 
-    auto rootSurfaceMesh = std::make_unique<SurfaceTileMesh>();
-    rootSurfaceMesh->hasMetadataAvailability = true;
-    rootSurfaceMesh->metadataAvailability = {{0, 0, 0, 0, 0}};
-    root->content.renderContent.setSurfaceMesh(std::move(rootSurfaceMesh));
+    root->content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
 
     for (TileLoadState state : {
              TileLoadState::Unloaded,
@@ -2114,11 +2111,11 @@ TEST(
     }
 
     root->content.loadState = TileLoadState::ContentLoaded;
-    TileQuantizedMeshAvailabilityIngestor::ingest(
-        providerPtr,
-        rootKey,
-        nullptr,
-        root->content.renderContent.surfaceMesh());
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 0;
+    update.subtreeKey = rootKey;
+    update.metadataAvailability = {{0, 0, 0, 0, 0}};
+    providerPtr->applyAvailabilityUpdates({update});
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     EXPECT_EQ(4u, root->children.size());
 

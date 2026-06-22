@@ -70,7 +70,6 @@ public:
     }
 
     template <typename EnsureTileFn,
-              typename IngestAvailabilityFn,
               typename EnsureTileMeshFn,
               typename EnsureGltfResourcesFn,
               typename MarkResourcesDirtyFn>
@@ -85,7 +84,6 @@ public:
         TileLoadLifecycle& lifecycle,
         bool resourceSmoothingActive,
         EnsureTileFn&& ensureTile,
-        IngestAvailabilityFn&& ingestAvailability,
         EnsureTileMeshFn&& ensureTileMesh,
         EnsureGltfResourcesFn&& ensureGltfResources,
         MarkResourcesDirtyFn&& markResourcesDirty) {
@@ -93,12 +91,10 @@ public:
         TileTerrainUploadCommitter::applyAvailabilityUpdates(
             terrainProvider,
             content);
-        TileTerrainUploadCommitter::ingestTerrainPayload(
-            upload.key,
+        TileTerrainUploadCommitter::cacheTerrainPayload(
             upload.cacheKey,
             content,
-            terrainCache,
-            std::forward<IngestAvailabilityFn>(ingestAvailability));
+            terrainCache);
         bool uploadsGltfTerrain = content.gltfModel != nullptr;
 
         if (TilesetTile* tile = ensureTile(upload.key)) {
@@ -200,7 +196,6 @@ public:
     }
 
     template <typename EnsureTileFn,
-              typename IngestAvailabilityFn,
               typename EnsureTileMeshFn,
               typename EnsureGltfResourcesFn,
               typename MarkResourcesDirtyFn>
@@ -215,7 +210,6 @@ public:
         TileLoadLifecycle& lifecycle,
         bool resourceSmoothingActive,
         EnsureTileFn&& ensureTile,
-        IngestAvailabilityFn&& ingestAvailability,
         EnsureTileMeshFn&& ensureTileMesh,
         EnsureGltfResourcesFn&& ensureGltfResources,
         MarkResourcesDirtyFn&& markResourcesDirty) {
@@ -237,7 +231,6 @@ public:
                 lifecycle,
                 resourceSmoothingActive,
                 std::forward<EnsureTileFn>(ensureTile),
-                std::forward<IngestAvailabilityFn>(ingestAvailability),
                 std::forward<EnsureTileMeshFn>(ensureTileMesh),
                 std::forward<EnsureGltfResourcesFn>(ensureGltfResources),
                 std::forward<MarkResourcesDirtyFn>(markResourcesDirty));

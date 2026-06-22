@@ -384,8 +384,6 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileRenderablePolicy.cpp
     earth_engine/tiling/TilePriorityMetrics.h
     earth_engine/tiling/TilePriorityMetrics.cpp
-    earth_engine/tiling/TileQuantizedMeshAvailabilityIngestor.h
-    earth_engine/tiling/TileQuantizedMeshAvailabilityIngestor.cpp
     earth_engine/tiling/TileRefinementAvailabilityResolver.h
     earth_engine/tiling/TileSelectionChildTraversal.h
     earth_engine/tiling/TileSelectionCounters.h

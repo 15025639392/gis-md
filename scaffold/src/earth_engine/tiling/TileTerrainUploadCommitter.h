@@ -26,26 +26,14 @@ struct TileTerrainUploadCommitter {
         TerrainProvider* terrainProvider,
         const TileLoadedContent& content);
 
-    template <typename IngestAvailabilityFn>
-    static void ingestTerrainPayload(
-        const TileKey& key,
+    static void cacheTerrainPayload(
         const std::string& cacheKey,
         TileLoadedContent& content,
         std::unordered_map<
             std::string,
-            std::unique_ptr<DecodedHeightmap>>& terrainCache,
-        IngestAvailabilityFn&& ingestAvailability) {
+            std::unique_ptr<DecodedHeightmap>>& terrainCache) {
         if (content.heightmap) {
-            ingestAvailability(
-                key,
-                content.heightmap.get(),
-                content.surfaceMesh.get());
             terrainCache[cacheKey] = std::move(content.heightmap);
-        } else if (content.surfaceMesh) {
-            ingestAvailability(
-                key,
-                nullptr,
-                content.surfaceMesh.get());
         }
     }
 
