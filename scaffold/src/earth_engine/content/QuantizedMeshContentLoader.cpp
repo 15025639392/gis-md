@@ -71,7 +71,7 @@ std::unique_ptr<GltfModel> makeQuantizedMeshGltfModel(
         }
         waterMaskTexture.sampler.minFilter = GltfTextureFilter::Linear;
         waterMaskTexture.sampler.magFilter = GltfTextureFilter::Linear;
-        waterMaskTexture.sampler.mipmap = false;
+        waterMaskTexture.sampler.mipmap = true;
         waterMaskTexture.sampler.wrapS = GltfTextureWrap::ClampToEdge;
         waterMaskTexture.sampler.wrapT = GltfTextureWrap::ClampToEdge;
         model->terrainWaterMaskTextureIndex = model->textures.size();

@@ -232,7 +232,7 @@ TEST(QuantizedMeshContentLoaderTest,
     EXPECT_EQ(255u, texture.image.pixels[12345u]);
     EXPECT_EQ(GltfTextureWrap::ClampToEdge, texture.sampler.wrapS);
     EXPECT_EQ(GltfTextureWrap::ClampToEdge, texture.sampler.wrapT);
-    EXPECT_FALSE(texture.sampler.mipmap);
+    EXPECT_TRUE(texture.sampler.mipmap);
 }
 
 TEST(QuantizedMeshContentLoaderTest,
