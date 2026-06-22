@@ -170,7 +170,11 @@ public:
             return;
         }
 
-        terrainCache.erase(upload.cacheKey);
+        const bool contentProviderOwnsTerrainQuadtree =
+            contentProvider && contentProvider->providesTerrainQuadtree();
+        if (!contentProviderOwnsTerrainQuadtree) {
+            terrainCache.erase(upload.cacheKey);
+        }
         captureInitialBoundingVolumes(*tile, upload.content().metadata);
         TileContentUploadCommitter::applyAvailabilityUpdates(
             contentProvider,

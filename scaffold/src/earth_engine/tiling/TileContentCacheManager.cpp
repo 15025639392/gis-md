@@ -32,11 +32,17 @@ void TileContentCacheManager::markIneligibleForUnloading(
 void TileContentCacheManager::eraseTileIndexState(
     const std::string& cacheKey,
     TileContentLifecycleManager& lifecycle,
-    TileLoadQueue& loadQueue) {
+    TileLoadQueue& loadQueue,
+    bool includeLegacyHeightmapTerrainCache) {
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        ignoredTerrainCache;
+    auto& terrainCache = includeLegacyHeightmapTerrainCache
+        ? lifecycle.terrainCache()
+        : ignoredTerrainCache;
     TileIndexState::eraseCacheKeyState(
         cacheKey,
         unloadQueue_,
-        lifecycle.terrainCache(),
+        terrainCache,
         lifecycle.emptyContentRegistry(),
         loadQueue,
         lifecycle.loadLifecycle(),
@@ -48,11 +54,17 @@ void TileContentCacheManager::eraseTileIndexState(
 TileCacheUnloadContentResult TileContentCacheManager::unloadTileContent(
     TilesetTile& tile,
     TileContentLifecycleManager& lifecycle,
-    IPrepareRendererResources* pPrepRenderer) {
+    IPrepareRendererResources* pPrepRenderer,
+    bool includeLegacyHeightmapTerrainCache) {
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        ignoredTerrainCache;
+    auto& terrainCache = includeLegacyHeightmapTerrainCache
+        ? lifecycle.terrainCache()
+        : ignoredTerrainCache;
     return TileContentUnloadCoordinator::unloadContent(
         tile,
         TileCacheKey::forTile(tile.key),
-        lifecycle.terrainCache(),
+        terrainCache,
         lifecycle.emptyContentRegistry(),
         pPrepRenderer);
 }

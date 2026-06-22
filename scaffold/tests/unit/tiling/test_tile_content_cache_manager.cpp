@@ -146,6 +146,44 @@ TEST(
 
 TEST(
     TileContentCacheManagerTest,
+    ContentOwnedTerrainUnloadDoesNotEraseLegacyHeightmapCache) {
+    TileContentCacheManager manager;
+    TileContentLifecycleManager lifecycle;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+
+    const TileKey key{"Geographic-TMS", 1, 0, 0};
+    const std::string cacheKey = TileCacheKey::forTile(key);
+    auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
+    tile->content.loadState = TileLoadState::Done;
+    tile->content.contentKind = TileContentKind::Render;
+    TilesetTile* tileRaw = tile.get();
+    tiles[cacheKey] = std::move(tile);
+    auto cachedHeightmap = makeFlatHeightmap(7.0f);
+    DecodedHeightmap* cachedHeightmapPtr = cachedHeightmap.get();
+    lifecycle.terrainCache()[cacheKey] = std::move(cachedHeightmap);
+    lifecycle.emptyContentRegistry().insert(cacheKey);
+
+    manager.markEligibleForUnloading(tiles, cacheKey);
+
+    const TileCacheUnloadContentResult result =
+        manager.unloadTileContent(
+            *tileRaw,
+            lifecycle,
+            nullptr,
+            false);
+
+    EXPECT_EQ(TileCacheUnloadContentResult::Remove, result);
+    auto cacheIt = lifecycle.terrainCache().find(cacheKey);
+    ASSERT_NE(lifecycle.terrainCache().end(), cacheIt);
+    EXPECT_EQ(cachedHeightmapPtr, cacheIt->second.get());
+    EXPECT_TRUE(cacheIt->second->valid());
+    EXPECT_FALSE(lifecycle.emptyContentRegistry().contains(cacheKey));
+    EXPECT_EQ(TileLoadState::Unloaded, tileRaw->content.loadState);
+    EXPECT_EQ(TileContentKind::Unknown, tileRaw->content.contentKind);
+}
+
+TEST(
+    TileContentCacheManagerTest,
     ClearsStaleEmptyMarkerWhenUnknownContentUnloads) {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
@@ -218,6 +256,62 @@ TEST(
     EXPECT_FALSE(manager.unloadQueue().contains(cacheKey));
     EXPECT_EQ(lifecycle.terrainCache().find(cacheKey),
               lifecycle.terrainCache().end());
+    EXPECT_FALSE(lifecycle.emptyContentRegistry().contains(cacheKey));
+    EXPECT_TRUE(loadQueue.empty());
+    EXPECT_FALSE(lifecycle.loadLifecycle().containsWorkForCacheKey(cacheKey));
+    EXPECT_FALSE(lifecycle.loadLifecycle().hasPendingWork());
+}
+
+TEST(
+    TileContentCacheManagerTest,
+    ContentOwnedTerrainEraseIndexStateDoesNotEraseLegacyHeightmapCache) {
+    TileContentCacheManager manager;
+    TileContentLifecycleManager lifecycle;
+    TileLoadQueue loadQueue;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+
+    const TileKey key{"Geographic-TMS", 1, 0, 0};
+    const std::string cacheKey = TileCacheKey::forTile(key);
+    auto tile = std::make_unique<TilesetTile>(key, Rectangle{});
+    tile->content.loadState = TileLoadState::Done;
+    tile->content.contentKind = TileContentKind::Render;
+    tiles[cacheKey] = std::move(tile);
+    auto cachedHeightmap = makeFlatHeightmap(9.0f);
+    DecodedHeightmap* cachedHeightmapPtr = cachedHeightmap.get();
+    lifecycle.terrainCache()[cacheKey] = std::move(cachedHeightmap);
+    lifecycle.emptyContentRegistry().insert(cacheKey);
+    loadQueue.queue(key, TileLoadPriorityGroup::Normal, 0.0);
+    manager.markEligibleForUnloading(tiles, cacheKey);
+
+    {
+        FrameResourceBudgetConfig config;
+        config.maxMainThreadFinalizesPerFrame = 1;
+        FrameResourceBudget budget;
+        budget.beginFrame(1, config);
+        std::lock_guard<std::mutex> lock(lifecycle.loadLifecycle().mutex());
+        lifecycle.loadLifecycle().pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
+                key,
+                cacheKey,
+                TileLoadPriorityGroup::Normal,
+                0.0,
+            TileLoadResult::fromContentResult(TileContentLoadResult::empty())});
+        ASSERT_TRUE(lifecycle.loadLifecycle()
+                        .pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    manager.eraseTileIndexState(
+        cacheKey,
+        lifecycle,
+        loadQueue,
+        false);
+
+    EXPECT_FALSE(manager.unloadQueue().contains(cacheKey));
+    auto cacheIt = lifecycle.terrainCache().find(cacheKey);
+    ASSERT_NE(lifecycle.terrainCache().end(), cacheIt);
+    EXPECT_EQ(cachedHeightmapPtr, cacheIt->second.get());
+    EXPECT_TRUE(cacheIt->second->valid());
     EXPECT_FALSE(lifecycle.emptyContentRegistry().contains(cacheKey));
     EXPECT_TRUE(loadQueue.empty());
     EXPECT_FALSE(lifecycle.loadLifecycle().containsWorkForCacheKey(cacheKey));
