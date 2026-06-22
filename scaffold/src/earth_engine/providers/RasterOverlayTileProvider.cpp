@@ -644,6 +644,13 @@ bool rectanglesEqualForDirectRasterTile(const Rectangle& a,
     return a.equalsEpsilon(b, span * 1e-12);
 }
 
+bool matchesProviderQuadtreeRange(const ImageryProvider& provider,
+                                  const TileKey& key) {
+    return key.schemeId == provider.schemeId() &&
+           key.z >= provider.minZoom() &&
+           key.z <= provider.maxZoom();
+}
+
 TileKey parentTileKey(const TileKey& key) {
     return key.parent();
 }
@@ -998,7 +1005,7 @@ RasterOverlayTileProvider::buildQuadtreeSourcePlan(
         for (int y = coveredRange.minY; y <= coveredRange.maxY; ++y) {
             for (int x = coveredRange.minX; x <= coveredRange.maxX; ++x) {
                 TileKey sourceKey{scheme.id(), plan.sourceZoom, x, y};
-                if (provider.supportsTile(sourceKey) &&
+                if (matchesProviderQuadtreeRange(provider, sourceKey) &&
                     rectanglesOverlapWithArea(
                         scheme.tileToRectangle(sourceKey),
                         sourceBounds)) {
@@ -1017,7 +1024,7 @@ RasterOverlayTileProvider::buildQuadtreeSourcePlan(
         for (int y = minY; y <= maxY; ++y) {
             for (int x = minX; x <= maxX; ++x) {
                 TileKey sourceKey{scheme.id(), plan.sourceZoom, x, y};
-                if (provider.supportsTile(sourceKey) &&
+                if (matchesProviderQuadtreeRange(provider, sourceKey) &&
                     rectanglesOverlapWithArea(
                         scheme.tileToRectangle(sourceKey),
                         sourceBounds)) {

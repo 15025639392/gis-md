@@ -248,6 +248,7 @@ public:
         return key.schemeId == schemeId() &&
                key.z >= minZoom() &&
                key.z <= maxZoom() &&
+               key != unsupportedChildKey &&
                key != unsupportedParentKey;
     }
     void requestTile(const TileKey& key,
@@ -257,7 +258,7 @@ public:
         requestedKeys.push_back(key);
         callback(
             key,
-            key == failingChildKey
+            key == failingChildKey || key == unsupportedChildKey
                 ? nullptr
                 : makeImage(256, 256, static_cast<uint8_t>(key.z)));
     }
@@ -267,6 +268,7 @@ public:
     }
 
     TileKey failingChildKey{"XYZ-WebMercator", -1, -1, -1};
+    TileKey unsupportedChildKey{"XYZ-WebMercator", -1, -1, -1};
     TileKey unsupportedParentKey{"XYZ-WebMercator", -1, -1, -1};
     std::vector<TileKey> requestedKeys;
 };
@@ -1916,6 +1918,59 @@ TEST(RasterOverlayLifecycleTest, CompositeImageMixesSourceLevelsAfterFailureLike
     EXPECT_TRUE(hasSourceLevelPixel);
     EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::Yes,
               compositeTile->isMoreDetailAvailable());
+}
+
+TEST(RasterOverlayLifecycleTest, SourcePlanRequestsUnsupportedChildForParentFallbackLikeCesiumNative) {
+    UnsupportedParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const int expectedSourceZoom = 8;
+    const TileKey childKey{scheme->id(), expectedSourceZoom, 137, 92};
+    const TileKey siblingKey{scheme->id(), expectedSourceZoom, 138, 92};
+    const TileKey parentKey = childKey.parent();
+    const Rectangle childBounds = scheme->tileToRectangle(childKey);
+    const Rectangle siblingBounds = scheme->tileToRectangle(siblingKey);
+    const Rectangle targetBounds(
+        childBounds.west(),
+        childBounds.south(),
+        siblingBounds.east(),
+        childBounds.north());
+
+    imagery.unsupportedChildKey = childKey;
+    imagery.unsupportedParentKey = parentKey;
+
+    auto compositeTile = provider
+        .mapRasterTilesToGeometryTile(
+            projectForProvider(provider, targetBounds),
+            1024.0,
+            512.0)
+        .tile;
+    ASSERT_NE(nullptr, compositeTile);
+    EXPECT_EQ(expectedSourceZoom, compositeTile->getSourceZoom());
+
+    ASSERT_TRUE(provider.loadTile(*compositeTile));
+    EXPECT_EQ(1, provider.processPendingUploads(false));
+
+    EXPECT_NE(
+        imagery.requestedKeys.end(),
+        std::find(imagery.requestedKeys.begin(),
+                  imagery.requestedKeys.end(),
+                  childKey));
+    EXPECT_NE(
+        imagery.requestedKeys.end(),
+        std::find(imagery.requestedKeys.begin(),
+                  imagery.requestedKeys.end(),
+                  parentKey));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              compositeTile->getState());
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::Yes,
+              compositeTile->isMoreDetailAvailable());
+    EXPECT_EQ(1, uploaderPtr->uploadCount);
+    ASSERT_FALSE(uploaderPtr->lastUpload.pixels.empty());
+    EXPECT_NE(nullptr, compositeTile->getTexture());
 }
 
 TEST(RasterOverlayLifecycleTest, CompositeTileWithOnlyAncestorFallbackLoadsWithoutTextureLikeCesiumNative) {
