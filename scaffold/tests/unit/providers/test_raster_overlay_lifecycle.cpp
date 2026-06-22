@@ -1356,6 +1356,57 @@ TEST(RasterOverlayLifecycleTest, LevelRangeChangeInvalidatesSourceDepotLikeCesiu
 }
 
 TEST(RasterOverlayLifecycleTest,
+     StaleEpochSourceCompletionDoesNotRepopulateCurrentDepotCache) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(3, 3);
+
+    const TileKey sourceKey{scheme->id(), 3, 4, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+    const Rectangle eastHalf(
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.south(),
+        sourceBounds.east(),
+        sourceBounds.north());
+
+    RasterOverlayTileProvider::TilePtr staleTile =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, westHalf),
+            128.0,
+            128.0)
+            .tile;
+    ASSERT_NE(nullptr, staleTile);
+    ASSERT_TRUE(provider.loadTile(*staleTile));
+    ASSERT_EQ(1u, imagery.requestedKeys.size());
+
+    provider.setLevelRange(3, 4);
+
+    imagery.completeNext();
+    ASSERT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              staleTile->getState());
+    EXPECT_EQ(0, provider.getCachedSourceTileBytes());
+
+    RasterOverlayTileProvider::TilePtr currentTile =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, eastHalf),
+            128.0,
+            128.0)
+            .tile;
+    ASSERT_NE(nullptr, currentTile);
+    ASSERT_TRUE(provider.loadTile(*currentTile));
+    EXPECT_EQ(2u, imagery.requestedKeys.size());
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.back());
+}
+
+TEST(RasterOverlayLifecycleTest,
      LevelRangeChangeRecreatesCachedSourceAssetLikeCesiumNative) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

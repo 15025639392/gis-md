@@ -1282,6 +1282,9 @@ private:
 
         auto cached = std::make_shared<SourceTileAsset>(failed);
         std::lock_guard<std::mutex> lock(cacheMutex);
+        if (state->sourceTileDepotEpoch != depotEpoch) {
+            return cached;
+        }
         const int64_t cacheBudgetBytes = state->subTileCacheBytes;
         if (cacheBudgetBytes <= 0) {
             cache.clear();
@@ -1323,6 +1326,9 @@ private:
         if (!source.image) return;
         SourceTileAsset cached = cachedSourceFromLoaded(source);
         std::lock_guard<std::mutex> lock(cacheMutex);
+        if (state->sourceTileDepotEpoch != depotEpoch) {
+            return;
+        }
         const int64_t cacheBudgetBytes = state->subTileCacheBytes;
         if (cacheBudgetBytes <= 0) {
             cache.clear();

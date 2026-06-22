@@ -171,6 +171,10 @@ public:
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         return asyncState_->subTileCacheBytes;
     }
+    int64_t getCachedSourceTileBytes() const {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        return asyncState_->sourceTileDepotCacheBytes;
+    }
     void setSubTileCacheBytes(int64_t subTileCacheBytes);
     int getMinimumLevel() const;
     int getMaximumLevel() const;
