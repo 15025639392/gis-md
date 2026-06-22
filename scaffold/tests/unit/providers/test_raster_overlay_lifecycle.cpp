@@ -86,6 +86,19 @@ std::unique_ptr<DecodedImage> makeRgbImage(int width,
     return image;
 }
 
+std::unique_ptr<DecodedImage> makeGrayImage(int width,
+                                            int height,
+                                            uint8_t value) {
+    auto image = std::make_unique<DecodedImage>();
+    image->width = width;
+    image->height = height;
+    image->channels = 1;
+    image->pixels.resize(static_cast<size_t>(width) *
+                         static_cast<size_t>(height),
+                         value);
+    return image;
+}
+
 class NullImageryProvider final : public ImageryProvider {
 public:
     std::string id() const override { return "null"; }
@@ -4095,6 +4108,41 @@ TEST(RasterOverlayLifecycleTest, CompositeImagePreservesRgbSourceChannelsLikeCes
         result.image->pixels.size());
 }
 
+TEST(RasterOverlayLifecycleTest,
+     CompositeImageExpandsSingleChannelSourceToUploadableRgb) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    Rectangle target = scheme->tileToRectangle(
+        TileKey{scheme->id(), 1, 0, 0});
+
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> sources;
+    sources.push_back({
+        TileKey{scheme->id(), 1, 0, 0},
+        target,
+        makeGrayImage(2, 2, 77),
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::No});
+
+    auto result =
+        RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
+            *scheme,
+            target,
+            1,
+            std::move(sources),
+            1,
+            8);
+
+    ASSERT_NE(nullptr, result.image);
+    EXPECT_EQ(3, result.image->channels);
+    ASSERT_GE(result.image->pixels.size(), 3u);
+    EXPECT_EQ(77, result.image->pixels[0]);
+    EXPECT_EQ(77, result.image->pixels[1]);
+    EXPECT_EQ(77, result.image->pixels[2]);
+    EXPECT_EQ(
+        static_cast<size_t>(result.image->width) *
+            static_cast<size_t>(result.image->height) * 3u,
+        result.image->pixels.size());
+}
+
 TEST(RasterOverlayLifecycleTest, CompositeImageUsesLargestSourceChannelCountLikeCesiumNative) {
     auto scheme = TileScheme::createXYZWebMercator();
     const TileKey westKey{scheme->id(), 2, 0, 1};
@@ -4142,7 +4190,8 @@ TEST(RasterOverlayLifecycleTest, CompositeImageUsesLargestSourceChannelCountLike
     EXPECT_EQ(23, result.image->pixels[7]);
 }
 
-TEST(RasterOverlayLifecycleTest, CompositeImageBlitsOnlyAncestorFallbackLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest,
+     CompositeImageReturnsEmptyForAncestorOnlySourcesLikeCesiumNative) {
     auto scheme = TileScheme::createXYZWebMercator();
     Rectangle target = scheme->tileToRectangle(
         TileKey{scheme->id(), 1, 0, 0});
@@ -4164,11 +4213,11 @@ TEST(RasterOverlayLifecycleTest, CompositeImageBlitsOnlyAncestorFallbackLikeCesi
         8);
 
     ASSERT_NE(nullptr, result.image);
-    EXPECT_EQ(2, result.image->width);
-    EXPECT_EQ(2, result.image->height);
-    EXPECT_EQ(4, result.image->channels);
-    ASSERT_FALSE(result.image->pixels.empty());
-    EXPECT_EQ(20, result.image->pixels.front());
+    EXPECT_EQ(0, result.image->width);
+    EXPECT_EQ(0, result.image->height);
+    EXPECT_EQ(0, result.image->channels);
+    EXPECT_TRUE(result.image->pixels.empty());
+    EXPECT_EQ(Rectangle{}, result.rectangle);
     EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
               result.moreDetailAvailable);
 }

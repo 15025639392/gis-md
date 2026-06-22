@@ -441,6 +441,12 @@ bool isDecodedImageUploadable(const DecodedImage& image) {
            image.pixels.size() >= static_cast<size_t>(requiredBytes);
 }
 
+bool isRasterCompositeSourceImage(const DecodedImage& image) {
+    return isDecodedImageUploadable(image) &&
+           (image.channels == 1 || image.channels == 3 ||
+            image.channels == 4);
+}
+
 int64_t decodedImageSizeBytes(const DecodedImage& image) {
     return static_cast<int64_t>(sizeof(DecodedImage)) +
            static_cast<int64_t>(image.pixels.size());
@@ -888,8 +894,7 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
         std::remove_if(sources.begin(), sources.end(),
                        [](const LoadedSourceImage& source) {
                            return !source.image ||
-                                  !isDecodedImageUploadable(*source.image) ||
-                                  source.image->channels < 3;
+                                  !isRasterCompositeSourceImage(*source.image);
                        }),
         sources.end());
     if (sources.empty()) return {};
@@ -920,9 +925,7 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
     if (measurements.width <= 0 || measurements.height <= 0) {
         return {};
     }
-    if (measurements.channels < 3) {
-        return {};
-    }
+    measurements.channels = std::max(3, measurements.channels);
 
     auto output = std::make_unique<DecodedImage>();
     output->width = measurements.width;
@@ -1555,13 +1558,21 @@ RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
     int maximumTextureSize) {
     std::vector<LoadedSourceImage> sources;
     sources.reserve(publicSources.size());
+    bool haveAnyUsefulImageData = false;
     for (auto& source : publicSources) {
+        haveAnyUsefulImageData |=
+            source.image != nullptr && !source.sourceSubset.has_value();
         sources.push_back(LoadedSourceImage{
             source.key,
             source.bounds,
             std::shared_ptr<const DecodedImage>(std::move(source.image)),
             source.sourceSubset,
             source.moreDetailAvailable});
+    }
+    if (!haveAnyUsefulImageData) {
+        CompositeImageResult result;
+        result.image = std::make_unique<DecodedImage>();
+        return result;
     }
     return combineQuadtreeSourceImages(
         scheme,
