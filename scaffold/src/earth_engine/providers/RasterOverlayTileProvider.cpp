@@ -222,6 +222,20 @@ bool tryIssueRasterRequestBudget(FrameResourceBudget* budget,
     if (!budget) {
         return true;
     }
+    const FrameResourceBudgetSnapshot snapshot = budget->snapshot();
+    const bool oversizedCesiumNativeBatch =
+        estimatedFanout >
+            static_cast<int>(snapshot.maxRasterNetworkRequestsPerFrame) ||
+        estimatedFanout >
+            static_cast<int>(snapshot.maxRasterNetworkInflight);
+    if (oversizedCesiumNativeBatch &&
+        currentInflight == 0 &&
+        snapshot.rasterNetworkRequestsIssued == 0) {
+        return budget->tryIssue(
+            FrameResourceLane::RasterRequest,
+            FrameResourcePriority::Normal,
+            1);
+    }
     if (!budget->hasNetworkInflightCapacity(
             FrameResourceLane::RasterRequest,
             currentInflight,
