@@ -81,6 +81,48 @@ public:
     std::unique_ptr<DecodedHeightmap> decodeTile(
         const uint8_t* data, size_t len) override;
 
+    // Cesium-native shaped layer.json availability store. Public only so the
+    // .cpp-local helper algorithms can name the type; provider API does not
+    // expose values of this type.
+    struct TileRectangleAvailability {
+        struct RectangleWithLevel {
+            uint32_t level = 0;
+            Rectangle rectangle;
+        };
+
+        struct Node {
+            Node(const TileKey& tileKey,
+                 const Rectangle& tileExtent,
+                 Node* parentNode);
+            Node(const Node& other);
+            Node& operator=(const Node& other);
+
+            TileKey key;
+            Rectangle extent;
+            Node* parent = nullptr;
+            std::unique_ptr<Node> ll;
+            std::unique_ptr<Node> lr;
+            std::unique_ptr<Node> ul;
+            std::unique_ptr<Node> ur;
+            std::vector<RectangleWithLevel> rectangles;
+        };
+
+        TileRectangleAvailability() = default;
+        TileRectangleAvailability(std::string schemeId, int maximumLevel);
+        TileRectangleAvailability(const TileRectangleAvailability& other);
+        TileRectangleAvailability&
+        operator=(const TileRectangleAvailability& other);
+
+        void reset(std::string schemeId, int maximumLevel);
+        void addAvailableTileRange(int level,
+                                   const TileAvailabilityRect& range);
+        uint32_t maximumLevelAtTileCenter(const TileKey& key) const;
+
+        std::string schemeId;
+        int maximumLevel = 0;
+        std::vector<std::unique_ptr<Node>> rootNodes;
+    };
+
 private:
     struct LayerConfig {
         std::string urlTemplate;
@@ -89,6 +131,7 @@ private:
         std::string version;
         std::string extensionsToRequest;
         std::vector<std::vector<TileAvailabilityRect>> availabilityRanges;
+        TileRectangleAvailability contentAvailability;
         std::vector<std::unordered_set<uint64_t>> loadedSubtrees;
         bool hasAvailability = false;
         int availabilityLevels = -1;
@@ -113,9 +156,6 @@ private:
     std::vector<LayerAvailabilityRequest>
     collectUnderlyingLayerAvailabilityRequests(const TileKey& key) const;
     TileAvailabilityState availabilityStateInLayer(
-        const LayerConfig& layer,
-        const TileKey& key) const;
-    uint32_t maximumAvailableLevelAtTileCenter(
         const LayerConfig& layer,
         const TileKey& key) const;
     bool isSubtreeLoadedInLayer(

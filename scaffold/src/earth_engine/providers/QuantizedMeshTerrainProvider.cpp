@@ -63,6 +63,30 @@ std::vector<uint8_t> readFileUrl(const std::string& url) {
     return data;
 }
 
+int rootTileCountX(const std::string& schemeId);
+int rootTileCountY(const std::string& schemeId);
+Rectangle availabilityTileRectangle(const std::string& schemeId,
+                                    int level,
+                                    uint32_t x,
+                                    uint32_t y);
+void reparentAvailabilityNodeChildren(
+    QuantizedMeshTerrainProvider::TileRectangleAvailability::Node& node);
+std::unique_ptr<QuantizedMeshTerrainProvider::TileRectangleAvailability::Node>
+cloneAvailabilityNode(
+    const QuantizedMeshTerrainProvider::TileRectangleAvailability::Node& node,
+    QuantizedMeshTerrainProvider::TileRectangleAvailability::Node* parent);
+void putAvailabilityRectangleInQuadtree(
+    QuantizedMeshTerrainProvider::TileRectangleAvailability::Node& node,
+    const std::string& schemeId,
+    int maximumLevel,
+    const QuantizedMeshTerrainProvider::TileRectangleAvailability::
+        RectangleWithLevel& rectangle);
+uint32_t findMaxAvailabilityLevelFromNode(
+    QuantizedMeshTerrainProvider::TileRectangleAvailability::Node* stopNode,
+    QuantizedMeshTerrainProvider::TileRectangleAvailability::Node& node,
+    double x,
+    double y);
+
 } // namespace
 
 QuantizedMeshTerrainProvider::QuantizedMeshTerrainProvider(
@@ -71,6 +95,148 @@ QuantizedMeshTerrainProvider::QuantizedMeshTerrainProvider(
       attribution_(std::move(attribution)) {}
 
 QuantizedMeshTerrainProvider::~QuantizedMeshTerrainProvider() = default;
+
+QuantizedMeshTerrainProvider::TileRectangleAvailability::Node::Node(
+    const TileKey& tileKey,
+    const Rectangle& tileExtent,
+    Node* parentNode)
+    : key(tileKey), extent(tileExtent), parent(parentNode) {}
+
+QuantizedMeshTerrainProvider::TileRectangleAvailability::Node::Node(
+    const Node& other)
+    : key(other.key),
+      extent(other.extent),
+      parent(nullptr),
+      rectangles(other.rectangles) {
+    if (other.ll) ll = cloneAvailabilityNode(*other.ll, this);
+    if (other.lr) lr = cloneAvailabilityNode(*other.lr, this);
+    if (other.ul) ul = cloneAvailabilityNode(*other.ul, this);
+    if (other.ur) ur = cloneAvailabilityNode(*other.ur, this);
+}
+
+QuantizedMeshTerrainProvider::TileRectangleAvailability::Node&
+QuantizedMeshTerrainProvider::TileRectangleAvailability::Node::operator=(
+    const Node& other) {
+    if (this == &other) return *this;
+    key = other.key;
+    extent = other.extent;
+    rectangles = other.rectangles;
+    ll = other.ll ? cloneAvailabilityNode(*other.ll, this) : nullptr;
+    lr = other.lr ? cloneAvailabilityNode(*other.lr, this) : nullptr;
+    ul = other.ul ? cloneAvailabilityNode(*other.ul, this) : nullptr;
+    ur = other.ur ? cloneAvailabilityNode(*other.ur, this) : nullptr;
+    reparentAvailabilityNodeChildren(*this);
+    return *this;
+}
+
+QuantizedMeshTerrainProvider::TileRectangleAvailability::
+    TileRectangleAvailability(std::string scheme, int maxLevel) {
+    reset(std::move(scheme), maxLevel);
+}
+
+QuantizedMeshTerrainProvider::TileRectangleAvailability::
+    TileRectangleAvailability(const TileRectangleAvailability& other)
+    : schemeId(other.schemeId),
+      maximumLevel(other.maximumLevel) {
+    rootNodes.reserve(other.rootNodes.size());
+    for (const auto& node : other.rootNodes) {
+        rootNodes.push_back(node ? cloneAvailabilityNode(*node, nullptr)
+                                 : nullptr);
+    }
+}
+
+QuantizedMeshTerrainProvider::TileRectangleAvailability&
+QuantizedMeshTerrainProvider::TileRectangleAvailability::operator=(
+    const TileRectangleAvailability& other) {
+    if (this == &other) return *this;
+    schemeId = other.schemeId;
+    maximumLevel = other.maximumLevel;
+    rootNodes.clear();
+    rootNodes.reserve(other.rootNodes.size());
+    for (const auto& node : other.rootNodes) {
+        rootNodes.push_back(node ? cloneAvailabilityNode(*node, nullptr)
+                                 : nullptr);
+    }
+    return *this;
+}
+
+void QuantizedMeshTerrainProvider::TileRectangleAvailability::reset(
+    std::string scheme,
+    int maxLevel) {
+    schemeId = std::move(scheme);
+    maximumLevel = std::max(0, maxLevel);
+    rootNodes.clear();
+
+    const int rootX = rootTileCountX(schemeId);
+    const int rootY = rootTileCountY(schemeId);
+    rootNodes.reserve(static_cast<size_t>(rootX * rootY));
+    for (int y = 0; y < rootY; ++y) {
+        for (int x = 0; x < rootX; ++x) {
+            const TileKey rootKey{schemeId, 0, x, y};
+            rootNodes.push_back(std::make_unique<Node>(
+                rootKey,
+                availabilityTileRectangle(
+                    schemeId,
+                    0,
+                    static_cast<uint32_t>(x),
+                    static_cast<uint32_t>(y)),
+                nullptr));
+        }
+    }
+}
+
+void QuantizedMeshTerrainProvider::TileRectangleAvailability::
+    addAvailableTileRange(int level, const TileAvailabilityRect& range) {
+    if (level < 0 || rootNodes.empty()) return;
+    const Rectangle lowerLeft = availabilityTileRectangle(
+        schemeId,
+        level,
+        range[0],
+        range[1]);
+    const Rectangle upperRight = availabilityTileRectangle(
+        schemeId,
+        level,
+        range[2],
+        range[3]);
+    const RectangleWithLevel rectangle{
+        static_cast<uint32_t>(level),
+        Rectangle(
+            lowerLeft.west(),
+            lowerLeft.south(),
+            upperRight.east(),
+            upperRight.north())};
+
+    for (const auto& node : rootNodes) {
+        if (node && node->extent.intersects(rectangle.rectangle)) {
+            putAvailabilityRectangleInQuadtree(
+                *node,
+                schemeId,
+                maximumLevel,
+                rectangle);
+        }
+    }
+}
+
+uint32_t QuantizedMeshTerrainProvider::TileRectangleAvailability::
+    maximumLevelAtTileCenter(const TileKey& key) const {
+    if (rootNodes.empty()) return 0;
+    const Rectangle rectangle = availabilityTileRectangle(
+        schemeId,
+        key.z,
+        static_cast<uint32_t>(key.x),
+        static_cast<uint32_t>(key.y));
+    const auto center = rectangle.center();
+    for (const auto& node : rootNodes) {
+        if (node && node->extent.contains(center.first, center.second)) {
+            return findMaxAvailabilityLevelFromNode(
+                nullptr,
+                *node,
+                center.first,
+                center.second);
+        }
+    }
+    return 0;
+}
 
 void QuantizedMeshTerrainProvider::setPlatformBridge(PlatformBridge* bridge) {
     platformBridge_ = bridge;
@@ -453,6 +619,246 @@ bool isCesiumSuccessfulHttpStatus(int statusCode) {
     return statusCode == 0 || (statusCode >= 200 && statusCode < 300);
 }
 
+int rootTileCountX(const std::string& schemeId) {
+    return schemeId == "Geographic-TMS" ? 2 : 1;
+}
+
+int rootTileCountY(const std::string&) {
+    return 1;
+}
+
+int tileCountXAtLevel(const std::string& schemeId, int level) {
+    return rootTileCountX(schemeId) << level;
+}
+
+int tileCountYAtLevel(const std::string& schemeId, int level) {
+    return rootTileCountY(schemeId) << level;
+}
+
+Rectangle availabilityTileRectangle(const std::string& schemeId,
+                                    int level,
+                                    uint32_t x,
+                                    uint32_t y) {
+    const double xTiles = static_cast<double>(
+        tileCountXAtLevel(schemeId, level));
+    const double yTiles = static_cast<double>(
+        tileCountYAtLevel(schemeId, level));
+    const double tileX = static_cast<double>(x);
+    const double tileY = static_cast<double>(y);
+    return Rectangle(
+        tileX / xTiles,
+        tileY / yTiles,
+        (tileX + 1.0) / xTiles,
+        (tileY + 1.0) / yTiles);
+}
+
+bool rectangleFullyContains(const Rectangle& outer, const Rectangle& inner) {
+    return outer.west() <= inner.west() &&
+           outer.south() <= inner.south() &&
+           outer.east() >= inner.east() &&
+           outer.north() >= inner.north();
+}
+
+void reparentAvailabilityNodeChildren(
+    QuantizedMeshTerrainProvider::TileRectangleAvailability::Node& node) {
+    if (node.ll) node.ll->parent = &node;
+    if (node.lr) node.lr->parent = &node;
+    if (node.ul) node.ul->parent = &node;
+    if (node.ur) node.ur->parent = &node;
+}
+
+std::unique_ptr<QuantizedMeshTerrainProvider::TileRectangleAvailability::Node>
+cloneAvailabilityNode(
+    const QuantizedMeshTerrainProvider::TileRectangleAvailability::Node& node,
+    QuantizedMeshTerrainProvider::TileRectangleAvailability::Node* parent) {
+    auto clone = std::make_unique<
+        QuantizedMeshTerrainProvider::TileRectangleAvailability::Node>(
+        node.key,
+        node.extent,
+        parent);
+    clone->rectangles = node.rectangles;
+    if (node.ll) clone->ll = cloneAvailabilityNode(*node.ll, clone.get());
+    if (node.lr) clone->lr = cloneAvailabilityNode(*node.lr, clone.get());
+    if (node.ul) clone->ul = cloneAvailabilityNode(*node.ul, clone.get());
+    if (node.ur) clone->ur = cloneAvailabilityNode(*node.ur, clone.get());
+    return clone;
+}
+
+void createAvailabilityNodeChildrenIfNecessary(
+    QuantizedMeshTerrainProvider::TileRectangleAvailability::Node& node,
+    const std::string& schemeId) {
+    if (node.ll) return;
+
+    const int childLevel = node.key.z + 1;
+    const uint32_t childX = static_cast<uint32_t>(node.key.x * 2);
+    const uint32_t childY = static_cast<uint32_t>(node.key.y * 2);
+    const TileKey llKey{schemeId,
+                        childLevel,
+                        static_cast<int>(childX),
+                        static_cast<int>(childY)};
+    node.ll = std::make_unique<
+        QuantizedMeshTerrainProvider::TileRectangleAvailability::Node>(
+        llKey,
+        availabilityTileRectangle(schemeId, childLevel, childX, childY),
+        &node);
+
+    const TileKey lrKey{schemeId,
+                        childLevel,
+                        static_cast<int>(childX + 1),
+                        static_cast<int>(childY)};
+    node.lr = std::make_unique<
+        QuantizedMeshTerrainProvider::TileRectangleAvailability::Node>(
+        lrKey,
+        availabilityTileRectangle(schemeId, childLevel, childX + 1, childY),
+        &node);
+
+    const TileKey ulKey{schemeId,
+                        childLevel,
+                        static_cast<int>(childX),
+                        static_cast<int>(childY + 1)};
+    node.ul = std::make_unique<
+        QuantizedMeshTerrainProvider::TileRectangleAvailability::Node>(
+        ulKey,
+        availabilityTileRectangle(schemeId, childLevel, childX, childY + 1),
+        &node);
+
+    const TileKey urKey{schemeId,
+                        childLevel,
+                        static_cast<int>(childX + 1),
+                        static_cast<int>(childY + 1)};
+    node.ur = std::make_unique<
+        QuantizedMeshTerrainProvider::TileRectangleAvailability::Node>(
+        urKey,
+        availabilityTileRectangle(schemeId, childLevel, childX + 1, childY + 1),
+        &node);
+}
+
+void putAvailabilityRectangleInQuadtree(
+    QuantizedMeshTerrainProvider::TileRectangleAvailability::Node& node,
+    const std::string& schemeId,
+    int maximumLevel,
+    const QuantizedMeshTerrainProvider::TileRectangleAvailability::
+        RectangleWithLevel& rectangle) {
+    auto* current = &node;
+
+    while (current->key.z < maximumLevel) {
+        createAvailabilityNodeChildrenIfNecessary(*current, schemeId);
+        if (current->ll &&
+            rectangleFullyContains(current->ll->extent, rectangle.rectangle)) {
+            current = current->ll.get();
+        } else if (
+            current->lr &&
+            rectangleFullyContains(current->lr->extent, rectangle.rectangle)) {
+            current = current->lr.get();
+        } else if (
+            current->ul &&
+            rectangleFullyContains(current->ul->extent, rectangle.rectangle)) {
+            current = current->ul.get();
+        } else if (
+            current->ur &&
+            rectangleFullyContains(current->ur->extent, rectangle.rectangle)) {
+            current = current->ur.get();
+        } else {
+            break;
+        }
+    }
+
+    auto& rectangles = current->rectangles;
+    rectangles.push_back(rectangle);
+    std::sort(
+        rectangles.begin(),
+        rectangles.end(),
+        [](const auto& a, const auto& b) { return a.level < b.level; });
+}
+
+uint32_t findMaxAvailabilityLevelFromNode(
+    QuantizedMeshTerrainProvider::TileRectangleAvailability::Node* stopNode,
+    QuantizedMeshTerrainProvider::TileRectangleAvailability::Node& node,
+    double x,
+    double y) {
+    uint32_t maxLevel = 0;
+    auto* current = &node;
+
+    while (true) {
+        const bool ll =
+            current->ll && current->ll->extent.contains(x, y);
+        const bool lr =
+            current->lr && current->lr->extent.contains(x, y);
+        const bool ul =
+            current->ul && current->ul->extent.contains(x, y);
+        const bool ur =
+            current->ur && current->ur->extent.contains(x, y);
+        const int containingChildren =
+            (ll ? 1 : 0) + (lr ? 1 : 0) + (ul ? 1 : 0) + (ur ? 1 : 0);
+
+        if (containingChildren > 1) {
+            if (ll) {
+                maxLevel = std::max(
+                    maxLevel,
+                    findMaxAvailabilityLevelFromNode(
+                        current,
+                        *current->ll,
+                        x,
+                        y));
+            }
+            if (lr) {
+                maxLevel = std::max(
+                    maxLevel,
+                    findMaxAvailabilityLevelFromNode(
+                        current,
+                        *current->lr,
+                        x,
+                        y));
+            }
+            if (ul) {
+                maxLevel = std::max(
+                    maxLevel,
+                    findMaxAvailabilityLevelFromNode(
+                        current,
+                        *current->ul,
+                        x,
+                        y));
+            }
+            if (ur) {
+                maxLevel = std::max(
+                    maxLevel,
+                    findMaxAvailabilityLevelFromNode(
+                        current,
+                        *current->ur,
+                        x,
+                        y));
+            }
+            break;
+        }
+
+        if (ll) {
+            current = current->ll.get();
+        } else if (lr) {
+            current = current->lr.get();
+        } else if (ul) {
+            current = current->ul.get();
+        } else if (ur) {
+            current = current->ur.get();
+        } else {
+            break;
+        }
+    }
+
+    while (current != stopNode) {
+        const auto& rectangles = current->rectangles;
+        for (auto it = rectangles.rbegin();
+             it != rectangles.rend() && it->level > maxLevel;
+             ++it) {
+            if (it->rectangle.contains(x, y)) {
+                maxLevel = it->level;
+            }
+        }
+        current = current->parent;
+    }
+
+    return maxLevel;
+}
+
 std::vector<std::string> jsonStringArray(
     const nlohmann::json& j,
     const char* name) {
@@ -711,6 +1117,7 @@ bool QuantizedMeshTerrainProvider::appendLayerFromJson(
     // metadata subtrees determine whether tiles are requestable.
     layer.minZoom = 0;
     layer.maxZoom = jsonInt32OrDefault(j, "maxzoom", 30);
+    layer.contentAvailability.reset(layer.schemeId, layer.maxZoom);
     layer.version = jsonStringOrEmpty(j, "version");
     layer.attribution = jsonStringOrEmpty(j, "attribution");
     std::vector<std::string> knownExtensions{
@@ -757,13 +1164,17 @@ bool QuantizedMeshTerrainProvider::appendLayerFromJson(
             }
             for (const auto& range : levelRanges) {
                 if (!range.is_object()) continue;
-                layer.availabilityRanges[static_cast<size_t>(availabilityLevel)]
-                    .push_back({
+                const TileAvailabilityRect availabilityRange{
                     jsonUint32OrDefault(range, "startX"),
                     jsonUint32OrDefault(range, "startY"),
                     jsonUint32OrDefault(range, "endX"),
                     jsonUint32OrDefault(range, "endY")
-                });
+                };
+                layer.availabilityRanges[static_cast<size_t>(availabilityLevel)]
+                    .push_back(availabilityRange);
+                layer.contentAvailability.addAvailableTileRange(
+                    availabilityLevel,
+                    availabilityRange);
             }
             ++availabilityLevel;
         }
@@ -842,53 +1253,6 @@ bool QuantizedMeshTerrainProvider::supportsTile(const TileKey& key) const {
     return availabilityState(key) == TileAvailabilityState::Available;
 }
 
-uint32_t QuantizedMeshTerrainProvider::maximumAvailableLevelAtTileCenter(
-    const LayerConfig& layer,
-    const TileKey& key) const {
-    // cesium-native QuadtreeRectangleAvailability::isTileAvailable:
-    // query the maximum available level at the center of this tile. Empty
-    // availability has maxLevel=0, so root tiles remain requestable but deeper
-    // tiles wait for metadata.
-    uint32_t maxLevel = 0;
-    if (layer.availabilityRanges.empty()) return maxLevel;
-
-    const bool geographic = layer.schemeId == "Geographic-TMS";
-    const double keyXTiles = geographic
-        ? std::ldexp(1.0, key.z + 1)
-        : std::ldexp(1.0, key.z);
-    const double keyYTiles = std::ldexp(1.0, key.z);
-    const double centerX = (static_cast<double>(key.x) + 0.5) / keyXTiles;
-    const double centerY = (static_cast<double>(key.y) + 0.5) / keyYTiles;
-
-    for (size_t levelIndex = 0; levelIndex < layer.availabilityRanges.size(); ++levelIndex) {
-        const auto& ranges = layer.availabilityRanges[levelIndex];
-        if (ranges.empty()) continue;
-
-        const int level = static_cast<int>(levelIndex);
-        const double xTiles = geographic
-            ? std::ldexp(1.0, level + 1)
-            : std::ldexp(1.0, level);
-        const double yTiles = std::ldexp(1.0, level);
-        for (const auto& range : ranges) {
-            // cesium-native QuadtreeRectangleAvailability stores each
-            // available tile range as a projected rectangle and uses
-            // Rectangle::contains, whose min/max edges are both inclusive.
-            // A coarser tile center can lie exactly on a deeper range edge;
-            // floor(center * tileCount) would incorrectly pick only one side.
-            const double minX = static_cast<double>(range[0]) / xTiles;
-            const double maxX = (static_cast<double>(range[2]) + 1.0) / xTiles;
-            const double minY = static_cast<double>(range[1]) / yTiles;
-            const double maxY = (static_cast<double>(range[3]) + 1.0) / yTiles;
-            if (centerX >= minX && centerX <= maxX &&
-                centerY >= minY && centerY <= maxY) {
-                maxLevel = std::max(maxLevel, static_cast<uint32_t>(level));
-                break;
-            }
-        }
-    }
-    return maxLevel;
-}
-
 bool QuantizedMeshTerrainProvider::isSubtreeLoadedInLayer(
     const LayerConfig& layer,
     int subtreeLevel,
@@ -914,7 +1278,7 @@ TileAvailabilityState QuantizedMeshTerrainProvider::availabilityStateInLayer(
     }
     if (!layer.hasAvailability) return TileAvailabilityState::Available;
 
-    if (maximumAvailableLevelAtTileCenter(layer, key) >=
+    if (layer.contentAvailability.maximumLevelAtTileCenter(key) >=
         static_cast<uint32_t>(key.z)) {
         return TileAvailabilityState::Available;
     }
@@ -961,6 +1325,16 @@ TileAvailabilityState QuantizedMeshTerrainProvider::availabilityState(
         legacy.version = version_;
         legacy.extensionsToRequest = extensionsToRequest_;
         legacy.availabilityRanges = availabilityRanges_;
+        legacy.contentAvailability.reset(legacy.schemeId, legacy.maxZoom);
+        for (size_t level = 0; level < legacy.availabilityRanges.size();
+             ++level) {
+            for (const TileAvailabilityRect& range :
+                 legacy.availabilityRanges[level]) {
+                legacy.contentAvailability.addAvailableTileRange(
+                    static_cast<int>(level),
+                    range);
+            }
+        }
         legacy.loadedSubtrees = loadedSubtrees_;
         legacy.hasAvailability = hasAvailability_;
         legacy.availabilityLevels = availabilityLevels_;
@@ -1524,6 +1898,7 @@ void QuantizedMeshTerrainProvider::addAvailabilityRectsToLayer(
     auto& ranges = layer.availabilityRanges[static_cast<size_t>(level)];
     for (const auto& r : rects) {
         ranges.push_back(r);
+        layer.contentAvailability.addAvailableTileRange(level, r);
     }
 }
 
