@@ -15,6 +15,7 @@
 #include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
+#include "earth_engine/tiling/TileSurface.h"
 #include "earth_engine/tiling/SurfaceTileDrawCommandBuilder.h"
 #include "earth_engine/tiling/TilesetTile.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -2703,6 +2704,105 @@ TEST(RasterOverlayLifecycleTest, TemporaryAncestorDoesNotReportMoreDetailLikeCes
     EXPECT_EQ(1, recorder.attachCount);
     EXPECT_EQ(parentReady, recorder.lastRasterTile.get());
     EXPECT_EQ(parentReady->getTexture(), recorder.lastTexture);
+}
+
+TEST(RasterOverlayLifecycleTest,
+     BoundingRegionAncestorFallbackComputesChildUvWindow) {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    RasterOverlayTileProvider provider(
+        overlay->getProvider(),
+        overlay->getTileScheme(),
+        nullptr);
+    provider.setOwner(overlay.get());
+
+    const TileKey parentKey{overlay->getTileScheme().id(), 2, 1, 1};
+    const TileKey childKey{overlay->getTileScheme().id(), 3, 2, 2};
+    const Rectangle parentRectangle =
+        overlay->getTileScheme().tileToRectangle(parentKey);
+    const Rectangle childRectangle =
+        overlay->getTileScheme().tileToRectangle(childKey);
+    const Rectangle projectedChildRectangle =
+        projectForProvider(provider, childRectangle);
+    RasterOverlayDetails parentDetails =
+        makeProviderDetails(overlay->getTileScheme(), parentRectangle);
+    RasterOverlayDetails emptyDetails;
+    std::vector<RasterOverlayProjection> missing;
+
+    TilesetTile parentTile(parentKey, parentRectangle);
+    RasterMappedToTilesetTile& parentMapping =
+        parentTile.rasterOverlayState.ensureMapping(0);
+    parentMapping.update(
+        parentKey,
+        parentDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missing,
+        nullptr,
+        0);
+    RasterOverlayTile* parentReady = parentMapping.getLoadingTile();
+    ASSERT_NE(nullptr, parentReady);
+    parentReady->setTexture(std::make_unique<TestTexture>(4, 4));
+    parentMapping.update(
+        parentKey,
+        parentDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missing,
+        nullptr,
+        0);
+    ASSERT_EQ(parentReady, parentMapping.getReadyTile());
+
+    RasterMappedToTilesetTile childMapping;
+    childMapping.update(
+        childKey,
+        emptyDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missing,
+        nullptr,
+        0,
+        false,
+        projectedChildRectangle);
+    ASSERT_NE(nullptr, childMapping.getLoadingTile());
+
+    childMapping.update(
+        childKey,
+        emptyDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missing,
+        &parentTile,
+        0,
+        false,
+        projectedChildRectangle);
+
+    EXPECT_EQ(parentReady, childMapping.getReadyTile());
+    const TileTextureWindow expectedWindow =
+        TileSurface::textureWindowForNorthWestUv(
+            TileSurface::computeTranslationAndScale(
+                projectedChildRectangle,
+                parentReady->getRectangle()));
+    EXPECT_NEAR(
+        expectedWindow.offsetU,
+        childMapping.getTranslationU(),
+        1e-6f);
+    EXPECT_NEAR(
+        expectedWindow.offsetV,
+        childMapping.getTranslationV(),
+        1e-6f);
+    EXPECT_NEAR(expectedWindow.scaleU, childMapping.getScaleU(), 1e-6f);
+    EXPECT_NEAR(expectedWindow.scaleV, childMapping.getScaleV(), 1e-6f);
 }
 
 TEST(RasterOverlayLifecycleTest, MappedReadyTileRetainsProviderCacheUntilReleased) {

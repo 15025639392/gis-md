@@ -166,6 +166,11 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
               projection,
               &readyTextureCoordinateID)
         : nullptr;
+    const Rectangle* mappingRectangle = geometryRectangle;
+    if (!mappingRectangle && !hasRenderContentDetails &&
+        boundingVolumeRectangle && !boundingVolumeRectangle->isEmpty()) {
+        mappingRectangle = &*boundingVolumeRectangle;
+    }
 
     // cesium-native RasterOverlayCollection::updateTileOverlays:
     // placeholder mappings are retried once the provider is ready.
@@ -262,9 +267,9 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                 readyTexture_ = _pReadyTile->getTexture();
 
                 // Compute UV transform from the tile's bounds
-                if (geometryRectangle) {
+                if (mappingRectangle) {
                     computeTranslationAndScale(
-                        *geometryRectangle, _pReadyTile->getRectangle());
+                        *mappingRectangle, _pReadyTile->getRectangle());
                 }
             }
         } else if (loadState == RasterOverlayTile::LoadState::Failed) {
@@ -303,9 +308,9 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                 tileProvider.markUsed(*_pReadyTile);
                 readyTexture_ = _pReadyTile->getTexture();
                 // cesium-native: recompute UV for CURRENT child bounds.
-                if (geometryRectangle) {
+                if (mappingRectangle) {
                     computeTranslationAndScale(
-                        *geometryRectangle,
+                        *mappingRectangle,
                         _pReadyTile->getRectangle());
                 }
             }
