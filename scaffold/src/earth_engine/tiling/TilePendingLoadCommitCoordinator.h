@@ -75,6 +75,7 @@ public:
               typename MarkResourcesDirtyFn>
     static void commitTerrainUpload(
         PendingTileLoad& upload,
+        TilesetContentProvider* contentProvider,
         TerrainProvider* terrainProvider,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
@@ -89,6 +90,7 @@ public:
         MarkResourcesDirtyFn&& markResourcesDirty) {
         TileLoadedContent& content = upload.content();
         TileTerrainUploadCommitter::applyAvailabilityUpdates(
+            contentProvider,
             terrainProvider,
             content);
         const bool hadHeightmapTerrainPayload =
@@ -221,6 +223,7 @@ public:
               typename MarkResourcesDirtyFn>
     static void commitUpload(
         PendingTileLoad& upload,
+        TilesetContentProvider* contentProvider,
         TerrainProvider* terrainProvider,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
@@ -235,6 +238,7 @@ public:
         MarkResourcesDirtyFn&& markResourcesDirty) {
         if (upload.domain == TileLoadDomain::Content) {
             TileTerrainUploadCommitter::applyAvailabilityUpdates(
+                contentProvider,
                 terrainProvider,
                 upload.content());
             commitContentUpload(
@@ -247,6 +251,7 @@ public:
         } else {
             commitTerrainUpload(
                 upload,
+                contentProvider,
                 terrainProvider,
                 device,
                 rasterOverlays,

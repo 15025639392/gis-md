@@ -13,6 +13,7 @@
 namespace earth_engine {
 
 class TerrainProvider;
+class TilesetContentProvider;
 class ActivatedRasterOverlay;
 class RenderDevice;
 struct DecodedHeightmap;
@@ -23,6 +24,7 @@ struct TilePendingUploadFrameProcessorInput {
     TileLoadLifecycle& loadLifecycle;
     FrameResourceBudget& budget;
     TerrainProvider* terrainProvider = nullptr;
+    TilesetContentProvider* contentProvider = nullptr;
     RenderDevice* device = nullptr;
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
@@ -58,6 +60,7 @@ public:
         auto processUpload = [&](PendingTileLoad& upload) {
             TilePendingLoadCommitCoordinator::commitUpload(
                 upload,
+                input.contentProvider,
                 input.terrainProvider,
                 input.device,
                 input.rasterOverlays,

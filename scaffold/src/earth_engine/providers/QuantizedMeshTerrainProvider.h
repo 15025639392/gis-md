@@ -83,6 +83,10 @@ public:
     }
     void applyAvailabilityUpdates(
         const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override;
+    void applyTerrainAvailabilityUpdates(
+        const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override {
+        applyAvailabilityUpdates(updates);
+    }
 
     void requestTile(const TileKey& key,
                      CancellationToken token,

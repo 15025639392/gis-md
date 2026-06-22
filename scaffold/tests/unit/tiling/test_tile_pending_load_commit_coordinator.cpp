@@ -8,10 +8,70 @@
 #include <memory>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 using namespace earth_engine;
 
 namespace {
+
+class RecordingTerrainContentProvider final : public TilesetContentProvider {
+public:
+    std::string id() const override { return "recording-terrain-content"; }
+    bool supportsTile(const TileKey&) const override { return true; }
+    bool providesTerrainQuadtree() const override { return true; }
+    void applyTerrainAvailabilityUpdates(
+        const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override {
+        appliedUpdates.insert(
+            appliedUpdates.end(),
+            updates.begin(),
+            updates.end());
+    }
+    void requestTileContent(
+        const TileKey& key,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callback(key, TileContentLoadResult::retryLater());
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+
+    std::vector<QuantizedMeshAvailabilityUpdate> appliedUpdates;
+};
+
+class RecordingTerrainProvider final : public TerrainProvider {
+public:
+    std::string id() const override { return "recording-terrain"; }
+    std::string schemeId() const override { return "Geographic-TMS"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 2; }
+    int tileSize() const override { return 2; }
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://recording-terrain";
+    }
+    void requestTile(
+        const TileKey& key,
+        CancellationToken,
+        TerrainCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callback(key, TerrainTileLoadResult::retryLater());
+    }
+    void applyAvailabilityUpdates(
+        const std::vector<QuantizedMeshAvailabilityUpdate>& updates)
+        override {
+        appliedUpdates.insert(
+            appliedUpdates.end(),
+            updates.begin(),
+            updates.end());
+    }
+    std::unique_ptr<DecodedHeightmap> decodeTile(const uint8_t*, size_t)
+        override {
+        return nullptr;
+    }
+
+    std::vector<QuantizedMeshAvailabilityUpdate> appliedUpdates;
+};
 
 TileLoadResultMetadata makeBoundingVolumeMetadata(
     const Rectangle& rectangle,
@@ -434,6 +494,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         terrainUpload,
         nullptr,
         nullptr,
+        nullptr,
         {},
         terrainCache,
         lifecycle,
@@ -513,6 +574,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     content.quantizedMeshAvailabilityUpdates.push_back(update);
 
     TileTerrainUploadCommitter::applyAvailabilityUpdates(
+        nullptr,
         &provider,
         content);
 
@@ -520,6 +582,32 @@ TEST(TilePendingLoadCommitCoordinatorTest,
               provider.availabilityState(availableChildKey));
     EXPECT_EQ(TileAvailabilityState::NotAvailable,
               provider.availabilityState(unavailableSiblingKey));
+}
+
+TEST(
+    TilePendingLoadCommitCoordinatorTest,
+    TerrainUploadCommitterAppliesAvailabilityToContentProviderFirst) {
+    RecordingTerrainContentProvider contentProvider;
+    RecordingTerrainProvider terrainProvider;
+
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 3;
+    update.subtreeKey = TileKey{"Geographic-TMS", 4, 5, 6};
+    update.metadataAvailability = {{0, 1, 2, 3, 4}};
+
+    TileLoadedContent content;
+    content.terrainRenderContent = true;
+    content.gltfModel = std::make_unique<GltfModel>();
+    content.quantizedMeshAvailabilityUpdates.push_back(update);
+
+    TileTerrainUploadCommitter::applyAvailabilityUpdates(
+        &contentProvider,
+        &terrainProvider,
+        content);
+
+    ASSERT_EQ(1u, contentProvider.appliedUpdates.size());
+    EXPECT_EQ(3, contentProvider.appliedUpdates[0].layerIndex);
+    EXPECT_TRUE(terrainProvider.appliedUpdates.empty());
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
@@ -595,6 +683,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitUpload(
         upload,
         &provider,
+        nullptr,
         nullptr,
         {},
         terrainCache,
@@ -679,6 +768,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     TilePendingLoadCommitCoordinator::commitTerrainUpload(
         upload,
+        nullptr,
         nullptr,
         nullptr,
         {},
@@ -769,6 +859,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         upload,
         nullptr,
         nullptr,
+        nullptr,
         {},
         terrainCache,
         lifecycle,
@@ -853,6 +944,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         upload,
         nullptr,
         nullptr,
+        nullptr,
         {},
         terrainCache,
         lifecycle,
@@ -934,6 +1026,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         upload,
         nullptr,
         nullptr,
+        nullptr,
         {},
         terrainCache,
         lifecycle,
@@ -997,6 +1090,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     TilePendingLoadCommitCoordinator::commitTerrainUpload(
         upload,
+        nullptr,
         nullptr,
         nullptr,
         {},
@@ -1160,6 +1254,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     bool resourcesDirty = false;
     TilePendingLoadCommitCoordinator::commitTerrainUpload(
         upload,
+        nullptr,
         &provider,
         nullptr,
         {},

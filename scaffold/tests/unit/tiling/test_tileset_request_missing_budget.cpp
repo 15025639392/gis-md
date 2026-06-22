@@ -1319,9 +1319,11 @@ TEST(
     update.layerIndex = 2;
     update.subtreeKey = TileKey{"Geographic-TMS", 4, 5, 6};
     update.metadataAvailability.push_back({0, 1, 2, 3, 4});
+    content.terrainRenderContent = true;
+    content.gltfModel = std::make_unique<GltfModel>();
     content.quantizedMeshAvailabilityUpdates.push_back(update);
 
-    TileTerrainUploadCommitter::applyAvailabilityUpdates(&provider, content);
+    TileTerrainUploadCommitter::applyAvailabilityUpdates(nullptr, &provider, content);
 
     ASSERT_EQ(provider.appliedAvailabilityUpdates.size(), 1u);
     EXPECT_EQ(provider.appliedAvailabilityUpdates[0].layerIndex, 2);

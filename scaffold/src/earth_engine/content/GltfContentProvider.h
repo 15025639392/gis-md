@@ -113,6 +113,8 @@ public:
     virtual bool isTerrainAvailabilityBoundaryLevel(int) const {
         return false;
     }
+    virtual void applyTerrainAvailabilityUpdates(
+        const std::vector<QuantizedMeshAvailabilityUpdate>&) {}
     virtual int estimatedRequestFanout(const TileKey&) const { return 1; }
 
     using ContentCallback = std::function<void(

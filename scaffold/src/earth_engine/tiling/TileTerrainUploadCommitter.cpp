@@ -1,5 +1,6 @@
 #include "TileTerrainUploadCommitter.h"
 
+#include "../content/GltfContentProvider.h"
 #include "RasterMappedToTilesetTile.h"
 #include "TileLoadResultMetadataApplicator.h"
 #include "TileRasterOverlayDetailsGenerator.h"
@@ -12,16 +13,24 @@
 namespace earth_engine {
 
 void TileTerrainUploadCommitter::applyAvailabilityUpdates(
+    TilesetContentProvider* contentProvider,
     TerrainProvider* terrainProvider,
     const TileLoadedContent& content) {
-    if (!terrainProvider ||
-        !content.hasGltfTerrainPayload() ||
+    if (!content.hasGltfTerrainPayload() ||
         content.quantizedMeshAvailabilityUpdates.empty()) {
         return;
     }
 
-    terrainProvider->applyAvailabilityUpdates(
-        content.quantizedMeshAvailabilityUpdates);
+    if (contentProvider && contentProvider->providesTerrainQuadtree()) {
+        contentProvider->applyTerrainAvailabilityUpdates(
+            content.quantizedMeshAvailabilityUpdates);
+        return;
+    }
+
+    if (terrainProvider) {
+        terrainProvider->applyAvailabilityUpdates(
+            content.quantizedMeshAvailabilityUpdates);
+    }
 }
 
 void TileTerrainUploadCommitter::prepareTerrainRenderContent(

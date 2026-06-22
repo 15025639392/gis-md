@@ -12,6 +12,7 @@ namespace earth_engine {
 
 class ActivatedRasterOverlay;
 class RenderDevice;
+class TilesetContentProvider;
 struct DecodedHeightmap;
 struct SurfaceTileMesh;
 struct TileKey;
@@ -23,6 +24,7 @@ struct TileTerrainUploadCommitAction {
 
 struct TileTerrainUploadCommitter {
     static void applyAvailabilityUpdates(
+        TilesetContentProvider* contentProvider,
         TerrainProvider* terrainProvider,
         const TileLoadedContent& content);
 
