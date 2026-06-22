@@ -764,7 +764,12 @@ RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
                         return source.image && !source.ancestorFallback;
                     });
     if (!haveAnyUsefulImageData) {
-        return {};
+        RasterOverlayTileProvider::RectangleCompositionResult result;
+        result.image = std::make_unique<DecodedImage>();
+        result.rectangle = Rectangle();
+        result.moreDetailAvailable =
+            RasterOverlayTile::MoreDetailAvailable::No;
+        return result;
     }
 
     double projectedWidthPerPixel = std::numeric_limits<double>::max();
@@ -1883,6 +1888,19 @@ int RasterOverlayTileProvider::processPendingUploads(
         if (it == tiles_.end()) continue;
 
         RasterOverlayTile& tile = *it->second;
+        if (upload.image &&
+            upload.image->width == 0 &&
+            upload.image->height == 0 &&
+            upload.image->channels == 0 &&
+            upload.image->pixels.empty()) {
+            tile.setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
+            tile.setRectangle(upload.rectangle);
+            tile.markLoadedWithoutTexture();
+            asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
+            ++processed;
+            continue;
+        }
+
         if (!upload.image || !isDecodedImageUploadable(*upload.image)) {
             tile.setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
             tile.setState(RasterOverlayTile::LoadState::Failed);

@@ -93,6 +93,11 @@ public:
     /// Set the GPU texture (takes ownership, called after GPU upload).
     void setTexture(std::unique_ptr<Texture> tex);
 
+    /// cesium-native: a raster request may complete with an empty image when
+    /// all quadtree source images are ancestor fallbacks. This tile is loaded
+    /// for lifecycle purposes but has no renderer resources to attach.
+    void markLoadedWithoutTexture();
+
     /// cesium-native: opaque renderer resources handle.
     /// Points to the owned GPU Texture.
     void* getRendererResources() const { return rendererResources_; }

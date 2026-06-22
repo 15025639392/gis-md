@@ -33,6 +33,12 @@ void RasterOverlayTile::setTexture(std::unique_ptr<Texture> tex) {
     }
 }
 
+void RasterOverlayTile::markLoadedWithoutTexture() {
+    texture_.reset();
+    rendererResources_ = nullptr;
+    state_ = LoadState::Loaded;
+}
+
 void RasterOverlayTile::loadInMainThread() {
     // cesium-native: transitions Loaded → Done.
     // In cesium-native, this is where GPU resources are created from image data.
