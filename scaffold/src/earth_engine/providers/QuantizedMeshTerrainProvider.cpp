@@ -1693,6 +1693,7 @@ void QuantizedMeshTerrainProvider::requestAsyncMetadataAndFinalize(
     metadataState->remaining = availabilityRequests->size();
 
     for (size_t i = 0; i < availabilityRequests->size(); ++i) {
+        requestsStarted_.fetch_add(1, std::memory_order_relaxed);
         auto metadataCallback =
             [this,
              metadataState,
@@ -1706,6 +1707,7 @@ void QuantizedMeshTerrainProvider::requestAsyncMetadataAndFinalize(
              statusCode,
              i](int metadataStatusCode,
                 std::vector<uint8_t> metadataBody) mutable {
+                requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
                 std::vector<std::vector<uint8_t>> metadataBodies;
                 bool shouldFinalize = false;
                 {

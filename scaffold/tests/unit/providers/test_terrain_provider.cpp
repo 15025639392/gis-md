@@ -1752,14 +1752,14 @@ TEST(QuantizedMeshTerrainProviderTest, LoadsUnderlyingLayerAvailabilityWithTileL
     EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
     ASSERT_NE(nullptr, completed.gltfModel);
     for (int i = 0;
-         i < 200 && provider.requestDiagnostics().requestsCompleted == 0;
+         i < 200 && provider.requestDiagnostics().requestsCompleted < 2;
          ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     const ProviderRequestDiagnostics requestDiag =
         provider.requestDiagnostics();
-    EXPECT_EQ(1, requestDiag.requestsStarted);
-    EXPECT_EQ(1, requestDiag.requestsCompleted);
+    EXPECT_EQ(2, requestDiag.requestsStarted);
+    EXPECT_EQ(2, requestDiag.requestsCompleted);
     EXPECT_EQ(0, requestDiag.activeWorkerBlockingRequests);
     EXPECT_EQ(0, requestDiag.peakWorkerBlockingRequests);
 
@@ -2458,6 +2458,7 @@ TEST(QuantizedMeshTerrainProviderTest, FetchesUnderlyingMetadataViaAsyncBridge) 
     EXPECT_NE(std::string::npos,
               bridge.pendingUrl(0).find("parentTiles/0/0/0.terrain"));
     ProviderRequestDiagnostics metadataDiag = provider.requestDiagnostics();
+    EXPECT_EQ(2, metadataDiag.requestsStarted);
     EXPECT_EQ(0, metadataDiag.requestsCompleted);
     EXPECT_EQ(0, metadataDiag.activeWorkerBlockingRequests);
     EXPECT_EQ(0, metadataDiag.peakWorkerBlockingRequests);
@@ -2481,7 +2482,8 @@ TEST(QuantizedMeshTerrainProviderTest, FetchesUnderlyingMetadataViaAsyncBridge) 
         1u,
         completed.quantizedMeshAvailabilityUpdates.front()
             .metadataAvailability.size());
-    EXPECT_EQ(1, doneDiag.requestsCompleted);
+    EXPECT_EQ(2, doneDiag.requestsStarted);
+    EXPECT_EQ(2, doneDiag.requestsCompleted);
     EXPECT_EQ(0, doneDiag.activeWorkerBlockingRequests);
     EXPECT_EQ(0, doneDiag.peakWorkerBlockingRequests);
 
