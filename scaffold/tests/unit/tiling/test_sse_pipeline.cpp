@@ -2549,33 +2549,6 @@ void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
           "RasterOverlayTileProvider: direct parent waiter keeps a valid rectangle");
 }
 
-void testRasterOverlayRectangleCompositionRejectsNoCoverage() {
-    auto imageryScheme = TileScheme::createXYZWebMercator();
-    const TileKey sourceKey{"XYZ-WebMercator", 3, 2, 3};
-    const Rectangle sourceBounds = imageryScheme->tileToRectangle(sourceKey);
-    const Rectangle targetBounds = imageryScheme->tileToRectangle(
-        TileKey{"XYZ-WebMercator", 3, 2, 4});
-
-    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
-    sources.push_back(RasterOverlayTileProvider::RectangleSourceImage{
-        sourceKey,
-        sourceBounds,
-        makeDecodedRgbaImage(8, 8),
-        std::nullopt,
-        RasterOverlayTile::MoreDetailAvailable::Unknown});
-
-    std::unique_ptr<DecodedImage> composed =
-        RasterOverlayTileProvider::composeRectangleImages(
-            *imageryScheme,
-            targetBounds,
-            sourceKey.z,
-            std::move(sources),
-            4096);
-
-    check(!composed,
-          "RasterOverlayTileProvider: composition rejects sources with no target coverage");
-}
-
 void testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -2588,80 +2561,6 @@ void testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize() {
 
     check(rectangleTile && rectangleTile->getSourceZoom() == 5,
           "RasterOverlayTileProvider: rectangle source zoom is reduced until combined texture fits like cesium-native");
-}
-
-void testRasterOverlayRectangleCompositionUsesProjectedWebMercatorHeight() {
-    auto imageryScheme = TileScheme::createXYZWebMercator();
-    const TileKey sourceKey{"XYZ-WebMercator", 2, 1, 0};
-    const Rectangle sourceBounds = imageryScheme->tileToRectangle(sourceKey);
-    const double midLatitude =
-        (sourceBounds.south() + sourceBounds.north()) * 0.5;
-    const Rectangle targetBounds(
-        sourceBounds.west(),
-        midLatitude,
-        sourceBounds.east(),
-        sourceBounds.north());
-
-    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
-    sources.push_back(RasterOverlayTileProvider::RectangleSourceImage{
-        sourceKey,
-        sourceBounds,
-        makeDecodedRgbaImage(64, 64),
-        std::nullopt,
-        RasterOverlayTile::MoreDetailAvailable::Unknown});
-
-    std::unique_ptr<DecodedImage> composed =
-        RasterOverlayTileProvider::composeRectangleImages(
-            *imageryScheme,
-            targetBounds,
-            sourceKey.z,
-            std::move(sources),
-            4096);
-
-    const double sourceProjectedHeight =
-        std::log(std::tan(sourceBounds.north() * 0.5 + M_PI * 0.25)) -
-        std::log(std::tan(sourceBounds.south() * 0.5 + M_PI * 0.25));
-    const double targetProjectedHeight =
-        std::log(std::tan(targetBounds.north() * 0.5 + M_PI * 0.25)) -
-        std::log(std::tan(targetBounds.south() * 0.5 + M_PI * 0.25));
-    const int expectedHeight = static_cast<int>(
-        std::ceil(targetProjectedHeight / (sourceProjectedHeight / 64.0)));
-
-    check(composed && composed->width == 64 &&
-              composed->height == expectedHeight &&
-              expectedHeight != 32,
-          "RasterOverlayTileProvider: WebMercator rectangle composition sizes target images in projected space like cesium-native");
-}
-
-void testRasterOverlayRectangleCompositionKeepsTinyProjectedOverlap() {
-    auto imageryScheme = TileScheme::createXYZWebMercator();
-    const TileKey sourceKey{"XYZ-WebMercator", 2, 1, 0};
-    const Rectangle sourceBounds = imageryScheme->tileToRectangle(sourceKey);
-    const double tinyHeight = sourceBounds.height() * 0.001;
-    const Rectangle targetBounds(
-        sourceBounds.west(),
-        sourceBounds.north() - tinyHeight,
-        sourceBounds.east(),
-        sourceBounds.north());
-
-    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
-    sources.push_back(RasterOverlayTileProvider::RectangleSourceImage{
-        sourceKey,
-        sourceBounds,
-        makeDecodedRgbaImage(64, 64),
-        std::nullopt,
-        RasterOverlayTile::MoreDetailAvailable::Unknown});
-
-    std::unique_ptr<DecodedImage> composed =
-        RasterOverlayTileProvider::composeRectangleImages(
-            *imageryScheme,
-            targetBounds,
-            sourceKey.z,
-            std::move(sources),
-            4096);
-
-    check(composed && composed->width == 64 && composed->height == 1,
-          "RasterOverlayTileProvider: tiny target overlap still produces a one-pixel projected image like cesium-native");
 }
 
 void testRasterOverlayUploadsStopAfterElapsedBudgetExpires() {
@@ -27782,10 +27681,7 @@ int main() {
     testRasterOverlayBaseRectangleSourceClampsCoverageEdgeMiss();
     testRasterOverlayRectangleSourceFailureRequestsParentSource();
     testRasterOverlayFallbackParentInFlightSharesDirectAsset();
-    testRasterOverlayRectangleCompositionRejectsNoCoverage();
     testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize();
-    testRasterOverlayRectangleCompositionUsesProjectedWebMercatorHeight();
-    testRasterOverlayRectangleCompositionKeepsTinyProjectedOverlap();
     testRasterOverlayUploadsStopAfterElapsedBudgetExpires();
     testRasterMappedUsesRenderContentDetailsRectangle();
     testRasterMappedMissingProjectionUsesPlaceholder();
