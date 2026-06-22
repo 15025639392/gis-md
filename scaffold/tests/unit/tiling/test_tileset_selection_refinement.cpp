@@ -17,6 +17,8 @@
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -2123,6 +2125,86 @@ TEST(
     root->content.loadState = TileLoadState::Done;
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     EXPECT_EQ(4u, root->children.size());
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
+    UnderlyingLayerAvailabilityBoundaryWaitsForLoadedTerrainLikeCesiumNative) {
+    const std::filesystem::path rootPath =
+        std::filesystem::temp_directory_path() /
+        "earth_md_qm_underlying_boundary_refinement_test";
+    std::filesystem::remove_all(rootPath);
+    std::filesystem::create_directories(rootPath / "parent");
+
+    const std::string parentLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["parentTiles/{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "metadataAvailability": 1
+    })json";
+    {
+        std::ofstream out(rootPath / "parent" / "layer.json");
+        out << parentLayerJson;
+    }
+
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string childLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["childTiles/{z}/{x}/{y}.terrain"],
+      "parentUrl": "../parent",
+      "maxzoom": 4,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+
+    ASSERT_TRUE(provider->configureFromLayerJson(
+        childLayerJson,
+        "file://" + (rootPath / "child" / "layer.json").generic_string()));
+    QuantizedMeshTerrainProvider* providerPtr = provider.get();
+
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    root->content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+
+    for (TileLoadState state : {
+             TileLoadState::Unloaded,
+             TileLoadState::ContentLoading,
+             TileLoadState::FailedTemporarily}) {
+        root->children.clear();
+        root->content.loadState = state;
+        TilesetTestAccess::ensureTileChildren(tileset, *root);
+        EXPECT_TRUE(root->children.empty());
+    }
+
+    root->content.loadState = TileLoadState::ContentLoaded;
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    EXPECT_TRUE(root->children.empty());
+
+    QuantizedMeshAvailabilityUpdate parentSubtreeUpdate;
+    parentSubtreeUpdate.layerIndex = 1;
+    parentSubtreeUpdate.subtreeKey = rootKey;
+    parentSubtreeUpdate.metadataAvailability = {{0, 0, 0, 0, 0}};
+    providerPtr->applyAvailabilityUpdates({parentSubtreeUpdate});
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    EXPECT_EQ(4u, root->children.size());
+
+    std::filesystem::remove_all(rootPath);
 }
 
 TEST(
