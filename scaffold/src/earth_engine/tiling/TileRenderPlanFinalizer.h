@@ -54,8 +54,7 @@ struct TileRenderPlanFinalizer {
             bool usesAncestorFallback = false;
 
             if (selectedThisFrame &&
-                !selectedTile->content.renderContent.hasGltfContent() &&
-                !selectedTile->hasSurfaceDrawable()) {
+                !canBuildRenderEntryDirectly(*selectedTile)) {
                 TilesetTile* renderableAncestor =
                     findNearestRenderableAncestor(
                         *selectedTile,
@@ -99,8 +98,7 @@ struct TileRenderPlanFinalizer {
             }
 
             bool allowSynchronousMeshPrep = true;
-            if (!commandTile->content.renderContent.hasGltfContent() &&
-                !commandTile->hasSurfaceDrawable()) {
+            if (needsSurfaceGeometryPrep(*commandTile)) {
                 if (renderPrepBudgetRemaining > 0) {
                     --renderPrepBudgetRemaining;
                     ++plan.renderEntrySynchronousPrepCount;
@@ -132,9 +130,9 @@ struct TileRenderPlanFinalizer {
             if (usesAncestorFallback) {
                 entry.reason = TileRenderEntryReason::AncestorFallback;
                 ++plan.renderEntryAncestorFallbackCount;
-            } else if (!commandTile->content.renderContent.hasGltfContent() &&
-                       !commandTile->hasSurfaceDrawable() &&
-                       allowSynchronousMeshPrep) {
+            } else if (
+                needsSurfaceGeometryPrep(*commandTile) &&
+                allowSynchronousMeshPrep) {
                 entry.reason = TileRenderEntryReason::SynchronousPrep;
             }
             plan.renderEntries.push_back(std::move(entry));
@@ -158,6 +156,16 @@ struct TileRenderPlanFinalizer {
     }
 
 private:
+    static bool canBuildRenderEntryDirectly(const TilesetTile& tile) {
+        return tile.content.renderContent.hasGltfContent() ||
+               tile.hasSurfaceDrawable();
+    }
+
+    static bool needsSurfaceGeometryPrep(const TilesetTile& tile) {
+        return !tile.content.renderContent.hasGltfContent() &&
+               !tile.hasSurfaceDrawable();
+    }
+
     static std::optional<std::array<float, 4>> clipUvForDescendantBounds(
         const Rectangle& ancestorBounds,
         const Rectangle& descendantBounds) {

@@ -12934,6 +12934,47 @@ void testTileRenderPlanFinalizerKeepsSurfaceEntryWithoutCommandBinding() {
           "TileRenderPlanFinalizer: surface entries stay planned when imagery command binding is not ready");
 }
 
+void testTileRenderPlanFinalizerKeepsGltfRenderContentDirect() {
+    const TileKey rootKey{"test", 0, 0, 0};
+    TilesetTile root(rootKey, Rectangle{});
+    root.content.renderContent.prepareGltfContent(
+        makeTexturedTriangleGltfModel(),
+        Mat4::identity());
+    root.content.contentKind = TileContentKind::Render;
+    root.content.loadState = TileLoadState::ContentLoaded;
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(rootKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            true,
+            0,
+            1},
+        [&root](const TileKey& key) -> TilesetTile* {
+            return key == root.key ? &root : nullptr;
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return tile.hasSurfaceDrawable();
+        });
+
+    check(plan.renderEntries.size() == 1 &&
+              plan.renderEntries.front().selectedKey == rootKey &&
+              plan.renderEntries.front().renderKey == rootKey &&
+              plan.renderEntries.front().reason ==
+                  TileRenderEntryReason::Direct &&
+              !plan.renderEntries.front().usesAncestorFallback &&
+              plan.renderEntries.front().allowSynchronousMeshPrep &&
+              plan.renderEntryAncestorFallbackCount == 0 &&
+              plan.renderEntrySynchronousPrepCount == 0 &&
+              plan.renderEntryDeferredPrepCount == 0,
+          "TileRenderPlanFinalizer: glTF render content stays direct for render-resource prep");
+}
+
 void testTileRenderPlanFinalizerPrefersFullGeometryOverEarlierClip() {
     const TileKey parentKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 0, 0};
@@ -27571,6 +27612,7 @@ int main() {
     testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery();
     testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback();
     testTileRenderPlanFinalizerKeepsSurfaceEntryWithoutCommandBinding();
+    testTileRenderPlanFinalizerKeepsGltfRenderContentDirect();
     testTileRenderPlanFinalizerPrefersFullGeometryOverEarlierClip();
     testTileRenderPlanFinalizerCountsRootPrepOnce();
     testTileRenderPlanFinalizerDefersFallbackPrepDuringInteraction();
