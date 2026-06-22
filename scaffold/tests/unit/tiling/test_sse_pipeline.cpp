@@ -2258,18 +2258,18 @@ void testRasterOverlayProviderDirectTileForExactProviderRectangle() {
     provider.setFrameNumber(1);
     auto mappedTile = provider.getTile(projectForProvider(provider, bounds), 512.0, 512.0);
     check(mappedTile != nullptr,
-          "RasterOverlayTileProvider: exact provider rectangle creates mapping tile");
-    check(mappedTile && mappedTile->isRectangleTile(),
-          "RasterOverlayTileProvider: exact provider rectangle uses rectangle mapping tile");
+          "RasterOverlayTileProvider: exact provider rectangle creates a tile");
+    check(mappedTile && !mappedTile->isRectangleTile(),
+          "RasterOverlayTileProvider: exact provider rectangle uses direct quadtree tile");
     check(mappedTile && mappedTile->getTileID() == key,
-          "RasterOverlayTileProvider: rectangle mapping tile preserves representative quadtree key");
-    check(mappedTile && mappedTile->getCacheKey().find("rectangle/") == 0,
-          "RasterOverlayTileProvider: rectangle mapping tile uses rectangle cache key");
+          "RasterOverlayTileProvider: direct fast path preserves quadtree key");
+    check(mappedTile && mappedTile->getCacheKey().find("XYZ-WebMercator/3/4/2") == 0,
+          "RasterOverlayTileProvider: direct fast path uses quadtree cache key");
     check(provider.getCachedTileCount() == 1,
-          "RasterOverlayTileProvider: exact rectangle path creates one mapping cache tile");
+          "RasterOverlayTileProvider: exact rectangle path creates one direct cache tile");
     auto directTile = provider.getTile(key);
-    check(directTile && directTile != mappedTile,
-          "RasterOverlayTileProvider: exact rectangle mapping is distinct from direct quadtree tile");
+    check(directTile && directTile == mappedTile,
+          "RasterOverlayTileProvider: exact rectangle path reuses direct quadtree tile");
 }
 
 class PendingRectangleImageryProvider final : public ImageryProvider {

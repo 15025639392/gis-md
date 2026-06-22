@@ -416,9 +416,8 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomFollowsCesiumTargetScreenPix
 
     auto matchingTile = provider.getTile(projectForProvider(provider, z3Bounds), 512.0, 512.0);
     ASSERT_NE(nullptr, matchingTile);
-    EXPECT_TRUE(matchingTile->isRectangleTile());
+    EXPECT_FALSE(matchingTile->isRectangleTile());
     EXPECT_EQ((TileKey{scheme->id(), 3, 2, 3}), matchingTile->getTileID());
-    EXPECT_EQ(3, matchingTile->getSourceZoom());
 
     auto widerTile = provider.getTile(projectForProvider(provider, z3Bounds), 1024.0, 256.0);
     ASSERT_NE(nullptr, widerTile);
@@ -436,9 +435,8 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomFollowsCesiumTargetScreenPix
     RasterOverlayTileProvider maxClampedProvider(imagery, *scheme, nullptr);
     auto maxClampedTile = maxClampedProvider.getTile(projectForProvider(maxClampedProvider, z3Bounds), 1024.0, 256.0);
     ASSERT_NE(nullptr, maxClampedTile);
-    EXPECT_TRUE(maxClampedTile->isRectangleTile());
+    EXPECT_FALSE(maxClampedTile->isRectangleTile());
     EXPECT_EQ((TileKey{scheme->id(), 3, 2, 3}), maxClampedTile->getTileID());
-    EXPECT_EQ(3, maxClampedTile->getSourceZoom());
 }
 
 TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayLevelRange) {
@@ -477,9 +475,8 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayLevelRange) {
     maxProvider.setOwner(&maxOverlay);
     auto maxTile = maxProvider.getTile(projectForProvider(maxProvider, z3Bounds), 1024.0, 256.0);
     ASSERT_NE(nullptr, maxTile);
-    EXPECT_TRUE(maxTile->isRectangleTile());
+    EXPECT_FALSE(maxTile->isRectangleTile());
     EXPECT_EQ((TileKey{scheme->id(), 3, 2, 3}), maxTile->getTileID());
-    EXPECT_EQ(3, maxTile->getSourceZoom());
 }
 
 TEST(RasterOverlayLifecycleTest, DirectTileCreationRejectsUnsupportedProviderTiles) {
@@ -650,7 +647,7 @@ TEST(RasterOverlayLifecycleTest, DirectAlignedSingleSourceUploadsWithoutResampli
     auto rectangleMappedTile = provider.getTile(projectForProvider(provider, sourceBounds), 8.0, 8.0);
 
     ASSERT_NE(nullptr, rectangleMappedTile);
-    EXPECT_TRUE(rectangleMappedTile->isRectangleTile());
+    EXPECT_FALSE(rectangleMappedTile->isRectangleTile());
     EXPECT_EQ(sourceKey, rectangleMappedTile->getTileID());
     EXPECT_EQ(projectForProvider(provider, sourceBounds),
               rectangleMappedTile->getRectangle());
@@ -810,7 +807,7 @@ TEST(RasterOverlayLifecycleTest, RectangleTileKeepsGeometryBoundsAndTargetPixels
 }
 
 TEST(RasterOverlayLifecycleTest,
-     ExactProviderRectangleCreatesDistinctMappingTileLikeCesiumNative) {
+     ExactProviderRectangleUsesDirectQuadtreeTileLikeCesiumNative) {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
@@ -821,20 +818,20 @@ TEST(RasterOverlayLifecycleTest,
     auto mappedTile = provider.getTile(projectForProvider(provider, bounds), 512.0, 512.0);
 
     ASSERT_NE(nullptr, mappedTile);
-    EXPECT_TRUE(mappedTile->isRectangleTile());
+    EXPECT_FALSE(mappedTile->isRectangleTile());
     EXPECT_EQ(key, mappedTile->getTileID());
     EXPECT_EQ(projectForProvider(provider, bounds), mappedTile->getRectangle());
-    EXPECT_EQ(0u, mappedTile->getCacheKey().find("rectangle/"));
+    EXPECT_EQ("XYZ-WebMercator/3/4/2", mappedTile->getCacheKey());
     EXPECT_EQ(1, provider.getCachedTileCount());
 
     auto directTile = provider.getTile(key);
     ASSERT_NE(nullptr, directTile);
-    EXPECT_NE(directTile, mappedTile);
+    EXPECT_EQ(directTile, mappedTile);
     EXPECT_FALSE(directTile->isRectangleTile());
 }
 
 TEST(RasterOverlayLifecycleTest,
-     ExactIntermediateRectangleCreatesDistinctMappingTileLikeCesiumNative) {
+     ExactIntermediateRectangleUsesDirectSourceTileLikeCesiumNative) {
     ConfigurableImageryProvider imagery;
     imagery.tileWidthValue = 256;
     imagery.tileHeightValue = 256;
@@ -847,14 +844,13 @@ TEST(RasterOverlayLifecycleTest,
     auto mappedTile = provider.getTile(projectForProvider(provider, bounds), 512.0, 512.0);
 
     ASSERT_NE(nullptr, mappedTile);
-    EXPECT_TRUE(mappedTile->isRectangleTile());
-    EXPECT_EQ(key, mappedTile->getTileID());
-    EXPECT_EQ(0u, mappedTile->getCacheKey().find("rectangle/"));
+    EXPECT_FALSE(mappedTile->isRectangleTile());
+    EXPECT_NE(0u, mappedTile->getCacheKey().find("rectangle/"));
     EXPECT_EQ(1, provider.getCachedTileCount());
 
-    auto directTile = provider.getTile(key);
+    auto directTile = provider.getTile(mappedTile->getTileID());
     ASSERT_NE(nullptr, directTile);
-    EXPECT_NE(directTile, mappedTile);
+    EXPECT_EQ(directTile, mappedTile);
     EXPECT_FALSE(directTile->isRectangleTile());
 }
 
@@ -886,8 +882,8 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayMaximumTextur
     auto constrainedTile =
         constrainedProvider.getTile(projectForProvider(constrainedProvider, rootBounds), 131072.0, 131072.0);
     ASSERT_NE(nullptr, constrainedTile);
-    EXPECT_TRUE(constrainedTile->isRectangleTile());
-    EXPECT_EQ(0, constrainedTile->getSourceZoom());
+    EXPECT_FALSE(constrainedTile->isRectangleTile());
+    EXPECT_EQ((TileKey{scheme->id(), 0, 0, 0}), constrainedTile->getTileID());
 
     auto ownedImagery = std::make_unique<ConfigurableImageryProvider>();
     ownedImagery->tileWidthValue = 256;
@@ -908,12 +904,12 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayMaximumTextur
     EXPECT_EQ(256, ownerProvider.getMaximumTextureSize());
     auto ownerTile = ownerProvider.getTile(projectForProvider(ownerProvider, rootBounds), 131072.0, 131072.0);
     ASSERT_NE(nullptr, ownerTile);
-    EXPECT_TRUE(ownerTile->isRectangleTile());
-    EXPECT_EQ(0, ownerTile->getSourceZoom());
+    EXPECT_FALSE(ownerTile->isRectangleTile());
+    EXPECT_EQ((TileKey{scheme->id(), 0, 0, 0}), ownerTile->getTileID());
 }
 
 TEST(RasterOverlayLifecycleTest,
-     ExactRootRectangleLoadsThroughMappingTileAndSharedSourceLikeCesiumNative) {
+     ExactRootRectangleLoadsThroughDirectQuadtreeTileLikeCesiumNative) {
     RgbImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     auto uploader = std::make_unique<CountingRasterUploader>();
@@ -924,9 +920,9 @@ TEST(RasterOverlayLifecycleTest,
     const Rectangle rootBounds = scheme->tileToRectangle(rootKey);
     auto tile = provider.getTile(projectForProvider(provider, rootBounds), 8.0, 8.0);
     ASSERT_NE(nullptr, tile);
-    EXPECT_TRUE(tile->isRectangleTile());
+    EXPECT_FALSE(tile->isRectangleTile());
     EXPECT_EQ(rootKey, tile->getTileID());
-    EXPECT_EQ(0u, tile->getCacheKey().find("rectangle/"));
+    EXPECT_EQ("XYZ-WebMercator/0/0/0", tile->getCacheKey());
 
     ASSERT_TRUE(provider.loadTile(*tile));
     EXPECT_EQ(1, provider.processPendingUploads(false));
@@ -1141,6 +1137,29 @@ TEST(RasterOverlayLifecycleTest, DirectAndRectangleTilesShareProviderSourceTileA
     EXPECT_EQ(2, provider.processPendingUploads(false));
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, directTile->getState());
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, rectangleTile->getState());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     ExactProviderRectangleReusesDirectQuadtreeTileLikeCesiumNative) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+
+    auto rectangleTile = provider.getTile(
+        projectForProvider(provider, sourceBounds),
+        512.0,
+        512.0);
+    auto directTile = provider.getTile(sourceKey);
+    ASSERT_NE(nullptr, rectangleTile);
+    ASSERT_NE(nullptr, directTile);
+
+    EXPECT_EQ(directTile.get(), rectangleTile.get());
+    EXPECT_FALSE(rectangleTile->isRectangleTile());
+    EXPECT_EQ(sourceKey, rectangleTile->getTileID());
+    EXPECT_EQ(1, provider.getCachedTileCount());
 }
 
 TEST(RasterOverlayLifecycleTest, DirectTileCallbackAfterProviderDestructionIsIgnored) {
@@ -1406,7 +1425,7 @@ TEST(RasterOverlayLifecycleTest, DirectAncestorFallbackUsesParentTileLikeCesiumN
 
     auto directTile = provider.getTile(projectForProvider(provider, bounds), 512.0, 512.0);
     ASSERT_NE(nullptr, directTile);
-    EXPECT_TRUE(directTile->isRectangleTile());
+    EXPECT_FALSE(directTile->isRectangleTile());
     EXPECT_EQ(key, directTile->getTileID());
 
     ASSERT_TRUE(provider.loadTile(*directTile));
@@ -1584,7 +1603,7 @@ TEST(RasterOverlayLifecycleTest, RectangleAtMaximumSourceZoomReportsNoMoreDetail
 
     auto tile = provider.getTile(projectForProvider(provider, bounds), 512.0, 512.0);
     ASSERT_NE(nullptr, tile);
-    EXPECT_TRUE(tile->isRectangleTile());
+    EXPECT_FALSE(tile->isRectangleTile());
     EXPECT_EQ(key, tile->getTileID());
 
     ASSERT_TRUE(provider.loadTile(*tile));

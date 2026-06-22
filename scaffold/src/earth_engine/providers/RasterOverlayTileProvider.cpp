@@ -1550,6 +1550,17 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
         getMinimumLevel(),
         getMaximumLevel());
 
+    if (sourcePlan.sourceKeys.size() == 1) {
+        const TileKey& sourceKey = sourcePlan.sourceKeys.front();
+        const Rectangle sourceTileBounds = scheme_.tileToRectangle(sourceKey);
+        if (rectanglesEqualForDirectRasterTile(geometryBounds,
+                                               sourceTileBounds) &&
+            rectanglesEqualForDirectRasterTile(sourceBounds,
+                                               sourceTileBounds)) {
+            return getTile(sourceKey);
+        }
+    }
+
     const std::string ck = rectangleTileCacheKey(
         scheme_, providerGeometryBounds, sourcePlan.sourceZoom);
     const double centerLng =
