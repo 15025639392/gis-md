@@ -643,6 +643,38 @@ TEST(RasterOverlayLifecycleTest, RectangleCoverageMissClampsToNearestCoverageEdg
     }
 }
 
+TEST(RasterOverlayLifecycleTest,
+     NonBaseOverlayCoverageMissDoesNotClampOrRequestSources) {
+    ParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const Rectangle coverage = scheme->tileToRectangle(
+        TileKey{scheme->id(), 3, 2, 3});
+    const Rectangle outsideCoverage = scheme->tileToRectangle(
+        TileKey{scheme->id(), 3, 2, 5});
+    RasterOverlay::Options options;
+    options.coverageRectangle = coverage;
+    options.role = RasterOverlayRole::AnnotationOverlay;
+    options.fallbackPolicy = RasterOverlayFallbackPolicy::SkipUntilReady;
+    options.blocksCompleteRenderable = false;
+    RasterOverlay overlay(
+        std::make_unique<NullImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        options);
+    provider.setOwner(&overlay);
+
+    RasterOverlayTileProvider::RasterTileMapping mapping =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, outsideCoverage),
+            512.0,
+            512.0);
+    EXPECT_EQ(nullptr, mapping.tile);
+    EXPECT_FALSE(mapping.directTile);
+    EXPECT_TRUE(imagery.requestedKeys.empty());
+    EXPECT_EQ(0, provider.getCachedTileCount());
+}
+
 TEST(RasterOverlayLifecycleTest, DirectAlignedSingleSourceUploadsWithoutResampling) {
     RgbImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

@@ -377,8 +377,10 @@ Rectangle expandClampedLineIntoCoverage(const Rectangle& bounds,
     return Rectangle(west, south, east, north);
 }
 
-Rectangle mapGeometryBoundsToImageryCoverage(const Rectangle& geometryBounds,
-                                             const Rectangle& coverage) {
+std::optional<Rectangle> mapGeometryBoundsToImageryCoverage(
+    const Rectangle& geometryBounds,
+    const Rectangle& coverage,
+    bool clampOutsideCoverage) {
     if (coverage.contains(geometryBounds)) {
         return geometryBounds;
     }
@@ -387,6 +389,10 @@ Rectangle mapGeometryBoundsToImageryCoverage(const Rectangle& geometryBounds,
         geometryBounds.computeIntersection(coverage);
     if (intersection) {
         return *intersection;
+    }
+
+    if (!clampOutsideCoverage) {
+        return std::nullopt;
     }
 
     // cesium-native QuadtreeRasterOverlayTileProvider maps base imagery with
@@ -417,6 +423,10 @@ Rectangle mapGeometryBoundsToImageryCoverage(const Rectangle& geometryBounds,
     return expandClampedLineIntoCoverage(
         Rectangle(west, south, east, north),
         coverage);
+}
+
+bool shouldClampOutsideCoverage(const RasterOverlay* owner) {
+    return owner == nullptr || owner->role() == RasterOverlayRole::BaseImagery;
 }
 
 bool isDecodedImageUploadable(const DecodedImage& image) {
@@ -1744,15 +1754,21 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
 
     const Rectangle geometryBounds =
         unprojectProviderToGeographic(providerGeometryBounds, projection_);
-    const Rectangle sourceBounds =
-        mapGeometryBoundsToImageryCoverage(geometryBounds, coverageRectangle_);
+    const std::optional<Rectangle> sourceBounds =
+        mapGeometryBoundsToImageryCoverage(
+            geometryBounds,
+            coverageRectangle_,
+            shouldClampOutsideCoverage(owner_));
+    if (!sourceBounds) {
+        return {nullptr, false};
+    }
 
     QuadtreeSourcePlan sourcePlan = buildQuadtreeSourcePlan(
         scheme_,
         provider_,
         textureUploader_.get(),
         geometryBounds,
-        sourceBounds,
+        *sourceBounds,
         targetScreenPixelsX,
         targetScreenPixelsY,
         maximumScreenSpaceError_,
@@ -1769,7 +1785,7 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
         const Rectangle sourceTileBounds = scheme_.tileToRectangle(sourceKey);
         if (rectanglesEqualForDirectRasterTile(geometryBounds,
                                                sourceTileBounds) &&
-            rectanglesEqualForDirectRasterTile(sourceBounds,
+            rectanglesEqualForDirectRasterTile(*sourceBounds,
                                                sourceTileBounds)) {
             return {getTile(sourceKey), true};
         }
@@ -1951,15 +1967,24 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
     const Rectangle outputBounds = tile.getRectangle();
     const Rectangle targetBounds =
         unprojectProviderToGeographic(outputBounds, projection_);
-    const Rectangle sourceBounds =
-        mapGeometryBoundsToImageryCoverage(targetBounds, coverageRectangle_);
+    const std::optional<Rectangle> sourceBounds =
+        mapGeometryBoundsToImageryCoverage(
+            targetBounds,
+            coverageRectangle_,
+            shouldClampOutsideCoverage(owner_));
+    if (!sourceBounds) {
+        logAndroidRasterPipeline("coverage-miss", ck, 0, 0);
+        tile.setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
+        tile.setState(RasterOverlayTile::LoadState::Failed);
+        return false;
+    }
 
     QuadtreeSourcePlan sourcePlan = buildQuadtreeSourcePlan(
         scheme_,
         provider_,
         textureUploader_.get(),
         targetBounds,
-        sourceBounds,
+        *sourceBounds,
         tile.getTargetScreenPixelsX(),
         tile.getTargetScreenPixelsY(),
         maximumScreenSpaceError_,
@@ -1981,7 +2006,7 @@ bool RasterOverlayTileProvider::loadCompositeTile(RasterOverlayTile& tile,
     return loadMappedTile(
         tile,
         std::move(sourcePlan),
-        sourceBounds,
+        *sourceBounds,
         outputBounds,
         ck,
         budget);
