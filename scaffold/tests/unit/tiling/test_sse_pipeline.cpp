@@ -1186,6 +1186,35 @@ std::unique_ptr<GltfModel> makeTriangleGltfModel() {
     return model;
 }
 
+std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
+    const Rectangle& rectangle) {
+    auto model = std::make_unique<GltfModel>();
+    GltfPrimitive primitive;
+    primitive.vertices.resize(4);
+    primitive.vertices[0].positionEcef = Vec3(0.0, 0.0, 0.0);
+    primitive.vertices[1].positionEcef = Vec3(2.0, 0.0, 0.0);
+    primitive.vertices[2].positionEcef = Vec3(0.0, 2.0, 0.0);
+    primitive.vertices[3].positionEcef = Vec3(2.0, 2.0, 0.0);
+    for (SurfaceVertex& vertex : primitive.vertices) {
+        vertex.normalEcef = Vec3::unitZ();
+    }
+    primitive.vertices[0].uv = {0.0f, 0.0f};
+    primitive.vertices[1].uv = {1.0f, 0.0f};
+    primitive.vertices[2].uv = {0.0f, 1.0f};
+    primitive.vertices[3].uv = {1.0f, 1.0f};
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 1.0f},
+        std::array<float, 2>{1.0f, 1.0f}};
+    primitive.indices = {0, 1, 2, 1, 3, 2};
+    primitive.runtime.baseVertices = primitive.vertices;
+    primitive.runtime.hasNormals = true;
+    model->primitives.push_back(std::move(primitive));
+    model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    return model;
+}
+
 GltfPrimitive makeTransparentTrianglePrimitiveAt(const Vec3& center) {
     GltfPrimitive primitive;
     primitive.vertices.resize(3);
@@ -26541,6 +26570,79 @@ void testTilesetUpsampledChildFinalizesContentLoadedParent() {
           "Tileset: upsampled child becomes renderable after finalized-parent upsample");
 }
 
+void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    SparseTerrainProvider* rawProvider = provider.get();
+    DummyRenderDevice device;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(provider),
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: glTF-parent upsample root tile is created");
+    if (!root) return;
+
+    root->content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(root->bounds),
+        Mat4::identity());
+    root->content.renderContent.setMeshReady(true);
+    root->content.contentKind = TileContentKind::Render;
+    root->content.loadState = TileLoadState::Done;
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(root->children.size() == 4,
+          "Tileset: glTF-parent upsample setup creates partial-availability children");
+    if (root->children.size() < 2 || !root->children[1]) return;
+
+    TilesetTile* child = root->children[1];
+    check(child->content.upsampledFromParent,
+          "Tileset: glTF-parent child is marked as upsampled terrain");
+
+    TilesetTestAccess::requestMissingTile(tileset, child->key);
+    check(child->content.loadState == TileLoadState::ContentLoading &&
+              tileset.loadDiagnostics().pendingTerrainUploads == 1 &&
+              rawProvider->requestCount == 0,
+          "Tileset: glTF-parent child enters local terrain upload without provider request");
+
+    TilesetTestAccess::processPendingUploads(tileset);
+    const GltfModel* childModel =
+        child->content.renderContent.gltfModelForRead();
+    check(child->content.loadState == TileLoadState::Done &&
+              child->content.renderContent.hasGltfContent() &&
+              child->content.renderContent.hasGltfResources() &&
+              !child->content.renderContent.hasSurfaceMesh() &&
+              TilesetTestAccess::isTileRenderable(tileset, *child),
+          "Tileset: glTF-parent upsampled child becomes renderable as glTF content");
+    if (!childModel || childModel->primitives.empty()) return;
+
+    bool clippedToSouthEast = true;
+    const GltfPrimitive& primitive = childModel->primitives.front();
+    for (const SurfaceVertex& vertex : primitive.vertices) {
+        clippedToSouthEast =
+            clippedToSouthEast &&
+            vertex.uv[0] >= 0.5f &&
+            vertex.uv[1] <= 0.5f;
+    }
+    check(clippedToSouthEast,
+          "Tileset: glTF-parent upsample clips child geometry to child raster quadrant");
+
+    const Rectangle* childOverlay =
+        childModel->rasterOverlayDetails.findRectangleForOverlayProjection(
+            RasterOverlayProjection::Geographic);
+    check(childOverlay &&
+              std::abs(childOverlay->west() - child->bounds.west()) < 1e-12 &&
+              std::abs(childOverlay->south() - child->bounds.south()) < 1e-12 &&
+              std::abs(childOverlay->east() - child->bounds.east()) < 1e-12 &&
+              std::abs(childOverlay->north() - child->bounds.north()) < 1e-12,
+          "Tileset: glTF-parent upsampled child carries child raster overlay details");
+}
+
 void testTilesetClearChildrenErasesFlatMapDescendants() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -27445,6 +27547,7 @@ int main() {
     testSurfaceTileCommandIgnoresOverflowingNoSkirtRange();
     testTilesetUpsampledChildQueuesParentUntilSourceReady();
     testTilesetUpsampledChildFinalizesContentLoadedParent();
+    testTilesetUpsampledChildBuildsGltfFromGltfParent();
     testTilesetClearChildrenErasesFlatMapDescendants();
     testTilesetClearChildrenErasesClaimedUploadDescendantWork();
     testTilesetClearChildrenIgnoresStaleTerrainCallback();

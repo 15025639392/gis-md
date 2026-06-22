@@ -11,7 +11,8 @@ class TileUpsampleSourcePreparer {
 public:
     static const TilesetTile* findSourceTile(
         const TilesetTile& tile,
-        bool allowUnloadingSource = false) {
+        bool allowUnloadingSource = false,
+        bool allowGltfTerrainSource = false) {
         const TilesetTile* ancestor = tile.parent;
         while (ancestor) {
             const bool sourceStateReady =
@@ -21,7 +22,9 @@ public:
             if (sourceStateReady &&
                 ancestor->content.contentKind == TileContentKind::Render &&
                 ancestor->content.renderContent.isMeshReady() &&
-                ancestor->content.renderContent.hasTerrainMesh()) {
+                (ancestor->content.renderContent.hasTerrainMesh() ||
+                 (allowGltfTerrainSource &&
+                  ancestor->content.renderContent.hasGltfContent()))) {
                 return ancestor;
             }
             ancestor = ancestor->parent;
@@ -35,7 +38,7 @@ public:
         double priority,
         EnsureTileMeshFn&& ensureTileMesh,
         QueueTileLoadFn&& queueTileLoad) {
-        if (findSourceTile(tile)) {
+        if (findSourceTile(tile, false, true)) {
             return true;
         }
 
@@ -46,7 +49,7 @@ public:
                  ancestor->content.loadState == TileLoadState::Done) &&
                 ancestor->content.contentKind == TileContentKind::Render) {
                 ensureTileMesh(*ancestor);
-                if (findSourceTile(tile)) {
+                if (findSourceTile(tile, false, true)) {
                     return true;
                 }
             }

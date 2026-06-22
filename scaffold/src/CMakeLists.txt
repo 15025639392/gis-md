@@ -332,6 +332,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TileLoadQueue.cpp
     earth_engine/tiling/TilePendingLoadQueue.h
     earth_engine/tiling/TilePendingLoadQueue.cpp
+    earth_engine/tiling/TileGltfTerrainUpsampledChildMaterializer.h
     earth_engine/tiling/TilePendingLoadCommitCoordinator.h
     earth_engine/tiling/TilePendingLoadProcessor.h
     earth_engine/tiling/TilePendingUploadFrameProcessor.h

@@ -6,6 +6,7 @@
 #include "TileLoadTypes.h"
 #include "TilePendingUploadCompletion.h"
 #include "TileTerminalLoadCommitter.h"
+#include "TileGltfTerrainUpsampledChildMaterializer.h"
 #include "TileTerrainUploadCommitter.h"
 #include "TilesetTile.h"
 
@@ -98,9 +99,13 @@ public:
             content,
             terrainCache,
             std::forward<IngestAvailabilityFn>(ingestAvailability));
-        const bool uploadsGltfTerrain = content.gltfModel != nullptr;
+        bool uploadsGltfTerrain = content.gltfModel != nullptr;
 
         if (TilesetTile* tile = ensureTile(upload.key)) {
+            TileGltfTerrainUpsampledChildMaterializer::materialize(
+                *tile,
+                content);
+            uploadsGltfTerrain = content.gltfModel != nullptr;
             TileTerrainUploadCommitter::prepareTerrainRenderContent(
                 *tile,
                 std::move(content),
