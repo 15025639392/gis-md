@@ -2168,11 +2168,12 @@ TEST(
     QuantizedMeshTerrainProvider* providerPtr = provider.get();
 
     Tileset tileset(
-        std::move(provider),
+        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
-        TilesetOptions{});
+        TilesetOptions{},
+        std::move(provider));
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -2249,11 +2250,12 @@ TEST(
     QuantizedMeshTerrainProvider* providerPtr = provider.get();
 
     Tileset tileset(
-        std::move(provider),
+        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
-        TilesetOptions{});
+        TilesetOptions{},
+        std::move(provider));
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -2311,11 +2313,12 @@ TEST(
     EXPECT_TRUE(provider->supportsTile(TileKey{"Geographic-TMS", 2, 0, 0}));
 
     Tileset tileset(
-        std::move(provider),
+        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
-        TilesetOptions{});
+        TilesetOptions{},
+        std::move(provider));
     TilesetTile* parent =
         TilesetTestAccess::ensureTile(
             tileset,

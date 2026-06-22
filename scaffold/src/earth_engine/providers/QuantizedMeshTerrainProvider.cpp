@@ -33,8 +33,16 @@ namespace {
 
 struct RequestCompletionGuard {
     std::atomic<int>& completed;
+    bool completedOnce = false;
     ~RequestCompletionGuard() {
+        complete();
+    }
+    void complete() {
+        if (completedOnce) {
+            return;
+        }
         completed.fetch_add(1, std::memory_order_relaxed);
+        completedOnce = true;
     }
 };
 
@@ -1467,10 +1475,11 @@ std::string QuantizedMeshTerrainProvider::buildUrl(const TileKey& key) const {
     return buildUrlForLayer(legacy, key);
 }
 
-void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
-                                                CancellationToken token,
-                                                TerrainCallback callback,
-                                                HttpRequestPriority priority) {
+void QuantizedMeshTerrainProvider::requestTileContent(
+    const TileKey& key,
+    CancellationToken token,
+    ContentCallback callback,
+    HttpRequestPriority priority) {
     const size_t contentLayerIndexValue = firstAvailableLayerIndex(key);
     const bool hasContentLayer =
         contentLayerIndexValue < layers_.size();
@@ -1495,14 +1504,14 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
     if (!layers_.empty() && !contentLayer) {
         requestsStarted_.fetch_add(1, std::memory_order_relaxed);
         requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
-        callback(key, TerrainTileLoadResult::failed());
+        callback(key, TileContentLoadResult::failed());
         return;
     }
     if (platformBridge_) {
         requestsStarted_.fetch_add(1, std::memory_order_relaxed);
         if (token.isCancelled()) {
             requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
-            callback(key, TerrainTileLoadResult::cancelled());
+            callback(key, TileContentLoadResult::cancelled());
             return;
         }
 
@@ -1539,7 +1548,7 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
     requestsStarted_.fetch_add(1, std::memory_order_relaxed);
     if (token.isCancelled()) {
         requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
-        callback(key, TerrainTileLoadResult::cancelled());
+        callback(key, TileContentLoadResult::cancelled());
         return;
     }
 
@@ -1555,7 +1564,7 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
              priority,
              callback = std::move(callback)]() mutable {
                 if (token.isCancelled()) {
-                    callback(key, TerrainTileLoadResult::cancelled());
+                    callback(key, TileContentLoadResult::cancelled());
                     return;
                 }
 
@@ -1609,38 +1618,13 @@ void QuantizedMeshTerrainProvider::requestTile(const TileKey& key,
         {priority, requestHeaders_});
 }
 
-void QuantizedMeshTerrainProvider::requestTileContent(
-    const TileKey& key,
-    CancellationToken token,
-    ContentCallback callback,
-    HttpRequestPriority priority) {
-    requestTile(
-        key,
-        std::move(token),
-        [callback = std::move(callback)](
-            const TileKey& loadedKey,
-            TerrainTileLoadResult terrainResult) mutable {
-            TileContentLoadResult contentResult;
-            contentResult.status = terrainResult.status;
-            contentResult.gltfModel = std::move(terrainResult.gltfModel);
-            contentResult.metadata = std::move(terrainResult.metadata);
-            contentResult.terrainRenderContent =
-                terrainResult.terrainRenderContent &&
-                contentResult.gltfModel != nullptr;
-            contentResult.quantizedMeshAvailabilityUpdates =
-                std::move(terrainResult.quantizedMeshAvailabilityUpdates);
-            callback(loadedKey, std::move(contentResult));
-        },
-        priority);
-}
-
 void QuantizedMeshTerrainProvider::handleAsyncTileBody(
     const TileKey& key,
     int contentLayerIndex,
     bool includeCurrentLayerMetadata,
     std::vector<LayerAvailabilityRequest> availabilityRequests,
     CancellationToken token,
-    TerrainCallback callback,
+    ContentCallback callback,
     HttpRequestPriority priority,
     int statusCode,
     std::vector<uint8_t> body,
@@ -1650,7 +1634,7 @@ void QuantizedMeshTerrainProvider::handleAsyncTileBody(
             std::move(availabilityRequests));
     auto tokenPtr = std::make_shared<CancellationToken>(std::move(token));
     auto callbackPtr =
-        std::make_shared<TerrainCallback>(std::move(callback));
+        std::make_shared<ContentCallback>(std::move(callback));
     auto bodyPtr =
         std::make_shared<std::vector<uint8_t>>(std::move(body));
 
@@ -1691,7 +1675,7 @@ void QuantizedMeshTerrainProvider::requestAsyncMetadataAndFinalize(
     std::shared_ptr<std::vector<LayerAvailabilityRequest>>
         availabilityRequests,
     std::shared_ptr<CancellationToken> token,
-    std::shared_ptr<TerrainCallback> callback,
+    std::shared_ptr<ContentCallback> callback,
     std::shared_ptr<std::vector<uint8_t>> body,
     int statusCode,
     HttpRequestPriority priority,
@@ -1789,7 +1773,7 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
     std::shared_ptr<std::vector<LayerAvailabilityRequest>>
         availabilityRequests,
     std::shared_ptr<CancellationToken> token,
-    std::shared_ptr<TerrainCallback> callback,
+    std::shared_ptr<ContentCallback> callback,
     std::shared_ptr<std::vector<uint8_t>> body,
     int statusCode,
     std::vector<std::vector<uint8_t>> metadataBodies) {
@@ -1806,11 +1790,13 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
          metadataBodies = std::move(metadataBodies)]() mutable {
             RequestCompletionGuard completion{requestsCompleted_};
             if (token->isCancelled()) {
-                (*callback)(key, TerrainTileLoadResult::cancelled());
+                completion.complete();
+                (*callback)(key, TileContentLoadResult::cancelled());
                 return;
             }
             if (!isCesiumSuccessfulHttpStatus(statusCode) || body->empty()) {
-                (*callback)(key, TerrainTileLoadResult::failed());
+                completion.complete();
+                (*callback)(key, TileContentLoadResult::failed());
                 return;
             }
 #ifdef __ANDROID__
@@ -1864,16 +1850,19 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                     metadata,
                     rasterOverlayProjectionForTerrainScheme(contentSchemeId));
             if (!contentResult.success()) {
-                (*callback)(key, TerrainTileLoadResult::failed());
+                completion.complete();
+                (*callback)(key, TileContentLoadResult::failed());
                 return;
             }
 
-            TerrainTileLoadResult result =
-                TerrainTileLoadResult::successWithGltfModel(
-                    std::move(contentResult.gltfModel),
-                    std::move(contentResult.metadata));
+            TileContentLoadResult result =
+                TileContentLoadResult::render(
+                    std::move(contentResult.gltfModel));
+            result.terrainRenderContent = result.gltfModel != nullptr;
+            result.metadata = std::move(contentResult.metadata);
             result.quantizedMeshAvailabilityUpdates =
                 std::move(contentResult.availabilityUpdates);
+            completion.complete();
             (*callback)(key, std::move(result));
         });
 }
@@ -2060,11 +2049,6 @@ bool QuantizedMeshTerrainProvider::isAvailabilityBoundaryLevel(int level) const 
         }
     }
     return false;
-}
-
-std::unique_ptr<DecodedHeightmap> QuantizedMeshTerrainProvider::decodeTile(
-    const uint8_t*, size_t) {
-    return nullptr;
 }
 
 TileContentLoadResult QuantizedMeshTerrainProvider::decodeContent(

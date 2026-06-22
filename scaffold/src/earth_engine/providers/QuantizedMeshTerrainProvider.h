@@ -1,6 +1,5 @@
 #pragma once
 
-#include "TerrainProvider.h"
 #include "../content/GltfContentProvider.h"
 #include <nlohmann/json.hpp>
 #include <array>
@@ -15,15 +14,13 @@ namespace earth_engine {
 
 class PlatformBridge;
 
-/// Terrain provider for the quantized-mesh-1.0 format.
+/// Content provider for the quantized-mesh-1.0 format.
 /// Parses binary tiles into first-class glTF terrain load results.
-/// Synchronous heightmap decoding is intentionally unsupported for this
-/// provider; quantized-mesh content enters the tile lifecycle through
-/// requestTile, matching cesium-native's content-loader ownership model.
+/// Quantized-mesh content enters the tile lifecycle through requestTileContent,
+/// matching cesium-native's content-loader ownership model.
 ///
 /// Reference: CesiumQuantizedMeshTerrain/QuantizedMeshLoader
-class QuantizedMeshTerrainProvider : public TerrainProvider,
-                                      public TilesetContentProvider {
+class QuantizedMeshTerrainProvider : public TilesetContentProvider {
 public:
     /// @param urlTemplate URL with {z}/{x}/{y} placeholders
     /// @param attribution display credit
@@ -33,15 +30,15 @@ public:
     ~QuantizedMeshTerrainProvider() override;
 
     std::string id() const override;
-    std::string type() const override { return "quantized-mesh-terrain"; }
+    std::string type() const { return "quantized-mesh-terrain"; }
     bool providesTerrainQuadtree() const override { return true; }
 
-    std::string schemeId() const override { return schemeId_; }
+    std::string schemeId() const { return schemeId_; }
 
-    int minZoom() const override { return minZoom_; }
-    int maxZoom() const override { return maxZoom_; }
-    int tileSize() const override { return tileSize_; }
-    std::string attribution() const override { return attribution_; }
+    int minZoom() const { return minZoom_; }
+    int maxZoom() const { return maxZoom_; }
+    int tileSize() const { return tileSize_; }
+    std::string attribution() const { return attribution_; }
 
     void setZoomRange(int minZ, int maxZ);
     void setTileSize(int ts) { tileSize_ = ts; }
@@ -58,8 +55,8 @@ public:
         const TileKey& key) const override {
         return availabilityState(key);
     }
-    TileAvailabilityState availabilityState(const TileKey& key) const override;
-    std::string buildUrl(const TileKey& key) const override;
+    TileAvailabilityState availabilityState(const TileKey& key) const;
+    std::string buildUrl(const TileKey& key) const;
     int estimatedRequestFanout(const TileKey& key) const override;
 
     /// cesium-native: dynamically add availability from QM metadata
@@ -73,22 +70,17 @@ public:
     void markSubtreeLoaded(int subtreeLevel, uint64_t mortonIndex);
     void markSubtreeLoadedForTile(const TileKey& subtreeKey);
     int availabilityLevels() const { return availabilityLevels_; }
-    bool isAvailabilityBoundaryLevel(int level) const override;
+    bool isAvailabilityBoundaryLevel(int level) const;
     bool isTerrainAvailabilityBoundaryLevel(int level) const override {
         return isAvailabilityBoundaryLevel(level);
     }
     void applyAvailabilityUpdates(
-        const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override;
+        const std::vector<QuantizedMeshAvailabilityUpdate>& updates);
     void applyTerrainAvailabilityUpdates(
         const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override {
         applyAvailabilityUpdates(updates);
     }
 
-    void requestTile(const TileKey& key,
-                     CancellationToken token,
-                     TerrainCallback callback,
-                     HttpRequestPriority priority =
-                         HttpRequestPriority::Normal) override;
     void requestTileContent(const TileKey& key,
                             CancellationToken token,
                             ContentCallback callback,
@@ -98,9 +90,6 @@ public:
                                         size_t size) override;
 
     ProviderRequestDiagnostics requestDiagnostics() const override;
-
-    std::unique_ptr<DecodedHeightmap> decodeTile(
-        const uint8_t* data, size_t len) override;
 
 private:
     struct TileRectangleAvailability {
@@ -227,7 +216,7 @@ private:
         bool includeCurrentLayerMetadata,
         std::vector<LayerAvailabilityRequest> availabilityRequests,
         CancellationToken token,
-        TerrainCallback callback,
+        ContentCallback callback,
         HttpRequestPriority priority,
         int statusCode,
         std::vector<uint8_t> body,
@@ -239,7 +228,7 @@ private:
         std::shared_ptr<std::vector<LayerAvailabilityRequest>>
             availabilityRequests,
         std::shared_ptr<CancellationToken> token,
-        std::shared_ptr<TerrainCallback> callback,
+        std::shared_ptr<ContentCallback> callback,
         std::shared_ptr<std::vector<uint8_t>> body,
         int statusCode,
         HttpRequestPriority priority,
@@ -251,7 +240,7 @@ private:
         std::shared_ptr<std::vector<LayerAvailabilityRequest>>
             availabilityRequests,
         std::shared_ptr<CancellationToken> token,
-        std::shared_ptr<TerrainCallback> callback,
+        std::shared_ptr<ContentCallback> callback,
         std::shared_ptr<std::vector<uint8_t>> body,
         int statusCode,
         std::vector<std::vector<uint8_t>> metadataBodies);

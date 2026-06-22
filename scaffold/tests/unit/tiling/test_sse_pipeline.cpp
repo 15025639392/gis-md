@@ -3362,7 +3362,13 @@ void testTileResourceDirtyInvalidatesRevisionAndCacheOnly() {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/{z}/{x}/{y}.terrain");
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
 
     TilesetTestAccess::primeCleanReusableResources(tileset);
     const uint64_t beforeRevision = TilesetTestAccess::resourceRevision(tileset);

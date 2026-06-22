@@ -424,10 +424,10 @@ TEST(QuantizedMeshTerrainProviderTest, HttpErrorFailsTerminally) {
     bool callbackCalled = false;
     TileLoadStatus completedStatus = TileLoadStatus::Renderable;
 
-    provider.requestTile(
+    provider.requestTileContent(
         TileKey{"Geographic-TMS", 0, 0, 0},
         CancellationToken{},
-        [&](const TileKey&, TerrainTileLoadResult result) {
+        [&](const TileKey&, TileContentLoadResult result) {
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 completedStatus = result.status;
@@ -460,10 +460,10 @@ TEST(QuantizedMeshTerrainProviderTest, InvalidBodyFailsTerminally) {
     bool callbackCalled = false;
     TileLoadStatus completedStatus = TileLoadStatus::Renderable;
 
-    provider.requestTile(
+    provider.requestTileContent(
         TileKey{"Geographic-TMS", 0, 0, 0},
         CancellationToken{},
-        [&](const TileKey&, TerrainTileLoadResult result) {
+        [&](const TileKey&, TileContentLoadResult result) {
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 completedStatus = result.status;
@@ -487,7 +487,7 @@ TEST(QuantizedMeshTerrainProviderTest, InvalidBodyFailsTerminally) {
 }
 
 TEST(QuantizedMeshTerrainProviderTest,
-     RequestTileProducesGltfTerrainLoadResult) {
+     RequestTileContentProducesGltfTerrainLoadResult) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/{z}/{x}/{y}.terrain");
     QueuedStatusPlatformBridge bridge;
@@ -501,12 +501,12 @@ TEST(QuantizedMeshTerrainProviderTest,
     std::mutex mutex;
     std::condition_variable cv;
     bool callbackCalled = false;
-    TerrainTileLoadResult completed;
+    TileContentLoadResult completed;
 
-    provider.requestTile(
+    provider.requestTileContent(
         TileKey{"Geographic-TMS", 0, 0, 0},
         CancellationToken{},
-        [&](const TileKey&, TerrainTileLoadResult result) {
+        [&](const TileKey&, TileContentLoadResult result) {
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 completed = std::move(result);
@@ -527,7 +527,6 @@ TEST(QuantizedMeshTerrainProviderTest,
 
     EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
     ASSERT_NE(nullptr, completed.gltfModel);
-    EXPECT_EQ(nullptr, completed.heightmap);
     ASSERT_FALSE(completed.gltfModel->primitives.empty());
     ASSERT_TRUE(completed.metadata.updatedBoundingVolume.has_value());
     EXPECT_EQ(TileBoundingVolumeKind::Region,
@@ -554,7 +553,7 @@ TEST(QuantizedMeshTerrainProviderTest,
 }
 
 TEST(QuantizedMeshTerrainProviderTest,
-     WebMercatorRequestTileUsesProjectedLayerRectangleLikeCesiumNative) {
+     WebMercatorRequestTileContentUsesProjectedLayerRectangleLikeCesiumNative) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
     const std::string layerJson = R"json({
@@ -578,12 +577,12 @@ TEST(QuantizedMeshTerrainProviderTest,
     std::mutex mutex;
     std::condition_variable cv;
     bool callbackCalled = false;
-    TerrainTileLoadResult completed;
+    TileContentLoadResult completed;
 
-    provider.requestTile(
+    provider.requestTileContent(
         key,
         CancellationToken{},
-        [&](const TileKey&, TerrainTileLoadResult result) {
+        [&](const TileKey&, TileContentLoadResult result) {
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 completed = std::move(result);
@@ -637,10 +636,10 @@ TEST(QuantizedMeshTerrainProviderTest, UsesAsyncBridgeWithoutWorkerBlockingWait)
     bool callbackCalled = false;
     TileLoadStatus completedStatus = TileLoadStatus::Renderable;
 
-    provider.requestTile(
+    provider.requestTileContent(
         TileKey{"Geographic-TMS", 1, 0, 0},
         token,
-        [&](const TileKey&, TerrainTileLoadResult result) {
+        [&](const TileKey&, TileContentLoadResult result) {
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 completedStatus = result.status;
@@ -1729,11 +1728,11 @@ TEST(QuantizedMeshTerrainProviderTest, LoadsUnderlyingLayerAvailabilityWithTileL
     std::mutex mutex;
     std::condition_variable cv;
     bool done = false;
-    TerrainTileLoadResult completed = TerrainTileLoadResult::retryLater();
-    provider.requestTile(
+    TileContentLoadResult completed = TileContentLoadResult::retryLater();
+    provider.requestTileContent(
         rootKey,
         CancellationToken{},
-        [&](const TileKey&, TerrainTileLoadResult result) {
+        [&](const TileKey&, TileContentLoadResult result) {
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 completed = std::move(result);
@@ -1752,7 +1751,6 @@ TEST(QuantizedMeshTerrainProviderTest, LoadsUnderlyingLayerAvailabilityWithTileL
 
     EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
     ASSERT_NE(nullptr, completed.gltfModel);
-    EXPECT_EQ(nullptr, completed.heightmap);
     for (int i = 0;
          i < 200 && provider.requestDiagnostics().requestsCompleted == 0;
          ++i) {
@@ -1831,12 +1829,12 @@ TEST(QuantizedMeshTerrainProviderTest, LoadedUnderlyingMetadataSubtreeSkipsDupli
     std::mutex mutex;
     std::condition_variable cv;
     bool done = false;
-    TerrainTileLoadResult completed = TerrainTileLoadResult::retryLater();
+    TileContentLoadResult completed = TileContentLoadResult::retryLater();
 
-    provider.requestTile(
+    provider.requestTileContent(
         rootKey,
         CancellationToken{},
-        [&](const TileKey&, TerrainTileLoadResult result) {
+        [&](const TileKey&, TileContentLoadResult result) {
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 completed = std::move(result);
@@ -1861,7 +1859,6 @@ TEST(QuantizedMeshTerrainProviderTest, LoadedUnderlyingMetadataSubtreeSkipsDupli
 
     EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
     ASSERT_NE(nullptr, completed.gltfModel);
-    EXPECT_EQ(nullptr, completed.heightmap);
     EXPECT_TRUE(completed.quantizedMeshAvailabilityUpdates.empty());
     EXPECT_EQ(0u, bridge.pendingCount());
 
@@ -1896,12 +1893,12 @@ TEST(QuantizedMeshTerrainProviderTest, UnknownMetadataTileDoesNotRequestContentL
     std::mutex mutex;
     std::condition_variable cv;
     bool done = false;
-    TerrainTileLoadResult completed = TerrainTileLoadResult::retryLater();
+    TileContentLoadResult completed = TileContentLoadResult::retryLater();
 
-    provider.requestTile(
+    provider.requestTileContent(
         unknownChild,
         CancellationToken{},
-        [&](const TileKey&, TerrainTileLoadResult result) {
+        [&](const TileKey&, TileContentLoadResult result) {
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 completed = std::move(result);
@@ -1981,13 +1978,13 @@ TEST(QuantizedMeshTerrainProviderTest,
     std::mutex firstMutex;
     std::condition_variable firstCv;
     bool firstDone = false;
-    TerrainTileLoadResult firstCompleted =
-        TerrainTileLoadResult::retryLater();
+    TileContentLoadResult firstCompleted =
+        TileContentLoadResult::retryLater();
 
-    provider.requestTile(
+    provider.requestTileContent(
         rootKey,
         CancellationToken{},
-        [&](const TileKey&, TerrainTileLoadResult result) {
+        [&](const TileKey&, TileContentLoadResult result) {
             {
                 std::lock_guard<std::mutex> lock(firstMutex);
                 firstCompleted = std::move(result);
@@ -2036,13 +2033,13 @@ TEST(QuantizedMeshTerrainProviderTest,
     std::mutex secondMutex;
     std::condition_variable secondCv;
     bool secondDone = false;
-    TerrainTileLoadResult secondCompleted =
-        TerrainTileLoadResult::retryLater();
+    TileContentLoadResult secondCompleted =
+        TileContentLoadResult::retryLater();
 
-    provider.requestTile(
+    provider.requestTileContent(
         rootKey,
         CancellationToken{},
-        [&](const TileKey&, TerrainTileLoadResult result) {
+        [&](const TileKey&, TileContentLoadResult result) {
             {
                 std::lock_guard<std::mutex> lock(secondMutex);
                 secondCompleted = std::move(result);
@@ -2135,11 +2132,11 @@ TEST(QuantizedMeshTerrainProviderTest,
     std::mutex mutex;
     std::condition_variable cv;
     bool done = false;
-    TerrainTileLoadResult completed = TerrainTileLoadResult::retryLater();
-    provider.requestTile(
+    TileContentLoadResult completed = TileContentLoadResult::retryLater();
+    provider.requestTileContent(
         rootKey,
         CancellationToken{},
-        [&](const TileKey&, TerrainTileLoadResult result) {
+        [&](const TileKey&, TileContentLoadResult result) {
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 completed = std::move(result);
@@ -2219,12 +2216,12 @@ TEST(QuantizedMeshTerrainProviderTest,
     std::mutex mutex;
     std::condition_variable cv;
     bool done = false;
-    TerrainTileLoadResult completed = TerrainTileLoadResult::retryLater();
+    TileContentLoadResult completed = TileContentLoadResult::retryLater();
 
-    provider.requestTile(
+    provider.requestTileContent(
         rootKey,
         CancellationToken{},
-        [&](const TileKey&, TerrainTileLoadResult result) {
+        [&](const TileKey&, TileContentLoadResult result) {
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 completed = std::move(result);
@@ -2339,11 +2336,11 @@ TEST(QuantizedMeshTerrainProviderTest,
     std::mutex mutex;
     std::condition_variable cv;
     bool done = false;
-    TerrainTileLoadResult completed = TerrainTileLoadResult::retryLater();
-    provider.requestTile(
+    TileContentLoadResult completed = TileContentLoadResult::retryLater();
+    provider.requestTileContent(
         parentTile,
         CancellationToken{},
-        [&](const TileKey&, TerrainTileLoadResult result) {
+        [&](const TileKey&, TileContentLoadResult result) {
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 completed = std::move(result);
@@ -2431,12 +2428,12 @@ TEST(QuantizedMeshTerrainProviderTest, FetchesUnderlyingMetadataViaAsyncBridge) 
     std::mutex mutex;
     std::condition_variable cv;
     bool done = false;
-    TerrainTileLoadResult completed = TerrainTileLoadResult::retryLater();
+    TileContentLoadResult completed = TileContentLoadResult::retryLater();
 
-    provider.requestTile(
+    provider.requestTileContent(
         TileKey{"Geographic-TMS", 0, 0, 0},
         CancellationToken{},
-        [&](const TileKey&, TerrainTileLoadResult result) {
+        [&](const TileKey&, TileContentLoadResult result) {
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 completed = std::move(result);
@@ -2479,7 +2476,6 @@ TEST(QuantizedMeshTerrainProviderTest, FetchesUnderlyingMetadataViaAsyncBridge) 
     ProviderRequestDiagnostics doneDiag = provider.requestDiagnostics();
     EXPECT_EQ(TileLoadStatus::Renderable, completed.status);
     ASSERT_NE(nullptr, completed.gltfModel);
-    EXPECT_EQ(nullptr, completed.heightmap);
     ASSERT_EQ(1u, completed.quantizedMeshAvailabilityUpdates.size());
     EXPECT_EQ(
         1u,

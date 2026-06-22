@@ -203,11 +203,12 @@ TEST(TilesetQuantizedMeshTest,
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::move(provider),
+        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         nullptr,
-        TilesetOptions{});
+        TilesetOptions{},
+        std::move(provider));
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -240,7 +241,13 @@ TEST(TilesetQuantizedMeshTest,
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/{z}/{x}/{y}.terrain");
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, TilesetOptions{});
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);

@@ -574,8 +574,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     content.quantizedMeshAvailabilityUpdates.push_back(update);
 
     TileTerrainUploadCommitter::applyAvailabilityUpdates(
-        nullptr,
         &provider,
+        nullptr,
         content);
 
     EXPECT_EQ(TileAvailabilityState::Available,
@@ -1254,8 +1254,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     bool resourcesDirty = false;
     TilePendingLoadCommitCoordinator::commitTerrainUpload(
         upload,
-        nullptr,
         &provider,
+        nullptr,
         nullptr,
         {},
         terrainCache,
