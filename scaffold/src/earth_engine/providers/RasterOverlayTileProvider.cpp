@@ -1563,6 +1563,12 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
 
     const std::string ck = rectangleTileCacheKey(
         scheme_, providerGeometryBounds, sourcePlan.sourceZoom);
+    auto existing = tiles_.find(ck);
+    if (existing != tiles_.end()) {
+        existing->second->lastUsedFrame = frameNumber_;
+        return existing->second;
+    }
+
     const double centerLng =
         geometryBounds.west() + geometryBounds.width() * 0.5;
     const double centerLat =

@@ -1026,7 +1026,7 @@ TEST(RasterOverlayLifecycleTest, SourceTileDepotCachesTilesByTileKeyLikeCesiumNa
 }
 
 TEST(RasterOverlayLifecycleTest,
-     RectangleMappingsAreDistinctButShareSourceAssetLikeCesiumNative) {
+     RectangleMappingsReuseProviderTileAssetLikeCesiumNative) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     auto uploader = std::make_unique<CountingRasterUploader>();
@@ -1051,7 +1051,7 @@ TEST(RasterOverlayLifecycleTest,
         512.0);
     ASSERT_NE(nullptr, first);
     ASSERT_NE(nullptr, second);
-    EXPECT_NE(first.get(), second.get());
+    EXPECT_EQ(first.get(), second.get());
     EXPECT_TRUE(first->isRectangleTile());
     EXPECT_TRUE(second->isRectangleTile());
     EXPECT_EQ(first->getCacheKey(), second->getCacheKey());
@@ -1067,7 +1067,7 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(1, provider.processPendingUploads(false));
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, first->getState());
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, second->getState());
-    EXPECT_EQ(2, uploaderPtr->uploadCount);
+    EXPECT_EQ(1, uploaderPtr->uploadCount);
 }
 
 TEST(RasterOverlayLifecycleTest, ConcurrentRectangleTilesShareProviderSourceTileAssetLikeCesiumNative) {
