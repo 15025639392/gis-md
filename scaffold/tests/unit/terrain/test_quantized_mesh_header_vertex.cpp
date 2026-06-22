@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/content/QuantizedMeshContentLoader.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
-#include "earth_engine/terrain/QuantizedMeshParser.h"
 #include "earth_engine/tiling/TileKey.h"
 #include "earth_engine/tiling/TileScheme.h"
 
@@ -84,9 +84,20 @@ Rectangle rootRectangle() {
     return scheme->tileToRectangle(TileKey{"Geographic-TMS", 0, 0, 0});
 }
 
+QuantizedMeshContentLoadResult loadQuantizedMeshContent(
+    const std::vector<uint8_t>& bytes,
+    const Rectangle& rectangle = rootRectangle()) {
+    return QuantizedMeshContentLoader::load(
+        bytes.data(),
+        bytes.size(),
+        rectangle,
+        false,
+        {});
+}
+
 } // namespace
 
-TEST(QuantizedMeshParserHeaderTest,
+TEST(QuantizedMeshContentLoaderHeaderTest,
      RtcOriginComesFromBoundingSphereCenterLikeCesiumNative) {
     const Rectangle bounds = rootRectangle();
     const Vec3 boundingSphereCenter(1234.0, -5678.0, 9012.0);
@@ -98,25 +109,36 @@ TEST(QuantizedMeshParserHeaderTest,
             100.0f,
             tileCenter);
 
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            bounds);
+    QuantizedMeshContentLoadResult result =
+        loadQuantizedMeshContent(bytes, bounds);
 
-    ASSERT_NE(nullptr, mesh);
-    EXPECT_TRUE(mesh->hasLocalOriginEcef);
-    EXPECT_LT((mesh->localOriginEcef - boundingSphereCenter).length(), 1e-12);
+    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.gltfModel->preferredLocalOriginEcef.has_value());
+    EXPECT_LT((*result.gltfModel->preferredLocalOriginEcef -
+               boundingSphereCenter)
+                  .length(),
+              1e-12);
+    ASSERT_EQ(1u, result.gltfModel->nodes.size());
+    EXPECT_EQ(Mat4::translation(boundingSphereCenter),
+              result.gltfModel->nodes.front().globalTransform);
 
     const Vec3 expectedFirstVertex =
         Ellipsoid::WGS84().cartographicToCartesian(
             Cartographic::fromRadians(bounds.west(), bounds.south(), 0.0));
-    ASSERT_FALSE(mesh->vertices.empty());
-    EXPECT_LT((mesh->vertices[0].positionEcef - expectedFirstVertex).length(),
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    ASSERT_FALSE(primitive.vertices.empty());
+    EXPECT_LT((primitive.vertices[0].positionEcef - expectedFirstVertex)
+                  .length(),
+              1e-6);
+    ASSERT_EQ(primitive.vertices.size(), primitive.runtime.baseVertices.size());
+    EXPECT_LT((primitive.runtime.baseVertices[0].positionEcef -
+               (expectedFirstVertex - boundingSphereCenter))
+                  .length(),
               1e-6);
 }
 
-TEST(QuantizedMeshParserHeaderTest,
+TEST(QuantizedMeshContentLoaderHeaderTest,
      HeaderHeightRangeIsExposedLikeCesiumNative) {
     constexpr float minimumHeight = -123.5f;
     constexpr float maximumHeight = 456.25f;
@@ -126,19 +148,27 @@ TEST(QuantizedMeshParserHeaderTest,
             minimumHeight,
             maximumHeight);
 
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            rootRectangle());
+    QuantizedMeshContentLoadResult result =
+        loadQuantizedMeshContent(bytes);
 
-    ASSERT_NE(nullptr, mesh);
-    EXPECT_TRUE(mesh->hasHeightRange);
-    EXPECT_LT(std::abs(mesh->minimumHeight - minimumHeight), 1e-6);
-    EXPECT_LT(std::abs(mesh->maximumHeight - maximumHeight), 1e-6);
+    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.metadata.terrainHeightRange.has_value());
+    EXPECT_LT(std::abs(result.metadata.terrainHeightRange->first -
+                       minimumHeight),
+              1e-6);
+    EXPECT_LT(std::abs(result.metadata.terrainHeightRange->second -
+                       maximumHeight),
+              1e-6);
+    ASSERT_TRUE(result.metadata.updatedBoundingVolume.has_value());
+    EXPECT_LT(std::abs(result.metadata.updatedBoundingVolume->minimumHeight -
+                       minimumHeight),
+              1e-6);
+    EXPECT_LT(std::abs(result.metadata.updatedBoundingVolume->maximumHeight -
+                       maximumHeight),
+              1e-6);
 }
 
-TEST(QuantizedMeshParserHeaderTest,
+TEST(QuantizedMeshContentLoaderHeaderTest,
      NonzeroHorizonOcclusionPointIsPreservedLikeCesiumNative) {
     const Vec3 horizonOcclusionPoint(0.25, -0.5, 0.75);
     const std::vector<uint8_t> bytes =
@@ -149,19 +179,17 @@ TEST(QuantizedMeshParserHeaderTest,
             Vec3::zero(),
             horizonOcclusionPoint);
 
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            rootRectangle());
+    QuantizedMeshContentLoadResult result =
+        loadQuantizedMeshContent(bytes);
 
-    ASSERT_NE(nullptr, mesh);
-    EXPECT_TRUE(mesh->hasHorizonOcclusionPoint);
-    EXPECT_LT((mesh->horizonOcclusionPoint - horizonOcclusionPoint).length(),
+    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.metadata.horizonOcclusionPoint.has_value());
+    EXPECT_LT((*result.metadata.horizonOcclusionPoint - horizonOcclusionPoint)
+                  .length(),
               1e-12);
 }
 
-TEST(QuantizedMeshParserHeaderTest,
+TEST(QuantizedMeshContentLoaderHeaderTest,
      ZeroHorizonOcclusionPointIsStillExposedLikeCesiumNative) {
     const std::vector<uint8_t> bytes =
         makeQuantizedMeshBytes(
@@ -171,18 +199,15 @@ TEST(QuantizedMeshParserHeaderTest,
             Vec3::zero(),
             Vec3::zero());
 
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            rootRectangle());
+    QuantizedMeshContentLoadResult result =
+        loadQuantizedMeshContent(bytes);
 
-    ASSERT_NE(nullptr, mesh);
-    EXPECT_TRUE(mesh->hasHorizonOcclusionPoint);
-    EXPECT_EQ(Vec3::zero(), mesh->horizonOcclusionPoint);
+    ASSERT_TRUE(result.success());
+    ASSERT_TRUE(result.metadata.horizonOcclusionPoint.has_value());
+    EXPECT_EQ(Vec3::zero(), *result.metadata.horizonOcclusionPoint);
 }
 
-TEST(QuantizedMeshParserVertexDecodeTest,
+TEST(QuantizedMeshContentLoaderVertexDecodeTest,
      UvAndHeightGoldenMatchCesiumNative) {
     const Rectangle bounds = rootRectangle();
     constexpr float minimumHeight = -50.0f;
@@ -193,30 +218,29 @@ TEST(QuantizedMeshParserVertexDecodeTest,
             minimumHeight,
             maximumHeight);
 
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            bounds);
+    QuantizedMeshContentLoadResult result =
+        loadQuantizedMeshContent(bytes, bounds);
 
-    ASSERT_NE(nullptr, mesh);
-    ASSERT_EQ(3u, mesh->vertices.size());
-    EXPECT_EQ(3u, mesh->indices.size());
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    ASSERT_EQ(3u, primitive.vertices.size());
+    EXPECT_EQ(3u, primitive.indices.size());
 
-    EXPECT_NEAR(0.0f, mesh->vertices[0].uv[0], 1e-6f);
-    EXPECT_NEAR(1.0f, mesh->vertices[0].uv[1], 1e-6f);
-    EXPECT_NEAR(1.0f, mesh->vertices[1].uv[0], 1e-6f);
-    EXPECT_NEAR(1.0f, mesh->vertices[1].uv[1], 1e-6f);
-    EXPECT_NEAR(0.0f, mesh->vertices[2].uv[0], 1e-6f);
-    EXPECT_NEAR(0.0f, mesh->vertices[2].uv[1], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertices[0].uv[0], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertices[0].uv[1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertices[1].uv[0], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertices[1].uv[1], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertices[2].uv[0], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertices[2].uv[1], 1e-6f);
 
     const auto& ellipsoid = Ellipsoid::WGS84();
     const Cartographic sw =
-        ellipsoid.cartesianToCartographic(mesh->vertices[0].positionEcef);
+        ellipsoid.cartesianToCartographic(primitive.vertices[0].positionEcef);
     const Cartographic se =
-        ellipsoid.cartesianToCartographic(mesh->vertices[1].positionEcef);
+        ellipsoid.cartesianToCartographic(primitive.vertices[1].positionEcef);
     const Cartographic nw =
-        ellipsoid.cartesianToCartographic(mesh->vertices[2].positionEcef);
+        ellipsoid.cartesianToCartographic(primitive.vertices[2].positionEcef);
 
     EXPECT_NEAR(bounds.west(), sw.longitude(), 1e-8);
     EXPECT_NEAR(bounds.south(), sw.latitude(), 1e-8);
