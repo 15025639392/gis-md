@@ -27803,16 +27803,24 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
     const auto mix = [](double a, double b, double t) {
         return a + (b - a) * t;
     };
+    const Rectangle projectedParentBounds = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        root->bounds);
+    const Rectangle projectedChildBounds = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        child->bounds);
     const double westT =
-        (child->bounds.west() - root->bounds.west()) / root->bounds.width();
+        (projectedChildBounds.west() - projectedParentBounds.west()) /
+        projectedParentBounds.width();
     const double eastT =
-        (child->bounds.east() - root->bounds.west()) / root->bounds.width();
+        (projectedChildBounds.east() - projectedParentBounds.west()) /
+        projectedParentBounds.width();
     const double southT =
-        (child->bounds.south() - root->bounds.south()) /
-        root->bounds.height();
+        (projectedChildBounds.south() - projectedParentBounds.south()) /
+        projectedParentBounds.height();
     const double northT =
-        (child->bounds.north() - root->bounds.south()) /
-        root->bounds.height();
+        (projectedChildBounds.north() - projectedParentBounds.south()) /
+        projectedParentBounds.height();
     const Rectangle expectedChildOverlay(
         mix(parentWebMercatorOverlay.west(), parentWebMercatorOverlay.east(), westT),
         mix(parentWebMercatorOverlay.south(), parentWebMercatorOverlay.north(), southT),

@@ -7,6 +7,7 @@
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/TilePlan.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/terrain/TerrainTile.h"
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/renderer/RenderDevice.h"
@@ -607,6 +608,75 @@ TEST(TileSurfaceTest,
     EXPECT_TRUE(childOverlayRectangle->equalsEpsilon(
         expectedChildOverlayRectangle,
         1e-14));
+    EXPECT_EQ(
+        childBounds,
+        childMesh->rasterOverlayDetails.boundingRegion.rectangle);
+}
+
+TEST(TileSurfaceTest,
+     UpsampledChildMeshDerivesWebMercatorRasterRectangleInProjectionSpace) {
+    Rectangle parentBounds = Rectangle::fromDegrees(-10.0, -10.0, 10.0, 60.0);
+    Rectangle childBounds = Rectangle::fromDegrees(-10.0, 20.0, 0.0, 60.0);
+    Rectangle parentOverlayRectangle(100.0, 200.0, 180.0, 280.0);
+
+    SurfaceTileMesh parentMesh = TileSurface::buildEllipsoidMesh(parentBounds, 1);
+    parentMesh.rasterOverlayDetails.rasterOverlayProjections = {
+        RasterOverlayProjection::WebMercator};
+    parentMesh.rasterOverlayDetails.rasterOverlayRectangles = {
+        parentOverlayRectangle};
+    parentMesh.rasterOverlayDetails.boundingRegion = {
+        parentBounds,
+        -5.0,
+        25.0};
+
+    std::optional<SurfaceTileMesh> childMesh =
+        TileSurface::upsampleChildMeshFromParent(
+            parentMesh,
+            parentBounds,
+            childBounds);
+
+    ASSERT_TRUE(childMesh.has_value());
+    const Rectangle* childOverlayRectangle =
+        childMesh->rasterOverlayDetails.findRectangleForOverlayProjection(
+            RasterOverlayProjection::WebMercator);
+    ASSERT_NE(nullptr, childOverlayRectangle);
+
+    const Rectangle projectedParent = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        parentBounds);
+    const Rectangle projectedChild = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        childBounds);
+    const auto mix = [](double a, double b, double t) {
+        return a + (b - a) * t;
+    };
+    const double westT =
+        (projectedChild.west() - projectedParent.west()) /
+        projectedParent.width();
+    const double eastT =
+        (projectedChild.east() - projectedParent.west()) /
+        projectedParent.width();
+    const double southT =
+        (projectedChild.south() - projectedParent.south()) /
+        projectedParent.height();
+    const double northT =
+        (projectedChild.north() - projectedParent.south()) /
+        projectedParent.height();
+    const Rectangle expected(
+        mix(parentOverlayRectangle.west(), parentOverlayRectangle.east(), westT),
+        mix(parentOverlayRectangle.south(), parentOverlayRectangle.north(), southT),
+        mix(parentOverlayRectangle.west(), parentOverlayRectangle.east(), eastT),
+        mix(parentOverlayRectangle.south(), parentOverlayRectangle.north(), northT));
+    const Rectangle geographicRatioResult(
+        100.0,
+        200.0 + 80.0 * (30.0 / 70.0),
+        140.0,
+        280.0);
+
+    EXPECT_TRUE(childOverlayRectangle->equalsEpsilon(expected, 1e-12));
+    EXPECT_FALSE(childOverlayRectangle->equalsEpsilon(
+        geographicRatioResult,
+        1e-12));
     EXPECT_EQ(
         childBounds,
         childMesh->rasterOverlayDetails.boundingRegion.rectangle);

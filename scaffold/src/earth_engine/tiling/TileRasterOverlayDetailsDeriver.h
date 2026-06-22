@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../core/geodesy/Ellipsoid.h"
+#include "../core/geodesy/Projection.h"
 #include "../core/math/MathUtils.h"
 #include "SurfaceTile.h"
 
@@ -30,28 +32,6 @@ public:
         childDetails.rasterOverlayRectangles.reserve(
             parentDetails.rasterOverlayProjections.size());
 
-        const double parentWidth = parentBounds.width();
-        const double parentHeight = parentBounds.height();
-        const auto relativeLongitude = [&](double longitude) {
-            double offset = longitude - parentBounds.west();
-            if (parentBounds.crossesAntimeridian() && offset < 0.0) {
-                offset += MathUtils::TwoPi;
-            }
-            return std::clamp(offset / parentWidth, 0.0, 1.0);
-        };
-        const double childWestT = relativeLongitude(childBounds.west());
-        const double childEastT = relativeLongitude(childBounds.east());
-        const double childSouthT =
-            std::clamp((childBounds.south() - parentBounds.south()) /
-                           parentHeight,
-                       0.0,
-                       1.0);
-        const double childNorthT =
-            std::clamp((childBounds.north() - parentBounds.south()) /
-                           parentHeight,
-                       0.0,
-                       1.0);
-
         for (size_t i = 0;
              i < parentDetails.rasterOverlayProjections.size();
              ++i) {
@@ -64,6 +44,24 @@ public:
 
             const Rectangle& parentOverlay =
                 parentDetails.rasterOverlayRectangles[i];
+            const RasterOverlayProjection projection =
+                parentDetails.rasterOverlayProjections[i];
+            const Rectangle projectedParentBounds =
+                projectBounds(parentBounds, projection);
+            const Rectangle projectedChildBounds =
+                projectBounds(childBounds, projection);
+            const double childWestT = relativeX(
+                projectedParentBounds,
+                projectedChildBounds.west());
+            const double childEastT = relativeX(
+                projectedParentBounds,
+                projectedChildBounds.east());
+            const double childSouthT = relativeY(
+                projectedParentBounds,
+                projectedChildBounds.south());
+            const double childNorthT = relativeY(
+                projectedParentBounds,
+                projectedChildBounds.north());
             childDetails.rasterOverlayRectangles.push_back(Rectangle(
                 mix(parentOverlay.west(), parentOverlay.east(), childWestT),
                 mix(parentOverlay.south(), parentOverlay.north(), childSouthT),
@@ -79,6 +77,34 @@ public:
     }
 
 private:
+    static Rectangle projectBounds(const Rectangle& bounds,
+                                   RasterOverlayProjection projection) {
+        switch (projection) {
+            case RasterOverlayProjection::Geographic:
+                return bounds;
+            case RasterOverlayProjection::WebMercator:
+                return projectRectangleSimple(
+                    WebMercatorProjection(Ellipsoid::WGS84()),
+                    bounds);
+        }
+        return bounds;
+    }
+
+    static double relativeX(const Rectangle& parentBounds, double x) {
+        double offset = x - parentBounds.west();
+        if (parentBounds.crossesAntimeridian() && offset < 0.0) {
+            offset += MathUtils::TwoPi;
+        }
+        return std::clamp(offset / parentBounds.width(), 0.0, 1.0);
+    }
+
+    static double relativeY(const Rectangle& parentBounds, double y) {
+        return std::clamp(
+            (y - parentBounds.south()) / parentBounds.height(),
+            0.0,
+            1.0);
+    }
+
     static double mix(double a, double b, double t) {
         return a + (b - a) * t;
     }
