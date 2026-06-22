@@ -49,10 +49,36 @@ public:
         CreateRasterOverlayUpsampledChildrenFn&&
             createRasterOverlayUpsampledChildren) {
         if (tile.content.renderContent.hasGltfContent()) {
+            const std::vector<size_t> overlayOrder =
+                TileSelectionRasterOverlayPreparer::processingOrder(
+                    rasterOverlays);
+            const SurfaceRasterOverlayUpdateAction overlayAction =
+                SurfaceRasterOverlayStateUpdater::update(
+                    renderer,
+                    tile,
+                    rasterOverlays,
+                    overlayOrder,
+                    device,
+                    context.maximumScreenSpaceError,
+                    frameResourceBudget);
+            if (overlayAction.unloadTileContent) {
+                unloadTileContent(tile);
+                return;
+            }
+            if (overlayAction.createRasterOverlayUpsampledChildren &&
+                tile.children.empty()) {
+                createRasterOverlayUpsampledChildren(tile);
+            }
+
             GltfRenderResourcePreparer::prepare(
                 tile,
                 device,
                 context.currentFrameTimeSeconds);
+            tile.updateFrameRenderability(
+                tile.content.renderContent.isGltfRenderReady(),
+                TileSelectionRasterOverlayPreparer::isCompleteRenderable(
+                    tile,
+                    rasterOverlays));
             GltfDrawCommandBuilder::build(
                 renderer,
                 tile,

@@ -5149,22 +5149,25 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
     root->geometricError = 100.0;
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
-    root->rasterOverlayState.mappings().resize(1);
 
-    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+    Renderer renderer(nullptr);
+    RenderCommandList commands;
+    TilesetTestAccess::buildTileDrawCommand(
+        tileset,
+        renderer,
+        *root,
+        commands,
+        1.0f);
     RasterMappedToTilesetTile* mapped =
-        root->rasterOverlayState.mappings()[0].get();
+        root->rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loading = mapped ? mapped->getLoadingTile() : nullptr;
     check(mapped != nullptr && loading != nullptr,
-          "Tileset: glTF mapped raster creates a loading mapping");
+          "Tileset: glTF mapped raster draw path creates a loading mapping");
     if (!mapped || !loading) return;
 
     loading->setTexture(std::make_unique<DummyTexture>(4, 4));
     loading->setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
-    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-
-    Renderer renderer(nullptr);
-    RenderCommandList commands;
+    commands.clear();
     TilesetTestAccess::buildTileDrawCommand(
         tileset,
         renderer,
