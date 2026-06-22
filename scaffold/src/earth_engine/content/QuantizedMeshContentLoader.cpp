@@ -162,15 +162,27 @@ void rewriteTerrainProjectionTexCoords(GltfModel& model,
     const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
     const WebMercatorProjection webMercator(ellipsoid);
     for (GltfPrimitive& primitive : model.primitives) {
+        const Mat4* nodeTransform = nullptr;
+        if (primitive.runtime.nodeIndex >= 0 &&
+            static_cast<size_t>(primitive.runtime.nodeIndex) <
+                model.nodes.size()) {
+            nodeTransform =
+                &model.nodes[static_cast<size_t>(primitive.runtime.nodeIndex)]
+                     .globalTransform;
+        }
         std::vector<std::array<float, 2>>& texCoords =
             primitive.vertexTexCoords[0];
         if (texCoords.size() != primitive.vertices.size()) {
             texCoords.resize(primitive.vertices.size());
         }
         for (size_t i = 0; i < primitive.vertices.size(); ++i) {
+            const Vec3 worldPosition = nodeTransform
+                ? nodeTransform->transformPoint(
+                      primitive.vertices[i].positionEcef)
+                : primitive.vertices[i].positionEcef;
             const std::optional<Cartographic> cartographic =
                 ellipsoid.tryCartesianToCartographic(
-                    primitive.vertices[i].positionEcef);
+                    worldPosition);
             if (!cartographic) {
                 texCoords[i] = primitive.vertices[i].uv;
                 continue;

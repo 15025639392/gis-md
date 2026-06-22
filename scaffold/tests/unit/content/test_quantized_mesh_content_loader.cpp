@@ -117,13 +117,18 @@ std::vector<uint8_t> makeQuadQuantizedMeshBytesWithEdges() {
     return bytes;
 }
 
-std::vector<uint8_t> makeQuantizedMeshBytesWithInteriorVertex() {
+std::vector<uint8_t> makeQuantizedMeshBytesWithInteriorVertex(
+    const Vec3& boundingSphereCenter = Vec3::zero()) {
     std::vector<uint8_t> bytes;
 
     for (int i = 0; i < 3; ++i) appendPod<double>(bytes, 0.0);
     appendPod<float>(bytes, 0.0f);
     appendPod<float>(bytes, 100.0f);
-    for (int i = 0; i < 7; ++i) appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, boundingSphereCenter.x());
+    appendPod<double>(bytes, boundingSphereCenter.y());
+    appendPod<double>(bytes, boundingSphereCenter.z());
+    appendPod<double>(bytes, 0.0);
+    for (int i = 0; i < 3; ++i) appendPod<double>(bytes, 0.0);
     appendPod<uint32_t>(bytes, 4);
 
     const uint16_t u[] = {
@@ -503,6 +508,81 @@ TEST(QuantizedMeshContentLoaderTest,
                horizonOcclusionPoint)
                   .length(),
               1e-12);
+}
+
+TEST(QuantizedMeshContentLoaderTest,
+     GeneratesWebMercatorTexCoordsFromWorldPositionsAfterRtcTransform) {
+    const Rectangle tileRectangle = geographicRootWestRectangle();
+    const Cartographic center = Cartographic::fromRadians(
+        tileRectangle.west() + tileRectangle.width() * 0.5,
+        tileRectangle.south() + tileRectangle.height() * 0.5,
+        0.0);
+    const Vec3 localOrigin =
+        Ellipsoid::WGS84().cartographicToCartesian(center);
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytesWithInteriorVertex(localOrigin);
+
+    QuantizedMeshContentLoadResult result =
+        QuantizedMeshContentLoader::load(
+            bytes.data(),
+            bytes.size(),
+            tileRectangle,
+            false,
+            {},
+            RasterOverlayProjection::WebMercator);
+
+    ASSERT_TRUE(result.success());
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    ASSERT_EQ(1u, result.gltfModel->nodes.size());
+
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    ASSERT_GT(primitive.vertices.size(), 3u);
+    ASSERT_GE(primitive.runtime.nodeIndex, 0);
+
+    const size_t interiorVertexIndex = 3u;
+    const Mat4& nodeTransform =
+        result.gltfModel->nodes[static_cast<size_t>(
+            primitive.runtime.nodeIndex)]
+            .globalTransform;
+    const Vec3 worldPosition = nodeTransform.transformPoint(
+        primitive.vertices[interiorVertexIndex].positionEcef);
+
+    const WebMercatorProjection projection(Ellipsoid::WGS84());
+    const Rectangle expectedProjectedRectangle = projectRectangleSimple(
+        projection,
+        tileRectangle);
+    const Cartographic interiorCartographic =
+        Ellipsoid::WGS84().cartesianToCartographic(worldPosition);
+    const Vec3 projectedInterior =
+        projectPosition(projection, interiorCartographic);
+    const double expectedU =
+        (projectedInterior.x() - expectedProjectedRectangle.west()) /
+        expectedProjectedRectangle.width();
+    const double expectedV =
+        (projectedInterior.y() - expectedProjectedRectangle.south()) /
+        expectedProjectedRectangle.height();
+
+    EXPECT_NEAR(expectedU,
+                primitive.vertexTexCoords[0][interiorVertexIndex][0],
+                1e-6);
+    EXPECT_NEAR(expectedV,
+                primitive.vertexTexCoords[0][interiorVertexIndex][1],
+                1e-6);
+
+    const Vec3 localPosition =
+        primitive.vertices[interiorVertexIndex].positionEcef;
+    const Cartographic localCartographic =
+        Ellipsoid::WGS84().cartesianToCartographic(localPosition);
+    const Vec3 incorrectlyProjectedLocal =
+        projectPosition(projection, localCartographic);
+    const double wrongV =
+        (incorrectlyProjectedLocal.y() - expectedProjectedRectangle.south()) /
+        expectedProjectedRectangle.height();
+    EXPECT_GT(std::abs(wrongV -
+                       primitive.vertexTexCoords[0][interiorVertexIndex][1]),
+              1e-3);
 }
 
 TEST(QuantizedMeshContentLoaderTest,
