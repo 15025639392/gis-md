@@ -134,7 +134,6 @@ std::unique_ptr<TerrainProvider> createTerrainProvider(
             config.urlTemplate, config.attribution);
         applyConfiguredZoomRange(*qm, config.minimumZoom, config.maximumZoom);
         qm->setTileSize(config.tileSize);
-        qm->setFlipYForUrl(config.flipYForUrl);
         qm->setWaterMaskEnabled(config.enableWaterMask);
         qm->setPlatformBridge(&platformBridge);
         if (!qm->configureFromLayerJsonUrl(config.layerJsonUrl)) {

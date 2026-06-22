@@ -44,7 +44,6 @@ public:
     void setTileSize(int ts) { tileSize_ = ts; }
     void setPlatformBridge(PlatformBridge* bridge);
     void setRequestHeaders(std::vector<HttpRequestOptions::Header> headers);
-    void setFlipYForUrl(bool flip) { flipYForUrl_ = flip; }
     void setWaterMaskEnabled(bool enabled) { waterMaskEnabled_ = enabled; }
     bool configureFromLayerJsonUrl(const std::string& layerJsonUrl);
     bool configureFromLayerJson(const std::string& layerJson,
@@ -168,10 +167,6 @@ private:
         std::shared_ptr<std::vector<uint8_t>> body,
         int statusCode,
         std::vector<std::vector<uint8_t>> metadataBodies);
-    std::vector<uint8_t> httpGet(
-        const std::string& url,
-        HttpRequestPriority priority = HttpRequestPriority::Normal,
-        std::function<bool()> shouldCancel = {});
     std::vector<LayerConfig> layers_;
     std::string urlTemplate_;
     std::string attribution_;
@@ -186,7 +181,6 @@ private:
     int minZoom_ = 0;
     int maxZoom_ = 15;
     int tileSize_ = 65;   // default 64×64 grid
-    bool flipYForUrl_ = false;
     bool waterMaskEnabled_ = false;
     PlatformBridge* platformBridge_ = nullptr;
     std::vector<HttpRequestOptions::Header> requestHeaders_;

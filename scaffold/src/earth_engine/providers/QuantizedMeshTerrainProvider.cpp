@@ -16,8 +16,6 @@
 #include <sstream>
 #include <algorithm>
 #include <mutex>
-#include <condition_variable>
-#include <chrono>
 #include <cstring>
 #include <fstream>
 #include <thread>
@@ -44,23 +42,6 @@ constexpr const char* kFileUrlPrefix = "file://";
 
 bool isFileUrl(const std::string& url) {
     return url.rfind(kFileUrlPrefix, 0) == 0;
-}
-
-std::string cacheKeyFor(
-    const std::string& url,
-    const std::vector<HttpRequestOptions::Header>& headers) {
-    if (headers.empty()) {
-        return url;
-    }
-    std::string key = url;
-    key += "\nheaders:";
-    for (const auto& header : headers) {
-        key += "\n";
-        key += header.first;
-        key += ":";
-        key += header.second;
-    }
-    return key;
 }
 
 std::vector<uint8_t> readFileUrl(const std::string& url) {
@@ -1074,14 +1055,10 @@ std::string QuantizedMeshTerrainProvider::id() const {
 std::string QuantizedMeshTerrainProvider::buildUrlForLayer(
     const LayerConfig& layer,
     const TileKey& key) const {
-    const int tilesAtZoom = 1 << key.z;
-    const int urlY = flipYForUrl_
-        ? std::clamp(tilesAtZoom - 1 - key.y, 0, tilesAtZoom - 1)
-        : key.y;
     const std::string level = std::to_string(key.z);
     std::string url = substituteTemplateParameters(
         layer.urlTemplate,
-        [&key, &layer, &level, urlY](const std::string& placeholder) {
+        [&key, &layer, &level](const std::string& placeholder) {
             if (placeholder == "level" || placeholder == "z") {
                 return level;
             }
@@ -1089,7 +1066,7 @@ std::string QuantizedMeshTerrainProvider::buildUrlForLayer(
                 return std::to_string(key.x);
             }
             if (placeholder == "y") {
-                return std::to_string(urlY);
+                return std::to_string(key.y);
             }
             if (placeholder == "version") {
                 return layer.version;
@@ -1687,80 +1664,6 @@ bool QuantizedMeshTerrainProvider::isAvailabilityBoundaryLevel(int level) const 
 std::unique_ptr<DecodedHeightmap> QuantizedMeshTerrainProvider::decodeTile(
     const uint8_t*, size_t) {
     return nullptr;
-}
-
-std::vector<uint8_t> QuantizedMeshTerrainProvider::httpGet(
-    const std::string& url,
-    HttpRequestPriority priority,
-    std::function<bool()> shouldCancel) {
-#ifdef __ANDROID__
-    __android_log_print(ANDROID_LOG_INFO, "QMTerrain", "httpGet ENTER: %s", url.c_str());
-#endif
-    // Check shared LRU cache
-    const std::string cacheKey = cacheKeyFor(url, requestHeaders_);
-    auto cached = HttpCache::shared().get(cacheKey);
-#ifdef __ANDROID__
-    if (!cached.empty())
-        __android_log_print(ANDROID_LOG_INFO, "QMTerrain",
-            "httpGet cache hit: %zu bytes", cached.size());
-#endif
-    if (!cached.empty()) return cached;
-
-    if (isFileUrl(url)) {
-        return readFileUrl(url);
-    }
-
-    if (platformBridge_) {
-        struct WaitState {
-            std::vector<uint8_t> result;
-            std::mutex mutex;
-            std::condition_variable cv;
-            bool done = false;
-        };
-        auto state = std::make_shared<WaitState>();
-        auto request = platformBridge_->get(url, [state](int code, std::vector<uint8_t> body) {
-            {
-                std::lock_guard<std::mutex> lk(state->mutex);
-                if (code == 200) state->result = std::move(body);
-                state->done = true;
-            }
-            state->cv.notify_one();
-        }, {priority, requestHeaders_});
-        bool done = false;
-        {
-            const auto deadline = std::chrono::steady_clock::now() +
-                std::chrono::seconds(20);
-            std::unique_lock<std::mutex> lk(state->mutex);
-            while (!state->done && !(shouldCancel && shouldCancel())) {
-                const auto now = std::chrono::steady_clock::now();
-                if (now >= deadline) break;
-                state->cv.wait_until(
-                    lk,
-                    std::min(deadline, now + std::chrono::milliseconds(20)));
-            }
-            done = state->done;
-        }
-        if ((!done || (shouldCancel && shouldCancel())) && request) {
-            request->cancel();
-        }
-        if (done && !state->result.empty()) {
-            HttpCache::shared().put(cacheKey, state->result);
-        }
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_INFO, "QMTerrain",
-            "httpGet bridge: %zu bytes", state->result.size());
-#endif
-        return done ? std::move(state->result) : std::vector<uint8_t>{};
-    }
-
-    std::vector<uint8_t> result =
-        CurlMultiRequestScheduler::shared().getBlocking(
-            url,
-            {priority, requestHeaders_},
-            std::chrono::seconds(20),
-            std::move(shouldCancel));
-    if (!result.empty()) HttpCache::shared().put(cacheKey, result);
-    return result;
 }
 
 } // namespace earth_engine
