@@ -172,6 +172,23 @@ struct TilesetTestAccess {
                 TileLoadResult::fromContentResult(std::move(result))});
     }
 
+    static void queueContentTerminalResult(
+        Tileset& tileset,
+        const TileKey& key,
+        TileLoadStatus status) {
+        const std::string cacheKey = terrainCacheKey(tileset, key);
+        std::lock_guard<std::mutex> lock(
+            tileset.contentLifecycle_.loadLifecycle().mutex());
+        tileset.contentLifecycle_.loadLifecycle().pendingLoads()
+            .addTerminalResult(PendingTileLoad{
+                TileLoadDomain::Content,
+                key,
+                cacheKey,
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileLoadResult::createTerminal(status)});
+    }
+
     static void unloadCachedBytes(
         Tileset& tileset,
         int64_t maximumCachedBytes) {
@@ -1126,6 +1143,90 @@ TEST(
 
     FrameState frameState;
     frameState.frameId = 402;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+
+    TilesetTestAccess::runUpdateFrameRuntime(tileset, frameState, &recorder);
+
+    EXPECT_EQ(1, recorder.detachCount);
+    EXPECT_EQ(key, recorder.lastDetachedGeometryKey);
+    EXPECT_EQ(0, recorder.lastDetachedOverlayIndex);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    UpdateFramePassesRendererPrepSinkToTerminalResultDetach) {
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        {});
+    TilesetTile* tile = TilesetTestAccess::ensureTile(tileset, key);
+    ASSERT_NE(nullptr, tile);
+
+    auto existingModel = std::make_unique<GltfModel>();
+    existingModel->rasterOverlayDetails.rasterOverlayProjections.push_back(
+        RasterOverlayProjection::WebMercator);
+    existingModel->rasterOverlayDetails.rasterOverlayRectangles.push_back(
+        projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            tile->bounds));
+    tile->content.renderContent.prepareGltfContent(
+        std::move(existingModel),
+        Mat4::identity());
+    tile->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile->content.loadState = TileLoadState::Done;
+    tile->content.contentKind = TileContentKind::Render;
+
+    DebugImageryProvider imagery;
+    auto rasterScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider rasterProvider(imagery, *rasterScheme, nullptr);
+    RasterMappedToTilesetTile& mapped =
+        tile->rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missingProjections;
+    ASSERT_EQ(
+        RasterMappedToTilesetTile::MoreDetail::Unknown,
+        mapped.update(
+            key,
+            tile->content.renderContent.rasterOverlayDetails(),
+            512.0,
+            512.0,
+            rasterProvider,
+            nullptr,
+            missingProjections));
+    ASSERT_NE(nullptr, mapped.getLoadingTile());
+    mapped.getLoadingTile()->setTexture(std::make_unique<DummyTexture>(4, 4));
+
+    RecordingPrepareRendererResources recorder;
+    mapped.update(
+        key,
+        tile->content.renderContent.rasterOverlayDetails(),
+        512.0,
+        512.0,
+        rasterProvider,
+        &recorder,
+        missingProjections);
+    ASSERT_EQ(1, recorder.attachCount);
+    ASSERT_EQ(0, recorder.detachCount);
+
+    TilesetTestAccess::queueContentTerminalResult(
+        tileset,
+        key,
+        TileLoadStatus::Empty);
+
+    Camera camera;
+    camera.lookAt(
+        Vec3(Ellipsoid::WGS84().semiMajorAxis() * 2.0, 0.0, 0.0),
+        Vec3(Ellipsoid::WGS84().semiMajorAxis(), 0.0, 0.0),
+        Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 403;
     frameState.camera = &camera;
     frameState.viewportWidthPixels = 800;
     frameState.viewportHeightPixels = 800;

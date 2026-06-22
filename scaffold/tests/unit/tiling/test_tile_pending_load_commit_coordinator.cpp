@@ -144,6 +144,7 @@ void expectContentTerminalClearsEmptyMarker(TileLoadStatus status) {
     TilePendingLoadCommitCoordinator::commitContentTerminalResult(
         result,
         emptyContentRegistry,
+        nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
@@ -174,6 +175,7 @@ void expectTerrainTerminalClearsEmptyMarker(TileLoadStatus status) {
     TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
         result,
         emptyContentRegistry,
+        nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&resourcesDirty]() { resourcesDirty = true; });
 
@@ -207,6 +209,7 @@ void expectTerrainTerminalIgnoresMetadata(TileLoadStatus status,
     TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
         pending,
         emptyContentRegistry,
+        nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         []() {});
 
@@ -239,6 +242,7 @@ void expectContentTerminalIgnoresMetadata(TileLoadStatus status,
     TilePendingLoadCommitCoordinator::commitContentTerminalResult(
         pending,
         emptyContentRegistry,
+        nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
         []() {});
@@ -275,11 +279,13 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
         terrainResult,
         emptyContentRegistry,
+        nullptr,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [&resourcesDirty]() { resourcesDirty = true; });
     TilePendingLoadCommitCoordinator::commitContentTerminalResult(
         contentResult,
         emptyContentRegistry,
+        nullptr,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
@@ -315,6 +321,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitContentTerminalResult(
         pending,
         emptyContentRegistry,
+        nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
@@ -351,6 +358,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
         pending,
         emptyContentRegistry,
+        nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&resourcesDirty]() { resourcesDirty = true; });
 
@@ -386,6 +394,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitContentTerminalResult(
         pending,
         emptyContentRegistry,
+        nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });

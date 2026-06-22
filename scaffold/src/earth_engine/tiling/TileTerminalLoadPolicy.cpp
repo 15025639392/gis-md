@@ -7,13 +7,17 @@ namespace earth_engine {
 
 namespace {
 
-void markUnknownTemporaryFailure(TilesetTile& tile) {
-    tile.rasterOverlayState.releaseAndClearReferences(nullptr);
+void markUnknownTemporaryFailure(
+    TilesetTile& tile,
+    IPrepareRendererResources* pPrepRenderer) {
+    tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
     tile.markContentFailedTemporarily();
 }
 
-void markUnknownPermanentFailure(TilesetTile& tile) {
-    tile.rasterOverlayState.releaseAndClearReferences(nullptr);
+void markUnknownPermanentFailure(
+    TilesetTile& tile,
+    IPrepareRendererResources* pPrepRenderer) {
+    tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
     tile.markContentFailedPermanently();
 }
 
@@ -36,13 +40,14 @@ void applyNativeEmptyContentRefinement(TilesetTile& tile) {
 TileTerminalLoadAction
 TileTerminalLoadPolicy::applyTerrainTerminalResult(
     TilesetTile& tile,
-    TileLoadStatus status) {
+    TileLoadStatus status,
+    IPrepareRendererResources* pPrepRenderer) {
     TileTerminalLoadAction action;
 
     switch (status) {
         case TileLoadStatus::Empty: {
             action.markEmptyCacheKey = true;
-            tile.rasterOverlayState.releaseAndClearReferences(nullptr);
+            tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
             tile.markEmptyContentLoaded();
             applyNativeEmptyContentRefinement(tile);
             tile.markEmptyContentDone();
@@ -51,13 +56,13 @@ TileTerminalLoadPolicy::applyTerrainTerminalResult(
         }
         case TileLoadStatus::RetryLater:
         case TileLoadStatus::Cancelled:
-            markUnknownTemporaryFailure(tile);
+            markUnknownTemporaryFailure(tile, pPrepRenderer);
             action.resourcesDirty = true;
             break;
         case TileLoadStatus::Failed:
         case TileLoadStatus::Renderable:
         case TileLoadStatus::External:
-            markUnknownPermanentFailure(tile);
+            markUnknownPermanentFailure(tile, pPrepRenderer);
             action.resourcesDirty = true;
             break;
     }
@@ -68,40 +73,41 @@ TileTerminalLoadPolicy::applyTerrainTerminalResult(
 TileTerminalLoadAction
 TileTerminalLoadPolicy::applyContentTerminalResult(
     TilesetTile& tile,
-    TileLoadStatus status) {
+    TileLoadStatus status,
+    IPrepareRendererResources* pPrepRenderer) {
     TileTerminalLoadAction action;
 
     switch (status) {
         case TileLoadStatus::Empty:
             action.markEmptyCacheKey = true;
-            tile.rasterOverlayState.releaseAndClearReferences(nullptr);
+            tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
             applyNativeEmptyContentRefinement(tile);
             tile.markEmptyContentDone();
             action.resourcesDirty = true;
             break;
         case TileLoadStatus::External:
-            tile.rasterOverlayState.releaseAndClearReferences(nullptr);
+            tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
             tile.markExternalContentDone();
             action.ensureChildren = true;
             action.resourcesDirty = true;
             break;
         case TileLoadStatus::RetryLater:
-            markUnknownTemporaryFailure(tile);
+            markUnknownTemporaryFailure(tile, pPrepRenderer);
             action.ensureChildren = true;
             action.resourcesDirty = true;
             break;
         case TileLoadStatus::Cancelled:
-            markUnknownTemporaryFailure(tile);
+            markUnknownTemporaryFailure(tile, pPrepRenderer);
             action.ensureChildren = true;
             action.resourcesDirty = true;
             break;
         case TileLoadStatus::Failed:
-            markUnknownPermanentFailure(tile);
+            markUnknownPermanentFailure(tile, pPrepRenderer);
             action.ensureChildren = true;
             action.resourcesDirty = true;
             break;
         case TileLoadStatus::Renderable:
-            markUnknownPermanentFailure(tile);
+            markUnknownPermanentFailure(tile, pPrepRenderer);
             action.resourcesDirty = true;
             break;
     }

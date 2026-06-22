@@ -52,6 +52,7 @@ public:
             TilePendingLoadCommitCoordinator::commitTerminalResult(
                 result,
                 input.emptyContentRegistry,
+                input.pPrepRenderer,
                 ensureTile,
                 ensureTileChildren,
                 markResourcesDirty);

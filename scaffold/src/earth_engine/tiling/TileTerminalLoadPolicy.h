@@ -5,6 +5,7 @@
 
 namespace earth_engine {
 
+class IPrepareRendererResources;
 struct TilesetTile;
 
 struct TileTerminalLoadAction {
@@ -16,10 +17,12 @@ struct TileTerminalLoadAction {
 struct TileTerminalLoadPolicy {
     static TileTerminalLoadAction applyTerrainTerminalResult(
         TilesetTile& tile,
-        TileLoadStatus status);
+        TileLoadStatus status,
+        IPrepareRendererResources* pPrepRenderer);
     static TileTerminalLoadAction applyContentTerminalResult(
         TilesetTile& tile,
-        TileLoadStatus status);
+        TileLoadStatus status,
+        IPrepareRendererResources* pPrepRenderer);
 };
 
 } // namespace earth_engine

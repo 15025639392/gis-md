@@ -12,11 +12,13 @@ TileTerminalLoadCommitter::commitTerrainTerminalResult(
     TilesetTile& tile,
     const std::string& cacheKey,
     TileLoadResult result,
-    TileEmptyContentRegistry& emptyContentRegistry) {
+    TileEmptyContentRegistry& emptyContentRegistry,
+    IPrepareRendererResources* pPrepRenderer) {
     TileTerminalLoadAction action =
         TileTerminalLoadPolicy::applyTerrainTerminalResult(
             tile,
-            result.status);
+            result.status,
+            pPrepRenderer);
     if (result.shouldApplyTerminalMetadata()) {
         TileLoadResultMetadataApplicator::apply(
             tile,
@@ -35,11 +37,13 @@ TileTerminalLoadCommitter::commitContentTerminalResult(
     TilesetTile& tile,
     const std::string& cacheKey,
     TileLoadResult result,
-    TileEmptyContentRegistry& emptyContentRegistry) {
+    TileEmptyContentRegistry& emptyContentRegistry,
+    IPrepareRendererResources* pPrepRenderer) {
     TileTerminalLoadAction action =
         TileTerminalLoadPolicy::applyContentTerminalResult(
             tile,
-            result.status);
+            result.status,
+            pPrepRenderer);
     if (result.shouldApplyTerminalMetadata()) {
         TileLoadResultMetadataApplicator::apply(
             tile,

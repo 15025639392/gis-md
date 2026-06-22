@@ -12588,7 +12588,8 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
     TileTerminalLoadAction action =
         TileTerminalLoadPolicy::applyTerrainTerminalResult(
             tile,
-            TileLoadStatus::Empty);
+            TileLoadStatus::Empty,
+        nullptr);
     check(action.markEmptyCacheKey &&
               action.resourcesDirty &&
               !action.ensureChildren &&
@@ -12622,7 +12623,8 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyTerrainTerminalResult(
         zeroErrorRoot,
-        TileLoadStatus::Empty);
+        TileLoadStatus::Empty,
+        nullptr);
     check(action.markEmptyCacheKey &&
               action.resourcesDirty &&
               zeroErrorRoot.content.contentKind == TileContentKind::Empty &&
@@ -12632,7 +12634,8 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyTerrainTerminalResult(
         tile,
-        TileLoadStatus::RetryLater);
+        TileLoadStatus::RetryLater,
+        nullptr);
     check(!action.markEmptyCacheKey &&
               action.resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
@@ -12641,7 +12644,8 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyTerrainTerminalResult(
         tile,
-        TileLoadStatus::Cancelled);
+        TileLoadStatus::Cancelled,
+        nullptr);
     check(!action.markEmptyCacheKey &&
               action.resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
@@ -12650,7 +12654,8 @@ void testTileTerminalLoadPolicyMapsTerrainTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyTerrainTerminalResult(
         tile,
-        TileLoadStatus::Renderable);
+        TileLoadStatus::Renderable,
+        nullptr);
     check(!action.markEmptyCacheKey &&
               action.resourcesDirty &&
               tile.content.contentKind == TileContentKind::Unknown &&
@@ -12664,7 +12669,8 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
     TileTerminalLoadAction action =
         TileTerminalLoadPolicy::applyContentTerminalResult(
             tile,
-            TileLoadStatus::Empty);
+            TileLoadStatus::Empty,
+        nullptr);
     check(action.markEmptyCacheKey &&
               action.resourcesDirty &&
               !action.ensureChildren &&
@@ -12681,7 +12687,8 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
     lowerErrorEmptyContent.geometricError = 8.0;
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         lowerErrorEmptyContent,
-        TileLoadStatus::Empty);
+        TileLoadStatus::Empty,
+        nullptr);
     check(action.markEmptyCacheKey &&
               !lowerErrorEmptyContent.unconditionallyRefine &&
               lowerErrorEmptyContent.content.contentKind ==
@@ -12696,7 +12703,8 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
     equalErrorEmptyContent.geometricError = 16.0;
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         equalErrorEmptyContent,
-        TileLoadStatus::Empty);
+        TileLoadStatus::Empty,
+        nullptr);
     check(action.markEmptyCacheKey &&
               equalErrorEmptyContent.unconditionallyRefine &&
               equalErrorEmptyContent.content.contentKind ==
@@ -12706,7 +12714,8 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         tile,
-        TileLoadStatus::External);
+        TileLoadStatus::External,
+        nullptr);
     check(!action.markEmptyCacheKey &&
               action.ensureChildren &&
               action.resourcesDirty &&
@@ -12717,7 +12726,8 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         tile,
-        TileLoadStatus::RetryLater);
+        TileLoadStatus::RetryLater,
+        nullptr);
     check(!action.markEmptyCacheKey &&
               action.ensureChildren &&
               action.resourcesDirty &&
@@ -12727,7 +12737,8 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         tile,
-        TileLoadStatus::Cancelled);
+        TileLoadStatus::Cancelled,
+        nullptr);
     check(!action.markEmptyCacheKey &&
               action.ensureChildren &&
               action.resourcesDirty &&
@@ -12737,7 +12748,8 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         tile,
-        TileLoadStatus::Failed);
+        TileLoadStatus::Failed,
+        nullptr);
     check(!action.markEmptyCacheKey &&
               action.ensureChildren &&
               action.resourcesDirty &&
@@ -12747,7 +12759,8 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
 
     action = TileTerminalLoadPolicy::applyContentTerminalResult(
         tile,
-        TileLoadStatus::Renderable);
+        TileLoadStatus::Renderable,
+        nullptr);
     check(!action.markEmptyCacheKey &&
               !action.ensureChildren &&
               action.resourcesDirty &&
@@ -12766,7 +12779,8 @@ void testTileTerminalLoadPolicyClearsRasterMappingsForNonRenderTerminalStates() 
     addRasterMapping(emptyContent);
     TileTerminalLoadPolicy::applyContentTerminalResult(
         emptyContent,
-        TileLoadStatus::Empty);
+        TileLoadStatus::Empty,
+        nullptr);
     check(emptyContent.rasterOverlayState.mappings().empty(),
           "TileTerminalLoadPolicy: empty content clears stale raster mappings");
 
@@ -12774,7 +12788,8 @@ void testTileTerminalLoadPolicyClearsRasterMappingsForNonRenderTerminalStates() 
     addRasterMapping(retryContent);
     TileTerminalLoadPolicy::applyContentTerminalResult(
         retryContent,
-        TileLoadStatus::RetryLater);
+        TileLoadStatus::RetryLater,
+        nullptr);
     check(retryContent.rasterOverlayState.mappings().empty(),
           "TileTerminalLoadPolicy: retry content clears stale raster mappings");
 
@@ -12782,7 +12797,8 @@ void testTileTerminalLoadPolicyClearsRasterMappingsForNonRenderTerminalStates() 
     addRasterMapping(failedTerrain);
     TileTerminalLoadPolicy::applyTerrainTerminalResult(
         failedTerrain,
-        TileLoadStatus::Failed);
+        TileLoadStatus::Failed,
+        nullptr);
     check(failedTerrain.rasterOverlayState.mappings().empty(),
           "TileTerminalLoadPolicy: failed terrain clears stale raster mappings");
 }
@@ -12797,7 +12813,8 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
             terrainTile,
             "terrain-empty",
             TileLoadResult::createTerminal(TileLoadStatus::Empty),
-            emptyContentRegistry);
+            emptyContentRegistry,
+            nullptr);
     check(action.markEmptyCacheKey &&
               action.resourcesDirty &&
               emptyContentRegistry.contains("terrain-empty") &&
@@ -12810,7 +12827,8 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
         contentTile,
         "content-empty",
         TileLoadResult::createTerminal(TileLoadStatus::Empty),
-        emptyContentRegistry);
+        emptyContentRegistry,
+            nullptr);
     check(action.markEmptyCacheKey &&
               action.resourcesDirty &&
               !action.ensureChildren &&
@@ -12824,7 +12842,8 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
         externalTile,
         "content-external",
         TileLoadResult::createTerminal(TileLoadStatus::External),
-        emptyContentRegistry);
+        emptyContentRegistry,
+            nullptr);
     check(!action.markEmptyCacheKey &&
               action.ensureChildren &&
               action.resourcesDirty &&
@@ -12840,7 +12859,8 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
         retryTile,
         "content-retry",
         TileLoadResult::createTerminal(TileLoadStatus::RetryLater),
-        emptyContentRegistry);
+        emptyContentRegistry,
+            nullptr);
     check(!action.markEmptyCacheKey &&
               action.ensureChildren &&
               action.resourcesDirty &&
@@ -12855,7 +12875,8 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
         cancelledContentTile,
         "content-cancelled",
         TileLoadResult::createTerminal(TileLoadStatus::Cancelled),
-        emptyContentRegistry);
+        emptyContentRegistry,
+            nullptr);
     check(!action.markEmptyCacheKey &&
               action.ensureChildren &&
               action.resourcesDirty &&
@@ -12872,7 +12893,8 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
         failedTerrainTile,
         "terrain-failed",
         TileLoadResult::createTerminal(TileLoadStatus::Failed),
-        emptyContentRegistry);
+        emptyContentRegistry,
+            nullptr);
     check(!action.markEmptyCacheKey &&
               !action.ensureChildren &&
               action.resourcesDirty &&
@@ -12887,7 +12909,8 @@ void testTileTerminalLoadCommitterWritesEmptyRegistryActions() {
         cancelledTerrainTile,
         "terrain-cancelled",
         TileLoadResult::createTerminal(TileLoadStatus::Cancelled),
-        emptyContentRegistry);
+        emptyContentRegistry,
+            nullptr);
     check(!action.markEmptyCacheKey &&
               !action.ensureChildren &&
               action.resourcesDirty &&
@@ -13695,11 +13718,13 @@ void testTilePendingLoadCommitCoordinatorSkipsMissingTileTerminalResults() {
     TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
         terrainResult,
         emptyContentRegistry,
+        nullptr,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [&resourcesDirty]() { resourcesDirty = true; });
     TilePendingLoadCommitCoordinator::commitContentTerminalResult(
         contentResult,
         emptyContentRegistry,
+        nullptr,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
@@ -13731,6 +13756,7 @@ void testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker() {
     TilePendingLoadCommitCoordinator::commitContentTerminalResult(
         result,
         emptyContentRegistry,
+        nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
@@ -13763,6 +13789,7 @@ void testTilePendingLoadCommitCoordinatorClearsContentCancelledEmptyMarker() {
     TilePendingLoadCommitCoordinator::commitContentTerminalResult(
         result,
         emptyContentRegistry,
+        nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
         [&resourcesDirty]() { resourcesDirty = true; });
@@ -13794,6 +13821,7 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainRetryEmptyMarker() {
     TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
         result,
         emptyContentRegistry,
+        nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&resourcesDirty]() { resourcesDirty = true; });
 
@@ -13823,6 +13851,7 @@ void testTilePendingLoadCommitCoordinatorClearsTerrainCancelledEmptyMarker() {
     TilePendingLoadCommitCoordinator::commitTerrainTerminalResult(
         result,
         emptyContentRegistry,
+        nullptr,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&resourcesDirty]() { resourcesDirty = true; });
 
@@ -22867,7 +22896,8 @@ void testTileMissingRequestSchedulerRetriesAfterEmptyMarkerCleared() {
         *tileRaw,
         cacheKey,
         TileLoadResult::createTerminal(TileLoadStatus::RetryLater),
-        emptyContentRegistry);
+        emptyContentRegistry,
+        nullptr);
     outcome = requestOnce();
     check(outcome.issued == 1 &&
               provider.requestCount == 1 &&
@@ -22955,7 +22985,8 @@ void testTileMissingRequestSchedulerRetriesTerrainAfterEmptyMarkerCleared() {
         *tileRaw,
         cacheKey,
         TileLoadResult::createTerminal(TileLoadStatus::RetryLater),
-        emptyContentRegistry);
+        emptyContentRegistry,
+        nullptr);
     outcome = requestOnce();
     check(outcome.issued == 1 &&
               provider.requestCount == 1 &&

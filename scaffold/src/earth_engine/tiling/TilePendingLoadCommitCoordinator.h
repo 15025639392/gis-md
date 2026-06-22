@@ -40,6 +40,7 @@ public:
     static void commitTerrainTerminalResult(
         PendingTileLoad& result,
         TileEmptyContentRegistry& emptyContentRegistry,
+        IPrepareRendererResources* pPrepRenderer,
         EnsureTileFn&& ensureTile,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         TilesetTile* tile = ensureTile(result.key);
@@ -50,7 +51,8 @@ public:
                 *tile,
                 result.cacheKey,
                 std::move(result.result),
-                emptyContentRegistry);
+                emptyContentRegistry,
+                pPrepRenderer);
         if (action.resourcesDirty) {
             markResourcesDirty();
         }
@@ -62,6 +64,7 @@ public:
     static void commitContentTerminalResult(
         PendingTileLoad& result,
         TileEmptyContentRegistry& emptyContentRegistry,
+        IPrepareRendererResources* pPrepRenderer,
         EnsureTileFn&& ensureTile,
         EnsureChildrenFn&& ensureChildren,
         MarkResourcesDirtyFn&& markResourcesDirty) {
@@ -73,7 +76,8 @@ public:
                 *tile,
                 result.cacheKey,
                 std::move(result.result),
-                emptyContentRegistry);
+                emptyContentRegistry,
+                pPrepRenderer);
         if (action.ensureChildren) {
             ensureChildren(*tile);
         }
@@ -207,6 +211,7 @@ public:
     static void commitTerminalResult(
         PendingTileLoad& result,
         TileEmptyContentRegistry& emptyContentRegistry,
+        IPrepareRendererResources* pPrepRenderer,
         EnsureTileFn&& ensureTile,
         EnsureChildrenFn&& ensureChildren,
         MarkResourcesDirtyFn&& markResourcesDirty) {
@@ -214,6 +219,7 @@ public:
             commitContentTerminalResult(
                 result,
                 emptyContentRegistry,
+                pPrepRenderer,
                 std::forward<EnsureTileFn>(ensureTile),
                 std::forward<EnsureChildrenFn>(ensureChildren),
                 std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
@@ -221,6 +227,7 @@ public:
             commitTerrainTerminalResult(
                 result,
                 emptyContentRegistry,
+                pPrepRenderer,
                 std::forward<EnsureTileFn>(ensureTile),
                 std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
         }
