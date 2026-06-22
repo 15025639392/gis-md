@@ -5,6 +5,7 @@
 #include "TileLoadRequestPlanner.h"
 #include "TileLoadPriorityPolicy.h"
 #include "TileLoadTypes.h"
+#include "TileGltfTerrainUpsampledChildMaterializer.h"
 #include "../core/resources/FrameResourceBudget.h"
 #include "../content/GltfContentProvider.h"
 #include "../providers/TerrainProvider.h"
@@ -84,6 +85,11 @@ public:
                     continue;
                 }
 
+                const TileLoadDomain upsampleDomain =
+                    TileGltfTerrainUpsampledChildMaterializer::
+                            findGltfTerrainSource(*tileState)
+                        ? TileLoadDomain::Content
+                        : TileLoadDomain::Terrain;
                 const TileLoadDispatchResult dispatchResult =
                     TileLoadRequestDispatcher::queueUpsampledTerrain(
                         input.lifecycle.mutex(),
@@ -92,7 +98,8 @@ public:
                         requestKey,
                         cacheKey,
                         request.group,
-                        request.priority);
+                        request.priority,
+                        upsampleDomain);
                 if (shouldStopAfterDispatch(dispatchResult)) {
                     break;
                 }

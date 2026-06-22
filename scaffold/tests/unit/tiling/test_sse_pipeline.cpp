@@ -27240,9 +27240,10 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
 
     TilesetTestAccess::requestMissingTile(tileset, child->key);
     check(child->content.loadState == TileLoadState::ContentLoading &&
-              tileset.loadDiagnostics().pendingTerrainUploads == 1 &&
+              tileset.loadDiagnostics().pendingContentUploads == 1 &&
+              tileset.loadDiagnostics().pendingTerrainUploads == 0 &&
               rawProvider->requestCount == 0,
-          "Tileset: glTF-parent child enters local terrain upload without provider request");
+          "Tileset: glTF-parent child enters local content upload without provider request");
 
     TilesetTestAccess::processPendingUploads(tileset);
     const GltfModel* childModel =
@@ -27376,9 +27377,10 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
     TilesetTile* child = root->children[2];
     TilesetTestAccess::requestMissingTile(tileset, child->key);
     check(child->content.loadState == TileLoadState::ContentLoading &&
-              tileset.loadDiagnostics().pendingTerrainUploads == 1 &&
+              tileset.loadDiagnostics().pendingContentUploads == 1 &&
+              tileset.loadDiagnostics().pendingTerrainUploads == 0 &&
               rawProvider->requestCount == 0,
-          "Tileset: WebMercator glTF-parent child queues local upsample");
+          "Tileset: WebMercator glTF-parent child queues local content upsample");
 
     TilesetTestAccess::processPendingUploads(tileset);
     const GltfModel* childModel =

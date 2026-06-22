@@ -32,7 +32,8 @@ public:
         const TileKey& key,
         const std::string& cacheKey,
         TileLoadPriorityGroup group,
-        double priority);
+        double priority,
+        TileLoadDomain domain = TileLoadDomain::Terrain);
 
     template <typename OnIssuedFn>
     static TileLoadDispatchResult requestContent(

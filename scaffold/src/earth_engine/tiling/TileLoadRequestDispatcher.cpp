@@ -9,7 +9,8 @@ TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledTerrain(
     const TileKey& key,
     const std::string& cacheKey,
     TileLoadPriorityGroup group,
-    double priority) {
+    double priority,
+    TileLoadDomain domain) {
     std::lock_guard<std::mutex> lock(mutex);
     if (requestState.destroying()) {
         return TileLoadDispatchResult::Destroying;
@@ -23,7 +24,7 @@ TileLoadDispatchResult TileLoadRequestDispatcher::queueUpsampledTerrain(
     }
     pendingLoads.addUpload(
         PendingTileLoad{
-            TileLoadDomain::Terrain,
+            domain,
             key,
             cacheKey,
             group,

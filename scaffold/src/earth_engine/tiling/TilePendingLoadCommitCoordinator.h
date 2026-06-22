@@ -172,6 +172,9 @@ public:
             return;
         }
 
+        TileGltfTerrainUpsampledChildMaterializer::materialize(
+            *tile,
+            upload.content());
         TileContentUploadCommitter::applyAvailabilityUpdates(
             contentProvider,
             upload.content());
