@@ -85,11 +85,16 @@ public:
                     continue;
                 }
 
-                const TileLoadDomain upsampleDomain =
+                const bool hasGltfTerrainSource =
                     TileGltfTerrainUpsampledChildMaterializer::
-                            findGltfTerrainSource(*tileState)
-                        ? TileLoadDomain::Content
-                        : TileLoadDomain::Terrain;
+                        findGltfTerrainSource(*tileState) != nullptr;
+                if (snapshot.contentProviderOwnsTerrainQuadtree &&
+                    !hasGltfTerrainSource) {
+                    continue;
+                }
+                const TileLoadDomain upsampleDomain = hasGltfTerrainSource
+                    ? TileLoadDomain::Content
+                    : TileLoadDomain::Terrain;
                 const TileLoadDispatchResult dispatchResult =
                     TileLoadRequestDispatcher::queueUpsampledTerrain(
                         input.lifecycle.mutex(),

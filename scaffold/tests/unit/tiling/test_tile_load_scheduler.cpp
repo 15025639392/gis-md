@@ -45,6 +45,27 @@ public:
     int estimatedFanout = 1;
 };
 
+class TerrainQuadtreeContentProvider final : public TilesetContentProvider {
+public:
+    std::string id() const override {
+        return "scheduler-content-terrain-quadtree";
+    }
+    bool supportsTile(const TileKey&) const override { return false; }
+    bool providesTerrainQuadtree() const override { return true; }
+    void requestTileContent(
+        const TileKey&,
+        CancellationToken,
+        ContentCallback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        ++requestCount;
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+
+    int requestCount = 0;
+};
+
 class ExplicitContentTerrainProvider final : public TerrainProvider,
                                              public TilesetContentProvider {
 public:
@@ -631,6 +652,64 @@ TEST(TileLoadSchedulerTest, QueuesUpsampledTerrainWhenNetworkInflightIsFull) {
         lifecycle.requestState().completeTerrainRequest("busy");
         lifecycle.pendingLoads().clear();
     }
+}
+
+TEST(TileLoadSchedulerTest,
+     ContentTerrainUpsampleWithoutGltfSourceDoesNotUseTerrainDomain) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    TilesetTile parent(parentKey, Rectangle{});
+    TilesetTile child(childKey, Rectangle{}, &parent);
+    child.content.upsampledFromParent = true;
+    TerrainQuadtreeContentProvider provider;
+    bool prepared = false;
+    bool marked = false;
+
+    const TileLoadRequestOutcome outcome =
+        TileLoadScheduler::requestMissingTiles(
+            {TileLoadRequest{
+                childKey,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileLoadSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                &provider},
+            cacheKeyForTile,
+            [&child](
+                const TileKey&,
+                const std::string&,
+                TilesetTile*& tileState) {
+                tileState = &child;
+                TileLoadRequestSnapshot snapshot;
+                snapshot.hasTile = true;
+                snapshot.upsampledFromParent = true;
+                snapshot.contentProviderOwnsTerrainQuadtree = true;
+                return snapshot;
+            },
+            [](const std::string&) { return false; },
+            [&prepared](TilesetTile&, double) {
+                prepared = true;
+                return true;
+            },
+            [&marked](const TileKey&) { marked = true; });
+
+    EXPECT_EQ(outcome.issued, 0u);
+    EXPECT_FALSE(outcome.blockedByInflight);
+    EXPECT_TRUE(prepared);
+    EXPECT_FALSE(marked);
+    EXPECT_EQ(lifecycle.counts().terrainUploads, 0u);
+    EXPECT_EQ(lifecycle.counts().contentUploads, 0u);
+    EXPECT_EQ(lifecycle.pendingRequestCount(), 0u);
+    EXPECT_EQ(provider.requestCount, 0);
 }
 
 TEST(TileLoadSchedulerTest, SkipsCachedTerrainWhenNetworkInflightIsFull) {
