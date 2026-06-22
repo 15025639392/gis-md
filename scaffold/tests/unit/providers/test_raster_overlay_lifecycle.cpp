@@ -2500,7 +2500,10 @@ TEST(RasterOverlayLifecycleTest,
         missing);
     RasterOverlayTile* noTextureTile = noTextureMapped.getLoadingTile();
     ASSERT_NE(nullptr, noTextureTile);
-    noTextureTile->setState(RasterOverlayTile::LoadState::Loaded);
+    noTextureTile->markLoadedWithoutTexture();
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              noTextureTile->getState());
+    EXPECT_EQ(nullptr, noTextureTile->getTexture());
 
     noTextureMapped.update(
         noTextureKey,
@@ -2514,6 +2517,10 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(noTextureTile, noTextureMapped.getReadyTile());
     EXPECT_TRUE(tile.rasterOverlayState.hasReadyMapping(1));
     EXPECT_FALSE(tile.rasterOverlayState.hasDrawableReadyMapping(1));
+    EXPECT_FLOAT_EQ(0.0f, noTextureMapped.getTranslationU());
+    EXPECT_FLOAT_EQ(0.0f, noTextureMapped.getTranslationV());
+    EXPECT_FLOAT_EQ(1.0f, noTextureMapped.getScaleU());
+    EXPECT_FLOAT_EQ(1.0f, noTextureMapped.getScaleV());
 
     noTextureTile->setTexture(std::make_unique<TestTexture>(4, 4));
     EXPECT_TRUE(tile.rasterOverlayState.hasDrawableReadyMapping(1));

@@ -413,6 +413,14 @@ bool RasterMappedToTilesetTile::loadThrottled(
 void RasterMappedToTilesetTile::computeTranslationAndScale(
     const Rectangle& geometryBounds,
     const Rectangle& imageryBounds) {
+    if (imageryBounds.isEmpty()) {
+        offsetU_ = 0.0f;
+        offsetV_ = 0.0f;
+        scaleU_ = 1.0f;
+        scaleV_ = 1.0f;
+        return;
+    }
+
     const TileTextureWindow nativeUv = TileSurface::computeTranslationAndScale(
         geometryBounds, imageryBounds);
     TileTextureWindow uv =
