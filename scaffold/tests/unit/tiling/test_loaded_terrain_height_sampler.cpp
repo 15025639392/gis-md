@@ -66,6 +66,26 @@ std::unique_ptr<GltfModel> makeTerrainGltfTriangle(
     return model;
 }
 
+std::unique_ptr<GltfModel> makeTransformedTerrainGltfTriangle(
+    const Rectangle& bounds,
+    double southwestHeight,
+    double southeastHeight,
+    double northwestHeight,
+    const Mat4& transform) {
+    std::unique_ptr<GltfModel> model = makeTerrainGltfTriangle(
+        bounds,
+        southwestHeight,
+        southeastHeight,
+        northwestHeight);
+    for (GltfPrimitive& primitive : model->primitives) {
+        for (SurfaceVertex& vertex : primitive.vertices) {
+            vertex.positionEcef = transform * vertex.positionEcef;
+        }
+        primitive.runtime.baseVertices = primitive.vertices;
+    }
+    return model;
+}
+
 void putTile(
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
     const TileKey& key,
@@ -77,11 +97,12 @@ void putLoadedGltfTerrainTile(
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
     const TileKey& key,
     const Rectangle& bounds,
-    std::unique_ptr<GltfModel> model) {
+    std::unique_ptr<GltfModel> model,
+    const Mat4& contentTransform = Mat4::identity()) {
     auto tile = std::make_unique<TilesetTile>(key, bounds);
     tile->content.renderContent.prepareGltfContent(
         std::move(model),
-        Mat4::identity());
+        contentTransform);
     tile->content.renderContent.setTerrainRenderContent(true);
     tile->markRenderContentDone();
     tiles.emplace(cacheKeyFor(key), std::move(tile));
@@ -167,4 +188,50 @@ TEST(LoadedTerrainHeightSamplerTest, SamplesLoadedGltfTerrainTile) {
             longitude,
             latitude),
         1e-4f);
+}
+
+TEST(LoadedTerrainHeightSamplerTest,
+     SamplesLoadedGltfTerrainWithContentTransform) {
+    auto scheme = TileScheme::createGeographicTMS();
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>>
+        transformedTiles;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> bakedTiles;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    const Rectangle bounds = scheme->tileToRectangle(rootKey);
+    const Mat4 transform = Mat4::scale(Vec3(1.00001, 1.00001, 1.00001));
+    putLoadedGltfTerrainTile(
+        transformedTiles,
+        rootKey,
+        bounds,
+        makeTerrainGltfTriangle(bounds, 10.0, 20.0, 30.0),
+        transform);
+    putLoadedGltfTerrainTile(
+        bakedTiles,
+        rootKey,
+        bounds,
+        makeTransformedTerrainGltfTriangle(
+            bounds,
+            10.0,
+            20.0,
+            30.0,
+            transform));
+
+    const double longitude = bounds.west() + bounds.width() * 0.25;
+    const double latitude = bounds.south() + bounds.height() * 0.25;
+    const float transformedHeight = LoadedTerrainHeightSampler::sampleHeight(
+        transformedTiles,
+        terrainCache,
+        longitude,
+        latitude);
+    const float bakedHeight = LoadedTerrainHeightSampler::sampleHeight(
+        bakedTiles,
+        terrainCache,
+        longitude,
+        latitude);
+
+    EXPECT_GT(transformedHeight, 17.5f);
+    EXPECT_NEAR(transformedHeight, bakedHeight, 1e-4f);
 }

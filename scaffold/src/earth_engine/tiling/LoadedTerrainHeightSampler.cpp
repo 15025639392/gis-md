@@ -11,6 +11,7 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+#include <vector>
 
 namespace earth_engine {
 
@@ -28,9 +29,11 @@ struct CartographicVertex {
 };
 
 std::optional<CartographicVertex> cartographicVertex(
-    const SurfaceVertex& vertex) {
+    const SurfaceVertex& vertex,
+    const Mat4& transform) {
     std::optional<Cartographic> cartographic =
-        Ellipsoid::WGS84().tryCartesianToCartographic(vertex.positionEcef);
+        Ellipsoid::WGS84().tryCartesianToCartographic(
+            transform * vertex.positionEcef);
     if (!cartographic) {
         return std::nullopt;
     }
@@ -75,6 +78,7 @@ std::optional<float> sampleTriangleHeight(
 
 std::optional<float> sampleGltfTerrainHeight(
     const GltfModel& model,
+    const Mat4& contentTransform,
     double longitudeRadians,
     double latitudeRadians) {
     for (const GltfPrimitive& primitive : model.primitives) {
@@ -89,17 +93,18 @@ std::optional<float> sampleGltfTerrainHeight(
         auto sampleIndexedTriangle =
             [&](uint32_t ia,
                 uint32_t ib,
-                uint32_t ic) -> std::optional<float> {
+                uint32_t ic,
+                const Mat4& transform) -> std::optional<float> {
             if (ia >= vertices.size() || ib >= vertices.size() ||
                 ic >= vertices.size()) {
                 return std::nullopt;
             }
             std::optional<CartographicVertex> a =
-                cartographicVertex(vertices[ia]);
+                cartographicVertex(vertices[ia], transform);
             std::optional<CartographicVertex> b =
-                cartographicVertex(vertices[ib]);
+                cartographicVertex(vertices[ib], transform);
             std::optional<CartographicVertex> c =
-                cartographicVertex(vertices[ic]);
+                cartographicVertex(vertices[ic], transform);
             if (!a || !b || !c) {
                 return std::nullopt;
             }
@@ -111,24 +116,40 @@ std::optional<float> sampleGltfTerrainHeight(
                 latitudeRadians);
         };
 
+        std::vector<Mat4> transforms;
+        if (primitive.instances.empty()) {
+            transforms.push_back(contentTransform);
+        } else {
+            transforms.reserve(primitive.instances.size());
+            for (const GltfInstance& instance : primitive.instances) {
+                transforms.push_back(contentTransform * instance.transform);
+            }
+        }
+
         if (!primitive.indices.empty()) {
-            for (size_t i = 0; i + 2 < primitive.indices.size(); i += 3) {
-                std::optional<float> height = sampleIndexedTriangle(
-                    primitive.indices[i],
-                    primitive.indices[i + 1],
-                    primitive.indices[i + 2]);
-                if (height) {
-                    return height;
+            for (const Mat4& transform : transforms) {
+                for (size_t i = 0; i + 2 < primitive.indices.size(); i += 3) {
+                    std::optional<float> height = sampleIndexedTriangle(
+                        primitive.indices[i],
+                        primitive.indices[i + 1],
+                        primitive.indices[i + 2],
+                        transform);
+                    if (height) {
+                        return height;
+                    }
                 }
             }
         } else {
-            for (size_t i = 0; i + 2 < vertices.size(); i += 3) {
-                std::optional<float> height = sampleIndexedTriangle(
-                    static_cast<uint32_t>(i),
-                    static_cast<uint32_t>(i + 1),
-                    static_cast<uint32_t>(i + 2));
-                if (height) {
-                    return height;
+            for (const Mat4& transform : transforms) {
+                for (size_t i = 0; i + 2 < vertices.size(); i += 3) {
+                    std::optional<float> height = sampleIndexedTriangle(
+                        static_cast<uint32_t>(i),
+                        static_cast<uint32_t>(i + 1),
+                        static_cast<uint32_t>(i + 2),
+                        transform);
+                    if (height) {
+                        return height;
+                    }
                 }
             }
         }
@@ -180,6 +201,7 @@ float LoadedTerrainHeightSampler::sampleHeight(
             if (gltf) {
                 std::optional<float> gltfHeight = sampleGltfTerrainHeight(
                     *gltf,
+                    renderContent.gltfTransform(),
                     longitudeRadians,
                     latitudeRadians);
                 if (gltfHeight) {
