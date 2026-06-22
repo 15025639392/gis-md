@@ -66,9 +66,9 @@ public:
     void markSubtreeLoaded(int subtreeLevel, uint64_t mortonIndex);
     void markSubtreeLoadedForTile(const TileKey& subtreeKey);
     int availabilityLevels() const { return availabilityLevels_; }
-    bool isAvailabilityBoundaryLevel(int level) const;
+    bool isAvailabilityBoundaryLevel(int level) const override;
     void applyAvailabilityUpdates(
-        const std::vector<QuantizedMeshAvailabilityUpdate>& updates);
+        const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override;
 
     void requestTile(const TileKey& key,
                      CancellationToken token,

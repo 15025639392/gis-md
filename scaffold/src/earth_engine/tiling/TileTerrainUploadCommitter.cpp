@@ -1,7 +1,5 @@
 #include "TileTerrainUploadCommitter.h"
 
-#include "../providers/QuantizedMeshTerrainProvider.h"
-
 #include "RasterMappedToTilesetTile.h"
 #include "TileLoadResultMetadataApplicator.h"
 #include "TileRasterOverlayDetailsGenerator.h"
@@ -16,17 +14,12 @@ namespace earth_engine {
 void TileTerrainUploadCommitter::applyAvailabilityUpdates(
     TerrainProvider* terrainProvider,
     const TileLoadedContent& content) {
-    if (content.quantizedMeshAvailabilityUpdates.empty()) {
+    if (!terrainProvider ||
+        content.quantizedMeshAvailabilityUpdates.empty()) {
         return;
     }
 
-    auto* qmProvider =
-        dynamic_cast<QuantizedMeshTerrainProvider*>(terrainProvider);
-    if (!qmProvider) {
-        return;
-    }
-
-    qmProvider->applyAvailabilityUpdates(
+    terrainProvider->applyAvailabilityUpdates(
         content.quantizedMeshAvailabilityUpdates);
 }
 

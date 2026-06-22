@@ -10,7 +10,6 @@
 #include "TileTerrainHeightRangePolicy.h"
 #include "TilesetTileRegistry.h"
 #include "../content/GltfContentProvider.h"
-#include "../providers/QuantizedMeshTerrainProvider.h"
 
 #include <vector>
 #include <algorithm>
@@ -102,12 +101,8 @@ bool TileContentAccess::hasResolvedAvailabilityBoundaryContent(
 
 bool TileContentAccess::isAvailabilityBoundaryTile(
     const TilesetTile& tile) const {
-    const auto* qmProvider =
-        dynamic_cast<const QuantizedMeshTerrainProvider*>(terrainProvider_);
-    if (!qmProvider) {
-        return false;
-    }
-    return qmProvider->isAvailabilityBoundaryLevel(tile.key.z);
+    return terrainProvider_ &&
+           terrainProvider_->isAvailabilityBoundaryLevel(tile.key.z);
 }
 
 bool TileContentAccess::canRefine(const TilesetTile& tile) const {

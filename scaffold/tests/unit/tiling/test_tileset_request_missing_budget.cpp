@@ -13,6 +13,7 @@
 #include "earth_engine/tiling/TileSelectionRasterOverlayPreparer.h"
 #include "earth_engine/tiling/TileSelectionPlanAppender.h"
 #include "earth_engine/tiling/TileScheme.h"
+#include "earth_engine/tiling/TileTerrainUploadCommitter.h"
 #include "earth_engine/tiling/Tileset.h"
 
 #include <algorithm>
@@ -518,6 +519,53 @@ public:
     }
 
     int requestCount = 0;
+};
+
+class ContractTerrainProvider final : public TerrainProvider {
+public:
+    std::string id() const override { return "contract-terrain"; }
+    std::string schemeId() const override { return "Geographic-TMS"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 2; }
+    int tileSize() const override { return 2; }
+
+    TileAvailabilityState availabilityState(const TileKey& key) const override {
+        return key.schemeId == schemeId()
+            ? TileAvailabilityState::Available
+            : TileAvailabilityState::NotAvailable;
+    }
+
+    bool isAvailabilityBoundaryLevel(int level) const override {
+        return level == 0;
+    }
+
+    void applyAvailabilityUpdates(
+        const std::vector<QuantizedMeshAvailabilityUpdate>& updates)
+        override {
+        appliedAvailabilityUpdates.insert(
+            appliedAvailabilityUpdates.end(),
+            updates.begin(),
+            updates.end());
+    }
+
+    std::string buildUrl(const TileKey&) const override {
+        return "memory://contract-terrain";
+    }
+
+    void requestTile(
+        const TileKey& key,
+        CancellationToken,
+        TerrainCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callback(key, TerrainTileLoadResult::retryLater());
+    }
+
+    std::unique_ptr<DecodedHeightmap> decodeTile(const uint8_t*, size_t)
+        override {
+        return nullptr;
+    }
+
+    std::vector<QuantizedMeshAvailabilityUpdate> appliedAvailabilityUpdates;
 };
 
 class ExplicitPastMaxZoomTerrainProvider final : public TerrainProvider {
@@ -1237,6 +1285,53 @@ TEST(
     EXPECT_EQ(rawProvider->requestCount, 0);
     EXPECT_EQ(diagnostics.loadQueueUrgentRequests, 1);
     EXPECT_EQ(diagnostics.loadQueueNormalRequests, 0);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    TerrainAvailabilityBoundaryUsesProviderContract) {
+    auto provider = std::make_unique<ContractTerrainProvider>();
+    Tileset tileset(
+        std::move(provider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    EXPECT_TRUE(root->children.empty());
+
+    root->content.loadState = TileLoadState::Done;
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    EXPECT_EQ(root->children.size(), 4u);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    TerrainAvailabilityUpdatesUseProviderContract) {
+    ContractTerrainProvider provider;
+    TileLoadedContent content;
+    QuantizedMeshAvailabilityUpdate update;
+    update.layerIndex = 2;
+    update.subtreeKey = TileKey{"Geographic-TMS", 4, 5, 6};
+    update.metadataAvailability.push_back({0, 1, 2, 3, 4});
+    content.quantizedMeshAvailabilityUpdates.push_back(update);
+
+    TileTerrainUploadCommitter::applyAvailabilityUpdates(&provider, content);
+
+    ASSERT_EQ(provider.appliedAvailabilityUpdates.size(), 1u);
+    EXPECT_EQ(provider.appliedAvailabilityUpdates[0].layerIndex, 2);
+    EXPECT_EQ(provider.appliedAvailabilityUpdates[0].subtreeKey.z, 4);
+    ASSERT_EQ(
+        provider.appliedAvailabilityUpdates[0].metadataAvailability.size(),
+        1u);
+    EXPECT_EQ(
+        provider.appliedAvailabilityUpdates[0].metadataAvailability[0][4],
+        4u);
 }
 
 TEST(
