@@ -156,6 +156,9 @@ public:
         TilesetContentProvider* contentProvider,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        std::unordered_map<
+            std::string,
+            std::unique_ptr<DecodedHeightmap>>& terrainCache,
         TileLoadLifecycle& lifecycle,
         EnsureTileFn&& ensureTile,
         EnsureGltfResourcesFn&& ensureGltfResources,
@@ -168,6 +171,7 @@ public:
             return;
         }
 
+        terrainCache.erase(upload.cacheKey);
         TileGltfTerrainUpsampledChildMaterializer::materialize(
             *tile,
             upload.content());
@@ -244,6 +248,7 @@ public:
                 contentProvider,
                 device,
                 rasterOverlays,
+                terrainCache,
                 lifecycle,
                 std::forward<EnsureTileFn>(ensureTile),
                 std::forward<EnsureGltfResourcesFn>(ensureGltfResources),
