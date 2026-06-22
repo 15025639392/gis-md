@@ -3296,7 +3296,8 @@ void testRasterMappedFailureFallbackMatchesOverlayOwner() {
         matchingMissing,
         nullptr,
         1);
-    matchingOwner->getLoadingTile()->setState(RasterOverlayTile::LoadState::Loaded);
+    matchingOwner->getLoadingTile()->setTexture(
+        std::make_unique<DummyTexture>(4, 4));
     matchingOwner->getLoadingTile()->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
     matchingOwner->update(
