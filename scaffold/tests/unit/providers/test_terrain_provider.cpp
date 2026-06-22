@@ -612,12 +612,19 @@ TEST(QuantizedMeshTerrainProviderTest,
     EXPECT_EQ(expected,
               completed.gltfModel->rasterOverlayDetails.boundingRegion
                   .rectangle);
+    const Rectangle expectedProjected = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        expected);
     const Rectangle* rasterRectangle =
         completed.gltfModel->rasterOverlayDetails
             .findRectangleForOverlayProjection(
-                RasterOverlayProjection::Geographic);
+                RasterOverlayProjection::WebMercator);
     ASSERT_NE(nullptr, rasterRectangle);
-    EXPECT_EQ(expected, *rasterRectangle);
+    EXPECT_TRUE(rasterRectangle->equalsEpsilon(expectedProjected, 1e-6));
+    EXPECT_EQ(nullptr,
+              completed.gltfModel->rasterOverlayDetails
+                  .findRectangleForOverlayProjection(
+                      RasterOverlayProjection::Geographic));
 }
 
 TEST(QuantizedMeshTerrainProviderTest, UsesAsyncBridgeWithoutWorkerBlockingWait) {
