@@ -1496,17 +1496,24 @@ void QuantizedMeshTerrainProvider::requestTileContent(
         : buildUrl(key);
     std::vector<LayerAvailabilityRequest> availabilityRequests =
         collectUnderlyingLayerAvailabilityRequests(key);
+    auto availabilityRequestsPtr =
+        std::make_shared<std::vector<LayerAvailabilityRequest>>(
+            std::move(availabilityRequests));
+    auto tokenPtr = std::make_shared<CancellationToken>(std::move(token));
+    auto callbackPtr =
+        std::make_shared<ContentCallback>(std::move(callback));
+    auto requestState = std::make_shared<AsyncTileRequestState>();
     if (!layers_.empty() && !contentLayer) {
         requestsStarted_.fetch_add(1, std::memory_order_relaxed);
         requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
-        callback(key, TileContentLoadResult::failed());
+        (*callbackPtr)(key, TileContentLoadResult::failed());
         return;
     }
     if (platformBridge_) {
         requestsStarted_.fetch_add(1, std::memory_order_relaxed);
-        if (token.isCancelled()) {
+        if (tokenPtr->isCancelled()) {
             requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
-            callback(key, TileContentLoadResult::cancelled());
+            (*callbackPtr)(key, TileContentLoadResult::cancelled());
             return;
         }
 
@@ -1518,68 +1525,106 @@ void QuantizedMeshTerrainProvider::requestTileContent(
              key,
              contentLayerIndex,
              includeCurrentLayerMetadata,
-             availabilityRequests = std::move(availabilityRequests),
-             token = std::move(token),
+             availabilityRequestsPtr,
+             tokenPtr,
+             callbackPtr,
+             requestState,
              priority,
-             callback = std::move(callback),
              requestHandle](int statusCode, std::vector<uint8_t> body) mutable {
                 (void)requestHandle;
                 handleAsyncTileBody(
                     key,
                     contentLayerIndex,
                     includeCurrentLayerMetadata,
-                    std::move(availabilityRequests),
-                    std::move(token),
-                    std::move(callback),
+                    availabilityRequestsPtr,
+                    tokenPtr,
+                    callbackPtr,
+                    requestState,
                     priority,
                     statusCode,
-                    std::move(body),
-                    true);
+                    std::move(body));
             },
             {priority, requestHeaders_});
+        startAsyncMetadataRequests(
+            key,
+            contentLayerIndex,
+            includeCurrentLayerMetadata,
+            availabilityRequestsPtr,
+            tokenPtr,
+            callbackPtr,
+            requestState,
+            priority,
+            true);
         return;
     }
 
     requestsStarted_.fetch_add(1, std::memory_order_relaxed);
-    if (token.isCancelled()) {
+    if (tokenPtr->isCancelled()) {
         requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
-        callback(key, TileContentLoadResult::cancelled());
+        (*callbackPtr)(key, TileContentLoadResult::cancelled());
         return;
     }
 
     if (isFileUrl(url)) {
+        startAsyncMetadataRequests(
+            key,
+            contentLayerIndex,
+            includeCurrentLayerMetadata,
+            availabilityRequestsPtr,
+            tokenPtr,
+            callbackPtr,
+            requestState,
+            priority,
+            false);
         AsyncSystem::pool().enqueue(
             [this,
              url,
              key,
              contentLayerIndex,
              includeCurrentLayerMetadata,
-             availabilityRequests = std::move(availabilityRequests),
-             token = std::move(token),
-             priority,
-             callback = std::move(callback)]() mutable {
-                if (token.isCancelled()) {
-                    callback(key, TileContentLoadResult::cancelled());
+             availabilityRequestsPtr,
+             tokenPtr,
+             callbackPtr,
+             requestState,
+             priority]() mutable {
+                if (tokenPtr->isCancelled()) {
+                    handleAsyncTileBody(
+                        key,
+                        contentLayerIndex,
+                        includeCurrentLayerMetadata,
+                        availabilityRequestsPtr,
+                        tokenPtr,
+                        callbackPtr,
+                        requestState,
+                        priority,
+                        0,
+                        {});
                     return;
                 }
 
                 std::vector<uint8_t> body = readFileUrl(url);
-	#ifdef __ANDROID__
-	                __android_log_print(ANDROID_LOG_INFO, "QMTerrain",
-	                    "requestTile: z=%d x=%d y=%d body=%zu canceled=%d",
-	                    key.z, key.x, key.y, body.size(), token.isCancelled());
-	#endif
+#ifdef __ANDROID__
+                __android_log_print(
+                    ANDROID_LOG_INFO,
+                    "QMTerrain",
+                    "requestTile: z=%d x=%d y=%d body=%zu canceled=%d",
+                    key.z,
+                    key.x,
+                    key.y,
+                    body.size(),
+                    tokenPtr->isCancelled());
+#endif
                 handleAsyncTileBody(
                     key,
                     contentLayerIndex,
                     includeCurrentLayerMetadata,
-                    std::move(availabilityRequests),
-                    std::move(token),
-                    std::move(callback),
+                    availabilityRequestsPtr,
+                    tokenPtr,
+                    callbackPtr,
+                    requestState,
                     priority,
                     body.empty() ? 0 : 200,
-                    std::move(body),
-                    false);
+                    std::move(body));
             });
         return;
     }
@@ -1592,78 +1637,68 @@ void QuantizedMeshTerrainProvider::requestTileContent(
          key,
          contentLayerIndex,
          includeCurrentLayerMetadata,
-         availabilityRequests = std::move(availabilityRequests),
-         token = std::move(token),
+         availabilityRequestsPtr,
+         tokenPtr,
+         callbackPtr,
+         requestState,
          priority,
-         callback = std::move(callback),
          requestHandle](int statusCode, std::vector<uint8_t> body) mutable {
             (void)requestHandle;
             handleAsyncTileBody(
                 key,
                 contentLayerIndex,
                 includeCurrentLayerMetadata,
-                std::move(availabilityRequests),
-                std::move(token),
-                std::move(callback),
+                availabilityRequestsPtr,
+                tokenPtr,
+                callbackPtr,
+                requestState,
                 priority,
                 statusCode,
-                std::move(body),
-                false);
+                std::move(body));
         },
         {priority, requestHeaders_});
-}
-
-void QuantizedMeshTerrainProvider::handleAsyncTileBody(
-    const TileKey& key,
-    int contentLayerIndex,
-    bool includeCurrentLayerMetadata,
-    std::vector<LayerAvailabilityRequest> availabilityRequests,
-    CancellationToken token,
-    ContentCallback callback,
-    HttpRequestPriority priority,
-    int statusCode,
-    std::vector<uint8_t> body,
-    bool usePlatformBridge) {
-    auto availabilityRequestsPtr =
-        std::make_shared<std::vector<LayerAvailabilityRequest>>(
-            std::move(availabilityRequests));
-    auto tokenPtr = std::make_shared<CancellationToken>(std::move(token));
-    auto callbackPtr =
-        std::make_shared<ContentCallback>(std::move(callback));
-    auto bodyPtr =
-        std::make_shared<std::vector<uint8_t>>(std::move(body));
-
-    if (!isCesiumSuccessfulHttpStatus(statusCode) ||
-        bodyPtr->empty() ||
-        tokenPtr->isCancelled() ||
-        availabilityRequestsPtr->empty()) {
-        finalizeAsyncTileRequest(
-            key,
-            contentLayerIndex,
-            includeCurrentLayerMetadata,
-            availabilityRequestsPtr,
-            tokenPtr,
-            callbackPtr,
-            bodyPtr,
-            statusCode,
-            {});
-        return;
-    }
-
-    requestAsyncMetadataAndFinalize(
+    startAsyncMetadataRequests(
         key,
         contentLayerIndex,
         includeCurrentLayerMetadata,
         availabilityRequestsPtr,
         tokenPtr,
         callbackPtr,
-        bodyPtr,
-        statusCode,
+        requestState,
         priority,
-        usePlatformBridge);
+        false);
 }
 
-void QuantizedMeshTerrainProvider::requestAsyncMetadataAndFinalize(
+void QuantizedMeshTerrainProvider::handleAsyncTileBody(
+    const TileKey& key,
+    int contentLayerIndex,
+    bool includeCurrentLayerMetadata,
+    std::shared_ptr<std::vector<LayerAvailabilityRequest>>
+        availabilityRequests,
+    std::shared_ptr<CancellationToken> token,
+    std::shared_ptr<ContentCallback> callback,
+    std::shared_ptr<AsyncTileRequestState> state,
+    HttpRequestPriority priority,
+    int statusCode,
+    std::vector<uint8_t> body) {
+    (void)priority;
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        state->statusCode = statusCode;
+        state->body = std::move(body);
+        state->contentFinished = true;
+    }
+    completeAsyncTileRequestIfReady(
+        key,
+        contentLayerIndex,
+        includeCurrentLayerMetadata,
+        availabilityRequests,
+        token,
+        callback,
+        state);
+}
+
+void QuantizedMeshTerrainProvider::startAsyncMetadataRequests(
     TileKey key,
     int contentLayerIndex,
     bool includeCurrentLayerMetadata,
@@ -1671,70 +1706,69 @@ void QuantizedMeshTerrainProvider::requestAsyncMetadataAndFinalize(
         availabilityRequests,
     std::shared_ptr<CancellationToken> token,
     std::shared_ptr<ContentCallback> callback,
-    std::shared_ptr<std::vector<uint8_t>> body,
-    int statusCode,
+    std::shared_ptr<AsyncTileRequestState> state,
     HttpRequestPriority priority,
     bool usePlatformBridge) {
-    struct MetadataFetchState {
-        std::mutex mutex;
-        std::vector<std::vector<uint8_t>> bodies;
-        std::vector<std::unique_ptr<HttpRequest>> handles;
-        size_t remaining = 0;
-        bool finalized = false;
-    };
-    auto metadataState = std::make_shared<MetadataFetchState>();
-    metadataState->bodies.resize(availabilityRequests->size());
-    metadataState->handles.resize(availabilityRequests->size());
-    metadataState->remaining = availabilityRequests->size();
+    if (availabilityRequests->empty()) {
+        {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->metadataFinished = true;
+        }
+        completeAsyncTileRequestIfReady(
+            key,
+            contentLayerIndex,
+            includeCurrentLayerMetadata,
+            availabilityRequests,
+            token,
+            callback,
+            state);
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        state->metadataBodies.resize(availabilityRequests->size());
+        state->metadataHandles.resize(availabilityRequests->size());
+        state->remainingMetadata = availabilityRequests->size();
+    }
 
     for (size_t i = 0; i < availabilityRequests->size(); ++i) {
         requestsStarted_.fetch_add(1, std::memory_order_relaxed);
         auto metadataCallback =
             [this,
-             metadataState,
+             state,
              key,
              contentLayerIndex,
              includeCurrentLayerMetadata,
              availabilityRequests,
              token,
              callback,
-             body,
-             statusCode,
              i](int metadataStatusCode,
                 std::vector<uint8_t> metadataBody) mutable {
                 requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
-                std::vector<std::vector<uint8_t>> metadataBodies;
-                bool shouldFinalize = false;
                 {
-                    std::lock_guard<std::mutex> lock(metadataState->mutex);
-                    if (!metadataState->finalized &&
+                    std::lock_guard<std::mutex> lock(state->mutex);
+                    if (!state->finalized &&
                         !token->isCancelled() &&
                         isCesiumSuccessfulHttpStatus(metadataStatusCode) &&
                         !metadataBody.empty()) {
-                        metadataState->bodies[i] = std::move(metadataBody);
+                        state->metadataBodies[i] = std::move(metadataBody);
                     }
-                    if (metadataState->remaining > 0) {
-                        --metadataState->remaining;
+                    if (state->remainingMetadata > 0) {
+                        --state->remainingMetadata;
                     }
-                    if (metadataState->remaining == 0 &&
-                        !metadataState->finalized) {
-                        metadataState->finalized = true;
-                        metadataBodies = std::move(metadataState->bodies);
-                        shouldFinalize = true;
+                    if (state->remainingMetadata == 0) {
+                        state->metadataFinished = true;
                     }
                 }
-                if (shouldFinalize) {
-                    finalizeAsyncTileRequest(
-                        key,
-                        contentLayerIndex,
-                        includeCurrentLayerMetadata,
-                        availabilityRequests,
-                        token,
-                        callback,
-                        body,
-                        statusCode,
-                        std::move(metadataBodies));
-                }
+                completeAsyncTileRequestIfReady(
+                    key,
+                    contentLayerIndex,
+                    includeCurrentLayerMetadata,
+                    availabilityRequests,
+                    token,
+                    callback,
+                    state);
             };
 
         const std::string& metadataUrl = (*availabilityRequests)[i].url;
@@ -1749,18 +1783,57 @@ void QuantizedMeshTerrainProvider::requestAsyncMetadataAndFinalize(
                         std::move(metadataBody));
                 });
         } else if (usePlatformBridge) {
-            metadataState->handles[i] = platformBridge_->get(
+            state->metadataHandles[i] = platformBridge_->get(
                 metadataUrl,
                 std::move(metadataCallback),
                 {priority, requestHeaders_});
         } else {
-            metadataState->handles[i] =
+            state->metadataHandles[i] =
                 CurlMultiRequestScheduler::shared().get(
                     metadataUrl,
                     std::move(metadataCallback),
                     {priority, requestHeaders_});
         }
     }
+}
+
+void QuantizedMeshTerrainProvider::completeAsyncTileRequestIfReady(
+    TileKey key,
+    int contentLayerIndex,
+    bool includeCurrentLayerMetadata,
+    std::shared_ptr<std::vector<LayerAvailabilityRequest>>
+        availabilityRequests,
+    std::shared_ptr<CancellationToken> token,
+    std::shared_ptr<ContentCallback> callback,
+    std::shared_ptr<AsyncTileRequestState> state) {
+    int statusCode = 0;
+    std::vector<uint8_t> body;
+    std::vector<std::vector<uint8_t>> metadataBodies;
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        if (state->finalized ||
+            !state->contentFinished ||
+            !state->metadataFinished) {
+            return;
+        }
+        state->finalized = true;
+        statusCode = state->statusCode;
+        body = std::move(state->body);
+        metadataBodies = std::move(state->metadataBodies);
+    }
+
+    auto bodyPtr =
+        std::make_shared<std::vector<uint8_t>>(std::move(body));
+    finalizeAsyncTileRequest(
+        key,
+        contentLayerIndex,
+        includeCurrentLayerMetadata,
+        availabilityRequests,
+        token,
+        callback,
+        bodyPtr,
+        statusCode,
+        std::move(metadataBodies));
 }
 
 void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(

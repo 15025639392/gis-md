@@ -2442,11 +2442,13 @@ TEST(QuantizedMeshTerrainProviderTest, FetchesUnderlyingMetadataViaAsyncBridge) 
             cv.notify_one();
         });
 
-    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    ASSERT_TRUE(bridge.waitUntilPendingCount(2));
     EXPECT_NE(std::string::npos,
               bridge.pendingUrl(0).find("childTiles/0/0/0.terrain"));
+    EXPECT_NE(std::string::npos,
+              bridge.pendingUrl(1).find("parentTiles/0/0/0.terrain"));
     ProviderRequestDiagnostics terrainDiag = provider.requestDiagnostics();
-    EXPECT_EQ(1, terrainDiag.requestsStarted);
+    EXPECT_EQ(2, terrainDiag.requestsStarted);
     EXPECT_EQ(0, terrainDiag.requestsCompleted);
     EXPECT_EQ(0, terrainDiag.activeWorkerBlockingRequests);
     EXPECT_EQ(0, terrainDiag.peakWorkerBlockingRequests);

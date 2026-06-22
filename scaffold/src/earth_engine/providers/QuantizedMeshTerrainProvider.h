@@ -6,6 +6,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -182,6 +183,17 @@ private:
         TileKey subtreeKey;
         std::string url;
     };
+    struct AsyncTileRequestState {
+        std::mutex mutex;
+        std::vector<std::vector<uint8_t>> metadataBodies;
+        std::vector<std::unique_ptr<HttpRequest>> metadataHandles;
+        size_t remainingMetadata = 0;
+        bool metadataFinished = false;
+        bool contentFinished = false;
+        bool finalized = false;
+        int statusCode = 0;
+        std::vector<uint8_t> body;
+    };
 
     bool appendLayerFromJson(const nlohmann::json& j,
                              const std::string& layerJsonUrl,
@@ -216,14 +228,15 @@ private:
         const TileKey& key,
         int contentLayerIndex,
         bool includeCurrentLayerMetadata,
-        std::vector<LayerAvailabilityRequest> availabilityRequests,
-        CancellationToken token,
-        ContentCallback callback,
+        std::shared_ptr<std::vector<LayerAvailabilityRequest>>
+            availabilityRequests,
+        std::shared_ptr<CancellationToken> token,
+        std::shared_ptr<ContentCallback> callback,
+        std::shared_ptr<AsyncTileRequestState> state,
         HttpRequestPriority priority,
         int statusCode,
-        std::vector<uint8_t> body,
-        bool usePlatformBridge);
-    void requestAsyncMetadataAndFinalize(
+        std::vector<uint8_t> body);
+    void startAsyncMetadataRequests(
         TileKey key,
         int contentLayerIndex,
         bool includeCurrentLayerMetadata,
@@ -231,10 +244,18 @@ private:
             availabilityRequests,
         std::shared_ptr<CancellationToken> token,
         std::shared_ptr<ContentCallback> callback,
-        std::shared_ptr<std::vector<uint8_t>> body,
-        int statusCode,
+        std::shared_ptr<AsyncTileRequestState> state,
         HttpRequestPriority priority,
         bool usePlatformBridge);
+    void completeAsyncTileRequestIfReady(
+        TileKey key,
+        int contentLayerIndex,
+        bool includeCurrentLayerMetadata,
+        std::shared_ptr<std::vector<LayerAvailabilityRequest>>
+            availabilityRequests,
+        std::shared_ptr<CancellationToken> token,
+        std::shared_ptr<ContentCallback> callback,
+        std::shared_ptr<AsyncTileRequestState> state);
     void finalizeAsyncTileRequest(
         TileKey key,
         int contentLayerIndex,
