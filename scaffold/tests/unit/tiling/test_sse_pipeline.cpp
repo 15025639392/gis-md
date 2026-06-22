@@ -4774,8 +4774,10 @@ void testTilesetPrefetchGeneratesRenderContentDetailsFromRegion() {
           "Tileset: prefetch maps loaded render-content missing projection to placeholder");
     check(mapped && mapped->getTextureCoordinateID() == 1,
           "Tileset: prefetch records generated projection after existing projection slots");
-    check(root->rasterOverlayState.missingProjections().empty(),
-          "Tileset: prefetch keeps missing projection local to the prefetch pass");
+    check(root->rasterOverlayState.missingProjections().size() == 1 &&
+              root->rasterOverlayState.missingProjections().front() ==
+                  RasterOverlayProjection::WebMercator,
+          "Tileset: prefetch records missing render-content projection for reload like cesium-native");
 }
 
 void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {

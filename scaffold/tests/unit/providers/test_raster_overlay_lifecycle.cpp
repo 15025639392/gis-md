@@ -15,6 +15,7 @@
 #include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
+#include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileSurface.h"
 #include "earth_engine/tiling/SurfaceTileDrawCommandBuilder.h"
 #include "earth_engine/tiling/TilesetTile.h"
@@ -2781,6 +2782,55 @@ TEST(RasterOverlayLifecycleTest, MissingProjectionUsesOffsetPlaceholderLikeCesiu
     ASSERT_EQ(1u, missing.size());
     EXPECT_EQ(RasterOverlayProjection::WebMercator, missing[0]);
     EXPECT_EQ(0, provider.getCachedTileCount());
+}
+
+TEST(RasterOverlayLifecycleTest, PrefetchRecordsMissingProjectionForContentReloadLikeCesiumNative) {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activated(*overlay);
+
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 2, 1, 1},
+        Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0));
+    auto model = std::make_unique<GltfModel>();
+    model->rasterOverlayDetails.rasterOverlayProjections.push_back(
+        RasterOverlayProjection::Geographic);
+    model->rasterOverlayDetails.rasterOverlayRectangles.push_back(tile.bounds);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(model),
+        Mat4::identity());
+    tile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.contentKind = TileContentKind::Render;
+    tile.geometricError = 100.0;
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        overlays,
+        {0},
+        nullptr,
+        16.0,
+        budget);
+
+    ASSERT_EQ(1u, tile.rasterOverlayState.missingProjections().size());
+    EXPECT_EQ(RasterOverlayProjection::WebMercator,
+              tile.rasterOverlayState.missingProjections()[0]);
+    RasterMappedToTilesetTile* mapped = tile.rasterOverlayState.mappingAt(0);
+    ASSERT_NE(nullptr, mapped);
+    ASSERT_NE(nullptr, mapped->getLoadingTile());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Placeholder,
+              mapped->getLoadingTile()->getState());
+    EXPECT_EQ(0, activated.getCachedTileCount());
 }
 
 TEST(RasterOverlayLifecycleTest, MissingPreciseRectangleWithoutRenderDetailsUsesPlaceholder) {

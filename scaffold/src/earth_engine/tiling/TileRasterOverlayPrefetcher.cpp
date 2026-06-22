@@ -38,6 +38,7 @@ void TileRasterOverlayPrefetcher::prefetch(
     }
 
     tile.rasterOverlayState.resizeMappingSlots(rasterOverlays.size(), nullptr);
+    tile.rasterOverlayState.clearMissingProjections();
 
     const bool hasRenderContentDetails =
         tile.content.contentKind == TileContentKind::Render &&
@@ -106,7 +107,11 @@ void TileRasterOverlayPrefetcher::prefetch(
             continue;
         }
 
-        std::vector<RasterOverlayProjection> ignoredMissingProjections;
+        std::vector<RasterOverlayProjection> localMissingProjections;
+        std::vector<RasterOverlayProjection>& missingProjections =
+            hasRenderContentDetails
+                ? tile.rasterOverlayState.missingProjections()
+                : localMissingProjections;
         mapped.update(
             tile.key,
             overlayDetails,
@@ -114,7 +119,7 @@ void TileRasterOverlayPrefetcher::prefetch(
             rasterScreenPixels.y,
             *activeProvider,
             nullptr,
-            ignoredMissingProjections,
+            missingProjections,
             tile.parent,
             i,
             hasRenderContentDetails,
