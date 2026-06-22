@@ -24,6 +24,7 @@ public:
         DecodedHeightmap* ownHeightmap,
         bool hasTerrainQuadtree,
         bool allowEllipsoidFallbackWithoutTerrain,
+        bool allowLegacySurfaceUpsample,
         FindUpsampleSourceFn&& findUpsampleSource,
         EnsureAncestorMeshFn&& ensureAncestorMesh) {
         const bool hasOwnTerrain = ownHeightmap != nullptr;
@@ -32,6 +33,10 @@ public:
                 hasOwnTerrain,
                 tile.content.derivesTerrainFromParent(),
                 hasTerrainQuadtree);
+        if (tile.content.derivesTerrainFromParent() &&
+            !allowLegacySurfaceUpsample) {
+            resolution.markDone = false;
+        }
 
         if (shouldDeferToGltfTerrainUpsample(tile, hasOwnTerrain)) {
             resolution.markDone = false;
@@ -41,6 +46,7 @@ public:
         resolveAncestorUpsample(
             tile,
             hasOwnTerrain,
+            allowLegacySurfaceUpsample,
             findUpsampleSource,
             ensureAncestorMesh,
             resolution);
@@ -67,10 +73,14 @@ private:
     static void resolveAncestorUpsample(
         TilesetTile& tile,
         bool hasOwnTerrain,
+        bool allowLegacySurfaceUpsample,
         FindUpsampleSourceFn&& findUpsampleSource,
         EnsureAncestorMeshFn&& ensureAncestorMesh,
         TileSurfaceMeshResolution& resolution) {
         if (tile.content.renderContent.hasSurfaceMesh() || hasOwnTerrain) {
+            return;
+        }
+        if (!allowLegacySurfaceUpsample) {
             return;
         }
 

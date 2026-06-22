@@ -16,6 +16,7 @@ struct TileSurfaceMeshEnsureInput {
     RenderDevice* device = nullptr;
     bool hasTerrainQuadtree = false;
     bool allowEllipsoidFallbackWithoutTerrain = true;
+    bool allowLegacySurfaceUpsample = true;
 };
 
 struct TileSurfaceMeshEnsureResult {
@@ -79,6 +80,7 @@ public:
                 ownHeightmap,
                 input.hasTerrainQuadtree,
                 input.allowEllipsoidFallbackWithoutTerrain,
+                input.allowLegacySurfaceUpsample,
                 findUpsampleSource,
                 ensureAncestorMesh);
         if (!tile.content.renderContent.hasSurfaceMesh()) {

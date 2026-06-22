@@ -11750,6 +11750,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             nullptr,
             false,
             true,
+            true,
             [](const TilesetTile&, bool) -> const TilesetTile* {
                 return nullptr;
             },
@@ -11768,6 +11769,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             contentTerrainFallbackTile,
             nullptr,
             true,
+            false,
             false,
             [](const TilesetTile&, bool) -> const TilesetTile* {
                 return nullptr;
@@ -11796,6 +11798,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             nullptr,
             true,
             false,
+            true,
             [&upsampleParent](const TilesetTile&, bool)
                 -> const TilesetTile* {
                 return &upsampleParent;
@@ -11809,6 +11812,42 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               !upsampleResolution.markDone &&
               !ancestorEnsured,
           "TileSurfaceMeshSourceResolver: child resolves ancestor upsample without forcing Done while provider is pending");
+
+    TilesetTile contentOwnedLegacyParent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    contentOwnedLegacyParent.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>(
+            TileSurface::buildEllipsoidMesh(
+                contentOwnedLegacyParent.bounds,
+                4)));
+    contentOwnedLegacyParent.markRenderContentDone();
+    TilesetTile contentOwnedUpsampleChild(
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        Rectangle::fromDegrees(-180.0, 0.0, 0.0, 90.0),
+        &contentOwnedLegacyParent);
+    contentOwnedUpsampleChild.content.markTerrainAvailabilityUpsample();
+    bool contentOwnedAncestorEnsured = false;
+    TileSurfaceMeshResolution contentOwnedUpsampleResolution =
+        TileSurfaceMeshSourceResolver::resolve(
+            contentOwnedUpsampleChild,
+            nullptr,
+            true,
+            false,
+            false,
+            [&contentOwnedLegacyParent](const TilesetTile&, bool)
+                -> const TilesetTile* {
+                return &contentOwnedLegacyParent;
+            },
+            [&contentOwnedAncestorEnsured](TilesetTile&) {
+                contentOwnedAncestorEnsured = true;
+            });
+    check(!contentOwnedUpsampleChild.content.renderContent.hasSurfaceMesh() &&
+              contentOwnedUpsampleResolution.source ==
+                  SurfaceDrawableSource::None &&
+              !contentOwnedUpsampleResolution.markDone &&
+              !contentOwnedAncestorEnsured,
+          "TileSurfaceMeshSourceResolver: content-owned terrain does not upsample from legacy SurfaceMesh ancestors");
 
     TilesetTile gltfParent(
         TileKey{"Geographic-TMS", 0, 0, 0},
@@ -11829,6 +11868,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             gltfChild,
             nullptr,
             true,
+            false,
             false,
             [](const TilesetTile&, bool) -> const TilesetTile* {
                 return nullptr;
@@ -11851,7 +11891,9 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
                 gltfChild,
                 nullptr,
                 nullptr,
-                true},
+                true,
+                false,
+                false},
             [&gltfEnsureIngested](const TileKey&, DecodedHeightmap*) {
                 gltfEnsureIngested = true;
             },

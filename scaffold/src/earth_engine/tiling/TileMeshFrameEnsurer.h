@@ -58,7 +58,8 @@ public:
                     input.device,
                     input.hasTerrainQuadtree,
                     !input.hasTerrainQuadtree ||
-                        input.useLegacyHeightmapTerrainCache},
+                        input.useLegacyHeightmapTerrainCache,
+                    input.useLegacyHeightmapTerrainCache},
                 ingestAvailability,
                 findUpsampleSource,
                 ensureAncestorMesh,
