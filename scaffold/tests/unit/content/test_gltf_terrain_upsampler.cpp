@@ -2,6 +2,8 @@
 
 #include "earth_engine/content/GltfTerrainUpsampler.h"
 
+#include <cmath>
+
 using namespace earth_engine;
 
 namespace {
@@ -48,6 +50,13 @@ GltfModel makeParentModel() {
     model.terrainWaterMask.translationY = 0.125;
     model.terrainWaterMask.scale = 0.5;
     return model;
+}
+
+void expectArrayNear(const std::array<float, 4>& actual,
+                     const std::array<float, 4>& expected) {
+    for (size_t i = 0; i < actual.size(); ++i) {
+        EXPECT_NEAR(expected[i], actual[i], 1e-6f);
+    }
 }
 
 } // namespace
@@ -146,6 +155,50 @@ TEST(GltfTerrainUpsamplerTest,
         EXPECT_LE(vertex.uv[0], 0.5f);
         EXPECT_LE(vertex.uv[1], 0.5f);
     }
+}
+
+TEST(GltfTerrainUpsamplerTest,
+     InterpolatesTriangleVertexColorAndTangentLikeCesiumNative) {
+    GltfModel parent = makeParentModel();
+    GltfPrimitive& parentPrimitive = parent.primitives.front();
+    parentPrimitive.skirtMetadata.reset();
+    parentPrimitive.vertexColors = {
+        {0.0f, 0.0f, 0.0f, 1.0f},
+        {1.0f, 0.0f, 0.0f, 1.0f},
+        {0.0f, 1.0f, 0.0f, 1.0f},
+        {1.0f, 1.0f, 0.0f, 1.0f}};
+    parentPrimitive.vertexTangents = {
+        {1.0f, 0.0f, 0.0f, 1.0f},
+        {0.0f, 1.0f, 0.0f, 1.0f},
+        {0.0f, 0.0f, 1.0f, 1.0f},
+        {1.0f, 1.0f, 1.0f, 1.0f}};
+
+    const UpsampledQuadtreeNode child{TileKey{"Geographic-TMS", 1, 0, 0}};
+
+    std::unique_ptr<GltfModel> upsampled =
+        GltfTerrainUpsampler::upsampleForRasterOverlay(parent, child, 0, false);
+
+    ASSERT_NE(nullptr, upsampled);
+    ASSERT_EQ(1u, upsampled->primitives.size());
+    const GltfPrimitive& primitive = upsampled->primitives.front();
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexColors.size());
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTangents.size());
+
+    bool foundEastMidpoint = false;
+    for (size_t i = 0; i < primitive.vertices.size(); ++i) {
+        const SurfaceVertex& vertex = primitive.vertices[i];
+        if (std::abs(vertex.uv[0] - 0.5f) < 1e-6f &&
+            std::abs(vertex.uv[1]) < 1e-6f) {
+            foundEastMidpoint = true;
+            expectArrayNear(
+                primitive.vertexColors[i],
+                {0.5f, 0.0f, 0.0f, 1.0f});
+            expectArrayNear(
+                primitive.vertexTangents[i],
+                {0.5f, 0.5f, 0.0f, 1.0f});
+        }
+    }
+    EXPECT_TRUE(foundEastMidpoint);
 }
 
 TEST(GltfTerrainUpsamplerTest,

@@ -13,6 +13,10 @@ struct ClipVertex {
     SurfaceVertex vertex;
     std::array<std::array<float, 2>, kGltfMaxTexCoordSets> texCoords{};
     std::array<bool, kGltfMaxTexCoordSets> hasTexCoord{};
+    std::array<float, 4> color{};
+    bool hasColor = false;
+    std::array<float, 4> tangent{};
+    bool hasTangent = false;
 };
 
 bool childKeepsEast(const UpsampledQuadtreeNode& childID) {
@@ -63,6 +67,20 @@ ClipVertex interpolate(const ClipVertex& a,
                 static_cast<float>(
                     a.texCoords[i][1] +
                     (b.texCoords[i][1] - a.texCoords[i][1]) * t)};
+        }
+    }
+    out.hasColor = a.hasColor && b.hasColor;
+    if (out.hasColor) {
+        for (size_t i = 0; i < out.color.size(); ++i) {
+            out.color[i] = static_cast<float>(
+                a.color[i] + (b.color[i] - a.color[i]) * t);
+        }
+    }
+    out.hasTangent = a.hasTangent && b.hasTangent;
+    if (out.hasTangent) {
+        for (size_t i = 0; i < out.tangent.size(); ++i) {
+            out.tangent[i] = static_cast<float>(
+                a.tangent[i] + (b.tangent[i] - a.tangent[i]) * t);
         }
     }
     return out;
@@ -124,6 +142,14 @@ std::vector<ClipVertex> makeTriangle(const GltfPrimitive& primitive,
                 vertex.texCoords[set] = primitive.vertexTexCoords[set][index];
             }
         }
+        if (primitive.vertexColors.size() == primitive.vertices.size()) {
+            vertex.hasColor = true;
+            vertex.color = primitive.vertexColors[index];
+        }
+        if (primitive.vertexTangents.size() == primitive.vertices.size()) {
+            vertex.hasTangent = true;
+            vertex.tangent = primitive.vertexTangents[index];
+        }
         triangle.push_back(vertex);
     }
     return triangle;
@@ -149,6 +175,12 @@ void appendPolygon(GltfPrimitive& output,
             if (vertex.hasTexCoord[set]) {
                 output.vertexTexCoords[set].push_back(vertex.texCoords[set]);
             }
+        }
+        if (vertex.hasColor) {
+            output.vertexColors.push_back(vertex.color);
+        }
+        if (vertex.hasTangent) {
+            output.vertexTangents.push_back(vertex.tangent);
         }
     }
     for (uint32_t i = 1; i + 1 < polygon.size(); ++i) {
