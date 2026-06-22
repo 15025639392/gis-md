@@ -1087,6 +1087,59 @@ TEST(RasterOverlayLifecycleTest, SourceTileDepotCachesTilesByTileKeyLikeCesiumNa
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, eastTile->getState());
 }
 
+TEST(RasterOverlayLifecycleTest, LevelRangeChangeInvalidatesSourceDepotLikeCesiumNative) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(3, 3);
+
+    const TileKey sourceKey{scheme->id(), 3, 4, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+    const Rectangle eastHalf(
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.south(),
+        sourceBounds.east(),
+        sourceBounds.north());
+
+    RasterOverlayTileProvider::TilePtr firstTile =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, westHalf),
+            128.0,
+            128.0)
+            .tile;
+    ASSERT_NE(nullptr, firstTile);
+    ASSERT_TRUE(firstTile->isCompositeTile());
+
+    ASSERT_TRUE(provider.loadTile(*firstTile));
+    ASSERT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
+    imagery.completeNext();
+    ASSERT_EQ(1, provider.processPendingUploads(false));
+    ASSERT_EQ(RasterOverlayTile::LoadState::Loaded,
+              firstTile->getState());
+
+    provider.setLevelRange(3, 4);
+
+    RasterOverlayTileProvider::TilePtr secondTile =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, eastHalf),
+            128.0,
+            128.0)
+            .tile;
+    ASSERT_NE(nullptr, secondTile);
+    ASSERT_TRUE(secondTile->isCompositeTile());
+
+    ASSERT_TRUE(provider.loadTile(*secondTile));
+    ASSERT_EQ(2u, imagery.requestedKeys.size());
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.back());
+}
+
 TEST(RasterOverlayLifecycleTest,
      RectangleMappingsReuseProviderTileAssetLikeCesiumNative) {
     DeferredImageryProvider imagery;

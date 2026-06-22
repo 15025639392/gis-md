@@ -1497,9 +1497,15 @@ void RasterOverlayTileProvider::setSubTileCacheBytes(int64_t subTileCacheBytes) 
 
 void RasterOverlayTileProvider::setLevelRange(int minimumLevel,
                                               int maximumLevel) {
-    minimumLevel_ = minimumLevel > 0 ? minimumLevel : 0;
-    maximumLevel_ = maximumLevel > 0 ? maximumLevel : 0;
-    refreshSourceAssetDepot();
+    const int nextMinimumLevel = minimumLevel > 0 ? minimumLevel : 0;
+    const int nextMaximumLevel = maximumLevel > 0 ? maximumLevel : 0;
+    if (minimumLevel_ == nextMinimumLevel &&
+        maximumLevel_ == nextMaximumLevel) {
+        return;
+    }
+    minimumLevel_ = nextMinimumLevel;
+    maximumLevel_ = nextMaximumLevel;
+    invalidateSourceAssetDepotCache();
 }
 
 int RasterOverlayTileProvider::getMinimumLevel() const {
@@ -1513,6 +1519,17 @@ void RasterOverlayTileProvider::refreshSourceAssetDepot() {
         asyncState_,
         getMinimumLevel(),
         getMaximumLevel());
+}
+
+void RasterOverlayTileProvider::invalidateSourceAssetDepotCache() {
+    {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        asyncState_->sourceTileDepotCache.clear();
+        asyncState_->sourceTileDepotInFlight.clear();
+        asyncState_->sourceTileDepotCacheLru.clear();
+        asyncState_->sourceTileDepotCacheBytes = 0;
+    }
+    refreshSourceAssetDepot();
 }
 
 int RasterOverlayTileProvider::getMaximumLevel() const {

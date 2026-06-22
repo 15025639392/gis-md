@@ -272,6 +272,7 @@ private:
 
     /// Tile cache key from TileKey.
     std::string tileCacheKey(const TileKey& key) const;
+    void invalidateSourceAssetDepotCache();
 
     ImageryProvider& provider_;
     const TileScheme& scheme_;
