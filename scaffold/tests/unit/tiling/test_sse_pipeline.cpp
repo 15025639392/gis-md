@@ -12684,7 +12684,6 @@ void testTilePendingLoadCommitCoordinatorErasesMissingTileUploadKeys() {
         [&resourcesDirty]() { resourcesDirty = true; });
     TilePendingLoadCommitCoordinator::commitContentUpload(
         contentUpload,
-        terrainCache,
         lifecycle,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [](TilesetTile&) {},
@@ -12735,7 +12734,6 @@ void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentU
 
     TilePendingLoadCommitCoordinator::commitContentUpload(
         upload,
-        terrainCache,
         lifecycle,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [&gltfEnsured](TilesetTile&) { gltfEnsured = true; },

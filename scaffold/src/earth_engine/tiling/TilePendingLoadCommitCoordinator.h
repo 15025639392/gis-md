@@ -157,9 +157,6 @@ public:
               typename MarkResourcesDirtyFn>
     static void commitContentUpload(
         PendingTileLoad& upload,
-        std::unordered_map<
-            std::string,
-            std::unique_ptr<DecodedHeightmap>>& terrainCache,
         TileLoadLifecycle& lifecycle,
         EnsureTileFn&& ensureTile,
         EnsureGltfResourcesFn&& ensureGltfResources,
@@ -172,7 +169,6 @@ public:
             return;
         }
 
-        terrainCache.erase(upload.cacheKey);
         TileContentUploadCommitter::prepareRenderContent(
             *tile,
             std::move(upload.content()));
@@ -239,7 +235,6 @@ public:
                 upload.content());
             commitContentUpload(
                 upload,
-                terrainCache,
                 lifecycle,
                 std::forward<EnsureTileFn>(ensureTile),
                 std::forward<EnsureGltfResourcesFn>(ensureGltfResources),

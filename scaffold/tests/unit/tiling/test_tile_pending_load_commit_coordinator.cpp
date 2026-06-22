@@ -499,7 +499,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         [&resourcesDirty]() { resourcesDirty = true; });
     TilePendingLoadCommitCoordinator::commitContentUpload(
         contentUpload,
-        terrainCache,
         lifecycle,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [](TilesetTile&) {},
@@ -1134,7 +1133,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     TilePendingLoadCommitCoordinator::commitContentUpload(
         upload,
-        terrainCache,
         lifecycle,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [&gltfEnsured](TilesetTile&) { gltfEnsured = true; },
@@ -1144,6 +1142,75 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_TRUE(terrainCache.at(cacheKey)->valid());
     EXPECT_FALSE(gltfEnsured);
     EXPECT_FALSE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     ContentUploadPreservesLegacyTerrainCacheForSameKey) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "shared-content-terrain-key";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+    auto model = std::make_unique<GltfModel>();
+    PendingTileLoad upload{TileLoadDomain::Content,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadResult::fromContentResult(
+            TileContentLoadResult::render(std::move(model)))};
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
+            upload.key,
+            upload.cacheKey,
+            upload.group,
+            upload.priority,
+            TileLoadResult::fromContentResult(
+                TileContentLoadResult::empty())});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    auto cachedHeightmap = std::make_unique<DecodedHeightmap>();
+    cachedHeightmap->tileSize = 2;
+    cachedHeightmap->heights = {5.0f, 6.0f, 7.0f, 8.0f};
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    terrainCache[cacheKey] = std::move(cachedHeightmap);
+    bool gltfEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitUpload(
+        upload,
+        nullptr,
+        nullptr,
+        {},
+        terrainCache,
+        lifecycle,
+        false,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](TilesetTile&) {},
+        [&gltfEnsured](TilesetTile& committedTile) {
+            committedTile.content.renderContent.addGltfPrimitiveResource(
+                GltfPrimitiveRenderResources{});
+            committedTile.markRenderContentDone();
+            gltfEnsured = true;
+        },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    ASSERT_NE(terrainCache.find(cacheKey), terrainCache.end());
+    EXPECT_TRUE(terrainCache.at(cacheKey)->valid());
+    EXPECT_TRUE(gltfEnsured);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_TRUE(tile.content.renderContent.hasGltfModel());
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }
 
