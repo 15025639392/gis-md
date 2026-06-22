@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "earth_engine/terrain/QuantizedMeshParser.h"
+#include "earth_engine/content/QuantizedMeshContentLoader.h"
 #include "earth_engine/tiling/TileKey.h"
 #include "earth_engine/tiling/TileScheme.h"
 
@@ -82,40 +82,53 @@ Rectangle rootRectangle() {
     return scheme->tileToRectangle(TileKey{"Geographic-TMS", 0, 0, 0});
 }
 
+QuantizedMeshContentLoadResult loadQuantizedMeshContent(
+    const std::vector<uint8_t>& bytes,
+    bool enableWaterMask,
+    bool includeCurrentLayerMetadata = false) {
+    std::vector<QuantizedMeshMetadataContent> metadata;
+    if (includeCurrentLayerMetadata) {
+        QuantizedMeshMetadataContent currentLayerMetadata;
+        currentLayerMetadata.layerIndex = 0;
+        currentLayerMetadata.subtreeKey = TileKey{"Geographic-TMS", 0, 0, 0};
+        currentLayerMetadata.data = bytes.data();
+        currentLayerMetadata.size = bytes.size();
+        metadata.push_back(currentLayerMetadata);
+    }
+    return QuantizedMeshContentLoader::load(
+        bytes.data(),
+        bytes.size(),
+        rootRectangle(),
+        enableWaterMask,
+        metadata);
+}
+
 } // namespace
 
-TEST(QuantizedMeshParserWaterMaskTest,
+TEST(QuantizedMeshContentLoaderWaterMaskTest,
      OneByteMasksMatchCesiumNativeOnlyLandOnlyWaterSemantics) {
     const std::vector<uint8_t> allWaterBytes =
         makeQuantizedMeshBytesWithWaterMask({255});
-    std::unique_ptr<SurfaceTileMesh> allWater =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            allWaterBytes.data(),
-            allWaterBytes.size(),
-            rootRectangle(),
-            true);
+    QuantizedMeshContentLoadResult allWater =
+        loadQuantizedMeshContent(allWaterBytes, true);
 
-    ASSERT_NE(nullptr, allWater);
-    EXPECT_TRUE(allWater->waterMask.allWater);
-    EXPECT_FALSE(allWater->waterMask.allLand);
-    EXPECT_TRUE(allWater->waterMask.data.empty());
+    ASSERT_TRUE(allWater.success());
+    EXPECT_TRUE(allWater.gltfModel->terrainWaterMask.allWater);
+    EXPECT_FALSE(allWater.gltfModel->terrainWaterMask.allLand);
+    EXPECT_TRUE(allWater.gltfModel->terrainWaterMask.data.empty());
 
     const std::vector<uint8_t> allLandBytes =
         makeQuantizedMeshBytesWithWaterMask({0});
-    std::unique_ptr<SurfaceTileMesh> allLand =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            allLandBytes.data(),
-            allLandBytes.size(),
-            rootRectangle(),
-            true);
+    QuantizedMeshContentLoadResult allLand =
+        loadQuantizedMeshContent(allLandBytes, true);
 
-    ASSERT_NE(nullptr, allLand);
-    EXPECT_TRUE(allLand->waterMask.allLand);
-    EXPECT_FALSE(allLand->waterMask.allWater);
-    EXPECT_TRUE(allLand->waterMask.data.empty());
+    ASSERT_TRUE(allLand.success());
+    EXPECT_TRUE(allLand.gltfModel->terrainWaterMask.allLand);
+    EXPECT_FALSE(allLand.gltfModel->terrainWaterMask.allWater);
+    EXPECT_TRUE(allLand.gltfModel->terrainWaterMask.data.empty());
 }
 
-TEST(QuantizedMeshParserWaterMaskTest,
+TEST(QuantizedMeshContentLoaderWaterMaskTest,
      FullMaskPreservesCesiumNativeWaterAlphaSemanticsForRenderer) {
     std::vector<uint8_t> mask(256 * 256, 0);
     mask[0] = 7;
@@ -123,25 +136,33 @@ TEST(QuantizedMeshParserWaterMaskTest,
     const std::vector<uint8_t> bytes =
         makeQuantizedMeshBytesWithWaterMask(mask);
 
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            rootRectangle(),
-            true);
+    QuantizedMeshContentLoadResult result =
+        loadQuantizedMeshContent(bytes, true);
 
-    ASSERT_NE(nullptr, mesh);
-    EXPECT_FALSE(mesh->waterMask.allLand);
-    EXPECT_FALSE(mesh->waterMask.allWater);
-    ASSERT_EQ(256u * 256u * 4u, mesh->waterMask.data.size());
-    EXPECT_EQ(7, mesh->waterMask.data[3]);
-    EXPECT_EQ(255, mesh->waterMask.data[12345 * 4]);
-    EXPECT_EQ(255, mesh->waterMask.data[12345 * 4 + 1]);
-    EXPECT_EQ(255, mesh->waterMask.data[12345 * 4 + 2]);
-    EXPECT_EQ(255, mesh->waterMask.data[12345 * 4 + 3]);
+    ASSERT_TRUE(result.success());
+    const WaterMask& waterMask = result.gltfModel->terrainWaterMask;
+    EXPECT_FALSE(waterMask.allLand);
+    EXPECT_FALSE(waterMask.allWater);
+    ASSERT_EQ(256u * 256u * 4u, waterMask.data.size());
+    EXPECT_EQ(7, waterMask.data[3]);
+    EXPECT_EQ(255, waterMask.data[12345 * 4]);
+    EXPECT_EQ(255, waterMask.data[12345 * 4 + 1]);
+    EXPECT_EQ(255, waterMask.data[12345 * 4 + 2]);
+    EXPECT_EQ(255, waterMask.data[12345 * 4 + 3]);
+    ASSERT_TRUE(result.gltfModel->terrainWaterMaskTextureIndex.has_value());
+    ASSERT_LT(*result.gltfModel->terrainWaterMaskTextureIndex,
+              result.gltfModel->textures.size());
+    const GltfTexture& texture =
+        result.gltfModel->textures[*result.gltfModel->terrainWaterMaskTextureIndex];
+    EXPECT_EQ(256, texture.image.width);
+    EXPECT_EQ(256, texture.image.height);
+    EXPECT_EQ(1, texture.image.channels);
+    ASSERT_EQ(256u * 256u, texture.image.pixels.size());
+    EXPECT_EQ(7, texture.image.pixels[0]);
+    EXPECT_EQ(255, texture.image.pixels[12345]);
 }
 
-TEST(QuantizedMeshParserWaterMaskTest,
+TEST(QuantizedMeshContentLoaderWaterMaskTest,
      LaterWaterMaskExtensionReplacesEarlierOneLikeCesiumNative) {
     std::vector<uint8_t> mask(256 * 256, 0);
     mask[42] = 255;
@@ -150,20 +171,16 @@ TEST(QuantizedMeshParserWaterMaskTest,
     appendPod<uint32_t>(bytes, 1);
     appendPod<uint8_t>(bytes, 255);
 
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            rootRectangle(),
-            true);
+    QuantizedMeshContentLoadResult result =
+        loadQuantizedMeshContent(bytes, true);
 
-    ASSERT_NE(nullptr, mesh);
-    EXPECT_TRUE(mesh->waterMask.allWater);
-    EXPECT_FALSE(mesh->waterMask.allLand);
-    EXPECT_TRUE(mesh->waterMask.data.empty());
+    ASSERT_TRUE(result.success());
+    EXPECT_TRUE(result.gltfModel->terrainWaterMask.allWater);
+    EXPECT_FALSE(result.gltfModel->terrainWaterMask.allLand);
+    EXPECT_TRUE(result.gltfModel->terrainWaterMask.data.empty());
 }
 
-TEST(QuantizedMeshParserWaterMaskTest,
+TEST(QuantizedMeshContentLoaderWaterMaskTest,
      UnsupportedAndUnknownExtensionsAdvanceToLaterKnownExtensions) {
     const std::string metadata = R"json({
       "available": [
@@ -178,20 +195,17 @@ TEST(QuantizedMeshParserWaterMaskTest,
     appendPod<uint8_t>(invalidWaterThenMetadata, 9);
     appendMetadataExtension(invalidWaterThenMetadata, metadata);
 
-    std::unique_ptr<SurfaceTileMesh> invalidWater =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            invalidWaterThenMetadata.data(),
-            invalidWaterThenMetadata.size(),
-            rootRectangle(),
-            true);
+    QuantizedMeshContentLoadResult invalidWater =
+        loadQuantizedMeshContent(invalidWaterThenMetadata, true, true);
 
-    ASSERT_NE(nullptr, invalidWater);
-    EXPECT_TRUE(invalidWater->waterMask.allLand);
-    EXPECT_FALSE(invalidWater->waterMask.allWater);
-    EXPECT_TRUE(invalidWater->waterMask.data.empty());
+    ASSERT_TRUE(invalidWater.success());
+    EXPECT_TRUE(invalidWater.gltfModel->terrainWaterMask.allLand);
+    EXPECT_FALSE(invalidWater.gltfModel->terrainWaterMask.allWater);
+    EXPECT_TRUE(invalidWater.gltfModel->terrainWaterMask.data.empty());
+    ASSERT_EQ(1u, invalidWater.availabilityUpdates.size());
     EXPECT_EQ((std::vector<QuantizedMeshAvailabilityRange>{
                   {0, 0, 0, 1, 0}}),
-              invalidWater->metadataAvailability);
+              invalidWater.availabilityUpdates.front().metadataAvailability);
 
     std::vector<uint8_t> unknownThenWaterBytes = makeQuantizedMeshBytes();
     appendPod<uint8_t>(unknownThenWaterBytes, 99);
@@ -203,34 +217,26 @@ TEST(QuantizedMeshParserWaterMaskTest,
     appendPod<uint32_t>(unknownThenWaterBytes, 1);
     appendPod<uint8_t>(unknownThenWaterBytes, 255);
 
-    std::unique_ptr<SurfaceTileMesh> unknownThenWater =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            unknownThenWaterBytes.data(),
-            unknownThenWaterBytes.size(),
-            rootRectangle(),
-            true);
+    QuantizedMeshContentLoadResult unknownThenWater =
+        loadQuantizedMeshContent(unknownThenWaterBytes, true);
 
-    ASSERT_NE(nullptr, unknownThenWater);
-    EXPECT_TRUE(unknownThenWater->waterMask.allWater);
-    EXPECT_FALSE(unknownThenWater->waterMask.allLand);
+    ASSERT_TRUE(unknownThenWater.success());
+    EXPECT_TRUE(unknownThenWater.gltfModel->terrainWaterMask.allWater);
+    EXPECT_FALSE(unknownThenWater.gltfModel->terrainWaterMask.allLand);
 }
 
-TEST(QuantizedMeshParserWaterMaskTest,
+TEST(QuantizedMeshContentLoaderWaterMaskTest,
      DisabledWaterMaskStillAdvancesToLaterMetadataLikeCesiumNative) {
     const std::vector<uint8_t> allWaterBytes =
         makeQuantizedMeshBytesWithWaterMask({255});
-    std::unique_ptr<SurfaceTileMesh> disabled =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            allWaterBytes.data(),
-            allWaterBytes.size(),
-            rootRectangle(),
-            false);
+    QuantizedMeshContentLoadResult disabled =
+        loadQuantizedMeshContent(allWaterBytes, false);
 
-    ASSERT_NE(nullptr, disabled);
-    EXPECT_FALSE(disabled->waterMask.allWater);
-    EXPECT_TRUE(disabled->waterMask.allLand);
-    EXPECT_TRUE(disabled->waterMask.data.empty());
-    EXPECT_FALSE(disabled->waterMask.valid());
+    ASSERT_TRUE(disabled.success());
+    EXPECT_FALSE(disabled.gltfModel->terrainWaterMask.allWater);
+    EXPECT_TRUE(disabled.gltfModel->terrainWaterMask.allLand);
+    EXPECT_TRUE(disabled.gltfModel->terrainWaterMask.data.empty());
+    EXPECT_FALSE(disabled.gltfModel->terrainWaterMask.valid());
 
     const std::string metadata = R"json({
       "available": [
@@ -241,16 +247,14 @@ TEST(QuantizedMeshParserWaterMaskTest,
         makeQuantizedMeshBytesWithWaterMask({255});
     appendMetadataExtension(disabledWaterThenMetadata, metadata);
 
-    std::unique_ptr<SurfaceTileMesh> disabledWithMetadata =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            disabledWaterThenMetadata.data(),
-            disabledWaterThenMetadata.size(),
-            rootRectangle(),
-            false);
+    QuantizedMeshContentLoadResult disabledWithMetadata =
+        loadQuantizedMeshContent(disabledWaterThenMetadata, false, true);
 
-    ASSERT_NE(nullptr, disabledWithMetadata);
-    EXPECT_FALSE(disabledWithMetadata->waterMask.valid());
+    ASSERT_TRUE(disabledWithMetadata.success());
+    EXPECT_FALSE(disabledWithMetadata.gltfModel->terrainWaterMask.valid());
+    ASSERT_EQ(1u, disabledWithMetadata.availabilityUpdates.size());
     EXPECT_EQ((std::vector<QuantizedMeshAvailabilityRange>{
                   {0, 0, 0, 1, 0}}),
-              disabledWithMetadata->metadataAvailability);
+              disabledWithMetadata.availabilityUpdates.front()
+                  .metadataAvailability);
 }
