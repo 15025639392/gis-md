@@ -31,7 +31,10 @@ RenderCommand::PrimitiveType renderPrimitiveType(GltfPrimitiveMode mode) {
             return RenderCommand::PrimitiveType::Lines;
         case GltfPrimitiveMode::LineStrip:
             return RenderCommand::PrimitiveType::LineStrip;
+        case GltfPrimitiveMode::TriangleStrip:
+            return RenderCommand::PrimitiveType::TriangleStrip;
         case GltfPrimitiveMode::Triangles:
+        case GltfPrimitiveMode::TriangleFan:
         default:
             return RenderCommand::PrimitiveType::Triangles;
     }

@@ -601,7 +601,11 @@ bool upsamplePrimitive(const GltfPrimitive& parent,
             hasInvertedVCoordinate);
     }
 
-    if (parent.primitiveMode != GltfPrimitiveMode::Triangles ||
+    const bool isTrianglePrimitive =
+        parent.primitiveMode == GltfPrimitiveMode::Triangles ||
+        parent.primitiveMode == GltfPrimitiveMode::TriangleStrip ||
+        parent.primitiveMode == GltfPrimitiveMode::TriangleFan;
+    if (!isTrianglePrimitive ||
         textureCoordinateIndex < 0 ||
         textureCoordinateIndex >= static_cast<int>(kGltfMaxTexCoordSets) ||
         parent.vertices.empty() ||
@@ -625,6 +629,7 @@ bool upsamplePrimitive(const GltfPrimitive& parent,
     output.runtime.baseTangents.clear();
     output.runtime.skinning.clear();
     output.runtime.morphTargets.clear();
+    output.primitiveMode = GltfPrimitiveMode::Triangles;
 
     const bool keepEast = childKeepsEast(childID);
     const bool keepNorth = childKeepsNorth(childID);
@@ -652,14 +657,14 @@ bool upsamplePrimitive(const GltfPrimitive& parent,
     }
     const uint32_t indexEnd = indexBegin + indexCount;
 
-    for (uint32_t i = indexBegin; i + 2 < indexEnd; i += 3) {
-        const uint32_t ia = hasExplicitIndices ? parent.indices[i] : i;
-        const uint32_t ib = hasExplicitIndices ? parent.indices[i + 1] : i + 1;
-        const uint32_t ic = hasExplicitIndices ? parent.indices[i + 2] : i + 2;
+    auto sourceIndex = [&](uint32_t i) {
+        return hasExplicitIndices ? parent.indices[i] : i;
+    };
+    auto upsampleTriangle = [&](uint32_t ia, uint32_t ib, uint32_t ic) {
         if (ia >= parent.vertices.size() ||
             ib >= parent.vertices.size() ||
             ic >= parent.vertices.size()) {
-            continue;
+            return;
         }
 
         std::vector<ClipVertex> polygon = makeTriangle(parent, ia, ib, ic);
@@ -676,6 +681,37 @@ bool upsamplePrimitive(const GltfPrimitive& parent,
             keepGreaterV,
             0.5);
         appendPolygon(output, polygon, textureCoordinateIndex);
+    };
+
+    if (parent.primitiveMode == GltfPrimitiveMode::Triangles) {
+        for (uint32_t i = indexBegin; i + 2 < indexEnd; i += 3) {
+            upsampleTriangle(
+                sourceIndex(i),
+                sourceIndex(i + 1),
+                sourceIndex(i + 2));
+        }
+    } else if (parent.primitiveMode == GltfPrimitiveMode::TriangleStrip) {
+        for (uint32_t i = indexBegin; i + 2 < indexEnd; ++i) {
+            if (((i - indexBegin) % 2u) == 0u) {
+                upsampleTriangle(
+                    sourceIndex(i),
+                    sourceIndex(i + 1),
+                    sourceIndex(i + 2));
+            } else {
+                upsampleTriangle(
+                    sourceIndex(i),
+                    sourceIndex(i + 2),
+                    sourceIndex(i + 1));
+            }
+        }
+    } else {
+        const uint32_t fanRoot = sourceIndex(indexBegin);
+        for (uint32_t i = indexBegin + 1; i + 1 < indexEnd; ++i) {
+            upsampleTriangle(
+                fanRoot,
+                sourceIndex(i),
+                sourceIndex(i + 1));
+        }
     }
 
     if (output.vertices.empty() || output.indices.empty()) {

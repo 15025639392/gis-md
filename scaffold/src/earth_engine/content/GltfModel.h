@@ -29,7 +29,9 @@ enum class GltfPrimitiveMode {
     Points,
     Lines,
     LineStrip,
-    Triangles
+    Triangles,
+    TriangleStrip,
+    TriangleFan
 };
 
 enum class GltfTextureFilter {

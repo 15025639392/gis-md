@@ -324,6 +324,58 @@ TEST(GltfTerrainUpsamplerTest,
 }
 
 TEST(GltfTerrainUpsamplerTest,
+     ClipsTriangleStripPrimitiveLikeCesiumNative) {
+    GltfModel parent = makeParentModel();
+    GltfPrimitive& primitive = parent.primitives.front();
+    primitive.skirtMetadata.reset();
+    primitive.primitiveMode = GltfPrimitiveMode::TriangleStrip;
+    primitive.indices = {0, 2, 1, 3};
+
+    const UpsampledQuadtreeNode child{TileKey{"Geographic-TMS", 1, 0, 0}};
+
+    std::unique_ptr<GltfModel> upsampled =
+        GltfTerrainUpsampler::upsampleForRasterOverlay(parent, child, 0, false);
+
+    ASSERT_NE(nullptr, upsampled);
+    ASSERT_EQ(1u, upsampled->primitives.size());
+    const GltfPrimitive& out = upsampled->primitives.front();
+    EXPECT_EQ(GltfPrimitiveMode::Triangles, out.primitiveMode);
+    ASSERT_FALSE(out.vertices.empty());
+    ASSERT_FALSE(out.indices.empty());
+    EXPECT_EQ(0u, out.indices.size() % 3u);
+    for (const SurfaceVertex& outVertex : out.vertices) {
+        EXPECT_LE(outVertex.uv[0], 0.5f);
+        EXPECT_LE(outVertex.uv[1], 0.5f);
+    }
+}
+
+TEST(GltfTerrainUpsamplerTest,
+     ClipsTriangleFanPrimitiveLikeCesiumNative) {
+    GltfModel parent = makeParentModel();
+    GltfPrimitive& primitive = parent.primitives.front();
+    primitive.skirtMetadata.reset();
+    primitive.primitiveMode = GltfPrimitiveMode::TriangleFan;
+    primitive.indices = {0, 1, 3, 2};
+
+    const UpsampledQuadtreeNode child{TileKey{"Geographic-TMS", 1, 0, 0}};
+
+    std::unique_ptr<GltfModel> upsampled =
+        GltfTerrainUpsampler::upsampleForRasterOverlay(parent, child, 0, false);
+
+    ASSERT_NE(nullptr, upsampled);
+    ASSERT_EQ(1u, upsampled->primitives.size());
+    const GltfPrimitive& out = upsampled->primitives.front();
+    EXPECT_EQ(GltfPrimitiveMode::Triangles, out.primitiveMode);
+    ASSERT_FALSE(out.vertices.empty());
+    ASSERT_FALSE(out.indices.empty());
+    EXPECT_EQ(0u, out.indices.size() % 3u);
+    for (const SurfaceVertex& outVertex : out.vertices) {
+        EXPECT_LE(outVertex.uv[0], 0.5f);
+        EXPECT_LE(outVertex.uv[1], 0.5f);
+    }
+}
+
+TEST(GltfTerrainUpsamplerTest,
      InterpolatesTriangleVertexColorAndTangentLikeCesiumNative) {
     GltfModel parent = makeParentModel();
     GltfPrimitive& parentPrimitive = parent.primitives.front();
