@@ -2666,9 +2666,8 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsNoCoverageAndAccepts
         TileKey{scheme->id(), 2, 0, 0},
         outside,
         makeImage(2, 2, 10),
-        false,
-        RasterOverlayTile::MoreDetailAvailable::Unknown,
-        std::nullopt});
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::Unknown});
     auto noCoverageResult =
         RasterOverlayTileProvider::composeRectangleImages(
             *scheme,
@@ -2683,9 +2682,8 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsNoCoverageAndAccepts
         TileKey{scheme->id(), 1, 0, 0},
         target,
         makeImage(2, 2, 20),
-        false,
-        RasterOverlayTile::MoreDetailAvailable::Unknown,
-        std::nullopt});
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::Unknown});
     auto fullResult =
         RasterOverlayTileProvider::composeRectangleImages(
             *scheme,
@@ -2715,9 +2713,8 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsMalformedSourceImage
         TileKey{scheme->id(), 1, 0, 0},
         target,
         std::move(malformed),
-        false,
-        RasterOverlayTile::MoreDetailAvailable::Unknown,
-        std::nullopt});
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::Unknown});
     auto result =
         RasterOverlayTileProvider::composeRectangleImages(
             *scheme,
@@ -2738,9 +2735,8 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesSourceMoreDetailFlagLik
         TileKey{scheme->id(), 1, 0, 0},
         target,
         makeImage(2, 2, 20),
-        false,
-        RasterOverlayTile::MoreDetailAvailable::No,
-        std::nullopt});
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::No});
 
     auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
         *scheme,
@@ -2765,9 +2761,8 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionReturnsEmptyImageForOnlyAnc
         TileKey{scheme->id(), 0, 0, 0},
         target,
         makeImage(2, 2, 20),
-        true,
-        RasterOverlayTile::MoreDetailAvailable::Yes,
-        target});
+        target,
+        RasterOverlayTile::MoreDetailAvailable::Yes});
 
     auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
         *scheme,
@@ -2801,9 +2796,8 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionReturnsCoveredRectangleLike
         TileKey{scheme->id(), 2, 0, 0},
         covered,
         makeImage(2, 2, 30),
-        false,
-        RasterOverlayTile::MoreDetailAvailable::No,
-        std::nullopt});
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::No});
 
     auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
         *scheme,
@@ -2852,16 +2846,14 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionBlitsSourcePixelBlocksLikeC
         westKey,
         westBounds,
         std::move(westImage),
-        false,
-        RasterOverlayTile::MoreDetailAvailable::Unknown,
-        std::nullopt});
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::Unknown});
     sources.push_back({
         eastKey,
         eastBounds,
         std::move(eastImage),
-        false,
-        RasterOverlayTile::MoreDetailAvailable::Unknown,
-        std::nullopt});
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::Unknown});
 
     auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
         *scheme,
@@ -2904,16 +2896,14 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesAncestorSubsetLikeCesiu
         eastKey,
         eastBounds,
         std::move(eastImage),
-        false,
-        RasterOverlayTile::MoreDetailAvailable::No,
-        std::nullopt});
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::No});
     sources.push_back({
         TileKey{scheme->id(), 1, 0, 0},
         target,
         std::move(ancestorImage),
-        true,
-        RasterOverlayTile::MoreDetailAvailable::Yes,
-        westBounds});
+        westBounds,
+        RasterOverlayTile::MoreDetailAvailable::Yes});
 
     auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
         *scheme,
@@ -2950,9 +2940,8 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionKeepsTinyProjectedOverlap) 
         sourceKey,
         sourceBounds,
         makeImage(64, 64, 40),
-        false,
-        RasterOverlayTile::MoreDetailAvailable::Unknown,
-        std::nullopt});
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::Unknown});
 
     auto result = RasterOverlayTileProvider::composeRectangleImages(
         *scheme,
@@ -2983,9 +2972,8 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesProjectedWebMercatorHei
         sourceKey,
         sourceBounds,
         makeImage(64, 64, 50),
-        false,
-        RasterOverlayTile::MoreDetailAvailable::Unknown,
-        std::nullopt});
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::Unknown});
 
     auto result = RasterOverlayTileProvider::composeRectangleImages(
         *scheme,

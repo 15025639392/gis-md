@@ -1396,11 +1396,7 @@ RasterOverlayTileProvider::composeRectangleImagesWithDetails(
             source.key,
             source.bounds,
             std::shared_ptr<const DecodedImage>(std::move(source.image)),
-            source.sourceSubset.has_value()
-                ? source.sourceSubset
-                : (source.ancestorFallback
-                       ? std::optional<Rectangle>(source.bounds)
-                       : std::nullopt),
+            source.sourceSubset,
             source.moreDetailAvailable});
     }
     return combineRectangleImages(

@@ -61,10 +61,9 @@ public:
         TileKey key;
         Rectangle bounds;
         std::unique_ptr<DecodedImage> image;
-        bool ancestorFallback = false;
+        std::optional<Rectangle> sourceSubset;
         RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::Unknown;
-        std::optional<Rectangle> sourceSubset;
     };
 
     struct RectangleCompositionResult {

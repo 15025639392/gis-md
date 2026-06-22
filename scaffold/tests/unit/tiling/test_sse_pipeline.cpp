@@ -2445,9 +2445,8 @@ void testRasterOverlayRectangleCompositionRejectsNoCoverage() {
         sourceKey,
         sourceBounds,
         makeDecodedRgbaImage(8, 8),
-        false,
-        RasterOverlayTile::MoreDetailAvailable::Unknown,
-        std::nullopt});
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::Unknown});
 
     std::unique_ptr<DecodedImage> composed =
         RasterOverlayTileProvider::composeRectangleImages(
@@ -2492,9 +2491,8 @@ void testRasterOverlayRectangleCompositionUsesProjectedWebMercatorHeight() {
         sourceKey,
         sourceBounds,
         makeDecodedRgbaImage(64, 64),
-        false,
-        RasterOverlayTile::MoreDetailAvailable::Unknown,
-        std::nullopt});
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::Unknown});
 
     std::unique_ptr<DecodedImage> composed =
         RasterOverlayTileProvider::composeRectangleImages(
@@ -2535,9 +2533,8 @@ void testRasterOverlayRectangleCompositionKeepsTinyProjectedOverlap() {
         sourceKey,
         sourceBounds,
         makeDecodedRgbaImage(64, 64),
-        false,
-        RasterOverlayTile::MoreDetailAvailable::Unknown,
-        std::nullopt});
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::Unknown});
 
     std::unique_ptr<DecodedImage> composed =
         RasterOverlayTileProvider::composeRectangleImages(
