@@ -83,6 +83,13 @@ double calculateSkirtHeight(const Ellipsoid& ellipsoid,
     return calcQuadtreeSkirtHeight(ellipsoid, rectangle);
 }
 
+std::string metadataExtensionTruncatedDiagnostic(uint32_t metadataJsonLength,
+                                                 size_t availableBytes) {
+    return "Quantized Mesh metadata extension is truncated: declared JSON length " +
+           std::to_string(metadataJsonLength) + " exceeds available payload bytes " +
+           std::to_string(availableBytes);
+}
+
 } // namespace
 
 std::vector<QuantizedMeshAvailabilityRange> QuantizedMeshParser::parseMetadataAvailability(
@@ -146,11 +153,25 @@ QuantizedMeshParser::parseMetadataAvailabilityWithDiagnostics(
                 break;
             }
             if (extId == 4) {
-                if (offset + sizeof(uint32_t) > len) break;
+                if (offset + sizeof(uint32_t) > len) {
+                    latestMetadata = MetadataAvailabilityParseResult{};
+                    latestMetadata->diagnostics.push_back(
+                        metadataExtensionTruncatedDiagnostic(
+                            0,
+                            len - offset));
+                    break;
+                }
                 uint32_t metadataJsonLength = 0;
                 std::memcpy(&metadataJsonLength, data + offset, sizeof(uint32_t));
                 const size_t jsonOffset = offset + sizeof(uint32_t);
-                if (metadataJsonLength > len - jsonOffset) break;
+                if (metadataJsonLength > len - jsonOffset) {
+                    latestMetadata = MetadataAvailabilityParseResult{};
+                    latestMetadata->diagnostics.push_back(
+                        metadataExtensionTruncatedDiagnostic(
+                            metadataJsonLength,
+                            len - jsonOffset));
+                    break;
+                }
                 latestMetadata = parseMetadataAvailabilityJson(std::string(
                     reinterpret_cast<const char*>(data + jsonOffset),
                     metadataJsonLength));
@@ -413,11 +434,23 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
             // Format: "available": [[{startX,startY,endX,endY},...],...]
             // Each valid level array advances the availability level.
             // Aligned with cesium-native loadAvailabilityRectangles.
-            if (offset + sizeof(uint32_t) > len) break;
+            if (offset + sizeof(uint32_t) > len) {
+                decoded->diagnostics.push_back(
+                    metadataExtensionTruncatedDiagnostic(
+                        0,
+                        len - offset));
+                break;
+            }
             uint32_t metadataJsonLength = 0;
             std::memcpy(&metadataJsonLength, data + offset, sizeof(uint32_t));
             const size_t jsonOffset = offset + sizeof(uint32_t);
-            if (metadataJsonLength > len - jsonOffset) break;
+            if (metadataJsonLength > len - jsonOffset) {
+                decoded->diagnostics.push_back(
+                    metadataExtensionTruncatedDiagnostic(
+                        metadataJsonLength,
+                        len - jsonOffset));
+                break;
+            }
             std::string metadataJson(
                 reinterpret_cast<const char*>(data + jsonOffset),
                 metadataJsonLength);

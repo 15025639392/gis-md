@@ -450,3 +450,37 @@ TEST(QuantizedMeshParserMetadataTest,
     EXPECT_NE(std::string::npos,
               result.diagnostics.front().find("Error when parsing metadata"));
 }
+
+TEST(QuantizedMeshParserMetadataTest,
+     TruncatedMetadataExtensionReportsDiagnostic) {
+    std::vector<uint8_t> bytes = makeQuantizedMeshBytes();
+    appendPod<uint8_t>(bytes, 4);
+    appendPod<uint32_t>(bytes, sizeof(uint32_t) + 16u);
+    appendPod<uint32_t>(bytes, 16u);
+    bytes.push_back('{');
+
+    QuantizedMeshParser::MetadataAvailabilityParseResult metadataOnly =
+        QuantizedMeshParser::parseMetadataAvailabilityWithDiagnostics(
+            bytes.data(),
+            bytes.size());
+
+    EXPECT_TRUE(metadataOnly.availability.empty());
+    ASSERT_EQ(1u, metadataOnly.diagnostics.size());
+    EXPECT_NE(std::string::npos,
+              metadataOnly.diagnostics.front().find(
+                  "metadata extension is truncated"));
+
+    QuantizedMeshContentLoadResult content = QuantizedMeshContentLoader::load(
+        bytes.data(),
+        bytes.size(),
+        rootRectangle(),
+        false,
+        {});
+
+    ASSERT_TRUE(content.success());
+    EXPECT_TRUE(content.availabilityUpdates.empty());
+    ASSERT_EQ(1u, content.diagnostics.size());
+    EXPECT_NE(std::string::npos,
+              content.diagnostics.front().find(
+                  "metadata extension is truncated"));
+}
