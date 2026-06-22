@@ -1528,58 +1528,20 @@ RasterOverlayTileProvider::getDirectTileForRectangle(
     const Rectangle& providerGeometryBounds,
     double targetScreenPixelsX,
     double targetScreenPixelsY) {
-    if (!ready_) {
-        return nullptr;
-    }
-
-    const Rectangle geometryBounds =
-        unprojectProviderToGeographic(providerGeometryBounds, projection_);
-    const Rectangle sourceBounds =
-        mapGeometryBoundsToImageryCoverage(geometryBounds, coverageRectangle_);
-
-    RectangleSourcePlan sourcePlan = buildRectangleSourcePlan(
-        scheme_,
-        provider_,
-        textureUploader_.get(),
-        geometryBounds,
-        sourceBounds,
+    RectangleTileMapping mapping = mapTileForRectangle(
+        providerGeometryBounds,
         targetScreenPixelsX,
-        targetScreenPixelsY,
-        maximumScreenSpaceError_,
-        maximumTextureSize_,
-        getMinimumLevel(),
-        getMaximumLevel());
-
-    if (sourcePlan.sourceKeys.size() != 1) {
-        return nullptr;
-    }
-
-    const TileKey& sourceKey = sourcePlan.sourceKeys.front();
-    const Rectangle sourceTileBounds = scheme_.tileToRectangle(sourceKey);
-    if (!rectanglesEqualForDirectRasterTile(geometryBounds,
-                                            sourceTileBounds) ||
-        !rectanglesEqualForDirectRasterTile(sourceBounds,
-                                            sourceTileBounds)) {
-        return nullptr;
-    }
-
-    return getTile(sourceKey);
+        targetScreenPixelsY);
+    return mapping.directTile ? mapping.tile : nullptr;
 }
 
-RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
+RasterOverlayTileProvider::RectangleTileMapping
+RasterOverlayTileProvider::mapTileForRectangle(
     const Rectangle& providerGeometryBounds,
     double targetScreenPixelsX,
     double targetScreenPixelsY) {
-    // cesium-native: return placeholder if provider is not yet ready
     if (!ready_) {
-        return getPlaceholderTile();
-    }
-
-    if (TilePtr directTile = getDirectTileForRectangle(
-            providerGeometryBounds,
-            targetScreenPixelsX,
-            targetScreenPixelsY)) {
-        return directTile;
+        return {getPlaceholderTile(), false};
     }
 
     const Rectangle geometryBounds =
@@ -1599,13 +1561,24 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
         maximumTextureSize_,
         getMinimumLevel(),
         getMaximumLevel());
+
+    if (sourcePlan.sourceKeys.size() == 1) {
+        const TileKey& sourceKey = sourcePlan.sourceKeys.front();
+        const Rectangle sourceTileBounds = scheme_.tileToRectangle(sourceKey);
+        if (rectanglesEqualForDirectRasterTile(geometryBounds,
+                                               sourceTileBounds) &&
+            rectanglesEqualForDirectRasterTile(sourceBounds,
+                                               sourceTileBounds)) {
+            return {getTile(sourceKey), true};
+        }
+    }
 
     const std::string ck = rectangleTileCacheKey(
         scheme_, providerGeometryBounds, sourcePlan.sourceZoom);
     auto existing = tiles_.find(ck);
     if (existing != tiles_.end()) {
         existing->second->lastUsedFrame = frameNumber_;
-        return existing->second;
+        return {existing->second, false};
     }
 
     const double centerLng =
@@ -1622,7 +1595,17 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
     tile->setTargetScreenPixels(targetScreenPixelsX, targetScreenPixelsY);
     tile->lastUsedFrame = frameNumber_;
     tiles_[ck] = tile;
-    return tile;
+    return {tile, false};
+}
+
+RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
+    const Rectangle& providerGeometryBounds,
+    double targetScreenPixelsX,
+    double targetScreenPixelsY) {
+    return mapTileForRectangle(
+        providerGeometryBounds,
+        targetScreenPixelsX,
+        targetScreenPixelsY).tile;
 }
 
 RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::resolveTile(

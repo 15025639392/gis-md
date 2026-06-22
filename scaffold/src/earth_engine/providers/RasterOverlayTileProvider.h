@@ -73,6 +73,11 @@ public:
             RasterOverlayTile::MoreDetailAvailable::No;
     };
 
+    struct RectangleTileMapping {
+        TilePtr tile;
+        bool directTile = false;
+    };
+
     /// Core rectangle composition contract. The returned image is in the target
     /// rectangle's UV space. Source sampling uses the provider scheme
     /// projection, so WebMercator source y is sampled in Mercator space.
@@ -108,6 +113,13 @@ public:
     TilePtr getTile(const Rectangle& rectangle,
                     double targetScreenPixelsX,
                     double targetScreenPixelsY);
+
+    /// Map a geometry rectangle to the provider's raster tile cache. Exact
+    /// single-source mappings return a direct quadtree tile; other mappings
+    /// return a rectangle tile while reusing the same source plan.
+    RectangleTileMapping mapTileForRectangle(const Rectangle& rectangle,
+                                             double targetScreenPixelsX,
+                                             double targetScreenPixelsY);
 
     /// Return the underlying quadtree imagery tile when the geometry rectangle
     /// maps exactly to one provider tile. Returns nullptr for partial or

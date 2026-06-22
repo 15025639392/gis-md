@@ -665,6 +665,40 @@ TEST(RasterOverlayLifecycleTest, DirectAlignedSingleSourceUploadsWithoutResampli
               rectangleMappedTile->getState());
 }
 
+TEST(RasterOverlayLifecycleTest, RectangleMappingReportsDirectOrComposedPath) {
+    RgbImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    RasterOverlayTileProvider::RectangleTileMapping direct =
+        provider.mapTileForRectangle(
+            projectForProvider(provider, sourceBounds),
+            8.0,
+            8.0);
+
+    ASSERT_NE(nullptr, direct.tile);
+    EXPECT_TRUE(direct.directTile);
+    EXPECT_FALSE(direct.tile->isRectangleTile());
+    EXPECT_EQ(sourceKey, direct.tile->getTileID());
+
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+    RasterOverlayTileProvider::RectangleTileMapping composed =
+        provider.mapTileForRectangle(
+            projectForProvider(provider, westHalf),
+            256.0,
+            512.0);
+
+    ASSERT_NE(nullptr, composed.tile);
+    EXPECT_FALSE(composed.directTile);
+    EXPECT_TRUE(composed.tile->isRectangleTile());
+}
+
 TEST(RasterOverlayLifecycleTest, DirectFastPathDoesNotRunForPartialRectangle) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

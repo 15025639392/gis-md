@@ -195,16 +195,10 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
             // RasterOverlayTileProvider::getTile(rectangle, screenPixels) receives
             // the geometry rectangle from TileRenderContent raster details.
             textureCoordinateID_ = readyTextureCoordinateID;
-            _pLoadingTile = tileProvider.getDirectTileForRectangle(
-                *geometryRectangle,
-                targetScreenPixelsX,
-                targetScreenPixelsY);
-            if (!_pLoadingTile) {
-                _pLoadingTile = tileProvider.getTile(
-                    *geometryRectangle,
-                    targetScreenPixelsX,
-                    targetScreenPixelsY);
-            }
+            _pLoadingTile = tileProvider.mapTileForRectangle(
+                                *geometryRectangle,
+                                targetScreenPixelsX,
+                                targetScreenPixelsY).tile;
             loadingTileSource_ = ReadyTileSource::Real;
         } else if (hasRenderContentDetails) {
             // Render content is loaded, but it has no texture coordinates for
@@ -225,16 +219,10 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                 addProjectionToList(missingProjections, projection);
             if (boundingVolumeRectangle &&
                 !boundingVolumeRectangle->isEmpty()) {
-                _pLoadingTile = tileProvider.getDirectTileForRectangle(
-                    *boundingVolumeRectangle,
-                    targetScreenPixelsX,
-                    targetScreenPixelsY);
-                if (!_pLoadingTile) {
-                    _pLoadingTile = tileProvider.getTile(
-                        *boundingVolumeRectangle,
-                        targetScreenPixelsX,
-                        targetScreenPixelsY);
-                }
+                _pLoadingTile = tileProvider.mapTileForRectangle(
+                                    *boundingVolumeRectangle,
+                                    targetScreenPixelsX,
+                                    targetScreenPixelsY).tile;
                 loadingTileSource_ = ReadyTileSource::Real;
             } else {
                 // No precise rectangle yet, so return a placeholder for now.
