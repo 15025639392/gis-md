@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/content/QuantizedMeshContentLoader.h"
+#include "earth_engine/core/geodesy/Cartographic.h"
+#include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/math/Vec3.h"
 
@@ -64,6 +66,53 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
     appendPod<uint32_t>(bytes, 1);
     for (int i = 0; i < 3; ++i) appendPod<uint16_t>(bytes, 0);
     for (int i = 0; i < 4; ++i) appendPod<uint32_t>(bytes, 0);
+    return bytes;
+}
+
+std::vector<uint8_t> makeQuadQuantizedMeshBytesWithEdges() {
+    std::vector<uint8_t> bytes;
+
+    for (int i = 0; i < 3; ++i) appendPod<double>(bytes, 0.0);
+    appendPod<float>(bytes, 0.0f);
+    appendPod<float>(bytes, 100.0f);
+    for (int i = 0; i < 7; ++i) appendPod<double>(bytes, 0.0);
+    appendPod<uint32_t>(bytes, 4);
+
+    const uint16_t u[] = {
+        zigZagEncode16(0),
+        zigZagEncode16(32767),
+        zigZagEncode16(-32767),
+        zigZagEncode16(32767)
+    };
+    const uint16_t v[] = {
+        zigZagEncode16(0),
+        zigZagEncode16(0),
+        zigZagEncode16(32767),
+        zigZagEncode16(0)
+    };
+    const uint16_t h[] = {
+        zigZagEncode16(0),
+        zigZagEncode16(0),
+        zigZagEncode16(0),
+        zigZagEncode16(0)
+    };
+    for (uint16_t value : u) appendPod<uint16_t>(bytes, value);
+    for (uint16_t value : v) appendPod<uint16_t>(bytes, value);
+    for (uint16_t value : h) appendPod<uint16_t>(bytes, value);
+
+    appendPod<uint32_t>(bytes, 2);
+    const uint16_t encodedIndices[] = {0, 0, 0, 2, 0, 2};
+    for (uint16_t value : encodedIndices) appendPod<uint16_t>(bytes, value);
+
+    const std::vector<uint16_t> west{0, 2};
+    const std::vector<uint16_t> south{1, 0};
+    const std::vector<uint16_t> east{3, 1};
+    const std::vector<uint16_t> north{2, 3};
+    for (const std::vector<uint16_t>* edge : {&west, &south, &east, &north}) {
+        appendPod<uint32_t>(bytes, static_cast<uint32_t>(edge->size()));
+        for (uint16_t index : *edge) appendPod<uint16_t>(bytes, index);
+    }
+
     return bytes;
 }
 
@@ -280,6 +329,41 @@ TEST(QuantizedMeshContentLoaderTest,
         1e-6));
     EXPECT_EQ(tileRectangle,
               result.metadata.rasterOverlayDetails->boundingRegion.rectangle);
+}
+
+TEST(QuantizedMeshContentLoaderTest,
+     PlacesEastSkirtOutsideTileLikeCesiumNative) {
+    const std::vector<uint8_t> bytes = makeQuadQuantizedMeshBytesWithEdges();
+    const Rectangle tileRectangle = geographicRootWestRectangle();
+
+    QuantizedMeshContentLoadResult result =
+        QuantizedMeshContentLoader::load(
+            bytes.data(),
+            bytes.size(),
+            tileRectangle,
+            false,
+            {});
+
+    ASSERT_TRUE(result.success());
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    ASSERT_TRUE(primitive.skirtMetadata.has_value());
+    ASSERT_EQ(4u, primitive.skirtMetadata->noSkirtVerticesCount);
+    ASSERT_GE(primitive.vertices.size(), 10u);
+
+    const size_t eastSkirtBegin =
+        primitive.skirtMetadata->noSkirtVerticesCount + 2u + 2u;
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    const double expectedLongitude =
+        tileRectangle.east() + tileRectangle.width() * 0.0001;
+
+    for (size_t i = 0; i < 2u; ++i) {
+        const Cartographic cartographic = ellipsoid.cartesianToCartographic(
+            primitive.vertices[eastSkirtBegin + i].positionEcef);
+        EXPECT_GT(cartographic.longitude(), tileRectangle.east());
+        EXPECT_NEAR(expectedLongitude, cartographic.longitude(), 1e-10);
+    }
 }
 
 TEST(QuantizedMeshContentLoaderTest,

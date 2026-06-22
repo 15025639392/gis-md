@@ -618,7 +618,7 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
 
     addSkirtEdge(sortedWest,  -lonOff, 0,       false);
     addSkirtEdge(sortedSouth, 0,       -latOff, false);
-    addSkirtEdge(sortedEast,  -lonOff, 0,       false);
+    addSkirtEdge(sortedEast,  lonOff,  0,       false);
     addSkirtEdge(sortedNorth, 0,       latOff,  false);
 
     decoded->gpuVertices.resize(decoded->vertices.size());
