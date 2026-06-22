@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/content/QuantizedMeshContentLoader.h"
 #include "earth_engine/terrain/QuantizedMeshParser.h"
 #include "earth_engine/tiling/TileKey.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -142,26 +143,37 @@ Rectangle rootRectangle() {
     return scheme->tileToRectangle(TileKey{"Geographic-TMS", 0, 0, 0});
 }
 
+QuantizedMeshContentLoadResult loadQuantizedMeshContent(
+    const std::vector<uint8_t>& bytes) {
+    return QuantizedMeshContentLoader::load(
+        bytes.data(),
+        bytes.size(),
+        rootRectangle(),
+        false,
+        {});
+}
+
 } // namespace
 
-TEST(QuantizedMeshParserIndexWidthTest,
+TEST(QuantizedMeshContentLoaderIndexWidthTest,
      VertexCountAbove65536ParsesUint32IndicesAndEdges) {
     const std::vector<uint8_t> bytes =
         makeLargeQuantizedMeshBytesWithUint32EdgeIndex();
 
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            rootRectangle());
+    QuantizedMeshContentLoadResult result = loadQuantizedMeshContent(bytes);
 
-    ASSERT_NE(nullptr, mesh);
-    EXPECT_GT(mesh->vertices.size(), 65537u);
-    EXPECT_NE(mesh->indices.end(),
-              std::find(mesh->indices.begin(), mesh->indices.end(), 65536u));
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    EXPECT_GT(primitive.vertices.size(), 65537u);
+    EXPECT_NE(primitive.indices.end(),
+              std::find(
+                  primitive.indices.begin(),
+                  primitive.indices.end(),
+                  65536u));
 }
 
-TEST(QuantizedMeshParserIndexWidthTest,
+TEST(QuantizedMeshContentLoaderIndexWidthTest,
      MetadataOnlyPathAcceptsUint32IndexPaddingLikeCesiumNative) {
     const std::string metadata = R"json({
       "available": [
@@ -179,7 +191,7 @@ TEST(QuantizedMeshParserIndexWidthTest,
                   bytes.size()));
 }
 
-TEST(QuantizedMeshParserIndexWidthTest,
+TEST(QuantizedMeshContentLoaderIndexWidthTest,
      VertexCount65536StillUsesUint16IndicesLikeCesiumNative) {
     const std::string metadata = R"json({
       "available": [
@@ -189,15 +201,16 @@ TEST(QuantizedMeshParserIndexWidthTest,
     const std::vector<uint8_t> bytes =
         makeBoundaryUint16QuantizedMeshBytes(metadata);
 
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            rootRectangle());
+    QuantizedMeshContentLoadResult result = loadQuantizedMeshContent(bytes);
 
-    ASSERT_NE(nullptr, mesh);
-    EXPECT_NE(mesh->indices.end(),
-              std::find(mesh->indices.begin(), mesh->indices.end(), 65535u));
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    EXPECT_NE(primitive.indices.end(),
+              std::find(
+                  primitive.indices.begin(),
+                  primitive.indices.end(),
+                  65535u));
     EXPECT_EQ((std::vector<QuantizedMeshAvailabilityRange>{
                   {0, 0, 0, 1, 0}}),
               QuantizedMeshParser::parseMetadataAvailability(
@@ -205,14 +218,11 @@ TEST(QuantizedMeshParserIndexWidthTest,
                   bytes.size()));
 }
 
-TEST(QuantizedMeshParserIndexWidthTest,
+TEST(QuantizedMeshContentLoaderIndexWidthTest,
      RejectsMissingUint32IndexPaddingLikeCesiumNative) {
     const std::vector<uint8_t> bytes =
         makeLargeQuantizedMeshBytesMissingUint32IndexPadding();
 
-    EXPECT_EQ(nullptr,
-              QuantizedMeshParser::parseToSurfaceTileMesh(
-                  bytes.data(),
-                  bytes.size(),
-                  rootRectangle()));
+    QuantizedMeshContentLoadResult result = loadQuantizedMeshContent(bytes);
+    EXPECT_FALSE(result.success());
 }
