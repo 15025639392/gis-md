@@ -2,6 +2,7 @@
 
 #include <memory>
 
+#include "earth_engine/content/GltfModel.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/math/Rectangle.h"
@@ -11,6 +12,18 @@
 #include "earth_engine/tiling/TileRenderContentState.h"
 
 using namespace earth_engine;
+
+namespace {
+
+void prepareGltfRenderContent(TileRenderContentState& renderContent,
+                              RasterOverlayDetails details = {}) {
+    auto model = std::make_unique<GltfModel>();
+    model->rasterOverlayDetails = std::move(details);
+    renderContent.prepareGltfContent(std::move(model), Mat4::identity());
+    renderContent.setTerrainRenderContent(true);
+}
+
+} // namespace
 
 TEST(RasterOverlayDetailsTest, MergeAppendsProjectionRectanglesLikeCesiumNative) {
     RasterOverlayDetails first;
@@ -61,10 +74,10 @@ TEST(RasterOverlayDetailsTest,
 TEST(RasterOverlayDetailsGeneratorTest,
      RegionGenerationSkipsExistingProjectionSlotLikeCesiumNative) {
     TileRenderContentState renderContent;
-    auto mesh = std::make_unique<SurfaceTileMesh>();
-    mesh->rasterOverlayDetails.rasterOverlayProjections.push_back(
+    RasterOverlayDetails existingDetails;
+    existingDetails.rasterOverlayProjections.push_back(
         RasterOverlayProjection::Geographic);
-    renderContent.setSurfaceMesh(std::move(mesh));
+    prepareGltfRenderContent(renderContent, std::move(existingDetails));
 
     const Rectangle region = Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
     const TileBoundingVolume boundingRegion =
@@ -90,10 +103,10 @@ TEST(RasterOverlayDetailsGeneratorTest,
 TEST(RasterOverlayDetailsGeneratorTest,
      RegionGenerationAppendsMissingProjectionAfterExistingSlotLikeCesiumNative) {
     TileRenderContentState renderContent;
-    auto mesh = std::make_unique<SurfaceTileMesh>();
-    mesh->rasterOverlayDetails.rasterOverlayProjections.push_back(
+    RasterOverlayDetails existingDetails;
+    existingDetails.rasterOverlayProjections.push_back(
         RasterOverlayProjection::Geographic);
-    renderContent.setSurfaceMesh(std::move(mesh));
+    prepareGltfRenderContent(renderContent, std::move(existingDetails));
 
     const Rectangle region = Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
     const TileBoundingVolume boundingRegion =
@@ -128,10 +141,10 @@ TEST(RasterOverlayDetailsGeneratorTest,
 TEST(RasterOverlayDetailsGeneratorTest,
      RegionGenerationSkipsExistingRectangleLikeCesiumNative) {
     TileRenderContentState renderContent;
-    auto mesh = std::make_unique<SurfaceTileMesh>();
+    RasterOverlayDetails existingDetails;
     const Rectangle existing = Rectangle::fromDegrees(1.0, 2.0, 3.0, 4.0);
-    mesh->rasterOverlayDetails.setGeographicRectangle(existing, 10.0, 20.0);
-    renderContent.setSurfaceMesh(std::move(mesh));
+    existingDetails.setGeographicRectangle(existing, 10.0, 20.0);
+    prepareGltfRenderContent(renderContent, std::move(existingDetails));
 
     const TileBoundingVolume boundingRegion = TileBoundingVolume::fromRegion(
         Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0),
@@ -158,7 +171,7 @@ TEST(RasterOverlayDetailsGeneratorTest,
 TEST(RasterOverlayDetailsGeneratorTest,
      RegionGenerationProjectsWebMercatorRectangleLikeCesiumNative) {
     TileRenderContentState renderContent;
-    renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
+    prepareGltfRenderContent(renderContent);
 
     const Rectangle region = Rectangle::fromDegrees(-90.0, -45.0, 45.0, 60.0);
     const TileBoundingVolume boundingRegion =
