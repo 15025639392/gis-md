@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <utility>
 #include <vector>
 
 namespace earth_engine {
@@ -136,14 +137,27 @@ struct TileChildMaterializer {
         const Rectangle& subdivisionRectangle,
         double defaultGeometricError,
         EnsureTileFn&& ensureTile) {
+        return materializeRasterUpsampledChildren(
+            parent,
+            subdivisionRectangle,
+            subdivisionRectangle.center(),
+            defaultGeometricError,
+            std::forward<EnsureTileFn>(ensureTile));
+    }
+
+    template <typename EnsureTileFn>
+    static bool materializeRasterUpsampledChildren(
+        TilesetTile& parent,
+        const Rectangle& subdivisionRectangle,
+        const std::pair<double, double>& subdivisionCenter,
+        double defaultGeometricError,
+        EnsureTileFn&& ensureTile) {
         if (parent.children.size() >= 4) {
             return false;
         }
 
-        const double centerLng =
-            subdivisionRectangle.west() + subdivisionRectangle.width() * 0.5;
-        const double centerLat =
-            subdivisionRectangle.south() + subdivisionRectangle.height() * 0.5;
+        const double centerLng = subdivisionCenter.first;
+        const double centerLat = subdivisionCenter.second;
 
         const int childZ = parent.key.z + 1;
         const int childX = parent.key.x * 2;

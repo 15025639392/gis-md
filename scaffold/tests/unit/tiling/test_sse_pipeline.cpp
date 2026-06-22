@@ -5067,13 +5067,22 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
           "Tileset: raster-more-detail root tile is created");
     if (!root) return;
 
-    const Rectangle rootRectangle =
+    const Rectangle contentRectangle =
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0);
-    root->bounds = rootRectangle;
+    const Rectangle overlayRectangle =
+        Rectangle::fromDegrees(-30.0, -40.0, 10.0, 60.0);
+    root->bounds = contentRectangle;
     root->content.renderContent.setSurfaceMesh(std::make_unique<SurfaceTileMesh>());
-    root->content.renderContent.mutableSurfaceMesh()
-        ->rasterOverlayDetails =
-            makeProviderDetails(overlay->getTileScheme(), rootRectangle);
+    RasterOverlayDetails rasterDetails;
+    rasterDetails.rasterOverlayProjections = {
+        RasterOverlayProjection::WebMercator};
+    rasterDetails.rasterOverlayRectangles = {
+        projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            overlayRectangle)};
+    rasterDetails.boundingRegion = {contentRectangle, 0.0, 0.0};
+    root->content.renderContent.mutableSurfaceMesh()->rasterOverlayDetails =
+        rasterDetails;
     root->content.renderContent.setMeshReady(true);
     root->content.renderContent.setSurfaceGpuBuffers(
         std::make_unique<DummyBuffer>(32),
@@ -5125,11 +5134,34 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
     }
     check(allUpsampled,
           "Tileset: raster more-detail children carry upsample metadata and region bounds");
+    const Rectangle expectedRegion =
+        contentRectangle.computeUnion(overlayRectangle);
+    const auto projectedCenter =
+        rasterDetails.rasterOverlayRectangles[0].center();
+    const Cartographic center = unprojectPosition(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        Vec3(projectedCenter.first, projectedCenter.second, 0.0));
     const std::array<Rectangle, 4> expectedChildBounds{
-        Rectangle::fromDegrees(-20.0, -10.0, -10.0, 0.0),
-        Rectangle::fromDegrees(-10.0, -10.0, 0.0, 0.0),
-        Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0),
-        Rectangle::fromDegrees(-10.0, 0.0, 0.0, 10.0)};
+        Rectangle(
+            expectedRegion.west(),
+            expectedRegion.south(),
+            center.longitude(),
+            center.latitude()),
+        Rectangle(
+            center.longitude(),
+            expectedRegion.south(),
+            expectedRegion.east(),
+            center.latitude()),
+        Rectangle(
+            expectedRegion.west(),
+            center.latitude(),
+            center.longitude(),
+            expectedRegion.north()),
+        Rectangle(
+            center.longitude(),
+            center.latitude(),
+            expectedRegion.east(),
+            expectedRegion.north())};
     auto rectangleNear = [](const Rectangle& a, const Rectangle& b) {
         constexpr double epsilon = 1e-12;
         return std::abs(a.west() - b.west()) < epsilon &&
@@ -5149,7 +5181,7 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
                 });
     }
     check(hasExpectedChildBounds,
-          "Tileset: raster more-detail children split the overlay rectangle SW/SE/NW/NE");
+          "Tileset: raster more-detail children split the Cesium-native content/overlay union at projection center");
 }
 
 void testTilesetGltfRenderContentBuildsPrimitiveCommands() {

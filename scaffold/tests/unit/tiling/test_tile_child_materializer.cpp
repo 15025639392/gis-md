@@ -829,12 +829,16 @@ TEST(TileChildMaterializerTest,
         100.0,
         ensure));
     ASSERT_EQ(4u, parent.children.size());
-    EXPECT_EQ(
-        Rectangle::fromDegrees(-20.0, -10.0, -10.0, 0.0),
-        parent.children[0]->bounds);
-    EXPECT_EQ(
-        Rectangle::fromDegrees(-10.0, 0.0, 0.0, 10.0),
-        parent.children[3]->bounds);
+    EXPECT_NEAR(parent.bounds.west(), parent.children[0]->bounds.west(), 1e-9);
+    EXPECT_NEAR(
+        parent.bounds.south(),
+        parent.children[0]->bounds.south(),
+        1e-9);
+    EXPECT_NEAR(parent.bounds.east(), parent.children[3]->bounds.east(), 1e-9);
+    EXPECT_NEAR(
+        parent.bounds.north(),
+        parent.children[3]->bounds.north(),
+        1e-9);
 
     RasterOverlayTile* readyTile = mapped.getReadyTile();
     ASSERT_NE(nullptr, readyTile);
@@ -848,7 +852,7 @@ TEST(TileChildMaterializerTest,
 }
 
 TEST(TileChildMaterializerTest,
-     RasterUpsampledChildrenSplitContentRegionNotOverlayRectangleLikeCesiumNative) {
+     RasterUpsampledChildrenUseOverlayCenterWithinContentUnionLikeCesiumNative) {
     DebugImageryProvider imagery;
     auto overlayScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *overlayScheme, nullptr);
@@ -924,17 +928,209 @@ TEST(TileChildMaterializerTest,
         ensure));
     ASSERT_EQ(4u, parent.children.size());
 
-    const double centerLng = tightRegion.west() + tightRegion.width() * 0.5;
-    const double centerLat =
-        tightRegion.south() + tightRegion.height() * 0.5;
-    EXPECT_NEAR(tightRegion.west(), parent.children[0]->bounds.west(), 1e-9);
-    EXPECT_NEAR(tightRegion.south(), parent.children[0]->bounds.south(), 1e-9);
-    EXPECT_NEAR(centerLng, parent.children[0]->bounds.east(), 1e-9);
-    EXPECT_NEAR(centerLat, parent.children[0]->bounds.north(), 1e-9);
-    EXPECT_NEAR(centerLng, parent.children[3]->bounds.west(), 1e-9);
-    EXPECT_NEAR(centerLat, parent.children[3]->bounds.south(), 1e-9);
-    EXPECT_NEAR(tightRegion.east(), parent.children[3]->bounds.east(), 1e-9);
-    EXPECT_NEAR(tightRegion.north(), parent.children[3]->bounds.north(), 1e-9);
+    const Rectangle expectedRegion = tightRegion.computeUnion(overlayRegion);
+    const auto projectedCenter =
+        details->rasterOverlayRectangles[1].center();
+    const Cartographic overlayCenter = unprojectPosition(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        Vec3(projectedCenter.first, projectedCenter.second, 0.0));
+    EXPECT_NEAR(
+        expectedRegion.west(),
+        parent.children[0]->bounds.west(),
+        1e-9);
+    EXPECT_NEAR(
+        expectedRegion.south(),
+        parent.children[0]->bounds.south(),
+        1e-9);
+    EXPECT_NEAR(
+        overlayCenter.longitude(),
+        parent.children[0]->bounds.east(),
+        1e-9);
+    EXPECT_NEAR(
+        overlayCenter.latitude(),
+        parent.children[0]->bounds.north(),
+        1e-9);
+    EXPECT_NEAR(
+        overlayCenter.longitude(),
+        parent.children[3]->bounds.west(),
+        1e-9);
+    EXPECT_NEAR(
+        overlayCenter.latitude(),
+        parent.children[3]->bounds.south(),
+        1e-9);
+    EXPECT_NEAR(
+        expectedRegion.east(),
+        parent.children[3]->bounds.east(),
+        1e-9);
+    EXPECT_NEAR(
+        expectedRegion.north(),
+        parent.children[3]->bounds.north(),
+        1e-9);
+}
+
+TEST(TileChildMaterializerTest,
+     RasterUpsampledChildrenUseProjectedCenterForWebMercatorLikeCesiumNative) {
+    DebugImageryProvider imagery;
+    auto overlayScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *overlayScheme, nullptr);
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 2, 2, 1},
+        Rectangle::fromDegrees(-30.0, -20.0, 30.0, 20.0));
+    parent.geometricError = 80.0;
+    parent.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    parent.content.renderContent.setMeshReady(true);
+    parent.content.renderContent.setTerrainHeightRange(-20.0, 120.0);
+
+    const Rectangle tightRegion =
+        Rectangle::fromDegrees(-10.0, -10.0, 10.0, 10.0);
+    const Rectangle overlayRegion =
+        Rectangle::fromDegrees(-20.0, -40.0, 20.0, 60.0);
+    const Rectangle projectedOverlay = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        overlayRegion);
+    RasterOverlayDetails* details =
+        parent.content.renderContent.mutableRasterOverlayDetails();
+    details->rasterOverlayProjections = {RasterOverlayProjection::WebMercator};
+    details->rasterOverlayRectangles = {projectedOverlay};
+    details->boundingRegion = {tightRegion, -20.0, 120.0};
+
+    auto& mapped = parent.rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missingProjections;
+    EXPECT_EQ(
+        RasterMappedToTilesetTile::MoreDetail::Unknown,
+        mapped.update(
+            parent.key,
+            parent.content.renderContent.rasterOverlayDetails(),
+            256.0,
+            256.0,
+            provider,
+            nullptr,
+            missingProjections));
+
+    RasterOverlayTile* loadingTile = mapped.getLoadingTile();
+    ASSERT_NE(nullptr, loadingTile);
+    loadingTile->setState(RasterOverlayTile::LoadState::Loaded);
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    EXPECT_EQ(
+        RasterMappedToTilesetTile::MoreDetail::Yes,
+        mapped.update(
+            parent.key,
+            parent.content.renderContent.rasterOverlayDetails(),
+            256.0,
+            256.0,
+            provider,
+            nullptr,
+            missingProjections));
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    ASSERT_TRUE(TileRasterUpsampledChildMaterializer::materialize(
+        parent,
+        80.0,
+        ensure));
+    ASSERT_EQ(4u, parent.children.size());
+
+    const Rectangle expectedRegion = tightRegion.computeUnion(overlayRegion);
+    const auto projectedCenter = projectedOverlay.center();
+    const Cartographic expectedCenter = unprojectPosition(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        Vec3(projectedCenter.first, projectedCenter.second, 0.0));
+    const auto geographicCenter = overlayRegion.center();
+
+    EXPECT_NEAR(
+        expectedRegion.west(),
+        parent.children[0]->bounds.west(),
+        1e-9);
+    EXPECT_NEAR(
+        expectedRegion.south(),
+        parent.children[0]->bounds.south(),
+        1e-9);
+    EXPECT_NEAR(
+        expectedCenter.longitude(),
+        parent.children[0]->bounds.east(),
+        1e-9);
+    EXPECT_NEAR(
+        expectedCenter.latitude(),
+        parent.children[0]->bounds.north(),
+        1e-9);
+    EXPECT_NEAR(
+        expectedCenter.longitude(),
+        parent.children[3]->bounds.west(),
+        1e-9);
+    EXPECT_NEAR(
+        expectedCenter.latitude(),
+        parent.children[3]->bounds.south(),
+        1e-9);
+    EXPECT_NEAR(
+        expectedRegion.east(),
+        parent.children[3]->bounds.east(),
+        1e-9);
+    EXPECT_NEAR(
+        expectedRegion.north(),
+        parent.children[3]->bounds.north(),
+        1e-9);
+    EXPECT_GT(
+        std::abs(expectedCenter.latitude() - geographicCenter.second),
+        1e-6);
+}
+
+TEST(TileChildMaterializerTest,
+     RasterUpsampledChildrenCanUseExplicitSubdivisionCenter) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
+    parent.geometricError = 100.0;
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    const Rectangle subdivision =
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0);
+    const auto explicitCenter =
+        Rectangle::fromDegrees(-12.0, -4.0, -12.0, -4.0).center();
+    ASSERT_TRUE(TileChildMaterializer::materializeRasterUpsampledChildren(
+        parent,
+        subdivision,
+        explicitCenter,
+        100.0,
+        ensure));
+    ASSERT_EQ(4u, parent.children.size());
+
+    EXPECT_NEAR(subdivision.west(), parent.children[0]->bounds.west(), 1e-9);
+    EXPECT_NEAR(subdivision.south(), parent.children[0]->bounds.south(), 1e-9);
+    EXPECT_NEAR(explicitCenter.first, parent.children[0]->bounds.east(), 1e-9);
+    EXPECT_NEAR(
+        explicitCenter.second,
+        parent.children[0]->bounds.north(),
+        1e-9);
+    EXPECT_NEAR(explicitCenter.first, parent.children[3]->bounds.west(), 1e-9);
+    EXPECT_NEAR(
+        explicitCenter.second,
+        parent.children[3]->bounds.south(),
+        1e-9);
+    EXPECT_NEAR(subdivision.east(), parent.children[3]->bounds.east(), 1e-9);
+    EXPECT_NEAR(subdivision.north(), parent.children[3]->bounds.north(), 1e-9);
 }
 
 TEST(TileChildMaterializerTest, CanRefineHonorsContentRulesBeforeTerrainSignals) {
