@@ -10,31 +10,35 @@ TEST(SceneRenderCommandDiagnosticsSnapshotTest, CountsRenderCommandLanes) {
 
     RenderCommand firstSurface;
     firstSurface.kind = RenderCommandKind::SurfaceTile;
+    firstSurface.terrainRenderContent = true;
     firstSurface.textures = {sharedTexture};
     firstSurface.surfaceGeometryZoom = 3;
     firstSurface.surfaceTextureZoom = 4;
 
     RenderCommand secondSurface;
     secondSurface.kind = RenderCommandKind::SurfaceTile;
+    secondSurface.terrainRenderContent = true;
     secondSurface.textures = {sharedTexture, secondTexture};
     secondSurface.surfaceGeometryZoom = 7;
     secondSurface.surfaceTextureZoom = 6;
 
     RenderCommand missingImagerySurface;
     missingImagerySurface.kind = RenderCommandKind::SurfaceTile;
+    missingImagerySurface.terrainRenderContent = true;
 
-    RenderCommand gltfPrimitive;
-    gltfPrimitive.kind = RenderCommandKind::GltfPrimitive;
+    RenderCommand terrainGltfPrimitive;
+    terrainGltfPrimitive.kind = RenderCommandKind::GltfPrimitive;
+    terrainGltfPrimitive.terrainRenderContent = true;
 
-    RenderCommand instancedGltfPrimitive;
-    instancedGltfPrimitive.kind = RenderCommandKind::GltfPrimitiveInstanced;
+    RenderCommand contentGltfPrimitive;
+    contentGltfPrimitive.kind = RenderCommandKind::GltfPrimitiveInstanced;
 
     RenderCommandList commands = {
         firstSurface,
         secondSurface,
         missingImagerySurface,
-        gltfPrimitive,
-        instancedGltfPrimitive};
+        terrainGltfPrimitive,
+        contentGltfPrimitive};
 
     const SceneRenderCommandDiagnosticsSnapshot snapshot =
         SceneRenderCommandDiagnosticsSnapshot::fromCommands(commands);
@@ -44,6 +48,7 @@ TEST(SceneRenderCommandDiagnosticsSnapshotTest, CountsRenderCommandLanes) {
     EXPECT_EQ(snapshot.surfaceMeshCount, 3);
     EXPECT_EQ(snapshot.terrainSurfaceMeshes, 3);
     EXPECT_EQ(snapshot.terrainReadySurfaceMeshes, 3);
+    EXPECT_EQ(snapshot.terrainRenderContentCommands, 4);
     EXPECT_EQ(snapshot.renderGltfPrimitives, 2);
     EXPECT_EQ(snapshot.gpuTextureCount, 2);
     EXPECT_EQ(snapshot.imageryExactAttachments, 2);
@@ -63,6 +68,9 @@ TEST(SceneRenderCommandDiagnosticsSnapshotTest, CountsRenderCommandLanes) {
     EXPECT_EQ(
         diagnostics.renderGltfPrimitives,
         snapshot.renderGltfPrimitives);
+    EXPECT_EQ(
+        diagnostics.terrainRenderContentCommands,
+        snapshot.terrainRenderContentCommands);
     EXPECT_EQ(diagnostics.imageryAttachments, 2);
 
     RenderCommandList commandsWithoutTextures = {missingImagerySurface};

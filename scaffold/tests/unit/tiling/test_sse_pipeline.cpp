@@ -12229,6 +12229,7 @@ void testTerrainUploadPreparesGltfRenderContent() {
 
     check(tile.content.renderContent.gltfModelForRead() == rawModel &&
               tile.content.renderContent.hasGltfModel() &&
+              tile.content.renderContent.isTerrainRenderContent() &&
               !tile.content.renderContent.hasSurfaceMesh() &&
               tile.content.renderContent.currentSurfaceSource() ==
                   SurfaceDrawableSource::GltfContent &&
@@ -12347,7 +12348,8 @@ void testTileContentUploadPolicyAppliesTileLoadResultFields() {
               committedDetails.boundingRegion.rectangle ==
                   resultRasterRectangle &&
               committedDetails.boundingRegion.minimumHeight == -9.0 &&
-              committedDetails.boundingRegion.maximumHeight == 19.0,
+              committedDetails.boundingRegion.maximumHeight == 19.0 &&
+              !tile.content.renderContent.isTerrainRenderContent(),
           "TileContentUploadPolicy: glTF upload applies TileLoadResult-like bounds and raster details");
 }
 
@@ -22322,31 +22324,35 @@ void testSceneRenderCommandDiagnosticsSnapshotCountsRenderCommandLanes() {
 
     RenderCommand firstSurface;
     firstSurface.kind = RenderCommandKind::SurfaceTile;
+    firstSurface.terrainRenderContent = true;
     firstSurface.textures = {sharedTexture};
     firstSurface.surfaceGeometryZoom = 3;
     firstSurface.surfaceTextureZoom = 4;
 
     RenderCommand secondSurface;
     secondSurface.kind = RenderCommandKind::SurfaceTile;
+    secondSurface.terrainRenderContent = true;
     secondSurface.textures = {sharedTexture, secondTexture};
     secondSurface.surfaceGeometryZoom = 7;
     secondSurface.surfaceTextureZoom = 6;
 
     RenderCommand missingImagerySurface;
     missingImagerySurface.kind = RenderCommandKind::SurfaceTile;
+    missingImagerySurface.terrainRenderContent = true;
 
-    RenderCommand gltfPrimitive;
-    gltfPrimitive.kind = RenderCommandKind::GltfPrimitive;
+    RenderCommand terrainGltfPrimitive;
+    terrainGltfPrimitive.kind = RenderCommandKind::GltfPrimitive;
+    terrainGltfPrimitive.terrainRenderContent = true;
 
-    RenderCommand instancedGltfPrimitive;
-    instancedGltfPrimitive.kind = RenderCommandKind::GltfPrimitiveInstanced;
+    RenderCommand contentGltfPrimitive;
+    contentGltfPrimitive.kind = RenderCommandKind::GltfPrimitiveInstanced;
 
     RenderCommandList commands = {
         firstSurface,
         secondSurface,
         missingImagerySurface,
-        gltfPrimitive,
-        instancedGltfPrimitive};
+        terrainGltfPrimitive,
+        contentGltfPrimitive};
 
     const SceneRenderCommandDiagnosticsSnapshot snapshot =
         SceneRenderCommandDiagnosticsSnapshot::fromCommands(commands);
@@ -22356,6 +22362,7 @@ void testSceneRenderCommandDiagnosticsSnapshotCountsRenderCommandLanes() {
               snapshot.surfaceMeshCount == 3 &&
               snapshot.terrainSurfaceMeshes == 3 &&
               snapshot.terrainReadySurfaceMeshes == 3 &&
+              snapshot.terrainRenderContentCommands == 4 &&
               snapshot.renderGltfPrimitives == 2,
           "SceneRenderCommandDiagnosticsSnapshot: counts render command lanes");
     check(snapshot.gpuTextureCount == 2 &&
@@ -22376,6 +22383,8 @@ void testSceneRenderCommandDiagnosticsSnapshotCountsRenderCommandLanes() {
               diagnostics.renderSurfaceTiles == snapshot.renderSurfaceTiles &&
               diagnostics.renderGltfPrimitives ==
                   snapshot.renderGltfPrimitives &&
+              diagnostics.terrainRenderContentCommands ==
+                  snapshot.terrainRenderContentCommands &&
               diagnostics.imageryAttachments == 2,
           "SceneRenderDiagnostics: flattens render command snapshot into legacy diagnostics");
 

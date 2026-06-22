@@ -17,6 +17,8 @@ void applyRenderCommandSnapshot(
     diagnostics.gpuTextureCount = snapshot.gpuTextureCount;
     diagnostics.renderSurfaceTiles = snapshot.renderSurfaceTiles;
     diagnostics.renderGltfPrimitives = snapshot.renderGltfPrimitives;
+    diagnostics.terrainRenderContentCommands =
+        snapshot.terrainRenderContentCommands;
     diagnostics.surfaceMeshCount = snapshot.surfaceMeshCount;
     diagnostics.imageryExactAttachments = snapshot.imageryExactAttachments;
     diagnostics.imageryMissingTiles = snapshot.imageryMissingTiles;
@@ -55,8 +57,11 @@ SceneRenderCommandDiagnosticsSnapshot::fromCommands(
         if (command.kind == RenderCommandKind::SurfaceTile) {
             ++snapshot.renderSurfaceTiles;
             ++snapshot.surfaceMeshCount;
-            ++snapshot.terrainSurfaceMeshes;
-            ++snapshot.terrainReadySurfaceMeshes;
+            if (command.terrainRenderContent) {
+                ++snapshot.terrainRenderContentCommands;
+                ++snapshot.terrainSurfaceMeshes;
+                ++snapshot.terrainReadySurfaceMeshes;
+            }
             if (!command.textures.empty()) {
                 ++snapshot.imageryExactAttachments;
                 for (const Texture* texture : command.textures) {
@@ -102,6 +107,9 @@ SceneRenderCommandDiagnosticsSnapshot::fromCommands(
         } else if (command.kind == RenderCommandKind::GltfPrimitive ||
                    command.kind == RenderCommandKind::GltfPrimitiveInstanced) {
             ++snapshot.renderGltfPrimitives;
+            if (command.terrainRenderContent) {
+                ++snapshot.terrainRenderContentCommands;
+            }
         }
     }
 
@@ -147,6 +155,7 @@ void SceneRenderDiagnostics::resetRenderCommandFields(
     diagnostics.gpuTextureCount = 0;
     diagnostics.renderSurfaceTiles = 0;
     diagnostics.renderGltfPrimitives = 0;
+    diagnostics.terrainRenderContentCommands = 0;
     diagnostics.terrainRenderEntriesPlanned = 0;
     diagnostics.terrainRenderEntriesSelectedPlanned = 0;
     diagnostics.terrainRenderEntriesFadingPlanned = 0;

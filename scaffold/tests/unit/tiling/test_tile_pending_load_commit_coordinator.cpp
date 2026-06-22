@@ -827,6 +827,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_TRUE(tile.content.renderContent.hasGltfResources());
     EXPECT_TRUE(tile.content.renderContent.isGltfRenderReady());
     EXPECT_TRUE(tile.content.renderContent.isRenderContentReady());
+    EXPECT_TRUE(tile.content.renderContent.isTerrainRenderContent());
     EXPECT_EQ(TileLoadState::Done, tile.content.loadState);
     EXPECT_EQ(TileContentKind::Render, tile.content.contentKind);
     EXPECT_EQ(0, ensureMeshCalls);

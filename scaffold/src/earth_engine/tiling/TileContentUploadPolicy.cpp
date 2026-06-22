@@ -12,6 +12,7 @@ void TileContentUploadPolicy::prepareGltfRenderContent(
     tile.content.renderContent.prepareGltfContent(
         std::move(content.gltfModel),
         content.contentTransform);
+    tile.content.renderContent.setTerrainRenderContent(false);
     TileLoadResultMetadataApplicator::apply(
         tile,
         std::move(content.metadata));

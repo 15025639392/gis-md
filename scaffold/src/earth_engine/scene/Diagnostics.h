@@ -81,6 +81,7 @@ struct Diagnostics {
     int gpuTextureCount = 0;
     int renderSurfaceTiles = 0;
     int renderGltfPrimitives = 0;
+    int terrainRenderContentCommands = 0;
     int terrainRenderEntriesPlanned = 0;
     int terrainRenderEntriesSelectedPlanned = 0;
     int terrainRenderEntriesFadingPlanned = 0;

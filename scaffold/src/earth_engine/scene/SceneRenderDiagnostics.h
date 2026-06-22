@@ -12,6 +12,7 @@ struct SceneRenderCommandDiagnosticsSnapshot {
     int gpuTextureCount = 0;
     int renderSurfaceTiles = 0;
     int renderGltfPrimitives = 0;
+    int terrainRenderContentCommands = 0;
     int surfaceMeshCount = 0;
     int imageryExactAttachments = 0;
     int imageryMissingTiles = 0;

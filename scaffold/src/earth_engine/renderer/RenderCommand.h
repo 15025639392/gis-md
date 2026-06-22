@@ -40,6 +40,7 @@ struct RenderCommand {
     std::string stableKey;
     uint64_t frameId = 0;
     uint64_t generation = 0;
+    bool terrainRenderContent = false;
 
     // GPU 资源引用（裸指针，生命周期由 RenderDevice 管理）
     ShaderProgram* shader = nullptr;

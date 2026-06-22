@@ -131,6 +131,7 @@ public:
     bool hasRenderableTerrainContent() const {
         return hasSurfaceMesh() || hasGltfContent();
     }
+    bool isTerrainRenderContent() const { return terrainRenderContent_; }
     const SurfaceTileMesh* surfaceMesh() const { return surface_.mesh.get(); }
     SurfaceTileMesh* surfaceMesh() { return surface_.mesh.get(); }
     bool hasSurfaceMesh() const { return surface_.mesh != nullptr; }
@@ -167,6 +168,9 @@ public:
     }
     void setGltfResourcesReady(bool ready) {
         gltfResourcesReady_ = ready;
+    }
+    void setTerrainRenderContent(bool terrain) {
+        terrainRenderContent_ = terrain;
     }
     void markRenderContentReady() {
         if (gltfModel) {
@@ -391,6 +395,7 @@ public:
         gltfTextureResources.clear();
         gltfPrimitiveResources.clear();
         gltfResourcesReady_ = false;
+        terrainRenderContent_ = false;
     }
 
     void prepareGltfContent(std::unique_ptr<GltfModel> model,
@@ -400,6 +405,7 @@ public:
         surface_.horizonOcclusionPoint.reset();
         surface_.meshReady = false;
         releaseGpuResources();
+        terrainRenderContent_ = false;
         if (model && model->preferredLocalOriginEcef.has_value()) {
             surface_.localOrigin =
                 contentTransform * *model->preferredLocalOriginEcef;
@@ -413,6 +419,7 @@ public:
     void clearGltfContent() {
         gltfModel.reset();
         clearGltfGpuResources();
+        terrainRenderContent_ = false;
     }
 
 private:
@@ -421,6 +428,7 @@ private:
     std::unique_ptr<GltfModel> gltfModel;
     Mat4 gltfContentTransform = Mat4::identity();
     bool gltfResourcesReady_ = false;
+    bool terrainRenderContent_ = false;
     std::vector<std::unique_ptr<Texture>> gltfTextureResources;
     std::vector<GltfPrimitiveRenderResources> gltfPrimitiveResources;
 };

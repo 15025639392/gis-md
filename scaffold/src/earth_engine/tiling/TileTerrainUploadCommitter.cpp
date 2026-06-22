@@ -32,6 +32,7 @@ void TileTerrainUploadCommitter::prepareTerrainRenderContent(
         tile.content.renderContent.prepareGltfContent(
             std::move(content.gltfModel),
             content.contentTransform);
+        tile.content.renderContent.setTerrainRenderContent(true);
         TileLoadResultMetadataApplicator::apply(
             tile,
             std::move(content.metadata));
@@ -51,6 +52,7 @@ void TileTerrainUploadCommitter::prepareTerrainRenderContent(
         tile.content.renderContent.setSurfaceMesh(
             std::move(content.surfaceMesh));
     }
+    tile.content.renderContent.setTerrainRenderContent(true);
     TileLoadResultMetadataApplicator::apply(
         tile,
         std::move(content.metadata));

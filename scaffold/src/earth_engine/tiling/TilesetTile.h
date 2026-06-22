@@ -102,6 +102,7 @@ struct TilesetTile {
                                     bool markDone,
                                     IsCompleteRenderableFn&&
                                         isCompleteRenderable) {
+        content.renderContent.setTerrainRenderContent(true);
         content.renderContent.setMeshReady(true);
         content.renderContent.setSurfaceSource(source);
         content.contentKind = TileContentKind::Render;

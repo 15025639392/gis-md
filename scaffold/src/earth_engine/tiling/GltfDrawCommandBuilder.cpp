@@ -85,6 +85,8 @@ void GltfDrawCommandBuilder::build(
                   primitive.vertexCount);
         cmd.frameId = context.frameNumber;
         cmd.generation = context.generation;
+        cmd.terrainRenderContent =
+            tile.content.renderContent.isTerrainRenderContent();
         cmd.primitive = renderPrimitiveType(primitive.primitiveMode);
         const Vec3& localOrigin = tile.content.renderContent.renderLocalOrigin();
         cmd.uniforms["u_modelOrigin"] = {

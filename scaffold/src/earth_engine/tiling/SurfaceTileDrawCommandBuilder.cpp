@@ -128,6 +128,7 @@ void SurfaceTileDrawCommandBuilder::build(
     surfaceCommand.indexOffset = surfaceIndexOffset;
     surfaceCommand.frameId = context.frameNumber;
     surfaceCommand.generation = context.generation;
+    surfaceCommand.terrainRenderContent = true;
     surfaceCommand.surfaceMeshIndexCount = meshIndexCount;
     surfaceCommand.surfaceNoSkirtIndexCount = surfaceIndexCount;
     surfaceCommand.surfaceSkirtIndexCount =
