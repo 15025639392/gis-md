@@ -9,9 +9,13 @@ void TileContentCacheManager::markResourcesDirty() {
 
 void TileContentCacheManager::updateTotalBytesUsed(
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
-    const TileContentLifecycleManager& lifecycle) {
-    totalBytesUsed_ =
-        TileCacheMetrics::estimateTotalBytes(tiles, lifecycle.terrainCache());
+    const TileContentLifecycleManager& lifecycle,
+    bool includeLegacyHeightmapTerrainCache) {
+    totalBytesUsed_ = includeLegacyHeightmapTerrainCache
+        ? TileCacheMetrics::estimateTotalBytes(
+              tiles,
+              lifecycle.terrainCache())
+        : TileCacheMetrics::estimateTotalBytes(tiles, {});
 }
 
 void TileContentCacheManager::markEligibleForUnloading(

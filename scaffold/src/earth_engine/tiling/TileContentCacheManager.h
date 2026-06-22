@@ -33,7 +33,8 @@ public:
         const std::unordered_map<
             std::string,
             std::unique_ptr<TilesetTile>>& tiles,
-        const TileContentLifecycleManager& lifecycle);
+        const TileContentLifecycleManager& lifecycle,
+        bool includeLegacyHeightmapTerrainCache);
 
     void markEligibleForUnloading(
         const std::unordered_map<
@@ -57,6 +58,7 @@ public:
         int64_t maximumCachedBytes,
         double unloadTimeLimitMs,
         bool resourceSmoothingActive,
+        bool includeLegacyHeightmapTerrainCache,
         const std::unordered_map<
             std::string,
             std::unique_ptr<TilesetTile>>& tiles,
@@ -90,7 +92,10 @@ public:
         cacheBytesDirty_ = result.cacheBytesDirty;
 
         if (result.shouldRefreshTotalBytes) {
-            updateTotalBytesUsed(tiles, lifecycle);
+            updateTotalBytesUsed(
+                tiles,
+                lifecycle,
+                includeLegacyHeightmapTerrainCache);
             cacheBytesDirty_ = false;
         }
     }

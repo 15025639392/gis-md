@@ -1041,6 +1041,32 @@ TEST(
 
 TEST(
     TilesetRequestMissingBudgetTest,
+    ContentTerrainQuadtreeIgnoresLegacyHeightmapCacheForByteAccounting) {
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    auto contentProvider =
+        std::make_unique<ManualCompletionContentProvider>(key);
+    contentProvider->ownsTerrainQuadtree = true;
+
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+    TilesetTestAccess::ensureTile(tileset, key);
+
+    auto heightmap = makeFlatHeightmap(42.0f);
+    heightmap->metadataAvailability.resize(8);
+    TilesetTestAccess::putTerrainCache(tileset, key, std::move(heightmap));
+
+    TilesetTestAccess::updateTotalBytesUsed(tileset);
+
+    EXPECT_EQ(tileset.totalBytesUsed(), 0);
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
     LoadDiagnosticsExposeContentProviderRequestDiagnostics) {
     const TileKey contentKey{"Geographic-TMS", 0, 0, 0};
     auto contentProvider =

@@ -24,7 +24,8 @@ public:
         std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
         bool& resourceSmoothingActiveForFrame,
         int64_t& maximumCachedBytes,
-        double& tileCacheUnloadTimeLimit);
+        double& tileCacheUnloadTimeLimit,
+        bool includeLegacyHeightmapTerrainCache);
 
     void updateTotalBytesUsed();
     void markEligibleForUnloading(const std::string& key);
@@ -47,6 +48,7 @@ private:
     bool& resourceSmoothingActiveForFrame_;
     int64_t& maximumCachedBytes_;
     double& tileCacheUnloadTimeLimit_;
+    bool includeLegacyHeightmapTerrainCache_ = true;
 };
 
 } // namespace earth_engine

@@ -47,7 +47,7 @@ struct ExternalSubtreeFixture {
         tiles[rootCacheKey] = std::move(root);
         tiles[childCacheKey] = std::move(child);
 
-        manager.updateTotalBytesUsed(tiles, lifecycle);
+        manager.updateTotalBytesUsed(tiles, lifecycle, true);
         manager.markEligibleForUnloading(tiles, rootCacheKey);
     }
 
@@ -84,6 +84,7 @@ struct ExternalSubtreeFixture {
             0,
             0.0,
             false,
+            true,
             tiles,
             lifecycle,
             nullptr,
@@ -113,7 +114,7 @@ TEST(
     lifecycle.terrainCache()[cacheKey] = makeFlatHeightmap(4.0f);
     lifecycle.emptyContentRegistry().insert(cacheKey);
 
-    manager.updateTotalBytesUsed(tiles, lifecycle);
+    manager.updateTotalBytesUsed(tiles, lifecycle, true);
     manager.markEligibleForUnloading(tiles, cacheKey);
 
     EXPECT_GT(manager.totalBytesUsed(), 0);
@@ -124,6 +125,7 @@ TEST(
         0,
         0.0,
         false,
+        true,
         tiles,
         lifecycle,
         nullptr,
@@ -162,6 +164,7 @@ TEST(
         -1,
         0.0,
         false,
+        true,
         tiles,
         lifecycle,
         nullptr,
@@ -232,6 +235,7 @@ TEST(
         0,
         0.0,
         false,
+        true,
         fixture.tiles,
         fixture.lifecycle,
         nullptr,
@@ -261,6 +265,7 @@ TEST(
         0,
         0.0,
         false,
+        true,
         fixture.tiles,
         fixture.lifecycle,
         nullptr,

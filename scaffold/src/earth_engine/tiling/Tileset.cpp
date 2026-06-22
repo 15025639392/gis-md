@@ -84,7 +84,10 @@ Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
           tileRegistry_.tiles(),
           resourceSmoothingActiveForFrame_,
           options_.maximumCachedBytes,
-          options_.tileCacheUnloadTimeLimit),
+          options_.tileCacheUnloadTimeLimit,
+          ::earth_engine::effectiveLegacyTerrainProvider(
+              terrainProvider_.get(),
+              contentProvider_.get()) != nullptr),
       rasterUpsampledChildren_(
           contentAccess_,
           resourceInvalidator_),

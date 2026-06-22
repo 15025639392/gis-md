@@ -16,17 +16,22 @@ TileCacheOwnershipManager::TileCacheOwnershipManager(
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
     bool& resourceSmoothingActiveForFrame,
     int64_t& maximumCachedBytes,
-    double& tileCacheUnloadTimeLimit)
+    double& tileCacheUnloadTimeLimit,
+    bool includeLegacyHeightmapTerrainCache)
     : contentCache_(contentCache),
       contentLifecycle_(contentLifecycle),
       loadQueue_(loadQueue),
       tiles_(tiles),
       resourceSmoothingActiveForFrame_(resourceSmoothingActiveForFrame),
       maximumCachedBytes_(maximumCachedBytes),
-      tileCacheUnloadTimeLimit_(tileCacheUnloadTimeLimit) {}
+      tileCacheUnloadTimeLimit_(tileCacheUnloadTimeLimit),
+      includeLegacyHeightmapTerrainCache_(includeLegacyHeightmapTerrainCache) {}
 
 void TileCacheOwnershipManager::updateTotalBytesUsed() {
-    contentCache_.updateTotalBytesUsed(tiles_, contentLifecycle_);
+    contentCache_.updateTotalBytesUsed(
+        tiles_,
+        contentLifecycle_,
+        includeLegacyHeightmapTerrainCache_);
 }
 
 void TileCacheOwnershipManager::markEligibleForUnloading(
@@ -81,6 +86,7 @@ void TileCacheOwnershipManager::unloadCachedBytes(
         maximumCachedBytes,
         tileCacheUnloadTimeLimit_,
         resourceSmoothingActiveForFrame_,
+        includeLegacyHeightmapTerrainCache_,
         tiles_,
         contentLifecycle_,
         pPrepRenderer,
