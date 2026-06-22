@@ -103,7 +103,7 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             selectionWork.requestMs,
             uploadWork.terrainUploadMs,
             uploadWork.rasterUploadMs,
-            tileset.contentLifecycle_.terrainCache().size(),
+            static_cast<size_t>(tileset.cachedTerrainTiles()),
             tileset.contentLifecycle_.loadLifecycle()
                 .requestState()
                 .totalRequestCount(),

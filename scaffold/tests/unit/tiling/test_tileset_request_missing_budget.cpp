@@ -15,6 +15,7 @@
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/TileTerrainUploadCommitter.h"
 #include "earth_engine/tiling/Tileset.h"
+#include "earth_engine/tiling/TilesetUpdateFrameRuntime.h"
 
 #include <algorithm>
 #include <chrono>
@@ -136,6 +137,12 @@ struct TilesetTestAccess {
 
     static void updateTotalBytesUsed(Tileset& tileset) {
         tileset.cacheOwnership_.updateTotalBytesUsed();
+    }
+
+    static TilesetUpdateFrameRuntimeResult runUpdateFrameRuntime(
+        Tileset& tileset,
+        const FrameState& frameState) {
+        return TilesetUpdateFrameRuntime::run(tileset, frameState);
     }
 
     static void unloadCachedBytes(
@@ -1046,6 +1053,8 @@ TEST(
     auto contentProvider =
         std::make_unique<ManualCompletionContentProvider>(key);
     contentProvider->ownsTerrainQuadtree = true;
+    ManualCompletionContentProvider* rawContentProvider =
+        contentProvider.get();
 
     Tileset tileset(
         std::unique_ptr<TerrainProvider>{},
@@ -1070,6 +1079,28 @@ TEST(
     SceneTilesetDiagnostics::addTileset(sceneDiagnostics, tileset, true);
     EXPECT_EQ(sceneDiagnostics.surfaceMeshBytes, 0);
     EXPECT_EQ(sceneDiagnostics.terrainCachedTiles, 0);
+
+    Camera camera;
+    camera.lookAt(
+        Vec3(Ellipsoid::WGS84().semiMajorAxis() * 2.0, 0.0, 0.0),
+        Vec3(Ellipsoid::WGS84().semiMajorAxis(), 0.0, 0.0),
+        Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 403;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+
+    const TilesetUpdateFrameRuntimeResult updateResult =
+        TilesetTestAccess::runUpdateFrameRuntime(tileset, frameState);
+    EXPECT_EQ(updateResult.debugLog.terrainCacheSize, 0u);
+    while (!rawContentProvider->pendingRequests.empty()) {
+        const TileKey pendingKey =
+            rawContentProvider->pendingRequests.front().key;
+        EXPECT_TRUE(rawContentProvider->completeWithEmpty(pendingKey));
+    }
 }
 
 TEST(
