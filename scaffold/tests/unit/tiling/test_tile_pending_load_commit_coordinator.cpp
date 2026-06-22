@@ -827,7 +827,10 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     EXPECT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
     EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(tile.content.renderContent.isMeshReady());
     EXPECT_TRUE(tile.content.renderContent.hasGltfResources());
+    EXPECT_TRUE(tile.content.renderContent.isGltfRenderReady());
+    EXPECT_TRUE(tile.content.renderContent.isRenderContentReady());
     EXPECT_EQ(TileLoadState::Done, tile.content.loadState);
     EXPECT_EQ(TileContentKind::Render, tile.content.contentKind);
     EXPECT_EQ(0, ensureMeshCalls);

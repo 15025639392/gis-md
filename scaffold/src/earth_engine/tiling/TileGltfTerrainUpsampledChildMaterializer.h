@@ -130,8 +130,7 @@ private:
                 ancestor->content.loadState == TileLoadState::Unloading;
             if (sourceStateReady &&
                 ancestor->content.contentKind == TileContentKind::Render &&
-                ancestor->content.renderContent.isMeshReady() &&
-                ancestor->content.renderContent.hasGltfContent()) {
+                ancestor->content.renderContent.isGltfRenderReady()) {
                 return ancestor;
             }
             ancestor = ancestor->parent;

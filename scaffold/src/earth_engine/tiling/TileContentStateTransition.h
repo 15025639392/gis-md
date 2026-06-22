@@ -24,7 +24,7 @@ public:
     static void markRenderDone(TileRenderContentState& renderContent,
                                TileLoadState& loadState,
                                TileContentKind& contentKind) {
-        renderContent.setMeshReady(true);
+        renderContent.markRenderContentReady();
         loadState = TileLoadState::Done;
         contentKind = TileContentKind::Render;
     }
@@ -34,6 +34,7 @@ public:
         TileLoadState& loadState,
         TileContentKind& contentKind) {
         renderContent.setMeshReady(false);
+        renderContent.setGltfResourcesReady(false);
         contentKind = TileContentKind::Unknown;
         loadState = TileLoadState::FailedTemporarily;
     }

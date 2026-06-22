@@ -4882,7 +4882,9 @@ void testTilesetGltfRenderContentBuildsPrimitiveCommands() {
         commands,
         0.5f);
 
-    check(root->content.renderContent.isMeshReady() &&
+    check(!root->content.renderContent.isMeshReady() &&
+              root->content.renderContent.isGltfRenderReady() &&
+              root->content.renderContent.isRenderContentReady() &&
               root->content.loadState == TileLoadState::Done,
           "Tileset: glTF render content reaches ready state after resource upload");
     check(!root->content.renderContent.hasSurfaceMesh() &&
@@ -26589,9 +26591,9 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
     root->content.renderContent.prepareGltfContent(
         makeQuadTerrainGltfModel(root->bounds),
         Mat4::identity());
-    root->content.renderContent.setMeshReady(true);
-    root->content.contentKind = TileContentKind::Render;
-    root->content.loadState = TileLoadState::Done;
+    root->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root->markRenderContentDone();
 
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,

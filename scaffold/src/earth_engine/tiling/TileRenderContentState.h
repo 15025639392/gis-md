@@ -111,6 +111,7 @@ public:
     const GltfModel* gltfModelForRead() const { return gltfModel.get(); }
     const Mat4& gltfTransform() const { return gltfContentTransform; }
     bool isMeshReady() const { return surface_.meshReady; }
+    bool isSurfaceMeshReady() const { return surface_.meshReady; }
     bool isSurfaceDrawable() const { return surface_.surfaceDrawable; }
     SurfaceDrawableSource currentSurfaceSource() const {
         return surface_.surfaceSource;
@@ -119,7 +120,16 @@ public:
         return surface_.meshReady && surface_.gpuVertexBuffer != nullptr;
     }
     bool hasGltfResources() const {
-        return surface_.meshReady && !gltfPrimitiveResources.empty();
+        return gltfResourcesReady_ && !gltfPrimitiveResources.empty();
+    }
+    bool isGltfRenderReady() const {
+        return gltfModel != nullptr && hasGltfResources();
+    }
+    bool isRenderContentReady() const {
+        return gltfModel ? isGltfRenderReady() : surface_.meshReady;
+    }
+    bool hasRenderableTerrainContent() const {
+        return hasSurfaceMesh() || hasGltfContent();
     }
     const SurfaceTileMesh* surfaceMesh() const { return surface_.mesh.get(); }
     SurfaceTileMesh* surfaceMesh() { return surface_.mesh.get(); }
@@ -154,6 +164,16 @@ public:
     }
     void setMeshReady(bool ready) {
         surface_.meshReady = ready;
+    }
+    void setGltfResourcesReady(bool ready) {
+        gltfResourcesReady_ = ready;
+    }
+    void markRenderContentReady() {
+        if (gltfModel) {
+            gltfResourcesReady_ = true;
+        } else {
+            surface_.meshReady = true;
+        }
     }
     void setSurfaceDrawable(bool drawable) {
         surface_.surfaceDrawable = drawable;
@@ -328,7 +348,7 @@ public:
 
     void clearGltfPrimitiveResources() {
         gltfPrimitiveResources.clear();
-        surface_.meshReady = false;
+        gltfResourcesReady_ = false;
     }
 
     void clearGltfGpuResources() {
@@ -348,6 +368,7 @@ public:
         surface_.gpuIndexBuffer.reset();
         gltfTextureResources.clear();
         gltfPrimitiveResources.clear();
+        gltfResourcesReady_ = false;
         surface_.surfaceDrawable = false;
         surface_.surfaceSource = SurfaceDrawableSource::None;
     }
@@ -369,6 +390,7 @@ public:
         gltfContentTransform = Mat4::identity();
         gltfTextureResources.clear();
         gltfPrimitiveResources.clear();
+        gltfResourcesReady_ = false;
     }
 
     void prepareGltfContent(std::unique_ptr<GltfModel> model,
@@ -376,6 +398,7 @@ public:
         surface_.heightmap.reset();
         surface_.mesh.reset();
         surface_.horizonOcclusionPoint.reset();
+        surface_.meshReady = false;
         releaseGpuResources();
         if (model && model->preferredLocalOriginEcef.has_value()) {
             surface_.localOrigin =
@@ -383,7 +406,7 @@ public:
         }
         gltfModel = std::move(model);
         gltfContentTransform = contentTransform;
-        surface_.meshReady = false;
+        gltfResourcesReady_ = false;
         surface_.surfaceSource = SurfaceDrawableSource::GltfContent;
     }
 
@@ -397,6 +420,7 @@ private:
     std::unique_ptr<Texture> surfaceWaterMaskTexture_;
     std::unique_ptr<GltfModel> gltfModel;
     Mat4 gltfContentTransform = Mat4::identity();
+    bool gltfResourcesReady_ = false;
     std::vector<std::unique_ptr<Texture>> gltfTextureResources;
     std::vector<GltfPrimitiveRenderResources> gltfPrimitiveResources;
 };

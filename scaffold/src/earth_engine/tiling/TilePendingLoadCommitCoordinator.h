@@ -116,7 +116,7 @@ public:
             const bool resourcesReady =
                 resourceSmoothingActive ||
                 (uploadsGltfTerrain
-                     ? tile->content.renderContent.hasGltfResources()
+                     ? tile->content.renderContent.hasGltfPrimitiveResources()
                      : tile->content.renderContent.isMeshReady());
             const TileTerrainUploadCommitAction action =
                 TileTerrainUploadCommitter::finishMeshResourcePreparation(
@@ -160,7 +160,7 @@ public:
         const TileContentUploadCommitAction action =
             TileContentUploadCommitter::finishRenderResourcePreparation(
                 *tile,
-                tile->content.renderContent.isMeshReady());
+                tile->content.renderContent.isRenderContentReady());
         if (action.resourcesDirty) {
             markResourcesDirty();
         }

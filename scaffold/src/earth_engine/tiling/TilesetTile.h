@@ -138,14 +138,14 @@ struct TilesetTile {
             unconditionallyRefine,
             !children.empty(),
             requiredRasterOverlaysReady,
-            content.renderContent.isMeshReady()};
+            content.renderContent.isRenderContentReady()};
     }
 
     bool canPrepareRasterOverlays() const {
         return content.loadState == TileLoadState::Done &&
                content.contentKind == TileContentKind::Render &&
-               content.renderContent.hasTerrainMesh() &&
-               content.renderContent.isMeshReady();
+               content.renderContent.hasRenderableTerrainContent() &&
+               content.renderContent.isRenderContentReady();
     }
 
     bool hasSurfaceDrawable() const {
