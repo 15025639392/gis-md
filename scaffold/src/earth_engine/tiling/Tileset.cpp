@@ -255,14 +255,12 @@ TileOcclusionState Tileset::checkOcclusion(const TilesetTile& tile) const {
 }
 
 float Tileset::sampleHeight(double lngRad, double latRad) const {
-    if (contentProvider_ && contentProvider_->providesTerrainQuadtree()) {
-        return 0.0f;
-    }
     return LoadedTerrainHeightSampler::sampleHeight(
         tileRegistry_.tiles(),
         contentLifecycle_.terrainCache(),
         lngRad,
-        latRad);
+        latRad,
+        !(contentProvider_ && contentProvider_->providesTerrainQuadtree()));
 }
 
 void Tileset::update(const FrameState& frameState) {

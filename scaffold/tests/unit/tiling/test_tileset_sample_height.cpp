@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/content/GltfContentProvider.h"
+#include "earth_engine/core/geodesy/Cartographic.h"
+#include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/Tileset.h"
@@ -22,6 +24,16 @@ struct TilesetTestAccess {
         tileset.contentLifecycle_.terrainCache()[TileCacheKey::forTile(key)] =
             std::move(heightmap);
     }
+
+    static void setLoadedGltfTerrainContent(
+        TilesetTile& tile,
+        std::unique_ptr<GltfModel> model) {
+        tile.content.renderContent.prepareGltfContent(
+            std::move(model),
+            Mat4::identity());
+        tile.content.renderContent.setTerrainRenderContent(true);
+        tile.markRenderContentDone();
+    }
 };
 } // namespace earth_engine
 
@@ -38,6 +50,39 @@ std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     heightmap->minHeight = heightMeters;
     heightmap->maxHeight = heightMeters;
     return heightmap;
+}
+
+std::unique_ptr<GltfModel> makeTerrainGltfTriangle(
+    const Rectangle& bounds,
+    double southwestHeight,
+    double southeastHeight,
+    double northwestHeight) {
+    auto model = std::make_unique<GltfModel>();
+    GltfPrimitive primitive;
+    const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+    primitive.vertices.resize(3);
+    primitive.vertices[0].positionEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(
+            bounds.west(),
+            bounds.south(),
+            southwestHeight));
+    primitive.vertices[1].positionEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(
+            bounds.east(),
+            bounds.south(),
+            southeastHeight));
+    primitive.vertices[2].positionEcef = ellipsoid.cartographicToCartesian(
+        Cartographic::fromRadians(
+            bounds.west(),
+            bounds.north(),
+            northwestHeight));
+    primitive.indices = {0, 1, 2};
+    primitive.primitiveMode = GltfPrimitiveMode::Triangles;
+    primitive.runtime.nodeIndex = 0;
+    primitive.runtime.baseVertices = primitive.vertices;
+    model->primitives.push_back(std::move(primitive));
+    model->rasterOverlayDetails.setGeographicRectangle(bounds);
+    return model;
 }
 
 std::pair<double, double> tileCenter(
@@ -142,4 +187,25 @@ TEST(TilesetSampleHeightTest,
         tileCenter(tileset.tileScheme(), rootKey);
 
     EXPECT_NEAR(tileset.sampleHeight(longitude, latitude), 0.0f, 1e-6f);
+}
+
+TEST(TilesetSampleHeightTest, ContentTerrainQuadtreeSamplesLoadedGltfTerrain) {
+    Tileset tileset = makeContentTerrainSamplingTileset();
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(321.0f));
+    const Rectangle bounds = tileset.tileScheme().tileToRectangle(rootKey);
+    TilesetTestAccess::setLoadedGltfTerrainContent(
+        *root,
+        makeTerrainGltfTriangle(bounds, 10.0, 20.0, 30.0));
+
+    const double longitude = bounds.west() + bounds.width() * 0.25;
+    const double latitude = bounds.south() + bounds.height() * 0.25;
+
+    EXPECT_NEAR(tileset.sampleHeight(longitude, latitude), 17.5f, 1e-4f);
 }
