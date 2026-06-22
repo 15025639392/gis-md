@@ -28,6 +28,22 @@ TilesetTile* findTile(
     return it == tiles.end() ? nullptr : it->second;
 }
 
+std::unique_ptr<GltfModel> makeEmptyGltfModel() {
+    return std::make_unique<GltfModel>();
+}
+
+void makeGltfRenderReady(TilesetTile& tile) {
+    tile.content.renderContent.setGltfContent(makeEmptyGltfModel());
+    tile.content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile.markRenderContentDone();
+}
+
+bool isDrawableRenderContent(const TilesetTile& tile) {
+    return tile.hasSurfaceDrawable() ||
+           tile.content.renderContent.isGltfRenderReady();
+}
+
 } // namespace
 
 TEST(
@@ -125,6 +141,96 @@ TEST(
     EXPECT_FALSE(entry.usesAncestorFallback);
     EXPECT_FALSE(entry.surfaceClipEnabled);
     EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 0);
+}
+
+TEST(
+    TileRenderPlanFinalizerTest,
+    UsesReadyGltfAncestorFallbackWithoutSurfaceGeometry) {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 1, 0};
+    TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
+    TilesetTile child(childKey, Rectangle{1.0, 1.0, 2.0, 2.0}, &parent);
+    makeGltfRenderReady(parent);
+
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {TileCacheKey::forTile(parentKey), &parent},
+        {TileCacheKey::forTile(childKey), &child}};
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(childKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            true,
+            0,
+            1},
+        [&tiles](const TileKey& key) {
+            return findTile(tiles, key);
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return isDrawableRenderContent(tile);
+        });
+
+    ASSERT_EQ(plan.renderEntries.size(), 1u);
+    const TileRenderEntry& entry = plan.renderEntries.front();
+    EXPECT_EQ(entry.selectedKey, childKey);
+    EXPECT_EQ(entry.renderKey, parentKey);
+    EXPECT_EQ(entry.reason, TileRenderEntryReason::AncestorFallback);
+    EXPECT_TRUE(entry.usesAncestorFallback);
+    EXPECT_TRUE(entry.surfaceClipEnabled);
+    EXPECT_TRUE(entry.allowSynchronousMeshPrep);
+    EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 1);
+    EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 0);
+    EXPECT_EQ(plan.renderEntryDeferredPrepCount, 0);
+}
+
+TEST(
+    TileRenderPlanFinalizerTest,
+    RejectsGltfAncestorFallbackUntilResourcesAreReady) {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 1, 0};
+    TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
+    TilesetTile child(childKey, Rectangle{1.0, 1.0, 2.0, 2.0}, &parent);
+    parent.content.renderContent.setGltfContent(makeEmptyGltfModel());
+    parent.content.loadState = TileLoadState::Done;
+    parent.content.contentKind = TileContentKind::Render;
+
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {TileCacheKey::forTile(parentKey), &parent},
+        {TileCacheKey::forTile(childKey), &child}};
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(childKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            false,
+            true,
+            0,
+            1},
+        [&tiles](const TileKey& key) {
+            return findTile(tiles, key);
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return isDrawableRenderContent(tile);
+        });
+
+    ASSERT_EQ(plan.renderEntries.size(), 1u);
+    const TileRenderEntry& entry = plan.renderEntries.front();
+    EXPECT_EQ(entry.selectedKey, childKey);
+    EXPECT_EQ(entry.renderKey, childKey);
+    EXPECT_EQ(entry.reason, TileRenderEntryReason::SynchronousPrep);
+    EXPECT_FALSE(entry.usesAncestorFallback);
+    EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 0);
+    EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 1);
+    EXPECT_EQ(plan.renderEntryDeferredPrepCount, 0);
 }
 
 TEST(TileRenderPlanFinalizerTest, CountsRootPrepOnceToAvoidBlankFrame) {

@@ -34,7 +34,8 @@ void TileRenderPlanFrameRefresher::refresh(
             return TileCacheKey::forTile(key);
         },
         [](const TilesetTile& tile) {
-            return tile.hasSurfaceDrawable();
+            return tile.hasSurfaceDrawable() ||
+                   tile.content.renderContent.isGltfRenderReady();
         });
 }
 
