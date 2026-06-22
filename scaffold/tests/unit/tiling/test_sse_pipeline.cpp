@@ -2447,10 +2447,10 @@ void testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative() 
               provider.loadTileThrottled(*compositeTile, &budget) &&
               compositeTile->getState() ==
                   RasterOverlayTile::LoadState::Loading &&
-              imagery.pendingRequests.size() > 4,
-          "RasterOverlayTileProvider: oversized quadtree source batch starts as one Cesium-native raster load");
-    check(budget.rasterNetworkRequestsIssued() == 1,
-          "RasterOverlayTileProvider: frame budget gates the mapped raster load instead of each shared source tile");
+              imagery.pendingRequests.size() == 4,
+          "RasterOverlayTileProvider: oversized quadtree source batch respects raster source frame budget");
+    check(budget.rasterNetworkRequestsIssued() == 4,
+          "RasterOverlayTileProvider: frame budget accounts each issued raster source tile");
 
     FrameResourceBudget secondBudget;
     secondBudget.beginFrame(2, config);

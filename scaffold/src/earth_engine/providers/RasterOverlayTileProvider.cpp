@@ -276,39 +276,23 @@ TileCoverage computeCoverage(const TileScheme& scheme,
     return coverage;
 }
 
-bool tryIssueRasterRequestBudget(FrameResourceBudget* budget,
-                                 uint32_t currentInflight,
-                                 int estimatedFanout) {
-    if (estimatedFanout <= 0) {
-        return true;
-    }
+int availableRasterRequestSlots(FrameResourceBudget* budget,
+                                uint32_t currentInflight) {
     if (!budget) {
-        return true;
+        return std::numeric_limits<int>::max();
     }
     const FrameResourceBudgetSnapshot snapshot = budget->snapshot();
-    const bool oversizedCesiumNativeBatch =
-        estimatedFanout >
-            static_cast<int>(snapshot.maxRasterNetworkRequestsPerFrame) ||
-        estimatedFanout >
-            static_cast<int>(snapshot.maxRasterNetworkInflight);
-    if (oversizedCesiumNativeBatch &&
-        currentInflight == 0 &&
-        snapshot.rasterNetworkRequestsIssued == 0) {
-        return budget->tryIssue(
-            FrameResourceLane::RasterRequest,
-            FrameResourcePriority::Normal,
-            1);
+    if (currentInflight >= snapshot.maxRasterNetworkInflight ||
+        snapshot.rasterNetworkRequestsIssued >=
+            snapshot.maxRasterNetworkRequestsPerFrame) {
+        return 0;
     }
-    if (!budget->hasNetworkInflightCapacity(
-            FrameResourceLane::RasterRequest,
-            currentInflight,
-            estimatedFanout)) {
-        return false;
-    }
-    return budget->tryIssue(
-        FrameResourceLane::RasterRequest,
-        FrameResourcePriority::Normal,
-        estimatedFanout);
+    const uint32_t frameSlots =
+        snapshot.maxRasterNetworkRequestsPerFrame -
+        snapshot.rasterNetworkRequestsIssued;
+    const uint32_t inflightSlots =
+        snapshot.maxRasterNetworkInflight - currentInflight;
+    return static_cast<int>(std::min(frameSlots, inflightSlots));
 }
 
 bool isWebMercatorScheme(const TileScheme& scheme) {
@@ -1411,9 +1395,14 @@ struct RasterOverlayTileProvider::QuadtreeSourceRequest
         sources.reserve(sourcePlan.sourceKeys.size());
     }
 
-    void issueAll(const std::function<void()>& onSourceIssued,
+    int issueSome(int maxNewSourceRequests,
+                  const std::function<void()>& onSourceIssued,
                   const std::function<void()>& onSourceFinished) {
-        while (!isComplete()) {
+        if (maxNewSourceRequests <= 0) {
+            return 0;
+        }
+        auto issued = std::make_shared<int>(0);
+        while (!isComplete() && *issued < maxNewSourceRequests) {
             TileKey sourceKey;
             {
                 std::lock_guard<std::mutex> lock(mutex);
@@ -1428,17 +1417,26 @@ struct RasterOverlayTileProvider::QuadtreeSourceRequest
                 sourceKey,
                 false,
                 true,
-                onSourceIssued,
+                [issued, onSourceIssued]() {
+                    ++(*issued);
+                    onSourceIssued();
+                },
                 onSourceFinished,
                 [self](LoadedSourceImage&& source) {
                     self->finishOneSource(std::move(source));
                 });
         }
+        return *issued;
     }
 
     bool isComplete() const {
         std::lock_guard<std::mutex> lock(mutex);
         return completed;
+    }
+
+    bool isFullyIssued() const {
+        std::lock_guard<std::mutex> lock(mutex);
+        return nextSourceIndex >= sourcePlan.sourceKeys.size();
     }
 
 private:
@@ -2122,10 +2120,12 @@ bool RasterOverlayTileProvider::loadMappedTile(
         }
         return estimated;
     };
-    if (!tryIssueRasterRequestBudget(
-            budget,
-            asyncState_->activeRasterSourceRequests,
-            estimateNewSourceRequests())) {
+    const int estimatedNewSourceRequests = estimateNewSourceRequests();
+    const int availableSourceSlots = availableRasterRequestSlots(
+        budget,
+        asyncState_->activeRasterSourceRequests.load(
+            std::memory_order_relaxed));
+    if (estimatedNewSourceRequests > 0 && availableSourceSlots <= 0) {
         return false;
     }
 
@@ -2188,42 +2188,107 @@ bool RasterOverlayTileProvider::loadMappedTile(
             state->revision.fetch_add(1, std::memory_order_relaxed);
         });
 
-    request->issueAll(
-        [state]() {
-            state->rasterSourceRequestsStarted.fetch_add(
-                1,
-                std::memory_order_relaxed);
-            const uint32_t active =
-                state->activeRasterSourceRequests.fetch_add(
-                    1,
-                    std::memory_order_relaxed) +
-                1;
-            uint32_t peak = state->peakRasterSourceRequests.load(
-                std::memory_order_relaxed);
-            while (active > peak &&
-                   !state->peakRasterSourceRequests.compare_exchange_weak(
-                       peak,
-                       active,
-                       std::memory_order_relaxed,
-                       std::memory_order_relaxed)) {
-            }
-        },
-        [state]() {
-            state->rasterSourceRequestsCompleted.fetch_add(
-                1,
-                std::memory_order_relaxed);
-            uint32_t current = state->activeRasterSourceRequests.load(
-                std::memory_order_relaxed);
-            while (current > 0 &&
-                   !state->activeRasterSourceRequests.compare_exchange_weak(
-                       current,
-                       current - 1,
-                       std::memory_order_relaxed,
-                       std::memory_order_relaxed)) {
-            }
-        });
+    if (estimatedNewSourceRequests == 0) {
+        issueCompositeSourceRequest(
+            request,
+            std::numeric_limits<int>::max(),
+            nullptr);
+    }
+    if (!request->isComplete() && !request->isFullyIssued()) {
+        pendingSourceRequests_.push_back(request);
+        pumpCompositeSourceRequests(budget);
+    }
 
     return true;
+}
+
+int RasterOverlayTileProvider::issueCompositeSourceRequest(
+    const std::shared_ptr<QuadtreeSourceRequest>& request,
+    int maxNewSourceRequests,
+    FrameResourceBudget* budget) {
+    if (!request || request->isComplete() || maxNewSourceRequests <= 0) {
+        return 0;
+    }
+    std::shared_ptr<ProviderAsyncState> state = asyncState_;
+    auto onSourceIssued = [state]() {
+        state->rasterSourceRequestsStarted.fetch_add(
+            1,
+            std::memory_order_relaxed);
+        const uint32_t active =
+            state->activeRasterSourceRequests.fetch_add(
+                1,
+                std::memory_order_relaxed) +
+            1;
+        uint32_t peak = state->peakRasterSourceRequests.load(
+            std::memory_order_relaxed);
+        while (active > peak &&
+               !state->peakRasterSourceRequests.compare_exchange_weak(
+                   peak,
+                   active,
+                   std::memory_order_relaxed,
+                   std::memory_order_relaxed)) {
+        }
+    };
+    auto onSourceFinished = [state]() {
+        state->rasterSourceRequestsCompleted.fetch_add(
+            1,
+            std::memory_order_relaxed);
+        uint32_t current = state->activeRasterSourceRequests.load(
+            std::memory_order_relaxed);
+        while (current > 0 &&
+               !state->activeRasterSourceRequests.compare_exchange_weak(
+                   current,
+                   current - 1,
+                   std::memory_order_relaxed,
+                   std::memory_order_relaxed)) {
+        }
+    };
+
+    const int newlyIssued =
+        request->issueSome(
+            maxNewSourceRequests,
+            onSourceIssued,
+            onSourceFinished);
+    if (budget && newlyIssued > 0) {
+        budget->tryIssue(
+            FrameResourceLane::RasterRequest,
+            FrameResourcePriority::Normal,
+            newlyIssued);
+    }
+    return newlyIssued;
+}
+
+int RasterOverlayTileProvider::pumpCompositeSourceRequests(
+    FrameResourceBudget* budget) {
+    if (pendingSourceRequests_.empty()) {
+        return 0;
+    }
+
+    std::shared_ptr<ProviderAsyncState> state = asyncState_;
+    int issued = 0;
+    for (auto it = pendingSourceRequests_.begin();
+         it != pendingSourceRequests_.end();) {
+        if (!*it || (*it)->isComplete()) {
+            it = pendingSourceRequests_.erase(it);
+            continue;
+        }
+        const int slots = availableRasterRequestSlots(
+            budget,
+            state->activeRasterSourceRequests.load(
+                std::memory_order_relaxed));
+        if (slots <= 0) {
+            break;
+        }
+        const int newlyIssued =
+            issueCompositeSourceRequest(*it, slots, budget);
+        issued += newlyIssued;
+        if ((*it)->isComplete() || (*it)->isFullyIssued()) {
+            it = pendingSourceRequests_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    return issued;
 }
 
 int RasterOverlayTileProvider::processPendingUploads(
@@ -2241,6 +2306,7 @@ int RasterOverlayTileProvider::processPendingUploads(
         localBudget.beginFrame(frameNumber_, config);
         budget = &localBudget;
     }
+    pumpCompositeSourceRequests(budget);
 
     int processed = 0;
     while (true) {

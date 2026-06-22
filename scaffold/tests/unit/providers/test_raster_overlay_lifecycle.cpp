@@ -2694,7 +2694,7 @@ TEST(RasterOverlayLifecycleTest, NonUnloadedRasterTilesDoNotConsumeRequestBudget
               failedTile->getState());
 }
 
-TEST(RasterOverlayLifecycleTest, OversizedRectangleBatchStartsAsOneRasterLoadLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest, OversizedRectangleBatchRespectsRasterSourceFrameBudget) {
     ImmediateImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
@@ -2714,7 +2714,7 @@ TEST(RasterOverlayLifecycleTest, OversizedRectangleBatchStartsAsOneRasterLoadLik
     budget.beginFrame(1, config);
 
     EXPECT_TRUE(provider.loadTileThrottled(*compositeTile, &budget));
-    EXPECT_EQ(4, imagery.requestCount);
+    EXPECT_EQ(1, imagery.requestCount);
     EXPECT_EQ(1u, budget.networkRequestsIssued());
     EXPECT_EQ(1u, budget.rasterNetworkRequestsIssued());
     EXPECT_EQ(RasterOverlayTile::LoadState::Loading,
@@ -2745,7 +2745,7 @@ TEST(RasterOverlayLifecycleTest, OversizedRectangleBatchWaitsWhenRasterInflightI
     firstBudget.beginFrame(1, firstConfig);
 
     ASSERT_TRUE(provider.loadTileThrottled(*firstTile, &firstBudget));
-    EXPECT_EQ(4u, imagery.pending.size());
+    EXPECT_EQ(1u, imagery.pending.size());
     EXPECT_EQ(1u, firstBudget.rasterNetworkRequestsIssued());
 
     const Rectangle quadrantBounds =
@@ -2767,7 +2767,7 @@ TEST(RasterOverlayLifecycleTest, OversizedRectangleBatchWaitsWhenRasterInflightI
     blockedBudget.beginFrame(2, blockedConfig);
 
     EXPECT_FALSE(provider.loadTileThrottled(*secondTile, &blockedBudget));
-    EXPECT_EQ(4u, imagery.pending.size());
+    EXPECT_EQ(1u, imagery.pending.size());
     EXPECT_EQ(0u, blockedBudget.rasterNetworkRequestsIssued());
     EXPECT_EQ(RasterOverlayTile::LoadState::Unloaded,
               secondTile->getState());
@@ -2775,7 +2775,7 @@ TEST(RasterOverlayLifecycleTest, OversizedRectangleBatchWaitsWhenRasterInflightI
               firstTile->getState());
 }
 
-TEST(RasterOverlayLifecycleTest, LoadingRectangleDoesNotPumpSourcesAcrossFrames) {
+TEST(RasterOverlayLifecycleTest, LoadingRectanglePumpsSourcesAcrossFramesWithinBudget) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
@@ -2788,7 +2788,7 @@ TEST(RasterOverlayLifecycleTest, LoadingRectangleDoesNotPumpSourcesAcrossFrames)
     ASSERT_TRUE(compositeTile->isCompositeTile());
 
     FrameResourceBudgetConfig config;
-    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkRequestsPerFrame = 2;
     config.maxRasterNetworkInflight = 32;
     FrameResourceBudget firstBudget;
     firstBudget.beginFrame(1, config);
@@ -2797,15 +2797,15 @@ TEST(RasterOverlayLifecycleTest, LoadingRectangleDoesNotPumpSourcesAcrossFrames)
     EXPECT_EQ(RasterOverlayTile::LoadState::Loading,
               compositeTile->getState());
     const size_t firstBatchSize = imagery.pending.size();
-    ASSERT_GT(firstBatchSize, 2u);
+    EXPECT_EQ(2u, firstBatchSize);
     EXPECT_EQ(firstBatchSize, firstBudget.rasterNetworkRequestsIssued());
 
     FrameResourceBudget secondBudget;
     secondBudget.beginFrame(2, config);
 
-    EXPECT_TRUE(provider.loadTileThrottled(*compositeTile, &secondBudget));
-    EXPECT_EQ(firstBatchSize, imagery.pending.size());
-    EXPECT_EQ(0u, secondBudget.rasterNetworkRequestsIssued());
+    EXPECT_EQ(0, provider.processPendingUploads(false, &secondBudget));
+    EXPECT_EQ(firstBatchSize + 2u, imagery.pending.size());
+    EXPECT_EQ(2u, secondBudget.rasterNetworkRequestsIssued());
 }
 
 TEST(RasterOverlayLifecycleTest, FrameBudgetSeparatesRasterFanoutFromTerrainBudget) {
