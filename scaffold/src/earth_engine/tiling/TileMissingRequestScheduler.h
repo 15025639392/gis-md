@@ -39,18 +39,25 @@ public:
         TerrainCacheKeyFn&& terrainCacheKey,
         PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
         EnsureTileFn&& ensureTile) {
+        TerrainProvider* terrainProvider =
+            effectiveTerrainProvider(input);
         return TileLoadScheduler::requestMissingTiles(
             loadRequests,
             TileLoadSchedulerInput{
                 input.loadLifecycle,
                 input.budget,
-                input.terrainProvider,
+                terrainProvider,
                 input.contentProvider},
             terrainCacheKey,
             [&](const TileKey& key,
                 const std::string& cacheKey,
                 TilesetTile*& tileState) {
-                return makeSnapshot(input, key, cacheKey, tileState);
+                return makeSnapshot(
+                    input,
+                    terrainProvider,
+                    key,
+                    cacheKey,
+                    tileState);
             },
             [&](const std::string& cacheKey) {
                 return input.emptyContentRegistry.contains(cacheKey);
@@ -64,8 +71,18 @@ public:
     }
 
 private:
+    static TerrainProvider* effectiveTerrainProvider(
+        const TileMissingRequestSchedulerInput& input) {
+        if (input.contentProvider &&
+            input.contentProvider->providesTerrainQuadtree()) {
+            return nullptr;
+        }
+        return input.terrainProvider;
+    }
+
     static TileLoadRequestSnapshot makeSnapshot(
         const TileMissingRequestSchedulerInput& input,
+        const TerrainProvider* terrainProvider,
         const TileKey& key,
         const std::string& cacheKey,
         TilesetTile*& outTileState) {
@@ -89,8 +106,8 @@ private:
         snapshot.terrainProviderSupportsTile =
             !snapshot.contentProviderOwnsTerrainQuadtree &&
             !TileSelectionRootPolicy::isVirtualTerrainRoot(key) &&
-            input.terrainProvider &&
-            input.terrainProvider->supportsTile(key);
+            terrainProvider &&
+            terrainProvider->supportsTile(key);
         snapshot.terrainAlreadyCached =
             input.terrainCache.count(cacheKey) > 0;
         snapshot.hasRenderContent =

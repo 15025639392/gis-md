@@ -376,6 +376,11 @@ public:
     int maxZoom() const override { return 1; }
     int tileSize() const override { return 2; }
 
+    bool supportsTile(const TileKey& key) const override {
+        ++supportsTileCalls;
+        return TerrainProvider::supportsTile(key);
+    }
+
     std::string buildUrl(const TileKey&) const override {
         return "memory://manual-completion-terrain";
     }
@@ -421,6 +426,7 @@ public:
 
     std::vector<PendingRequest> pendingRequests;
     int maximumTransportActiveRequests = -1;
+    mutable int supportsTileCalls = 0;
 };
 
 class ManualCompletionContentProvider final : public TilesetContentProvider {
@@ -436,6 +442,9 @@ public:
     std::string id() const override { return "manual-completion-content"; }
     bool supportsTile(const TileKey& key) const override { return key == key_; }
     std::vector<TileKey> rootTiles() const override { return {key_}; }
+    bool providesTerrainQuadtree() const override {
+        return ownsTerrainQuadtree;
+    }
 
     void requestTileContent(
         const TileKey& key,
@@ -464,6 +473,23 @@ public:
         return true;
     }
 
+    bool completeWithEmpty(const TileKey& key) {
+        auto it = std::find_if(
+            pendingRequests.begin(),
+            pendingRequests.end(),
+            [&key](const PendingRequest& request) {
+                return request.key == key;
+            });
+        if (it == pendingRequests.end()) {
+            return false;
+        }
+
+        ContentCallback callback = std::move(it->callback);
+        pendingRequests.erase(it);
+        callback(key, TileContentLoadResult::empty());
+        return true;
+    }
+
     TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
         return TileContentLoadResult::failed();
     }
@@ -474,6 +500,7 @@ public:
 
     std::vector<PendingRequest> pendingRequests;
     ProviderRequestDiagnostics diagnostics;
+    bool ownsTerrainQuadtree = false;
 
 private:
     TileKey key_;
@@ -880,6 +907,36 @@ TEST(TilesetRequestMissingBudgetTest,
     EXPECT_EQ(terrainTile->content.loadState, TileLoadState::ContentLoading);
     EXPECT_EQ(diagnostics.pendingTerrainUploads, 1);
     EXPECT_EQ(diagnostics.pendingContentUploads, 0);
+}
+
+TEST(TilesetRequestMissingBudgetTest,
+     ContentTerrainQuadtreeSuppressesLegacyTerrainRequestPath) {
+    const TileKey key{"Geographic-TMS", 1, 0, 0};
+    auto terrainProvider = std::make_unique<ManualCompletionTerrainProvider>();
+    ManualCompletionTerrainProvider* rawTerrainProvider =
+        terrainProvider.get();
+    auto contentProvider =
+        std::make_unique<ManualCompletionContentProvider>(key);
+    contentProvider->ownsTerrainQuadtree = true;
+    ManualCompletionContentProvider* rawContentProvider =
+        contentProvider.get();
+
+    Tileset tileset(
+        std::move(terrainProvider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        {},
+        std::move(contentProvider));
+    TilesetTestAccess::ensureTile(tileset, key);
+
+    TilesetTestAccess::requestMissingTile(tileset, key);
+
+    EXPECT_EQ(rawTerrainProvider->supportsTileCalls, 0);
+    EXPECT_TRUE(rawTerrainProvider->pendingRequests.empty());
+    ASSERT_EQ(rawContentProvider->pendingRequests.size(), 1u);
+    EXPECT_EQ(rawContentProvider->pendingRequests.front().key, key);
+    EXPECT_TRUE(rawContentProvider->completeWithEmpty(key));
 }
 
 TEST(
