@@ -46,7 +46,7 @@ void SceneFrameUpdateCoordinator::update(
         frameStateResult.environmentUpdateMs;
 
     SceneTilesetUpdateResult tilesetUpdateResult =
-        input.tilesets.update(input.frameState);
+        input.tilesets.update(input.frameState, input.pPrepRenderer);
     input.diagnostics.terrainUpdateMs = tilesetUpdateResult.terrainUpdateMs;
     input.diagnostics.contentTilesetUpdateMs =
         tilesetUpdateResult.contentTilesetUpdateMs;

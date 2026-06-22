@@ -2,13 +2,19 @@
 
 #include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
 #include "earth_engine/platform/bridge/PlatformBridge.h"
+#include "earth_engine/providers/DebugImageryProvider.h"
+#include "earth_engine/providers/RasterOverlayTileProvider.h"
+#include "earth_engine/providers/RasterOverlayTile.h"
 #include "earth_engine/providers/TerrainProvider.h"
+#include "earth_engine/renderer/IPrepareRendererResources.h"
 #include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
 #include "earth_engine/scene/SceneTilesetDiagnostics.h"
+#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileSelectionRasterOverlayPreparer.h"
 #include "earth_engine/tiling/TileSelectionPlanAppender.h"
@@ -141,8 +147,29 @@ struct TilesetTestAccess {
 
     static TilesetUpdateFrameRuntimeResult runUpdateFrameRuntime(
         Tileset& tileset,
-        const FrameState& frameState) {
-        return TilesetUpdateFrameRuntime::run(tileset, frameState);
+        const FrameState& frameState,
+        IPrepareRendererResources* pPrepRenderer = nullptr) {
+        return TilesetUpdateFrameRuntime::run(
+            tileset,
+            frameState,
+            pPrepRenderer);
+    }
+
+    static void queueContentUpload(
+        Tileset& tileset,
+        const TileKey& key,
+        TileContentLoadResult&& result) {
+        const std::string cacheKey = terrainCacheKey(tileset, key);
+        std::lock_guard<std::mutex> lock(
+            tileset.contentLifecycle_.loadLifecycle().mutex());
+        tileset.contentLifecycle_.loadLifecycle().pendingLoads().addUpload(
+            PendingTileLoad{
+                TileLoadDomain::Content,
+                key,
+                cacheKey,
+                TileLoadPriorityGroup::Normal,
+                0.0,
+                TileLoadResult::fromContentResult(std::move(result))});
     }
 
     static void unloadCachedBytes(
@@ -177,7 +204,7 @@ struct TilesetTestAccess {
     }
 
     static void processPendingUploads(Tileset& tileset) {
-        tileset.processPendingLoads(false, false);
+        tileset.processPendingLoads(false, false, nullptr);
     }
 
     static bool isTileRenderable(Tileset& tileset, const TilesetTile& tile) {
@@ -212,7 +239,7 @@ struct TilesetTestAccess {
     static void processPendingUploadsWithBudget(
         Tileset& tileset,
         FrameResourceBudget& budget) {
-        tileset.processPendingLoads(false, false, &budget);
+        tileset.processPendingLoads(false, false, nullptr, &budget);
     }
 };
 } // namespace earth_engine
@@ -659,6 +686,43 @@ private:
     int height_ = 0;
 };
 
+class RecordingPrepareRendererResources final
+    : public IPrepareRendererResources {
+public:
+    void attachRasterInMainThread(
+        const TileKey& geometryKey,
+        int32_t overlayIndex,
+        std::shared_ptr<const RasterOverlayTile> rasterTile,
+        Texture* texture,
+        float,
+        float,
+        float,
+        float) override {
+        ++attachCount;
+        lastGeometryKey = geometryKey;
+        lastOverlayIndex = overlayIndex;
+        lastRasterTile = std::move(rasterTile);
+        lastTexture = texture;
+    }
+
+    void detachRasterInMainThread(
+        const TileKey& geometryKey,
+        int32_t overlayIndex) noexcept override {
+        ++detachCount;
+        lastDetachedGeometryKey = geometryKey;
+        lastDetachedOverlayIndex = overlayIndex;
+    }
+
+    int attachCount = 0;
+    int detachCount = 0;
+    TileKey lastGeometryKey;
+    TileKey lastDetachedGeometryKey;
+    int32_t lastOverlayIndex = -1;
+    int32_t lastDetachedOverlayIndex = -1;
+    std::shared_ptr<const RasterOverlayTile> lastRasterTile;
+    Texture* lastTexture = nullptr;
+};
+
 class DummyRenderDevice final : public RenderDevice {
 public:
     Backend backendType() const override { return Backend::OpenGLES; }
@@ -988,6 +1052,90 @@ TEST(
             pendingKey,
             makeFlatHeightmap(0.0f)));
     }
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
+    UpdateFramePassesRendererPrepSinkToContentReplacementDetach) {
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        {});
+    TilesetTile* tile = TilesetTestAccess::ensureTile(tileset, key);
+    ASSERT_NE(nullptr, tile);
+
+    auto existingModel = std::make_unique<GltfModel>();
+    existingModel->rasterOverlayDetails.rasterOverlayProjections.push_back(
+        RasterOverlayProjection::WebMercator);
+    existingModel->rasterOverlayDetails.rasterOverlayRectangles.push_back(
+        projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            tile->bounds));
+    tile->content.renderContent.prepareGltfContent(
+        std::move(existingModel),
+        Mat4::identity());
+    tile->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    tile->content.loadState = TileLoadState::Done;
+    tile->content.contentKind = TileContentKind::Render;
+
+    DebugImageryProvider imagery;
+    auto rasterScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider rasterProvider(imagery, *rasterScheme, nullptr);
+    RasterMappedToTilesetTile& mapped =
+        tile->rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> missingProjections;
+    ASSERT_EQ(
+        RasterMappedToTilesetTile::MoreDetail::Unknown,
+        mapped.update(
+            key,
+            tile->content.renderContent.rasterOverlayDetails(),
+            512.0,
+            512.0,
+            rasterProvider,
+            nullptr,
+            missingProjections));
+    ASSERT_NE(nullptr, mapped.getLoadingTile());
+    mapped.getLoadingTile()->setTexture(std::make_unique<DummyTexture>(4, 4));
+
+    RecordingPrepareRendererResources recorder;
+    mapped.update(
+        key,
+        tile->content.renderContent.rasterOverlayDetails(),
+        512.0,
+        512.0,
+        rasterProvider,
+        &recorder,
+        missingProjections);
+    ASSERT_EQ(1, recorder.attachCount);
+    ASSERT_EQ(0, recorder.detachCount);
+
+    TilesetTestAccess::queueContentUpload(
+        tileset,
+        key,
+        TileContentLoadResult::render(std::make_unique<GltfModel>()));
+
+    Camera camera;
+    camera.lookAt(
+        Vec3(Ellipsoid::WGS84().semiMajorAxis() * 2.0, 0.0, 0.0),
+        Vec3(Ellipsoid::WGS84().semiMajorAxis(), 0.0, 0.0),
+        Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 402;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+
+    TilesetTestAccess::runUpdateFrameRuntime(tileset, frameState, &recorder);
+
+    EXPECT_EQ(1, recorder.detachCount);
+    EXPECT_EQ(key, recorder.lastDetachedGeometryKey);
+    EXPECT_EQ(0, recorder.lastDetachedOverlayIndex);
 }
 
 TEST(

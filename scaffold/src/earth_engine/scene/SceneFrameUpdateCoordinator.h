@@ -12,6 +12,7 @@ namespace earth_engine {
 class Camera;
 class CameraController;
 struct Diagnostics;
+class IPrepareRendererResources;
 class SceneTilesetCoordinator;
 class SkyGradient;
 class TimeController;
@@ -21,6 +22,7 @@ struct SceneFrameUpdateInput {
     Diagnostics& diagnostics;
     Camera* camera = nullptr;
     CameraController* cameraController = nullptr;
+    IPrepareRendererResources* pPrepRenderer = nullptr;
     SceneTilesetCoordinator& tilesets;
     uint64_t& frameId;
     double& elapsedTime;

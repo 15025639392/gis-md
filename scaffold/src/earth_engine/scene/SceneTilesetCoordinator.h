@@ -8,6 +8,7 @@
 namespace earth_engine {
 
 struct FrameState;
+class IPrepareRendererResources;
 class Tileset;
 
 struct SceneTilesetUpdateResult {
@@ -31,7 +32,9 @@ public:
 
     void setOcclusionCallback(TileOcclusionCallback callback);
     void clearOcclusionCallback();
-    SceneTilesetUpdateResult update(FrameState& frameState);
+    SceneTilesetUpdateResult update(
+        FrameState& frameState,
+        IPrepareRendererResources* pPrepRenderer);
 
 private:
     void applyOcclusionCallback(Tileset& tileset) const;

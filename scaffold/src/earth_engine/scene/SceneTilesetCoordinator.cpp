@@ -51,18 +51,19 @@ void SceneTilesetCoordinator::clearOcclusionCallback() {
 }
 
 SceneTilesetUpdateResult SceneTilesetCoordinator::update(
-    FrameState& frameState) {
+    FrameState& frameState,
+    IPrepareRendererResources* pPrepRenderer) {
     SceneTilesetUpdateResult result;
     if (primary_) {
         const double startMs = perf::nowMs();
-        primary_->update(frameState);
+        primary_->update(frameState, pPrepRenderer);
         result.terrainUpdateMs = perf::nowMs() - startMs;
     }
     if (!contentTilesets_.empty()) {
         const double startMs = perf::nowMs();
         for (auto& tileset : contentTilesets_) {
             if (tileset) {
-                tileset->update(frameState);
+                tileset->update(frameState, pPrepRenderer);
             }
         }
         result.contentTilesetUpdateMs = perf::nowMs() - startMs;

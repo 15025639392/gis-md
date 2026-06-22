@@ -5,6 +5,7 @@
 namespace earth_engine {
 
 struct FrameState;
+class IPrepareRendererResources;
 class Tileset;
 
 struct TilesetUpdateFrameRuntimeResult {
@@ -13,8 +14,10 @@ struct TilesetUpdateFrameRuntimeResult {
 
 class TilesetUpdateFrameRuntime {
 public:
-    static TilesetUpdateFrameRuntimeResult run(Tileset& tileset,
-                                               const FrameState& frameState);
+    static TilesetUpdateFrameRuntimeResult run(
+        Tileset& tileset,
+        const FrameState& frameState,
+        IPrepareRendererResources* pPrepRenderer = nullptr);
 };
 
 } // namespace earth_engine

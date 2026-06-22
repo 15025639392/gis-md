@@ -13,6 +13,7 @@ namespace earth_engine {
 class Camera;
 class CameraController;
 struct Diagnostics;
+class IPrepareRendererResources;
 class SceneTilesetCoordinator;
 class SkyGradient;
 class Tileset;
@@ -43,6 +44,7 @@ public:
         Diagnostics& diagnostics,
         Camera* camera,
         CameraController* cameraController,
+        IPrepareRendererResources* pPrepRenderer,
         SceneTilesetCoordinator& tilesets,
         double deltaSeconds,
         bool hasInteractionFocus,

@@ -330,7 +330,8 @@ struct TilesetTestAccess {
     static void processPendingUploads(Tileset& tileset) {
         tileset.processPendingLoads(
             false,
-            false);
+            false,
+            nullptr);
     }
 
     static void processPendingUploadsWithBudget(
@@ -339,6 +340,7 @@ struct TilesetTestAccess {
         tileset.processPendingLoads(
             false,
             false,
+            nullptr,
             &budget);
     }
 

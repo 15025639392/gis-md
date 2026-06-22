@@ -84,6 +84,7 @@ void Scene::update(double deltaSeconds) {
             telemetry_->diagnostics(),
             camera_.get(),
             cameraController_.get(),
+            renderer_.get(),
             *tilesets_,
             deltaSeconds,
             interaction_->hasInteractionFocus(),

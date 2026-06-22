@@ -12,12 +12,13 @@ namespace earth_engine {
 
 void TilesetUpdateFrameFacade::update(
     Tileset& tileset,
-    const FrameState& frameState) {
+    const FrameState& frameState,
+    IPrepareRendererResources* pPrepRenderer) {
     if (!frameState.camera) return;
     const double updateStartMs = perf::nowMs();
 
     const TilesetUpdateFrameRuntimeResult updateResult =
-        TilesetUpdateFrameRuntime::run(tileset, frameState);
+        TilesetUpdateFrameRuntime::run(tileset, frameState, pPrepRenderer);
 
     const std::array<char, 640> updateDetail =
         TileFrameDebugLogFormatter::updateDetail(

@@ -38,6 +38,7 @@ namespace earth_engine {
 
 class Renderer;
 class RenderDevice;
+class IPrepareRendererResources;
 struct SelectorFrame;
 class ActivatedRasterOverlay;
 struct TilesetTestAccess;
@@ -97,7 +98,8 @@ public:
             std::unique_ptr<TilesetContentProvider> contentProvider = nullptr);
     ~Tileset();
 
-    void update(const FrameState& frameState);
+    void update(const FrameState& frameState,
+                IPrepareRendererResources* pPrepRenderer = nullptr);
     void buildRenderCommands(Renderer& renderer, RenderCommandList& commands);
 
     const TilePlan& tilePlan() const { return tilePlan_; }
@@ -130,7 +132,8 @@ private:
     friend class TilesetUpdateFrameRuntime;
 
     TileContentRuntimeRequestFrame makeContentRuntimeRequestFrame() const;
-    TileContentRuntimeUploadFrame makeContentRuntimeUploadFrame() const;
+    TileContentRuntimeUploadFrame makeContentRuntimeUploadFrame(
+        IPrepareRendererResources* pPrepRenderer) const;
     TerrainProvider* effectiveLegacyTerrainProvider() const;
     bool hasTerrainQuadtree() const;
     TileLoadRequestOutcome requestMissingContent(
@@ -139,6 +142,7 @@ private:
     bool processPendingLoads(
         bool interactionActive,
         bool resourceSmoothingActive,
+        IPrepareRendererResources* pPrepRenderer,
         FrameResourceBudget* budget = nullptr);
     void markContentResourcesDirty();
     TileOcclusionState checkSingleTileOcclusion(

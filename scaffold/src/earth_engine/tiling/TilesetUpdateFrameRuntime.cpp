@@ -19,7 +19,8 @@ constexpr double kPostInteractionResourceSmoothingSeconds = 1.25;
 
 TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
     Tileset& tileset,
-    const FrameState& frameState) {
+    const FrameState& frameState,
+    IPrepareRendererResources* pPrepRenderer) {
     // cesium-native: increment generation each frame so that
     // RenderCommand validator (non-zero check) accepts SurfaceTile commands.
     ++tileset.generation_;
@@ -53,12 +54,13 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             tileset.lastInteractionActiveTimeSeconds_,
             tileset.lastCameraPosition_,
             tileset.lastCameraDirection_},
-        [&tileset](bool uploadInteractionActive,
-                   bool uploadResourceSmoothingActive,
-                   FrameResourceBudget* budget) {
+        [&tileset, pPrepRenderer](bool uploadInteractionActive,
+                                  bool uploadResourceSmoothingActive,
+                                  FrameResourceBudget* budget) {
             return tileset.processPendingLoads(
                 uploadInteractionActive,
                 uploadResourceSmoothingActive,
+                pPrepRenderer,
                 budget);
         },
         [&tileset]() {

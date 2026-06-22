@@ -215,10 +215,12 @@ Tileset::makeContentRuntimeRequestFrame() const {
     return frame;
 }
 
-TileContentRuntimeUploadFrame Tileset::makeContentRuntimeUploadFrame() const {
+TileContentRuntimeUploadFrame Tileset::makeContentRuntimeUploadFrame(
+    IPrepareRendererResources* pPrepRenderer) const {
     TileContentRuntimeUploadFrame frame{rasterOverlays_};
     frame.contentProvider = contentProvider_.get();
     frame.device = device_;
+    frame.pPrepRenderer = pPrepRenderer;
     frame.frameNumber = frameNumber_;
     frame.maximumSimultaneousTileLoads =
         options_.maximumSimultaneousTileLoads;
@@ -241,9 +243,10 @@ TileLoadRequestOutcome Tileset::requestMissingContent(
 bool Tileset::processPendingLoads(
     bool interactionActive,
     bool resourceSmoothingActive,
+    IPrepareRendererResources* pPrepRenderer,
     FrameResourceBudget* budget) {
     return contentRuntime_.processPendingUploads(
-        makeContentRuntimeUploadFrame(),
+        makeContentRuntimeUploadFrame(pPrepRenderer),
         interactionActive,
         resourceSmoothingActive,
         budget);
@@ -278,8 +281,10 @@ float Tileset::sampleHeight(double lngRad, double latRad) const {
         !(contentProvider_ && contentProvider_->providesTerrainQuadtree()));
 }
 
-void Tileset::update(const FrameState& frameState) {
-    TilesetUpdateFrameFacade::update(*this, frameState);
+void Tileset::update(
+    const FrameState& frameState,
+    IPrepareRendererResources* pPrepRenderer) {
+    TilesetUpdateFrameFacade::update(*this, frameState, pPrepRenderer);
 }
 
 void Tileset::buildRenderCommands(Renderer& renderer,
