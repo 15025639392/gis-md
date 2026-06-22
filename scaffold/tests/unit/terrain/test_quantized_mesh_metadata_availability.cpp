@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/content/QuantizedMeshContentLoader.h"
 #include "earth_engine/terrain/QuantizedMeshParser.h"
 #include "earth_engine/tiling/TileKey.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -179,6 +180,29 @@ Rectangle rootRectangle() {
     return scheme->tileToRectangle(TileKey{"Geographic-TMS", 0, 0, 0});
 }
 
+QuantizedMeshContentLoadResult loadQuantizedMeshContentWithCurrentMetadata(
+    const std::vector<uint8_t>& bytes) {
+    QuantizedMeshMetadataContent currentLayerMetadata;
+    currentLayerMetadata.layerIndex = 0;
+    currentLayerMetadata.subtreeKey = TileKey{"Geographic-TMS", 0, 0, 0};
+    currentLayerMetadata.data = bytes.data();
+    currentLayerMetadata.size = bytes.size();
+    return QuantizedMeshContentLoader::load(
+        bytes.data(),
+        bytes.size(),
+        rootRectangle(),
+        false,
+        {currentLayerMetadata});
+}
+
+std::vector<QuantizedMeshAvailabilityRange> firstAvailabilityUpdate(
+    const QuantizedMeshContentLoadResult& result) {
+    if (result.availabilityUpdates.empty()) {
+        return {};
+    }
+    return result.availabilityUpdates.front().metadataAvailability;
+}
+
 } // namespace
 
 TEST(QuantizedMeshParserMetadataTest,
@@ -191,20 +215,18 @@ TEST(QuantizedMeshParserMetadataTest,
     })json";
     const std::vector<uint8_t> bytes = makeQuantizedMeshBytes(metadata);
 
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            rootRectangle());
+    QuantizedMeshContentLoadResult result =
+        loadQuantizedMeshContentWithCurrentMetadata(bytes);
 
-    ASSERT_NE(nullptr, mesh);
-    ASSERT_EQ(2u, mesh->metadataAvailability.size());
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(1u, result.availabilityUpdates.size());
+    ASSERT_EQ(2u, result.availabilityUpdates.front().metadataAvailability.size());
     EXPECT_EQ((QuantizedMeshAvailabilityRange{0, 0, 0, 1, 0}),
-              mesh->metadataAvailability[0]);
+              result.availabilityUpdates.front().metadataAvailability[0]);
     EXPECT_EQ((QuantizedMeshAvailabilityRange{1, 2, 1, 3, 1}),
-              mesh->metadataAvailability[1]);
+              result.availabilityUpdates.front().metadataAvailability[1]);
 
-    EXPECT_EQ(mesh->metadataAvailability,
+    EXPECT_EQ(result.availabilityUpdates.front().metadataAvailability,
               QuantizedMeshParser::parseMetadataAvailability(
                   bytes.data(),
                   bytes.size()));
@@ -220,18 +242,16 @@ TEST(QuantizedMeshParserMetadataTest,
     const std::vector<uint8_t> bytes =
         makeZeroTriangleQuantizedMeshBytes(metadata);
 
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            rootRectangle());
+    QuantizedMeshContentLoadResult result =
+        loadQuantizedMeshContentWithCurrentMetadata(bytes);
 
-    ASSERT_NE(nullptr, mesh);
-    EXPECT_EQ(3u, mesh->vertices.size());
-    EXPECT_TRUE(mesh->indices.empty());
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    EXPECT_EQ(3u, result.gltfModel->primitives.front().vertices.size());
+    EXPECT_TRUE(result.gltfModel->primitives.front().indices.empty());
     EXPECT_EQ((std::vector<QuantizedMeshAvailabilityRange>{
                   {0, 0, 0, 1, 0}}),
-              mesh->metadataAvailability);
+              firstAvailabilityUpdate(result));
 }
 
 TEST(QuantizedMeshParserMetadataTest,
@@ -366,15 +386,12 @@ TEST(QuantizedMeshParserMetadataTest,
 
     const std::vector<uint8_t> shortNormalBytes =
         makeQuantizedMeshBytesWithShortOctNormalThenMetadata(metadata);
-    std::unique_ptr<SurfaceTileMesh> shortNormalMesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            shortNormalBytes.data(),
-            shortNormalBytes.size(),
-            rootRectangle());
-    ASSERT_NE(nullptr, shortNormalMesh);
+    QuantizedMeshContentLoadResult shortNormalResult =
+        loadQuantizedMeshContentWithCurrentMetadata(shortNormalBytes);
+    ASSERT_TRUE(shortNormalResult.success());
     EXPECT_EQ((std::vector<QuantizedMeshAvailabilityRange>{
                   {0, 0, 0, 1, 0}}),
-              shortNormalMesh->metadataAvailability);
+              firstAvailabilityUpdate(shortNormalResult));
 
     const std::vector<uint8_t> malformedBytes =
         makeQuantizedMeshBytesWithMalformedMetadataThenMetadata(metadata);
