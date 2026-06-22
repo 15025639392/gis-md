@@ -531,6 +531,7 @@ TEST(QuantizedMeshTerrainProviderTest,
     ASSERT_TRUE(completed.metadata.updatedBoundingVolume.has_value());
     EXPECT_EQ(TileBoundingVolumeKind::Region,
               completed.metadata.updatedBoundingVolume->kind);
+    EXPECT_FALSE(completed.metadata.updatedContentBoundingVolume.has_value());
     const TileKey requestedKey{"Geographic-TMS", 0, 0, 0};
     auto scheme = TileScheme::createGeographicTMS();
     EXPECT_EQ(scheme->tileToRectangle(requestedKey),
@@ -603,6 +604,7 @@ TEST(QuantizedMeshTerrainProviderTest,
 
     ASSERT_EQ(TileLoadStatus::Renderable, completed.status);
     ASSERT_TRUE(completed.metadata.updatedBoundingVolume.has_value());
+    EXPECT_FALSE(completed.metadata.updatedContentBoundingVolume.has_value());
     auto scheme = TileScheme::createXYZWebMercator();
     const Rectangle expected = scheme->tileToRectangle(key);
     EXPECT_EQ(expected, completed.metadata.updatedBoundingVolume->region);

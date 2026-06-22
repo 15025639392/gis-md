@@ -358,6 +358,7 @@ TEST(QuantizedMeshContentLoaderTest,
     ASSERT_TRUE(result.metadata.terrainHeightRange.has_value());
     EXPECT_NEAR(-10.0, result.metadata.terrainHeightRange->first, 1e-6);
     EXPECT_NEAR(150.0, result.metadata.terrainHeightRange->second, 1e-6);
+    EXPECT_FALSE(result.metadata.updatedContentBoundingVolume.has_value());
     EXPECT_TRUE(result.availabilityUpdates.empty());
 }
 
@@ -691,6 +692,7 @@ TEST(QuantizedMeshContentLoaderTest, InvalidBodyFailsWithoutUpdates) {
     EXPECT_EQ(QuantizedMeshContentLoadStatus::Failed, result.status);
     EXPECT_EQ(nullptr, result.gltfModel);
     EXPECT_FALSE(result.metadata.updatedBoundingVolume.has_value());
+    EXPECT_FALSE(result.metadata.updatedContentBoundingVolume.has_value());
     EXPECT_FALSE(result.metadata.rasterOverlayDetails.has_value());
     EXPECT_TRUE(result.availabilityUpdates.empty());
 }
