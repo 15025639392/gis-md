@@ -848,6 +848,29 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainGltfLoadResultDropsSurfacePayloadLikeCesiumNativeContentKind) {
+    TerrainTileLoadResult terrainResult;
+    terrainResult.status = TileLoadStatus::Renderable;
+    auto heightmap = std::make_unique<DecodedHeightmap>();
+    heightmap->tileSize = 1;
+    heightmap->heights = {1.0f};
+    terrainResult.heightmap = std::move(heightmap);
+    terrainResult.surfaceMesh = std::make_unique<SurfaceTileMesh>();
+    auto model = std::make_unique<GltfModel>();
+    GltfModel* rawModel = model.get();
+    terrainResult.gltfModel = std::move(model);
+
+    TileLoadResult loadResult =
+        TileLoadResult::fromTerrainResult(std::move(terrainResult));
+
+    EXPECT_EQ(TileLoadStatus::Renderable, loadResult.status);
+    EXPECT_TRUE(loadResult.shouldUpload());
+    EXPECT_EQ(rawModel, loadResult.content.gltfModel.get());
+    EXPECT_EQ(nullptr, loadResult.content.surfaceMesh);
+    EXPECT_EQ(nullptr, loadResult.content.heightmap);
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      MissingContentUploadPreservesTerrainCache) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;

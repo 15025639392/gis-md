@@ -30,9 +30,11 @@ struct TileLoadedContent {
     static TileLoadedContent fromTerrainResult(
         TerrainTileLoadResult&& result) {
         TileLoadedContent content;
-        content.heightmap = std::move(result.heightmap);
-        content.surfaceMesh = std::move(result.surfaceMesh);
         content.gltfModel = std::move(result.gltfModel);
+        if (!content.gltfModel) {
+            content.heightmap = std::move(result.heightmap);
+            content.surfaceMesh = std::move(result.surfaceMesh);
+        }
         content.metadata = std::move(result.metadata);
         content.quantizedMeshAvailabilityUpdates =
             std::move(result.quantizedMeshAvailabilityUpdates);
