@@ -404,7 +404,7 @@ TEST(QuantizedMeshContentLoaderTest,
         (projectedInterior.x() - expectedProjectedRectangle.west()) /
         expectedProjectedRectangle.width();
     const double expectedV =
-        (expectedProjectedRectangle.north() - projectedInterior.y()) /
+        (projectedInterior.y() - expectedProjectedRectangle.south()) /
         expectedProjectedRectangle.height();
     EXPECT_NEAR(expectedU,
                 primitive.vertexTexCoords[0][interiorVertexIndex][0],

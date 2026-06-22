@@ -6,6 +6,7 @@
 #include "../core/geodesy/Projection.h"
 #include "../terrain/QuantizedMeshParser.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <optional>
@@ -141,9 +142,16 @@ void rewriteTerrainProjectionTexCoords(GltfModel& model,
                 projectPosition(webMercator, *cartographic);
             texCoords[i] = {
                 static_cast<float>(
-                    (projected.x() - projectedRectangle->west()) / width),
+                    std::clamp(
+                        (projected.x() - projectedRectangle->west()) / width,
+                        0.0,
+                        1.0)),
                 static_cast<float>(
-                    (projectedRectangle->north() - projected.y()) / height)};
+                    std::clamp(
+                        (projected.y() - projectedRectangle->south()) /
+                            height,
+                        0.0,
+                        1.0))};
         }
     }
 }

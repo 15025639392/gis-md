@@ -12,6 +12,7 @@
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../providers/RasterOverlayTileProvider.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 
@@ -82,9 +83,16 @@ bool writeGltfOverlayTexCoords(TileRenderContentState& renderContent,
                 projectPositionForOverlay(*cartographic, projection);
             texCoords.push_back({
                 static_cast<float>(
-                    (projected.x() - projectedRectangle.west()) / width),
+                    std::clamp(
+                        (projected.x() - projectedRectangle.west()) / width,
+                        0.0,
+                        1.0)),
                 static_cast<float>(
-                    (projected.y() - projectedRectangle.south()) / height)});
+                    std::clamp(
+                        (projected.y() - projectedRectangle.south()) /
+                            height,
+                        0.0,
+                        1.0))});
         }
     }
     return true;
