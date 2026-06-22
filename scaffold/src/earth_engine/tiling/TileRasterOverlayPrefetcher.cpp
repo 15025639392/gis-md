@@ -20,13 +20,8 @@ namespace {
 std::optional<Rectangle> projectedBoundingVolumeRectangle(
     const TilesetTile& tile,
     RasterOverlayProjection projection) {
-    if (!tile.boundingVolume ||
-        tile.boundingVolume->kind != TileBoundingVolumeKind::Region) {
-        return std::nullopt;
-    }
-    return TileRasterOverlayDetailsGenerator::projectRegionRectangle(
-        tile.boundingVolume->region,
-        projection);
+    return TileRasterOverlayDetailsGenerator::
+        projectEffectiveContentBoundingVolumeRectangle(tile, projection);
 }
 
 } // namespace

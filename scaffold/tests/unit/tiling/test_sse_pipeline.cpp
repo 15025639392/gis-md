@@ -4310,6 +4310,62 @@ void testTilesetPrefetchWaitsForRenderDetailsBeforeRequestingRaster() {
           "Tileset: prefetch bounding-region request uses projected precise rectangle");
 }
 
+void testTilesetPrefetchUsesContentBoundingVolumeFallback() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+
+    auto terrainProvider = std::make_unique<SparseTerrainProvider>();
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(terrainProvider),
+        std::move(scheme),
+        {&activated},
+        nullptr,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: prefetch content-bounds fallback root tile is created");
+    if (!root) return;
+
+    const Rectangle tileRectangle =
+        Rectangle::fromDegrees(-40.0, -20.0, 40.0, 20.0);
+    const Rectangle contentRectangle =
+        Rectangle::fromDegrees(-9.0, -3.0, 3.0, 7.0);
+    root->bounds = Rectangle::fromDegrees(-45.0, -25.0, 45.0, 25.0);
+    root->boundingVolume =
+        TileBoundingVolume::fromRegion(tileRectangle, -100.0, 1000.0);
+    root->contentBoundingVolume =
+        TileBoundingVolume::fromRegion(contentRectangle, -10.0, 120.0);
+    root->geometricError = 100.0;
+    root->rasterOverlayState.mappings().resize(1);
+
+    FrameResourceBudgetConfig budgetConfig;
+    budgetConfig.maxRasterNetworkRequestsPerFrame = 64;
+    budgetConfig.maxRasterNetworkInflight = 64;
+    TilesetTestAccess::beginFrameResourceBudget(tileset, budgetConfig);
+    TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
+
+    RasterMappedToTilesetTile* mapped =
+        root->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
+    const Rectangle expectedContentWebMercator = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        contentRectangle);
+    const Rectangle tileWebMercator = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        tileRectangle);
+
+    check(loadingTile &&
+              loadingTile->getRectangle() == expectedContentWebMercator &&
+              loadingTile->getRectangle() != tileWebMercator,
+          "Tileset: prefetch fallback raster request uses effective content bounding volume like cesium-native");
+}
+
 void testTilesetPrefetchGeneratesRenderContentDetailsFromRegion() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -14857,6 +14913,61 @@ void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
           "RenderContentRasterOverlayStateUpdater: invisible overlay releases stale mapping");
     check(TileCacheMetrics::estimateTileBytes(tile) == 0,
           "RenderContentRasterOverlayStateUpdater: invisible overlay releases raster tile references");
+}
+
+void testSurfaceRasterUpdaterUsesContentBoundingVolumeFallback() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-45.0, -25.0, 45.0, 25.0));
+    const Rectangle tileRectangle =
+        Rectangle::fromDegrees(-40.0, -20.0, 40.0, 20.0);
+    const Rectangle contentRectangle =
+        Rectangle::fromDegrees(-11.0, -4.0, 5.0, 8.0);
+    tile.boundingVolume =
+        TileBoundingVolume::fromRegion(tileRectangle, -100.0, 1000.0);
+    tile.contentBoundingVolume =
+        TileBoundingVolume::fromRegion(contentRectangle, -10.0, 120.0);
+    tile.geometricError = 100.0;
+
+    Renderer renderer(nullptr);
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    const std::vector<size_t> order{0};
+    RenderContentRasterOverlayStateUpdater::update(
+        renderer,
+        tile,
+        overlays,
+        order,
+        nullptr,
+        16.0,
+        budget);
+
+    RasterMappedToTilesetTile* mapped =
+        tile.rasterOverlayState.mappingAt(0);
+    RasterOverlayTile* loadingTile =
+        mapped ? mapped->getLoadingTile() : nullptr;
+    const Rectangle expectedContentWebMercator = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        contentRectangle);
+    const Rectangle tileWebMercator = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        tileRectangle);
+
+    check(loadingTile &&
+              loadingTile->getRectangle() == expectedContentWebMercator &&
+              loadingTile->getRectangle() != tileWebMercator,
+          "RenderContentRasterOverlayStateUpdater: fallback raster request uses effective content bounding volume like cesium-native");
 }
 
 void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
@@ -28284,6 +28395,7 @@ int main() {
     testTilesetRasterTargetPixelsUseRenderContentRectangle();
     testTilesetEnsuresOverlayProviderBeforeMapping();
     testTilesetPrefetchWaitsForRenderDetailsBeforeRequestingRaster();
+    testTilesetPrefetchUsesContentBoundingVolumeFallback();
     testTilesetPrefetchGeneratesRenderContentDetailsFromRegion();
     testTileRasterOverlayFrameProcessorPrefetchesByPriority();
     testTileRasterOverlayFrameProcessorSkipsDuplicateFramePrefetch();
@@ -28468,6 +28580,7 @@ int main() {
     testTileRasterOverlayStateOwnsMappingsAndMissingProjections();
     testTileRasterOverlayStateResizeReleasesRemovedMappings();
     testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping();
+    testSurfaceRasterUpdaterUsesContentBoundingVolumeFallback();
     testTileUnloadPolicyDefersReferencedSubtreesAndExternalWork();
     testTileUnloadPolicyProtectsUpsampledLoadingSources();
     testTileUpsampleSourcePreparerSkipsPermanentFailedAncestor();

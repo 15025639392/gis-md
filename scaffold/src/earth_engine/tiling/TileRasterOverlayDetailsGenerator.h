@@ -2,6 +2,7 @@
 
 #include "SurfaceTile.h"
 
+#include <optional>
 #include <vector>
 
 namespace earth_engine {
@@ -16,6 +17,11 @@ class TileRasterOverlayDetailsGenerator {
 public:
     static Rectangle projectRegionRectangle(
         const Rectangle& rectangle,
+        RasterOverlayProjection projection);
+
+    static std::optional<Rectangle>
+    projectEffectiveContentBoundingVolumeRectangle(
+        const TilesetTile& tile,
         RasterOverlayProjection projection);
 
     static bool ensureProjectionDetailsFromRegion(

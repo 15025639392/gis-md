@@ -106,6 +106,23 @@ Rectangle TileRasterOverlayDetailsGenerator::projectRegionRectangle(
     return rectangle;
 }
 
+std::optional<Rectangle>
+TileRasterOverlayDetailsGenerator::projectEffectiveContentBoundingVolumeRectangle(
+    const TilesetTile& tile,
+    RasterOverlayProjection projection) {
+    const TileBoundingVolume* effectiveContentBoundingVolume =
+        tile.contentBoundingVolume
+            ? &*tile.contentBoundingVolume
+            : (tile.boundingVolume ? &*tile.boundingVolume : nullptr);
+    if (!effectiveContentBoundingVolume ||
+        effectiveContentBoundingVolume->kind != TileBoundingVolumeKind::Region) {
+        return std::nullopt;
+    }
+    return projectRegionRectangle(
+        effectiveContentBoundingVolume->region,
+        projection);
+}
+
 bool TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
     TileRenderContentState& renderContent,
     const TileBoundingVolume& boundingVolume,
