@@ -1,8 +1,11 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/content/GltfTerrainUpsampler.h"
 
 #include <cmath>
+#include <limits>
+#include <vector>
 
 using namespace earth_engine;
 
@@ -87,6 +90,92 @@ void expectArrayNear(const std::array<float, 4>& actual,
                      const std::array<float, 4>& expected) {
     for (size_t i = 0; i < actual.size(); ++i) {
         EXPECT_NEAR(expected[i], actual[i], 1e-6f);
+    }
+}
+
+bool sameUv(const SurfaceVertex& a, const SurfaceVertex& b) {
+    return std::abs(a.uv[0] - b.uv[0]) <= 1e-6f &&
+           std::abs(a.uv[1] - b.uv[1]) <= 1e-6f;
+}
+
+void expectRasterOverlaySkirtsMatchCesiumNative(const GltfPrimitive& primitive,
+                                                const SkirtMetadata& skirt) {
+    ASSERT_TRUE(primitive.skirtMetadata.has_value());
+    const SkirtMetadata& currentSkirt = *primitive.skirtMetadata;
+    ASSERT_GT(currentSkirt.noSkirtVerticesCount, 0u);
+    ASSERT_LE(
+        currentSkirt.noSkirtVerticesBegin + currentSkirt.noSkirtVerticesCount,
+        primitive.vertices.size());
+
+    const double westU = std::numeric_limits<double>::infinity();
+    const double eastU = -std::numeric_limits<double>::infinity();
+    const double southV = std::numeric_limits<double>::infinity();
+    const double northV = -std::numeric_limits<double>::infinity();
+    double minU = westU;
+    double maxU = eastU;
+    double minV = southV;
+    double maxV = northV;
+    const size_t topBegin = currentSkirt.noSkirtVerticesBegin;
+    const size_t topEnd = topBegin + currentSkirt.noSkirtVerticesCount;
+    for (size_t i = topBegin; i < topEnd; ++i) {
+        const SurfaceVertex& vertex = primitive.vertices[i];
+        minU = std::min(minU, static_cast<double>(vertex.uv[0]));
+        maxU = std::max(maxU, static_cast<double>(vertex.uv[0]));
+        minV = std::min(minV, static_cast<double>(vertex.uv[1]));
+        maxV = std::max(maxV, static_cast<double>(vertex.uv[1]));
+    }
+
+    auto edgeHeightsFor = [&](const SurfaceVertex& vertex) {
+        std::vector<double> heights;
+        if (std::abs(static_cast<double>(vertex.uv[0]) - minU) <= 1e-5) {
+            heights.push_back(currentSkirt.skirtWestHeight);
+        }
+        if (std::abs(static_cast<double>(vertex.uv[0]) - maxU) <= 1e-5) {
+            heights.push_back(currentSkirt.skirtEastHeight);
+        }
+        if (std::abs(static_cast<double>(vertex.uv[1]) - minV) <= 1e-5) {
+            heights.push_back(currentSkirt.skirtSouthHeight);
+        }
+        if (std::abs(static_cast<double>(vertex.uv[1]) - maxV) <= 1e-5) {
+            heights.push_back(currentSkirt.skirtNorthHeight);
+        }
+        return heights;
+    };
+
+    ASSERT_GT(primitive.vertices.size(), topEnd);
+    for (size_t i = topEnd; i < primitive.vertices.size(); ++i) {
+        const SurfaceVertex& skirtVertex = primitive.vertices[i];
+        std::vector<double> candidateHeights = edgeHeightsFor(skirtVertex);
+        ASSERT_FALSE(candidateHeights.empty());
+
+        const SurfaceVertex* matchingTop = nullptr;
+        for (size_t topIndex = topBegin; topIndex < topEnd; ++topIndex) {
+            if (sameUv(primitive.vertices[topIndex], skirtVertex)) {
+                matchingTop = &primitive.vertices[topIndex];
+                break;
+            }
+        }
+        ASSERT_NE(nullptr, matchingTop);
+
+        bool matchedHeight = false;
+        for (double height : candidateHeights) {
+            const Ellipsoid ellipsoid = Ellipsoid::WGS84();
+            const Vec3 absoluteTop = matchingTop->positionEcef + skirt.meshCenter;
+            Vec3 normal = ellipsoid.geodeticSurfaceNormal(absoluteTop);
+            if (normal.lengthSquared() <= 0.0 &&
+                matchingTop->normalEcef.lengthSquared() > 0.0) {
+                normal = matchingTop->normalEcef.normalized();
+            }
+            ASSERT_GT(normal.lengthSquared(), 0.0);
+            normal = normal.normalized();
+            const Vec3 expected =
+                absoluteTop - normal * height - skirt.meshCenter;
+            if ((expected - skirtVertex.positionEcef).length() <= 1e-6) {
+                matchedHeight = true;
+                break;
+            }
+        }
+        EXPECT_TRUE(matchedHeight);
     }
 }
 
@@ -195,6 +284,33 @@ TEST(GltfTerrainUpsamplerTest,
     EXPECT_DOUBLE_EQ(0.5, primitive.terrainWaterMaskTranslationX);
     EXPECT_DOUBLE_EQ(0.375, primitive.terrainWaterMaskTranslationY);
     EXPECT_DOUBLE_EQ(0.25, primitive.terrainWaterMaskScale);
+}
+
+TEST(GltfTerrainUpsamplerTest,
+     DropsRasterOverlaySkirtsAlongGeodeticNormalForEveryQuadrantLikeCesiumNative) {
+    const GltfModel parent = makeParentModel();
+    const SkirtMetadata parentSkirt =
+        *parent.primitives.front().skirtMetadata;
+    const std::vector<UpsampledQuadtreeNode> children = {
+        UpsampledQuadtreeNode{TileKey{"Geographic-TMS", 1, 0, 0}},
+        UpsampledQuadtreeNode{TileKey{"Geographic-TMS", 1, 1, 0}},
+        UpsampledQuadtreeNode{TileKey{"Geographic-TMS", 1, 0, 1}},
+        UpsampledQuadtreeNode{TileKey{"Geographic-TMS", 1, 1, 1}}};
+
+    for (const UpsampledQuadtreeNode& child : children) {
+        std::unique_ptr<GltfModel> upsampled =
+            GltfTerrainUpsampler::upsampleForRasterOverlay(
+                parent,
+                child,
+                0,
+                false);
+
+        ASSERT_NE(nullptr, upsampled);
+        ASSERT_EQ(1u, upsampled->primitives.size());
+        expectRasterOverlaySkirtsMatchCesiumNative(
+            upsampled->primitives.front(),
+            parentSkirt);
+    }
 }
 
 TEST(GltfTerrainUpsamplerTest,

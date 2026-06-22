@@ -137,7 +137,7 @@ public:
 
     // Retained renderer/cache accessors.
     State state() const { return state_; }
-    Texture* texture() const { return readyTexture_; }
+    Texture* texture() const;
     float offsetU() const { return offsetU_; }
     float offsetV() const { return offsetV_; }
     float scaleU() const { return scaleU_; }

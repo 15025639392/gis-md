@@ -133,15 +133,23 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
     // cesium-native: if getState() == Attached, report MoreDetailAvailable
     if (state_ == State::Attached) {
         if (_pReadyTile != nullptr &&
-            _pReadyTile->getState() != RasterOverlayTile::LoadState::Placeholder) {
-            tileProvider.markUsed(*_pReadyTile);
+            _pReadyTile->getState() != RasterOverlayTile::LoadState::Failed &&
+            _pReadyTile->getRendererResources() == nullptr) {
+            state_ = State::Unattached;
+            readyTexture_ = nullptr;
+        } else {
+            if (_pReadyTile != nullptr &&
+                _pReadyTile->getState() !=
+                    RasterOverlayTile::LoadState::Placeholder) {
+                tileProvider.markUsed(*_pReadyTile);
+            }
+            if (!originalFailed_ && _pReadyTile != nullptr &&
+                _pReadyTile->isMoreDetailAvailable() !=
+                    RasterOverlayTile::MoreDetailAvailable::No) {
+                return MoreDetail::Yes;
+            }
+            return MoreDetail::No;
         }
-        if (!originalFailed_ && _pReadyTile != nullptr &&
-            _pReadyTile->isMoreDetailAvailable() !=
-                RasterOverlayTile::MoreDetailAvailable::No) {
-            return MoreDetail::Yes;
-        }
-        return MoreDetail::No;
     }
 
     // ── Step 2: Failure fallback — walk parent geometry tile chain ──
@@ -394,6 +402,10 @@ bool RasterMappedToTilesetTile::isMoreDetailAvailable() const {
     if (_pReadyTile == nullptr) return false;
     return _pReadyTile->isMoreDetailAvailable() ==
            RasterOverlayTile::MoreDetailAvailable::Yes;
+}
+
+Texture* RasterMappedToTilesetTile::texture() const {
+    return _pReadyTile ? _pReadyTile->getTexture() : nullptr;
 }
 
 void RasterMappedToTilesetTile::detachFromTile(IPrepareRendererResources* pPrepRenderer) {

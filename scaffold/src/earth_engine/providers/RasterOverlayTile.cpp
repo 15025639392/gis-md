@@ -44,6 +44,9 @@ void RasterOverlayTile::loadInMainThread() {
     // In cesium-native, this is where GPU resources are created from image data.
     // In our architecture, the texture may already be uploaded by the Provider.
     // The rendererResources_ pointer already points to the Texture.
+    if (texture_ && rendererResources_ == nullptr) {
+        rendererResources_ = static_cast<void*>(texture_.get());
+    }
     if (state_ == LoadState::Loaded) {
         state_ = LoadState::Done;
     }

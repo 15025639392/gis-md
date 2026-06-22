@@ -3074,6 +3074,100 @@ TEST(RasterOverlayLifecycleTest, AttachedUnknownReportsMoreDetailLikeCesiumNativ
     EXPECT_FALSE(mapped.isMoreDetailAvailable());
 }
 
+TEST(RasterOverlayLifecycleTest,
+     AttachedTileWithLostRendererResourcesReattachesBeforeFastPath) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    TileKey key{scheme->id(), 3, 4, 2};
+    RasterOverlayDetails details =
+        makeProviderDetails(*scheme, scheme->tileToRectangle(key));
+    std::vector<RasterOverlayProjection> missing;
+
+    RasterMappedToTilesetTile mapped;
+    mapped.update(
+        key,
+        details,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missing);
+    RasterOverlayTile* loadingTile = mapped.getLoadingTile();
+    ASSERT_NE(nullptr, loadingTile);
+    loadingTile->setTexture(std::make_unique<TestTexture>(4, 4));
+
+    RecordingPrepareRendererResources recorder;
+    mapped.update(
+        key,
+        details,
+        512.0,
+        512.0,
+        provider,
+        &recorder,
+        missing);
+    ASSERT_EQ(RasterMappedToTilesetTile::State::Attached, mapped.getState());
+    ASSERT_EQ(1, recorder.attachCount);
+    ASSERT_NE(nullptr, mapped.texture());
+
+    loadingTile->setRendererResources(nullptr);
+    RasterMappedToTilesetTile::MoreDetail recovered = mapped.update(
+        key,
+        details,
+        512.0,
+        512.0,
+        provider,
+        &recorder,
+        missing);
+
+    EXPECT_EQ(RasterMappedToTilesetTile::MoreDetail::Unknown, recovered);
+    EXPECT_EQ(RasterMappedToTilesetTile::State::Attached, mapped.getState());
+    EXPECT_EQ(2, recorder.attachCount);
+    EXPECT_EQ(loadingTile, recorder.lastRasterTile.get());
+    EXPECT_EQ(loadingTile->getTexture(), recorder.lastTexture);
+}
+
+TEST(RasterOverlayLifecycleTest,
+     ReadyTileTextureAccessorReflectsLateTextureRecovery) {
+    DebugImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    TileKey key{scheme->id(), 3, 4, 2};
+    RasterOverlayDetails details =
+        makeProviderDetails(*scheme, scheme->tileToRectangle(key));
+    std::vector<RasterOverlayProjection> missing;
+
+    RasterMappedToTilesetTile mapped;
+    mapped.update(
+        key,
+        details,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missing);
+    RasterOverlayTile* loadingTile = mapped.getLoadingTile();
+    ASSERT_NE(nullptr, loadingTile);
+    loadingTile->markLoadedWithoutTexture();
+
+    mapped.update(
+        key,
+        details,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        missing);
+    ASSERT_EQ(loadingTile, mapped.getReadyTile());
+    EXPECT_EQ(nullptr, mapped.texture());
+
+    loadingTile->setTexture(std::make_unique<TestTexture>(8, 8));
+
+    EXPECT_EQ(loadingTile->getTexture(), mapped.texture());
+}
+
 TEST(RasterOverlayLifecycleTest, FailedTileWithoutAncestorBecomesReadyLikeCesiumNative) {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
