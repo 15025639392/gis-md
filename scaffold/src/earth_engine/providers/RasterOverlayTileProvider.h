@@ -123,9 +123,7 @@ public:
     class RasterOverlay* getOwner() const { return owner_; }
     void setOwner(RasterOverlay* owner);
     const Rectangle& getCoverageRectangle() const { return coverageRectangle_; }
-    void setCoverageRectangle(const Rectangle& coverageRectangle) {
-        coverageRectangle_ = coverageRectangle;
-    }
+    void setCoverageRectangle(const Rectangle& coverageRectangle);
 
     /// Direct access to the imagery provider.
     ImageryProvider& getImageryProvider() { return provider_; }
@@ -166,14 +164,9 @@ public:
     double getMaximumScreenSpaceError() const {
         return maximumScreenSpaceError_;
     }
-    void setMaximumScreenSpaceError(double maximumScreenSpaceError) {
-        maximumScreenSpaceError_ =
-            maximumScreenSpaceError > 0.0 ? maximumScreenSpaceError : 2.0;
-    }
+    void setMaximumScreenSpaceError(double maximumScreenSpaceError);
     int getMaximumTextureSize() const { return maximumTextureSize_; }
-    void setMaximumTextureSize(int maximumTextureSize) {
-        maximumTextureSize_ = maximumTextureSize > 0 ? maximumTextureSize : 2048;
-    }
+    void setMaximumTextureSize(int maximumTextureSize);
     int64_t getSubTileCacheBytes() const {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         return asyncState_->subTileCacheBytes;
@@ -272,6 +265,7 @@ private:
 
     /// Tile cache key from TileKey.
     std::string tileCacheKey(const TileKey& key) const;
+    void invalidateCompositeTileCache();
     void invalidateSourceAssetDepotCache();
 
     ImageryProvider& provider_;
@@ -354,6 +348,7 @@ private:
     /// Monotonic frame counter, updated by trimUnusedTiles.
     /// Used to stamp lastUsedFrame on tiles in getTile().
     uint64_t frameNumber_ = 0;
+    uint64_t compositeTileEpoch_ = 0;
     double maximumScreenSpaceError_ = 2.0;
     int maximumTextureSize_ = 2048;
     int minimumLevel_ = 0;

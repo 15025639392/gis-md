@@ -608,7 +608,8 @@ int chooseQuadtreeSourceZoom(const TileScheme& scheme,
 
 std::string compositeTileCacheKey(const TileScheme& scheme,
                                   const Rectangle& rectangle,
-                                  int sourceZoom) {
+                                  int sourceZoom,
+                                  uint64_t epoch) {
     char bounds[256];
     std::snprintf(bounds,
                   sizeof(bounds),
@@ -617,7 +618,8 @@ std::string compositeTileCacheKey(const TileScheme& scheme,
                   rectangle.south(),
                   rectangle.east(),
                   rectangle.north());
-    return "composite/" + scheme.id() + "/srcz/" +
+    return "composite/epoch/" + std::to_string(epoch) + "/" +
+           scheme.id() + "/srcz/" +
            std::to_string(sourceZoom) + "/" + bounds;
 }
 
@@ -1561,12 +1563,44 @@ RasterOverlayTileProvider::~RasterOverlayTileProvider() {
 void RasterOverlayTileProvider::setOwner(RasterOverlay* owner) {
     owner_ = owner;
     if (owner_) {
-        coverageRectangle_ = owner_->getOptions().coverageRectangle;
+        setCoverageRectangle(owner_->getOptions().coverageRectangle);
+        setMaximumScreenSpaceError(
+            owner_->getOptions().maximumScreenSpaceError);
         setMaximumTextureSize(owner_->getOptions().maximumTextureSize);
         setSubTileCacheBytes(owner_->getOptions().subTileCacheBytes);
         setLevelRange(owner_->getOptions().minimumZoom,
                       owner_->getOptions().maximumZoom);
     }
+}
+
+void RasterOverlayTileProvider::setCoverageRectangle(
+    const Rectangle& coverageRectangle) {
+    if (coverageRectangle_ == coverageRectangle) {
+        return;
+    }
+    coverageRectangle_ = coverageRectangle;
+    invalidateCompositeTileCache();
+}
+
+void RasterOverlayTileProvider::setMaximumScreenSpaceError(
+    double maximumScreenSpaceError) {
+    const double nextMaximumScreenSpaceError =
+        maximumScreenSpaceError > 0.0 ? maximumScreenSpaceError : 2.0;
+    if (maximumScreenSpaceError_ == nextMaximumScreenSpaceError) {
+        return;
+    }
+    maximumScreenSpaceError_ = nextMaximumScreenSpaceError;
+    invalidateCompositeTileCache();
+}
+
+void RasterOverlayTileProvider::setMaximumTextureSize(int maximumTextureSize) {
+    const int nextMaximumTextureSize =
+        maximumTextureSize > 0 ? maximumTextureSize : 2048;
+    if (maximumTextureSize_ == nextMaximumTextureSize) {
+        return;
+    }
+    maximumTextureSize_ = nextMaximumTextureSize;
+    invalidateCompositeTileCache();
 }
 
 void RasterOverlayTileProvider::setSubTileCacheBytes(int64_t subTileCacheBytes) {
@@ -1606,6 +1640,7 @@ void RasterOverlayTileProvider::setLevelRange(int minimumLevel,
     }
     minimumLevel_ = nextMinimumLevel;
     maximumLevel_ = nextMaximumLevel;
+    invalidateCompositeTileCache();
     invalidateSourceAssetDepotCache();
 }
 
@@ -1620,6 +1655,21 @@ void RasterOverlayTileProvider::refreshSourceAssetDepot() {
         asyncState_,
         getMinimumLevel(),
         getMaximumLevel());
+}
+
+void RasterOverlayTileProvider::invalidateCompositeTileCache() {
+    ++compositeTileEpoch_;
+    for (auto it = tiles_.begin(); it != tiles_.end();) {
+        if (it->first.rfind("composite/", 0) == 0 &&
+            it->second &&
+            it->second->getState() !=
+                RasterOverlayTile::LoadState::Loading) {
+            it = tiles_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
 }
 
 void RasterOverlayTileProvider::invalidateSourceAssetDepotCache() {
@@ -1726,7 +1776,10 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
     }
 
     const std::string ck = compositeTileCacheKey(
-        scheme_, providerGeometryBounds, sourcePlan.sourceZoom);
+        scheme_,
+        providerGeometryBounds,
+        sourcePlan.sourceZoom,
+        compositeTileEpoch_);
     auto existing = tiles_.find(ck);
     if (existing != tiles_.end()) {
         existing->second->lastUsedFrame = frameNumber_;

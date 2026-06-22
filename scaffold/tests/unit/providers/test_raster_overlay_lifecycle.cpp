@@ -904,6 +904,59 @@ TEST(RasterOverlayLifecycleTest, CompositeTileKeepsGeometryBoundsAndTargetPixels
 }
 
 TEST(RasterOverlayLifecycleTest,
+     CompositeTileCacheInvalidatesWhenSourcePlanConfigurationChanges) {
+    DebugImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto geometryScheme = TileScheme::createGeographicTMS();
+    RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
+
+    const TileKey directKey{imageryScheme->id(), 3, 4, 2};
+    const Rectangle directBounds = imageryScheme->tileToRectangle(directKey);
+    auto directTile = provider
+                          .mapRasterTilesToGeometryTile(
+                              projectForProvider(provider, directBounds),
+                              512.0,
+                              512.0)
+                          .tile;
+    ASSERT_NE(nullptr, directTile);
+    ASSERT_FALSE(directTile->isCompositeTile());
+
+    const TileKey geometryKey{geometryScheme->id(), 2, 4, 2};
+    const Rectangle geometryBounds =
+        geometryScheme->tileToRectangle(geometryKey);
+    auto firstComposite = provider
+                              .mapRasterTilesToGeometryTile(
+                                  projectForProvider(provider, geometryBounds),
+                                  512.0,
+                                  512.0)
+                              .tile;
+
+    ASSERT_NE(nullptr, firstComposite);
+    ASSERT_TRUE(firstComposite->isCompositeTile());
+    const std::string firstCompositeKey = firstComposite->getCacheKey();
+    EXPECT_EQ(2, provider.getCachedTileCount());
+
+    provider.setMaximumScreenSpaceError(
+        provider.getMaximumScreenSpaceError() * 4.0);
+
+    EXPECT_EQ(1, provider.getCachedTileCount());
+    EXPECT_EQ(directTile, provider.getTile(directKey));
+
+    auto secondComposite = provider
+                               .mapRasterTilesToGeometryTile(
+                                   projectForProvider(provider, geometryBounds),
+                                   512.0,
+                                   512.0)
+                               .tile;
+
+    ASSERT_NE(nullptr, secondComposite);
+    ASSERT_TRUE(secondComposite->isCompositeTile());
+    EXPECT_NE(firstComposite.get(), secondComposite.get());
+    EXPECT_NE(firstCompositeKey, secondComposite->getCacheKey());
+    EXPECT_EQ(2, provider.getCachedTileCount());
+}
+
+TEST(RasterOverlayLifecycleTest,
      ExactProviderRectangleUsesDirectQuadtreeTileLikeCesiumNative) {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
