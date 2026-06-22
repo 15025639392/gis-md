@@ -789,6 +789,72 @@ TEST(QuantizedMeshTerrainProviderTest, LayerJsonUrlConfigUsesSeparateFetcher) {
     EXPECT_EQ(0, doneDiag.peakWorkerBlockingRequests);
 }
 
+TEST(QuantizedMeshTerrainProviderTest,
+     ParentUrlWithQueryAppendsLayerJsonBeforeQueryLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+
+    const std::string childLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["childTiles/{z}/{x}/{y}.terrain"],
+      "parentUrl": "Parent?token=parent",
+      "maxzoom": 4
+    })json";
+
+    bool configured = false;
+    std::thread configThread([&]() {
+        configured = provider.configureFromLayerJson(
+            childLayerJson,
+            "https://terrain.example/root/layer.json?token=base");
+    });
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    EXPECT_EQ("https://terrain.example/root/Parent/layer.json?token=parent",
+              bridge.pendingUrl(0));
+    ASSERT_TRUE(bridge.completeNext(404, {}));
+    configThread.join();
+
+    EXPECT_TRUE(configured);
+    EXPECT_EQ(0u, bridge.pendingCount());
+}
+
+TEST(QuantizedMeshTerrainProviderTest,
+     ParentUrlWithFragmentAppendsLayerJsonBeforeFragmentLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+
+    const std::string childLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["childTiles/{z}/{x}/{y}.terrain"],
+      "parentUrl": "Parent#terrain-parent",
+      "maxzoom": 4
+    })json";
+
+    bool configured = false;
+    std::thread configThread([&]() {
+        configured = provider.configureFromLayerJson(
+            childLayerJson,
+            "https://terrain.example/root/layer.json");
+    });
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    EXPECT_EQ("https://terrain.example/root/Parent/layer.json#terrain-parent",
+              bridge.pendingUrl(0));
+    ASSERT_TRUE(bridge.completeNext(404, {}));
+    configThread.join();
+
+    EXPECT_TRUE(configured);
+    EXPECT_EQ(0u, bridge.pendingCount());
+}
+
 TEST(QuantizedMeshTerrainProviderTest, ConfiguresFromCesiumLayerJson) {
     QuantizedMeshTerrainProvider provider("https://example.com/fallback/{z}/{x}/{y}.terrain");
     const std::string layerJson = R"json({

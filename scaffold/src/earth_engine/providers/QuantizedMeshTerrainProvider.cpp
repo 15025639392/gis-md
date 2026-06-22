@@ -567,12 +567,11 @@ std::string resolveParentLayerJsonUrl(const std::string& layerJsonUrl,
 
     resolved.hasQuery = relative.hasQuery;
     resolved.query = relative.query;
-    std::string url = composeUrl(resolved);
-    if (url.empty() || url.back() != '/') {
-        url += "/";
+    if (resolved.path.empty() || resolved.path.back() != '/') {
+        resolved.path += "/";
     }
-    url += "layer.json";
-    return url;
+    resolved.path += "layer.json";
+    return composeUrl(resolved);
 }
 
 std::string substituteTemplateParameters(
