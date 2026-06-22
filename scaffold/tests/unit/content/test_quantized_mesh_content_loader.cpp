@@ -542,6 +542,48 @@ TEST(QuantizedMeshContentLoaderTest,
     EXPECT_EQ(4u, update.metadataAvailability[1][4]);
 }
 
+TEST(QuantizedMeshContentLoaderTest,
+     CarriesCurrentTileMetadataFromDecodedContentLikeCesiumNative) {
+    const std::string metadataJson = R"json({
+        "available": [
+            [
+                {"startX": 2, "startY": 0, "endX": 3, "endY": 1}
+            ],
+            [
+                {"startX": 4, "startY": 2, "endX": 7, "endY": 3}
+            ]
+        ]
+    })json";
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytesWithMetadata(metadataJson);
+    const TileKey subtreeKey{"Geographic-TMS", 3, 2, 1};
+    QuantizedMeshAvailabilityUpdate currentTileUpdate;
+    currentTileUpdate.layerIndex = 5;
+    currentTileUpdate.subtreeKey = subtreeKey;
+
+    QuantizedMeshContentLoadResult result =
+        QuantizedMeshContentLoader::load(
+            bytes.data(),
+            bytes.size(),
+            geographicRootWestRectangle(),
+            false,
+            {},
+            RasterOverlayProjection::Geographic,
+            currentTileUpdate);
+
+    EXPECT_TRUE(result.success());
+    ASSERT_EQ(1u, result.availabilityUpdates.size());
+    const QuantizedMeshAvailabilityUpdate& update =
+        result.availabilityUpdates.front();
+    EXPECT_EQ(5, update.layerIndex);
+    EXPECT_EQ(subtreeKey, update.subtreeKey);
+    ASSERT_EQ(2u, update.metadataAvailability.size());
+    EXPECT_EQ((QuantizedMeshAvailabilityRange{0, 2, 0, 3, 1}),
+              update.metadataAvailability[0]);
+    EXPECT_EQ((QuantizedMeshAvailabilityRange{1, 4, 2, 7, 3}),
+              update.metadataAvailability[1]);
+}
+
 TEST(QuantizedMeshContentLoaderTest, InvalidBodyFailsWithoutUpdates) {
     const uint8_t invalid[] = {0, 1, 2, 3};
 

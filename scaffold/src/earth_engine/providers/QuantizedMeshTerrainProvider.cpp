@@ -16,6 +16,7 @@
 #include <sstream>
 #include <algorithm>
 #include <mutex>
+#include <optional>
 #include <cstring>
 #include <fstream>
 #include <thread>
@@ -1807,16 +1808,14 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                 token->isCancelled());
 #endif
             std::vector<QuantizedMeshMetadataContent> metadata;
-            metadata.reserve(
-                availabilityRequests->size() +
-                (includeCurrentLayerMetadata ? 1u : 0u));
+            metadata.reserve(availabilityRequests->size());
+            std::optional<QuantizedMeshAvailabilityUpdate>
+                currentTileAvailabilityUpdate;
             if (includeCurrentLayerMetadata && contentLayerIndex >= 0) {
-                QuantizedMeshMetadataContent currentLayerMetadata;
-                currentLayerMetadata.layerIndex = contentLayerIndex;
-                currentLayerMetadata.subtreeKey = key;
-                currentLayerMetadata.data = body->data();
-                currentLayerMetadata.size = body->size();
-                metadata.push_back(currentLayerMetadata);
+                QuantizedMeshAvailabilityUpdate update;
+                update.layerIndex = contentLayerIndex;
+                update.subtreeKey = key;
+                currentTileAvailabilityUpdate = std::move(update);
             }
             for (size_t i = 0; i < availabilityRequests->size(); ++i) {
                 const LayerAvailabilityRequest& request =
@@ -1844,7 +1843,8 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                     terrainContentRectangle(key, contentSchemeId),
                     waterMaskEnabled_,
                     metadata,
-                    rasterOverlayProjectionForTerrainScheme(contentSchemeId));
+                    rasterOverlayProjectionForTerrainScheme(contentSchemeId),
+                    std::move(currentTileAvailabilityUpdate));
             if (!contentResult.success()) {
                 completion.complete();
                 (*callback)(key, TileContentLoadResult::failed());

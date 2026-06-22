@@ -49,7 +49,9 @@ public:
         bool enableWaterMask,
         const std::vector<QuantizedMeshMetadataContent>& metadata,
         RasterOverlayProjection terrainProjection =
-            RasterOverlayProjection::Geographic);
+            RasterOverlayProjection::Geographic,
+        std::optional<QuantizedMeshAvailabilityUpdate>
+            currentTileAvailabilityUpdate = std::nullopt);
 };
 
 } // namespace earth_engine

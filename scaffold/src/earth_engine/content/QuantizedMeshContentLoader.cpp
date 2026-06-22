@@ -156,7 +156,9 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
     const Rectangle& tileRectangle,
     bool enableWaterMask,
     const std::vector<QuantizedMeshMetadataContent>& metadata,
-    RasterOverlayProjection terrainProjection) {
+    RasterOverlayProjection terrainProjection,
+    std::optional<QuantizedMeshAvailabilityUpdate>
+        currentTileAvailabilityUpdate) {
     QuantizedMeshContentLoadResult result;
 
     std::unique_ptr<QuantizedMeshParser::DecodedTile> decodedTile =
@@ -195,7 +197,16 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
         decodedTile->horizonOcclusionPoint;
     result.metadata.rasterOverlayDetails = std::move(rasterOverlayDetails);
     result.gltfModel = std::move(gltfModel);
-    result.availabilityUpdates.reserve(metadata.size());
+    result.availabilityUpdates.reserve(
+        metadata.size() + (currentTileAvailabilityUpdate ? 1u : 0u));
+    if (currentTileAvailabilityUpdate) {
+        if (decodedTile->hasMetadataAvailability) {
+            currentTileAvailabilityUpdate->metadataAvailability =
+                decodedTile->metadataAvailability;
+        }
+        result.availabilityUpdates.push_back(
+            std::move(*currentTileAvailabilityUpdate));
+    }
     for (const QuantizedMeshMetadataContent& item : metadata) {
         QuantizedMeshAvailabilityUpdate update;
         update.layerIndex = item.layerIndex;
