@@ -109,6 +109,13 @@ public:
                     double targetScreenPixelsX,
                     double targetScreenPixelsY);
 
+    /// Return the underlying quadtree imagery tile when the geometry rectangle
+    /// maps exactly to one provider tile. Returns nullptr for partial or
+    /// multi-tile geometry so callers can fall back to rectangle handling.
+    TilePtr getDirectTileForRectangle(const Rectangle& rectangle,
+                                      double targetScreenPixelsX,
+                                      double targetScreenPixelsY);
+
     /// cesium-native: returns whether the provider is ready to serve tiles.
     bool isReady() const { return ready_; }
     void setReady(bool ready) { ready_ = ready; }

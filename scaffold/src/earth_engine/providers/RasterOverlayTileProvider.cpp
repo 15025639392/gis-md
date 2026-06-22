@@ -1523,13 +1523,13 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
     return tile;
 }
 
-RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
+RasterOverlayTileProvider::TilePtr
+RasterOverlayTileProvider::getDirectTileForRectangle(
     const Rectangle& providerGeometryBounds,
     double targetScreenPixelsX,
     double targetScreenPixelsY) {
-    // cesium-native: return placeholder if provider is not yet ready
     if (!ready_) {
-        return getPlaceholderTile();
+        return nullptr;
     }
 
     const Rectangle geometryBounds =
@@ -1550,16 +1550,55 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
         getMinimumLevel(),
         getMaximumLevel());
 
-    if (sourcePlan.sourceKeys.size() == 1) {
-        const TileKey& sourceKey = sourcePlan.sourceKeys.front();
-        const Rectangle sourceTileBounds = scheme_.tileToRectangle(sourceKey);
-        if (rectanglesEqualForDirectRasterTile(geometryBounds,
-                                               sourceTileBounds) &&
-            rectanglesEqualForDirectRasterTile(sourceBounds,
-                                               sourceTileBounds)) {
-            return getTile(sourceKey);
-        }
+    if (sourcePlan.sourceKeys.size() != 1) {
+        return nullptr;
     }
+
+    const TileKey& sourceKey = sourcePlan.sourceKeys.front();
+    const Rectangle sourceTileBounds = scheme_.tileToRectangle(sourceKey);
+    if (!rectanglesEqualForDirectRasterTile(geometryBounds,
+                                            sourceTileBounds) ||
+        !rectanglesEqualForDirectRasterTile(sourceBounds,
+                                            sourceTileBounds)) {
+        return nullptr;
+    }
+
+    return getTile(sourceKey);
+}
+
+RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
+    const Rectangle& providerGeometryBounds,
+    double targetScreenPixelsX,
+    double targetScreenPixelsY) {
+    // cesium-native: return placeholder if provider is not yet ready
+    if (!ready_) {
+        return getPlaceholderTile();
+    }
+
+    if (TilePtr directTile = getDirectTileForRectangle(
+            providerGeometryBounds,
+            targetScreenPixelsX,
+            targetScreenPixelsY)) {
+        return directTile;
+    }
+
+    const Rectangle geometryBounds =
+        unprojectProviderToGeographic(providerGeometryBounds, projection_);
+    const Rectangle sourceBounds =
+        mapGeometryBoundsToImageryCoverage(geometryBounds, coverageRectangle_);
+
+    RectangleSourcePlan sourcePlan = buildRectangleSourcePlan(
+        scheme_,
+        provider_,
+        textureUploader_.get(),
+        geometryBounds,
+        sourceBounds,
+        targetScreenPixelsX,
+        targetScreenPixelsY,
+        maximumScreenSpaceError_,
+        maximumTextureSize_,
+        getMinimumLevel(),
+        getMaximumLevel());
 
     const std::string ck = rectangleTileCacheKey(
         scheme_, providerGeometryBounds, sourcePlan.sourceZoom);
