@@ -23,6 +23,19 @@ class RenderDevice;
 
 class TilePendingLoadCommitCoordinator {
 public:
+    static void captureInitialBoundingVolumes(
+        TilesetTile& tile,
+        TileLoadResultMetadata& metadata) {
+        if (!metadata.initialBoundingVolume && tile.boundingVolume) {
+            metadata.initialBoundingVolume = *tile.boundingVolume;
+        }
+        if (!metadata.initialContentBoundingVolume &&
+            tile.contentBoundingVolume) {
+            metadata.initialContentBoundingVolume =
+                *tile.contentBoundingVolume;
+        }
+    }
+
     template <typename EnsureTileFn, typename MarkResourcesDirtyFn>
     static void commitTerrainTerminalResult(
         PendingTileLoad& result,
@@ -104,6 +117,7 @@ public:
                 *tile,
                 content);
             uploadsGltfTerrain = content.hasGltfTerrainPayload();
+            captureInitialBoundingVolumes(*tile, content.metadata);
             if (contentProviderOwnsTerrainQuadtree && uploadsGltfTerrain) {
                 const TileTerrainUploadCommitAction action =
                     TileTerrainUploadCommitter::
@@ -189,6 +203,7 @@ public:
         TileGltfTerrainUpsampledChildMaterializer::materialize(
             *tile,
             upload.content());
+        captureInitialBoundingVolumes(*tile, upload.content().metadata);
         TileContentUploadCommitter::applyAvailabilityUpdates(
             contentProvider,
             upload.content());

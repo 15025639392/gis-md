@@ -15,6 +15,8 @@ struct TileLoadResultMetadata {
     std::optional<TileBoundingVolume> updatedBoundingVolume;
     std::optional<TileBoundingVolume> updatedContentBoundingVolume;
     std::optional<RasterOverlayDetails> rasterOverlayDetails;
+    std::optional<TileBoundingVolume> initialBoundingVolume;
+    std::optional<TileBoundingVolume> initialContentBoundingVolume;
     std::optional<std::pair<double, double>> terrainHeightRange;
     std::optional<Vec3> horizonOcclusionPoint;
 };

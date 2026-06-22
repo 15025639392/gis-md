@@ -28,10 +28,29 @@ bool hasValidBoundingRegion(const RasterOverlayDetails& details) {
 void TileLoadResultMetadataApplicator::apply(
     TilesetTile& tile,
     TileLoadResultMetadata&& metadata) {
+    if (metadata.initialBoundingVolume) {
+        tile.initialBoundingVolume = std::move(metadata.initialBoundingVolume);
+    } else if (!tile.initialBoundingVolume && metadata.updatedBoundingVolume &&
+               tile.boundingVolume) {
+        tile.initialBoundingVolume = *tile.boundingVolume;
+    }
+
+    if (metadata.initialContentBoundingVolume) {
+        tile.initialContentBoundingVolume =
+            std::move(metadata.initialContentBoundingVolume);
+    } else if (!tile.initialContentBoundingVolume &&
+               metadata.updatedContentBoundingVolume &&
+               tile.contentBoundingVolume) {
+        tile.initialContentBoundingVolume = *tile.contentBoundingVolume;
+    }
+
     if (!metadata.updatedBoundingVolume &&
         metadata.rasterOverlayDetails &&
         isDefaultLooseRegion(tile) &&
         hasValidBoundingRegion(*metadata.rasterOverlayDetails)) {
+        if (!tile.initialBoundingVolume && tile.boundingVolume) {
+            tile.initialBoundingVolume = *tile.boundingVolume;
+        }
         const auto& region = metadata.rasterOverlayDetails->boundingRegion;
         metadata.updatedBoundingVolume = TileBoundingVolume::fromRegion(
             region.rectangle,

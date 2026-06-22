@@ -38,6 +38,8 @@ struct TilesetTile {
     std::optional<TileBoundingVolume> boundingVolume;
     std::optional<TileBoundingVolume> viewerRequestVolume;
     std::optional<TileBoundingVolume> contentBoundingVolume;
+    std::optional<TileBoundingVolume> initialBoundingVolume;
+    std::optional<TileBoundingVolume> initialContentBoundingVolume;
 
     // ---- Tree structure (cesium-native parent/child) ----
     // DIFF from cesium-native: children are raw pointers, ownership is in

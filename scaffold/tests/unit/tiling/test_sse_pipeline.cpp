@@ -12802,6 +12802,77 @@ void testTileContentUploadPolicyAppliesTileLoadResultFields() {
           "TileContentUploadPolicy: raster overlay details tighten loose bounding region like cesium-native");
 }
 
+void testTileLoadResultPreservesInitialBoundingVolumes() {
+    TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
+    const Rectangle initialRectangle{0.0, 0.0, 1.0, 1.0};
+    const Rectangle initialContentRectangle{0.1, 0.1, 0.9, 0.9};
+    tile.boundingVolume =
+        TileBoundingVolume::fromRegion(initialRectangle, -1000.0, 9000.0);
+    tile.contentBoundingVolume = TileBoundingVolume::fromRegion(
+        initialContentRectangle,
+        -200.0,
+        300.0);
+
+    auto model = std::make_unique<GltfModel>();
+    TileContentLoadResult result = TileContentLoadResult::render(
+        std::move(model));
+    const Rectangle updatedRectangle{0.2, 0.25, 0.8, 0.85};
+    const Rectangle updatedContentRectangle{0.3, 0.35, 0.7, 0.75};
+    result.metadata.updatedBoundingVolume =
+        TileBoundingVolume::fromRegion(updatedRectangle, -12.0, 34.0);
+    result.metadata.updatedContentBoundingVolume =
+        TileBoundingVolume::fromRegion(updatedContentRectangle, -5.0, 15.0);
+
+    TileContentUploadPolicy::prepareGltfRenderContent(
+        tile,
+        TileLoadedContent::fromContentResult(std::move(result)));
+
+    check(tile.initialBoundingVolume &&
+              tile.initialBoundingVolume->kind ==
+                  TileBoundingVolumeKind::Region &&
+              tile.initialBoundingVolume->region == initialRectangle &&
+              tile.initialBoundingVolume->minimumHeight == -1000.0 &&
+              tile.initialBoundingVolume->maximumHeight == 9000.0 &&
+              tile.initialContentBoundingVolume &&
+              tile.initialContentBoundingVolume->kind ==
+                  TileBoundingVolumeKind::Region &&
+              tile.initialContentBoundingVolume->region ==
+                  initialContentRectangle &&
+              tile.initialContentBoundingVolume->minimumHeight == -200.0 &&
+              tile.initialContentBoundingVolume->maximumHeight == 300.0 &&
+              tile.boundingVolume &&
+              tile.boundingVolume->region == updatedRectangle &&
+              tile.contentBoundingVolume &&
+              tile.contentBoundingVolume->region == updatedContentRectangle,
+          "TileLoadResult: initial bounding volumes stay separate from updated volumes like cesium-native");
+
+    TilesetTile explicitTile(TileKey{"test", 0, 1, 0}, Rectangle{});
+    explicitTile.boundingVolume =
+        TileBoundingVolume::fromRegion(initialRectangle, -1.0, 1.0);
+    auto explicitModel = std::make_unique<GltfModel>();
+    TileContentLoadResult explicitResult = TileContentLoadResult::render(
+        std::move(explicitModel));
+    const Rectangle explicitInitialRectangle{-1.0, -0.5, 1.0, 0.5};
+    const Rectangle explicitUpdatedRectangle{-0.25, -0.2, 0.25, 0.2};
+    explicitResult.metadata.initialBoundingVolume =
+        TileBoundingVolume::fromRegion(explicitInitialRectangle, 10.0, 20.0);
+    explicitResult.metadata.updatedBoundingVolume =
+        TileBoundingVolume::fromRegion(explicitUpdatedRectangle, 11.0, 19.0);
+
+    TileContentUploadPolicy::prepareGltfRenderContent(
+        explicitTile,
+        TileLoadedContent::fromContentResult(std::move(explicitResult)));
+
+    check(explicitTile.initialBoundingVolume &&
+              explicitTile.initialBoundingVolume->region ==
+                  explicitInitialRectangle &&
+              explicitTile.initialBoundingVolume->minimumHeight == 10.0 &&
+              explicitTile.initialBoundingVolume->maximumHeight == 20.0 &&
+              explicitTile.boundingVolume &&
+              explicitTile.boundingVolume->region == explicitUpdatedRectangle,
+          "TileLoadResult: explicit initial bounding volume from loader is preserved");
+}
+
 void testTileContentUploadPolicyMarksGltfRenderResourceFailure() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
     tile.content.renderContent.setGltfContent(std::make_unique<GltfModel>());
@@ -28299,6 +28370,7 @@ int main() {
     testContentTileLoadResultCarriesGltfTerrainModel();
     testGltfRenderContentProvidesRasterOverlayDetails();
     testTileContentUploadPolicyAppliesTileLoadResultFields();
+    testTileLoadResultPreservesInitialBoundingVolumes();
     testTileContentUploadPolicyMarksGltfRenderResourceFailure();
     testTileContentUploadCommitterAppliesRenderResourceOutcome();
     testTileTerrainUploadPolicyMarksTerrainRenderContentStates();

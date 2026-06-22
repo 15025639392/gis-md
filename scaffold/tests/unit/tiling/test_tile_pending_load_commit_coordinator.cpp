@@ -1301,6 +1301,74 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     ContentUploadCapturesInitialBoundingVolumesBeforeUpdate) {
+    TileLoadLifecycle lifecycle;
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "content-initial-bv";
+    TilesetTile tile(key, Rectangle{});
+    const Rectangle initialRectangle(0.0, 0.0, 1.0, 1.0);
+    const Rectangle initialContentRectangle(0.1, 0.1, 0.9, 0.9);
+    tile.boundingVolume =
+        TileBoundingVolume::fromRegion(initialRectangle, -1000.0, 9000.0);
+    tile.contentBoundingVolume = TileBoundingVolume::fromRegion(
+        initialContentRectangle,
+        -50.0,
+        75.0);
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    auto model = std::make_unique<GltfModel>();
+    TileContentLoadResult contentResult = TileContentLoadResult::render(
+        std::move(model));
+    const Rectangle updatedRectangle(0.25, 0.25, 0.75, 0.75);
+    const Rectangle updatedContentRectangle(0.3, 0.3, 0.7, 0.7);
+    contentResult.metadata.updatedBoundingVolume =
+        TileBoundingVolume::fromRegion(updatedRectangle, -12.0, 34.0);
+    contentResult.metadata.updatedContentBoundingVolume =
+        TileBoundingVolume::fromRegion(updatedContentRectangle, -5.0, 15.0);
+    PendingTileLoad upload{TileLoadDomain::Content,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadResult::fromContentResult(std::move(contentResult))};
+    bool gltfEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitContentUpload(
+        upload,
+        nullptr,
+        nullptr,
+        {},
+        lifecycle,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&gltfEnsured](TilesetTile& committedTile) {
+            committedTile.content.renderContent.addGltfPrimitiveResource(
+                GltfPrimitiveRenderResources{});
+            committedTile.markRenderContentDone();
+            gltfEnsured = true;
+        },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    ASSERT_TRUE(tile.initialBoundingVolume.has_value());
+    EXPECT_EQ(initialRectangle, tile.initialBoundingVolume->region);
+    EXPECT_DOUBLE_EQ(-1000.0, tile.initialBoundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(9000.0, tile.initialBoundingVolume->maximumHeight);
+    ASSERT_TRUE(tile.initialContentBoundingVolume.has_value());
+    EXPECT_EQ(initialContentRectangle,
+              tile.initialContentBoundingVolume->region);
+    EXPECT_DOUBLE_EQ(-50.0,
+                     tile.initialContentBoundingVolume->minimumHeight);
+    EXPECT_DOUBLE_EQ(75.0,
+                     tile.initialContentBoundingVolume->maximumHeight);
+    ASSERT_TRUE(tile.boundingVolume.has_value());
+    EXPECT_EQ(updatedRectangle, tile.boundingVolume->region);
+    ASSERT_TRUE(tile.contentBoundingVolume.has_value());
+    EXPECT_EQ(updatedContentRectangle, tile.contentBoundingVolume->region);
+    EXPECT_TRUE(gltfEnsured);
+    EXPECT_TRUE(resourcesDirty);
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      ContentRetryAndCancelledClearEmptyMarker) {
     expectContentTerminalClearsEmptyMarker(TileLoadStatus::RetryLater);
     expectContentTerminalClearsEmptyMarker(TileLoadStatus::Cancelled);
