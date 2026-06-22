@@ -848,7 +848,7 @@ TEST(TileChildMaterializerTest,
 }
 
 TEST(TileChildMaterializerTest,
-     RasterUpsampledChildrenUseReadyOverlayProjectionCenterLikeCesiumNative) {
+     RasterUpsampledChildrenSplitContentRegionNotOverlayRectangleLikeCesiumNative) {
     DebugImageryProvider imagery;
     auto overlayScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *overlayScheme, nullptr);
@@ -924,17 +924,17 @@ TEST(TileChildMaterializerTest,
         ensure));
     ASSERT_EQ(4u, parent.children.size());
 
-    const double centerLng = overlayRegion.west() + overlayRegion.width() * 0.5;
+    const double centerLng = tightRegion.west() + tightRegion.width() * 0.5;
     const double centerLat =
-        overlayRegion.south() + overlayRegion.height() * 0.5;
-    EXPECT_NEAR(overlayRegion.west(), parent.children[0]->bounds.west(), 1e-9);
-    EXPECT_NEAR(overlayRegion.south(), parent.children[0]->bounds.south(), 1e-9);
+        tightRegion.south() + tightRegion.height() * 0.5;
+    EXPECT_NEAR(tightRegion.west(), parent.children[0]->bounds.west(), 1e-9);
+    EXPECT_NEAR(tightRegion.south(), parent.children[0]->bounds.south(), 1e-9);
     EXPECT_NEAR(centerLng, parent.children[0]->bounds.east(), 1e-9);
     EXPECT_NEAR(centerLat, parent.children[0]->bounds.north(), 1e-9);
     EXPECT_NEAR(centerLng, parent.children[3]->bounds.west(), 1e-9);
     EXPECT_NEAR(centerLat, parent.children[3]->bounds.south(), 1e-9);
-    EXPECT_NEAR(overlayRegion.east(), parent.children[3]->bounds.east(), 1e-9);
-    EXPECT_NEAR(overlayRegion.north(), parent.children[3]->bounds.north(), 1e-9);
+    EXPECT_NEAR(tightRegion.east(), parent.children[3]->bounds.east(), 1e-9);
+    EXPECT_NEAR(tightRegion.north(), parent.children[3]->bounds.north(), 1e-9);
 }
 
 TEST(TileChildMaterializerTest, CanRefineHonorsContentRulesBeforeTerrainSignals) {

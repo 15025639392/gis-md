@@ -4,11 +4,7 @@
 #include "TileChildMaterializer.h"
 #include "TilesetTile.h"
 
-#include "../core/geodesy/Ellipsoid.h"
-#include "../core/geodesy/Projection.h"
-#include "../core/geodesy/WebMercatorProjection.h"
 #include "../providers/RasterOverlayTile.h"
-#include "../providers/RasterOverlayTileProvider.h"
 
 #include <vector>
 
@@ -45,15 +41,6 @@ public:
             if (!readyTile) {
                 return;
             }
-            const RasterOverlayProjection projection =
-                readyTile->getTileProvider().getProjection();
-            const Rectangle* projectionRectangle =
-                details.findRectangleForOverlayProjection(projection);
-            if (!projectionRectangle) {
-                return;
-            }
-            subdivisionRectangle =
-                unprojectSubdivisionRectangle(*projectionRectangle, projection);
             hasMoreRasterDetail = true;
         });
 
@@ -66,21 +53,6 @@ public:
             subdivisionRectangle,
             defaultGeometricError,
             ensureTile);
-    }
-
-private:
-    static Rectangle unprojectSubdivisionRectangle(
-        const Rectangle& projectionRectangle,
-        RasterOverlayProjection projection) {
-        switch (projection) {
-            case RasterOverlayProjection::Geographic:
-                return projectionRectangle;
-            case RasterOverlayProjection::WebMercator:
-                return unprojectRectangleSimple(
-                    WebMercatorProjection(Ellipsoid::WGS84()),
-                    projectionRectangle);
-        }
-        return projectionRectangle;
     }
 };
 
