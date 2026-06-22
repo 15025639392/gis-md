@@ -65,6 +65,13 @@ public:
             ingestAvailability(tile.key, ownHeightmap);
         }
 
+        if (!hasOwnTerrain &&
+            tile.content.derivesTerrainFromParent() &&
+            TileGltfTerrainUpsampledChildMaterializer::findGltfTerrainSource(
+                tile) != nullptr) {
+            return TileSurfaceMeshEnsureResult{};
+        }
+
         TileSurfaceMeshResolution resolution =
             TileSurfaceMeshSourceResolver::resolve(
                 tile,

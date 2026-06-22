@@ -11186,6 +11186,67 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               !upsampleResolution.markDone &&
               !ancestorEnsured,
           "TileSurfaceMeshSourceResolver: child resolves ancestor upsample without forcing Done while provider is pending");
+
+    TilesetTile gltfParent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    gltfParent.content.renderContent.prepareGltfContent(
+        makeQuadTerrainGltfModel(gltfParent.bounds),
+        Mat4::identity());
+    gltfParent.content.renderContent.setTerrainRenderContent(true);
+    gltfParent.markRenderContentDone();
+    TilesetTile gltfChild(
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        Rectangle::fromDegrees(0.0, 0.0, 180.0, 90.0),
+        &gltfParent);
+    gltfChild.content.markTerrainAvailabilityUpsample();
+    bool gltfAncestorEnsured = false;
+    TileSurfaceMeshResolution gltfUpsampleResolution =
+        TileSurfaceMeshSourceResolver::resolve(
+            gltfChild,
+            nullptr,
+            true,
+            [](const TilesetTile&, bool) -> const TilesetTile* {
+                return nullptr;
+            },
+            [&gltfAncestorEnsured](TilesetTile&) {
+                gltfAncestorEnsured = true;
+            });
+    check(!gltfChild.content.renderContent.hasSurfaceMesh() &&
+              gltfUpsampleResolution.source == SurfaceDrawableSource::None &&
+              !gltfUpsampleResolution.markDone &&
+              !gltfAncestorEnsured,
+          "TileSurfaceMeshSourceResolver: glTF terrain ancestor defers to glTF upsample instead of SurfaceMesh fallback");
+
+    bool gltfEnsureIngested = false;
+    bool gltfEnsureAncestorEnsured = false;
+    bool gltfEnsureCompletenessChecked = false;
+    TileSurfaceMeshEnsureResult gltfEnsureResult =
+        TileSurfaceMeshEnsurer::ensure(
+            TileSurfaceMeshEnsureInput{
+                gltfChild,
+                nullptr,
+                nullptr,
+                true},
+            [&gltfEnsureIngested](const TileKey&, DecodedHeightmap*) {
+                gltfEnsureIngested = true;
+            },
+            [](const TilesetTile&, bool) -> const TilesetTile* {
+                return nullptr;
+            },
+            [&gltfEnsureAncestorEnsured](TilesetTile&) {
+                gltfEnsureAncestorEnsured = true;
+            },
+            [&gltfEnsureCompletenessChecked](const TilesetTile&) {
+                gltfEnsureCompletenessChecked = true;
+                return false;
+            });
+    check(!gltfEnsureResult.resourcesDirty &&
+              !gltfChild.content.renderContent.hasSurfaceMesh() &&
+              !gltfEnsureIngested &&
+              !gltfEnsureAncestorEnsured &&
+              !gltfEnsureCompletenessChecked,
+          "TileSurfaceMeshEnsurer: glTF terrain upsample source bypasses SurfaceMesh commit path");
 }
 
 void testTileSelectionPreTraversalPolicyPlansRenderAndChildVisit() {

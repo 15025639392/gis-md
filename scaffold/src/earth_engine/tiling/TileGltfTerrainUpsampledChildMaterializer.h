@@ -12,6 +12,23 @@ namespace earth_engine {
 
 class TileGltfTerrainUpsampledChildMaterializer {
 public:
+    static const TilesetTile* findGltfTerrainSource(const TilesetTile& tile) {
+        const TilesetTile* ancestor = tile.parent;
+        while (ancestor) {
+            const bool sourceStateReady =
+                ancestor->content.loadState == TileLoadState::Done ||
+                ancestor->content.loadState == TileLoadState::Unloading;
+            if (sourceStateReady &&
+                ancestor->content.contentKind == TileContentKind::Render &&
+                ancestor->content.renderContent.isTerrainRenderContent() &&
+                ancestor->content.renderContent.hasGltfContent()) {
+                return ancestor;
+            }
+            ancestor = ancestor->parent;
+        }
+        return nullptr;
+    }
+
     static bool materialize(TilesetTile& tile,
                             TileLoadedContent& content) {
         if (!tile.content.derivesTerrainFromParent() ||
@@ -156,23 +173,6 @@ private:
         }
 
         return modelHasTextureCoordinate(model, 0) ? 0 : -1;
-    }
-
-    static const TilesetTile* findGltfTerrainSource(const TilesetTile& tile) {
-        const TilesetTile* ancestor = tile.parent;
-        while (ancestor) {
-            const bool sourceStateReady =
-                ancestor->content.loadState == TileLoadState::Done ||
-                ancestor->content.loadState == TileLoadState::Unloading;
-            if (sourceStateReady &&
-                ancestor->content.contentKind == TileContentKind::Render &&
-                ancestor->content.renderContent.isTerrainRenderContent() &&
-                ancestor->content.renderContent.hasGltfContent()) {
-                return ancestor;
-            }
-            ancestor = ancestor->parent;
-        }
-        return nullptr;
     }
 };
 
