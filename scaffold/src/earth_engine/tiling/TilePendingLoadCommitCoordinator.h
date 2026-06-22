@@ -6,7 +6,6 @@
 #include "TileLoadTypes.h"
 #include "TilePendingUploadCompletion.h"
 #include "TileTerminalLoadCommitter.h"
-#include "TileGltfTerrainUpsampledChildMaterializer.h"
 #include "TileTerrainUploadCommitter.h"
 #include "TilesetTile.h"
 
@@ -172,11 +171,6 @@ public:
         }
 
         terrainCache.erase(upload.cacheKey);
-        if (!upload.content().hasGltfTerrainPayload()) {
-            TileGltfTerrainUpsampledChildMaterializer::materialize(
-                *tile,
-                upload.content());
-        }
         captureInitialBoundingVolumes(*tile, upload.content().metadata);
         TileContentUploadCommitter::applyAvailabilityUpdates(
             contentProvider,

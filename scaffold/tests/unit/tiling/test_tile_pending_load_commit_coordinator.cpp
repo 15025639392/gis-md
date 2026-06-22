@@ -12,6 +12,7 @@
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileScheme.h"
 
+#include <array>
 #include <memory>
 #include <unordered_map>
 #include <utility>
@@ -92,6 +93,33 @@ TileLoadResult makeGltfTerrainContentResult(
         contentResult.gltfModel != nullptr;
     contentResult.metadata = std::move(metadata);
     return TileLoadResult::fromContentResult(std::move(contentResult));
+}
+
+std::unique_ptr<GltfModel> makeCommitCoordinatorQuadTerrainGltfModel(
+    const Rectangle& rectangle) {
+    auto model = std::make_unique<GltfModel>();
+    GltfPrimitive primitive;
+    primitive.vertices.resize(4);
+    primitive.vertices[0].positionEcef = Vec3(0.0, 0.0, 0.0);
+    primitive.vertices[1].positionEcef = Vec3(1.0, 0.0, 0.0);
+    primitive.vertices[2].positionEcef = Vec3(0.0, 1.0, 0.0);
+    primitive.vertices[3].positionEcef = Vec3(1.0, 1.0, 0.0);
+    for (SurfaceVertex& vertex : primitive.vertices) {
+        vertex.normalEcef = Vec3::unitZ();
+    }
+    primitive.vertices[0].uv = {0.0f, 0.0f};
+    primitive.vertices[1].uv = {1.0f, 0.0f};
+    primitive.vertices[2].uv = {0.0f, 1.0f};
+    primitive.vertices[3].uv = {1.0f, 1.0f};
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 1.0f},
+        std::array<float, 2>{1.0f, 1.0f}};
+    primitive.indices = {0, 1, 2, 1, 3, 2};
+    model->primitives.push_back(std::move(primitive));
+    model->rasterOverlayDetails.setGeographicRectangle(rectangle);
+    return model;
 }
 
 void expectContentTerminalClearsEmptyMarker(TileLoadStatus status) {
@@ -1318,6 +1346,78 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
     EXPECT_EQ(0, ensureMeshCalls);
     EXPECT_TRUE(resourcesDirty);
+    EXPECT_TRUE(terrainCache.empty());
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     ContentUploadWithoutPayloadDoesNotMaterializeGltfTerrainUpsample) {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    const std::string cacheKey = "test:gltf-upsample-without-payload";
+    const Rectangle parentBounds{-1.0, -0.5, 1.0, 0.5};
+    const Rectangle childBounds{-1.0, -0.5, 0.0, 0.0};
+    TilesetTile parent(parentKey, parentBounds);
+    TilesetTile child(childKey, childBounds, &parent);
+    child.content.loadState = TileLoadState::ContentLoading;
+    child.content.upsampledFromParent = true;
+    parent.content.renderContent.setGltfContent(
+        makeCommitCoordinatorQuadTerrainGltfModel(parentBounds));
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.markRenderContentDone();
+
+    PendingTileLoad upload{TileLoadDomain::Content,
+        childKey,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadResult::createRenderableTerrain()};
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
+            childKey,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadResult::createRenderableTerrain()});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    bool meshEnsured = false;
+    bool gltfEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitUpload(
+        upload,
+        nullptr,
+        nullptr,
+        {},
+        terrainCache,
+        lifecycle,
+        false,
+        [&child](const TileKey&) -> TilesetTile* { return &child; },
+        [&meshEnsured](TilesetTile&) { meshEnsured = true; },
+        [&gltfEnsured](TilesetTile&) { gltfEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_FALSE(meshEnsured);
+    EXPECT_TRUE(gltfEnsured);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(child.content.renderContent.hasGltfModel());
+    EXPECT_FALSE(child.content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(child.content.renderContent.isTerrainRenderContent());
+    EXPECT_EQ(TileLoadState::FailedTemporarily, child.content.loadState);
+    EXPECT_EQ(TileContentKind::Unknown, child.content.contentKind);
     EXPECT_TRUE(terrainCache.empty());
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }
