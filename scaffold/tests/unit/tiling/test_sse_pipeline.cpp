@@ -27136,9 +27136,9 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
     TilesetTestAccess::ensureTileChildren(tileset, *root);
     check(root->children.size() == 4,
           "Tileset: WebMercator glTF-parent upsample setup creates children");
-    if (root->children.size() < 2 || !root->children[1]) return;
+    if (root->children.size() < 3 || !root->children[2]) return;
 
-    TilesetTile* child = root->children[1];
+    TilesetTile* child = root->children[2];
     TilesetTestAccess::requestMissingTile(tileset, child->key);
     check(child->content.loadState == TileLoadState::ContentLoading &&
               tileset.loadDiagnostics().pendingTerrainUploads == 1 &&
@@ -27156,14 +27156,14 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
     if (!childModel || childModel->primitives.empty()) return;
 
     const GltfPrimitive& primitive = childModel->primitives.front();
-    bool clippedToSouthEastTexcoord = true;
+    bool clippedToNorthWestTexcoord = true;
     for (const auto& texCoord : primitive.vertexTexCoords[1]) {
-        clippedToSouthEastTexcoord =
-            clippedToSouthEastTexcoord &&
-            texCoord[0] >= 0.5f &&
-            texCoord[1] <= 0.5f;
+        clippedToNorthWestTexcoord =
+            clippedToNorthWestTexcoord &&
+            texCoord[0] <= 0.5f &&
+            texCoord[1] >= 0.5f;
     }
-    check(clippedToSouthEastTexcoord,
+    check(clippedToNorthWestTexcoord,
           "Tileset: WebMercator glTF-parent clips with projection texcoord");
 
     const Rectangle* childOverlay =

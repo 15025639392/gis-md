@@ -1,7 +1,8 @@
 #pragma once
 
 #include "../content/GltfTerrainUpsampler.h"
-#include "../core/math/MathUtils.h"
+#include "../core/geodesy/Ellipsoid.h"
+#include "../core/geodesy/Projection.h"
 #include "TileLoadTypes.h"
 #include "TilesetTile.h"
 
@@ -65,7 +66,6 @@ public:
 
         childModel->rasterOverlayDetails = deriveChildRasterOverlayDetails(
             parentModel->rasterOverlayDetails,
-            source->bounds,
             tile.bounds);
         content.gltfModel = std::move(childModel);
         content.terrainPayloadKind = TerrainTilePayloadKind::GltfModel;
@@ -75,13 +75,8 @@ public:
     }
 
 private:
-    static double mix(double a, double b, double t) {
-        return a + (b - a) * t;
-    }
-
     static RasterOverlayDetails deriveChildRasterOverlayDetails(
         const RasterOverlayDetails& parentDetails,
-        const Rectangle& parentBounds,
         const Rectangle& childBounds) {
         RasterOverlayDetails childDetails;
         if (parentDetails.empty()) {
@@ -94,28 +89,6 @@ private:
         childDetails.rasterOverlayRectangles.reserve(
             parentDetails.rasterOverlayProjections.size());
 
-        const double parentWidth = parentBounds.width();
-        const double parentHeight = parentBounds.height();
-        const auto relativeLongitude = [&](double longitude) {
-            double offset = longitude - parentBounds.west();
-            if (parentBounds.crossesAntimeridian() && offset < 0.0) {
-                offset += MathUtils::TwoPi;
-            }
-            return std::clamp(offset / parentWidth, 0.0, 1.0);
-        };
-        const double childWestT = relativeLongitude(childBounds.west());
-        const double childEastT = relativeLongitude(childBounds.east());
-        const double childSouthT =
-            std::clamp((childBounds.south() - parentBounds.south()) /
-                           parentHeight,
-                       0.0,
-                       1.0);
-        const double childNorthT =
-            std::clamp((childBounds.north() - parentBounds.south()) /
-                           parentHeight,
-                       0.0,
-                       1.0);
-
         for (size_t i = 0;
              i < parentDetails.rasterOverlayProjections.size();
              ++i) {
@@ -125,16 +98,26 @@ private:
                     Rectangle::EMPTY);
                 continue;
             }
-            const Rectangle& parentOverlay =
-                parentDetails.rasterOverlayRectangles[i];
-            childDetails.rasterOverlayRectangles.push_back(Rectangle(
-                mix(parentOverlay.west(), parentOverlay.east(), childWestT),
-                mix(parentOverlay.south(), parentOverlay.north(), childSouthT),
-                mix(parentOverlay.west(), parentOverlay.east(), childEastT),
-                mix(parentOverlay.south(), parentOverlay.north(), childNorthT)));
+            childDetails.rasterOverlayRectangles.push_back(
+                projectChildRectangle(
+                    parentDetails.rasterOverlayProjections[i],
+                    childBounds));
         }
         childDetails.boundingRegion = {childBounds, 0.0, 0.0};
         return childDetails;
+    }
+
+    static Rectangle projectChildRectangle(RasterOverlayProjection projection,
+                                           const Rectangle& childBounds) {
+        switch (projection) {
+            case RasterOverlayProjection::Geographic:
+                return childBounds;
+            case RasterOverlayProjection::WebMercator:
+                return projectRectangleSimple(
+                    WebMercatorProjection(Ellipsoid::WGS84()),
+                    childBounds);
+        }
+        return childBounds;
     }
 
     static bool modelHasTextureCoordinate(const GltfModel& model,
