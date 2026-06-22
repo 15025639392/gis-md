@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/content/QuantizedMeshContentLoader.h"
 #include "earth_engine/terrain/QuantizedMeshParser.h"
 #include "earth_engine/tiling/TileKey.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -9,7 +10,6 @@
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
-#include <memory>
 #include <utility>
 #include <vector>
 
@@ -140,103 +140,85 @@ Rectangle rootRectangle() {
     return scheme->tileToRectangle(TileKey{"Geographic-TMS", 0, 0, 0});
 }
 
+QuantizedMeshContentLoadResult loadQuantizedMeshContent(
+    const std::vector<uint8_t>& bytes) {
+    return QuantizedMeshContentLoader::load(
+        bytes.data(),
+        bytes.size(),
+        rootRectangle(),
+        false,
+        {});
+}
+
 } // namespace
 
-TEST(QuantizedMeshParserValidationTest,
+TEST(QuantizedMeshContentLoaderValidationTest,
      RejectsTruncatedEdgeIndicesLikeCesiumNative) {
     std::vector<uint8_t> bytes = makeQuantizedMeshBytes(true);
-    std::unique_ptr<SurfaceTileMesh> validMesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            rootRectangle());
-    ASSERT_NE(nullptr, validMesh);
+    QuantizedMeshContentLoadResult validResult =
+        loadQuantizedMeshContent(bytes);
+    ASSERT_TRUE(validResult.success());
 
     bytes.pop_back();
-    EXPECT_EQ(nullptr,
-              QuantizedMeshParser::parseToSurfaceTileMesh(
-                  bytes.data(),
-                  bytes.size(),
-                  rootRectangle()));
+    EXPECT_FALSE(loadQuantizedMeshContent(bytes).success());
 }
 
-TEST(QuantizedMeshParserValidationTest,
-     SurfaceMeshAcceptsZeroTriangleMeshLikeCesiumNative) {
+TEST(QuantizedMeshContentLoaderValidationTest,
+     GltfContentAcceptsZeroTriangleMeshLikeCesiumNative) {
     const std::vector<uint8_t> bytes = makeZeroTriangleQuantizedMeshBytes();
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
-            bytes.data(),
-            bytes.size(),
-            rootRectangle());
+    QuantizedMeshContentLoadResult result = loadQuantizedMeshContent(bytes);
 
-    ASSERT_NE(nullptr, mesh);
-    EXPECT_TRUE(mesh->indices.empty());
-    EXPECT_TRUE(mesh->hasHeightRange);
-    EXPECT_DOUBLE_EQ(0.0, mesh->minimumHeight);
-    EXPECT_DOUBLE_EQ(100.0, mesh->maximumHeight);
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    EXPECT_TRUE(primitive.indices.empty());
+    ASSERT_TRUE(result.metadata.terrainHeightRange.has_value());
+    EXPECT_DOUBLE_EQ(0.0, result.metadata.terrainHeightRange->first);
+    EXPECT_DOUBLE_EQ(100.0, result.metadata.terrainHeightRange->second);
 }
 
-TEST(QuantizedMeshParserValidationTest,
+TEST(QuantizedMeshContentLoaderValidationTest,
      RejectsIllFormedCoreBuffersLikeCesiumNative) {
     std::vector<uint8_t> shortHeader(32);
-    EXPECT_EQ(nullptr,
-              QuantizedMeshParser::parseToSurfaceTileMesh(
-                  shortHeader.data(),
-                  shortHeader.size(),
-                  rootRectangle()));
+    EXPECT_FALSE(loadQuantizedMeshContent(shortHeader).success());
 
     const std::vector<uint8_t> validBytes = makeQuantizedMeshBytes();
     constexpr size_t afterUBuffer = 92 + 3 * sizeof(uint16_t);
     std::vector<uint8_t> truncatedVertexData(
         validBytes.begin(),
         validBytes.begin() + static_cast<std::ptrdiff_t>(afterUBuffer));
-    EXPECT_EQ(nullptr,
-              QuantizedMeshParser::parseToSurfaceTileMesh(
-                  truncatedVertexData.data(),
-                  truncatedVertexData.size(),
-                  rootRectangle()));
+    EXPECT_FALSE(loadQuantizedMeshContent(truncatedVertexData).success());
 
     constexpr size_t afterTriangleCount =
         92 + 3 * 3 * sizeof(uint16_t) + sizeof(uint32_t);
     std::vector<uint8_t> truncatedIndices(
         validBytes.begin(),
         validBytes.begin() + static_cast<std::ptrdiff_t>(afterTriangleCount));
-    EXPECT_EQ(nullptr,
-              QuantizedMeshParser::parseToSurfaceTileMesh(
-                  truncatedIndices.data(),
-                  truncatedIndices.size(),
-                  rootRectangle()));
+    EXPECT_FALSE(loadQuantizedMeshContent(truncatedIndices).success());
 }
 
-TEST(QuantizedMeshParserValidationTest,
+TEST(QuantizedMeshContentLoaderValidationTest,
      RejectsZeroVertexCountLikeCesiumNative) {
     const std::vector<uint8_t> bytes = makeZeroVertexCountQuantizedMeshBytes();
 
-    EXPECT_EQ(nullptr,
-              QuantizedMeshParser::parseToSurfaceTileMesh(
-                  bytes.data(),
-                  bytes.size(),
-                  rootRectangle()));
+    EXPECT_FALSE(loadQuantizedMeshContent(bytes).success());
     EXPECT_TRUE(QuantizedMeshParser::parseMetadataAvailability(
                     bytes.data(),
                     bytes.size())
                     .empty());
 }
 
-TEST(QuantizedMeshParserValidationTest,
-     SurfaceMeshRejectsHeaderWithoutVertexCountLikeCesiumNative) {
+TEST(QuantizedMeshContentLoaderValidationTest,
+     RejectsHeaderWithoutVertexCountLikeCesiumNative) {
     for (const size_t byteCount : {size_t{88}, size_t{91}}) {
         std::vector<uint8_t> headerWithoutVertexCount(byteCount);
 
-        EXPECT_EQ(nullptr,
-                  QuantizedMeshParser::parseToSurfaceTileMesh(
-                      headerWithoutVertexCount.data(),
-                      headerWithoutVertexCount.size(),
-                      rootRectangle()));
+        EXPECT_FALSE(loadQuantizedMeshContent(headerWithoutVertexCount)
+                         .success());
     }
 }
 
-TEST(QuantizedMeshParserValidationTest,
+TEST(QuantizedMeshContentLoaderValidationTest,
      RejectsEachTruncatedEdgeLikeCesiumNative) {
     const std::vector<uint8_t> validBytes = makeQuantizedMeshBytes(true);
     constexpr size_t edgeStart =
@@ -258,15 +240,11 @@ TEST(QuantizedMeshParserValidationTest,
             validBytes.begin(),
             validBytes.begin() + static_cast<std::ptrdiff_t>(byteCount));
 
-        EXPECT_EQ(nullptr,
-                  QuantizedMeshParser::parseToSurfaceTileMesh(
-                      truncatedBytes.data(),
-                      truncatedBytes.size(),
-                      rootRectangle()));
+        EXPECT_FALSE(loadQuantizedMeshContent(truncatedBytes).success());
     }
 }
 
-TEST(QuantizedMeshParserValidationTest,
+TEST(QuantizedMeshContentLoaderValidationTest,
      RejectsDecodedTriangleIndicesOutsideVertexRange) {
     std::vector<uint8_t> bytes = makeQuantizedMeshBytes(false, true);
     constexpr size_t thirdTriangleIndexOffset =
@@ -278,14 +256,10 @@ TEST(QuantizedMeshParserValidationTest,
         &invalidHighWaterMarkCode,
         sizeof(invalidHighWaterMarkCode));
 
-    EXPECT_EQ(nullptr,
-              QuantizedMeshParser::parseToSurfaceTileMesh(
-                  bytes.data(),
-                  bytes.size(),
-                  rootRectangle()));
+    EXPECT_FALSE(loadQuantizedMeshContent(bytes).success());
 }
 
-TEST(QuantizedMeshParserValidationTest,
+TEST(QuantizedMeshContentLoaderValidationTest,
      RejectsEdgeIndicesOutsideVertexRange) {
     std::vector<uint8_t> bytes = makeQuantizedMeshBytes(true, true);
     constexpr size_t firstWestEdgeIndexOffset =
@@ -297,9 +271,5 @@ TEST(QuantizedMeshParserValidationTest,
         &invalidEdgeIndex,
         sizeof(invalidEdgeIndex));
 
-    EXPECT_EQ(nullptr,
-              QuantizedMeshParser::parseToSurfaceTileMesh(
-                  bytes.data(),
-                  bytes.size(),
-                  rootRectangle()));
+    EXPECT_FALSE(loadQuantizedMeshContent(bytes).success());
 }
