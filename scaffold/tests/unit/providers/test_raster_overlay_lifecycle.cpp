@@ -672,6 +672,34 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(2, imagery.requestCount);
 }
 
+TEST(RasterOverlayLifecycleTest,
+     CoverageChangePreventsStaleInFlightSourceFromRepopulatingDepot) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const TileKey firstKey{scheme->id(), 2, 1, 1};
+    const TileKey secondKey{scheme->id(), 2, 3, 3};
+    provider.setCoverageRectangle(scheme->tileToRectangle(firstKey));
+
+    auto firstTile = provider.getTile(firstKey);
+    ASSERT_NE(nullptr, firstTile);
+    ASSERT_TRUE(provider.loadTile(*firstTile));
+    ASSERT_EQ(1u, imagery.pending.size());
+
+    provider.setCoverageRectangle(scheme->tileToRectangle(secondKey));
+    imagery.completeNext();
+    ASSERT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(0, provider.getCachedSourceTileBytes());
+    EXPECT_EQ(nullptr, provider.getTile(firstKey));
+
+    auto secondTile = provider.getTile(secondKey);
+    ASSERT_NE(nullptr, secondTile);
+    ASSERT_TRUE(provider.loadTile(*secondTile));
+    EXPECT_EQ(2u, imagery.requestedKeys.size());
+    EXPECT_EQ(secondKey, imagery.requestedKeys.back());
+}
+
 TEST(RasterOverlayLifecycleTest, RectangleCoverageClampsOutsideAndClipsSourcePlan) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

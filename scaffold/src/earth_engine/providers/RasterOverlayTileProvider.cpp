@@ -1614,24 +1614,7 @@ void RasterOverlayTileProvider::setCoverageRectangle(
         return;
     }
     coverageRectangle_ = coverageRectangle;
-    {
-        std::lock_guard<std::mutex> lock(asyncState_->mutex);
-        for (auto it = asyncState_->sourceTileDepotCache.begin();
-             it != asyncState_->sourceTileDepotCache.end();) {
-            const Rectangle sourceBounds =
-                it->second.sourceSubset.value_or(it->second.bounds);
-            if (!sourceBounds.computeIntersection(coverageRectangle_)) {
-                asyncState_->sourceTileDepotCacheBytes -=
-                    it->second.sizeBytes;
-                it = asyncState_->sourceTileDepotCache.erase(it);
-            } else {
-                ++it;
-            }
-        }
-        if (asyncState_->sourceTileDepotCacheBytes < 0) {
-            asyncState_->sourceTileDepotCacheBytes = 0;
-        }
-    }
+    invalidateSourceAssetDepotCache();
     for (auto it = tiles_.begin(); it != tiles_.end();) {
         if (it->first.rfind("composite/", 0) == 0 || !it->second) {
             ++it;
