@@ -523,15 +523,7 @@ TEST(TilesetQuantizedMeshTest,
                     child->boundingVolume->maximumHeight,
                     1e-6);
 
-        ASSERT_TRUE(child->contentBoundingVolume.has_value());
-        EXPECT_EQ(TileBoundingVolumeKind::Region,
-                  child->contentBoundingVolume->kind);
-        EXPECT_NEAR(minimumHeight,
-                    child->contentBoundingVolume->minimumHeight,
-                    1e-6);
-        EXPECT_NEAR(maximumHeight,
-                    child->contentBoundingVolume->maximumHeight,
-                    1e-6);
+        EXPECT_FALSE(child->contentBoundingVolume.has_value());
     }
 }
 

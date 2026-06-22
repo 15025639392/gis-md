@@ -209,12 +209,7 @@ TEST(TileChildMaterializerTest, AnyAvailableTerrainChildCreatesFullQuadLikeCesiu
         EXPECT_EQ(TileBoundingVolumeKind::Region, child->boundingVolume->kind);
         EXPECT_DOUBLE_EQ(-10.0, child->boundingVolume->minimumHeight);
         EXPECT_DOUBLE_EQ(90.0, child->boundingVolume->maximumHeight);
-        ASSERT_TRUE(child->contentBoundingVolume.has_value());
-        EXPECT_EQ(
-            TileBoundingVolumeKind::Region,
-            child->contentBoundingVolume->kind);
-        EXPECT_DOUBLE_EQ(-10.0, child->contentBoundingVolume->minimumHeight);
-        EXPECT_DOUBLE_EQ(90.0, child->contentBoundingVolume->maximumHeight);
+        EXPECT_FALSE(child->contentBoundingVolume.has_value());
     }
 }
 

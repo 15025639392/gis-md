@@ -107,7 +107,7 @@ struct TileChildMaterializer {
                 child->bounds,
                 minimumHeight,
                 maximumHeight);
-            child->contentBoundingVolume = child->boundingVolume;
+            child->contentBoundingVolume.reset();
             if (!child->content.renderContent.isRenderContentReady()) {
                 TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                     *child,
