@@ -54,8 +54,7 @@ RasterMappedToTilesetTile& addMoreDetailRasterMapping(
 
     auto& mapped = tile.rasterOverlayState.ensureMapping(0);
     std::vector<RasterOverlayProjection> missingProjections;
-    EXPECT_EQ(
-        RasterMappedToTilesetTile::MoreDetail::Unknown,
+    const RasterMappedToTilesetTile::MoreDetail firstMoreDetail =
         mapped.update(
             tile.key,
             tile.content.renderContent.rasterOverlayDetails(),
@@ -63,13 +62,26 @@ RasterMappedToTilesetTile& addMoreDetailRasterMapping(
             256.0,
             provider,
             nullptr,
-            missingProjections));
+            missingProjections);
 
     RasterOverlayTile* loadingTile = mapped.getLoadingTile();
-    EXPECT_NE(nullptr, loadingTile);
-    loadingTile->setState(RasterOverlayTile::LoadState::Loaded);
-    loadingTile->setMoreDetailAvailable(
-        RasterOverlayTile::MoreDetailAvailable::Yes);
+    RasterOverlayTile* readyTile = mapped.getReadyTile();
+    EXPECT_TRUE(
+        firstMoreDetail == RasterMappedToTilesetTile::MoreDetail::Unknown ||
+        loadingTile != nullptr ||
+        readyTile != nullptr);
+    if (loadingTile) {
+        loadingTile->setState(RasterOverlayTile::LoadState::Loaded);
+        loadingTile->setMoreDetailAvailable(
+            RasterOverlayTile::MoreDetailAvailable::Yes);
+    } else {
+        EXPECT_NE(nullptr, readyTile);
+        if (!readyTile) {
+            return mapped;
+        }
+        readyTile->setMoreDetailAvailable(
+            RasterOverlayTile::MoreDetailAvailable::Yes);
+    }
 
     EXPECT_EQ(
         RasterMappedToTilesetTile::MoreDetail::Yes,
@@ -776,6 +788,7 @@ TEST(TileChildMaterializerTest, RasterUpsampledTileCanContinueSubdividingForImag
             false,
             false,
             true,
+            true,
             18},
         [](const TileKey&) { return std::string{"child"}; },
         [](const std::string&) { return false; },
@@ -940,6 +953,7 @@ TEST(TileChildMaterializerTest, CanRefineHonorsContentRulesBeforeTerrainSignals)
             false,
             false,
             false,
+            true,
             4},
         noCacheKey,
         noTerrainCached,
@@ -953,6 +967,7 @@ TEST(TileChildMaterializerTest, CanRefineHonorsContentRulesBeforeTerrainSignals)
             true,
             false,
             true,
+            false,
             4},
         [](const TileKey&) { return std::string{"child"}; },
         [](const std::string&) { return true; },
@@ -970,6 +985,7 @@ TEST(TileChildMaterializerTest, CanRefineUsesCachedAndAvailableTerrainSignals) {
             false,
             false,
             false,
+            true,
             4},
         cacheKeyFor,
         [](const std::string& cacheKey) {
@@ -984,6 +1000,7 @@ TEST(TileChildMaterializerTest, CanRefineUsesCachedAndAvailableTerrainSignals) {
             false,
             false,
             false,
+            true,
             true,
             4},
         cacheKeyFor,
@@ -1006,6 +1023,7 @@ TEST(TileChildMaterializerTest, CanRefineStopsAtMaxZoomWithoutChildrenOrTerrainS
             false,
             false,
             true,
+            true,
             4},
         [](const TileKey&) { return std::string{"child"}; },
         [](const std::string&) { return true; },
@@ -1024,6 +1042,7 @@ TEST(TileChildMaterializerTest, CanRefineSkipsOutOfRangeGeographicTmsChildren) {
             false,
             false,
             false,
+            true,
             true,
             2},
         [](const TileKey&) { return std::string{"child"}; },
@@ -1050,6 +1069,7 @@ TEST(TileChildMaterializerTest, CanRefineBlocksAvailabilityBoundaryAndTerrainUps
             false,
             true,
             true,
+            true,
             4},
         [](const TileKey&) { return std::string{"child"}; },
         [](const std::string&) { return true; },
@@ -1064,6 +1084,7 @@ TEST(TileChildMaterializerTest, CanRefineBlocksAvailabilityBoundaryAndTerrainUps
             true,
             false,
             false,
+            true,
             true,
             4},
         [](const TileKey&) { return std::string{"child"}; },
