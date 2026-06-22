@@ -308,6 +308,7 @@ private:
         std::optional<Rectangle> sourceSubset;
         RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::Unknown;
+        bool terminalFailure = false;
         int64_t sizeBytes = 0;
         uint64_t generation = 0;
     };

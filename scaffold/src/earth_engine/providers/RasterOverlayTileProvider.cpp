@@ -992,7 +992,8 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
             if (it == cache.end() && ancestorFallback) {
                 it = cache.find(sourceCacheKey(requestedKey));
             }
-            if (it != cache.end() && it->second.image) {
+            if (it != cache.end() &&
+                (it->second.image || it->second.terminalFailure)) {
                 touchCachedSource(it->first, it->second);
                 LoadedSourceImage source;
                 source.key = it->second.key;
@@ -1129,9 +1130,10 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                 }
 
                 onSourceFinished();
-                self->finishInFlightSource(originalKey, nullptr);
+                auto failed = self->cacheTerminalFailure(originalKey);
+                self->finishInFlightSource(originalKey, failed);
                 for (const TileKey& key : fallbackInFlightKeys) {
-                    self->finishInFlightSource(key, nullptr);
+                    self->finishInFlightSource(key, failed);
                 }
             });
     }
@@ -1166,6 +1168,36 @@ private:
         }
         cached.sourceSubset = source.sourceSubset;
         cached.moreDetailAvailable = source.moreDetailAvailable;
+        return cached;
+    }
+
+    InFlightSourceTileAsset::Result cacheTerminalFailure(
+        const TileKey& requestedKey) {
+        SourceTileAsset failed;
+        failed.key = requestedKey;
+        failed.bounds = scheme.tileToRectangle(requestedKey);
+        failed.moreDetailAvailable =
+            RasterOverlayTile::MoreDetailAvailable::No;
+        failed.terminalFailure = true;
+
+        auto cached = std::make_shared<SourceTileAsset>(failed);
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        const int64_t cacheBudgetBytes = state->subTileCacheBytes;
+        if (cacheBudgetBytes <= 0) {
+            cache.clear();
+            cacheLru.clear();
+            cacheBytes = 0;
+            return cached;
+        }
+        const std::string key = sourceCacheKey(requestedKey);
+        auto existing = cache.find(key);
+        if (existing != cache.end()) {
+            cacheBytes -= existing->second.sizeBytes;
+        }
+        failed.generation = ++cacheGeneration;
+        cacheLru.emplace_back(key, failed.generation);
+        cache[key] = failed;
+        pruneCacheToBudget(cacheBudgetBytes);
         return cached;
     }
 
@@ -1785,7 +1817,7 @@ bool RasterOverlayTileProvider::loadMappedTile(
             auto cached =
                 asyncState_->sourceTileDepotCache.find(sourceKeyString);
             if (cached != asyncState_->sourceTileDepotCache.end() &&
-                cached->second.image) {
+                (cached->second.image || cached->second.terminalFailure)) {
                 continue;
             }
             if (asyncState_->sourceTileDepotInFlight.count(sourceKeyString) >
