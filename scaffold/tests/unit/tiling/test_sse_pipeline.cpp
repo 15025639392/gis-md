@@ -2516,6 +2516,53 @@ void testRasterOverlayBaseQuadtreeSourceClampsCoverageEdgeMiss() {
           "RasterOverlayTileProvider: clamped coverage miss samples the nearest coverage edge");
 }
 
+void testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian() {
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
+
+    RasterOverlayTileProvider::TilePtr compositeTile =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(
+                provider,
+                Rectangle::fromDegrees(170.0, -10.0, -170.0, 10.0)),
+            1024.0,
+            1024.0).tile;
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 1024;
+    config.maxRasterNetworkInflight = 1024;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    check(compositeTile &&
+              provider.loadTileThrottled(*compositeTile, &budget) &&
+              !imagery.pendingRequests.empty(),
+          "RasterOverlayTileProvider: antimeridian composite starts source requests");
+    if (!compositeTile || imagery.pendingRequests.empty()) {
+        return;
+    }
+
+    const int tileCountX =
+        imageryScheme->tileCountX(compositeTile->getSourceZoom());
+    bool onlyDatelineEdgeColumns = true;
+    bool hasWesternEdge = false;
+    bool hasEasternEdge = false;
+    const int edgeColumnSpan = std::max(1, tileCountX / 8);
+    for (const auto& request : imagery.pendingRequests) {
+        const bool westernEdge = request.key.x >= tileCountX - edgeColumnSpan;
+        const bool easternEdge = request.key.x < edgeColumnSpan;
+        hasWesternEdge = hasWesternEdge || westernEdge;
+        hasEasternEdge = hasEasternEdge || easternEdge;
+        onlyDatelineEdgeColumns =
+            onlyDatelineEdgeColumns &&
+            request.key.z == compositeTile->getSourceZoom() &&
+            (westernEdge || easternEdge);
+    }
+    check(onlyDatelineEdgeColumns && hasWesternEdge && hasEasternEdge,
+          "RasterOverlayTileProvider: antimeridian source plan requests dateline edge columns instead of the whole world");
+}
+
 void testRasterOverlayQuadtreeSourceFailureRequestsParentSource() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -28567,6 +28614,7 @@ int main() {
     testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative();
     testRasterOverlayQuadtreeSourceRangeTrimsTileEdgeTouches();
     testRasterOverlayBaseQuadtreeSourceClampsCoverageEdgeMiss();
+    testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian();
     testRasterOverlayQuadtreeSourceFailureRequestsParentSource();
     testRasterOverlayFallbackParentInFlightSharesDirectAsset();
     testRasterOverlayDirectTileJoinsCompositeSourceInFlight();

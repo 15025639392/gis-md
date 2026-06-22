@@ -141,6 +141,49 @@ struct TileRange {
     int count() const { return width() * height(); }
 };
 
+struct TileCoverage {
+    std::vector<TileRange> ranges;
+
+    int width() const {
+        int total = 0;
+        for (const TileRange& range : ranges) {
+            total += range.width();
+        }
+        return total;
+    }
+
+    int height() const {
+        int maximum = 0;
+        for (const TileRange& range : ranges) {
+            maximum = std::max(maximum, range.height());
+        }
+        return maximum;
+    }
+
+    int count() const {
+        int total = 0;
+        for (const TileRange& range : ranges) {
+            total += range.count();
+        }
+        return total;
+    }
+
+    TileRange combinedRange() const {
+        TileRange combined;
+        if (ranges.empty()) {
+            return combined;
+        }
+        combined = ranges.front();
+        for (size_t i = 1; i < ranges.size(); ++i) {
+            combined.minX = std::min(combined.minX, ranges[i].minX);
+            combined.minY = std::min(combined.minY, ranges[i].minY);
+            combined.maxX = std::max(combined.maxX, ranges[i].maxX);
+            combined.maxY = std::max(combined.maxY, ranges[i].maxY);
+        }
+        return combined;
+    }
+};
+
 TileRange computeRange(const TileScheme& scheme,
                        const Rectangle& bounds,
                        int zoom) {
@@ -211,6 +254,26 @@ TileRange trimCesiumNativeBoundarySlop(const TileScheme& scheme,
     }
 
     return range;
+}
+
+TileCoverage computeCoverage(const TileScheme& scheme,
+                             const Rectangle& bounds,
+                             int zoom) {
+    TileCoverage coverage;
+    const auto split = bounds.splitAtAntimeridian();
+    coverage.ranges.push_back(trimCesiumNativeBoundarySlop(
+        scheme,
+        split.first,
+        zoom,
+        computeRange(scheme, split.first, zoom)));
+    if (split.second) {
+        coverage.ranges.push_back(trimCesiumNativeBoundarySlop(
+            scheme,
+            *split.second,
+            zoom,
+            computeRange(scheme, *split.second, zoom)));
+    }
+    return coverage;
 }
 
 bool tryIssueRasterRequestBudget(FrameResourceBudget* budget,
@@ -316,6 +379,10 @@ Rectangle expandClampedLineIntoCoverage(const Rectangle& bounds,
 
 Rectangle mapGeometryBoundsToImageryCoverage(const Rectangle& geometryBounds,
                                              const Rectangle& coverage) {
+    if (coverage.contains(geometryBounds)) {
+        return geometryBounds;
+    }
+
     std::optional<Rectangle> intersection =
         geometryBounds.computeIntersection(coverage);
     if (intersection) {
@@ -521,27 +588,21 @@ int chooseQuadtreeSourceZoom(const TileScheme& scheme,
     const int maxTextureSize =
         maximumCombinedTextureSize(uploader, maximumTextureSize);
 
-    TileRange range = trimCesiumNativeBoundarySlop(
-        scheme,
-        geometryBounds,
-        zoom,
-        computeRange(scheme, sourceBounds, zoom));
+    TileCoverage coverage = computeCoverage(scheme, sourceBounds, zoom);
     while (zoom > minZoom) {
-        const int widthPixels = range.width() * std::max(1, provider.tileWidth());
-        const int heightPixels = range.height() * std::max(1, provider.tileHeight());
+        const int widthPixels =
+            coverage.width() * std::max(1, provider.tileWidth());
+        const int heightPixels =
+            coverage.height() * std::max(1, provider.tileHeight());
         if (widthPixels <= maxTextureSize &&
             heightPixels <= maxTextureSize) {
             break;
         }
         --zoom;
-        range = trimCesiumNativeBoundarySlop(
-            scheme,
-            geometryBounds,
-            zoom,
-            computeRange(scheme, sourceBounds, zoom));
+        coverage = computeCoverage(scheme, sourceBounds, zoom);
     }
 
-    if (outRange) *outRange = range;
+    if (outRange) *outRange = coverage.combinedRange();
     return zoom;
 }
 
@@ -931,20 +992,26 @@ RasterOverlayTileProvider::buildQuadtreeSourcePlan(
     plan.minY = range.minY;
     plan.maxX = range.maxX;
     plan.maxY = range.maxY;
+    const TileCoverage coverage = computeCoverage(
+        scheme,
+        sourceBounds,
+        plan.sourceZoom);
     plan.sourceKeys.reserve(
-        static_cast<size_t>(std::max(0, range.count())));
-    for (int y = range.minY; y <= range.maxY; ++y) {
-        for (int x = range.minX; x <= range.maxX; ++x) {
-            TileKey sourceKey{scheme.id(), plan.sourceZoom, x, y};
-            if (provider.supportsTile(sourceKey) &&
-                rectanglesOverlapWithArea(
-                    scheme.tileToRectangle(sourceKey),
-                    sourceBounds)) {
-                plan.sourceKeys.push_back(sourceKey);
+        static_cast<size_t>(std::max(0, coverage.count())));
+    for (const TileRange& coveredRange : coverage.ranges) {
+        for (int y = coveredRange.minY; y <= coveredRange.maxY; ++y) {
+            for (int x = coveredRange.minX; x <= coveredRange.maxX; ++x) {
+                TileKey sourceKey{scheme.id(), plan.sourceZoom, x, y};
+                if (provider.supportsTile(sourceKey) &&
+                    rectanglesOverlapWithArea(
+                        scheme.tileToRectangle(sourceKey),
+                        sourceBounds)) {
+                    plan.sourceKeys.push_back(sourceKey);
+                }
             }
         }
     }
-    if (plan.sourceKeys.empty() && range.count() > 0) {
+    if (plan.sourceKeys.empty() && coverage.count() > 0) {
         const int maxTileX = scheme.tileCountX(plan.sourceZoom) - 1;
         const int maxTileY = scheme.tileCountY(plan.sourceZoom) - 1;
         const int minX = std::max(0, range.minX - 1);
