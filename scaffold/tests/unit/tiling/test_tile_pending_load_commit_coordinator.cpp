@@ -603,10 +603,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                                        -1000.0,
                                        9000.0);
 
-    auto surfaceMesh = std::make_unique<SurfaceTileMesh>();
-    SurfaceVertex vertex;
-    vertex.positionEcef = Vec3(1.0, 0.0, 0.0);
-    surfaceMesh->vertices.push_back(vertex);
+    auto model = std::make_unique<GltfModel>();
+    GltfModel* rawModel = model.get();
 
     const Rectangle updatedRectangle(0.1, 0.2, 0.3, 0.4);
     const Rectangle updatedContentRectangle(0.5, 0.6, 0.7, 0.8);
@@ -620,9 +618,10 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileLoadResult::createRenderableSurfaceTerrain(
-            std::move(surfaceMesh),
-            std::move(metadata))};
+        TileLoadResult::fromTerrainResult(
+            TerrainTileLoadResult::successWithGltfModel(
+                std::move(model),
+                std::move(metadata)))};
 
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -645,6 +644,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     bool resourcesDirty = false;
+    int ensureGltfCalls = 0;
 
     TilePendingLoadCommitCoordinator::commitTerrainUpload(
         upload,
@@ -656,9 +656,16 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         false,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
-        [](TilesetTile&) {},
+        [&ensureGltfCalls](TilesetTile& committedTile) {
+            committedTile.content.renderContent.addGltfPrimitiveResource(
+                GltfPrimitiveRenderResources{});
+            committedTile.markRenderContentDone();
+            ++ensureGltfCalls;
+        },
         [&resourcesDirty]() { resourcesDirty = true; });
 
+    EXPECT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
+    EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
     ASSERT_TRUE(tile.boundingVolume.has_value());
     EXPECT_EQ(TileBoundingVolumeKind::Region, tile.boundingVolume->kind);
     EXPECT_EQ(updatedRectangle, tile.boundingVolume->region);
@@ -669,6 +676,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_EQ(updatedContentRectangle, tile.contentBoundingVolume->region);
     EXPECT_DOUBLE_EQ(-5.0, tile.contentBoundingVolume->minimumHeight);
     EXPECT_DOUBLE_EQ(15.0, tile.contentBoundingVolume->maximumHeight);
+    EXPECT_EQ(1, ensureGltfCalls);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }
@@ -680,10 +688,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilesetTile tile(key, Rectangle{});
     tile.content.loadState = TileLoadState::ContentLoading;
 
-    auto surfaceMesh = std::make_unique<SurfaceTileMesh>();
-    SurfaceVertex vertex;
-    vertex.positionEcef = Vec3(1.0, 0.0, 0.0);
-    surfaceMesh->vertices.push_back(vertex);
+    auto model = std::make_unique<GltfModel>();
+    GltfModel* rawModel = model.get();
 
     const Rectangle detailsRectangle =
         Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
@@ -700,9 +706,10 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileLoadResult::createRenderableSurfaceTerrain(
-            std::move(surfaceMesh),
-            std::move(metadata))};
+        TileLoadResult::fromTerrainResult(
+            TerrainTileLoadResult::successWithGltfModel(
+                std::move(model),
+                std::move(metadata)))};
 
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -725,6 +732,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
         terrainCache;
     bool resourcesDirty = false;
+    int ensureGltfCalls = 0;
 
     TilePendingLoadCommitCoordinator::commitTerrainUpload(
         upload,
@@ -736,10 +744,16 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         false,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [](TilesetTile&) {},
-        [](TilesetTile&) {},
+        [&ensureGltfCalls](TilesetTile& committedTile) {
+            committedTile.content.renderContent.addGltfPrimitiveResource(
+                GltfPrimitiveRenderResources{});
+            committedTile.markRenderContentDone();
+            ++ensureGltfCalls;
+        },
         [&resourcesDirty]() { resourcesDirty = true; });
 
-    ASSERT_TRUE(tile.content.renderContent.hasSurfaceMesh());
+    EXPECT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
+    EXPECT_FALSE(tile.content.renderContent.hasSurfaceMesh());
     const RasterOverlayDetails& committedDetails =
         tile.content.renderContent.rasterOverlayDetails();
     const Rectangle* rectangle =
@@ -750,6 +764,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_EQ(detailsRectangle, committedDetails.boundingRegion.rectangle);
     EXPECT_DOUBLE_EQ(-25.0, committedDetails.boundingRegion.minimumHeight);
     EXPECT_DOUBLE_EQ(125.0, committedDetails.boundingRegion.maximumHeight);
+    EXPECT_EQ(1, ensureGltfCalls);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }
