@@ -648,7 +648,7 @@ struct LoadedSourceImage {
     TileKey key;
     Rectangle bounds;
     std::shared_ptr<const DecodedImage> image;
-    bool ancestorFallback = false;
+    std::optional<Rectangle> sourceSubset;
     RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
         RasterOverlayTile::MoreDetailAvailable::Unknown;
 };
@@ -712,8 +712,10 @@ CombinedImageMeasurements measureCombinedImage(
     int maximumTextureSize) {
     std::optional<Rectangle> combinedBounds;
     for (const LoadedSourceImage& source : sources) {
+        const Rectangle sourceSubset =
+            source.sourceSubset.value_or(source.bounds);
         std::optional<Rectangle> intersection =
-            targetBounds.computeIntersection(source.bounds);
+            targetBounds.computeIntersection(sourceSubset);
         if (!intersection) {
             continue;
         }
@@ -785,9 +787,11 @@ void blitImage(DecodedImage& target,
                const Rectangle& targetRectangle,
                const DecodedImage& source,
                const Rectangle& sourceRectangle,
+               const std::optional<Rectangle>& sourceSubset,
                const TileScheme& scheme) {
+    const Rectangle sourceToCopy = sourceSubset.value_or(sourceRectangle);
     std::optional<Rectangle> overlap =
-        targetRectangle.computeIntersection(sourceRectangle);
+        targetRectangle.computeIntersection(sourceToCopy);
     if (!overlap) {
         return;
     }
@@ -866,7 +870,8 @@ RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
         std::any_of(sources.begin(),
                     sources.end(),
                     [](const LoadedSourceImage& source) {
-                        return source.image && !source.ancestorFallback;
+                        return source.image &&
+                               !source.sourceSubset.has_value();
                     });
     if (!haveAnyUsefulImageData) {
         RasterOverlayTileProvider::RectangleCompositionResult result;
@@ -917,6 +922,7 @@ RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
                   measurements.rectangle,
                   *source.image,
                   source.bounds,
+                  source.sourceSubset,
                   scheme);
     }
 
@@ -934,7 +940,7 @@ RasterOverlayTileProvider::RectangleCompositionResult combineRectangleImages(
                     : (source.key.z < maximumSourceZoom
                            ? RasterOverlayTile::MoreDetailAvailable::Yes
                            : RasterOverlayTile::MoreDetailAvailable::No);
-            return !source.ancestorFallback &&
+            return !source.sourceSubset.has_value() &&
                    sourceMoreDetail == RasterOverlayTile::MoreDetailAvailable::Yes;
         });
     result.moreDetailAvailable =
@@ -1035,8 +1041,10 @@ private:
                 source.key = it->second.key;
                 source.bounds = it->second.bounds;
                 source.image = it->second.image;
-                source.ancestorFallback =
-                    ancestorFallback || it->second.ancestorFallback;
+                source.sourceSubset = ancestorFallback
+                    ? std::optional<Rectangle>(
+                          scheme.tileToRectangle(originalKey))
+                    : it->second.sourceSubset;
                 source.moreDetailAvailable = it->second.moreDetailAvailable;
                 cachedSource = std::move(source);
             }
@@ -1050,15 +1058,17 @@ private:
         if (shareInFlight) {
             const std::string inFlightKey = sourceCacheKey(originalKey);
             auto waiter =
-                [self, ancestorFallback](
+                [self, originalKey, ancestorFallback](
                     InFlightSourceTileAsset::Result cached) {
                     if (cached && cached->image) {
                         LoadedSourceImage source;
                         source.key = cached->key;
                         source.bounds = cached->bounds;
                         source.image = cached->image;
-                        source.ancestorFallback =
-                            ancestorFallback || cached->ancestorFallback;
+                        source.sourceSubset = ancestorFallback
+                            ? std::optional<Rectangle>(
+                                  self->scheme.tileToRectangle(originalKey))
+                            : cached->sourceSubset;
                         source.moreDetailAvailable =
                             cached->moreDetailAvailable;
                         self->finishOneSource(std::move(source));
@@ -1080,15 +1090,17 @@ private:
         if (ancestorFallback) {
             const std::string fallbackInFlightKey = sourceCacheKey(requestedKey);
             auto waiter =
-                [self, ancestorFallback](
+                [self, originalKey, ancestorFallback](
                     InFlightSourceTileAsset::Result cached) {
                     if (cached && cached->image) {
                         LoadedSourceImage source;
                         source.key = cached->key;
                         source.bounds = cached->bounds;
                         source.image = cached->image;
-                        source.ancestorFallback =
-                            ancestorFallback || cached->ancestorFallback;
+                        source.sourceSubset = ancestorFallback
+                            ? std::optional<Rectangle>(
+                                  self->scheme.tileToRectangle(originalKey))
+                            : cached->sourceSubset;
                         source.moreDetailAvailable =
                             cached->moreDetailAvailable;
                         self->finishOneSource(std::move(source));
@@ -1131,7 +1143,10 @@ private:
                     source.bounds = self->scheme.tileToRectangle(loadedKey);
                     source.image =
                         std::shared_ptr<const DecodedImage>(std::move(image));
-                    source.ancestorFallback = ancestorFallback;
+                    source.sourceSubset = ancestorFallback
+                        ? std::optional<Rectangle>(
+                              self->scheme.tileToRectangle(originalKey))
+                        : std::nullopt;
                     source.moreDetailAvailable =
                         loadedKey.z < self->maximumLevel
                             ? RasterOverlayTile::MoreDetailAvailable::Yes
@@ -1144,7 +1159,7 @@ private:
                         directSource.key = loadedKey;
                         directSource.bounds = source.bounds;
                         directSource.image = source.image;
-                        directSource.ancestorFallback = false;
+                        directSource.sourceSubset = std::nullopt;
                         directSource.moreDetailAvailable =
                             source.moreDetailAvailable;
                         self->cacheSource(loadedKey, directSource);
@@ -1192,7 +1207,7 @@ private:
             cached.image = source.image;
             cached.sizeBytes = decodedImageSizeBytes(*source.image);
         }
-        cached.ancestorFallback = source.ancestorFallback;
+        cached.sourceSubset = source.sourceSubset;
         cached.moreDetailAvailable = source.moreDetailAvailable;
         return cached;
     }
@@ -1228,7 +1243,7 @@ private:
         cached.key = source.key;
         cached.bounds = source.bounds;
         cached.image = source.image;
-        cached.ancestorFallback = source.ancestorFallback;
+        cached.sourceSubset = source.sourceSubset;
         cached.moreDetailAvailable = source.moreDetailAvailable;
         cached.sizeBytes = decodedImageSizeBytes(*source.image);
         std::lock_guard<std::mutex> lock(cacheMutex);
@@ -1288,7 +1303,7 @@ private:
         if (completedSources.size() == 1 &&
             sourcePlan.sourceKeys.size() == 1 &&
             completedSources.front().image &&
-            !completedSources.front().ancestorFallback &&
+            !completedSources.front().sourceSubset.has_value() &&
             rectanglesEqualForDirectRasterTile(
                 targetBounds,
                 completedSources.front().bounds)) {
@@ -1381,7 +1396,11 @@ RasterOverlayTileProvider::composeRectangleImagesWithDetails(
             source.key,
             source.bounds,
             std::shared_ptr<const DecodedImage>(std::move(source.image)),
-            source.ancestorFallback,
+            source.sourceSubset.has_value()
+                ? source.sourceSubset
+                : (source.ancestorFallback
+                       ? std::optional<Rectangle>(source.bounds)
+                       : std::nullopt),
             source.moreDetailAvailable});
     }
     return combineRectangleImages(

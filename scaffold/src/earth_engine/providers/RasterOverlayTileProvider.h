@@ -10,6 +10,7 @@
 #include "../core/math/Rectangle.h"
 
 #include <memory>
+#include <optional>
 #include <vector>
 #include <string>
 #include <utility>
@@ -63,6 +64,7 @@ public:
         bool ancestorFallback = false;
         RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::Unknown;
+        std::optional<Rectangle> sourceSubset;
     };
 
     struct RectangleCompositionResult {
@@ -271,7 +273,7 @@ private:
         TileKey key;
         Rectangle bounds;
         std::shared_ptr<const DecodedImage> image;
-        bool ancestorFallback = false;
+        std::optional<Rectangle> sourceSubset;
         RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::Unknown;
         int64_t sizeBytes = 0;

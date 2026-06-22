@@ -24,6 +24,7 @@
 #include <cmath>
 #include <memory>
 #include <deque>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -2664,7 +2665,10 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsNoCoverageAndAccepts
     noCoverage.push_back({
         TileKey{scheme->id(), 2, 0, 0},
         outside,
-        makeImage(2, 2, 10)});
+        makeImage(2, 2, 10),
+        false,
+        RasterOverlayTile::MoreDetailAvailable::Unknown,
+        std::nullopt});
     auto noCoverageResult =
         RasterOverlayTileProvider::composeRectangleImages(
             *scheme,
@@ -2678,7 +2682,10 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsNoCoverageAndAccepts
     full.push_back({
         TileKey{scheme->id(), 1, 0, 0},
         target,
-        makeImage(2, 2, 20)});
+        makeImage(2, 2, 20),
+        false,
+        RasterOverlayTile::MoreDetailAvailable::Unknown,
+        std::nullopt});
     auto fullResult =
         RasterOverlayTileProvider::composeRectangleImages(
             *scheme,
@@ -2707,7 +2714,10 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsMalformedSourceImage
     sources.push_back({
         TileKey{scheme->id(), 1, 0, 0},
         target,
-        std::move(malformed)});
+        std::move(malformed),
+        false,
+        RasterOverlayTile::MoreDetailAvailable::Unknown,
+        std::nullopt});
     auto result =
         RasterOverlayTileProvider::composeRectangleImages(
             *scheme,
@@ -2729,7 +2739,8 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesSourceMoreDetailFlagLik
         target,
         makeImage(2, 2, 20),
         false,
-        RasterOverlayTile::MoreDetailAvailable::No});
+        RasterOverlayTile::MoreDetailAvailable::No,
+        std::nullopt});
 
     auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
         *scheme,
@@ -2755,7 +2766,8 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionReturnsEmptyImageForOnlyAnc
         target,
         makeImage(2, 2, 20),
         true,
-        RasterOverlayTile::MoreDetailAvailable::Yes});
+        RasterOverlayTile::MoreDetailAvailable::Yes,
+        target});
 
     auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
         *scheme,
@@ -2790,7 +2802,8 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionReturnsCoveredRectangleLike
         covered,
         makeImage(2, 2, 30),
         false,
-        RasterOverlayTile::MoreDetailAvailable::No});
+        RasterOverlayTile::MoreDetailAvailable::No,
+        std::nullopt});
 
     auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
         *scheme,
@@ -2835,8 +2848,20 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionBlitsSourcePixelBlocksLikeC
         22, 0, 0, 255, 23, 0, 0, 255};
 
     std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
-    sources.push_back({westKey, westBounds, std::move(westImage)});
-    sources.push_back({eastKey, eastBounds, std::move(eastImage)});
+    sources.push_back({
+        westKey,
+        westBounds,
+        std::move(westImage),
+        false,
+        RasterOverlayTile::MoreDetailAvailable::Unknown,
+        std::nullopt});
+    sources.push_back({
+        eastKey,
+        eastBounds,
+        std::move(eastImage),
+        false,
+        RasterOverlayTile::MoreDetailAvailable::Unknown,
+        std::nullopt});
 
     auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
         *scheme,
@@ -2859,6 +2884,56 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionBlitsSourcePixelBlocksLikeC
     EXPECT_EQ(23, result.image->pixels[28]);
 }
 
+TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesAncestorSubsetLikeCesiumNative) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    const TileKey westKey{scheme->id(), 2, 0, 1};
+    const TileKey eastKey{scheme->id(), 2, 1, 1};
+    const Rectangle westBounds = scheme->tileToRectangle(westKey);
+    const Rectangle eastBounds = scheme->tileToRectangle(eastKey);
+    const Rectangle target(
+        westBounds.west(),
+        westBounds.south(),
+        eastBounds.east(),
+        westBounds.north());
+
+    auto eastImage = makeImage(2, 2, 20);
+    auto ancestorImage = makeImage(4, 2, 10);
+
+    std::vector<RasterOverlayTileProvider::RectangleSourceImage> sources;
+    sources.push_back({
+        eastKey,
+        eastBounds,
+        std::move(eastImage),
+        false,
+        RasterOverlayTile::MoreDetailAvailable::No,
+        std::nullopt});
+    sources.push_back({
+        TileKey{scheme->id(), 1, 0, 0},
+        target,
+        std::move(ancestorImage),
+        true,
+        RasterOverlayTile::MoreDetailAvailable::Yes,
+        westBounds});
+
+    auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
+        *scheme,
+        target,
+        westKey.z,
+        std::move(sources),
+        westKey.z,
+        8);
+
+    ASSERT_NE(nullptr, result.image);
+    ASSERT_EQ(4, result.image->width);
+    ASSERT_EQ(2, result.image->height);
+    EXPECT_EQ(10, result.image->pixels[0]);
+    EXPECT_EQ(10, result.image->pixels[4]);
+    EXPECT_EQ(20, result.image->pixels[8]);
+    EXPECT_EQ(20, result.image->pixels[12]);
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
+              result.moreDetailAvailable);
+}
+
 TEST(RasterOverlayLifecycleTest, RectangleCompositionKeepsTinyProjectedOverlap) {
     auto scheme = TileScheme::createXYZWebMercator();
     const TileKey sourceKey{scheme->id(), 2, 1, 0};
@@ -2874,7 +2949,10 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionKeepsTinyProjectedOverlap) 
     sources.push_back({
         sourceKey,
         sourceBounds,
-        makeImage(64, 64, 40)});
+        makeImage(64, 64, 40),
+        false,
+        RasterOverlayTile::MoreDetailAvailable::Unknown,
+        std::nullopt});
 
     auto result = RasterOverlayTileProvider::composeRectangleImages(
         *scheme,
@@ -2904,7 +2982,10 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesProjectedWebMercatorHei
     sources.push_back({
         sourceKey,
         sourceBounds,
-        makeImage(64, 64, 50)});
+        makeImage(64, 64, 50),
+        false,
+        RasterOverlayTile::MoreDetailAvailable::Unknown,
+        std::nullopt});
 
     auto result = RasterOverlayTileProvider::composeRectangleImages(
         *scheme,

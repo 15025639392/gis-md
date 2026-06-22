@@ -129,6 +129,7 @@
 #include <limits>
 #include <list>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -2443,7 +2444,10 @@ void testRasterOverlayRectangleCompositionRejectsNoCoverage() {
     sources.push_back(RasterOverlayTileProvider::RectangleSourceImage{
         sourceKey,
         sourceBounds,
-        makeDecodedRgbaImage(8, 8)});
+        makeDecodedRgbaImage(8, 8),
+        false,
+        RasterOverlayTile::MoreDetailAvailable::Unknown,
+        std::nullopt});
 
     std::unique_ptr<DecodedImage> composed =
         RasterOverlayTileProvider::composeRectangleImages(
@@ -2487,7 +2491,10 @@ void testRasterOverlayRectangleCompositionUsesProjectedWebMercatorHeight() {
     sources.push_back(RasterOverlayTileProvider::RectangleSourceImage{
         sourceKey,
         sourceBounds,
-        makeDecodedRgbaImage(64, 64)});
+        makeDecodedRgbaImage(64, 64),
+        false,
+        RasterOverlayTile::MoreDetailAvailable::Unknown,
+        std::nullopt});
 
     std::unique_ptr<DecodedImage> composed =
         RasterOverlayTileProvider::composeRectangleImages(
@@ -2527,7 +2534,10 @@ void testRasterOverlayRectangleCompositionKeepsTinyProjectedOverlap() {
     sources.push_back(RasterOverlayTileProvider::RectangleSourceImage{
         sourceKey,
         sourceBounds,
-        makeDecodedRgbaImage(64, 64)});
+        makeDecodedRgbaImage(64, 64),
+        false,
+        RasterOverlayTile::MoreDetailAvailable::Unknown,
+        std::nullopt});
 
     std::unique_ptr<DecodedImage> composed =
         RasterOverlayTileProvider::composeRectangleImages(
