@@ -1,5 +1,7 @@
 #include "GltfTerrainUpsampler.h"
 
+#include "../core/geodesy/Ellipsoid.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -35,6 +37,27 @@ bool childKeepsNorth(const UpsampledQuadtreeNode& childID) {
 double component(const ClipVertex& vertex, int axis, int texCoord) {
     return axis == 0 ? vertex.texCoords[texCoord][0]
                      : vertex.texCoords[texCoord][1];
+}
+
+std::pair<Vec3, Vec3> splitHighLow(const Vec3& value) {
+    constexpr double kSplit = 65536.0;
+    const auto split = [](double v) {
+        const double high = std::floor(v / kSplit) * kSplit;
+        return std::pair<double, double>{high, v - high};
+    };
+    const auto sx = split(value.x());
+    const auto sy = split(value.y());
+    const auto sz = split(value.z());
+    return {
+        Vec3(sx.first, sy.first, sz.first),
+        Vec3(sx.second, sy.second, sz.second)};
+}
+
+void setPosition(SurfaceVertex& vertex, const Vec3& positionEcef) {
+    vertex.positionEcef = positionEcef;
+    auto split = splitHighLow(positionEcef);
+    vertex.positionHighEcef = split.first;
+    vertex.positionLowEcef = split.second;
 }
 
 ClipVertex interpolate(const ClipVertex& a,
@@ -254,6 +277,255 @@ void appendPoint(GltfPrimitive& output,
     output.indices.push_back(outputIndex);
 }
 
+struct EdgeVertex {
+    uint32_t index = 0;
+    std::array<float, 2> uv = {0.0f, 0.0f};
+};
+
+struct EdgeIndices {
+    std::vector<EdgeVertex> west;
+    std::vector<EdgeVertex> south;
+    std::vector<EdgeVertex> east;
+    std::vector<EdgeVertex> north;
+};
+
+bool equalsEpsilon(float a, double b) {
+    return std::abs(static_cast<double>(a) - b) <= 1e-5;
+}
+
+double shortestSkirtHeight(const SkirtMetadata& skirt) {
+    return std::min(
+        std::min(skirt.skirtWestHeight, skirt.skirtEastHeight),
+        std::min(skirt.skirtSouthHeight, skirt.skirtNorthHeight));
+}
+
+void collectEdge(EdgeIndices& edges,
+                 const GltfPrimitive& primitive,
+                 int textureCoordinateIndex,
+                 const UpsampledQuadtreeNode& childID,
+                 bool hasInvertedVCoordinate) {
+    if (textureCoordinateIndex < 0 ||
+        textureCoordinateIndex >= static_cast<int>(kGltfMaxTexCoordSets)) {
+        return;
+    }
+    const auto& texCoords =
+        primitive.vertexTexCoords[static_cast<size_t>(textureCoordinateIndex)];
+    if (texCoords.size() != primitive.vertices.size()) {
+        return;
+    }
+
+    const bool eastChild = childKeepsEast(childID);
+    const bool northChild = childKeepsNorth(childID);
+    const double westU = eastChild ? 0.5 : 0.0;
+    const double eastU = eastChild ? 1.0 : 0.5;
+    const bool keepGreaterV =
+        hasInvertedVCoordinate ? !northChild : northChild;
+    const double lowV = keepGreaterV ? 0.5 : 0.0;
+    const double highV = keepGreaterV ? 1.0 : 0.5;
+    const double southV = hasInvertedVCoordinate ? highV : lowV;
+    const double northV = hasInvertedVCoordinate ? lowV : highV;
+
+    for (uint32_t i = 0; i < texCoords.size(); ++i) {
+        const auto& uv = texCoords[i];
+        if (equalsEpsilon(uv[0], westU)) {
+            edges.west.push_back({i, uv});
+        }
+        if (equalsEpsilon(uv[0], eastU)) {
+            edges.east.push_back({i, uv});
+        }
+        if (equalsEpsilon(uv[1], southV)) {
+            edges.south.push_back({i, uv});
+        }
+        if (equalsEpsilon(uv[1], northV)) {
+            edges.north.push_back({i, uv});
+        }
+    }
+}
+
+void uniqueSortedEdge(std::vector<EdgeVertex>& edge) {
+    edge.erase(
+        std::unique(
+            edge.begin(),
+            edge.end(),
+            [](const EdgeVertex& a, const EdgeVertex& b) {
+                return a.index == b.index;
+            }),
+        edge.end());
+}
+
+void appendSkirtVertex(GltfPrimitive& primitive,
+                       uint32_t sourceIndex,
+                       double skirtHeight,
+                       const Vec3& meshCenter,
+                       const Ellipsoid& ellipsoid) {
+    SurfaceVertex skirtVertex = primitive.vertices[sourceIndex];
+    const Vec3 absoluteTop = skirtVertex.positionEcef + meshCenter;
+    Vec3 normal = ellipsoid.geodeticSurfaceNormal(absoluteTop);
+    if (normal.lengthSquared() <= 0.0 &&
+        skirtVertex.normalEcef.lengthSquared() > 0.0) {
+        normal = skirtVertex.normalEcef.normalized();
+    }
+    if (normal.lengthSquared() > 0.0) {
+        normal = normal.normalized();
+    }
+    const Vec3 skirtPosition =
+        absoluteTop - normal * skirtHeight - meshCenter;
+    setPosition(skirtVertex, skirtPosition);
+    primitive.vertices.push_back(skirtVertex);
+
+    for (size_t set = 0; set < kGltfMaxTexCoordSets; ++set) {
+        if (primitive.vertexTexCoords[set].size() + 1 ==
+            primitive.vertices.size()) {
+            primitive.vertexTexCoords[set].push_back(
+                primitive.vertexTexCoords[set][sourceIndex]);
+        }
+    }
+    if (primitive.vertexColors.size() + 1 == primitive.vertices.size()) {
+        primitive.vertexColors.push_back(primitive.vertexColors[sourceIndex]);
+    }
+    if (primitive.vertexTangents.size() + 1 == primitive.vertices.size()) {
+        primitive.vertexTangents.push_back(
+            primitive.vertexTangents[sourceIndex]);
+    }
+    if (primitive.featureIds.size() + 1 == primitive.vertices.size()) {
+        primitive.featureIds.push_back(primitive.featureIds[sourceIndex]);
+    }
+    if (primitive.featureProperties.size() + 1 == primitive.vertices.size()) {
+        primitive.featureProperties.push_back(
+            primitive.featureProperties[sourceIndex]);
+    }
+}
+
+void appendSkirtEdge(GltfPrimitive& primitive,
+                     const std::vector<EdgeVertex>& edge,
+                     double skirtHeight,
+                     const Vec3& meshCenter,
+                     const Ellipsoid& ellipsoid) {
+    if (edge.size() < 2) {
+        return;
+    }
+
+    const uint32_t firstSkirtVertex =
+        static_cast<uint32_t>(primitive.vertices.size());
+    for (const EdgeVertex& edgeVertex : edge) {
+        appendSkirtVertex(
+            primitive,
+            edgeVertex.index,
+            skirtHeight,
+            meshCenter,
+            ellipsoid);
+    }
+
+    for (uint32_t i = 0; i + 1 < edge.size(); ++i) {
+        const uint32_t topA = edge[i].index;
+        const uint32_t topB = edge[i + 1].index;
+        const uint32_t skirtA = firstSkirtVertex + i;
+        const uint32_t skirtB = firstSkirtVertex + i + 1;
+        primitive.indices.push_back(topA);
+        primitive.indices.push_back(topB);
+        primitive.indices.push_back(skirtA);
+        primitive.indices.push_back(skirtA);
+        primitive.indices.push_back(topB);
+        primitive.indices.push_back(skirtB);
+    }
+}
+
+void addSkirts(GltfPrimitive& primitive,
+               const UpsampledQuadtreeNode& childID,
+               int textureCoordinateIndex,
+               bool hasInvertedVCoordinate) {
+    if (!primitive.skirtMetadata) {
+        return;
+    }
+
+    const SkirtMetadata parentSkirt = *primitive.skirtMetadata;
+    primitive.skirtMetadata->noSkirtVerticesBegin = 0;
+    primitive.skirtMetadata->noSkirtVerticesCount =
+        static_cast<uint32_t>(primitive.vertices.size());
+    primitive.skirtMetadata->noSkirtIndicesBegin = 0;
+    primitive.skirtMetadata->noSkirtIndicesCount =
+        static_cast<uint32_t>(primitive.indices.size());
+
+    EdgeIndices edges;
+    collectEdge(
+        edges,
+        primitive,
+        textureCoordinateIndex,
+        childID,
+        hasInvertedVCoordinate);
+
+    const double shortestHeight = shortestSkirtHeight(parentSkirt);
+    primitive.skirtMetadata->skirtWestHeight = childKeepsEast(childID)
+        ? shortestHeight * 0.5
+        : parentSkirt.skirtWestHeight;
+    primitive.skirtMetadata->skirtSouthHeight = childKeepsNorth(childID)
+        ? shortestHeight * 0.5
+        : parentSkirt.skirtSouthHeight;
+    primitive.skirtMetadata->skirtEastHeight = childKeepsEast(childID)
+        ? parentSkirt.skirtEastHeight
+        : shortestHeight * 0.5;
+    primitive.skirtMetadata->skirtNorthHeight = childKeepsNorth(childID)
+        ? parentSkirt.skirtNorthHeight
+        : shortestHeight * 0.5;
+
+    std::sort(edges.west.begin(), edges.west.end(), [](const auto& a,
+                                                       const auto& b) {
+        return a.uv[1] < b.uv[1] ||
+               (a.uv[1] == b.uv[1] && a.index < b.index);
+    });
+    uniqueSortedEdge(edges.west);
+    std::sort(edges.south.begin(), edges.south.end(), [](const auto& a,
+                                                        const auto& b) {
+        return a.uv[0] > b.uv[0] ||
+               (a.uv[0] == b.uv[0] && a.index < b.index);
+    });
+    if (hasInvertedVCoordinate) {
+        std::reverse(edges.south.begin(), edges.south.end());
+    }
+    uniqueSortedEdge(edges.south);
+    std::sort(edges.east.begin(), edges.east.end(), [](const auto& a,
+                                                       const auto& b) {
+        return a.uv[1] > b.uv[1] ||
+               (a.uv[1] == b.uv[1] && a.index < b.index);
+    });
+    uniqueSortedEdge(edges.east);
+    std::sort(edges.north.begin(), edges.north.end(), [](const auto& a,
+                                                        const auto& b) {
+        return a.uv[0] < b.uv[0] ||
+               (a.uv[0] == b.uv[0] && a.index < b.index);
+    });
+    if (hasInvertedVCoordinate) {
+        std::reverse(edges.north.begin(), edges.north.end());
+    }
+    uniqueSortedEdge(edges.north);
+
+    const Ellipsoid ellipsoid = Ellipsoid::WGS84();
+    appendSkirtEdge(
+        primitive,
+        edges.west,
+        primitive.skirtMetadata->skirtWestHeight,
+        primitive.skirtMetadata->meshCenter,
+        ellipsoid);
+    appendSkirtEdge(
+        primitive,
+        edges.south,
+        primitive.skirtMetadata->skirtSouthHeight,
+        primitive.skirtMetadata->meshCenter,
+        ellipsoid);
+    appendSkirtEdge(
+        primitive,
+        edges.east,
+        primitive.skirtMetadata->skirtEastHeight,
+        primitive.skirtMetadata->meshCenter,
+        ellipsoid);
+    appendSkirtEdge(
+        primitive,
+        edges.north,
+        primitive.skirtMetadata->skirtNorthHeight,
+        primitive.skirtMetadata->meshCenter,
+        ellipsoid);
+}
+
 bool upsamplePointsPrimitive(const GltfPrimitive& parent,
                              GltfPrimitive& output,
                              const UpsampledQuadtreeNode& childID,
@@ -407,14 +679,7 @@ bool upsamplePrimitive(const GltfPrimitive& parent,
     }
 
     output.skirtMetadata = parent.skirtMetadata;
-    if (output.skirtMetadata) {
-        output.skirtMetadata->noSkirtVerticesBegin = 0;
-        output.skirtMetadata->noSkirtVerticesCount =
-            static_cast<uint32_t>(output.vertices.size());
-        output.skirtMetadata->noSkirtIndicesBegin = 0;
-        output.skirtMetadata->noSkirtIndicesCount =
-            static_cast<uint32_t>(output.indices.size());
-    }
+    addSkirts(output, childID, textureCoordinateIndex, hasInvertedVCoordinate);
     return true;
 }
 

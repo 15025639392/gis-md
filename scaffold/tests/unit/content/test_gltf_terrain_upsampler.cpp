@@ -132,13 +132,27 @@ TEST(GltfTerrainUpsamplerTest,
     }
     ASSERT_TRUE(primitive.skirtMetadata.has_value());
     EXPECT_EQ(0u, primitive.skirtMetadata->noSkirtIndicesBegin);
-    EXPECT_EQ(primitive.indices.size(),
-              primitive.skirtMetadata->noSkirtIndicesCount);
     EXPECT_EQ(0u, primitive.skirtMetadata->noSkirtVerticesBegin);
-    EXPECT_EQ(primitive.vertices.size(),
-              primitive.skirtMetadata->noSkirtVerticesCount);
+    EXPECT_LT(
+        primitive.skirtMetadata->noSkirtIndicesCount,
+        primitive.indices.size());
+    EXPECT_LT(
+        primitive.skirtMetadata->noSkirtVerticesCount,
+        primitive.vertices.size());
     EXPECT_EQ(parent.primitives.front().skirtMetadata->meshCenter,
               primitive.skirtMetadata->meshCenter);
+    EXPECT_DOUBLE_EQ(
+        10.0,
+        primitive.skirtMetadata->skirtWestHeight);
+    EXPECT_DOUBLE_EQ(
+        10.0,
+        primitive.skirtMetadata->skirtSouthHeight);
+    EXPECT_DOUBLE_EQ(
+        5.0,
+        primitive.skirtMetadata->skirtEastHeight);
+    EXPECT_DOUBLE_EQ(
+        5.0,
+        primitive.skirtMetadata->skirtNorthHeight);
     EXPECT_DOUBLE_EQ(0.25, upsampled->terrainWaterMask.translationX);
     EXPECT_DOUBLE_EQ(0.125, upsampled->terrainWaterMask.translationY);
     EXPECT_DOUBLE_EQ(0.25, upsampled->terrainWaterMask.scale);
@@ -254,10 +268,9 @@ TEST(GltfTerrainUpsamplerTest,
 }
 
 TEST(GltfTerrainUpsamplerTest,
-     PreservesTriangleFeatureMetadataWhenClippingLikeCesiumNative) {
+    PreservesTriangleFeatureMetadataWhenClippingLikeCesiumNative) {
     GltfModel parent = makeParentModel();
     GltfPrimitive& parentPrimitive = parent.primitives.front();
-    parentPrimitive.skirtMetadata.reset();
     parentPrimitive.featureIds = {42, 42, 42, 42};
     parentPrimitive.featureProperties.resize(4);
     for (auto& properties : parentPrimitive.featureProperties) {
