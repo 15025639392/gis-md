@@ -3842,7 +3842,7 @@ std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
     return hm;
 }
 
-void testTilesetMissingRasterProjectionUnloadsRenderContent() {
+void testTilesetMissingRasterProjectionGeneratesDetails() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -3888,67 +3888,32 @@ void testTilesetMissingRasterProjectionUnloadsRenderContent() {
 
     check(commands.empty(),
           "Tileset: missing raster projection stops draw command creation");
-    check(root->content.loadState == TileLoadState::Unloaded &&
-              root->content.contentKind == TileContentKind::Unknown,
-          "Tileset: missing raster projection unloads render content like cesium-native");
-    check(!root->content.renderContent.isMeshReady() &&
-              !root->content.renderContent.hasSurfaceMesh() &&
-              root->content.renderContent.surfaceVertexBuffer() == nullptr,
-          "Tileset: missing raster projection releases render resources before reload");
-    check(root->rasterOverlayState.mappings().empty(),
-          "Tileset: missing raster projection clears mapped raster state before reload");
-    check(root->rasterOverlayState.missingProjections().size() == 1 &&
-              root->rasterOverlayState.missingProjections().front() ==
-                  RasterOverlayProjection::WebMercator,
-          "Tileset: missing raster projection remains diagnosable after unload");
+    check(root->content.loadState == TileLoadState::Done &&
+              root->content.contentKind == TileContentKind::Render &&
+              root->content.renderContent.hasSurfaceMesh() &&
+              root->content.renderContent.isMeshReady(),
+          "Tileset: missing raster projection preserves render content while generating details");
 
-    TileLoadedContent reloadedContent;
-    reloadedContent.surfaceMesh = std::make_unique<SurfaceTileMesh>();
-    reloadedContent.surfaceMesh->rasterOverlayDetails.setGeographicRectangle(
-        terrainRectangle,
-        -25.0,
-        125.0);
-    std::vector<ActivatedRasterOverlay*> overlays{&activated};
-    TileTerrainUploadCommitter::prepareTerrainRenderContent(
-        *root,
-        std::move(reloadedContent),
-        overlays,
-        nullptr);
-    root->content.renderContent.setMeshReady(true);
-    root->content.renderContent.setSurfaceGpuBuffers(
-        std::make_unique<DummyBuffer>(32),
-        nullptr);
-
-    commands.clear();
-    TilesetTestAccess::buildTileDrawCommand(
-        tileset,
-        renderer,
-        *root,
-        commands,
-        1.0f);
-
-    const RasterOverlayDetails& reloadedDetails =
+    const RasterOverlayDetails& generatedDetails =
         root->content.renderContent.rasterOverlayDetails();
     const Rectangle expectedWebMercator = projectRectangleSimple(
         WebMercatorProjection(Ellipsoid::WGS84()),
         terrainRectangle);
     const Rectangle* webMercatorDetails =
-        reloadedDetails.findRectangleForOverlayProjection(
+        generatedDetails.findRectangleForOverlayProjection(
             RasterOverlayProjection::WebMercator);
     RasterMappedToTilesetTile* mapped =
         root->rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
     check(webMercatorDetails && *webMercatorDetails == expectedWebMercator,
-          "Tileset: reloaded terrain content generates missing raster projection details");
+          "Tileset: render content generates missing raster projection details like cesium-native");
     check(loadingTile &&
               loadingTile->getState() !=
                   RasterOverlayTile::LoadState::Placeholder &&
               loadingTile->getRectangle() == expectedWebMercator,
-          "Tileset: reloaded terrain content maps generated projection to a real raster tile");
-    check(root->content.loadState != TileLoadState::Unloaded &&
-              root->content.contentKind == TileContentKind::Render &&
-              root->rasterOverlayState.missingProjections().empty(),
-          "Tileset: reloaded terrain projection closes missing-projection unload loop");
+          "Tileset: generated projection maps to a real raster tile");
+    check(root->rasterOverlayState.missingProjections().empty(),
+          "Tileset: generated raster projection avoids the unload/reload loop");
 }
 
 void testTilesetRasterTargetPixelsUseRenderContentRectangle() {
@@ -4121,7 +4086,7 @@ void testTilesetPrefetchWaitsForRenderDetailsBeforeRequestingRaster() {
           "Tileset: prefetch placeholder load remains a no-op");
 }
 
-void testTilesetPrefetchDoesNotGenerateRenderContentDetailsFromRegion() {
+void testTilesetPrefetchGeneratesRenderContentDetailsFromRegion() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -4140,7 +4105,7 @@ void testTilesetPrefetchDoesNotGenerateRenderContentDetailsFromRegion() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
-          "Tileset: prefetch no-detail-generation root tile is created");
+          "Tileset: prefetch detail-generation root tile is created");
     if (!root) return;
 
     const Rectangle regionRectangle =
@@ -4161,21 +4126,29 @@ void testTilesetPrefetchDoesNotGenerateRenderContentDetailsFromRegion() {
 
     const RasterOverlayDetails& details =
         root->content.renderContent.rasterOverlayDetails();
-    check(details.rasterOverlayProjections.size() == 1 &&
-              details.rasterOverlayRectangles.empty(),
-          "Tileset: prefetch does not synthesize render-content raster details");
-    check(details.boundingRegion.rectangle.isEmpty(),
-          "Tileset: prefetch leaves render-content bounding region unchanged");
+    const Rectangle expectedWebMercator = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        regionRectangle);
+    const Rectangle* webMercatorDetails =
+        details.findRectangleForOverlayProjection(
+            RasterOverlayProjection::WebMercator);
+    check(webMercatorDetails && *webMercatorDetails == expectedWebMercator,
+          "Tileset: prefetch generates render-content raster details from region like cesium-native");
+    check(details.boundingRegion.rectangle == regionRectangle &&
+              details.boundingRegion.minimumHeight == -25.0 &&
+              details.boundingRegion.maximumHeight == 125.0,
+          "Tileset: prefetch records generated raster detail bounding region");
 
     RasterMappedToTilesetTile* mapped =
         root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
     check(loadingTile != nullptr &&
-              loadingTile->getState() ==
-                  RasterOverlayTile::LoadState::Placeholder,
-          "Tileset: prefetch maps missing render-content projection to placeholder");
+              loadingTile->getState() !=
+                  RasterOverlayTile::LoadState::Placeholder &&
+              loadingTile->getRectangle() == expectedWebMercator,
+          "Tileset: prefetch maps generated render-content projection to real raster");
     check(mapped && mapped->getTextureCoordinateID() == 1,
-          "Tileset: prefetch records missing projection after existing projection slots");
+          "Tileset: prefetch records generated projection after existing projection slots");
     check(root->rasterOverlayState.missingProjections().empty(),
           "Tileset: prefetch keeps missing projection local to the prefetch pass");
 }
@@ -27162,11 +27135,11 @@ int main() {
     testRasterMappedMissingProjectionUsesPlaceholder();
     testRasterMappedPlaceholderRemapsWhenProviderBecomesReady();
     testRasterMappedFailedReadyTileDetachSkipsRendererCallback();
-    testTilesetMissingRasterProjectionUnloadsRenderContent();
+    testTilesetMissingRasterProjectionGeneratesDetails();
     testTilesetRasterTargetPixelsUseRenderContentRectangle();
     testTilesetEnsuresOverlayProviderBeforeMapping();
     testTilesetPrefetchWaitsForRenderDetailsBeforeRequestingRaster();
-    testTilesetPrefetchDoesNotGenerateRenderContentDetailsFromRegion();
+    testTilesetPrefetchGeneratesRenderContentDetailsFromRegion();
     testTileRasterOverlayFrameProcessorPrefetchesByPriority();
     testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach();
     testRasterSelectionPrefetchSkipHonorsMoreDetail();

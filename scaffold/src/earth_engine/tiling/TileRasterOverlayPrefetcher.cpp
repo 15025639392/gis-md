@@ -2,6 +2,7 @@
 
 #include "RasterMappedToTilesetTile.h"
 #include "RasterOverlayScreenSpaceMetrics.h"
+#include "TileRasterOverlayDetailsGenerator.h"
 #include "TilesetTile.h"
 
 #include "../core/resources/FrameResourceBudget.h"
@@ -31,6 +32,14 @@ void TileRasterOverlayPrefetcher::prefetch(
         tile.content.contentKind == TileContentKind::Render &&
         (tile.content.renderContent.hasSurfaceMesh() ||
          tile.content.renderContent.hasGltfModel());
+    if (hasRenderContentDetails) {
+        TileRasterOverlayDetailsGenerator::
+            ensureProjectionDetailsFromActiveOverlays(
+                tile.content.renderContent,
+                tile.boundingVolume ? &*tile.boundingVolume : nullptr,
+                rasterOverlays,
+                device);
+    }
     const RasterOverlayDetails* renderDetails = hasRenderContentDetails
         ? &tile.content.renderContent.rasterOverlayDetails()
         : nullptr;
