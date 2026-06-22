@@ -488,12 +488,17 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     mesh->skirtMeta.noSkirtVerticesCount = vc;
     mesh->skirtMeta.noSkirtIndicesBegin = 0;
     mesh->skirtMeta.noSkirtIndicesCount = static_cast<uint32_t>(mesh->indices.size());
+    mesh->skirtMeta.meshCenter = mesh->localOriginEcef;
 
     // cesium-native skirt: partial_sort_copy each edge by UV coordinate,
     // then create bottom vertices and triangle strips.
     const double lonOff = (eastLng - westLng) * 0.0001;
     const double latOff = (northLat - southLat) * 0.0001;
     const double skirtH = calculateSkirtHeight(ellipsoid, bounds);
+    mesh->skirtMeta.skirtWestHeight = skirtH;
+    mesh->skirtMeta.skirtSouthHeight = skirtH;
+    mesh->skirtMeta.skirtEastHeight = skirtH;
+    mesh->skirtMeta.skirtNorthHeight = skirtH;
 
     auto addSkirtEdge = [&](const std::vector<uint32_t>& edgeIdx,
                              double lo, double la, bool reverse) {

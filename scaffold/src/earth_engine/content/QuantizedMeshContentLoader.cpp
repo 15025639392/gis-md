@@ -35,6 +35,7 @@ std::unique_ptr<GltfModel> makeQuantizedMeshGltfModel(
     GltfPrimitive primitive;
     primitive.vertices = surfaceMesh.vertices;
     primitive.indices = surfaceMesh.indices;
+    primitive.skirtMetadata = surfaceMesh.skirtMeta;
     primitive.primitiveMode = GltfPrimitiveMode::Triangles;
     primitive.doubleSided = false;
     primitive.metallicFactor = 0.0f;

@@ -119,6 +119,7 @@ struct GltfPrimitive {
         featureProperties;
     std::vector<GltfInstance> instances;
     GltfPrimitiveRuntime runtime;
+    std::optional<SkirtMetadata> skirtMetadata;
     GltfPrimitiveMode primitiveMode = GltfPrimitiveMode::Triangles;
     std::array<float, 4> baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f};
     std::optional<size_t> baseColorTextureIndex;

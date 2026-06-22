@@ -651,6 +651,23 @@ TEST(TileSurfaceTest, SurfaceTileTerrainCanAddSkirt) {
 
     EXPECT_GT(withSkirt.vertices.size(), noSkirt.vertices.size());
     EXPECT_GT(withSkirt.indices.size(), noSkirt.indices.size());
+    ASSERT_GT(withSkirt.skirtMeta.noSkirtVerticesCount, 0u);
+    Vec3 expectedMeshCenter = Vec3::zero();
+    for (uint32_t i = 0; i < withSkirt.skirtMeta.noSkirtVerticesCount; ++i) {
+        expectedMeshCenter += withSkirt.vertices[i].positionEcef;
+    }
+    expectedMeshCenter =
+        expectedMeshCenter /
+        static_cast<double>(withSkirt.skirtMeta.noSkirtVerticesCount);
+    EXPECT_LT((expectedMeshCenter - withSkirt.skirtMeta.meshCenter).length(),
+              1e-6);
+    EXPECT_GT(withSkirt.skirtMeta.skirtWestHeight, 0.0);
+    EXPECT_DOUBLE_EQ(withSkirt.skirtMeta.skirtWestHeight,
+                     withSkirt.skirtMeta.skirtSouthHeight);
+    EXPECT_DOUBLE_EQ(withSkirt.skirtMeta.skirtWestHeight,
+                     withSkirt.skirtMeta.skirtEastHeight);
+    EXPECT_DOUBLE_EQ(withSkirt.skirtMeta.skirtWestHeight,
+                     withSkirt.skirtMeta.skirtNorthHeight);
 
     bool sawLowerSkirtVertex = false;
     for (size_t i = noSkirt.vertices.size(); i < withSkirt.vertices.size(); ++i) {

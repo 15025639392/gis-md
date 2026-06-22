@@ -174,6 +174,24 @@ TEST(QuantizedMeshContentLoaderTest,
               primitive.vertexTexCoords[0].front());
     EXPECT_EQ(result.surfaceMesh->vertices.back().uv,
               primitive.vertexTexCoords[0].back());
+    ASSERT_TRUE(primitive.skirtMetadata.has_value());
+    EXPECT_EQ(result.surfaceMesh->skirtMeta.noSkirtIndicesBegin,
+              primitive.skirtMetadata->noSkirtIndicesBegin);
+    EXPECT_EQ(result.surfaceMesh->skirtMeta.noSkirtIndicesCount,
+              primitive.skirtMetadata->noSkirtIndicesCount);
+    EXPECT_EQ(result.surfaceMesh->skirtMeta.noSkirtVerticesBegin,
+              primitive.skirtMetadata->noSkirtVerticesBegin);
+    EXPECT_EQ(result.surfaceMesh->skirtMeta.noSkirtVerticesCount,
+              primitive.skirtMetadata->noSkirtVerticesCount);
+    EXPECT_EQ(result.surfaceMesh->skirtMeta.meshCenter,
+              primitive.skirtMetadata->meshCenter);
+    EXPECT_GT(primitive.skirtMetadata->skirtWestHeight, 0.0);
+    EXPECT_DOUBLE_EQ(primitive.skirtMetadata->skirtWestHeight,
+                     primitive.skirtMetadata->skirtSouthHeight);
+    EXPECT_DOUBLE_EQ(primitive.skirtMetadata->skirtWestHeight,
+                     primitive.skirtMetadata->skirtEastHeight);
+    EXPECT_DOUBLE_EQ(primitive.skirtMetadata->skirtWestHeight,
+                     primitive.skirtMetadata->skirtNorthHeight);
     EXPECT_FALSE(result.surfaceMesh->vertices.empty());
     EXPECT_FALSE(result.surfaceMesh->indices.empty());
     EXPECT_TRUE(result.surfaceMesh->hasHeightRange);

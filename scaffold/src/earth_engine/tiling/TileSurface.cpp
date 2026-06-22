@@ -373,6 +373,16 @@ SurfaceTileMesh TileSurface::buildTerrainMesh(const Rectangle& tileBounds,
         mesh.skirtMeta.noSkirtIndicesBegin = 0;
         mesh.skirtMeta.noSkirtIndicesCount =
             static_cast<uint32_t>(mesh.indices.size());
+        Vec3 meshCenter = Vec3::zero();
+        for (const SurfaceVertex& vertex : mesh.vertices) {
+            meshCenter += vertex.positionEcef;
+        }
+        mesh.skirtMeta.meshCenter =
+            meshCenter / static_cast<double>(mesh.vertices.size());
+        mesh.skirtMeta.skirtWestHeight = skirtHeight;
+        mesh.skirtMeta.skirtSouthHeight = skirtHeight;
+        mesh.skirtMeta.skirtEastHeight = skirtHeight;
+        mesh.skirtMeta.skirtNorthHeight = skirtHeight;
 
         // Build a skirt edge: given border vertex indices (already in their
         // sorted traversal order), create bottom-of-skirt vertices offset

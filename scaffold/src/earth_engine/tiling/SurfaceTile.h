@@ -50,6 +50,11 @@ struct SkirtMetadata {
     uint32_t noSkirtIndicesCount = 0;
     uint32_t noSkirtVerticesBegin = 0;
     uint32_t noSkirtVerticesCount = 0;
+    Vec3 meshCenter = Vec3::zero();
+    double skirtWestHeight = 0.0;
+    double skirtSouthHeight = 0.0;
+    double skirtEastHeight = 0.0;
+    double skirtNorthHeight = 0.0;
 };
 
 /// Water mask from QuantizedMesh extension ID=2.

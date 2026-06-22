@@ -347,6 +347,19 @@ TEST(QuantizedMeshParserSkirtTest,
         ellipsoid.semiMajorAxis() * 0.25 / 65.0 * bounds.width() * 5.0;
     EXPECT_LT(std::abs((top.height() - skirt.height()) - expectedSkirtHeight),
               1e-6);
+    EXPECT_EQ(mesh->localOriginEcef, mesh->skirtMeta.meshCenter);
+    EXPECT_NEAR(expectedSkirtHeight,
+                mesh->skirtMeta.skirtWestHeight,
+                1e-6);
+    EXPECT_NEAR(expectedSkirtHeight,
+                mesh->skirtMeta.skirtSouthHeight,
+                1e-6);
+    EXPECT_NEAR(expectedSkirtHeight,
+                mesh->skirtMeta.skirtEastHeight,
+                1e-6);
+    EXPECT_NEAR(expectedSkirtHeight,
+                mesh->skirtMeta.skirtNorthHeight,
+                1e-6);
 }
 
 TEST(QuantizedMeshParserSkirtTest,
