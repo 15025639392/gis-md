@@ -1154,6 +1154,8 @@ private:
                     self->cacheSource(originalKey, source);
                     auto completed = std::make_shared<SourceTileAsset>(
                         self->cachedSourceFromLoaded(source));
+                    InFlightSourceTileAsset::Result directCompleted =
+                        completed;
                     if (loadedKey != originalKey) {
                         LoadedSourceImage directSource;
                         directSource.key = loadedKey;
@@ -1163,10 +1165,12 @@ private:
                         directSource.moreDetailAvailable =
                             source.moreDetailAvailable;
                         self->cacheSource(loadedKey, directSource);
+                        directCompleted = std::make_shared<SourceTileAsset>(
+                            self->cachedSourceFromLoaded(directSource));
                     }
                     self->finishInFlightSource(originalKey, completed);
                     for (const TileKey& key : fallbackInFlightKeys) {
-                        self->finishInFlightSource(key, completed);
+                        self->finishInFlightSource(key, directCompleted);
                     }
                     return;
                 }

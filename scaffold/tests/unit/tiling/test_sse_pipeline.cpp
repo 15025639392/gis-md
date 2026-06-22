@@ -2433,6 +2433,71 @@ void testRasterOverlayRectangleSourceFailureRequestsParentSource() {
           "RasterOverlayTileProvider: failed source tile requests parent source like cesium-native");
 }
 
+void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<SlowRasterTextureUploader>();
+    RasterOverlayTileProvider provider(
+        imagery,
+        *imageryScheme,
+        std::move(uploader));
+
+    Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
+        TileKey{"XYZ-WebMercator", 3, 2, 3});
+    RasterOverlayTileProvider::TilePtr rectangleTile =
+        provider.getTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0);
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    config.maxRasterUploadsPerFrame = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    check(rectangleTile &&
+              provider.loadTileThrottled(*rectangleTile, &budget) &&
+              !imagery.pendingRequests.empty(),
+          "RasterOverlayTileProvider: fallback-share fixture starts child source requests");
+    if (imagery.pendingRequests.empty()) return;
+
+    const TileKey failedSource = imagery.pendingRequests.front().key;
+    imagery.pendingRequests.front().callback(failedSource, nullptr);
+    const TileKey parentKey{
+        failedSource.schemeId,
+        failedSource.z - 1,
+        failedSource.x / 2,
+        failedSource.y / 2};
+
+    RasterOverlayTileProvider::TilePtr parentTile = provider.getTile(parentKey);
+    FrameResourceBudget parentBudget;
+    parentBudget.beginFrame(2, config);
+    check(parentTile &&
+              provider.loadTileThrottled(*parentTile, &parentBudget),
+          "RasterOverlayTileProvider: direct parent joins fallback parent in-flight");
+
+    auto parentRequest = std::find_if(
+        imagery.pendingRequests.begin(),
+        imagery.pendingRequests.end(),
+        [&](const PendingRectangleImageryProvider::PendingRequest& request) {
+            return request.key == parentKey;
+        });
+    check(parentRequest != imagery.pendingRequests.end(),
+          "RasterOverlayTileProvider: fallback parent request exists once");
+    if (parentRequest == imagery.pendingRequests.end()) return;
+
+    parentRequest->callback(parentKey, makeDecodedRgbaImage(64, 64));
+    FrameResourceBudget uploadBudget;
+    uploadBudget.beginFrame(3, config);
+    provider.processPendingUploads(false, &uploadBudget);
+
+    check(parentTile->getState() == RasterOverlayTile::LoadState::Loaded,
+          "RasterOverlayTileProvider: direct parent waiter loads after shared parent completes");
+    check(parentTile->getTexture() != nullptr,
+          "RasterOverlayTileProvider: direct parent waiter receives uploadable direct image");
+    check(!parentTile->getRectangle().isEmpty(),
+          "RasterOverlayTileProvider: direct parent waiter keeps a valid rectangle");
+}
+
 void testRasterOverlayRectangleCompositionRejectsNoCoverage() {
     auto imageryScheme = TileScheme::createXYZWebMercator();
     const TileKey sourceKey{"XYZ-WebMercator", 3, 2, 3};
@@ -27135,6 +27200,7 @@ int main() {
     testRasterOverlayRectangleSourceRangeTrimsTileEdgeTouches();
     testRasterOverlayBaseRectangleSourceClampsCoverageEdgeMiss();
     testRasterOverlayRectangleSourceFailureRequestsParentSource();
+    testRasterOverlayFallbackParentInFlightSharesDirectAsset();
     testRasterOverlayRectangleCompositionRejectsNoCoverage();
     testRasterOverlayRectangleSourceZoomRespectsMaximumTextureSize();
     testRasterOverlayRectangleCompositionUsesProjectedWebMercatorHeight();
