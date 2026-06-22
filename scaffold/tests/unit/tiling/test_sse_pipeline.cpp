@@ -22063,7 +22063,7 @@ void testTileFrameResourceBudgetPlannerAlignsRasterBudgetWithTransportLane() {
                 false));
     check(wideTransportConfig.maxRasterNetworkRequestsPerFrame == 32 &&
               wideTransportConfig.maxRasterNetworkInflight == 32,
-          "TileFrameResourceBudgetPlanner: wider transports can still run a full rectangle raster fanout");
+          "TileFrameResourceBudgetPlanner: wider transports can still run a full quadtree source raster fanout");
 }
 
 void testTileFrameResourceBudgetPlannerKeepsMainThreadFinalizesWhenWorkerLoadsDisabled() {
@@ -22572,7 +22572,7 @@ void testTilesetFrameResourceBudgetSeparatesRasterFanoutFromTerrainRequests() {
               FrameResourceLane::RasterRequest,
               FrameResourcePriority::Normal,
               4),
-          "Tileset: setup consumes one rectangle raster fan-out budget");
+          "Tileset: setup consumes one quadtree source raster fan-out budget");
 
     TilesetTestAccess::requestMissingTilesWithBudget(
         tileset,

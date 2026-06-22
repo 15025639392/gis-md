@@ -55,14 +55,14 @@ public:
     static uint32_t rasterNetworkRequestLimit(
         uint32_t maximumSimultaneousTileLoads,
         uint32_t maximumTransportActiveRequests) {
-        constexpr uint32_t kMinimumRectangleFanoutBudget = 32u;
-        const uint32_t rectangleFanoutBudget = std::max(
-            kMinimumRectangleFanoutBudget,
+        constexpr uint32_t kMinimumQuadtreeSourceFanoutBudget = 32u;
+        const uint32_t quadtreeSourceFanoutBudget = std::max(
+            kMinimumQuadtreeSourceFanoutBudget,
             maximumSimultaneousTileLoads);
         if (maximumTransportActiveRequests == 0) {
-            return rectangleFanoutBudget;
+            return quadtreeSourceFanoutBudget;
         }
-        return std::min(rectangleFanoutBudget, maximumTransportActiveRequests);
+        return std::min(quadtreeSourceFanoutBudget, maximumTransportActiveRequests);
     }
 
     static FrameResourceBudgetConfig plan(
