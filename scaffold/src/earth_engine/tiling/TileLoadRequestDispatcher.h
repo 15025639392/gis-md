@@ -163,13 +163,9 @@ public:
                         TileLoadResult loadResult =
                             TileLoadResult::fromTerrainResult(
                                 std::move(result));
-                        const TileLoadDomain domain =
-                            loadResult.content.hasGltfTerrainPayload()
-                                ? TileLoadDomain::Content
-                                : TileLoadDomain::Terrain;
                         enqueueCompletedLoadResult(
                             pendingLoads,
-                            domain,
+                            TileLoadDomain::Terrain,
                             key,
                             cacheKey,
                             group,

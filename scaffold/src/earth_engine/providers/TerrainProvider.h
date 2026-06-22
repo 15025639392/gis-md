@@ -1,11 +1,8 @@
 #pragma once
 
 #include "ProviderRequestDiagnostics.h"
-#include "../content/GltfModel.h"
 #include "../terrain/QuantizedMeshAvailability.h"
 #include "../tiling/TileKey.h"
-#include "../tiling/TileBoundingVolume.h"
-#include "../tiling/TileLoadResultMetadata.h"
 #include "../tiling/TileLoadStatus.h"
 #include "../tiling/SurfaceTile.h"
 #include "../platform/bridge/PlatformBridge.h"
@@ -63,12 +60,7 @@ enum class TerrainTilePayloadKind {
 struct TerrainTileLoadResult {
     TileLoadStatus status = TileLoadStatus::Failed;
     TerrainTilePayloadKind payloadKind = TerrainTilePayloadKind::None;
-    bool terrainRenderContent = false;
     std::unique_ptr<DecodedHeightmap> heightmap;
-    std::unique_ptr<GltfModel> gltfModel;
-    TileLoadResultMetadata metadata;
-    std::vector<QuantizedMeshAvailabilityUpdate>
-        quantizedMeshAvailabilityUpdates;
 
     static TerrainTileLoadResult successWithHeightmap(
         std::unique_ptr<DecodedHeightmap> hm) {
@@ -77,25 +69,7 @@ struct TerrainTileLoadResult {
                            : TileLoadStatus::Failed;
         result.payloadKind = hm ? TerrainTilePayloadKind::Heightmap
                                 : TerrainTilePayloadKind::None;
-        result.terrainRenderContent = hm != nullptr;
         result.heightmap = std::move(hm);
-        return result;
-    }
-
-    static TerrainTileLoadResult successWithGltfModel(
-        std::unique_ptr<GltfModel> model,
-        TileLoadResultMetadata metadata = {}) {
-        TerrainTileLoadResult result;
-        result.status = model ? TileLoadStatus::Renderable
-                              : TileLoadStatus::Failed;
-        result.payloadKind = TerrainTilePayloadKind::None;
-        result.terrainRenderContent = model != nullptr;
-        result.metadata = std::move(metadata);
-        if (model && !result.metadata.rasterOverlayDetails.has_value()) {
-            result.metadata.rasterOverlayDetails =
-                model->rasterOverlayDetails;
-        }
-        result.gltfModel = std::move(model);
         return result;
     }
 

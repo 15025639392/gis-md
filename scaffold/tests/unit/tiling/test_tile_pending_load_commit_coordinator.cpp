@@ -86,6 +86,17 @@ TileLoadResultMetadata makeBoundingVolumeMetadata(
     return metadata;
 }
 
+TileLoadResult makeGltfTerrainContentResult(
+    std::unique_ptr<GltfModel> model,
+    TileLoadResultMetadata metadata = {}) {
+    TileContentLoadResult contentResult =
+        TileContentLoadResult::render(std::move(model));
+    contentResult.terrainRenderContent =
+        contentResult.gltfModel != nullptr;
+    contentResult.metadata = std::move(metadata);
+    return TileLoadResult::fromContentResult(std::move(contentResult));
+}
+
 void expectContentTerminalClearsEmptyMarker(TileLoadStatus status) {
     const TileKey key{"test", 0, 0, 0};
     const std::string cacheKey = "test:0:0:0";
@@ -397,12 +408,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
                                   TileLoadStatus::Cancelled}) {
         TerrainTileLoadResult terrainResult;
         terrainResult.status = status;
-        terrainResult.metadata = makeBoundingVolumeMetadata(
-            Rectangle(0.1, 0.2, 0.3, 0.4),
-            -10.0,
-            20.0);
-        terrainResult.quantizedMeshAvailabilityUpdates.push_back(
-            QuantizedMeshAvailabilityUpdate{});
         TileLoadResult normalizedTerrain =
             TileLoadResult::fromTerrainResult(std::move(terrainResult));
         EXPECT_FALSE(
@@ -639,9 +644,10 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     auto model = std::make_unique<GltfModel>();
     GltfModel* rawModel = model.get();
-    TerrainTileLoadResult terrainResult =
-        TerrainTileLoadResult::successWithGltfModel(std::move(model));
-    terrainResult.quantizedMeshAvailabilityUpdates.push_back(update);
+    TileContentLoadResult contentResult =
+        TileContentLoadResult::render(std::move(model));
+    contentResult.terrainRenderContent = true;
+    contentResult.quantizedMeshAvailabilityUpdates.push_back(update);
 
     const TileKey key{"Geographic-TMS", 2, 0, 0};
     const std::string cacheKey = "terrain-gltf-content-domain";
@@ -651,7 +657,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileLoadResult::fromTerrainResult(std::move(terrainResult))};
+        TileLoadResult::fromContentResult(std::move(contentResult))};
     TilesetTile tile(key, Rectangle{});
     tile.content.loadState = TileLoadState::ContentLoading;
 
@@ -738,10 +744,9 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileLoadResult::fromTerrainResult(
-            TerrainTileLoadResult::successWithGltfModel(
-                std::move(model),
-                std::move(metadata)))};
+        makeGltfTerrainContentResult(
+            std::move(model),
+            std::move(metadata))};
 
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -827,10 +832,9 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileLoadResult::fromTerrainResult(
-            TerrainTileLoadResult::successWithGltfModel(
-                std::move(model),
-                std::move(metadata)))};
+        makeGltfTerrainContentResult(
+            std::move(model),
+            std::move(metadata))};
 
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -911,10 +915,9 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileLoadResult::fromTerrainResult(
-            TerrainTileLoadResult::successWithGltfModel(
-                std::move(model),
-                std::move(metadata)))};
+        makeGltfTerrainContentResult(
+            std::move(model),
+            std::move(metadata))};
 
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -995,8 +998,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileLoadResult::fromTerrainResult(
-            TerrainTileLoadResult::successWithGltfModel(std::move(model)))};
+        makeGltfTerrainContentResult(std::move(model))};
 
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -1112,26 +1114,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_TRUE(resourcesDirty);
     EXPECT_TRUE(terrainCache.empty());
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
-}
-
-TEST(TilePendingLoadCommitCoordinatorTest,
-     TerrainGltfLoadResultDropsHeightmapPayloadLikeCesiumNativeContentKind) {
-    auto model = std::make_unique<GltfModel>();
-    GltfModel* rawModel = model.get();
-    TerrainTileLoadResult terrainResult =
-        TerrainTileLoadResult::successWithGltfModel(std::move(model));
-    auto heightmap = std::make_unique<DecodedHeightmap>();
-    heightmap->tileSize = 1;
-    heightmap->heights = {1.0f};
-    terrainResult.heightmap = std::move(heightmap);
-
-    TileLoadResult loadResult =
-        TileLoadResult::fromTerrainResult(std::move(terrainResult));
-
-    EXPECT_EQ(TileLoadStatus::Renderable, loadResult.status);
-    EXPECT_TRUE(loadResult.shouldUpload());
-    EXPECT_EQ(rawModel, loadResult.content.gltfModel.get());
-    EXPECT_EQ(nullptr, loadResult.content.heightmap);
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,

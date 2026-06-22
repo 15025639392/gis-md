@@ -12330,10 +12330,10 @@ void testTerrainUploadPreparesGltfRenderContent() {
                   RasterOverlayProjection::WebMercator) == 1 &&
               tile.content.contentKind == TileContentKind::Render &&
               tile.content.loadState == TileLoadState::ContentLoaded,
-          "TileTerrainUploadCommitter: terrain-domain glTF upload uses unified render content and overlay details");
+          "TileTerrainUploadCommitter: content-domain glTF terrain upload uses unified render content and overlay details");
 }
 
-void testTerrainTileLoadResultCarriesGltfModel() {
+void testContentTileLoadResultCarriesGltfTerrainModel() {
     auto model = makeTriangleGltfModel();
     GltfModel* rawModel = model.get();
     const Rectangle contentRectangle =
@@ -12343,8 +12343,11 @@ void testTerrainTileLoadResultCarriesGltfModel() {
         -2.0,
         18.0);
 
-    TileLoadResult loadResult = TileLoadResult::fromTerrainResult(
-        TerrainTileLoadResult::successWithGltfModel(std::move(model)));
+    TileContentLoadResult contentResult =
+        TileContentLoadResult::render(std::move(model));
+    contentResult.terrainRenderContent = true;
+    TileLoadResult loadResult =
+        TileLoadResult::fromContentResult(std::move(contentResult));
 
     const RasterOverlayDetails* details =
         loadResult.content.metadata.rasterOverlayDetails
@@ -12359,7 +12362,7 @@ void testTerrainTileLoadResultCarriesGltfModel() {
               loadResult.shouldUpload() &&
               loadResult.content.gltfModel.get() == rawModel &&
               geographic && *geographic == contentRectangle,
-          "TileLoadResult: terrain-domain glTF model carries TileLoadResult metadata");
+          "TileLoadResult: content-domain glTF terrain model carries TileLoadResult metadata");
 }
 
 void testGltfRenderContentProvidesRasterOverlayDetails() {
@@ -27866,7 +27869,7 @@ int main() {
     testTileContentUploadPolicyPreparesGltfRenderContent();
     testTerrainUploadGeneratesActiveRasterOverlayProjectionDetails();
     testTerrainUploadPreparesGltfRenderContent();
-    testTerrainTileLoadResultCarriesGltfModel();
+    testContentTileLoadResultCarriesGltfTerrainModel();
     testGltfRenderContentProvidesRasterOverlayDetails();
     testTileContentUploadPolicyAppliesTileLoadResultFields();
     testTileContentUploadPolicyMarksGltfRenderResourceFailure();
