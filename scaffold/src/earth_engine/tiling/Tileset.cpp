@@ -42,6 +42,15 @@ bool providerHasTerrainQuadtree(const TerrainProvider* terrainProvider,
            (contentProvider && contentProvider->providesTerrainQuadtree());
 }
 
+TerrainProvider* effectiveLegacyTerrainProvider(
+    TerrainProvider* terrainProvider,
+    const TilesetContentProvider* contentProvider) {
+    if (contentProvider && contentProvider->providesTerrainQuadtree()) {
+        return nullptr;
+    }
+    return terrainProvider;
+}
+
 } // namespace
 
 Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
@@ -59,7 +68,9 @@ Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
       contentAccess_(
           tileRegistry_,
           *tileScheme_,
-          terrainProvider_.get(),
+          ::earth_engine::effectiveLegacyTerrainProvider(
+              terrainProvider_.get(),
+              contentProvider_.get()),
           contentProvider_.get(),
           contentLifecycle_,
           rasterOverlays_.size()),
@@ -149,11 +160,17 @@ TilesetLoadDiagnostics Tileset::loadDiagnostics() const {
         contentCache_.unloadQueue(),
         tileRegistry_.tiles());
     TilesetProviderDiagnosticsCollector::collect(
-        terrainProvider_.get(),
+        effectiveLegacyTerrainProvider(),
         contentProvider_.get(),
         rasterOverlays_)
         .applyTo(diagnostics);
     return diagnostics;
+}
+
+TerrainProvider* Tileset::effectiveLegacyTerrainProvider() const {
+    return earth_engine::effectiveLegacyTerrainProvider(
+        terrainProvider_.get(),
+        contentProvider_.get());
 }
 
 TileContentRuntimeRequestFrame
@@ -161,7 +178,7 @@ Tileset::makeContentRuntimeRequestFrame() const {
     TileContentRuntimeRequestFrame frame{
         rasterOverlays_,
         tileRegistry_.tiles()};
-    frame.terrainProvider = terrainProvider_.get();
+    frame.terrainProvider = effectiveLegacyTerrainProvider();
     frame.contentProvider = contentProvider_.get();
     frame.device = device_;
     frame.frameNumber = frameNumber_;

@@ -990,6 +990,57 @@ TEST(
 
 TEST(
     TilesetRequestMissingBudgetTest,
+    ContentTerrainQuadtreeIgnoresLegacyTerrainProviderDiagnosticsForBudget) {
+    const TileKey key{"Geographic-TMS", 0, 0, 0};
+    TilesetOptions options;
+    options.maximumSimultaneousTileLoads = 20;
+
+    auto terrainProvider = std::make_unique<ManualCompletionTerrainProvider>();
+    terrainProvider->maximumTransportActiveRequests = 3;
+    auto contentProvider =
+        std::make_unique<ManualCompletionContentProvider>(key);
+    contentProvider->ownsTerrainQuadtree = true;
+    contentProvider->diagnostics.maximumTransportActiveRequests = 17;
+    ManualCompletionContentProvider* rawContentProvider =
+        contentProvider.get();
+
+    Tileset tileset(
+        std::move(terrainProvider),
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        options,
+        std::move(contentProvider));
+
+    Camera camera;
+    camera.lookAt(
+        Vec3(Ellipsoid::WGS84().semiMajorAxis() * 2.0, 0.0, 0.0),
+        Vec3(Ellipsoid::WGS84().semiMajorAxis(), 0.0, 0.0),
+        Vec3::unitZ());
+
+    FrameState frameState;
+    frameState.frameId = 402;
+    frameState.camera = &camera;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 800;
+    frameState.selectorViews.push_back(makeSelectorView(camera, 800, 800));
+
+    tileset.update(frameState);
+
+    const TilesetLoadDiagnostics diagnostics = tileset.loadDiagnostics();
+    EXPECT_EQ(diagnostics.resourceBudget.maxRasterNetworkRequestsPerFrame, 17u);
+    EXPECT_EQ(diagnostics.resourceBudget.maxNetworkRequestsPerFrame, 20u);
+    EXPECT_EQ(
+        diagnostics.terrainProviderRequests.maximumTransportActiveRequests,
+        -1);
+    EXPECT_EQ(
+        diagnostics.contentProviderRequests.maximumTransportActiveRequests,
+        17);
+    EXPECT_TRUE(rawContentProvider->completeWithEmpty(key));
+}
+
+TEST(
+    TilesetRequestMissingBudgetTest,
     LoadDiagnosticsExposeContentProviderRequestDiagnostics) {
     const TileKey contentKey{"Geographic-TMS", 0, 0, 0};
     auto contentProvider =

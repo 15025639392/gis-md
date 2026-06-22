@@ -131,6 +131,7 @@ private:
 
     TileContentRuntimeRequestFrame makeContentRuntimeRequestFrame() const;
     TileContentRuntimeUploadFrame makeContentRuntimeUploadFrame() const;
+    TerrainProvider* effectiveLegacyTerrainProvider() const;
     bool hasTerrainQuadtree() const;
     TileLoadRequestOutcome requestMissingContent(
         const std::vector<TileLoadRequest>& loadRequests,
