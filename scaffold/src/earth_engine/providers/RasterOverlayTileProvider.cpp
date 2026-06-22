@@ -1369,22 +1369,6 @@ private:
     std::vector<LoadedSourceImage> sources;
 };
 
-std::unique_ptr<DecodedImage>
-RasterOverlayTileProvider::composeRectangleImages(
-    const TileScheme& scheme,
-    const Rectangle& targetBounds,
-    int sourceZoom,
-    std::vector<RectangleSourceImage>&& publicSources,
-    int maximumTextureSize) {
-    return composeRectangleImagesWithDetails(
-        scheme,
-        targetBounds,
-        sourceZoom,
-        std::move(publicSources),
-        sourceZoom,
-        maximumTextureSize).image;
-}
-
 RasterOverlayTileProvider::RectangleCompositionResult
 RasterOverlayTileProvider::composeRectangleImagesWithDetails(
     const TileScheme& scheme,

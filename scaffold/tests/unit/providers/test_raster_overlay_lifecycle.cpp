@@ -2808,13 +2808,14 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsNoCoverageAndAccepts
         std::nullopt,
         RasterOverlayTile::MoreDetailAvailable::Unknown});
     auto noCoverageResult =
-        RasterOverlayTileProvider::composeRectangleImages(
+        RasterOverlayTileProvider::composeRectangleImagesWithDetails(
             *scheme,
             target,
             2,
             std::move(noCoverage),
+            2,
             8);
-    EXPECT_EQ(nullptr, noCoverageResult);
+    EXPECT_EQ(nullptr, noCoverageResult.image);
 
     std::vector<RasterOverlayTileProvider::RectangleSourceImage> full;
     full.push_back({
@@ -2824,16 +2825,17 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsNoCoverageAndAccepts
         std::nullopt,
         RasterOverlayTile::MoreDetailAvailable::Unknown});
     auto fullResult =
-        RasterOverlayTileProvider::composeRectangleImages(
+        RasterOverlayTileProvider::composeRectangleImagesWithDetails(
             *scheme,
             target,
             1,
             std::move(full),
+            1,
             8);
-    ASSERT_NE(nullptr, fullResult);
-    EXPECT_GT(fullResult->width, 0);
-    EXPECT_GT(fullResult->height, 0);
-    EXPECT_EQ(20, fullResult->pixels[0]);
+    ASSERT_NE(nullptr, fullResult.image);
+    EXPECT_GT(fullResult.image->width, 0);
+    EXPECT_GT(fullResult.image->height, 0);
+    EXPECT_EQ(20, fullResult.image->pixels[0]);
 }
 
 TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsMalformedSourceImages) {
@@ -2855,13 +2857,14 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionRejectsMalformedSourceImage
         std::nullopt,
         RasterOverlayTile::MoreDetailAvailable::Unknown});
     auto result =
-        RasterOverlayTileProvider::composeRectangleImages(
+        RasterOverlayTileProvider::composeRectangleImagesWithDetails(
             *scheme,
             target,
             1,
             std::move(sources),
+            1,
             8);
-    EXPECT_EQ(nullptr, result);
+    EXPECT_EQ(nullptr, result.image);
 }
 
 TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesSourceMoreDetailFlagLikeCesiumNative) {
@@ -3082,16 +3085,17 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionKeepsTinyProjectedOverlap) 
         std::nullopt,
         RasterOverlayTile::MoreDetailAvailable::Unknown});
 
-    auto result = RasterOverlayTileProvider::composeRectangleImages(
+    auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
         *scheme,
         target,
         sourceKey.z,
         std::move(sources),
+        sourceKey.z,
         4096);
 
-    ASSERT_NE(nullptr, result);
-    EXPECT_EQ(64, result->width);
-    EXPECT_EQ(1, result->height);
+    ASSERT_NE(nullptr, result.image);
+    EXPECT_EQ(64, result.image->width);
+    EXPECT_EQ(1, result.image->height);
 }
 
 TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesProjectedWebMercatorHeight) {
@@ -3114,11 +3118,12 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesProjectedWebMercatorHei
         std::nullopt,
         RasterOverlayTile::MoreDetailAvailable::Unknown});
 
-    auto result = RasterOverlayTileProvider::composeRectangleImages(
+    auto result = RasterOverlayTileProvider::composeRectangleImagesWithDetails(
         *scheme,
         target,
         sourceKey.z,
         std::move(sources),
+        sourceKey.z,
         4096);
 
     const double sourceProjectedHeight =
@@ -3130,9 +3135,9 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionUsesProjectedWebMercatorHei
     const int expectedHeight = static_cast<int>(
         std::ceil(targetProjectedHeight / (sourceProjectedHeight / 64.0)));
 
-    ASSERT_NE(nullptr, result);
-    EXPECT_EQ(64, result->width);
-    EXPECT_EQ(expectedHeight, result->height);
+    ASSERT_NE(nullptr, result.image);
+    EXPECT_EQ(64, result.image->width);
+    EXPECT_EQ(expectedHeight, result.image->height);
     EXPECT_NE(32, expectedHeight);
 }
 

@@ -78,17 +78,6 @@ public:
         bool directTile = false;
     };
 
-    /// Core rectangle composition contract. The returned image is in the target
-    /// rectangle's UV space. Source sampling uses the provider scheme
-    /// projection, so WebMercator source y is sampled in Mercator space.
-    /// Returns nullptr unless every target pixel is covered by a real source.
-    static std::unique_ptr<DecodedImage> composeRectangleImages(
-        const TileScheme& scheme,
-        const Rectangle& targetBounds,
-        int sourceZoom,
-        std::vector<RectangleSourceImage>&& sources,
-        int maximumTextureSize);
-
     static RectangleCompositionResult composeRectangleImagesWithDetails(
         const TileScheme& scheme,
         const Rectangle& targetBounds,
