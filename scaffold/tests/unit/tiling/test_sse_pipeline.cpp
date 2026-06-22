@@ -1215,6 +1215,37 @@ std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
     return model;
 }
 
+std::unique_ptr<GltfModel> makeWebMercatorQuadTerrainGltfModel(
+    const Rectangle& rectangle) {
+    auto model = makeQuadTerrainGltfModel(rectangle);
+    if (!model || model->primitives.empty()) {
+        return model;
+    }
+
+    GltfPrimitive& primitive = model->primitives.front();
+    primitive.vertexTexCoords[0] = {
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{0.25f, 0.0f},
+        std::array<float, 2>{0.0f, 0.25f},
+        std::array<float, 2>{0.25f, 0.25f}};
+    primitive.vertexTexCoords[1] = {
+        std::array<float, 2>{0.0f, 0.0f},
+        std::array<float, 2>{1.0f, 0.0f},
+        std::array<float, 2>{0.0f, 1.0f},
+        std::array<float, 2>{1.0f, 1.0f}};
+
+    model->rasterOverlayDetails.rasterOverlayProjections = {
+        RasterOverlayProjection::Geographic,
+        RasterOverlayProjection::WebMercator};
+    model->rasterOverlayDetails.rasterOverlayRectangles = {
+        Rectangle::EMPTY,
+        projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            rectangle)};
+    model->rasterOverlayDetails.boundingRegion = {rectangle, 0.0, 0.0};
+    return model;
+}
+
 GltfPrimitive makeTransparentTrianglePrimitiveAt(const Vec3& center) {
     GltfPrimitive primitive;
     primitive.vertices.resize(3);
@@ -26708,6 +26739,83 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
           "Tileset: glTF-parent upsampled child carries child raster overlay details");
 }
 
+void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
+    auto provider = std::make_unique<SparseTerrainProvider>();
+    SparseTerrainProvider* rawProvider = provider.get();
+    DummyRenderDevice device;
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::move(provider),
+        std::move(scheme),
+        {},
+        &device,
+        TilesetOptions{});
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    check(root != nullptr,
+          "Tileset: WebMercator glTF-parent upsample root tile is created");
+    if (!root) return;
+
+    root->content.renderContent.prepareGltfContent(
+        makeWebMercatorQuadTerrainGltfModel(root->bounds),
+        Mat4::identity());
+    root->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    root->markRenderContentDone();
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    check(root->children.size() == 4,
+          "Tileset: WebMercator glTF-parent upsample setup creates children");
+    if (root->children.size() < 2 || !root->children[1]) return;
+
+    TilesetTile* child = root->children[1];
+    TilesetTestAccess::requestMissingTile(tileset, child->key);
+    check(child->content.loadState == TileLoadState::ContentLoading &&
+              tileset.loadDiagnostics().pendingTerrainUploads == 1 &&
+              rawProvider->requestCount == 0,
+          "Tileset: WebMercator glTF-parent child queues local upsample");
+
+    TilesetTestAccess::processPendingUploads(tileset);
+    const GltfModel* childModel =
+        child->content.renderContent.gltfModelForRead();
+    check(child->content.loadState == TileLoadState::Done &&
+              childModel != nullptr &&
+              child->content.renderContent.hasGltfResources() &&
+              !child->content.renderContent.hasSurfaceMesh(),
+          "Tileset: WebMercator glTF-parent upsample uses available overlay texcoord");
+    if (!childModel || childModel->primitives.empty()) return;
+
+    const GltfPrimitive& primitive = childModel->primitives.front();
+    bool clippedToSouthEastTexcoord = true;
+    for (const auto& texCoord : primitive.vertexTexCoords[1]) {
+        clippedToSouthEastTexcoord =
+            clippedToSouthEastTexcoord &&
+            texCoord[0] >= 0.5f &&
+            texCoord[1] <= 0.5f;
+    }
+    check(clippedToSouthEastTexcoord,
+          "Tileset: WebMercator glTF-parent clips with projection texcoord");
+
+    const Rectangle* childOverlay =
+        childModel->rasterOverlayDetails.findRectangleForOverlayProjection(
+            RasterOverlayProjection::WebMercator);
+    const Rectangle expectedChildOverlay =
+        projectRectangleSimple(
+            WebMercatorProjection(Ellipsoid::WGS84()),
+            child->bounds);
+    check(childOverlay &&
+              std::abs(childOverlay->west() - expectedChildOverlay.west()) <
+                  1e-12 &&
+              std::abs(childOverlay->south() - expectedChildOverlay.south()) <
+                  1e-12 &&
+              std::abs(childOverlay->east() - expectedChildOverlay.east()) <
+                  1e-12 &&
+              std::abs(childOverlay->north() - expectedChildOverlay.north()) <
+                  1e-12,
+          "Tileset: WebMercator glTF-parent carries child projection overlay details");
+}
+
 void testTilesetClearChildrenErasesFlatMapDescendants() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -27614,6 +27722,7 @@ int main() {
     testTilesetUpsampledChildQueuesParentUntilSourceReady();
     testTilesetUpsampledChildFinalizesContentLoadedParent();
     testTilesetUpsampledChildBuildsGltfFromGltfParent();
+    testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord();
     testTilesetClearChildrenErasesFlatMapDescendants();
     testTilesetClearChildrenErasesClaimedUploadDescendantWork();
     testTilesetClearChildrenIgnoresStaleTerrainCallback();

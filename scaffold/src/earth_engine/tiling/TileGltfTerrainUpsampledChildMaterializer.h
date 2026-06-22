@@ -30,11 +30,10 @@ public:
             return false;
         }
 
-        int textureCoordinateIndex =
-            parentModel->rasterOverlayDetails.textureCoordinateIDForProjection(
-                RasterOverlayProjection::Geographic);
+        const int textureCoordinateIndex =
+            chooseUpsampleTextureCoordinate(*parentModel);
         if (textureCoordinateIndex < 0) {
-            textureCoordinateIndex = 0;
+            return false;
         }
 
         std::unique_ptr<GltfModel> childModel =
@@ -119,6 +118,44 @@ private:
         }
         childDetails.boundingRegion = {childBounds, 0.0, 0.0};
         return childDetails;
+    }
+
+    static bool modelHasTextureCoordinate(const GltfModel& model,
+                                          int textureCoordinateIndex) {
+        if (textureCoordinateIndex < 0 ||
+            textureCoordinateIndex >= static_cast<int>(kGltfMaxTexCoordSets)) {
+            return false;
+        }
+        const size_t index = static_cast<size_t>(textureCoordinateIndex);
+        for (const GltfPrimitive& primitive : model.primitives) {
+            if (!primitive.vertices.empty() &&
+                primitive.vertexTexCoords[index].size() ==
+                    primitive.vertices.size()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static int chooseUpsampleTextureCoordinate(const GltfModel& model) {
+        const int geographic =
+            model.rasterOverlayDetails.textureCoordinateIDForProjection(
+                RasterOverlayProjection::Geographic);
+        if (modelHasTextureCoordinate(model, geographic)) {
+            return geographic;
+        }
+
+        for (RasterOverlayProjection projection :
+             model.rasterOverlayDetails.rasterOverlayProjections) {
+            const int candidate =
+                model.rasterOverlayDetails.textureCoordinateIDForProjection(
+                    projection);
+            if (modelHasTextureCoordinate(model, candidate)) {
+                return candidate;
+            }
+        }
+
+        return modelHasTextureCoordinate(model, 0) ? 0 : -1;
     }
 
     static const TilesetTile* findGltfTerrainSource(const TilesetTile& tile) {
