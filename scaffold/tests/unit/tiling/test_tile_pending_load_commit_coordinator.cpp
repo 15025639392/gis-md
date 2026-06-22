@@ -508,6 +508,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     update.metadataAvailability = {{0, 0, 0, 0, 0}};
 
     TileLoadedContent content;
+    content.terrainPayloadKind = TerrainTilePayloadKind::GltfModel;
+    content.gltfModel = std::make_unique<GltfModel>();
     content.quantizedMeshAvailabilityUpdates.push_back(update);
 
     TileTerrainUploadCommitter::applyAvailabilityUpdates(
@@ -939,7 +941,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     LegacyHeightmapTerrainUploadDoesNotApplyQuantizedMeshAvailabilityUpdates) {
+     HeightmapTerrainUploadDoesNotApplyQuantizedMeshAvailabilityUpdates) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxMainThreadFinalizesPerFrame = 4;

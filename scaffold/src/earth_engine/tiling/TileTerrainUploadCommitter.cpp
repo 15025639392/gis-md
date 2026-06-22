@@ -15,6 +15,7 @@ void TileTerrainUploadCommitter::applyAvailabilityUpdates(
     TerrainProvider* terrainProvider,
     const TileLoadedContent& content) {
     if (!terrainProvider ||
+        !content.hasGltfTerrainPayload() ||
         content.quantizedMeshAvailabilityUpdates.empty()) {
         return;
     }
