@@ -16,6 +16,7 @@
 
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <utility>
 
 namespace earth_engine {
@@ -51,6 +52,18 @@ TerrainProvider* effectiveLegacyTerrainProvider(
     return terrainProvider;
 }
 
+std::unique_ptr<TerrainProvider> validateTerrainProviderOwnership(
+    std::unique_ptr<TerrainProvider> terrainProvider,
+    const TilesetContentProvider* contentProvider) {
+    if (terrainProvider && contentProvider &&
+        contentProvider->providesTerrainQuadtree()) {
+        throw std::invalid_argument(
+            "Tileset cannot be constructed with both a TerrainProvider and "
+            "a terrain TilesetContentProvider");
+    }
+    return terrainProvider;
+}
+
 } // namespace
 
 Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
@@ -59,7 +72,9 @@ Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
                  RenderDevice* device,
                  TilesetOptions options,
                  std::unique_ptr<TilesetContentProvider> contentProvider)
-    : terrainProvider_(std::move(terrainProvider)),
+    : terrainProvider_(validateTerrainProviderOwnership(
+          std::move(terrainProvider),
+          contentProvider.get())),
       contentProvider_(std::move(contentProvider)),
       tileScheme_(std::move(tileScheme)),
       rasterOverlays_(std::move(rasterOverlays)),

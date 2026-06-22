@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <vector>
 
 using namespace earth_engine;
@@ -225,6 +226,23 @@ TEST(TilesetQuantizedMeshTest,
     EXPECT_TRUE(provider.supportsTile(availableDeepTile));
     EXPECT_EQ(TileAvailabilityState::NotAvailable,
               provider.availabilityState(unavailableSibling));
+}
+
+TEST(TilesetQuantizedMeshTest,
+     ContentTerrainProviderRejectsLegacyTerrainProviderCompanion) {
+    auto legacyProvider = std::make_unique<SparseTerrainProvider>();
+    auto contentProvider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+
+    EXPECT_THROW(
+        Tileset(
+            std::move(legacyProvider),
+            TileScheme::createGeographicTMS(),
+            {},
+            nullptr,
+            TilesetOptions{},
+            std::move(contentProvider)),
+        std::invalid_argument);
 }
 
 TEST(TilesetQuantizedMeshTest,
