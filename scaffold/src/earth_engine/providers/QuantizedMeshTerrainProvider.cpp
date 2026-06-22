@@ -1413,6 +1413,9 @@ QuantizedMeshTerrainProvider::collectUnderlyingLayerAvailabilityRequests(
 
 int QuantizedMeshTerrainProvider::estimatedRequestFanout(
     const TileKey& key) const {
+    if (!layers_.empty() && firstAvailableLayerIndex(key) >= layers_.size()) {
+        return 0;
+    }
     return 1 + static_cast<int>(
         collectUnderlyingLayerAvailabilityRequests(key).size());
 }

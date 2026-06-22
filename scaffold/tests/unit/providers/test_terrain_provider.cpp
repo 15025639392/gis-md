@@ -1888,6 +1888,7 @@ TEST(QuantizedMeshTerrainProviderTest, UnknownMetadataTileDoesNotRequestContentL
     EXPECT_EQ(TileAvailabilityState::Unknown,
               provider.availabilityState(unknownChild));
     EXPECT_FALSE(provider.supportsTile(unknownChild));
+    EXPECT_EQ(0, provider.estimatedRequestFanout(unknownChild));
 
     QueuedStatusPlatformBridge bridge;
     provider.setPlatformBridge(&bridge);
