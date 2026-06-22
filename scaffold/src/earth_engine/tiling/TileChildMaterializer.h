@@ -106,7 +106,7 @@ struct TileChildMaterializer {
                 minimumHeight,
                 maximumHeight);
             child->contentBoundingVolume = child->boundingVolume;
-            if (!child->content.renderContent.isMeshReady()) {
+            if (!child->content.renderContent.isRenderContentReady()) {
                 TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                     *child,
                     parent);
@@ -116,7 +116,7 @@ struct TileChildMaterializer {
                 childInfo.state != TileAvailabilityState::Available;
             if (child->content.isTerrainAvailabilityUpsample() != upsampled ||
                 child->content.isRasterDetailUpsample()) {
-                child->content.renderContent.clearSurfaceMeshResources();
+                child->content.renderContent.clearRenderContent();
                 if (upsampled) {
                     child->content.markTerrainAvailabilityUpsample();
                 } else {

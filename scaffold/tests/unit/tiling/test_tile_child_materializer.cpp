@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/core/math/MathUtils.h"
+#include "earth_engine/content/GltfModel.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/renderer/RenderDevice.h"
@@ -412,6 +413,102 @@ TEST(TileChildMaterializerTest,
     EXPECT_FALSE(staleRasterChild->content.isRasterDetailUpsample());
     EXPECT_FALSE(staleRasterChild->content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(staleRasterChild->content.renderContent.isMeshReady());
+}
+
+TEST(TileChildMaterializerTest,
+     TerrainAvailabilityMaterializationClearsStaleGltfRenderContent) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        Rectangle{});
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    TilesetTile* staleRasterChild =
+        ensure(TileKey{"Geographic-TMS", 2, 3, 0});
+    ASSERT_NE(nullptr, staleRasterChild);
+    staleRasterChild->content.markRasterDetailUpsample();
+    staleRasterChild->content.renderContent.setGltfContent(
+        std::make_unique<GltfModel>());
+    staleRasterChild->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    staleRasterChild->content.renderContent.markRenderContentReady();
+
+    const bool changed = TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        3,
+        [](const TileKey& key) {
+            return key.x == 2 && key.y == 0
+                ? TileAvailabilityState::Available
+                : TileAvailabilityState::NotAvailable;
+        },
+        ensure);
+
+    EXPECT_TRUE(changed);
+    ASSERT_EQ(4u, parent.children.size());
+    EXPECT_TRUE(staleRasterChild->content.isTerrainAvailabilityUpsample());
+    EXPECT_FALSE(staleRasterChild->content.isRasterDetailUpsample());
+    EXPECT_FALSE(staleRasterChild->content.renderContent.hasGltfModel());
+    EXPECT_FALSE(staleRasterChild->content.renderContent.hasGltfResources());
+    EXPECT_FALSE(staleRasterChild->content.renderContent.isRenderContentReady());
+}
+
+TEST(TileChildMaterializerTest,
+     TerrainAvailabilityMaterializationPreservesReadyGltfHeightRange) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 1, 1, 0},
+        Rectangle{});
+    parent.content.renderContent.setTerrainHeightRange(-100.0, 200.0);
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    TilesetTile* readyGltfChild =
+        ensure(TileKey{"Geographic-TMS", 2, 2, 0});
+    ASSERT_NE(nullptr, readyGltfChild);
+    readyGltfChild->content.renderContent.setGltfContent(
+        std::make_unique<GltfModel>());
+    readyGltfChild->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    readyGltfChild->content.renderContent.markRenderContentReady();
+    readyGltfChild->content.renderContent.setTerrainHeightRange(1.0, 2.0);
+
+    EXPECT_TRUE(TileChildMaterializer::materializeTerrainChildren(
+        parent,
+        3,
+        [](const TileKey& key) {
+            return key.x == 2 && key.y == 0
+                ? TileAvailabilityState::Available
+                : TileAvailabilityState::NotAvailable;
+        },
+        ensure));
+
+    EXPECT_TRUE(readyGltfChild->content.renderContent.hasGltfModel());
+    EXPECT_TRUE(readyGltfChild->content.renderContent.isRenderContentReady());
+    EXPECT_DOUBLE_EQ(
+        1.0,
+        readyGltfChild->content.renderContent.terrainMinimumHeight());
+    EXPECT_DOUBLE_EQ(
+        2.0,
+        readyGltfChild->content.renderContent.terrainMaximumHeight());
 }
 
 TEST(TileChildMaterializerTest, NonRootGeographicTerrainChildrenPreserveBounds) {
