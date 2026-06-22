@@ -10,7 +10,6 @@
 #include "../providers/BingMapsImageryProvider.h"
 #include "../providers/DebugImageryProvider.h"
 #include "../providers/GoogleMapTilesImageryProvider.h"
-#include "../providers/HeightmapTerrainProvider.h"
 #include "../providers/QuantizedMeshLayerJsonFetcher.h"
 #include "../providers/QuantizedMeshTerrainProvider.h"
 #include "../providers/TileMapServiceImageryProvider.h"
@@ -144,13 +143,8 @@ std::unique_ptr<TerrainProvider> createTerrainProvider(
         return qm;
     }
 
-    auto hm = std::make_unique<HeightmapTerrainProvider>(
-        config.urlTemplate, config.attribution);
-    applyConfiguredZoomRange(*hm, config.minimumZoom, config.maximumZoom);
-    hm->setEncoding(HeightmapTerrainProvider::Encoding::MapboxTerrainRgb);
-    hm->setTileSize(config.tileSize);
-    hm->setPlatformBridge(&platformBridge);
-    return hm;
+    logError(platformBridge, "Unsupported terrain source kind");
+    return {};
 }
 
 } // namespace

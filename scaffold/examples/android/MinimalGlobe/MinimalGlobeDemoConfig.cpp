@@ -11,29 +11,16 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     };
 
     if (kEnableTerrainForDemo) {
-        if (kUseQuantizedMeshTerrain) {
-            config.terrain = {
-                TerrainSourceKind::QuantizedMesh,
-                kQuantizedMeshTerrainTemplate,
-                kQuantizedMeshTerrainLayerJson,
-                "QuantizedMesh Terrain",
-                0,
-                12,
-                65,
-                false,
-            };
-        } else {
-            config.terrain = {
-                TerrainSourceKind::HeightmapTerrainRgb,
-                kFabdemTerrainTemplate,
-                "",
-                "Mapbox Terrain-RGB",
-                0,
-                14,
-                514,
-                false,
-            };
-        }
+        config.terrain = {
+            TerrainSourceKind::QuantizedMesh,
+            kQuantizedMeshTerrainTemplate,
+            kQuantizedMeshTerrainLayerJson,
+            "QuantizedMesh Terrain",
+            0,
+            12,
+            65,
+            false,
+        };
     }
     config.tileset = {
         4.0,

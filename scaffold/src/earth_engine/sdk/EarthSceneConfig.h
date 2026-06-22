@@ -12,7 +12,6 @@ namespace earth_engine {
 
 enum class TerrainSourceKind {
     None,
-    HeightmapTerrainRgb,
     QuantizedMesh
 };
 

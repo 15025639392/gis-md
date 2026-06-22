@@ -4,8 +4,6 @@
 
 namespace earth_engine::minimal_globe_demo {
 
-constexpr const char* kFabdemTerrainTemplate =
-    "http://192.168.1.4:8001/{z}/{x}/{y}.png";
 constexpr const char* kQuantizedMeshTerrainTemplate =
     "http://192.168.1.8:8090/{z}/{x}/{y}.terrain";
 constexpr const char* kQuantizedMeshTerrainLayerJson =
@@ -21,8 +19,6 @@ constexpr bool kEnableTerrainForDemo = true;
 constexpr bool kUseGaodeSatelliteForDemo = true;
 constexpr bool kEnableGaodeRoadNetOverlayForDemo = true;
 constexpr bool kEnableRobotExpressiveGltfDemo = false;
-/// Use QuantizedMesh terrain (cesium-native format) instead of RGB heightmap.
-constexpr bool kUseQuantizedMeshTerrain = true;
 
 constexpr double kDemoCameraLongitudeDegrees = 106.508;
 constexpr double kDemoCameraLatitudeDegrees = 29.617;

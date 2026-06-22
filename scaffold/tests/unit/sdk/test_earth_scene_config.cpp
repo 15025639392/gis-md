@@ -57,6 +57,10 @@ TEST(EarthSceneConfig, StoresSceneSourceDefinitions) {
     EXPECT_DOUBLE_EQ(copied.fixedSimulationJulianDate, 2461188.75);
 }
 
+TEST(EarthSceneConfig, ExposesOnlyTilesetTerrainSourceKinds) {
+    EXPECT_NE(TerrainSourceKind::None, TerrainSourceKind::QuantizedMesh);
+}
+
 TEST(EarthSceneConfig, StoresTileMapServiceImagerySourceDefinitions) {
     EarthSceneConfig config;
     RasterOverlaySourceConfig overlay;
