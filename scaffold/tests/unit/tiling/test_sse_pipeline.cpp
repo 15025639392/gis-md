@@ -5613,9 +5613,17 @@ void testTilesetGltfDrawCommandBindsTerrainWaterMask() {
     waterMaskTexture.sampler.wrapS = GltfTextureWrap::ClampToEdge;
     waterMaskTexture.sampler.wrapT = GltfTextureWrap::ClampToEdge;
     waterMaskTexture.sampler.mipmap = false;
-    model->terrainWaterMask = waterMask;
     model->terrainWaterMaskTextureIndex = model->textures.size();
     model->textures.push_back(std::move(waterMaskTexture));
+    model->primitives.front().terrainOnlyLand = false;
+    model->primitives.front().terrainOnlyWater = false;
+    model->primitives.front().terrainWaterMaskTextureIndex =
+        model->terrainWaterMaskTextureIndex;
+    model->primitives.front().terrainWaterMaskTranslationX =
+        waterMask.translationX;
+    model->primitives.front().terrainWaterMaskTranslationY =
+        waterMask.translationY;
+    model->primitives.front().terrainWaterMaskScale = waterMask.scale;
 
     root->content.renderContent.prepareGltfContent(
         std::move(model),

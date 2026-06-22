@@ -291,6 +291,24 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
                 resources.dynamicVertices = animated;
                 resources.animationRevision =
                     model->currentAnimationRevision();
+                resources.terrainOnlyWater = primitive.terrainOnlyWater;
+                resources.terrainOnlyLand = primitive.terrainOnlyLand;
+                resources.terrainWaterMaskTranslationScale = {
+                    static_cast<float>(primitive.terrainWaterMaskTranslationX),
+                    static_cast<float>(primitive.terrainWaterMaskTranslationY),
+                    static_cast<float>(primitive.terrainWaterMaskScale),
+                    0.0f};
+                if (primitive.terrainWaterMaskTextureIndex &&
+                    *primitive.terrainWaterMaskTextureIndex <
+                        tile.content.renderContent
+                            .gltfTextureResourcesForBinding()
+                            .size()) {
+                    resources.terrainWaterMaskTexture =
+                        tile.content.renderContent
+                            .gltfTextureResourcesForBinding()
+                            [*primitive.terrainWaterMaskTextureIndex]
+                                .get();
+                }
                 std::optional<GltfTextureBinding> baseColorBinding =
                     primitive.baseColorTexture;
                 if (!baseColorBinding && primitive.baseColorTextureIndex) {

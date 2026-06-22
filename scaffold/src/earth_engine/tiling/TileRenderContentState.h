@@ -65,6 +65,14 @@ struct GltfPrimitiveRenderResources {
     TextureBinding normalTexture;
     TextureBinding occlusionTexture;
     TextureBinding emissiveTexture;
+    Texture* terrainWaterMaskTexture = nullptr;
+    bool terrainOnlyWater = false;
+    bool terrainOnlyLand = true;
+    std::array<float, 4> terrainWaterMaskTranslationScale{
+        0.0f,
+        0.0f,
+        1.0f,
+        0.0f};
     int vertexCount = 0;
     int indexCount = 0;
     int instanceCount = 0;
