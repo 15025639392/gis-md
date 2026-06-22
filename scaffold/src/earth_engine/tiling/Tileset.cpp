@@ -36,6 +36,12 @@ FrameResourceBudgetConfig makeFrameResourceBudgetConfig(
             resourceSmoothingActive));
 }
 
+bool providerHasTerrainQuadtree(const TerrainProvider* terrainProvider,
+                                const TilesetContentProvider* contentProvider) {
+    return terrainProvider != nullptr ||
+           (contentProvider && contentProvider->providesTerrainQuadtree());
+}
+
 } // namespace
 
 Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
@@ -75,7 +81,9 @@ Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
           contentLifecycle_,
           resourceInvalidator_,
           loadQueue_,
-          terrainProvider_.get(),
+          providerHasTerrainQuadtree(
+              terrainProvider_.get(),
+              contentProvider_.get()),
           device_,
           rasterOverlays_),
       contentRuntime_(
@@ -98,6 +106,12 @@ Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
             overlay->ensureTileProvider(device_);
         }
     }
+}
+
+bool Tileset::hasTerrainQuadtree() const {
+    return providerHasTerrainQuadtree(
+        terrainProvider_.get(),
+        contentProvider_.get());
 }
 
 Tileset::~Tileset() {

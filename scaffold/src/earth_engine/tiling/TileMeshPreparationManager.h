@@ -9,7 +9,6 @@ namespace earth_engine {
 
 class ActivatedRasterOverlay;
 class RenderDevice;
-class TerrainProvider;
 class TileContentLifecycleManager;
 class TileContentResourceInvalidator;
 class TileLoadQueue;
@@ -21,7 +20,7 @@ public:
         TileContentLifecycleManager& contentLifecycle,
         TileContentResourceInvalidator& resourceInvalidator,
         TileLoadQueue& loadQueue,
-        TerrainProvider* terrainProvider,
+        bool hasTerrainQuadtree,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays);
 
@@ -39,7 +38,7 @@ private:
     TileContentLifecycleManager& contentLifecycle_;
     TileContentResourceInvalidator& resourceInvalidator_;
     TileLoadQueue& loadQueue_;
-    TerrainProvider* terrainProvider_ = nullptr;
+    bool hasTerrainQuadtree_ = false;
     RenderDevice* device_ = nullptr;
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays_;
 };

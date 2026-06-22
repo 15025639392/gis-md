@@ -27,7 +27,7 @@ void TilesetSelectionFrameFacade::selectTiles(
             tileset.tileScheme_->id(),
             tileset.contentProvider_ ? tileset.contentProvider_->rootTiles()
                                      : std::vector<TileKey>{},
-            tileset.terrainProvider_ != nullptr},
+            tileset.hasTerrainQuadtree()},
         [&tileset]() {
             TileSelectionStateResetter::reset(
                 tileset.tileRegistry_,

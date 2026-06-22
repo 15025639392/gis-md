@@ -11078,7 +11078,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
         TileSurfaceMeshResolution::forContext(false, true, true);
     TileSurfaceMeshResolution noProviderContext =
         TileSurfaceMeshResolution::forContext(false, false, false);
-    TileSurfaceMeshResolution pendingProviderContext =
+    TileSurfaceMeshResolution pendingQuadtreeContext =
         TileSurfaceMeshResolution::forContext(false, false, true);
     check(missingResolution.resolvedSource() ==
               SurfaceDrawableSource::EllipsoidFallback &&
@@ -11088,7 +11088,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
               ownContext.markDone &&
               upsampleContext.markDone &&
               noProviderContext.markDone &&
-              !pendingProviderContext.markDone,
+              !pendingQuadtreeContext.markDone,
           "TileSurfaceMeshResolution: source fallback and done decision are explicit");
 
     gpuTile.content.renderContent.setSurfaceSource(
@@ -11118,6 +11118,24 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
                   SurfaceDrawableSource::EllipsoidFallback &&
               fallbackResolution.markDone,
           "TileSurfaceMeshSourceResolver: no-provider tile resolves to done ellipsoid fallback");
+
+    TilesetTile contentTerrainFallbackTile(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    TileSurfaceMeshResolution contentTerrainFallbackResolution =
+        TileSurfaceMeshSourceResolver::resolve(
+            contentTerrainFallbackTile,
+            nullptr,
+            true,
+            [](const TilesetTile&, bool) -> const TilesetTile* {
+                return nullptr;
+            },
+            [](TilesetTile&) {});
+    check(contentTerrainFallbackTile.content.renderContent.hasSurfaceMesh() &&
+              contentTerrainFallbackResolution.resolvedSource() ==
+                  SurfaceDrawableSource::EllipsoidFallback &&
+              !contentTerrainFallbackResolution.markDone,
+          "TileSurfaceMeshSourceResolver: content terrain quadtree fallback stays pending like terrain provider");
 
     TilesetTile upsampleParent(
         TileKey{"Geographic-TMS", 0, 0, 0},

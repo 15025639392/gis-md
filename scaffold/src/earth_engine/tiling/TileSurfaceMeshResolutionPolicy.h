@@ -12,10 +12,10 @@ struct TileSurfaceMeshResolution {
     static TileSurfaceMeshResolution forContext(
         bool hasOwnTerrain,
         bool upsampledFromParent,
-        bool hasTerrainProvider) {
+        bool hasTerrainQuadtree) {
         TileSurfaceMeshResolution resolution;
         resolution.markDone =
-            hasOwnTerrain || upsampledFromParent || !hasTerrainProvider;
+            hasOwnTerrain || upsampledFromParent || !hasTerrainQuadtree;
         return resolution;
     }
 

@@ -18,7 +18,7 @@ struct TileMeshFrameEnsureInput {
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
         terrainCache;
     RenderDevice* device = nullptr;
-    bool hasTerrainProvider = false;
+    bool hasTerrainQuadtree = false;
 };
 
 class TileMeshFrameEnsurer {
@@ -53,7 +53,7 @@ public:
                     input.tile,
                     ownHeightmap,
                     input.device,
-                    input.hasTerrainProvider},
+                    input.hasTerrainQuadtree},
                 ingestAvailability,
                 findUpsampleSource,
                 ensureAncestorMesh,

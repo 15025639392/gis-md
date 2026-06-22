@@ -130,6 +130,7 @@ private:
     friend class TilesetUpdateFrameRuntime;
 
     TileContentRuntimeFrame makeContentRuntimeFrame() const;
+    bool hasTerrainQuadtree() const;
     TileLoadRequestOutcome requestMissingContent(
         const std::vector<TileLoadRequest>& loadRequests,
         FrameResourceBudget* budget = nullptr);

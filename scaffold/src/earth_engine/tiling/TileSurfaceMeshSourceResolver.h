@@ -22,7 +22,7 @@ public:
     static TileSurfaceMeshResolution resolve(
         TilesetTile& tile,
         DecodedHeightmap* ownHeightmap,
-        bool hasTerrainProvider,
+        bool hasTerrainQuadtree,
         FindUpsampleSourceFn&& findUpsampleSource,
         EnsureAncestorMeshFn&& ensureAncestorMesh) {
         const bool hasOwnTerrain = ownHeightmap != nullptr;
@@ -30,7 +30,7 @@ public:
             TileSurfaceMeshResolution::forContext(
                 hasOwnTerrain,
                 tile.content.derivesTerrainFromParent(),
-                hasTerrainProvider);
+                hasTerrainQuadtree);
 
         if (shouldDeferToGltfTerrainUpsample(tile, hasOwnTerrain)) {
             resolution.markDone = false;

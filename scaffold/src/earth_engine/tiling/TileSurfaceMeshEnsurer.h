@@ -14,7 +14,7 @@ struct TileSurfaceMeshEnsureInput {
     TilesetTile& tile;
     DecodedHeightmap* ownHeightmap = nullptr;
     RenderDevice* device = nullptr;
-    bool hasTerrainProvider = false;
+    bool hasTerrainQuadtree = false;
 };
 
 struct TileSurfaceMeshEnsureResult {
@@ -76,7 +76,7 @@ public:
             TileSurfaceMeshSourceResolver::resolve(
                 tile,
                 ownHeightmap,
-                input.hasTerrainProvider,
+                input.hasTerrainQuadtree,
                 findUpsampleSource,
                 ensureAncestorMesh);
 
