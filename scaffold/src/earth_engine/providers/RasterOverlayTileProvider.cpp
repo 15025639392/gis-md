@@ -152,7 +152,7 @@ TileRange computeRange(const TileScheme& scheme,
 }
 
 TileRange trimCesiumNativeBoundarySlop(const TileScheme& scheme,
-                                       const Rectangle& bounds,
+                                       const Rectangle& geometryBounds,
                                        int zoom,
                                        TileRange range) {
     if (range.maxX < range.minX || range.maxY < range.minY) {
@@ -162,19 +162,19 @@ TileRange trimCesiumNativeBoundarySlop(const TileScheme& scheme,
     // cesium-native QuadtreeRasterOverlayTileProvider excludes tiles that only
     // touch a geometry rectangle along a tile edge, using 1/512 of the geometry
     // span as the edge tolerance.
-    const double veryCloseX = std::max(1e-12, bounds.width()) / 512.0;
-    const double veryCloseY = std::max(1e-12, bounds.height()) / 512.0;
+    const double veryCloseX = std::max(1e-12, geometryBounds.width()) / 512.0;
+    const double veryCloseY = std::max(1e-12, geometryBounds.height()) / 512.0;
 
     const Rectangle westTile = scheme.tileToRectangle(
         TileKey{scheme.id(), zoom, range.minX, range.minY});
-    if (std::abs(westTile.east() - bounds.west()) < veryCloseX &&
+    if (std::abs(westTile.east() - geometryBounds.west()) < veryCloseX &&
         range.minX < range.maxX) {
         ++range.minX;
     }
 
     const Rectangle eastTile = scheme.tileToRectangle(
         TileKey{scheme.id(), zoom, range.maxX, range.maxY});
-    if (std::abs(eastTile.west() - bounds.east()) < veryCloseX &&
+    if (std::abs(eastTile.west() - geometryBounds.east()) < veryCloseX &&
         range.maxX > range.minX) {
         --range.maxX;
     }
@@ -183,28 +183,28 @@ TileRange trimCesiumNativeBoundarySlop(const TileScheme& scheme,
     if (yDown) {
         const Rectangle northTile = scheme.tileToRectangle(
             TileKey{scheme.id(), zoom, range.minX, range.minY});
-        if (std::abs(northTile.south() - bounds.north()) < veryCloseY &&
+        if (std::abs(northTile.south() - geometryBounds.north()) < veryCloseY &&
             range.minY < range.maxY) {
             ++range.minY;
         }
 
         const Rectangle southTile = scheme.tileToRectangle(
             TileKey{scheme.id(), zoom, range.maxX, range.maxY});
-        if (std::abs(southTile.north() - bounds.south()) < veryCloseY &&
+        if (std::abs(southTile.north() - geometryBounds.south()) < veryCloseY &&
             range.maxY > range.minY) {
             --range.maxY;
         }
     } else {
         const Rectangle southTile = scheme.tileToRectangle(
             TileKey{scheme.id(), zoom, range.minX, range.minY});
-        if (std::abs(southTile.north() - bounds.south()) < veryCloseY &&
+        if (std::abs(southTile.north() - geometryBounds.south()) < veryCloseY &&
             range.minY < range.maxY) {
             ++range.minY;
         }
 
         const Rectangle northTile = scheme.tileToRectangle(
             TileKey{scheme.id(), zoom, range.maxX, range.maxY});
-        if (std::abs(northTile.south() - bounds.north()) < veryCloseY &&
+        if (std::abs(northTile.south() - geometryBounds.north()) < veryCloseY &&
             range.maxY > range.minY) {
             --range.maxY;
         }
@@ -251,6 +251,13 @@ bool isWebMercatorScheme(const TileScheme& scheme) {
     return id == "XYZ-WebMercator" ||
            id == "TMS-WebMercator" ||
            id == "OpenGlobus-Earth";
+}
+
+bool rectanglesOverlapWithArea(const Rectangle& a, const Rectangle& b) {
+    std::optional<Rectangle> intersection = a.computeIntersection(b);
+    return intersection &&
+           intersection->width() > 1e-15 &&
+           intersection->height() > 1e-15;
 }
 
 bool isDecodedImageUploadable(const DecodedImage& image) {
@@ -432,7 +439,10 @@ int chooseRectangleSourceZoom(const TileScheme& scheme,
         maximumCombinedTextureSize(uploader, maximumTextureSize);
 
     TileRange range = trimCesiumNativeBoundarySlop(
-        scheme, sourceBounds, zoom, computeRange(scheme, sourceBounds, zoom));
+        scheme,
+        geometryBounds,
+        zoom,
+        computeRange(scheme, sourceBounds, zoom));
     while (zoom > minZoom) {
         const int widthPixels = range.width() * std::max(1, provider.tileWidth());
         const int heightPixels = range.height() * std::max(1, provider.tileHeight());
@@ -442,7 +452,10 @@ int chooseRectangleSourceZoom(const TileScheme& scheme,
         }
         --zoom;
         range = trimCesiumNativeBoundarySlop(
-            scheme, sourceBounds, zoom, computeRange(scheme, sourceBounds, zoom));
+            scheme,
+            geometryBounds,
+            zoom,
+            computeRange(scheme, sourceBounds, zoom));
     }
 
     if (outRange) *outRange = range;
@@ -480,7 +493,10 @@ RectangleSourcePlan buildRectangleSourcePlan(
     for (int y = plan.range.minY; y <= plan.range.maxY; ++y) {
         for (int x = plan.range.minX; x <= plan.range.maxX; ++x) {
             TileKey sourceKey{scheme.id(), plan.sourceZoom, x, y};
-            if (provider.supportsTile(sourceKey)) {
+            if (provider.supportsTile(sourceKey) &&
+                rectanglesOverlapWithArea(
+                    scheme.tileToRectangle(sourceKey),
+                    sourceBounds)) {
                 plan.sourceKeys.push_back(sourceKey);
             }
         }

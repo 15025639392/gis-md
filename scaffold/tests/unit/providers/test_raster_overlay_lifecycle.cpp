@@ -569,6 +569,31 @@ TEST(RasterOverlayLifecycleTest, RectangleCoverageRejectsOutsideAndClipsSourcePl
     }
 }
 
+TEST(RasterOverlayLifecycleTest,
+     RectangleCoverageClipDoesNotRequestEdgeTouchingSourceTiles) {
+    RgbImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setLevelRange(1, 1);
+
+    const TileKey coveredKey{scheme->id(), 1, 0, 0};
+    const Rectangle coverage = scheme->tileToRectangle(coveredKey);
+    const Rectangle rootBounds =
+        scheme->tileToRectangle(TileKey{scheme->id(), 0, 0, 0});
+    provider.setCoverageRectangle(coverage);
+
+    RasterOverlayTileProvider::TilePtr tile =
+        provider.getTile(projectForProvider(provider, rootBounds),
+                         1024.0,
+                         1024.0);
+    ASSERT_NE(nullptr, tile);
+    ASSERT_TRUE(tile->isRectangleTile());
+    EXPECT_TRUE(provider.loadTile(*tile));
+
+    ASSERT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(coveredKey, imagery.requestedKeys.front());
+}
+
 TEST(RasterOverlayLifecycleTest, RectangleCoverageMissCreatesNoTileOrRequest) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
