@@ -263,6 +263,53 @@ TEST(
     EXPECT_EQ(terrainProvider.requestCount, 0);
 }
 
+TEST(
+    TileMissingRequestSchedulerTest,
+    ContentOwnedTerrainQuadtreeIgnoresLegacyTerrainCacheForRequests) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    TerrainQuadtreeContentProvider contentProvider;
+    contentProvider.supports = true;
+    TileEmptyContentRegistry emptyContentRegistry;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = cacheKeyForTile(key);
+    terrainCache[cacheKey] = std::make_unique<DecodedHeightmap>();
+
+    const TileLoadRequestOutcome outcome =
+        TileMissingRequestScheduler::request(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileMissingRequestSchedulerInput{
+                lifecycle,
+                budget,
+                nullptr,
+                &contentProvider,
+                tiles,
+                terrainCache,
+                emptyContentRegistry},
+            cacheKeyForTile,
+            [](TilesetTile&, double) { return false; },
+            [&tiles](const TileKey& tileKey) -> TilesetTile* {
+                const std::string lookupKey = cacheKeyForTile(tileKey);
+                auto it = tiles.find(lookupKey);
+                return it == tiles.end() ? nullptr : it->second.get();
+            });
+
+    EXPECT_EQ(outcome.issued, 1u);
+    EXPECT_EQ(contentProvider.requestCount, 1);
+    EXPECT_EQ(lifecycle.counts().contentTerminalResults, 1u);
+}
+
 TEST(TileMissingRequestSchedulerTest, UpsampledTileUsesLocalPathBeforeContentProvider) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;

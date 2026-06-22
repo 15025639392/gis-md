@@ -109,6 +109,7 @@ private:
             terrainProvider &&
             terrainProvider->supportsTile(key);
         snapshot.terrainAlreadyCached =
+            !snapshot.contentProviderOwnsTerrainQuadtree &&
             input.terrainCache.count(cacheKey) > 0;
         snapshot.hasRenderContent =
             outTileState &&
