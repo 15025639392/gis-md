@@ -4,10 +4,25 @@
 #include "TileContentUploadPolicy.h"
 #include "TileRasterOverlayDetailsGenerator.h"
 #include "TilesetTile.h"
+#include "../content/GltfContentProvider.h"
 
 #include <utility>
 
 namespace earth_engine {
+
+void TileContentUploadCommitter::applyAvailabilityUpdates(
+    TilesetContentProvider* contentProvider,
+    const TileLoadedContent& content) {
+    if (!content.hasGltfTerrainPayload() ||
+        content.quantizedMeshAvailabilityUpdates.empty()) {
+        return;
+    }
+
+    if (contentProvider && contentProvider->providesTerrainQuadtree()) {
+        contentProvider->applyTerrainAvailabilityUpdates(
+            content.quantizedMeshAvailabilityUpdates);
+    }
+}
 
 void TileContentUploadCommitter::prepareRenderContent(
     TilesetTile& tile,

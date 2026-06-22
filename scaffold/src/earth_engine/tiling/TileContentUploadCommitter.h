@@ -8,6 +8,7 @@ namespace earth_engine {
 
 class ActivatedRasterOverlay;
 class RenderDevice;
+class TilesetContentProvider;
 struct TilesetTile;
 
 struct TileContentUploadCommitAction {
@@ -15,6 +16,9 @@ struct TileContentUploadCommitAction {
 };
 
 struct TileContentUploadCommitter {
+    static void applyAvailabilityUpdates(
+        TilesetContentProvider* contentProvider,
+        const TileLoadedContent& content);
     static void prepareRenderContent(
         TilesetTile& tile,
         TileLoadedContent&& content,

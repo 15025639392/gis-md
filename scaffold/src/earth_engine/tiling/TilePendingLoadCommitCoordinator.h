@@ -157,6 +157,7 @@ public:
               typename MarkResourcesDirtyFn>
     static void commitContentUpload(
         PendingTileLoad& upload,
+        TilesetContentProvider* contentProvider,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         TileLoadLifecycle& lifecycle,
@@ -171,6 +172,9 @@ public:
             return;
         }
 
+        TileContentUploadCommitter::applyAvailabilityUpdates(
+            contentProvider,
+            upload.content());
         TileContentUploadCommitter::prepareRenderContent(
             *tile,
             std::move(upload.content()),
@@ -234,11 +238,9 @@ public:
         EnsureGltfResourcesFn&& ensureGltfResources,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         if (upload.domain == TileLoadDomain::Content) {
-            TileTerrainUploadCommitter::applyAvailabilityUpdates(
-                contentProvider,
-                upload.content());
             commitContentUpload(
                 upload,
+                contentProvider,
                 device,
                 rasterOverlays,
                 lifecycle,

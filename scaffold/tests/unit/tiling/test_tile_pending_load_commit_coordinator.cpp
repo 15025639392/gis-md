@@ -2,6 +2,7 @@
 
 #include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
 #include "earth_engine/tiling/TileEmptyContentRegistry.h"
+#include "earth_engine/tiling/TileContentUploadCommitter.h"
 #include "earth_engine/tiling/TilePendingLoadCommitCoordinator.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 
@@ -500,6 +501,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TilePendingLoadCommitCoordinator::commitContentUpload(
         contentUpload,
         nullptr,
+        nullptr,
         {},
         lifecycle,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
@@ -580,7 +582,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
 TEST(
     TilePendingLoadCommitCoordinatorTest,
-    TerrainUploadCommitterAppliesAvailabilityToContentProviderOnly) {
+    ContentUploadCommitterAppliesTerrainAvailabilityToContentProvider) {
     RecordingTerrainContentProvider contentProvider;
 
     QuantizedMeshAvailabilityUpdate update;
@@ -593,7 +595,7 @@ TEST(
     content.gltfModel = std::make_unique<GltfModel>();
     content.quantizedMeshAvailabilityUpdates.push_back(update);
 
-    TileTerrainUploadCommitter::applyAvailabilityUpdates(
+    TileContentUploadCommitter::applyAvailabilityUpdates(
         &contentProvider,
         content);
 
@@ -1135,6 +1137,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
     TilePendingLoadCommitCoordinator::commitContentUpload(
         upload,
+        nullptr,
         nullptr,
         {},
         lifecycle,
