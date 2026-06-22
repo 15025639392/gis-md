@@ -554,6 +554,72 @@ TEST(QuantizedMeshTerrainProviderTest,
         1e-6);
 }
 
+TEST(QuantizedMeshTerrainProviderTest,
+     WebMercatorRequestTileUsesProjectedLayerRectangleLikeCesiumNative) {
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    const std::string layerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:3857",
+      "tiles": ["{z}/{x}/{y}.terrain"],
+      "maxzoom": 12,
+      "available": [
+        [{"startX": 0, "startY": 0, "endX": 0, "endY": 0}],
+        [{"startX": 1, "startY": 1, "endX": 1, "endY": 1}]
+      ]
+    })json";
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        layerJson,
+        "https://example.invalid/terrain/layer.json"));
+
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+
+    const TileKey key{"XYZ-WebMercator", 1, 1, 1};
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool callbackCalled = false;
+    TerrainTileLoadResult completed;
+
+    provider.requestTile(
+        key,
+        CancellationToken{},
+        [&](const TileKey&, TerrainTileLoadResult result) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed = std::move(result);
+                callbackCalled = true;
+            }
+            cv.notify_one();
+        });
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(1));
+    ASSERT_TRUE(bridge.completeNext(200, makeQuantizedMeshBytes()));
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return callbackCalled; }));
+    }
+
+    ASSERT_EQ(TileLoadStatus::Renderable, completed.status);
+    ASSERT_TRUE(completed.metadata.updatedBoundingVolume.has_value());
+    auto scheme = TileScheme::createXYZWebMercator();
+    const Rectangle expected = scheme->tileToRectangle(key);
+    EXPECT_EQ(expected, completed.metadata.updatedBoundingVolume->region);
+    ASSERT_NE(nullptr, completed.gltfModel);
+    EXPECT_EQ(expected,
+              completed.gltfModel->rasterOverlayDetails.boundingRegion
+                  .rectangle);
+    const Rectangle* rasterRectangle =
+        completed.gltfModel->rasterOverlayDetails
+            .findRectangleForOverlayProjection(
+                RasterOverlayProjection::Geographic);
+    ASSERT_NE(nullptr, rasterRectangle);
+    EXPECT_EQ(expected, *rasterRectangle);
+}
+
 TEST(QuantizedMeshTerrainProviderTest, UsesAsyncBridgeWithoutWorkerBlockingWait) {
     QuantizedMeshTerrainProvider provider(
         "https://example.invalid/{z}/{x}/{y}.terrain");

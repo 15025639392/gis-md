@@ -5,6 +5,9 @@
 #endif
 #include "../core/async/AsyncSystem.h"
 #include "../core/cache/HttpCache.h"
+#include "../core/geodesy/Ellipsoid.h"
+#include "../core/geodesy/Projection.h"
+#include "../core/geodesy/WebMercatorProjection.h"
 #include "../content/QuantizedMeshContentLoader.h"
 #include "../platform/bridge/CurlMultiRequestScheduler.h"
 #include "../platform/bridge/PlatformBridge.h"
@@ -209,6 +212,33 @@ Rectangle geographicTmsRectangle(const TileKey& key) {
     const double north =
         -0.5 * kPi + static_cast<double>(key.y + 1) / yTilesAtZ * kPi;
     return Rectangle(west, south, east, north);
+}
+
+Rectangle webMercatorRectangle(const TileKey& key) {
+    WebMercatorProjection projection(Ellipsoid::WGS84());
+    const Rectangle projectedRoot =
+        WebMercatorProjection::computeMaximumProjectedRectangle(
+            Ellipsoid::WGS84());
+    const double tilesAtZ = std::ldexp(1.0, key.z);
+    const double tileWidth = projectedRoot.width() / tilesAtZ;
+    const double tileHeight = projectedRoot.height() / tilesAtZ;
+    const double west =
+        projectedRoot.west() + static_cast<double>(key.x) * tileWidth;
+    const double east = west + tileWidth;
+    const double north =
+        projectedRoot.north() - static_cast<double>(key.y) * tileHeight;
+    const double south = north - tileHeight;
+    return unprojectRectangleSimple(
+        Projection(projection),
+        Rectangle(west, south, east, north));
+}
+
+Rectangle terrainContentRectangle(const TileKey& key,
+                                  const std::string& schemeId) {
+    if (schemeId == "XYZ-WebMercator") {
+        return webMercatorRectangle(key);
+    }
+    return geographicTmsRectangle(key);
 }
 
 std::string composeUrl(const ParsedUrl& url) {
@@ -1444,11 +1474,16 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                 metadata.push_back(item);
             }
 
+            const std::string contentSchemeId =
+                contentLayerIndex >= 0 &&
+                        static_cast<size_t>(contentLayerIndex) < layers_.size()
+                    ? layers_[static_cast<size_t>(contentLayerIndex)].schemeId
+                    : schemeId_;
             QuantizedMeshContentLoadResult contentResult =
                 QuantizedMeshContentLoader::load(
                     body->data(),
                     body->size(),
-                    geographicTmsRectangle(key),
+                    terrainContentRectangle(key, contentSchemeId),
                     waterMaskEnabled_,
                     metadata);
             if (!contentResult.success()) {
