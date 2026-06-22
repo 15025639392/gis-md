@@ -104,21 +104,36 @@ struct TileLoadResult {
     }
 
     static TileLoadResult createRenderableTerrain(
-        std::unique_ptr<DecodedHeightmap> heightmap = nullptr,
-        std::unique_ptr<SurfaceTileMesh> surfaceMesh = nullptr,
         TileLoadResultMetadata metadata = {}) {
         TileLoadResult loadResult;
         loadResult.status = TileLoadStatus::Renderable;
+        loadResult.content.metadata = std::move(metadata);
+        return loadResult;
+    }
+
+    static TileLoadResult createRenderableHeightmapTerrain(
+        std::unique_ptr<DecodedHeightmap> heightmap,
+        TileLoadResultMetadata metadata = {}) {
+        TileLoadResult loadResult = createRenderableTerrain(
+            std::move(metadata));
         loadResult.content.heightmap = std::move(heightmap);
-        loadResult.content.surfaceMesh = std::move(surfaceMesh);
         if (loadResult.content.heightmap) {
             loadResult.content.terrainPayloadKind =
                 TerrainTilePayloadKind::Heightmap;
-        } else if (loadResult.content.surfaceMesh) {
+        }
+        return loadResult;
+    }
+
+    static TileLoadResult createRenderableSurfaceTerrain(
+        std::unique_ptr<SurfaceTileMesh> surfaceMesh,
+        TileLoadResultMetadata metadata = {}) {
+        TileLoadResult loadResult = createRenderableTerrain(
+            std::move(metadata));
+        loadResult.content.surfaceMesh = std::move(surfaceMesh);
+        if (loadResult.content.surfaceMesh) {
             loadResult.content.terrainPayloadKind =
                 TerrainTilePayloadKind::SurfaceMesh;
         }
-        loadResult.content.metadata = std::move(metadata);
         return loadResult;
     }
 

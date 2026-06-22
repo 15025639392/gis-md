@@ -546,8 +546,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileLoadResult::createRenderableTerrain(
-            nullptr,
+        TileLoadResult::createRenderableSurfaceTerrain(
             std::move(surfaceMesh))};
 
     TileLoadLifecycle lifecycle;
@@ -621,8 +620,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileLoadResult::createRenderableTerrain(
-            nullptr,
+        TileLoadResult::createRenderableSurfaceTerrain(
             std::move(surfaceMesh),
             std::move(metadata))};
 
@@ -702,8 +700,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileLoadResult::createRenderableTerrain(
-            nullptr,
+        TileLoadResult::createRenderableSurfaceTerrain(
             std::move(surfaceMesh),
             std::move(metadata))};
 
@@ -953,7 +950,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         cacheKey,
         TileLoadPriorityGroup::Normal,
         0.0,
-        TileLoadResult::createRenderableTerrain(std::move(heightmap))};
+        TileLoadResult::createRenderableHeightmapTerrain(std::move(heightmap))};
     {
         std::lock_guard<std::mutex> lock(lifecycle.mutex());
         lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
