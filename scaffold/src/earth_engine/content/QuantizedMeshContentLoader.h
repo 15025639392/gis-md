@@ -47,7 +47,9 @@ public:
         size_t size,
         const Rectangle& tileRectangle,
         bool enableWaterMask,
-        const std::vector<QuantizedMeshMetadataContent>& metadata);
+        const std::vector<QuantizedMeshMetadataContent>& metadata,
+        RasterOverlayProjection terrainProjection =
+            RasterOverlayProjection::Geographic);
 };
 
 } // namespace earth_engine

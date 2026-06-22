@@ -1,6 +1,8 @@
 #include "QuantizedMeshContentLoader.h"
 
 #include "GltfModel.h"
+#include "../core/geodesy/Ellipsoid.h"
+#include "../core/geodesy/Projection.h"
 #include "../terrain/QuantizedMeshParser.h"
 
 namespace earth_engine {
@@ -53,6 +55,28 @@ std::unique_ptr<GltfModel> makeQuantizedMeshGltfModel(
     return model;
 }
 
+RasterOverlayDetails makeRasterOverlayDetails(
+    const Rectangle& geographicRectangle,
+    double minimumHeight,
+    double maximumHeight,
+    RasterOverlayProjection terrainProjection) {
+    RasterOverlayDetails details;
+    details.rasterOverlayProjections = {terrainProjection};
+    if (terrainProjection == RasterOverlayProjection::WebMercator) {
+        details.rasterOverlayRectangles = {
+            projectRectangleSimple(
+                WebMercatorProjection(Ellipsoid::WGS84()),
+                geographicRectangle)};
+    } else {
+        details.rasterOverlayRectangles = {geographicRectangle};
+    }
+    details.boundingRegion = {
+        geographicRectangle,
+        minimumHeight,
+        maximumHeight};
+    return details;
+}
+
 } // namespace
 
 QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
@@ -60,7 +84,8 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
     size_t size,
     const Rectangle& tileRectangle,
     bool enableWaterMask,
-    const std::vector<QuantizedMeshMetadataContent>& metadata) {
+    const std::vector<QuantizedMeshMetadataContent>& metadata,
+    RasterOverlayProjection terrainProjection) {
     QuantizedMeshContentLoadResult result;
 
     std::unique_ptr<QuantizedMeshParser::DecodedTile> decodedTile =
@@ -79,6 +104,13 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
         return result;
     }
 
+    RasterOverlayDetails rasterOverlayDetails = makeRasterOverlayDetails(
+        tileRectangle,
+        decodedTile->minimumHeight,
+        decodedTile->maximumHeight,
+        terrainProjection);
+    gltfModel->rasterOverlayDetails = rasterOverlayDetails;
+
     result.status = QuantizedMeshContentLoadStatus::Success;
     result.metadata.updatedBoundingVolume = TileBoundingVolume::fromRegion(
         tileRectangle,
@@ -89,7 +121,7 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
         decodedTile->maximumHeight};
     result.metadata.horizonOcclusionPoint =
         decodedTile->horizonOcclusionPoint;
-    result.metadata.rasterOverlayDetails = decodedTile->rasterOverlayDetails;
+    result.metadata.rasterOverlayDetails = std::move(rasterOverlayDetails);
     result.gltfModel = std::move(gltfModel);
     result.availabilityUpdates.reserve(metadata.size());
     for (const QuantizedMeshMetadataContent& item : metadata) {

@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/content/QuantizedMeshContentLoader.h"
+#include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/math/Vec3.h"
 
 #include <cstdint>
@@ -229,6 +230,56 @@ TEST(QuantizedMeshContentLoaderTest,
     EXPECT_NEAR(-10.0, result.metadata.terrainHeightRange->first, 1e-6);
     EXPECT_NEAR(150.0, result.metadata.terrainHeightRange->second, 1e-6);
     EXPECT_TRUE(result.availabilityUpdates.empty());
+}
+
+TEST(QuantizedMeshContentLoaderTest,
+     GeneratesWebMercatorRasterOverlayDetailsLikeLayerJsonTerrainLoader) {
+    const std::vector<uint8_t> bytes =
+        makeQuantizedMeshBytes(-10.0f, 150.0f);
+    const Rectangle tileRectangle = geographicRootWestRectangle();
+
+    QuantizedMeshContentLoadResult result =
+        QuantizedMeshContentLoader::load(
+            bytes.data(),
+            bytes.size(),
+            tileRectangle,
+            false,
+            {},
+            RasterOverlayProjection::WebMercator);
+
+    ASSERT_TRUE(result.success());
+    ASSERT_NE(nullptr, result.gltfModel);
+
+    const Rectangle expectedProjectedRectangle = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        tileRectangle);
+    const Rectangle* modelRasterRectangle =
+        result.gltfModel->rasterOverlayDetails
+            .findRectangleForOverlayProjection(
+                RasterOverlayProjection::WebMercator);
+    ASSERT_NE(nullptr, modelRasterRectangle);
+    EXPECT_TRUE(modelRasterRectangle->equalsEpsilon(
+        expectedProjectedRectangle,
+        1e-6));
+    EXPECT_EQ(nullptr,
+              result.gltfModel->rasterOverlayDetails
+                  .findRectangleForOverlayProjection(
+                      RasterOverlayProjection::Geographic));
+    EXPECT_EQ(tileRectangle,
+              result.gltfModel->rasterOverlayDetails.boundingRegion
+                  .rectangle);
+
+    ASSERT_TRUE(result.metadata.rasterOverlayDetails.has_value());
+    const Rectangle* metadataRasterRectangle =
+        result.metadata.rasterOverlayDetails
+            ->findRectangleForOverlayProjection(
+                RasterOverlayProjection::WebMercator);
+    ASSERT_NE(nullptr, metadataRasterRectangle);
+    EXPECT_TRUE(metadataRasterRectangle->equalsEpsilon(
+        expectedProjectedRectangle,
+        1e-6));
+    EXPECT_EQ(tileRectangle,
+              result.metadata.rasterOverlayDetails->boundingRegion.rectangle);
 }
 
 TEST(QuantizedMeshContentLoaderTest,

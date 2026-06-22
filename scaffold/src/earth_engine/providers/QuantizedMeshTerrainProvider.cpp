@@ -373,6 +373,14 @@ Rectangle terrainContentRectangle(const TileKey& key,
     return geographicTmsRectangle(key);
 }
 
+RasterOverlayProjection rasterOverlayProjectionForTerrainScheme(
+    const std::string& schemeId) {
+    if (schemeId == "XYZ-WebMercator") {
+        return RasterOverlayProjection::WebMercator;
+    }
+    return RasterOverlayProjection::Geographic;
+}
+
 std::string composeUrl(const ParsedUrl& url) {
     std::string result;
     if (url.hasScheme) {
@@ -1825,7 +1833,8 @@ void QuantizedMeshTerrainProvider::finalizeAsyncTileRequest(
                     body->size(),
                     terrainContentRectangle(key, contentSchemeId),
                     waterMaskEnabled_,
-                    metadata);
+                    metadata,
+                    rasterOverlayProjectionForTerrainScheme(contentSchemeId));
             if (!contentResult.success()) {
                 (*callback)(key, TerrainTileLoadResult::failed());
                 return;
