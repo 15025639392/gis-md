@@ -91,6 +91,9 @@ public:
         TileTerrainUploadCommitter::applyAvailabilityUpdates(
             terrainProvider,
             content);
+        const bool hadHeightmapTerrainPayload =
+            content.terrainPayloadKind == TerrainTilePayloadKind::Heightmap &&
+            content.heightmap != nullptr;
         TileTerrainUploadCommitter::cacheTerrainPayload(
             upload.cacheKey,
             content,
@@ -102,21 +105,39 @@ public:
                 *tile,
                 content);
             uploadsGltfTerrain = content.hasGltfTerrainPayload();
-            TileTerrainUploadCommitter::prepareTerrainRenderContent(
-                *tile,
-                std::move(content),
-                rasterOverlays,
-                device);
+            const bool uploadsHeightmapTerrain =
+                !uploadsGltfTerrain &&
+                content.terrainPayloadKind ==
+                    TerrainTilePayloadKind::Heightmap &&
+                hadHeightmapTerrainPayload;
+            const bool uploadsParentUpsampledTerrain =
+                !uploadsGltfTerrain &&
+                !uploadsHeightmapTerrain &&
+                tile->content.derivesTerrainFromParent();
+            const bool uploadsTerrainPayload =
+                uploadsGltfTerrain ||
+                uploadsHeightmapTerrain ||
+                uploadsParentUpsampledTerrain;
+            if (uploadsTerrainPayload) {
+                TileTerrainUploadCommitter::prepareTerrainRenderContent(
+                    *tile,
+                    std::move(content),
+                    rasterOverlays,
+                    device);
+            }
             if (uploadsGltfTerrain) {
                 ensureGltfResources(*tile);
-            } else if (!resourceSmoothingActive &&
+            } else if ((uploadsHeightmapTerrain ||
+                        uploadsParentUpsampledTerrain) &&
+                       !resourceSmoothingActive &&
                        !tile->content.renderContent.hasSurfaceMesh()) {
                 ensureTileMesh(*tile);
             }
-            const bool resourcesReady = resourceSmoothingActive ||
-                (uploadsGltfTerrain
-                     ? tile->content.renderContent.isRenderContentReady()
-                     : tile->content.renderContent.hasSurfaceMesh());
+            const bool resourcesReady = uploadsTerrainPayload &&
+                (resourceSmoothingActive ||
+                 (uploadsGltfTerrain
+                      ? tile->content.renderContent.isRenderContentReady()
+                      : tile->content.renderContent.hasSurfaceMesh()));
             const TileTerrainUploadCommitAction action =
                 TileTerrainUploadCommitter::finishTerrainResourcePreparation(
                     *tile,
