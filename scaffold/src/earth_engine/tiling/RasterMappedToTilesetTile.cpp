@@ -46,7 +46,7 @@ bool hasSameOverlayOwner(const RasterOverlayTile& candidate,
     return &candidate.getTileProvider() == &provider;
 }
 
-std::shared_ptr<RasterOverlayTile> findDrawableTileOverlay(
+std::shared_ptr<RasterOverlayTile> findLoadedTileOverlay(
     const TilesetTile& tile,
     const RasterOverlayTileProvider& provider) {
     std::shared_ptr<RasterOverlayTile> result;
@@ -56,8 +56,7 @@ std::shared_ptr<RasterOverlayTile> findDrawableTileOverlay(
 
         std::shared_ptr<RasterOverlayTile> readyTile =
             mapped->getReadyTileHandle();
-        if (!readyTile || !hasSameOverlayOwner(*readyTile, provider) ||
-            !readyTile->getTexture()) {
+        if (!readyTile || !hasSameOverlayOwner(*readyTile, provider)) {
             return;
         }
 
@@ -66,6 +65,27 @@ std::shared_ptr<RasterOverlayTile> findDrawableTileOverlay(
             state == RasterOverlayTile::LoadState::Done) {
             result = readyTile;
         }
+    });
+    return result;
+}
+
+std::shared_ptr<RasterOverlayTile> findParentTileOverlayPreferLoading(
+    const TilesetTile& tile,
+    const RasterOverlayTileProvider& provider) {
+    std::shared_ptr<RasterOverlayTile> result;
+    tile.rasterOverlayState.forEachMapping([&](const auto* mapped) {
+        if (result) return;
+        if (!mapped) return;
+
+        std::shared_ptr<RasterOverlayTile> readyTile =
+            mapped->getReadyTileHandle();
+        if (!readyTile || !hasSameOverlayOwner(*readyTile, provider)) {
+            return;
+        }
+
+        std::shared_ptr<RasterOverlayTile> loadingTile =
+            mapped->getLoadingTileHandle();
+        result = loadingTile ? loadingTile : readyTile;
     });
     return result;
 }
@@ -146,12 +166,14 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
            pGeomTile != nullptr) {
         originalFailed_ = true;
         std::shared_ptr<RasterOverlayTile> overlayTile =
-            findDrawableTileOverlay(
+            findParentTileOverlayPreferLoading(
                 *pGeomTile,
                 _pLoadingTile->getTileProvider());
         if (overlayTile) {
             _pLoadingTile = overlayTile;
-            loadingTileSource_ = ReadyTileSource::Ancestor;
+            loadingTileSource_ =
+                overlayTile->getTexture() ? ReadyTileSource::Ancestor
+                                          : ReadyTileSource::Real;
             if (_pLoadingTile->getState() != RasterOverlayTile::LoadState::Placeholder) {
                 tileProvider.markUsed(*_pLoadingTile);
             }
@@ -286,7 +308,7 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
         pGeomTile = parentTile;
 
         while (pGeomTile) {
-            candidate = findDrawableTileOverlay(
+            candidate = findLoadedTileOverlay(
                 *pGeomTile,
                 _pLoadingTile->getTileProvider());
             if (candidate) {

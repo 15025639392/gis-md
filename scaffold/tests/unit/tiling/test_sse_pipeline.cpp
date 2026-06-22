@@ -3582,6 +3582,235 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
           "RasterMappedToTilesetTile: attached temporary ancestor still does not trigger upsample children");
 }
 
+void testRasterMappedFailedChildFollowsParentLoadingTile() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+
+    RasterOverlayTileProvider provider(
+        overlay->getProvider(),
+        overlay->getTileScheme(),
+        nullptr);
+    provider.setOwner(overlay.get());
+    provider.setFrameNumber(1);
+
+    RasterOverlayDetails grandparentDetails = makeProviderDetails(
+        overlay->getTileScheme(),
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
+    RasterOverlayDetails parentDetails = makeProviderDetails(
+        overlay->getTileScheme(),
+        Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0));
+    RasterOverlayDetails childDetails = makeProviderDetails(
+        overlay->getTileScheme(),
+        Rectangle::fromDegrees(-20.0, 5.0, -15.0, 10.0));
+
+    TilesetTile grandparent(
+        TileKey{"Geographic-TMS", 2, 2, 1},
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 3, 4, 2},
+        Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0),
+        &grandparent);
+    TilesetTile child(
+        TileKey{"Geographic-TMS", 4, 8, 4},
+        Rectangle::fromDegrees(-20.0, 5.0, -15.0, 10.0),
+        &parent);
+    grandparent.rasterOverlayState.mappings().resize(1);
+    parent.rasterOverlayState.mappings().resize(1);
+
+    auto grandparentMapped = std::make_unique<RasterMappedToTilesetTile>();
+    std::vector<RasterOverlayProjection> grandparentMissing;
+    grandparentMapped->update(
+        grandparent.key,
+        grandparentDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        grandparentMissing,
+        nullptr,
+        0);
+    grandparentMapped->getLoadingTile()->setTexture(
+        std::make_unique<DummyTexture>(4, 4));
+    grandparentMapped->getLoadingTile()->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    grandparentMapped->update(
+        grandparent.key,
+        grandparentDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        grandparentMissing,
+        nullptr,
+        0);
+    RasterOverlayTile* grandparentReady = grandparentMapped->getReadyTile();
+    grandparent.rasterOverlayState.mappings()[0] =
+        std::move(grandparentMapped);
+
+    auto parentMapped = std::make_unique<RasterMappedToTilesetTile>();
+    std::vector<RasterOverlayProjection> parentMissing;
+    parentMapped->update(
+        parent.key,
+        parentDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        parentMissing,
+        nullptr,
+        0);
+    RasterOverlayTile* parentLoading = parentMapped->getLoadingTile();
+    parentMapped->update(
+        parent.key,
+        parentDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        parentMissing,
+        &grandparent,
+        0);
+    check(parentMapped->getLoadingTile() == parentLoading &&
+              parentMapped->getReadyTile() == grandparentReady,
+          "RasterMappedToTilesetTile: parent fixture has loading raster plus temporary ancestor");
+    parent.rasterOverlayState.mappings()[0] = std::move(parentMapped);
+
+    RasterMappedToTilesetTile childMapped;
+    std::vector<RasterOverlayProjection> childMissing;
+    childMapped.update(
+        child.key,
+        childDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        childMissing,
+        nullptr,
+        0);
+    RasterOverlayTile* failedChildLoading = childMapped.getLoadingTile();
+    failedChildLoading->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::Yes);
+    failedChildLoading->setState(RasterOverlayTile::LoadState::Failed);
+
+    const auto fallbackUpdate = childMapped.update(
+        child.key,
+        childDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        childMissing,
+        &parent,
+        0);
+
+    check(fallbackUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown,
+          "RasterMappedToTilesetTile: failed child follows parent loading raster like cesium-native");
+    check(childMapped.getLoadingTile() == parentLoading,
+          "RasterMappedToTilesetTile: failed child keeps parent loading tile as desired raster");
+    check(childMapped.getReadyTile() == grandparentReady,
+          "RasterMappedToTilesetTile: failed child still draws closest available ancestor raster");
+    check(!childMapped.isMoreDetailAvailable(),
+          "RasterMappedToTilesetTile: original failed child does not trigger raster upsample children");
+}
+
+void testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+
+    RasterOverlayTileProvider provider(
+        overlay->getProvider(),
+        overlay->getTileScheme(),
+        nullptr);
+    provider.setOwner(overlay.get());
+    provider.setFrameNumber(1);
+
+    RasterOverlayDetails parentDetails = makeProviderDetails(
+        overlay->getTileScheme(),
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
+    RasterOverlayDetails childDetails = makeProviderDetails(
+        overlay->getTileScheme(),
+        Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0));
+
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 2, 2, 1},
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
+    TilesetTile child(
+        TileKey{"Geographic-TMS", 3, 4, 2},
+        Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0),
+        &parent);
+    parent.rasterOverlayState.mappings().resize(1);
+
+    auto parentMapped = std::make_unique<RasterMappedToTilesetTile>();
+    std::vector<RasterOverlayProjection> parentMissing;
+    parentMapped->update(
+        parent.key,
+        parentDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        parentMissing,
+        nullptr,
+        0);
+    RasterOverlayTile* parentRaster = parentMapped->getLoadingTile();
+    parentRaster->setState(RasterOverlayTile::LoadState::Loaded);
+    parentRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    parentMapped->update(
+        parent.key,
+        parentDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        parentMissing,
+        nullptr,
+        0);
+    check(parentMapped->getReadyTile() == parentRaster &&
+              parentMapped->getState() ==
+                  RasterMappedToTilesetTile::State::Unattached &&
+              parentRaster->getTexture() == nullptr,
+          "RasterMappedToTilesetTile: parent loaded raster can be lifecycle-ready before texture upload");
+    parent.rasterOverlayState.mappings()[0] = std::move(parentMapped);
+
+    RasterMappedToTilesetTile childMapped;
+    std::vector<RasterOverlayProjection> childMissing;
+    childMapped.update(
+        child.key,
+        childDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        childMissing,
+        nullptr,
+        0);
+
+    const auto fallbackUpdate = childMapped.update(
+        child.key,
+        childDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        childMissing,
+        &parent,
+        0);
+
+    check(fallbackUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown,
+          "RasterMappedToTilesetTile: loaded ancestor without texture keeps child detail unknown");
+    check(childMapped.getReadyTile() == parentRaster,
+          "RasterMappedToTilesetTile: child accepts loaded ancestor raster before GPU upload like cesium-native");
+    check(childMapped.getLoadingTile() != nullptr,
+          "RasterMappedToTilesetTile: child still keeps its desired raster loading");
+    check(childMapped.texture() == nullptr,
+          "RasterMappedToTilesetTile: lifecycle-ready ancestor does not create drawable texture binding");
+}
+
 void testRasterOverlayNativeTranslationAndRendererWindow() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey child{"Geographic-TMS", 2, 2, 0};
@@ -28713,6 +28942,8 @@ int main() {
     testRasterMappedFailureFallbackMatchesOverlayOwner();
     testRasterMappedFailedTileWithoutAncestorBecomesReadyNonBlocking();
     testRasterMappedTemporaryAncestorDoesNotReportMoreDetail();
+    testRasterMappedFailedChildFollowsParentLoadingTile();
+    testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload();
     testRasterOverlayNativeTranslationAndRendererWindow();
     testHeightmapTerrainProviderExposesAttribution();
     testTilesetBoundingRegionDegenerateDistanceMatchesCesiumNative();
