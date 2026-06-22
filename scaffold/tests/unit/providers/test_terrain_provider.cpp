@@ -1579,6 +1579,26 @@ TEST(QuantizedMeshTerrainProviderTest, FabdemLayerJsonShapeConfigures) {
     EXPECT_EQ(12, provider.maxZoom());
     EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 0, 0}));
     EXPECT_TRUE(provider.supportsTile(TileKey{"Geographic-TMS", 0, 1, 0}));
+    const std::vector<TileKey> roots = provider.rootTiles();
+    ASSERT_EQ(1u, roots.size());
+    const auto rootMetadata = provider.tileMetadata(roots.front());
+    ASSERT_TRUE(rootMetadata.has_value());
+    EXPECT_EQ(Rectangle::MAXIMUM, rootMetadata->bounds);
+    const std::vector<TileKey> levelZeroChildren =
+        provider.childTiles(roots.front());
+    ASSERT_EQ(2u, levelZeroChildren.size());
+    const auto westRootMetadata =
+        provider.tileMetadata(TileKey{"Geographic-TMS", 0, 0, 0});
+    const auto eastRootMetadata =
+        provider.tileMetadata(TileKey{"Geographic-TMS", 0, 1, 0});
+    ASSERT_TRUE(westRootMetadata.has_value());
+    ASSERT_TRUE(eastRootMetadata.has_value());
+    EXPECT_EQ(TileScheme::createGeographicTMS()->tileToRectangle(
+                  TileKey{"Geographic-TMS", 0, 0, 0}),
+              westRootMetadata->bounds);
+    EXPECT_EQ(TileScheme::createGeographicTMS()->tileToRectangle(
+                  TileKey{"Geographic-TMS", 0, 1, 0}),
+              eastRootMetadata->bounds);
     const TileKey sample{"Geographic-TMS", 12, 6487, 2685};
     EXPECT_TRUE(provider.supportsTile(sample));
     EXPECT_EQ("http://192.168.1.8:8092/12/6487/2685.terrain",
