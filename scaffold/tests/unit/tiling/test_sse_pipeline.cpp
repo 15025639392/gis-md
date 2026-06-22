@@ -3767,6 +3767,10 @@ public:
         return {key_};
     }
 
+    bool providesTerrainQuadtree() const override {
+        return ownsTerrainQuadtree;
+    }
+
     void requestTileContent(const TileKey& key,
                             CancellationToken,
                             ContentCallback callback,
@@ -3800,6 +3804,7 @@ public:
     }
 
     std::vector<PendingRequest> pendingRequests;
+    bool ownsTerrainQuadtree = false;
 
 private:
     TileKey key_;
@@ -5095,12 +5100,17 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
     DummyRenderDevice device;
     device.allowTextureCreation = true;
     auto scheme = TileScheme::createGeographicTMS();
+    auto contentProvider =
+        std::make_unique<ManualCompletionContentProvider>(
+            TileKey{"Geographic-TMS", 0, 0, 0});
+    contentProvider->ownsTerrainQuadtree = true;
     Tileset tileset(
         std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {&activated},
         &device,
-        TilesetOptions{});
+        TilesetOptions{},
+        std::move(contentProvider));
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -5129,6 +5139,12 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
     root->geometricError = 100.0;
     root->content.contentKind = TileContentKind::Render;
     root->content.loadState = TileLoadState::ContentLoaded;
+    auto staleHeightmap = makeFlatHeightmap(999.0f);
+    staleHeightmap->metadataAvailability.resize(4);
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        std::move(staleHeightmap));
 
     Renderer renderer(nullptr);
     RenderCommandList commands;
@@ -5160,13 +5176,16 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
     if (commands.empty()) return;
     const RenderCommand& cmd = commands.front();
     check(cmd.kind == RenderCommandKind::GltfPrimitive &&
+              root->content.renderContent.hasGltfModel() &&
+              !root->content.renderContent.hasSurfaceMesh() &&
+              TilesetTestAccess::hasTerrainCache(tileset, rootKey) &&
               cmd.gltfRasterOverlayTextureCount == 1 &&
               cmd.textures.size() >
                   static_cast<size_t>(kGltfRasterOverlayTextureBase) &&
               cmd.textures[0] != nullptr &&
               cmd.textures[kGltfRasterOverlayTextureBase] ==
                   loading->getTexture(),
-          "Tileset: glTF mapped raster uses texture slot 15 without replacing material slot 0");
+          "Tileset: glTF mapped raster ignores stale heightmap cache and uses texture slot 15 without replacing material slot 0");
     check(cmd.gltfRasterOverlayTexCoordSets[0] == 1.0f &&
               cmd.uniforms.count("u_mappedRasterTexCoordSet0") &&
               cmd.uniforms.at("u_mappedRasterTexCoordSet0").front() == 1.0f,
