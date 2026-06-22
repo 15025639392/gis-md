@@ -117,7 +117,7 @@ private:
             }
         }
 
-        return modelHasTextureCoordinate(model, 0) ? 0 : -1;
+        return -1;
     }
 };
 

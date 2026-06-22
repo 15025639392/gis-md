@@ -27465,6 +27465,37 @@ void testGltfTerrainUpsampleRejectsOrdinaryGltfContentParent() {
           "Tileset: ordinary glTF content parent is not a terrain upsample source");
 }
 
+void testGltfTerrainUpsampleRequiresRasterOverlayProjectionDetails() {
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    const TileKey childKey{"Geographic-TMS", 1, 1, 0};
+    TilesetTile parent(
+        parentKey,
+        Rectangle{-MathUtils::OnePi, -MathUtils::PiOverTwo, 0.0, 0.0});
+    TilesetTile child(
+        childKey,
+        Rectangle{-MathUtils::PiOverTwo, -MathUtils::PiOverTwo, 0.0, 0.0},
+        &parent);
+    child.content.markTerrainAvailabilityUpsample();
+
+    auto parentModel = makeQuadTerrainGltfModel(parent.bounds);
+    parentModel->rasterOverlayDetails = RasterOverlayDetails{};
+    parent.content.renderContent.prepareGltfContent(
+        std::move(parentModel),
+        Mat4::identity());
+    parent.content.renderContent.setTerrainRenderContent(true);
+    parent.markRenderContentDone();
+
+    TileLoadedContent content;
+    const bool materialized =
+        TileGltfTerrainUpsampledChildMaterializer::materialize(
+            child,
+            content);
+    check(!materialized &&
+              !content.hasGltfTerrainPayload() &&
+              content.gltfModel == nullptr,
+          "Tileset: glTF terrain upsample requires raster overlay projection details like cesium-native");
+}
+
 void testTilesetClearChildrenErasesFlatMapDescendants() {
     auto provider = std::make_unique<SparseTerrainProvider>();
     auto scheme = TileScheme::createGeographicTMS();
@@ -28375,6 +28406,7 @@ int main() {
     testTilesetUpsampledChildBuildsGltfFromGltfParent();
     testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord();
     testGltfTerrainUpsampleRejectsOrdinaryGltfContentParent();
+    testGltfTerrainUpsampleRequiresRasterOverlayProjectionDetails();
     testTilesetClearChildrenErasesFlatMapDescendants();
     testTilesetClearChildrenErasesClaimedUploadDescendantWork();
     testTilesetClearChildrenIgnoresStaleTerrainCallback();
