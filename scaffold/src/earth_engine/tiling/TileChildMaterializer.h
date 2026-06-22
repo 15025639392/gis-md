@@ -213,6 +213,9 @@ struct TileChildMaterializer {
             child->contentBoundingVolume = child->boundingVolume;
             child->geometricError = parent.geometricError * 0.5;
             child->refine = TileRefine::Replace;
+            if (!child->content.isRasterDetailUpsample()) {
+                child->content.renderContent.clearRenderContent();
+            }
             child->content.markRasterDetailUpsample();
             child->unconditionallyRefine = false;
             TileTerrainHeightRangePolicy::inheritTerrainHeightRange(

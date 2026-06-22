@@ -796,6 +796,63 @@ TEST(TileChildMaterializerTest, RasterUpsampledTileCanContinueSubdividingForImag
 }
 
 TEST(TileChildMaterializerTest,
+     RasterUpsampledChildrenClearStaleNonRasterRenderContentLikeCesiumNative) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
+    parent.geometricError = 100.0;
+    parent.content.renderContent.setTerrainHeightRange(-5.0, 25.0);
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    TilesetTile* staleChild =
+        ensure(TileKey{"Geographic-TMS", 1, 1, 0});
+    ASSERT_NE(nullptr, staleChild);
+    staleChild->content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    staleChild->content.renderContent.setMeshReady(true);
+    staleChild->content.renderContent.setGltfContent(
+        std::make_unique<GltfModel>());
+    staleChild->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    staleChild->content.renderContent.markRenderContentReady();
+
+    const bool changed =
+        TileChildMaterializer::materializeRasterUpsampledChildren(
+            parent,
+            parent.bounds,
+            100.0,
+            ensure);
+
+    ASSERT_TRUE(changed);
+    ASSERT_EQ(4u, parent.children.size());
+    EXPECT_EQ(staleChild, parent.children[1]);
+    EXPECT_TRUE(staleChild->content.isRasterDetailUpsample());
+    EXPECT_FALSE(staleChild->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(staleChild->content.renderContent.isMeshReady());
+    EXPECT_FALSE(staleChild->content.renderContent.hasGltfModel());
+    EXPECT_FALSE(staleChild->content.renderContent.hasGltfResources());
+    EXPECT_FALSE(staleChild->content.renderContent.isRenderContentReady());
+    EXPECT_TRUE(staleChild->content.renderContent.hasTerrainHeightRange());
+    EXPECT_DOUBLE_EQ(
+        -5.0,
+        staleChild->content.renderContent.terrainMinimumHeight());
+    EXPECT_DOUBLE_EQ(
+        25.0,
+        staleChild->content.renderContent.terrainMaximumHeight());
+}
+
+TEST(TileChildMaterializerTest,
      RasterUpsampledChildrenUseReadyRasterBeforeGpuTexture) {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createGeographicTMS();
