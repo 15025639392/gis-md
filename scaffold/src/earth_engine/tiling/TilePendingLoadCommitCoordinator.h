@@ -88,9 +88,8 @@ public:
         EnsureGltfResourcesFn&& ensureGltfResources,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         TileLoadedContent& content = upload.content();
-        TileTerrainUploadCommitter::applyAvailabilityUpdates(
-            contentProvider,
-            content);
+        const bool contentProviderOwnsTerrainQuadtree =
+            contentProvider && contentProvider->providesTerrainQuadtree();
         const bool hadHeightmapTerrainPayload =
             content.terrainPayloadKind == TerrainTilePayloadKind::Heightmap &&
             content.heightmap != nullptr;
@@ -105,6 +104,21 @@ public:
                 *tile,
                 content);
             uploadsGltfTerrain = content.hasGltfTerrainPayload();
+            if (contentProviderOwnsTerrainQuadtree && uploadsGltfTerrain) {
+                const TileTerrainUploadCommitAction action =
+                    TileTerrainUploadCommitter::
+                        finishTerrainResourcePreparation(*tile, false);
+                if (action.resourcesDirty) {
+                    markResourcesDirty();
+                }
+                TilePendingUploadCompletion::eraseUpload(
+                    lifecycle,
+                    upload.cacheKey);
+                return;
+            }
+            TileTerrainUploadCommitter::applyAvailabilityUpdates(
+                contentProvider,
+                content);
             const bool uploadsHeightmapTerrain =
                 !uploadsGltfTerrain &&
                 content.terrainPayloadKind ==
