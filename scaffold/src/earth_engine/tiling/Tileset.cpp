@@ -143,6 +143,9 @@ int Tileset::pendingRequests() const {
 }
 
 int Tileset::cachedTerrainTiles() const {
+    if (contentProvider_ && contentProvider_->providesTerrainQuadtree()) {
+        return 0;
+    }
     return static_cast<int>(contentLifecycle_.terrainCache().size());
 }
 

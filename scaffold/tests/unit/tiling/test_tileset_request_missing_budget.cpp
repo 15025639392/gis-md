@@ -1063,6 +1063,13 @@ TEST(
     TilesetTestAccess::updateTotalBytesUsed(tileset);
 
     EXPECT_EQ(tileset.totalBytesUsed(), 0);
+    EXPECT_EQ(tileset.cachedTerrainTiles(), 0);
+
+    Diagnostics sceneDiagnostics;
+    SceneTilesetDiagnostics::reset(sceneDiagnostics);
+    SceneTilesetDiagnostics::addTileset(sceneDiagnostics, tileset, true);
+    EXPECT_EQ(sceneDiagnostics.surfaceMeshBytes, 0);
+    EXPECT_EQ(sceneDiagnostics.terrainCachedTiles, 0);
 }
 
 TEST(
