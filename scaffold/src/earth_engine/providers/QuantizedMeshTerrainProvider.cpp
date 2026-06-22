@@ -1813,12 +1813,10 @@ void QuantizedMeshTerrainProvider::startAsyncMetadataRequests(
     {
         std::lock_guard<std::mutex> lock(state->mutex);
         state->metadataBodies.resize(availabilityRequests->size());
-        state->metadataHandles.resize(availabilityRequests->size());
         state->remainingMetadata = availabilityRequests->size();
     }
 
     for (size_t i = 0; i < availabilityRequests->size(); ++i) {
-        requestsStarted_.fetch_add(1, std::memory_order_relaxed);
         auto metadataCallback =
             [this,
              state,
@@ -1830,7 +1828,6 @@ void QuantizedMeshTerrainProvider::startAsyncMetadataRequests(
              callback,
              i](int metadataStatusCode,
                 std::vector<uint8_t> metadataBody) mutable {
-                requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
                 {
                     std::lock_guard<std::mutex> lock(state->mutex);
                     if (!state->finalized &&
@@ -1856,30 +1853,75 @@ void QuantizedMeshTerrainProvider::startAsyncMetadataRequests(
                     state);
             };
 
-        const std::string& metadataUrl = (*availabilityRequests)[i].url;
-        if (!usePlatformBridge && isFileUrl(metadataUrl)) {
-            AsyncSystem::pool().enqueue(
-                [metadataUrl,
-                 metadataCallback = std::move(metadataCallback)]() mutable {
-                    std::vector<uint8_t> metadataBody =
-                        readFileUrl(metadataUrl);
-                    metadataCallback(
-                        metadataBody.empty() ? 0 : 200,
-                        std::move(metadataBody));
-                });
-        } else if (usePlatformBridge) {
-            state->metadataHandles[i] = platformBridge_->get(
-                metadataUrl,
-                std::move(metadataCallback),
-                {priority, requestHeaders_});
-        } else {
-            state->metadataHandles[i] =
-                CurlMultiRequestScheduler::shared().get(
-                    metadataUrl,
-                    std::move(metadataCallback),
-                    {priority, requestHeaders_});
-        }
+        requestSharedMetadataTile(
+            (*availabilityRequests)[i].url,
+            priority,
+            usePlatformBridge,
+            std::move(metadataCallback));
     }
+}
+
+void QuantizedMeshTerrainProvider::requestSharedMetadataTile(
+    const std::string& url,
+    HttpRequestPriority priority,
+    bool usePlatformBridge,
+    InFlightMetadataRequest::Waiter waiter) {
+    std::shared_ptr<InFlightMetadataRequest> request;
+    {
+        std::lock_guard<std::mutex> lock(metadataRequestMutex_);
+        auto [it, inserted] = inFlightMetadataRequests_.try_emplace(
+            url,
+            std::make_shared<InFlightMetadataRequest>());
+        it->second->waiters.push_back(std::move(waiter));
+        if (!inserted) {
+            return;
+        }
+        request = it->second;
+    }
+
+    requestsStarted_.fetch_add(1, std::memory_order_relaxed);
+    auto completeSharedRequest =
+        [this, url](int statusCode, std::vector<uint8_t> body) mutable {
+            requestsCompleted_.fetch_add(1, std::memory_order_relaxed);
+            std::vector<InFlightMetadataRequest::Waiter> waiters;
+            {
+                std::lock_guard<std::mutex> lock(metadataRequestMutex_);
+                auto it = inFlightMetadataRequests_.find(url);
+                if (it != inFlightMetadataRequests_.end()) {
+                    waiters = std::move(it->second->waiters);
+                    inFlightMetadataRequests_.erase(it);
+                }
+            }
+            for (auto& sharedWaiter : waiters) {
+                sharedWaiter(statusCode, body);
+            }
+        };
+
+    if (!usePlatformBridge && isFileUrl(url)) {
+        AsyncSystem::pool().enqueue(
+            [url,
+             completeSharedRequest = std::move(completeSharedRequest)]()
+                mutable {
+                std::vector<uint8_t> metadataBody = readFileUrl(url);
+                completeSharedRequest(
+                    metadataBody.empty() ? 0 : 200,
+                    std::move(metadataBody));
+            });
+        return;
+    }
+
+    if (usePlatformBridge) {
+        request->handle = platformBridge_->get(
+            url,
+            std::move(completeSharedRequest),
+            {priority, requestHeaders_});
+        return;
+    }
+
+    request->handle = CurlMultiRequestScheduler::shared().get(
+        url,
+        std::move(completeSharedRequest),
+        {priority, requestHeaders_});
 }
 
 void QuantizedMeshTerrainProvider::completeAsyncTileRequestIfReady(

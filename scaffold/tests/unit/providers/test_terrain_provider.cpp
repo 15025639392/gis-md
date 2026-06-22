@@ -2124,6 +2124,118 @@ TEST(QuantizedMeshTerrainProviderTest, LoadedUnderlyingMetadataSubtreeSkipsDupli
     std::filesystem::remove_all(root);
 }
 
+TEST(QuantizedMeshTerrainProviderTest,
+     ConcurrentUnderlyingMetadataRequestsShareInFlightLikeCesiumNative) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() /
+        "earth_md_qm_shared_underlying_metadata_provider_test";
+    std::filesystem::remove_all(root);
+
+    const std::string parentLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["parentTiles/{z}/{x}/{y}.terrain"],
+      "maxzoom": 4,
+      "metadataAvailability": 1,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+    {
+        std::filesystem::create_directories(root / "parent");
+        std::ofstream out(root / "parent" / "layer.json");
+        out << parentLayerJson;
+    }
+
+    const std::string childLayerJson = R"json({
+      "format": "quantized-mesh-1.0",
+      "projection": "EPSG:4326",
+      "scheme": "tms",
+      "tiles": ["childTiles/{z}/{x}/{y}.terrain"],
+      "parentUrl": "../parent",
+      "maxzoom": 4,
+      "available": [
+        [{"startX":0,"startY":0,"endX":1,"endY":0}]
+      ]
+    })json";
+    const std::string parentMetadata = R"json({
+      "available": [
+        [{"startX":2,"startY":0,"endX":2,"endY":0}]
+      ]
+    })json";
+
+    QuantizedMeshTerrainProvider provider(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    ASSERT_TRUE(provider.configureFromLayerJson(
+        childLayerJson,
+        "file://" + (root / "child" / "layer.json").generic_string()));
+    QueuedStatusPlatformBridge bridge;
+    provider.setPlatformBridge(&bridge);
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    std::mutex mutex;
+    std::condition_variable cv;
+    int completedCount = 0;
+    std::vector<TileContentLoadResult> completed;
+
+    auto callback = [&](const TileKey&, TileContentLoadResult result) {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            completed.push_back(std::move(result));
+            ++completedCount;
+        }
+        cv.notify_one();
+    };
+
+    provider.requestTileContent(rootKey, CancellationToken{}, callback);
+    provider.requestTileContent(rootKey, CancellationToken{}, callback);
+
+    ASSERT_TRUE(bridge.waitUntilPendingCount(3));
+    EXPECT_NE(std::string::npos,
+              bridge.pendingUrl(0).find("childTiles/0/0/0.terrain"));
+    EXPECT_NE(std::string::npos,
+              bridge.pendingUrl(1).find("parentTiles/0/0/0.terrain"));
+    EXPECT_NE(std::string::npos,
+              bridge.pendingUrl(2).find("childTiles/0/0/0.terrain"));
+    EXPECT_EQ(3, provider.requestDiagnostics().requestsStarted);
+
+    ASSERT_TRUE(bridge.completeNext(
+        206,
+        makeQuantizedMeshBytesWithMetadata("")));
+    ASSERT_TRUE(bridge.completeNext(
+        206,
+        makeQuantizedMeshBytesWithMetadata(parentMetadata)));
+    ASSERT_TRUE(bridge.completeNext(
+        206,
+        makeQuantizedMeshBytesWithMetadata("")));
+
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        ASSERT_TRUE(cv.wait_for(
+            lock,
+            std::chrono::seconds(5),
+            [&] { return completedCount == 2; }));
+    }
+
+    ASSERT_EQ(2u, completed.size());
+    for (const TileContentLoadResult& result : completed) {
+        EXPECT_EQ(TileLoadStatus::Renderable, result.status);
+        ASSERT_EQ(1u, result.quantizedMeshAvailabilityUpdates.size());
+        EXPECT_EQ(1, result.quantizedMeshAvailabilityUpdates.front().layerIndex);
+    }
+    EXPECT_EQ(0u, bridge.pendingCount());
+    EXPECT_EQ(3, provider.requestDiagnostics().requestsStarted);
+    for (int i = 0;
+         i < 200 && provider.requestDiagnostics().requestsCompleted < 3;
+         ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_EQ(3, provider.requestDiagnostics().requestsCompleted);
+
+    std::filesystem::remove_all(root);
+}
+
 TEST(QuantizedMeshTerrainProviderTest, UnknownMetadataTileDoesNotRequestContentLikeCesiumNative) {
     const std::string layerJson = R"json({
       "format": "quantized-mesh-1.0",

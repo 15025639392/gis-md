@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -190,13 +191,17 @@ private:
     struct AsyncTileRequestState {
         std::mutex mutex;
         std::vector<std::vector<uint8_t>> metadataBodies;
-        std::vector<std::unique_ptr<HttpRequest>> metadataHandles;
         size_t remainingMetadata = 0;
         bool metadataFinished = false;
         bool contentFinished = false;
         bool finalized = false;
         int statusCode = 0;
         std::vector<uint8_t> body;
+    };
+    struct InFlightMetadataRequest {
+        using Waiter = std::function<void(int, std::vector<uint8_t>)>;
+        std::vector<Waiter> waiters;
+        std::unique_ptr<HttpRequest> handle;
     };
 
     bool appendLayerFromJson(const nlohmann::json& j,
@@ -251,6 +256,11 @@ private:
         std::shared_ptr<AsyncTileRequestState> state,
         HttpRequestPriority priority,
         bool usePlatformBridge);
+    void requestSharedMetadataTile(
+        const std::string& url,
+        HttpRequestPriority priority,
+        bool usePlatformBridge,
+        InFlightMetadataRequest::Waiter waiter);
     void completeAsyncTileRequestIfReady(
         TileKey key,
         int contentLayerIndex,
@@ -292,6 +302,9 @@ private:
     std::atomic<int> requestsCompleted_{0};
     std::atomic<int> activeWorkerBlockingRequests_{0};
     std::atomic<int> peakWorkerBlockingRequests_{0};
+    std::mutex metadataRequestMutex_;
+    std::unordered_map<std::string, std::shared_ptr<InFlightMetadataRequest>>
+        inFlightMetadataRequests_;
 };
 
 } // namespace earth_engine
