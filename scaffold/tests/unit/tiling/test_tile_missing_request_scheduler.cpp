@@ -44,6 +44,27 @@ public:
     int requestCount = 0;
 };
 
+class TerrainQuadtreeContentProvider final : public TilesetContentProvider {
+public:
+    std::string id() const override { return "missing-terrain-content"; }
+    bool supportsTile(const TileKey&) const override { return supports; }
+    bool providesTerrainQuadtree() const override { return true; }
+    void requestTileContent(
+        const TileKey& key,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        ++requestCount;
+        callback(key, TileContentLoadResult::retryLater());
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+
+    bool supports = false;
+    int requestCount = 0;
+};
+
 class RetryTerrainProvider final : public TerrainProvider {
 public:
     std::string id() const override { return "missing-retry-terrain"; }
@@ -196,6 +217,50 @@ TEST(TileMissingRequestSchedulerTest, RetriesTerrainAfterEmptyMarkerCleared) {
     EXPECT_EQ(provider.requestCount, 1);
     EXPECT_EQ(lifecycle.counts().terrainTerminalResults, 1u);
     EXPECT_EQ(tileRaw->content.loadState, TileLoadState::ContentLoading);
+}
+
+TEST(
+    TileMissingRequestSchedulerTest,
+    ContentOwnedTerrainQuadtreeDoesNotFallbackToTerrainProvider) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    config.maxNetworkInflight = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    TerrainQuadtreeContentProvider contentProvider;
+    RetryTerrainProvider terrainProvider;
+    TileEmptyContentRegistry emptyContentRegistry;
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+
+    const TileKey key{"test", 0, 0, 0};
+    const TileLoadRequestOutcome outcome =
+        TileMissingRequestScheduler::request(
+            {TileLoadRequest{
+                key,
+                TileLoadPriorityGroup::Urgent,
+                100.0}},
+            TileMissingRequestSchedulerInput{
+                lifecycle,
+                budget,
+                &terrainProvider,
+                &contentProvider,
+                tiles,
+                terrainCache,
+                emptyContentRegistry},
+            cacheKeyForTile,
+            [](TilesetTile&, double) { return false; },
+            [&tiles](const TileKey& tileKey) -> TilesetTile* {
+                const std::string lookupKey = cacheKeyForTile(tileKey);
+                auto it = tiles.find(lookupKey);
+                return it == tiles.end() ? nullptr : it->second.get();
+            });
+
+    EXPECT_EQ(outcome.issued, 0u);
+    EXPECT_EQ(contentProvider.requestCount, 0);
+    EXPECT_EQ(terrainProvider.requestCount, 0);
 }
 
 TEST(TileMissingRequestSchedulerTest, UpsampledTileUsesLocalPathBeforeContentProvider) {

@@ -83,7 +83,11 @@ private:
             !snapshot.upsampledFromParent &&
             input.contentProvider &&
             input.contentProvider->supportsTile(key);
+        snapshot.contentProviderOwnsTerrainQuadtree =
+            input.contentProvider &&
+            input.contentProvider->providesTerrainQuadtree();
         snapshot.terrainProviderSupportsTile =
+            !snapshot.contentProviderOwnsTerrainQuadtree &&
             !TileSelectionRootPolicy::isVirtualTerrainRoot(key) &&
             input.terrainProvider &&
             input.terrainProvider->supportsTile(key);

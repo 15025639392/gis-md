@@ -21,6 +21,10 @@ TileLoadRequestKind TileLoadRequestPlanner::classify(
         return TileLoadRequestKind::Content;
     }
 
+    if (snapshot.contentProviderOwnsTerrainQuadtree) {
+        return TileLoadRequestKind::Skip;
+    }
+
     if (snapshot.terrainAlreadyCached ||
         !snapshot.terrainProviderSupportsTile) {
         return TileLoadRequestKind::Skip;
