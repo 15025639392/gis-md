@@ -377,6 +377,10 @@ public:
         surface_.mesh.reset();
         surface_.horizonOcclusionPoint.reset();
         releaseGpuResources();
+        if (model && model->preferredLocalOriginEcef.has_value()) {
+            surface_.localOrigin =
+                contentTransform * *model->preferredLocalOriginEcef;
+        }
         gltfModel = std::move(model);
         gltfContentTransform = contentTransform;
         surface_.meshReady = false;

@@ -11,6 +11,9 @@ std::unique_ptr<GltfModel> makeQuantizedMeshGltfModel(
     auto model = std::make_unique<GltfModel>();
     model->rasterOverlayDetails = surfaceMesh.rasterOverlayDetails;
     model->terrainWaterMask = surfaceMesh.waterMask;
+    if (surfaceMesh.hasLocalOriginEcef) {
+        model->preferredLocalOriginEcef = surfaceMesh.localOriginEcef;
+    }
     if (!surfaceMesh.waterMask.allLand &&
         !surfaceMesh.waterMask.allWater &&
         !surfaceMesh.waterMask.data.empty()) {

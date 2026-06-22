@@ -73,6 +73,9 @@ bool GltfRenderGeometryBuilder::modelUsesSplitBlendInstances(
 Vec3 GltfRenderGeometryBuilder::localOrigin(
     const GltfModel& model,
     const Mat4& contentTransform) {
+    if (model.preferredLocalOriginEcef.has_value()) {
+        return contentTransform * *model.preferredLocalOriginEcef;
+    }
     Vec3 origin = Vec3::zero();
     size_t vertexTotal = 0;
     for (const GltfPrimitive& primitive : model.primitives) {

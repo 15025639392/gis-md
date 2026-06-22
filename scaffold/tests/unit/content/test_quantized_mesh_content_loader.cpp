@@ -25,13 +25,17 @@ uint16_t zigZagEncode16(int32_t value) {
 std::vector<uint8_t> makeQuantizedMeshBytes(
     float minimumHeight = 0.0f,
     float maximumHeight = 100.0f,
-    const Vec3& horizonOcclusionPoint = Vec3::zero()) {
+    const Vec3& horizonOcclusionPoint = Vec3::zero(),
+    const Vec3& boundingSphereCenter = Vec3::zero()) {
     std::vector<uint8_t> bytes;
 
     for (int i = 0; i < 3; ++i) appendPod<double>(bytes, 0.0);
     appendPod<float>(bytes, minimumHeight);
     appendPod<float>(bytes, maximumHeight);
-    for (int i = 0; i < 4; ++i) appendPod<double>(bytes, 0.0);
+    appendPod<double>(bytes, boundingSphereCenter.x());
+    appendPod<double>(bytes, boundingSphereCenter.y());
+    appendPod<double>(bytes, boundingSphereCenter.z());
+    appendPod<double>(bytes, 0.0);
     appendPod<double>(bytes, horizonOcclusionPoint.x());
     appendPod<double>(bytes, horizonOcclusionPoint.y());
     appendPod<double>(bytes, horizonOcclusionPoint.z());
@@ -135,8 +139,13 @@ TEST(QuantizedMeshContentLoaderTest,
 
 TEST(QuantizedMeshContentLoaderTest,
      LoadsGltfTerrainModelWithoutTerrainProvider) {
+    const Vec3 boundingSphereCenter(10.0, 20.0, 30.0);
     const std::vector<uint8_t> bytes =
-        makeQuantizedMeshBytes(-10.0f, 150.0f);
+        makeQuantizedMeshBytes(
+            -10.0f,
+            150.0f,
+            Vec3::zero(),
+            boundingSphereCenter);
 
     QuantizedMeshContentLoadResult result =
         QuantizedMeshContentLoader::load(
@@ -148,6 +157,9 @@ TEST(QuantizedMeshContentLoaderTest,
 
     EXPECT_TRUE(result.success());
     ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_TRUE(result.gltfModel->preferredLocalOriginEcef.has_value());
+    EXPECT_EQ(boundingSphereCenter,
+              *result.gltfModel->preferredLocalOriginEcef);
     ASSERT_EQ(1u, result.gltfModel->primitives.size());
     const GltfPrimitive& primitive = result.gltfModel->primitives.front();
     EXPECT_EQ(GltfPrimitiveMode::Triangles, primitive.primitiveMode);

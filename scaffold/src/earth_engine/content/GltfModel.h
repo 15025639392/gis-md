@@ -234,6 +234,7 @@ struct GltfModel {
     RasterOverlayDetails rasterOverlayDetails;
     WaterMask terrainWaterMask;
     std::optional<size_t> terrainWaterMaskTextureIndex;
+    std::optional<Vec3> preferredLocalOriginEcef;
     int activeAnimationIndex = 0;
     bool animationLooping = true;
     bool animationPaused = false;

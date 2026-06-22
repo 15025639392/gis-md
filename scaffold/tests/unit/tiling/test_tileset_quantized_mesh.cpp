@@ -3,14 +3,15 @@
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Transforms.h"
+#include "earth_engine/content/QuantizedMeshContentLoader.h"
 #include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileBoundsMetrics.h"
 #include "earth_engine/tiling/TileScheme.h"
+#include "earth_engine/tiling/TileTerrainUploadCommitter.h"
 #include "earth_engine/tiling/Tileset.h"
-#include "earth_engine/terrain/QuantizedMeshParser.h"
 
 #include <cmath>
 #include <cstdint>
@@ -133,24 +134,27 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
     return bytes;
 }
 
-void installQuantizedMeshSurface(TilesetTile& tile,
-                                 const std::vector<uint8_t>& bytes) {
-    std::unique_ptr<SurfaceTileMesh> mesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
+void installQuantizedMeshTerrainContent(TilesetTile& tile,
+                                        const std::vector<uint8_t>& bytes) {
+    QuantizedMeshContentLoadResult loadResult =
+        QuantizedMeshContentLoader::load(
             bytes.data(),
             bytes.size(),
-            tile.bounds);
-    ASSERT_NE(nullptr, mesh);
-    ASSERT_TRUE(mesh->hasHeightRange);
-    const double minimumHeight = mesh->minimumHeight;
-    const double maximumHeight = mesh->maximumHeight;
-    tile.content.renderContent.setSurfaceMesh(std::move(mesh));
-    tile.content.renderContent.setSurfaceSource(
-        SurfaceDrawableSource::OwnTerrain);
-    tile.content.renderContent.setTerrainHeightRange(
-        minimumHeight,
-        maximumHeight);
-    tile.content.contentKind = TileContentKind::Render;
+            tile.bounds,
+            false,
+            {});
+    ASSERT_TRUE(loadResult.success());
+
+    TileLoadedContent content;
+    content.gltfModel = std::move(loadResult.gltfModel);
+    content.metadata = std::move(loadResult.metadata);
+    content.quantizedMeshAvailabilityUpdates =
+        std::move(loadResult.availabilityUpdates);
+    TileTerrainUploadCommitter::prepareTerrainRenderContent(
+        tile,
+        std::move(content),
+        {},
+        nullptr);
     tile.content.loadState = TileLoadState::Done;
 }
 
@@ -210,7 +214,7 @@ TEST(TilesetQuantizedMeshTest,
 
     const Vec3 boundingSphereCenter(3456.0, -7890.0, 12345.0);
     const Vec3 tileCenter(-3456.0, 7890.0, -12345.0);
-    installQuantizedMeshSurface(
+    installQuantizedMeshTerrainContent(
         *root,
         makeQuantizedMeshBytes(boundingSphereCenter, tileCenter));
 
@@ -243,7 +247,7 @@ TEST(TilesetQuantizedMeshTest,
 
     constexpr float minimumHeight = -250.0f;
     constexpr float maximumHeight = 1789.0f;
-    installQuantizedMeshSurface(
+    installQuantizedMeshTerrainContent(
         *root,
         makeQuantizedMeshBytes(
             Vec3::zero(),
@@ -399,7 +403,7 @@ TEST(TilesetQuantizedMeshTest,
 
     constexpr float minimumHeight = -320.0f;
     constexpr float maximumHeight = 2048.0f;
-    installQuantizedMeshSurface(
+    installQuantizedMeshTerrainContent(
         *root,
         makeQuantizedMeshBytes(
             Vec3::zero(),

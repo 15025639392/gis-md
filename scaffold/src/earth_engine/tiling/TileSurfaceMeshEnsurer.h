@@ -44,6 +44,10 @@ public:
         DecodedHeightmap* ownHeightmap = input.ownHeightmap;
         const bool hasOwnTerrain = ownHeightmap != nullptr;
 
+        if (tile.content.renderContent.hasGltfContent()) {
+            return TileSurfaceMeshEnsureResult{};
+        }
+
         if (tile.content.renderContent.isMeshReady()) {
             if (shouldReplaceReadySurface(tile, hasOwnTerrain)) {
                 tile.content.renderContent.clearSurfaceMeshResources();
