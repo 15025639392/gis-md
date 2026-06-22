@@ -2,6 +2,7 @@
 
 #include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
+#include "earth_engine/providers/RasterOverlayTile.h"
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
@@ -9,6 +10,7 @@
 #include "earth_engine/tiling/TileEmptyContentRegistry.h"
 #include "earth_engine/tiling/TileContentUploadCommitter.h"
 #include "earth_engine/tiling/TilePendingLoadCommitCoordinator.h"
+#include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileScheme.h"
 
@@ -1051,6 +1053,102 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_EQ(updatedRectangle, committedDetails.boundingRegion.rectangle);
     EXPECT_TRUE(tile.contentBoundingVolume.has_value());
     EXPECT_EQ(staleContentRectangle, tile.contentBoundingVolume->region);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     ContentUploadClearsStaleRasterOverlayStateBeforeNewRenderGeneration) {
+    const TileKey key{"Geographic-TMS", 2, 1, 1};
+    const std::string cacheKey = "test:gltf-raster-generation";
+    const Rectangle bounds = Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0);
+    TilesetTile tile(key, bounds);
+    tile.content.loadState = TileLoadState::ContentLoading;
+    tile.geometricError = 100.0;
+    tile.rasterOverlayState.ensureMapping(0);
+    tile.rasterOverlayState.missingProjections().push_back(
+        RasterOverlayProjection::WebMercator);
+
+    TileLoadResultMetadata metadata;
+    metadata.updatedBoundingVolume =
+        TileBoundingVolume::fromRegion(bounds, -25.0, 125.0);
+
+    PendingTileLoad upload{TileLoadDomain::Content,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        makeGltfTerrainContentResult(
+            std::make_unique<GltfModel>(),
+            std::move(metadata))};
+
+    RasterOverlay overlay(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activeOverlay(overlay);
+    std::vector<ActivatedRasterOverlay*> rasterOverlays{&activeOverlay};
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{
+            TileLoadDomain::Content,
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadResult::createRenderableTerrain()});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitUpload(
+        upload,
+        nullptr,
+        nullptr,
+        rasterOverlays,
+        terrainCache,
+        lifecycle,
+        false,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](TilesetTile&) {},
+        [](TilesetTile& committedTile) {
+            committedTile.content.renderContent.addGltfPrimitiveResource(
+                GltfPrimitiveRenderResources{});
+            committedTile.markRenderContentDone();
+        },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_TRUE(tile.rasterOverlayState.mappings().empty());
+    EXPECT_TRUE(tile.rasterOverlayState.missingProjections().empty());
+
+    budget.beginFrame(2, config);
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        rasterOverlays,
+        {0},
+        nullptr,
+        16.0,
+        budget);
+
+    EXPECT_TRUE(tile.rasterOverlayState.missingProjections().empty());
+    RasterMappedToTilesetTile* mapped = tile.rasterOverlayState.mappingAt(0);
+    ASSERT_NE(nullptr, mapped);
+    ASSERT_NE(nullptr, mapped->getLoadingTile());
+    EXPECT_NE(RasterOverlayTile::LoadState::Placeholder,
+              mapped->getLoadingTile()->getState());
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }
