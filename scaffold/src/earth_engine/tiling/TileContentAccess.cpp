@@ -83,7 +83,7 @@ void TileContentAccess::ensureTileChildren(TilesetTile& tile) {
             contentProvider_ ? contentProvider_->childTiles(tile.key)
                              : std::vector<TileKey>{},
             tileScheme_.maxZoom(),
-            terrainProvider_ != nullptr,
+            hasTerrainQuadtree(),
             isAvailabilityBoundaryTile(tile) &&
                 !hasResolvedAvailabilityBoundaryContent(tile)},
         [this](const TileKey& key) {
@@ -101,8 +101,17 @@ bool TileContentAccess::hasResolvedAvailabilityBoundaryContent(
 
 bool TileContentAccess::isAvailabilityBoundaryTile(
     const TilesetTile& tile) const {
+    if (contentProvider_ && contentProvider_->providesTerrainQuadtree()) {
+        return contentProvider_->isTerrainAvailabilityBoundaryLevel(
+            tile.key.z);
+    }
     return terrainProvider_ &&
            terrainProvider_->isAvailabilityBoundaryLevel(tile.key.z);
+}
+
+bool TileContentAccess::hasTerrainQuadtree() const {
+    return (contentProvider_ && contentProvider_->providesTerrainQuadtree()) ||
+           terrainProvider_ != nullptr;
 }
 
 bool TileContentAccess::canRefine(const TilesetTile& tile) const {
@@ -129,6 +138,9 @@ bool TileContentAccess::canRefine(const TilesetTile& tile) const {
 
 TileAvailabilityState TileContentAccess::availabilityState(
     const TileKey& key) const {
+    if (contentProvider_ && contentProvider_->providesTerrainQuadtree()) {
+        return contentProvider_->terrainAvailabilityState(key);
+    }
     return terrainProvider_
         ? terrainProvider_->availabilityState(key)
         : TileAvailabilityState::NotAvailable;

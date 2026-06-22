@@ -19,7 +19,7 @@ struct TileRefinementAvailabilityOptions {
     bool hasContentChildren = false;
     bool contentProviderSupportsTile = false;
     bool isAvailabilityBoundaryWaitingForContent = false;
-    bool hasTerrainProvider = false;
+    bool hasTerrainQuadtree = false;
     int maxZoom = 0;
 };
 
@@ -262,7 +262,7 @@ struct TileChildMaterializer {
                 if (isTerrainCached(cacheKey(childKey))) {
                     return true;
                 }
-                if (options.hasTerrainProvider &&
+                if (options.hasTerrainQuadtree &&
                     availabilityState(childKey) ==
                         TileAvailabilityState::Available) {
                     return true;

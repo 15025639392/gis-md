@@ -41,15 +41,23 @@ public:
             TileRefinementAvailabilityOptions{
                 !tile.children.empty(),
                 !contentChildren.empty(),
-                contentProvider && contentProvider->supportsTile(tile.key),
+                contentProvider &&
+                    !contentProvider->providesTerrainQuadtree() &&
+                    contentProvider->supportsTile(tile.key),
                 isAvailabilityBoundary(tile) && !hasLoadedTerrainContent(tile),
-                terrainProvider != nullptr,
+                (contentProvider &&
+                 contentProvider->providesTerrainQuadtree()) ||
+                    terrainProvider != nullptr,
                 tileScheme.maxZoom()},
             cacheKey,
             [&terrainCache](const std::string& key) {
                 return terrainCache.count(key) > 0;
             },
-            [terrainProvider](const TileKey& key) {
+            [contentProvider, terrainProvider](const TileKey& key) {
+                if (contentProvider &&
+                    contentProvider->providesTerrainQuadtree()) {
+                    return contentProvider->terrainAvailabilityState(key);
+                }
                 return terrainProvider
                     ? terrainProvider->availabilityState(key)
                     : TileAvailabilityState::NotAvailable;

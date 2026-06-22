@@ -7,6 +7,12 @@
 
 namespace earth_engine {
 
+enum class TileAvailabilityState {
+    NotAvailable,
+    Available,
+    Unknown
+};
+
 /// cesium-native LayerJsonTerrainLoader: when loading a tile from an
 /// upper layer, availability metadata for matching underlying layers is
 /// loaded at the same time. These updates are applied on the main thread.

@@ -231,6 +231,47 @@ private:
     std::vector<std::pair<TileKey, std::vector<TileKey>>> children_;
 };
 
+class TerrainQuadtreeContentProvider final : public TilesetContentProvider {
+public:
+    std::string id() const override { return "content-terrain-quadtree"; }
+
+    bool supportsTile(const TileKey& key) const override {
+        return terrainAvailabilityState(key) ==
+               TileAvailabilityState::Available;
+    }
+
+    bool providesTerrainQuadtree() const override { return true; }
+
+    TileAvailabilityState terrainAvailabilityState(
+        const TileKey& key) const override {
+        for (const auto& entry : availability) {
+            if (entry.first == key) {
+                return entry.second;
+            }
+        }
+        return TileAvailabilityState::NotAvailable;
+    }
+
+    bool isTerrainAvailabilityBoundaryLevel(int level) const override {
+        return boundaryLevel >= 0 && level == boundaryLevel;
+    }
+
+    void requestTileContent(
+        const TileKey& key,
+        CancellationToken,
+        ContentCallback callback,
+        HttpRequestPriority = HttpRequestPriority::Normal) override {
+        callback(key, TileContentLoadResult::retryLater());
+    }
+
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+
+    std::vector<std::pair<TileKey, TileAvailabilityState>> availability;
+    int boundaryLevel = -1;
+};
+
 SelectorView makeSelectorView(
     const Camera& camera,
     int viewportWidth,
@@ -2287,4 +2328,43 @@ TEST(
     ASSERT_FALSE(parent->children.empty());
     ASSERT_NE(nullptr, parent->children[0]);
     EXPECT_FALSE(parent->children[0]->content.upsampledFromParent);
+}
+
+TEST(
+    TilesetSelectionRefinementTest,
+    ContentTerrainQuadtreeDrivesAvailabilityRefinementWithoutTerrainProvider) {
+    auto contentProvider = std::make_unique<TerrainQuadtreeContentProvider>();
+    contentProvider->boundaryLevel = 0;
+    contentProvider->availability.push_back(
+        {TileKey{"Geographic-TMS", 1, 0, 0},
+         TileAvailabilityState::Available});
+
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(root, nullptr);
+    root->geometricError = 100.0;
+    root->refine = TileRefine::Replace;
+
+    EXPECT_FALSE(TilesetTestAccess::canRefine(tileset, *root));
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    EXPECT_TRUE(root->children.empty());
+
+    setLoadedTerrainGltfContent(*root);
+    EXPECT_TRUE(TilesetTestAccess::canRefine(tileset, *root));
+
+    TilesetTestAccess::ensureTileChildren(tileset, *root);
+    ASSERT_EQ(4u, root->children.size());
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 0}), root->children[0]->key);
+    EXPECT_FALSE(root->children[0]->content.isTerrainAvailabilityUpsample());
+    EXPECT_TRUE(root->children[1]->content.isTerrainAvailabilityUpsample());
+    EXPECT_TRUE(root->children[2]->content.isTerrainAvailabilityUpsample());
+    EXPECT_TRUE(root->children[3]->content.isTerrainAvailabilityUpsample());
 }

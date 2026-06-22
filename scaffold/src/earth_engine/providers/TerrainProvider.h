@@ -24,12 +24,6 @@ namespace earth_engine {
 
 class TilesetContentProvider;
 
-enum class TileAvailabilityState {
-    NotAvailable,
-    Available,
-    Unknown
-};
-
 /// 解码后的高度图数据。
 /// 高度为 WGS84 ellipsoid height（meter）。
 /// 网格为 tileSize×tileSize 的 regular grid。

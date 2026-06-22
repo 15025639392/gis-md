@@ -11,7 +11,7 @@ struct TileChildFrameMaterializeInput {
     TilesetTile& tile;
     std::vector<TileKey> contentChildKeys;
     int maxZoom = 0;
-    bool hasTerrainProvider = false;
+    bool hasTerrainQuadtree = false;
     bool isAvailabilityBoundaryWaitingForContent = false;
 };
 
@@ -36,7 +36,7 @@ public:
         if (input.tile.content.isTerrainAvailabilityUpsample()) {
             return;
         }
-        if (!input.hasTerrainProvider) {
+        if (!input.hasTerrainQuadtree) {
             return;
         }
         if (input.isAvailabilityBoundaryWaitingForContent) {

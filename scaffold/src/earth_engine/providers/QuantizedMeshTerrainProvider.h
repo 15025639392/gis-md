@@ -34,6 +34,7 @@ public:
 
     std::string id() const override;
     std::string type() const override { return "quantized-mesh-terrain"; }
+    bool providesTerrainQuadtree() const override { return true; }
     TilesetContentProvider* contentProviderView() override { return this; }
     const TilesetContentProvider* contentProviderView() const override {
         return this;
@@ -57,6 +58,10 @@ public:
     const std::string& urlTemplate() const { return urlTemplate_; }
 
     bool supportsTile(const TileKey& key) const override;
+    TileAvailabilityState terrainAvailabilityState(
+        const TileKey& key) const override {
+        return availabilityState(key);
+    }
     TileAvailabilityState availabilityState(const TileKey& key) const override;
     std::string buildUrl(const TileKey& key) const override;
     int estimatedRequestFanout(const TileKey& key) const override;
@@ -73,6 +78,9 @@ public:
     void markSubtreeLoadedForTile(const TileKey& subtreeKey);
     int availabilityLevels() const { return availabilityLevels_; }
     bool isAvailabilityBoundaryLevel(int level) const override;
+    bool isTerrainAvailabilityBoundaryLevel(int level) const override {
+        return isAvailabilityBoundaryLevel(level);
+    }
     void applyAvailabilityUpdates(
         const std::vector<QuantizedMeshAvailabilityUpdate>& updates) override;
 

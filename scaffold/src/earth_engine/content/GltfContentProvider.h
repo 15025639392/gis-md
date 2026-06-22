@@ -105,6 +105,14 @@ public:
     virtual std::vector<TileKey> childTiles(const TileKey&) const {
         return {};
     }
+    virtual bool providesTerrainQuadtree() const { return false; }
+    virtual TileAvailabilityState terrainAvailabilityState(
+        const TileKey&) const {
+        return TileAvailabilityState::NotAvailable;
+    }
+    virtual bool isTerrainAvailabilityBoundaryLevel(int) const {
+        return false;
+    }
     virtual int estimatedRequestFanout(const TileKey&) const { return 1; }
 
     using ContentCallback = std::function<void(

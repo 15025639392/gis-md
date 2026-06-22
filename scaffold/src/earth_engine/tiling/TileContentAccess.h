@@ -30,6 +30,7 @@ public:
     bool canRefine(const TilesetTile& tile) const;
 
 private:
+    bool hasTerrainQuadtree() const;
     TileAvailabilityState availabilityState(const TileKey& key) const;
 
     TilesetTileRegistry& tileRegistry_;
