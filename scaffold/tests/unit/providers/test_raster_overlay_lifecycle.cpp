@@ -1405,6 +1405,60 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceFailureDoesNotFallbackBelowOverl
         parentBelowMinimum) == imagery.requestedKeys.end());
 }
 
+TEST(RasterOverlayLifecycleTest, RectangleTilesShareInFlightSourceTileLikeCesiumNativeDepot) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setLevelRange(3, 3);
+
+    const TileKey sourceKey{scheme->id(), 3, 4, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+    const Rectangle eastHalf(
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.south(),
+        sourceBounds.east(),
+        sourceBounds.north());
+
+    RasterOverlayTileProvider::TilePtr firstTile =
+        provider.getTile(projectForProvider(provider, westHalf), 128.0, 128.0);
+    RasterOverlayTileProvider::TilePtr secondTile =
+        provider.getTile(projectForProvider(provider, eastHalf), 128.0, 128.0);
+    ASSERT_NE(nullptr, firstTile);
+    ASSERT_NE(nullptr, secondTile);
+    ASSERT_TRUE(firstTile->isRectangleTile());
+    ASSERT_TRUE(secondTile->isRectangleTile());
+
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 1;
+    config.maxRasterNetworkRequestsPerFrame = 1;
+    config.maxNetworkInflight = 1;
+    config.maxRasterNetworkInflight = 1;
+
+    FrameResourceBudget firstBudget;
+    firstBudget.beginFrame(1, config);
+    ASSERT_TRUE(provider.loadTileThrottled(*firstTile, &firstBudget));
+    EXPECT_EQ(1u, firstBudget.rasterNetworkRequestsIssued());
+    ASSERT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
+    EXPECT_EQ(1, provider.getActiveRasterSourceRequests());
+
+    FrameResourceBudget secondBudget;
+    secondBudget.beginFrame(2, config);
+    ASSERT_TRUE(provider.loadTileThrottled(*secondTile, &secondBudget));
+    EXPECT_EQ(0u, secondBudget.rasterNetworkRequestsIssued());
+    EXPECT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(1, provider.getActiveRasterSourceRequests());
+
+    imagery.completeNext();
+    EXPECT_EQ(0, provider.getActiveRasterSourceRequests());
+    EXPECT_EQ(2, provider.getPendingUploadCount());
+}
+
 TEST(RasterOverlayLifecycleTest, RectangleAtMaximumSourceZoomReportsNoMoreDetail) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

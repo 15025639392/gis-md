@@ -228,6 +228,9 @@ struct RectangleSourcePlan {
 bool tryIssueRasterRequestBudget(FrameResourceBudget* budget,
                                  uint32_t currentInflight,
                                  int estimatedFanout) {
+    if (estimatedFanout <= 0) {
+        return true;
+    }
     if (!budget) {
         return true;
     }
@@ -869,8 +872,12 @@ struct RasterOverlayTileProvider::RectangleSourceRequest
                 }
                 sourceKey = sourcePlan.sourceKeys[nextSourceIndex++];
             }
-            onSourceIssued();
-            requestSource(sourceKey, sourceKey, false, true, onSourceFinished);
+            requestSource(sourceKey,
+                          sourceKey,
+                          false,
+                          true,
+                          onSourceIssued,
+                          onSourceFinished);
         }
     }
 
@@ -885,6 +892,7 @@ private:
         const TileKey& originalKey,
         bool ancestorFallback,
         bool shareInFlight,
+        const std::function<void()>& onSourceIssued,
         const std::function<void()>& onSourceFinished,
         std::vector<TileKey> fallbackInFlightKeys = {}) {
         std::optional<LoadedSourceImage> cachedSource;
@@ -908,7 +916,6 @@ private:
             }
         }
         if (cachedSource) {
-            onSourceFinished();
             finishOneSource(std::move(*cachedSource));
             return;
         }
@@ -917,9 +924,8 @@ private:
         if (shareInFlight) {
             const std::string inFlightKey = sourceCacheKey(originalKey);
             auto waiter =
-                [self, ancestorFallback, onSourceFinished](
+                [self, ancestorFallback](
                     const SourceTileAsset* cached) {
-                    onSourceFinished();
                     if (cached && cached->image) {
                         LoadedSourceImage source;
                         source.key = cached->key;
@@ -948,9 +954,8 @@ private:
         if (ancestorFallback) {
             const std::string fallbackInFlightKey = sourceCacheKey(requestedKey);
             auto waiter =
-                [self, ancestorFallback, onSourceFinished](
+                [self, ancestorFallback](
                     const SourceTileAsset* cached) {
-                    onSourceFinished();
                     if (cached && cached->image) {
                         LoadedSourceImage source;
                         source.key = cached->key;
@@ -979,6 +984,7 @@ private:
             fallbackInFlightKeys.push_back(requestedKey);
         }
 
+        onSourceIssued();
         CancellationToken token;
         provider.requestTile(
             requestedKey,
@@ -987,11 +993,13 @@ private:
              requestedKey,
              originalKey,
              ancestorFallback,
+             onSourceIssued,
              onSourceFinished,
              fallbackInFlightKeys = std::move(fallbackInFlightKeys)](
                 const TileKey& loadedKey,
                 std::unique_ptr<DecodedImage> image) mutable {
                 if (image) {
+                    onSourceFinished();
                     LoadedSourceImage source;
                     source.key = loadedKey;
                     source.bounds = self->scheme.tileToRectangle(loadedKey);
@@ -1027,17 +1035,20 @@ private:
                 if (requestedKey.z > self->minimumLevel) {
                     const TileKey parentKey = parentTileKey(requestedKey);
                     if (self->provider.supportsTile(parentKey)) {
+                        onSourceFinished();
                         self->requestSource(
                             parentKey,
                             originalKey,
                             true,
                             false,
+                            onSourceIssued,
                             onSourceFinished,
                             std::move(fallbackInFlightKeys));
                         return;
                     }
                 }
 
+                onSourceFinished();
                 self->finishInFlightSource(originalKey, nullptr);
                 for (const TileKey& key : fallbackInFlightKeys) {
                     self->finishInFlightSource(key, nullptr);
@@ -1512,10 +1523,33 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
             return true;
         }
     }
+    RectangleSourcePlan sourcePlan;
+    sourcePlan.sourceZoom = key.z;
+    sourcePlan.range = TileRange{key.x, key.y, key.x, key.y};
+    sourcePlan.sourceKeys.push_back(key);
+    auto estimateNewSourceRequests = [&]() {
+        int estimated = 0;
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        for (const TileKey& sourceKey : sourcePlan.sourceKeys) {
+            const std::string sourceKeyString = sourceCacheKey(sourceKey);
+            auto cached =
+                asyncState_->sourceTileDepotCache.find(sourceKeyString);
+            if (cached != asyncState_->sourceTileDepotCache.end() &&
+                cached->second.image) {
+                continue;
+            }
+            if (asyncState_->sourceTileDepotInFlight.count(sourceKeyString) >
+                0) {
+                continue;
+            }
+            ++estimated;
+        }
+        return estimated;
+    };
     if (!tryIssueRasterRequestBudget(
             budget,
             asyncState_->activeRasterSourceRequests,
-            1)) {
+            estimateNewSourceRequests())) {
         return false;
     }
 
@@ -1531,10 +1565,6 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
     if (tileIt != tiles_.end()) {
         tileWeak = tileIt->second;
     }
-    RectangleSourcePlan sourcePlan;
-    sourcePlan.sourceZoom = key.z;
-    sourcePlan.range = TileRange{key.x, key.y, key.x, key.y};
-    sourcePlan.sourceKeys.push_back(key);
     const Rectangle outputBounds = tile.getRectangle();
     const Rectangle targetBounds =
         unprojectProviderToGeographic(outputBounds, projection_);
@@ -1678,10 +1708,29 @@ bool RasterOverlayTileProvider::loadRectangleTile(RasterOverlayTile& tile,
         tile.setState(RasterOverlayTile::LoadState::Failed);
         return false;
     }
+    auto estimateNewSourceRequests = [&]() {
+        int estimated = 0;
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        for (const TileKey& sourceKey : sourcePlan.sourceKeys) {
+            const std::string sourceKeyString = sourceCacheKey(sourceKey);
+            auto cached =
+                asyncState_->sourceTileDepotCache.find(sourceKeyString);
+            if (cached != asyncState_->sourceTileDepotCache.end() &&
+                cached->second.image) {
+                continue;
+            }
+            if (asyncState_->sourceTileDepotInFlight.count(sourceKeyString) >
+                0) {
+                continue;
+            }
+            ++estimated;
+        }
+        return estimated;
+    };
     if (!tryIssueRasterRequestBudget(
             budget,
             asyncState_->activeRasterSourceRequests,
-            sourcePlan.budgetUnits())) {
+            estimateNewSourceRequests())) {
         return false;
     }
 
