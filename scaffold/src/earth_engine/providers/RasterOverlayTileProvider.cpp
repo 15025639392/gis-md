@@ -1614,6 +1614,26 @@ void RasterOverlayTileProvider::setCoverageRectangle(
         return;
     }
     coverageRectangle_ = coverageRectangle;
+    for (auto it = tiles_.begin(); it != tiles_.end();) {
+        if (it->first.rfind("composite/", 0) == 0 || !it->second) {
+            ++it;
+            continue;
+        }
+        const Rectangle tileGeographicBounds =
+            unprojectProviderToGeographic(
+                it->second->getRectangle(),
+                projection_);
+        const bool stillCovered =
+            tileGeographicBounds.computeIntersection(coverageRectangle_)
+                .has_value();
+        const bool loading =
+            it->second->getState() == RasterOverlayTile::LoadState::Loading;
+        if (!stillCovered && !loading) {
+            it = tiles_.erase(it);
+        } else {
+            ++it;
+        }
+    }
     invalidateCompositeTileCache();
 }
 

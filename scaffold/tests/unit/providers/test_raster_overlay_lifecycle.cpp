@@ -618,6 +618,31 @@ TEST(RasterOverlayLifecycleTest, DirectTileCreationRejectsOutsideCoverageLikeCes
     EXPECT_EQ(1, provider.getCachedTileCount());
 }
 
+TEST(RasterOverlayLifecycleTest,
+     CoverageChangeEvictsUncoveredDirectTilesLikeCesiumNativeDepotScope) {
+    ConfigurableImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const TileKey firstKey{scheme->id(), 2, 1, 1};
+    const TileKey secondKey{scheme->id(), 2, 3, 3};
+    provider.setCoverageRectangle(scheme->tileToRectangle(firstKey));
+
+    auto firstTile = provider.getTile(firstKey);
+    ASSERT_NE(nullptr, firstTile);
+    EXPECT_EQ(1, provider.getCachedTileCount());
+
+    provider.setCoverageRectangle(scheme->tileToRectangle(secondKey));
+
+    EXPECT_EQ(nullptr, provider.getTile(firstKey));
+    EXPECT_EQ(0, provider.getCachedTileCount());
+
+    auto secondTile = provider.getTile(secondKey);
+    ASSERT_NE(nullptr, secondTile);
+    EXPECT_EQ(secondKey, secondTile->getTileID());
+    EXPECT_EQ(1, provider.getCachedTileCount());
+}
+
 TEST(RasterOverlayLifecycleTest, RectangleCoverageClampsOutsideAndClipsSourcePlan) {
     ParentFallbackImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
