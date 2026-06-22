@@ -60,6 +60,7 @@ public:
             std::lock_guard<std::mutex> lock(mutex_);
             callback_ = std::move(callback);
             entered_ = true;
+            ++enteredCount_;
         }
         cv_.notify_all();
         return std::make_unique<BlockingHttpRequest>();
@@ -75,11 +76,20 @@ public:
             [this]() { return entered_; });
     }
 
+    bool waitUntilEnteredCount(int count) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        return cv_.wait_for(
+            lock,
+            std::chrono::seconds(2),
+            [this, count]() { return enteredCount_ >= count; });
+    }
+
     bool complete(int statusCode, std::vector<uint8_t> body = {}) {
         std::function<void(int, std::vector<uint8_t>)> callback;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             callback = std::move(callback_);
+            entered_ = false;
         }
         if (!callback) {
             return false;
@@ -104,6 +114,7 @@ private:
     std::condition_variable cv_;
     std::function<void(int, std::vector<uint8_t>)> callback_;
     bool entered_ = false;
+    int enteredCount_ = 0;
 };
 
 class DiagnosticTerrainProvider final : public TerrainProvider {
@@ -255,7 +266,7 @@ TEST(
 
 TEST(
     TilesetProviderDiagnosticsCollectorTest,
-    ExposesQuantizedMeshTerrainProviderRequestDiagnosticsThroughTilesetAndScene) {
+    ExposesQuantizedMeshContentProviderRequestDiagnosticsThroughTilesetAndScene) {
     BlockingPlatformBridge bridge;
     TilesetOptions options;
     options.maximumSimultaneousTileLoads = 2;
@@ -264,7 +275,13 @@ TEST(
         "https://example.invalid/{z}/{x}/{y}.terrain");
     provider->setPlatformBridge(&bridge);
     auto scheme = TileScheme::createGeographicTMS();
-    Tileset tileset(std::move(provider), std::move(scheme), {}, nullptr, options);
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        nullptr,
+        options,
+        std::move(provider));
 
     const TileKey key{"Geographic-TMS", 1, 0, 0};
     TilesetTestAccess::ensureTile(tileset, key);
@@ -272,36 +289,40 @@ TEST(
 
     ASSERT_TRUE(bridge.waitUntilEntered());
     const TilesetLoadDiagnostics diag = tileset.loadDiagnostics();
-    EXPECT_EQ(diag.terrainProviderRequests.requestsStarted, 1);
+    EXPECT_EQ(diag.terrainProviderRequests.requestsStarted, 0);
     EXPECT_EQ(diag.terrainProviderRequests.requestsCompleted, 0);
+    EXPECT_EQ(diag.contentProviderRequests.requestsStarted, 1);
+    EXPECT_EQ(diag.contentProviderRequests.requestsCompleted, 0);
     EXPECT_EQ(
-        diag.terrainProviderRequests.activeWorkerBlockingRequests,
+        diag.contentProviderRequests.activeWorkerBlockingRequests,
         0);
-    EXPECT_EQ(diag.terrainProviderRequests.peakWorkerBlockingRequests, 0);
+    EXPECT_EQ(diag.contentProviderRequests.peakWorkerBlockingRequests, 0);
     EXPECT_EQ(
-        diag.terrainProviderRequests.maximumTransportActiveRequests,
+        diag.contentProviderRequests.maximumTransportActiveRequests,
         11);
 
     Diagnostics sceneDiagnostics;
     SceneTilesetDiagnostics::reset(sceneDiagnostics);
     SceneTilesetDiagnostics::addTileset(sceneDiagnostics, tileset, true);
-    EXPECT_EQ(sceneDiagnostics.terrainProviderRequestsStarted, 1);
+    EXPECT_EQ(sceneDiagnostics.terrainProviderRequestsStarted, 0);
     EXPECT_EQ(sceneDiagnostics.terrainProviderRequestsCompleted, 0);
+    EXPECT_EQ(sceneDiagnostics.contentProviderRequestsStarted, 1);
+    EXPECT_EQ(sceneDiagnostics.contentProviderRequestsCompleted, 0);
     EXPECT_EQ(
-        sceneDiagnostics.terrainProviderActiveWorkerBlockingRequests,
+        sceneDiagnostics.contentProviderActiveWorkerBlockingRequests,
         0);
-    EXPECT_EQ(sceneDiagnostics.terrainProviderPeakWorkerBlockingRequests, 0);
-    EXPECT_EQ(sceneDiagnostics.terrainTransportActiveRequestLimit, 11);
+    EXPECT_EQ(sceneDiagnostics.contentProviderPeakWorkerBlockingRequests, 0);
+    EXPECT_EQ(sceneDiagnostics.contentTransportActiveRequestLimit, 11);
 
     ASSERT_TRUE(bridge.complete(404));
     for (int i = 0; i < 200 &&
                     tileset.loadDiagnostics()
-                            .terrainProviderRequests.requestsCompleted == 0;
+                            .contentProviderRequests.requestsCompleted == 0;
          ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     EXPECT_EQ(
-        tileset.loadDiagnostics().terrainProviderRequests.requestsCompleted,
+        tileset.loadDiagnostics().contentProviderRequests.requestsCompleted,
         1);
 }
 
@@ -415,14 +436,18 @@ TEST(
     EXPECT_EQ(activeDiag.pendingContentTotal(), 0);
 
     ASSERT_TRUE(bridge.complete(404));
+    ASSERT_TRUE(bridge.waitUntilEnteredCount(2));
+    ASSERT_TRUE(bridge.complete(404));
     for (int i = 0; i < 200 &&
-                    rasterProvider->requestDiagnostics().requestsCompleted == 0;
+                    (rasterProvider->requestDiagnostics().requestsCompleted < 2 ||
+                     rasterProvider->getActiveRasterSourceRequests() != 0 ||
+                     rasterProvider->getThrottledTilesCurrentlyLoading() != 0);
          ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     const TilesetLoadDiagnostics doneDiag = tileset.loadDiagnostics();
-    EXPECT_EQ(doneDiag.rasterProviderRequests.requestsCompleted, 1);
+    EXPECT_EQ(doneDiag.rasterProviderRequests.requestsCompleted, 2);
     EXPECT_EQ(
         doneDiag.rasterProviderRequests.activeWorkerBlockingRequests,
         0);
