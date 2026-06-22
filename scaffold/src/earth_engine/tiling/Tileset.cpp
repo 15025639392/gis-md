@@ -95,6 +95,9 @@ Tileset::Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
           providerHasTerrainQuadtree(
               terrainProvider_.get(),
               contentProvider_.get()),
+          ::earth_engine::effectiveLegacyTerrainProvider(
+              terrainProvider_.get(),
+              contentProvider_.get()) != nullptr,
           device_,
           rasterOverlays_),
       contentRuntime_(

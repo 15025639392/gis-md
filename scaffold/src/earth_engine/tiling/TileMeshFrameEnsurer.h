@@ -19,6 +19,7 @@ struct TileMeshFrameEnsureInput {
         terrainCache;
     RenderDevice* device = nullptr;
     bool hasTerrainQuadtree = false;
+    bool useLegacyHeightmapTerrainCache = true;
 };
 
 class TileMeshFrameEnsurer {
@@ -41,7 +42,9 @@ public:
             return;
         }
 
-        auto it = input.terrainCache.find(terrainCacheKey(input.tile.key));
+        auto it = input.useLegacyHeightmapTerrainCache
+            ? input.terrainCache.find(terrainCacheKey(input.tile.key))
+            : input.terrainCache.end();
         const bool hasOwnTerrain =
             it != input.terrainCache.end() && it->second;
         DecodedHeightmap* ownHeightmap =

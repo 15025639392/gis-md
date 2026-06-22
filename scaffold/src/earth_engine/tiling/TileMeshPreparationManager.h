@@ -21,6 +21,7 @@ public:
         TileContentResourceInvalidator& resourceInvalidator,
         TileLoadQueue& loadQueue,
         bool hasTerrainQuadtree,
+        bool useLegacyHeightmapTerrainCache,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays);
 
@@ -39,6 +40,7 @@ private:
     TileContentResourceInvalidator& resourceInvalidator_;
     TileLoadQueue& loadQueue_;
     bool hasTerrainQuadtree_ = false;
+    bool useLegacyHeightmapTerrainCache_ = true;
     RenderDevice* device_ = nullptr;
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays_;
 };

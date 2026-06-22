@@ -197,6 +197,19 @@ public:
     }
 };
 
+std::unique_ptr<DecodedHeightmap> makeFlatHeightmap(float heightMeters) {
+    auto heightmap = std::make_unique<DecodedHeightmap>();
+    heightmap->tileSize = 2;
+    heightmap->heights = {
+        heightMeters,
+        heightMeters,
+        heightMeters,
+        heightMeters};
+    heightmap->minHeight = heightMeters;
+    heightmap->maxHeight = heightMeters;
+    return heightmap;
+}
+
 TEST(TilesetQuantizedMeshTest,
      RtcOriginComesFromBoundingSphereCenterLikeCesiumNative) {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
@@ -234,6 +247,39 @@ TEST(TilesetQuantizedMeshTest,
         boundingSphereCenter.z(),
         root->content.renderContent.renderLocalOrigin().z(),
         1e-12);
+}
+
+TEST(TilesetQuantizedMeshTest,
+     ContentTerrainMeshPreparationIgnoresLegacyHeightmapCache) {
+    auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
+        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
+    auto scheme = TileScheme::createGeographicTMS();
+    Tileset tileset(
+        std::unique_ptr<TerrainProvider>{},
+        std::move(scheme),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(provider));
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
+    ASSERT_NE(nullptr, root);
+    TilesetTestAccess::putTerrainCache(
+        tileset,
+        rootKey,
+        makeFlatHeightmap(1234.0f));
+
+    TilesetTestAccess::ensureTileMesh(tileset, *root);
+
+    EXPECT_TRUE(root->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(
+        root->content.renderContent.isSurfaceSource(
+            SurfaceDrawableSource::OwnTerrain));
+    EXPECT_TRUE(
+        root->content.renderContent.isSurfaceSource(
+            SurfaceDrawableSource::EllipsoidFallback));
+    EXPECT_NE(root->content.loadState, TileLoadState::Done);
 }
 
 TEST(TilesetQuantizedMeshTest,
