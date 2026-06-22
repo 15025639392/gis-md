@@ -76,7 +76,9 @@ std::vector<uint8_t> readFileUrl(const std::string& url) {
 QuantizedMeshTerrainProvider::QuantizedMeshTerrainProvider(
     std::string urlTemplate, std::string attribution)
     : urlTemplate_(std::move(urlTemplate)),
-      attribution_(std::move(attribution)) {}
+      attribution_(std::move(attribution)) {
+    resetFallbackLayerFromFields();
+}
 
 QuantizedMeshTerrainProvider::~QuantizedMeshTerrainProvider() = default;
 
@@ -243,6 +245,13 @@ void QuantizedMeshTerrainProvider::setRequestHeaders(
 void QuantizedMeshTerrainProvider::setZoomRange(int minZ, int maxZ) {
     minZoom_ = std::max(0, minZ);
     maxZoom_ = std::max(0, maxZ);
+    if (layers_.size() == 1 && layers_.front().fallbackLayer) {
+        layers_.front().minZoom = minZoom_;
+        layers_.front().maxZoom = maxZoom_;
+        layers_.front().contentAvailability.reset(
+            layers_.front().schemeId,
+            layers_.front().maxZoom);
+    }
 }
 
 namespace {
@@ -1258,6 +1267,25 @@ bool QuantizedMeshTerrainProvider::supportsTile(const TileKey& key) const {
     return availabilityState(key) == TileAvailabilityState::Available;
 }
 
+void QuantizedMeshTerrainProvider::resetFallbackLayerFromFields() {
+    LayerConfig layer;
+    layer.urlTemplate = urlTemplate_;
+    layer.schemeId = schemeId_;
+    layer.version = version_;
+    layer.extensionsToRequest = extensionsToRequest_;
+    layer.availabilityRanges = availabilityRanges_;
+    layer.contentAvailability.reset(layer.schemeId, maxZoom_);
+    layer.loadedSubtrees = loadedSubtrees_;
+    layer.hasAvailability = hasAvailability_;
+    layer.availabilityLevels = availabilityLevels_;
+    layer.minZoom = minZoom_;
+    layer.maxZoom = maxZoom_;
+    layer.attribution = attribution_;
+    layer.fallbackLayer = true;
+    layers_.clear();
+    layers_.push_back(std::move(layer));
+}
+
 bool QuantizedMeshTerrainProvider::isSubtreeLoadedInLayer(
     const LayerConfig& layer,
     int subtreeLevel,
@@ -1278,6 +1306,10 @@ bool QuantizedMeshTerrainProvider::isSubtreeLoadedInLayer(
 TileAvailabilityState QuantizedMeshTerrainProvider::availabilityStateInLayer(
     const LayerConfig& layer,
     const TileKey& key) const {
+    if (layer.fallbackLayer &&
+        (key.z < layer.minZoom || key.z > layer.maxZoom)) {
+        return TileAvailabilityState::NotAvailable;
+    }
     if (!isTileInLayerRange(key, layer.schemeId)) {
         return TileAvailabilityState::NotAvailable;
     }
@@ -1315,39 +1347,6 @@ TileAvailabilityState QuantizedMeshTerrainProvider::availabilityStateInLayer(
 
 TileAvailabilityState QuantizedMeshTerrainProvider::availabilityState(
     const TileKey& key) const {
-    if (layers_.empty()) {
-        if (key.z < minZoom_ || key.z > maxZoom_) {
-            return TileAvailabilityState::NotAvailable;
-        }
-        if (!isTileInLayerRange(key, schemeId_)) {
-            return TileAvailabilityState::NotAvailable;
-        }
-        if (!hasAvailability_) return TileAvailabilityState::Available;
-
-        LayerConfig legacy;
-        legacy.urlTemplate = urlTemplate_;
-        legacy.schemeId = schemeId_;
-        legacy.version = version_;
-        legacy.extensionsToRequest = extensionsToRequest_;
-        legacy.availabilityRanges = availabilityRanges_;
-        legacy.minZoom = minZoom_;
-        legacy.maxZoom = maxZoom_;
-        legacy.contentAvailability.reset(legacy.schemeId, legacy.maxZoom);
-        for (size_t level = 0; level < legacy.availabilityRanges.size();
-             ++level) {
-            for (const TileAvailabilityRect& range :
-                 legacy.availabilityRanges[level]) {
-                legacy.contentAvailability.addAvailableTileRange(
-                    static_cast<int>(level),
-                    range);
-            }
-        }
-        legacy.loadedSubtrees = loadedSubtrees_;
-        legacy.hasAvailability = hasAvailability_;
-        legacy.availabilityLevels = availabilityLevels_;
-        return availabilityStateInLayer(legacy, key);
-    }
-
     bool anyUnknown = false;
     for (const LayerConfig& layer : layers_) {
         const TileAvailabilityState state = availabilityStateInLayer(layer, key);
@@ -1467,12 +1466,7 @@ std::string QuantizedMeshTerrainProvider::buildUrl(const TileKey& key) const {
         }
     }
 
-    LayerConfig legacy;
-    legacy.urlTemplate = urlTemplate_;
-    legacy.schemeId = schemeId_;
-    legacy.version = version_;
-    legacy.extensionsToRequest = extensionsToRequest_;
-    return buildUrlForLayer(legacy, key);
+    return {};
 }
 
 void QuantizedMeshTerrainProvider::requestTileContent(
@@ -1888,19 +1882,9 @@ QuantizedMeshTerrainProvider::requestDiagnostics() const {
 void QuantizedMeshTerrainProvider::addAvailabilityRects(
     int level, const std::vector<TileAvailabilityRect>& rects) {
     if (level < 0) return;
-    if (!layers_.empty()) {
-        addAvailabilityRectsToLayer(layers_.front(), level, rects);
-        syncLegacyFieldsFromPrimaryLayer();
-        return;
-    }
-    hasAvailability_ = true;
-    if (static_cast<size_t>(level) >= availabilityRanges_.size()) {
-        availabilityRanges_.resize(static_cast<size_t>(level) + 1);
-    }
-    auto& ranges = availabilityRanges_[static_cast<size_t>(level)];
-    for (const auto& r : rects) {
-        ranges.push_back(r);
-    }
+    if (layers_.empty()) return;
+    addAvailabilityRectsToLayer(layers_.front(), level, rects);
+    syncLegacyFieldsFromPrimaryLayer();
 }
 
 void QuantizedMeshTerrainProvider::addAvailabilityRectsToLayer(
@@ -1923,11 +1907,6 @@ void QuantizedMeshTerrainProvider::addAvailabilityRectsForTile(
     const TileKey& subtreeKey,
     int level,
     const std::vector<TileAvailabilityRect>& rects) {
-    if (layers_.empty()) {
-        addAvailabilityRects(level, rects);
-        return;
-    }
-
     LayerConfig* layer = firstAvailableLayer(subtreeKey);
     if (!layer || level < 0) return;
     addAvailabilityRectsToLayer(*layer, level, rects);
@@ -1936,19 +1915,9 @@ void QuantizedMeshTerrainProvider::addAvailabilityRectsForTile(
 
 bool QuantizedMeshTerrainProvider::isSubtreeLoaded(
     int subtreeLevel, uint64_t mortonIndex) const {
-    if (!layers_.empty()) {
-        return isSubtreeLoadedInLayer(
-            layers_.front(), subtreeLevel, mortonIndex);
-    }
-    if (subtreeLevel < 0) {
-        return false;
-    }
-    if (availabilityLevels_ > 0 &&
-        static_cast<size_t>(subtreeLevel) >= loadedSubtrees_.size()) {
-        return true;
-    }
-    if (static_cast<size_t>(subtreeLevel) >= loadedSubtrees_.size()) return false;
-    return loadedSubtrees_[subtreeLevel].count(mortonIndex) > 0;
+    if (layers_.empty()) return false;
+    return isSubtreeLoadedInLayer(
+        layers_.front(), subtreeLevel, mortonIndex);
 }
 
 void QuantizedMeshTerrainProvider::markSubtreeLoadedInLayer(
@@ -1969,33 +1938,13 @@ void QuantizedMeshTerrainProvider::markSubtreeLoadedInLayer(
 void QuantizedMeshTerrainProvider::markSubtreeLoaded(
     int subtreeLevel, uint64_t mortonIndex) {
     if (subtreeLevel < 0) return;
-    if (!layers_.empty()) {
-        markSubtreeLoadedInLayer(layers_.front(), subtreeLevel, mortonIndex);
-        syncLegacyFieldsFromPrimaryLayer();
-        return;
-    }
-    hasAvailability_ = true;
-    if (static_cast<size_t>(subtreeLevel) >= loadedSubtrees_.size()) {
-        if (availabilityLevels_ > 0) {
-            return;
-        }
-        loadedSubtrees_.resize(subtreeLevel + 1);
-    }
-    loadedSubtrees_[subtreeLevel].insert(mortonIndex);
+    if (layers_.empty()) return;
+    markSubtreeLoadedInLayer(layers_.front(), subtreeLevel, mortonIndex);
+    syncLegacyFieldsFromPrimaryLayer();
 }
 
 void QuantizedMeshTerrainProvider::markSubtreeLoadedForTile(
     const TileKey& subtreeKey) {
-    if (layers_.empty()) {
-        if (availabilityLevels_ > 0) {
-            markSubtreeLoaded(
-                subtreeKey.z / availabilityLevels_,
-                mortonEncode2D(static_cast<uint32_t>(subtreeKey.x),
-                               static_cast<uint32_t>(subtreeKey.y)));
-        }
-        return;
-    }
-
     LayerConfig* layer = firstAvailableLayer(subtreeKey);
     if (!layer || layer->availabilityLevels <= 0) return;
     markSubtreeLoadedInLayer(
@@ -2041,9 +1990,6 @@ void QuantizedMeshTerrainProvider::applyAvailabilityUpdates(
 }
 
 bool QuantizedMeshTerrainProvider::isAvailabilityBoundaryLevel(int level) const {
-    if (layers_.empty()) {
-        return availabilityLevels_ > 0 && level % availabilityLevels_ == 0;
-    }
     for (const LayerConfig& layer : layers_) {
         if (layer.availabilityLevels > 0 &&
             level % layer.availabilityLevels == 0) {

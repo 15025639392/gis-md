@@ -1599,14 +1599,14 @@ TEST(QuantizedMeshTerrainProviderTest, RejectsOutOfRangeGeographicTilesLikeCesiu
               metadataProvider.availabilityState(
                   TileKey{"Geographic-TMS", 1, 0, 2}));
 
-    QuantizedMeshTerrainProvider legacyProvider(
+    QuantizedMeshTerrainProvider fallbackProvider(
         "https://example.invalid/{z}/{x}/{y}.terrain");
-    legacyProvider.setZoomRange(0, 2);
+    fallbackProvider.setZoomRange(0, 2);
 
     EXPECT_FALSE(
-        legacyProvider.supportsTile(TileKey{"Geographic-TMS", 0, 2, 0}));
+        fallbackProvider.supportsTile(TileKey{"Geographic-TMS", 0, 2, 0}));
     EXPECT_FALSE(
-        legacyProvider.supportsTile(TileKey{"Geographic-TMS", 1, 0, 2}));
+        fallbackProvider.supportsTile(TileKey{"Geographic-TMS", 1, 0, 2}));
 }
 
 TEST(QuantizedMeshTerrainProviderTest, ParentLayerUsesPrimaryProjectionLikeCesiumNative) {

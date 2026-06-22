@@ -175,6 +175,7 @@ private:
         int minZoom = 0;
         int maxZoom = 15;
         std::string attribution;
+        bool fallbackLayer = false;
     };
     struct LayerAvailabilityRequest {
         size_t layerIndex = 0;
@@ -209,6 +210,7 @@ private:
         const std::vector<TileAvailabilityRect>& rects);
     std::string buildUrlForLayer(const LayerConfig& layer,
                                  const TileKey& key) const;
+    void resetFallbackLayerFromFields();
     void syncLegacyFieldsFromPrimaryLayer();
     void handleAsyncTileBody(
         const TileKey& key,
