@@ -662,7 +662,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     TerrainUploadRejectsGltfTerrainPayload) {
+     TerrainDomainGltfTerrainUploadAppliesContentAvailabilityUpdates) {
     RecordingTerrainContentProvider provider;
 
     QuantizedMeshAvailabilityUpdate update;
@@ -724,17 +724,26 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         false,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&ensureMeshCalls](TilesetTile&) { ++ensureMeshCalls; },
-        [&ensureGltfCalls](TilesetTile&) { ++ensureGltfCalls; },
+        [&ensureGltfCalls](TilesetTile& committedTile) {
+            committedTile.content.renderContent.addGltfPrimitiveResource(
+                GltfPrimitiveRenderResources{});
+            committedTile.markRenderContentDone();
+            ++ensureGltfCalls;
+        },
         [&resourcesDirty]() { resourcesDirty = true; });
 
-    EXPECT_TRUE(provider.appliedUpdates.empty());
-    EXPECT_NE(rawModel, tile.content.renderContent.gltfModelForRead());
-    EXPECT_FALSE(tile.content.renderContent.hasGltfContent());
-    EXPECT_FALSE(tile.content.renderContent.isTerrainRenderContent());
-    EXPECT_EQ(TileLoadState::FailedTemporarily, tile.content.loadState);
-    EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
+    ASSERT_EQ(1u, provider.appliedUpdates.size());
+    EXPECT_EQ(update.layerIndex, provider.appliedUpdates.front().layerIndex);
+    EXPECT_EQ(update.subtreeKey, provider.appliedUpdates.front().subtreeKey);
+    EXPECT_EQ(update.metadataAvailability,
+              provider.appliedUpdates.front().metadataAvailability);
+    EXPECT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
+    EXPECT_TRUE(tile.content.renderContent.hasGltfContent());
+    EXPECT_TRUE(tile.content.renderContent.isTerrainRenderContent());
+    EXPECT_EQ(TileLoadState::Done, tile.content.loadState);
+    EXPECT_EQ(TileContentKind::Render, tile.content.contentKind);
     EXPECT_EQ(0, ensureMeshCalls);
-    EXPECT_EQ(0, ensureGltfCalls);
+    EXPECT_EQ(1, ensureGltfCalls);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_TRUE(terrainCache.empty());
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
@@ -1066,6 +1075,87 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
     EXPECT_EQ(0, ensureMeshCalls);
     EXPECT_EQ(1, ensureGltfCalls);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     TerrainDomainGltfTerrainUploadUsesContentLifecycleLikeCesiumNative) {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "test:gltf-terrain-terrain-domain";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    auto model = std::make_unique<GltfModel>();
+    const GltfModel* rawModel = model.get();
+    TileLoadResultMetadata metadata;
+    metadata.terrainHeightRange = {-45.0, 345.0};
+    metadata.horizonOcclusionPoint = Vec3(4.0, 5.0, 6.0);
+    PendingTileLoad upload{TileLoadDomain::Terrain,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        makeGltfTerrainContentResult(std::move(model), std::move(metadata))};
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Terrain,
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadResult::createRenderableTerrain()});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    int ensureMeshCalls = 0;
+    int ensureGltfCalls = 0;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitUpload(
+        upload,
+        nullptr,
+        nullptr,
+        {},
+        terrainCache,
+        lifecycle,
+        false,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&ensureMeshCalls](TilesetTile&) { ++ensureMeshCalls; },
+        [&ensureGltfCalls](TilesetTile& committedTile) {
+            committedTile.content.renderContent.addGltfPrimitiveResource(
+                GltfPrimitiveRenderResources{});
+            committedTile.markRenderContentDone();
+            ++ensureGltfCalls;
+        },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_TRUE(terrainCache.empty());
+    EXPECT_EQ(rawModel, tile.content.renderContent.gltfModelForRead());
+    EXPECT_TRUE(tile.content.renderContent.isTerrainRenderContent());
+    EXPECT_TRUE(tile.content.renderContent.isGltfRenderReady());
+    EXPECT_EQ(TileLoadState::Done, tile.content.loadState);
+    EXPECT_EQ(TileContentKind::Render, tile.content.contentKind);
+    EXPECT_EQ(0, ensureMeshCalls);
+    EXPECT_EQ(1, ensureGltfCalls);
+    EXPECT_TRUE(tile.content.renderContent.hasTerrainHeightRange());
+    EXPECT_DOUBLE_EQ(-45.0,
+                     tile.content.renderContent.terrainMinimumHeight());
+    EXPECT_DOUBLE_EQ(345.0,
+                     tile.content.renderContent.terrainMaximumHeight());
+    ASSERT_NE(nullptr, tile.content.renderContent.horizonOcclusionPoint());
+    EXPECT_EQ(Vec3(4.0, 5.0, 6.0),
+              *tile.content.renderContent.horizonOcclusionPoint());
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }

@@ -258,7 +258,8 @@ public:
         EnsureTileMeshFn&& ensureTileMesh,
         EnsureGltfResourcesFn&& ensureGltfResources,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        if (upload.domain == TileLoadDomain::Content) {
+        if (upload.domain == TileLoadDomain::Content ||
+            upload.content().hasGltfTerrainPayload()) {
             commitContentUpload(
                 upload,
                 contentProvider,
