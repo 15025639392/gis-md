@@ -1570,16 +1570,6 @@ RasterOverlayTileProvider::mapTileForRectangle(
     return {tile, false};
 }
 
-RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
-    const Rectangle& providerGeometryBounds,
-    double targetScreenPixelsX,
-    double targetScreenPixelsY) {
-    return mapTileForRectangle(
-        providerGeometryBounds,
-        targetScreenPixelsX,
-        targetScreenPixelsY).tile;
-}
-
 RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::resolveTile(
     const Rectangle& bounds,
     int desiredZoom) {

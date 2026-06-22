@@ -414,26 +414,26 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomFollowsCesiumTargetScreenPix
     Rectangle z3Bounds =
         scheme->tileToRectangle(TileKey{scheme->id(), 3, 2, 3});
 
-    auto matchingTile = provider.getTile(projectForProvider(provider, z3Bounds), 512.0, 512.0);
+    auto matchingTile = provider.mapTileForRectangle(projectForProvider(provider, z3Bounds), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, matchingTile);
     EXPECT_FALSE(matchingTile->isRectangleTile());
     EXPECT_EQ((TileKey{scheme->id(), 3, 2, 3}), matchingTile->getTileID());
 
-    auto widerTile = provider.getTile(projectForProvider(provider, z3Bounds), 1024.0, 256.0);
+    auto widerTile = provider.mapTileForRectangle(projectForProvider(provider, z3Bounds), 1024.0, 256.0).tile;
     ASSERT_NE(nullptr, widerTile);
     EXPECT_TRUE(widerTile->isRectangleTile());
     EXPECT_EQ(4, widerTile->getSourceZoom());
 
     imagery.minZoomValue = 5;
     RasterOverlayTileProvider minClampedProvider(imagery, *scheme, nullptr);
-    auto minClampedTile = minClampedProvider.getTile(projectForProvider(minClampedProvider, z3Bounds), 512.0, 512.0);
+    auto minClampedTile = minClampedProvider.mapTileForRectangle(projectForProvider(minClampedProvider, z3Bounds), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, minClampedTile);
     EXPECT_EQ(5, minClampedTile->getSourceZoom());
 
     imagery.minZoomValue = 0;
     imagery.maxZoomValue = 3;
     RasterOverlayTileProvider maxClampedProvider(imagery, *scheme, nullptr);
-    auto maxClampedTile = maxClampedProvider.getTile(projectForProvider(maxClampedProvider, z3Bounds), 1024.0, 256.0);
+    auto maxClampedTile = maxClampedProvider.mapTileForRectangle(projectForProvider(maxClampedProvider, z3Bounds), 1024.0, 256.0).tile;
     ASSERT_NE(nullptr, maxClampedTile);
     EXPECT_FALSE(maxClampedTile->isRectangleTile());
     EXPECT_EQ((TileKey{scheme->id(), 3, 2, 3}), maxClampedTile->getTileID());
@@ -457,7 +457,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayLevelRange) {
         minOverlay.getTileScheme(),
         nullptr);
     minProvider.setOwner(&minOverlay);
-    auto minTile = minProvider.getTile(projectForProvider(minProvider, z3Bounds), 512.0, 512.0);
+    auto minTile = minProvider.mapTileForRectangle(projectForProvider(minProvider, z3Bounds), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, minTile);
     EXPECT_EQ(5, minTile->getSourceZoom());
 
@@ -473,7 +473,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayLevelRange) {
         maxOverlay.getTileScheme(),
         nullptr);
     maxProvider.setOwner(&maxOverlay);
-    auto maxTile = maxProvider.getTile(projectForProvider(maxProvider, z3Bounds), 1024.0, 256.0);
+    auto maxTile = maxProvider.mapTileForRectangle(projectForProvider(maxProvider, z3Bounds), 1024.0, 256.0).tile;
     ASSERT_NE(nullptr, maxTile);
     EXPECT_FALSE(maxTile->isRectangleTile());
     EXPECT_EQ((TileKey{scheme->id(), 3, 2, 3}), maxTile->getTileID());
@@ -551,7 +551,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCoverageClampsOutsideAndClipsSourcePla
     Rectangle outside =
         scheme->tileToRectangle(TileKey{scheme->id(), 1, 1, 1});
     auto outsideTile =
-        provider.getTile(projectForProvider(provider, outside), 512.0, 512.0);
+        provider.mapTileForRectangle(projectForProvider(provider, outside), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, outsideTile);
     EXPECT_TRUE(outsideTile->isRectangleTile());
     EXPECT_TRUE(provider.loadTileThrottled(*outsideTile, nullptr));
@@ -573,10 +573,10 @@ TEST(RasterOverlayLifecycleTest, RectangleCoverageClampsOutsideAndClipsSourcePla
         options.coverageRectangle.south(),
         options.coverageRectangle.east() + options.coverageRectangle.width() * 0.5,
         options.coverageRectangle.north());
-    auto tile = overlappingProvider.getTile(
+    auto tile = overlappingProvider.mapTileForRectangle(
         projectForProvider(overlappingProvider, overlapping),
         512.0,
-        512.0);
+        512.0).tile;
     ASSERT_NE(nullptr, tile);
     EXPECT_TRUE(tile->isRectangleTile());
     EXPECT_TRUE(overlappingProvider.loadTileThrottled(*tile, nullptr));
@@ -602,9 +602,9 @@ TEST(RasterOverlayLifecycleTest,
     provider.setCoverageRectangle(coverage);
 
     RasterOverlayTileProvider::TilePtr tile =
-        provider.getTile(projectForProvider(provider, rootBounds),
+        provider.mapTileForRectangle(projectForProvider(provider, rootBounds),
                          1024.0,
-                         1024.0);
+                         1024.0).tile;
     ASSERT_NE(nullptr, tile);
     ASSERT_TRUE(tile->isRectangleTile());
     EXPECT_TRUE(provider.loadTile(*tile));
@@ -625,7 +625,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCoverageMissClampsToNearestCoverageEdg
     provider.setCoverageRectangle(coverage);
 
     auto tile =
-        provider.getTile(projectForProvider(provider, outsideCoverage), 512.0, 512.0);
+        provider.mapTileForRectangle(projectForProvider(provider, outsideCoverage), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, tile);
     EXPECT_TRUE(tile->isRectangleTile());
     EXPECT_TRUE(provider.loadTile(*tile));
@@ -644,7 +644,7 @@ TEST(RasterOverlayLifecycleTest, DirectAlignedSingleSourceUploadsWithoutResampli
 
     const TileKey sourceKey{scheme->id(), 3, 2, 3};
     const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
-    auto rectangleMappedTile = provider.getTile(projectForProvider(provider, sourceBounds), 8.0, 8.0);
+    auto rectangleMappedTile = provider.mapTileForRectangle(projectForProvider(provider, sourceBounds), 8.0, 8.0).tile;
 
     ASSERT_NE(nullptr, rectangleMappedTile);
     EXPECT_FALSE(rectangleMappedTile->isRectangleTile());
@@ -712,7 +712,7 @@ TEST(RasterOverlayLifecycleTest, DirectFastPathDoesNotRunForPartialRectangle) {
         sourceBounds.west() + sourceBounds.width() * 0.5,
         sourceBounds.north());
 
-    auto rectangleTile = provider.getTile(projectForProvider(provider, westHalf), 256.0, 512.0);
+    auto rectangleTile = provider.mapTileForRectangle(projectForProvider(provider, westHalf), 256.0, 512.0).tile;
     ASSERT_NE(nullptr, rectangleTile);
     EXPECT_TRUE(rectangleTile->isRectangleTile());
     EXPECT_EQ(sourceKey.z, rectangleTile->getSourceZoom());
@@ -727,7 +727,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceRangeTrimsTileEdgeTouchesLikeCes
 
     const Rectangle sourceAlignedBounds = scheme->tileToRectangle(
         TileKey{scheme->id(), 3, 2, 3});
-    auto rectangleTile = provider.getTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0);
+    auto rectangleTile = provider.mapTileForRectangle(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, rectangleTile);
     EXPECT_EQ(5, rectangleTile->getSourceZoom());
 
@@ -760,7 +760,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceRangeTrimsSouthUpTileEdgeTouches
 
     const Rectangle sourceAlignedBounds = scheme->tileToRectangle(
         TileKey{scheme->id(), 3, 2, 3});
-    auto rectangleTile = provider.getTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0);
+    auto rectangleTile = provider.mapTileForRectangle(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, rectangleTile);
     EXPECT_EQ(5, rectangleTile->getSourceZoom());
 
@@ -828,7 +828,7 @@ TEST(RasterOverlayLifecycleTest, RectangleTileKeepsGeometryBoundsAndTargetPixels
 
     TileKey geometryKey{geometryScheme->id(), 2, 4, 2};
     Rectangle geometryBounds = geometryScheme->tileToRectangle(geometryKey);
-    auto rectangleTile = provider.getTile(projectForProvider(provider, geometryBounds), 512.0, 512.0);
+    auto rectangleTile = provider.mapTileForRectangle(projectForProvider(provider, geometryBounds), 512.0, 512.0).tile;
 
     ASSERT_NE(nullptr, rectangleTile);
     EXPECT_TRUE(rectangleTile->isRectangleTile());
@@ -849,7 +849,7 @@ TEST(RasterOverlayLifecycleTest,
 
     const TileKey key{scheme->id(), 3, 4, 2};
     const Rectangle bounds = scheme->tileToRectangle(key);
-    auto mappedTile = provider.getTile(projectForProvider(provider, bounds), 512.0, 512.0);
+    auto mappedTile = provider.mapTileForRectangle(projectForProvider(provider, bounds), 512.0, 512.0).tile;
 
     ASSERT_NE(nullptr, mappedTile);
     EXPECT_FALSE(mappedTile->isRectangleTile());
@@ -875,7 +875,7 @@ TEST(RasterOverlayLifecycleTest,
 
     const TileKey key{scheme->id(), 3, 4, 2};
     const Rectangle bounds = scheme->tileToRectangle(key);
-    auto mappedTile = provider.getTile(projectForProvider(provider, bounds), 512.0, 512.0);
+    auto mappedTile = provider.mapTileForRectangle(projectForProvider(provider, bounds), 512.0, 512.0).tile;
 
     ASSERT_NE(nullptr, mappedTile);
     EXPECT_FALSE(mappedTile->isRectangleTile());
@@ -902,7 +902,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayMaximumTextur
         imagery,
         *scheme,
         std::move(defaultUploader));
-    auto defaultTile = defaultProvider.getTile(projectForProvider(defaultProvider, rootBounds), 131072.0, 131072.0);
+    auto defaultTile = defaultProvider.mapTileForRectangle(projectForProvider(defaultProvider, rootBounds), 131072.0, 131072.0).tile;
     ASSERT_NE(nullptr, defaultTile);
     EXPECT_EQ(3, defaultTile->getSourceZoom());
 
@@ -914,7 +914,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayMaximumTextur
         std::move(constrainedUploader));
     constrainedProvider.setMaximumTextureSize(256);
     auto constrainedTile =
-        constrainedProvider.getTile(projectForProvider(constrainedProvider, rootBounds), 131072.0, 131072.0);
+        constrainedProvider.mapTileForRectangle(projectForProvider(constrainedProvider, rootBounds), 131072.0, 131072.0).tile;
     ASSERT_NE(nullptr, constrainedTile);
     EXPECT_FALSE(constrainedTile->isRectangleTile());
     EXPECT_EQ((TileKey{scheme->id(), 0, 0, 0}), constrainedTile->getTileID());
@@ -936,7 +936,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceZoomRespectsOverlayMaximumTextur
         std::move(ownerUploader));
     ownerProvider.setOwner(&overlay);
     EXPECT_EQ(256, ownerProvider.getMaximumTextureSize());
-    auto ownerTile = ownerProvider.getTile(projectForProvider(ownerProvider, rootBounds), 131072.0, 131072.0);
+    auto ownerTile = ownerProvider.mapTileForRectangle(projectForProvider(ownerProvider, rootBounds), 131072.0, 131072.0).tile;
     ASSERT_NE(nullptr, ownerTile);
     EXPECT_FALSE(ownerTile->isRectangleTile());
     EXPECT_EQ((TileKey{scheme->id(), 0, 0, 0}), ownerTile->getTileID());
@@ -952,7 +952,7 @@ TEST(RasterOverlayLifecycleTest,
 
     const TileKey rootKey{scheme->id(), 0, 0, 0};
     const Rectangle rootBounds = scheme->tileToRectangle(rootKey);
-    auto tile = provider.getTile(projectForProvider(provider, rootBounds), 8.0, 8.0);
+    auto tile = provider.mapTileForRectangle(projectForProvider(provider, rootBounds), 8.0, 8.0).tile;
     ASSERT_NE(nullptr, tile);
     EXPECT_FALSE(tile->isRectangleTile());
     EXPECT_EQ(rootKey, tile->getTileID());
@@ -994,7 +994,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceFailureFallsBackToParentTile) {
             tileBounds.south(),
             expectedSourceZoom);
 
-    auto rectangleTile = provider.getTile(projectForProvider(provider, tileBounds), 1024.0, 1024.0);
+    auto rectangleTile = provider.mapTileForRectangle(projectForProvider(provider, tileBounds), 1024.0, 1024.0).tile;
     ASSERT_NE(nullptr, rectangleTile);
     EXPECT_EQ(expectedSourceZoom, rectangleTile->getSourceZoom());
 
@@ -1041,7 +1041,7 @@ TEST(RasterOverlayLifecycleTest, SourceTileDepotCachesTilesByTileKeyLikeCesiumNa
         sourceBounds.east(),
         sourceBounds.north());
 
-    auto westTile = provider.getTile(projectForProvider(provider, westHalf), 256.0, 512.0);
+    auto westTile = provider.mapTileForRectangle(projectForProvider(provider, westHalf), 256.0, 512.0).tile;
     ASSERT_NE(nullptr, westTile);
     EXPECT_EQ(sourceKey.z, westTile->getSourceZoom());
     ASSERT_TRUE(provider.loadTile(*westTile));
@@ -1049,7 +1049,7 @@ TEST(RasterOverlayLifecycleTest, SourceTileDepotCachesTilesByTileKeyLikeCesiumNa
     EXPECT_EQ(1, static_cast<int>(imagery.requestedKeys.size()));
     EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
 
-    auto eastTile = provider.getTile(projectForProvider(provider, eastHalf), 256.0, 512.0);
+    auto eastTile = provider.mapTileForRectangle(projectForProvider(provider, eastHalf), 256.0, 512.0).tile;
     ASSERT_NE(nullptr, eastTile);
     EXPECT_EQ(sourceKey.z, eastTile->getSourceZoom());
     ASSERT_TRUE(provider.loadTile(*eastTile));
@@ -1075,14 +1075,14 @@ TEST(RasterOverlayLifecycleTest,
         sourceBounds.west() + sourceBounds.width() * 0.5,
         sourceBounds.north());
 
-    auto first = provider.getTile(
+    auto first = provider.mapTileForRectangle(
         projectForProvider(provider, westHalf),
         256.0,
-        512.0);
-    auto second = provider.getTile(
+        512.0).tile;
+    auto second = provider.mapTileForRectangle(
         projectForProvider(provider, westHalf),
         256.0,
-        512.0);
+        512.0).tile;
     ASSERT_NE(nullptr, first);
     ASSERT_NE(nullptr, second);
     EXPECT_EQ(first.get(), second.get());
@@ -1123,8 +1123,8 @@ TEST(RasterOverlayLifecycleTest, ConcurrentRectangleTilesShareProviderSourceTile
         sourceBounds.east(),
         sourceBounds.north());
 
-    auto westTile = provider.getTile(projectForProvider(provider, westHalf), 256.0, 512.0);
-    auto eastTile = provider.getTile(projectForProvider(provider, eastHalf), 256.0, 512.0);
+    auto westTile = provider.mapTileForRectangle(projectForProvider(provider, westHalf), 256.0, 512.0).tile;
+    auto eastTile = provider.mapTileForRectangle(projectForProvider(provider, eastHalf), 256.0, 512.0).tile;
     ASSERT_NE(nullptr, westTile);
     ASSERT_NE(nullptr, eastTile);
 
@@ -1156,7 +1156,7 @@ TEST(RasterOverlayLifecycleTest, DirectAndRectangleTilesShareProviderSourceTileA
         sourceBounds.north());
 
     auto directTile = provider.getTile(sourceKey);
-    auto rectangleTile = provider.getTile(projectForProvider(provider, westHalf), 256.0, 512.0);
+    auto rectangleTile = provider.mapTileForRectangle(projectForProvider(provider, westHalf), 256.0, 512.0).tile;
     ASSERT_NE(nullptr, directTile);
     ASSERT_NE(nullptr, rectangleTile);
 
@@ -1182,10 +1182,10 @@ TEST(RasterOverlayLifecycleTest,
     const TileKey sourceKey{scheme->id(), 3, 2, 3};
     const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
 
-    auto rectangleTile = provider.getTile(
+    auto rectangleTile = provider.mapTileForRectangle(
         projectForProvider(provider, sourceBounds),
         512.0,
-        512.0);
+        512.0).tile;
     auto directTile = provider.getTile(sourceKey);
     ASSERT_NE(nullptr, rectangleTile);
     ASSERT_NE(nullptr, directTile);
@@ -1233,10 +1233,10 @@ TEST(RasterOverlayLifecycleTest, RectangleTileCallbackAfterProviderDestructionIs
         sourceBounds.west() + sourceBounds.width() * 0.5,
         sourceBounds.north());
 
-    auto tile = provider->getTile(
+    auto tile = provider->mapTileForRectangle(
         projectForProvider(*provider, westHalf),
         256.0,
-        512.0);
+        512.0).tile;
     ASSERT_NE(nullptr, tile);
     ASSERT_TRUE(provider->loadTile(*tile));
     ASSERT_EQ(1u, imagery.pending.size());
@@ -1276,13 +1276,13 @@ TEST(RasterOverlayLifecycleTest, SourceTileDepotHonorsSubTileCacheByteBudget) {
         sourceBounds.east(),
         sourceBounds.north());
 
-    auto westTile = provider.getTile(projectForProvider(provider, westHalf), 256.0, 512.0);
+    auto westTile = provider.mapTileForRectangle(projectForProvider(provider, westHalf), 256.0, 512.0).tile;
     ASSERT_NE(nullptr, westTile);
     ASSERT_TRUE(provider.loadTile(*westTile));
     EXPECT_EQ(1, provider.processPendingUploads(false));
     EXPECT_EQ(1, static_cast<int>(imagery->requestedKeys.size()));
 
-    auto eastTile = provider.getTile(projectForProvider(provider, eastHalf), 256.0, 512.0);
+    auto eastTile = provider.mapTileForRectangle(projectForProvider(provider, eastHalf), 256.0, 512.0).tile;
     ASSERT_NE(nullptr, eastTile);
     ASSERT_TRUE(provider.loadTile(*eastTile));
     EXPECT_EQ(1, provider.processPendingUploads(false));
@@ -1302,7 +1302,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceFallbacksAreCachedByRequestedTil
     imagery.failingKey = failingKey;
     const Rectangle bounds = scheme->tileToRectangle(failingKey);
 
-    auto firstTile = provider.getTile(projectForProvider(provider, bounds), 512.0, 512.0);
+    auto firstTile = provider.mapTileForRectangle(projectForProvider(provider, bounds), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, firstTile);
     ASSERT_TRUE(provider.loadTile(*firstTile));
     EXPECT_EQ(1, provider.processPendingUploads(false));
@@ -1318,7 +1318,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceFallbacksAreCachedByRequestedTil
         bounds.south() + bounds.height() * 0.25,
         bounds.east() - bounds.width() * 0.25,
         bounds.north() - bounds.height() * 0.25);
-    auto secondTile = provider.getTile(projectForProvider(provider, innerBounds), 256.0, 256.0);
+    auto secondTile = provider.mapTileForRectangle(projectForProvider(provider, innerBounds), 256.0, 256.0).tile;
     ASSERT_NE(nullptr, secondTile);
     ASSERT_TRUE(provider.loadTile(*secondTile));
     EXPECT_EQ(1, provider.processPendingUploads(false));
@@ -1356,7 +1356,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSiblingFallbacksReuseCachedParentSourc
         eastBounds.west() + eastBounds.width() * 0.5,
         eastBounds.north());
 
-    auto firstTile = provider.getTile(projectForProvider(provider, westHalf), 256.0, 512.0);
+    auto firstTile = provider.mapTileForRectangle(projectForProvider(provider, westHalf), 256.0, 512.0).tile;
     ASSERT_NE(nullptr, firstTile);
     ASSERT_TRUE(provider.loadTile(*firstTile));
     EXPECT_EQ(1, provider.processPendingUploads(false));
@@ -1370,7 +1370,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSiblingFallbacksReuseCachedParentSourc
             parent));
     EXPECT_EQ(1, parentRequestsAfterFirstLoad);
 
-    auto secondTile = provider.getTile(projectForProvider(provider, eastHalf), 256.0, 512.0);
+    auto secondTile = provider.mapTileForRectangle(projectForProvider(provider, eastHalf), 256.0, 512.0).tile;
     ASSERT_NE(nullptr, secondTile);
     ASSERT_TRUE(provider.loadTile(*secondTile));
     EXPECT_EQ(1, provider.processPendingUploads(false));
@@ -1410,8 +1410,8 @@ TEST(RasterOverlayLifecycleTest, ConcurrentSiblingFallbacksShareParentSourceInFl
         eastBounds.west() + eastBounds.width() * 0.5,
         eastBounds.north());
 
-    auto westTile = provider.getTile(projectForProvider(provider, westHalf), 256.0, 512.0);
-    auto eastTile = provider.getTile(projectForProvider(provider, eastHalf), 256.0, 512.0);
+    auto westTile = provider.mapTileForRectangle(projectForProvider(provider, westHalf), 256.0, 512.0).tile;
+    auto eastTile = provider.mapTileForRectangle(projectForProvider(provider, eastHalf), 256.0, 512.0).tile;
     ASSERT_NE(nullptr, westTile);
     ASSERT_NE(nullptr, eastTile);
 
@@ -1457,7 +1457,7 @@ TEST(RasterOverlayLifecycleTest, DirectAncestorFallbackUsesParentTileLikeCesiumN
     Rectangle bounds = scheme->tileToRectangle(key);
     imagery.failingKey = key;
 
-    auto directTile = provider.getTile(projectForProvider(provider, bounds), 512.0, 512.0);
+    auto directTile = provider.mapTileForRectangle(projectForProvider(provider, bounds), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, directTile);
     EXPECT_FALSE(directTile->isRectangleTile());
     EXPECT_EQ(key, directTile->getTileID());
@@ -1499,7 +1499,7 @@ TEST(RasterOverlayLifecycleTest, RectangleCompositionMixesSourceLevelsAfterFailu
                                expectedSourceZoom);
     imagery.failingKey = southeastKey;
 
-    auto rectangleTile = provider.getTile(projectForProvider(provider, tileBounds), 1024.0, 1024.0);
+    auto rectangleTile = provider.mapTileForRectangle(projectForProvider(provider, tileBounds), 1024.0, 1024.0).tile;
     ASSERT_NE(nullptr, rectangleTile);
     EXPECT_EQ(expectedSourceZoom, rectangleTile->getSourceZoom());
 
@@ -1553,7 +1553,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSourceFailureDoesNotFallbackBelowOverl
             tileBounds.south(),
             expectedSourceZoom);
 
-    auto rectangleTile = provider.getTile(projectForProvider(provider, tileBounds), 1024.0, 1024.0);
+    auto rectangleTile = provider.mapTileForRectangle(projectForProvider(provider, tileBounds), 1024.0, 1024.0).tile;
     ASSERT_NE(nullptr, rectangleTile);
     EXPECT_EQ(expectedSourceZoom, rectangleTile->getSourceZoom());
 
@@ -1590,9 +1590,9 @@ TEST(RasterOverlayLifecycleTest, RectangleTilesShareInFlightSourceTileLikeCesium
         sourceBounds.north());
 
     RasterOverlayTileProvider::TilePtr firstTile =
-        provider.getTile(projectForProvider(provider, westHalf), 128.0, 128.0);
+        provider.mapTileForRectangle(projectForProvider(provider, westHalf), 128.0, 128.0).tile;
     RasterOverlayTileProvider::TilePtr secondTile =
-        provider.getTile(projectForProvider(provider, eastHalf), 128.0, 128.0);
+        provider.mapTileForRectangle(projectForProvider(provider, eastHalf), 128.0, 128.0).tile;
     ASSERT_NE(nullptr, firstTile);
     ASSERT_NE(nullptr, secondTile);
     ASSERT_TRUE(firstTile->isRectangleTile());
@@ -1635,7 +1635,7 @@ TEST(RasterOverlayLifecycleTest, RectangleAtMaximumSourceZoomReportsNoMoreDetail
     TileKey key = scheme->positionToTile(0.1, 0.2, expectedSourceZoom);
     Rectangle bounds = scheme->tileToRectangle(key);
 
-    auto tile = provider.getTile(projectForProvider(provider, bounds), 512.0, 512.0);
+    auto tile = provider.mapTileForRectangle(projectForProvider(provider, bounds), 512.0, 512.0).tile;
     ASSERT_NE(nullptr, tile);
     EXPECT_FALSE(tile->isRectangleTile());
     EXPECT_EQ(key, tile->getTileID());
@@ -1668,7 +1668,7 @@ TEST(RasterOverlayLifecycleTest, FailedRasterTilesAreTerminalLikeCesiumNative) {
 
     Rectangle rootBounds =
         scheme->tileToRectangle(TileKey{scheme->id(), 0, 0, 0});
-    auto rectangleTile = provider.getTile(projectForProvider(provider, rootBounds), 8.0, 8.0);
+    auto rectangleTile = provider.mapTileForRectangle(projectForProvider(provider, rootBounds), 8.0, 8.0).tile;
     ASSERT_NE(nullptr, rectangleTile);
     ASSERT_TRUE(rectangleTile->isRectangleTile());
     EXPECT_TRUE(provider.loadTileThrottled(*rectangleTile, nullptr));
@@ -1690,7 +1690,7 @@ TEST(RasterOverlayLifecycleTest, RectangleLoadClampsCoverageChangedAfterTileCrea
 
     Rectangle initialBounds =
         scheme->tileToRectangle(TileKey{scheme->id(), 2, 0, 0});
-    auto rectangleTile = provider.getTile(projectForProvider(provider, initialBounds), 8.0, 8.0);
+    auto rectangleTile = provider.mapTileForRectangle(projectForProvider(provider, initialBounds), 8.0, 8.0).tile;
     ASSERT_NE(nullptr, rectangleTile);
     ASSERT_TRUE(rectangleTile->isRectangleTile());
 
@@ -1872,7 +1872,7 @@ TEST(RasterOverlayLifecycleTest, RectangleLoadRequiresBudgetForSourceFanout) {
 
     Rectangle rootBounds =
         scheme->tileToRectangle(TileKey{scheme->id(), 0, 0, 0});
-    auto rectangleTile = provider.getTile(projectForProvider(provider, rootBounds), 8.0, 8.0);
+    auto rectangleTile = provider.mapTileForRectangle(projectForProvider(provider, rootBounds), 8.0, 8.0).tile;
     ASSERT_NE(nullptr, rectangleTile);
     ASSERT_TRUE(rectangleTile->isRectangleTile());
 
@@ -1908,10 +1908,10 @@ TEST(RasterOverlayLifecycleTest, LoadingRectangleDoesNotPumpSourcesAcrossFrames)
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
 
-    auto rectangleTile = provider.getTile(
+    auto rectangleTile = provider.mapTileForRectangle(
         Rectangle::fromDegrees(-170.0, -70.0, 170.0, 70.0),
         1024.0,
-        1024.0);
+        1024.0).tile;
     ASSERT_NE(nullptr, rectangleTile);
     ASSERT_TRUE(rectangleTile->isRectangleTile());
 
@@ -1943,7 +1943,7 @@ TEST(RasterOverlayLifecycleTest, FrameBudgetSeparatesRasterFanoutFromTerrainBudg
 
     Rectangle rootBounds =
         scheme->tileToRectangle(TileKey{scheme->id(), 0, 0, 0});
-    auto rectangleTile = provider.getTile(projectForProvider(provider, rootBounds), 8.0, 8.0);
+    auto rectangleTile = provider.mapTileForRectangle(projectForProvider(provider, rootBounds), 8.0, 8.0).tile;
     ASSERT_NE(nullptr, rectangleTile);
     ASSERT_TRUE(rectangleTile->isRectangleTile());
 

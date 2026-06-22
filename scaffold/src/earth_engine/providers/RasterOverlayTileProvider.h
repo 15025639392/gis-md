@@ -97,12 +97,6 @@ public:
     /// Returns the shared placeholder tile if the provider is not yet ready.
     TilePtr getTile(const TileKey& key);
 
-    /// cesium-native mapOverlayToTile rectangle path: get or create a raster
-    /// tile for the geometry rectangle.
-    TilePtr getTile(const Rectangle& rectangle,
-                    double targetScreenPixelsX,
-                    double targetScreenPixelsY);
-
     /// Map a geometry rectangle to the provider's raster tile cache. Exact
     /// single-source mappings return a direct quadtree tile; other mappings
     /// return a rectangle tile while reusing the same source plan.
