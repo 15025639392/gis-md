@@ -13,6 +13,21 @@
 #include <optional>
 
 namespace earth_engine {
+namespace {
+
+std::optional<Rectangle> projectedBoundingVolumeRectangle(
+    const TilesetTile& tile,
+    RasterOverlayProjection projection) {
+    if (!tile.boundingVolume ||
+        tile.boundingVolume->kind != TileBoundingVolumeKind::Region) {
+        return std::nullopt;
+    }
+    return TileRasterOverlayDetailsGenerator::projectRegionRectangle(
+        tile.boundingVolume->region,
+        projection);
+}
+
+} // namespace
 
 RenderContentRasterOverlayUpdateAction
 RenderContentRasterOverlayStateUpdater::update(
@@ -66,9 +81,14 @@ RenderContentRasterOverlayStateUpdater::update(
         const Rectangle* geometryRectangle = hasRenderContentDetails
             ? overlayDetails.findRectangleForOverlayProjection(projection)
             : nullptr;
+        const std::optional<Rectangle> boundingVolumeRectangle =
+            hasRenderContentDetails
+                ? std::nullopt
+                : projectedBoundingVolumeRectangle(tile, projection);
         const Rectangle& rasterTargetRectangle = geometryRectangle
             ? *geometryRectangle
-            : tile.bounds;
+            : (boundingVolumeRectangle ? *boundingVolumeRectangle
+                                       : tile.bounds);
         const RasterTargetScreenPixels rasterScreenPixels =
             RasterOverlayScreenSpaceMetrics::computeDesiredScreenPixels(
                 rasterTargetRectangle,
@@ -86,7 +106,8 @@ RenderContentRasterOverlayStateUpdater::update(
                 tile.rasterOverlayState.missingProjections(),
                 tile.parent,
                 i,
-                hasRenderContentDetails);
+                hasRenderContentDetails,
+                boundingVolumeRectangle);
         if (tile.rasterOverlayState.hasMissingProjections()) {
             action.unloadTileContent = true;
             return action;

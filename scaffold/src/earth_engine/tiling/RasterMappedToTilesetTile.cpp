@@ -103,7 +103,8 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
     std::vector<RasterOverlayProjection>& missingProjections,
     const TilesetTile* parentTile,
     size_t overlayIndex,
-    bool hasRenderContentDetails) {
+    bool hasRenderContentDetails,
+    std::optional<Rectangle> boundingVolumeRectangle) {
 
     // cesium-native: store geometry key + overlay slot for attach/detach.
     geometryKey_ = geometryKey;
@@ -214,13 +215,20 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
             _pLoadingTile = tileProvider.getPlaceholderTile();
             loadingTileSource_ = ReadyTileSource::None;
         } else {
-            // No render-content raster details exist yet. Cesium-native waits
-            // for content-manager generated overlay details instead of
-            // synthesizing a geometry rectangle from the tile bounding region.
             textureCoordinateID_ =
                 addProjectionToList(missingProjections, projection);
-            _pLoadingTile = tileProvider.getPlaceholderTile();
-            loadingTileSource_ = ReadyTileSource::None;
+            if (boundingVolumeRectangle &&
+                !boundingVolumeRectangle->isEmpty()) {
+                _pLoadingTile = tileProvider.getTile(
+                    *boundingVolumeRectangle,
+                    targetScreenPixelsX,
+                    targetScreenPixelsY);
+                loadingTileSource_ = ReadyTileSource::Real;
+            } else {
+                // No precise rectangle yet, so return a placeholder for now.
+                _pLoadingTile = tileProvider.getPlaceholderTile();
+                loadingTileSource_ = ReadyTileSource::None;
+            }
         }
     }
 

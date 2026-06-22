@@ -9,10 +9,10 @@
 #include "../providers/RasterOverlayTileProvider.h"
 
 namespace earth_engine {
-namespace {
 
-Rectangle projectRegionRectangle(const Rectangle& rectangle,
-                                 RasterOverlayProjection projection) {
+Rectangle TileRasterOverlayDetailsGenerator::projectRegionRectangle(
+    const Rectangle& rectangle,
+    RasterOverlayProjection projection) {
     switch (projection) {
         case RasterOverlayProjection::Geographic:
             return rectangle;
@@ -23,8 +23,6 @@ Rectangle projectRegionRectangle(const Rectangle& rectangle,
     }
     return rectangle;
 }
-
-} // namespace
 
 bool TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromRegion(
     TileRenderContentState& renderContent,

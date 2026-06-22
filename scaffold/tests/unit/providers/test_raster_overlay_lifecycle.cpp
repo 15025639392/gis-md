@@ -2068,7 +2068,7 @@ TEST(RasterOverlayLifecycleTest, MissingProjectionUsesOffsetPlaceholderLikeCesiu
     EXPECT_EQ(0, provider.getCachedTileCount());
 }
 
-TEST(RasterOverlayLifecycleTest, BoundingRegionWithoutRenderDetailsUsesPlaceholderLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest, MissingPreciseRectangleWithoutRenderDetailsUsesPlaceholder) {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *scheme, nullptr);

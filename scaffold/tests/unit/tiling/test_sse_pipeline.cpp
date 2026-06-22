@@ -2923,7 +2923,7 @@ void testRasterMappedLoadedContentMissingProjectionOffsetsTextureCoordinateID() 
           "RasterMappedToTilesetTile: stale render details do not create a cache tile");
 }
 
-void testRasterMappedBoundingRegionWithoutRenderContentUsesPlaceholder() {
+void testRasterMappedBoundingRegionWithoutRenderContentUsesPreciseRectangle() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
@@ -2933,6 +2933,11 @@ void testRasterMappedBoundingRegionWithoutRenderContentUsesPlaceholder() {
     RasterOverlayDetails emptyDetails;
     std::vector<RasterOverlayProjection> missingProjections;
     const TileKey geometryKey{"Geographic-TMS", 4, 8, 8};
+    const Rectangle regionRectangle =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    const Rectangle projectedRectangle = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        regionRectangle);
     const RasterMappedToTilesetTile::MoreDetail moreDetail = mapped.update(
         geometryKey,
         emptyDetails,
@@ -2943,21 +2948,32 @@ void testRasterMappedBoundingRegionWithoutRenderContentUsesPlaceholder() {
         missingProjections,
         nullptr,
         0,
-        false);
+        false,
+        projectedRectangle);
 
-    check(moreDetail == RasterMappedToTilesetTile::MoreDetail::No,
-          "RasterMappedToTilesetTile: bounding region without render details does not request detail");
+    check(moreDetail == RasterMappedToTilesetTile::MoreDetail::Unknown,
+          "RasterMappedToTilesetTile: bounding region without render details maps first detail");
     check(mapped.getLoadingTile() != nullptr &&
               mapped.getLoadingTile()->getState() ==
-                  RasterOverlayTile::LoadState::Placeholder,
-          "RasterMappedToTilesetTile: bounding region without render details maps to placeholder");
+                  RasterOverlayTile::LoadState::Unloaded,
+          "RasterMappedToTilesetTile: bounding region without render details maps to a real tile");
     check(mapped.getTextureCoordinateID() == 0,
           "RasterMappedToTilesetTile: bounding region missing projection gets first texture coordinate ID");
     check(missingProjections.size() == 1 &&
               missingProjections.front() == RasterOverlayProjection::WebMercator,
           "RasterMappedToTilesetTile: bounding region records projection needed by later render content");
-    check(provider.getCachedTileCount() == 0,
-          "RasterMappedToTilesetTile: bounding region without render details creates no cache tile");
+    check(provider.getCachedTileCount() == 1,
+          "RasterMappedToTilesetTile: bounding region without render details creates one cache tile");
+    check(mapped.getLoadingTile() &&
+              std::abs(mapped.getLoadingTile()->getRectangle().west() -
+                       projectedRectangle.west()) < 1e-12 &&
+              std::abs(mapped.getLoadingTile()->getRectangle().south() -
+                       projectedRectangle.south()) < 1e-12 &&
+              std::abs(mapped.getLoadingTile()->getRectangle().east() -
+                       projectedRectangle.east()) < 1e-12 &&
+              std::abs(mapped.getLoadingTile()->getRectangle().north() -
+                       projectedRectangle.north()) < 1e-12,
+          "RasterMappedToTilesetTile: bounding region request uses projected precise rectangle");
 }
 
 void testRasterMappedAttachedUnknownReportsMoreDetail() {
@@ -4191,21 +4207,31 @@ void testTilesetPrefetchWaitsForRenderDetailsBeforeRequestingRaster() {
     RasterMappedToTilesetTile* mapped = root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTileProvider* provider = activated.getTileProvider();
     RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
+    const Rectangle expectedWebMercator = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        regionRectangle);
     check(provider != nullptr,
           "Tileset: prefetch uses an ensured raster provider");
     check(loadingTile != nullptr &&
               loadingTile->getState() ==
-                  RasterOverlayTile::LoadState::Placeholder,
-          "Tileset: prefetch waits for render details instead of requesting bounding-region imagery");
+                  RasterOverlayTile::LoadState::Loading,
+          "Tileset: prefetch requests bounding-region imagery like cesium-native");
     check(mapped && mapped->getTextureCoordinateID() == 0,
-          "Tileset: prefetch placeholder records projection texture coordinate ID");
+          "Tileset: prefetch bounding-region mapping records projection texture coordinate ID");
     check(root->rasterOverlayState.missingProjections().empty(),
           "Tileset: prefetch does not report render-content missing projection diagnostics");
-    check(provider && provider->getCachedTileCount() == 0,
-          "Tileset: prefetch creates no real raster cache tile before render details");
+    check(provider && provider->getCachedTileCount() == 1,
+          "Tileset: prefetch creates one real raster cache tile from bounding region");
     check(loadingTile &&
-              loadingTile->getState() == RasterOverlayTile::LoadState::Placeholder,
-          "Tileset: prefetch placeholder load remains a no-op");
+              std::abs(loadingTile->getRectangle().west() -
+                       expectedWebMercator.west()) < 1e-12 &&
+              std::abs(loadingTile->getRectangle().south() -
+                       expectedWebMercator.south()) < 1e-12 &&
+              std::abs(loadingTile->getRectangle().east() -
+                       expectedWebMercator.east()) < 1e-12 &&
+              std::abs(loadingTile->getRectangle().north() -
+                       expectedWebMercator.north()) < 1e-12,
+          "Tileset: prefetch bounding-region request uses projected precise rectangle");
 }
 
 void testTilesetPrefetchGeneratesRenderContentDetailsFromRegion() {
@@ -27761,7 +27787,7 @@ int main() {
     testTilesetUnloadRenderContentReleasesGltfResources();
     testRasterMappedProviderNotReadyUsesPlaceholderWithoutMissingProjection();
     testRasterMappedLoadedContentMissingProjectionOffsetsTextureCoordinateID();
-    testRasterMappedBoundingRegionWithoutRenderContentUsesPlaceholder();
+    testRasterMappedBoundingRegionWithoutRenderContentUsesPreciseRectangle();
     testRasterMappedAttachedUnknownReportsMoreDetail();
     testRasterMappedFailureFallbackMatchesOverlayOwner();
     testRasterMappedFailedTileWithoutAncestorBecomesReadyNonBlocking();

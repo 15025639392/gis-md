@@ -11,9 +11,25 @@
 #include "../providers/RasterOverlayTileProvider.h"
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace earth_engine {
+namespace {
+
+std::optional<Rectangle> projectedBoundingVolumeRectangle(
+    const TilesetTile& tile,
+    RasterOverlayProjection projection) {
+    if (!tile.boundingVolume ||
+        tile.boundingVolume->kind != TileBoundingVolumeKind::Region) {
+        return std::nullopt;
+    }
+    return TileRasterOverlayDetailsGenerator::projectRegionRectangle(
+        tile.boundingVolume->region,
+        projection);
+}
+
+} // namespace
 
 void TileRasterOverlayPrefetcher::prefetch(
     TilesetTile& tile,
@@ -69,9 +85,14 @@ void TileRasterOverlayPrefetcher::prefetch(
         const Rectangle* geometryRectangle = renderDetails
             ? renderDetails->findRectangleForOverlayProjection(projection)
             : nullptr;
+        const std::optional<Rectangle> boundingVolumeRectangle =
+            hasRenderContentDetails
+                ? std::nullopt
+                : projectedBoundingVolumeRectangle(tile, projection);
         const Rectangle& rasterTargetRectangle = geometryRectangle
             ? *geometryRectangle
-            : tile.bounds;
+            : (boundingVolumeRectangle ? *boundingVolumeRectangle
+                                       : tile.bounds);
         const RasterTargetScreenPixels rasterScreenPixels =
             RasterOverlayScreenSpaceMetrics::computeDesiredScreenPixels(
                 rasterTargetRectangle,
@@ -109,7 +130,8 @@ void TileRasterOverlayPrefetcher::prefetch(
             ignoredMissingProjections,
             tile.parent,
             i,
-            hasRenderContentDetails);
+            hasRenderContentDetails,
+            boundingVolumeRectangle);
         mapped.loadThrottled(*activeProvider, &frameResourceBudget);
     }
 }

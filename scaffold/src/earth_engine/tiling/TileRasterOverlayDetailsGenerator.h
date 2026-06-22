@@ -13,6 +13,10 @@ struct TileBoundingVolume;
 
 class TileRasterOverlayDetailsGenerator {
 public:
+    static Rectangle projectRegionRectangle(
+        const Rectangle& rectangle,
+        RasterOverlayProjection projection);
+
     static bool ensureProjectionDetailsFromRegion(
         TileRenderContentState& renderContent,
         const TileBoundingVolume& boundingVolume,

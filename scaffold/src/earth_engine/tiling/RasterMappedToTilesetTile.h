@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace earth_engine {
@@ -82,7 +83,9 @@ public:
                       std::vector<RasterOverlayProjection>& missingProjections,
                       const TilesetTile* parentTile = nullptr,
                       size_t overlayIndex = 0,
-                      bool hasRenderContentDetails = true);
+                      bool hasRenderContentDetails = true,
+                      std::optional<Rectangle> boundingVolumeRectangle =
+                          std::nullopt);
 
     /// cesium-native: check if a higher-resolution tile could be loaded.
     bool isMoreDetailAvailable() const;
