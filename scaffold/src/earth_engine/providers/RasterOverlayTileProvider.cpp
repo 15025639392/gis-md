@@ -1051,7 +1051,7 @@ private:
             const std::string inFlightKey = sourceCacheKey(originalKey);
             auto waiter =
                 [self, ancestorFallback](
-                    const SourceTileAsset* cached) {
+                    InFlightSourceTileAsset::Result cached) {
                     if (cached && cached->image) {
                         LoadedSourceImage source;
                         source.key = cached->key;
@@ -1081,7 +1081,7 @@ private:
             const std::string fallbackInFlightKey = sourceCacheKey(requestedKey);
             auto waiter =
                 [self, ancestorFallback](
-                    const SourceTileAsset* cached) {
+                    InFlightSourceTileAsset::Result cached) {
                     if (cached && cached->image) {
                         LoadedSourceImage source;
                         source.key = cached->key;
@@ -1137,8 +1137,8 @@ private:
                             ? RasterOverlayTile::MoreDetailAvailable::Yes
                             : RasterOverlayTile::MoreDetailAvailable::No;
                     self->cacheSource(originalKey, source);
-                    SourceTileAsset completed =
-                        self->cachedSourceFromLoaded(source);
+                    auto completed = std::make_shared<SourceTileAsset>(
+                        self->cachedSourceFromLoaded(source));
                     if (loadedKey != originalKey) {
                         LoadedSourceImage directSource;
                         directSource.key = loadedKey;
@@ -1149,9 +1149,9 @@ private:
                             source.moreDetailAvailable;
                         self->cacheSource(loadedKey, directSource);
                     }
-                    self->finishInFlightSource(originalKey, &completed);
+                    self->finishInFlightSource(originalKey, completed);
                     for (const TileKey& key : fallbackInFlightKeys) {
-                        self->finishInFlightSource(key, &completed);
+                        self->finishInFlightSource(key, completed);
                     }
                     return;
                 }
@@ -1198,8 +1198,9 @@ private:
     }
 
     void finishInFlightSource(const TileKey& originalKey,
-                              const SourceTileAsset* source) {
-        std::vector<std::function<void(const SourceTileAsset*)>> waiters;
+                              InFlightSourceTileAsset::Result source) {
+        std::vector<std::function<void(InFlightSourceTileAsset::Result)>>
+            waiters;
         {
             std::lock_guard<std::mutex> lock(cacheMutex);
             auto it = inFlight.find(sourceCacheKey(originalKey));

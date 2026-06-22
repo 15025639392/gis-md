@@ -278,7 +278,8 @@ private:
         uint64_t generation = 0;
     };
     struct InFlightSourceTileAsset {
-        std::vector<std::function<void(const SourceTileAsset*)>> waiters;
+        using Result = std::shared_ptr<const SourceTileAsset>;
+        std::vector<std::function<void(Result)>> waiters;
     };
 
     /// Failed tiles (key → first fail timestamp, for retry logic).
