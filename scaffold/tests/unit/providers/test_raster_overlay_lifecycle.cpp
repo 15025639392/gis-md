@@ -694,6 +694,38 @@ TEST(RasterOverlayLifecycleTest, DirectExactSourceUploadUsesSharedSourceAssetLik
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, tile->getState());
 }
 
+TEST(RasterOverlayLifecycleTest, DirectTileUsesParentSubsetFallbackLikeCesiumNative) {
+    ParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey childKey{scheme->id(), 3, 2, 3};
+    const TileKey parentKey{scheme->id(), 2, 1, 1};
+    imagery.failingKey = childKey;
+
+    auto tile = provider.getTile(childKey);
+    ASSERT_NE(nullptr, tile);
+
+    ASSERT_TRUE(provider.loadTile(*tile));
+    ASSERT_EQ(2u, imagery.requestedKeys.size());
+    EXPECT_EQ(childKey, imagery.requestedKeys[0]);
+    EXPECT_EQ(parentKey, imagery.requestedKeys[1]);
+
+    ASSERT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, tile->getState());
+    ASSERT_EQ(1, uploaderPtr->uploadCount);
+    EXPECT_EQ(128, uploaderPtr->lastUpload.width);
+    EXPECT_EQ(128, uploaderPtr->lastUpload.height);
+    EXPECT_EQ(4, uploaderPtr->lastUpload.channels);
+    ASSERT_FALSE(uploaderPtr->lastUpload.pixels.empty());
+    EXPECT_EQ(static_cast<uint8_t>(parentKey.z),
+              uploaderPtr->lastUpload.pixels.front());
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
+              tile->isMoreDetailAvailable());
+}
+
 TEST(RasterOverlayLifecycleTest, RectangleMappingReportsDirectOrComposedPath) {
     RgbImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
@@ -1512,7 +1544,7 @@ TEST(RasterOverlayLifecycleTest, QuadtreeSourceFallbacksAreCachedByRequestedTile
     EXPECT_EQ(1, provider.processPendingUploads(false));
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               firstTile->getState());
-    EXPECT_EQ(nullptr, firstTile->getTexture());
+    EXPECT_NE(nullptr, firstTile->getTexture());
     const int requestsAfterFirstLoad =
         static_cast<int>(imagery.requestedKeys.size());
     EXPECT_TRUE(requestsAfterFirstLoad >= 2);
@@ -1531,7 +1563,7 @@ TEST(RasterOverlayLifecycleTest, QuadtreeSourceFallbacksAreCachedByRequestedTile
               static_cast<int>(imagery.requestedKeys.size()));
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               secondTile->getState());
-    EXPECT_EQ(nullptr, secondTile->getTexture());
+    EXPECT_NE(nullptr, secondTile->getTexture());
     EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
               secondTile->isMoreDetailAvailable());
 }
@@ -1566,7 +1598,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSiblingFallbacksReuseCachedParentSourc
     EXPECT_EQ(1, provider.processPendingUploads(false));
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               firstTile->getState());
-    EXPECT_EQ(nullptr, firstTile->getTexture());
+    EXPECT_NE(nullptr, firstTile->getTexture());
     const int parentRequestsAfterFirstLoad =
         static_cast<int>(std::count(
             imagery.requestedKeys.begin(),
@@ -1581,7 +1613,7 @@ TEST(RasterOverlayLifecycleTest, RectangleSiblingFallbacksReuseCachedParentSourc
 
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               secondTile->getState());
-    EXPECT_EQ(nullptr, secondTile->getTexture());
+    EXPECT_NE(nullptr, secondTile->getTexture());
     EXPECT_EQ(
         parentRequestsAfterFirstLoad,
         static_cast<int>(std::count(
@@ -1645,8 +1677,8 @@ TEST(RasterOverlayLifecycleTest, ConcurrentSiblingFallbacksShareParentSourceInFl
     EXPECT_EQ(2, provider.processPendingUploads(false));
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, westTile->getState());
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, eastTile->getState());
-    EXPECT_EQ(nullptr, westTile->getTexture());
-    EXPECT_EQ(nullptr, eastTile->getTexture());
+    EXPECT_NE(nullptr, westTile->getTexture());
+    EXPECT_NE(nullptr, eastTile->getTexture());
 }
 
 TEST(RasterOverlayLifecycleTest, DirectAncestorFallbackUsesParentTileLikeCesiumNative) {
@@ -1671,8 +1703,8 @@ TEST(RasterOverlayLifecycleTest, DirectAncestorFallbackUsesParentTileLikeCesiumN
 
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               directTile->getState());
-    EXPECT_EQ(nullptr, directTile->getTexture());
-    EXPECT_EQ(0, uploaderPtr->uploadCount);
+    EXPECT_NE(nullptr, directTile->getTexture());
+    EXPECT_EQ(1, uploaderPtr->uploadCount);
     EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
               directTile->isMoreDetailAvailable());
     EXPECT_TRUE(std::find(
@@ -3338,7 +3370,7 @@ TEST(RasterOverlayLifecycleTest, CompositeImageUsesSourceMoreDetailFlagLikeCesiu
               result.moreDetailAvailable);
 }
 
-TEST(RasterOverlayLifecycleTest, CompositeImageReturnsEmptyImageForOnlyAncestorFallbackLikeCesiumNative) {
+TEST(RasterOverlayLifecycleTest, CompositeImageBlitsOnlyAncestorFallbackLikeCesiumNative) {
     auto scheme = TileScheme::createXYZWebMercator();
     Rectangle target = scheme->tileToRectangle(
         TileKey{scheme->id(), 1, 0, 0});
@@ -3360,10 +3392,11 @@ TEST(RasterOverlayLifecycleTest, CompositeImageReturnsEmptyImageForOnlyAncestorF
         8);
 
     ASSERT_NE(nullptr, result.image);
-    EXPECT_EQ(0, result.image->width);
-    EXPECT_EQ(0, result.image->height);
-    EXPECT_EQ(0, result.image->channels);
-    EXPECT_TRUE(result.image->pixels.empty());
+    EXPECT_EQ(2, result.image->width);
+    EXPECT_EQ(2, result.image->height);
+    EXPECT_EQ(4, result.image->channels);
+    ASSERT_FALSE(result.image->pixels.empty());
+    EXPECT_EQ(20, result.image->pixels.front());
     EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
               result.moreDetailAvailable);
 }

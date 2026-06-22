@@ -867,22 +867,6 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
                        }),
         sources.end());
     if (sources.empty()) return {};
-    const bool haveAnyUsefulImageData =
-        std::any_of(sources.begin(),
-                    sources.end(),
-                    [](const LoadedSourceImage& source) {
-                        return source.image &&
-                               !source.sourceSubset.has_value();
-                    });
-    if (!haveAnyUsefulImageData) {
-        RasterOverlayTileProvider::CompositeImageResult result;
-        result.image = std::make_unique<DecodedImage>();
-        result.rectangle = Rectangle();
-        result.moreDetailAvailable =
-            RasterOverlayTile::MoreDetailAvailable::No;
-        return result;
-    }
-
     double projectedWidthPerPixel = std::numeric_limits<double>::max();
     double projectedHeightPerPixel = std::numeric_limits<double>::max();
     for (const LoadedSourceImage& source : sources) {
