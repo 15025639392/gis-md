@@ -1,10 +1,16 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
+#include "earth_engine/providers/DebugImageryProvider.h"
+#include "earth_engine/layers/ActivatedRasterOverlay.h"
+#include "earth_engine/layers/RasterOverlay.h"
+#include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/tiling/TileEmptyContentRegistry.h"
 #include "earth_engine/tiling/TileContentUploadCommitter.h"
 #include "earth_engine/tiling/TilePendingLoadCommitCoordinator.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/TileScheme.h"
 
 #include <memory>
 #include <unordered_map>
@@ -921,6 +927,102 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_DOUBLE_EQ(-25.0, committedDetails.boundingRegion.minimumHeight);
     EXPECT_DOUBLE_EQ(125.0, committedDetails.boundingRegion.maximumHeight);
     EXPECT_EQ(1, ensureGltfCalls);
+    EXPECT_TRUE(resourcesDirty);
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
+     ContentUploadGeneratesRasterDetailsFromUpdatedBoundsBeforeTileContentBounds) {
+    const TileKey key{"test", 0, 0, 0};
+    const std::string cacheKey = "test:gltf-terrain-updated-bounds";
+    TilesetTile tile(key, Rectangle{});
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    const Rectangle staleContentRectangle =
+        Rectangle::fromDegrees(-80.0, -30.0, -70.0, -20.0);
+    tile.contentBoundingVolume =
+        TileBoundingVolume::fromRegion(staleContentRectangle, -10.0, 10.0);
+
+    const Rectangle updatedRectangle =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    TileLoadResultMetadata metadata;
+    metadata.updatedBoundingVolume =
+        TileBoundingVolume::fromRegion(updatedRectangle, -25.0, 125.0);
+
+    PendingTileLoad upload{TileLoadDomain::Content,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        makeGltfTerrainContentResult(
+            std::make_unique<GltfModel>(),
+            std::move(metadata))};
+
+    RasterOverlay overlay(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activeOverlay(overlay);
+    std::vector<ActivatedRasterOverlay*> rasterOverlays{&activeOverlay};
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{
+            TileLoadDomain::Content,
+            key,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadResult::createRenderableTerrain()});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitUpload(
+        upload,
+        nullptr,
+        nullptr,
+        rasterOverlays,
+        terrainCache,
+        lifecycle,
+        false,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [](TilesetTile&) {},
+        [](TilesetTile& committedTile) {
+            committedTile.content.renderContent.addGltfPrimitiveResource(
+                GltfPrimitiveRenderResources{});
+            committedTile.markRenderContentDone();
+        },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    const RasterOverlayDetails& committedDetails =
+        tile.content.renderContent.rasterOverlayDetails();
+    const Rectangle* rectangle =
+        committedDetails.findRectangleForOverlayProjection(
+            RasterOverlayProjection::WebMercator);
+    ASSERT_NE(nullptr, rectangle);
+
+    const Rectangle expectedUpdatedProjection = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        updatedRectangle);
+    const Rectangle staleContentProjection = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        staleContentRectangle);
+    EXPECT_EQ(expectedUpdatedProjection, *rectangle);
+    EXPECT_NE(staleContentProjection, *rectangle);
+    EXPECT_EQ(updatedRectangle, committedDetails.boundingRegion.rectangle);
+    EXPECT_TRUE(tile.contentBoundingVolume.has_value());
+    EXPECT_EQ(staleContentRectangle, tile.contentBoundingVolume->region);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }

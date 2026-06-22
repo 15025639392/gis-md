@@ -6,9 +6,31 @@
 #include "TilesetTile.h"
 #include "../content/GltfContentProvider.h"
 
+#include <optional>
 #include <utility>
 
 namespace earth_engine {
+namespace {
+
+std::optional<TileBoundingVolume> effectiveContentBoundingVolumeForLoad(
+    const TilesetTile& tile,
+    const TileLoadedContent& content) {
+    if (content.metadata.updatedContentBoundingVolume) {
+        return *content.metadata.updatedContentBoundingVolume;
+    }
+    if (content.metadata.updatedBoundingVolume) {
+        return *content.metadata.updatedBoundingVolume;
+    }
+    if (tile.contentBoundingVolume) {
+        return *tile.contentBoundingVolume;
+    }
+    if (tile.boundingVolume) {
+        return *tile.boundingVolume;
+    }
+    return std::nullopt;
+}
+
+} // namespace
 
 void TileContentUploadCommitter::applyAvailabilityUpdates(
     TilesetContentProvider* contentProvider,
@@ -29,13 +51,18 @@ void TileContentUploadCommitter::prepareRenderContent(
     TileLoadedContent&& content,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
     RenderDevice* device) {
+    const std::optional<TileBoundingVolume> effectiveContentBoundingVolume =
+        effectiveContentBoundingVolumeForLoad(tile, content);
     TileContentUploadPolicy::prepareGltfRenderContent(
         tile,
         std::move(content));
     if (tile.content.renderContent.hasGltfModel()) {
         TileRasterOverlayDetailsGenerator::
             ensureProjectionDetailsFromActiveOverlays(
-                tile,
+                tile.content.renderContent,
+                effectiveContentBoundingVolume
+                    ? &*effectiveContentBoundingVolume
+                    : nullptr,
                 rasterOverlays,
                 device);
     }
