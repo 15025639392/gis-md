@@ -7,16 +7,14 @@ namespace earth_engine {
 namespace {
 
 std::unique_ptr<GltfModel> makeQuantizedMeshGltfModel(
-    const SurfaceTileMesh& surfaceMesh) {
+    const QuantizedMeshParser::DecodedTile& decodedTile) {
     auto model = std::make_unique<GltfModel>();
-    model->rasterOverlayDetails = surfaceMesh.rasterOverlayDetails;
-    model->terrainWaterMask = surfaceMesh.waterMask;
-    if (surfaceMesh.hasLocalOriginEcef) {
-        model->preferredLocalOriginEcef = surfaceMesh.localOriginEcef;
-    }
-    if (!surfaceMesh.waterMask.allLand &&
-        !surfaceMesh.waterMask.allWater &&
-        !surfaceMesh.waterMask.data.empty()) {
+    model->rasterOverlayDetails = decodedTile.rasterOverlayDetails;
+    model->terrainWaterMask = decodedTile.waterMask;
+    model->preferredLocalOriginEcef = decodedTile.localOriginEcef;
+    if (!decodedTile.waterMask.allLand &&
+        !decodedTile.waterMask.allWater &&
+        !decodedTile.waterMask.data.empty()) {
         GltfTexture waterMaskTexture;
         waterMaskTexture.image.width = 256;
         waterMaskTexture.image.height = 256;
@@ -24,7 +22,7 @@ std::unique_ptr<GltfModel> makeQuantizedMeshGltfModel(
         waterMaskTexture.image.pixels.reserve(256u * 256u);
         for (size_t i = 0; i < 256u * 256u; ++i) {
             waterMaskTexture.image.pixels.push_back(
-                surfaceMesh.waterMask.data[i * 4u + 3u]);
+                decodedTile.waterMask.data[i * 4u + 3u]);
         }
         waterMaskTexture.sampler.minFilter = GltfTextureFilter::Linear;
         waterMaskTexture.sampler.magFilter = GltfTextureFilter::Linear;
@@ -36,16 +34,16 @@ std::unique_ptr<GltfModel> makeQuantizedMeshGltfModel(
     }
 
     GltfPrimitive primitive;
-    primitive.vertices = surfaceMesh.vertices;
-    primitive.indices = surfaceMesh.indices;
-    primitive.skirtMetadata = surfaceMesh.skirtMeta;
+    primitive.vertices = decodedTile.vertices;
+    primitive.indices = decodedTile.indices;
+    primitive.skirtMetadata = decodedTile.skirtMetadata;
     primitive.primitiveMode = GltfPrimitiveMode::Triangles;
     primitive.doubleSided = false;
     primitive.metallicFactor = 0.0f;
     primitive.roughnessFactor = 1.0f;
     primitive.unlit = false;
-    primitive.vertexTexCoords[0].reserve(surfaceMesh.vertices.size());
-    for (const SurfaceVertex& vertex : surfaceMesh.vertices) {
+    primitive.vertexTexCoords[0].reserve(decodedTile.vertices.size());
+    for (const SurfaceVertex& vertex : decodedTile.vertices) {
         primitive.vertexTexCoords[0].push_back(vertex.uv);
     }
     primitive.runtime.baseVertices = primitive.vertices;
@@ -65,37 +63,33 @@ QuantizedMeshContentLoadResult QuantizedMeshContentLoader::load(
     const std::vector<QuantizedMeshMetadataContent>& metadata) {
     QuantizedMeshContentLoadResult result;
 
-    std::unique_ptr<SurfaceTileMesh> surfaceMesh =
-        QuantizedMeshParser::parseToSurfaceTileMesh(
+    std::unique_ptr<QuantizedMeshParser::DecodedTile> decodedTile =
+        QuantizedMeshParser::parseToDecodedTile(
             data,
             size,
             tileRectangle,
             enableWaterMask);
-    if (!surfaceMesh) {
+    if (!decodedTile) {
         return result;
     }
 
     std::unique_ptr<GltfModel> gltfModel =
-        makeQuantizedMeshGltfModel(*surfaceMesh);
+        makeQuantizedMeshGltfModel(*decodedTile);
     if (!gltfModel || gltfModel->primitives.empty()) {
         return result;
     }
 
     result.status = QuantizedMeshContentLoadStatus::Success;
-    if (surfaceMesh->hasHeightRange) {
-        result.metadata.updatedBoundingVolume = TileBoundingVolume::fromRegion(
-            tileRectangle,
-            surfaceMesh->minimumHeight,
-            surfaceMesh->maximumHeight);
-        result.metadata.terrainHeightRange = {
-            surfaceMesh->minimumHeight,
-            surfaceMesh->maximumHeight};
-    }
-    if (surfaceMesh->hasHorizonOcclusionPoint) {
-        result.metadata.horizonOcclusionPoint =
-            surfaceMesh->horizonOcclusionPoint;
-    }
-    result.metadata.rasterOverlayDetails = surfaceMesh->rasterOverlayDetails;
+    result.metadata.updatedBoundingVolume = TileBoundingVolume::fromRegion(
+        tileRectangle,
+        decodedTile->minimumHeight,
+        decodedTile->maximumHeight);
+    result.metadata.terrainHeightRange = {
+        decodedTile->minimumHeight,
+        decodedTile->maximumHeight};
+    result.metadata.horizonOcclusionPoint =
+        decodedTile->horizonOcclusionPoint;
+    result.metadata.rasterOverlayDetails = decodedTile->rasterOverlayDetails;
     result.gltfModel = std::move(gltfModel);
     result.availabilityUpdates.reserve(metadata.size());
     for (const QuantizedMeshMetadataContent& item : metadata) {

@@ -158,7 +158,7 @@ std::vector<QuantizedMeshAvailabilityRange> QuantizedMeshParser::parseMetadataAv
     return availability.value_or(std::vector<QuantizedMeshAvailabilityRange>{});
 }
 
-std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
+std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDecodedTile(
     const uint8_t* data,
     size_t len,
     const Rectangle& bounds,
@@ -341,20 +341,17 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
         return nullptr;
     }
 
-    auto mesh = std::make_unique<SurfaceTileMesh>();
-    mesh->rasterOverlayDetails.setGeographicRectangle(
+    auto decoded = std::make_unique<DecodedTile>();
+    decoded->rasterOverlayDetails.setGeographicRectangle(
         bounds,
         hdr.minimumHeight,
         hdr.maximumHeight);
-    mesh->hasLocalOriginEcef = true;
-    mesh->localOriginEcef =
+    decoded->localOriginEcef =
         Vec3(hdr.boundingSphereX, hdr.boundingSphereY, hdr.boundingSphereZ);
-    mesh->hasHeightRange = true;
-    mesh->minimumHeight = hdr.minimumHeight;
-    mesh->maximumHeight = hdr.maximumHeight;
-    mesh->horizonOcclusionPoint =
+    decoded->minimumHeight = hdr.minimumHeight;
+    decoded->maximumHeight = hdr.maximumHeight;
+    decoded->horizonOcclusionPoint =
         Vec3(hdr.horizonOcclusionX, hdr.horizonOcclusionY, hdr.horizonOcclusionZ);
-    mesh->hasHorizonOcclusionPoint = true;
 
     // --- Parse extensions (oct-encoded normals, water mask, metadata) ---
     WaterMask waterMask;
@@ -411,8 +408,8 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
             std::string metadataJson(
                 reinterpret_cast<const char*>(data + jsonOffset),
                 metadataJsonLength);
-            mesh->hasMetadataAvailability = true;
-            mesh->metadataAvailability =
+            decoded->hasMetadataAvailability = true;
+            decoded->metadataAvailability =
                 parseMetadataAvailabilityJson(metadataJson);
         }
         if (extLen > len - offset) break;
@@ -426,11 +423,8 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     const double hMin = hdr.minimumHeight, hRange = hdr.maximumHeight - hMin;
     const double uScale = 1.0 / 32767.0, hScale = 1.0 / 32767.0;
 
-    mesh->gridSize = 0;  // irregular mesh
-    mesh->winding = SurfaceTileMeshWinding::Outward;
-    mesh->sampling = SurfaceTileSampling::WebMercatorVToWgs84Ecef;
-    mesh->vertices.reserve(vc);
-    mesh->indices.reserve(idxCount);
+    decoded->vertices.reserve(vc);
+    decoded->indices.reserve(idxCount);
 
     // Vertices
     for (uint32_t i = 0; i < vc; ++i) {
@@ -450,32 +444,32 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
             static_cast<float>(u),
             static_cast<float>(1.0 - std::clamp(v, 0.0, 1.0))
         };
-        mesh->vertices.push_back(sv);
+        decoded->vertices.push_back(sv);
     }
 
     // Indices
-    for (uint32_t idx : indices) mesh->indices.push_back(idx);
+    for (uint32_t idx : indices) decoded->indices.push_back(idx);
 
     // --- Apply normals ---
     if (octNormals.size() == vc) {
         // Use the oct-encoded per-vertex normals (cesium-native quality)
         for (uint32_t i = 0; i < vc; ++i) {
-            mesh->vertices[i].normalEcef = octNormals[i];
+            decoded->vertices[i].normalEcef = octNormals[i];
         }
     } else {
         // Fallback: face-average normals from the triangulation
         for (uint32_t t = 0; t < triCount; ++t) {
             uint32_t a = indices[t * 3], b = indices[t * 3 + 1], c = indices[t * 3 + 2];
-            SurfaceVertex& va = mesh->vertices[a];
-            SurfaceVertex& vb = mesh->vertices[b];
-            SurfaceVertex& vc = mesh->vertices[c];
+            SurfaceVertex& va = decoded->vertices[a];
+            SurfaceVertex& vb = decoded->vertices[b];
+            SurfaceVertex& vc = decoded->vertices[c];
             Vec3 fn = (vb.positionEcef - va.positionEcef)
                 .cross(vc.positionEcef - va.positionEcef);
             va.normalEcef += fn;
             vb.normalEcef += fn;
             vc.normalEcef += fn;
         }
-        for (auto& v : mesh->vertices) {
+        for (auto& v : decoded->vertices) {
             if (v.normalEcef.lengthSquared() > 0.0)
                 v.normalEcef = v.normalEcef.normalized();
             else
@@ -484,30 +478,30 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     }
 
     // --- Skirt ---
-    mesh->skirtMeta.noSkirtVerticesBegin = 0;
-    mesh->skirtMeta.noSkirtVerticesCount = vc;
-    mesh->skirtMeta.noSkirtIndicesBegin = 0;
-    mesh->skirtMeta.noSkirtIndicesCount = static_cast<uint32_t>(mesh->indices.size());
-    mesh->skirtMeta.meshCenter = mesh->localOriginEcef;
+    decoded->skirtMetadata.noSkirtVerticesBegin = 0;
+    decoded->skirtMetadata.noSkirtVerticesCount = vc;
+    decoded->skirtMetadata.noSkirtIndicesBegin = 0;
+    decoded->skirtMetadata.noSkirtIndicesCount = static_cast<uint32_t>(decoded->indices.size());
+    decoded->skirtMetadata.meshCenter = decoded->localOriginEcef;
 
     // cesium-native skirt: partial_sort_copy each edge by UV coordinate,
     // then create bottom vertices and triangle strips.
     const double lonOff = (eastLng - westLng) * 0.0001;
     const double latOff = (northLat - southLat) * 0.0001;
     const double skirtH = calculateSkirtHeight(ellipsoid, bounds);
-    mesh->skirtMeta.skirtWestHeight = skirtH;
-    mesh->skirtMeta.skirtSouthHeight = skirtH;
-    mesh->skirtMeta.skirtEastHeight = skirtH;
-    mesh->skirtMeta.skirtNorthHeight = skirtH;
+    decoded->skirtMetadata.skirtWestHeight = skirtH;
+    decoded->skirtMetadata.skirtSouthHeight = skirtH;
+    decoded->skirtMetadata.skirtEastHeight = skirtH;
+    decoded->skirtMetadata.skirtNorthHeight = skirtH;
 
     auto addSkirtEdge = [&](const std::vector<uint32_t>& edgeIdx,
                              double lo, double la, bool reverse) {
         if (edgeIdx.size() < 2) return;
-        const uint32_t firstSkirt = static_cast<uint32_t>(mesh->vertices.size());
+        const uint32_t firstSkirt = static_cast<uint32_t>(decoded->vertices.size());
 
         for (size_t i = 0; i < edgeIdx.size(); ++i) {
             size_t ei = reverse ? (edgeIdx.size() - 1 - i) : i;
-            const SurfaceVertex& top = mesh->vertices[edgeIdx[ei]];
+            const SurfaceVertex& top = decoded->vertices[edgeIdx[ei]];
             Cartographic cart = ellipsoid.cartesianToCartographic(top.positionEcef);
             Cartographic sc = Cartographic::fromRadians(
                 cart.longitude() + lo, cart.latitude() + la, cart.height() - skirtH);
@@ -516,7 +510,7 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
             sv.positionEcef = ellipsoid.cartographicToCartesian(sc);
             sv.normalEcef = top.normalEcef;
             sv.uv = top.uv;
-            mesh->vertices.push_back(sv);
+            decoded->vertices.push_back(sv);
         }
 
         for (size_t i = 0; i + 1 < edgeIdx.size(); ++i) {
@@ -524,8 +518,8 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
             uint32_t t1 = edgeIdx[reverse ? (edgeIdx.size() - 2 - i) : (i + 1)];
             uint32_t s0 = firstSkirt + static_cast<uint32_t>(i);
             uint32_t s1 = firstSkirt + static_cast<uint32_t>(i + 1);
-            mesh->indices.push_back(t0); mesh->indices.push_back(t1); mesh->indices.push_back(s0);
-            mesh->indices.push_back(s0); mesh->indices.push_back(t1); mesh->indices.push_back(s1);
+            decoded->indices.push_back(t0); decoded->indices.push_back(t1); decoded->indices.push_back(s0);
+            decoded->indices.push_back(s0); decoded->indices.push_back(t1); decoded->indices.push_back(s1);
         }
     };
 
@@ -627,11 +621,11 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
     addSkirtEdge(sortedEast,  -lonOff, 0,       false);
     addSkirtEdge(sortedNorth, 0,       latOff,  false);
 
-    mesh->gpuVertices.resize(mesh->vertices.size());
-    const Vec3 localOrigin = mesh->localOriginEcef;
-    for (size_t i = 0; i < mesh->vertices.size(); ++i) {
-        const SurfaceVertex& src = mesh->vertices[i];
-        SurfaceGpuVertex& dst = mesh->gpuVertices[i];
+    decoded->gpuVertices.resize(decoded->vertices.size());
+    const Vec3 localOrigin = decoded->localOriginEcef;
+    for (size_t i = 0; i < decoded->vertices.size(); ++i) {
+        const SurfaceVertex& src = decoded->vertices[i];
+        SurfaceGpuVertex& dst = decoded->gpuVertices[i];
         const Vec3 rel = src.positionEcef - localOrigin;
         Vec3 nrm = src.normalEcef;
         if (nrm.lengthSquared() > 0.0) {
@@ -649,7 +643,40 @@ std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
         dst.uv[1] = src.uv[1];
     }
 
-    mesh->waterMask = std::move(waterMask);
+    decoded->waterMask = std::move(waterMask);
+    return decoded;
+}
+
+std::unique_ptr<SurfaceTileMesh> QuantizedMeshParser::parseToSurfaceTileMesh(
+    const uint8_t* data,
+    size_t len,
+    const Rectangle& bounds,
+    bool enableWaterMask) {
+    std::unique_ptr<DecodedTile> decoded =
+        parseToDecodedTile(data, len, bounds, enableWaterMask);
+    if (!decoded) {
+        return nullptr;
+    }
+
+    auto mesh = std::make_unique<SurfaceTileMesh>();
+    mesh->vertices = std::move(decoded->vertices);
+    mesh->indices = std::move(decoded->indices);
+    mesh->gpuVertices = std::move(decoded->gpuVertices);
+    mesh->gridSize = 0;
+    mesh->winding = SurfaceTileMeshWinding::Outward;
+    mesh->sampling = SurfaceTileSampling::WebMercatorVToWgs84Ecef;
+    mesh->hasLocalOriginEcef = true;
+    mesh->localOriginEcef = decoded->localOriginEcef;
+    mesh->hasHeightRange = true;
+    mesh->minimumHeight = decoded->minimumHeight;
+    mesh->maximumHeight = decoded->maximumHeight;
+    mesh->hasHorizonOcclusionPoint = true;
+    mesh->horizonOcclusionPoint = decoded->horizonOcclusionPoint;
+    mesh->skirtMeta = decoded->skirtMetadata;
+    mesh->waterMask = std::move(decoded->waterMask);
+    mesh->hasMetadataAvailability = decoded->hasMetadataAvailability;
+    mesh->metadataAvailability = std::move(decoded->metadataAvailability);
+    mesh->rasterOverlayDetails = std::move(decoded->rasterOverlayDetails);
     return mesh;
 }
 
