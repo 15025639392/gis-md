@@ -621,28 +621,6 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
     addSkirtEdge(sortedEast,  lonOff,  0,       false);
     addSkirtEdge(sortedNorth, 0,       latOff,  false);
 
-    decoded->gpuVertices.resize(decoded->vertices.size());
-    const Vec3 localOrigin = decoded->localOriginEcef;
-    for (size_t i = 0; i < decoded->vertices.size(); ++i) {
-        const SurfaceVertex& src = decoded->vertices[i];
-        SurfaceGpuVertex& dst = decoded->gpuVertices[i];
-        const Vec3 rel = src.positionEcef - localOrigin;
-        Vec3 nrm = src.normalEcef;
-        if (nrm.lengthSquared() > 0.0) {
-            nrm = nrm.normalized();
-        } else {
-            nrm = ellipsoid.geodeticSurfaceNormal(src.positionEcef);
-        }
-        dst.pos[0] = static_cast<float>(rel.x());
-        dst.pos[1] = static_cast<float>(rel.y());
-        dst.pos[2] = static_cast<float>(rel.z());
-        dst.nrm[0] = static_cast<float>(nrm.x());
-        dst.nrm[1] = static_cast<float>(nrm.y());
-        dst.nrm[2] = static_cast<float>(nrm.z());
-        dst.uv[0] = src.uv[0];
-        dst.uv[1] = src.uv[1];
-    }
-
     decoded->waterMask = std::move(waterMask);
     return decoded;
 }

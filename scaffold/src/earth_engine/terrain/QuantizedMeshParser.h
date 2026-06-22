@@ -32,7 +32,6 @@ public:
     struct DecodedTile {
         std::vector<SurfaceVertex> vertices;
         std::vector<uint32_t> indices;
-        std::vector<SurfaceGpuVertex> gpuVertices;
         Vec3 localOriginEcef = Vec3::zero();
         double minimumHeight = 0.0;
         double maximumHeight = 0.0;
