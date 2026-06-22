@@ -82,6 +82,15 @@ std::unique_ptr<GltfModel> makeQuantizedMeshGltfModel(
     primitive.vertices = decodedTile.vertices;
     primitive.indices = decodedTile.indices;
     primitive.skirtMetadata = decodedTile.skirtMetadata;
+    primitive.terrainOnlyWater = decodedTile.waterMask.allWater;
+    primitive.terrainOnlyLand = decodedTile.waterMask.allLand;
+    primitive.terrainWaterMaskTextureIndex =
+        model->terrainWaterMaskTextureIndex;
+    primitive.terrainWaterMaskTranslationX =
+        decodedTile.waterMask.translationX;
+    primitive.terrainWaterMaskTranslationY =
+        decodedTile.waterMask.translationY;
+    primitive.terrainWaterMaskScale = decodedTile.waterMask.scale;
     primitive.primitiveMode = GltfPrimitiveMode::Triangles;
     primitive.doubleSided = false;
     primitive.metallicFactor = 0.0f;

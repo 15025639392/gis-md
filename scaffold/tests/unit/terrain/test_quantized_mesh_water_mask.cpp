@@ -116,6 +116,12 @@ TEST(QuantizedMeshContentLoaderWaterMaskTest,
     EXPECT_TRUE(allWater.gltfModel->terrainWaterMask.allWater);
     EXPECT_FALSE(allWater.gltfModel->terrainWaterMask.allLand);
     EXPECT_TRUE(allWater.gltfModel->terrainWaterMask.data.empty());
+    ASSERT_EQ(1u, allWater.gltfModel->primitives.size());
+    EXPECT_TRUE(allWater.gltfModel->primitives.front().terrainOnlyWater);
+    EXPECT_FALSE(allWater.gltfModel->primitives.front().terrainOnlyLand);
+    EXPECT_FALSE(
+        allWater.gltfModel->primitives.front()
+            .terrainWaterMaskTextureIndex.has_value());
 
     const std::vector<uint8_t> allLandBytes =
         makeQuantizedMeshBytesWithWaterMask({0});
@@ -126,6 +132,12 @@ TEST(QuantizedMeshContentLoaderWaterMaskTest,
     EXPECT_TRUE(allLand.gltfModel->terrainWaterMask.allLand);
     EXPECT_FALSE(allLand.gltfModel->terrainWaterMask.allWater);
     EXPECT_TRUE(allLand.gltfModel->terrainWaterMask.data.empty());
+    ASSERT_EQ(1u, allLand.gltfModel->primitives.size());
+    EXPECT_FALSE(allLand.gltfModel->primitives.front().terrainOnlyWater);
+    EXPECT_TRUE(allLand.gltfModel->primitives.front().terrainOnlyLand);
+    EXPECT_FALSE(
+        allLand.gltfModel->primitives.front()
+            .terrainWaterMaskTextureIndex.has_value());
 }
 
 TEST(QuantizedMeshContentLoaderWaterMaskTest,
@@ -152,6 +164,16 @@ TEST(QuantizedMeshContentLoaderWaterMaskTest,
     ASSERT_TRUE(result.gltfModel->terrainWaterMaskTextureIndex.has_value());
     ASSERT_LT(*result.gltfModel->terrainWaterMaskTextureIndex,
               result.gltfModel->textures.size());
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    EXPECT_FALSE(primitive.terrainOnlyWater);
+    EXPECT_FALSE(primitive.terrainOnlyLand);
+    ASSERT_TRUE(primitive.terrainWaterMaskTextureIndex.has_value());
+    EXPECT_EQ(*result.gltfModel->terrainWaterMaskTextureIndex,
+              *primitive.terrainWaterMaskTextureIndex);
+    EXPECT_DOUBLE_EQ(0.0, primitive.terrainWaterMaskTranslationX);
+    EXPECT_DOUBLE_EQ(0.0, primitive.terrainWaterMaskTranslationY);
+    EXPECT_DOUBLE_EQ(1.0, primitive.terrainWaterMaskScale);
     const GltfTexture& texture =
         result.gltfModel->textures[*result.gltfModel->terrainWaterMaskTextureIndex];
     EXPECT_EQ(256, texture.image.width);

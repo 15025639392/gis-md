@@ -693,6 +693,17 @@ void scaleWaterMask(WaterMask& waterMask, const UpsampledQuadtreeNode& childID) 
     waterMask.translationY += waterMask.scale * (childKeepsNorth(childID) ? 1.0 : 0.0);
 }
 
+void applyWaterMaskToPrimitive(GltfPrimitive& primitive,
+                               const WaterMask& waterMask,
+                               std::optional<size_t> textureIndex) {
+    primitive.terrainOnlyWater = waterMask.allWater;
+    primitive.terrainOnlyLand = waterMask.allLand;
+    primitive.terrainWaterMaskTextureIndex = textureIndex;
+    primitive.terrainWaterMaskTranslationX = waterMask.translationX;
+    primitive.terrainWaterMaskTranslationY = waterMask.translationY;
+    primitive.terrainWaterMaskScale = waterMask.scale;
+}
+
 void rebuildRuntimeBaseVerticesForNode(GltfPrimitive& primitive,
                                        const GltfModel& model) {
     primitive.runtime.baseVertices = primitive.vertices;
@@ -735,6 +746,10 @@ std::unique_ptr<GltfModel> GltfTerrainUpsampler::upsampleForRasterOverlay(
                 childID,
                 textureCoordinateIndex,
                 hasInvertedVCoordinate)) {
+            applyWaterMaskToPrimitive(
+                upsampled,
+                result->terrainWaterMask,
+                result->terrainWaterMaskTextureIndex);
             rebuildRuntimeBaseVerticesForNode(upsampled, *result);
             result->primitives.push_back(std::move(upsampled));
         }

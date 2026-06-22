@@ -32,6 +32,12 @@ GltfModel makeParentModel() {
         {1.0f, 1.0f}};
     primitive.runtime.baseVertices = primitive.vertices;
     primitive.runtime.hasNormals = true;
+    primitive.terrainOnlyWater = false;
+    primitive.terrainOnlyLand = false;
+    primitive.terrainWaterMaskTextureIndex = 0;
+    primitive.terrainWaterMaskTranslationX = 0.25;
+    primitive.terrainWaterMaskTranslationY = 0.125;
+    primitive.terrainWaterMaskScale = 0.5;
     SkirtMetadata skirt;
     skirt.noSkirtIndicesBegin = 0;
     skirt.noSkirtIndicesCount = 6;
@@ -49,6 +55,8 @@ GltfModel makeParentModel() {
     model.terrainWaterMask.translationX = 0.25;
     model.terrainWaterMask.translationY = 0.125;
     model.terrainWaterMask.scale = 0.5;
+    model.terrainWaterMaskTextureIndex = 0;
+    model.textures.emplace_back();
     return model;
 }
 
@@ -156,6 +164,11 @@ TEST(GltfTerrainUpsamplerTest,
     EXPECT_DOUBLE_EQ(0.25, upsampled->terrainWaterMask.translationX);
     EXPECT_DOUBLE_EQ(0.125, upsampled->terrainWaterMask.translationY);
     EXPECT_DOUBLE_EQ(0.25, upsampled->terrainWaterMask.scale);
+    ASSERT_TRUE(primitive.terrainWaterMaskTextureIndex.has_value());
+    EXPECT_EQ(0u, *primitive.terrainWaterMaskTextureIndex);
+    EXPECT_DOUBLE_EQ(0.25, primitive.terrainWaterMaskTranslationX);
+    EXPECT_DOUBLE_EQ(0.125, primitive.terrainWaterMaskTranslationY);
+    EXPECT_DOUBLE_EQ(0.25, primitive.terrainWaterMaskScale);
 }
 
 TEST(GltfTerrainUpsamplerTest,
@@ -178,6 +191,9 @@ TEST(GltfTerrainUpsamplerTest,
     EXPECT_DOUBLE_EQ(0.5, upsampled->terrainWaterMask.translationX);
     EXPECT_DOUBLE_EQ(0.375, upsampled->terrainWaterMask.translationY);
     EXPECT_DOUBLE_EQ(0.25, upsampled->terrainWaterMask.scale);
+    EXPECT_DOUBLE_EQ(0.5, primitive.terrainWaterMaskTranslationX);
+    EXPECT_DOUBLE_EQ(0.375, primitive.terrainWaterMaskTranslationY);
+    EXPECT_DOUBLE_EQ(0.25, primitive.terrainWaterMaskScale);
 }
 
 TEST(GltfTerrainUpsamplerTest,

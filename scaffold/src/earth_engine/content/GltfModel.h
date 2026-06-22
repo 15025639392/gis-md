@@ -120,6 +120,12 @@ struct GltfPrimitive {
     std::vector<GltfInstance> instances;
     GltfPrimitiveRuntime runtime;
     std::optional<SkirtMetadata> skirtMetadata;
+    bool terrainOnlyWater = false;
+    bool terrainOnlyLand = true;
+    std::optional<size_t> terrainWaterMaskTextureIndex;
+    double terrainWaterMaskTranslationX = 0.0;
+    double terrainWaterMaskTranslationY = 0.0;
+    double terrainWaterMaskScale = 1.0;
     GltfPrimitiveMode primitiveMode = GltfPrimitiveMode::Triangles;
     std::array<float, 4> baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f};
     std::optional<size_t> baseColorTextureIndex;
