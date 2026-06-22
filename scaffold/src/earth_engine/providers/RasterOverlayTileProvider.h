@@ -181,10 +181,7 @@ public:
     void setSubTileCacheBytes(int64_t subTileCacheBytes);
     int getMinimumLevel() const;
     int getMaximumLevel() const;
-    void setLevelRange(int minimumLevel, int maximumLevel) {
-        minimumLevel_ = minimumLevel > 0 ? minimumLevel : 0;
-        maximumLevel_ = maximumLevel > 0 ? maximumLevel : 0;
-    }
+    void setLevelRange(int minimumLevel, int maximumLevel);
 
     /// Process completed uploads on the main thread.
     /// Should be called once per frame.
@@ -266,6 +263,7 @@ private:
                         const Rectangle& outputBounds,
                         const std::string& cacheKey,
                         FrameResourceBudget* budget);
+    void refreshSourceAssetDepot();
 
     /// Internal: load a composite raster tile by combining the provider's
     /// quadtree imagery tiles that overlap its geometry rectangle.
@@ -344,6 +342,7 @@ private:
     };
     std::shared_ptr<ProviderAsyncState> asyncState_ =
         std::make_shared<ProviderAsyncState>();
+    std::shared_ptr<QuadtreeSourceAssetDepot> sourceAssetDepot_;
 
     /// Monotonic frame counter, updated by trimUnusedTiles.
     /// Used to stamp lastUsedFrame on tiles in getTile().

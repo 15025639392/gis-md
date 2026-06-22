@@ -1245,26 +1245,17 @@ private:
 
 struct RasterOverlayTileProvider::QuadtreeSourceRequest
     : public std::enable_shared_from_this<QuadtreeSourceRequest> {
-    QuadtreeSourceRequest(ImageryProvider& imageryProvider,
-                          const TileScheme& tileScheme,
-                          std::shared_ptr<ProviderAsyncState> asyncState,
+    QuadtreeSourceRequest(const TileScheme& tileScheme,
+                          std::shared_ptr<QuadtreeSourceAssetDepot> sourceDepot,
                           QuadtreeSourcePlan plan,
                           Rectangle bounds,
                           Rectangle outputRectangle,
                           int textureSize,
-                          int minimumSourceLevel,
                           int maximumSourceLevel,
                           CompositeRequestSuccess success,
                           CompositeRequestFailure failure)
-        : provider(imageryProvider)
-        , scheme(tileScheme)
-        , state(std::move(asyncState))
-        , depot(std::make_shared<QuadtreeSourceAssetDepot>(
-              provider,
-              scheme,
-              state,
-              minimumSourceLevel,
-              maximumSourceLevel))
+        : scheme(tileScheme)
+        , depot(std::move(sourceDepot))
         , sourcePlan(std::move(plan))
         , targetBounds(bounds)
         , outputBounds(outputRectangle)
@@ -1367,9 +1358,7 @@ private:
         }
     }
 
-    ImageryProvider& provider;
     const TileScheme& scheme;
-    std::shared_ptr<ProviderAsyncState> state;
     std::shared_ptr<QuadtreeSourceAssetDepot> depot;
     QuadtreeSourcePlan sourcePlan;
     Rectangle targetBounds;
@@ -1425,7 +1414,9 @@ RasterOverlayTileProvider::RasterOverlayTileProvider(ImageryProvider& provider,
     : provider_(provider)
     , scheme_(scheme)
     , projection_(projectionForScheme(scheme))
-    , textureUploader_(std::move(textureUploader)) {}
+    , textureUploader_(std::move(textureUploader)) {
+    refreshSourceAssetDepot();
+}
 
 RasterOverlayTileProvider::~RasterOverlayTileProvider() {
     asyncState_->alive.store(false, std::memory_order_release);
@@ -1469,8 +1460,24 @@ void RasterOverlayTileProvider::setSubTileCacheBytes(int64_t subTileCacheBytes) 
     }
 }
 
+void RasterOverlayTileProvider::setLevelRange(int minimumLevel,
+                                              int maximumLevel) {
+    minimumLevel_ = minimumLevel > 0 ? minimumLevel : 0;
+    maximumLevel_ = maximumLevel > 0 ? maximumLevel : 0;
+    refreshSourceAssetDepot();
+}
+
 int RasterOverlayTileProvider::getMinimumLevel() const {
     return std::max({scheme_.minZoom(), provider_.minZoom(), minimumLevel_});
+}
+
+void RasterOverlayTileProvider::refreshSourceAssetDepot() {
+    sourceAssetDepot_ = std::make_shared<QuadtreeSourceAssetDepot>(
+        provider_,
+        scheme_,
+        asyncState_,
+        getMinimumLevel(),
+        getMaximumLevel());
 }
 
 int RasterOverlayTileProvider::getMaximumLevel() const {
@@ -1803,15 +1810,16 @@ bool RasterOverlayTileProvider::loadMappedTile(
     }
     const int maxTextureSize =
         maximumCombinedTextureSize(textureUploader_.get(), maximumTextureSize_);
+    if (!sourceAssetDepot_) {
+        refreshSourceAssetDepot();
+    }
     auto request = std::make_shared<QuadtreeSourceRequest>(
-        provider_,
         scheme_,
-        state,
+        sourceAssetDepot_,
         sourcePlan,
         targetBounds,
         outputBounds,
         maxTextureSize,
-        getMinimumLevel(),
         getMaximumLevel(),
         [state, cacheKey](std::unique_ptr<DecodedImage> composed,
                           Rectangle rectangle,
