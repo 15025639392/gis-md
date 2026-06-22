@@ -1191,12 +1191,24 @@ std::unique_ptr<GltfModel> makeTriangleGltfModel() {
 std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
     const Rectangle& rectangle) {
     auto model = std::make_unique<GltfModel>();
+    const Vec3 nodeOrigin(100.0, 200.0, 300.0);
+    GltfNodeRuntime rootNode;
+    rootNode.baseLocalTransform = Mat4::translation(nodeOrigin);
+    rootNode.localTransform = rootNode.baseLocalTransform;
+    rootNode.globalTransform = rootNode.baseLocalTransform;
+    rootNode.mesh = 0;
+    rootNode.hasMatrix = true;
+    rootNode.baseTranslation = {nodeOrigin.x(), nodeOrigin.y(), nodeOrigin.z()};
+    rootNode.translation = rootNode.baseTranslation;
+    model->nodes.push_back(rootNode);
+    model->sceneRootNodes.push_back(0);
+
     GltfPrimitive primitive;
     primitive.vertices.resize(4);
-    primitive.vertices[0].positionEcef = Vec3(0.0, 0.0, 0.0);
-    primitive.vertices[1].positionEcef = Vec3(2.0, 0.0, 0.0);
-    primitive.vertices[2].positionEcef = Vec3(0.0, 2.0, 0.0);
-    primitive.vertices[3].positionEcef = Vec3(2.0, 2.0, 0.0);
+    primitive.vertices[0].positionEcef = nodeOrigin + Vec3(0.0, 0.0, 0.0);
+    primitive.vertices[1].positionEcef = nodeOrigin + Vec3(2.0, 0.0, 0.0);
+    primitive.vertices[2].positionEcef = nodeOrigin + Vec3(0.0, 2.0, 0.0);
+    primitive.vertices[3].positionEcef = nodeOrigin + Vec3(2.0, 2.0, 0.0);
     for (SurfaceVertex& vertex : primitive.vertices) {
         vertex.normalEcef = Vec3::unitZ();
     }
@@ -1211,6 +1223,10 @@ std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
         std::array<float, 2>{1.0f, 1.0f}};
     primitive.indices = {0, 1, 2, 1, 3, 2};
     primitive.runtime.baseVertices = primitive.vertices;
+    for (SurfaceVertex& vertex : primitive.runtime.baseVertices) {
+        vertex.positionEcef = vertex.positionEcef - nodeOrigin;
+    }
+    primitive.runtime.nodeIndex = 0;
     primitive.runtime.hasNormals = true;
     model->primitives.push_back(std::move(primitive));
     model->rasterOverlayDetails.setGeographicRectangle(rectangle);
@@ -26959,6 +26975,32 @@ void testTilesetUpsampledChildBuildsGltfFromGltfParent() {
 
     bool clippedToSouthEast = true;
     const GltfPrimitive& primitive = childModel->primitives.front();
+    check(childModel->nodes.size() == 1 &&
+              childModel->sceneRootNodes.size() == 1 &&
+              childModel->sceneRootNodes.front() == 0 &&
+              primitive.runtime.nodeIndex == 0,
+          "Tileset: glTF-parent upsampled child keeps terrain scene root and node binding");
+    check(primitive.runtime.baseVertices.size() == primitive.vertices.size(),
+          "Tileset: glTF-parent upsampled child keeps runtime base vertices");
+    bool runtimeVerticesAreNodeLocal = true;
+    if (!childModel->nodes.empty() &&
+        primitive.runtime.baseVertices.size() == primitive.vertices.size()) {
+        const Mat4 inverseNodeTransform =
+            childModel->nodes.front().globalTransform.inverse();
+        for (size_t i = 0; i < primitive.vertices.size(); ++i) {
+            const Vec3 expectedLocal =
+                inverseNodeTransform.transformPoint(
+                    primitive.vertices[i].positionEcef);
+            runtimeVerticesAreNodeLocal =
+                runtimeVerticesAreNodeLocal &&
+                primitive.runtime.baseVertices[i].positionEcef.distanceTo(
+                    expectedLocal) < 1e-12;
+        }
+    } else {
+        runtimeVerticesAreNodeLocal = false;
+    }
+    check(runtimeVerticesAreNodeLocal,
+          "Tileset: glTF-parent upsampled child stores node-local runtime vertices like Cesium native");
     for (const SurfaceVertex& vertex : primitive.vertices) {
         clippedToSouthEast =
             clippedToSouthEast &&
