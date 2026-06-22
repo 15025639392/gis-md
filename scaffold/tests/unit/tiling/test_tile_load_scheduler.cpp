@@ -45,8 +45,8 @@ public:
     int estimatedFanout = 1;
 };
 
-class ContentViewTerrainProvider final : public TerrainProvider,
-                                         public TilesetContentProvider {
+class ExplicitContentTerrainProvider final : public TerrainProvider,
+                                             public TilesetContentProvider {
 public:
     std::string id() const override { return "scheduler-content-terrain"; }
     std::string schemeId() const override { return "test"; }
@@ -55,10 +55,6 @@ public:
     int tileSize() const override { return 2; }
     bool supportsTile(const TileKey& key) const override {
         return TerrainProvider::supportsTile(key);
-    }
-    TilesetContentProvider* contentProviderView() override { return this; }
-    const TilesetContentProvider* contentProviderView() const override {
-        return this;
     }
     std::string buildUrl(const TileKey&) const override {
         return "memory://scheduler-content-terrain";
@@ -414,7 +410,7 @@ TEST(TileLoadSchedulerTest, BlocksTerrainFanoutOverInflightCapacity) {
     }
 }
 
-TEST(TileLoadSchedulerTest, TerrainContentProviderViewUsesContentRequestPath) {
+TEST(TileLoadSchedulerTest, ExplicitContentProviderUsesContentRequestPath) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxNetworkInflight = 4;
@@ -422,7 +418,7 @@ TEST(TileLoadSchedulerTest, TerrainContentProviderViewUsesContentRequestPath) {
     budget.beginFrame(1, config);
 
     const TileKey key{"test", 0, 0, 0};
-    ContentViewTerrainProvider provider;
+    ExplicitContentTerrainProvider provider;
     bool marked = false;
 
     const TileLoadRequestOutcome outcome =
@@ -435,7 +431,7 @@ TEST(TileLoadSchedulerTest, TerrainContentProviderViewUsesContentRequestPath) {
                 lifecycle,
                 budget,
                 &provider,
-                provider.contentProviderView()},
+                &provider},
             cacheKeyForTile,
             [](const TileKey&,
                const std::string&,

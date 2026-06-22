@@ -35,10 +35,6 @@ public:
     std::string id() const override;
     std::string type() const override { return "quantized-mesh-terrain"; }
     bool providesTerrainQuadtree() const override { return true; }
-    TilesetContentProvider* contentProviderView() override { return this; }
-    const TilesetContentProvider* contentProviderView() const override {
-        return this;
-    }
 
     std::string schemeId() const override { return schemeId_; }
 

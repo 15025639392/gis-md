@@ -136,13 +136,6 @@ public:
     /// Provider 类型
     virtual std::string type() const { return "terrain"; }
 
-    /// cesium-native terrain loaders are content loaders. Providers that can
-    /// produce TileContentLoadResult directly expose that view here.
-    virtual TilesetContentProvider* contentProviderView() { return nullptr; }
-    virtual const TilesetContentProvider* contentProviderView() const {
-        return nullptr;
-    }
-
     /// 瓦片体系 ID
     virtual std::string schemeId() const = 0;
 
