@@ -9,6 +9,7 @@ namespace earth_engine {
 class ActivatedRasterOverlay;
 class RenderDevice;
 class TileRenderContentState;
+struct TilesetTile;
 struct TileBoundingVolume;
 
 class TileRasterOverlayDetailsGenerator {
@@ -25,6 +26,11 @@ public:
     static int ensureProjectionDetailsFromActiveOverlays(
         TileRenderContentState& renderContent,
         const TileBoundingVolume* boundingVolume,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        RenderDevice* device);
+
+    static int ensureProjectionDetailsFromActiveOverlays(
+        TilesetTile& tile,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         RenderDevice* device);
 };

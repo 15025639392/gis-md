@@ -1,7 +1,9 @@
 #include "TileRasterOverlayDetailsGenerator.h"
 
+#include "RasterMappedToTilesetTile.h"
 #include "TileBoundingVolume.h"
 #include "TileRenderContentState.h"
+#include "TilesetTile.h"
 
 #include "../content/GltfModel.h"
 #include "../core/geodesy/Cartographic.h"
@@ -171,6 +173,21 @@ int TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromActiveOverlays
         }
     }
     return generated;
+}
+
+int TileRasterOverlayDetailsGenerator::ensureProjectionDetailsFromActiveOverlays(
+    TilesetTile& tile,
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+    RenderDevice* device) {
+    const TileBoundingVolume* effectiveContentBoundingVolume =
+        tile.contentBoundingVolume
+            ? &*tile.contentBoundingVolume
+            : (tile.boundingVolume ? &*tile.boundingVolume : nullptr);
+    return ensureProjectionDetailsFromActiveOverlays(
+        tile.content.renderContent,
+        effectiveContentBoundingVolume,
+        rasterOverlays,
+        device);
 }
 
 } // namespace earth_engine

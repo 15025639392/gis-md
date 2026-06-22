@@ -35,8 +35,7 @@ void TileContentUploadCommitter::prepareRenderContent(
     if (tile.content.renderContent.hasGltfModel()) {
         TileRasterOverlayDetailsGenerator::
             ensureProjectionDetailsFromActiveOverlays(
-                tile.content.renderContent,
-                tile.boundingVolume ? &*tile.boundingVolume : nullptr,
+                tile,
                 rasterOverlays,
                 device);
     }

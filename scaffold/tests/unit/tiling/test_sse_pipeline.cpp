@@ -12585,6 +12585,55 @@ void testContentUploadGeneratesRasterOverlayProjectionDetailsForGltf() {
           "TileContentUploadCommitter: ordinary glTF upload generates active raster overlay projection details like cesium-native");
 }
 
+void testContentUploadUsesContentBoundingVolumeForRasterOverlayDetails() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay activated(*overlay);
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+
+    const Rectangle tileRectangle =
+        Rectangle::fromDegrees(-40.0, -20.0, 40.0, 20.0);
+    const Rectangle contentRectangle =
+        Rectangle::fromDegrees(-7.0, -3.0, 5.0, 9.0);
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 2, 1, 1},
+        Rectangle::fromDegrees(-45.0, -25.0, 45.0, 25.0));
+    tile.boundingVolume =
+        TileBoundingVolume::fromRegion(tileRectangle, -100.0, 1000.0);
+    tile.contentBoundingVolume =
+        TileBoundingVolume::fromRegion(contentRectangle, -10.0, 120.0);
+
+    TileLoadedContent content;
+    content.gltfModel = makeTriangleGltfModel();
+
+    TileContentUploadCommitter::prepareRenderContent(
+        tile,
+        std::move(content),
+        overlays,
+        nullptr);
+
+    const RasterOverlayDetails& details =
+        tile.content.renderContent.rasterOverlayDetails();
+    const Rectangle* webMercator =
+        details.findRectangleForOverlayProjection(
+            RasterOverlayProjection::WebMercator);
+    const Rectangle expectedContentWebMercator = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        contentRectangle);
+    const Rectangle tileWebMercator = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        tileRectangle);
+
+    check(webMercator && *webMercator == expectedContentWebMercator &&
+              *webMercator != tileWebMercator &&
+              details.boundingRegion.rectangle == contentRectangle &&
+              details.boundingRegion.minimumHeight == -10.0 &&
+              details.boundingRegion.maximumHeight == 120.0,
+          "TileContentUploadCommitter: raster overlay details use effective content bounding volume like cesium-native");
+}
+
 void testTerrainUploadPreparesGltfRenderContent() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -28366,6 +28415,7 @@ int main() {
     testTerrainUploadGeneratesActiveRasterOverlayProjectionDetails();
     testContentUploadGeneratesTerrainRasterOverlayProjectionDetails();
     testContentUploadGeneratesRasterOverlayProjectionDetailsForGltf();
+    testContentUploadUsesContentBoundingVolumeForRasterOverlayDetails();
     testTerrainUploadPreparesGltfRenderContent();
     testContentTileLoadResultCarriesGltfTerrainModel();
     testGltfRenderContentProvidesRasterOverlayDetails();

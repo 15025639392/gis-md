@@ -41,8 +41,7 @@ void TileTerrainUploadCommitter::prepareTerrainRenderContent(
             std::move(content.metadata));
         TileRasterOverlayDetailsGenerator::
             ensureProjectionDetailsFromActiveOverlays(
-                tile.content.renderContent,
-                tile.boundingVolume ? &*tile.boundingVolume : nullptr,
+                tile,
                 rasterOverlays,
                 device);
         prepareTerrainRenderContent(tile);
@@ -55,8 +54,7 @@ void TileTerrainUploadCommitter::prepareTerrainRenderContent(
         std::move(content.metadata));
     TileRasterOverlayDetailsGenerator::
         ensureProjectionDetailsFromActiveOverlays(
-            tile.content.renderContent,
-            tile.boundingVolume ? &*tile.boundingVolume : nullptr,
+            tile,
             rasterOverlays,
             device);
     prepareTerrainRenderContent(tile);
