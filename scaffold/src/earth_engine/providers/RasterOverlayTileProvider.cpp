@@ -1583,7 +1583,6 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
     tile->setTargetScreenPixels(targetScreenPixelsX, targetScreenPixelsY);
     tile->lastUsedFrame = frameNumber_;
     tiles_[ck] = tile;
-    rectangleTiles_[ck].push_back(tile);
     return tile;
 }
 
@@ -2006,30 +2005,6 @@ int RasterOverlayTileProvider::processPendingUploads(
         std::vector<TilePtr> targetTiles;
         if (auto it = tiles_.find(upload.cacheKey); it != tiles_.end()) {
             targetTiles.push_back(it->second);
-        }
-        auto rectangleIt = rectangleTiles_.find(upload.cacheKey);
-        if (rectangleIt != rectangleTiles_.end()) {
-            auto& weakTiles = rectangleIt->second;
-            for (auto weakIt = weakTiles.begin();
-                 weakIt != weakTiles.end();) {
-                if (auto tile = weakIt->lock()) {
-                    const bool alreadyIncluded = std::any_of(
-                        targetTiles.begin(),
-                        targetTiles.end(),
-                        [&](const TilePtr& existing) {
-                            return existing.get() == tile.get();
-                        });
-                    if (!alreadyIncluded) {
-                        targetTiles.push_back(std::move(tile));
-                    }
-                    ++weakIt;
-                } else {
-                    weakIt = weakTiles.erase(weakIt);
-                }
-            }
-            if (weakTiles.empty()) {
-                rectangleTiles_.erase(rectangleIt);
-            }
         }
         if (targetTiles.empty()) continue;
 
