@@ -291,6 +291,7 @@ private:
     struct PendingUpload {
         std::string cacheKey;
         std::unique_ptr<DecodedImage> image;
+        std::shared_ptr<const DecodedImage> sharedImage;
         Rectangle rectangle;
         RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::Unknown;

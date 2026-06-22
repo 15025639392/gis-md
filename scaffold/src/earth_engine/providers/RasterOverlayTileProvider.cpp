@@ -350,15 +350,6 @@ bool isDecodedImageUploadable(const DecodedImage& image) {
            image.pixels.size() >= static_cast<size_t>(requiredBytes);
 }
 
-std::unique_ptr<DecodedImage> cloneDecodedImage(const DecodedImage& image) {
-    auto clone = std::make_unique<DecodedImage>();
-    clone->width = image.width;
-    clone->height = image.height;
-    clone->channels = image.channels;
-    clone->pixels = image.pixels;
-    return clone;
-}
-
 int64_t decodedImageSizeBytes(const DecodedImage& image) {
     return static_cast<int64_t>(sizeof(DecodedImage)) +
            static_cast<int64_t>(image.pixels.size());
@@ -883,6 +874,7 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
 
 using CompositeRequestSuccess =
     std::function<void(std::unique_ptr<DecodedImage>,
+                       std::shared_ptr<const DecodedImage>,
                        Rectangle,
                        RasterOverlayTile::MoreDetailAvailable)>;
 using CompositeRequestFailure = std::function<void()>;
@@ -1343,7 +1335,8 @@ private:
                            ? RasterOverlayTile::MoreDetailAvailable::Yes
                            : RasterOverlayTile::MoreDetailAvailable::No);
             onSuccess(
-                cloneDecodedImage(*source.image),
+                nullptr,
+                source.image,
                 outputBounds,
                 moreDetailAvailable);
             return;
@@ -1360,6 +1353,7 @@ private:
         if (composed.image) {
             onSuccess(
                 std::move(composed.image),
+                nullptr,
                 outputBounds,
                 composed.moreDetailAvailable);
         } else {
@@ -1835,6 +1829,7 @@ bool RasterOverlayTileProvider::loadMappedTile(
         maxTextureSize,
         getMaximumLevel(),
         [state, cacheKey](std::unique_ptr<DecodedImage> composed,
+                          std::shared_ptr<const DecodedImage> sharedImage,
                           Rectangle rectangle,
                           RasterOverlayTile::MoreDetailAvailable moreDetailAvailable) {
             std::lock_guard<std::mutex> providerLock(state->mutex);
@@ -1844,7 +1839,11 @@ bool RasterOverlayTileProvider::loadMappedTile(
             }
             logAndroidRasterPipeline("composed", cacheKey, 0, 0);
             state->pendingUploads.push_back(
-                {cacheKey, std::move(composed), rectangle, moreDetailAvailable});
+                {cacheKey,
+                 std::move(composed),
+                 std::move(sharedImage),
+                 rectangle,
+                 moreDetailAvailable});
         },
         [state, cacheKey, tileWeak]() {
             std::lock_guard<std::mutex> providerLock(state->mutex);
@@ -1922,9 +1921,12 @@ int RasterOverlayTileProvider::processPendingUploads(
                     asyncState_->pendingUploads.begin(),
                     asyncState_->pendingUploads.end(),
                     [](const PendingUpload& candidate) {
+                        const DecodedImage* candidateImage = candidate.image
+                            ? candidate.image.get()
+                            : candidate.sharedImage.get();
                         return uploadAllowedDuringInteraction(
                             candidate.cacheKey,
-                            candidate.image.get());
+                            candidateImage);
                     });
                 if (selected == asyncState_->pendingUploads.end()) {
                     break;
@@ -1940,12 +1942,15 @@ int RasterOverlayTileProvider::processPendingUploads(
         }
         if (targetTiles.empty()) continue;
 
+        const DecodedImage* uploadImage = upload.image
+            ? upload.image.get()
+            : upload.sharedImage.get();
         const bool emptyImage =
-            upload.image &&
-            upload.image->width == 0 &&
-            upload.image->height == 0 &&
-            upload.image->channels == 0 &&
-            upload.image->pixels.empty();
+            uploadImage &&
+            uploadImage->width == 0 &&
+            uploadImage->height == 0 &&
+            uploadImage->channels == 0 &&
+            uploadImage->pixels.empty();
         if (emptyImage) {
             for (const TilePtr& target : targetTiles) {
                 target->setMoreDetailAvailable(
@@ -1958,7 +1963,7 @@ int RasterOverlayTileProvider::processPendingUploads(
             continue;
         }
 
-        if (!upload.image || !isDecodedImageUploadable(*upload.image)) {
+        if (!uploadImage || !isDecodedImageUploadable(*uploadImage)) {
             for (const TilePtr& target : targetTiles) {
                 target->setMoreDetailAvailable(
                     RasterOverlayTile::MoreDetailAvailable::No);
@@ -1983,7 +1988,7 @@ int RasterOverlayTileProvider::processPendingUploads(
             uploadOptions.generateMipmaps = generateMipmaps;
             auto tex = textureUploader_
                 ? textureUploader_->uploadRasterTexture(
-                      *upload.image,
+                      *uploadImage,
                       uploadOptions)
                 : nullptr;
             uploadMs = perf::nowMs() - uploadStartMs;
@@ -2015,13 +2020,13 @@ int RasterOverlayTileProvider::processPendingUploads(
                 "Tile loaded: %d/%d/%d", tile.getTileID().z,
                 tile.getTileID().x, tile.getTileID().y);
             if (uploadMs >= 8.0 ||
-                upload.image->width > 1024 ||
-                upload.image->height > 1024) {
+                uploadImage->width > 1024 ||
+                uploadImage->height > 1024) {
                 __android_log_print(ANDROID_LOG_INFO, "RasterOverlayTileProvider",
                     "upload %.2fms size=%dx%d composite=%d mipmap=%d cache=%s",
                     uploadMs,
-                    upload.image->width,
-                    upload.image->height,
+                    uploadImage->width,
+                    uploadImage->height,
                     tile.isCompositeTile() ? 1 : 0,
                     generateMipmaps ? 1 : 0,
                     tile.getCacheKey().c_str());

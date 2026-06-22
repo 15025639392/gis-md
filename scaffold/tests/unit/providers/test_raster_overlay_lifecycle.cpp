@@ -257,9 +257,11 @@ public:
         ASSERT_FALSE(pending.empty());
         Pending item = std::move(pending.front());
         pending.pop_front();
+        auto image = makeImage(256, 256, static_cast<uint8_t>(item.key.z));
+        lastCompletedImage = image.get();
         item.callback(
             item.key,
-            makeImage(256, 256, static_cast<uint8_t>(item.key.z)));
+            std::move(image));
     }
 
     struct Pending {
@@ -268,6 +270,7 @@ public:
     };
     std::vector<TileKey> requestedKeys;
     std::deque<Pending> pending;
+    const DecodedImage* lastCompletedImage = nullptr;
 };
 
 class DeferredParentFallbackImageryProvider final : public ImageryProvider {
@@ -322,12 +325,14 @@ public:
         const DecodedImage& image,
         const RasterTextureUploadOptions&) override {
         ++uploadCount;
+        lastUploadSource = &image;
         lastUpload = image;
         return std::make_unique<TestTexture>(image.width, image.height);
     }
 
     int uploadCount = 0;
     int maxTextureSizeValue = 2048;
+    const DecodedImage* lastUploadSource = nullptr;
     DecodedImage lastUpload;
 };
 
@@ -663,6 +668,29 @@ TEST(RasterOverlayLifecycleTest, DirectAlignedSingleSourceUploadsWithoutResampli
     EXPECT_EQ(3, uploaderPtr->lastUpload.channels);
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
               rectangleMappedTile->getState());
+}
+
+TEST(RasterOverlayLifecycleTest, DirectExactSourceUploadUsesSharedSourceAssetLikeCesiumNative) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    CountingRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 3};
+    auto tile = provider.getTile(sourceKey);
+
+    ASSERT_NE(nullptr, tile);
+    EXPECT_FALSE(tile->isCompositeTile());
+
+    ASSERT_TRUE(provider.loadTile(*tile));
+    ASSERT_EQ(1, static_cast<int>(imagery.pending.size()));
+    imagery.completeNext();
+
+    ASSERT_EQ(1, provider.processPendingUploads(false));
+    EXPECT_EQ(1, uploaderPtr->uploadCount);
+    EXPECT_EQ(imagery.lastCompletedImage, uploaderPtr->lastUploadSource);
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, tile->getState());
 }
 
 TEST(RasterOverlayLifecycleTest, RectangleMappingReportsDirectOrComposedPath) {
