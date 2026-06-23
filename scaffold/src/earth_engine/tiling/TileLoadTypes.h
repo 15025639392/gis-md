@@ -132,6 +132,9 @@ struct TileLoadResult {
         TileLoadResultMetadata metadata = {},
         Mat4 contentTransform = Mat4::identity()) {
         TileLoadResult loadResult = createRenderable();
+        if (!metadata.rasterOverlayDetails && model) {
+            metadata.rasterOverlayDetails = model->rasterOverlayDetails;
+        }
         loadResult.content.metadata = std::move(metadata);
         loadResult.content.gltfModel = std::move(model);
         loadResult.content.terrainRenderContent =

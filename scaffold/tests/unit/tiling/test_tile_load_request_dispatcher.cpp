@@ -756,6 +756,12 @@ TEST(TileLoadRequestDispatcherTest,
 
     auto directGltfModel = std::make_unique<GltfModel>();
     GltfModel* rawDirectGltfModel = directGltfModel.get();
+    const Rectangle modelRasterRectangle =
+        Rectangle::fromDegrees(10.0, 11.0, 12.0, 13.0);
+    directGltfModel->rasterOverlayDetails.setGeographicRectangle(
+        modelRasterRectangle,
+        -3.0,
+        4.0);
     TileLoadResultMetadata directMetadata;
     directMetadata.updatedBoundingVolume =
         TileBoundingVolume::fromRegion(
@@ -784,6 +790,36 @@ TEST(TileLoadRequestDispatcherTest,
               committedVolume.region);
     EXPECT_DOUBLE_EQ(-10.0, committedVolume.minimumHeight);
     EXPECT_DOUBLE_EQ(20.0, committedVolume.maximumHeight);
+    ASSERT_TRUE(
+        directGltfTerrain.content.metadata.rasterOverlayDetails.has_value());
+    const Rectangle* inheritedRasterRectangle =
+        directGltfTerrain.content.metadata.rasterOverlayDetails
+            ->findRectangleForOverlayProjection(
+                RasterOverlayProjection::Geographic);
+    ASSERT_NE(nullptr, inheritedRasterRectangle);
+    EXPECT_EQ(modelRasterRectangle, *inheritedRasterRectangle);
+
+    auto explicitModel = std::make_unique<GltfModel>();
+    explicitModel->rasterOverlayDetails.setGeographicRectangle(
+        Rectangle::fromDegrees(-40.0, -30.0, -20.0, -10.0));
+    TileLoadResultMetadata explicitMetadata;
+    const Rectangle explicitRasterRectangle =
+        Rectangle::fromDegrees(30.0, 31.0, 32.0, 33.0);
+    explicitMetadata.rasterOverlayDetails.emplace();
+    explicitMetadata.rasterOverlayDetails->setGeographicRectangle(
+        explicitRasterRectangle);
+    TileLoadResult explicitGltfTerrain =
+        TileLoadResult::createRenderableGltfTerrain(
+            std::move(explicitModel),
+            explicitMetadata);
+    ASSERT_TRUE(
+        explicitGltfTerrain.content.metadata.rasterOverlayDetails.has_value());
+    const Rectangle* explicitCommittedRectangle =
+        explicitGltfTerrain.content.metadata.rasterOverlayDetails
+            ->findRectangleForOverlayProjection(
+                RasterOverlayProjection::Geographic);
+    ASSERT_NE(nullptr, explicitCommittedRectangle);
+    EXPECT_EQ(explicitRasterRectangle, *explicitCommittedRectangle);
 
     TileLoadResult contentGltf = TileLoadResult::fromContentResult(
         TileContentLoadResult::render(std::make_unique<GltfModel>()));
