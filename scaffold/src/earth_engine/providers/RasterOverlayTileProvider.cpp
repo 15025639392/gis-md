@@ -2337,12 +2337,6 @@ bool RasterOverlayTileProvider::loadMappedTile(
             }
             decrementActiveRasterTileLoads(
                 state->activeRasterTileLoads);
-            auto& fr = state->failedTiles[cacheKey];
-            if (fr.firstFailTime == 0.0) {
-                fr.firstFailTime = std::chrono::duration<double>(
-                    std::chrono::steady_clock::now().time_since_epoch()).count();
-            }
-            fr.retries++;
             state->revision.fetch_add(1, std::memory_order_relaxed);
         });
 

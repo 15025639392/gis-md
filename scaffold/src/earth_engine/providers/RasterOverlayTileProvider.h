@@ -19,7 +19,6 @@
 #include <deque>
 #include <mutex>
 #include <functional>
-#include <chrono>
 #include <atomic>
 #include <cstdint>
 
@@ -338,9 +337,6 @@ private:
         std::vector<std::function<void(Result)>> waiters;
     };
 
-    /// Failed tiles (key → first fail timestamp, for retry logic).
-    struct FailedRecord { double firstFailTime = 0.0; int retries = 0; };
-
     /// Shared runtime state touched by async raster callbacks. It intentionally
     /// outlives RasterOverlayTileProvider when a source request completes
     /// after overlay/provider destruction, matching cesium-native's depot
@@ -366,7 +362,6 @@ private:
         std::atomic<int> rasterSourceRequestsStarted{0};
         std::atomic<int> rasterSourceRequestsCompleted{0};
         std::atomic<int> rasterSourceRequestsFailed{0};
-        std::unordered_map<std::string, FailedRecord> failedTiles;
         std::atomic<uint64_t> revision{0};
         std::atomic<bool> alive{true};
     };
