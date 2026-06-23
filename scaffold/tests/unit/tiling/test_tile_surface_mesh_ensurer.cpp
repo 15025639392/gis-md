@@ -2,6 +2,7 @@
 
 #include "earth_engine/tiling/TileSurface.h"
 #include "earth_engine/tiling/TileSurfaceMeshEnsurer.h"
+#include "earth_engine/tiling/TileUpsampleSourcePreparer.h"
 
 #include <memory>
 
@@ -95,4 +96,52 @@ TEST(TileSurfaceMeshEnsurerTest,
     EXPECT_TRUE(child.content.renderContent.hasSurfaceMesh());
     EXPECT_TRUE(completenessChecked);
     EXPECT_EQ(TileLoadState::Done, child.content.loadState);
+}
+
+TEST(TileSurfaceMeshEnsurerTest,
+     ContentOwnedUpsampleSourceRejectsLegacySurfaceMeshAncestor) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    parent.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>(
+            TileSurface::buildEllipsoidMesh(parent.bounds, 4)));
+    parent.markRenderContentDone();
+
+    TilesetTile child(
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        Rectangle::fromDegrees(-180.0, 0.0, 0.0, 90.0),
+        &parent);
+    child.content.markTerrainAvailabilityUpsample();
+
+    EXPECT_EQ(nullptr,
+              TileUpsampleSourcePreparer::findSourceTile(
+                  child,
+                  false,
+                  true,
+                  false));
+}
+
+TEST(TileSurfaceMeshEnsurerTest,
+     LegacyUpsampleSourceStillAcceptsSurfaceMeshAncestor) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 0, 0, 0},
+        Rectangle::fromDegrees(-180.0, -90.0, 180.0, 90.0));
+    parent.content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>(
+            TileSurface::buildEllipsoidMesh(parent.bounds, 4)));
+    parent.markRenderContentDone();
+
+    TilesetTile child(
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        Rectangle::fromDegrees(-180.0, 0.0, 0.0, 90.0),
+        &parent);
+    child.content.markTerrainAvailabilityUpsample();
+
+    EXPECT_EQ(&parent,
+              TileUpsampleSourcePreparer::findSourceTile(
+                  child,
+                  false,
+                  true,
+                  true));
 }

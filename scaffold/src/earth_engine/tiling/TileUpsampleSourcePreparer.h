@@ -12,7 +12,8 @@ public:
     static const TilesetTile* findSourceTile(
         const TilesetTile& tile,
         bool allowUnloadingSource = false,
-        bool allowGltfTerrainSource = false) {
+        bool allowGltfTerrainSource = false,
+        bool allowLegacySurfaceSource = true) {
         const TilesetTile* parent = tile.parent;
         if (allowGltfTerrainSource && parent) {
             const bool parentStateReady =
@@ -25,6 +26,10 @@ public:
                 parent->content.renderContent.hasGltfContent()) {
                 return parent;
             }
+        }
+
+        if (!allowLegacySurfaceSource) {
+            return nullptr;
         }
 
         const TilesetTile* ancestor = tile.parent;
@@ -50,7 +55,25 @@ public:
         double priority,
         EnsureTileMeshFn&& ensureTileMesh,
         QueueTileLoadFn&& queueTileLoad) {
-        if (findSourceTile(tile, false, true)) {
+        return prepareSourceTile(
+            tile,
+            priority,
+            true,
+            std::forward<EnsureTileMeshFn>(ensureTileMesh),
+            std::forward<QueueTileLoadFn>(queueTileLoad));
+    }
+
+    template <typename EnsureTileMeshFn, typename QueueTileLoadFn>
+    static bool prepareSourceTile(
+        TilesetTile& tile,
+        double priority,
+        bool allowLegacySurfaceSource,
+        EnsureTileMeshFn&& ensureTileMesh,
+        QueueTileLoadFn&& queueTileLoad) {
+        if (findSourceTile(tile,
+                           false,
+                           true,
+                           allowLegacySurfaceSource)) {
             return true;
         }
 
@@ -61,7 +84,10 @@ public:
                  ancestor->content.loadState == TileLoadState::Done) &&
                 ancestor->content.contentKind == TileContentKind::Render) {
                 ensureTileMesh(*ancestor);
-                if (findSourceTile(tile, false, true)) {
+                if (findSourceTile(tile,
+                                   false,
+                                   true,
+                                   allowLegacySurfaceSource)) {
                     return true;
                 }
             }

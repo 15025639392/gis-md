@@ -64,6 +64,7 @@ bool TileMeshPreparationManager::prepareUpsampleSourceTile(
     return TileUpsampleSourcePreparer::prepareSourceTile(
         tile,
         priority,
+        legacyHeightmapMode_ == TileMeshLegacyHeightmapMode::Include,
         [this](TilesetTile& ancestor) {
             ensureTileMesh(ancestor);
         },
