@@ -161,9 +161,6 @@ public:
         RenderDevice* device,
         IPrepareRendererResources* pPrepRenderer,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
-        std::unordered_map<
-            std::string,
-            std::unique_ptr<DecodedHeightmap>>& legacyTerrainCache,
         TileLoadLifecycle& lifecycle,
         EnsureTileFn&& ensureTile,
         EnsureGltfResourcesFn&& ensureGltfResources,
@@ -176,7 +173,6 @@ public:
             return;
         }
 
-        legacyTerrainCache.erase(upload.cacheKey);
         captureInitialBoundingVolumes(*tile, upload.content().metadata);
         TileContentUploadCommitter::applyAvailabilityUpdates(
             contentProvider,
@@ -255,7 +251,6 @@ public:
                 device,
                 pPrepRenderer,
                 rasterOverlays,
-                legacyTerrainCache,
                 lifecycle,
                 std::forward<EnsureTileFn>(ensureTile),
                 std::forward<EnsureGltfResourcesFn>(ensureGltfResources),

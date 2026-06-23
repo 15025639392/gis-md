@@ -589,7 +589,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         nullptr,
         {},
-        terrainCache,
         lifecycle,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [](TilesetTile&) {},
@@ -1653,7 +1652,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         nullptr,
         {},
-        terrainCache,
         lifecycle,
         [](const TileKey&) -> TilesetTile* { return nullptr; },
         [&gltfEnsured](TilesetTile&) { gltfEnsured = true; },
@@ -1740,7 +1738,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentUploadClearsHeightmapTerrainAdapterCacheForSameKey) {
+     ContentUploadDoesNotInspectHeightmapTerrainAdapterCache) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxMainThreadFinalizesPerFrame = 4;
@@ -1801,7 +1799,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         },
         [&resourcesDirty]() { resourcesDirty = true; });
 
-    EXPECT_EQ(terrainCache.end(), terrainCache.find(cacheKey));
+    ASSERT_NE(terrainCache.end(), terrainCache.find(cacheKey));
+    EXPECT_TRUE(terrainCache.at(cacheKey)->valid());
     EXPECT_TRUE(gltfEnsured);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_TRUE(tile.content.renderContent.hasGltfModel());
@@ -1809,7 +1808,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentOwnedTerrainUploadClearsStaleHeightmapTerrainAdapterCacheLikeCesiumNative) {
+     TerrainContentUploadDoesNotUseHeightmapTerrainAdapterCache) {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
     config.maxMainThreadFinalizesPerFrame = 4;
@@ -1874,7 +1873,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         },
         [&resourcesDirty]() { resourcesDirty = true; });
 
-    EXPECT_EQ(terrainCache.end(), terrainCache.find(cacheKey));
+    ASSERT_NE(terrainCache.end(), terrainCache.find(cacheKey));
+    EXPECT_TRUE(terrainCache.at(cacheKey)->valid());
     EXPECT_FALSE(meshEnsured);
     EXPECT_TRUE(gltfEnsured);
     EXPECT_TRUE(resourcesDirty);
@@ -1926,7 +1926,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         nullptr,
         nullptr,
         {},
-        terrainCache,
         lifecycle,
         [&tile](const TileKey&) -> TilesetTile* { return &tile; },
         [&gltfEnsured](TilesetTile& committedTile) {
