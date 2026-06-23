@@ -12040,35 +12040,18 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     gltfFrameTile.content.renderContent.prepareGltfContent(
         makeQuadTerrainGltfModel(gltfFrameTile.bounds),
         Mat4::identity());
-    bool frameSurfacePathTouched = false;
     bool frameResourcesDirty = false;
     TileMeshFrameEnsurer::ensureContentTerrain(
         TileContentTerrainMeshFrameEnsureInput{
             gltfFrameTile,
             nullptr,
             true},
-        [&frameSurfacePathTouched](const TileKey&, DecodedHeightmap*) {
-            frameSurfacePathTouched = true;
-        },
-        [&frameSurfacePathTouched](const TilesetTile&, bool)
-            -> const TilesetTile* {
-            frameSurfacePathTouched = true;
-            return nullptr;
-        },
-        [&frameSurfacePathTouched](TilesetTile&) {
-            frameSurfacePathTouched = true;
-        },
-        [&frameSurfacePathTouched](const TilesetTile&) {
-            frameSurfacePathTouched = true;
-            return false;
-        },
         [&frameResourcesDirty]() {
             frameResourcesDirty = true;
         });
-    check(!frameSurfacePathTouched &&
-              !frameResourcesDirty &&
+    check(!frameResourcesDirty &&
               !gltfFrameTile.content.renderContent.hasSurfaceMesh(),
-          "TileMeshFrameEnsurer: glTF terrain render content skips SurfaceMesh frame path");
+          "TileMeshFrameEnsurer: glTF terrain render content has no SurfaceMesh frame path");
 
     TilesetTile gltfWithStaleHeightmapSurface(
         TileKey{"Geographic-TMS", 0, 0, 0},
@@ -12083,37 +12066,20 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
         SurfaceDrawableSource::HeightmapTerrain);
     gltfWithStaleHeightmapSurface.content.renderContent.setRetainedHeightmap(
         makeFlatHeightmap(77.0f));
-    bool gltfStaleSurfacePathTouched = false;
     bool gltfStaleResourcesDirty = false;
     TileMeshFrameEnsurer::ensureContentTerrain(
         TileContentTerrainMeshFrameEnsureInput{
             gltfWithStaleHeightmapSurface,
             nullptr,
             true},
-        [&gltfStaleSurfacePathTouched](const TileKey&, DecodedHeightmap*) {
-            gltfStaleSurfacePathTouched = true;
-        },
-        [&gltfStaleSurfacePathTouched](const TilesetTile&, bool)
-            -> const TilesetTile* {
-            gltfStaleSurfacePathTouched = true;
-            return nullptr;
-        },
-        [&gltfStaleSurfacePathTouched](TilesetTile&) {
-            gltfStaleSurfacePathTouched = true;
-        },
-        [&gltfStaleSurfacePathTouched](const TilesetTile&) {
-            gltfStaleSurfacePathTouched = true;
-            return false;
-        },
         [&gltfStaleResourcesDirty]() {
             gltfStaleResourcesDirty = true;
         });
-    check(!gltfStaleSurfacePathTouched &&
-              gltfStaleResourcesDirty &&
+    check(gltfStaleResourcesDirty &&
               gltfWithStaleHeightmapSurface.content.renderContent.hasGltfContent() &&
               !gltfWithStaleHeightmapSurface.content.renderContent.hasSurfaceMesh() &&
               !gltfWithStaleHeightmapSurface.content.renderContent.hasRetainedHeightmap(),
-          "TileMeshFrameEnsurer: glTF terrain clears stale heightmap surface residue before bypassing SurfaceMesh path");
+          "TileMeshFrameEnsurer: glTF terrain clears stale heightmap surface residue without SurfaceMesh path");
 
     TilesetTile staleHeightmapSurfaceTile(
         TileKey{"Geographic-TMS", 0, 0, 0},
@@ -12125,33 +12091,16 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
         SurfaceDrawableSource::HeightmapTerrain);
     staleHeightmapSurfaceTile.content.renderContent.setRetainedHeightmap(
         makeFlatHeightmap(42.0f));
-    bool staleSurfacePathTouched = false;
     bool staleResourcesDirty = false;
     TileMeshFrameEnsurer::ensureContentTerrain(
         TileContentTerrainMeshFrameEnsureInput{
             staleHeightmapSurfaceTile,
             nullptr,
             true},
-        [&staleSurfacePathTouched](const TileKey&, DecodedHeightmap*) {
-            staleSurfacePathTouched = true;
-        },
-        [&staleSurfacePathTouched](const TilesetTile&, bool)
-            -> const TilesetTile* {
-            staleSurfacePathTouched = true;
-            return nullptr;
-        },
-        [&staleSurfacePathTouched](TilesetTile&) {
-            staleSurfacePathTouched = true;
-        },
-        [&staleSurfacePathTouched](const TilesetTile&) {
-            staleSurfacePathTouched = true;
-            return false;
-        },
         [&staleResourcesDirty]() {
             staleResourcesDirty = true;
         });
-    check(!staleSurfacePathTouched &&
-              staleResourcesDirty &&
+    check(staleResourcesDirty &&
               !staleHeightmapSurfaceTile.content.renderContent.hasSurfaceMesh() &&
               !staleHeightmapSurfaceTile.content.renderContent.hasRetainedHeightmap(),
           "TileMeshFrameEnsurer: content terrain quadtree clears stale heightmap surface residue");

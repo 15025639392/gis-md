@@ -61,22 +61,10 @@ public:
             std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
     }
 
-    template <typename IngestAvailabilityFn,
-              typename FindUpsampleSourceFn,
-              typename EnsureAncestorMeshFn,
-              typename IsCompleteRenderableFn,
-              typename MarkResourcesDirtyFn>
+    template <typename MarkResourcesDirtyFn>
     static void ensureContentTerrain(
         const TileContentTerrainMeshFrameEnsureInput& input,
-        IngestAvailabilityFn&& ingestAvailability,
-        FindUpsampleSourceFn&& findUpsampleSource,
-        EnsureAncestorMeshFn&& ensureAncestorMesh,
-        IsCompleteRenderableFn&& isCompleteRenderable,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        (void)ingestAvailability;
-        (void)findUpsampleSource;
-        (void)ensureAncestorMesh;
-        (void)isCompleteRenderable;
         (void)input.device;
         (void)input.hasTerrainQuadtree;
 

@@ -83,10 +83,6 @@ void TileMeshPreparationManager::ensureTileMesh(TilesetTile& tile) {
             tile,
             device_,
             hasTerrainQuadtree_},
-        ingestAvailability,
-        findUpsampleSource,
-        ensureAncestorMesh,
-        isCompleteRenderable,
         markDirty);
 }
 
