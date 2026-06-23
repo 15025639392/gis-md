@@ -140,6 +140,9 @@ public:
     bool hasRenderableTerrainContent() const {
         return hasSurfaceMesh() || hasGltfContent();
     }
+    bool hasRasterOverlayDetailsContent() const {
+        return hasSurfaceMesh() || hasGltfContent();
+    }
     bool isTerrainRenderContent() const { return terrainRenderContent_; }
     const SurfaceTileMesh* surfaceMesh() const { return surface_.mesh.get(); }
     SurfaceTileMesh* surfaceMesh() { return surface_.mesh.get(); }

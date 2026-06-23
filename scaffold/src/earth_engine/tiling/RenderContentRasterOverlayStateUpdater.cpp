@@ -45,7 +45,7 @@ RenderContentRasterOverlayStateUpdater::update(
     tile.rasterOverlayState.clearMissingProjections();
     const bool hasRenderContentDetails =
         tile.content.contentKind == TileContentKind::Render &&
-        tile.content.renderContent.hasRenderableTerrainContent();
+        tile.content.renderContent.hasRasterOverlayDetailsContent();
     static const RasterOverlayDetails emptyOverlayDetails;
     const RasterOverlayDetails& overlayDetails = hasRenderContentDetails
         ? tile.content.renderContent.rasterOverlayDetails()

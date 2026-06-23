@@ -26,7 +26,7 @@ public:
         double defaultGeometricError,
         EnsureTileFn&& ensureTile,
         IPrepareRendererResources* pPrepRenderer = nullptr) {
-        if (!tile.content.renderContent.hasRenderableTerrainContent() ||
+        if (!tile.content.renderContent.hasRasterOverlayDetailsContent() ||
             tile.children.size() >= 4) {
             return false;
         }

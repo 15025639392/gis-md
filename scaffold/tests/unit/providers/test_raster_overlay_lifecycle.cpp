@@ -4120,6 +4120,57 @@ TEST(RasterOverlayLifecycleTest, PrefetchRecordsMissingProjectionForContentReloa
 }
 
 TEST(RasterOverlayLifecycleTest,
+     PrefetchUsesOrdinaryGltfRasterOverlayDetailsLikeCesiumNativeRenderContent) {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activated(*overlay);
+
+    TilesetTile tile(
+        TileKey{"Geographic-TMS", 2, 1, 1},
+        Rectangle::fromDegrees(-20.0, -10.0, 20.0, 10.0));
+    tile.geometricError = 100.0;
+    tile.content.loadState = TileLoadState::Done;
+    tile.content.contentKind = TileContentKind::Render;
+
+    const Rectangle contentRectangle =
+        Rectangle::fromDegrees(-4.0, -3.0, 6.0, 5.0);
+    auto model = std::make_unique<GltfModel>();
+    model->rasterOverlayDetails =
+        makeProviderDetails(overlay->getTileScheme(), contentRectangle);
+    tile.content.renderContent.prepareGltfContent(
+        std::move(model),
+        Mat4::identity());
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    TileRasterOverlayPrefetcher::prefetch(
+        tile,
+        overlays,
+        {0},
+        nullptr,
+        16.0,
+        budget);
+
+    RasterMappedToTilesetTile* mapped = tile.rasterOverlayState.mappingAt(0);
+    ASSERT_NE(nullptr, mapped);
+    ASSERT_NE(nullptr, mapped->getLoadingTile());
+    const Rectangle expected =
+        projectForProvider(overlay->getTileScheme(), contentRectangle);
+    const Rectangle tileProjection =
+        projectForProvider(overlay->getTileScheme(), tile.bounds);
+    EXPECT_EQ(expected, mapped->getLoadingTile()->getRectangle());
+    EXPECT_NE(tileProjection, mapped->getLoadingTile()->getRectangle());
+    EXPECT_TRUE(tile.rasterOverlayState.missingProjections().empty());
+}
+
+TEST(RasterOverlayLifecycleTest,
      PrefetchPromotesAncestorFallbackWhileChildLoadingLikeCesiumNative) {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
