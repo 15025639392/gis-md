@@ -56,13 +56,6 @@ TerrainProvider* effectiveLegacyTerrainProvider(
     return terrainProvider;
 }
 
-TileMeshLegacyHeightmapMode tileMeshLegacyHeightmapModeFor(
-    const TilesetContentProvider* contentProvider) {
-    return contentProviderOwnsTerrainQuadtree(contentProvider)
-        ? TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly
-        : TileMeshLegacyHeightmapMode::Include;
-}
-
 LoadedTerrainHeightCacheMode loadedTerrainHeightCacheModeFor(
     const TilesetContentProvider* contentProvider) {
     return contentProviderOwnsTerrainQuadtree(contentProvider)
@@ -142,7 +135,7 @@ Tileset::Tileset(ProviderOwnership providers,
           providerHasTerrainQuadtree(
               legacyTerrainProvider_.get(),
               contentProvider_.get()),
-          tileMeshLegacyHeightmapModeFor(contentProvider_.get()),
+          !contentProviderOwnsTerrainQuadtree(contentProvider_.get()),
           device_,
           rasterOverlays_),
       contentRuntime_(

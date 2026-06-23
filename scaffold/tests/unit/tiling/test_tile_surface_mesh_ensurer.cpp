@@ -33,7 +33,7 @@ TEST(TileSurfaceMeshEnsurerTest,
                 nullptr,
                 nullptr,
                 true,
-                TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly},
+                false},
             [](const TileKey&, DecodedHeightmap*) {},
             [&parent](const TilesetTile&, bool) -> const TilesetTile* {
                 return &parent;
@@ -77,7 +77,7 @@ TEST(TileSurfaceMeshEnsurerTest,
                 nullptr,
                 nullptr,
                 true,
-                TileMeshLegacyHeightmapMode::Include},
+                true},
             [](const TileKey&, DecodedHeightmap*) {},
             [&parent](const TilesetTile&, bool) -> const TilesetTile* {
                 return &parent;

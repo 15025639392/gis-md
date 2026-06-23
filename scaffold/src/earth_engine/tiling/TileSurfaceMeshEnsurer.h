@@ -1,6 +1,5 @@
 #pragma once
 
-#include "TileMeshLegacyHeightmapMode.h"
 #include "TileSurfaceMeshResolutionPolicy.h"
 #include "TileSurfaceMeshSourceResolver.h"
 #include "TileSurfaceRenderContentCoordinator.h"
@@ -16,8 +15,7 @@ struct TileSurfaceMeshEnsureInput {
     DecodedHeightmap* ownHeightmap = nullptr;
     RenderDevice* device = nullptr;
     bool hasTerrainQuadtree = false;
-    TileMeshLegacyHeightmapMode legacyHeightmapMode =
-        TileMeshLegacyHeightmapMode::Include;
+    bool allowLegacyHeightmapSurface = true;
 };
 
 struct TileSurfaceMeshEnsureResult {
@@ -80,7 +78,7 @@ public:
                 tile,
                 ownHeightmap,
                 input.hasTerrainQuadtree,
-                input.legacyHeightmapMode,
+                input.allowLegacyHeightmapSurface,
                 findUpsampleSource,
                 ensureAncestorMesh);
         if (!tile.content.renderContent.hasSurfaceMesh()) {

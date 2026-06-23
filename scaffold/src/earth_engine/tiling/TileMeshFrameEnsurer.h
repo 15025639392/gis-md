@@ -1,6 +1,5 @@
 #pragma once
 
-#include "TileMeshLegacyHeightmapMode.h"
 #include "TileSurfaceMeshEnsurer.h"
 
 #include <memory>
@@ -20,8 +19,7 @@ struct TileMeshFrameEnsureInput {
         terrainCache;
     RenderDevice* device = nullptr;
     bool hasTerrainQuadtree = false;
-    TileMeshLegacyHeightmapMode legacyHeightmapMode =
-        TileMeshLegacyHeightmapMode::Include;
+    bool allowLegacyHeightmapSurface = true;
 };
 
 class TileMeshFrameEnsurer {
@@ -40,11 +38,9 @@ public:
         EnsureAncestorMeshFn&& ensureAncestorMesh,
         IsCompleteRenderableFn&& isCompleteRenderable,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        const bool useLegacyHeightmapTerrainCache =
-            input.legacyHeightmapMode == TileMeshLegacyHeightmapMode::Include;
         const bool contentTerrainQuadtreeOwnsSurface =
             input.hasTerrainQuadtree &&
-            !useLegacyHeightmapTerrainCache;
+            !input.allowLegacyHeightmapSurface;
         const bool hasLegacySurfaceResidue =
             contentTerrainQuadtreeOwnsSurface &&
             (input.tile.content.renderContent.hasSurfaceMesh() ||
@@ -59,7 +55,7 @@ public:
             return;
         }
 
-        auto it = useLegacyHeightmapTerrainCache
+        auto it = input.allowLegacyHeightmapSurface
             ? input.terrainCache.find(terrainCacheKey(input.tile.key))
             : input.terrainCache.end();
         const bool hasOwnTerrain =
@@ -74,7 +70,7 @@ public:
                     ownHeightmap,
                     input.device,
                     input.hasTerrainQuadtree,
-                    input.legacyHeightmapMode},
+                    input.allowLegacyHeightmapSurface},
                 ingestAvailability,
                 findUpsampleSource,
                 ensureAncestorMesh,

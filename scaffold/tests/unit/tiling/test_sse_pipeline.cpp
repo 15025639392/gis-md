@@ -11792,7 +11792,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             fallbackTile,
             nullptr,
             false,
-            TileMeshLegacyHeightmapMode::Include,
+            true,
             [](const TilesetTile&, bool) -> const TilesetTile* {
                 return nullptr;
             },
@@ -11811,7 +11811,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             contentTerrainFallbackTile,
             nullptr,
             true,
-            TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly,
+            false,
             [](const TilesetTile&, bool) -> const TilesetTile* {
                 return nullptr;
             },
@@ -11838,7 +11838,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             upsampleChild,
             nullptr,
             true,
-            TileMeshLegacyHeightmapMode::Include,
+            true,
             [&upsampleParent](const TilesetTile&, bool)
                 -> const TilesetTile* {
                 return &upsampleParent;
@@ -11873,7 +11873,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             contentOwnedUpsampleChild,
             nullptr,
             true,
-            TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly,
+            false,
             [&contentOwnedLegacyParent](const TilesetTile&, bool)
                 -> const TilesetTile* {
                 return &contentOwnedLegacyParent;
@@ -11907,7 +11907,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             gltfChild,
             nullptr,
             true,
-            TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly,
+            false,
             [](const TilesetTile&, bool) -> const TilesetTile* {
                 return nullptr;
             },
@@ -11930,7 +11930,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
                 nullptr,
                 nullptr,
                 true,
-                TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly},
+                false},
             [&gltfEnsureIngested](const TileKey&, DecodedHeightmap*) {
                 gltfEnsureIngested = true;
             },
@@ -12018,7 +12018,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             frameTerrainCache,
             nullptr,
             true,
-            TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly},
+            false},
         [&gltfStaleCacheKeyComputed](const TileKey&) {
             gltfStaleCacheKeyComputed = true;
             return std::string("unexpected-gltf-stale-cache-key");
@@ -12068,7 +12068,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
             frameTerrainCache,
             nullptr,
             true,
-            TileMeshLegacyHeightmapMode::ContentOwnedTerrainOnly},
+            false},
         [&staleCacheKeyComputed](const TileKey&) {
             staleCacheKeyComputed = true;
             return std::string("unexpected-content-terrain-cache-key");
