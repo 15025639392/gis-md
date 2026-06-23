@@ -2870,7 +2870,7 @@ TEST(RasterOverlayLifecycleTest,
 }
 
 TEST(RasterOverlayLifecycleTest,
-     SharedSourceWaiterAfterProviderDestructionIsIgnored) {
+     SharedSourceWaitersAfterProviderDestructionResolveLikeCesiumNativeDepot) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
     auto provider = std::make_unique<RasterOverlayTileProvider>(
@@ -2908,12 +2908,21 @@ TEST(RasterOverlayLifecycleTest,
     ASSERT_EQ(1u, imagery.requestedKeys.size());
     EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
 
+    std::shared_future<void> destroyed =
+        provider->getAsyncDestructionCompleteEvent();
     provider.reset();
+    EXPECT_EQ(
+        std::future_status::timeout,
+        destroyed.wait_for(std::chrono::milliseconds(0)));
+
     imagery.completeNext();
 
     EXPECT_TRUE(imagery.pending.empty());
     ASSERT_EQ(1u, imagery.requestedKeys.size());
     EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
+    EXPECT_EQ(
+        std::future_status::ready,
+        destroyed.wait_for(std::chrono::seconds(1)));
 }
 
 TEST(RasterOverlayLifecycleTest, SourceTileDepotHonorsSubTileCacheByteBudget) {
