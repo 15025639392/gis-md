@@ -517,7 +517,8 @@ std::optional<Rectangle> mapGeometryBoundsToImageryCoverage(
 }
 
 bool shouldClampOutsideCoverage(const RasterOverlay* owner) {
-    return !owner || owner->role() == RasterOverlayRole::BaseImagery;
+    (void)owner;
+    return true;
 }
 
 bool isDecodedImageUploadable(const DecodedImage& image) {
