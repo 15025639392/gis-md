@@ -2518,6 +2518,7 @@ TEST(RasterOverlayLifecycleTest, CompositeTilesShareInFlightSourceTileLikeCesium
     ASSERT_EQ(1u, imagery.requestedKeys.size());
     EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
     EXPECT_EQ(1, provider.getActiveRasterSourceRequests());
+    EXPECT_TRUE(provider.hasPendingWork());
 
     FrameResourceBudget secondBudget;
     secondBudget.beginFrame(2, config);
@@ -2525,10 +2526,14 @@ TEST(RasterOverlayLifecycleTest, CompositeTilesShareInFlightSourceTileLikeCesium
     EXPECT_EQ(0u, secondBudget.rasterNetworkRequestsIssued());
     EXPECT_EQ(1u, imagery.requestedKeys.size());
     EXPECT_EQ(1, provider.getActiveRasterSourceRequests());
+    EXPECT_TRUE(provider.hasPendingWork());
 
     imagery.completeNext();
     EXPECT_EQ(0, provider.getActiveRasterSourceRequests());
     EXPECT_EQ(2, provider.getPendingUploadCount());
+    EXPECT_TRUE(provider.hasPendingWork());
+    EXPECT_EQ(2, provider.processPendingUploads(false));
+    EXPECT_FALSE(provider.hasPendingWork());
 }
 
 TEST(RasterOverlayLifecycleTest, FailedSourceTileIsSharedLikeCesiumNativeDepot) {

@@ -2482,7 +2482,10 @@ int RasterOverlayTileProvider::processPendingUploads(
 bool RasterOverlayTileProvider::hasPendingWork() const {
     std::lock_guard<std::mutex> lock(asyncState_->mutex);
     return !asyncState_->pendingUploads.empty() ||
-           !asyncState_->inFlightRequests.empty();
+           !asyncState_->inFlightRequests.empty() ||
+           !asyncState_->sourceTileDepotInFlight.empty() ||
+           asyncState_->activeRasterSourceRequests.load(
+               std::memory_order_relaxed) > 0;
 }
 
 void RasterOverlayTileProvider::markUsed(const std::string& cacheKey) {
