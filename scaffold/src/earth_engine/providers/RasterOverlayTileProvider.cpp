@@ -997,12 +997,12 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
     return result;
 }
 
-using CompositeRequestSuccess =
+using MappedSourceLoadSuccess =
     std::function<void(std::unique_ptr<DecodedImage>,
                        std::shared_ptr<const DecodedImage>,
                        Rectangle,
                        RasterOverlayTile::MoreDetailAvailable)>;
-using CompositeRequestFailure = std::function<void()>;
+using MappedSourceLoadFailure = std::function<void()>;
 
 bool isMappedRasterCacheKey(const std::string& cacheKey) {
     return cacheKey.rfind("mapped-raster/", 0) == 0;
@@ -1446,18 +1446,19 @@ private:
     }
 };
 
-struct RasterOverlayTileProvider::QuadtreeSourceRequest
-    : public std::enable_shared_from_this<QuadtreeSourceRequest> {
-    QuadtreeSourceRequest(const TileScheme& tileScheme,
-                          std::shared_ptr<ProviderAsyncState> asyncState,
-                          std::shared_ptr<QuadtreeSourceAssetDepot> sourceDepot,
-                          QuadtreeSourcePlan plan,
-                          Rectangle bounds,
-                          RasterOverlayProjection outputProjection,
-                          int maximumSourceLevel,
-                          bool emptyWhenOnlyAncestorFallback,
-                          CompositeRequestSuccess success,
-                          CompositeRequestFailure failure)
+struct RasterOverlayTileProvider::MappedSourceImageRequest
+    : public std::enable_shared_from_this<MappedSourceImageRequest> {
+    MappedSourceImageRequest(const TileScheme& tileScheme,
+                             std::shared_ptr<ProviderAsyncState> asyncState,
+                             std::shared_ptr<QuadtreeSourceAssetDepot>
+                                 sourceDepot,
+                             QuadtreeSourcePlan plan,
+                             Rectangle bounds,
+                             RasterOverlayProjection outputProjection,
+                             int maximumSourceLevel,
+                             bool emptyWhenOnlyAncestorFallback,
+                             MappedSourceLoadSuccess success,
+                             MappedSourceLoadFailure failure)
         : scheme(tileScheme)
         , state(std::move(asyncState))
         , depot(std::move(sourceDepot))
@@ -1642,8 +1643,8 @@ private:
     RasterOverlayProjection projection;
     int maximumLevel = 0;
     bool returnEmptyForAncestorOnly = false;
-    CompositeRequestSuccess onSuccess;
-    CompositeRequestFailure onFailure;
+    MappedSourceLoadSuccess onSuccess;
+    MappedSourceLoadFailure onFailure;
     mutable std::mutex mutex;
     size_t nextSourceIndex = 0;
     int remaining = 0;
@@ -2349,7 +2350,7 @@ bool RasterOverlayTileProvider::loadMappedSourceImages(
         refreshSourceAssetDepot();
     }
     const bool returnEmptyForAncestorOnly = true;
-    auto request = std::make_shared<QuadtreeSourceRequest>(
+    auto request = std::make_shared<MappedSourceImageRequest>(
         scheme_,
         state,
         sourceAssetDepot_,
@@ -2405,7 +2406,7 @@ bool RasterOverlayTileProvider::loadMappedSourceImages(
 }
 
 int RasterOverlayTileProvider::issueMappedSourceRequests(
-    const std::shared_ptr<QuadtreeSourceRequest>& request,
+    const std::shared_ptr<MappedSourceImageRequest>& request,
     FrameResourceBudget* budget) {
     if (!request || request->isComplete()) {
         return 0;
@@ -2485,7 +2486,7 @@ int RasterOverlayTileProvider::processPendingUploads(
         PendingUpload upload;
         {
             std::lock_guard<std::mutex> lock(asyncState_->mutex);
-            // Composite raster tiles can be 512x512+ and state finalization
+            // Mapped raster tiles can be 512x512+ and state finalization
             // runs on the main thread. Take one upload at a time so elapsed
             // upload cost can stop the next item in the same frame.
             if (asyncState_->pendingUploads.empty()) {
@@ -2566,9 +2567,9 @@ int RasterOverlayTileProvider::processPendingUploads(
         double uploadMs = 0.0;
         for (const TilePtr& target : targetTiles) {
             RasterOverlayTile& tile = *target;
-            // Resource-prep upload (main-thread safe). Composite images are
+            // Resource-prep upload (main-thread safe). Mapped raster images are
             // already combined at the selector's target screen-pixel density;
-            // on mobile, generating mipmaps for every composite image is
+            // on mobile, generating mipmaps for every mapped raster image is
             // expensive main-thread work without improving the current
             // selected tile.
             const bool generateMipmaps = !tile.isMappedRasterTile();

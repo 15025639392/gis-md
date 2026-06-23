@@ -255,7 +255,7 @@ private:
         bool empty() const { return sourceKeys.empty(); }
     };
 
-    struct QuadtreeSourceRequest;
+    struct MappedSourceImageRequest;
     struct QuadtreeSourceAssetDepot;
 
     static QuadtreeSourcePlan buildQuadtreeSourcePlan(
@@ -288,7 +288,7 @@ private:
     bool loadMappedRasterTile(RasterOverlayTile& tile,
                               FrameResourceBudget* budget = nullptr);
     int issueMappedSourceRequests(
-        const std::shared_ptr<QuadtreeSourceRequest>& request,
+        const std::shared_ptr<MappedSourceImageRequest>& request,
         FrameResourceBudget* budget);
 
     /// Tile cache key from TileKey.
