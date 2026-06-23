@@ -52,6 +52,8 @@ struct TilesetContentUploadContext {
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
         terrainCache;
+    LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode =
+        LegacyHeightmapTerrainCacheMode::Include;
     TileEmptyContentRegistry& emptyContentRegistry;
     uint64_t frameNumber = 0;
     uint32_t maximumSimultaneousTileLoads = 20;

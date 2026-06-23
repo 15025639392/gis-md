@@ -56,6 +56,7 @@ bool TileContentRuntime::processPendingUploads(
         frame.device,
         frame.pPrepRenderer,
         frame.rasterOverlays,
+        frame.legacyHeightmapCacheMode,
         frame.frameNumber,
         frame.maximumSimultaneousTileLoads,
         frame.mainThreadLoadingTimeLimit,

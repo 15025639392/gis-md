@@ -15,10 +15,10 @@ bool TileContentLifecycleManager::hasPendingWork() const {
     return loadLifecycle_.hasPendingWork();
 }
 
-void TileContentLifecycleManager::
-    discardLegacyTerrainCacheIfOwnedByContentProvider(
-        const TilesetContentProvider* contentProvider) {
-    if (contentProvider && contentProvider->providesTerrainQuadtree()) {
+void TileContentLifecycleManager::discardLegacyTerrainCacheForMode(
+    LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode) {
+    if (legacyHeightmapCacheMode ==
+        LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly) {
         legacyTerrainCache_.clear();
     }
 }

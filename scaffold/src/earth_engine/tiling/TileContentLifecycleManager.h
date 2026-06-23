@@ -44,8 +44,8 @@ public:
     int pendingRequests() const;
     bool hasPendingWork() const;
     void shutdown();
-    void discardLegacyTerrainCacheIfOwnedByContentProvider(
-        const TilesetContentProvider* contentProvider);
+    void discardLegacyTerrainCacheForMode(
+        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode);
 
     template <typename PrepareUpsampleSourceTileFn, typename EnsureTileFn>
     TileLoadRequestOutcome requestMissingTiles(
@@ -65,7 +65,7 @@ public:
         FrameResourceBudget* budget,
         PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
         EnsureTileFn&& ensureTile) {
-        discardLegacyTerrainCacheIfOwnedByContentProvider(contentProvider);
+        discardLegacyTerrainCacheForMode(legacyHeightmapCacheMode);
         return TilesetContentLifecycleCoordinator::requestMissingTiles(
             loadRequests,
             makeContext(
@@ -95,6 +95,7 @@ public:
         RenderDevice* device,
         IPrepareRendererResources* pPrepRenderer,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode,
         uint64_t frameNumber,
         uint32_t maximumSimultaneousTileLoads,
         double mainThreadLoadingTimeLimit,
@@ -107,13 +108,14 @@ public:
         EnsureTileChildrenFn&& ensureTileChildren,
         EnsureTileMeshFn&& ensureTileMesh,
         MarkResourcesDirtyFn&& markResourcesDirty) {
-        discardLegacyTerrainCacheIfOwnedByContentProvider(contentProvider);
+        discardLegacyTerrainCacheForMode(legacyHeightmapCacheMode);
         return TilesetContentLifecycleCoordinator::processPendingUploads(
             makeUploadContext(
                 contentProvider,
                 device,
                 pPrepRenderer,
                 rasterOverlays,
+                legacyHeightmapCacheMode,
                 frameNumber,
                 maximumSimultaneousTileLoads,
                 mainThreadLoadingTimeLimit,
@@ -164,6 +166,7 @@ private:
         RenderDevice* device,
         IPrepareRendererResources* pPrepRenderer,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode,
         uint64_t frameNumber,
         uint32_t maximumSimultaneousTileLoads,
         double mainThreadLoadingTimeLimit,
@@ -176,6 +179,7 @@ private:
             pPrepRenderer,
             rasterOverlays,
             legacyTerrainCache_,
+            legacyHeightmapCacheMode,
             emptyContentRegistry_,
             frameNumber,
             maximumSimultaneousTileLoads,
