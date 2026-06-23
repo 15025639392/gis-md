@@ -950,7 +950,9 @@ TEST(TileChildMaterializerTest,
         std::make_unique<SurfaceTileMesh>());
     sw->content.renderContent.setMeshReady(true);
     sw->content.renderContent.markRenderContentReady();
+    sw->rasterOverlayState.ensureMapping(0);
     ASSERT_TRUE(sw->content.renderContent.hasSurfaceMesh());
+    ASSERT_EQ(1u, sw->rasterOverlayState.mappingCount());
 
     const Rectangle tighterSubdivision =
         Rectangle::fromDegrees(-16.0, -8.0, -2.0, 8.0);
@@ -968,6 +970,7 @@ TEST(TileChildMaterializerTest,
     EXPECT_FALSE(sw->content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(sw->content.renderContent.isMeshReady());
     EXPECT_FALSE(sw->content.renderContent.isRenderContentReady());
+    EXPECT_EQ(0u, sw->rasterOverlayState.mappingCount());
     EXPECT_TRUE(sw->content.renderContent.hasTerrainHeightRange());
     EXPECT_DOUBLE_EQ(-5.0, sw->content.renderContent.terrainMinimumHeight());
     EXPECT_DOUBLE_EQ(25.0, sw->content.renderContent.terrainMaximumHeight());
@@ -1034,6 +1037,51 @@ TEST(TileChildMaterializerTest, RasterUpsampledTileCanContinueSubdividingForImag
         [](const TileKey&) { return std::string{"child"}; },
         [](const std::string&) { return false; },
         [](const TileKey&) { return TileAvailabilityState::NotAvailable; }));
+}
+
+TEST(TileChildMaterializerTest,
+     RasterUpsampledChildrenResetDeepApproximateTileIdLikeCesiumNative) {
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 30, 600000000, 600000000},
+        Rectangle::fromDegrees(106.0, 29.0, 107.0, 30.0));
+    parent.geometricError = 64.0;
+    parent.content.renderContent.setTerrainHeightRange(100.0, 500.0);
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    auto ensure = [&tiles](const TileKey& key) -> TilesetTile* {
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(key, Rectangle{})).first;
+        }
+        return it->second.get();
+    };
+
+    const bool changed =
+        TileChildMaterializer::materializeRasterUpsampledChildren(
+            parent,
+            parent.bounds,
+            64.0,
+            ensure);
+
+    ASSERT_TRUE(changed);
+    ASSERT_EQ(4u, parent.children.size());
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 0}),
+              parent.children[0]->key);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 1, 0}),
+              parent.children[1]->key);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 1}),
+              parent.children[2]->key);
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 1, 1}),
+              parent.children[3]->key);
+    EXPECT_TRUE(parent.children[0]->bounds.equalsEpsilon(
+        Rectangle::fromDegrees(106.0, 29.0, 106.5, 29.5),
+        1e-12));
+    EXPECT_TRUE(parent.children[3]->bounds.equalsEpsilon(
+        Rectangle::fromDegrees(106.5, 29.5, 107.0, 30.0),
+        1e-12));
 }
 
 TEST(TileChildMaterializerTest,

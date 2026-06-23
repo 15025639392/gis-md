@@ -193,9 +193,15 @@ struct TileChildMaterializer {
         const double centerLng = subdivisionCenter.first;
         const double centerLat = subdivisionCenter.second;
 
-        const int childZ = parent.key.z + 1;
-        const int childX = parent.key.x * 2;
-        const int childY = parent.key.y * 2;
+        TileKey parentKeyForUpsampledId = parent.key;
+        if (parentKeyForUpsampledId.z >= 30) {
+            parentKeyForUpsampledId.z = 0;
+            parentKeyForUpsampledId.x = 0;
+            parentKeyForUpsampledId.y = 0;
+        }
+        const int childZ = parentKeyForUpsampledId.z + 1;
+        const int childX = parentKeyForUpsampledId.x * 2;
+        const int childY = parentKeyForUpsampledId.y * 2;
         const std::array<Rectangle, 4> childBounds = {
             Rectangle(
                 subdivisionRectangle.west(),
@@ -256,6 +262,7 @@ struct TileChildMaterializer {
             child->refine = TileRefine::Replace;
             if (!wasRasterDetailUpsample || childGeometryChanged) {
                 child->content.renderContent.clearRenderContent();
+                child->rasterOverlayState.releaseAndClearReferences(nullptr);
             }
             child->content.markRasterDetailUpsample();
             child->unconditionallyRefine = false;
