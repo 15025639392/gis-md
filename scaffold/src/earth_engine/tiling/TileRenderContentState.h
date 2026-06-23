@@ -433,16 +433,23 @@ public:
     }
 
     void clearGltfContent() {
+        const bool wasGltfOwnedContent =
+            gltfModel != nullptr ||
+            terrainRenderContent_ ||
+            surface_.surfaceSource == SurfaceDrawableSource::GltfContent;
         gltfModel.reset();
         gltfContentTransform = Mat4::identity();
         clearGltfGpuResources();
         terrainRenderContent_ = false;
-        if (surface_.surfaceSource == SurfaceDrawableSource::GltfContent) {
-            surface_.surfaceSource = SurfaceDrawableSource::None;
-        }
-        if (!surface_.mesh) {
+        if (wasGltfOwnedContent) {
+            clearSurfaceMeshResources();
+            surface_.heightmap.reset();
             surface_.surfaceDrawable = false;
             surface_.localOrigin = Vec3::zero();
+            return;
+        }
+        if (surface_.surfaceSource == SurfaceDrawableSource::GltfContent) {
+            surface_.surfaceSource = SurfaceDrawableSource::None;
         }
     }
 

@@ -150,6 +150,47 @@ void expectRectangleNear(const Rectangle& expected,
 } // namespace
 
 TEST(RasterOverlayDetailsTest,
+     ClearingGltfTerrainContentDoesNotExposeStaleSurfaceState) {
+    TileRenderContentState renderContent;
+    auto model = std::make_unique<GltfModel>();
+    RasterOverlayDetails gltfDetails;
+    const Rectangle rectangle(0.0, 0.0, 1.0, 1.0);
+    gltfDetails.setGeographicRectangle(rectangle, -1.0, 1.0);
+    model->rasterOverlayDetails = std::move(gltfDetails);
+    renderContent.prepareGltfContent(std::move(model), Mat4::identity());
+    renderContent.setTerrainRenderContent(true);
+
+    auto staleSurface = std::make_unique<SurfaceTileMesh>();
+    RasterOverlayDetails staleSurfaceDetails;
+    staleSurfaceDetails.setGeographicRectangle(
+        Rectangle(2.0, 2.0, 3.0, 3.0),
+        10.0,
+        20.0);
+    staleSurface->rasterOverlayDetails = std::move(staleSurfaceDetails);
+    renderContent.setSurfaceMesh(std::move(staleSurface));
+    renderContent.setRetainedHeightmap(std::make_unique<DecodedHeightmap>());
+    renderContent.setSurfaceDrawable(true);
+    renderContent.setSurfaceSource(SurfaceDrawableSource::GltfContent);
+    renderContent.setMeshReady(true);
+    renderContent.setSurfaceLocalOrigin(Vec3(1.0, 2.0, 3.0));
+
+    renderContent.clearGltfContent();
+
+    EXPECT_FALSE(renderContent.hasGltfContent());
+    EXPECT_FALSE(renderContent.hasRenderableTerrainContent());
+    EXPECT_FALSE(renderContent.hasRasterOverlayDetailsContent());
+    EXPECT_FALSE(renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(renderContent.hasRetainedHeightmap());
+    EXPECT_FALSE(renderContent.isSurfaceDrawable());
+    EXPECT_FALSE(renderContent.isSurfaceMeshReady());
+    EXPECT_EQ(SurfaceDrawableSource::None,
+              renderContent.currentSurfaceSource());
+    EXPECT_EQ(Vec3::zero(), renderContent.renderLocalOrigin());
+    EXPECT_TRUE(renderContent.rasterOverlayDetails()
+                    .rasterOverlayRectangles.empty());
+}
+
+TEST(RasterOverlayDetailsTest,
      MergeAppendsProjectionSlotsLikeCesiumNative) {
     RasterOverlayDetails first;
     const Rectangle firstRectangle(0.0, 1.0, 2.0, 3.0);
