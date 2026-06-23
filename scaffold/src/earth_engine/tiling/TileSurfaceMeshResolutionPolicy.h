@@ -30,7 +30,7 @@ class TileSurfaceMeshResolutionPolicy {
 public:
     static bool shouldReplaceReadySurface(const TilesetTile& tile,
                                           bool hasOwnTerrain) {
-        return tile.content.renderContent.needsOwnTerrainSurfaceReplacement(
+        return tile.content.renderContent.needsLegacyHeightmapSurfaceReplacement(
             hasOwnTerrain);
     }
 };

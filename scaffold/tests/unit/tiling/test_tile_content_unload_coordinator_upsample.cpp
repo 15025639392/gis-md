@@ -29,7 +29,7 @@ struct ProtectedSourceFixture {
             std::make_unique<SurfaceTileMesh>());
         parent.content.renderContent.setSurfaceDrawable(true);
         parent.content.renderContent.setSurfaceSource(
-            SurfaceDrawableSource::OwnTerrain);
+            SurfaceDrawableSource::LegacyHeightmapTerrain);
         parent.selectionFrameState.renderable = true;
         parent.selectionFrameState.completeRenderable = true;
         child.content.upsampledFromParent = true;

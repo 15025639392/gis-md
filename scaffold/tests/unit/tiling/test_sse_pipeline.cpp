@@ -11627,7 +11627,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
         nullptr);
     tile.content.loadState = TileLoadState::ContentLoaded;
     tile.commitSurfaceRenderContent(
-        SurfaceDrawableSource::OwnTerrain,
+        SurfaceDrawableSource::LegacyHeightmapTerrain,
         true,
         [](const TilesetTile& committedTile) {
             return committedTile.content.loadState == TileLoadState::Done &&
@@ -11636,7 +11636,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     check(tile.content.loadState == TileLoadState::Done &&
               tile.content.contentKind == TileContentKind::Render &&
               tile.content.renderContent.isSurfaceSource(
-                  SurfaceDrawableSource::OwnTerrain) &&
+                  SurfaceDrawableSource::LegacyHeightmapTerrain) &&
               tile.content.renderContent.isSurfaceDrawable() &&
               tile.selectionFrameState.completeRenderable &&
               tile.selectionFrameState.renderable,
@@ -11675,7 +11675,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     TileSurfaceRenderContentCoordinator::commitSurface(
         tile,
         TileSurfaceRenderContentCommit{
-            SurfaceDrawableSource::OwnTerrain,
+            SurfaceDrawableSource::LegacyHeightmapTerrain,
             true,
             nullptr},
         [](const TilesetTile& committedTile) {
@@ -11709,7 +11709,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     TileSurfaceRenderContentCoordinator::commitSurface(
         gpuTile,
         TileSurfaceRenderContentCommit{
-            SurfaceDrawableSource::OwnTerrain,
+            SurfaceDrawableSource::LegacyHeightmapTerrain,
             true,
             nullptr,
             &device},
@@ -11724,7 +11724,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
 
     TileSurfaceMeshResolution missingResolution;
     TileSurfaceMeshResolution ownResolution;
-    ownResolution.source = SurfaceDrawableSource::OwnTerrain;
+    ownResolution.source = SurfaceDrawableSource::LegacyHeightmapTerrain;
     ownResolution.markDone = true;
     TileSurfaceMeshResolution ownContext =
         TileSurfaceMeshResolution::forContext(true, false, true);
@@ -11737,7 +11737,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     check(missingResolution.resolvedSource() ==
               SurfaceDrawableSource::EllipsoidFallback &&
               ownResolution.resolvedSource() ==
-                  SurfaceDrawableSource::OwnTerrain &&
+                  SurfaceDrawableSource::LegacyHeightmapTerrain &&
               ownResolution.markDone &&
               ownContext.markDone &&
               upsampleContext.markDone &&
@@ -12921,7 +12921,7 @@ void testTileContentUploadPolicyPreparesGltfRenderContent() {
     tile.content.renderContent.addGltfPrimitiveResource(GltfPrimitiveRenderResources{});
     tile.content.renderContent.setMeshReady(true);
     tile.content.renderContent.setSurfaceDrawable(true);
-    tile.content.renderContent.setSurfaceSource(SurfaceDrawableSource::OwnTerrain);
+    tile.content.renderContent.setSurfaceSource(SurfaceDrawableSource::LegacyHeightmapTerrain);
     tile.content.contentKind = TileContentKind::Empty;
     tile.content.loadState = TileLoadState::Done;
 
@@ -14799,7 +14799,7 @@ void testTileContentUnloadCoordinatorKeepsProtectedUpsampleSource() {
     parent.content.renderContent.setSurfaceDrawable(true);
     parent.selectionFrameState.completeRenderable = true;
     parent.selectionFrameState.renderable = true;
-    parent.content.renderContent.setSurfaceSource(SurfaceDrawableSource::OwnTerrain);
+    parent.content.renderContent.setSurfaceSource(SurfaceDrawableSource::LegacyHeightmapTerrain);
     child.content.upsampledFromParent = true;
     child.content.loadState = TileLoadState::ContentLoading;
     const std::string cacheKey = "test:0:0:0";
@@ -15671,7 +15671,7 @@ void testTileUnloadPolicyProtectsUpsampledLoadingSources() {
     parent.content.renderContent.setSurfaceDrawable(true);
     parent.selectionFrameState.completeRenderable = true;
     parent.selectionFrameState.renderable = true;
-    parent.content.renderContent.setSurfaceSource(SurfaceDrawableSource::OwnTerrain);
+    parent.content.renderContent.setSurfaceSource(SurfaceDrawableSource::LegacyHeightmapTerrain);
     parent.content.renderContent.addGltfPrimitiveResource(GltfPrimitiveRenderResources{});
     TileUnloadPolicy::releaseMainThreadRenderResourcesForProtectedUnload(parent);
 
@@ -15893,7 +15893,7 @@ void testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded() {
     tile.content.renderContent.addGltfPrimitiveResource(GltfPrimitiveRenderResources{});
     tile.content.renderContent.setMeshReady(true);
     tile.content.renderContent.setSurfaceDrawable(true);
-    tile.content.renderContent.setSurfaceSource(SurfaceDrawableSource::OwnTerrain);
+    tile.content.renderContent.setSurfaceSource(SurfaceDrawableSource::LegacyHeightmapTerrain);
     tile.selectionFrameState.completeRenderable = true;
     tile.selectionFrameState.renderable = true;
 
