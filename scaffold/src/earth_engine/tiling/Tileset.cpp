@@ -304,7 +304,9 @@ float Tileset::sampleHeight(double lngRad, double latRad) const {
         contentLifecycle_.legacyTerrainCache(),
         lngRad,
         latRad,
-        !(contentProvider_ && contentProvider_->providesTerrainQuadtree()));
+        contentProvider_ && contentProvider_->providesTerrainQuadtree()
+            ? LoadedTerrainHeightCacheMode::ContentOwnedTerrainOnly
+            : LoadedTerrainHeightCacheMode::IncludeLegacyHeightmap);
 }
 
 void Tileset::update(

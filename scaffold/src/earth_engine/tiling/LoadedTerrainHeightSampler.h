@@ -9,6 +9,11 @@ namespace earth_engine {
 struct DecodedHeightmap;
 struct TilesetTile;
 
+enum class LoadedTerrainHeightCacheMode {
+    IncludeLegacyHeightmap,
+    ContentOwnedTerrainOnly
+};
+
 class LoadedTerrainHeightSampler {
 public:
     static float sampleHeight(
@@ -20,7 +25,8 @@ public:
             std::unique_ptr<DecodedHeightmap>>& terrainCache,
         double longitudeRadians,
         double latitudeRadians,
-        bool useTerrainCache = true);
+        LoadedTerrainHeightCacheMode cacheMode =
+            LoadedTerrainHeightCacheMode::IncludeLegacyHeightmap);
 };
 
 } // namespace earth_engine

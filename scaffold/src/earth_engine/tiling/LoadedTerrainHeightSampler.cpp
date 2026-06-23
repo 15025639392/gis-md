@@ -218,8 +218,10 @@ float LoadedTerrainHeightSampler::sampleHeight(
             std::unique_ptr<DecodedHeightmap>>& terrainCache,
         double longitudeRadians,
         double latitudeRadians,
-        bool useTerrainCache) {
+        LoadedTerrainHeightCacheMode cacheMode) {
     std::optional<LoadedTerrainSample> bestSample;
+    const bool useTerrainCache =
+        cacheMode == LoadedTerrainHeightCacheMode::IncludeLegacyHeightmap;
 
     for (const auto& [cacheKey, tile] : tiles) {
         if (!tile ||
