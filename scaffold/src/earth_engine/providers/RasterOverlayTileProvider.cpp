@@ -2301,6 +2301,8 @@ bool RasterOverlayTileProvider::loadMappedTile(
             std::lock_guard<std::mutex> providerLock(state->mutex);
             state->inFlightRequests.erase(cacheKey);
             if (!state->alive.load(std::memory_order_acquire)) {
+                decrementActiveRasterTileLoads(
+                    state->activeRasterTileLoads);
                 return;
             }
             logAndroidRasterPipeline("composed", cacheKey, 0, 0);
@@ -2315,6 +2317,8 @@ bool RasterOverlayTileProvider::loadMappedTile(
             std::lock_guard<std::mutex> providerLock(state->mutex);
             state->inFlightRequests.erase(cacheKey);
             if (!state->alive.load(std::memory_order_acquire)) {
+                decrementActiveRasterTileLoads(
+                    state->activeRasterTileLoads);
                 return;
             }
             logAndroidRasterPipeline("compose-failed", cacheKey, 0, 0);
