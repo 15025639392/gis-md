@@ -276,6 +276,53 @@ TEST(
 
 TEST(
     SceneTilesetDiagnosticsSnapshotTest,
+    AppliesMappedRasterFrameProgressToDiagnostics) {
+    SceneTilesetDiagnosticsSnapshot snapshot;
+    snapshot.frameMappedRasterTileCount = 4;
+    snapshot.frameMappedRasterTileLoadingCount = 2;
+    snapshot.frameProgressTotalCount = 10;
+    snapshot.frameProgressLoadingCount = 3;
+    snapshot.frameLoadProgressPercentage = 70.0;
+
+    Diagnostics diagnostics;
+    SceneTilesetDiagnostics::reset(diagnostics);
+    snapshot.applyTo(diagnostics);
+
+    EXPECT_EQ(diagnostics.frameMappedRasterTileCount, 4);
+    EXPECT_EQ(diagnostics.frameMappedRasterTileLoadingCount, 2);
+    EXPECT_EQ(diagnostics.frameProgressTotalCount, 10);
+    EXPECT_EQ(diagnostics.frameProgressLoadingCount, 3);
+    EXPECT_NEAR(diagnostics.frameLoadProgressPercentage, 70.0, 1e-8);
+}
+
+TEST(
+    SceneTilesetDiagnosticsSnapshotTest,
+    AggregatesMappedRasterFrameProgressByTotalWork) {
+    SceneTilesetDiagnosticsSnapshot snapshot;
+    snapshot.frameMappedRasterTileCount = 3;
+    snapshot.frameMappedRasterTileLoadingCount = 1;
+    snapshot.frameProgressTotalCount = 5;
+    snapshot.frameProgressLoadingCount = 2;
+    snapshot.frameLoadProgressPercentage = 60.0;
+
+    SceneTilesetDiagnosticsSnapshot next;
+    next.frameMappedRasterTileCount = 2;
+    next.frameMappedRasterTileLoadingCount = 1;
+    next.frameProgressTotalCount = 5;
+    next.frameProgressLoadingCount = 1;
+    next.frameLoadProgressPercentage = 80.0;
+
+    snapshot.add(next);
+
+    EXPECT_EQ(snapshot.frameMappedRasterTileCount, 5);
+    EXPECT_EQ(snapshot.frameMappedRasterTileLoadingCount, 2);
+    EXPECT_EQ(snapshot.frameProgressTotalCount, 10);
+    EXPECT_EQ(snapshot.frameProgressLoadingCount, 3);
+    EXPECT_NEAR(snapshot.frameLoadProgressPercentage, 70.0, 1e-8);
+}
+
+TEST(
+    SceneTilesetDiagnosticsSnapshotTest,
     UnknownProviderTransportLimitsPreserveDiagnosticsLimits) {
     SceneTilesetDiagnosticsSnapshot snapshot;
     snapshot.terrainProviderRequests.requestsStarted = 2;

@@ -351,6 +351,15 @@ SceneTilesetDiagnosticsSnapshot::fromTileset(
     snapshot.rasterSourceRequestsInFlight =
         loadDiag.rasterSourceRequestsInFlight;
     snapshot.rasterPendingUploads = loadDiag.rasterPendingUploads;
+    snapshot.frameMappedRasterTileCount =
+        plan.frameMappedRasterTileCount;
+    snapshot.frameMappedRasterTileLoadingCount =
+        plan.frameMappedRasterTileLoadingCount;
+    snapshot.frameProgressTotalCount = plan.frameProgressTotalCount;
+    snapshot.frameProgressLoadingCount =
+        plan.frameProgressLoadingCount;
+    snapshot.frameLoadProgressPercentage =
+        plan.frameLoadProgressPercentage;
     snapshot.surfaceMeshBytes =
         static_cast<int>(tileset.totalBytesUsed());
     snapshot.terrainContentUnknownTiles = loadDiag.contentUnknownTiles;
@@ -394,6 +403,18 @@ void SceneTilesetDiagnosticsSnapshot::add(
     rasterOverlayTilesLoading += next.rasterOverlayTilesLoading;
     rasterSourceRequestsInFlight += next.rasterSourceRequestsInFlight;
     rasterPendingUploads += next.rasterPendingUploads;
+    frameMappedRasterTileCount += next.frameMappedRasterTileCount;
+    frameMappedRasterTileLoadingCount +=
+        next.frameMappedRasterTileLoadingCount;
+    frameProgressTotalCount += next.frameProgressTotalCount;
+    frameProgressLoadingCount += next.frameProgressLoadingCount;
+    frameLoadProgressPercentage =
+        frameProgressLoadingCount == 0 || frameProgressTotalCount <= 0
+            ? 100.0
+            : 100.0 *
+                  static_cast<double>(frameProgressTotalCount -
+                                      frameProgressLoadingCount) /
+                  static_cast<double>(frameProgressTotalCount);
     lodSizePixels = next.lodSizePixels != 0.0 ? next.lodSizePixels
                                               : lodSizePixels;
     minVisibleZoom =
@@ -521,6 +542,19 @@ void SceneTilesetDiagnosticsSnapshot::applyTo(Diagnostics& diag) const {
     diag.rasterOverlayTilesLoading += rasterOverlayTilesLoading;
     diag.rasterSourceRequestsInFlight += rasterSourceRequestsInFlight;
     diag.rasterPendingUploads += rasterPendingUploads;
+    diag.frameMappedRasterTileCount += frameMappedRasterTileCount;
+    diag.frameMappedRasterTileLoadingCount +=
+        frameMappedRasterTileLoadingCount;
+    diag.frameProgressTotalCount += frameProgressTotalCount;
+    diag.frameProgressLoadingCount += frameProgressLoadingCount;
+    diag.frameLoadProgressPercentage =
+        diag.frameProgressLoadingCount == 0 ||
+                diag.frameProgressTotalCount <= 0
+            ? 100.0
+            : 100.0 *
+                  static_cast<double>(diag.frameProgressTotalCount -
+                                      diag.frameProgressLoadingCount) /
+                  static_cast<double>(diag.frameProgressTotalCount);
     diag.lodSizePixels = lodSizePixels;
     diag.minVisibleZoom = minVisibleZoom;
     diag.maxVisibleZoom = maxVisibleZoom;
@@ -613,6 +647,11 @@ void SceneTilesetDiagnostics::reset(Diagnostics& diag) {
     diag.rasterOverlayTilesLoading = 0;
     diag.rasterSourceRequestsInFlight = 0;
     diag.rasterPendingUploads = 0;
+    diag.frameMappedRasterTileCount = 0;
+    diag.frameMappedRasterTileLoadingCount = 0;
+    diag.frameProgressTotalCount = 0;
+    diag.frameProgressLoadingCount = 0;
+    diag.frameLoadProgressPercentage = 100.0;
     diag.lodSizePixels = 0.0;
     diag.minVisibleZoom = 0;
     diag.maxVisibleZoom = 0;

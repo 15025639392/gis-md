@@ -100,9 +100,20 @@ void appendTilesetTrace(PresentationTrace& trace, const Tileset* tileset) {
     const TilePlan& plan = tileset->tilePlan();
     PresentationTilesetTrace tilesetTrace;
     tilesetTrace.visibleTiles = plan.visibleTiles;
+    tilesetTrace.frameCredits = plan.frameCredits;
     tilesetTrace.minVisibleZoom = plan.minVisibleZoom;
     tilesetTrace.maxVisibleZoom = plan.maxVisibleZoom;
     tilesetTrace.lodSizePixels = plan.lodSizePixels;
+    tilesetTrace.frameMappedRasterTileCount =
+        plan.frameMappedRasterTileCount;
+    tilesetTrace.frameMappedRasterTileLoadingCount =
+        plan.frameMappedRasterTileLoadingCount;
+    tilesetTrace.frameProgressTotalCount =
+        plan.frameProgressTotalCount;
+    tilesetTrace.frameProgressLoadingCount =
+        plan.frameProgressLoadingCount;
+    tilesetTrace.frameLoadProgressPercentage =
+        plan.frameLoadProgressPercentage;
     tilesetTrace.renderEntryAncestorFallbackCount =
         plan.renderEntryAncestorFallbackCount;
     tilesetTrace.renderEntrySynchronousPrepCount =

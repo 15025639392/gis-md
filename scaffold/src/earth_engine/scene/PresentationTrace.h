@@ -51,9 +51,15 @@ struct PresentationRenderEntryTrace {
 struct PresentationTilesetTrace {
     std::vector<TileKey> visibleTiles;
     std::vector<PresentationRenderEntryTrace> renderEntries;
+    std::vector<std::string> frameCredits;
     int minVisibleZoom = 0;
     int maxVisibleZoom = 0;
     double lodSizePixels = 0.0;
+    int frameMappedRasterTileCount = 0;
+    int frameMappedRasterTileLoadingCount = 0;
+    int frameProgressTotalCount = 0;
+    int frameProgressLoadingCount = 0;
+    double frameLoadProgressPercentage = 100.0;
     int renderEntryAncestorFallbackCount = 0;
     int renderEntrySynchronousPrepCount = 0;
     int renderEntryDeferredPrepCount = 0;

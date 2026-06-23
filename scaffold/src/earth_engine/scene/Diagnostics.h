@@ -76,6 +76,11 @@ struct Diagnostics {
     int rasterOverlayTilesLoading = 0;
     int rasterSourceRequestsInFlight = 0;
     int rasterPendingUploads = 0;
+    int frameMappedRasterTileCount = 0;
+    int frameMappedRasterTileLoadingCount = 0;
+    int frameProgressTotalCount = 0;
+    int frameProgressLoadingCount = 0;
+    double frameLoadProgressPercentage = 100.0;
     int rasterProviderRequestsStarted = 0;
     int rasterProviderRequestsCompleted = 0;
     int rasterProviderActiveWorkerBlockingRequests = 0;

@@ -75,6 +75,11 @@ struct SceneTilesetDiagnosticsSnapshot {
     int rasterOverlayTilesLoading = 0;
     int rasterSourceRequestsInFlight = 0;
     int rasterPendingUploads = 0;
+    int frameMappedRasterTileCount = 0;
+    int frameMappedRasterTileLoadingCount = 0;
+    int frameProgressTotalCount = 0;
+    int frameProgressLoadingCount = 0;
+    double frameLoadProgressPercentage = 100.0;
     double lodSizePixels = 0.0;
     int minVisibleZoom = 0;
     int maxVisibleZoom = 0;

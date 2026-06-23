@@ -25688,6 +25688,49 @@ void testPresentationTraceCopiesRenderEntryPassFailures() {
           "Presentation trace: render-entry missed and deferred counts preserve selected/fading pass attribution");
 }
 
+void testPresentationTraceCopiesFrameCreditsAndProgress() {
+    Tileset tileset(
+        TileScheme::createGeographicTMS(),
+        {},
+        nullptr,
+        TilesetOptions{});
+    TilePlan& plan = TilesetTestAccess::mutableTilePlan(tileset);
+    plan.frameCredits = {"Imagery credit", "Content credit"};
+    plan.frameMappedRasterTileCount = 3;
+    plan.frameMappedRasterTileLoadingCount = 1;
+    plan.frameProgressTotalCount = 5;
+    plan.frameProgressLoadingCount = 2;
+    plan.frameLoadProgressPercentage = 60.0;
+
+    FrameState frameState;
+    frameState.frameId = 4;
+    frameState.camera = nullptr;
+    RenderCommandList commands;
+    PresentationTrace trace =
+        ScenePresentationTraceBuilder::build(
+            ScenePresentationTraceInput{
+                frameState,
+                &tileset,
+                emptyContentTilesets(),
+                commands});
+
+    check(trace.tilesets.size() == 1,
+          "Presentation trace: frame credit/progress copy includes one tileset");
+    if (trace.tilesets.empty()) return;
+    const PresentationTilesetTrace& tilesetTrace = trace.tilesets.front();
+    check(tilesetTrace.frameCredits.size() == 2 &&
+              tilesetTrace.frameCredits[0] == "Imagery credit" &&
+              tilesetTrace.frameCredits[1] == "Content credit",
+          "Presentation trace: frame credits expose cesium-native style current-frame attribution");
+    check(tilesetTrace.frameMappedRasterTileCount == 3 &&
+              tilesetTrace.frameMappedRasterTileLoadingCount == 1 &&
+              tilesetTrace.frameProgressTotalCount == 5 &&
+              tilesetTrace.frameProgressLoadingCount == 2 &&
+              std::abs(tilesetTrace.frameLoadProgressPercentage - 60.0) <
+                  1e-8,
+          "Presentation trace: mapped raster progress exposes cesium-native style frame load percentage");
+}
+
 void testPresentationTraceExposesFadingRenderEntry() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
@@ -27986,6 +28029,7 @@ int main() {
     testPresentationTraceRecordsDeterministicCameraState();
     testPresentationTraceLinksTilePlanToSurfaceCommand();
     testPresentationTraceCopiesRenderEntryPassFailures();
+    testPresentationTraceCopiesFrameCreditsAndProgress();
     testPresentationTraceExposesFadingRenderEntry();
     testPresentationTraceExposesAdditiveSelectedRenderEntries();
     testClippedFallbackCommandsHaveSelectedChildStableKeys();
