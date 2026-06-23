@@ -87,10 +87,8 @@ public:
             tile.bounds,
             minimumHeight,
             maximumHeight);
-        content.gltfModel = std::move(childModel);
-        content.terrainRenderContent = true;
-        content.metadata.rasterOverlayDetails =
-            content.gltfModel->rasterOverlayDetails;
+        content = TileLoadedContent::fromContentResult(
+            TileContentLoadResult::renderTerrain(std::move(childModel)));
         return true;
     }
 

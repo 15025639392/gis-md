@@ -4513,8 +4513,7 @@ public:
         }
 
         TileContentLoadResult result =
-            TileContentLoadResult::render(std::move(model));
-        result.terrainRenderContent = result.gltfModel != nullptr;
+            TileContentLoadResult::renderTerrain(std::move(model));
         ContentCallback callback = std::move(it->callback);
         pendingRequests.erase(it);
         callback(key, std::move(result));
@@ -13369,16 +13368,14 @@ void testContentUploadGeneratesTerrainContentActiveRasterOverlayProjectionDetail
     tile.boundingVolume =
         TileBoundingVolume::fromRegion(tileRectangle, -25.0, 125.0);
 
-    auto model = makeTriangleGltfModel();
-    model->rasterOverlayDetails.setGeographicRectangle(
-        tileRectangle,
-        -25.0,
-        125.0);
-    TileLoadedContent content;
-    content.gltfModel = std::move(model);
-    content.terrainRenderContent = true;
-    content.metadata.updatedBoundingVolume =
+    auto model = makeQuadTerrainGltfModel(tileRectangle);
+    TileLoadResultMetadata metadata;
+    metadata.updatedBoundingVolume =
         TileBoundingVolume::fromRegion(tileRectangle, -25.0, 125.0);
+    TileLoadedContent content = TileLoadedContent::fromContentResult(
+        TileContentLoadResult::renderTerrain(
+            std::move(model),
+            std::move(metadata)));
 
     TileContentUploadCommitter::prepareRenderContent(
         tile,
@@ -13428,16 +13425,14 @@ void testContentUploadGeneratesTerrainRasterOverlayProjectionDetails() {
     tile.boundingVolume =
         TileBoundingVolume::fromRegion(tileRectangle, -35.0, 210.0);
 
-    auto model = makeTriangleGltfModel();
-    model->rasterOverlayDetails.setGeographicRectangle(
-        tileRectangle,
-        -35.0,
-        210.0);
-    TileLoadedContent content;
-    content.gltfModel = std::move(model);
-    content.terrainRenderContent = true;
-    content.metadata.updatedBoundingVolume =
+    auto model = makeQuadTerrainGltfModel(tileRectangle);
+    TileLoadResultMetadata metadata;
+    metadata.updatedBoundingVolume =
         TileBoundingVolume::fromRegion(tileRectangle, -35.0, 210.0);
+    TileLoadedContent content = TileLoadedContent::fromContentResult(
+        TileContentLoadResult::renderTerrain(
+            std::move(model),
+            std::move(metadata)));
 
     TileContentUploadCommitter::prepareRenderContent(
         tile,
@@ -13578,18 +13573,16 @@ void testContentUploadPreparesTerrainContentRenderContent() {
     tile.content.renderContent.setMeshReady(true);
     tile.content.renderContent.setSurfaceDrawable(true);
 
-    auto model = makeTriangleGltfModel();
+    auto model = makeQuadTerrainGltfModel(tileRectangle);
     GltfModel* rawModel = model.get();
-    model->rasterOverlayDetails.setGeographicRectangle(
-        tileRectangle,
-        -15.0,
-        85.0);
 
-    TileLoadedContent loaded;
-    loaded.gltfModel = std::move(model);
-    loaded.terrainRenderContent = true;
-    loaded.metadata.updatedBoundingVolume =
+    TileLoadResultMetadata metadata;
+    metadata.updatedBoundingVolume =
         TileBoundingVolume::fromRegion(tileRectangle, -15.0, 85.0);
+    TileLoadedContent loaded = TileLoadedContent::fromContentResult(
+        TileContentLoadResult::renderTerrain(
+            std::move(model),
+            std::move(metadata)));
 
     TileContentUploadCommitter::prepareRenderContent(
         tile,
@@ -13632,8 +13625,7 @@ void testContentTileLoadResultCarriesTerrainContentModel() {
         18.0);
 
     TileContentLoadResult contentResult =
-        TileContentLoadResult::render(std::move(model));
-    contentResult.terrainRenderContent = true;
+        TileContentLoadResult::renderTerrain(std::move(model));
     TileLoadResult loadResult =
         TileLoadResult::fromContentResult(std::move(contentResult));
 

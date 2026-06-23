@@ -132,16 +132,10 @@ struct TileLoadResult {
         std::unique_ptr<GltfModel> model,
         TileLoadResultMetadata metadata = {},
         Mat4 contentTransform = Mat4::identity()) {
-        TileLoadResult loadResult = createRenderable();
-        if (!metadata.rasterOverlayDetails && model) {
-            metadata.rasterOverlayDetails = model->rasterOverlayDetails;
-        }
-        loadResult.content.metadata = std::move(metadata);
-        loadResult.content.gltfModel = std::move(model);
-        loadResult.content.terrainRenderContent =
-            loadResult.content.gltfModel != nullptr;
-        loadResult.content.contentTransform = contentTransform;
-        return loadResult;
+        return fromContentResult(TileContentLoadResult::renderTerrain(
+            std::move(model),
+            std::move(metadata),
+            contentTransform));
     }
 
     static TileLoadResult fromTerrainResult(TerrainTileLoadResult&& result) {

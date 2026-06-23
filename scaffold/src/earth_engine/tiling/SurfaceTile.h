@@ -4,8 +4,10 @@
 #include "../core/math/Rectangle.h"
 #include "../core/math/Vec3.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <iterator>
 #include <vector>
 
 namespace earth_engine {
@@ -148,19 +150,36 @@ struct RasterOverlayDetails {
                rasterOverlayProjections.size()) {
             rasterOverlayInvertedVCoordinates.push_back(false);
         }
-        rasterOverlayProjections.insert(
-            rasterOverlayProjections.end(),
-            other.rasterOverlayProjections.begin(),
-            other.rasterOverlayProjections.end());
-        rasterOverlayRectangles.insert(
-            rasterOverlayRectangles.end(),
-            other.rasterOverlayRectangles.begin(),
-            other.rasterOverlayRectangles.end());
         for (size_t i = 0; i < other.rasterOverlayProjections.size(); ++i) {
-            rasterOverlayInvertedVCoordinates.push_back(
+            const RasterOverlayProjection projection =
+                other.rasterOverlayProjections[i];
+            const Rectangle rectangle =
+                i < other.rasterOverlayRectangles.size()
+                    ? other.rasterOverlayRectangles[i]
+                    : Rectangle::EMPTY;
+            const bool invertedV =
                 i < other.rasterOverlayInvertedVCoordinates.size()
                     ? other.rasterOverlayInvertedVCoordinates[i]
-                    : false);
+                    : false;
+
+            auto existing = std::find(
+                rasterOverlayProjections.begin(),
+                rasterOverlayProjections.end(),
+                projection);
+            if (existing != rasterOverlayProjections.end()) {
+                const size_t index = static_cast<size_t>(
+                    std::distance(rasterOverlayProjections.begin(),
+                                  existing));
+                if (!rectangle.isEmpty()) {
+                    rasterOverlayRectangles[index] = rectangle;
+                    rasterOverlayInvertedVCoordinates[index] = invertedV;
+                }
+                continue;
+            }
+
+            rasterOverlayProjections.push_back(projection);
+            rasterOverlayRectangles.push_back(rectangle);
+            rasterOverlayInvertedVCoordinates.push_back(invertedV);
         }
         const bool hasRegion = boundingRegion.minimumHeight <=
                                boundingRegion.maximumHeight;

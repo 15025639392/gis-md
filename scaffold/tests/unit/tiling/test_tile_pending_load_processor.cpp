@@ -74,16 +74,15 @@ PendingTileLoad gltfTerrainUpload(
     std::string cacheKey,
     TileLoadPriorityGroup group = TileLoadPriorityGroup::Normal,
     double priority = 0.0) {
-    TileContentLoadResult content =
-        TileContentLoadResult::render(std::make_unique<GltfModel>());
-    content.terrainRenderContent = true;
     return PendingTileLoad{
         TileLoadDomain::TerrainContent,
         key,
         std::move(cacheKey),
         group,
         priority,
-        TileLoadResult::fromContentResult(std::move(content))};
+        TileLoadResult::fromContentResult(
+            TileContentLoadResult::renderTerrain(
+                std::make_unique<GltfModel>()))};
 }
 
 std::string labelFor(const char* prefix, const PendingTileLoad& load) {

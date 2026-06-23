@@ -92,7 +92,8 @@ void expectRectangleNear(const Rectangle& expected,
 
 } // namespace
 
-TEST(RasterOverlayDetailsTest, MergeAppendsProjectionRectanglesLikeCesiumNative) {
+TEST(RasterOverlayDetailsTest,
+     MergeCoalescesExistingProjectionAndAppendsMissingProjection) {
     RasterOverlayDetails first;
     const Rectangle firstRectangle(0.0, 1.0, 2.0, 3.0);
     first.setGeographicRectangle(firstRectangle, -10.0, 20.0);
@@ -104,19 +105,13 @@ TEST(RasterOverlayDetailsTest, MergeAppendsProjectionRectanglesLikeCesiumNative)
 
     first.merge(second);
 
-    ASSERT_EQ(2u, first.rasterOverlayProjections.size());
-    ASSERT_EQ(2u, first.rasterOverlayRectangles.size());
-    ASSERT_EQ(2u, first.rasterOverlayInvertedVCoordinates.size());
+    ASSERT_EQ(1u, first.rasterOverlayProjections.size());
+    ASSERT_EQ(1u, first.rasterOverlayRectangles.size());
+    ASSERT_EQ(1u, first.rasterOverlayInvertedVCoordinates.size());
     EXPECT_EQ(RasterOverlayProjection::Geographic,
               first.rasterOverlayProjections[0]);
-    EXPECT_EQ(RasterOverlayProjection::Geographic,
-              first.rasterOverlayProjections[1]);
-    EXPECT_FALSE(first.rasterOverlayInvertedVCoordinates[0]);
-    EXPECT_TRUE(first.rasterOverlayInvertedVCoordinates[1]);
-    EXPECT_DOUBLE_EQ(firstRectangle.west(),
-                     first.rasterOverlayRectangles[0].west());
-    EXPECT_DOUBLE_EQ(secondRectangle.west(),
-                     first.rasterOverlayRectangles[1].west());
+    EXPECT_TRUE(first.rasterOverlayInvertedVCoordinates[0]);
+    EXPECT_EQ(secondRectangle, first.rasterOverlayRectangles[0]);
 
     const Rectangle* found = first.findRectangleForOverlayProjection(
         RasterOverlayProjection::Geographic);
@@ -128,6 +123,29 @@ TEST(RasterOverlayDetailsTest, MergeAppendsProjectionRectanglesLikeCesiumNative)
               first.boundingRegion.rectangle);
     EXPECT_DOUBLE_EQ(-30.0, first.boundingRegion.minimumHeight);
     EXPECT_DOUBLE_EQ(40.0, first.boundingRegion.maximumHeight);
+
+    RasterOverlayDetails webMercator;
+    const Rectangle webMercatorRectangle(8.0, 9.0, 10.0, 11.0);
+    webMercator.rasterOverlayProjections = {
+        RasterOverlayProjection::WebMercator};
+    webMercator.rasterOverlayRectangles = {webMercatorRectangle};
+    webMercator.rasterOverlayInvertedVCoordinates = {false};
+    first.merge(webMercator);
+
+    ASSERT_EQ(2u, first.rasterOverlayProjections.size());
+    EXPECT_EQ(1, first.textureCoordinateIDForProjection(
+                     RasterOverlayProjection::WebMercator));
+    EXPECT_EQ(webMercatorRectangle, first.rasterOverlayRectangles[1]);
+
+    RasterOverlayDetails emptyGeographic;
+    emptyGeographic.rasterOverlayProjections = {
+        RasterOverlayProjection::Geographic};
+    emptyGeographic.rasterOverlayRectangles = {Rectangle::EMPTY};
+    emptyGeographic.rasterOverlayInvertedVCoordinates = {false};
+    first.merge(emptyGeographic);
+    ASSERT_EQ(2u, first.rasterOverlayProjections.size());
+    EXPECT_EQ(secondRectangle, first.rasterOverlayRectangles[0]);
+    EXPECT_TRUE(first.rasterOverlayInvertedVCoordinates[0]);
 }
 
 TEST(RasterOverlayDetailsTest,

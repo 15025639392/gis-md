@@ -90,10 +90,9 @@ TileLoadResult makeTerrainContentContentResult(
     std::unique_ptr<GltfModel> model,
     TileLoadResultMetadata metadata = {}) {
     TileContentLoadResult contentResult =
-        TileContentLoadResult::render(std::move(model));
-    contentResult.terrainRenderContent =
-        contentResult.gltfModel != nullptr;
-    contentResult.metadata = std::move(metadata);
+        TileContentLoadResult::renderTerrain(
+            std::move(model),
+            std::move(metadata));
     return TileLoadResult::fromContentResult(std::move(contentResult));
 }
 
@@ -634,9 +633,8 @@ TEST(
     update.subtreeKey = TileKey{"Geographic-TMS", 4, 5, 6};
     update.metadataAvailability = {{0, 1, 2, 3, 4}};
 
-    TileLoadedContent content;
-    content.terrainRenderContent = true;
-    content.gltfModel = std::make_unique<GltfModel>();
+    TileLoadedContent content = TileLoadedContent::fromContentResult(
+        TileContentLoadResult::renderTerrain(std::make_unique<GltfModel>()));
     content.quantizedMeshAvailabilityUpdates.push_back(update);
 
     TileContentUploadCommitter::applyAvailabilityUpdates(
@@ -662,9 +660,8 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     update.subtreeKey = TileKey{"Geographic-TMS", 4, 5, 6};
     update.metadataAvailability = {{0, 1, 2, 3, 4}};
 
-    TileLoadedContent content;
-    content.terrainRenderContent = true;
-    content.gltfModel = std::make_unique<GltfModel>();
+    TileLoadedContent content = TileLoadedContent::fromContentResult(
+        TileContentLoadResult::renderTerrain(std::make_unique<GltfModel>()));
     content.quantizedMeshAvailabilityUpdates.push_back(update);
     content.quantizedMeshAvailabilityUpdatesApplied = true;
 
@@ -705,8 +702,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     auto model = std::make_unique<GltfModel>();
     GltfModel* rawModel = model.get();
     TileContentLoadResult contentResult =
-        TileContentLoadResult::render(std::move(model));
-    contentResult.terrainRenderContent = true;
+        TileContentLoadResult::renderTerrain(std::move(model));
     contentResult.quantizedMeshAvailabilityUpdates.push_back(update);
 
     const TileKey key{"Geographic-TMS", 2, 0, 0};
@@ -790,8 +786,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     auto model = std::make_unique<GltfModel>();
     GltfModel* rawModel = model.get();
     TileContentLoadResult contentResult =
-        TileContentLoadResult::render(std::move(model));
-    contentResult.terrainRenderContent = true;
+        TileContentLoadResult::renderTerrain(std::move(model));
     contentResult.quantizedMeshAvailabilityUpdates.push_back(update);
 
     const TileKey key{"Geographic-TMS", 2, 0, 0};
