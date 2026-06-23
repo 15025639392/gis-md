@@ -95,7 +95,7 @@ public:
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         std::unordered_map<
             std::string,
-            std::unique_ptr<DecodedHeightmap>>& terrainCache,
+            std::unique_ptr<DecodedHeightmap>>& legacyTerrainCache,
         TileLoadLifecycle& lifecycle,
         bool resourceSmoothingActive,
         EnsureTileFn&& ensureTile,
@@ -108,7 +108,7 @@ public:
         TileTerrainUploadCommitter::cacheTerrainPayload(
             upload.cacheKey,
             content,
-            terrainCache);
+            legacyTerrainCache);
 
         if (TilesetTile* tile = ensureTile(upload.key)) {
             captureInitialBoundingVolumes(*tile, content.metadata);
@@ -163,7 +163,7 @@ public:
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         std::unordered_map<
             std::string,
-            std::unique_ptr<DecodedHeightmap>>& terrainCache,
+            std::unique_ptr<DecodedHeightmap>>& legacyTerrainCache,
         TileLoadLifecycle& lifecycle,
         EnsureTileFn&& ensureTile,
         EnsureGltfResourcesFn&& ensureGltfResources,
@@ -179,7 +179,7 @@ public:
         const bool contentProviderOwnsTerrainQuadtree =
             contentProvider && contentProvider->providesTerrainQuadtree();
         if (!contentProviderOwnsTerrainQuadtree) {
-            terrainCache.erase(upload.cacheKey);
+            legacyTerrainCache.erase(upload.cacheKey);
         }
         captureInitialBoundingVolumes(*tile, upload.content().metadata);
         TileContentUploadCommitter::applyAvailabilityUpdates(
@@ -245,7 +245,7 @@ public:
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         std::unordered_map<
             std::string,
-            std::unique_ptr<DecodedHeightmap>>& terrainCache,
+            std::unique_ptr<DecodedHeightmap>>& legacyTerrainCache,
         TileLoadLifecycle& lifecycle,
         bool resourceSmoothingActive,
         EnsureTileFn&& ensureTile,
@@ -259,7 +259,7 @@ public:
                 device,
                 pPrepRenderer,
                 rasterOverlays,
-                terrainCache,
+                legacyTerrainCache,
                 lifecycle,
                 std::forward<EnsureTileFn>(ensureTile),
                 std::forward<EnsureGltfResourcesFn>(ensureGltfResources),
@@ -269,7 +269,7 @@ public:
                 upload,
                 device,
                 rasterOverlays,
-                terrainCache,
+                legacyTerrainCache,
                 lifecycle,
                 resourceSmoothingActive,
                 std::forward<EnsureTileFn>(ensureTile),

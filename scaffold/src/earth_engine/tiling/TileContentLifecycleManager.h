@@ -49,7 +49,7 @@ public:
     template <typename PrepareUpsampleSourceTileFn, typename EnsureTileFn>
     TileLoadRequestOutcome requestMissingTiles(
         const std::vector<TileLoadRequest>& loadRequests,
-        TerrainProvider* terrainProvider,
+        TerrainProvider* legacyTerrainProvider,
         TilesetContentProvider* contentProvider,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
@@ -67,7 +67,7 @@ public:
         return TilesetContentLifecycleCoordinator::requestMissingTiles(
             loadRequests,
             makeContext(
-                terrainProvider,
+                legacyTerrainProvider,
                 contentProvider,
                 device,
                 rasterOverlays,
@@ -127,7 +127,7 @@ public:
 
 private:
     TilesetContentLifecycleContext makeContext(
-        TerrainProvider* terrainProvider,
+        TerrainProvider* legacyTerrainProvider,
         TilesetContentProvider* contentProvider,
         RenderDevice* device,
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
@@ -140,7 +140,7 @@ private:
         uint32_t smoothedMainThreadUploadLimit) {
         return TilesetContentLifecycleContext{
             loadLifecycle_,
-            terrainProvider,
+            legacyTerrainProvider,
             contentProvider,
             device,
             rasterOverlays,
