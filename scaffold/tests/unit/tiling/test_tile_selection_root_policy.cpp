@@ -4,6 +4,8 @@
 #include "earth_engine/core/geodesy/QuadtreeGeometricError.h"
 #include "earth_engine/core/geodesy/WebMercatorProjection.h"
 #include "earth_engine/core/math/MathUtils.h"
+#include "earth_engine/content/GltfContentProvider.h"
+#include "earth_engine/content/GltfModel.h"
 #include "earth_engine/tiling/TileContentAccess.h"
 #include "earth_engine/tiling/TileContentLifecycleManager.h"
 #include "earth_engine/tiling/TileLoadState.h"
@@ -16,6 +18,25 @@
 using namespace earth_engine;
 
 namespace {
+
+class ContentOwnedTerrainProvider final : public TilesetContentProvider {
+public:
+    std::string id() const override { return "content-owned-terrain"; }
+    bool supportsTile(const TileKey&) const override { return true; }
+    bool providesTerrainQuadtree() const override { return true; }
+    TileAvailabilityState terrainAvailabilityState(
+        const TileKey&) const override {
+        return TileAvailabilityState::Available;
+    }
+    void requestTileContent(const TileKey&,
+                            CancellationToken,
+                            ContentCallback,
+                            HttpRequestPriority =
+                                HttpRequestPriority::Normal) override {}
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return TileContentLoadResult::failed();
+    }
+};
 
 struct GeographicRootFixture {
     TilesetTileRegistry registry;
@@ -41,6 +62,20 @@ struct WebMercatorRootFixture {
         nullptr,
         lifecycle,
         1};
+};
+
+struct ContentOwnedGeographicRootFixture {
+    TilesetTileRegistry registry;
+    std::unique_ptr<TileScheme> scheme = TileScheme::createGeographicTMS();
+    TileContentLifecycleManager lifecycle;
+    ContentOwnedTerrainProvider provider;
+    TileContentAccess contentAccess{
+        registry,
+        *scheme,
+        nullptr,
+        &provider,
+        lifecycle,
+        2};
 };
 
 } // namespace
@@ -206,6 +241,69 @@ TEST(TileSelectionRootPolicyTest, VirtualGeographicRootLinksLevelZeroDataTiles) 
             child->content.renderContent.terrainMaximumHeight(),
             9000.0);
     }
+}
+
+TEST(TileSelectionRootPolicyTest,
+     ContentOwnedVirtualRootClearsLegacyResidueFromLevelZeroTiles) {
+    ContentOwnedGeographicRootFixture fixture;
+    const TileKey levelZeroKey{"Geographic-TMS", 0, 1, 0};
+    TilesetTile* levelZero = fixture.contentAccess.ensureTile(levelZeroKey);
+    ASSERT_NE(nullptr, levelZero);
+    levelZero->content.renderContent.setSurfaceMesh(
+        std::make_unique<SurfaceTileMesh>());
+    levelZero->content.renderContent.setMeshReady(true);
+    levelZero->content.renderContent.setRetainedHeightmap(
+        std::make_unique<DecodedHeightmap>());
+    levelZero->rasterOverlayState.ensureMapping(0);
+    levelZero->rasterOverlayState.missingProjections().push_back(
+        RasterOverlayProjection{});
+
+    TilesetTile* root = fixture.contentAccess.ensureTile(
+        TileSelectionRootPolicy::virtualTerrainRootKey("Geographic-TMS"));
+    ASSERT_NE(nullptr, root);
+
+    fixture.contentAccess.ensureTileChildren(*root);
+
+    ASSERT_EQ(2u, root->children.size());
+    EXPECT_EQ(levelZero, root->children[1]);
+    EXPECT_FALSE(levelZero->content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(levelZero->content.renderContent.hasRetainedHeightmap());
+    EXPECT_FALSE(levelZero->content.renderContent.isRenderContentReady());
+    EXPECT_EQ(0u, levelZero->rasterOverlayState.mappingCount());
+    EXPECT_FALSE(levelZero->rasterOverlayState.hasMissingProjections());
+    EXPECT_TRUE(levelZero->content.renderContent.hasTerrainHeightRange());
+    EXPECT_DOUBLE_EQ(
+        -1000.0,
+        levelZero->content.renderContent.terrainMinimumHeight());
+    EXPECT_DOUBLE_EQ(
+        9000.0,
+        levelZero->content.renderContent.terrainMaximumHeight());
+}
+
+TEST(TileSelectionRootPolicyTest,
+     ContentOwnedVirtualRootPreservesLoadedGltfLevelZeroTiles) {
+    ContentOwnedGeographicRootFixture fixture;
+    const TileKey levelZeroKey{"Geographic-TMS", 0, 1, 0};
+    TilesetTile* levelZero = fixture.contentAccess.ensureTile(levelZeroKey);
+    ASSERT_NE(nullptr, levelZero);
+    levelZero->content.renderContent.prepareGltfContent(
+        std::make_unique<GltfModel>(),
+        Mat4::identity());
+    levelZero->content.renderContent.addGltfPrimitiveResource(
+        GltfPrimitiveRenderResources{});
+    levelZero->content.renderContent.markRenderContentReady();
+    RasterMappedToTilesetTile* existingMapping =
+        &levelZero->rasterOverlayState.ensureMapping(0);
+
+    TilesetTile* root = fixture.contentAccess.ensureTile(
+        TileSelectionRootPolicy::virtualTerrainRootKey("Geographic-TMS"));
+    ASSERT_NE(nullptr, root);
+
+    fixture.contentAccess.ensureTileChildren(*root);
+
+    EXPECT_TRUE(levelZero->content.renderContent.hasGltfModel());
+    EXPECT_TRUE(levelZero->content.renderContent.isRenderContentReady());
+    EXPECT_EQ(existingMapping, levelZero->rasterOverlayState.mappingAt(0));
 }
 
 TEST(TileSelectionRootPolicyTest, VirtualWebMercatorRootLinksLevelZeroDataTile) {

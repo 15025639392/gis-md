@@ -55,6 +55,8 @@ TilesetTile* TileContentAccess::ensureTile(const TileKey& key) {
 
 void TileContentAccess::ensureTileChildren(TilesetTile& tile) {
     if (TileSelectionRootPolicy::isVirtualTerrainRoot(tile.key)) {
+        const bool contentProviderOwnsTerrainQuadtree =
+            contentProvider_ && contentProvider_->providesTerrainQuadtree();
         for (const TileKey& childKey :
              TileSelectionRootPolicy::levelZeroTerrainRoots(
                  tile.key.schemeId)) {
@@ -71,6 +73,19 @@ void TileContentAccess::ensureTileChildren(TilesetTile& tile) {
             TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
                 *child,
                 tile);
+            if (contentProviderOwnsTerrainQuadtree &&
+                !child->content.renderContent.hasGltfContent() &&
+                (child->content.renderContent.hasRenderableTerrainContent() ||
+                 child->content.renderContent.hasRetainedHeightmap() ||
+                 child->content.renderContent.isRenderContentReady() ||
+                 child->rasterOverlayState.mappingCount() > 0 ||
+                 child->rasterOverlayState.hasMissingProjections())) {
+                child->content.renderContent.clearRenderContent();
+                child->rasterOverlayState.releaseAndClearReferences(nullptr);
+                TileTerrainHeightRangePolicy::inheritTerrainHeightRange(
+                    *child,
+                    tile);
+            }
             linkChildIfMissing(tile, *child);
         }
         return;
