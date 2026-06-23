@@ -2239,6 +2239,7 @@ void RasterOverlayTileProvider::refreshSourceAssetDepot() {
 
 void RasterOverlayTileProvider::invalidateMappedRasterTileCache() {
     ++mappedRasterTileEpoch_;
+    abandonActiveMappedSourceSets();
     for (auto it = tiles_.begin(); it != tiles_.end();) {
         if (isMappedRasterCacheKey(it->first) &&
             it->second &&
@@ -2267,6 +2268,7 @@ void RasterOverlayTileProvider::invalidateDirectRasterTileCache() {
 }
 
 void RasterOverlayTileProvider::invalidateSourceAssetDepotCache() {
+    abandonActiveMappedSourceSets();
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         ++asyncState_->sourceTileDepotEpoch;
@@ -2276,6 +2278,37 @@ void RasterOverlayTileProvider::invalidateSourceAssetDepotCache() {
     }
     invalidateDirectRasterTileCache();
     refreshSourceAssetDepot();
+}
+
+void RasterOverlayTileProvider::abandonActiveMappedSourceSets() {
+    std::vector<std::pair<std::string, std::shared_ptr<MappedSourceImageSet>>>
+        activeSets;
+    {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        activeSets.reserve(asyncState_->activeMappedSourceSets.size());
+        for (auto& entry : asyncState_->activeMappedSourceSets) {
+            activeSets.emplace_back(entry.first, std::move(entry.second));
+            asyncState_->inFlightRequests.erase(entry.first);
+        }
+        asyncState_->activeMappedSourceSets.clear();
+    }
+
+    for (const auto& [cacheKey, sourceSet] : activeSets) {
+        if (sourceSet) {
+            sourceSet->markAbandoned();
+            decrementActiveRasterTileLoads(asyncState_->activeRasterTileLoads);
+        }
+        auto tileIt = tiles_.find(cacheKey);
+        if (tileIt != tiles_.end() && tileIt->second) {
+            tileIt->second->setMoreDetailAvailable(
+                RasterOverlayTile::MoreDetailAvailable::No);
+            tileIt->second->setState(RasterOverlayTile::LoadState::Failed);
+        }
+    }
+    if (!activeSets.empty()) {
+        asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
+        asyncState_->resolveDestructionIfComplete();
+    }
 }
 
 int RasterOverlayTileProvider::getMaximumLevel() const {
@@ -3105,6 +3138,7 @@ bool RasterOverlayTileProvider::hasPendingWork() const {
     std::lock_guard<std::mutex> lock(asyncState_->mutex);
     return !asyncState_->pendingUploads.empty() ||
            !asyncState_->inFlightRequests.empty() ||
+           !asyncState_->activeMappedSourceSets.empty() ||
            !asyncState_->sourceTileDepotInFlight.empty() ||
            asyncState_->activeRasterComposeTasks.load(
                std::memory_order_relaxed) > 0 ||

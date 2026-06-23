@@ -327,6 +327,7 @@ private:
     void invalidateDirectRasterTileCache();
     void invalidateMappedRasterTileCache();
     void invalidateSourceAssetDepotCache();
+    void abandonActiveMappedSourceSets();
 
     ImageryProvider& provider_;
     const TileScheme& scheme_;

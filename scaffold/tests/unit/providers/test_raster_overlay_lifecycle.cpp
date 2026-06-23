@@ -4395,6 +4395,52 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_TRUE(imagery.pending.empty());
 }
 
+TEST(RasterOverlayLifecycleTest,
+     MappedRasterConfigChangeAbandonsUnissuedSourceFanout) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+
+    const Rectangle rootBounds =
+        scheme->tileToRectangle(TileKey{scheme->id(), 0, 0, 0});
+    auto staleTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, rootBounds),
+        1024.0,
+        1024.0).tile;
+    ASSERT_NE(nullptr, staleTile);
+    ASSERT_TRUE(staleTile->isMappedRasterTile());
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 2;
+    config.maxRasterNetworkInflight = 16;
+    FrameResourceBudget firstBudget;
+    firstBudget.beginFrame(1, config);
+
+    ASSERT_TRUE(provider.loadTileThrottled(*staleTile, &firstBudget));
+    EXPECT_EQ(2u, imagery.pending.size());
+    EXPECT_EQ(2u, firstBudget.rasterNetworkRequestsIssued());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loading, staleTile->getState());
+    EXPECT_TRUE(provider.hasPendingWork());
+
+    provider.setMaximumScreenSpaceError(
+        provider.getMaximumScreenSpaceError() * 2.0);
+
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, staleTile->getState());
+    EXPECT_TRUE(provider.hasPendingWork());
+
+    FrameResourceBudget secondBudget;
+    secondBudget.beginFrame(2, config);
+    EXPECT_TRUE(provider.loadTileThrottled(*staleTile, &secondBudget));
+    EXPECT_EQ(2u, imagery.pending.size());
+    EXPECT_EQ(0u, secondBudget.rasterNetworkRequestsIssued());
+
+    while (!imagery.pending.empty()) {
+        imagery.completeNext();
+    }
+    EXPECT_FALSE(provider.hasPendingWork());
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+}
+
 TEST(RasterOverlayLifecycleTest, FrameBudgetSeparatesRasterFanoutFromTerrainBudget) {
     ImmediateImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
