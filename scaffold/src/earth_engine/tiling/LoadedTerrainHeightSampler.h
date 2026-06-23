@@ -25,8 +25,7 @@ public:
             std::unique_ptr<DecodedHeightmap>>& terrainCache,
         double longitudeRadians,
         double latitudeRadians,
-        LoadedTerrainHeightCacheMode cacheMode =
-            LoadedTerrainHeightCacheMode::IncludeLegacyHeightmap);
+        LoadedTerrainHeightCacheMode cacheMode);
 };
 
 } // namespace earth_engine

@@ -211,11 +211,17 @@ public:
               typename MarkResourcesDirtyFn>
     static void commitTerminalResult(
         PendingTileLoad& result,
+        TilesetContentProvider* contentProvider,
         TileEmptyContentRegistry& emptyContentRegistry,
         IPrepareRendererResources* pPrepRenderer,
         EnsureTileFn&& ensureTile,
         EnsureChildrenFn&& ensureChildren,
         MarkResourcesDirtyFn&& markResourcesDirty) {
+        if (shouldDiscardLegacyHeightmapTerrainAdapter(
+                contentProvider,
+                result.domain)) {
+            return;
+        }
         if (result.domain == TileLoadDomain::Content) {
             commitContentTerminalResult(
                 result,

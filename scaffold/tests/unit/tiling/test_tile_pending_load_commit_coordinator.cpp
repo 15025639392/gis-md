@@ -324,6 +324,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 
         TilePendingLoadCommitCoordinator::commitTerminalResult(
             result,
+            nullptr,
             emptyContentRegistry,
             nullptr,
             [&tile](const TileKey&) -> TilesetTile* { return &tile; },
@@ -336,6 +337,43 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         EXPECT_EQ(TileContentKind::Unknown, tile.content.contentKind);
         EXPECT_EQ(expectedLoadState, tile.content.loadState);
     }
+}
+
+TEST(
+    TilePendingLoadCommitCoordinatorTest,
+    ContentOwnedTerrainProviderDiscardLegacyHeightmapTerminalAtCoordinator) {
+    const TileKey key{"Geographic-TMS", 1, 0, 0};
+    const std::string cacheKey = "coordinator-stale-heightmap-terminal";
+    TilesetTile tile(key, Rectangle::fromDegrees(-180.0, -90.0, 0.0, 0.0));
+    tile.content.loadState = TileLoadState::ContentLoading;
+
+    TileEmptyContentRegistry emptyContentRegistry;
+    emptyContentRegistry.insert(cacheKey);
+    PendingTileLoad result{
+        TileLoadDomain::HeightmapTerrainAdapter,
+        key,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadStatus::RetryLater};
+
+    RecordingTerrainContentProvider contentProvider;
+    bool childrenEnsured = false;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitTerminalResult(
+        result,
+        &contentProvider,
+        emptyContentRegistry,
+        nullptr,
+        [&tile](const TileKey&) -> TilesetTile* { return &tile; },
+        [&childrenEnsured](TilesetTile&) { childrenEnsured = true; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_TRUE(emptyContentRegistry.contains(cacheKey));
+    EXPECT_FALSE(childrenEnsured);
+    EXPECT_FALSE(resourcesDirty);
+    EXPECT_EQ(TileLoadState::ContentLoading, tile.content.loadState);
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,

@@ -49,14 +49,9 @@ public:
         EnsureGltfResourcesFn&& ensureGltfResources,
         MarkResourcesDirtyFn&& markResourcesDirty) {
         auto processTerminalResult = [&](PendingTileLoad& result) {
-            if (TilePendingLoadCommitCoordinator::
-                    shouldDiscardLegacyHeightmapTerrainAdapter(
-                        input.contentProvider,
-                        result.domain)) {
-                return;
-            }
             TilePendingLoadCommitCoordinator::commitTerminalResult(
                 result,
+                input.contentProvider,
                 input.emptyContentRegistry,
                 input.pPrepRenderer,
                 ensureTile,
