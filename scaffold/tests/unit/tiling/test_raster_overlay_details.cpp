@@ -76,6 +76,26 @@ std::unique_ptr<GltfModel> makeRtcTerrainQuadModel(const Rectangle& rectangle) {
     return model;
 }
 
+std::unique_ptr<GltfModel> makeContentTransformTerrainQuadModel(
+    const Rectangle& rectangle,
+    Mat4& contentTransform) {
+    auto model = makeTerrainQuadModel(rectangle);
+    const Cartographic center = Cartographic::fromRadians(
+        rectangle.west() + rectangle.width() * 0.5,
+        rectangle.south() + rectangle.height() * 0.5,
+        0.0);
+    const Vec3 origin =
+        Ellipsoid::WGS84().cartographicToCartesian(center);
+    contentTransform = Mat4::translation(origin);
+
+    GltfPrimitive& primitive = model->primitives.front();
+    for (SurfaceVertex& vertex : primitive.vertices) {
+        vertex.positionEcef = vertex.positionEcef - origin;
+    }
+    primitive.runtime.baseVertices = primitive.vertices;
+    return model;
+}
+
 void prepareTerrainQuadRenderContent(TileRenderContentState& renderContent,
                                      const Rectangle& rectangle,
                                      RasterOverlayDetails details = {}) {
@@ -506,6 +526,47 @@ TEST(RasterOverlayDetailsGeneratorTest,
     const double wrongV =
         (localOnlyProjected.y() - projected.south()) / projected.height();
     EXPECT_GT(std::abs(wrongV - primitive.vertexTexCoords[0][2][1]), 1e-3);
+}
+
+TEST(RasterOverlayDetailsGeneratorTest,
+     ModelBoundsGenerationAppliesContentTransformLikeCesiumNative) {
+    TileRenderContentState renderContent;
+    const Rectangle modelRegion =
+        Rectangle::fromDegrees(-12.0, -4.0, -6.0, 2.0);
+    Mat4 contentTransform = Mat4::identity();
+    auto quadModel =
+        makeContentTransformTerrainQuadModel(modelRegion, contentTransform);
+    renderContent.prepareGltfContent(std::move(quadModel), contentTransform);
+    renderContent.setTerrainRenderContent(true);
+    const Rectangle projected = projectRectangleSimple(
+        WebMercatorProjection(Ellipsoid::WGS84()),
+        modelRegion);
+
+    const bool generated = TileRasterOverlayDetailsGenerator::
+        ensureProjectionDetailsFromModelBounds(
+            renderContent,
+            RasterOverlayProjection::WebMercator);
+
+    ASSERT_TRUE(generated);
+    const RasterOverlayDetails& details = renderContent.rasterOverlayDetails();
+    ASSERT_EQ(1u, details.rasterOverlayProjections.size());
+    ASSERT_EQ(1u, details.rasterOverlayRectangles.size());
+    EXPECT_EQ(projected, details.rasterOverlayRectangles[0]);
+    expectRectangleNear(modelRegion, details.boundingRegion.rectangle);
+
+    const GltfModel* model = renderContent.gltfModelForRead();
+    ASSERT_NE(nullptr, model);
+    ASSERT_EQ(1u, model->primitives.size());
+    const GltfPrimitive& primitive = model->primitives.front();
+    ASSERT_EQ(primitive.vertices.size(), primitive.vertexTexCoords[0].size());
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][0], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][0][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][1][0], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][1][1], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][2][0], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][2][1], 1e-6f);
+    EXPECT_NEAR(0.0f, primitive.vertexTexCoords[0][3][0], 1e-6f);
+    EXPECT_NEAR(1.0f, primitive.vertexTexCoords[0][3][1], 1e-6f);
 }
 
 TEST(RasterOverlayDetailsGeneratorTest,
