@@ -35,12 +35,8 @@ void TileContentCacheManager::eraseTileIndexState(
     TileContentLifecycleManager& lifecycle,
     TileLoadQueue& loadQueue,
     LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode) {
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        ignoredTerrainCache;
-    auto& terrainCache =
-        legacyHeightmapCacheMode == LegacyHeightmapTerrainCacheMode::Include
-        ? lifecycle.legacyTerrainCache()
-        : ignoredTerrainCache;
+    (void)legacyHeightmapCacheMode;
+    auto& terrainCache = lifecycle.legacyTerrainCache();
     TileIndexState::eraseCacheKeyState(
         cacheKey,
         unloadQueue_,
@@ -58,16 +54,11 @@ TileCacheUnloadContentResult TileContentCacheManager::unloadTileContent(
     TileContentLifecycleManager& lifecycle,
     IPrepareRendererResources* pPrepRenderer,
     LegacyHeightmapTerrainCacheMode legacyHeightmapCacheMode) {
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        ignoredTerrainCache;
-    auto& terrainCache =
-        legacyHeightmapCacheMode == LegacyHeightmapTerrainCacheMode::Include
-        ? lifecycle.legacyTerrainCache()
-        : ignoredTerrainCache;
+    (void)legacyHeightmapCacheMode;
     return TileContentUnloadCoordinator::unloadContent(
         tile,
         TileCacheKey::forTile(tile.key),
-        terrainCache,
+        lifecycle.legacyTerrainCache(),
         lifecycle.emptyContentRegistry(),
         pPrepRenderer);
 }
