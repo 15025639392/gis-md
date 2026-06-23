@@ -1619,6 +1619,72 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
+     RasterDetailUpsampleRejectsLegacyHeightmapUpload) {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    const std::string cacheKey = "test:raster-detail-heightmap-upload";
+    TilesetTile parent(parentKey, Rectangle{});
+    TilesetTile child(childKey, Rectangle{}, &parent);
+    child.content.markRasterDetailUpsample();
+    child.content.loadState = TileLoadState::ContentLoading;
+
+    auto heightmap = std::make_unique<DecodedHeightmap>();
+    heightmap->tileSize = 2;
+    heightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
+    PendingTileLoad upload{TileLoadDomain::HeightmapTerrainAdapter,
+        childKey,
+        cacheKey,
+        TileLoadPriorityGroup::Normal,
+        0.0,
+        TileLoadResult::createRenderableHeightmapTerrain(
+            std::move(heightmap))};
+
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxMainThreadFinalizesPerFrame = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    {
+        std::lock_guard<std::mutex> lock(lifecycle.mutex());
+        lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::HeightmapTerrainAdapter,
+            childKey,
+            cacheKey,
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            TileLoadResult::createRenderableTerrain()});
+        ASSERT_TRUE(lifecycle.pendingLoads()
+                        .takeHighestPriorityUpload(false, budget)
+                        .has_value());
+    }
+
+    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
+        terrainCache;
+    int ensureMeshCalls = 0;
+    bool resourcesDirty = false;
+
+    TilePendingLoadCommitCoordinator::commitLegacyHeightmapTerrainAdapterUpload(
+        upload,
+        nullptr,
+        {},
+        terrainCache,
+        lifecycle,
+        false,
+        [&child](const TileKey&) -> TilesetTile* { return &child; },
+        [&ensureMeshCalls](TilesetTile&) { ++ensureMeshCalls; },
+        [&resourcesDirty]() { resourcesDirty = true; });
+
+    EXPECT_TRUE(child.content.isRasterDetailUpsample());
+    EXPECT_EQ(TileLoadState::ContentLoading, child.content.loadState);
+    EXPECT_EQ(TileContentKind::Unknown, child.content.contentKind);
+    EXPECT_FALSE(child.content.renderContent.hasSurfaceMesh());
+    EXPECT_FALSE(child.content.renderContent.isTerrainRenderContent());
+    EXPECT_EQ(0, ensureMeshCalls);
+    EXPECT_FALSE(resourcesDirty);
+    EXPECT_TRUE(terrainCache.empty());
+    EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
+}
+
+TEST(TilePendingLoadCommitCoordinatorTest,
      ContentUploadWithoutPayloadDoesNotMaterializeTerrainContentUpsample) {
     const TileKey parentKey{"test", 0, 0, 0};
     const TileKey childKey{"test", 1, 0, 0};

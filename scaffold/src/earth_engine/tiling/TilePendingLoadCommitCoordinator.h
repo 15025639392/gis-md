@@ -118,12 +118,20 @@ public:
         const bool hadHeightmapTerrainAdapterPayload =
             content.terrainPayloadKind == TerrainTilePayloadKind::LegacyHeightmap &&
             content.heightmap != nullptr;
+        TilesetTile* tile = ensureTile(upload.key);
+        if (tile && tile->content.isRasterDetailUpsample()) {
+            TilePendingUploadCompletion::eraseUpload(
+                lifecycle,
+                upload.cacheKey);
+            return;
+        }
+
         TileTerrainUploadCommitter::cacheTerrainPayload(
             upload.cacheKey,
             content,
             heightmapTerrainAdapterCache);
 
-        if (TilesetTile* tile = ensureTile(upload.key)) {
+        if (tile) {
             captureInitialBoundingVolumes(*tile, content.metadata);
             const bool uploadsHeightmapTerrainAdapter =
                 content.terrainPayloadKind ==
