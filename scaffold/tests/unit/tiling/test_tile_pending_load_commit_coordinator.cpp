@@ -879,8 +879,10 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     EXPECT_EQ(expectedUpdatedProjection, *rectangle);
     EXPECT_NE(staleContentProjection, *rectangle);
     EXPECT_EQ(updatedRectangle, committedDetails.boundingRegion.rectangle);
-    EXPECT_TRUE(tile.contentBoundingVolume.has_value());
-    EXPECT_EQ(staleContentRectangle, tile.contentBoundingVolume->region);
+    EXPECT_FALSE(tile.contentBoundingVolume.has_value());
+    ASSERT_TRUE(tile.initialContentBoundingVolume.has_value());
+    EXPECT_EQ(staleContentRectangle,
+              tile.initialContentBoundingVolume->region);
     EXPECT_TRUE(resourcesDirty);
     EXPECT_FALSE(lifecycle.containsWorkForCacheKey(cacheKey));
 }
