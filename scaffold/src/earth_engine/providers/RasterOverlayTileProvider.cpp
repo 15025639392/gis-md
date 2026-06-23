@@ -1083,6 +1083,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
         bool shareInFlight,
         const std::function<void()>& onSourceIssued,
         const std::function<void()>& onSourceFinished,
+        const std::function<void()>& onSourceFailed,
         SourceReady onReady,
         std::vector<TileKey> fallbackInFlightKeys = {}) {
         std::optional<LoadedSourceImage> cachedSource;
@@ -1171,6 +1172,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
              ancestorFallback,
              onSourceIssued,
              onSourceFinished,
+             onSourceFailed,
              onReady,
              fallbackInFlightKeys = std::move(fallbackInFlightKeys)](
                 const TileKey& loadedKey,
@@ -1214,6 +1216,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                     return;
                 }
 
+                onSourceFailed();
                 if (requestedKey.z > self->minimumLevel) {
                     const TileKey parentKey = parentTileKey(requestedKey);
                     onSourceFinished();
@@ -1224,6 +1227,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                         false,
                         onSourceIssued,
                         onSourceFinished,
+                        onSourceFailed,
                         std::move(onReady),
                         std::move(fallbackInFlightKeys));
                     return;
@@ -1413,7 +1417,8 @@ struct RasterOverlayTileProvider::QuadtreeSourceRequest
 
     int issueSome(int maxNewSourceRequests,
                   const std::function<void()>& onSourceIssued,
-                  const std::function<void()>& onSourceFinished) {
+                  const std::function<void()>& onSourceFinished,
+                  const std::function<void()>& onSourceFailed) {
         if (maxNewSourceRequests <= 0) {
             return 0;
         }
@@ -1438,6 +1443,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceRequest
                     onSourceIssued();
                 },
                 onSourceFinished,
+                onSourceFailed,
                 [self](LoadedSourceImage&& source) {
                     self->finishOneSource(std::move(source));
                 });
@@ -1939,6 +1945,9 @@ RasterOverlayTileProvider::requestDiagnostics() const {
     diag.externalResourceRequestsCompleted +=
         asyncState_->rasterSourceRequestsCompleted.load(
             std::memory_order_relaxed);
+    diag.externalResourceRequestsFailed +=
+        asyncState_->rasterSourceRequestsFailed.load(
+            std::memory_order_relaxed);
     diag.activeExternalResourceBlockingRequests +=
         static_cast<int>(
             asyncState_->activeRasterSourceRequests.load(
@@ -2256,12 +2265,18 @@ int RasterOverlayTileProvider::issueCompositeSourceRequest(
                    std::memory_order_relaxed)) {
         }
     };
+    auto onSourceFailed = [state]() {
+        state->rasterSourceRequestsFailed.fetch_add(
+            1,
+            std::memory_order_relaxed);
+    };
 
     const int newlyIssued =
         request->issueSome(
             maxNewSourceRequests,
             onSourceIssued,
-            onSourceFinished);
+            onSourceFinished,
+            onSourceFailed);
     if (budget && newlyIssued > 0) {
         budget->tryIssue(
             FrameResourceLane::RasterRequest,

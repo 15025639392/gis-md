@@ -347,6 +347,7 @@ private:
         std::atomic<uint32_t> peakRasterSourceRequests{0};
         std::atomic<int> rasterSourceRequestsStarted{0};
         std::atomic<int> rasterSourceRequestsCompleted{0};
+        std::atomic<int> rasterSourceRequestsFailed{0};
         std::unordered_map<std::string, FailedRecord> failedTiles;
         std::atomic<uint64_t> revision{0};
         std::atomic<bool> alive{true};

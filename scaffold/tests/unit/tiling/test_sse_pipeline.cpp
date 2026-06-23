@@ -2613,6 +2613,11 @@ void testRasterOverlayQuadtreeSourceFailureRequestsParentSource() {
 
     const TileKey failedSource = imagery.pendingRequests.front().key;
     imagery.pendingRequests.front().callback(failedSource, nullptr);
+    const ProviderRequestDiagnostics fallbackDiag =
+        provider.requestDiagnostics();
+    check(fallbackDiag.externalResourceRequestsFailed == 1 &&
+              fallbackDiag.externalResourceRequestsCompleted == 1,
+          "RasterOverlayTileProvider: failed source request is visible in external diagnostics");
 
     const TileKey expectedParent{
         failedSource.schemeId,
@@ -2663,6 +2668,13 @@ void testRasterOverlayCompositeWithFailedSourcesStaysTerminal() {
     for (const auto& request : pendingRequests) {
         request.callback(request.key, nullptr);
     }
+    const ProviderRequestDiagnostics failedDiag =
+        provider.requestDiagnostics();
+    check(failedDiag.externalResourceRequestsFailed ==
+              static_cast<int>(pendingRequests.size()) &&
+              failedDiag.externalResourceRequestsCompleted ==
+                  static_cast<int>(pendingRequests.size()),
+          "RasterOverlayTileProvider: all failed source requests are visible in external diagnostics");
     FrameResourceBudget uploadBudget;
     uploadBudget.beginFrame(2, config);
     provider.processPendingUploads(false, &uploadBudget);
