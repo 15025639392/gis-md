@@ -3,6 +3,7 @@
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Transforms.h"
+#include "earth_engine/content/EllipsoidTerrainContentProvider.h"
 #include "earth_engine/content/QuantizedMeshContentLoader.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/QuantizedMeshTerrainProvider.h"
@@ -373,6 +374,57 @@ TEST(TilesetQuantizedMeshTest,
     EXPECT_EQ(nullptr,
               TilesetTestAccess::requestFrameContentProvider(
                   *legacyTerrainTileset));
+}
+
+TEST(TilesetQuantizedMeshTest,
+     EllipsoidTerrainProviderUsesGltfTerrainContentLifecycle) {
+    auto contentProvider =
+        std::make_unique<EllipsoidTerrainContentProvider>(
+            "XYZ-WebMercator",
+            2,
+            4);
+    EllipsoidTerrainContentProvider* rawProvider = contentProvider.get();
+    Tileset tileset(
+        TileScheme::createXYZWebMercator(),
+        {},
+        nullptr,
+        TilesetOptions{},
+        std::move(contentProvider));
+
+    EXPECT_EQ(rawProvider,
+              TilesetTestAccess::requestFrameContentProvider(tileset));
+    EXPECT_EQ(nullptr,
+              TilesetTestAccess::effectiveLegacyTerrainProvider(tileset));
+    EXPECT_EQ(0, tileset.cachedTerrainTiles());
+
+    const TileKey key{"XYZ-WebMercator", 0, 0, 0};
+    bool completed = false;
+    TileContentLoadResult result = TileContentLoadResult::failed();
+    rawProvider->requestTileContent(
+        key,
+        CancellationToken{},
+        [&](const TileKey& completedKey, TileContentLoadResult completedResult) {
+            EXPECT_EQ(key, completedKey);
+            result = std::move(completedResult);
+            completed = true;
+        });
+
+    ASSERT_TRUE(completed);
+    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
+    EXPECT_TRUE(result.terrainRenderContent);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_FALSE(result.gltfModel->primitives.empty());
+    EXPECT_TRUE(result.metadata.rasterOverlayDetails.has_value());
+    ASSERT_EQ(
+        1u,
+        result.metadata.rasterOverlayDetails
+            ->rasterOverlayProjections.size());
+    EXPECT_EQ(
+        RasterOverlayProjection::WebMercator,
+        result.metadata.rasterOverlayDetails
+            ->rasterOverlayProjections.front());
+    EXPECT_TRUE(result.metadata.updatedBoundingVolume.has_value());
+    EXPECT_EQ(0, tileset.cachedTerrainTiles());
 }
 
 TEST(TilesetQuantizedMeshTest,

@@ -1,12 +1,12 @@
 #import "MetalView.h"
 
 #include "earth_engine/Engine.h"
+#include "earth_engine/content/EllipsoidTerrainContentProvider.h"
 #include "earth_engine/interaction/InputEvent.h"
 #include "earth_engine/platform/bridge/PlatformBridge.h"
 #include "earth_engine/platform/ios/RenderDeviceMetal.h"
 #include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
-#include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -35,27 +35,6 @@ constexpr const char* kGaodeSatelliteTemplate =
 constexpr bool kUseGaodeSatelliteForDemo = true;
 
 } // anonymous namespace
-
-class FlatTerrainProvider final : public TerrainProvider {
-public:
-    std::string id() const override { return "flat-terrain"; }
-    std::string schemeId() const override { return "XYZ-WebMercator"; }
-    int minZoom() const override { return 0; }
-    int maxZoom() const override { return 14; }
-    int tileSize() const override { return 17; }
-    std::string buildUrl(const TileKey&) const override { return {}; }
-    void requestTile(const TileKey& key,
-                     CancellationToken,
-                     HeightmapCallback callback) override {
-        auto heightmap = std::make_unique<DecodedHeightmap>();
-        heightmap->tileSize = tileSize();
-        heightmap->heights.assign(static_cast<size_t>(tileSize() * tileSize()), 0.0f);
-        callback(key, TerrainTileLoadResult::success(std::move(heightmap)));
-    }
-    std::unique_ptr<DecodedHeightmap> decodeTile(const uint8_t*, size_t) override {
-        return nullptr;
-    }
-};
 
 @interface MetalView ()
 @property (nonatomic, retain) CADisplayLink* displayLink;
@@ -158,11 +137,12 @@ public:
 
         TilesetOptions tilesetOptions;
         auto tileset = std::make_unique<Tileset>(
-            std::make_unique<FlatTerrainProvider>(),
             TileScheme::createXYZWebMercator(),
             std::move(rasterOverlays),
             _renderDevice.get(),
-            tilesetOptions);
+            tilesetOptions,
+            std::make_unique<EllipsoidTerrainContentProvider>(
+                "XYZ-WebMercator"));
         _engine->setTileset(std::move(tileset));
 
         // Match Android demo: default view over Chongqing, China
