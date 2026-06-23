@@ -1369,6 +1369,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                     : it->second.sourceSubset;
                 source.moreDetailAvailable = it->second.moreDetailAvailable;
                 source.diagnostics = it->second.diagnostics;
+                source.credits = it->second.credits;
                 source.terminalFailure = it->second.terminalFailure;
                 cachedSource = std::move(source);
             }

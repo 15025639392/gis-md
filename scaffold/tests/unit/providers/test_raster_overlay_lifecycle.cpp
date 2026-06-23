@@ -2276,6 +2276,57 @@ TEST(RasterOverlayLifecycleTest, SourceTileDepotCachesTilesByTileKeyLikeCesiumNa
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, eastTile->getState());
 }
 
+TEST(RasterOverlayLifecycleTest,
+     SourceTileDepotCacheHitPreservesCreditsLikeCesiumNativeSharedAsset) {
+    ImmediateImageryProvider imagery;
+    imagery.attributionValue = "Imagery credit";
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(3, 3);
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+    const Rectangle eastHalf(
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.south(),
+        sourceBounds.east(),
+        sourceBounds.north());
+
+    RasterOverlayTileProvider::TilePtr westTile =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, westHalf),
+            256.0,
+            512.0)
+            .tile;
+    ASSERT_NE(nullptr, westTile);
+    ASSERT_TRUE(provider.loadTile(*westTile));
+    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+    ASSERT_EQ(1u, westTile->credits().size());
+    EXPECT_EQ("Imagery credit", westTile->credits().front());
+    EXPECT_EQ(1, imagery.requestCount);
+
+    RasterOverlayTileProvider::TilePtr eastTile =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, eastHalf),
+            256.0,
+            512.0)
+            .tile;
+    ASSERT_NE(nullptr, eastTile);
+    ASSERT_TRUE(provider.loadTile(*eastTile));
+    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+
+    EXPECT_EQ(1, imagery.requestCount);
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, eastTile->getState());
+    ASSERT_EQ(1u, eastTile->credits().size());
+    EXPECT_EQ("Imagery credit", eastTile->credits().front());
+}
+
 TEST(RasterOverlayLifecycleTest, LevelRangeChangeInvalidatesSourceDepotLikeCesiumNative) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();
