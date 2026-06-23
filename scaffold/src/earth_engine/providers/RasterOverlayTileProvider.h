@@ -57,12 +57,28 @@ public:
     RasterOverlayTileProvider& operator=(const RasterOverlayTileProvider&) = delete;
 
     struct QuadtreeSourceImage {
+        QuadtreeSourceImage() = default;
+        QuadtreeSourceImage(
+            TileKey key_,
+            Rectangle bounds_,
+            std::unique_ptr<DecodedImage> image_,
+            std::optional<Rectangle> sourceSubset_,
+            RasterOverlayTile::MoreDetailAvailable moreDetailAvailable_,
+            std::vector<std::string> diagnostics_ = {})
+            : key(std::move(key_)),
+              bounds(bounds_),
+              image(std::move(image_)),
+              sourceSubset(std::move(sourceSubset_)),
+              moreDetailAvailable(moreDetailAvailable_),
+              diagnostics(std::move(diagnostics_)) {}
+
         TileKey key;
         Rectangle bounds;
         std::unique_ptr<DecodedImage> image;
         std::optional<Rectangle> sourceSubset;
         RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::Unknown;
+        std::vector<std::string> diagnostics;
     };
 
     struct CompositeImageResult {
@@ -70,6 +86,7 @@ public:
         Rectangle rectangle;
         RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::No;
+        std::vector<std::string> diagnostics;
     };
 
     struct RasterSourceTileMapping {
@@ -340,6 +357,7 @@ private:
         std::optional<Rectangle> sourceSubset;
         RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::Unknown;
+        std::vector<std::string> diagnostics;
         bool terminalFailure = false;
         int64_t sizeBytes = 0;
         uint64_t generation = 0;

@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -790,6 +791,7 @@ struct RasterSourceResult {
     std::optional<Rectangle> sourceSubset;
     RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
         RasterOverlayTile::MoreDetailAvailable::Unknown;
+    std::vector<std::string> diagnostics;
     bool terminalFailure = false;
 };
 
@@ -1006,6 +1008,13 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
     std::vector<RasterSourceResult>&& sources,
     int maximumSourceZoom) {
     (void)sourceZoom;
+    std::vector<std::string> diagnostics;
+    for (RasterSourceResult& source : sources) {
+        diagnostics.insert(
+            diagnostics.end(),
+            std::make_move_iterator(source.diagnostics.begin()),
+            std::make_move_iterator(source.diagnostics.end()));
+    }
     sources.erase(
         std::remove_if(sources.begin(), sources.end(),
                        [](const RasterSourceResult& source) {
@@ -1013,7 +1022,11 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
                                   !isRasterCompositeSourceImage(*source.image);
                        }),
         sources.end());
-    if (sources.empty()) return {};
+    if (sources.empty()) {
+        RasterOverlayTileProvider::CompositeImageResult result;
+        result.diagnostics = std::move(diagnostics);
+        return result;
+    }
     double projectedWidthPerPixel = std::numeric_limits<double>::max();
     double projectedHeightPerPixel = std::numeric_limits<double>::max();
     for (const RasterSourceResult& source : sources) {
@@ -1028,7 +1041,9 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
     if (projectedWidthPerPixel <= 0.0 || projectedHeightPerPixel <= 0.0 ||
         !std::isfinite(projectedWidthPerPixel) ||
         !std::isfinite(projectedHeightPerPixel)) {
-        return {};
+        RasterOverlayTileProvider::CompositeImageResult result;
+        result.diagnostics = std::move(diagnostics);
+        return result;
     }
 
     CombinedImageMeasurements measurements = measureCombinedImage(
@@ -1043,6 +1058,7 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
         result.rectangle = targetBounds;
         result.moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::Yes;
+        result.diagnostics = std::move(diagnostics);
         return result;
     }
     measurements.channels = std::max(3, measurements.channels);
@@ -1086,6 +1102,7 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
         moreDetailAvailable
             ? RasterOverlayTile::MoreDetailAvailable::Yes
             : RasterOverlayTile::MoreDetailAvailable::No;
+    result.diagnostics = std::move(diagnostics);
     return result;
 }
 
@@ -1116,6 +1133,12 @@ RasterOverlayTileProvider::CompositeImageResult composeMappedSourceImageSet(
         result.image = std::make_unique<DecodedImage>();
         result.moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::No;
+        for (RasterSourceResult& source : sources) {
+            result.diagnostics.insert(
+                result.diagnostics.end(),
+                std::make_move_iterator(source.diagnostics.begin()),
+                std::make_move_iterator(source.diagnostics.end()));
+        }
         return result;
     }
 
@@ -1266,6 +1289,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                           scheme.tileToRectangle(originalKey))
                     : it->second.sourceSubset;
                 source.moreDetailAvailable = it->second.moreDetailAvailable;
+                source.diagnostics = it->second.diagnostics;
                 source.terminalFailure = it->second.terminalFailure;
                 cachedSource = std::move(source);
             }
@@ -1375,6 +1399,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                         directSource.sourceSubset = std::nullopt;
                         directSource.moreDetailAvailable =
                             source.moreDetailAvailable;
+                        directSource.diagnostics = source.diagnostics;
                         self->cacheSource(loadedKey, directSource);
                         directCompleted = std::make_shared<SourceTileAsset>(
                             self->sourceAssetFromResult(directSource));
@@ -1448,6 +1473,7 @@ private:
             ? std::optional<Rectangle>(scheme.tileToRectangle(originalKey))
             : cached->sourceSubset;
         source.moreDetailAvailable = cached->moreDetailAvailable;
+        source.diagnostics = cached->diagnostics;
         source.terminalFailure = cached->terminalFailure;
         return source;
     }
@@ -1463,6 +1489,7 @@ private:
         }
         cached.sourceSubset = source.sourceSubset;
         cached.moreDetailAvailable = source.moreDetailAvailable;
+        cached.diagnostics = source.diagnostics;
         return cached;
     }
 
@@ -1473,6 +1500,8 @@ private:
         failed.bounds = scheme.tileToRectangle(requestedKey);
         failed.moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::No;
+        failed.diagnostics.push_back(
+            "Raster source tile failed after exhausting parent fallback");
         failed.terminalFailure = true;
         failed.sizeBytes = 1;
 
@@ -1789,11 +1818,18 @@ RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
             std::shared_ptr<const DecodedImage>(std::move(source.image)),
             source.sourceSubset,
             source.moreDetailAvailable,
+            std::move(source.diagnostics),
             false});
     }
     if (!haveAnyUsefulImageData) {
         CompositeImageResult result;
         result.image = std::make_unique<DecodedImage>();
+        for (RasterSourceResult& source : sources) {
+            result.diagnostics.insert(
+                result.diagnostics.end(),
+                std::make_move_iterator(source.diagnostics.begin()),
+                std::make_move_iterator(source.diagnostics.end()));
+        }
         return result;
     }
     return combineQuadtreeSourceImages(

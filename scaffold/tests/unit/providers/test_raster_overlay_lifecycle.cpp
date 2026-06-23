@@ -5723,6 +5723,70 @@ TEST(RasterOverlayLifecycleTest, CompositeImageRejectsMalformedSourceImages) {
     EXPECT_EQ(nullptr, result.image);
 }
 
+TEST(RasterOverlayLifecycleTest,
+     CompositeImagePreservesSourceDiagnosticsLikeCesiumNativeErrorList) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    Rectangle target = scheme->tileToRectangle(
+        TileKey{scheme->id(), 1, 0, 0});
+
+    auto malformed = std::make_unique<DecodedImage>();
+    malformed->width = 2;
+    malformed->height = 2;
+    malformed->channels = 4;
+    malformed->pixels.resize(4);
+
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> sources;
+    sources.push_back({
+        TileKey{scheme->id(), 1, 0, 0},
+        target,
+        makeImage(2, 2, 20),
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::No,
+        {"valid source warning"}});
+    sources.push_back({
+        TileKey{scheme->id(), 1, 0, 0},
+        target,
+        std::move(malformed),
+        std::nullopt,
+        RasterOverlayTile::MoreDetailAvailable::Unknown,
+        {"malformed source error"}});
+
+    auto result =
+        RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
+            *scheme,
+            target,
+            1,
+            std::move(sources),
+            1);
+
+    ASSERT_NE(nullptr, result.image);
+    EXPECT_EQ(2u, result.diagnostics.size());
+    EXPECT_EQ("valid source warning", result.diagnostics[0]);
+    EXPECT_EQ("malformed source error", result.diagnostics[1]);
+
+    std::vector<RasterOverlayTileProvider::QuadtreeSourceImage> ancestorOnly;
+    ancestorOnly.push_back({
+        TileKey{scheme->id(), 0, 0, 0},
+        target,
+        makeImage(2, 2, 30),
+        target,
+        RasterOverlayTile::MoreDetailAvailable::Yes,
+        {"ancestor fallback warning"}});
+
+    auto emptyResult =
+        RasterOverlayTileProvider::composeQuadtreeSourceImagesWithDetails(
+            *scheme,
+            target,
+            1,
+            std::move(ancestorOnly),
+            1);
+
+    ASSERT_NE(nullptr, emptyResult.image);
+    EXPECT_TRUE(emptyResult.image->pixels.empty());
+    ASSERT_EQ(1u, emptyResult.diagnostics.size());
+    EXPECT_EQ("ancestor fallback warning", emptyResult.diagnostics[0]);
+}
+
 TEST(RasterOverlayLifecycleTest, CompositeImageUsesSourceMoreDetailFlagLikeCesiumNative) {
     auto scheme = TileScheme::createXYZWebMercator();
     Rectangle target = scheme->tileToRectangle(
