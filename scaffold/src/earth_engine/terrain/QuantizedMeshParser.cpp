@@ -262,7 +262,6 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
 
     // --- Parse indices ---
     bool idx32 = (vc > 65536);
-    const size_t idxOffset = offset;
     if (idx32 && (offset % 4) != 0) offset += 2;
     if (offset + 4 > len) {
 #ifdef __ANDROID__
@@ -273,32 +272,12 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
         return nullptr;
     }
     uint32_t triCount = readU32();
-    if (triCount > vc * 4) {
-        // Retry with 4-byte alignment used by some quantized-mesh encoders.
-        offset = idxOffset;
-        if ((offset % 4) != 0) offset += 2;
-        if (offset + 4 > len) {
-#ifdef __ANDROID__
-            __android_log_print(ANDROID_LOG_ERROR, "QMParser",
-                "parseToDecodedTile fail: missing aligned triCount vc=%u off=%zu len=%zu",
-                vc, offset, len);
-#endif
-            return nullptr;
-        }
-        triCount = readU32();
-#ifdef __ANDROID__
-        if (triCount > 0 && triCount <= vc * 4) {
-            __android_log_print(ANDROID_LOG_INFO, "QMParser",
-                "aligned triCount=%u", triCount);
-        }
-#endif
-    }
-    const uint32_t idxCount = triCount * 3;
+    const size_t idxCount = static_cast<size_t>(triCount) * 3u;
     size_t idxByte = idx32 ? 4 : 2;
-    if (offset + idxCount * idxByte > len || triCount > vc * 4) {
+    if (idxCount > (len - offset) / idxByte) {
 #ifdef __ANDROID__
         __android_log_print(ANDROID_LOG_ERROR, "QMParser",
-            "parseToDecodedTile fail: index overflow vc=%u tri=%u idxCount=%u idxByte=%zu off=%zu len=%zu",
+            "parseToDecodedTile fail: index overflow vc=%u tri=%u idxCount=%zu idxByte=%zu off=%zu len=%zu",
             vc, triCount, idxCount, idxByte, offset, len);
 #endif
         return nullptr;
@@ -306,7 +285,7 @@ std::unique_ptr<QuantizedMeshParser::DecodedTile> QuantizedMeshParser::parseToDe
 
     std::vector<uint32_t> indices(idxCount);
     uint32_t highest = 0;
-    for (uint32_t i = 0; i < idxCount; ++i) {
+    for (size_t i = 0; i < idxCount; ++i) {
         uint32_t code;
         if (idx32) { std::memcpy(&code, data + offset, 4); offset += 4; }
         else       { uint16_t c; std::memcpy(&c, data + offset, 2); offset += 2; code = c; }

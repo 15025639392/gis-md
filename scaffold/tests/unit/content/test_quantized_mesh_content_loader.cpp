@@ -70,6 +70,46 @@ std::vector<uint8_t> makeQuantizedMeshBytes(
     return bytes;
 }
 
+std::vector<uint8_t> makeHighTriangleCountQuantizedMeshBytes() {
+    std::vector<uint8_t> bytes;
+
+    for (int i = 0; i < 3; ++i) appendPod<double>(bytes, 0.0);
+    appendPod<float>(bytes, 0.0f);
+    appendPod<float>(bytes, 100.0f);
+    for (int i = 0; i < 7; ++i) appendPod<double>(bytes, 0.0);
+    appendPod<uint32_t>(bytes, 3);
+
+    const uint16_t u[] = {
+        zigZagEncode16(0),
+        zigZagEncode16(32767),
+        zigZagEncode16(-32767)
+    };
+    const uint16_t v[] = {
+        zigZagEncode16(0),
+        zigZagEncode16(0),
+        zigZagEncode16(32767)
+    };
+    const uint16_t h[] = {
+        zigZagEncode16(0),
+        zigZagEncode16(0),
+        zigZagEncode16(0)
+    };
+    for (uint16_t value : u) appendPod<uint16_t>(bytes, value);
+    for (uint16_t value : v) appendPod<uint16_t>(bytes, value);
+    for (uint16_t value : h) appendPod<uint16_t>(bytes, value);
+
+    constexpr uint32_t kTriangleCount = 13;
+    appendPod<uint32_t>(bytes, kTriangleCount);
+    const uint16_t firstTriangle[] = {0, 0, 0};
+    for (uint16_t value : firstTriangle) appendPod<uint16_t>(bytes, value);
+    for (uint32_t triangle = 1; triangle < kTriangleCount; ++triangle) {
+        const uint16_t repeatedTriangle[] = {3, 2, 1};
+        for (uint16_t value : repeatedTriangle) appendPod<uint16_t>(bytes, value);
+    }
+    for (int i = 0; i < 4; ++i) appendPod<uint32_t>(bytes, 0);
+    return bytes;
+}
+
 std::vector<uint8_t> makeQuadQuantizedMeshBytesWithEdges() {
     std::vector<uint8_t> bytes;
 
@@ -775,6 +815,26 @@ TEST(QuantizedMeshContentLoaderTest,
     ASSERT_EQ(1u, result.diagnostics.size());
     EXPECT_NE(std::string::npos,
               result.diagnostics.front().find("Error when parsing metadata"));
+}
+
+TEST(QuantizedMeshContentLoaderTest,
+     AcceptsCompleteHighTriangleCountMeshLikeCesiumNative) {
+    const std::vector<uint8_t> bytes =
+        makeHighTriangleCountQuantizedMeshBytes();
+
+    QuantizedMeshContentLoadResult result =
+        QuantizedMeshContentLoader::load(
+            bytes.data(),
+            bytes.size(),
+            geographicRootWestRectangle(),
+            false,
+            {});
+
+    ASSERT_TRUE(result.success());
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    EXPECT_GE(result.gltfModel->primitives.front().indices.size(), 39u);
+    EXPECT_TRUE(result.availabilityUpdates.empty());
 }
 
 TEST(QuantizedMeshContentLoaderTest, InvalidBodyFailsWithoutUpdates) {
