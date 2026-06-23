@@ -5,7 +5,6 @@
 #include "TileLoadResultMetadata.h"
 #include "../content/GltfContentProvider.h"
 #include "../core/math/Mat4.h"
-#include "../providers/TerrainProvider.h"
 
 #include <limits>
 #include <memory>
