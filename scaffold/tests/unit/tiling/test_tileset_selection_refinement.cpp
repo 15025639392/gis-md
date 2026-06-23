@@ -51,7 +51,7 @@ struct TilesetTestAccess {
         Tileset& tileset,
         const TileKey& key,
         std::unique_ptr<DecodedHeightmap> heightmap) {
-        tileset.contentLifecycle_.legacyTerrainCache()[TileCacheKey::forTile(key)] =
+        tileset.contentLifecycle_.heightmapTerrainCache()[TileCacheKey::forTile(key)] =
             std::move(heightmap);
     }
 
@@ -2397,7 +2397,7 @@ TEST(
 
 TEST(
     TilesetSelectionRefinementTest,
-    ContentTerrainQuadtreeIgnoresLegacyHeightmapCacheForRefinement) {
+    ContentTerrainQuadtreeIgnoresHeightmapTerrainCacheForRefinement) {
     auto contentProvider = std::make_unique<TerrainQuadtreeContentProvider>();
 
     Tileset tileset(
@@ -2427,7 +2427,7 @@ TEST(
 
 TEST(
     TilesetSelectionRefinementTest,
-    ResolverInfersLegacyHeightmapCacheUseFromContentProviderKind) {
+    ResolverInfersHeightmapTerrainCacheUseFromContentProviderKind) {
     TerrainQuadtreeContentProvider contentProvider;
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey cachedLegacyChildKey{"Geographic-TMS", 1, 0, 0};
@@ -2436,8 +2436,8 @@ TEST(
         {{rootKey, {cachedLegacyChildKey}}});
     auto tileScheme = TileScheme::createGeographicTMS();
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        legacyTerrainCache;
-    legacyTerrainCache[TileCacheKey::forTile(cachedLegacyChildKey)] =
+        heightmapTerrainCache;
+    heightmapTerrainCache[TileCacheKey::forTile(cachedLegacyChildKey)] =
         std::make_unique<DecodedHeightmap>();
     TilesetTile root(
         rootKey,
@@ -2452,7 +2452,7 @@ TEST(
                 provider,
                 nullptr,
                 *tileScheme,
-                legacyTerrainCache,
+                heightmapTerrainCache,
                 [](const TileKey& key) {
                     return TileCacheKey::forTile(key);
                 },
@@ -2474,7 +2474,7 @@ TEST(
     AlwaysAvailableLegacyTerrainProvider legacyTerrainProvider;
     auto tileScheme = TileScheme::createGeographicTMS();
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        legacyTerrainCache;
+        heightmapTerrainCache;
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile root(
         rootKey,
@@ -2487,7 +2487,7 @@ TEST(
         &contentProvider,
         &legacyTerrainProvider,
         *tileScheme,
-        legacyTerrainCache,
+        heightmapTerrainCache,
         [](const TileKey& key) { return TileCacheKey::forTile(key); },
         [](const TilesetTile&) { return false; },
         [](const TilesetTile& tile) {
@@ -2504,10 +2504,10 @@ TEST(
     AlwaysAvailableLegacyTerrainProvider legacyTerrainProvider;
     auto tileScheme = TileScheme::createGeographicTMS();
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        legacyTerrainCache;
+        heightmapTerrainCache;
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     const TileKey cachedLegacyChildKey{"Geographic-TMS", 1, 0, 0};
-    legacyTerrainCache[TileCacheKey::forTile(cachedLegacyChildKey)] =
+    heightmapTerrainCache[TileCacheKey::forTile(cachedLegacyChildKey)] =
         std::make_unique<DecodedHeightmap>();
     TilesetTile root(
         rootKey,
@@ -2520,7 +2520,7 @@ TEST(
         &contentProvider,
         &legacyTerrainProvider,
         *tileScheme,
-        legacyTerrainCache,
+        heightmapTerrainCache,
         [](const TileKey& key) { return TileCacheKey::forTile(key); },
         [](const TilesetTile&) { return false; },
         [](const TilesetTile& tile) {

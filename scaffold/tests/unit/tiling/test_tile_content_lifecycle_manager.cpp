@@ -142,37 +142,37 @@ TEST(TileContentLifecycleManagerTest, ExposesClaimedUploadWork) {
     EXPECT_FALSE(manager.hasPendingWork());
 }
 
-TEST(TileContentLifecycleManagerTest, KeepsLegacyTerrainCacheWhenNotDiscarding) {
+TEST(TileContentLifecycleManagerTest, KeepsHeightmapTerrainCacheWhenNotDiscarding) {
     TileContentLifecycleManager manager;
     auto cachedHeightmap = std::make_unique<DecodedHeightmap>();
     cachedHeightmap->tileSize = 2;
     cachedHeightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
-    manager.legacyTerrainCache()["terrain"] = std::move(cachedHeightmap);
+    manager.heightmapTerrainCache()["terrain"] = std::move(cachedHeightmap);
 
-    manager.discardLegacyTerrainCache(false);
+    manager.discardHeightmapTerrainCache(false);
 
-    ASSERT_NE(manager.legacyTerrainCache().end(),
-              manager.legacyTerrainCache().find("terrain"));
-    EXPECT_TRUE(manager.legacyTerrainCache().at("terrain")->valid());
+    ASSERT_NE(manager.heightmapTerrainCache().end(),
+              manager.heightmapTerrainCache().find("terrain"));
+    EXPECT_TRUE(manager.heightmapTerrainCache().at("terrain")->valid());
 }
 
 TEST(
     TileContentLifecycleManagerTest,
-    DiscardLegacyTerrainCacheClearsHeightmapCache) {
+    DiscardHeightmapTerrainCacheClearsCache) {
     TileContentLifecycleManager manager;
     auto cachedHeightmap = std::make_unique<DecodedHeightmap>();
     cachedHeightmap->tileSize = 2;
     cachedHeightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
-    manager.legacyTerrainCache()["terrain"] = std::move(cachedHeightmap);
+    manager.heightmapTerrainCache()["terrain"] = std::move(cachedHeightmap);
 
-    manager.discardLegacyTerrainCache(true);
+    manager.discardHeightmapTerrainCache(true);
 
-    EXPECT_TRUE(manager.legacyTerrainCache().empty());
+    EXPECT_TRUE(manager.heightmapTerrainCache().empty());
 }
 
 TEST(
     TileContentLifecycleManagerTest,
-    ContentOwnedTerrainRequestClearsLegacyHeightmapCache) {
+    ContentOwnedTerrainRequestClearsHeightmapTerrainCache) {
     TileContentLifecycleManager manager;
     LifecycleTerrainContentProvider contentProvider;
     std::vector<ActivatedRasterOverlay*> rasterOverlays;
@@ -180,7 +180,7 @@ TEST(
     auto cachedHeightmap = std::make_unique<DecodedHeightmap>();
     cachedHeightmap->tileSize = 2;
     cachedHeightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
-    manager.legacyTerrainCache()["test/0/0/0"] = std::move(cachedHeightmap);
+    manager.heightmapTerrainCache()["test/0/0/0"] = std::move(cachedHeightmap);
 
     const TileLoadRequestOutcome outcome = manager.requestMissingTiles(
         {TileLoadRequest{
@@ -202,7 +202,7 @@ TEST(
 
     EXPECT_EQ(1u, outcome.issued);
     EXPECT_EQ(1, contentProvider.requestCount);
-    EXPECT_TRUE(manager.legacyTerrainCache().empty());
+    EXPECT_TRUE(manager.heightmapTerrainCache().empty());
     EXPECT_EQ(1u, manager.loadLifecycle().pendingLoads()
                       .terminalResultCount());
 }

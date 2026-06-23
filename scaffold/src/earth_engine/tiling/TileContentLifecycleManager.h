@@ -25,12 +25,12 @@ public:
     const TileLoadLifecycle& loadLifecycle() const { return loadLifecycle_; }
 
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
-    legacyTerrainCache() {
-        return legacyTerrainCache_;
+    heightmapTerrainCache() {
+        return heightmapTerrainCache_;
     }
     const std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
-    legacyTerrainCache() const {
-        return legacyTerrainCache_;
+    heightmapTerrainCache() const {
+        return heightmapTerrainCache_;
     }
 
     TileEmptyContentRegistry& emptyContentRegistry() {
@@ -43,7 +43,7 @@ public:
     int pendingRequests() const;
     bool hasPendingWork() const;
     void shutdown();
-    void discardLegacyTerrainCache(bool discard);
+    void discardHeightmapTerrainCache(bool discard);
 
     template <typename PrepareUpsampleSourceTileFn, typename EnsureTileFn>
     TileLoadRequestOutcome requestMissingTiles(
@@ -62,7 +62,7 @@ public:
         PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
         EnsureTileFn&& ensureTile) {
         if (contentProviderOwnsTerrainQuadtree(contentProvider)) {
-            legacyTerrainCache_.clear();
+            heightmapTerrainCache_.clear();
         }
         return TilesetContentLifecycleCoordinator::requestMissingTiles(
             loadRequests,
@@ -143,7 +143,7 @@ private:
             device,
             rasterOverlays,
             tiles,
-            legacyTerrainCache_,
+            heightmapTerrainCache_,
             emptyContentRegistry_,
             frameNumber,
             maximumSimultaneousTileLoads,
@@ -178,7 +178,7 @@ private:
 
     TileLoadLifecycle loadLifecycle_;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        legacyTerrainCache_;
+        heightmapTerrainCache_;
     TileEmptyContentRegistry emptyContentRegistry_;
 };
 

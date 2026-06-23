@@ -17,7 +17,7 @@ TileCacheOwnershipManager::TileCacheOwnershipManager(
     bool& resourceSmoothingActiveForFrame,
     int64_t& maximumCachedBytes,
     double& tileCacheUnloadTimeLimit,
-    bool includeLegacyHeightmapCache)
+    bool includeHeightmapTerrainCache)
     : contentCache_(contentCache),
       contentLifecycle_(contentLifecycle),
       loadQueue_(loadQueue),
@@ -25,13 +25,13 @@ TileCacheOwnershipManager::TileCacheOwnershipManager(
       resourceSmoothingActiveForFrame_(resourceSmoothingActiveForFrame),
       maximumCachedBytes_(maximumCachedBytes),
       tileCacheUnloadTimeLimit_(tileCacheUnloadTimeLimit),
-      includeLegacyHeightmapCache_(includeLegacyHeightmapCache) {}
+      includeHeightmapTerrainCache_(includeHeightmapTerrainCache) {}
 
 void TileCacheOwnershipManager::updateTotalBytesUsed() {
     contentCache_.updateTotalBytesUsed(
         tiles_,
         contentLifecycle_,
-        includeLegacyHeightmapCache_);
+        includeHeightmapTerrainCache_);
 }
 
 void TileCacheOwnershipManager::markEligibleForUnloading(
@@ -89,7 +89,7 @@ void TileCacheOwnershipManager::unloadCachedBytes(
         maximumCachedBytes,
         tileCacheUnloadTimeLimit_,
         resourceSmoothingActiveForFrame_,
-        includeLegacyHeightmapCache_,
+        includeHeightmapTerrainCache_,
         tiles_,
         contentLifecycle_,
         pPrepRenderer,

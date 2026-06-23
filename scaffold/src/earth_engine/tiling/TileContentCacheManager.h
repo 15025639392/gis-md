@@ -34,7 +34,7 @@ public:
             std::string,
             std::unique_ptr<TilesetTile>>& tiles,
         const TileContentLifecycleManager& lifecycle,
-        bool includeLegacyHeightmapCache);
+        bool includeHeightmapTerrainCache);
 
     void markEligibleForUnloading(
         const std::unordered_map<
@@ -58,7 +58,7 @@ public:
         int64_t maximumCachedBytes,
         double unloadTimeLimitMs,
         bool resourceSmoothingActive,
-        bool includeLegacyHeightmapCache,
+        bool includeHeightmapTerrainCache,
         const std::unordered_map<
             std::string,
             std::unique_ptr<TilesetTile>>& tiles,
@@ -98,7 +98,7 @@ public:
             updateTotalBytesUsed(
                 tiles,
                 lifecycle,
-                includeLegacyHeightmapCache);
+                includeHeightmapTerrainCache);
             cacheBytesDirty_ = false;
         }
     }

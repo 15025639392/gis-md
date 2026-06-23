@@ -32,7 +32,7 @@ void TileMeshPreparationManager::ensureTileMesh(TilesetTile& tile) {
     TileMeshFrameEnsurer::ensure(
         TileMeshFrameEnsureInput{
             tile,
-            contentLifecycle_.legacyTerrainCache(),
+            contentLifecycle_.heightmapTerrainCache(),
             device_,
             hasTerrainQuadtree_,
             useHeightmapSurfacePath_},

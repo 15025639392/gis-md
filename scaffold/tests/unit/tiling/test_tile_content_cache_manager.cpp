@@ -43,7 +43,7 @@ struct ExternalSubtreeFixture {
         rootRaw->children.push_back(child.get());
         rootRaw->content.loadState = TileLoadState::Done;
         rootRaw->content.contentKind = TileContentKind::External;
-        lifecycle.legacyTerrainCache()[rootCacheKey] = makeFlatHeightmap(4.0f);
+        lifecycle.heightmapTerrainCache()[rootCacheKey] = makeFlatHeightmap(4.0f);
         tiles[rootCacheKey] = std::move(root);
         tiles[childCacheKey] = std::move(child);
 
@@ -114,7 +114,7 @@ TEST(
     tile->content.loadState = TileLoadState::Done;
     tile->content.contentKind = TileContentKind::Render;
     tiles[cacheKey] = std::move(tile);
-    lifecycle.legacyTerrainCache()[cacheKey] = makeFlatHeightmap(4.0f);
+    lifecycle.heightmapTerrainCache()[cacheKey] = makeFlatHeightmap(4.0f);
     lifecycle.emptyContentRegistry().insert(cacheKey);
 
     manager.updateTotalBytesUsed(
@@ -142,8 +142,8 @@ TEST(
     EXPECT_EQ(manager.totalBytesUsed(), 0);
     EXPECT_FALSE(manager.cacheBytesDirty());
     EXPECT_FALSE(manager.unloadQueue().contains(cacheKey));
-    EXPECT_EQ(lifecycle.legacyTerrainCache().find(cacheKey),
-              lifecycle.legacyTerrainCache().end());
+    EXPECT_EQ(lifecycle.heightmapTerrainCache().find(cacheKey),
+              lifecycle.heightmapTerrainCache().end());
     EXPECT_FALSE(lifecycle.emptyContentRegistry().contains(cacheKey));
     EXPECT_EQ(tiles[cacheKey]->content.loadState, TileLoadState::Unloaded);
     EXPECT_EQ(tiles[cacheKey]->content.contentKind, TileContentKind::Unknown);
@@ -152,7 +152,7 @@ TEST(
 
 TEST(
     TileContentCacheManagerTest,
-    ContentOwnedTerrainUnloadErasesLegacyHeightmapCache) {
+    ContentOwnedTerrainUnloadErasesHeightmapTerrainCache) {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
@@ -164,7 +164,7 @@ TEST(
     tile->content.contentKind = TileContentKind::Render;
     TilesetTile* tileRaw = tile.get();
     tiles[cacheKey] = std::move(tile);
-    lifecycle.legacyTerrainCache()[cacheKey] = makeFlatHeightmap(7.0f);
+    lifecycle.heightmapTerrainCache()[cacheKey] = makeFlatHeightmap(7.0f);
     lifecycle.emptyContentRegistry().insert(cacheKey);
 
     manager.markEligibleForUnloading(tiles, cacheKey);
@@ -176,8 +176,8 @@ TEST(
             nullptr);
 
     EXPECT_EQ(TileCacheUnloadContentResult::Remove, result);
-    EXPECT_EQ(lifecycle.legacyTerrainCache().find(cacheKey),
-              lifecycle.legacyTerrainCache().end());
+    EXPECT_EQ(lifecycle.heightmapTerrainCache().find(cacheKey),
+              lifecycle.heightmapTerrainCache().end());
     EXPECT_FALSE(lifecycle.emptyContentRegistry().contains(cacheKey));
     EXPECT_EQ(TileLoadState::Unloaded, tileRaw->content.loadState);
     EXPECT_EQ(TileContentKind::Unknown, tileRaw->content.contentKind);
@@ -257,7 +257,7 @@ TEST(
     tile->content.loadState = TileLoadState::Done;
     tile->content.contentKind = TileContentKind::Render;
     tiles[cacheKey] = std::move(tile);
-    lifecycle.legacyTerrainCache()[cacheKey] = makeFlatHeightmap(2.0f);
+    lifecycle.heightmapTerrainCache()[cacheKey] = makeFlatHeightmap(2.0f);
     lifecycle.emptyContentRegistry().insert(cacheKey);
     loadQueue.queue(key, TileLoadPriorityGroup::Normal, 0.0);
     manager.markEligibleForUnloading(tiles, cacheKey);
@@ -283,8 +283,8 @@ TEST(
     manager.eraseTileIndexState(cacheKey, lifecycle, loadQueue);
 
     EXPECT_FALSE(manager.unloadQueue().contains(cacheKey));
-    EXPECT_EQ(lifecycle.legacyTerrainCache().find(cacheKey),
-              lifecycle.legacyTerrainCache().end());
+    EXPECT_EQ(lifecycle.heightmapTerrainCache().find(cacheKey),
+              lifecycle.heightmapTerrainCache().end());
     EXPECT_FALSE(lifecycle.emptyContentRegistry().contains(cacheKey));
     EXPECT_TRUE(loadQueue.empty());
     EXPECT_FALSE(lifecycle.loadLifecycle().containsWorkForCacheKey(cacheKey));
@@ -293,7 +293,7 @@ TEST(
 
 TEST(
     TileContentCacheManagerTest,
-    ContentOwnedTerrainEraseIndexStateErasesLegacyHeightmapCache) {
+    ContentOwnedTerrainEraseIndexStateErasesHeightmapTerrainCache) {
     TileContentCacheManager manager;
     TileContentLifecycleManager lifecycle;
     TileLoadQueue loadQueue;
@@ -305,7 +305,7 @@ TEST(
     tile->content.loadState = TileLoadState::Done;
     tile->content.contentKind = TileContentKind::Render;
     tiles[cacheKey] = std::move(tile);
-    lifecycle.legacyTerrainCache()[cacheKey] = makeFlatHeightmap(9.0f);
+    lifecycle.heightmapTerrainCache()[cacheKey] = makeFlatHeightmap(9.0f);
     lifecycle.emptyContentRegistry().insert(cacheKey);
     loadQueue.queue(key, TileLoadPriorityGroup::Normal, 0.0);
     manager.markEligibleForUnloading(tiles, cacheKey);
@@ -334,8 +334,8 @@ TEST(
         loadQueue);
 
     EXPECT_FALSE(manager.unloadQueue().contains(cacheKey));
-    EXPECT_EQ(lifecycle.legacyTerrainCache().find(cacheKey),
-              lifecycle.legacyTerrainCache().end());
+    EXPECT_EQ(lifecycle.heightmapTerrainCache().find(cacheKey),
+              lifecycle.heightmapTerrainCache().end());
     EXPECT_FALSE(lifecycle.emptyContentRegistry().contains(cacheKey));
     EXPECT_TRUE(loadQueue.empty());
     EXPECT_FALSE(lifecycle.loadLifecycle().containsWorkForCacheKey(cacheKey));

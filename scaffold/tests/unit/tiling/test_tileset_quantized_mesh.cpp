@@ -74,14 +74,14 @@ struct TilesetTestAccess {
         Tileset& tileset,
         const TileKey& key,
         std::unique_ptr<DecodedHeightmap> heightmap) {
-        tileset.contentLifecycle_.legacyTerrainCache()[TileCacheKey::forTile(key)] =
+        tileset.contentLifecycle_.heightmapTerrainCache()[TileCacheKey::forTile(key)] =
             std::move(heightmap);
     }
 
     static bool hasTerrainCache(Tileset& tileset, const TileKey& key) {
-        return tileset.contentLifecycle_.legacyTerrainCache().find(
+        return tileset.contentLifecycle_.heightmapTerrainCache().find(
                    TileCacheKey::forTile(key)) !=
-            tileset.contentLifecycle_.legacyTerrainCache().end();
+            tileset.contentLifecycle_.heightmapTerrainCache().end();
     }
 
     static Vec3 tileBoundsCenter(const Rectangle& bounds) {
@@ -442,7 +442,7 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
-     ContentTerrainProviderDiscardsLegacyTerrainCacheDuringFrameRuntime) {
+     ContentTerrainProviderDiscardsHeightmapTerrainCacheDuringFrameRuntime) {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
     auto scheme = TileScheme::createGeographicTMS();
