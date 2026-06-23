@@ -155,9 +155,6 @@ bool TileContentAccess::canRefine(const TilesetTile& tile) const {
         legacyTerrainProvider_,
         tileScheme_,
         contentLifecycle_.legacyTerrainCache(),
-        contentProvider_ && contentProvider_->providesTerrainQuadtree()
-            ? LegacyHeightmapTerrainCacheMode::ContentOwnedTerrainOnly
-            : LegacyHeightmapTerrainCacheMode::Include,
         [](const TileKey& key) {
             return TileCacheKey::forTile(key);
         },
