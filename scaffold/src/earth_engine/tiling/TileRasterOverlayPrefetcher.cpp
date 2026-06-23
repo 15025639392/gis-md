@@ -97,6 +97,11 @@ void TileRasterOverlayPrefetcher::prefetch(
 
         RasterMappedToTilesetTile& mapped =
             tile.rasterOverlayState.ensureMapping(i);
+        std::vector<RasterOverlayProjection> localMissingProjections;
+        std::vector<RasterOverlayProjection>& missingProjections =
+            hasRenderContentDetails
+                ? tile.rasterOverlayState.missingProjections()
+                : localMissingProjections;
 
         RasterOverlayTile* loadingTile = mapped.getLoadingTile();
         if (loadingTile &&
@@ -106,6 +111,18 @@ void TileRasterOverlayPrefetcher::prefetch(
                     RasterOverlayTile::LoadState::Unloaded ||
                 loadingTile->getState() ==
                     RasterOverlayTile::LoadState::Loading) {
+                mapped.update(
+                    tile.key,
+                    overlayDetails,
+                    rasterScreenPixels.x,
+                    rasterScreenPixels.y,
+                    *activeProvider,
+                    nullptr,
+                    missingProjections,
+                    tile.parent,
+                    i,
+                    hasRenderContentDetails,
+                    boundingVolumeRectangle);
                 mapped.loadThrottled(*activeProvider, &frameResourceBudget);
                 continue;
             }
@@ -114,11 +131,6 @@ void TileRasterOverlayPrefetcher::prefetch(
             continue;
         }
 
-        std::vector<RasterOverlayProjection> localMissingProjections;
-        std::vector<RasterOverlayProjection>& missingProjections =
-            hasRenderContentDetails
-                ? tile.rasterOverlayState.missingProjections()
-                : localMissingProjections;
         mapped.update(
             tile.key,
             overlayDetails,

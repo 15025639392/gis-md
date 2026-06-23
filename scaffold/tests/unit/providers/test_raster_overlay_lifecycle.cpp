@@ -3418,6 +3418,99 @@ TEST(RasterOverlayLifecycleTest, PrefetchRecordsMissingProjectionForContentReloa
     EXPECT_EQ(0, activated.getCachedTileCount());
 }
 
+TEST(RasterOverlayLifecycleTest,
+     PrefetchPromotesAncestorFallbackWhileChildLoadingLikeCesiumNative) {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        RasterOverlay::Options{});
+    ActivatedRasterOverlay activated(*overlay);
+    RasterOverlayTileProvider* provider = activated.ensureTileProvider(nullptr);
+    ASSERT_NE(nullptr, provider);
+
+    const TileKey parentKey{overlay->getTileScheme().id(), 2, 1, 1};
+    const TileKey childKey{overlay->getTileScheme().id(), 3, 2, 2};
+    const Rectangle parentBounds =
+        overlay->getTileScheme().tileToRectangle(parentKey);
+    const Rectangle childBounds =
+        overlay->getTileScheme().tileToRectangle(childKey);
+    RasterOverlayDetails parentDetails =
+        makeProviderDetails(overlay->getTileScheme(), parentBounds);
+    RasterOverlayDetails childDetails =
+        makeProviderDetails(overlay->getTileScheme(), childBounds);
+    std::vector<RasterOverlayProjection> missing;
+
+    TilesetTile parentTile(parentKey, parentBounds);
+    RasterMappedToTilesetTile& parentMapping =
+        parentTile.rasterOverlayState.ensureMapping(0);
+    parentMapping.update(
+        parentKey,
+        parentDetails,
+        512.0,
+        512.0,
+        *provider,
+        nullptr,
+        missing,
+        nullptr,
+        0);
+    RasterOverlayTile* parentRaster = parentMapping.getLoadingTile();
+    ASSERT_NE(nullptr, parentRaster);
+    parentRaster->setTexture(std::make_unique<TestTexture>(4, 4));
+    parentMapping.update(
+        parentKey,
+        parentDetails,
+        512.0,
+        512.0,
+        *provider,
+        nullptr,
+        missing,
+        nullptr,
+        0);
+    ASSERT_EQ(parentRaster, parentMapping.getReadyTile());
+
+    TilesetTile childTile(childKey, childBounds, &parentTile);
+    childTile.geometricError = 100.0;
+    RasterMappedToTilesetTile& childMapping =
+        childTile.rasterOverlayState.ensureMapping(0);
+    childMapping.update(
+        childKey,
+        childDetails,
+        512.0,
+        512.0,
+        *provider,
+        nullptr,
+        missing,
+        &parentTile,
+        0);
+    RasterOverlayTile* childRaster = childMapping.getLoadingTile();
+    ASSERT_NE(nullptr, childRaster);
+    ASSERT_EQ(RasterOverlayTile::LoadState::Unloaded,
+              childRaster->getState());
+
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 64;
+    config.maxRasterNetworkInflight = 64;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+
+    std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    TileRasterOverlayPrefetcher::prefetch(
+        childTile,
+        overlays,
+        {0},
+        nullptr,
+        16.0,
+        budget);
+
+    EXPECT_TRUE(childTile.rasterOverlayState.hasReadyMapping(0));
+    EXPECT_EQ(parentRaster, childMapping.getReadyTile());
+    EXPECT_EQ(childRaster, childMapping.getLoadingTile());
+    EXPECT_EQ(RasterMappedToTilesetTile::ReadyTileSource::Ancestor,
+              childMapping.getReadyTileSource());
+    EXPECT_EQ(RasterMappedToTilesetTile::State::Unattached,
+              childMapping.getState());
+}
+
 TEST(RasterOverlayLifecycleTest, EmptyPrefetchClearsRasterOverlayStateLikeCesiumNativeRemove) {
     TilesetTile tile(
         TileKey{"Geographic-TMS", 2, 1, 1},
