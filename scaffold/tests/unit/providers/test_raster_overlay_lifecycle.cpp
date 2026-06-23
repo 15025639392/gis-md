@@ -286,6 +286,33 @@ public:
     }
 };
 
+class HighBitImageryProvider final : public ImageryProvider {
+public:
+    std::string id() const override { return "high-bit"; }
+    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 18; }
+    int tileWidth() const override { return 1; }
+    int tileHeight() const override { return 1; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     TileCallback callback,
+                     HttpRequestPriority = HttpRequestPriority::Normal) override {
+        auto image = std::make_unique<DecodedImage>();
+        image->width = 1;
+        image->height = 1;
+        image->channels = 3;
+        image->bytesPerChannel = 2;
+        image->pixels = {0x34, 0x12, 0x56, 0x12, 0x78, 0x12};
+        callback(key, std::move(image));
+    }
+    std::unique_ptr<DecodedImage> decodeTile(
+        const uint8_t*, size_t) override {
+        return nullptr;
+    }
+};
+
 class ParentFallbackImageryProvider final : public ImageryProvider {
 public:
     std::string id() const override { return "parent-fallback"; }
@@ -522,6 +549,25 @@ public:
     int uploadCount = 0;
     int maxTextureSizeValue = 2048;
     const DecodedImage* lastUploadSource = nullptr;
+    DecodedImage lastUpload;
+};
+
+class RejectingHighBitRasterUploader final : public RasterTextureUploader {
+public:
+    int maxTextureSize() const override { return 2048; }
+
+    std::unique_ptr<Texture> uploadRasterTexture(
+        const DecodedImage& image,
+        const RasterTextureUploadOptions&) override {
+        ++uploadCount;
+        lastUpload = image;
+        if (image.bytesPerChannel != 1) {
+            return nullptr;
+        }
+        return std::make_unique<TestTexture>(image.width, image.height);
+    }
+
+    int uploadCount = 0;
     DecodedImage lastUpload;
 };
 
@@ -3831,6 +3877,27 @@ TEST(RasterOverlayLifecycleTest, MalformedRasterImagesFailBeforeUploadLikeCesium
     EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
               tile->isMoreDetailAvailable());
     EXPECT_EQ(0, uploaderPtr->uploadCount);
+}
+
+TEST(RasterOverlayLifecycleTest,
+     HighBitRasterImagesFailUploadUntilRendererFormatExists) {
+    HighBitImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<RejectingHighBitRasterUploader>();
+    RejectingHighBitRasterUploader* uploaderPtr = uploader.get();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+
+    auto tile = provider.getTile(TileKey{scheme->id(), 2, 1, 1});
+    ASSERT_NE(nullptr, tile);
+    ASSERT_TRUE(provider.loadTile(*tile));
+
+    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(1, uploaderPtr->uploadCount);
+    EXPECT_EQ(2, uploaderPtr->lastUpload.bytesPerChannel);
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed, tile->getState());
+    EXPECT_EQ(RasterOverlayTile::MoreDetailAvailable::No,
+              tile->isMoreDetailAvailable());
+    EXPECT_EQ(nullptr, tile->getTexture());
 }
 
 TEST(RasterOverlayLifecycleTest, SharedFrameBudgetLimitsRasterUploadsPerFrame) {
