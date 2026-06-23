@@ -20,7 +20,7 @@ namespace earth_engine {
 struct TileMissingRequestSchedulerInput {
     TileLoadLifecycle& loadLifecycle;
     FrameResourceBudget& budget;
-    TerrainProvider* terrainProvider = nullptr;
+    TerrainProvider* legacyTerrainProvider = nullptr;
     TilesetContentProvider* contentProvider = nullptr;
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles;
     const std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
@@ -39,14 +39,14 @@ public:
         TerrainCacheKeyFn&& terrainCacheKey,
         PrepareUpsampleSourceTileFn&& prepareUpsampleSourceTile,
         EnsureTileFn&& ensureTile) {
-        TerrainProvider* terrainProvider =
-            effectiveTerrainProvider(input);
+        TerrainProvider* legacyTerrainProvider =
+            effectiveLegacyTerrainProvider(input);
         return TileLoadScheduler::requestMissingTiles(
             loadRequests,
             TileLoadSchedulerInput{
                 input.loadLifecycle,
                 input.budget,
-                terrainProvider,
+                legacyTerrainProvider,
                 input.contentProvider},
             terrainCacheKey,
             [&](const TileKey& key,
@@ -54,7 +54,7 @@ public:
                 TilesetTile*& tileState) {
                 return makeSnapshot(
                     input,
-                    terrainProvider,
+                    legacyTerrainProvider,
                     key,
                     cacheKey,
                     tileState);
@@ -71,13 +71,13 @@ public:
     }
 
 private:
-    static TerrainProvider* effectiveTerrainProvider(
+    static TerrainProvider* effectiveLegacyTerrainProvider(
         const TileMissingRequestSchedulerInput& input) {
         if (input.contentProvider &&
             input.contentProvider->providesTerrainQuadtree()) {
             return nullptr;
         }
-        return input.terrainProvider;
+        return input.legacyTerrainProvider;
     }
 
     static TileLoadRequestSnapshot makeSnapshot(

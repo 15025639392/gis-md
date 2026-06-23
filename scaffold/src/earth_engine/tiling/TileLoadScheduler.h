@@ -26,7 +26,7 @@ struct TilesetTile;
 struct TileLoadSchedulerInput {
     TileLoadLifecycle& lifecycle;
     FrameResourceBudget& budget;
-    TerrainProvider* terrainProvider = nullptr;
+    TerrainProvider* legacyTerrainProvider = nullptr;
     TilesetContentProvider* contentProvider = nullptr;
 };
 
@@ -172,13 +172,14 @@ public:
             }
 
             if (requestKind != TileLoadRequestKind::Terrain ||
-                !input.terrainProvider) {
+                !input.legacyTerrainProvider) {
                 continue;
             }
 
             {
                 const int estimatedFanout =
-                    input.terrainProvider->estimatedRequestFanout(requestKey);
+                    input.legacyTerrainProvider->estimatedRequestFanout(
+                        requestKey);
                 std::lock_guard<std::mutex> lock(input.lifecycle.mutex());
                 if (!input.budget.hasNetworkInflightCapacity(
                         FrameResourceLane::TerrainRequest,
@@ -199,7 +200,7 @@ public:
                     input.lifecycle.requestState(),
                     input.lifecycle.pendingLoads(),
                     input.budget,
-                    *input.terrainProvider,
+                    *input.legacyTerrainProvider,
                     requestKey,
                     cacheKey,
                     request.group,

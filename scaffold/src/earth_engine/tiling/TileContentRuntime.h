@@ -26,7 +26,7 @@ struct TileContentRuntimeRequestFrame {
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     const std::unordered_map<std::string, std::unique_ptr<TilesetTile>>&
         tiles;
-    TerrainProvider* terrainProvider = nullptr;
+    TerrainProvider* legacyTerrainProvider = nullptr;
     TilesetContentProvider* contentProvider = nullptr;
     RenderDevice* device = nullptr;
     uint64_t frameNumber = 0;

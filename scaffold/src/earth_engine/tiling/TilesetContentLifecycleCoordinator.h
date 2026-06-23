@@ -26,7 +26,7 @@ class IPrepareRendererResources;
 
 struct TilesetContentLifecycleContext {
     TileLoadLifecycle& loadLifecycle;
-    TerrainProvider* terrainProvider = nullptr;
+    TerrainProvider* legacyTerrainProvider = nullptr;
     TilesetContentProvider* contentProvider = nullptr;
     RenderDevice* device = nullptr;
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
@@ -80,7 +80,7 @@ public:
             TileMissingRequestSchedulerInput{
                 context.loadLifecycle,
                 *budget,
-                context.terrainProvider,
+                context.legacyTerrainProvider,
                 context.contentProvider,
                 context.tiles,
                 context.terrainCache,
