@@ -95,12 +95,10 @@ public:
             return std::nullopt;
         }
 
-        TileLoadResult result =
-            TileLoadResult::createRenderableTerrain(
-                std::move(content.metadata));
-        result.content.gltfModel = std::move(content.gltfModel);
-        result.content.terrainRenderContent = content.terrainRenderContent;
-        result.content.contentTransform = content.contentTransform;
+        TileLoadResult result = TileLoadResult::createRenderableGltfTerrain(
+            std::move(content.gltfModel),
+            std::move(content.metadata),
+            content.contentTransform);
         result.content.quantizedMeshAvailabilityUpdates =
             std::move(content.quantizedMeshAvailabilityUpdates);
         return result;

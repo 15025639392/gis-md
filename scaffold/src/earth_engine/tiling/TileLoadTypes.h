@@ -127,6 +127,19 @@ struct TileLoadResult {
         return loadResult;
     }
 
+    static TileLoadResult createRenderableGltfTerrain(
+        std::unique_ptr<GltfModel> model,
+        TileLoadResultMetadata metadata = {},
+        Mat4 contentTransform = Mat4::identity()) {
+        TileLoadResult loadResult = createRenderable();
+        loadResult.content.metadata = std::move(metadata);
+        loadResult.content.gltfModel = std::move(model);
+        loadResult.content.terrainRenderContent =
+            loadResult.content.gltfModel != nullptr;
+        loadResult.content.contentTransform = contentTransform;
+        return loadResult;
+    }
+
     static TileLoadResult fromTerrainResult(TerrainTileLoadResult&& result) {
         TileLoadResult loadResult;
         loadResult.status = result.status;

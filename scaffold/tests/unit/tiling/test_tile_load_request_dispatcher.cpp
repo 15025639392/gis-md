@@ -2,6 +2,8 @@
 
 #include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
+#include "earth_engine/core/math/Vec3.h"
+#include "earth_engine/tiling/TileBoundingVolume.h"
 #include "earth_engine/tiling/TileLoadLifecycle.h"
 #include "earth_engine/tiling/TileLoadRequestDispatcher.h"
 
@@ -751,6 +753,37 @@ TEST(TileLoadRequestDispatcherTest,
 
     TileLoadResult untypedTerrain = TileLoadResult::createRenderableTerrain();
     EXPECT_FALSE(untypedTerrain.shouldUpload());
+
+    auto directGltfModel = std::make_unique<GltfModel>();
+    GltfModel* rawDirectGltfModel = directGltfModel.get();
+    TileLoadResultMetadata directMetadata;
+    directMetadata.updatedBoundingVolume =
+        TileBoundingVolume::fromRegion(
+            Rectangle::fromDegrees(1.0, 2.0, 3.0, 4.0),
+            -10.0,
+            20.0);
+    const Mat4 directTransform = Mat4::translation(Vec3{1.0, 2.0, 3.0});
+    TileLoadResult directGltfTerrain =
+        TileLoadResult::createRenderableGltfTerrain(
+            std::move(directGltfModel),
+            directMetadata,
+            directTransform);
+    EXPECT_TRUE(directGltfTerrain.shouldUpload());
+    EXPECT_TRUE(directGltfTerrain.content.hasGltfTerrainPayload());
+    EXPECT_EQ(TerrainTilePayloadKind::None,
+              directGltfTerrain.content.terrainPayloadKind);
+    EXPECT_EQ(nullptr, directGltfTerrain.content.heightmap);
+    EXPECT_EQ(rawDirectGltfModel, directGltfTerrain.content.gltfModel.get());
+    EXPECT_EQ(directTransform, directGltfTerrain.content.contentTransform);
+    ASSERT_TRUE(
+        directGltfTerrain.content.metadata.updatedBoundingVolume.has_value());
+    const TileBoundingVolume& committedVolume =
+        *directGltfTerrain.content.metadata.updatedBoundingVolume;
+    EXPECT_EQ(TileBoundingVolumeKind::Region, committedVolume.kind);
+    EXPECT_EQ(directMetadata.updatedBoundingVolume->region,
+              committedVolume.region);
+    EXPECT_DOUBLE_EQ(-10.0, committedVolume.minimumHeight);
+    EXPECT_DOUBLE_EQ(20.0, committedVolume.maximumHeight);
 
     TileLoadResult contentGltf = TileLoadResult::fromContentResult(
         TileContentLoadResult::render(std::make_unique<GltfModel>()));
