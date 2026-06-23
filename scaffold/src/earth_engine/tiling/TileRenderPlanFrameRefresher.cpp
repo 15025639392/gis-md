@@ -5,7 +5,10 @@
 #include "RasterMappedToTilesetTile.h"
 #include "TileRenderPlanFinalizer.h"
 #include "TilesetTile.h"
+#include "../layers/ActivatedRasterOverlay.h"
+#include "../providers/ImageryProvider.h"
 #include "../providers/RasterOverlayTile.h"
+#include "../providers/RasterOverlayTileProvider.h"
 
 #include <algorithm>
 
@@ -46,9 +49,32 @@ void collectReadyRasterTileCredits(const TilesetTile& tile,
         });
 }
 
+void collectRasterOverlayProviderCredits(
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+    std::vector<std::string>& frameCredits) {
+    for (const ActivatedRasterOverlay* overlay : rasterOverlays) {
+        if (!overlay) {
+            continue;
+        }
+
+        const RasterOverlayTileProvider* tileProvider =
+            overlay->getTileProvider();
+        if (!tileProvider) {
+            continue;
+        }
+
+        appendUniqueCredit(
+            frameCredits,
+            tileProvider->getImageryProvider().attribution());
+    }
+}
+
 void refreshFrameCredits(TilePlan& tilePlan,
+                         const std::vector<ActivatedRasterOverlay*>&
+                             rasterOverlays,
                          TileContentAccess& contentAccess) {
     tilePlan.frameCredits.clear();
+    collectRasterOverlayProviderCredits(rasterOverlays, tilePlan.frameCredits);
 
     for (const TileRenderEntry& entry : tilePlan.renderEntries) {
         if (TilesetTile* selectedTile =
@@ -74,7 +100,6 @@ void TileRenderPlanFrameRefresher::refresh(
     TileContentAccess& contentAccess,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
     const TileRenderPlanFrameRefreshOptions& options) {
-    (void)rasterOverlays;
     TileRenderPlanFinalizer::refreshRenderEntries(
         tilePlan,
         TileRenderPlanFinalizeOptions{
@@ -92,7 +117,7 @@ void TileRenderPlanFrameRefresher::refresh(
             return tile.hasSurfaceDrawable() ||
                    tile.content.renderContent.isGltfRenderReady();
         });
-    refreshFrameCredits(tilePlan, contentAccess);
+    refreshFrameCredits(tilePlan, rasterOverlays, contentAccess);
 }
 
 } // namespace earth_engine

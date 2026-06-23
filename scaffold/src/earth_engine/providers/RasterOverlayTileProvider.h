@@ -164,6 +164,7 @@ public:
 
     /// Direct access to the imagery provider.
     ImageryProvider& getImageryProvider() { return provider_; }
+    const ImageryProvider& getImageryProvider() const { return provider_; }
     ProviderRequestDiagnostics requestDiagnostics() const;
 
     /// Returns the tile scheme.
