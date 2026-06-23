@@ -263,23 +263,6 @@ TEST(TilesetQuantizedMeshTest,
 }
 
 TEST(TilesetQuantizedMeshTest,
-     ContentTerrainProviderRejectsLegacyTerrainProviderCompanion) {
-    auto legacyProvider = std::make_unique<SparseTerrainProvider>();
-    auto contentProvider = std::make_unique<QuantizedMeshTerrainProvider>(
-        "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
-
-    EXPECT_THROW(
-        Tileset(
-            std::move(legacyProvider),
-            TileScheme::createGeographicTMS(),
-            {},
-            nullptr,
-            TilesetOptions{},
-            std::move(contentProvider)),
-        std::invalid_argument);
-}
-
-TEST(TilesetQuantizedMeshTest,
      RtcOriginComesFromBoundingSphereCenterLikeCesiumNative) {
     auto provider = std::make_unique<QuantizedMeshTerrainProvider>(
         "https://example.invalid/fallback/{z}/{x}/{y}.terrain");
@@ -556,8 +539,7 @@ TEST(TilesetQuantizedMeshTest,
                     std::move(scheme),
                     {},
                     nullptr,
-                    TilesetOptions{},
-                    nullptr);
+                    TilesetOptions{});
 
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
@@ -611,8 +593,7 @@ TEST(TilesetQuantizedMeshTest,
                     std::move(scheme),
                     {},
                     nullptr,
-                    TilesetOptions{},
-                    nullptr);
+                    TilesetOptions{});
 
     const TileKey rootKey{"XYZ-WebMercator", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);

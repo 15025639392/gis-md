@@ -3904,7 +3904,6 @@ void testTileResourceDirtyInvalidatesRevisionAndCacheOnly() {
         "https://example.invalid/{z}/{x}/{y}.terrain");
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         nullptr,
@@ -4294,18 +4293,21 @@ public:
     };
 
     explicit ManualCompletionContentProvider(TileKey key)
-        : key_(std::move(key)) {}
+        : keys_{std::move(key)} {}
+
+    explicit ManualCompletionContentProvider(std::vector<TileKey> keys)
+        : keys_(std::move(keys)) {}
 
     std::string id() const override {
         return "manual-completion-content";
     }
 
     bool supportsTile(const TileKey& key) const override {
-        return key == key_;
+        return std::find(keys_.begin(), keys_.end(), key) != keys_.end();
     }
 
     std::vector<TileKey> rootTiles() const override {
-        return {key_};
+        return keys_;
     }
 
     bool providesTerrainQuadtree() const override {
@@ -4338,6 +4340,28 @@ public:
         return true;
     }
 
+    bool completeWithTerrainModel(
+        const TileKey& key,
+        std::unique_ptr<GltfModel> model) {
+        auto it = std::find_if(
+            pendingRequests.begin(),
+            pendingRequests.end(),
+            [&key](const PendingRequest& request) {
+                return request.key == key;
+            });
+        if (it == pendingRequests.end()) {
+            return false;
+        }
+
+        TileContentLoadResult result =
+            TileContentLoadResult::render(std::move(model));
+        result.terrainRenderContent = result.gltfModel != nullptr;
+        ContentCallback callback = std::move(it->callback);
+        pendingRequests.erase(it);
+        callback(key, std::move(result));
+        return true;
+    }
+
     TileContentLoadResult decodeContent(
         const uint8_t*,
         size_t) override {
@@ -4348,7 +4372,7 @@ public:
     bool ownsTerrainQuadtree = false;
 
 private:
-    TileKey key_;
+    std::vector<TileKey> keys_;
 };
 
 class SelectionTreeContentProvider final : public TilesetContentProvider {
@@ -5736,7 +5760,6 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
             TileKey{"Geographic-TMS", 0, 0, 0});
     contentProvider->ownsTerrainQuadtree = true;
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {&activated},
         &device,
@@ -7268,7 +7291,6 @@ void testTilesetContentProviderLoadsGltfRenderContent() {
         Mat4::translation(Vec3(100.0, 200.0, 300.0)));
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -7356,7 +7378,6 @@ void testTilesetContentProviderLoadsNativeGpuInstancingGltf() {
         "native EXT_mesh_gpu_instancing GLB fixture");
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -7432,7 +7453,6 @@ void testTilesetContentProviderUploadsNativeGpuInstancingTrsMatrices() {
         "native EXT_mesh_gpu_instancing TRS GLB fixture");
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -7536,7 +7556,6 @@ void testTilesetContentProviderSplitsNativeGpuInstancingBlendGltf() {
         "native EXT_mesh_gpu_instancing BLEND GLB fixture");
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -7609,7 +7628,6 @@ void testTilesetContentProviderSplitsNativeGpuInstancingBlendTrsGltf() {
         "native EXT_mesh_gpu_instancing BLEND TRS GLB fixture");
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -7722,7 +7740,6 @@ void testTilesetContentProviderBatchesI3dmNativeGpuInstancingOpaqueGltf() {
         "I3DM native EXT_mesh_gpu_instancing opaque fixture");
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -7841,7 +7858,6 @@ void testTilesetContentProviderSplitsI3dmNativeGpuInstancingBlendGltf() {
         "I3DM native EXT_mesh_gpu_instancing BLEND fixture");
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -7963,7 +7979,6 @@ void testTilesetJsonProviderLoadsExplicitGltfTile() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -8073,7 +8088,6 @@ void testTilesetJsonGltfUpAxisZKeepsZUpContent() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -8160,7 +8174,6 @@ void testTilesetJsonI3dmDefaultUpAxisKeepsInstancePositionsTileLocal() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -8259,7 +8272,6 @@ void testTilesetJsonProviderLoadsPntsPointCloud() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -8373,7 +8385,6 @@ void testTilesetJsonProviderLoadsCmptCompositeContent() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -8656,7 +8667,6 @@ void expectTilesetJsonTileFailsExplicitly(
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -9657,7 +9667,6 @@ void testTilesetJsonProviderLoadsExternalTilesetContent() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,
@@ -9720,7 +9729,6 @@ void testTilesetViewerRequestVolumeGatesContentLoadQueue() {
         rootKey);
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         nullptr,
@@ -9877,7 +9885,6 @@ void testTilesetContentRetryLaterMaterializesLatentChildren() {
     SelectionTreeContentProvider* rawProvider = contentProvider.get();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        nullptr,
         std::move(scheme),
         {},
         nullptr,
@@ -9914,7 +9921,6 @@ void testTilesetContentCancelledMaterializesLatentChildrenAndRetries() {
     SelectionTreeContentProvider* rawProvider = contentProvider.get();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        nullptr,
         std::move(scheme),
         {},
         nullptr,
@@ -9951,7 +9957,6 @@ void testTilesetContentFailedMaterializesLatentChildrenWithoutRetry() {
     SelectionTreeContentProvider* rawProvider = contentProvider.get();
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        nullptr,
         std::move(scheme),
         {},
         nullptr,
@@ -9989,7 +9994,6 @@ void testTilesetCacheUnloadFailedUnknownPreservesChildren() {
         TileLoadStatus::Failed);
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        nullptr,
         std::move(scheme),
         {},
         nullptr,
@@ -23011,18 +23015,15 @@ void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
     const TileKey terrainKey{"Geographic-TMS", 1, 0, 0};
     const TileKey contentKey{"Geographic-TMS", 1, 1, 0};
 
-    auto terrainProvider =
-        std::make_unique<ManualCompletionTerrainProvider>();
-    ManualCompletionTerrainProvider* rawTerrainProvider =
-        terrainProvider.get();
     auto contentProvider =
-        std::make_unique<ManualCompletionContentProvider>(contentKey);
+        std::make_unique<ManualCompletionContentProvider>(
+            std::vector<TileKey>{terrainKey, contentKey});
     ManualCompletionContentProvider* rawContentProvider =
         contentProvider.get();
+    rawContentProvider->ownsTerrainQuadtree = true;
     auto scheme = TileScheme::createGeographicTMS();
     DummyRenderDevice device;
     Tileset tileset(
-        std::move(terrainProvider),
         std::move(scheme),
         {},
         &device,
@@ -23038,20 +23039,18 @@ void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
         contentKey,
         1.0);
 
-    check(rawTerrainProvider->pendingRequests.size() == 1 &&
-              rawContentProvider->pendingRequests.size() == 1,
-          "Tileset: mixed upload budget test queues terrain and content requests");
-    check(rawTerrainProvider->completeWithHeightmap(
+    check(rawContentProvider->pendingRequests.size() == 2,
+          "Tileset: content-owned terrain budget test queues terrain and content requests");
+    check(rawContentProvider->completeWithTerrainModel(
               terrainKey,
-              makeFlatHeightmap(1.0f)),
-          "Tileset: lower-priority terrain upload can complete first");
+              makeTriangleGltfModel()),
+          "Tileset: lower-priority terrain glTF upload can complete first");
     check(rawContentProvider->completeWithModel(
               contentKey,
               makeTriangleGltfModel()),
           "Tileset: higher-priority content upload can complete second");
-    check(tileset.loadDiagnostics().pendingTerrainUploads == 1 &&
-              tileset.loadDiagnostics().pendingContentUploads == 1,
-          "Tileset: mixed terrain/content uploads wait on main thread");
+    check(tileset.loadDiagnostics().pendingContentUploads == 2,
+          "Tileset: content-owned terrain/content uploads wait on main thread");
 
     TilesetTestAccess::processPendingUploads(tileset);
 
@@ -23068,9 +23067,8 @@ void testTilesetMainThreadUploadBudgetIsGlobalAcrossContentKinds() {
           "Tileset: global main-thread budget processes higher-priority content first");
     check(terrainTile &&
               terrainTile->content.loadState == TileLoadState::ContentLoading &&
-              diag.pendingTerrainUploads == 1 &&
-              diag.pendingContentUploads == 0,
-          "Tileset: lower-priority terrain waits under the same upload budget");
+              diag.pendingContentUploads == 1,
+          "Tileset: lower-priority content-owned terrain waits under the same upload budget");
 }
 
 void testTilesetFrameResourceBudgetLimitsWorkerRequests() {
@@ -24040,7 +24038,6 @@ void testTilesetAdditiveRefinementRendersFailedChildHoleAndSiblings() {
             {rootKey, childKeys}});
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         nullptr,
@@ -24142,7 +24139,6 @@ void testTilesetReplaceRefinementStopsWhenParentMeetsSse() {
             {rootKey, childKeys}});
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         nullptr,
@@ -24313,7 +24309,6 @@ void testTilesetReplaceRefinementFallsBackToParentWhileChildrenLoad() {
             {rootKey, childKeys}});
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         nullptr,
@@ -24482,7 +24477,6 @@ void runTilesetUnconditionallyRefinedChildSelectionTest(TilesetOptions options,
             {childKey, {grandchildKey}}});
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         nullptr,
@@ -24590,7 +24584,6 @@ void testTilesetExternalWrapperRefinesToChildSelection() {
             {externalKey, {renderKey}}});
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         nullptr,
@@ -24686,7 +24679,6 @@ void testTilesetReplaceFailedChildSwitchesFromGrandchildToEmptyHole() {
             {failedChildKey, {grandchildKey}}});
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         nullptr,
@@ -25417,7 +25409,6 @@ void testTilesetCullRequiresAllSelectorViewsToMissTile() {
             {rootKey, childKeys}});
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         nullptr,
@@ -28689,7 +28680,6 @@ void testTilesetClearChildrenIgnoresStaleContentCallback() {
     DummyRenderDevice device;
     auto scheme = TileScheme::createGeographicTMS();
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         std::move(scheme),
         {},
         &device,

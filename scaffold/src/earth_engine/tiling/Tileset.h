@@ -95,12 +95,6 @@ public:
             std::vector<ActivatedRasterOverlay*> rasterOverlays,
             RenderDevice* device,
             TilesetOptions options);
-    Tileset(std::unique_ptr<TerrainProvider> terrainProvider,
-            std::unique_ptr<TileScheme> tileScheme,
-            std::vector<ActivatedRasterOverlay*> rasterOverlays,
-            RenderDevice* device,
-            TilesetOptions options,
-            std::unique_ptr<TilesetContentProvider> contentProvider);
     Tileset(std::unique_ptr<TileScheme> tileScheme,
             std::vector<ActivatedRasterOverlay*> rasterOverlays,
             RenderDevice* device,
@@ -137,9 +131,19 @@ public:
     void clearOcclusionCallback();
 
 private:
+    struct AdoptProvidersTag {};
+
     friend struct TilesetTestAccess;
     friend class TilesetSelectionFrameFacade;
     friend class TilesetUpdateFrameRuntime;
+
+    Tileset(AdoptProvidersTag,
+            std::unique_ptr<TerrainProvider> terrainProvider,
+            std::unique_ptr<TileScheme> tileScheme,
+            std::vector<ActivatedRasterOverlay*> rasterOverlays,
+            RenderDevice* device,
+            TilesetOptions options,
+            std::unique_ptr<TilesetContentProvider> contentProvider);
 
     TileContentRuntimeRequestFrame makeContentRuntimeRequestFrame() const;
     TileContentRuntimeUploadFrame makeContentRuntimeUploadFrame(
