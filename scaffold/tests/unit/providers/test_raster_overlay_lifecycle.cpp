@@ -3082,6 +3082,41 @@ TEST(RasterOverlayLifecycleTest, SourceTileDepotUsesRuntimeSubTileCacheBudget) {
 }
 
 TEST(RasterOverlayLifecycleTest,
+     MappedRasterCacheKeyIgnoresSubNanometerRectangleNoise) {
+    ParentFallbackImageryProvider imagery;
+    imagery.schemeIdValue = "Geographic-TMS";
+    auto scheme = TileScheme::createGeographicTMS();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    provider.setLevelRange(3, 3);
+
+    const TileKey sourceKey{scheme->id(), 3, 2, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+    const double noise = 2e-16;
+    const Rectangle noisyWestHalf(
+        westHalf.west() + noise,
+        westHalf.south() - noise,
+        westHalf.east() + noise,
+        westHalf.north() - noise);
+
+    auto stableTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, westHalf),
+        256.0,
+        512.0).tile;
+    auto noisyTile = provider.mapRasterTilesToGeometryTile(
+        projectForProvider(provider, noisyWestHalf),
+        256.0,
+        512.0).tile;
+
+    ASSERT_NE(nullptr, stableTile);
+    EXPECT_EQ(stableTile, noisyTile);
+}
+
+TEST(RasterOverlayLifecycleTest,
      TerminalFailureSourceAssetsRespectSubTileCacheBudget) {
     AlwaysFailingImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

@@ -720,15 +720,19 @@ int chooseQuadtreeSourceZoom(const TileScheme& scheme,
     return zoom;
 }
 
+double normalizeRectangleCacheCoordinate(double value) {
+    return std::abs(value) < 1e-15 ? 0.0 : value;
+}
+
 std::string rectangleCacheKey(const Rectangle& rectangle) {
     char bounds[256];
     std::snprintf(bounds,
                   sizeof(bounds),
-                  "%.17g/%.17g/%.17g/%.17g",
-                  rectangle.west(),
-                  rectangle.south(),
-                  rectangle.east(),
-                  rectangle.north());
+                  "%.15g/%.15g/%.15g/%.15g",
+                  normalizeRectangleCacheCoordinate(rectangle.west()),
+                  normalizeRectangleCacheCoordinate(rectangle.south()),
+                  normalizeRectangleCacheCoordinate(rectangle.east()),
+                  normalizeRectangleCacheCoordinate(rectangle.north()));
     return bounds;
 }
 
