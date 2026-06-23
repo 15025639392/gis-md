@@ -57,20 +57,6 @@ public:
     static bool prepareSourceTile(
         TilesetTile& tile,
         double priority,
-        EnsureTileMeshFn&& ensureTileMesh,
-        QueueTileLoadFn&& queueTileLoad) {
-        return prepareSourceTile(
-            tile,
-            priority,
-            true,
-            std::forward<EnsureTileMeshFn>(ensureTileMesh),
-            std::forward<QueueTileLoadFn>(queueTileLoad));
-    }
-
-    template <typename EnsureTileMeshFn, typename QueueTileLoadFn>
-    static bool prepareSourceTile(
-        TilesetTile& tile,
-        double priority,
         bool useHeightmapSurfacePath,
         EnsureTileMeshFn&& ensureTileMesh,
         QueueTileLoadFn&& queueTileLoad) {

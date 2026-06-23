@@ -1091,6 +1091,7 @@ TEST(TileLoadSchedulerTest,
     const bool ready = TileUpsampleSourcePreparer::prepareSourceTile(
         child,
         12.0,
+        false,
         [&ensured](TilesetTile&) {
             ensured = true;
         },

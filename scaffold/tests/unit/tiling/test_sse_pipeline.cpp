@@ -15794,6 +15794,7 @@ void testTileUpsampleSourcePreparerSkipsPermanentFailedAncestor() {
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
         child,
         42.0,
+        true,
         [&ensuredMeshes](TilesetTile&) {
             ++ensuredMeshes;
         },
@@ -15825,6 +15826,7 @@ void testTileUpsampleSourcePreparerQueuesTemporaryFailedAncestor() {
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
         child,
         7.0,
+        true,
         [&ensuredMeshes](TilesetTile&) {
             ++ensuredMeshes;
         },
@@ -15857,6 +15859,7 @@ void testTileUpsampleSourcePreparerQueuesUnloadedAncestor() {
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
         child,
         9.0,
+        true,
         [&ensuredMeshes](TilesetTile&) {
             ++ensuredMeshes;
         },
@@ -15889,6 +15892,7 @@ void testTileUpsampleSourcePreparerFinalizesContentLoadedAncestor() {
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
         child,
         11.0,
+        true,
         [&ensuredMeshes](TilesetTile& tile) {
             ++ensuredMeshes;
             tile.content.loadState = TileLoadState::Done;
@@ -15923,6 +15927,7 @@ void testTileUpsampleSourcePreparerWaitsForLoadingAncestor() {
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
         child,
         5.0,
+        true,
         [&ensuredMeshes](TilesetTile&) {
             ++ensuredMeshes;
         },
@@ -15955,6 +15960,7 @@ void testTileUpsampleSourcePreparerWaitsForUnloadingAncestor() {
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
         child,
         5.0,
+        true,
         [&ensuredMeshes](TilesetTile&) {
             ++ensuredMeshes;
         },
@@ -15993,6 +15999,7 @@ void testTileUpsampleSourcePreparerRasterDetailRequiresDirectGltfParent() {
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
         child,
         13.0,
+        false,
         [&ensuredMeshes](TilesetTile&) {
             ++ensuredMeshes;
         },
@@ -16038,6 +16045,7 @@ void testTileUpsampleSourcePreparerRasterDetailFinalizesDirectGltfParentOnly() {
     const bool prepared = TileUpsampleSourcePreparer::prepareSourceTile(
         child,
         17.0,
+        false,
         [&ensuredMeshes, &parent](TilesetTile& tile) {
             ++ensuredMeshes;
             check(&tile == &parent,
