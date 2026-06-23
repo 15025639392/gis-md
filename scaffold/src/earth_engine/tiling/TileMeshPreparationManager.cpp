@@ -29,33 +29,55 @@ TileMeshPreparationManager::TileMeshPreparationManager(
       rasterOverlays_(rasterOverlays) {}
 
 void TileMeshPreparationManager::ensureTileMesh(TilesetTile& tile) {
-    TileMeshFrameEnsurer::ensure(
-        TileMeshFrameEnsureInput{
-            tile,
-            contentLifecycle_.heightmapTerrainCache(),
-            device_,
-            hasTerrainQuadtree_,
-            useHeightmapSurfacePath_},
-        [](const TileKey& key) {
-            return TileCacheKey::forTile(key);
-        },
-        [](const TileKey&, DecodedHeightmap*) {},
-        [](const TilesetTile& sourceTile, bool allowUnloadingSource) {
+    auto ingestAvailability = [](const TileKey&, DecodedHeightmap*) {};
+    auto findUpsampleSource =
+        [this](const TilesetTile& sourceTile, bool allowUnloadingSource) {
             return TileUpsampleSourcePreparer::findSourceTile(
                 sourceTile,
-                allowUnloadingSource);
-        },
-        [this](TilesetTile& ancestor) {
-            ensureTileMesh(ancestor);
-        },
-        [this](const TilesetTile& renderableTile) {
-            return TileSelectionRasterOverlayPreparer::isCompleteRenderable(
-                renderableTile,
-                rasterOverlays_);
-        },
-        [this]() {
-            markResourcesDirty();
-        });
+                allowUnloadingSource,
+                false,
+                useHeightmapSurfacePath_);
+        };
+    auto ensureAncestorMesh = [this](TilesetTile& ancestor) {
+        ensureTileMesh(ancestor);
+    };
+    auto isCompleteRenderable = [this](const TilesetTile& renderableTile) {
+        return TileSelectionRasterOverlayPreparer::isCompleteRenderable(
+            renderableTile,
+            rasterOverlays_);
+    };
+    auto markDirty = [this]() {
+        markResourcesDirty();
+    };
+
+    if (useHeightmapSurfacePath_) {
+        TileMeshFrameEnsurer::ensureHeightmapSurface(
+            TileHeightmapMeshFrameEnsureInput{
+                tile,
+                contentLifecycle_.heightmapTerrainCache(),
+                device_,
+                hasTerrainQuadtree_},
+            [](const TileKey& key) {
+                return TileCacheKey::forTile(key);
+            },
+            ingestAvailability,
+            findUpsampleSource,
+            ensureAncestorMesh,
+            isCompleteRenderable,
+            markDirty);
+        return;
+    }
+
+    TileMeshFrameEnsurer::ensureContentTerrain(
+        TileContentTerrainMeshFrameEnsureInput{
+            tile,
+            device_,
+            hasTerrainQuadtree_},
+        ingestAvailability,
+        findUpsampleSource,
+        ensureAncestorMesh,
+        isCompleteRenderable,
+        markDirty);
 }
 
 bool TileMeshPreparationManager::prepareUpsampleSourceTile(

@@ -13,13 +13,18 @@ class RenderDevice;
 struct TileKey;
 struct TilesetTile;
 
-struct TileMeshFrameEnsureInput {
+struct TileHeightmapMeshFrameEnsureInput {
     TilesetTile& tile;
     std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>&
         terrainCache;
     RenderDevice* device = nullptr;
     bool hasTerrainQuadtree = false;
-    bool useHeightmapSurfacePath = true;
+};
+
+struct TileContentTerrainMeshFrameEnsureInput {
+    TilesetTile& tile;
+    RenderDevice* device = nullptr;
+    bool hasTerrainQuadtree = true;
 };
 
 class TileMeshFrameEnsurer {
@@ -30,47 +35,98 @@ public:
               typename EnsureAncestorMeshFn,
               typename IsCompleteRenderableFn,
               typename MarkResourcesDirtyFn>
-    static void ensure(
-        const TileMeshFrameEnsureInput& input,
+    static void ensureHeightmapSurface(
+        const TileHeightmapMeshFrameEnsureInput& input,
         TerrainCacheKeyFn&& terrainCacheKey,
         IngestAvailabilityFn&& ingestAvailability,
         FindUpsampleSourceFn&& findUpsampleSource,
         EnsureAncestorMeshFn&& ensureAncestorMesh,
         IsCompleteRenderableFn&& isCompleteRenderable,
         MarkResourcesDirtyFn&& markResourcesDirty) {
+        auto it = input.terrainCache.find(terrainCacheKey(input.tile.key));
+        DecodedHeightmap* ownHeightmap =
+            it != input.terrainCache.end() && it->second
+                ? it->second.get()
+                : nullptr;
+        ensureSurface(
+            input.tile,
+            ownHeightmap,
+            input.device,
+            input.hasTerrainQuadtree,
+            true,
+            std::forward<IngestAvailabilityFn>(ingestAvailability),
+            std::forward<FindUpsampleSourceFn>(findUpsampleSource),
+            std::forward<EnsureAncestorMeshFn>(ensureAncestorMesh),
+            std::forward<IsCompleteRenderableFn>(isCompleteRenderable),
+            std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
+    }
+
+    template <typename IngestAvailabilityFn,
+              typename FindUpsampleSourceFn,
+              typename EnsureAncestorMeshFn,
+              typename IsCompleteRenderableFn,
+              typename MarkResourcesDirtyFn>
+    static void ensureContentTerrain(
+        const TileContentTerrainMeshFrameEnsureInput& input,
+        IngestAvailabilityFn&& ingestAvailability,
+        FindUpsampleSourceFn&& findUpsampleSource,
+        EnsureAncestorMeshFn&& ensureAncestorMesh,
+        IsCompleteRenderableFn&& isCompleteRenderable,
+        MarkResourcesDirtyFn&& markResourcesDirty) {
+        ensureSurface(
+            input.tile,
+            nullptr,
+            input.device,
+            input.hasTerrainQuadtree,
+            false,
+            std::forward<IngestAvailabilityFn>(ingestAvailability),
+            std::forward<FindUpsampleSourceFn>(findUpsampleSource),
+            std::forward<EnsureAncestorMeshFn>(ensureAncestorMesh),
+            std::forward<IsCompleteRenderableFn>(isCompleteRenderable),
+            std::forward<MarkResourcesDirtyFn>(markResourcesDirty));
+    }
+
+private:
+    template <typename IngestAvailabilityFn,
+              typename FindUpsampleSourceFn,
+              typename EnsureAncestorMeshFn,
+              typename IsCompleteRenderableFn,
+              typename MarkResourcesDirtyFn>
+    static void ensureSurface(
+        TilesetTile& tile,
+        DecodedHeightmap* ownHeightmap,
+        RenderDevice* device,
+        bool hasTerrainQuadtree,
+        bool useHeightmapSurfacePath,
+        IngestAvailabilityFn&& ingestAvailability,
+        FindUpsampleSourceFn&& findUpsampleSource,
+        EnsureAncestorMeshFn&& ensureAncestorMesh,
+        IsCompleteRenderableFn&& isCompleteRenderable,
+        MarkResourcesDirtyFn&& markResourcesDirty) {
         const bool contentTerrainQuadtreeOwnsSurface =
-            input.hasTerrainQuadtree &&
-            !input.useHeightmapSurfacePath;
+            hasTerrainQuadtree && !useHeightmapSurfacePath;
         const bool hasHeightmapSurfaceResidue =
             contentTerrainQuadtreeOwnsSurface &&
-            (input.tile.content.renderContent.hasSurfaceMesh() ||
-             input.tile.content.renderContent.hasRetainedHeightmap());
+            (tile.content.renderContent.hasSurfaceMesh() ||
+             tile.content.renderContent.hasRetainedHeightmap());
         if (hasHeightmapSurfaceResidue) {
-            input.tile.content.renderContent.clearSurfaceMeshResources();
-            input.tile.content.renderContent.clearRetainedHeightmap();
+            tile.content.renderContent.clearSurfaceMeshResources();
+            tile.content.renderContent.clearRetainedHeightmap();
             markResourcesDirty();
         }
 
-        if (input.tile.content.renderContent.hasGltfContent()) {
+        if (tile.content.renderContent.hasGltfContent()) {
             return;
         }
-
-        auto it = input.useHeightmapSurfacePath
-            ? input.terrainCache.find(terrainCacheKey(input.tile.key))
-            : input.terrainCache.end();
-        const bool hasOwnTerrain =
-            it != input.terrainCache.end() && it->second;
-        DecodedHeightmap* ownHeightmap =
-            hasOwnTerrain ? it->second.get() : nullptr;
 
         const TileSurfaceMeshEnsureResult result =
             TileSurfaceMeshEnsurer::ensure(
                 TileSurfaceMeshEnsureInput{
-                    input.tile,
+                    tile,
                     ownHeightmap,
-                    input.device,
-                    input.hasTerrainQuadtree,
-                    input.useHeightmapSurfacePath},
+                    device,
+                    hasTerrainQuadtree,
+                    useHeightmapSurfacePath},
                 ingestAvailability,
                 findUpsampleSource,
                 ensureAncestorMesh,

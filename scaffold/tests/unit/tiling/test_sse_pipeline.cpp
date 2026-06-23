@@ -11956,21 +11956,13 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
     gltfFrameTile.content.renderContent.prepareGltfContent(
         makeQuadTerrainGltfModel(gltfFrameTile.bounds),
         Mat4::identity());
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        frameTerrainCache;
-    bool frameCacheKeyComputed = false;
     bool frameSurfacePathTouched = false;
     bool frameResourcesDirty = false;
-    TileMeshFrameEnsurer::ensure(
-        TileMeshFrameEnsureInput{
+    TileMeshFrameEnsurer::ensureContentTerrain(
+        TileContentTerrainMeshFrameEnsureInput{
             gltfFrameTile,
-            frameTerrainCache,
             nullptr,
             true},
-        [&frameCacheKeyComputed](const TileKey&) {
-            frameCacheKeyComputed = true;
-            return std::string("unexpected-gltf-terrain-cache-key");
-        },
         [&frameSurfacePathTouched](const TileKey&, DecodedHeightmap*) {
             frameSurfacePathTouched = true;
         },
@@ -11989,11 +11981,10 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
         [&frameResourcesDirty]() {
             frameResourcesDirty = true;
         });
-    check(!frameCacheKeyComputed &&
-              !frameSurfacePathTouched &&
+    check(!frameSurfacePathTouched &&
               !frameResourcesDirty &&
               !gltfFrameTile.content.renderContent.hasSurfaceMesh(),
-          "TileMeshFrameEnsurer: glTF terrain render content skips terrain cache and SurfaceMesh frame path");
+          "TileMeshFrameEnsurer: glTF terrain render content skips SurfaceMesh frame path");
 
     TilesetTile gltfWithStaleHeightmapSurface(
         TileKey{"Geographic-TMS", 0, 0, 0},
@@ -12008,20 +11999,13 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
         SurfaceDrawableSource::HeightmapTerrain);
     gltfWithStaleHeightmapSurface.content.renderContent.setRetainedHeightmap(
         makeFlatHeightmap(77.0f));
-    bool gltfStaleCacheKeyComputed = false;
     bool gltfStaleSurfacePathTouched = false;
     bool gltfStaleResourcesDirty = false;
-    TileMeshFrameEnsurer::ensure(
-        TileMeshFrameEnsureInput{
+    TileMeshFrameEnsurer::ensureContentTerrain(
+        TileContentTerrainMeshFrameEnsureInput{
             gltfWithStaleHeightmapSurface,
-            frameTerrainCache,
             nullptr,
-            true,
-            false},
-        [&gltfStaleCacheKeyComputed](const TileKey&) {
-            gltfStaleCacheKeyComputed = true;
-            return std::string("unexpected-gltf-stale-cache-key");
-        },
+            true},
         [&gltfStaleSurfacePathTouched](const TileKey&, DecodedHeightmap*) {
             gltfStaleSurfacePathTouched = true;
         },
@@ -12040,8 +12024,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
         [&gltfStaleResourcesDirty]() {
             gltfStaleResourcesDirty = true;
         });
-    check(!gltfStaleCacheKeyComputed &&
-              !gltfStaleSurfacePathTouched &&
+    check(!gltfStaleSurfacePathTouched &&
               gltfStaleResourcesDirty &&
               gltfWithStaleHeightmapSurface.content.renderContent.hasGltfContent() &&
               !gltfWithStaleHeightmapSurface.content.renderContent.hasSurfaceMesh() &&
@@ -12058,20 +12041,13 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
         SurfaceDrawableSource::HeightmapTerrain);
     staleHeightmapSurfaceTile.content.renderContent.setRetainedHeightmap(
         makeFlatHeightmap(42.0f));
-    bool staleCacheKeyComputed = false;
     bool staleSurfacePathTouched = false;
     bool staleResourcesDirty = false;
-    TileMeshFrameEnsurer::ensure(
-        TileMeshFrameEnsureInput{
+    TileMeshFrameEnsurer::ensureContentTerrain(
+        TileContentTerrainMeshFrameEnsureInput{
             staleHeightmapSurfaceTile,
-            frameTerrainCache,
             nullptr,
-            true,
-            false},
-        [&staleCacheKeyComputed](const TileKey&) {
-            staleCacheKeyComputed = true;
-            return std::string("unexpected-content-terrain-cache-key");
-        },
+            true},
         [&staleSurfacePathTouched](const TileKey&, DecodedHeightmap*) {
             staleSurfacePathTouched = true;
         },
@@ -12090,8 +12066,7 @@ void testTilesetTileRenderableSnapshotAndRasterPreparationEligibility() {
         [&staleResourcesDirty]() {
             staleResourcesDirty = true;
         });
-    check(!staleCacheKeyComputed &&
-              !staleSurfacePathTouched &&
+    check(!staleSurfacePathTouched &&
               staleResourcesDirty &&
               !staleHeightmapSurfaceTile.content.renderContent.hasSurfaceMesh() &&
               !staleHeightmapSurfaceTile.content.renderContent.hasRetainedHeightmap(),
