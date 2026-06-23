@@ -911,6 +911,14 @@ TEST(TilesetQuantizedMeshTest,
         rootKey,
         makeFlatHeightmap(9876.0f));
     ASSERT_TRUE(TilesetTestAccess::hasTerrainCache(tileset, rootKey));
+    root->content.renderContent.setRetainedHeightmap(
+        makeFlatHeightmap(1357.0f));
+    root->rasterOverlayState.ensureMapping(0);
+    root->rasterOverlayState.missingProjections().push_back(
+        RasterOverlayProjection::WebMercator);
+    ASSERT_TRUE(root->content.renderContent.hasRetainedHeightmap());
+    ASSERT_EQ(1u, root->rasterOverlayState.mappingCount());
+    ASSERT_TRUE(root->rasterOverlayState.hasMissingProjections());
 
     EXPECT_EQ(0, tileset.cachedTerrainTiles());
     EXPECT_FLOAT_EQ(0.0f, tileset.sampleHeight(0.0, 0.0));
@@ -918,6 +926,8 @@ TEST(TilesetQuantizedMeshTest,
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     EXPECT_FALSE(root->content.renderContent.hasSurfaceMesh());
     EXPECT_FALSE(root->content.renderContent.hasRetainedHeightmap());
+    EXPECT_EQ(0u, root->rasterOverlayState.mappingCount());
+    EXPECT_FALSE(root->rasterOverlayState.hasMissingProjections());
     EXPECT_FALSE(root->content.renderContent.isTerrainRenderContent());
     EXPECT_TRUE(TilesetTestAccess::hasTerrainCache(tileset, rootKey));
 }
