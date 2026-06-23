@@ -434,8 +434,16 @@ public:
 
     void clearGltfContent() {
         gltfModel.reset();
+        gltfContentTransform = Mat4::identity();
         clearGltfGpuResources();
         terrainRenderContent_ = false;
+        if (surface_.surfaceSource == SurfaceDrawableSource::GltfContent) {
+            surface_.surfaceSource = SurfaceDrawableSource::None;
+        }
+        if (!surface_.mesh) {
+            surface_.surfaceDrawable = false;
+            surface_.localOrigin = Vec3::zero();
+        }
     }
 
 private:

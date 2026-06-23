@@ -13663,21 +13663,36 @@ void testTileLoadResultPreservesInitialBoundingVolumes() {
 
 void testTileContentUploadPolicyMarksGltfRenderResourceFailure() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
-    tile.content.renderContent.setGltfContent(std::make_unique<GltfModel>());
+    auto model = std::make_unique<GltfModel>();
+    model->preferredLocalOriginEcef = Vec3(10.0, 20.0, 30.0);
+    tile.content.renderContent.setGltfContent(
+        std::move(model),
+        Mat4::translation(Vec3(1.0, 2.0, 3.0)));
     tile.content.renderContent.addGltfTextureResource(
         std::make_unique<DummyTexture>(1, 1));
     tile.content.renderContent.addGltfPrimitiveResource(GltfPrimitiveRenderResources{});
+    tile.content.renderContent.setGltfResourcesReady(true);
+    tile.content.renderContent.setSurfaceDrawable(true);
+    tile.content.renderContent.setTerrainRenderContent(true);
     tile.content.contentKind = TileContentKind::Render;
     tile.content.loadState = TileLoadState::ContentLoaded;
 
     TileContentUploadPolicy::markGltfRenderResourcesFailed(tile);
 
     check(!tile.content.renderContent.hasGltfModel() &&
+              tile.content.renderContent.gltfTransform() ==
+                  Mat4::identity() &&
               tile.content.renderContent.gltfTextureResourcesForBinding().empty() &&
               !tile.content.renderContent.hasGltfPrimitiveResources() &&
+              !tile.content.renderContent.hasGltfResources() &&
+              !tile.content.renderContent.isSurfaceDrawable() &&
+              !tile.content.renderContent.isTerrainRenderContent() &&
+              tile.content.renderContent.currentSurfaceSource() ==
+                  SurfaceDrawableSource::None &&
+              tile.content.renderContent.renderLocalOrigin() == Vec3::zero() &&
               tile.content.contentKind == TileContentKind::Unknown &&
               tile.content.loadState == TileLoadState::FailedTemporarily,
-          "TileContentUploadPolicy: failed glTF resource preparation rolls back render content state");
+          "TileContentUploadPolicy: failed glTF resource preparation clears glTF-derived render content state");
 }
 
 void testTileContentUploadCommitterAppliesRenderResourceOutcome() {
