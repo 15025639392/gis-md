@@ -127,6 +127,11 @@ const Rectangle* findRectangleForProjection(
     return nullptr;
 }
 
+bool isCurrentProviderTile(const std::shared_ptr<RasterOverlayTile>& tile,
+                           const RasterOverlayTileProvider& provider) {
+    return !tile || provider.ownsCurrentTile(*tile);
+}
+
 } // namespace
 
 RasterMappedToTilesetTile::RasterMappedToTilesetTile() = default;
@@ -148,6 +153,26 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
     // cesium-native: store geometry key + overlay slot for attach/detach.
     geometryKey_ = geometryKey;
     overlaySlot_ = static_cast<int32_t>(overlayIndex);
+
+    // Provider option/coverage/level changes invalidate mapped-raster cache
+    // entries. Existing mappings may still retain shared handles, so drop
+    // stale handles before the attached fast path can keep rendering an old
+    // composition indefinitely.
+    const bool readyTileCurrent =
+        isCurrentProviderTile(_pReadyTile, tileProvider);
+    const bool loadingTileCurrent =
+        isCurrentProviderTile(_pLoadingTile, tileProvider);
+    if (!readyTileCurrent) {
+        releaseTileReferences(pPrepRenderer);
+    } else if (!loadingTileCurrent) {
+        _pLoadingTile = nullptr;
+        loadingTileSource_ = ReadyTileSource::None;
+        mappedSourceTiles_ = {};
+        directRasterTile_ = false;
+        if (_pReadyTile == nullptr) {
+            state_ = State::Unattached;
+        }
+    }
 
     // ── Step 1: Already-Attached fast path ──
     // cesium-native: if getState() == Attached, report MoreDetailAvailable
@@ -445,6 +470,12 @@ bool RasterMappedToTilesetTile::isMoreDetailAvailable() const {
     if (_pReadyTile == nullptr) return false;
     return _pReadyTile->isMoreDetailAvailable() ==
            RasterOverlayTile::MoreDetailAvailable::Yes;
+}
+
+bool RasterMappedToTilesetTile::hasPendingNonPlaceholderLoadingTile() const {
+    return _pLoadingTile != nullptr &&
+           _pLoadingTile->getState() !=
+               RasterOverlayTile::LoadState::Placeholder;
 }
 
 Texture* RasterMappedToTilesetTile::texture() const {

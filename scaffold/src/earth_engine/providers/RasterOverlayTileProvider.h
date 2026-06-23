@@ -235,6 +235,11 @@ public:
     void markUsed(const TileKey& key);
     void markUsed(const RasterOverlayTile& tile);
 
+    /// True when this tile is still the provider-owned cache entry for its
+    /// identity. Mapped raster cache keys include a provider mapping epoch, so
+    /// option changes invalidate old geometry-to-raster compositions.
+    bool ownsCurrentTile(const RasterOverlayTile& tile) const;
+
     /// Evict tiles that have not been referenced recently.
     /// Called once per frame from Tileset::buildRenderCommands,
     /// AFTER all tile access for the frame is complete.

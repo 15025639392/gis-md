@@ -102,6 +102,11 @@ public:
     /// cesium-native: check if a higher-resolution tile could be loaded.
     bool isMoreDetailAvailable() const;
 
+    /// True while a real raster tile is still loading or waiting for
+    /// failure/loaded-state consumption. Ready ancestor fallbacks should not
+    /// let traversal skip this lifecycle update.
+    bool hasPendingNonPlaceholderLoadingTile() const;
+
     /// cesium-native: detach this raster from the geometry tile.
     void detachFromTile(IPrepareRendererResources* pPrepRenderer);
 

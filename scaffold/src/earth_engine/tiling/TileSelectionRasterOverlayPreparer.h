@@ -38,6 +38,9 @@ public:
             }
             const RasterMappedToTilesetTile* mapped =
                 tile.rasterOverlayState.mappingAt(i);
+            if (mapped && mapped->hasPendingNonPlaceholderLoadingTile()) {
+                return false;
+            }
             if (mapped && mapped->isMoreDetailAvailable()) {
                 return false;
             }

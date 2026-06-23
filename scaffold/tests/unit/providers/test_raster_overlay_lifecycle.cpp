@@ -1827,6 +1827,74 @@ TEST(RasterOverlayLifecycleTest,
 }
 
 TEST(RasterOverlayLifecycleTest,
+     MappedTileDropsStaleProviderCacheEntryBeforeAttachedFastPath) {
+    DebugImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto geometryScheme = TileScheme::createGeographicTMS();
+    RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
+
+    const TileKey geometryKey{geometryScheme->id(), 2, 4, 2};
+    const Rectangle geometryBounds =
+        geometryScheme->tileToRectangle(geometryKey);
+    RasterOverlayDetails details =
+        makeProviderDetails(*imageryScheme, geometryBounds);
+    std::vector<RasterOverlayProjection> missing;
+
+    RasterMappedToTilesetTile mapped;
+    ASSERT_EQ(RasterMappedToTilesetTile::MoreDetail::Unknown,
+              mapped.update(
+                  geometryKey,
+                  details,
+                  512.0,
+                  512.0,
+                  provider,
+                  nullptr,
+                  missing));
+
+    RasterOverlayTile* firstLoading = mapped.getLoadingTile();
+    ASSERT_NE(nullptr, firstLoading);
+    ASSERT_TRUE(firstLoading->isMappedRasterTile());
+    const std::string firstCacheKey = firstLoading->getCacheKey();
+    firstLoading->setTexture(std::make_unique<TestTexture>(4, 4));
+
+    RecordingPrepareRendererResources recorder;
+    mapped.update(
+        geometryKey,
+        details,
+        512.0,
+        512.0,
+        provider,
+        &recorder,
+        missing);
+    ASSERT_EQ(RasterMappedToTilesetTile::State::Attached,
+              mapped.getState());
+    ASSERT_EQ(firstLoading, mapped.getReadyTile());
+    ASSERT_EQ(1, recorder.attachCount);
+
+    provider.setMaximumScreenSpaceError(
+        provider.getMaximumScreenSpaceError() * 4.0);
+
+    mapped.update(
+        geometryKey,
+        details,
+        512.0,
+        512.0,
+        provider,
+        &recorder,
+        missing);
+
+    RasterOverlayTile* remappedLoading = mapped.getLoadingTile();
+    ASSERT_NE(nullptr, remappedLoading);
+    EXPECT_TRUE(remappedLoading->isMappedRasterTile());
+    EXPECT_NE(firstLoading, remappedLoading);
+    EXPECT_NE(firstCacheKey, remappedLoading->getCacheKey());
+    EXPECT_EQ(nullptr, mapped.getReadyTile());
+    EXPECT_EQ(RasterMappedToTilesetTile::State::Unattached,
+              mapped.getState());
+    EXPECT_EQ(1, recorder.detachCount);
+}
+
+TEST(RasterOverlayLifecycleTest,
      ExactProviderRectangleUsesDirectQuadtreeTileLikeCesiumNative) {
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

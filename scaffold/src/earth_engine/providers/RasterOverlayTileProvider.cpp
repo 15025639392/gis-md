@@ -2729,6 +2729,22 @@ void RasterOverlayTileProvider::markUsed(const RasterOverlayTile& tile) {
     }
 }
 
+bool RasterOverlayTileProvider::ownsCurrentTile(
+    const RasterOverlayTile& tile) const {
+    if (tile.getState() == RasterOverlayTile::LoadState::Placeholder) {
+        return placeholderTile_ && placeholderTile_.get() == &tile;
+    }
+
+    const std::string& cacheKey = tile.getCacheKey();
+    if (!cacheKey.empty()) {
+        auto it = tiles_.find(cacheKey);
+        return it != tiles_.end() && it->second.get() == &tile;
+    }
+
+    auto it = tiles_.find(tileCacheKey(tile.getTileID()));
+    return it != tiles_.end() && it->second.get() == &tile;
+}
+
 void RasterOverlayTileProvider::trimUnusedTiles() {
     // Keep recently referenced tiles for a short window. cesium-native retains
     // raster tiles via intrusive references and a cache budget; this local

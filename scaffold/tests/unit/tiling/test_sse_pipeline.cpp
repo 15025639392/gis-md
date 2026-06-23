@@ -5400,6 +5400,65 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
               *root,
               std::vector<ActivatedRasterOverlay*>{&activated}),
           "Tileset: ready raster with more detail keeps traversal prefetch active");
+
+    loadingTile->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    RasterOverlayTileProvider* provider =
+        activated.ensureTileProvider(nullptr);
+    check(provider != nullptr,
+          "Tileset: pending-raster skip test has active provider");
+    if (!provider) return;
+
+    const Rectangle childRectangle =
+        Rectangle::fromDegrees(-10.0, -5.0, -6.0, 0.0);
+    TilesetTile child(
+        TileKey{"Geographic-TMS", 1, 0, 0},
+        childRectangle,
+        root);
+    RasterOverlayDetails childDetails =
+        makeProviderDetails(activated.getOverlay().getTileScheme(),
+                            childRectangle);
+    RasterMappedToTilesetTile& childMapped =
+        child.rasterOverlayState.ensureMapping(0);
+    std::vector<RasterOverlayProjection> childMissingProjections;
+    childMapped.update(
+        child.key,
+        childDetails,
+        512.0,
+        512.0,
+        *provider,
+        nullptr,
+        childMissingProjections,
+        root,
+        0);
+
+    check(childMapped.getReadyTile() == loadingTile &&
+              childMapped.getLoadingTile() != nullptr,
+          "Tileset: child raster can render ancestor while own raster is pending");
+    check(!TileSelectionRasterOverlayPreparer::canSkipReadyOverlayPrefetch(
+              child,
+              std::vector<ActivatedRasterOverlay*>{&activated}),
+          "Tileset: pending child raster prevents traversal prefetch skip");
+
+    RasterOverlayTile* failedChildRaster = childMapped.getLoadingTile();
+    failedChildRaster->setState(RasterOverlayTile::LoadState::Failed);
+    const RasterMappedToTilesetTile::MoreDetail converged =
+        childMapped.update(
+            child.key,
+            childDetails,
+            512.0,
+            512.0,
+            *provider,
+            nullptr,
+            childMissingProjections,
+            root,
+            0);
+
+    check(converged == RasterMappedToTilesetTile::MoreDetail::No &&
+              childMapped.getLoadingTile() == nullptr &&
+              childMapped.getReadyTile() == loadingTile &&
+              !childMapped.isMoreDetailAvailable(),
+          "Tileset: failed pending child raster converges to ancestor without more detail");
 }
 
 void testTilesetBlockingBaseImageryDrawsPlaceholderSurface() {
