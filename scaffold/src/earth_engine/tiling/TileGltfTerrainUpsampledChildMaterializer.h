@@ -31,28 +31,39 @@ public:
             : nullptr;
     }
 
-    static bool materialize(TilesetTile& tile,
-                            TileLoadedContent& content) {
-        if (!tile.content.derivesTerrainFromParent() ||
-            content.hasTerrainPayload()) {
-            return false;
+    static std::optional<TileLoadResult> createLoadResult(
+        TilesetTile& tile) {
+        std::unique_ptr<GltfModel> childModel = createUpsampledModel(tile);
+        if (!childModel) {
+            return std::nullopt;
+        }
+
+        return TileLoadResult::createRenderableGltfTerrain(
+            std::move(childModel));
+    }
+
+private:
+    static std::unique_ptr<GltfModel> createUpsampledModel(
+        TilesetTile& tile) {
+        if (!tile.content.derivesTerrainFromParent()) {
+            return nullptr;
         }
 
         const TilesetTile* source = findGltfTerrainSource(tile);
         if (!source) {
-            return false;
+            return nullptr;
         }
 
         const GltfModel* parentModel =
             source->content.renderContent.gltfModelForRead();
         if (!parentModel) {
-            return false;
+            return nullptr;
         }
 
         const int textureCoordinateIndex =
             chooseUpsampleTextureCoordinate(*parentModel, *source, tile);
         if (textureCoordinateIndex < 0) {
-            return false;
+            return nullptr;
         }
         const bool hasInvertedVCoordinate =
             parentModel->rasterOverlayDetails
@@ -69,9 +80,8 @@ public:
                 textureCoordinateIndex,
                 hasInvertedVCoordinate);
         if (!childModel) {
-            return false;
+            return nullptr;
         }
-
         const double minimumHeight =
             parentModel->rasterOverlayDetails.boundingRegion.minimumHeight;
         const double maximumHeight =
@@ -87,26 +97,9 @@ public:
             tile.bounds,
             minimumHeight,
             maximumHeight);
-        content = TileLoadedContent::fromContentResult(
-            TileContentLoadResult::renderTerrain(std::move(childModel)));
-        return true;
+        return childModel;
     }
 
-    static std::optional<TileLoadResult> createLoadResult(
-        TilesetTile& tile) {
-        TileLoadedContent content;
-        if (!materialize(tile, content)) {
-            return std::nullopt;
-        }
-
-        TileLoadResult result = TileLoadResult::createRenderableGltfTerrain(
-            std::move(content.gltfModel),
-            std::move(content.metadata),
-            content.contentTransform);
-        return result;
-    }
-
-private:
     static bool modelHasTextureCoordinate(const GltfModel& model,
                                           int textureCoordinateIndex) {
         if (textureCoordinateIndex < 0 ||

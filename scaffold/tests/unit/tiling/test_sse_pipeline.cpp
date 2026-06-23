@@ -28770,12 +28770,10 @@ void testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail(
     parent.content.renderContent.setTerrainRenderContent(true);
     parent.markRenderContentDone();
 
-    TileLoadedContent content;
-    const bool materialized =
-        TileGltfTerrainUpsampledChildMaterializer::materialize(
-            child,
-            content);
-    const GltfModel* childModel = content.gltfModel.get();
+    std::optional<TileLoadResult> loadResult =
+        TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
+    const GltfModel* childModel =
+        loadResult ? loadResult->content.gltfModel.get() : nullptr;
     const Rectangle* childWebMercator = childModel
         ? childModel->rasterOverlayDetails.findRectangleForOverlayProjection(
               RasterOverlayProjection::WebMercator)
@@ -28800,9 +28798,10 @@ void testWebMercatorTerrainUpsampleUsesTerrainProjectionWithoutRasterMoreDetail(
         projectRectangleSimple(
             WebMercatorProjection(Ellipsoid::WGS84()),
             child.bounds);
-    check(materialized &&
+    check(loadResult.has_value() &&
+              loadResult->status == TileLoadStatus::Renderable &&
               childModel != nullptr &&
-              content.terrainRenderContent &&
+              loadResult->content.terrainRenderContent &&
               clippedWithWebMercatorTexcoord &&
               childWebMercator != nullptr &&
               childWebMercator->equalsEpsilon(
@@ -28844,18 +28843,18 @@ void testTerrainContentUpsampleDerivesDetailsFromParentModelRegion() {
     parent.content.renderContent.setTerrainRenderContent(true);
     parent.markRenderContentDone();
 
-    TileLoadedContent content;
-    const bool materialized =
-        TileGltfTerrainUpsampledChildMaterializer::materialize(
-            child,
-            content);
-    const GltfModel* childModel = content.gltfModel.get();
+    std::optional<TileLoadResult> loadResult =
+        TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
+    const GltfModel* childModel =
+        loadResult ? loadResult->content.gltfModel.get() : nullptr;
     const Rectangle* childOverlay = childModel
         ? childModel->rasterOverlayDetails.findRectangleForOverlayProjection(
               RasterOverlayProjection::Geographic)
         : nullptr;
 
-    check(materialized &&
+    check(loadResult.has_value() &&
+              loadResult->status == TileLoadStatus::Renderable &&
+              loadResult->content.terrainRenderContent &&
               childModel != nullptr &&
               childOverlay != nullptr &&
               childOverlay->equalsEpsilon(child.bounds, 1e-12) &&
@@ -28900,12 +28899,10 @@ void testTerrainContentUpsamplePropagatesInvertedVCoordinate() {
     parent.content.renderContent.setTerrainRenderContent(true);
     parent.markRenderContentDone();
 
-    TileLoadedContent content;
-    const bool materialized =
-        TileGltfTerrainUpsampledChildMaterializer::materialize(
-            child,
-            content);
-    const GltfModel* childModel = content.gltfModel.get();
+    std::optional<TileLoadResult> loadResult =
+        TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
+    const GltfModel* childModel =
+        loadResult ? loadResult->content.gltfModel.get() : nullptr;
 
     bool clippedWithInvertedV = true;
     if (childModel && !childModel->primitives.empty()) {
@@ -28921,7 +28918,9 @@ void testTerrainContentUpsamplePropagatesInvertedVCoordinate() {
         clippedWithInvertedV = false;
     }
 
-    check(materialized &&
+    check(loadResult.has_value() &&
+              loadResult->status == TileLoadStatus::Renderable &&
+              loadResult->content.terrainRenderContent &&
               childModel != nullptr &&
               clippedWithInvertedV &&
               childModel->rasterOverlayDetails
@@ -28947,14 +28946,9 @@ void testTerrainContentUpsampleRejectsOrdinaryGltfContentParent() {
         Mat4::identity());
     parent.markRenderContentDone();
 
-    TileLoadedContent content;
-    const bool materialized =
-        TileGltfTerrainUpsampledChildMaterializer::materialize(
-            child,
-            content);
-    check(!materialized &&
-              !content.hasGltfTerrainPayload() &&
-              content.gltfModel == nullptr,
+    std::optional<TileLoadResult> loadResult =
+        TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
+    check(!loadResult.has_value(),
           "Tileset: ordinary glTF content parent is not a terrain upsample source");
 }
 
@@ -28978,14 +28972,9 @@ void testTerrainContentUpsampleRequiresRasterOverlayProjectionDetails() {
     parent.content.renderContent.setTerrainRenderContent(true);
     parent.markRenderContentDone();
 
-    TileLoadedContent content;
-    const bool materialized =
-        TileGltfTerrainUpsampledChildMaterializer::materialize(
-            child,
-            content);
-    check(!materialized &&
-              !content.hasGltfTerrainPayload() &&
-              content.gltfModel == nullptr,
+    std::optional<TileLoadResult> loadResult =
+        TileGltfTerrainUpsampledChildMaterializer::createLoadResult(child);
+    check(!loadResult.has_value(),
           "Tileset: glTF terrain upsample requires raster overlay projection details like cesium-native");
 }
 
