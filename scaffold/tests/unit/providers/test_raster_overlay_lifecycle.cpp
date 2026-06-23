@@ -2298,6 +2298,62 @@ TEST(RasterOverlayLifecycleTest,
 }
 
 TEST(RasterOverlayLifecycleTest,
+     MaximumTextureSizeChangeRejectsStaleMappedCompositionLikeCesiumNative) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(3, 3);
+    provider.setMaximumTextureSize(2048);
+
+    const TileKey sourceKey{scheme->id(), 3, 4, 3};
+    const Rectangle sourceBounds = scheme->tileToRectangle(sourceKey);
+    const Rectangle westHalf(
+        sourceBounds.west(),
+        sourceBounds.south(),
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.north());
+    const Rectangle eastHalf(
+        sourceBounds.west() + sourceBounds.width() * 0.5,
+        sourceBounds.south(),
+        sourceBounds.east(),
+        sourceBounds.north());
+
+    RasterOverlayTileProvider::TilePtr staleTile =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, westHalf),
+            128.0,
+            128.0)
+            .tile;
+    ASSERT_NE(nullptr, staleTile);
+    ASSERT_TRUE(staleTile->isMappedRasterTile());
+    ASSERT_TRUE(provider.loadTile(*staleTile));
+    ASSERT_EQ(1u, imagery.requestedKeys.size());
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.front());
+
+    provider.setMaximumTextureSize(256);
+
+    imagery.completeNext();
+    EXPECT_EQ(0, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+    EXPECT_EQ(RasterOverlayTile::LoadState::Failed,
+              staleTile->getState());
+    EXPECT_FALSE(provider.hasPendingWork());
+    EXPECT_EQ(0, provider.getCachedSourceTileBytes());
+
+    RasterOverlayTileProvider::TilePtr currentTile =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, eastHalf),
+            128.0,
+            128.0)
+            .tile;
+    ASSERT_NE(nullptr, currentTile);
+    ASSERT_TRUE(provider.loadTile(*currentTile));
+    EXPECT_EQ(2u, imagery.requestedKeys.size());
+    EXPECT_EQ(sourceKey, imagery.requestedKeys.back());
+}
+
+TEST(RasterOverlayLifecycleTest,
      LevelRangeChangeRecreatesCachedSourceAssetLikeCesiumNative) {
     DeferredImageryProvider imagery;
     auto scheme = TileScheme::createXYZWebMercator();

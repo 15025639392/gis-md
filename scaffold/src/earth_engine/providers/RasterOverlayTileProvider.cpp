@@ -2020,6 +2020,7 @@ void RasterOverlayTileProvider::setMaximumTextureSize(int maximumTextureSize) {
     }
     maximumTextureSize_ = nextMaximumTextureSize;
     invalidateMappedRasterTileCache();
+    invalidateSourceAssetDepotCache();
 }
 
 void RasterOverlayTileProvider::setSubTileCacheBytes(int64_t subTileCacheBytes) {
