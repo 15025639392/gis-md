@@ -6,6 +6,7 @@
 #include "RasterTextureUploader.h"
 #include "../renderer/RenderDevice.h"
 #include "../threading/CancellationToken.h"
+#include "../core/async/AsyncSystem.h"
 #include "../debug/PerfTimer.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/Projection.h"
@@ -23,6 +24,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -1396,6 +1398,7 @@ private:
 struct RasterOverlayTileProvider::QuadtreeSourceRequest
     : public std::enable_shared_from_this<QuadtreeSourceRequest> {
     QuadtreeSourceRequest(const TileScheme& tileScheme,
+                          std::shared_ptr<ProviderAsyncState> asyncState,
                           std::shared_ptr<QuadtreeSourceAssetDepot> sourceDepot,
                           QuadtreeSourcePlan plan,
                           Rectangle bounds,
@@ -1405,6 +1408,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceRequest
                           CompositeRequestSuccess success,
                           CompositeRequestFailure failure)
         : scheme(tileScheme)
+        , state(std::move(asyncState))
         , depot(std::move(sourceDepot))
         , sourcePlan(std::move(plan))
         , targetBounds(bounds)
@@ -1507,42 +1511,89 @@ private:
             return;
         }
 
-        const bool haveAnyUsefulImageData =
-            !returnEmptyForAncestorOnly ||
-            std::any_of(
-                completedSources.begin(),
-                completedSources.end(),
-                [](const LoadedSourceImage& source) {
-                    return source.image && !source.sourceSubset.has_value();
-                });
-        if (!haveAnyUsefulImageData) {
-            onSuccess(
-                std::make_unique<DecodedImage>(),
-                nullptr,
-                Rectangle(),
-                RasterOverlayTile::MoreDetailAvailable::No);
+        auto self = shared_from_this();
+        if (!state->alive.load(std::memory_order_acquire)) {
+            onFailure();
             return;
         }
+        state->activeRasterComposeTasks.fetch_add(
+            1,
+            std::memory_order_relaxed);
+        try {
+            AsyncSystem::pool().enqueue(
+                [self,
+                 completedSources = std::move(completedSources)]() mutable {
+                    const auto finishCompose = [&self]() {
+                        self->state->activeRasterComposeTasks.fetch_sub(
+                            1,
+                            std::memory_order_relaxed);
+                    };
+                    try {
+                        const bool haveAnyUsefulImageData =
+                            !self->returnEmptyForAncestorOnly ||
+                            std::any_of(
+                                completedSources.begin(),
+                                completedSources.end(),
+                                [](const LoadedSourceImage& source) {
+                                    return source.image &&
+                                           !source.sourceSubset.has_value();
+                                });
+                        if (!haveAnyUsefulImageData) {
+                            if (self->state->alive.load(
+                                    std::memory_order_acquire)) {
+                                self->onSuccess(
+                                    std::make_unique<DecodedImage>(),
+                                    nullptr,
+                                    Rectangle(),
+                                    RasterOverlayTile::MoreDetailAvailable::No);
+                            }
+                            finishCompose();
+                            return;
+                        }
 
-        CompositeImageResult composed =
-            combineQuadtreeSourceImages(
-                scheme,
-                targetBounds,
-                sourcePlan.sourceZoom,
-                std::move(completedSources),
-                maximumLevel);
-        if (composed.image) {
-            onSuccess(
-                std::move(composed.image),
-                nullptr,
-                projectGeographicToProvider(composed.rectangle, projection),
-                composed.moreDetailAvailable);
-        } else {
+                        CompositeImageResult composed =
+                            combineQuadtreeSourceImages(
+                                self->scheme,
+                                self->targetBounds,
+                                self->sourcePlan.sourceZoom,
+                                std::move(completedSources),
+                                self->maximumLevel);
+                        if (composed.image) {
+                            if (self->state->alive.load(
+                                    std::memory_order_acquire)) {
+                                self->onSuccess(
+                                    std::move(composed.image),
+                                    nullptr,
+                                    projectGeographicToProvider(
+                                        composed.rectangle,
+                                        self->projection),
+                                    composed.moreDetailAvailable);
+                            }
+                        } else {
+                            if (self->state->alive.load(
+                                    std::memory_order_acquire)) {
+                                self->onFailure();
+                            }
+                        }
+                        finishCompose();
+                    } catch (...) {
+                        if (self->state->alive.load(
+                                std::memory_order_acquire)) {
+                            self->onFailure();
+                        }
+                        finishCompose();
+                    }
+                });
+        } catch (...) {
+            state->activeRasterComposeTasks.fetch_sub(
+                1,
+                std::memory_order_relaxed);
             onFailure();
         }
     }
 
     const TileScheme& scheme;
+    std::shared_ptr<ProviderAsyncState> state;
     std::shared_ptr<QuadtreeSourceAssetDepot> depot;
     QuadtreeSourcePlan sourcePlan;
     Rectangle targetBounds;
@@ -1610,6 +1661,10 @@ RasterOverlayTileProvider::RasterOverlayTileProvider(ImageryProvider& provider,
 
 RasterOverlayTileProvider::~RasterOverlayTileProvider() {
     asyncState_->alive.store(false, std::memory_order_release);
+    while (asyncState_->activeRasterComposeTasks.load(
+               std::memory_order_acquire) > 0) {
+        std::this_thread::yield();
+    }
 }
 
 void RasterOverlayTileProvider::setOwner(RasterOverlay* owner) {
@@ -2166,6 +2221,7 @@ bool RasterOverlayTileProvider::loadMappedTile(
     const bool returnEmptyForAncestorOnly = true;
     auto request = std::make_shared<QuadtreeSourceRequest>(
         scheme_,
+        state,
         sourceAssetDepot_,
         sourcePlan,
         targetBounds,
@@ -2482,6 +2538,8 @@ bool RasterOverlayTileProvider::hasPendingWork() const {
            !asyncState_->inFlightRequests.empty() ||
            !asyncState_->sourceTileDepotInFlight.empty() ||
            !pendingSourceRequests_.empty() ||
+           asyncState_->activeRasterComposeTasks.load(
+               std::memory_order_relaxed) > 0 ||
            asyncState_->activeRasterSourceRequests.load(
                std::memory_order_relaxed) > 0;
 }

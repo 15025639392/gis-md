@@ -657,6 +657,21 @@ namespace {
 
 int gFailures = 0;
 
+int processPendingRasterUploadsUntil(RasterOverlayTileProvider& provider,
+                                     int expectedUploads,
+                                     FrameResourceBudget* budget = nullptr) {
+    int processed = 0;
+    for (int attempt = 0; attempt < 200 && processed < expectedUploads;
+         ++attempt) {
+        processed += provider.processPendingUploads(false, budget);
+        if (processed >= expectedUploads) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return processed;
+}
+
 const std::vector<std::unique_ptr<Tileset>>& emptyContentTilesets() {
     static const std::vector<std::unique_ptr<Tileset>> empty;
     return empty;
@@ -2677,7 +2692,7 @@ void testRasterOverlayCompositeWithFailedSourcesLoadsEmptyLikeCesiumNative() {
           "RasterOverlayTileProvider: all failed source requests are visible in external diagnostics");
     FrameResourceBudget uploadBudget;
     uploadBudget.beginFrame(2, config);
-    provider.processPendingUploads(false, &uploadBudget);
+    processPendingRasterUploadsUntil(provider, 1, &uploadBudget);
 
     check(compositeTile->getState() == RasterOverlayTile::LoadState::Loaded &&
               compositeTile->getTexture() == nullptr &&
@@ -2884,8 +2899,7 @@ void testRasterOverlayCompositeTilesShareSourceInFlight() {
 
     FrameResourceBudget uploadBudget;
     uploadBudget.beginFrame(3, config);
-    provider.processPendingUploads(false, &uploadBudget);
-    provider.processPendingUploads(false, &uploadBudget);
+    processPendingRasterUploadsUntil(provider, 2, &uploadBudget);
 
     check(westComposite->getState() == RasterOverlayTile::LoadState::Loaded &&
               eastComposite->getState() == RasterOverlayTile::LoadState::Loaded,

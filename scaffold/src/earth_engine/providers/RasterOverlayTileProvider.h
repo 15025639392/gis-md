@@ -349,6 +349,7 @@ private:
         uint64_t sourceTileDepotEpoch = 0;
         std::unordered_set<std::string> inFlightRequests;
         std::atomic<uint32_t> activeRasterSourceRequests{0};
+        std::atomic<uint32_t> activeRasterComposeTasks{0};
         std::atomic<uint32_t> peakRasterSourceRequests{0};
         std::atomic<int> rasterSourceRequestsStarted{0};
         std::atomic<int> rasterSourceRequestsCompleted{0};
