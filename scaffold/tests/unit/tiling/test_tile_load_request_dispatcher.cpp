@@ -480,7 +480,7 @@ TEST(TileLoadRequestDispatcherTest,
 }
 
 TEST(TileLoadRequestDispatcherTest,
-     TerrainResultIsHeightmapOnlyAndTerrainContentUsesContentResult) {
+     TerrainContentUsesGltfContentResult) {
     auto gltfModel = std::make_unique<GltfModel>();
     GltfModel* rawGltfModel = gltfModel.get();
     TileContentLoadResult contentResult =
@@ -493,28 +493,10 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_EQ(TileLoadStatus::Renderable, normalizedGltf.status);
     EXPECT_TRUE(normalizedGltf.shouldUpload());
     EXPECT_TRUE(normalizedGltf.content.terrainRenderContent);
-    EXPECT_EQ(nullptr, normalizedGltf.content.heightmap);
     EXPECT_EQ(rawGltfModel, normalizedGltf.content.gltfModel.get());
     EXPECT_EQ(
         1u,
         normalizedGltf.content.quantizedMeshAvailabilityUpdates.size());
-
-    auto heightmap = std::make_unique<DecodedHeightmap>();
-    DecodedHeightmap* rawHeightmap = heightmap.get();
-    TerrainTileLoadResult heightmapResult =
-        TerrainTileLoadResult::successWithHeightmap(std::move(heightmap));
-
-    TileLoadResult normalizedHeightmap =
-        TileLoadResult::fromTerrainResult(std::move(heightmapResult));
-
-    EXPECT_EQ(TileLoadStatus::Renderable, normalizedHeightmap.status);
-    EXPECT_TRUE(normalizedHeightmap.shouldUpload());
-    EXPECT_TRUE(normalizedHeightmap.content.terrainRenderContent);
-    EXPECT_EQ(rawHeightmap, normalizedHeightmap.content.heightmap.get());
-    EXPECT_EQ(nullptr, normalizedHeightmap.content.gltfModel);
-    EXPECT_FALSE(normalizedHeightmap.content.hasGltfTerrainPayload());
-    EXPECT_TRUE(
-        normalizedHeightmap.content.quantizedMeshAvailabilityUpdates.empty());
 
     TileLoadResult untypedTerrain = TileLoadResult::createRenderableTerrain();
     EXPECT_FALSE(untypedTerrain.shouldUpload());
@@ -541,7 +523,6 @@ TEST(TileLoadRequestDispatcherTest,
             directTransform);
     EXPECT_TRUE(directTerrainContent.shouldUpload());
     EXPECT_TRUE(directTerrainContent.content.hasGltfTerrainPayload());
-    EXPECT_EQ(nullptr, directTerrainContent.content.heightmap);
     EXPECT_EQ(rawDirectGltfModel, directTerrainContent.content.gltfModel.get());
     EXPECT_EQ(directTransform, directTerrainContent.content.contentTransform);
     ASSERT_TRUE(

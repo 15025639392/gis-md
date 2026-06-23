@@ -6,7 +6,6 @@
 #include "TileLoadTypes.h"
 #include "TilePendingUploadCompletion.h"
 #include "TileTerminalLoadCommitter.h"
-#include "TileTerrainUploadCommitter.h"
 #include "TilesetTile.h"
 #include "../content/GltfContentProvider.h"
 

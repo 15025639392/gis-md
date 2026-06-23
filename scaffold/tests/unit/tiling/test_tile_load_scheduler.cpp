@@ -812,7 +812,6 @@ TEST(TileLoadSchedulerTest,
     EXPECT_EQ(pending->result.status, TileLoadStatus::Renderable);
     EXPECT_TRUE(pending->content().hasGltfTerrainPayload());
     ASSERT_NE(pending->content().gltfModel, nullptr);
-    EXPECT_FALSE(pending->content().heightmap);
     ASSERT_TRUE(pending->content().metadata.rasterOverlayDetails.has_value());
     const RasterOverlayDetails& details =
         *pending->content().metadata.rasterOverlayDetails;

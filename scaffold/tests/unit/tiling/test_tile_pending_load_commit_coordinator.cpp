@@ -403,21 +403,10 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     FailedRetryAndCancelledProviderResultsDropMetadataLikeCesiumNative) {
+     FailedRetryAndCancelledContentResultsDropMetadataLikeCesiumNative) {
     for (TileLoadStatus status : {TileLoadStatus::RetryLater,
                                   TileLoadStatus::Failed,
                                   TileLoadStatus::Cancelled}) {
-        TerrainTileLoadResult terrainResult;
-        terrainResult.status = status;
-        TileLoadResult normalizedTerrain =
-            TileLoadResult::fromTerrainResult(std::move(terrainResult));
-        EXPECT_FALSE(
-            normalizedTerrain.content.metadata.updatedBoundingVolume
-                .has_value());
-        EXPECT_TRUE(
-            normalizedTerrain.content.quantizedMeshAvailabilityUpdates
-                .empty());
-
         TileContentLoadResult contentResult;
         contentResult.status = status;
         contentResult.metadata = makeBoundingVolumeMetadata(
@@ -453,32 +442,6 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     TerrainUploadCommitterCachesHeightmapWithoutAvailabilitySideEffect) {
-    const TileKey key{"test", 1, 2, 3};
-    const std::string cacheKey = "terrain-payload";
-    auto heightmap = std::make_unique<DecodedHeightmap>();
-    heightmap->tileSize = 2;
-    heightmap->heights = {1.0f, 2.0f, 3.0f, 4.0f};
-
-    TileLoadedContent content;
-    content.heightmap = std::move(heightmap);
-    content.terrainRenderContent = true;
-
-    std::unordered_map<std::string, std::unique_ptr<DecodedHeightmap>>
-        terrainCache;
-
-    TileTerrainUploadCommitter::cacheTerrainPayload(
-        cacheKey,
-        content,
-        terrainCache);
-
-    EXPECT_EQ(nullptr, content.heightmap);
-    ASSERT_NE(terrainCache.find(cacheKey), terrainCache.end());
-    EXPECT_TRUE(terrainCache.at(cacheKey)->valid());
-}
-
-TEST(
-    TilePendingLoadCommitCoordinatorTest,
     ContentUploadCommitterAppliesTerrainAvailabilityToContentProvider) {
     RecordingTerrainContentProvider contentProvider;
 

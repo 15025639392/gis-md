@@ -19,7 +19,6 @@
 #include "earth_engine/tiling/TileSelectionRasterOverlayPreparer.h"
 #include "earth_engine/tiling/TileSelectionPlanAppender.h"
 #include "earth_engine/tiling/TileScheme.h"
-#include "earth_engine/tiling/TileTerrainUploadCommitter.h"
 #include "earth_engine/tiling/Tileset.h"
 #include "earth_engine/tiling/TilesetUpdateFrameRuntime.h"
 

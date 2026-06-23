@@ -86,7 +86,7 @@ TEST(TileLoadLifecycleTest, CancelErasesPendingUploads) {
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableHeightmapTerrain(std::make_unique<DecodedHeightmap>())});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             contentKey,
             "content-upload",
@@ -121,7 +121,7 @@ TEST(TileLoadLifecycleTest, CancelErasesClaimedUploads) {
             "terrain-upload",
             TileLoadPriorityGroup::Urgent,
             100.0,
-            TileLoadResult::createRenderableHeightmapTerrain(std::make_unique<DecodedHeightmap>())});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             contentKey,
             "content-upload",

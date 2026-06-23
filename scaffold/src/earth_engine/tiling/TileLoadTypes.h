@@ -27,14 +27,6 @@ struct TileLoadRequestOutcome {
 };
 
 struct TileLoadedContent {
-    static TileLoadedContent fromTerrainResult(
-        TerrainTileLoadResult&& result) {
-        TileLoadedContent content;
-        content.heightmap = std::move(result.heightmap);
-        content.terrainRenderContent = content.heightmap != nullptr;
-        return content;
-    }
-
     static TileLoadedContent fromContentResult(
         TileContentLoadResult&& result) {
         TileLoadedContent content;
@@ -47,7 +39,6 @@ struct TileLoadedContent {
         return content;
     }
 
-    std::unique_ptr<DecodedHeightmap> heightmap;
     std::unique_ptr<GltfModel> gltfModel;
     bool terrainRenderContent = false;
     Mat4 contentTransform = Mat4::identity();
@@ -57,8 +48,7 @@ struct TileLoadedContent {
     bool quantizedMeshAvailabilityUpdatesApplied = false;
 
     bool hasTerrainPayload() const {
-        return heightmap != nullptr ||
-               terrainRenderContent;
+        return terrainRenderContent;
     }
 
     bool hasGltfTerrainPayload() const {
@@ -66,7 +56,7 @@ struct TileLoadedContent {
     }
 
     bool hasRenderablePayload() const {
-        return heightmap != nullptr || gltfModel != nullptr;
+        return gltfModel != nullptr;
     }
 };
 
@@ -101,18 +91,6 @@ struct TileLoadResult {
         return loadResult;
     }
 
-    static TileLoadResult createRenderableHeightmapTerrain(
-        std::unique_ptr<DecodedHeightmap> heightmap,
-        TileLoadResultMetadata metadata = {}) {
-        TileLoadResult loadResult = createRenderableTerrain(
-            std::move(metadata));
-        loadResult.content.heightmap = std::move(heightmap);
-        if (loadResult.content.heightmap) {
-            loadResult.content.terrainRenderContent = true;
-        }
-        return loadResult;
-    }
-
     static TileLoadResult createRenderableGltfTerrain(
         std::unique_ptr<GltfModel> model,
         TileLoadResultMetadata metadata = {},
@@ -121,16 +99,6 @@ struct TileLoadResult {
             std::move(model),
             std::move(metadata),
             contentTransform));
-    }
-
-    static TileLoadResult fromTerrainResult(TerrainTileLoadResult&& result) {
-        TileLoadResult loadResult;
-        loadResult.status = result.status;
-        if (isSuccessfulTileLoadStatus(result.status)) {
-            loadResult.content = TileLoadedContent::fromTerrainResult(
-                std::move(result));
-        }
-        return loadResult;
     }
 
     static TileLoadResult fromContentResult(TileContentLoadResult&& result) {

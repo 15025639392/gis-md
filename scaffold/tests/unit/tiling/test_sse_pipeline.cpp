@@ -97,7 +97,6 @@
 #include "earth_engine/tiling/TileTerminalLoadCommitter.h"
 #include "earth_engine/tiling/TileTerminalLoadPolicy.h"
 #include "earth_engine/tiling/TileTerrainHeightRangePolicy.h"
-#include "earth_engine/tiling/TileTerrainUploadCommitter.h"
 #include "earth_engine/tiling/TileTerrainUploadPolicy.h"
 #include "earth_engine/tiling/TileTraversalDetails.h"
 #include "earth_engine/tiling/TileViewerRequestVolumePolicy.h"
@@ -13646,35 +13645,6 @@ void testTileTerrainUploadPolicyMarksTerrainRenderContentStates() {
           "TileTerrainUploadPolicy: failed terrain render-resource preparation rolls back render content");
 }
 
-void testTileTerrainUploadCommitterAppliesRenderResourceOutcome() {
-    TilesetTile readyTile(TileKey{"test", 0, 0, 0}, Rectangle{});
-    readyTile.content.contentKind = TileContentKind::Unknown;
-    readyTile.content.loadState = TileLoadState::Unloaded;
-
-    TileTerrainUploadCommitter::prepareTerrainRenderContent(readyTile);
-    TileTerrainUploadCommitAction action =
-        TileTerrainUploadCommitter::finishTerrainResourcePreparation(
-            readyTile,
-            true);
-    check(action.resourcesDirty &&
-              readyTile.content.contentKind == TileContentKind::Render &&
-              readyTile.content.loadState == TileLoadState::ContentLoaded,
-          "TileTerrainUploadCommitter: ready render resources keep terrain render content state and request dirty resources");
-
-    TilesetTile failedTile(TileKey{"test", 0, 1, 0}, Rectangle{});
-    failedTile.content.contentKind = TileContentKind::Unknown;
-    failedTile.content.loadState = TileLoadState::Unloaded;
-
-    TileTerrainUploadCommitter::prepareTerrainRenderContent(failedTile);
-    action = TileTerrainUploadCommitter::finishTerrainResourcePreparation(
-        failedTile,
-        false);
-    check(action.resourcesDirty &&
-              failedTile.content.contentKind == TileContentKind::Unknown &&
-              failedTile.content.loadState == TileLoadState::FailedTemporarily,
-          "TileTerrainUploadCommitter: failed render-resource preparation rolls back terrain render content and requests dirty resources");
-}
-
 void testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentUpload() {
     TileLoadLifecycle lifecycle;
     FrameResourceBudgetConfig config;
@@ -19425,7 +19395,7 @@ void testTileLoadLifecycleCancelErasesPendingUploads() {
             "terrain-upload",
             TileLoadPriorityGroup::Normal,
             0.0,
-            TileLoadResult::createRenderableHeightmapTerrain(std::make_unique<DecodedHeightmap>())});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             contentKey,
             "content-upload",
@@ -19459,7 +19429,7 @@ void testTileLoadLifecycleCancelErasesClaimedUploads() {
             "terrain-upload",
             TileLoadPriorityGroup::Urgent,
             100.0,
-            TileLoadResult::createRenderableHeightmapTerrain(std::make_unique<DecodedHeightmap>())});
+            TileLoadResult::createRenderableGltfTerrain(std::make_unique<GltfModel>())});
         lifecycle.pendingLoads().addUpload(PendingTileLoad{TileLoadDomain::Content,
             contentKey,
             "content-upload",
@@ -27185,7 +27155,6 @@ int main() {
     testTileContentUploadPolicyMarksGltfRenderResourceFailure();
     testTileContentUploadCommitterAppliesRenderResourceOutcome();
     testTileTerrainUploadPolicyMarksTerrainRenderContentStates();
-    testTileTerrainUploadCommitterAppliesRenderResourceOutcome();
     testTilePendingLoadCommitCoordinatorPreservesTerrainCacheForMissingContentUpload();
     testTilePendingLoadCommitCoordinatorSkipsMissingTileTerminalResults();
     testTilePendingLoadCommitCoordinatorClearsContentRetryEmptyMarker();
