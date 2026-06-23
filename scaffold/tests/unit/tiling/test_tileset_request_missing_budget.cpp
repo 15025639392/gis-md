@@ -488,11 +488,16 @@ public:
     };
 
     explicit ManualCompletionContentProvider(TileKey key)
-        : key_(std::move(key)) {}
+        : keys_{std::move(key)} {}
+
+    explicit ManualCompletionContentProvider(std::vector<TileKey> keys)
+        : keys_(std::move(keys)) {}
 
     std::string id() const override { return "manual-completion-content"; }
-    bool supportsTile(const TileKey& key) const override { return key == key_; }
-    std::vector<TileKey> rootTiles() const override { return {key_}; }
+    bool supportsTile(const TileKey& key) const override {
+        return std::find(keys_.begin(), keys_.end(), key) != keys_.end();
+    }
+    std::vector<TileKey> rootTiles() const override { return keys_; }
     bool providesTerrainQuadtree() const override {
         return ownsTerrainQuadtree;
     }
@@ -554,7 +559,7 @@ public:
     bool ownsTerrainQuadtree = false;
 
 private:
-    TileKey key_;
+    std::vector<TileKey> keys_;
 };
 
 class SparseTerrainProvider final : public TerrainProvider {
@@ -939,62 +944,68 @@ TEST(TilesetRequestMissingBudgetTest,
     options.maximumSimultaneousTileLoads = 2;
     options.mainThreadLoadingTimeLimit = 1.0e-12;
 
-    const TileKey terrainKey{"Geographic-TMS", 1, 0, 0};
-    const TileKey contentKey{"Geographic-TMS", 1, 1, 0};
+    const TileKey lowPriorityContentKey{"Geographic-TMS", 1, 0, 0};
+    const TileKey highPriorityContentKey{"Geographic-TMS", 1, 1, 0};
 
-    auto terrainProvider = std::make_unique<ManualCompletionTerrainProvider>();
-    ManualCompletionTerrainProvider* rawTerrainProvider =
-        terrainProvider.get();
     auto contentProvider =
-        std::make_unique<ManualCompletionContentProvider>(contentKey);
+        std::make_unique<ManualCompletionContentProvider>(
+            std::vector<TileKey>{
+                lowPriorityContentKey,
+                highPriorityContentKey});
     ManualCompletionContentProvider* rawContentProvider =
         contentProvider.get();
     DummyRenderDevice device;
     Tileset tileset(
-        std::move(terrainProvider),
         TileScheme::createGeographicTMS(),
         {},
         &device,
         options,
         std::move(contentProvider));
 
-    TilesetTestAccess::ensureTile(tileset, terrainKey);
-    TilesetTestAccess::ensureTile(tileset, contentKey);
+    TilesetTestAccess::ensureTile(tileset, lowPriorityContentKey);
+    TilesetTestAccess::ensureTile(tileset, highPriorityContentKey);
     TilesetTestAccess::requestMissingTilesWithPriorities(
         tileset,
-        terrainKey,
+        lowPriorityContentKey,
         100.0,
-        contentKey,
+        highPriorityContentKey,
         1.0);
 
-    ASSERT_EQ(rawTerrainProvider->pendingRequests.size(), 1u);
-    ASSERT_EQ(rawContentProvider->pendingRequests.size(), 1u);
-    EXPECT_TRUE(rawTerrainProvider->completeWithHeightmap(
-        terrainKey,
-        makeFlatHeightmap(1.0f)));
+    ASSERT_EQ(rawContentProvider->pendingRequests.size(), 2u);
     EXPECT_TRUE(rawContentProvider->completeWithModel(
-        contentKey,
+        lowPriorityContentKey,
         makeTriangleGltfModel()));
-    EXPECT_EQ(tileset.loadDiagnostics().pendingTerrainUploads, 1);
-    EXPECT_EQ(tileset.loadDiagnostics().pendingContentUploads, 1);
+    EXPECT_TRUE(rawContentProvider->completeWithModel(
+        highPriorityContentKey,
+        makeTriangleGltfModel()));
+    EXPECT_EQ(tileset.loadDiagnostics().pendingTerrainUploads, 0);
+    EXPECT_EQ(tileset.loadDiagnostics().pendingContentUploads, 2);
 
     TilesetTestAccess::processPendingUploads(tileset);
 
-    TilesetTile* terrainTile =
-        TilesetTestAccess::findTile(tileset, terrainKey);
-    TilesetTile* contentTile =
-        TilesetTestAccess::findTile(tileset, contentKey);
-    ASSERT_NE(contentTile, nullptr);
-    EXPECT_EQ(contentTile->content.loadState, TileLoadState::Done);
-    EXPECT_EQ(contentTile->content.contentKind, TileContentKind::Render);
-    EXPECT_TRUE(contentTile->content.renderContent.hasGltfModel());
-    EXPECT_TRUE(contentTile->content.renderContent.hasGltfPrimitiveResources());
+    TilesetTile* lowPriorityContentTile =
+        TilesetTestAccess::findTile(tileset, lowPriorityContentKey);
+    TilesetTile* highPriorityContentTile =
+        TilesetTestAccess::findTile(tileset, highPriorityContentKey);
+    ASSERT_NE(highPriorityContentTile, nullptr);
+    EXPECT_EQ(
+        highPriorityContentTile->content.loadState,
+        TileLoadState::Done);
+    EXPECT_EQ(
+        highPriorityContentTile->content.contentKind,
+        TileContentKind::Render);
+    EXPECT_TRUE(
+        highPriorityContentTile->content.renderContent.hasGltfModel());
+    EXPECT_TRUE(highPriorityContentTile->content.renderContent
+                    .hasGltfPrimitiveResources());
 
     const TilesetLoadDiagnostics diagnostics = tileset.loadDiagnostics();
-    ASSERT_NE(terrainTile, nullptr);
-    EXPECT_EQ(terrainTile->content.loadState, TileLoadState::ContentLoading);
-    EXPECT_EQ(diagnostics.pendingTerrainUploads, 1);
-    EXPECT_EQ(diagnostics.pendingContentUploads, 0);
+    ASSERT_NE(lowPriorityContentTile, nullptr);
+    EXPECT_EQ(
+        lowPriorityContentTile->content.loadState,
+        TileLoadState::ContentLoading);
+    EXPECT_EQ(diagnostics.pendingTerrainUploads, 0);
+    EXPECT_EQ(diagnostics.pendingContentUploads, 1);
 }
 
 TEST(TilesetRequestMissingBudgetTest,
@@ -1075,7 +1086,6 @@ TEST(
     UpdateFramePassesRendererPrepSinkToContentReplacementDetach) {
     const TileKey key{"Geographic-TMS", 0, 0, 0};
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1159,7 +1169,6 @@ TEST(
     UpdateFramePassesRendererPrepSinkToTerminalResultDetach) {
     const TileKey key{"Geographic-TMS", 0, 0, 0};
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1357,7 +1366,6 @@ TEST(
         contentProvider.get();
 
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1420,7 +1428,6 @@ TEST(
     contentProvider->setPlatformBridge(&bridge);
 
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         nullptr,
@@ -1508,7 +1515,6 @@ TEST(
         "external resource diagnostics fixture");
 
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         &device,
@@ -1881,7 +1887,6 @@ TEST(
     ManualCompletionContentProvider* rawProvider = provider.get();
     DummyRenderDevice device;
     Tileset tileset(
-        std::unique_ptr<TerrainProvider>{},
         TileScheme::createGeographicTMS(),
         {},
         &device,
