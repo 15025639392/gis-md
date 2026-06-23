@@ -3902,6 +3902,92 @@ void testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload() {
           "RasterMappedToTilesetTile: lifecycle-ready ancestor does not create drawable texture binding");
 }
 
+void testRasterMappedChildUsesLoadedAncestorLoadingTileBeforePromotion() {
+    auto overlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createXYZWebMercator(),
+        makeRasterOverlayOptions());
+
+    RasterOverlayTileProvider provider(
+        overlay->getProvider(),
+        overlay->getTileScheme(),
+        nullptr);
+    provider.setOwner(overlay.get());
+    provider.setFrameNumber(1);
+
+    RasterOverlayDetails parentDetails = makeProviderDetails(
+        overlay->getTileScheme(),
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
+    RasterOverlayDetails childDetails = makeProviderDetails(
+        overlay->getTileScheme(),
+        Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0));
+
+    TilesetTile parent(
+        TileKey{"Geographic-TMS", 2, 2, 1},
+        Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
+    TilesetTile child(
+        TileKey{"Geographic-TMS", 3, 4, 2},
+        Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0),
+        &parent);
+    parent.rasterOverlayState.mappings().resize(1);
+
+    auto parentMapped = std::make_unique<RasterMappedToTilesetTile>();
+    std::vector<RasterOverlayProjection> parentMissing;
+    parentMapped->update(
+        parent.key,
+        parentDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        parentMissing,
+        nullptr,
+        0);
+    RasterOverlayTile* parentLoading = parentMapped->getLoadingTile();
+    parentLoading->setState(RasterOverlayTile::LoadState::Loaded);
+    parentLoading->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    check(parentMapped->getReadyTile() == nullptr &&
+              parentMapped->getLoadingTile() == parentLoading,
+          "RasterMappedToTilesetTile: test fixture keeps ancestor raster loaded but not promoted");
+    parent.rasterOverlayState.mappings()[0] = std::move(parentMapped);
+
+    RasterMappedToTilesetTile childMapped;
+    std::vector<RasterOverlayProjection> childMissing;
+    childMapped.update(
+        child.key,
+        childDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        childMissing,
+        nullptr,
+        0);
+    RasterOverlayTile* childDesired = childMapped.getLoadingTile();
+
+    const auto fallbackUpdate = childMapped.update(
+        child.key,
+        childDetails,
+        512.0,
+        512.0,
+        provider,
+        nullptr,
+        childMissing,
+        &parent,
+        0);
+
+    check(fallbackUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown,
+          "RasterMappedToTilesetTile: loaded ancestor loading raster keeps child detail unknown");
+    check(childMapped.getReadyTile() == parentLoading,
+          "RasterMappedToTilesetTile: child uses ancestor loading tile once it is loaded like cesium-native");
+    check(childMapped.getLoadingTile() == childDesired,
+          "RasterMappedToTilesetTile: child keeps its own desired raster while borrowing loaded ancestor loading tile");
+    check(childMapped.getReadyTileSource() ==
+              RasterMappedToTilesetTile::ReadyTileSource::Ancestor,
+          "RasterMappedToTilesetTile: borrowed loaded ancestor loading tile is marked as ancestor source");
+}
+
 void testRasterOverlayNativeTranslationAndRendererWindow() {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey child{"Geographic-TMS", 2, 2, 0};
@@ -29259,6 +29345,7 @@ int main() {
     testRasterMappedTemporaryAncestorDoesNotReportMoreDetail();
     testRasterMappedFailedChildFollowsParentLoadingTile();
     testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload();
+    testRasterMappedChildUsesLoadedAncestorLoadingTileBeforePromotion();
     testRasterOverlayNativeTranslationAndRendererWindow();
     testHeightmapTerrainProviderExposesAttribution();
     testTilesetBoundingRegionDegenerateDistanceMatchesCesiumNative();

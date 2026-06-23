@@ -54,16 +54,17 @@ std::shared_ptr<RasterOverlayTile> findLoadedTileOverlay(
         if (result) return;
         if (!mapped) return;
 
-        std::shared_ptr<RasterOverlayTile> readyTile =
-            mapped->getReadyTileHandle();
-        if (!readyTile || !hasSameOverlayOwner(*readyTile, provider)) {
-            return;
+        std::shared_ptr<RasterOverlayTile> candidate =
+            mapped->getLoadingTileHandle();
+        if (!candidate || !hasSameOverlayOwner(*candidate, provider)) {
+            candidate = mapped->getReadyTileHandle();
         }
+        if (!candidate || !hasSameOverlayOwner(*candidate, provider)) return;
 
-        const RasterOverlayTile::LoadState state = readyTile->getState();
+        const RasterOverlayTile::LoadState state = candidate->getState();
         if (state == RasterOverlayTile::LoadState::Loaded ||
             state == RasterOverlayTile::LoadState::Done) {
-            result = readyTile;
+            result = candidate;
         }
     });
     return result;
